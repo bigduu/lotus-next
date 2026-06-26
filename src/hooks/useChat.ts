@@ -233,6 +233,31 @@ export function useChat() {
     [currentSessionId],
   )
 
+  // Fork the conversation from a message: backend clones the session up to that
+  // message into a fresh one; we switch to the new branch.
+  const fork = useCallback(
+    async (messageId: string): Promise<string | undefined> => {
+      if (!currentSessionId) return undefined
+      try {
+        const res = await agentApiClient.post<{ session?: { id?: string; session_id?: string } }>(
+          `sessions/${encodeURIComponent(currentSessionId)}/fork`,
+          { up_to_message_id: messageId },
+        )
+        const newId = res?.session?.id ?? res?.session?.session_id
+        if (!newId) return undefined
+        // Await the full switch so the caller's loading spinner spans the whole
+        // operation and clears exactly when we land on the new branch.
+        await useAppStore.getState().refreshChatsNow()
+        useAppStore.getState().selectSession(newId)
+        await useAppStore.getState().loadChatHistory(newId)
+        return newId
+      } catch {
+        return undefined
+      }
+    },
+    [currentSessionId],
+  )
+
   // Answering a clarification resumes the SAME run — the original subscription
   // is still open (a pending question keeps the stream live), so tokens keep
   // flowing into onToken. No new run / no `sending` conflict.
@@ -273,6 +298,7 @@ export function useChat() {
     stop,
     newChat,
     deleteMessage,
+    fork,
     pendingQuestion,
     pendingApproval,
     answerQuestion,

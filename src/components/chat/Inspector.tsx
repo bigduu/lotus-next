@@ -79,36 +79,6 @@ export function Inspector({
         </div>
 
         <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4">
-          <section className="rounded-lg border p-3">
-            <div className="mb-2 text-xs font-medium text-muted-foreground">配置</div>
-            <Row label="模型" value={model} />
-            {provider ? <Row label="提供方" value={provider} /> : null}
-            {cfg?.reasoningEffort ? <Row label="推理强度" value={cfg.reasoningEffort} /> : null}
-          </section>
-
-          {usage ? (
-            <section className="rounded-lg border p-3">
-              <div className="mb-2 text-xs font-medium text-muted-foreground">上下文用量</div>
-              <Row label="总 tokens" value={usage.totalTokens.toLocaleString()} />
-              {usage.maxContextTokens ? (
-                <>
-                  <Row
-                    label="上下文窗口"
-                    value={usage.maxContextTokens.toLocaleString()}
-                  />
-                  <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-muted">
-                    <div
-                      className="h-full rounded-full bg-primary"
-                      style={{
-                        width: `${Math.min(100, Math.round((usage.totalTokens / usage.maxContextTokens) * 100))}%`,
-                      }}
-                    />
-                  </div>
-                </>
-              ) : null}
-            </section>
-          ) : null}
-
           {goal ? (
             <section className="rounded-lg border p-3">
               <div className="mb-2 text-xs font-medium text-muted-foreground">目标</div>
@@ -170,6 +140,42 @@ export function Inspector({
               </ul>
             </section>
           ) : null}
+
+          {/* Developer telemetry — folded away by default for a clean surface. */}
+          <details className="rounded-lg border p-3">
+            <summary className="cursor-pointer select-none text-xs font-medium text-muted-foreground">
+              高级信息
+            </summary>
+            <div className="mt-3 space-y-3">
+              <div>
+                <div className="mb-1 text-xs text-muted-foreground">配置</div>
+                <Row label="模型" value={model} />
+                {provider ? <Row label="提供方" value={provider} /> : null}
+                {cfg?.reasoningEffort ? (
+                  <Row label="推理强度" value={cfg.reasoningEffort} />
+                ) : null}
+              </div>
+              {usage ? (
+                <div>
+                  <div className="mb-1 text-xs text-muted-foreground">上下文用量</div>
+                  <Row label="总 tokens" value={usage.totalTokens.toLocaleString()} />
+                  {usage.maxContextTokens ? (
+                    <>
+                      <Row label="上下文窗口" value={usage.maxContextTokens.toLocaleString()} />
+                      <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-muted">
+                        <div
+                          className="h-full rounded-full bg-primary"
+                          style={{
+                            width: `${Math.min(100, Math.round((usage.totalTokens / usage.maxContextTokens) * 100))}%`,
+                          }}
+                        />
+                      </div>
+                    </>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
+          </details>
         </div>
       </aside>
     </>

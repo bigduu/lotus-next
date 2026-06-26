@@ -10,6 +10,8 @@ import {
   Trash2,
   Paperclip,
   ChevronDown,
+  GitFork,
+  Loader2,
   Cog,
   Download,
   FileDown,
@@ -25,6 +27,8 @@ import { SlashMenu } from "@/components/chat/SlashMenu"
 import { FileMenu } from "@/components/chat/FileMenu"
 import { ModelPicker } from "@/components/chat/ModelPicker"
 import { ReasoningPicker } from "@/components/chat/ReasoningPicker"
+import { OverflowMenu } from "@/components/chat/OverflowMenu"
+import { SessionRow } from "@/components/chat/SessionRow"
 import { ToolCalls } from "@/components/chat/ToolCalls"
 import { Reasoning } from "@/components/chat/Reasoning"
 import { workspaceService } from "@services/workspace"
@@ -121,6 +125,7 @@ function App() {
     stop,
     newChat,
     deleteMessage,
+    fork,
     pendingQuestion,
     pendingApproval,
     answerQuestion,
@@ -140,6 +145,15 @@ function App() {
   const [selectedSkill, setSelectedSkill] = useState<SkillDefinition | null>(null)
   const [attachments, setAttachments] = useState<Attachment[]>([])
   const [preview, setPreview] = useState<string | null>(null)
+  const [toast, setToast] = useState<string | null>(null)
+  const [forking, setForking] = useState(false)
+  const [pendingDelete, setPendingDelete] = useState<{ id: string; title: string } | null>(null)
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const showToast = (msg: string) => {
+    setToast(msg)
+    if (toastTimer.current) clearTimeout(toastTimer.current)
+    toastTimer.current = setTimeout(() => setToast(null), 2500)
+  }
   const scrollRef = useRef<HTMLDivElement>(null)
   const contentRef = useRef<HTMLDivElement>(null)
   const stickRef = useRef(true)
@@ -186,6 +200,8 @@ function App() {
   )
   const reasoningEffort = sessionReasoningEffort ?? globalReasoningEffort ?? "medium"
   const setInputReasoningEffort = useAppStore((s) => s.setInputReasoningEffort)
+  const persistSessionTitle = useAppStore((s) => s.persistSessionTitle)
+  const deleteSession = useAppStore((s) => s.deleteSession)
   // What the next send will use: explicit pick → configured global default →
   // (last resort) the session's own historical model.
   const activeModel =
@@ -312,24 +328,17 @@ function App() {
                 {g.label}
               </div>
               {g.chats.map((c) => (
-                <button
+                <SessionRow
                   key={c.id}
-                  onClick={() => {
+                  chat={c}
+                  active={c.id === currentSessionId}
+                  onSelect={() => {
                     select(c.id)
                     setSidebarOpen(false)
                   }}
-                  className={cn(
-                    "mb-0.5 flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-sm transition-colors hover:bg-sidebar-accent",
-                    c.id === currentSessionId && "bg-sidebar-accent font-medium",
-                  )}
-                >
-                  {c.isRunning ? (
-                    <span className="size-1.5 shrink-0 animate-pulse rounded-full bg-primary" />
-                  ) : (
-                    <span className="size-1.5 shrink-0" />
-                  )}
-                  <span className="truncate">{c.title || "新会话"}</span>
-                </button>
+                  onRename={(title) => void persistSessionTitle(c.id, title)}
+                  onDelete={() => setPendingDelete({ id: c.id, title: c.title || "新会话" })}
+                />
               ))}
             </div>
           ))}
@@ -379,35 +388,29 @@ function App() {
               menuAlign="right"
             />
           ) : null}
-          {currentSessionId && messages.length > 0 ? (
-            <>
-              <Button
-                size="icon"
-                variant="ghost"
-                aria-label="导出 Markdown"
-                onClick={() => downloadMarkdown(messages, currentChat?.title || "chat")}
-              >
-                <Download />
-              </Button>
-              <Button
-                size="icon"
-                variant="ghost"
-                aria-label="导出 PDF"
-                onClick={() => void downloadPdf(messages, currentChat?.title || "chat")}
-              >
-                <FileDown />
-              </Button>
-            </>
-          ) : null}
-          <Button
-            size="icon"
-            variant="ghost"
-            aria-label="分屏对比"
-            className="hidden md:inline-flex"
-            onClick={() => setSplitOpen((v) => !v)}
-          >
-            <Columns2 />
-          </Button>
+          <OverflowMenu
+            items={[
+              ...(currentSessionId && messages.length > 0
+                ? [
+                    {
+                      label: "导出 Markdown",
+                      icon: <Download className="size-4" />,
+                      onClick: () => downloadMarkdown(messages, currentChat?.title || "chat"),
+                    },
+                    {
+                      label: "导出 PDF",
+                      icon: <FileDown className="size-4" />,
+                      onClick: () => void downloadPdf(messages, currentChat?.title || "chat"),
+                    },
+                  ]
+                : []),
+              {
+                label: splitOpen ? "关闭分屏对比" : "分屏对比",
+                icon: <Columns2 className="size-4" />,
+                onClick: () => setSplitOpen((v) => !v),
+              },
+            ]}
+          />
           {currentSessionId ? (
             <Button
               size="icon"
@@ -499,6 +502,21 @@ function App() {
                       aria-label="复制"
                     >
                       <Copy className="size-3.5" />
+                    </button>
+                    <button
+                      onClick={() => {
+                        setForking(true)
+                        void fork(m.id).then((id) => {
+                          setForking(false)
+                          if (id) showToast("已从这里分叉到新会话")
+                        })
+                      }}
+                      disabled={forking}
+                      className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-50"
+                      aria-label="从这里分叉"
+                      title="从这里分叉成新会话"
+                    >
+                      <GitFork className="size-3.5" />
                     </button>
                     <button
                       onClick={() => void deleteMessage(m.id)}
@@ -671,6 +689,53 @@ function App() {
 
       <Settings open={settingsOpen} onClose={() => setSettingsOpen(false)} />
       <Onboarding />
+
+      {pendingDelete ? (
+        <div
+          className="fixed inset-0 z-[120] flex items-end justify-center bg-black/50 p-4 md:items-center"
+          onClick={() => setPendingDelete(null)}
+        >
+          <div
+            className="w-full max-w-md rounded-2xl border bg-card p-5 shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="text-base font-semibold">删除会话</h3>
+            <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
+              确定删除「{pendingDelete.title}」?此操作无法撤销。
+            </p>
+            <div className="mt-5 flex justify-end gap-2">
+              <Button variant="secondary" onClick={() => setPendingDelete(null)}>
+                取消
+              </Button>
+              <Button
+                variant="destructive"
+                onClick={() => {
+                  void deleteSession(pendingDelete.id)
+                  setPendingDelete(null)
+                }}
+              >
+                删除
+              </Button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {forking ? (
+        <div className="pointer-events-none fixed inset-x-0 bottom-28 z-[110] flex justify-center px-4">
+          <div className="flex items-center gap-2 rounded-full border bg-card px-4 py-2 text-sm font-medium text-foreground shadow-xl animate-in fade-in slide-in-from-bottom-2">
+            <Loader2 className="size-4 animate-spin text-primary" />
+            分叉中…
+          </div>
+        </div>
+      ) : toast ? (
+        <div className="pointer-events-none fixed inset-x-0 bottom-28 z-[110] flex justify-center px-4">
+          <div className="flex items-center gap-2 rounded-full border bg-card px-4 py-2 text-sm font-medium text-foreground shadow-xl animate-in fade-in slide-in-from-bottom-2">
+            <GitFork className="size-4 text-primary" />
+            {toast}
+          </div>
+        </div>
+      ) : null}
 
       {preview ? (
         <div
