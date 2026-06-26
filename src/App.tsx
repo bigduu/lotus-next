@@ -32,6 +32,7 @@ import { ModelPicker } from "@/components/chat/ModelPicker"
 import { ReasoningPicker } from "@/components/chat/ReasoningPicker"
 import { OverflowMenu } from "@/components/chat/OverflowMenu"
 import { SessionRow } from "@/components/chat/SessionRow"
+import { CommandPalette } from "@/components/chat/CommandPalette"
 import { ToolCalls } from "@/components/chat/ToolCalls"
 import { Reasoning } from "@/components/chat/Reasoning"
 import { workspaceService } from "@services/workspace"
@@ -139,6 +140,18 @@ function App() {
 
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [search, setSearch] = useState("")
+  const [paletteOpen, setPaletteOpen] = useState(false)
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && (e.key === "k" || e.key === "K")) {
+        e.preventDefault()
+        setPaletteOpen((v) => !v)
+      }
+    }
+    window.addEventListener("keydown", onKey)
+    return () => window.removeEventListener("keydown", onKey)
+  }, [])
   const [inspectorOpen, setInspectorOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [splitOpen, setSplitOpen] = useState(false)
@@ -779,6 +792,18 @@ function App() {
 
       <Settings open={settingsOpen} onClose={() => setSettingsOpen(false)} />
       <Onboarding />
+
+      <CommandPalette
+        open={paletteOpen}
+        onClose={() => setPaletteOpen(false)}
+        chats={chats}
+        onSelect={(id) => {
+          select(id)
+          setSidebarOpen(false)
+        }}
+        onNewChat={newChat}
+        onSettings={() => setSettingsOpen(true)}
+      />
 
       {pendingDelete ? (
         <div
