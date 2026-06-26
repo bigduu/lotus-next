@@ -1,0 +1,12 @@
+/**
+ * Unified API Client
+ *
+ * Centralized HTTP client for all backend API communication.
+ */
+
+export { ApiClient, apiClient, agentApiClient } from "./client";
+export type { ApiClientConfig } from "./client";
+
+export { ApiError, isApiError, getErrorMessage, withFallback } from "./errors";
+
+export * from "./types";
