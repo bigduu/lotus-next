@@ -9,8 +9,11 @@ import {
   Copy,
   Trash2,
   Paperclip,
+  Search,
   ChevronDown,
   GitFork,
+  Pencil,
+  RotateCcw,
   Loader2,
   Cog,
   Download,
@@ -126,6 +129,8 @@ function App() {
     newChat,
     deleteMessage,
     fork,
+    regenerate,
+    editMessage,
     pendingQuestion,
     pendingApproval,
     answerQuestion,
@@ -133,6 +138,7 @@ function App() {
   } = useChat()
 
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [search, setSearch] = useState("")
   const [inspectorOpen, setInspectorOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [splitOpen, setSplitOpen] = useState(false)
@@ -148,6 +154,7 @@ function App() {
   const [toast, setToast] = useState<string | null>(null)
   const [forking, setForking] = useState(false)
   const [pendingDelete, setPendingDelete] = useState<{ id: string; title: string } | null>(null)
+  const [editingMsg, setEditingMsg] = useState<{ id: string; text: string } | null>(null)
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const showToast = (msg: string) => {
     setToast(msg)
@@ -202,6 +209,8 @@ function App() {
   const setInputReasoningEffort = useAppStore((s) => s.setInputReasoningEffort)
   const persistSessionTitle = useAppStore((s) => s.persistSessionTitle)
   const deleteSession = useAppStore((s) => s.deleteSession)
+  const pinSession = useAppStore((s) => s.pinSession)
+  const unpinSession = useAppStore((s) => s.unpinSession)
   // What the next send will use: explicit pick → configured global default →
   // (last resort) the session's own historical model.
   const activeModel =
@@ -214,7 +223,11 @@ function App() {
     void loadSkills()
   }, [loadSkills])
 
-  const groups = useMemo(() => groupChats(chats, new Date()), [chats])
+  const groups = useMemo(() => {
+    const q = search.trim().toLowerCase()
+    const filtered = q ? chats.filter((c) => (c.title || "").toLowerCase().includes(q)) : chats
+    return groupChats(filtered, new Date())
+  }, [chats, search])
   const renderItems = useMemo(() => buildRenderItems(messages), [messages])
   const slashQuery = draft.startsWith("/") ? draft.slice(1) : null
 
@@ -316,6 +329,26 @@ function App() {
             <Plus /> 新建
           </Button>
         </div>
+        <div className="px-3 pb-2">
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="搜索会话"
+              className="w-full rounded-md border bg-background py-1.5 pl-8 pr-7 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            />
+            {search ? (
+              <button
+                onClick={() => setSearch("")}
+                aria-label="清除"
+                className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded p-0.5 text-muted-foreground hover:text-foreground"
+              >
+                <X className="size-3.5" />
+              </button>
+            ) : null}
+          </div>
+        </div>
         <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-3">
           {chats.length === 0 && (
             <p className="px-2 py-4 text-xs text-muted-foreground">
@@ -338,6 +371,7 @@ function App() {
                   }}
                   onRename={(title) => void persistSessionTitle(c.id, title)}
                   onDelete={() => setPendingDelete({ id: c.id, title: c.title || "新会话" })}
+                  onTogglePin={() => (c.pinned ? unpinSession(c.id) : pinSession(c.id))}
                 />
               ))}
             </div>
@@ -463,6 +497,42 @@ function App() {
               const reasoning = isUser ? "" : messageReasoning(m)
               // Truly empty (no text, no images, no reasoning) → skip the blank bubble.
               if (!text.trim() && !imgs?.length && !reasoning) return null
+
+              if (isUser && editingMsg?.id === m.id) {
+                return (
+                  <div key={m.id} className="flex flex-col items-end">
+                    <div className="w-full max-w-[85%]">
+                      <Textarea
+                        value={editingMsg.text}
+                        onChange={(e) => setEditingMsg({ id: m.id, text: e.target.value })}
+                        onKeyDown={(e) => {
+                          if (e.key === "Escape") setEditingMsg(null)
+                          if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+                            void editMessage(m.id, editingMsg.text)
+                            setEditingMsg(null)
+                          }
+                        }}
+                        autoFocus
+                        className="min-h-16 bg-card"
+                      />
+                      <div className="mt-1.5 flex justify-end gap-2">
+                        <Button size="sm" variant="secondary" onClick={() => setEditingMsg(null)}>
+                          取消
+                        </Button>
+                        <Button
+                          size="sm"
+                          onClick={() => {
+                            void editMessage(m.id, editingMsg.text)
+                            setEditingMsg(null)
+                          }}
+                        >
+                          保存并重发
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                )
+              }
               return (
                 <div
                   key={m.id}
@@ -503,6 +573,26 @@ function App() {
                     >
                       <Copy className="size-3.5" />
                     </button>
+                    {isUser ? (
+                      <button
+                        onClick={() => setEditingMsg({ id: m.id, text })}
+                        className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
+                        aria-label="编辑"
+                        title="编辑并重发"
+                      >
+                        <Pencil className="size-3.5" />
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => void regenerate()}
+                        disabled={sending}
+                        className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-50"
+                        aria-label="重新生成"
+                        title="重新生成"
+                      >
+                        <RotateCcw className="size-3.5" />
+                      </button>
+                    )}
                     <button
                       onClick={() => {
                         setForking(true)

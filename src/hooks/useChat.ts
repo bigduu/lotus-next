@@ -122,6 +122,102 @@ export function useChat() {
     void useAppStore.getState().loadChatHistory(id)
   }, [])
 
+  // Execute a session + subscribe to its token stream. Shared by send (after a
+  // new user message) and by regenerate / retry / edit (after a truncate).
+  const runStream = useCallback(
+    async (sid: string) => {
+      setStreamSid(sid)
+      streamBufRef.current = ""
+      setStreamingText("")
+      const ac = new AbortController()
+      abortRef.current = ac
+      void agentClient.execute(sid, effectiveModel || undefined, reasoningEffort).catch(() => {})
+      await agentClient.subscribeToEvents(
+        sid,
+        {
+          onToken: pushToken,
+          onNeedClarification: (event) =>
+            setPendingQuestion({
+              question: event.question ?? "",
+              options: event.options ?? [],
+              allowCustom: event.allow_custom ?? true,
+            }),
+          onChildApprovalRequested: (childSessionId, requestId, req) =>
+            setPendingApproval({
+              childSessionId,
+              requestId,
+              toolName: req.toolName,
+              permission: req.permission,
+              resource: req.resource,
+            }),
+          onComplete: async () => {
+            setPendingQuestion(null)
+            await useAppStore.getState().loadChatHistory(sid, { waitForAssistant: true })
+            stopStream(null)
+          },
+          onError: async () => {
+            setPendingQuestion(null)
+            await useAppStore.getState().loadChatHistory(sid)
+            stopStream(null)
+          },
+          onCancelled: async () => {
+            setPendingQuestion(null)
+            await useAppStore.getState().loadChatHistory(sid)
+            stopStream(null)
+          },
+        },
+        ac,
+      )
+    },
+    [effectiveModel, reasoningEffort],
+  )
+
+  // Re-run the conversation after a server-side truncate/restore (regenerate,
+  // retry, edit). Shows the streaming placeholder + reloads history on done.
+  const rerun = useCallback(
+    async (sid: string) => {
+      if (sending) return
+      setSending(true)
+      try {
+        await useAppStore.getState().loadChatHistory(sid)
+        await runStream(sid)
+      } catch (err) {
+        console.error("[useChat] rerun failed", err)
+        stopStream(null)
+      } finally {
+        setSending(false)
+      }
+    },
+    [runStream, sending],
+  )
+
+  const regenerate = useCallback(async () => {
+    if (!currentSessionId) return
+    await agentClient.truncateSessionMessages(currentSessionId, { mode: "after_last_user" }).catch(() => {})
+    await rerun(currentSessionId)
+  }, [currentSessionId, rerun])
+
+  const retry = useCallback(async () => {
+    if (!currentSessionId) return
+    await agentClient.truncateSessionMessages(currentSessionId, { mode: "error_retry" }).catch(() => {})
+    await rerun(currentSessionId)
+  }, [currentSessionId, rerun])
+
+  // Edit a user message in place, drop everything after it, and re-run.
+  const editMessage = useCallback(
+    async (messageId: string, text: string) => {
+      const sid = currentSessionId
+      const body = text.trim()
+      if (!sid || !body) return
+      await agentClient.patchSessionMessage(sid, messageId, { content: body }).catch(() => {})
+      await agentClient
+        .restoreSessionState(sid, { target_message_id: messageId, restore_files: false })
+        .catch(() => {})
+      await rerun(sid)
+    },
+    [currentSessionId, rerun],
+  )
+
   const send = useCallback(
     async (
       text: string,
@@ -161,48 +257,7 @@ export function useChat() {
         await useAppStore.getState().loadChatHistory(sid)
         setPending(null)
 
-        const ac = new AbortController()
-        abortRef.current = ac
-        void agentClient.execute(sid, effectiveModel || undefined, reasoningEffort).catch(() => {})
-
-        await agentClient.subscribeToEvents(
-          sid,
-          {
-            onToken: pushToken,
-            onNeedClarification: (event) =>
-              setPendingQuestion({
-                question: event.question ?? "",
-                options: event.options ?? [],
-                allowCustom: event.allow_custom ?? true,
-              }),
-            onChildApprovalRequested: (childSessionId, requestId, req) =>
-              setPendingApproval({
-                childSessionId,
-                requestId,
-                toolName: req.toolName,
-                permission: req.permission,
-                resource: req.resource,
-              }),
-            onComplete: async () => {
-              setPendingQuestion(null)
-              await useAppStore
-                .getState()
-                .loadChatHistory(sid, { waitForAssistant: true })
-              stopStream(null)
-            },
-            onError: async () => {
-              setPendingQuestion(null)
-              await useAppStore.getState().loadChatHistory(sid)
-              stopStream(null)
-            },
-            onCancelled: async () => {
-              setPendingQuestion(null)
-              await useAppStore.getState().loadChatHistory(sid)
-              stopStream(null)
-            },
-          },
-          ac,
-        )
+        await runStream(sid)
       } catch (err) {
         console.error("[useChat] send failed", err)
         stopStream(null)
@@ -210,7 +265,7 @@ export function useChat() {
         setSending(false)
       }
     },
-    [currentSessionId, effectiveModel, reasoningEffort, sending],
+    [currentSessionId, effectiveModel, sending, runStream],
   )
 
   const stop = useCallback(() => {
@@ -299,6 +354,9 @@ export function useChat() {
     newChat,
     deleteMessage,
     fork,
+    regenerate,
+    retry,
+    editMessage,
     pendingQuestion,
     pendingApproval,
     answerQuestion,

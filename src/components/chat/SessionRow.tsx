@@ -1,22 +1,24 @@
 import { useEffect, useRef, useState } from "react"
-import { MoreHorizontal, Pencil, Trash2 } from "lucide-react"
+import { MoreHorizontal, Pencil, Pin, PinOff, Trash2 } from "lucide-react"
 import { cn } from "@/lib/utils"
 
-type Chat = { id: string; title?: string | null; isRunning?: boolean }
+type Chat = { id: string; title?: string | null; isRunning?: boolean; pinned?: boolean }
 
-/** A sidebar session row: select, plus a ⋯ menu for inline rename + delete. */
+/** A sidebar session row: select, plus a ⋯ menu for pin / inline rename / delete. */
 export function SessionRow({
   chat,
   active,
   onSelect,
   onRename,
   onDelete,
+  onTogglePin,
 }: {
   chat: Chat
   active: boolean
   onSelect: () => void
   onRename: (title: string) => void
   onDelete: () => void
+  onTogglePin: () => void
 }) {
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(chat.title ?? "")
@@ -104,6 +106,24 @@ export function SessionRow({
         </button>
         {menuOpen ? (
           <div className="absolute right-0 top-full z-50 mt-1 min-w-32 rounded-xl border bg-popover p-1 shadow-xl">
+            <button
+              type="button"
+              onClick={() => {
+                setMenuOpen(false)
+                onTogglePin()
+              }}
+              className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-sm transition-colors hover:bg-accent"
+            >
+              {chat.pinned ? (
+                <>
+                  <PinOff className="size-3.5" /> 取消置顶
+                </>
+              ) : (
+                <>
+                  <Pin className="size-3.5" /> 置顶
+                </>
+              )}
+            </button>
             <button
               type="button"
               onClick={() => {
