@@ -442,6 +442,30 @@ function App() {
           <span className="flex-1 truncate text-sm font-semibold">
             {currentChat?.title || "Bodhi"}
           </span>
+          {(() => {
+            const u = currentChat?.config?.tokenUsage
+            if (!u?.maxContextTokens) return null
+            const pct = Math.min(100, Math.round((u.totalTokens / u.maxContextTokens) * 100))
+            return (
+              <button
+                onClick={() => setInspectorOpen(true)}
+                className="hidden items-center gap-1.5 sm:flex"
+                title={`上下文 ${u.totalTokens.toLocaleString()} / ${u.maxContextTokens.toLocaleString()} tokens`}
+                aria-label="上下文用量"
+              >
+                <div className="h-1.5 w-16 overflow-hidden rounded-full bg-muted">
+                  <div
+                    className={cn(
+                      "h-full rounded-full transition-all",
+                      pct > 85 ? "bg-destructive" : pct > 65 ? "bg-amber-500" : "bg-primary",
+                    )}
+                    style={{ width: `${pct}%` }}
+                  />
+                </div>
+                <span className="text-xs tabular-nums text-muted-foreground">{pct}%</span>
+              </button>
+            )
+          })()}
           <ReasoningPicker
             value={reasoningEffort}
             onChange={(effort) => setInputReasoningEffort(currentSessionId ?? "", effort)}
