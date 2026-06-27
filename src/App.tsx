@@ -19,7 +19,6 @@ import {
   Download,
   FileDown,
   Columns2,
-  FolderGit2,
 } from "lucide-react"
 import { useShallow } from "zustand/react/shallow"
 import { Button } from "@/components/ui/button"
@@ -264,10 +263,11 @@ function App() {
     return m ? m[1] : null
   })()
   const workspacePath = currentChat?.config?.workspacePath
-  // Workspace chosen for the NEXT new chat (an existing session's cwd is fixed).
+  // Workspace chosen in the picker — used for @-file refs + new-chat cwd. The
+  // session's own cwd (if set) wins for display; otherwise the picked one.
   const [pickedWorkspace, setPickedWorkspace] = useState<string | null>(null)
   const [wsPickerOpen, setWsPickerOpen] = useState(false)
-  const displayWorkspace = currentSessionId ? workspacePath ?? null : pickedWorkspace
+  const displayWorkspace = workspacePath ?? pickedWorkspace
   const [workspaceFiles, setWorkspaceFiles] = useState<WorkspaceFileEntry[]>([])
   const filesLoadedForRef = useRef<string | null>(null)
   useEffect(() => {
@@ -773,7 +773,7 @@ function App() {
           {slashQuery !== null && (
             <SlashMenu skills={skills} query={slashQuery} onPick={pickSkill} />
           )}
-          {slashQuery === null && atQuery !== null && workspacePath ? (
+          {slashQuery === null && atQuery !== null && displayWorkspace ? (
             <FileMenu files={workspaceFiles} query={atQuery} onPick={pickFile} />
           ) : null}
           {selectedSkill && (
@@ -822,21 +822,6 @@ function App() {
               e.target.value = ""
             }}
           />
-          <div className="mx-auto mb-1.5 flex max-w-2xl items-center">
-            <button
-              onClick={() => setWsPickerOpen(true)}
-              className="flex max-w-full items-center gap-1.5 rounded-full border bg-card px-2.5 py-1 text-xs text-muted-foreground hover:text-foreground"
-              title={displayWorkspace || "默认工作目录"}
-            >
-              <FolderGit2 className="size-3.5 shrink-0" />
-              <span className="truncate">
-                {displayWorkspace
-                  ? displayWorkspace.split("/").filter(Boolean).pop() || displayWorkspace
-                  : "默认工作目录"}
-              </span>
-              {!currentSessionId ? <ChevronDown className="size-3 shrink-0 opacity-60" /> : null}
-            </button>
-          </div>
           <div className="mx-auto flex max-w-2xl items-center gap-2">
             <div className="flex min-w-0 flex-1 items-center gap-1 overflow-hidden rounded-2xl border bg-card px-2 py-1">
               <Button
@@ -895,6 +880,8 @@ function App() {
         sessionId={currentSessionId}
         open={inspectorOpen}
         onClose={() => setInspectorOpen(false)}
+        workspace={displayWorkspace}
+        onEditWorkspace={() => setWsPickerOpen(true)}
       />
 
       <Settings open={settingsOpen} onClose={() => setSettingsOpen(false)} />
@@ -903,7 +890,7 @@ function App() {
       <WorkspacePicker
         open={wsPickerOpen}
         current={displayWorkspace}
-        locked={!!currentSessionId}
+        locked={!!workspacePath}
         onClose={() => setWsPickerOpen(false)}
         onSelect={(p) => setPickedWorkspace(p)}
       />

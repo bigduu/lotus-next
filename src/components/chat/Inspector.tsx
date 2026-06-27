@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react"
-import { X } from "lucide-react"
+import { X, FolderGit2 } from "lucide-react"
 import { useShallow } from "zustand/react/shallow"
 import { useAppStore, selectCurrentChat, selectChildren } from "@shared/store/appStore"
 import { useProviderStore } from "@shared/store/appStore/slices/providerSlice"
@@ -102,10 +102,14 @@ export function Inspector({
   sessionId,
   open,
   onClose,
+  workspace,
+  onEditWorkspace,
 }: {
   sessionId: string | null
   open: boolean
   onClose: () => void
+  workspace?: string | null
+  onEditWorkspace?: () => void
 }) {
   const chat = useAppStore(selectCurrentChat)
   const taskList = useAppStore((s) => (sessionId ? s.taskLists[sessionId] : undefined))
@@ -154,6 +158,28 @@ export function Inspector({
         </div>
 
         <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4">
+          <section className="rounded-lg border p-3">
+            <div className="mb-2 flex items-center justify-between">
+              <span className="text-xs font-medium text-muted-foreground">工作目录</span>
+              {onEditWorkspace ? (
+                <button onClick={onEditWorkspace} className="text-xs text-primary hover:underline">
+                  {sessionId ? "更改" : "选择"}
+                </button>
+              ) : null}
+            </div>
+            <div className="flex items-center gap-2">
+              <FolderGit2 className="size-4 shrink-0 text-muted-foreground" />
+              <span className="min-w-0 flex-1 truncate font-mono text-xs" title={workspace || undefined}>
+                {workspace || "默认目录"}
+              </span>
+            </div>
+            {sessionId ? (
+              <p className="mt-1.5 text-[11px] text-muted-foreground">
+                会话创建时设定;更改用于新建会话与 @ 文件引用。
+              </p>
+            ) : null}
+          </section>
+
           {sessionId ? (
             <GoalSection
               sessionId={sessionId}
