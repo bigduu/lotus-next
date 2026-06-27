@@ -271,14 +271,16 @@ function App() {
   const [workspaceFiles, setWorkspaceFiles] = useState<WorkspaceFileEntry[]>([])
   const filesLoadedForRef = useRef<string | null>(null)
   useEffect(() => {
-    if (atQuery === null || !workspacePath) return
-    if (filesLoadedForRef.current === workspacePath) return
-    filesLoadedForRef.current = workspacePath
+    // @-file references follow the EFFECTIVE workspace — the session's cwd, or the
+    // one picked for a new chat — so completions match where the agent will run.
+    if (atQuery === null || !displayWorkspace) return
+    if (filesLoadedForRef.current === displayWorkspace) return
+    filesLoadedForRef.current = displayWorkspace
     workspaceService
-      .listWorkspaceFiles(workspacePath)
+      .listWorkspaceFiles(displayWorkspace)
       .then(setWorkspaceFiles)
       .catch(() => setWorkspaceFiles([]))
-  }, [atQuery, workspacePath])
+  }, [atQuery, displayWorkspace])
 
   const pickFile = (entry: WorkspaceFileEntry) => {
     setDraft((d) => d.replace(/@[^\s@]*$/, `@${entry.path} `))

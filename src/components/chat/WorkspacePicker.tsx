@@ -27,6 +27,7 @@ export function WorkspacePicker({
   const [path, setPath] = useState("")
   const [validating, setValidating] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [completions, setCompletions] = useState<Array<{ name: string; path: string }>>([])
 
   useEffect(() => {
     if (!open) return
@@ -38,6 +39,29 @@ export function WorkspacePicker({
       .finally(() => setLoading(false))
   }, [open])
 
+  // Live folder autocomplete: browse the typed path's parent dir and filter its
+  // subfolders by the trailing segment, so you don't have to remember full paths.
+  useEffect(() => {
+    if (!open || !path.startsWith("/")) {
+      setCompletions([])
+      return
+    }
+    const idx = path.lastIndexOf("/")
+    const parent = idx <= 0 ? "/" : path.slice(0, idx)
+    const prefix = path.slice(idx + 1).toLowerCase()
+    const t = setTimeout(() => {
+      workspaceService
+        .browseFolder(parent)
+        .then((res) =>
+          setCompletions(
+            res.folders.filter((f) => f.name.toLowerCase().startsWith(prefix)).slice(0, 10),
+          ),
+        )
+        .catch(() => setCompletions([]))
+    }, 180)
+    return () => clearTimeout(t)
+  }, [open, path])
+
   if (!open) return null
 
   const choose = (p: string | null) => {
@@ -46,7 +70,8 @@ export function WorkspacePicker({
   }
 
   const validateAndChoose = async () => {
-    const p = path.trim()
+    let p = path.trim()
+    if (p.length > 1) p = p.replace(/\/+$/, "")
     if (!p) return
     setValidating(true)
     setError(null)
@@ -94,6 +119,7 @@ export function WorkspacePicker({
               className={input}
               placeholder="绝对路径,如 /Users/you/project"
               value={path}
+              autoFocus
               onChange={(e) => setPath(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === "Enter") void validateAndChoose()
@@ -103,6 +129,22 @@ export function WorkspacePicker({
               {validating ? <Loader2 className="size-4 animate-spin" /> : "使用"}
             </Button>
           </div>
+          {completions.length > 0 ? (
+            <ul className="-mt-1 max-h-52 overflow-y-auto rounded-md border bg-background">
+              {completions.map((f) => (
+                <li key={f.path}>
+                  <button
+                    onClick={() => setPath(f.path + "/")}
+                    className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-sm hover:bg-accent"
+                  >
+                    <Folder className="size-3.5 shrink-0 text-muted-foreground" />
+                    <span className="truncate">{f.name}</span>
+                    <span className="ml-auto truncate text-xs text-muted-foreground">{f.path}</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          ) : null}
           {error ? <p className="text-xs text-destructive">{error}</p> : null}
 
           {current ? (
