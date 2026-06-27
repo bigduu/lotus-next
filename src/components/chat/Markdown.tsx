@@ -44,6 +44,25 @@ const components: Components = {
       </code>
     )
   },
+  // GFM tables: scroll horizontally instead of crushing columns, and wrap cell
+  // text at WORD boundaries (the prose container forces overflow-wrap:anywhere,
+  // which otherwise breaks "Shared" into vertical letters in a narrow column).
+  table: ({ children }) => (
+    <div className="my-2 w-full overflow-x-auto rounded-lg border">
+      <table className="w-full border-collapse text-xs">{children}</table>
+    </div>
+  ),
+  thead: ({ children }) => <thead className="bg-muted/50">{children}</thead>,
+  th: ({ children }) => (
+    <th className="border-b px-3 py-2 text-left align-top font-medium [overflow-wrap:break-word]">
+      {children}
+    </th>
+  ),
+  td: ({ children }) => (
+    <td className="border-b border-border/40 px-3 py-2 align-top [overflow-wrap:break-word]">
+      {children}
+    </td>
+  ),
 }
 
 /**
