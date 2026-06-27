@@ -294,6 +294,7 @@ export function useChat() {
       opts?: {
         skillIds?: string[]
         images?: Array<{ base64: string; name?: string; size?: number; type?: string }>
+        workspacePath?: string | null
       },
     ) => {
       const body = text.trim()
@@ -314,6 +315,9 @@ export function useChat() {
           model: effectiveModel,
           selected_skill_ids: opts?.skillIds?.length ? opts.skillIds : undefined,
           images: opts?.images?.length ? opts.images : undefined,
+          // Only meaningful when creating a NEW session; an existing session keeps
+          // the cwd it was created with.
+          workspace_path: !currentSessionId && opts?.workspacePath ? opts.workspacePath : undefined,
         })
         const sid = res.session_id
 
