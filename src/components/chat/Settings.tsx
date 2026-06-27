@@ -3,6 +3,7 @@ import { X } from "lucide-react"
 import { useShallow } from "zustand/react/shallow"
 import { useThemeStore } from "@shared/store/themeStore"
 import { useAppStore } from "@shared/store/appStore"
+import { useProviderStore } from "@shared/store/appStore/slices/providerSlice"
 import { metricsService } from "@services/metrics"
 import type { MetricsSummary } from "@services/metrics/types"
 import { Button } from "@/components/ui/button"
@@ -31,6 +32,8 @@ function GeneralTab() {
   const models = useAppStore(useShallow((s) => s.models))
   const selectedModel = useAppStore((s) => s.selectedModel)
   const setSelectedModel = useAppStore((s) => s.setSelectedModel)
+  const defaultChatModel = useProviderStore((s) => s.providerConfig?.defaults?.chat?.model)
+  const activeModel = selectedModel || defaultChatModel || ""
   const [metrics, setMetrics] = useState<MetricsSummary | null>(null)
 
   useEffect(() => {
@@ -64,13 +67,18 @@ function GeneralTab() {
           <p className="text-xs text-muted-foreground">模型列表加载中或为空</p>
         ) : (
           <select
-            value={selectedModel ?? ""}
+            value={activeModel}
             onChange={(e) => setSelectedModel(e.target.value)}
             className="w-full rounded-lg border bg-transparent px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
             <option value="" disabled>
               选择模型
             </option>
+            {activeModel && !models.includes(activeModel) ? (
+              <option value={activeModel} className="bg-card">
+                {activeModel}
+              </option>
+            ) : null}
             {models.map((m) => (
               <option key={m} value={m} className="bg-card">
                 {m}

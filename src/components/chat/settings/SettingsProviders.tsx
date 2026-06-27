@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react"
 import { Trash2, Plus, Check, Pencil } from "lucide-react"
-import { settingsService } from "@services/config/SettingsService"
+import { settingsService, type DeviceCodeInfo } from "@services/config/SettingsService"
 import { useProviderStore } from "@shared/store/appStore/slices/providerSlice"
 import type { ProviderInstance, ProviderType } from "@shared/types/providerConfig"
 import { Button } from "@/components/ui/button"
@@ -34,6 +34,82 @@ function Field({
   )
 }
 
+function CopilotAuth() {
+  const [authed, setAuthed] = useState<boolean | null>(null)
+  const [device, setDevice] = useState<DeviceCodeInfo | null>(null)
+  const [busy, setBusy] = useState(false)
+
+  useEffect(() => {
+    settingsService
+      .getCopilotAuthStatus()
+      .then((s) => setAuthed(s.authenticated))
+      .catch(() => setAuthed(false))
+  }, [])
+
+  const login = async () => {
+    setBusy(true)
+    try {
+      const d = await settingsService.startCopilotAuth()
+      setDevice(d)
+      try {
+        window.open(d.verification_uri, "_blank", "noopener")
+      } catch {
+        /* popup blocked — user can click the link */
+      }
+      await settingsService.completeCopilotAuth({
+        device_code: d.device_code,
+        interval: d.interval ?? 5,
+        expires_in: d.expires_in,
+      })
+      const s = await settingsService.getCopilotAuthStatus()
+      setAuthed(s.authenticated)
+      setDevice(null)
+    } catch {
+      setDevice(null)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="space-y-2 rounded-md border bg-muted/30 p-2.5">
+      <div className="text-xs font-medium text-muted-foreground">Copilot 授权</div>
+      {authed ? (
+        <div className="flex items-center justify-between text-sm">
+          <span className="text-emerald-500">✓ 已登录</span>
+          <Button
+            size="sm"
+            variant="secondary"
+            onClick={async () => {
+              await settingsService.logoutCopilot().catch(() => {})
+              setAuthed(false)
+            }}
+          >
+            退出
+          </Button>
+        </div>
+      ) : device ? (
+        <div className="space-y-1 text-sm">
+          <p>
+            打开{" "}
+            <a href={device.verification_uri} target="_blank" rel="noopener noreferrer" className="text-primary underline">
+              {device.verification_uri}
+            </a>
+          </p>
+          <p>
+            输入代码:<span className="font-mono text-base font-semibold tracking-wider">{device.user_code}</span>
+          </p>
+          <p className="text-xs text-muted-foreground">授权后这里会自动完成…</p>
+        </div>
+      ) : (
+        <Button size="sm" onClick={login} disabled={busy}>
+          {busy ? "登录中…" : "登录 GitHub Copilot"}
+        </Button>
+      )}
+    </div>
+  )
+}
+
 function InstanceEditor({
   initial,
   onSave,
@@ -61,8 +137,14 @@ function InstanceEditor({
         </select>
       </label>
       <Field label="名称" value={label} onChange={setLabel} placeholder="如 我的 Anthropic" />
-      <Field label="API Key" value={str(cfg.api_key)} onChange={(v) => set("api_key", v)} type="password" placeholder="sk-…" />
-      <Field label="Base URL(可选)" value={str(cfg.base_url)} onChange={(v) => set("base_url", v)} placeholder="https://api.anthropic.com" />
+      {type === "copilot" ? (
+        <CopilotAuth />
+      ) : (
+        <>
+          <Field label="API Key" value={str(cfg.api_key)} onChange={(v) => set("api_key", v)} type="password" placeholder="sk-…" />
+          <Field label="Base URL(可选)" value={str(cfg.base_url)} onChange={(v) => set("base_url", v)} placeholder="https://api.anthropic.com" />
+        </>
+      )}
       <Field label="默认模型(可选)" value={str(cfg.model)} onChange={(v) => set("model", v)} placeholder="glm-5.2" />
       <div className="grid grid-cols-2 gap-2">
         <Field label="Max tokens" value={str(cfg.max_tokens)} onChange={(v) => set("max_tokens", v)} placeholder="8000" />

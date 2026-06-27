@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { Trash2, Plus } from "lucide-react"
 import { serviceFactory } from "@services/common/ServiceFactory"
 import { Button } from "@/components/ui/button"
@@ -39,6 +39,21 @@ export function SettingsMasking() {
     void save([...entries, { pattern: pattern.trim(), match_type: matchType, enabled: true }])
     setPattern("")
   }
+
+  const [sample, setSample] = useState("")
+  const masked = useMemo(() => {
+    let out = sample
+    for (const e of entries) {
+      if (!e.enabled || !e.pattern) continue
+      try {
+        if (e.match_type === "regex") out = out.replace(new RegExp(e.pattern, "g"), "***")
+        else out = out.split(e.pattern).join("***")
+      } catch {
+        /* invalid regex — skip */
+      }
+    }
+    return out
+  }, [sample, entries])
 
   return (
     <div className="space-y-3">
@@ -103,6 +118,19 @@ export function SettingsMasking() {
             ))}
           </ul>
         )}
+      </section>
+
+      <section className="space-y-2 rounded-lg border p-3">
+        <div className="text-xs font-medium text-muted-foreground">预览</div>
+        <textarea
+          className={cn(input, "min-h-16 w-full resize-y")}
+          placeholder="输入一段文本,看看掩码后的效果…"
+          value={sample}
+          onChange={(e) => setSample(e.target.value)}
+        />
+        {sample ? (
+          <div className="rounded-md bg-muted/40 p-2.5 text-sm [overflow-wrap:anywhere]">{masked}</div>
+        ) : null}
       </section>
     </div>
   )
