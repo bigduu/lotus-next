@@ -149,16 +149,24 @@ export function useChat() {
   // Execute a session + subscribe to its token stream. Shared by send (after a
   // new user message) and by regenerate / retry / edit (after a truncate).
   const runStream = useCallback(
-    async (sid: string) => {
+    async (sid: string, opts?: { resume?: boolean }) => {
       setStreamSid(sid)
       streamBufRef.current = ""
       reasonBufRef.current = ""
       childBufRef.current = {}
       setStreamingText("")
       setStreamingReasoningText(null)
+      // Clear any stale question only when a (re)run actually starts. A pending
+      // question must NOT be cleared by the terminal that accompanies a
+      // suspend-for-permission, or the approval dialog flashes and vanishes.
+      setPendingQuestion(null)
       const ac = new AbortController()
       abortRef.current = ac
-      void agentClient.execute(sid, effectiveModel || undefined, reasoningEffort).catch(() => {})
+      // On resume (after answering a question/permission) the backend already
+      // continues the suspended run — only subscribe, don't kick a fresh execute.
+      if (!opts?.resume) {
+        void agentClient.execute(sid, effectiveModel || undefined, reasoningEffort).catch(() => {})
+      }
       await agentClient.subscribeToEvents(
         sid,
         {
@@ -204,7 +212,6 @@ export function useChat() {
               resource: req.resource,
             }),
           onComplete: async () => {
-            setPendingQuestion(null)
             // Freeze the fully-streamed text in place (cancel any pending RAF) so the
             // assistant bubble keeps showing it while the persisted message loads —
             // otherwise it blanks for a beat between "streaming" and "normal".
@@ -224,13 +231,11 @@ export function useChat() {
             stopStream(null)
           },
           onError: async () => {
-            setPendingQuestion(null)
             setSendError(true)
             await useAppStore.getState().loadChatHistory(sid)
             stopStream(null)
           },
           onCancelled: async () => {
-            setPendingQuestion(null)
             await useAppStore.getState().loadChatHistory(sid)
             stopStream(null)
           },
@@ -395,12 +400,16 @@ export function useChat() {
   const answerQuestion = useCallback(
     async (text: string) => {
       if (!currentSessionId) return
+      const sid = currentSessionId
       setPendingQuestion(null)
       await agentApiClient
-        .post(`respond/${encodeURIComponent(currentSessionId)}`, { response: text })
+        .post(`respond/${encodeURIComponent(sid)}`, { response: text })
         .catch(() => {})
+      // The backend resumes the suspended run — re-subscribe to watch it stream
+      // live (and to catch a follow-up permission prompt). Don't re-execute.
+      await runStream(sid, { resume: true })
     },
-    [currentSessionId],
+    [currentSessionId, runStream],
   )
 
   const respondApproval = useCallback(
