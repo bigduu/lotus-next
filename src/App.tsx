@@ -446,23 +446,33 @@ function App() {
             const u = currentChat?.config?.tokenUsage
             if (!u?.maxContextTokens) return null
             const pct = Math.min(100, Math.round((u.totalTokens / u.maxContextTokens) * 100))
+            const C = 2 * Math.PI * 7
+            const color =
+              pct > 85 ? "text-destructive" : pct > 65 ? "text-amber-500" : "text-primary"
             return (
               <button
                 onClick={() => setInspectorOpen(true)}
-                className="hidden items-center gap-1.5 sm:flex"
-                title={`上下文 ${u.totalTokens.toLocaleString()} / ${u.maxContextTokens.toLocaleString()} tokens`}
+                className="flex items-center gap-1.5"
+                title={`上下文 ${u.totalTokens.toLocaleString()} / ${u.maxContextTokens.toLocaleString()} tokens (${pct}%)`}
                 aria-label="上下文用量"
               >
-                <div className="h-1.5 w-16 overflow-hidden rounded-full bg-muted">
-                  <div
-                    className={cn(
-                      "h-full rounded-full transition-all",
-                      pct > 85 ? "bg-destructive" : pct > 65 ? "bg-amber-500" : "bg-primary",
-                    )}
-                    style={{ width: `${pct}%` }}
+                <svg width="20" height="20" viewBox="0 0 18 18" className="-rotate-90">
+                  <circle cx="9" cy="9" r="7" fill="none" strokeWidth="2.5" className="stroke-muted" />
+                  <circle
+                    cx="9"
+                    cy="9"
+                    r="7"
+                    fill="none"
+                    strokeWidth="2.5"
+                    strokeLinecap="round"
+                    strokeDasharray={C}
+                    strokeDashoffset={C * (1 - pct / 100)}
+                    className={cn("stroke-current transition-all", color)}
                   />
-                </div>
-                <span className="text-xs tabular-nums text-muted-foreground">{pct}%</span>
+                </svg>
+                <span className={cn("hidden text-xs tabular-nums text-muted-foreground sm:inline")}>
+                  {pct}%
+                </span>
               </button>
             )
           })()}
