@@ -7,6 +7,11 @@ import { metricsService } from "@services/metrics"
 import type { MetricsSummary } from "@services/metrics/types"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
+import { SettingsProviders } from "@/components/chat/settings/SettingsProviders"
+import { SettingsMcp } from "@/components/chat/settings/SettingsMcp"
+import { SettingsSkills } from "@/components/chat/settings/SettingsSkills"
+import { SettingsPermissions } from "@/components/chat/settings/SettingsPermissions"
+import { SettingsEnv } from "@/components/chat/settings/SettingsEnv"
 
 function Stat({ label, value }: { label: string; value: number | undefined }) {
   return (
@@ -17,7 +22,7 @@ function Stat({ label, value }: { label: string; value: number | undefined }) {
   )
 }
 
-export function Settings({ open, onClose }: { open: boolean; onClose: () => void }) {
+function GeneralTab() {
   const themeMode = useThemeStore((s) => s.themeMode)
   const setThemeMode = useThemeStore((s) => s.setThemeMode)
   const models = useAppStore(useShallow((s) => s.models))
@@ -26,24 +31,101 @@ export function Settings({ open, onClose }: { open: boolean; onClose: () => void
   const [metrics, setMetrics] = useState<MetricsSummary | null>(null)
 
   useEffect(() => {
-    if (!open) return
     metricsService
       .getSummary()
       .then(setMetrics)
       .catch(() => setMetrics(null))
-  }, [open])
-
-  if (!open) return null
+  }, [])
 
   return (
-    <>
-      <button className="fixed inset-0 z-40 bg-black/50" aria-label="关闭设置" onClick={onClose} />
-      <aside
-        className={cn(
-          "fixed z-50 flex flex-col bg-card",
-          "inset-x-0 bottom-0 max-h-[85vh] rounded-t-2xl border-t",
-          "md:inset-y-0 md:right-0 md:left-auto md:w-96 md:max-h-none md:rounded-none md:border-l md:border-t-0",
+    <div className="space-y-4">
+      <section className="rounded-lg border p-3">
+        <div className="mb-2 text-xs font-medium text-muted-foreground">外观</div>
+        <div className="flex gap-2">
+          {(["light", "dark"] as const).map((m) => (
+            <Button
+              key={m}
+              variant={themeMode === m ? "default" : "secondary"}
+              className="flex-1"
+              onClick={() => setThemeMode(m)}
+            >
+              {m === "light" ? "浅色" : "深色"}
+            </Button>
+          ))}
+        </div>
+      </section>
+
+      <section className="rounded-lg border p-3">
+        <div className="mb-2 text-xs font-medium text-muted-foreground">默认模型</div>
+        {models.length === 0 ? (
+          <p className="text-xs text-muted-foreground">模型列表加载中或为空</p>
+        ) : (
+          <select
+            value={selectedModel ?? ""}
+            onChange={(e) => setSelectedModel(e.target.value)}
+            className="w-full rounded-lg border bg-transparent px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            <option value="" disabled>
+              选择模型
+            </option>
+            {models.map((m) => (
+              <option key={m} value={m} className="bg-card">
+                {m}
+              </option>
+            ))}
+          </select>
         )}
+      </section>
+
+      <section className="rounded-lg border p-3">
+        <div className="mb-2 text-xs font-medium text-muted-foreground">用量统计</div>
+        {metrics ? (
+          <div className="grid grid-cols-3 gap-2">
+            <Stat label="总会话" value={metrics.total_sessions} />
+            <Stat label="进行中" value={metrics.active_sessions} />
+            <Stat label="已完成" value={metrics.completed_sessions} />
+            <Stat label="工具调用" value={metrics.total_tool_calls} />
+            <Stat label="出错" value={metrics.error_sessions} />
+            <Stat label="压缩节省" value={metrics.total_tokens_saved} />
+          </div>
+        ) : (
+          <p className="text-xs text-muted-foreground">加载中…</p>
+        )}
+      </section>
+
+      <section className="rounded-lg border p-3">
+        <div className="mb-2 text-xs font-medium text-muted-foreground">关于</div>
+        <div className="flex items-center justify-between text-sm">
+          <span className="text-muted-foreground">应用</span>
+          <span className="font-medium">Bodhi · lotus-next</span>
+        </div>
+      </section>
+    </div>
+  )
+}
+
+const TABS = [
+  { id: "general", label: "通用", render: () => <GeneralTab /> },
+  { id: "providers", label: "提供方", render: () => <SettingsProviders /> },
+  { id: "mcp", label: "MCP", render: () => <SettingsMcp /> },
+  { id: "skills", label: "技能", render: () => <SettingsSkills /> },
+  { id: "permissions", label: "权限", render: () => <SettingsPermissions /> },
+  { id: "env", label: "环境变量", render: () => <SettingsEnv /> },
+] as const
+
+export function Settings({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const [tab, setTab] = useState<(typeof TABS)[number]["id"]>("general")
+  if (!open) return null
+  const current = TABS.find((t) => t.id === tab) ?? TABS[0]
+
+  return (
+    <div
+      className="fixed inset-0 z-[120] flex items-end justify-center bg-black/50 p-0 md:items-center md:p-4"
+      onClick={onClose}
+    >
+      <div
+        className="flex h-[88vh] w-full max-w-3xl flex-col overflow-hidden rounded-t-2xl border bg-card shadow-2xl md:h-[80vh] md:rounded-2xl"
+        onClick={(e) => e.stopPropagation()}
         style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
       >
         <div className="flex items-center justify-between border-b px-4 py-3">
@@ -53,73 +135,27 @@ export function Settings({ open, onClose }: { open: boolean; onClose: () => void
           </Button>
         </div>
 
-        <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4">
-          <section className="rounded-lg border p-3">
-            <div className="mb-2 text-xs font-medium text-muted-foreground">外观</div>
-            <div className="flex gap-2">
-              {(["light", "dark"] as const).map((m) => (
-                <Button
-                  key={m}
-                  variant={themeMode === m ? "default" : "secondary"}
-                  className="flex-1"
-                  onClick={() => setThemeMode(m)}
-                >
-                  {m === "light" ? "浅色" : "深色"}
-                </Button>
-              ))}
-            </div>
-          </section>
-
-          <section className="rounded-lg border p-3">
-            <div className="mb-2 text-xs font-medium text-muted-foreground">默认模型</div>
-            {models.length === 0 ? (
-              <p className="text-xs text-muted-foreground">模型列表加载中或为空</p>
-            ) : (
-              <select
-                value={selectedModel ?? ""}
-                onChange={(e) => setSelectedModel(e.target.value)}
-                className="w-full rounded-lg border bg-transparent px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        {/* Tab rail (left on desktop, horizontal scroll on mobile) */}
+        <div className="flex min-h-0 flex-1 flex-col md:flex-row">
+          <div className="flex shrink-0 gap-1 overflow-x-auto border-b p-2 md:w-40 md:flex-col md:overflow-y-auto md:border-b-0 md:border-r">
+            {TABS.map((t) => (
+              <button
+                key={t.id}
+                onClick={() => setTab(t.id)}
+                className={cn(
+                  "shrink-0 whitespace-nowrap rounded-lg px-3 py-2 text-left text-sm transition-colors md:w-full",
+                  tab === t.id
+                    ? "bg-accent font-medium text-foreground"
+                    : "text-muted-foreground hover:bg-accent/60",
+                )}
               >
-                <option value="" disabled>
-                  选择模型
-                </option>
-                {models.map((m) => (
-                  <option key={m} value={m} className="bg-card">
-                    {m}
-                  </option>
-                ))}
-              </select>
-            )}
-          </section>
-
-          <section className="rounded-lg border p-3">
-            <div className="mb-2 text-xs font-medium text-muted-foreground">用量统计</div>
-            {metrics ? (
-              <div className="grid grid-cols-3 gap-2">
-                <Stat label="总会话" value={metrics.total_sessions} />
-                <Stat label="进行中" value={metrics.active_sessions} />
-                <Stat label="已完成" value={metrics.completed_sessions} />
-                <Stat label="工具调用" value={metrics.total_tool_calls} />
-                <Stat label="出错" value={metrics.error_sessions} />
-                <Stat label="压缩节省" value={metrics.total_tokens_saved} />
-              </div>
-            ) : (
-              <p className="text-xs text-muted-foreground">加载中…</p>
-            )}
-          </section>
-
-          <section className="rounded-lg border p-3">
-            <div className="mb-2 text-xs font-medium text-muted-foreground">关于</div>
-            <div className="flex items-center justify-between text-sm">
-              <span className="text-muted-foreground">应用</span>
-              <span className="font-medium">Bodhi · lotus-next</span>
-            </div>
-            <p className="mt-2 text-xs text-muted-foreground">
-              更多配置(提供方、环境变量、MCP、权限等)可在后端 / 桌面端设置中管理。
-            </p>
-          </section>
+                {t.label}
+              </button>
+            ))}
+          </div>
+          <div className="min-h-0 flex-1 overflow-y-auto p-4">{current.render()}</div>
         </div>
-      </aside>
-    </>
+      </div>
+    </div>
   )
 }
