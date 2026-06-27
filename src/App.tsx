@@ -20,6 +20,7 @@ import {
   FileDown,
   Columns2,
   FolderGit2,
+  ShieldAlert,
 } from "lucide-react"
 import { useShallow } from "zustand/react/shallow"
 import { Button } from "@/components/ui/button"
@@ -38,6 +39,7 @@ import { ToolCalls } from "@/components/chat/ToolCalls"
 import { Reasoning } from "@/components/chat/Reasoning"
 import { workspaceService } from "@services/workspace"
 import type { WorkspaceFileEntry } from "@services/workspace/types"
+import { agentClient } from "@services/chat/AgentService"
 import { QuestionDialog, ApprovalDialog } from "@/components/chat/Dialogs"
 import { Settings } from "@/components/chat/Settings"
 import { Onboarding } from "@/components/chat/Onboarding"
@@ -269,6 +271,14 @@ function App() {
   const [pickedWorkspace, setPickedWorkspace] = useState<string | null>(null)
   const [wsPickerOpen, setWsPickerOpen] = useState(false)
   const displayWorkspace = workspacePath ?? pickedWorkspace
+  const bypassPermissions = currentChat?.config?.bypassPermissions ?? false
+  const toggleBypass = async () => {
+    if (!currentSessionId) return
+    await agentClient
+      .patchSession(currentSessionId, { bypass_permissions: !bypassPermissions })
+      .catch(() => {})
+    await useAppStore.getState().loadChatHistory(currentSessionId)
+  }
   const [workspaceFiles, setWorkspaceFiles] = useState<WorkspaceFileEntry[]>([])
   const filesLoadedForRef = useRef<string | null>(null)
   useEffect(() => {
@@ -512,6 +522,16 @@ function App() {
               menuAlign="right"
             />
           ) : null}
+          {bypassPermissions ? (
+            <button
+              onClick={() => void toggleBypass()}
+              title="已绕过权限审批 — 点击关闭"
+              className="flex items-center gap-1 rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-1 text-xs font-medium text-amber-600 dark:text-amber-400"
+            >
+              <ShieldAlert className="size-3.5" />
+              <span className="hidden sm:inline">绕过权限</span>
+            </button>
+          ) : null}
           <OverflowMenu
             items={[
               ...(currentSessionId && messages.length > 0
@@ -533,6 +553,19 @@ function App() {
                 icon: <Columns2 className="size-4" />,
                 onClick: () => setSplitOpen((v) => !v),
               },
+              ...(currentSessionId
+                ? [
+                    {
+                      label: bypassPermissions ? "绕过权限审批 · 已开启" : "绕过权限审批",
+                      icon: (
+                        <ShieldAlert
+                          className={cn("size-4", bypassPermissions && "text-amber-500")}
+                        />
+                      ),
+                      onClick: () => void toggleBypass(),
+                    },
+                  ]
+                : []),
             ]}
           />
           {currentSessionId ? (
