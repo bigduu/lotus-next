@@ -277,7 +277,9 @@ function App() {
     await agentClient
       .patchSession(currentSessionId, { bypass_permissions: !bypassPermissions })
       .catch(() => {})
-    await useAppStore.getState().loadChatHistory(currentSessionId)
+    // bypassPermissions is mirrored from the session summary, not chat history —
+    // refresh the index so the badge/toggle state reflects the change.
+    await useAppStore.getState().refreshChatsNow()
   }
   const [workspaceFiles, setWorkspaceFiles] = useState<WorkspaceFileEntry[]>([])
   const filesLoadedForRef = useRef<string | null>(null)
