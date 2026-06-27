@@ -19,7 +19,6 @@ import {
   Download,
   FileDown,
   Columns2,
-  Brain,
 } from "lucide-react"
 import { useShallow } from "zustand/react/shallow"
 import { Button } from "@/components/ui/button"
@@ -50,6 +49,7 @@ import { cn } from "@/lib/utils"
 import { useChat } from "@/hooks/useChat"
 import { useAppStore, selectChildren } from "@shared/store/appStore"
 import { SubAgents } from "@/components/chat/SubAgents"
+import { StreamingReasoning } from "@/components/chat/StreamingReasoning"
 import { useProviderStore } from "@shared/store/appStore/slices/providerSlice"
 import type { Message } from "@shared/types/chatMessages"
 import type { SkillDefinition } from "@shared/types/skill"
@@ -719,14 +719,7 @@ function App() {
                   {streamingReasoning ? (
                     // Live reasoning ("思考过程") so the user sees progress instead of
                     // waiting on a blank bubble while the model thinks.
-                    <div className={streaming ? "mb-2" : ""}>
-                      <div className="mb-1 flex items-center gap-1.5 text-xs text-muted-foreground">
-                        <Brain className="size-3.5 animate-pulse" /> 思考中…
-                      </div>
-                      <div className="max-h-48 overflow-y-auto whitespace-pre-wrap border-l-2 border-border pl-3 text-xs leading-relaxed text-muted-foreground [overflow-wrap:anywhere]">
-                        {streamingReasoning}
-                      </div>
-                    </div>
+                    <StreamingReasoning text={streamingReasoning} spaced={!!streaming} />
                   ) : null}
                   {streaming ? (
                     // Live markdown while streaming (RAF-throttled to once/frame),
