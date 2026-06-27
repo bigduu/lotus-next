@@ -53,8 +53,10 @@ export function WorkspacePicker({
       workspaceService
         .browseFolder(parent)
         .then((res) =>
+          // Show ALL matching subfolders (the list scrolls); only cap at a sane
+          // upper bound to avoid rendering thousands of DOM nodes.
           setCompletions(
-            res.folders.filter((f) => f.name.toLowerCase().startsWith(prefix)).slice(0, 10),
+            res.folders.filter((f) => f.name.toLowerCase().startsWith(prefix)).slice(0, 500),
           ),
         )
         .catch(() => setCompletions([]))
@@ -130,7 +132,7 @@ export function WorkspacePicker({
             </Button>
           </div>
           {completions.length > 0 ? (
-            <ul className="-mt-1 max-h-52 overflow-y-auto rounded-md border bg-background">
+            <ul className="-mt-1 max-h-80 overflow-y-auto rounded-md border bg-background">
               {completions.map((f) => (
                 <li key={f.path}>
                   <button
