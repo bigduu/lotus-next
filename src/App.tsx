@@ -11,6 +11,7 @@ import {
   Paperclip,
   Search,
   ChevronDown,
+  ChevronLeft,
   GitFork,
   Pencil,
   RotateCcw,
@@ -52,6 +53,7 @@ import { cn } from "@/lib/utils"
 import { useChat } from "@/hooks/useChat"
 import { useAppStore, selectChildren } from "@shared/store/appStore"
 import { SubAgents } from "@/components/chat/SubAgents"
+import type { ChildProgress } from "@shared/store/appStore/slices/executionStateSlice/types"
 import { StreamingReasoning } from "@/components/chat/StreamingReasoning"
 import { WorkspacePicker } from "@/components/chat/WorkspacePicker"
 import { useProviderStore } from "@shared/store/appStore/slices/providerSlice"
@@ -215,6 +217,23 @@ function App() {
   const skills = useAppStore(useShallow((s) => s.skills))
   const loadSkills = useAppStore((s) => s.loadSkills)
   const subAgents = useAppStore(useShallow((s) => selectChildren(currentSessionId)(s)))
+  // Sub-agents to display: persistent child sessions from the index (survive
+  // reload, navigable) overlaid with live progress (status/preview during a run).
+  const mergedSubAgents = useMemo(() => {
+    const out: Record<string, ChildProgress> = {}
+    for (const c of chats) {
+      if (currentSessionId && c.parentSessionId === currentSessionId) {
+        out[c.id] = {
+          title: c.title || c.subagentType || undefined,
+          status: c.isRunning ? "running" : "completed",
+        }
+      }
+    }
+    for (const [id, p] of Object.entries(subAgents)) {
+      out[id] = { ...out[id], ...p }
+    }
+    return out
+  }, [chats, currentSessionId, subAgents])
   const models = useAppStore(useShallow((s) => s.models))
   const selectedModel = useAppStore((s) => s.selectedModel)
   const setSelectedModel = useAppStore((s) => s.setSelectedModel)
@@ -591,6 +610,15 @@ function App() {
           </div>
         ) : null}
 
+        {currentChat?.parentSessionId ? (
+          <button
+            onClick={() => select(currentChat.parentSessionId as string)}
+            className="flex w-full items-center gap-1.5 border-b bg-muted/40 px-3 py-1.5 text-xs font-medium text-muted-foreground hover:text-foreground"
+          >
+            <ChevronLeft className="size-3.5" /> 子代理 · 返回父会话
+          </button>
+        ) : null}
+
         <div ref={scrollRef} onScroll={handleScroll} className="min-h-0 flex-1 overflow-y-auto">
           <div ref={contentRef} className="mx-auto flex max-w-2xl flex-col gap-4 px-3 py-4">
             {messages.length === 0 && !streaming && !pendingUserText && (
@@ -753,7 +781,7 @@ function App() {
               </div>
             ) : null}
 
-            <SubAgents children={subAgents} />
+            <SubAgents children={mergedSubAgents} onOpen={(id) => select(id)} />
 
             {streaming !== null && (
               <div className="flex justify-start">

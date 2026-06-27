@@ -1,5 +1,4 @@
-import { useState } from "react"
-import { ChevronRight, Bot, Loader2, Check, AlertCircle } from "lucide-react"
+import { Bot, Loader2, Check, AlertCircle, ChevronRight } from "lucide-react"
 import { cn } from "@/lib/utils"
 import type { ChildProgress } from "@shared/store/appStore/slices/executionStateSlice/types"
 
@@ -15,30 +14,21 @@ function statusOf(c: ChildProgress): Status {
 
 const LABEL: Record<Status, string> = { running: "运行中", done: "完成", error: "失败" }
 
-function SubAgentCard({ child }: { child: ChildProgress }) {
+function SubAgentCard({ child, onOpen }: { child: ChildProgress; onOpen?: () => void }) {
   const st = statusOf(child)
   const detail = child.error || child.outputPreview
-  const [open, setOpen] = useState(false)
 
   return (
-    <div
+    <button
+      onClick={onOpen}
+      disabled={!onOpen}
       className={cn(
-        "overflow-hidden rounded-lg border",
+        "w-full overflow-hidden rounded-lg border text-left transition-colors",
+        onOpen && "hover:border-primary/50 hover:bg-accent/50",
         st === "running" ? "border-primary/40 bg-primary/5" : "bg-muted/30",
       )}
     >
-      <button
-        onClick={() => setOpen((o) => !o)}
-        className="flex w-full items-center gap-2 px-3 py-2 text-left"
-        disabled={!detail}
-      >
-        <ChevronRight
-          className={cn(
-            "size-3.5 shrink-0 text-muted-foreground transition-transform",
-            open && "rotate-90",
-            !detail && "opacity-0",
-          )}
-        />
+      <div className="flex items-center gap-2 px-3 py-2">
         {st === "running" ? (
           <Loader2 className="size-3.5 shrink-0 animate-spin text-primary" />
         ) : st === "error" ? (
@@ -52,34 +42,39 @@ function SubAgentCard({ child }: { child: ChildProgress }) {
           {LABEL[st]}
           {typeof child.roundCount === "number" ? ` · ${child.roundCount}轮` : ""}
         </span>
-      </button>
-      {open && detail ? (
+        {onOpen ? <ChevronRight className="size-4 shrink-0 text-muted-foreground" /> : null}
+      </div>
+      {detail ? (
         <div
           className={cn(
-            "whitespace-pre-wrap border-t px-3 py-2 text-xs leading-relaxed [overflow-wrap:anywhere]",
+            "line-clamp-2 whitespace-pre-wrap border-t px-3 py-1.5 text-xs leading-relaxed [overflow-wrap:anywhere]",
             child.error ? "text-destructive" : "text-muted-foreground",
           )}
         >
           {detail}
         </div>
       ) : null}
-    </div>
+    </button>
   )
 }
 
-/** Claude-Code-style inline sub-agent blocks, nested under the assistant turn. */
-export function SubAgents({ children }: { children: Record<string, ChildProgress> }) {
+/** Claude-Code-style inline sub-agent blocks; click one to open its full transcript. */
+export function SubAgents({
+  children,
+  onOpen,
+}: {
+  children: Record<string, ChildProgress>
+  onOpen?: (childId: string) => void
+}) {
   const entries = Object.entries(children)
   if (entries.length === 0) return null
 
   return (
     <div className="flex justify-start">
       <div className="ml-1 w-full max-w-[85%] space-y-1.5 border-l-2 border-border/60 pl-3">
-        <div className="text-xs font-medium text-muted-foreground">
-          子代理 ({entries.length})
-        </div>
+        <div className="text-xs font-medium text-muted-foreground">子代理 ({entries.length})</div>
         {entries.map(([id, c]) => (
-          <SubAgentCard key={id} child={c} />
+          <SubAgentCard key={id} child={c} onOpen={onOpen ? () => onOpen(id) : undefined} />
         ))}
       </div>
     </div>
