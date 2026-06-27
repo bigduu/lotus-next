@@ -241,7 +241,12 @@ function App() {
 
   const groups = useMemo(() => {
     const q = search.trim().toLowerCase()
-    const filtered = q ? chats.filter((c) => (c.title || "").toLowerCase().includes(q)) : chats
+    // Only root sessions in the sidebar — child sub-agent sessions live in the
+    // inspector's sub-agents panel, not as top-level chats.
+    let filtered = chats.filter(
+      (c) => !(c as { parentSessionId?: string | null }).parentSessionId,
+    )
+    if (q) filtered = filtered.filter((c) => (c.title || "").toLowerCase().includes(q))
     return groupChats(filtered, new Date())
   }, [chats, search])
   const renderItems = useMemo(() => buildRenderItems(messages), [messages])
