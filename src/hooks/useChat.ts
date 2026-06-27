@@ -58,6 +58,7 @@ export function useChat() {
   // Optimistic just-sent user message (shows instantly before history reloads).
   const [pending, setPending] = useState<{ sid: string | null; text: string } | null>(null)
   const [sending, setSending] = useState(false)
+  const [sendError, setSendError] = useState(false)
   const [pendingQuestion, setPendingQuestion] = useState<PendingQuestion | null>(null)
   const [pendingApproval, setPendingApproval] = useState<PendingApproval | null>(null)
   const abortRef = useRef<AbortController | null>(null)
@@ -157,6 +158,7 @@ export function useChat() {
           },
           onError: async () => {
             setPendingQuestion(null)
+            setSendError(true)
             await useAppStore.getState().loadChatHistory(sid)
             stopStream(null)
           },
@@ -178,6 +180,7 @@ export function useChat() {
     async (sid: string) => {
       if (sending) return
       setSending(true)
+      setSendError(false)
       try {
         await useAppStore.getState().loadChatHistory(sid)
         await runStream(sid)
@@ -230,6 +233,7 @@ export function useChat() {
       if ((!body && !opts?.images?.length) || sending) return
       const startSid = currentSessionId
       setSending(true)
+      setSendError(false)
       // Optimistically show the user's message + streaming placeholder right away,
       // scoped to the session it's being sent to.
       if (body) setPending({ sid: startSid, text: body })
@@ -260,6 +264,7 @@ export function useChat() {
         await runStream(sid)
       } catch (err) {
         console.error("[useChat] send failed", err)
+        setSendError(true)
         stopStream(null)
       } finally {
         setSending(false)
@@ -357,6 +362,7 @@ export function useChat() {
     regenerate,
     retry,
     editMessage,
+    sendError,
     pendingQuestion,
     pendingApproval,
     answerQuestion,

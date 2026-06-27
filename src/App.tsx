@@ -132,6 +132,8 @@ function App() {
     fork,
     regenerate,
     editMessage,
+    retry,
+    sendError,
     pendingQuestion,
     pendingApproval,
     answerQuestion,
@@ -156,6 +158,7 @@ function App() {
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [splitOpen, setSplitOpen] = useState(false)
   const [draft, setDraft] = useState("")
+  const [dragOver, setDragOver] = useState(false)
 
   const themeMode = useThemeStore((s) => s.themeMode)
   useEffect(() => {
@@ -405,7 +408,28 @@ function App() {
       </aside>
 
       {/* Main */}
-      <div className="relative flex min-w-0 flex-1 flex-col">
+      <div
+        className="relative flex min-w-0 flex-1 flex-col"
+        onDragOver={(e) => {
+          if (e.dataTransfer.types.includes("Files")) {
+            e.preventDefault()
+            setDragOver(true)
+          }
+        }}
+        onDragLeave={(e) => {
+          if (e.currentTarget === e.target) setDragOver(false)
+        }}
+        onDrop={(e) => {
+          e.preventDefault()
+          setDragOver(false)
+          if (e.dataTransfer.files.length) void addFiles(e.dataTransfer.files)
+        }}
+      >
+        {dragOver ? (
+          <div className="pointer-events-none absolute inset-0 z-[60] m-3 flex items-center justify-center rounded-2xl border-2 border-dashed border-primary bg-primary/10 text-sm font-medium text-primary">
+            松开以添加图片
+          </div>
+        ) : null}
         <header className="flex items-center gap-2 border-b px-3 py-2.5">
           <Button
             size="icon"
@@ -675,6 +699,15 @@ function App() {
             <ChevronDown className="size-5" />
           </button>
         )}
+
+        {sendError ? (
+          <div className="mx-auto mb-1 flex max-w-2xl items-center justify-between gap-2 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm">
+            <span className="text-destructive">生成失败</span>
+            <Button size="sm" variant="secondary" onClick={() => void retry()}>
+              <RotateCcw className="size-3.5" /> 重试
+            </Button>
+          </div>
+        ) : null}
 
         {/* Composer */}
         <div className="border-t px-3 py-3">
