@@ -65,9 +65,14 @@ export function useChat() {
   // Token buffer + RAF handle — coalesce many tokens into ≤1 state update/frame.
   const streamBufRef = useRef("")
   const rafRef = useRef<number | null>(null)
+  // Live reasoning ("思考过程") stream — same RAF-coalescing as content tokens.
+  const [streamingReasoningText, setStreamingReasoningText] = useState<string | null>(null)
+  const reasonBufRef = useRef("")
+  const reasonRafRef = useRef<number | null>(null)
 
   // Streaming / optimistic message are scoped to the current session.
   const streaming = streamSid === currentSessionId ? streamingText : null
+  const streamingReasoning = streamSid === currentSessionId ? streamingReasoningText : null
   const pendingUserText =
     pending && (pending.sid === currentSessionId || pending.sid === null) ? pending.text : null
 
@@ -81,13 +86,29 @@ export function useChat() {
     }
   }, [])
 
+  const pushReasoning = useCallback((c: string) => {
+    reasonBufRef.current += c
+    if (reasonRafRef.current == null) {
+      reasonRafRef.current = requestAnimationFrame(() => {
+        reasonRafRef.current = null
+        setStreamingReasoningText(reasonBufRef.current)
+      })
+    }
+  }, [])
+
   const stopStream = useCallback((final: string | null) => {
     if (rafRef.current != null) {
       cancelAnimationFrame(rafRef.current)
       rafRef.current = null
     }
+    if (reasonRafRef.current != null) {
+      cancelAnimationFrame(reasonRafRef.current)
+      reasonRafRef.current = null
+    }
     streamBufRef.current = ""
+    reasonBufRef.current = ""
     setStreamingText(final)
+    setStreamingReasoningText(null)
   }, [])
 
   const LAST_SESSION_KEY = "lotus_next_last_session"
@@ -129,7 +150,9 @@ export function useChat() {
     async (sid: string) => {
       setStreamSid(sid)
       streamBufRef.current = ""
+      reasonBufRef.current = ""
       setStreamingText("")
+      setStreamingReasoningText(null)
       const ac = new AbortController()
       abortRef.current = ac
       void agentClient.execute(sid, effectiveModel || undefined, reasoningEffort).catch(() => {})
@@ -137,6 +160,7 @@ export function useChat() {
         sid,
         {
           onToken: pushToken,
+          onReasoningToken: pushReasoning,
           onNeedClarification: (event) =>
             setPendingQuestion({
               question: event.question ?? "",
@@ -153,6 +177,15 @@ export function useChat() {
             }),
           onComplete: async () => {
             setPendingQuestion(null)
+            // Freeze the fully-streamed text in place (cancel any pending RAF) so the
+            // assistant bubble keeps showing it while the persisted message loads —
+            // otherwise it blanks for a beat between "streaming" and "normal".
+            if (rafRef.current != null) {
+              cancelAnimationFrame(rafRef.current)
+              rafRef.current = null
+            }
+            const finalText = streamBufRef.current
+            if (finalText) setStreamingText(finalText)
             await useAppStore.getState().loadChatHistory(sid, { waitForAssistant: true })
             stopStream(null)
           },
@@ -351,6 +384,7 @@ export function useChat() {
     currentChat,
     messages,
     streaming,
+    streamingReasoning,
     pendingUserText,
     sending,
     select,

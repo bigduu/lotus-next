@@ -19,6 +19,7 @@ import {
   Download,
   FileDown,
   Columns2,
+  Brain,
 } from "lucide-react"
 import { useShallow } from "zustand/react/shallow"
 import { Button } from "@/components/ui/button"
@@ -122,6 +123,7 @@ function App() {
     currentChat,
     messages,
     streaming,
+    streamingReasoning,
     pendingUserText,
     sending,
     select,
@@ -710,12 +712,24 @@ function App() {
                   className="max-w-[85%] overflow-hidden rounded-2xl bg-muted px-3.5 py-2 text-sm leading-relaxed [overflow-wrap:anywhere]"
                   style={{ transform: "translateZ(0)" }}
                 >
+                  {streamingReasoning ? (
+                    // Live reasoning ("思考过程") so the user sees progress instead of
+                    // waiting on a blank bubble while the model thinks.
+                    <div className={streaming ? "mb-2" : ""}>
+                      <div className="mb-1 flex items-center gap-1.5 text-xs text-muted-foreground">
+                        <Brain className="size-3.5 animate-pulse" /> 思考中…
+                      </div>
+                      <div className="max-h-48 overflow-y-auto whitespace-pre-wrap border-l-2 border-border pl-3 text-xs leading-relaxed text-muted-foreground [overflow-wrap:anywhere]">
+                        {streamingReasoning}
+                      </div>
+                    </div>
+                  ) : null}
                   {streaming ? (
                     // Live markdown while streaming (RAF-throttled to once/frame),
                     // with provider built-in-tool blocks folded the same as the
                     // final message — so no raw **/``` flash mid-stream.
                     <AssistantMarkdown>{streaming}</AssistantMarkdown>
-                  ) : (
+                  ) : streamingReasoning ? null : (
                     <span className="inline-flex gap-1">
                       <span className="size-1.5 animate-pulse rounded-full bg-muted-foreground" />
                       <span className="size-1.5 animate-pulse rounded-full bg-muted-foreground [animation-delay:150ms]" />
