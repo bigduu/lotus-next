@@ -17,6 +17,7 @@
 import { AgentClient, type ChangeEvent, type FeedSubscription } from "./AgentService";
 import { useAppStore, selectShouldObserve } from "@shared/store/appStore";
 import { isApiV2WsEnabled } from "@shared/utils/debugFlags";
+import { notify } from "@/lib/notify";
 
 const CURSOR_STORAGE_KEY = "lotus_account_feed_cursor_v1";
 const REFRESH_DEBOUNCE_MS = 400;
@@ -82,6 +83,16 @@ const applyChange = (change: ChangeEvent): void => {
   const { event } = change;
   const store = useAppStore.getState();
   const sessionId = change.session_id ?? event.session_id;
+
+  // Server-side preference-gated notifications → surface as a browser
+  // notification when the user isn't actively watching that session.
+  if (event.type === "notification") {
+    const e = event as { title?: string; body?: string };
+    if (typeof document === "undefined" || document.hidden || sessionId !== store.currentSessionId) {
+      notify(e.title || "Bodhi", e.body);
+    }
+    return;
+  }
 
   // Multi-device: keep the OPEN conversation live (not just the list) when it
   // changes elsewhere.

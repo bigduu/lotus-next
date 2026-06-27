@@ -1,10 +1,85 @@
-import { useEffect } from "react"
+import { useEffect, useState } from "react"
 import { X } from "lucide-react"
 import { useShallow } from "zustand/react/shallow"
 import { useAppStore, selectCurrentChat, selectChildren } from "@shared/store/appStore"
 import { useProviderStore } from "@shared/store/appStore/slices/providerSlice"
+import { agentClient, type GoldConfig, type GoalState } from "@services/chat/AgentService"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
+
+function GoalSection({
+  sessionId,
+  goldConfig,
+  goalState,
+}: {
+  sessionId: string
+  goldConfig?: GoldConfig | null
+  goalState?: GoalState | null
+}) {
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState("")
+  const goal = goldConfig?.goal
+
+  const save = async () => {
+    const g = draft.trim()
+    setEditing(false)
+    await agentClient
+      .patchSession(sessionId, {
+        gold_config: { ...(goldConfig ?? { enabled: true }), enabled: true, goal: g || null },
+      })
+      .catch(() => {})
+    await useAppStore.getState().loadChatHistory(sessionId)
+  }
+
+  return (
+    <section className="rounded-lg border p-3">
+      <div className="mb-2 flex items-center justify-between">
+        <span className="text-xs font-medium text-muted-foreground">目标</span>
+        {!editing ? (
+          <button
+            onClick={() => {
+              setDraft(goal ?? "")
+              setEditing(true)
+            }}
+            className="text-xs text-primary hover:underline"
+          >
+            {goal ? "编辑" : "设置"}
+          </button>
+        ) : null}
+      </div>
+      {editing ? (
+        <>
+          <textarea
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            autoFocus
+            placeholder="描述这段会话要达成的目标…"
+            className="min-h-16 w-full resize-y rounded-md border bg-background px-2.5 py-1.5 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          />
+          <div className="mt-1.5 flex justify-end gap-2">
+            <Button size="sm" variant="secondary" onClick={() => setEditing(false)}>
+              取消
+            </Button>
+            <Button size="sm" onClick={save}>
+              保存
+            </Button>
+          </div>
+        </>
+      ) : goal ? (
+        <>
+          <p className="text-sm leading-relaxed">{goal}</p>
+          {goalState?.status ? (
+            <div className="mt-1.5 text-xs text-muted-foreground">状态:{goalState.status}</div>
+          ) : null}
+        </>
+      ) : (
+        <p className="text-xs leading-relaxed text-muted-foreground">
+          未设置目标。设置后,agent 会朝目标推进并自检是否达成。
+        </p>
+      )}
+    </section>
+  )
+}
 
 const STATUS: Record<string, { icon: string; cls: string }> = {
   pending: { icon: "○", cls: "text-muted-foreground" },
@@ -79,12 +154,12 @@ export function Inspector({
         </div>
 
         <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4">
-          {goal ? (
-            <section className="rounded-lg border p-3">
-              <div className="mb-2 text-xs font-medium text-muted-foreground">目标</div>
-              <p className="text-sm leading-relaxed">{goal.objective}</p>
-              <div className="mt-1.5 text-xs text-muted-foreground">状态:{goal.status}</div>
-            </section>
+          {sessionId ? (
+            <GoalSection
+              sessionId={sessionId}
+              goldConfig={(cfg as { goldConfig?: GoldConfig | null })?.goldConfig}
+              goalState={goal}
+            />
           ) : null}
 
           <section className="rounded-lg border p-3">

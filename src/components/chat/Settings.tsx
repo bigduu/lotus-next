@@ -13,6 +13,7 @@ import { SettingsSkills } from "@/components/chat/settings/SettingsSkills"
 import { SettingsPermissions } from "@/components/chat/settings/SettingsPermissions"
 import { SettingsEnv } from "@/components/chat/settings/SettingsEnv"
 import { SettingsSchedules } from "@/components/chat/settings/SettingsSchedules"
+import { SettingsNotifications } from "@/components/chat/settings/SettingsNotifications"
 
 function Stat({ label, value }: { label: string; value: number | undefined }) {
   return (
@@ -113,6 +114,7 @@ const TABS = [
   { id: "permissions", label: "权限", render: () => <SettingsPermissions /> },
   { id: "env", label: "环境变量", render: () => <SettingsEnv /> },
   { id: "schedules", label: "定时任务", render: () => <SettingsSchedules /> },
+  { id: "notifications", label: "通知", render: () => <SettingsNotifications /> },
 ] as const
 
 export function Settings({ open, onClose }: { open: boolean; onClose: () => void }) {
