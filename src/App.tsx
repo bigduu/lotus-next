@@ -19,6 +19,7 @@ import {
   Download,
   FileDown,
   Columns2,
+  FolderGit2,
 } from "lucide-react"
 import { useShallow } from "zustand/react/shallow"
 import { Button } from "@/components/ui/button"
@@ -822,6 +823,23 @@ function App() {
               e.target.value = ""
             }}
           />
+          {!currentSessionId ? (
+            <div className="mx-auto mb-1.5 flex max-w-2xl items-center">
+              <button
+                onClick={() => setWsPickerOpen(true)}
+                className="flex max-w-full items-center gap-1.5 rounded-full border bg-card px-2.5 py-1 text-xs text-muted-foreground hover:text-foreground"
+                title={displayWorkspace || "默认工作目录"}
+              >
+                <FolderGit2 className="size-3.5 shrink-0" />
+                <span className="truncate">
+                  {displayWorkspace
+                    ? displayWorkspace.split("/").filter(Boolean).pop() || displayWorkspace
+                    : "选择工作目录"}
+                </span>
+                <ChevronDown className="size-3 shrink-0 opacity-60" />
+              </button>
+            </div>
+          ) : null}
           <div className="mx-auto flex max-w-2xl items-center gap-2">
             <div className="flex min-w-0 flex-1 items-center gap-1 overflow-hidden rounded-2xl border bg-card px-2 py-1">
               <Button
