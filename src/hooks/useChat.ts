@@ -69,6 +69,8 @@ export function useChat() {
   const [streamingReasoningText, setStreamingReasoningText] = useState<string | null>(null)
   const reasonBufRef = useRef("")
   const reasonRafRef = useRef<number | null>(null)
+  // Per-child rolling output buffer for live sub-agent previews.
+  const childBufRef = useRef<Record<string, string>>({})
 
   // Streaming / optimistic message are scoped to the current session.
   const streaming = streamSid === currentSessionId ? streamingText : null
@@ -151,6 +153,7 @@ export function useChat() {
       setStreamSid(sid)
       streamBufRef.current = ""
       reasonBufRef.current = ""
+      childBufRef.current = {}
       setStreamingText("")
       setStreamingReasoningText(null)
       const ac = new AbortController()
@@ -161,6 +164,31 @@ export function useChat() {
         {
           onToken: pushToken,
           onReasoningToken: pushReasoning,
+          onSubAgentStarted: (parentSid, childId, title) => {
+            useAppStore.getState().applyChildProgress(parentSid, childId, {
+              title,
+              status: "running",
+            })
+          },
+          onSubAgentEvent: (parentSid, childId, event) => {
+            const e = event as { type?: string; content?: string; tool_name?: string }
+            const patch: { outputPreview?: string } = {}
+            if (e.type === "token" && e.content) {
+              childBufRef.current[childId] = (childBufRef.current[childId] || "") + e.content
+              patch.outputPreview = childBufRef.current[childId].slice(-400)
+            } else if (e.type === "tool_start" && e.tool_name) {
+              patch.outputPreview = `· 调用 ${e.tool_name}…`
+            }
+            if (patch.outputPreview !== undefined) {
+              useAppStore.getState().applyChildProgress(parentSid, childId, patch)
+            }
+          },
+          onSubAgentCompleted: (parentSid, childId, status, error) => {
+            useAppStore.getState().applyChildProgress(parentSid, childId, {
+              status: error ? "error" : status || "completed",
+              error: error || undefined,
+            })
+          },
           onNeedClarification: (event) =>
             setPendingQuestion({
               question: event.question ?? "",
