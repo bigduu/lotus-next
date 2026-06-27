@@ -48,7 +48,8 @@ import { useThemeStore } from "@shared/store/themeStore"
 import { groupChats } from "@/lib/groupChats"
 import { cn } from "@/lib/utils"
 import { useChat } from "@/hooks/useChat"
-import { useAppStore } from "@shared/store/appStore"
+import { useAppStore, selectChildren } from "@shared/store/appStore"
+import { SubAgents } from "@/components/chat/SubAgents"
 import { useProviderStore } from "@shared/store/appStore/slices/providerSlice"
 import type { Message } from "@shared/types/chatMessages"
 import type { SkillDefinition } from "@shared/types/skill"
@@ -209,6 +210,7 @@ function App() {
 
   const skills = useAppStore(useShallow((s) => s.skills))
   const loadSkills = useAppStore((s) => s.loadSkills)
+  const subAgents = useAppStore(useShallow((s) => selectChildren(currentSessionId)(s)))
   const models = useAppStore(useShallow((s) => s.models))
   const selectedModel = useAppStore((s) => s.selectedModel)
   const setSelectedModel = useAppStore((s) => s.setSelectedModel)
@@ -705,6 +707,8 @@ function App() {
                 </div>
               </div>
             ) : null}
+
+            <SubAgents children={subAgents} />
 
             {streaming !== null && (
               <div className="flex justify-start">
