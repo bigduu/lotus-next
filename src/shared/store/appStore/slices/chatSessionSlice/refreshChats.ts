@@ -155,11 +155,11 @@ export function applySessionsList(sessions: SessionSummary[], set: ChatSliceSet)
             : nextConfig.goldConfig
           : nextConfig.goldConfig,
         // `bypass_permissions` is only carried by the detail endpoint, never the
-        // lightweight list. Keep the locally-known value (set via the toggle or a
-        // prior detail load) so a list refresh can't reset it to `false`.
-        bypassPermissions: Object.prototype.hasOwnProperty.call(prevConfig, "bypassPermissions")
-          ? prevConfig.bypassPermissions
-          : nextConfig.bypassPermissions,
+        // The session index DOES carry bypass_permissions, so the server value is
+        // authoritative (it only changes via patchSession, which is confirmed
+        // before we refresh). Fall back to the local value only if the summary
+        // omits it, so a hypothetical lightweight list can't reset it to `false`.
+        bypassPermissions: nextConfig.bypassPermissions ?? prevConfig.bypassPermissions,
         compressionEvents: prev.config?.compressionEvents ?? c.config?.compressionEvents,
         syncCursor: prev.config?.syncCursor ?? c.config?.syncCursor,
       };
