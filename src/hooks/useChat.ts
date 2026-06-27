@@ -5,7 +5,6 @@ import {
   initializeStore,
   selectCurrentMessages,
   selectCurrentChat,
-  selectIsBusy,
 } from "@shared/store/appStore"
 import { useProviderStore } from "@shared/store/appStore/slices/providerSlice"
 import { agentClient } from "@services/chat/AgentService"
@@ -114,37 +113,6 @@ export function useChat() {
     setStreamingReasoningText(null)
   }, [])
 
-  // Backstop for a dropped live stream. The v2 WS agent channel does NOT replay
-  // tokens/terminal missed during a reconnect (common through the cloudflared
-  // tunnel), so a mid-run blip can strand the streaming bubble at a truncated
-  // point — onComplete never fires. The account feed (cursor-resumed) still
-  // flips the session out of a busy phase when the run actually finishes; when
-  // it does while a bubble is up, reconcile to the full persisted message.
-  const streamBusy = useAppStore((s) => (streamSid ? selectIsBusy(streamSid)(s) : false))
-  const sawBusyRef = useRef(false)
-  useEffect(() => {
-    if (!streamSid || streamingText === null) {
-      sawBusyRef.current = false
-      return
-    }
-    if (streamBusy) {
-      sawBusyRef.current = true
-      return
-    }
-    if (!sawBusyRef.current) return
-    // Was running, now idle, bubble still up → the terminal was likely lost.
-    // Grace period lets a normal onComplete win the race + absorbs phase flicker.
-    const sid = streamSid
-    const timer = setTimeout(() => {
-      sawBusyRef.current = false
-      void useAppStore
-        .getState()
-        .loadChatHistory(sid, { waitForAssistant: true })
-        .then(() => stopStream(null))
-    }, 2500)
-    return () => clearTimeout(timer)
-  }, [streamSid, streamingText, streamBusy, stopStream])
-
   const LAST_SESSION_KEY = "lotus_next_last_session"
 
   useEffect(() => {
@@ -246,7 +214,13 @@ export function useChat() {
             }
             const finalText = streamBufRef.current
             if (finalText) setStreamingText(finalText)
-            await useAppStore.getState().loadChatHistory(sid, { waitForAssistant: true })
+            // waitForAssistant is a no-op without retries (its loop guard is
+            // `attempt < retries`), so pass a real retry budget — otherwise the
+            // load can apply a state without the assistant reply and the held
+            // bubble clears into a blank/empty view.
+            await useAppStore
+              .getState()
+              .loadChatHistory(sid, { waitForAssistant: true, retries: 8, retryDelayMs: 150 })
             stopStream(null)
           },
           onError: async () => {
