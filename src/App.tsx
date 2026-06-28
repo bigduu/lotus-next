@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react"
+import { Fragment, useEffect, useMemo, useRef, useState } from "react"
 import {
   Menu,
   Plus,
@@ -277,6 +277,25 @@ function App() {
     return groupChats(filtered, new Date())
   }, [chats, search])
   const renderItems = useMemo(() => buildRenderItems(messages), [messages])
+  // Anchor the sub-agent block after the tool-group that spawned them, so it
+  // scrolls up with the conversation instead of staying pinned at the bottom.
+  const spawnItemIdx = useMemo(() => {
+    if (Object.keys(mergedSubAgents).length === 0) return -1
+    for (let i = renderItems.length - 1; i >= 0; i -= 1) {
+      const it = renderItems[i]
+      if (
+        it.kind === "tools" &&
+        it.items.some((m) =>
+          (m as { toolCalls?: { toolName?: string }[] }).toolCalls?.some((tc) =>
+            /task|sub.?agent|spawn/i.test(tc.toolName || ""),
+          ),
+        )
+      ) {
+        return i
+      }
+    }
+    return -1
+  }, [renderItems, mergedSubAgents])
   const slashQuery = draft.startsWith("/") ? draft.slice(1) : null
 
   // @file references: detect a trailing "@query" and list workspace files.
@@ -633,13 +652,22 @@ function App() {
             {renderItems.map((it, idx) => {
               if (it.kind === "tools") {
                 const isLast = idx === renderItems.length - 1
-                return (
+                const tools = (
                   <ToolCalls
                     key={it.items[0]?.id ?? `tools-${idx}`}
                     items={it.items}
                     active={isLast && (sending || streaming !== null)}
                   />
                 )
+                if (idx === spawnItemIdx) {
+                  return (
+                    <Fragment key={`spawn-${idx}`}>
+                      {tools}
+                      <SubAgents children={mergedSubAgents} onOpen={(id) => select(id)} />
+                    </Fragment>
+                  )
+                }
+                return tools
               }
               const m = it.m
               const text = messageText(m)
@@ -781,7 +809,9 @@ function App() {
               </div>
             ) : null}
 
-            <SubAgents children={mergedSubAgents} onOpen={(id) => select(id)} />
+            {spawnItemIdx === -1 ? (
+              <SubAgents children={mergedSubAgents} onOpen={(id) => select(id)} />
+            ) : null}
 
             {streaming !== null && (
               <div className="flex justify-start">
