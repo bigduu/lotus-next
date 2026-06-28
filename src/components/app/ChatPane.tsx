@@ -392,12 +392,6 @@ export function ChatPane({
           />
         )}
 
-        {secondary && !currentSessionId ? (
-          <div className="flex flex-1 items-center justify-center p-6 text-center text-sm text-muted-foreground">
-            选择上方会话,在这里并排独立对话 —— 可与左侧同时运行。
-          </div>
-        ) : (
-          <>
         {currentChat?.planMode ? (
           <div className="border-b bg-primary/10 px-3 py-1.5 text-center text-xs font-medium text-primary">
             计划模式
@@ -479,8 +473,6 @@ export function ChatPane({
           hasSession={!!currentSessionId}
           onOpenWorkspacePicker={onOpenWorkspacePicker}
         />
-          </>
-        )}
       </div>
 
       <Toasts forking={forking} toast={toast} />

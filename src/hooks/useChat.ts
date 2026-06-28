@@ -33,7 +33,14 @@ export type PendingApproval = {
  * one-time app bootstrap (the main instance owns it) and never persists the
  * "last session" pointer.
  */
-export function useChat(boundSessionId?: string | null) {
+export function useChat(
+  boundSessionId?: string | null,
+  // For bound instances: when a send/fork creates a NEW session, the bound
+  // instance must NOT mutate the global current (that would hijack the main
+  // pane). Instead it reports the new id here so the caller can re-bind its own
+  // pane to it (e.g. App's setSecondSid).
+  onSessionCreated?: (sessionId: string) => void,
+) {
   const isBound = boundSessionId !== undefined
 
   const chats = useAppStore(useShallow((s) => s.chats))
@@ -342,7 +349,10 @@ export function useChat(boundSessionId?: string | null) {
           if (body) setPending({ sid: newSid, text: body })
           setStreamSid(newSid)
           await useAppStore.getState().refreshChatsNow()
-          useAppStore.getState().selectSession(newSid)
+          // Bound pane: report the new id (caller re-binds) instead of moving the
+          // global current; main pane: select it globally as before.
+          if (isBound) onSessionCreated?.(newSid)
+          else useAppStore.getState().selectSession(newSid)
         }
         // Real user message is now persisted — reload, then drop the optimistic one.
         await useAppStore.getState().loadChatHistory(newSid)
@@ -357,7 +367,7 @@ export function useChat(boundSessionId?: string | null) {
         setSending(false)
       }
     },
-    [sid, effectiveModel, sending, runStream],
+    [sid, isBound, onSessionCreated, effectiveModel, sending, runStream],
   )
 
   const stop = useCallback(() => {
@@ -395,14 +405,16 @@ export function useChat(boundSessionId?: string | null) {
         // Await the full switch so the caller's loading spinner spans the whole
         // operation and clears exactly when we land on the new branch.
         await useAppStore.getState().refreshChatsNow()
-        useAppStore.getState().selectSession(newId)
+        // Bound pane adopts the branch locally; main pane switches global current.
+        if (isBound) onSessionCreated?.(newId)
+        else useAppStore.getState().selectSession(newId)
         await useAppStore.getState().loadChatHistory(newId)
         return newId
       } catch {
         return undefined
       }
     },
-    [sid],
+    [sid, isBound, onSessionCreated],
   )
 
   // Answering a clarification resumes the SAME run — the original subscription

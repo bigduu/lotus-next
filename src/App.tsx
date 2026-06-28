@@ -26,7 +26,9 @@ function App() {
   // useChat instance streams its own session concurrently. Bound to null while
   // no session is picked (cheap; bootstrap is skipped for bound instances).
   const [secondSid, setSecondSid] = useState<string | null>(null)
-  const secondChat = useChat(secondSid)
+  // onSessionCreated: when a send/fork in the 2nd pane spawns a new session,
+  // re-bind THIS pane to it (no global-current change → main pane untouched).
+  const secondChat = useChat(secondSid, (newSid) => setSecondSid(newSid))
   const pickSecond = (id: string | null) => {
     setSecondSid(id)
     // Load the picked session's history into the store WITHOUT touching the
