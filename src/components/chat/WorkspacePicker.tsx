@@ -3,10 +3,13 @@ import { Folder, Check, X, Loader2 } from "lucide-react"
 import { workspaceService } from "@services/workspace"
 import type { Workspace } from "@services/workspace/types"
 import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import {
+  ResponsiveDialog,
+  ResponsiveDialogContent,
+  ResponsiveDialogTitle,
+} from "@/components/ui/responsive-dialog"
 import { cn } from "@/lib/utils"
-
-const input =
-  "flex-1 rounded-md border bg-background px-2.5 py-1.5 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
 
 export function WorkspacePicker({
   open,
@@ -93,17 +96,18 @@ export function WorkspacePicker({
   }
 
   return (
-    <div
-      className="fixed inset-0 z-[130] flex items-end justify-center bg-black/50 p-0 md:items-center md:p-4"
-      onClick={onClose}
+    <ResponsiveDialog
+      open
+      onOpenChange={(o) => {
+        if (!o) onClose()
+      }}
     >
-      <div
-        className="flex max-h-[80vh] w-full max-w-lg flex-col overflow-hidden rounded-t-2xl border bg-card shadow-2xl md:rounded-2xl"
-        onClick={(e) => e.stopPropagation()}
-        style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
+      <ResponsiveDialogContent
+        showCloseButton={false}
+        className="p-0 sm:max-w-lg"
       >
         <div className="flex items-center justify-between border-b px-4 py-3">
-          <span className="text-sm font-semibold">选择工作目录</span>
+          <ResponsiveDialogTitle>选择工作目录</ResponsiveDialogTitle>
           <Button size="icon" variant="ghost" onClick={onClose}>
             <X />
           </Button>
@@ -117,8 +121,8 @@ export function WorkspacePicker({
           ) : null}
 
           <div className="flex gap-2">
-            <input
-              className={input}
+            <Input
+              className="flex-1"
               placeholder="绝对路径,如 /Users/you/project"
               value={path}
               autoFocus
@@ -190,7 +194,7 @@ export function WorkspacePicker({
             )}
           </div>
         </div>
-      </div>
-    </div>
+      </ResponsiveDialogContent>
+    </ResponsiveDialog>
   )
 }

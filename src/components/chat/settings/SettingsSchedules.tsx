@@ -3,10 +3,9 @@ import { Trash2, Plus, Power, Pencil } from "lucide-react"
 import { agentClient } from "@services/chat/AgentService"
 import type { ScheduleEntry, ScheduleTrigger } from "@services/chat/AgentService"
 import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import { Textarea } from "@/components/ui/textarea"
 import { cn } from "@/lib/utils"
-
-const input =
-  "w-full rounded-md border bg-background px-2.5 py-1.5 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
 
 function triggerSummary(t: ScheduleTrigger): string {
   const tt = t as { type: string; every_seconds?: number; expression?: string }
@@ -99,10 +98,10 @@ export function SettingsSchedules() {
 
       {adding || editId ? (
         <div className="space-y-2.5 rounded-lg border bg-muted/30 p-3">
-          <input className={input} placeholder="名称" value={name} onChange={(e) => setName(e.target.value)} />
-          <input className={input} placeholder="cron 表达式(如 0 9 * * *)" value={cron} onChange={(e) => setCron(e.target.value)} />
-          <textarea
-            className={cn(input, "min-h-16 resize-y")}
+          <Input placeholder="名称" value={name} onChange={(e) => setName(e.target.value)} />
+          <Input placeholder="cron 表达式(如 0 9 * * *)" value={cron} onChange={(e) => setCron(e.target.value)} />
+          <Textarea
+            className="min-h-16 resize-y rounded-md border px-2.5 py-1.5 text-sm"
             placeholder={editId ? "任务内容(留空则保持不变)" : "任务内容"}
             value={task}
             onChange={(e) => setTask(e.target.value)}

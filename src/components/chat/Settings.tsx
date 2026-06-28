@@ -7,6 +7,18 @@ import { useProviderStore } from "@shared/store/appStore/slices/providerSlice"
 import { metricsService } from "@services/metrics"
 import type { MetricsSummary } from "@services/metrics/types"
 import { Button } from "@/components/ui/button"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
+import {
+  ResponsiveDialog,
+  ResponsiveDialogContent,
+  ResponsiveDialogTitle,
+} from "@/components/ui/responsive-dialog"
 import { cn } from "@/lib/utils"
 import { SettingsProviders } from "@/components/chat/settings/SettingsProviders"
 import { SettingsMcp } from "@/components/chat/settings/SettingsMcp"
@@ -66,25 +78,21 @@ function GeneralTab() {
         {models.length === 0 ? (
           <p className="text-xs text-muted-foreground">模型列表加载中或为空</p>
         ) : (
-          <select
-            value={activeModel}
-            onChange={(e) => setSelectedModel(e.target.value)}
-            className="w-full rounded-lg border bg-transparent px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          >
-            <option value="" disabled>
-              选择模型
-            </option>
-            {activeModel && !models.includes(activeModel) ? (
-              <option value={activeModel} className="bg-card">
-                {activeModel}
-              </option>
-            ) : null}
-            {models.map((m) => (
-              <option key={m} value={m} className="bg-card">
-                {m}
-              </option>
-            ))}
-          </select>
+          <Select value={activeModel} onValueChange={setSelectedModel}>
+            <SelectTrigger className="w-full">
+              <SelectValue placeholder="选择模型" />
+            </SelectTrigger>
+            <SelectContent>
+              {activeModel && !models.includes(activeModel) ? (
+                <SelectItem value={activeModel}>{activeModel}</SelectItem>
+              ) : null}
+              {models.map((m) => (
+                <SelectItem key={m} value={m}>
+                  {m}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         )}
       </section>
 
@@ -133,17 +141,18 @@ export function Settings({ open, onClose }: { open: boolean; onClose: () => void
   const current = TABS.find((t) => t.id === tab) ?? TABS[0]
 
   return (
-    <div
-      className="fixed inset-0 z-[120] flex items-end justify-center bg-black/50 p-0 md:items-center md:p-4"
-      onClick={onClose}
+    <ResponsiveDialog
+      open
+      onOpenChange={(o) => {
+        if (!o) onClose()
+      }}
     >
-      <div
-        className="flex h-[88vh] w-full max-w-3xl flex-col overflow-hidden rounded-t-2xl border bg-card shadow-2xl md:h-[80vh] md:rounded-2xl"
-        onClick={(e) => e.stopPropagation()}
-        style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
+      <ResponsiveDialogContent
+        showCloseButton={false}
+        className="h-[88dvh] p-0 sm:h-[80vh] sm:max-w-3xl"
       >
         <div className="flex items-center justify-between border-b px-4 py-3">
-          <span className="text-sm font-semibold">系统设置</span>
+          <ResponsiveDialogTitle>系统设置</ResponsiveDialogTitle>
           <Button size="icon" variant="ghost" onClick={onClose}>
             <X />
           </Button>
@@ -169,7 +178,7 @@ export function Settings({ open, onClose }: { open: boolean; onClose: () => void
           </div>
           <div className="min-h-0 flex-1 overflow-y-auto p-4">{current.render()}</div>
         </div>
-      </div>
-    </div>
+      </ResponsiveDialogContent>
+    </ResponsiveDialog>
   )
 }

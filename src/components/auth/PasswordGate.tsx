@@ -1,5 +1,6 @@
 import { useState } from "react"
 import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
 import { ServiceFactory } from "@services/common/ServiceFactory"
 
 export function PasswordGate({ onVerified }: { onVerified: () => void }) {
@@ -31,7 +32,7 @@ export function PasswordGate({ onVerified }: { onVerified: () => void }) {
         <label className="mt-5 block text-sm font-medium" htmlFor="access-password">
           访问密码
         </label>
-        <input
+        <Input
           id="access-password"
           type="password"
           value={password}
@@ -41,8 +42,8 @@ export function PasswordGate({ onVerified }: { onVerified: () => void }) {
           }}
           placeholder="请输入访问密码"
           autoFocus
-          // 16px font avoids iOS focus auto-zoom.
-          className="mt-1.5 w-full rounded-lg border bg-transparent px-3 py-2 text-base outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          // text-base (16px) on mobile avoids iOS focus auto-zoom.
+          className="mt-1.5 h-auto rounded-lg py-2 !text-base"
         />
         {error ? <p className="mt-2 text-sm text-destructive">{error}</p> : null}
 

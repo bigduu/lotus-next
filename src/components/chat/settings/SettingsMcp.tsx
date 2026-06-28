@@ -2,9 +2,7 @@ import { useEffect, useState } from "react"
 import { Trash2, Plus, Plug, PlugZap } from "lucide-react"
 import { mcpService, createDefaultMcpServerConfig, type McpServer } from "@services/mcp"
 import { Button } from "@/components/ui/button"
-
-const input =
-  "w-full rounded-md border bg-background px-2.5 py-1.5 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+import { Input } from "@/components/ui/input"
 
 function runtimeStatus(s: McpServer): string {
   const r = s.runtime as { status?: string; tool_count?: number } | undefined
@@ -61,7 +59,7 @@ export function SettingsMcp() {
 
       {adding ? (
         <div className="space-y-2.5 rounded-lg border bg-muted/30 p-3">
-          <input className={input} placeholder="名称" value={name} onChange={(e) => setName(e.target.value)} />
+          <Input placeholder="名称" value={name} onChange={(e) => setName(e.target.value)} />
           <div className="flex gap-2">
             {(["stdio", "sse"] as const).map((k) => (
               <Button key={k} size="sm" variant={kind === k ? "default" : "secondary"} className="flex-1" onClick={() => setKind(k)}>
@@ -71,11 +69,11 @@ export function SettingsMcp() {
           </div>
           {kind === "stdio" ? (
             <>
-              <input className={input} placeholder="命令(如 npx)" value={command} onChange={(e) => setCommand(e.target.value)} />
-              <input className={input} placeholder="参数(空格分隔)" value={args} onChange={(e) => setArgs(e.target.value)} />
+              <Input placeholder="命令(如 npx)" value={command} onChange={(e) => setCommand(e.target.value)} />
+              <Input placeholder="参数(空格分隔)" value={args} onChange={(e) => setArgs(e.target.value)} />
             </>
           ) : (
-            <input className={input} placeholder="SSE URL" value={url} onChange={(e) => setUrl(e.target.value)} />
+            <Input placeholder="SSE URL" value={url} onChange={(e) => setUrl(e.target.value)} />
           )}
           <div className="flex justify-end gap-2">
             <Button size="sm" variant="secondary" onClick={() => setAdding(false)}>

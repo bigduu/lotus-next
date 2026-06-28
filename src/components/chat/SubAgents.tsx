@@ -60,13 +60,13 @@ function SubAgentCard({ child, onOpen }: { child: ChildProgress; onOpen?: () => 
 
 /** Claude-Code-style inline sub-agent blocks; click one to open its full transcript. */
 export function SubAgents({
-  children,
+  agents,
   onOpen,
 }: {
-  children: Record<string, ChildProgress>
+  agents: Record<string, ChildProgress>
   onOpen?: (childId: string) => void
 }) {
-  const entries = Object.entries(children)
+  const entries = Object.entries(agents)
   if (entries.length === 0) return null
 
   return (

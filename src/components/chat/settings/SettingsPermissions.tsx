@@ -2,9 +2,7 @@ import { useEffect, useState } from "react"
 import { Trash2, Plus } from "lucide-react"
 import { settingsService } from "@services/config/SettingsService"
 import { Button } from "@/components/ui/button"
-
-const input =
-  "flex-1 rounded-md border bg-background px-2.5 py-1.5 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+import { Input } from "@/components/ui/input"
 
 export function SettingsPermissions() {
   const [rules, setRules] = useState<string[]>([])
@@ -45,8 +43,8 @@ export function SettingsPermissions() {
       <section className="space-y-2 rounded-lg border p-3">
         <div className="text-xs font-medium text-muted-foreground">新增规则</div>
         <div className="flex gap-2">
-          <input
-            className={input}
+          <Input
+            className="flex-1"
             placeholder="工具名 / 模式"
             value={draft}
             onChange={(e) => setDraft(e.target.value)}

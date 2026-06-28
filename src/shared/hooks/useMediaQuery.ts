@@ -41,3 +41,12 @@ export function useMediaQuery(query: string): boolean {
 export function useIsMobile(): boolean {
   return useMediaQuery("(max-width: 768px)");
 }
+
+/**
+ * Wide desktop: enough room to dock the inspector as an in-flow third column
+ * (sidebar ~288 + inspector ~384 leaves a comfortable chat width). Below this
+ * the inspector falls back to a bottom-sheet overlay.
+ */
+export function useIsWide(): boolean {
+  return useMediaQuery("(min-width: 1280px)");
+}

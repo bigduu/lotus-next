@@ -104,12 +104,18 @@ export function Inspector({
   onClose,
   workspace,
   onEditWorkspace,
+  docked = false,
+  width,
 }: {
   sessionId: string | null
   open: boolean
   onClose: () => void
   workspace?: string | null
   onEditWorkspace?: () => void
+  /** Render as an in-flow right column (wide desktop) instead of an overlay sheet. */
+  docked?: boolean
+  /** Docked column width in px (resizable). */
+  width?: number
 }) {
   const chat = useAppStore(selectCurrentChat)
   const taskList = useAppStore((s) => (sessionId ? s.taskLists[sessionId] : undefined))
@@ -133,23 +139,8 @@ export function Inspector({
   const usage = cfg?.tokenUsage
   const childList = Object.entries(children ?? {})
 
-  return (
+  const body = (
     <>
-      <button
-        className="fixed inset-0 z-40 bg-black/50"
-        aria-label="关闭检查器"
-        onClick={onClose}
-      />
-      <aside
-        className={cn(
-          "fixed z-50 flex flex-col bg-card",
-          // mobile: bottom sheet
-          "inset-x-0 bottom-0 max-h-[85vh] rounded-t-2xl border-t",
-          // desktop: right rail
-          "md:inset-y-0 md:right-0 md:left-auto md:w-96 md:max-h-none md:rounded-none md:border-l md:border-t-0",
-        )}
-        style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
-      >
         <div className="flex items-center justify-between border-b px-4 py-3">
           <span className="text-sm font-semibold">检查器</span>
           <Button size="icon" variant="ghost" onClick={onClose}>
@@ -278,6 +269,42 @@ export function Inspector({
             </div>
           </details>
         </div>
+    </>
+  )
+
+  // Wide desktop: dock as an in-flow right column alongside the chat (no
+  // backdrop, both visible at once). Narrow/mobile: overlay bottom-sheet / rail.
+  if (docked) {
+    return (
+      <aside
+        className="flex shrink-0 flex-col border-l bg-card"
+        // Dynamic cap: never wider than ~38% of the viewport, so the chat column
+        // always stays larger than the inspector regardless of drag / window size.
+        style={{ width: width ?? 384, maxWidth: "38vw" }}
+      >
+        {body}
+      </aside>
+    )
+  }
+
+  return (
+    <>
+      <button
+        className="fixed inset-0 z-40 bg-black/50"
+        aria-label="关闭检查器"
+        onClick={onClose}
+      />
+      <aside
+        className={cn(
+          "fixed z-50 flex flex-col bg-card",
+          // mobile: bottom sheet
+          "inset-x-0 bottom-0 max-h-[85vh] rounded-t-2xl border-t",
+          // desktop (narrow): right rail overlay
+          "md:inset-y-0 md:right-0 md:left-auto md:w-96 md:max-h-none md:rounded-none md:border-l md:border-t-0",
+        )}
+        style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
+      >
+        {body}
       </aside>
     </>
   )

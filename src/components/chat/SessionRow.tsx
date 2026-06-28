@@ -1,6 +1,12 @@
 import { useEffect, useRef, useState } from "react"
 import { MoreHorizontal, Pencil, Pin, PinOff, Trash2 } from "lucide-react"
 import { cn } from "@/lib/utils"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 
 type Chat = { id: string; title?: string | null; isRunning?: boolean; pinned?: boolean }
 
@@ -22,8 +28,6 @@ export function SessionRow({
 }) {
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(chat.title ?? "")
-  const [menuOpen, setMenuOpen] = useState(false)
-  const menuRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
@@ -35,15 +39,6 @@ export function SessionRow({
       })
     }
   }, [editing, chat.title])
-
-  useEffect(() => {
-    if (!menuOpen) return
-    const onDoc = (e: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenuOpen(false)
-    }
-    document.addEventListener("mousedown", onDoc)
-    return () => document.removeEventListener("mousedown", onDoc)
-  }, [menuOpen])
 
   const commit = () => {
     const t = draft.trim()
@@ -91,62 +86,46 @@ export function SessionRow({
         <span className="truncate">{chat.title || "新会话"}</span>
       </button>
 
-      <div ref={menuRef} className="relative shrink-0">
-        <button
-          onClick={() => setMenuOpen((v) => !v)}
+      <DropdownMenu>
+        <DropdownMenuTrigger
           aria-label="会话操作"
           className={cn(
-            "mr-1 rounded p-1 text-muted-foreground transition-opacity hover:bg-accent hover:text-foreground",
-            menuOpen
-              ? "opacity-100"
-              : "opacity-100 md:opacity-0 md:group-hover/row:opacity-100",
+            "mr-1 shrink-0 rounded p-1 text-muted-foreground outline-none transition-opacity hover:bg-accent hover:text-foreground",
+            "opacity-100 data-[state=open]:opacity-100 md:opacity-0 md:group-hover/row:opacity-100",
           )}
         >
           <MoreHorizontal className="size-4" />
-        </button>
-        {menuOpen ? (
-          <div className="absolute right-0 top-full z-50 mt-1 min-w-32 rounded-xl border bg-popover p-1 shadow-xl">
-            <button
-              type="button"
-              onClick={() => {
-                setMenuOpen(false)
-                onTogglePin()
-              }}
-              className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-sm transition-colors hover:bg-accent"
-            >
-              {chat.pinned ? (
-                <>
-                  <PinOff className="size-3.5" /> 取消置顶
-                </>
-              ) : (
-                <>
-                  <Pin className="size-3.5" /> 置顶
-                </>
-              )}
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setMenuOpen(false)
-                setEditing(true)
-              }}
-              className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-sm transition-colors hover:bg-accent"
-            >
-              <Pencil className="size-3.5" /> 重命名
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setMenuOpen(false)
-                onDelete()
-              }}
-              className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-sm text-destructive transition-colors hover:bg-accent"
-            >
-              <Trash2 className="size-3.5" /> 删除
-            </button>
-          </div>
-        ) : null}
-      </div>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="min-w-32 rounded-xl">
+          <DropdownMenuItem
+            onClick={onTogglePin}
+            className="gap-2 rounded-lg px-2.5 py-1.5"
+          >
+            {chat.pinned ? (
+              <>
+                <PinOff className="size-3.5" /> 取消置顶
+              </>
+            ) : (
+              <>
+                <Pin className="size-3.5" /> 置顶
+              </>
+            )}
+          </DropdownMenuItem>
+          <DropdownMenuItem
+            onClick={() => setEditing(true)}
+            className="gap-2 rounded-lg px-2.5 py-1.5"
+          >
+            <Pencil className="size-3.5" /> 重命名
+          </DropdownMenuItem>
+          <DropdownMenuItem
+            variant="destructive"
+            onClick={onDelete}
+            className="gap-2 rounded-lg px-2.5 py-1.5"
+          >
+            <Trash2 className="size-3.5" /> 删除
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
     </div>
   )
 }

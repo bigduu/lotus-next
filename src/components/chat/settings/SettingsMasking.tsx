@@ -2,13 +2,20 @@ import { useEffect, useMemo, useState } from "react"
 import { Trash2, Plus } from "lucide-react"
 import { serviceFactory } from "@services/common/ServiceFactory"
 import { Button } from "@/components/ui/button"
-import { cn } from "@/lib/utils"
+import { Input } from "@/components/ui/input"
+import { Textarea } from "@/components/ui/textarea"
+import { Switch } from "@/components/ui/switch"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 
 type Entry = { pattern: string; match_type: string; enabled: boolean }
 
 const MATCH_TYPES = ["exact", "contains", "regex"]
-const input =
-  "rounded-md border bg-background px-2.5 py-1.5 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
 
 export function SettingsMasking() {
   const [entries, setEntries] = useState<Entry[]>([])
@@ -64,8 +71,8 @@ export function SettingsMasking() {
       <section className="space-y-2 rounded-lg border p-3">
         <div className="text-xs font-medium text-muted-foreground">新增规则</div>
         <div className="flex gap-2">
-          <input
-            className={cn(input, "flex-1")}
+          <Input
+            className="flex-1"
             placeholder="要掩码的内容 / 模式"
             value={pattern}
             onChange={(e) => setPattern(e.target.value)}
@@ -73,13 +80,18 @@ export function SettingsMasking() {
               if (e.key === "Enter") add()
             }}
           />
-          <select className={input} value={matchType} onChange={(e) => setMatchType(e.target.value)}>
-            {MATCH_TYPES.map((t) => (
-              <option key={t} value={t} className="bg-card">
-                {t}
-              </option>
-            ))}
-          </select>
+          <Select value={matchType} onValueChange={setMatchType}>
+            <SelectTrigger className="w-28 shrink-0">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {MATCH_TYPES.map((t) => (
+                <SelectItem key={t} value={t}>
+                  {t}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
           <Button size="sm" onClick={add} disabled={!pattern.trim()}>
             <Plus className="size-4" />
           </Button>
@@ -96,12 +108,12 @@ export function SettingsMasking() {
           <ul className="space-y-1.5">
             {entries.map((e, i) => (
               <li key={`${e.pattern}-${i}`} className="flex items-center gap-2 rounded-md bg-muted/40 px-2.5 py-1.5">
-                <input
-                  type="checkbox"
+                <Switch
                   checked={e.enabled}
-                  onChange={() =>
+                  onCheckedChange={() =>
                     void save(entries.map((x, j) => (j === i ? { ...x, enabled: !x.enabled } : x)))
                   }
+                  aria-label="启用规则"
                 />
                 <span className="min-w-0 flex-1 truncate font-mono text-xs">{e.pattern}</span>
                 <span className="shrink-0 rounded bg-muted px-1 text-[10px] text-muted-foreground">
@@ -122,8 +134,8 @@ export function SettingsMasking() {
 
       <section className="space-y-2 rounded-lg border p-3">
         <div className="text-xs font-medium text-muted-foreground">预览</div>
-        <textarea
-          className={cn(input, "min-h-16 w-full resize-y")}
+        <Textarea
+          className="min-h-16 resize-y rounded-md border px-2.5 py-1.5 text-sm"
           placeholder="输入一段文本,看看掩码后的效果…"
           value={sample}
           onChange={(e) => setSample(e.target.value)}

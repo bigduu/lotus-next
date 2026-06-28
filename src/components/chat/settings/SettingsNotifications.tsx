@@ -7,6 +7,7 @@ import {
   notify,
 } from "@/lib/notify"
 import { Button } from "@/components/ui/button"
+import { Switch } from "@/components/ui/switch"
 
 export function SettingsNotifications() {
   const [enabled, setEnabled] = useState(isNotifyEnabled())
@@ -33,9 +34,12 @@ export function SettingsNotifications() {
               agent 任务在后台(标签页不可见或在看别的会话)完成时,通过浏览器通知提醒你。
             </p>
           </div>
-          <Button size="sm" variant={enabled ? "default" : "secondary"} onClick={toggle}>
-            {enabled ? "已开启" : "开启"}
-          </Button>
+          <Switch
+            checked={enabled}
+            onCheckedChange={() => void toggle()}
+            aria-label="任务完成提醒"
+            className="mt-0.5"
+          />
         </div>
         {perm === "denied" ? (
           <p className="mt-2 text-xs text-destructive">浏览器已拒绝通知权限,请在浏览器站点设置里允许。</p>

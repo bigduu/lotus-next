@@ -4,11 +4,18 @@ import { settingsService, type DeviceCodeInfo } from "@services/config/SettingsS
 import { useProviderStore } from "@shared/store/appStore/slices/providerSlice"
 import type { ProviderInstance, ProviderType } from "@shared/types/providerConfig"
 import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import { cn } from "@/lib/utils"
 
 const PROVIDER_TYPES: ProviderType[] = ["anthropic", "openai", "gemini", "copilot", "bodhi"]
-const input =
-  "w-full rounded-md border bg-background px-2.5 py-1.5 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+const REASONING_EFFORTS = ["low", "medium", "high", "xhigh", "max"]
 
 type Cfg = Record<string, unknown>
 const str = (v: unknown) => (typeof v === "string" ? v : v == null ? "" : String(v))
@@ -29,7 +36,7 @@ function Field({
   return (
     <label className="block">
       <span className="mb-1 block text-xs text-muted-foreground">{label}</span>
-      <input className={input} type={type} value={value} placeholder={placeholder} onChange={(e) => onChange(e.target.value)} />
+      <Input type={type} value={value} placeholder={placeholder} onChange={(e) => onChange(e.target.value)} />
     </label>
   )
 }
@@ -128,13 +135,18 @@ function InstanceEditor({
     <div className="space-y-2.5 rounded-lg border bg-muted/30 p-3">
       <label className="block">
         <span className="mb-1 block text-xs text-muted-foreground">类型</span>
-        <select className={input} value={type} onChange={(e) => setType(e.target.value as ProviderType)}>
-          {PROVIDER_TYPES.map((t) => (
-            <option key={t} value={t} className="bg-card">
-              {t}
-            </option>
-          ))}
-        </select>
+        <Select value={type} onValueChange={(v) => setType(v as ProviderType)}>
+          <SelectTrigger className="w-full">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {PROVIDER_TYPES.map((t) => (
+              <SelectItem key={t} value={t}>
+                {t}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       </label>
       <Field label="名称" value={label} onChange={setLabel} placeholder="如 我的 Anthropic" />
       {type === "copilot" ? (
@@ -150,13 +162,21 @@ function InstanceEditor({
         <Field label="Max tokens" value={str(cfg.max_tokens)} onChange={(v) => set("max_tokens", v)} placeholder="8000" />
         <label className="block">
           <span className="mb-1 block text-xs text-muted-foreground">推理强度</span>
-          <select className={input} value={str(cfg.reasoning_effort) || "medium"} onChange={(e) => set("reasoning_effort", e.target.value)}>
-            {["low", "medium", "high", "xhigh", "max"].map((r) => (
-              <option key={r} value={r} className="bg-card">
-                {r}
-              </option>
-            ))}
-          </select>
+          <Select
+            value={str(cfg.reasoning_effort) || "medium"}
+            onValueChange={(v) => set("reasoning_effort", v)}
+          >
+            <SelectTrigger className="w-full">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {REASONING_EFFORTS.map((r) => (
+                <SelectItem key={r} value={r}>
+                  {r}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </label>
       </div>
       <div className="flex justify-end gap-2 pt-1">

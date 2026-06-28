@@ -1,11 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import { useShallow } from "zustand/react/shallow"
-import {
-  useAppStore,
-  initializeStore,
-  selectCurrentMessages,
-  selectCurrentChat,
-} from "@shared/store/appStore"
+import { useAppStore, initializeStore, selectSessionById } from "@shared/store/appStore"
 import { useProviderStore } from "@shared/store/appStore/slices/providerSlice"
 import { agentClient } from "@services/chat/AgentService"
 import { agentApiClient } from "@services/api"
@@ -30,12 +25,24 @@ export type PendingApproval = {
  * streaming is held locally here (the full jotai streaming machine is a later
  * port). On terminal we reload history so the persisted assistant message
  * replaces the live buffer.
+ *
+ * `boundSessionId` makes the hook drive a SPECIFIC session instead of the global
+ * "current" one — this is what lets multiple panes each run an independent live
+ * chat. Called with no argument (the main pane), the hook follows the global
+ * `currentSessionId` and behaves exactly as before. A bound instance skips the
+ * one-time app bootstrap (the main instance owns it) and never persists the
+ * "last session" pointer.
  */
-export function useChat() {
+export function useChat(boundSessionId?: string | null) {
+  const isBound = boundSessionId !== undefined
+
   const chats = useAppStore(useShallow((s) => s.chats))
-  const currentSessionId = useAppStore((s) => s.currentSessionId)
-  const currentChat = useAppStore(selectCurrentChat)
-  const messages = useAppStore(useShallow(selectCurrentMessages))
+  const globalCurrentSessionId = useAppStore((s) => s.currentSessionId)
+  // The session this hook instance drives: a bound pane uses its own id; the
+  // main pane follows the global current. Everything below keys off `sid`.
+  const sid = isBound ? boundSessionId : globalCurrentSessionId
+  const currentChat = useAppStore(selectSessionById(sid))
+  const messages = useAppStore(useShallow((s) => selectSessionById(sid)(s)?.messages ?? []))
   const selectedModel = useAppStore((s) => s.selectedModel)
   // Global default model (configured in provider settings). Used when the user
   // hasn't explicitly picked one, so sends honor the default (e.g. glm-5.2)
@@ -47,8 +54,7 @@ export function useChat() {
     return (id ? s.providerInstances.find((i) => i.id === id) : undefined)?.config?.reasoning_effort
   })
   const reasoningEffort =
-    useAppStore((s) => s.inputStates[currentSessionId ?? ""]?.reasoningEffort) ??
-    globalReasoningEffort
+    useAppStore((s) => s.inputStates[sid ?? ""]?.reasoningEffort) ?? globalReasoningEffort
 
   const [booted, setBooted] = useState(false)
   const [streamingText, setStreamingText] = useState<string | null>(null)
@@ -72,11 +78,11 @@ export function useChat() {
   // Per-child rolling output buffer for live sub-agent previews.
   const childBufRef = useRef<Record<string, string>>({})
 
-  // Streaming / optimistic message are scoped to the current session.
-  const streaming = streamSid === currentSessionId ? streamingText : null
-  const streamingReasoning = streamSid === currentSessionId ? streamingReasoningText : null
+  // Streaming / optimistic message are scoped to this instance's session.
+  const streaming = streamSid === sid ? streamingText : null
+  const streamingReasoning = streamSid === sid ? streamingReasoningText : null
   const pendingUserText =
-    pending && (pending.sid === currentSessionId || pending.sid === null) ? pending.text : null
+    pending && (pending.sid === sid || pending.sid === null) ? pending.text : null
 
   const pushToken = useCallback((c: string) => {
     streamBufRef.current += c
@@ -116,6 +122,12 @@ export function useChat() {
   const LAST_SESSION_KEY = "lotus_next_last_session"
 
   useEffect(() => {
+    // Only the main (unbound) instance bootstraps the app; bound panes mount
+    // after boot and reuse the already-initialized store.
+    if (isBound) {
+      setBooted(true)
+      return
+    }
     void initializeStore().finally(() => {
       // Restore the last session the user was on (not whatever loadChats defaulted to).
       try {
@@ -129,17 +141,17 @@ export function useChat() {
       }
       setBooted(true)
     })
-  }, [])
+  }, [isBound])
 
-  // Persist the active session so it's restored next launch.
+  // Persist the active session so it's restored next launch — main pane only.
   useEffect(() => {
-    if (!currentSessionId) return
+    if (isBound || !globalCurrentSessionId) return
     try {
-      localStorage.setItem(LAST_SESSION_KEY, currentSessionId)
+      localStorage.setItem(LAST_SESSION_KEY, globalCurrentSessionId)
     } catch {
       /* ignore */
     }
-  }, [currentSessionId])
+  }, [globalCurrentSessionId, isBound])
 
   const select = useCallback((id: string) => {
     useAppStore.getState().selectSession(id)
@@ -149,8 +161,8 @@ export function useChat() {
   // Execute a session + subscribe to its token stream. Shared by send (after a
   // new user message) and by regenerate / retry / edit (after a truncate).
   const runStream = useCallback(
-    async (sid: string, opts?: { resume?: boolean }) => {
-      setStreamSid(sid)
+    async (runSid: string, opts?: { resume?: boolean }) => {
+      setStreamSid(runSid)
       streamBufRef.current = ""
       reasonBufRef.current = ""
       childBufRef.current = {}
@@ -165,10 +177,10 @@ export function useChat() {
       // On resume (after answering a question/permission) the backend already
       // continues the suspended run — only subscribe, don't kick a fresh execute.
       if (!opts?.resume) {
-        void agentClient.execute(sid, effectiveModel || undefined, reasoningEffort).catch(() => {})
+        void agentClient.execute(runSid, effectiveModel || undefined, reasoningEffort).catch(() => {})
       }
       await agentClient.subscribeToEvents(
-        sid,
+        runSid,
         {
           onToken: pushToken,
           onReasoningToken: pushReasoning,
@@ -227,16 +239,16 @@ export function useChat() {
             // bubble clears into a blank/empty view.
             await useAppStore
               .getState()
-              .loadChatHistory(sid, { waitForAssistant: true, retries: 8, retryDelayMs: 150 })
+              .loadChatHistory(runSid, { waitForAssistant: true, retries: 8, retryDelayMs: 150 })
             stopStream(null)
           },
           onError: async () => {
             setSendError(true)
-            await useAppStore.getState().loadChatHistory(sid)
+            await useAppStore.getState().loadChatHistory(runSid)
             stopStream(null)
           },
           onCancelled: async () => {
-            await useAppStore.getState().loadChatHistory(sid)
+            await useAppStore.getState().loadChatHistory(runSid)
             stopStream(null)
           },
         },
@@ -249,13 +261,13 @@ export function useChat() {
   // Re-run the conversation after a server-side truncate/restore (regenerate,
   // retry, edit). Shows the streaming placeholder + reloads history on done.
   const rerun = useCallback(
-    async (sid: string) => {
+    async (runSid: string) => {
       if (sending) return
       setSending(true)
       setSendError(false)
       try {
-        await useAppStore.getState().loadChatHistory(sid)
-        await runStream(sid)
+        await useAppStore.getState().loadChatHistory(runSid)
+        await runStream(runSid)
       } catch (err) {
         console.error("[useChat] rerun failed", err)
         stopStream(null)
@@ -267,21 +279,20 @@ export function useChat() {
   )
 
   const regenerate = useCallback(async () => {
-    if (!currentSessionId) return
-    await agentClient.truncateSessionMessages(currentSessionId, { mode: "after_last_user" }).catch(() => {})
-    await rerun(currentSessionId)
-  }, [currentSessionId, rerun])
+    if (!sid) return
+    await agentClient.truncateSessionMessages(sid, { mode: "after_last_user" }).catch(() => {})
+    await rerun(sid)
+  }, [sid, rerun])
 
   const retry = useCallback(async () => {
-    if (!currentSessionId) return
-    await agentClient.truncateSessionMessages(currentSessionId, { mode: "error_retry" }).catch(() => {})
-    await rerun(currentSessionId)
-  }, [currentSessionId, rerun])
+    if (!sid) return
+    await agentClient.truncateSessionMessages(sid, { mode: "error_retry" }).catch(() => {})
+    await rerun(sid)
+  }, [sid, rerun])
 
   // Edit a user message in place, drop everything after it, and re-run.
   const editMessage = useCallback(
     async (messageId: string, text: string) => {
-      const sid = currentSessionId
       const body = text.trim()
       if (!sid || !body) return
       await agentClient.patchSessionMessage(sid, messageId, { content: body }).catch(() => {})
@@ -290,7 +301,7 @@ export function useChat() {
         .catch(() => {})
       await rerun(sid)
     },
-    [currentSessionId, rerun],
+    [sid, rerun],
   )
 
   const send = useCallback(
@@ -304,7 +315,7 @@ export function useChat() {
     ) => {
       const body = text.trim()
       if ((!body && !opts?.images?.length) || sending) return
-      const startSid = currentSessionId
+      const startSid = sid
       setSending(true)
       setSendError(false)
       // Optimistically show the user's message + streaming placeholder right away,
@@ -316,28 +327,28 @@ export function useChat() {
       try {
         const res = await agentClient.sendMessage({
           message: body,
-          session_id: currentSessionId ?? undefined,
+          session_id: sid ?? undefined,
           model: effectiveModel,
           selected_skill_ids: opts?.skillIds?.length ? opts.skillIds : undefined,
           images: opts?.images?.length ? opts.images : undefined,
           // Only meaningful when creating a NEW session; an existing session keeps
           // the cwd it was created with.
-          workspace_path: !currentSessionId && opts?.workspacePath ? opts.workspacePath : undefined,
+          workspace_path: !sid && opts?.workspacePath ? opts.workspacePath : undefined,
         })
-        const sid = res.session_id
+        const newSid = res.session_id
 
-        if (sid !== startSid) {
+        if (newSid !== startSid) {
           // New session: re-key the optimistic message + stream to the real id.
-          if (body) setPending({ sid, text: body })
-          setStreamSid(sid)
+          if (body) setPending({ sid: newSid, text: body })
+          setStreamSid(newSid)
           await useAppStore.getState().refreshChatsNow()
-          useAppStore.getState().selectSession(sid)
+          useAppStore.getState().selectSession(newSid)
         }
         // Real user message is now persisted — reload, then drop the optimistic one.
-        await useAppStore.getState().loadChatHistory(sid)
+        await useAppStore.getState().loadChatHistory(newSid)
         setPending(null)
 
-        await runStream(sid)
+        await runStream(newSid)
       } catch (err) {
         console.error("[useChat] send failed", err)
         setSendError(true)
@@ -346,14 +357,14 @@ export function useChat() {
         setSending(false)
       }
     },
-    [currentSessionId, effectiveModel, sending, runStream],
+    [sid, effectiveModel, sending, runStream],
   )
 
   const stop = useCallback(() => {
     abortRef.current?.abort()
-    if (currentSessionId) void agentClient.stopGeneration(currentSessionId).catch(() => {})
+    if (sid) void agentClient.stopGeneration(sid).catch(() => {})
     stopStream(null)
-  }, [currentSessionId])
+  }, [sid])
 
   const newChat = useCallback(() => {
     useAppStore.getState().selectSession(null)
@@ -362,21 +373,21 @@ export function useChat() {
 
   const deleteMessage = useCallback(
     async (messageId: string) => {
-      if (!currentSessionId) return
-      await agentClient.deleteSessionMessage(currentSessionId, messageId).catch(() => {})
-      await useAppStore.getState().loadChatHistory(currentSessionId)
+      if (!sid) return
+      await agentClient.deleteSessionMessage(sid, messageId).catch(() => {})
+      await useAppStore.getState().loadChatHistory(sid)
     },
-    [currentSessionId],
+    [sid],
   )
 
   // Fork the conversation from a message: backend clones the session up to that
   // message into a fresh one; we switch to the new branch.
   const fork = useCallback(
     async (messageId: string): Promise<string | undefined> => {
-      if (!currentSessionId) return undefined
+      if (!sid) return undefined
       try {
         const res = await agentApiClient.post<{ session?: { id?: string; session_id?: string } }>(
-          `sessions/${encodeURIComponent(currentSessionId)}/fork`,
+          `sessions/${encodeURIComponent(sid)}/fork`,
           { up_to_message_id: messageId },
         )
         const newId = res?.session?.id ?? res?.session?.session_id
@@ -391,7 +402,7 @@ export function useChat() {
         return undefined
       }
     },
-    [currentSessionId],
+    [sid],
   )
 
   // Answering a clarification resumes the SAME run — the original subscription
@@ -399,8 +410,7 @@ export function useChat() {
   // flowing into onToken. No new run / no `sending` conflict.
   const answerQuestion = useCallback(
     async (text: string) => {
-      if (!currentSessionId) return
-      const sid = currentSessionId
+      if (!sid) return
       setPendingQuestion(null)
       await agentApiClient
         .post(`respond/${encodeURIComponent(sid)}`, { response: text })
@@ -409,7 +419,7 @@ export function useChat() {
       // live (and to catch a follow-up permission prompt). Don't re-execute.
       await runStream(sid, { resume: true })
     },
-    [currentSessionId, runStream],
+    [sid, runStream],
   )
 
   const respondApproval = useCallback(
@@ -425,9 +435,9 @@ export function useChat() {
   )
 
   return {
-    booted,
+    booted: isBound ? true : booted,
     chats,
-    currentSessionId,
+    currentSessionId: sid,
     currentChat,
     messages,
     streaming,

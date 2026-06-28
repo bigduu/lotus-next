@@ -5,6 +5,13 @@ import { useAppStore, selectSessionById } from "@shared/store/appStore"
 import type { Message } from "@shared/types/chatMessages"
 import { LazyMarkdown as Markdown } from "@/components/chat/LazyMarkdown"
 import { Button } from "@/components/ui/button"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import { cn } from "@/lib/utils"
 
 function text(m: Message): string {
@@ -19,7 +26,7 @@ function text(m: Message): string {
  * side-by-side (compare / reference). Full dual-composer multi-pane is deferred
  * — low value for a mobile-first app.
  */
-export function ReferencePane({ onClose }: { onClose: () => void }) {
+export function ReferencePane({ onClose, width }: { onClose: () => void; width?: number }) {
   const chats = useAppStore(useShallow((s) => s.chats))
   const [sid, setSid] = useState<string | null>(null)
   const chat = useAppStore(useShallow(selectSessionById(sid)))
@@ -30,20 +37,23 @@ export function ReferencePane({ onClose }: { onClose: () => void }) {
   }, [sid])
 
   return (
-    <aside className="hidden w-[420px] shrink-0 flex-col border-l md:flex">
+    <aside
+      className="hidden shrink-0 flex-col border-l md:flex"
+      style={{ width: width ?? 420 }}
+    >
       <div className="flex items-center gap-2 border-b px-3 py-2.5">
-        <select
-          value={sid ?? ""}
-          onChange={(e) => setSid(e.target.value || null)}
-          className="min-w-0 flex-1 truncate rounded-md border bg-transparent px-2 py-1 text-sm outline-none"
-        >
-          <option value="">选择会话对比…</option>
-          {chats.map((c) => (
-            <option key={c.id} value={c.id} className="bg-card">
-              {c.title || "新会话"}
-            </option>
-          ))}
-        </select>
+        <Select value={sid ?? undefined} onValueChange={(v) => setSid(v || null)}>
+          <SelectTrigger className="min-w-0 flex-1">
+            <SelectValue placeholder="选择会话对比…" />
+          </SelectTrigger>
+          <SelectContent>
+            {chats.map((c) => (
+              <SelectItem key={c.id} value={c.id}>
+                {c.title || "新会话"}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
         <Button size="icon" variant="ghost" aria-label="关闭分屏" onClick={onClose}>
           <X />
         </Button>

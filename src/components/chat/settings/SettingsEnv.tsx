@@ -2,9 +2,9 @@ import { useEffect, useState } from "react"
 import { Trash2, Plus } from "lucide-react"
 import { settingsService, type EnvVarResponse } from "@services/config/SettingsService"
 import { Button } from "@/components/ui/button"
-
-const input =
-  "w-full rounded-md border bg-background px-2.5 py-1.5 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+import { Input } from "@/components/ui/input"
+import { Switch } from "@/components/ui/switch"
+import { Label } from "@/components/ui/label"
 
 export function SettingsEnv() {
   const [entries, setEntries] = useState<EnvVarResponse[]>([])
@@ -55,19 +55,18 @@ export function SettingsEnv() {
 
       <section className="space-y-2 rounded-lg border p-3">
         <div className="text-xs font-medium text-muted-foreground">新增变量</div>
-        <input className={input} placeholder="名称(如 OPENAI_API_KEY)" value={name} onChange={(e) => setName(e.target.value)} />
-        <input
-          className={input}
+        <Input placeholder="名称(如 OPENAI_API_KEY)" value={name} onChange={(e) => setName(e.target.value)} />
+        <Input
           placeholder="值"
           type={secret ? "password" : "text"}
           value={value}
           onChange={(e) => setValue(e.target.value)}
         />
         <div className="flex items-center justify-between">
-          <label className="flex items-center gap-2 text-sm text-muted-foreground">
-            <input type="checkbox" checked={secret} onChange={(e) => setSecret(e.target.checked)} />
+          <Label className="text-muted-foreground font-normal">
+            <Switch checked={secret} onCheckedChange={setSecret} />
             密钥(掩码)
-          </label>
+          </Label>
           <Button size="sm" onClick={add} disabled={!name.trim() || busy}>
             <Plus className="size-4" /> 添加
           </Button>
