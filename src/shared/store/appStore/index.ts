@@ -9,6 +9,8 @@ import { TokenBudgetSlice, createTokenBudgetSlice } from "./slices/tokenBudgetSl
 import { TaskListSlice, createTaskListSlice } from "./slices/todoListSlice";
 import { InputStateSlice, createInputStateSlice } from "./slices/inputStateSlice";
 import { ExecutionStateSlice, createExecutionStateSlice } from "./slices/executionStateSlice";
+import { BackgroundBashSlice, createBackgroundBashSlice } from "./slices/backgroundBashSlice";
+import type { BashDone } from "./slices/backgroundBashSlice";
 import { AgentClient } from "@services/chat/AgentService";
 import { startAccountFeed } from "@services/chat/accountFeed";
 import { serviceFactory } from "@services/common/ServiceFactory";
@@ -50,6 +52,7 @@ export type AppState = ChatSlice &
   TaskListSlice &
   InputStateSlice &
   ExecutionStateSlice &
+  BackgroundBashSlice &
   AgentAvailabilitySlice &
   SessionIndexSyncSlice;
 
@@ -65,6 +68,7 @@ export const useAppStore = create<AppState>()(
       ...createTaskListSlice(set, get, api),
       ...createInputStateSlice(set, get, api),
       ...createExecutionStateSlice(set, get, api),
+      ...createBackgroundBashSlice(set, get, api),
       agentAvailability: null,
       setAgentAvailability: (available) => {
         set({ agentAvailability: available });
@@ -170,6 +174,15 @@ export const selectCurrentChat = (state: AppState): ChatItem | null => {
 
 export const selectCurrentMessages = (state: AppState): Message[] =>
   selectCurrentChat(state)?.messages ?? [];
+
+/**
+ * Reactive selector for a background shell's terminal outcome by `bash_id`.
+ * Returns `undefined` while the shell is still running, then the {@link BashDone}
+ * outcome once its `bash_completed` event has been recorded — letting an
+ * already-rendered tool card flip without a history reload.
+ */
+export const useBackgroundBash = (bashId: string): BashDone | undefined =>
+  useAppStore((state) => state.backgroundBash[bashId]);
 
 const applyStoredProxyAuth = async (): Promise<boolean> => {
   const storedAuth = readStoredProxyAuth();

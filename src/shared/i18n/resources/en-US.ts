@@ -596,6 +596,12 @@ export const enUsTranslation = {
         hoursAgo: "{{count}}h ago",
         daysAgo: "{{count}}d ago",
       },
+      tools: {
+        runningInBackground: "Running in background…",
+        backgroundCompleted: "Completed",
+        backgroundKilled: "Killed",
+        backgroundFailed: "Failed",
+      },
     },
     settings: {
       page: {

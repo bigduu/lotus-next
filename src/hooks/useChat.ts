@@ -216,6 +216,13 @@ export function useChat(
               error: error || undefined,
             })
           },
+          // A background/async shell finished. Record its outcome in the store
+          // keyed by bash_id so the already-rendered tool card flips reactively
+          // (no history reload). The in-app toast + desktop notification are
+          // surfaced by ChatPane, which observes `lastBashCompletion`.
+          onBashCompleted: (bashId, command, exitCode, status) => {
+            useAppStore.getState().setBashCompleted(bashId, status, exitCode, command)
+          },
           onNeedClarification: (event) =>
             setPendingQuestion({
               question: event.question ?? "",

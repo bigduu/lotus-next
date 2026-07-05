@@ -581,6 +581,12 @@ export const zhCnTranslation = {
         hoursAgo: "{{count}}小时前",
         daysAgo: "{{count}}天前",
       },
+      tools: {
+        runningInBackground: "后台运行中…",
+        backgroundCompleted: "已完成",
+        backgroundKilled: "已终止",
+        backgroundFailed: "失败",
+      },
     },
     settings: {
       page: {
