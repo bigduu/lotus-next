@@ -4,6 +4,7 @@ import { useAppStore, initializeStore, selectSessionById } from "@shared/store/a
 import { useProviderStore } from "@shared/store/appStore/slices/providerSlice"
 import { agentClient } from "@services/chat/AgentService"
 import { agentApiClient } from "@services/api"
+import { notify } from "@/lib/notify"
 
 export type PendingQuestion = {
   question: string
@@ -218,10 +219,21 @@ export function useChat(
           },
           // A background/async shell finished. Record its outcome in the store
           // keyed by bash_id so the already-rendered tool card flips reactively
-          // (no history reload). The in-app toast + desktop notification are
-          // surfaced by ChatPane, which observes `lastBashCompletion`.
-          onBashCompleted: (bashId, command, exitCode, status) => {
-            useAppStore.getState().setBashCompleted(bashId, status, exitCode, command)
+          // (no history reload). NO ping is fired here: `bash_completed` is a
+          // cached CRITICAL event replayed on every resubscribe, which would
+          // burst. The user-facing ping comes from the backend `notification`
+          // (category background_task_completed) via `onNotification` below —
+          // deduped, preference-gated, and never replayed.
+          onBashCompleted: (bashId, _command, exitCode, status) => {
+            useAppStore.getState().setBashCompleted(bashId, status, exitCode)
+          },
+          // Backend-classified notifications (deduped + preference-gated server
+          // side, and NOT part of the critical-event replay). Surface as an OS
+          // notification (opt-in via lib/notify). Covers needs-clarification /
+          // approval / context-critical / sub-agent + background-task completion.
+          onNotification: (event) => {
+            const e = event as { title?: string; body?: string }
+            notify(e.title ?? "", e.body ?? "")
           },
           onNeedClarification: (event) =>
             setPendingQuestion({
