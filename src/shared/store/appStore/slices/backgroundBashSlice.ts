@@ -67,6 +67,13 @@ export const createBackgroundBashSlice: StateCreator<AppState, [], [], Backgroun
       // see this bash_id. (Keying the one-shot on a per-delivery seq instead
       // would mint a fresh value on each replay and re-fire the toast.)
       const firstSeen = state.backgroundBash[bashId] === undefined;
+      // Idempotent replay: an already-seen shell with an unchanged terminal
+      // outcome is a no-op — return the SAME state reference so subscribed cards
+      // don't re-render on every replayed bash_completed.
+      const prev = state.backgroundBash[bashId];
+      if (!firstSeen && prev && prev.status === normalized && prev.exitCode === exitCode) {
+        return state;
+      }
       return {
         backgroundBash: { ...state.backgroundBash, [bashId]: done },
         lastBashCompletion: firstSeen
