@@ -18,8 +18,6 @@ import { agentClient } from "@services/chat/AgentService"
 import { QuestionDialog, ApprovalDialog } from "@/components/chat/Dialogs"
 import { downloadMarkdown } from "@/lib/exportMarkdown"
 import { downloadPdf } from "@/lib/exportPdf"
-import { notify } from "@/lib/notify"
-import i18n from "@shared/i18n"
 import { cn } from "@/lib/utils"
 import type { useChat } from "@/hooks/useChat"
 import { useStickyScroll } from "@/hooks/useStickyScroll"
@@ -145,26 +143,10 @@ export function ChatPane({
     toastTimer.current = setTimeout(() => setToast(null), 2500)
   }
 
-  // Surface a one-shot toast + (opt-in) desktop notification when a background
-  // shell finishes. The tool card itself flips reactively via the store; this is
-  // the completion NOTIFICATION. Only the primary pane fires it (guard on
-  // `secondary`) so a split view doesn't double-toast. De-dup by monotonic seq.
-  const lastBashCompletion = useAppStore((s) => s.lastBashCompletion)
-  const seenBashSeqRef = useRef(0)
-  useEffect(() => {
-    if (secondary) return
-    if (!lastBashCompletion || lastBashCompletion.seq <= seenBashSeqRef.current) return
-    seenBashSeqRef.current = lastBashCompletion.seq
-    const { command } = lastBashCompletion
-    const title = i18n.t("app.notifications.backgroundTask.completedTitle")
-    const body = command
-      ? i18n.t("app.notifications.backgroundTask.completedBody", { title: command })
-      : i18n.t("app.notifications.backgroundTask.completedFallback")
-    showToast(body)
-    notify(title, body)
-    // showToast is a stable closure over refs/state setters; intentionally omitted.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [lastBashCompletion, secondary])
+  // NOTE: the background-shell completion NOTIFICATION is no longer fired here.
+  // It arrives as a backend `notification` event (deduped + preference-gated,
+  // never replayed on resubscribe) and is surfaced via `onNotification` in
+  // useChat. The tool card still flips reactively from the store.
 
   // Sticky-scroll machinery (refs + ResizeObserver + open-session re-pin).
   const { scrollRef, contentRef, atBottom, handleScroll, scrollToBottom, pinToBottom } =
