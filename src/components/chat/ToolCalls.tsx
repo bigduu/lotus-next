@@ -2,11 +2,52 @@ import { useEffect, useState } from "react"
 import { Wrench, ChevronRight, Loader2 } from "lucide-react"
 import type { Message } from "@shared/types/chatMessages"
 import { cn } from "@/lib/utils"
+import { Badge } from "@/components/ui/badge"
+import { useBackgroundBash } from "@shared/store/appStore"
+import i18n from "@shared/i18n"
 
 type Entry = {
   toolName: string
   params?: Record<string, unknown>
   result?: { text: string; isError: boolean }
+  /** Set when the result marks a background/async shell (see parseBackgroundBash). */
+  background?: { bashId: string; command: string }
+}
+
+/**
+ * A background/async tool LAUNCH returns a NORMAL result whose JSON body carries
+ * `{ bash_id, command, status: "running", cwd, environment }`. Detect it
+ * structurally (there is no marker on `display_preference`).
+ *
+ * The `command` field is the load-bearing discriminator: BashOutput
+ * (`{bash_id, status, exit_code, output, ...}`) and BashInput
+ * (`{bash_id, status, bytes_written, ...}`) results ALSO report
+ * `status: "running"` while the shell is alive but carry NO `command`. Without
+ * requiring it, reading/feeding a running shell would render as a "running in
+ * background" launch and share the launcher's bash_id (flipping together on
+ * completion). So: non-null iff bash_id AND a non-empty command are present.
+ */
+function parseBackgroundBash(
+  resultText: string,
+): { bashId: string; command: string } | null {
+  let obj: unknown
+  try {
+    obj = JSON.parse(resultText)
+  } catch {
+    return null
+  }
+  if (
+    obj &&
+    typeof obj === "object" &&
+    typeof (obj as { bash_id?: unknown }).bash_id === "string" &&
+    (obj as { status?: unknown }).status === "running" &&
+    typeof (obj as { command?: unknown }).command === "string" &&
+    (obj as { command: string }).command.length > 0
+  ) {
+    const o = obj as { bash_id: string; command: string }
+    return { bashId: o.bash_id, command: o.command }
+  }
+  return null
 }
 
 const VISIBLE_CAP = 3
@@ -85,7 +126,53 @@ function buildEntries(items: Message[]): Entry[] {
         })
     }
   }
-  return calls.map((c) => ({ toolName: c.toolName, params: c.params, result: results.get(c.id) }))
+  return calls.map((c) => {
+    const result = results.get(c.id)
+    const background = result ? parseBackgroundBash(result.text) : null
+    return {
+      toolName: c.toolName,
+      params: c.params,
+      result,
+      background: background ?? undefined,
+    }
+  })
+}
+
+/**
+ * Badge reflecting a background shell's state. Reads the reactive store keyed by
+ * `bash_id` so it flips from the amber "Running in background" spinner to a
+ * success / neutral / destructive terminal badge the moment `bash_completed`
+ * arrives — no history reload required.
+ */
+function BackgroundBadge({ bashId }: { bashId: string }) {
+  const done = useBackgroundBash(bashId)
+  if (!done) {
+    return (
+      <Badge variant="warning">
+        <Loader2 className="size-3 animate-spin" />
+        {i18n.t("chat.tools.runningInBackground")}
+      </Badge>
+    )
+  }
+  const { status, exitCode } = done
+  const exitSuffix = exitCode == null ? "" : ` · exit ${exitCode}`
+  if (status === "completed" && (exitCode === 0 || exitCode == null)) {
+    return (
+      <Badge variant="success">
+        {i18n.t("chat.tools.backgroundCompleted")}
+        {exitSuffix}
+      </Badge>
+    )
+  }
+  if (status === "killed") {
+    return <Badge variant="secondary">{i18n.t("chat.tools.backgroundKilled")}</Badge>
+  }
+  return (
+    <Badge variant="destructive">
+      {i18n.t("chat.tools.backgroundFailed")}
+      {exitSuffix}
+    </Badge>
+  )
 }
 
 function EntryRow({ e }: { e: Entry }) {
@@ -96,6 +183,7 @@ function EntryRow({ e }: { e: Entry }) {
       <div className="flex items-center gap-1.5">
         <span className="text-xs font-medium text-foreground">{e.toolName}</span>
         {e.result?.isError ? <span className="text-[10px] text-destructive">出错</span> : null}
+        {e.background ? <BackgroundBadge bashId={e.background.bashId} /> : null}
       </div>
       {primary ? (
         <div className="mt-1 line-clamp-3 break-all rounded bg-muted/50 px-2 py-1 font-mono text-[11px] text-foreground [overflow-wrap:anywhere]">
