@@ -10,6 +10,36 @@ import { SubAgents } from "@/components/chat/SubAgents"
 import { cn } from "@/lib/utils"
 import type { Message } from "@shared/types/chatMessages"
 import type { ChildProgress } from "@shared/store/appStore/slices/executionStateSlice/types"
+import type { LiveSegment } from "@/hooks/useChat"
+
+// Synthesize Message-shaped rows from a live tools segment so the in-run
+// display reuses the exact ToolCalls rendering (grouping/expansion) that
+// persisted history gets. While a call runs, its streamed output shows in the
+// result slot and is replaced by the final result on completion.
+function liveToolMessages(seg: Extract<LiveSegment, { kind: "tools" }>): Message[] {
+  const out: Message[] = []
+  for (const c of seg.calls) {
+    out.push({
+      id: `live-call-${c.toolCallId}`,
+      role: "assistant",
+      type: "tool_call",
+      toolCalls: [{ toolCallId: c.toolCallId, toolName: c.toolName, parameters: c.args ?? {} }],
+      createdAt: "",
+    } as unknown as Message)
+    if (c.output || c.status !== "running") {
+      out.push({
+        id: `live-res-${c.toolCallId}`,
+        role: "tool",
+        type: "tool_result",
+        toolCallId: c.toolCallId,
+        isError: c.status === "error",
+        result: { result: c.status === "error" ? c.error || c.output : c.output },
+        createdAt: "",
+      } as unknown as Message)
+    }
+  }
+  return out
+}
 
 function messageText(m: Message): string {
   if ("content" in m && typeof (m as { content?: unknown }).content === "string") {
@@ -59,6 +89,8 @@ export function MessageList({
   sending,
   streaming,
   streamingReasoning,
+  liveSegments,
+  streamStatus,
   pendingUserText,
   forking,
   onSelectSubAgent,
@@ -76,6 +108,8 @@ export function MessageList({
   sending: boolean
   streaming: string | null
   streamingReasoning: string | null
+  liveSegments: LiveSegment[]
+  streamStatus: string | null
   pendingUserText: string | null
   forking: boolean
   onSelectSubAgent: (id: string) => void
@@ -111,7 +145,7 @@ export function MessageList({
   return (
     <div ref={scrollRef} onScroll={onScroll} className="min-h-0 flex-1 overflow-y-auto">
       <div ref={contentRef} className="mx-auto flex max-w-2xl flex-col gap-4 px-3 py-4">
-        {messages.length === 0 && !streaming && !pendingUserText && (
+        {messages.length === 0 && !streaming && !pendingUserText && liveSegments.length === 0 && (
           <div className="flex flex-col items-center gap-2 py-20 text-center">
             <div className="size-10 rounded-xl bg-primary" />
             <p className="text-sm text-muted-foreground">开始一段新对话</p>
@@ -276,6 +310,24 @@ export function MessageList({
           <SubAgents agents={mergedSubAgents} onOpen={onSelectSubAgent} />
         ) : null}
 
+        {/* Frozen live-run timeline: text rounds + tool groups streamed so far. */}
+        {liveSegments.map((seg, i) =>
+          seg.kind === "tools" ? (
+            <ToolCalls
+              key={`live-tools-${i}`}
+              items={liveToolMessages(seg)}
+              active={seg.calls.some((c) => c.status === "running")}
+            />
+          ) : (
+            <div key={`live-text-${i}`} className="flex justify-start">
+              <div className="max-w-[85%] overflow-hidden rounded-2xl bg-muted px-3.5 py-2 text-sm leading-relaxed [overflow-wrap:anywhere]">
+                {seg.reasoning ? <Reasoning text={seg.reasoning} /> : null}
+                {seg.text.trim() ? <AssistantMarkdown>{seg.text}</AssistantMarkdown> : null}
+              </div>
+            </div>
+          ),
+        )}
+
         {streaming !== null && (
           <div className="flex justify-start">
             <div
@@ -292,7 +344,14 @@ export function MessageList({
                 // with provider built-in-tool blocks folded the same as the
                 // final message — so no raw **/``` flash mid-stream.
                 <AssistantMarkdown>{streaming}</AssistantMarkdown>
-              ) : streamingReasoning ? null : (
+              ) : streamingReasoning ? null : streamStatus ? (
+                // "what is the agent doing" one-liner (tool running / compacting)
+                // instead of anonymous dots while no text streams.
+                <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+                  <span className="size-1.5 animate-pulse rounded-full bg-muted-foreground" />
+                  {streamStatus}
+                </span>
+              ) : (
                 <span className="inline-flex gap-1">
                   <span className="size-1.5 animate-pulse rounded-full bg-muted-foreground" />
                   <span className="size-1.5 animate-pulse rounded-full bg-muted-foreground [animation-delay:150ms]" />

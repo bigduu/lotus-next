@@ -5,6 +5,7 @@ import { useProviderStore } from "@shared/store/appStore/slices/providerSlice"
 import { agentClient } from "@services/chat/AgentService"
 import { agentApiClient } from "@services/api"
 import { notify } from "@/lib/notify"
+import { mapTokenBudgetUsage } from "@shared/types/tokenBudget"
 
 export type PendingQuestion = {
   question: string
@@ -18,6 +19,31 @@ export type PendingApproval = {
   permission?: string
   resource?: string
 }
+
+/** A single live (in-run) tool invocation, streamed over the agent channel. */
+export type LiveToolCall = {
+  toolCallId: string
+  toolName: string
+  args?: Record<string, unknown>
+  /** Streamed output while running; replaced by the final result on complete. */
+  output: string
+  status: "running" | "completed" | "error"
+  error?: string
+}
+
+/**
+ * One frozen segment of the CURRENT run's live timeline. Text the model
+ * finished streaming before a tool round freezes into a `text` segment; the
+ * round's tool calls accumulate in a `tools` segment. The still-streaming tail
+ * stays in `streaming`/`streamingReasoning`. On terminal the whole timeline is
+ * dropped in favor of the reloaded persisted history.
+ */
+export type LiveSegment =
+  | { kind: "text"; text: string; reasoning: string | null }
+  | { kind: "tools"; calls: LiveToolCall[] }
+
+// Stable empty array so instances not owning the live stream don't re-render.
+const EMPTY_SEGMENTS: LiveSegment[] = []
 
 /**
  * Minimal P0 chat orchestration on top of the ported store + AgentService.
@@ -85,22 +111,81 @@ export function useChat(
   const reasonRafRef = useRef<number | null>(null)
   // Per-child rolling output buffer for live sub-agent previews.
   const childBufRef = useRef<Record<string, string>>({})
+  // The current run's frozen live timeline (finished text rounds + tool groups).
+  // Mutations happen on the ref; a RAF flush clones into state ≤1×/frame.
+  const [liveSegmentsState, setLiveSegmentsState] = useState<LiveSegment[]>([])
+  const liveSegRef = useRef<LiveSegment[]>([])
+  const segRafRef = useRef<number | null>(null)
+  const toolCallsByIdRef = useRef<Map<string, LiveToolCall>>(new Map())
+  // One-line "what is the agent doing" status (tool running / compacting…),
+  // shown while no text is streaming.
+  const [streamStatusState, setStreamStatusState] = useState<string | null>(null)
+  const streamStatusRef = useRef<string | null>(null)
 
   // Streaming / optimistic message are scoped to this instance's session.
   const streaming = streamSid === sid ? streamingText : null
   const streamingReasoning = streamSid === sid ? streamingReasoningText : null
+  const liveSegments = streamSid === sid ? liveSegmentsState : EMPTY_SEGMENTS
+  const streamStatus = streamSid === sid ? streamStatusState : null
   const pendingUserText =
     pending && (pending.sid === sid || pending.sid === null) ? pending.text : null
 
-  const pushToken = useCallback((c: string) => {
-    streamBufRef.current += c
-    if (rafRef.current == null) {
-      rafRef.current = requestAnimationFrame(() => {
-        rafRef.current = null
-        setStreamingText(streamBufRef.current)
-      })
-    }
+  const setStreamStatus = useCallback((status: string | null) => {
+    if (streamStatusRef.current === status) return
+    streamStatusRef.current = status
+    setStreamStatusState(status)
   }, [])
+
+  const flushSegments = useCallback(() => {
+    if (segRafRef.current != null) return
+    segRafRef.current = requestAnimationFrame(() => {
+      segRafRef.current = null
+      // Clone (segments + calls) so React sees new references for mutated rows.
+      setLiveSegmentsState(
+        liveSegRef.current.map((s) =>
+          s.kind === "tools" ? { ...s, calls: s.calls.map((c) => ({ ...c })) } : s,
+        ),
+      )
+    })
+  }, [])
+
+  // Freeze the currently-buffered assistant text/reasoning into a `text`
+  // segment (natural "text → tool call" reading order) and restart the buffers
+  // for whatever streams after the tool round. Also fixes the multi-round
+  // duplication where every round's text piled up in ONE bubble.
+  const freezeTextSegment = useCallback(() => {
+    const text = streamBufRef.current
+    const reasoning = reasonBufRef.current
+    if (!text.trim() && !reasoning.trim()) return
+    liveSegRef.current.push({ kind: "text", text, reasoning: reasoning.trim() ? reasoning : null })
+    streamBufRef.current = ""
+    reasonBufRef.current = ""
+    if (rafRef.current != null) {
+      cancelAnimationFrame(rafRef.current)
+      rafRef.current = null
+    }
+    if (reasonRafRef.current != null) {
+      cancelAnimationFrame(reasonRafRef.current)
+      reasonRafRef.current = null
+    }
+    setStreamingText("")
+    setStreamingReasoningText(null)
+  }, [])
+
+  const pushToken = useCallback(
+    (c: string) => {
+      // Text is flowing again — the "running tool…" status line is stale.
+      setStreamStatus(null)
+      streamBufRef.current += c
+      if (rafRef.current == null) {
+        rafRef.current = requestAnimationFrame(() => {
+          rafRef.current = null
+          setStreamingText(streamBufRef.current)
+        })
+      }
+    },
+    [setStreamStatus],
+  )
 
   const pushReasoning = useCallback((c: string) => {
     reasonBufRef.current += c
@@ -112,20 +197,31 @@ export function useChat(
     }
   }, [])
 
-  const stopStream = useCallback((final: string | null) => {
-    if (rafRef.current != null) {
-      cancelAnimationFrame(rafRef.current)
-      rafRef.current = null
-    }
-    if (reasonRafRef.current != null) {
-      cancelAnimationFrame(reasonRafRef.current)
-      reasonRafRef.current = null
-    }
-    streamBufRef.current = ""
-    reasonBufRef.current = ""
-    setStreamingText(final)
-    setStreamingReasoningText(null)
-  }, [])
+  const stopStream = useCallback(
+    (final: string | null) => {
+      if (rafRef.current != null) {
+        cancelAnimationFrame(rafRef.current)
+        rafRef.current = null
+      }
+      if (reasonRafRef.current != null) {
+        cancelAnimationFrame(reasonRafRef.current)
+        reasonRafRef.current = null
+      }
+      if (segRafRef.current != null) {
+        cancelAnimationFrame(segRafRef.current)
+        segRafRef.current = null
+      }
+      streamBufRef.current = ""
+      reasonBufRef.current = ""
+      liveSegRef.current = []
+      toolCallsByIdRef.current.clear()
+      setLiveSegmentsState(EMPTY_SEGMENTS)
+      setStreamStatus(null)
+      setStreamingText(final)
+      setStreamingReasoningText(null)
+    },
+    [setStreamStatus],
+  )
 
   const LAST_SESSION_KEY = "lotus_next_last_session"
 
@@ -174,6 +270,10 @@ export function useChat(
       streamBufRef.current = ""
       reasonBufRef.current = ""
       childBufRef.current = {}
+      liveSegRef.current = []
+      toolCallsByIdRef.current.clear()
+      setLiveSegmentsState(EMPTY_SEGMENTS)
+      setStreamStatus(null)
       setStreamingText("")
       setStreamingReasoningText(null)
       // Clear any stale question only when a (re)run actually starts. A pending
@@ -192,6 +292,85 @@ export function useChat(
         {
           onToken: pushToken,
           onReasoningToken: pushReasoning,
+          onToolStart: (toolCallId, toolName, args) => {
+            // Natural reading order: whatever text streamed before this tool
+            // round freezes above it; the buffers restart afterwards.
+            freezeTextSegment()
+            const call: LiveToolCall = {
+              toolCallId,
+              toolName,
+              args,
+              output: "",
+              status: "running",
+            }
+            toolCallsByIdRef.current.set(toolCallId, call)
+            const last = liveSegRef.current[liveSegRef.current.length - 1]
+            if (last && last.kind === "tools") last.calls.push(call)
+            else liveSegRef.current.push({ kind: "tools", calls: [call] })
+            setStreamStatus(`正在运行 ${toolName}…`)
+            flushSegments()
+          },
+          onToolToken: (toolCallId, content) => {
+            const call = toolCallsByIdRef.current.get(toolCallId)
+            if (!call) return
+            call.output += content
+            flushSegments()
+          },
+          onToolComplete: (toolCallId, result) => {
+            const call = toolCallsByIdRef.current.get(toolCallId)
+            if (!call) return
+            call.status = "completed"
+            const r = result as { result?: unknown } | undefined
+            if (typeof r?.result === "string" && r.result) call.output = r.result
+            setStreamStatus(null)
+            flushSegments()
+          },
+          onToolError: (toolCallId, error) => {
+            const call = toolCallsByIdRef.current.get(toolCallId)
+            if (!call) return
+            call.status = "error"
+            call.error = error
+            setStreamStatus(null)
+            flushSegments()
+          },
+          onTaskListUpdated: (taskList) => {
+            if (taskList.session_id) {
+              useAppStore.getState().setTaskList(taskList.session_id, taskList)
+            }
+          },
+          onTaskListItemProgress: (delta) => {
+            if (!delta.session_id) return
+            const store = useAppStore.getState()
+            // No local baseline (fresh open mid-run): fetch the full list once
+            // instead of applying a delta onto nothing.
+            if (!store.taskLists[delta.session_id]) void store.loadTaskList(delta.session_id)
+            else store.updateTaskListDelta(delta.session_id, delta)
+          },
+          onTaskEvaluationStarted: (evalSid) => {
+            useAppStore.getState().setEvaluationState(evalSid, {
+              isEvaluating: true,
+              reasoning: null,
+              timestamp: Date.now(),
+            })
+          },
+          onTaskEvaluationCompleted: (evalSid, updatesCount, reasoning) => {
+            useAppStore.getState().setEvaluationState(evalSid, {
+              isEvaluating: false,
+              reasoning: updatesCount > 0 ? reasoning : null,
+              timestamp: Date.now(),
+            })
+          },
+          onTokenBudgetUpdated: (usage) => {
+            const mapped = mapTokenBudgetUsage(usage)
+            if (!mapped) return
+            const store = useAppStore.getState()
+            store.updateTokenUsage(runSid, mapped)
+            store.setTruncationInfo(runSid, usage.truncation_occurred, usage.segments_removed)
+          },
+          onContextCompressionStatus: (_phase, status) => {
+            if (status === "started") setStreamStatus("正在压缩上下文…")
+            else setStreamStatus(null)
+          },
           onSubAgentStarted: (parentSid, childId, title) => {
             useAppStore.getState().applyChildProgress(parentSid, childId, {
               title,
@@ -473,6 +652,8 @@ export function useChat(
     messages,
     streaming,
     streamingReasoning,
+    liveSegments,
+    streamStatus,
     pendingUserText,
     sending,
     select,

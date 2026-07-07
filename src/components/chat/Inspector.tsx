@@ -119,6 +119,7 @@ export function Inspector({
 }) {
   const chat = useAppStore(selectCurrentChat)
   const taskList = useAppStore((s) => (sessionId ? s.taskLists[sessionId] : undefined))
+  const evaluation = useAppStore((s) => (sessionId ? s.evaluationStates[sessionId] : undefined))
   const loadTaskList = useAppStore((s) => s.loadTaskList)
   const getProviderLabel = useProviderStore((s) => s.getProviderDisplayLabel)
   const children = useAppStore(
@@ -181,6 +182,16 @@ export function Inspector({
 
           <section className="rounded-lg border p-3">
             <div className="mb-2 text-xs font-medium text-muted-foreground">任务清单</div>
+            {evaluation?.isEvaluating ? (
+              <p className="mb-2 flex items-center gap-1.5 text-xs text-primary">
+                <span className="size-1.5 animate-pulse rounded-full bg-primary" />
+                正在评估任务进度…
+              </p>
+            ) : evaluation?.reasoning ? (
+              <p className="mb-2 rounded bg-muted/60 px-2 py-1.5 text-[11px] leading-relaxed text-muted-foreground">
+                {evaluation.reasoning}
+              </p>
+            ) : null}
             {!taskList || taskList.items.length === 0 ? (
               <p className="text-xs text-muted-foreground">暂无任务</p>
             ) : (

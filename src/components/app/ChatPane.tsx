@@ -112,6 +112,8 @@ export function ChatPane({
     messages,
     streaming,
     streamingReasoning,
+    liveSegments,
+    streamStatus,
     pendingUserText,
     sending,
     select,
@@ -128,6 +130,12 @@ export function ChatPane({
     answerQuestion,
     respondApproval,
   } = chat
+
+  // Live in-run token budget (pushed over the agent channel) — beats the
+  // persisted config snapshot, which only refreshes on history reload.
+  const liveTokenUsage = useAppStore((s) =>
+    currentSessionId ? s.tokenUsages[currentSessionId] : undefined,
+  )
 
   const [draft, setDraft] = useState("")
   const [dragOver, setDragOver] = useState(false)
@@ -382,7 +390,7 @@ export function ChatPane({
           <ChatHeader
             title={currentChat?.title || "Bodhi"}
             hasSession={!!currentSessionId}
-            tokenUsage={currentChat?.config?.tokenUsage}
+            tokenUsage={liveTokenUsage ?? currentChat?.config?.tokenUsage}
             reasoningEffort={reasoningEffort}
             onChangeReasoning={(effort) => setInputReasoningEffort(currentSessionId ?? "", effort)}
             models={models}
@@ -424,6 +432,8 @@ export function ChatPane({
           sending={sending}
           streaming={streaming}
           streamingReasoning={streamingReasoning}
+          liveSegments={liveSegments}
+          streamStatus={streamStatus}
           pendingUserText={pendingUserText}
           forking={forking}
           onSelectSubAgent={select}
