@@ -8,10 +8,9 @@ import { Textarea } from "@/components/ui/textarea"
 import { cn } from "@/lib/utils"
 
 function triggerSummary(t: ScheduleTrigger): string {
-  const tt = t as { type: string; every_seconds?: number; expression?: string }
-  switch (tt.type) {
+  switch (t.type) {
     case "interval":
-      return `每 ${Math.round((tt.every_seconds ?? 0) / 60)} 分钟`
+      return `每 ${Math.round((t.every_seconds ?? 0) / 60)} 分钟`
     case "daily":
       return "每天"
     case "weekly":
@@ -19,9 +18,9 @@ function triggerSummary(t: ScheduleTrigger): string {
     case "monthly":
       return "每月"
     case "cron":
-      return `cron: ${tt.expression ?? ""}`
+      return `cron: ${t.expr}`
     default:
-      return tt.type
+      return (t as { type: string }).type
   }
 }
 
@@ -55,13 +54,13 @@ export function SettingsSchedules() {
     setAdding(false)
     setEditId(s.id)
     setName(s.name)
-    setCron((s.trigger as { expression?: string }).expression ?? "0 9 * * *")
+    setCron(s.trigger.type === "cron" ? s.trigger.expr : "0 9 * * *")
     setTask("")
   }
 
   const save = async () => {
     if (!name.trim()) return
-    const trigger = { type: "cron", expression: cron.trim() } as unknown as ScheduleTrigger
+    const trigger: ScheduleTrigger = { type: "cron", expr: cron.trim() }
     if (editId) {
       await agentClient
         .patchSchedule(editId, {

@@ -15,7 +15,9 @@ import {
 
 type Entry = { pattern: string; match_type: string; enabled: boolean }
 
-const MATCH_TYPES = ["exact", "contains", "regex"]
+// Mirrors the backend `MatchType` enum: "exact" is a substring search, "regex"
+// a pattern match. Any other value is rejected by the config schema.
+const MATCH_TYPES = ["exact", "regex"]
 
 export function SettingsMasking() {
   const [entries, setEntries] = useState<Entry[]>([])
