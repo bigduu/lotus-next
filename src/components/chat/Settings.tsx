@@ -28,6 +28,11 @@ import { SettingsEnv } from "@/components/chat/settings/SettingsEnv"
 import { SettingsSchedules } from "@/components/chat/settings/SettingsSchedules"
 import { SettingsNotifications } from "@/components/chat/settings/SettingsNotifications"
 import { SettingsMasking } from "@/components/chat/settings/SettingsMasking"
+import { SettingsPrompts } from "@/components/chat/settings/SettingsPrompts"
+import { SettingsWorkflows } from "@/components/chat/settings/SettingsWorkflows"
+import { SettingsClusters } from "@/components/chat/settings/SettingsClusters"
+import { SettingsMetrics } from "@/components/chat/settings/SettingsMetrics"
+import { SettingsSystem } from "@/components/chat/settings/SettingsSystem"
 
 function Stat({ label, value }: { label: string; value: number | undefined }) {
   return (
@@ -133,6 +138,11 @@ const TABS = [
   { id: "schedules", label: "定时任务", render: () => <SettingsSchedules /> },
   { id: "notifications", label: "通知", render: () => <SettingsNotifications /> },
   { id: "masking", label: "关键词掩码", render: () => <SettingsMasking /> },
+  { id: "prompts", label: "提示词", render: () => <SettingsPrompts /> },
+  { id: "workflows", label: "工作流", render: () => <SettingsWorkflows /> },
+  { id: "clusters", label: "集群", render: () => <SettingsClusters /> },
+  { id: "metrics", label: "指标", render: () => <SettingsMetrics /> },
+  { id: "system", label: "系统", render: () => <SettingsSystem /> },
 ] as const
 
 export function Settings({ open, onClose }: { open: boolean; onClose: () => void }) {
