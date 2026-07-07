@@ -1,7 +1,10 @@
 import { type ReactNode } from "react"
 import { Menu, PanelRightOpen } from "lucide-react"
+import { useShallow } from "zustand/react/shallow"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
+import { useAppStore } from "@shared/store/appStore"
+import { MachineTag } from "@/components/chat/MachineTag"
 import { ModelPicker } from "@/components/chat/ModelPicker"
 import { ReasoningPicker } from "@/components/chat/ReasoningPicker"
 import { OverflowMenu } from "@/components/chat/OverflowMenu"
@@ -43,6 +46,16 @@ export function ChatHeader({
   /** Desktop: sidebar is collapsed, so show the menu button to bring it back. */
   sidebarCollapsed: boolean
 }) {
+  // Which machine the current session runs on — only badge non-local placements
+  // (root sessions default to the backend's own host; that's noise here).
+  const placement = useAppStore(
+    useShallow((s) =>
+      s.currentSessionId
+        ? (s.chats.find((c) => c.id === s.currentSessionId)?.placement ?? null)
+        : null,
+    ),
+  )
+
   return (
     <header className="flex items-center gap-2 border-b px-3 py-2.5">
       <Button
@@ -55,6 +68,9 @@ export function ChatHeader({
         <Menu />
       </Button>
       <span className="flex-1 truncate text-sm font-semibold">{title}</span>
+      {placement && placement.kind !== "local" ? (
+        <MachineTag placement={placement} compact className="max-w-36 shrink-0" />
+      ) : null}
       {tokenUsage ? (
         <ContextUsageRing
           totalTokens={tokenUsage.totalTokens}

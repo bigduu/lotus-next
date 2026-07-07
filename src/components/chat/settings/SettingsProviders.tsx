@@ -1,208 +1,125 @@
 import { useEffect, useState } from "react"
-import { Trash2, Plus, Check, Pencil } from "lucide-react"
-import { settingsService, type DeviceCodeInfo } from "@services/config/SettingsService"
+import { Trash2, Plus, Check, Pencil, RefreshCw } from "lucide-react"
+import { settingsService } from "@services/config/SettingsService"
+import { getErrorMessage } from "@services/api"
 import { useProviderStore } from "@shared/store/appStore/slices/providerSlice"
-import type { ProviderInstance, ProviderType } from "@shared/types/providerConfig"
+import type { ProviderInstance } from "@shared/types/providerConfig"
+import { PROVIDER_LABELS } from "@shared/types/providerConfig"
 import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
+import { Badge } from "@/components/ui/badge"
+import { Switch } from "@/components/ui/switch"
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
+  ResponsiveDialog,
+  ResponsiveDialogContent,
+  ResponsiveDialogTitle,
+  ResponsiveDialogDescription,
+} from "@/components/ui/responsive-dialog"
 import { cn } from "@/lib/utils"
-
-const PROVIDER_TYPES: ProviderType[] = ["anthropic", "openai", "gemini", "copilot", "bodhi"]
-const REASONING_EFFORTS = ["low", "medium", "high", "xhigh", "max"]
-
-type Cfg = Record<string, unknown>
-const str = (v: unknown) => (typeof v === "string" ? v : v == null ? "" : String(v))
-
-function Field({
-  label,
-  value,
-  onChange,
-  type = "text",
-  placeholder,
-}: {
-  label: string
-  value: string
-  onChange: (v: string) => void
-  type?: string
-  placeholder?: string
-}) {
-  return (
-    <label className="block">
-      <span className="mb-1 block text-xs text-muted-foreground">{label}</span>
-      <Input type={type} value={value} placeholder={placeholder} onChange={(e) => onChange(e.target.value)} />
-    </label>
-  )
-}
-
-function CopilotAuth() {
-  const [authed, setAuthed] = useState<boolean | null>(null)
-  const [device, setDevice] = useState<DeviceCodeInfo | null>(null)
-  const [busy, setBusy] = useState(false)
-
-  useEffect(() => {
-    settingsService
-      .getCopilotAuthStatus()
-      .then((s) => setAuthed(s.authenticated))
-      .catch(() => setAuthed(false))
-  }, [])
-
-  const login = async () => {
-    setBusy(true)
-    try {
-      const d = await settingsService.startCopilotAuth()
-      setDevice(d)
-      try {
-        window.open(d.verification_uri, "_blank", "noopener")
-      } catch {
-        /* popup blocked — user can click the link */
-      }
-      await settingsService.completeCopilotAuth({
-        device_code: d.device_code,
-        interval: d.interval ?? 5,
-        expires_in: d.expires_in,
-      })
-      const s = await settingsService.getCopilotAuthStatus()
-      setAuthed(s.authenticated)
-      setDevice(null)
-    } catch {
-      setDevice(null)
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  return (
-    <div className="space-y-2 rounded-md border bg-muted/30 p-2.5">
-      <div className="text-xs font-medium text-muted-foreground">Copilot 授权</div>
-      {authed ? (
-        <div className="flex items-center justify-between text-sm">
-          <span className="text-emerald-500">✓ 已登录</span>
-          <Button
-            size="sm"
-            variant="secondary"
-            onClick={async () => {
-              await settingsService.logoutCopilot().catch(() => {})
-              setAuthed(false)
-            }}
-          >
-            退出
-          </Button>
-        </div>
-      ) : device ? (
-        <div className="space-y-1 text-sm">
-          <p>
-            打开{" "}
-            <a href={device.verification_uri} target="_blank" rel="noopener noreferrer" className="text-primary underline">
-              {device.verification_uri}
-            </a>
-          </p>
-          <p>
-            输入代码:<span className="font-mono text-base font-semibold tracking-wider">{device.user_code}</span>
-          </p>
-          <p className="text-xs text-muted-foreground">授权后这里会自动完成…</p>
-        </div>
-      ) : (
-        <Button size="sm" onClick={login} disabled={busy}>
-          {busy ? "登录中…" : "登录 GitHub Copilot"}
-        </Button>
-      )}
-    </div>
-  )
-}
-
-function InstanceEditor({
-  initial,
-  onSave,
-  onCancel,
-}: {
-  initial: { type: ProviderType; label: string; config: Cfg }
-  onSave: (v: { type: ProviderType; label: string; config: Cfg }) => void
-  onCancel: () => void
-}) {
-  const [type, setType] = useState<ProviderType>(initial.type)
-  const [label, setLabel] = useState(initial.label)
-  const [cfg, setCfg] = useState<Cfg>(initial.config)
-  const set = (k: string, v: string) => setCfg((c) => ({ ...c, [k]: v }))
-
-  return (
-    <div className="space-y-2.5 rounded-lg border bg-muted/30 p-3">
-      <label className="block">
-        <span className="mb-1 block text-xs text-muted-foreground">类型</span>
-        <Select value={type} onValueChange={(v) => setType(v as ProviderType)}>
-          <SelectTrigger className="w-full">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {PROVIDER_TYPES.map((t) => (
-              <SelectItem key={t} value={t}>
-                {t}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </label>
-      <Field label="名称" value={label} onChange={setLabel} placeholder="如 我的 Anthropic" />
-      {type === "copilot" ? (
-        <CopilotAuth />
-      ) : (
-        <>
-          <Field label="API Key" value={str(cfg.api_key)} onChange={(v) => set("api_key", v)} type="password" placeholder="sk-…" />
-          <Field label="Base URL(可选)" value={str(cfg.base_url)} onChange={(v) => set("base_url", v)} placeholder="https://api.anthropic.com" />
-        </>
-      )}
-      <Field label="默认模型(可选)" value={str(cfg.model)} onChange={(v) => set("model", v)} placeholder="glm-5.2" />
-      <div className="grid grid-cols-2 gap-2">
-        <Field label="Max tokens" value={str(cfg.max_tokens)} onChange={(v) => set("max_tokens", v)} placeholder="8000" />
-        <label className="block">
-          <span className="mb-1 block text-xs text-muted-foreground">推理强度</span>
-          <Select
-            value={str(cfg.reasoning_effort) || "medium"}
-            onValueChange={(v) => set("reasoning_effort", v)}
-          >
-            <SelectTrigger className="w-full">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {REASONING_EFFORTS.map((r) => (
-                <SelectItem key={r} value={r}>
-                  {r}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </label>
-      </div>
-      <div className="flex justify-end gap-2 pt-1">
-        <Button size="sm" variant="secondary" onClick={onCancel}>
-          取消
-        </Button>
-        <Button size="sm" onClick={() => onSave({ type, label: label.trim() || type, config: cfg })}>
-          保存
-        </Button>
-      </div>
-    </div>
-  )
-}
+import { InstanceEditor, type InstanceSavePayload } from "./providers/InstanceEditor"
+import { DefaultsEditor } from "./providers/DefaultsEditor"
 
 export function SettingsProviders() {
   const instances = useProviderStore((s) => s.providerInstances)
   const defaultId = useProviderStore((s) => s.defaultProviderInstanceId)
   const loadInstances = useProviderStore((s) => s.loadProviderInstances)
+  const loadCatalog = useProviderStore((s) => s.loadCatalog)
+  const storeError = useProviderStore((s) => s.error)
+
   const [editing, setEditing] = useState<string | null>(null)
   const [adding, setAdding] = useState(false)
+  const [listError, setListError] = useState<string | null>(null)
+  const [deleting, setDeleting] = useState<ProviderInstance | null>(null)
+  const [deleteBusy, setDeleteBusy] = useState(false)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
+  const [fetchingId, setFetchingId] = useState<string | null>(null)
+  const [fetchNotice, setFetchNotice] = useState<{ id: string; text: string; error: boolean } | null>(null)
 
   useEffect(() => {
     void loadInstances()
   }, [loadInstances])
 
   const reload = () => void loadInstances()
+
+  const createInstance = async (v: InstanceSavePayload) => {
+    await settingsService.createProviderInstance({
+      type: v.type,
+      label: v.label,
+      enabled: v.enabled,
+      config: v.config,
+    })
+    setAdding(false)
+    reload()
+  }
+
+  const updateInstance = async (id: string, v: InstanceSavePayload) => {
+    // The backend PUT ignores `type` — provider type is immutable after create.
+    await settingsService.updateProviderInstance(id, {
+      label: v.label,
+      enabled: v.enabled,
+      config: v.config,
+    })
+    setEditing(null)
+    reload()
+  }
+
+  const toggleEnabled = async (inst: ProviderInstance, next: boolean) => {
+    setListError(null)
+    try {
+      await settingsService.updateProviderInstance(inst.id, { enabled: next })
+      reload()
+    } catch (e) {
+      setListError(`「${inst.label || inst.type}」${next ? "启用" : "停用"}失败:${getErrorMessage(e)}`)
+    }
+  }
+
+  const setDefault = async (inst: ProviderInstance) => {
+    setListError(null)
+    try {
+      await settingsService.setDefaultProviderInstance(inst.id)
+      reload()
+    } catch (e) {
+      setListError(`设为默认失败:${getErrorMessage(e)}`)
+    }
+  }
+
+  const fetchModels = async (inst: ProviderInstance) => {
+    setFetchingId(inst.id)
+    setFetchNotice(null)
+    try {
+      const res = await settingsService.fetchCatalogModels(inst.id)
+      const fetched = res.fetched ?? []
+      const entry =
+        fetched.find((f) => f.provider === inst.id) ??
+        fetched.find((f) => f.provider === inst.type) ??
+        fetched[0]
+      if (entry?.error) {
+        setFetchNotice({ id: inst.id, text: `拉取失败:${entry.error}`, error: true })
+      } else {
+        const count = entry?.models?.length ?? 0
+        setFetchNotice({ id: inst.id, text: `已拉取 ${count} 个模型`, error: false })
+        await loadCatalog()
+      }
+    } catch (e) {
+      setFetchNotice({ id: inst.id, text: `拉取失败:${getErrorMessage(e)}`, error: true })
+    } finally {
+      setFetchingId(null)
+    }
+  }
+
+  const confirmDelete = async () => {
+    if (!deleting) return
+    setDeleteBusy(true)
+    setDeleteError(null)
+    try {
+      await settingsService.deleteProviderInstance(deleting.id)
+      setDeleting(null)
+      reload()
+    } catch (e) {
+      setDeleteError(getErrorMessage(e))
+    } finally {
+      setDeleteBusy(false)
+    }
+  }
 
   return (
     <div className="space-y-3">
@@ -215,75 +132,116 @@ export function SettingsProviders() {
         ) : null}
       </div>
 
-      {adding ? (
-        <InstanceEditor
-          initial={{ type: "anthropic", label: "", config: { reasoning_effort: "medium" } }}
-          onCancel={() => setAdding(false)}
-          onSave={async (v) => {
-            await settingsService
-              .createProviderInstance({ type: v.type, label: v.label, enabled: true, config: v.config })
-              .catch(() => {})
-            setAdding(false)
-            reload()
-          }}
-        />
-      ) : null}
+      {storeError ? <p className="text-xs text-destructive">加载失败:{storeError}</p> : null}
+      {listError ? <p className="text-xs text-destructive">{listError}</p> : null}
+
+      {adding ? <InstanceEditor instance={null} onCancel={() => setAdding(false)} onSave={createInstance} /> : null}
 
       <ul className="space-y-2">
         {instances.map((inst: ProviderInstance) => (
           <li key={inst.id} className="rounded-lg border p-3">
             {editing === inst.id ? (
               <InstanceEditor
-                initial={{ type: inst.type, label: inst.label, config: (inst.config as Cfg) ?? {} }}
+                instance={inst}
                 onCancel={() => setEditing(null)}
-                onSave={async (v) => {
-                  await settingsService
-                    .updateProviderInstance(inst.id, { label: v.label, config: v.config })
-                    .catch(() => {})
-                  setEditing(null)
-                  reload()
-                }}
+                onSave={(v) => updateInstance(inst.id, v)}
               />
             ) : (
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={async () => {
-                    await settingsService.setDefaultProviderInstance(inst.id).catch(() => {})
-                    reload()
-                  }}
-                  aria-label="设为默认"
-                  className={cn(
-                    "flex size-5 shrink-0 items-center justify-center rounded-full border",
-                    inst.id === defaultId ? "border-primary bg-primary text-primary-foreground" : "text-transparent hover:border-primary",
-                  )}
-                >
-                  <Check className="size-3" />
-                </button>
-                <div className="min-w-0 flex-1">
-                  <div className="truncate text-sm font-medium">{inst.label || inst.type}</div>
-                  <div className="text-xs text-muted-foreground">
-                    {inst.type}
-                    {inst.id === defaultId ? " · 默认" : ""}
+              <>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => void setDefault(inst)}
+                    aria-label="设为默认"
+                    className={cn(
+                      "flex size-5 shrink-0 items-center justify-center rounded-full border",
+                      inst.id === defaultId
+                        ? "border-primary bg-primary text-primary-foreground"
+                        : "text-transparent hover:border-primary",
+                    )}
+                  >
+                    <Check className="size-3" />
+                  </button>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-1.5">
+                      <span className="truncate text-sm font-medium">{inst.label || inst.type}</span>
+                      {!inst.enabled ? (
+                        <Badge variant="secondary" className="shrink-0 px-1.5 text-[10px]">
+                          已停用
+                        </Badge>
+                      ) : null}
+                    </div>
+                    <div className="truncate text-xs text-muted-foreground">
+                      {PROVIDER_LABELS[inst.type] ?? inst.type}
+                      {inst.id === defaultId ? " · 默认" : ""}
+                    </div>
                   </div>
+                  <Switch
+                    checked={inst.enabled}
+                    onCheckedChange={(v) => void toggleEnabled(inst, v)}
+                    aria-label={inst.enabled ? "停用" : "启用"}
+                    className="shrink-0"
+                  />
+                  <button
+                    onClick={() => void fetchModels(inst)}
+                    aria-label="拉取模型列表"
+                    title="拉取模型列表"
+                    disabled={fetchingId === inst.id}
+                    className="shrink-0 rounded p-1 text-muted-foreground hover:text-foreground disabled:opacity-50"
+                  >
+                    <RefreshCw className={cn("size-3.5", fetchingId === inst.id && "animate-spin")} />
+                  </button>
+                  <button
+                    onClick={() => setEditing(inst.id)}
+                    aria-label="编辑"
+                    className="shrink-0 rounded p-1 text-muted-foreground hover:text-foreground"
+                  >
+                    <Pencil className="size-3.5" />
+                  </button>
+                  <button
+                    onClick={() => {
+                      setDeleteError(null)
+                      setDeleting(inst)
+                    }}
+                    aria-label="删除"
+                    className="shrink-0 rounded p-1 text-muted-foreground hover:text-destructive"
+                  >
+                    <Trash2 className="size-3.5" />
+                  </button>
                 </div>
-                <button onClick={() => setEditing(inst.id)} aria-label="编辑" className="shrink-0 rounded p-1 text-muted-foreground hover:text-foreground">
-                  <Pencil className="size-3.5" />
-                </button>
-                <button
-                  onClick={async () => {
-                    await settingsService.deleteProviderInstance(inst.id).catch(() => {})
-                    reload()
-                  }}
-                  aria-label="删除"
-                  className="shrink-0 rounded p-1 text-muted-foreground hover:text-destructive"
-                >
-                  <Trash2 className="size-3.5" />
-                </button>
-              </div>
+                {fetchNotice && fetchNotice.id === inst.id ? (
+                  <p className={cn("mt-1.5 text-xs", fetchNotice.error ? "text-destructive" : "text-emerald-500")}>
+                    {fetchNotice.text}
+                  </p>
+                ) : null}
+              </>
             )}
           </li>
         ))}
       </ul>
+
+      {instances.length === 0 && !adding && !storeError ? (
+        <p className="text-xs text-muted-foreground">暂无提供方实例,点击「新增」创建。</p>
+      ) : null}
+
+      <DefaultsEditor />
+
+      <ResponsiveDialog open={deleting != null} onOpenChange={(open) => (!open ? setDeleting(null) : null)}>
+        <ResponsiveDialogContent className="gap-3 p-4">
+          <ResponsiveDialogTitle>删除提供方实例</ResponsiveDialogTitle>
+          <ResponsiveDialogDescription>
+            确定删除「{deleting?.label || deleting?.type}」?引用它的默认模型偏好将失效。
+          </ResponsiveDialogDescription>
+          {deleteError ? <p className="text-xs text-destructive">删除失败:{deleteError}</p> : null}
+          <div className="flex justify-end gap-2">
+            <Button size="sm" variant="secondary" onClick={() => setDeleting(null)} disabled={deleteBusy}>
+              取消
+            </Button>
+            <Button size="sm" variant="destructive" onClick={() => void confirmDelete()} disabled={deleteBusy}>
+              {deleteBusy ? "删除中…" : "删除"}
+            </Button>
+          </div>
+        </ResponsiveDialogContent>
+      </ResponsiveDialog>
     </div>
   )
 }

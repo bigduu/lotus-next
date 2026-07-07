@@ -1,5 +1,7 @@
 import { Bot, Loader2, Check, AlertCircle, ChevronRight } from "lucide-react"
 import { cn } from "@/lib/utils"
+import { MachineTag } from "@/components/chat/MachineTag"
+import type { SessionPlacement } from "@services/chat/AgentService"
 import type { ChildProgress } from "@shared/store/appStore/slices/executionStateSlice/types"
 
 type Status = "running" | "done" | "error"
@@ -17,6 +19,11 @@ const LABEL: Record<Status, string> = { running: "运行中", done: "完成", er
 function SubAgentCard({ child, onOpen }: { child: ChildProgress; onOpen?: () => void }) {
   const st = statusOf(child)
   const detail = child.error || child.outputPreview
+  // Which machine this child runs on. ChildProgress doesn't carry placement
+  // yet — read it defensively so remote children badge up as soon as the
+  // event pipeline forwards it, and nothing renders meanwhile.
+  const placement =
+    (child as ChildProgress & { placement?: SessionPlacement | null }).placement ?? null
 
   return (
     <button
@@ -38,6 +45,7 @@ function SubAgentCard({ child, onOpen }: { child: ChildProgress; onOpen?: () => 
         )}
         <Bot className="size-3.5 shrink-0 text-muted-foreground" />
         <span className="min-w-0 flex-1 truncate text-sm font-medium">{child.title || "子代理"}</span>
+        <MachineTag placement={placement} compact className="max-w-32 shrink-0" />
         <span className="shrink-0 text-xs text-muted-foreground">
           {LABEL[st]}
           {typeof child.roundCount === "number" ? ` · ${child.roundCount}轮` : ""}
