@@ -137,7 +137,15 @@ export function ChatPane({
     currentSessionId ? s.tokenUsages[currentSessionId] : undefined,
   )
 
-  const [draft, setDraft] = useState("")
+  // Per-session persisted draft (survives session switches + reloads via the
+  // inputStates slice); new-chat drafts key off "".
+  const draftKey = currentSessionId ?? ""
+  const draft = useAppStore((s) => s.inputStates[draftKey]?.content ?? "")
+  const setDraft = (value: string | ((prev: string) => string)) => {
+    const store = useAppStore.getState()
+    const prev = store.inputStates[draftKey]?.content ?? ""
+    store.setInputContent(draftKey, typeof value === "function" ? value(prev) : value)
+  }
   const [dragOver, setDragOver] = useState(false)
   const [selectedSkill, setSelectedSkill] = useState<SkillDefinition | null>(null)
   const [attachments, setAttachments] = useState<Attachment[]>([])
@@ -208,10 +216,17 @@ export function ChatPane({
     currentChat?.config?.model ||
     ""
 
-  const slashQuery = draft.startsWith("/") ? draft.slice(1) : null
+  // Escape hides the pickers until the draft changes again (typing re-opens).
+  const [menusDismissed, setMenusDismissed] = useState(false)
+  useEffect(() => {
+    setMenusDismissed(false)
+  }, [draft])
+
+  const slashQuery = !menusDismissed && draft.startsWith("/") ? draft.slice(1) : null
 
   // @file references: detect a trailing "@query" and list workspace files.
   const atQuery = (() => {
+    if (menusDismissed) return null
     const m = draft.match(/@([^\s@]*)$/)
     return m ? m[1] : null
   })()
@@ -487,6 +502,7 @@ export function ChatPane({
           onPickFile={pickFile}
           hasSession={!!currentSessionId}
           onOpenWorkspacePicker={onOpenWorkspacePicker}
+          onDismissMenus={() => setMenusDismissed(true)}
         />
       </div>
 

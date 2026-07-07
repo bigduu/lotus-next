@@ -11,6 +11,8 @@ import { agentClient } from "@services/chat/AgentService"
 import { agentApiClient } from "@services/api"
 import { notify } from "@/lib/notify"
 import { mapTokenBudgetUsage } from "@shared/types/tokenBudget"
+import { getSystemPromptEnhancementText } from "@shared/utils/systemPromptEnhancement"
+import { isCopilotConclusionWithOptionsEnhancementEnabled } from "@shared/utils/copilotConclusionWithOptionsEnhancementUtils"
 
 export type PendingQuestion = {
   question: string
@@ -91,6 +93,12 @@ export function useChat(
   const globalReasoningEffort = useProviderStore((s) => {
     const id = s.defaultProviderInstanceId
     return (id ? s.providerInstances.find((i) => i.id === id) : undefined)?.config?.reasoning_effort
+  })
+  // Provider TYPE of the default instance — drives provider-specific prompt
+  // enhancement segments (e.g. the Copilot conclusion-with-options contract).
+  const providerType = useProviderStore((s) => {
+    const id = s.defaultProviderInstanceId
+    return (id ? s.providerInstances.find((i) => i.id === id) : undefined)?.type
   })
   const reasoningEffort =
     useAppStore((s) => s.inputStates[sid ?? ""]?.reasoningEffort) ?? globalReasoningEffort
@@ -595,10 +603,27 @@ export function useChat(
       streamBufRef.current = ""
       setStreamingText("")
       try {
+        // Client-side prompt enhancement (OS info + operational guidance + the
+        // user's own enhancement text), recomputed per send like lotus does.
+        const enhancePrompt = getSystemPromptEnhancementText(providerType).trim()
+        // New sessions honor the selected system-prompt preset; existing
+        // sessions keep the prompt they were created with.
+        let systemPrompt: string | undefined
+        if (!sid) {
+          const st = useAppStore.getState()
+          const preset = st.lastSelectedPromptId
+            ? st.systemPrompts.find((p) => p.id === st.lastSelectedPromptId)
+            : undefined
+          systemPrompt = preset?.content?.trim() || undefined
+        }
         const res = await agentClient.sendMessage({
           message: body,
           session_id: sid ?? undefined,
           model: effectiveModel,
+          enhance_prompt: enhancePrompt || undefined,
+          copilot_conclusion_with_options_enhancement_enabled:
+            providerType === "copilot" && isCopilotConclusionWithOptionsEnhancementEnabled(),
+          system_prompt: systemPrompt,
           selected_skill_ids: opts?.skillIds?.length ? opts.skillIds : undefined,
           images: opts?.images?.length ? opts.images : undefined,
           // Only meaningful when creating a NEW session; an existing session keeps
@@ -630,7 +655,7 @@ export function useChat(
         setSending(false)
       }
     },
-    [sid, isBound, onSessionCreated, effectiveModel, sending, runStream],
+    [sid, isBound, onSessionCreated, effectiveModel, providerType, sending, runStream],
   )
 
   const stop = useCallback(() => {

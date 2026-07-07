@@ -1,11 +1,58 @@
 import { useRef } from "react"
-import { X, Paperclip, FolderGit2, ChevronDown, ArrowUp, Square } from "lucide-react"
+import { X, Paperclip, FolderGit2, ChevronDown, ArrowUp, Square, BookText, Check } from "lucide-react"
+import { useShallow } from "zustand/react/shallow"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import { SlashMenu } from "@/components/chat/SlashMenu"
 import { FileMenu } from "@/components/chat/FileMenu"
+import { useAppStore } from "@shared/store/appStore"
 import type { SkillDefinition } from "@shared/types/skill"
 import type { WorkspaceFileEntry } from "@services/workspace/types"
+
+/**
+ * System-prompt preset chip for NEW chats: the selected preset's content is
+ * sent as `system_prompt` on the first message (useChat.send reads
+ * lastSelectedPromptId). Hidden when the user has no presets.
+ */
+function PromptChip() {
+  const systemPrompts = useAppStore(useShallow((s) => s.systemPrompts))
+  const lastSelectedPromptId = useAppStore((s) => s.lastSelectedPromptId)
+  const setLastSelectedPromptId = useAppStore((s) => s.setLastSelectedPromptId)
+  if (systemPrompts.length === 0) return null
+  const active = systemPrompts.find((p) => p.id === lastSelectedPromptId)
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button
+          className="flex max-w-full items-center gap-1.5 rounded-full border bg-card px-2.5 py-1 text-xs text-muted-foreground hover:text-foreground"
+          title={active ? `系统提示词:${active.name}` : "选择系统提示词"}
+        >
+          <BookText className="size-3.5 shrink-0" />
+          <span className="truncate">{active ? active.name : "默认提示词"}</span>
+          <ChevronDown className="size-3 shrink-0 opacity-60" />
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start">
+        <DropdownMenuItem onClick={() => setLastSelectedPromptId("")}>
+          {!active ? <Check className="size-3.5" /> : <span className="size-3.5" />}
+          默认提示词
+        </DropdownMenuItem>
+        {systemPrompts.map((p) => (
+          <DropdownMenuItem key={p.id} onClick={() => setLastSelectedPromptId(p.id)}>
+            {active?.id === p.id ? <Check className="size-3.5" /> : <span className="size-3.5" />}
+            <span className="truncate">{p.name}</span>
+          </DropdownMenuItem>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  )
+}
 
 type AttachmentView = { id: string; url: string; name: string }
 
@@ -30,6 +77,7 @@ export function Composer({
   onPickFile,
   hasSession,
   onOpenWorkspacePicker,
+  onDismissMenus,
 }: {
   draft: string
   onDraftChange: (v: string) => void
@@ -51,16 +99,17 @@ export function Composer({
   onPickFile: (entry: WorkspaceFileEntry) => void
   hasSession: boolean
   onOpenWorkspacePicker: () => void
+  onDismissMenus?: () => void
 }) {
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   return (
     <div className="border-t px-3 py-3">
       {slashQuery !== null && (
-        <SlashMenu skills={skills} query={slashQuery} onPick={onPickSkill} />
+        <SlashMenu skills={skills} query={slashQuery} onPick={onPickSkill} onDismiss={onDismissMenus} />
       )}
       {slashQuery === null && atQuery !== null && displayWorkspace ? (
-        <FileMenu files={workspaceFiles} query={atQuery} onPick={onPickFile} />
+        <FileMenu files={workspaceFiles} query={atQuery} onPick={onPickFile} onDismiss={onDismissMenus} />
       ) : null}
       {selectedSkill && (
         <div className="mx-auto mb-2 flex max-w-2xl">
@@ -109,7 +158,7 @@ export function Composer({
         }}
       />
       {!hasSession ? (
-        <div className="mx-auto mb-1.5 flex max-w-2xl items-center">
+        <div className="mx-auto mb-1.5 flex max-w-2xl items-center gap-1.5">
           <button
             onClick={onOpenWorkspacePicker}
             className="flex max-w-full items-center gap-1.5 rounded-full border bg-card px-2.5 py-1 text-xs text-muted-foreground hover:text-foreground"
@@ -123,6 +172,7 @@ export function Composer({
             </span>
             <ChevronDown className="size-3 shrink-0 opacity-60" />
           </button>
+          <PromptChip />
         </div>
       ) : null}
       <div className="mx-auto flex max-w-2xl items-center gap-2">
