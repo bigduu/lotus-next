@@ -5,6 +5,8 @@ import { cn } from "@/lib/utils"
 import { Badge } from "@/components/ui/badge"
 import { useBackgroundBash } from "@shared/store/appStore"
 import i18n from "@shared/i18n"
+import { parseFileChangeResultPayload } from "@shared/utils/resultFormatters"
+import { FileChangeView } from "./FileChangeView"
 
 type Entry = {
   toolName: string
@@ -177,6 +179,8 @@ function BackgroundBadge({ bashId }: { bashId: string }) {
 
 function EntryRow({ e }: { e: Entry }) {
   const { primary, rest } = cleanParams(e.params)
+  // File-editing tool results render as a real diff instead of raw JSON.
+  const fileChange = e.result?.text ? parseFileChangeResultPayload(e.result.text) : null
   const result = e.result?.text ? prettyResult(e.result.text) : ""
   return (
     <div className="rounded-md bg-background/40 px-2.5 py-2">
@@ -199,7 +203,11 @@ function EntryRow({ e }: { e: Entry }) {
           ))}
         </div>
       ) : null}
-      {result ? (
+      {fileChange ? (
+        <div className="mt-1.5">
+          <FileChangeView payload={fileChange} />
+        </div>
+      ) : result ? (
         <details className="mt-1.5">
           <summary className="cursor-pointer select-none text-[11px] text-muted-foreground hover:text-foreground">
             结果

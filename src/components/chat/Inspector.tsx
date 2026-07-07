@@ -1,11 +1,21 @@
-import { useEffect, useState } from "react"
-import { X, FolderGit2 } from "lucide-react"
+import { useEffect, useMemo, useState } from "react"
+import { X, FolderGit2, FileDiff } from "lucide-react"
 import { useShallow } from "zustand/react/shallow"
-import { useAppStore, selectCurrentChat, selectChildren } from "@shared/store/appStore"
+import {
+  useAppStore,
+  selectCurrentChat,
+  selectChildren,
+  selectSessionById,
+} from "@shared/store/appStore"
 import { useProviderStore } from "@shared/store/appStore/slices/providerSlice"
 import { agentClient, type GoldConfig, type GoalState } from "@services/chat/AgentService"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
+import {
+  parseFileChangeResultPayload,
+  type FileChangeResultPayload,
+} from "@shared/utils/resultFormatters"
+import { FileChangeView } from "./FileChangeView"
 
 function GoalSection({
   sessionId,
@@ -121,6 +131,22 @@ export function Inspector({
   const taskList = useAppStore((s) => (sessionId ? s.taskLists[sessionId] : undefined))
   const evaluation = useAppStore((s) => (sessionId ? s.evaluationStates[sessionId] : undefined))
   const loadTaskList = useAppStore((s) => s.loadTaskList)
+  // Session-level file-change aggregation ("Diffs" section): every
+  // file-editing tool result in the loaded transcript, newest last.
+  const sessionMessages = useAppStore(
+    useShallow((s) => (sessionId ? (selectSessionById(sessionId)(s)?.messages ?? []) : [])),
+  )
+  const fileChanges = useMemo(() => {
+    const out: Array<{ id: string; payload: FileChangeResultPayload }> = []
+    for (const m of sessionMessages) {
+      if ((m as { type?: string }).type !== "tool_result") continue
+      const content = (m as { result?: { result?: unknown } }).result?.result
+      if (typeof content !== "string") continue
+      const payload = parseFileChangeResultPayload(content)
+      if (payload) out.push({ id: (m as { id: string }).id, payload })
+    }
+    return out
+  }, [sessionMessages])
   const getProviderLabel = useProviderStore((s) => s.getProviderDisplayLabel)
   const children = useAppStore(
     useShallow((s) => (sessionId ? selectChildren(sessionId)(s) : {})),
@@ -215,6 +241,37 @@ export function Inspector({
               </ul>
             )}
           </section>
+
+          {fileChanges.length > 0 ? (
+            <section className="rounded-lg border p-3">
+              <div className="mb-2 text-xs font-medium text-muted-foreground">
+                文件变更 ({fileChanges.length})
+              </div>
+              <div className="space-y-1.5">
+                {fileChanges.map(({ id, payload }) => (
+                  <details key={id}>
+                    <summary className="flex cursor-pointer select-none items-center gap-1.5 rounded px-1 py-0.5 text-xs hover:bg-accent [&::-webkit-details-marker]:hidden">
+                      <FileDiff className="size-3.5 shrink-0 text-muted-foreground" />
+                      <span className="min-w-0 flex-1 truncate font-mono" title={payload.file_path}>
+                        {payload.file_path?.split("/").filter(Boolean).pop() || payload.file_path}
+                      </span>
+                      <span className="shrink-0 text-[11px]">
+                        <span className="text-green-600 dark:text-green-400">
+                          +{payload.diff?.added_lines ?? 0}
+                        </span>{" "}
+                        <span className="text-red-600 dark:text-red-400">
+                          −{payload.diff?.removed_lines ?? 0}
+                        </span>
+                      </span>
+                    </summary>
+                    <div className="mt-1">
+                      <FileChangeView payload={payload} />
+                    </div>
+                  </details>
+                ))}
+              </div>
+            </section>
+          ) : null}
 
           {childList.length > 0 ? (
             <section className="rounded-lg border p-3">
