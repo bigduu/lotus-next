@@ -1,31 +1,28 @@
 /**
  * Account change-feed runner.
  *
- * Owns a single long-lived SSE connection to `GET /api/v1/stream` and applies
+ * Owns the long-lived `feed` channel on the shared v2 WebSocket and applies
  * durable change events to the Zustand store. This replaces the former
- * timer-based polling (10s agent-health + 15s session-index): the feed connects
- * once, the browser `EventSource` auto-reconnects with `Last-Event-ID`, and the
- * backend replays only what was missed. Availability is derived from the feed
- * connection state rather than a health poll.
+ * timer-based polling (10s agent-health + 15s session-index): the feed
+ * subscribes once, the WS client auto-reconnects and re-subscribes with the
+ * latest cursor, and the backend replays only what was missed. Availability is
+ * derived from the feed connection state rather than a health poll.
  *
  * Most change events trigger a debounced `refreshChats()` so all existing,
  * tested session-list reconciliation logic is reused. Title/pinned events also
  * apply directly for snappier UX. Live token streaming of the *currently open*
- * session still flows through the per-session `/events/{id}` SSE
+ * session still flows through the per-session `agent.<sid>` channel
  * (`agentSubscriptionRunner`); this feed is the cross-session sync channel.
  */
 import { AgentClient, type ChangeEvent, type FeedSubscription } from "./AgentService";
 import { useAppStore, selectShouldObserve } from "@shared/store/appStore";
-import { isApiV2WsEnabled } from "@shared/utils/debugFlags";
 import { notify } from "@/lib/notify";
 
 const CURSOR_STORAGE_KEY = "lotus_account_feed_cursor_v1";
 const REFRESH_DEBOUNCE_MS = 400;
 
-// The feed transport is either a browser `EventSource` (legacy SSE, default) or
-// the opt-in v2 WebSocket handle; both expose `close()`, so we only depend on
-// the narrow `FeedSubscription` interface.
-let eventSource: FeedSubscription | null = null;
+// The live v2 WS feed subscription handle (null while stopped).
+let feedSubscription: FeedSubscription | null = null;
 let refreshTimer: ReturnType<typeof setTimeout> | null = null;
 
 const readCursor = (): number => {
@@ -159,25 +156,20 @@ const applyChange = (change: ChangeEvent): void => {
  * connection is live.
  */
 export const startAccountFeed = (): void => {
-  if (eventSource) return;
-  // The feed requires a browser/webview transport: an EventSource for the
-  // legacy SSE path, or a WebSocket for the opt-in v2 path. In SSR/node/test
-  // environments both may be absent — skip rather than throw.
-  const wsEnabled = isApiV2WsEnabled();
-  if (wsEnabled) {
-    if (typeof WebSocket === "undefined") return;
-  } else if (typeof EventSource === "undefined") {
-    return;
-  }
+  if (feedSubscription) return;
+  // The feed requires a browser/webview WebSocket. In SSR/node/test
+  // environments it may be absent — skip rather than throw.
+  if (typeof WebSocket === "undefined") return;
   const client = AgentClient.getInstance();
 
-  eventSource = client.subscribeToAccountStream(
+  feedSubscription = client.subscribeToAccountStream(
     {
       onOpen: () => {
         useAppStore.getState().setAgentAvailability(true);
       },
       onError: () => {
-        // Transient: the browser will auto-reconnect (resending Last-Event-ID).
+        // Transient: the WS client auto-reconnects (resubscribing with the
+        // latest cursor).
         useAppStore.getState().setAgentAvailability(false);
       },
       onReset: () => {
@@ -201,8 +193,8 @@ export const stopAccountFeed = (): void => {
     clearTimeout(refreshTimer);
     refreshTimer = null;
   }
-  if (eventSource) {
-    eventSource.close();
-    eventSource = null;
+  if (feedSubscription) {
+    feedSubscription.close();
+    feedSubscription = null;
   }
 };

@@ -1,4 +1,4 @@
-import { debugLog, isApiV2WsEnabled } from "@shared/utils/debugFlags";
+import { debugLog } from "@shared/utils/debugFlags";
 /**
  * Agent Client Service
  *
@@ -272,21 +272,15 @@ export interface AgentEvent {
 }
 
 /**
- * A sequenced change-feed event from `GET /api/v1/stream`: an {@link AgentEvent}
- * stamped with a global monotonic `seq` (the resume cursor) and a routing
- * `session_id`.
+ * A sequenced change-feed event from the v2 WS `feed` channel: an
+ * {@link AgentEvent} stamped with a global monotonic `seq` (the resume cursor)
+ * and a routing `session_id`.
  */
 export interface ChangeEvent {
   seq: number;
   ts: string;
   session_id?: string;
   event: AgentEvent;
-}
-
-/** Control frame telling the client to drop local state and full-resync. */
-export interface FeedResetFrame {
-  type: "feed_reset";
-  from_seq: number;
 }
 
 /** Callbacks for {@link AgentClient.subscribeToAccountStream}. */
@@ -1242,6 +1236,12 @@ export class AgentClient {
   /**
    * Subscribe to events only (no execution trigger)
    * Use this for passive observation like TaskList updates
+   *
+   * Routes the per-session agent stream over the shared `/v2/stream` WebSocket
+   * (the only transport — lotus-next is WSS-only). The Promise resolves on the
+   * agent `terminal` control or when the abort signal fires; a transient WS
+   * disconnect does not reject (the WS client reconnects and re-subscribes
+   * internally), so `agentSubscriptionRunner` needs no change.
    */
   async subscribeToEvents(
     sessionId: string,
@@ -1251,325 +1251,43 @@ export class AgentClient {
     const signal = abortController?.signal;
     debugLog("[AgentClient]", "events.subscribe.request", { sessionId });
 
-    // v2 WebSocket transport (default ON; force OFF with bodhi_api_v2_ws="0").
-    // Route this per-session agent stream over the shared `/v2/stream` socket.
-    // The handle's Promise resolves on the agent `terminal` control or when the
-    // abort signal fires; a transient WS disconnect does not reject (the WS
-    // client reconnects and re-subscribes internally), so
-    // `agentSubscriptionRunner` needs no change.
-    //
-    // If the WS's very FIRST connection never opens (old backend without
-    // `/v2/stream`, or unreachable host), `onConnectFailed` fires once and we
-    // transparently fall back to the legacy SSE agent path below — the caller
-    // sees identical Promise/abort semantics regardless of which transport won.
-    if (isApiV2WsEnabled()) {
-      if (signal?.aborted) {
-        debugLog("[AgentClient]", "events.subscribe.ws.aborted_before_connect", { sessionId });
-        return;
-      }
-
-      let fellBack = false;
-      const fallbackPromise = new Promise<void>((resolve, reject) => {
-        // Declare `close` ABOVE the subscribeAgent call: `onConnectFailed` can
-        // fire SYNCHRONOUSLY when the WS is already in a known-failed state (a
-        // second subscribe after a prior WS failure), and the callback references
-        // `close` — using it before initialization would throw a temporal-dead-
-        // zone ReferenceError. (v2Stream also defers that synchronous fire to a
-        // microtask for belt-and-braces.)
-        let close: () => void = () => {};
-        const subscription = v2Stream.subscribeAgent(
-          sessionId,
-          handlers,
-          (event, h) => this.handleEvent(event, h),
-          () => {
-            // Initial WS connect failed: tear down the WS subscription (already
-            // torn down internally by the client) and fall back to SSE. Mark so
-            // the WS promise's resolution below is ignored.
-            fellBack = true;
-            debugLog("[AgentClient]", "events.subscribe.ws.connect_failed_fallback", { sessionId });
-            close();
-            this.subscribeToEventsSse(sessionId, handlers, signal).then(resolve, reject);
-          },
-        );
-        const { promise } = subscription;
-        close = subscription.close;
-        const abortListener = () => {
-          debugLog("[AgentClient]", "events.subscribe.ws.abort", { sessionId });
-          close();
-        };
-        signal?.addEventListener("abort", abortListener, { once: true });
-        promise
-          .then(() => {
-            signal?.removeEventListener("abort", abortListener);
-            // Resolve the WS leg only if we did NOT fall back; otherwise the SSE
-            // leg owns resolution.
-            if (!fellBack) resolve();
-          })
-          .catch((error) => {
-            signal?.removeEventListener("abort", abortListener);
-            if (!fellBack) reject(error);
-          });
-      });
-      await fallbackPromise;
+    if (signal?.aborted) {
+      debugLog("[AgentClient]", "events.subscribe.ws.aborted_before_connect", { sessionId });
       return;
     }
 
-    return this.subscribeToEventsSse(sessionId, handlers, signal);
+    const { promise, close } = v2Stream.subscribeAgent(sessionId, handlers, (event, h) =>
+      this.handleEvent(event, h),
+    );
+    const abortListener = () => {
+      debugLog("[AgentClient]", "events.subscribe.ws.abort", { sessionId });
+      close();
+    };
+    signal?.addEventListener("abort", abortListener, { once: true });
+    try {
+      await promise;
+    } finally {
+      signal?.removeEventListener("abort", abortListener);
+    }
   }
 
   /**
-   * Legacy SSE per-session agent subscription (`GET /api/v1/events/{id}`).
+   * Subscribe to the account-wide change feed (the v2 WS `feed` channel).
    *
-   * This is the original `subscribeToEvents` body, factored out so it can be
-   * invoked from BOTH the flag-off path AND the v2 WS connect-failure fallback,
-   * with byte-for-byte identical behavior in the force-OFF case.
-   */
-  private subscribeToEventsSse(
-    sessionId: string,
-    handlers: AgentEventHandlers,
-    signal?: AbortSignal,
-  ): Promise<void> {
-    const base = getBackendBaseUrlSync().trim().replace(/\/+$/, "");
-    const origin = base.endsWith("/v1") ? base.slice(0, -3) : base;
-    const eventsUrl = `${origin}/api/v1/events/${encodeURIComponent(sessionId)}`;
-    debugLog("[AgentClient]", "events.subscribe.url", { sessionId, eventsUrl });
-
-    return new Promise<void>((resolve, reject) => {
-      if (signal?.aborted) {
-        debugLog("[AgentClient]", "events.subscribe.aborted_before_connect", { sessionId });
-        resolve();
-        return;
-      }
-
-      let settled = false;
-      let terminalSeen = false;
-      let eventSource: EventSource | null = null;
-
-      const abortListener = () => {
-        debugLog("[AgentClient]", "events.subscribe.abort", { sessionId, terminalSeen });
-        settleResolve();
-      };
-
-      const cleanup = () => {
-        if (eventSource) {
-          eventSource.close();
-          eventSource = null;
-        }
-        signal?.removeEventListener("abort", abortListener);
-      };
-
-      const settleResolve = () => {
-        if (settled) return;
-        settled = true;
-        debugLog("[AgentClient]", "events.subscribe.resolve", {
-          sessionId,
-          terminalSeen,
-          aborted: signal?.aborted ?? false,
-        });
-        cleanup();
-        resolve();
-      };
-
-      const settleReject = (error: unknown) => {
-        if (settled) return;
-        settled = true;
-        debugLog("[AgentClient]", "events.subscribe.reject", {
-          sessionId,
-          terminalSeen,
-          aborted: signal?.aborted ?? false,
-          error,
-        });
-        cleanup();
-        reject(error);
-      };
-
-      signal?.addEventListener("abort", abortListener, { once: true });
-
-      try {
-        eventSource = new EventSource(eventsUrl, { withCredentials: true });
-      } catch (error) {
-        settleReject(error);
-        return;
-      }
-
-      eventSource.onopen = () => {
-        debugLog("[AgentClient]", "events.subscribe.open", { sessionId });
-      };
-
-      eventSource.onmessage = (messageEvent) => {
-        const data = messageEvent.data;
-
-        if (data === "[DONE]") {
-          terminalSeen = true;
-          debugLog("[AgentClient]", "events.subscribe.done", { sessionId });
-          settleResolve();
-          return;
-        }
-
-        if (data === "[KEEPALIVE]") {
-          return;
-        }
-
-        try {
-          const event: AgentEvent = JSON.parse(data);
-          if (
-            event.type === "execution_started" ||
-            event.type === "complete" ||
-            event.type === "cancelled" ||
-            event.type === "error" ||
-            event.type === "runner_progress" ||
-            event.type === "need_clarification"
-          ) {
-            debugLog("[AgentClient]", "events.subscribe.event", {
-              sessionId,
-              ...summarizeStreamControlEvent(event),
-            });
-          }
-          this.handleEvent(event, handlers);
-          if (event.type === "complete" || event.type === "cancelled" || event.type === "error") {
-            terminalSeen = true;
-          }
-        } catch (error) {
-          console.warn("Failed to parse event:", data, error);
-        }
-      };
-
-      eventSource.onerror = () => {
-        debugLog("[AgentClient]", "events.subscribe.error", {
-          sessionId,
-          terminalSeen,
-          aborted: signal?.aborted ?? false,
-        });
-        if (signal?.aborted || terminalSeen) {
-          settleResolve();
-          return;
-        }
-        settleReject(new Error(`EventSource connection failed for session ${sessionId}`));
-      };
-    });
-  }
-
-  /**
-   * Subscribe to the account-wide change feed (`GET /api/v1/stream`).
+   * A single long-lived channel on the shared `/v2/stream` WebSocket
+   * multiplexing durable change events across all sessions (session
+   * created/deleted/cleared, title/pinned, message appended, task updates,
+   * terminal status). Replaces the old session-index and health polling: the
+   * WS client auto-reconnects and re-subscribes with the latest cursor, so the
+   * backend replays only what was missed.
    *
-   * A single long-lived SSE connection multiplexing durable change events
-   * across all sessions (session created/deleted/cleared, title/pinned, message
-   * appended, task updates, terminal status). Replaces the old session-index
-   * and health polling: the browser `EventSource` auto-reconnects and resends
-   * `Last-Event-ID`, so the backend replays only what was missed.
-   *
-   * Returns a small `{ close() }` handle so the caller can tear it down. With
-   * the legacy SSE transport this is the live `EventSource` (which structurally
-   * satisfies the handle) and reconnection is handled natively by the browser;
-   * with the v2 WebSocket transport it is the v2 feed subscription.
-   *
-   * v2 WebSocket transport is default ON (force OFF with bodhi_api_v2_ws="0").
-   * If the WS's very FIRST connection never opens (old backend without
-   * `/v2/stream`, or unreachable host), we transparently fall back to the legacy
-   * SSE feed below. The returned handle closes whichever transport ended up
-   * active; `accountFeed.ts` needs no change.
+   * Returns a small `{ close() }` handle so the caller can tear it down.
    */
   subscribeToAccountStream(
     handlers: AccountStreamHandlers,
     opts?: { since?: number },
   ): FeedSubscription {
-    if (isApiV2WsEnabled()) {
-      // The handle must close whichever transport is active. It starts holding
-      // the WS feed subscription and swaps to the SSE handle if the initial WS
-      // connect fails. If the caller closes BEFORE any fallback, the `closed`
-      // guard prevents a late fallback from opening a leaked EventSource.
-      //
-      // IMPORTANT: declare `closed`/`active`/`wsHandle` ABOVE the subscribeFeed
-      // call. `onConnectFailed` can fire SYNCHRONOUSLY inside subscribeFeed when
-      // the WS is already in a known-failed state (a second subscribe after a
-      // prior WS failure); referencing these from the callback before they were
-      // initialized would throw a temporal-dead-zone ReferenceError. (v2Stream
-      // also defers that synchronous fire to a microtask for belt-and-braces.)
-      let closed = false;
-      let active: FeedSubscription | null = null;
-      // `wsClose` is a hoisted no-op so the callback NEVER references the
-      // not-yet-assigned `wsHandle` const (temporal-dead-zone safety, symmetric
-      // with the agent path). v2Stream also defers any synchronous connect-failed
-      // fire to a microtask, so in practice the callback runs after `wsClose` is
-      // pointed at the real handle below — but the no-op makes a sync fire safe too.
-      let wsClose: () => void = () => {};
-      const wsHandle: FeedSubscription = v2Stream.subscribeFeed(handlers, opts?.since ?? 0, () => {
-        if (closed) return;
-        debugLog("[AgentClient]", "stream.subscribe.ws.connect_failed_fallback", {});
-        // Close the WS feed handle so v2Stream nulls its feedChannel and
-        // closeIfIdle resets connectivity state (everOpened/connectFailed) —
-        // symmetric with the agent path. Without this the feed channel stays
-        // registered: hasSubscriptions() stays true, the WS never resets, and
-        // every later subscribe keeps hitting the already-failed path (and the
-        // WS is never retried even if the backend is later upgraded).
-        wsClose();
-        // Swap to the legacy SSE feed with the same handlers + since.
-        active = this.subscribeAccountStreamSse(handlers, opts);
-      });
-      wsClose = () => wsHandle.close();
-      if (active === null) active = wsHandle;
-      return {
-        close() {
-          if (closed) return;
-          closed = true;
-          active?.close();
-        },
-      };
-    }
-
-    return this.subscribeAccountStreamSse(handlers, opts);
-  }
-
-  /**
-   * Legacy SSE account change-feed (`GET /api/v1/stream`).
-   *
-   * This is the original `subscribeToAccountStream` body, factored out so it can
-   * be invoked from BOTH the flag-off path AND the v2 WS connect-failure
-   * fallback, with byte-for-byte identical behavior in the force-OFF case.
-   */
-  private subscribeAccountStreamSse(
-    handlers: AccountStreamHandlers,
-    opts?: { since?: number },
-  ): FeedSubscription {
-    const base = getBackendBaseUrlSync().trim().replace(/\/+$/, "");
-    const origin = base.endsWith("/v1") ? base.slice(0, -3) : base;
-    const since = opts?.since && opts.since > 0 ? `?since=${opts.since}` : "";
-    const url = `${origin}/api/v1/stream${since}`;
-    debugLog("[AgentClient]", "stream.subscribe.url", { url });
-
-    const eventSource = new EventSource(url, { withCredentials: true });
-
-    eventSource.onopen = () => {
-      debugLog("[AgentClient]", "stream.subscribe.open", {});
-      handlers.onOpen?.();
-    };
-
-    eventSource.onmessage = (messageEvent) => {
-      const data = messageEvent.data;
-      if (data === "[KEEPALIVE]") {
-        return;
-      }
-      try {
-        const parsed = JSON.parse(data) as ChangeEvent | FeedResetFrame;
-        if ((parsed as FeedResetFrame).type === "feed_reset") {
-          debugLog("[AgentClient]", "stream.subscribe.feed_reset", parsed);
-          handlers.onReset?.();
-          return;
-        }
-        handlers.onChange(parsed as ChangeEvent);
-      } catch (error) {
-        console.warn("Failed to parse change-feed event:", data, error);
-      }
-    };
-
-    eventSource.onerror = () => {
-      // The browser will auto-reconnect (resending Last-Event-ID). Surface the
-      // transient disconnect so the UI can reflect availability.
-      debugLog("[AgentClient]", "stream.subscribe.error", {});
-      handlers.onError?.();
-    };
-
-    return eventSource;
+    return v2Stream.subscribeFeed(handlers, opts?.since ?? 0);
   }
 
   /**
