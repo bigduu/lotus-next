@@ -112,7 +112,14 @@ export function DefaultsEditor() {
         payload[role.key] = filled ? { provider: v.provider, model: v.model.trim() } : null
         normalized[role.key] = filled ? { provider: v.provider, model: v.model.trim() } : { provider: "", model: "" }
       }
-      await apiClient.post("/bamboo/config", { defaults: payload })
+      // BACKEND GOTCHA (bamboo set.rs): every POST /bamboo/config rewrites
+      // model_limits.json from the patch — a patch WITHOUT the key DELETES
+      // the file. Fetch the current value and carry it along.
+      const current = await apiClient.get<{ model_limits?: unknown }>("/bamboo/config")
+      await apiClient.post("/bamboo/config", {
+        defaults: payload,
+        ...(current?.model_limits !== undefined ? { model_limits: current.model_limits } : {}),
+      })
       // Settle local state on the exact values we sent, then let the store
       // reload confirm (the resync effect only applies when not dirty).
       setDraft(normalized)

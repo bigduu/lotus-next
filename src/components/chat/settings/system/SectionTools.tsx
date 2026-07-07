@@ -18,19 +18,15 @@ export function SectionTools({
   saveSection: SystemConfigApi["saveSection"]
 }) {
   const [available, setAvailable] = useState<string[]>([])
-  const [disabled, setDisabled] = useState<string[]>([])
-  const [saved, setSaved] = useState<string[]>([])
+  // Seed once at mount: re-seeding on config change would clobber in-progress
+  // edits whenever another section saves (each save reloads the shared config).
+  const [disabled, setDisabled] = useState<string[]>(() =>
+    normalizeNames((config.tools?.disabled ?? []).filter((n): n is string => typeof n === "string"))
+  )
+  const [saved, setSaved] = useState<string[]>(disabled)
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState<SectionMessage>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
-
-  useEffect(() => {
-    const fromConfig = normalizeNames(
-      (config.tools?.disabled ?? []).filter((n): n is string => typeof n === "string")
-    )
-    setDisabled(fromConfig)
-    setSaved(fromConfig)
-  }, [config])
 
   const loadTools = () => {
     setLoadError(null)

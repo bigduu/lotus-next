@@ -140,8 +140,9 @@ export function ChatPane({
   )
 
   // Per-session persisted draft (survives session switches + reloads via the
-  // inputStates slice); new-chat drafts key off "".
-  const draftKey = currentSessionId ?? ""
+  // inputStates slice). New-chat drafts key off a per-pane sentinel so the
+  // main pane's and a split pane's empty composers don't share one draft.
+  const draftKey = currentSessionId ?? (secondary ? "__new_chat_pane2__" : "")
   const draft = useAppStore((s) => s.inputStates[draftKey]?.content ?? "")
   const setDraft = (value: string | ((prev: string) => string)) => {
     const store = useAppStore.getState()
@@ -257,11 +258,17 @@ export function ChatPane({
     // one picked for a new chat — so completions match where the agent will run.
     if (atQuery === null || !displayWorkspace) return
     if (filesLoadedForRef.current === displayWorkspace) return
-    filesLoadedForRef.current = displayWorkspace
+    const target = displayWorkspace
+    filesLoadedForRef.current = target
     workspaceService
-      .listWorkspaceFiles(displayWorkspace)
+      .listWorkspaceFiles(target)
       .then(setWorkspaceFiles)
-      .catch(() => setWorkspaceFiles([]))
+      .catch(() => {
+        // Don't cache a transient failure as an empty list — let the next
+        // @-open retry the fetch.
+        if (filesLoadedForRef.current === target) filesLoadedForRef.current = null
+        setWorkspaceFiles([])
+      })
   }, [atQuery, displayWorkspace])
 
   const pickFile = (entry: WorkspaceFileEntry) => {
@@ -284,6 +291,9 @@ export function ChatPane({
   }, [slashQuery])
 
   const submit = () => {
+    // Guard BEFORE clearing anything: a Cmd+Enter while a reply streams must
+    // not silently destroy the typed draft (send() would no-op on `sending`).
+    if (sending) return
     const text = draft
     if (!text.trim() && attachments.length === 0 && !selectedWorkflow) return
     setDraft("")

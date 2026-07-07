@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react"
+import { useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { getErrorMessage } from "@services/api"
@@ -13,14 +13,14 @@ export function SectionSubagents({
   config: SystemBambooConfig
   saveSection: SystemConfigApi["saveSection"]
 }) {
-  const [maxConcurrent, setMaxConcurrent] = useState("")
+  // Seed once at mount: re-seeding on config change would clobber in-progress
+  // edits whenever another section saves (each save reloads the shared config).
+  const [maxConcurrent, setMaxConcurrent] = useState(() => {
+    const value = config.subagents?.max_concurrent
+    return typeof value === "number" ? String(value) : ""
+  })
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState<SectionMessage>(null)
-
-  useEffect(() => {
-    const value = config.subagents?.max_concurrent
-    setMaxConcurrent(typeof value === "number" ? String(value) : "")
-  }, [config])
 
   const save = async () => {
     const trimmed = maxConcurrent.trim()

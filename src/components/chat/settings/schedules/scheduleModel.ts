@@ -187,8 +187,15 @@ export function buildMisfirePolicy(values: ScheduleFormValues): MisfirePolicy {
   }
 }
 
-export function buildRunConfig(values: ScheduleFormValues): ScheduleRunConfig {
+export function buildRunConfig(
+  values: ScheduleFormValues,
+  original?: ScheduleRunConfig | null,
+): ScheduleRunConfig {
   return {
+    // The backend PATCH replaces run_config WHOLESALE (no field merge), so
+    // carry over fields this form doesn't edit — e.g. reasoning_effort set
+    // via the scheduler tool — or editing a schedule silently drops them.
+    ...(original ?? {}),
     system_prompt: normalizedString(values.system_prompt),
     task_message: normalizedString(values.task_message),
     model: normalizedString(values.model),

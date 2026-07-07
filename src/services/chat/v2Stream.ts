@@ -111,7 +111,10 @@ export const onReconnected = (listener: () => void): (() => void) => {
 };
 
 let feedChannel: FeedChannel | null = null;
-const agentChannels = new Map<string, AgentChannel>();
+// Multiple local subscribers may watch the SAME session (e.g. the main pane
+// and a bound split pane), so each channel holds a SET of subscribers. One
+// subscribe/unsubscribe frame per channel; events fan out to every subscriber.
+const agentChannels = new Map<string, Set<AgentChannel>>();
 
 const agentCh = (sessionId: string): string => `agent.${sessionId}`;
 
@@ -145,8 +148,8 @@ const resubscribeAll = (): void => {
   if (feedChannel) {
     send({ type: "subscribe", ch: "feed", since: feedChannel.since });
   }
-  for (const channel of agentChannels.values()) {
-    send({ type: "subscribe", ch: agentCh(channel.sessionId) });
+  for (const ch of agentChannels.keys()) {
+    send({ type: "subscribe", ch });
   }
 };
 
@@ -191,6 +194,9 @@ const closeIfIdle = (): void => {
   teardownSocket();
   connecting = false;
   reconnectAttempts = 0;
+  // A drop from a previous subscription epoch must not make the next epoch's
+  // very first open fire the reconnected listeners.
+  droppedSinceOpen = false;
 };
 
 /**
@@ -252,12 +258,15 @@ const handleFrame = (frame: ServerFrame | undefined): void => {
   }
 
   if (ch.startsWith("agent.")) {
-    const channel = agentChannels.get(ch);
-    if (!channel) return;
+    const subscribers = agentChannels.get(ch);
+    if (!subscribers || subscribers.size === 0) return;
     if (control) {
       if (control.type === "terminal") {
-        debugLog("[v2Stream]", "agent.terminal", { ch });
-        channel.resolve();
+        debugLog("[v2Stream]", "agent.terminal", { ch, subscribers: subscribers.size });
+        // resolve() mutates the set (removes the subscriber) — snapshot first.
+        for (const channel of [...subscribers]) {
+          channel.resolve();
+        }
       }
       return;
     }
@@ -265,10 +274,12 @@ const handleFrame = (frame: ServerFrame | undefined): void => {
       debugLog("[v2Stream]", "agent.frame.no_event", {});
       return;
     }
-    try {
-      channel.dispatch(event as AgentEvent, channel.handlers);
-    } catch (error) {
-      console.warn("Failed to dispatch v2 agent event:", event, error);
+    for (const channel of [...subscribers]) {
+      try {
+        channel.dispatch(event as AgentEvent, channel.handlers);
+      } catch (error) {
+        console.warn("Failed to dispatch v2 agent event:", event, error);
+      }
     }
     return;
   }
@@ -420,26 +431,38 @@ export const subscribeAgent = (
   let settled = false;
   let resolveFn: () => void = () => {};
 
+  const subscriber: AgentChannel = { sessionId, handlers, dispatch, resolve: () => resolveFn() };
+
   const promise = new Promise<void>((resolve) => {
     resolveFn = () => {
       if (settled) return;
       settled = true;
-      agentChannels.delete(ch);
-      send({ type: "unsubscribe", ch });
-      closeIfIdle();
+      const subscribers = agentChannels.get(ch);
+      subscribers?.delete(subscriber);
+      // Only the LAST local subscriber leaving unsubscribes the wire channel —
+      // another pane may still be watching the same session.
+      if (!subscribers || subscribers.size === 0) {
+        agentChannels.delete(ch);
+        send({ type: "unsubscribe", ch });
+        closeIfIdle();
+      }
       resolve();
     };
   });
 
-  agentChannels.set(ch, { sessionId, handlers, dispatch, resolve: resolveFn });
+  const existing = agentChannels.get(ch);
+  const isFirstSubscriber = !existing || existing.size === 0;
+  if (existing) existing.add(subscriber);
+  else agentChannels.set(ch, new Set([subscriber]));
 
   if (socket && socket.readyState === WebSocket.OPEN) {
-    send({ type: "subscribe", ch });
+    // One subscribe frame per channel; later subscribers piggyback on it.
+    if (isFirstSubscriber) send({ type: "subscribe", ch });
   } else {
     connect();
   }
 
-  return { promise, close: resolveFn };
+  return { promise, close: () => resolveFn() };
 };
 
 /** Test-only: reset the singleton state between cases. */
@@ -449,6 +472,8 @@ export const __resetV2StreamForTests = (): void => {
   teardownSocket();
   connecting = false;
   reconnectAttempts = 0;
+  droppedSinceOpen = false;
+  reconnectedListeners.clear();
   feedChannel = null;
   agentChannels.clear();
 };

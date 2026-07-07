@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react"
+import { useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Switch } from "@/components/ui/switch"
@@ -16,16 +16,15 @@ export function SectionMemory({
   config: SystemBambooConfig
   saveSection: SystemConfigApi["saveSection"]
 }) {
-  const [enabled, setEnabled] = useState(false)
-  const [intervalSecs, setIntervalSecs] = useState(String(DEFAULT_INTERVAL_SECS))
+  // Seed once at mount: re-seeding on config change would clobber in-progress
+  // edits whenever another section saves (each save reloads the shared config).
+  // Backend default for auto_dream_enabled is ON when the field is omitted.
+  const [enabled, setEnabled] = useState(() => config.memory?.auto_dream_enabled ?? true)
+  const [intervalSecs, setIntervalSecs] = useState(() =>
+    String(config.memory?.auto_dream_interval_secs ?? DEFAULT_INTERVAL_SECS)
+  )
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState<SectionMessage>(null)
-
-  useEffect(() => {
-    // Backend default for auto_dream_enabled is ON when the field is omitted.
-    setEnabled(config.memory?.auto_dream_enabled ?? true)
-    setIntervalSecs(String(config.memory?.auto_dream_interval_secs ?? DEFAULT_INTERVAL_SECS))
-  }, [config])
 
   const save = async () => {
     const parsed = Number(intervalSecs)

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react"
+import { useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { getErrorMessage } from "@services/api"
@@ -13,15 +13,12 @@ export function SectionProxy({
   config: SystemBambooConfig
   saveSection: SystemConfigApi["saveSection"]
 }) {
-  const [httpProxy, setHttpProxy] = useState("")
-  const [httpsProxy, setHttpsProxy] = useState("")
+  // Seed once at mount: re-seeding on config change would clobber in-progress
+  // edits whenever another section saves (each save reloads the shared config).
+  const [httpProxy, setHttpProxy] = useState(() => config.http_proxy ?? "")
+  const [httpsProxy, setHttpsProxy] = useState(() => config.https_proxy ?? "")
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState<SectionMessage>(null)
-
-  useEffect(() => {
-    setHttpProxy(config.http_proxy ?? "")
-    setHttpsProxy(config.https_proxy ?? "")
-  }, [config])
 
   const save = async () => {
     setBusy(true)

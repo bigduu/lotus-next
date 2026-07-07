@@ -66,10 +66,17 @@ export function SettingsSkills() {
             .filter(Boolean),
         ),
       ).sort()
+      // NARROW patch, never the whole GET body: echoing the redacted config
+      // back would write mask strings into secrets the backend only
+      // un-masks for provider api keys (e.g. cluster_fabric SSH keys).
+      // model_limits must ride along explicitly — a POST without the key
+      // DELETES model_limits.json (bamboo set.rs contract).
       await saveConfig({
-        ...(latest ?? {}),
         skills: { ...(latest?.skills ?? {}), disabled: next },
-      })
+        ...(latest && (latest as { model_limits?: unknown }).model_limits !== undefined
+          ? { model_limits: (latest as { model_limits?: unknown }).model_limits }
+          : {}),
+      } as Parameters<typeof saveConfig>[0])
       void refreshGlobalSkills()
     } catch (e) {
       setSaveError({

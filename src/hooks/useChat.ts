@@ -284,6 +284,11 @@ export function useChat(
   // new user message) and by regenerate / retry / edit (after a truncate).
   const runStream = useCallback(
     async (runSid: string, opts?: { resume?: boolean }) => {
+      // ONE live subscription per hook instance: sever the previous one FIRST
+      // so its handlers can't pollute the buffers we're about to re-key to a
+      // (possibly different) session. Abort synchronously removes the
+      // subscriber from the shared WS channel.
+      abortRef.current?.abort()
       setStreamSid(runSid)
       streamBufRef.current = ""
       reasonBufRef.current = ""
@@ -303,7 +308,12 @@ export function useChat(
       // On resume (after answering a question/permission) the backend already
       // continues the suspended run — only subscribe, don't kick a fresh execute.
       if (!opts?.resume) {
-        void agentClient.execute(runSid, effectiveModel || undefined, reasoningEffort).catch(() => {})
+        void agentClient.execute(runSid, effectiveModel || undefined, reasoningEffort).catch(() => {
+          // The run never started, so no terminal will ever arrive — settle
+          // the subscription instead of leaving it (and the UI) hanging.
+          setSendError(true)
+          ac.abort()
+        })
       }
       subscribedSidRef.current = runSid
       await agentClient.subscribeToEvents(
@@ -482,6 +492,15 @@ export function useChat(
       })
     },
     [effectiveModel, reasoningEffort],
+  )
+
+  // Sever the live subscription when this hook instance unmounts (a closed
+  // split pane must not keep feeding a dead component's buffers).
+  useEffect(
+    () => () => {
+      abortRef.current?.abort()
+    },
+    [],
   )
 
   // ── Passive observation: engage runs driven ELSEWHERE ────────────────

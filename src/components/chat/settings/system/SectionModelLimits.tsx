@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useState } from "react"
 import { Plus, Trash2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -99,20 +99,14 @@ export function SectionModelLimits({
   saveSection: SystemConfigApi["saveSection"]
 }) {
   const [globalDefault, setGlobalDefault] = useState<GlobalDefault>(FALLBACK_DEFAULT)
-  const [rows, setRows] = useState<RowDraft[]>([])
+  // Seed once at mount: re-seeding on config change would clobber in-progress
+  // edits whenever another section saves (each save reloads the shared config).
+  // Our own save re-seeds explicitly via setRows in `save`.
+  const [rows, setRows] = useState<RowDraft[]>(() => (config.model_limits ?? []).map(toRow))
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState<SectionMessage>(null)
   const [confirmReset, setConfirmReset] = useState(false)
   const [resetError, setResetError] = useState<string | null>(null)
-  // Re-seed rows from config only on initial load / after our own save —
-  // not on every unrelated config refresh mid-edit.
-  const seededRef = useRef(false)
-
-  useEffect(() => {
-    if (seededRef.current) return
-    seededRef.current = true
-    setRows((config.model_limits ?? []).map(toRow))
-  }, [config])
 
   useEffect(() => {
     serviceFactory

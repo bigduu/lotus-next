@@ -31,6 +31,11 @@ export function useMenuKeyboardNav(
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (countRef.current === 0) return
+      // Never interfere with IME composition (CJK input commits via Enter).
+      if (e.isComposing || e.keyCode === 229) return
+      // The menus are driven by the composer TEXTAREA; keys typed into any
+      // other control (sidebar search, dialogs…) are none of our business.
+      if (!(e.target instanceof HTMLTextAreaElement)) return
       if (e.key === "ArrowDown") {
         e.preventDefault()
         e.stopPropagation()

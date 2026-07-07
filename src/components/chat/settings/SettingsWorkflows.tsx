@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import { Plus, RefreshCw, Trash2 } from "lucide-react"
 import { commandService, type CommandItem } from "@services/command"
 import { serviceFactory } from "@services/common/ServiceFactory"
@@ -34,6 +34,7 @@ export function SettingsWorkflows() {
   const [editorName, setEditorName] = useState("")
   const [editorContent, setEditorContent] = useState("")
   const [loadingContent, setLoadingContent] = useState(false)
+  const selectSeqRef = useRef(0)
   const [saving, setSaving] = useState(false)
   const [dirty, setDirty] = useState(false)
   const [editorError, setEditorError] = useState<string | null>(null)
@@ -83,13 +84,18 @@ export function SettingsWorkflows() {
     setDirty(false)
     setEditorError(null)
     setLoadingContent(true)
+    // Guard against out-of-order responses: rapidly clicking A then B must not
+    // put A's markdown into B's editor (saving would overwrite B with A).
+    const seq = ++selectSeqRef.current
     try {
       const detail = await commandService.getWorkflowCommand(name)
+      if (selectSeqRef.current !== seq) return
       setEditorContent(detail.content ?? "")
     } catch (error) {
+      if (selectSeqRef.current !== seq) return
       setEditorError(`加载内容失败:${getErrorMessage(error)}`)
     } finally {
-      setLoadingContent(false)
+      if (selectSeqRef.current === seq) setLoadingContent(false)
     }
   }
 

@@ -106,7 +106,10 @@ export function SettingsSchedules() {
       setFormError(error ?? "请完善触发配置")
       return
     }
-    const runConfig = buildRunConfig(form)
+    // Editing round-trips the original run_config so fields this form doesn't
+    // edit (e.g. reasoning_effort) survive the backend's wholesale replace.
+    const original = editId ? items.find((s) => s.id === editId)?.run_config : null
+    const runConfig = buildRunConfig(form, original)
     if (form.auto_execute && !runConfig.task_message) {
       setFormError("启用自动执行时必须填写任务内容")
       return

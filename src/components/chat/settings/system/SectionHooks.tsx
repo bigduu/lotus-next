@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react"
+import { useState } from "react"
 import { Switch } from "@/components/ui/switch"
 import {
   Select,
@@ -34,15 +34,14 @@ export function SectionHooks({
   config: SystemBambooConfig
   saveSection: SystemConfigApi["saveSection"]
 }) {
-  const [enabled, setEnabled] = useState(false)
-  const [mode, setMode] = useState<FallbackMode>("placeholder")
+  // Seed once at mount: re-seeding on config change would clobber in-progress
+  // edits whenever another section saves (each save reloads the shared config).
+  const [enabled, setEnabled] = useState(() => config.hooks?.image_fallback?.enabled === true)
+  const [mode, setMode] = useState<FallbackMode>(() =>
+    normalizeMode(config.hooks?.image_fallback?.mode)
+  )
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState<SectionMessage>(null)
-
-  useEffect(() => {
-    setEnabled(config.hooks?.image_fallback?.enabled === true)
-    setMode(normalizeMode(config.hooks?.image_fallback?.mode))
-  }, [config])
 
   const apply = async (nextEnabled: boolean, nextMode: FallbackMode) => {
     const prev = { enabled, mode }
