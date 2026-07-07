@@ -92,6 +92,23 @@ let connecting = false;
 let reconnectAttempts = 0;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let intentionalClose = false;
+/** True once a non-intentional drop happened; cleared when the socket reopens. */
+let droppedSinceOpen = false;
+
+/**
+ * Listeners fired when the socket REOPENS after a non-intentional drop (never
+ * on the first open). Agent-channel events emitted during the gap are lost
+ * (replay covers critical state only, not token deltas), so consumers use this
+ * to reconcile the open conversation immediately instead of waiting for the
+ * terminal frame.
+ */
+const reconnectedListeners = new Set<() => void>();
+
+/** Register a reconnected listener; returns an unsubscribe function. */
+export const onReconnected = (listener: () => void): (() => void) => {
+  reconnectedListeners.add(listener);
+  return () => reconnectedListeners.delete(listener);
+};
 
 let feedChannel: FeedChannel | null = null;
 const agentChannels = new Map<string, AgentChannel>();
@@ -304,9 +321,20 @@ const connect = (): void => {
   ws.onopen = () => {
     connecting = false;
     reconnectAttempts = 0;
-    debugLog("[v2Stream]", "open", {});
+    const wasDropped = droppedSinceOpen;
+    droppedSinceOpen = false;
+    debugLog("[v2Stream]", "open", { afterDrop: wasDropped });
     resubscribeAll();
     feedChannel?.handlers.onOpen?.();
+    if (wasDropped) {
+      for (const listener of [...reconnectedListeners]) {
+        try {
+          listener();
+        } catch (error) {
+          debugLog("[v2Stream]", "reconnected.listener_error", { error });
+        }
+      }
+    }
   };
 
   ws.onmessage = (messageEvent: MessageEvent) => {
@@ -330,6 +358,7 @@ const connect = (): void => {
     // opened — feeds the same bounded-backoff reconnect loop. There is no
     // other transport to degrade to; the UI reflects unavailability via
     // `onError` until a reconnect succeeds.
+    droppedSinceOpen = true;
     feedChannel?.handlers.onError?.();
     scheduleReconnect();
   };

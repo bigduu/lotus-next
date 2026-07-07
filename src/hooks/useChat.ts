@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import { useShallow } from "zustand/react/shallow"
-import { useAppStore, initializeStore, selectSessionById } from "@shared/store/appStore"
+import {
+  useAppStore,
+  initializeStore,
+  selectSessionById,
+  selectShouldObserve,
+} from "@shared/store/appStore"
 import { useProviderStore } from "@shared/store/appStore/slices/providerSlice"
 import { agentClient } from "@services/chat/AgentService"
 import { agentApiClient } from "@services/api"
@@ -102,6 +107,10 @@ export function useChat(
   const [pendingQuestion, setPendingQuestion] = useState<PendingQuestion | null>(null)
   const [pendingApproval, setPendingApproval] = useState<PendingApproval | null>(null)
   const abortRef = useRef<AbortController | null>(null)
+  // The session whose agent channel this instance is CURRENTLY subscribed to
+  // (null once the subscription settles). Guards the passive-observe engine
+  // against double-subscribing a run we already drive/watch.
+  const subscribedSidRef = useRef<string | null>(null)
   // Token buffer + RAF handle — coalesce many tokens into ≤1 state update/frame.
   const streamBufRef = useRef("")
   const rafRef = useRef<number | null>(null)
@@ -287,6 +296,7 @@ export function useChat(
       if (!opts?.resume) {
         void agentClient.execute(runSid, effectiveModel || undefined, reasoningEffort).catch(() => {})
       }
+      subscribedSidRef.current = runSid
       await agentClient.subscribeToEvents(
         runSid,
         {
@@ -458,10 +468,65 @@ export function useChat(
           },
         },
         ac,
-      )
+      ).finally(() => {
+        if (subscribedSidRef.current === runSid) subscribedSidRef.current = null
+      })
     },
     [effectiveModel, reasoningEffort],
   )
+
+  // ── Passive observation: engage runs driven ELSEWHERE ────────────────
+  // A run started on another device, by a schedule, or before a reload flips
+  // this session's execution phase to busy via the session summary. If nothing
+  // here is subscribed to its agent channel yet, subscribe (no execute) so live
+  // tokens stream in instead of the transcript freezing until terminal.
+  const shouldObserve = useAppStore((s) => (sid ? selectShouldObserve(sid)(s) : false))
+  useEffect(() => {
+    if (!sid || !shouldObserve) return
+    if (subscribedSidRef.current === sid) return
+    void runStream(sid, { resume: true })
+  }, [sid, shouldObserve, runStream])
+
+  // ── Stranded-terminal reconcile ───────────────────────────────────────
+  // If the summary settles (is_running=false via the feed) while we still hold
+  // a live subscription for that session, the agent channel probably missed
+  // its terminal frame (e.g. frozen background WS). Give the channel a grace
+  // period to deliver, then force-settle: abort + reload history.
+  const summaryRunning = currentChat?.isRunning ?? false
+  useEffect(() => {
+    if (!sid || summaryRunning) return
+    if (subscribedSidRef.current !== sid) return
+    if (sending) return // we drive this run; send() owns settling
+    const timer = setTimeout(() => {
+      if (subscribedSidRef.current !== sid) return
+      const stillRunning = useAppStore.getState().chats.find((c) => c.id === sid)?.isRunning
+      if (stillRunning) return
+      abortRef.current?.abort()
+      void useAppStore
+        .getState()
+        .loadChatHistory(sid)
+        .then(() => stopStream(null))
+    }, 2_000)
+    return () => clearTimeout(timer)
+  }, [sid, summaryRunning, sending, stopStream])
+
+  // ── Tab-visibility reconcile (main instance only) ────────────────────
+  // A backgrounded tab/webview freezes the WS and every reconnect timer; runs
+  // that finished (or started) while hidden never delivered their frames. On
+  // regain: refresh summaries (settles finished runs), reconcile the open
+  // conversation, and let the observe effect re-engage anything still running.
+  useEffect(() => {
+    if (isBound) return
+    const onVisibility = () => {
+      if (document.visibilityState !== "visible") return
+      const store = useAppStore.getState()
+      void store.refreshChatsNow()
+      const cur = store.currentSessionId
+      if (cur) store.reconcileOpenSession(cur, "visibility_regain")
+    }
+    document.addEventListener("visibilitychange", onVisibility)
+    return () => document.removeEventListener("visibilitychange", onVisibility)
+  }, [isBound])
 
   // Re-run the conversation after a server-side truncate/restore (regenerate,
   // retry, edit). Shows the streaming placeholder + reloads history on done.

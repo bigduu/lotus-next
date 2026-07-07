@@ -15,6 +15,7 @@
  * (`agentSubscriptionRunner`); this feed is the cross-session sync channel.
  */
 import { AgentClient, type ChangeEvent, type FeedSubscription } from "./AgentService";
+import { onReconnected } from "./v2Stream";
 import { useAppStore, selectShouldObserve } from "@shared/store/appStore";
 import { notify } from "@/lib/notify";
 
@@ -24,6 +25,7 @@ const REFRESH_DEBOUNCE_MS = 400;
 // The live v2 WS feed subscription handle (null while stopped).
 let feedSubscription: FeedSubscription | null = null;
 let refreshTimer: ReturnType<typeof setTimeout> | null = null;
+let offReconnected: (() => void) | null = null;
 
 const readCursor = (): number => {
   try {
@@ -162,6 +164,16 @@ export const startAccountFeed = (): void => {
   if (typeof WebSocket === "undefined") return;
   const client = AgentClient.getInstance();
 
+  // Agent-channel token deltas emitted during a WS gap are lost (replay covers
+  // critical state only) — on reconnect, refresh summaries and reconcile the
+  // open conversation immediately instead of waiting for the terminal frame.
+  offReconnected = onReconnected(() => {
+    const store = useAppStore.getState();
+    void store.refreshChatsNow();
+    const cur = store.currentSessionId;
+    if (cur) store.reconcileOpenSession(cur, "ws_reconnected");
+  });
+
   feedSubscription = client.subscribeToAccountStream(
     {
       onOpen: () => {
@@ -192,6 +204,10 @@ export const stopAccountFeed = (): void => {
   if (refreshTimer) {
     clearTimeout(refreshTimer);
     refreshTimer = null;
+  }
+  if (offReconnected) {
+    offReconnected();
+    offReconnected = null;
   }
   if (feedSubscription) {
     feedSubscription.close();
