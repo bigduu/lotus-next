@@ -42,7 +42,6 @@ interface Draft {
   apiKey: string
   baseUrl: string
   model: string
-  maxTokens: string
   reasoningEffort: string
   responsesOnlyModels: string
   headlessAuth: boolean
@@ -61,7 +60,6 @@ function draftFromInstance(inst: ProviderInstance | null): Draft {
     apiKey: str(cfg.api_key),
     baseUrl: str(cfg.base_url),
     model: str(cfg.model),
-    maxTokens: cfg.max_tokens == null ? "" : String(cfg.max_tokens),
     reasoningEffort: str(cfg.reasoning_effort),
     responsesOnlyModels: Array.isArray(cfg.responses_only_models)
       ? (cfg.responses_only_models as unknown[]).map(str).filter(Boolean).join("\n")
@@ -102,16 +100,9 @@ function buildPayload(
   setOrClear("model", draft.model.trim(), draft.model.trim() !== "")
   setOrClear("reasoning_effort", draft.reasoningEffort, draft.reasoningEffort !== "")
 
-  if (type === "anthropic") {
-    const raw = draft.maxTokens.trim()
-    if (raw) {
-      const n = Number(raw)
-      if (!Number.isInteger(n) || n <= 0) return { error: "Max tokens 需为正整数" }
-      config.max_tokens = n
-    } else if (isEdit) {
-      config.max_tokens = null
-    }
-  }
+  // NOTE: no max_tokens field here on purpose — the backend instance→provider
+  // projection hardcodes it to None (bamboo provider_registry.rs), so an
+  // instance-level max_tokens would be accepted but silently inert.
 
   if (type === "openai" || type === "copilot") {
     const models = draft.responsesOnlyModels
@@ -307,16 +298,7 @@ export function InstanceEditor({
 
       <Field label="默认模型(可选)" value={draft.model} onChange={(v) => patch({ model: v })} placeholder="glm-5.2" />
 
-      <div className={type === "anthropic" ? "grid grid-cols-2 gap-2" : ""}>
-        {type === "anthropic" ? (
-          <Field
-            label="Max tokens(可选)"
-            value={draft.maxTokens}
-            onChange={(v) => patch({ maxTokens: v })}
-            type="number"
-            placeholder="8000"
-          />
-        ) : null}
+      <div>
         <label className="block">
           <span className="mb-1 block text-xs text-muted-foreground">推理强度(可选)</span>
           <Select

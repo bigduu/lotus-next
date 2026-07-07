@@ -367,6 +367,13 @@ export function ScheduleForm({
                 />
               </div>
             </div>
+            {/* Backend PATCH can't distinguish "missing" from "clear" for these
+                Option fields — an emptied value is simply not sent, so the
+                stored value stays. Be honest about it instead of silently
+                pretending the clear persisted. */}
+            <p className="text-[11px] text-muted-foreground">
+              注:清空时区 / 开始 / 结束时间后保存不会移除已保存的值(后端暂不支持清除)。
+            </p>
             <div>
               <FieldLabel>增强提示词(可选)</FieldLabel>
               <Textarea
