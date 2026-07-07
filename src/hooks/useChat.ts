@@ -518,6 +518,38 @@ export function useChat(
     return () => clearTimeout(timer)
   }, [sid, summaryRunning, sending, stopStream])
 
+  // ── Pending-question rehydration ──────────────────────────────────────
+  // A run suspended on a question keeps waiting across reloads and devices,
+  // but the ask event only flows to the subscription that was live when it
+  // fired. On every session open, ask the backend for the pending question so
+  // the dialog reappears (and stale dialogs from the previous session clear).
+  useEffect(() => {
+    setPendingQuestion(null)
+    if (!sid) return
+    let stale = false
+    void agentApiClient
+      .get<{
+        has_pending_question: boolean
+        question?: string
+        options?: string[]
+        allow_custom?: boolean
+      }>(`respond/${encodeURIComponent(sid)}/pending`)
+      .then((res) => {
+        if (stale || !res?.has_pending_question) return
+        setPendingQuestion({
+          question: res.question ?? "",
+          options: res.options ?? [],
+          allowCustom: res.allow_custom ?? true,
+        })
+      })
+      .catch(() => {
+        /* best-effort rehydration */
+      })
+    return () => {
+      stale = true
+    }
+  }, [sid])
+
   // ── Tab-visibility reconcile (main instance only) ────────────────────
   // A backgrounded tab/webview freezes the WS and every reconnect timer; runs
   // that finished (or started) while hidden never delivered their frames. On

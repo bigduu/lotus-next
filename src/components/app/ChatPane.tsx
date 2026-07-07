@@ -288,6 +288,7 @@ export function ChatPane({
     void fork(id).then((nid) => {
       setForking(false)
       if (nid) showToast("已从这里分叉到新会话")
+      else showToast("分叉失败:当前后端暂不支持会话分叉")
     })
   }
 

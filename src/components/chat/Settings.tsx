@@ -44,8 +44,8 @@ function Stat({ label, value }: { label: string; value: number | undefined }) {
 }
 
 function GeneralTab() {
-  const themeMode = useThemeStore((s) => s.themeMode)
-  const setThemeMode = useThemeStore((s) => s.setThemeMode)
+  const themePreference = useThemeStore((s) => s.themePreference)
+  const setThemePreference = useThemeStore((s) => s.setThemePreference)
   const models = useAppStore(useShallow((s) => s.models))
   const selectedModel = useAppStore((s) => s.selectedModel)
   const setSelectedModel = useAppStore((s) => s.setSelectedModel)
@@ -65,14 +65,14 @@ function GeneralTab() {
       <section className="rounded-lg border p-3">
         <div className="mb-2 text-xs font-medium text-muted-foreground">外观</div>
         <div className="flex gap-2">
-          {(["light", "dark"] as const).map((m) => (
+          {(["light", "dark", "system"] as const).map((m) => (
             <Button
               key={m}
-              variant={themeMode === m ? "default" : "secondary"}
+              variant={themePreference === m ? "default" : "secondary"}
               className="flex-1"
-              onClick={() => setThemeMode(m)}
+              onClick={() => setThemePreference(m)}
             >
-              {m === "light" ? "浅色" : "深色"}
+              {m === "light" ? "浅色" : m === "dark" ? "深色" : "跟随系统"}
             </Button>
           ))}
         </div>

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react"
-import { MoreHorizontal, Pencil, Pin, PinOff, Trash2 } from "lucide-react"
+import { MoreHorizontal, Pencil, Pin, PinOff, Sparkles, Trash2 } from "lucide-react"
 import { cn } from "@/lib/utils"
+import { agentClient } from "@services/chat/AgentService"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -116,6 +117,16 @@ export function SessionRow({
             className="gap-2 rounded-lg px-2.5 py-1.5"
           >
             <Pencil className="size-3.5" /> 重命名
+          </DropdownMenuItem>
+          <DropdownMenuItem
+            onClick={() => {
+              // The new title lands via the feed's session_title_updated event
+              // (applyServerTitle) — no local state to manage here.
+              void agentClient.regenerateSessionTitle(chat.id).catch(() => {})
+            }}
+            className="gap-2 rounded-lg px-2.5 py-1.5"
+          >
+            <Sparkles className="size-3.5" /> AI 生成标题
           </DropdownMenuItem>
           <DropdownMenuItem
             variant="destructive"
