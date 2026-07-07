@@ -27,6 +27,7 @@ import type { ChildProgress } from "@shared/store/appStore/slices/executionState
 import { useProviderStore } from "@shared/store/appStore/slices/providerSlice"
 import type { SkillDefinition } from "@shared/types/skill"
 import { ChatHeader } from "@/components/app/ChatHeader"
+import { HomeDashboard } from "@/components/app/HomeDashboard"
 import { MessageList } from "@/components/app/MessageList"
 import { Composer } from "@/components/app/Composer"
 import { Toasts } from "@/components/app/Toasts"
@@ -477,6 +478,15 @@ export function ChatPane({
           </button>
         ) : null}
 
+        {!currentSessionId && !secondary && !sending && !pendingUserText ? (
+          // Main-pane home view: session shortcuts + quick-start templates.
+          // The composer below stays live — a template only prefills it.
+          <HomeDashboard
+            chats={chats}
+            onOpenSession={select}
+            onPickTemplate={(prefill) => setDraft(prefill)}
+          />
+        ) : (
         <MessageList
           scrollRef={scrollRef}
           contentRef={contentRef}
@@ -497,6 +507,7 @@ export function ChatPane({
           onDelete={(id) => void deleteMessage(id)}
           onEditMessage={(id, text) => void editMessage(id, text)}
         />
+        )}
 
         {/* Jump-to-bottom button — shows when scrolled up to read history. */}
         {!atBottom && (

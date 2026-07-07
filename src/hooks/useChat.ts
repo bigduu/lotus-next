@@ -13,6 +13,7 @@ import { notify } from "@/lib/notify"
 import { mapTokenBudgetUsage } from "@shared/types/tokenBudget"
 import { getSystemPromptEnhancementText } from "@shared/utils/systemPromptEnhancement"
 import { isCopilotConclusionWithOptionsEnhancementEnabled } from "@shared/utils/copilotConclusionWithOptionsEnhancementUtils"
+import { consumePendingTemplatePrompt } from "@/lib/taskTemplates"
 
 export type PendingQuestion = {
   question: string
@@ -638,15 +639,17 @@ export function useChat(
         // Client-side prompt enhancement (OS info + operational guidance + the
         // user's own enhancement text), recomputed per send like lotus does.
         const enhancePrompt = getSystemPromptEnhancementText(providerType).trim()
-        // New sessions honor the selected system-prompt preset; existing
-        // sessions keep the prompt they were created with.
+        // New sessions honor (in priority order) a just-picked home-dashboard
+        // template's base prompt, then the selected system-prompt preset;
+        // existing sessions keep the prompt they were created with.
         let systemPrompt: string | undefined
         if (!sid) {
+          const templatePrompt = consumePendingTemplatePrompt()
           const st = useAppStore.getState()
           const preset = st.lastSelectedPromptId
             ? st.systemPrompts.find((p) => p.id === st.lastSelectedPromptId)
             : undefined
-          systemPrompt = preset?.content?.trim() || undefined
+          systemPrompt = templatePrompt?.trim() || preset?.content?.trim() || undefined
         }
         const res = await agentClient.sendMessage({
           message: body,
