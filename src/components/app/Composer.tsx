@@ -13,6 +13,7 @@ import { SlashMenu } from "@/components/chat/SlashMenu"
 import { FileMenu } from "@/components/chat/FileMenu"
 import { useAppStore } from "@shared/store/appStore"
 import type { SkillDefinition } from "@shared/types/skill"
+import type { CommandItem } from "@services/command"
 import type { WorkspaceFileEntry } from "@services/workspace/types"
 
 /**
@@ -70,6 +71,10 @@ export function Composer({
   onClearSkill,
   onPickSkill,
   skills,
+  workflows,
+  selectedWorkflow,
+  onClearWorkflow,
+  onPickWorkflow,
   slashQuery,
   atQuery,
   displayWorkspace,
@@ -92,6 +97,10 @@ export function Composer({
   onClearSkill: () => void
   onPickSkill: (skill: SkillDefinition) => void
   skills: SkillDefinition[]
+  workflows: CommandItem[]
+  selectedWorkflow: { name: string; content: string } | null
+  onClearWorkflow: () => void
+  onPickWorkflow: (command: CommandItem) => void
   slashQuery: string | null
   atQuery: string | null
   displayWorkspace: string | null | undefined
@@ -106,7 +115,14 @@ export function Composer({
   return (
     <div className="border-t px-3 py-3">
       {slashQuery !== null && (
-        <SlashMenu skills={skills} query={slashQuery} onPick={onPickSkill} onDismiss={onDismissMenus} />
+        <SlashMenu
+          skills={skills}
+          workflows={workflows}
+          query={slashQuery}
+          onPick={onPickSkill}
+          onPickWorkflow={onPickWorkflow}
+          onDismiss={onDismissMenus}
+        />
       )}
       {slashQuery === null && atQuery !== null && displayWorkspace ? (
         <FileMenu files={workspaceFiles} query={atQuery} onPick={onPickFile} onDismiss={onDismissMenus} />
@@ -118,6 +134,20 @@ export function Composer({
             <button
               onClick={onClearSkill}
               aria-label="移除技能"
+              className="opacity-70 hover:opacity-100"
+            >
+              <X className="size-3" />
+            </button>
+          </span>
+        </div>
+      )}
+      {selectedWorkflow && (
+        <div className="mx-auto mb-2 flex max-w-2xl">
+          <span className="inline-flex items-center gap-1 rounded-full bg-primary/15 px-2.5 py-1 text-xs font-medium text-primary">
+            工作流 /{selectedWorkflow.name}
+            <button
+              onClick={onClearWorkflow}
+              aria-label="移除工作流"
               className="opacity-70 hover:opacity-100"
             >
               <X className="size-3" />
@@ -217,7 +247,7 @@ export function Composer({
           <Button
             size="icon"
             onClick={onSubmit}
-            disabled={!draft.trim() && attachments.length === 0}
+            disabled={!draft.trim() && attachments.length === 0 && !selectedWorkflow}
             className="rounded-full"
           >
             <ArrowUp />

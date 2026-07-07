@@ -22,6 +22,7 @@ import { cn } from "@/lib/utils"
 import type { useChat } from "@/hooks/useChat"
 import { useStickyScroll } from "@/hooks/useStickyScroll"
 import { useAppStore, selectChildren } from "@shared/store/appStore"
+import { commandService, type CommandItem } from "@services/command"
 import type { ChildProgress } from "@shared/store/appStore/slices/executionStateSlice/types"
 import { useProviderStore } from "@shared/store/appStore/slices/providerSlice"
 import type { SkillDefinition } from "@shared/types/skill"
@@ -148,6 +149,12 @@ export function ChatPane({
   }
   const [dragOver, setDragOver] = useState(false)
   const [selectedSkill, setSelectedSkill] = useState<SkillDefinition | null>(null)
+  // Workflow commands for the slash menu; the picked one expands into the
+  // message on send (content + user input).
+  const [workflowCmds, setWorkflowCmds] = useState<CommandItem[]>([])
+  const [selectedWorkflow, setSelectedWorkflow] = useState<{ name: string; content: string } | null>(
+    null,
+  )
   const [attachments, setAttachments] = useState<Attachment[]>([])
   const [preview, setPreview] = useState<string | null>(null)
   const [toast, setToast] = useState<string | null>(null)
@@ -260,11 +267,31 @@ export function ChatPane({
     setDraft((d) => d.replace(/@[^\s@]*$/, `@${entry.path} `))
   }
 
+  // Lazily fetch workflow commands the first time a slash menu opens.
+  const workflowsLoadedRef = useRef(false)
+  useEffect(() => {
+    if (slashQuery === null || workflowsLoadedRef.current) return
+    workflowsLoadedRef.current = true
+    commandService
+      .listCommands()
+      .then((res) =>
+        setWorkflowCmds((res.commands ?? []).filter((c) => c.type === "workflow")),
+      )
+      .catch(() => {
+        /* slash menu simply shows skills only */
+      })
+  }, [slashQuery])
+
   const submit = () => {
     const text = draft
-    if (!text.trim() && attachments.length === 0) return
+    if (!text.trim() && attachments.length === 0 && !selectedWorkflow) return
     setDraft("")
-    void send(text, {
+    // Workflow expansion: the workflow's markdown is the message body; any
+    // typed text is appended as extra input (lotus token semantics).
+    const finalText = selectedWorkflow
+      ? `${selectedWorkflow.content}${text.trim() ? `\n\n${text.trim()}` : ""}`
+      : text
+    void send(finalText, {
       skillIds: selectedSkill ? [selectedSkill.id] : undefined,
       images: attachments.length
         ? attachments.map((a) => ({ base64: a.base64, name: a.name, size: a.size, type: a.type }))
@@ -272,6 +299,7 @@ export function ChatPane({
       workspacePath: pickedWorkspace,
     })
     setSelectedSkill(null)
+    setSelectedWorkflow(null)
     setAttachments([])
     // Re-pin to bottom on send — the ResizeObserver keeps it there as the reply
     // grows and as the streaming→markdown swap relayouts.
@@ -281,6 +309,16 @@ export function ChatPane({
   const pickSkill = (skill: SkillDefinition) => {
     setSelectedSkill(skill)
     setDraft("")
+  }
+
+  const pickWorkflow = (command: CommandItem) => {
+    setDraft("")
+    commandService
+      .getWorkflowCommand(command.name)
+      .then((detail) =>
+        setSelectedWorkflow({ name: command.display_name || command.name, content: detail.content }),
+      )
+      .catch(() => showToast(`加载工作流 ${command.name} 失败`))
   }
 
   const handleFork = (id: string) => {
@@ -496,6 +534,10 @@ export function ChatPane({
           onClearSkill={() => setSelectedSkill(null)}
           onPickSkill={pickSkill}
           skills={skills}
+          workflows={workflowCmds}
+          selectedWorkflow={selectedWorkflow}
+          onClearWorkflow={() => setSelectedWorkflow(null)}
+          onPickWorkflow={pickWorkflow}
           slashQuery={slashQuery}
           atQuery={atQuery}
           displayWorkspace={displayWorkspace}
