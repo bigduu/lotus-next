@@ -51,13 +51,22 @@ interface Draft {
 
 const str = (v: unknown) => (typeof v === "string" ? v : v == null ? "" : String(v))
 
+/**
+ * The backend redacts configured secrets to `****...****` in GET responses.
+ * Never prefill it into the editable field — a paste that doesn't fully clear
+ * the placeholder produces `****...****sk-new…`, which used to be treated as
+ * "keep the old key" and silently discarded the new token (bamboo #430).
+ */
+export const isMaskedSecret = (v: unknown): v is string =>
+  typeof v === "string" && v.trim().length > 0 && [...v.trim()].every((c) => c === "*" || c === ".")
+
 function draftFromInstance(inst: ProviderInstance | null): Draft {
   const cfg = (inst?.config ?? {}) as Record<string, unknown>
   return {
     type: inst?.type ?? "anthropic",
     label: inst?.label ?? "",
     enabled: inst?.enabled ?? true,
-    apiKey: str(cfg.api_key),
+    apiKey: isMaskedSecret(cfg.api_key) ? "" : str(cfg.api_key),
     baseUrl: str(cfg.base_url),
     model: str(cfg.model),
     reasoningEffort: str(cfg.reasoning_effort),
@@ -81,6 +90,7 @@ function draftFromInstance(inst: ProviderInstance | null): Draft {
 function buildPayload(
   draft: Draft,
   isEdit: boolean,
+  hasStoredApiKey: boolean,
 ): { payload: InstanceSavePayload } | { error: string } {
   const type = draft.type
   const config: Record<string, unknown> = {}
@@ -92,8 +102,12 @@ function buildPayload(
 
   if (type !== "copilot") {
     const apiKey = draft.apiKey.trim()
-    if (!apiKey) return { error: "API Key 不能为空" }
-    config.api_key = apiKey
+    if (apiKey) {
+      config.api_key = apiKey
+    } else if (!(isEdit && hasStoredApiKey)) {
+      return { error: "API Key 不能为空" }
+    }
+    // Empty while editing a configured instance: omit api_key = keep stored key.
     setOrClear("base_url", draft.baseUrl.trim(), draft.baseUrl.trim() !== "")
   }
 
@@ -180,6 +194,9 @@ export function InstanceEditor({
   onCancel: () => void
 }) {
   const isEdit = instance != null
+  const hasStoredApiKey = isMaskedSecret(
+    ((instance?.config ?? {}) as Record<string, unknown>).api_key,
+  )
   const [draft, setDraft] = useState<Draft>(() => draftFromInstance(instance))
   const [showAdvanced, setShowAdvanced] = useState(() => {
     const d = draftFromInstance(instance)
@@ -192,7 +209,7 @@ export function InstanceEditor({
   const type = draft.type
 
   const submit = async () => {
-    const result = buildPayload(draft, isEdit)
+    const result = buildPayload(draft, isEdit, hasStoredApiKey)
     if ("error" in result) {
       setError(result.error)
       return
@@ -247,7 +264,7 @@ export function InstanceEditor({
             value={draft.apiKey}
             onChange={(v) => patch({ apiKey: v })}
             type="password"
-            placeholder={API_KEY_PLACEHOLDER[type]}
+            placeholder={hasStoredApiKey ? "已配置，留空保持不变" : API_KEY_PLACEHOLDER[type]}
           />
           <Field
             label="Base URL(可选)"
