@@ -34,17 +34,25 @@ export function AvailabilityBanner() {
     return undefined
   }, [available])
 
-  if (!visible) return null
-
   return (
-    // Above dialogs (z-[130]): a dead connection matters everywhere. The
-    // safe-area padding keeps the text clear of the notch in standalone mode
-    // while the bar itself extends to the very top edge.
-    <div role="status" aria-live="polite" className="fixed inset-x-0 top-0 z-[140]">
-      <div className="flex items-center justify-center gap-2 bg-destructive px-3 py-1.5 pt-[max(0.375rem,env(safe-area-inset-top))] text-xs font-medium text-white">
-        <WifiOff className="size-3.5 shrink-0" />
-        <span>连接已断开,正在重连…</span>
-      </div>
+    // The aria-live region stays mounted permanently and only its CONTENT
+    // toggles — live regions announce changes, not nodes mounted with content
+    // already present. Pure status display: pointer-events-none so the fixed
+    // strip never swallows clicks on the header underneath (same discipline as
+    // Toasts). Above dialogs (z-[130]): a dead connection matters everywhere.
+    // The safe-area padding keeps the text clear of the notch in standalone
+    // mode while the bar itself extends to the very top edge.
+    <div
+      role="status"
+      aria-live="polite"
+      className="pointer-events-none fixed inset-x-0 top-0 z-[140]"
+    >
+      {visible ? (
+        <div className="flex items-center justify-center gap-2 bg-destructive px-3 py-1.5 pt-[max(0.375rem,env(safe-area-inset-top))] text-xs font-medium text-white">
+          <WifiOff className="size-3.5 shrink-0" />
+          <span>连接已断开,正在重连…</span>
+        </div>
+      ) : null}
     </div>
   )
 }

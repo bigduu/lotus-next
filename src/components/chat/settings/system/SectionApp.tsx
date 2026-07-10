@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { AlertTriangle } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Switch } from "@/components/ui/switch"
@@ -7,6 +7,7 @@ import { getErrorMessage } from "@services/api"
 import { serviceFactory } from "@services/common/ServiceFactory"
 import {
   isVdiSafeModeEnabled,
+  onVdiSafeModeChange,
   setVdiSafeModeEnabled,
   VDI_SAFE_MODE_CHANGE_EVENT,
 } from "@shared/utils/vdiSafeMode"
@@ -27,6 +28,10 @@ export function SectionApp() {
   const [actionError, setActionError] = useState<string | null>(null)
   const [msg, setMsg] = useState<SectionMessage>(null)
   const [vdiSafeMode, setVdiSafeMode] = useState(isVdiSafeModeEnabled())
+
+  // Keep the visible switch fresh when the flag changes elsewhere — another
+  // tab (key-filtered `storage`) or another listener in this tab.
+  useEffect(() => onVdiSafeModeChange(() => setVdiSafeMode(isVdiSafeModeEnabled())), [])
 
   const toggleVdiSafeMode = (checked: boolean) => {
     setVdiSafeMode(checked)

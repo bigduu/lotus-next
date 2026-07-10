@@ -10,7 +10,7 @@ import { useResizableWidth } from "@/hooks/useResizableWidth"
 import { ResizeHandle } from "@/components/ui/resize-handle"
 import { useIsWide } from "@shared/hooks/useMediaQuery"
 import { useAppStore } from "@shared/store/appStore"
-import { isVdiSafeModeEnabled, VDI_SAFE_MODE_CHANGE_EVENT } from "@shared/utils/vdiSafeMode"
+import { isVdiSafeModeEnabled, onVdiSafeModeChange } from "@shared/utils/vdiSafeMode"
 import { Sidebar } from "@/components/app/Sidebar"
 import { DeleteSessionDialog } from "@/components/app/DeleteSessionDialog"
 import { ChatPane } from "@/components/app/ChatPane"
@@ -87,8 +87,8 @@ function App() {
 
   // VDI / graphics compatibility mode (ported from legacy lotus): reflect the
   // persisted flag as a `data-vdi-safe` attribute so CSS can strip blur/glass
-  // effects. `storage` covers other tabs; the custom event covers this tab
-  // (toggled from 设置 → 系统 → 应用).
+  // effects. onVdiSafeModeChange covers other tabs (key-filtered `storage`) and
+  // this tab (custom event, toggled from 设置 → 系统 → 应用).
   useEffect(() => {
     const sync = () => {
       const enabled = isVdiSafeModeEnabled() ? "true" : "false"
@@ -96,12 +96,7 @@ function App() {
       document.getElementById("root")?.setAttribute("data-vdi-safe", enabled)
     }
     sync()
-    window.addEventListener("storage", sync)
-    window.addEventListener(VDI_SAFE_MODE_CHANGE_EVENT, sync)
-    return () => {
-      window.removeEventListener("storage", sync)
-      window.removeEventListener(VDI_SAFE_MODE_CHANGE_EVENT, sync)
-    }
+    return onVdiSafeModeChange(sync)
   }, [])
 
   const loadSkills = useAppStore((s) => s.loadSkills)
