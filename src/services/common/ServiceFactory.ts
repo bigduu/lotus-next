@@ -24,6 +24,51 @@ export interface BambooSubagentsConfig {
   max_concurrent?: number;
 }
 
+/**
+ * Native desktop (OS-notification) delivery channel.
+ *
+ * `enabled === undefined` (key absent) or `null` both mean "auto": on for a
+ * standalone `bamboo serve` process, off when spawned as a sidecar under
+ * `--parent-pid` (a native shell such as Bodhi owns notification UX then).
+ * `true`/`false` is an explicit user override in either direction.
+ */
+export interface DesktopChannelConfig {
+  enabled?: boolean | null;
+}
+
+/**
+ * [ntfy.sh](https://ntfy.sh) push notification channel (self-hostable).
+ *
+ * `token` is `#[serde(skip_serializing)]` on the backend: GET omits the key
+ * entirely when nothing is configured, and redacts it to `"****...****"`
+ * when a token IS configured. See `isMaskedSecret` (`@/lib/secrets`) for the
+ * load/save contract this implies.
+ */
+export interface NtfyChannelConfig {
+  enabled?: boolean;
+  base_url?: string;
+  topic?: string;
+  token?: string;
+}
+
+/**
+ * [Bark](https://github.com/Finb/Bark) iOS push notification channel.
+ *
+ * `device_key` follows the same redact-on-GET / mask-on-save contract as
+ * `NtfyChannelConfig.token` (see `isMaskedSecret`).
+ */
+export interface BarkChannelConfig {
+  enabled?: boolean;
+  base_url?: string;
+  device_key?: string;
+}
+
+export interface NotificationsConfig {
+  desktop?: DesktopChannelConfig;
+  ntfy?: NtfyChannelConfig;
+  bark?: BarkChannelConfig;
+}
+
 export interface BambooConfig {
   model?: string;
   api_key?: string;
@@ -35,6 +80,7 @@ export interface BambooConfig {
   skills?: BambooSkillsConfig;
   memory?: BambooMemoryConfig;
   subagents?: BambooSubagentsConfig;
+  notifications?: NotificationsConfig;
   [key: string]: unknown;
 }
 

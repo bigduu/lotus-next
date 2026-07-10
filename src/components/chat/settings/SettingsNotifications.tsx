@@ -14,6 +14,7 @@ import {
 import { Button } from "@/components/ui/button"
 import { Switch } from "@/components/ui/switch"
 import { cn } from "@/lib/utils"
+import { ChannelsSection } from "@/components/chat/settings/notifications/ChannelsSection"
 
 const EVENT_ROWS: {
   key: keyof Omit<NotificationPreferences, "enabled">
@@ -23,6 +24,8 @@ const EVENT_ROWS: {
   { key: "onToolApproval", label: "工具执行需要批准时" },
   { key: "onContextPressure", label: "上下文接近上限时" },
   { key: "onSubAgentComplete", label: "后台子任务完成时" },
+  { key: "onRunComplete", label: "任务运行成功完成时" },
+  { key: "onRunFailed", label: "任务运行失败时" },
 ]
 
 export function SettingsNotifications() {
@@ -160,6 +163,8 @@ export function SettingsNotifications() {
           </Button>
         ) : null}
       </section>
+
+      <ChannelsSection />
     </div>
   )
 }
