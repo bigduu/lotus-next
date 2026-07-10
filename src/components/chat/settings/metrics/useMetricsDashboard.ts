@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import { metricsService } from "@services/metrics"
 import type {
+  ForwardEndpointMetrics,
+  ForwardRequestMetrics,
+  MemoryTimelinePoint,
   MetricsUsageBreakdownResponse,
   ModelMetrics,
   SessionMetrics,
@@ -21,6 +24,9 @@ export interface MetricsDashboardData {
   models: ModelMetrics[]
   usage: MetricsUsageBreakdownResponse | null
   sessions: SessionMetrics[]
+  forwardEndpoints: ForwardEndpointMetrics[]
+  forwardRequests: ForwardRequestMetrics[]
+  memoryTimeline: MemoryTimelinePoint[]
 }
 
 const EMPTY_DATA: MetricsDashboardData = {
@@ -29,10 +35,24 @@ const EMPTY_DATA: MetricsDashboardData = {
   models: [],
   usage: null,
   sessions: [],
+  forwardEndpoints: [],
+  forwardRequests: [],
+  memoryTimeline: [],
 }
 
 const POLL_INTERVAL_MS = 30_000
-const SECTION_LABELS = ["总览", "趋势", "模型分布", "用量构成", "会话列表"] as const
+/** Raw forward-request rows are bounded; aggregates take the full range. */
+const FORWARD_REQUEST_LIMIT = 50
+const SECTION_LABELS = [
+  "总览",
+  "趋势",
+  "模型分布",
+  "用量构成",
+  "会话列表",
+  "Forward 端点",
+  "Forward 请求",
+  "记忆趋势",
+] as const
 
 function errorMessage(reason: unknown): string {
   if (reason instanceof Error) return reason.message
@@ -80,19 +100,37 @@ export function useMetricsDashboard(filters: MetricsDashboardFilters) {
         metricsService.getByModel(range),
         metricsService.getUsageBreakdown(range),
         metricsService.getSessions({ ...range, limit: 20 }),
+        metricsService.getForwardByEndpoint(range),
+        metricsService.getForwardRequests({ ...range, limit: FORWARD_REQUEST_LIMIT }),
+        metricsService.getMemoryTimeline({ days: filters.days, endDate: filters.endDate }),
       ])
 
       if (generation !== generationRef.current) return
       inFlightRef.current = false
       if (!mountedRef.current) return
 
-      const [summary, timeline, models, usage, sessions] = results
+      const [
+        summary,
+        timeline,
+        models,
+        usage,
+        sessions,
+        forwardEndpoints,
+        forwardRequests,
+        memoryTimeline,
+      ] = results
       setData((prev) => ({
         summary: summary.status === "fulfilled" ? summary.value : prev.summary,
         timeline: timeline.status === "fulfilled" ? timeline.value : prev.timeline,
         models: models.status === "fulfilled" ? models.value : prev.models,
         usage: usage.status === "fulfilled" ? usage.value : prev.usage,
         sessions: sessions.status === "fulfilled" ? sessions.value : prev.sessions,
+        forwardEndpoints:
+          forwardEndpoints.status === "fulfilled" ? forwardEndpoints.value : prev.forwardEndpoints,
+        forwardRequests:
+          forwardRequests.status === "fulfilled" ? forwardRequests.value : prev.forwardRequests,
+        memoryTimeline:
+          memoryTimeline.status === "fulfilled" ? memoryTimeline.value : prev.memoryTimeline,
       }))
       setErrors(
         results.flatMap((result, index) =>

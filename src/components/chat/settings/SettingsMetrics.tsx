@@ -17,6 +17,10 @@ import { TimelineChart } from "./metrics/TimelineChart"
 import { BarList, type BarListItem } from "./metrics/BarList"
 import { SessionsTable } from "./metrics/SessionsTable"
 import { UsageBreakdown } from "./metrics/UsageBreakdown"
+import { ForwardEndpointsList } from "./metrics/ForwardEndpointsList"
+import { ForwardRequestsTable } from "./metrics/ForwardRequestsTable"
+import { SyncMismatchBreakdown } from "./metrics/SyncMismatchBreakdown"
+import { MemoryTrendChart } from "./metrics/MemoryTrendChart"
 
 type PresetId = "today" | "7d" | "30d" | "custom"
 
@@ -26,9 +30,9 @@ const PRESETS: { id: Exclude<PresetId, "custom">; label: string; days: number }[
   { id: "30d", label: "30 天", days: 30 },
 ]
 
-/* Chart series colors (validated for both surfaces): chat = blue, forward = aqua. */
+/* Chart series colors (validated for both surfaces): chat = blue, forward = aqua, memory = violet. */
 const SERIES_CSS =
-  ".lnx-metrics{--mx-chat:#2a78d6;--mx-fwd:#1baf7a}.dark .lnx-metrics{--mx-chat:#3987e5;--mx-fwd:#199e70}"
+  ".lnx-metrics{--mx-chat:#2a78d6;--mx-fwd:#1baf7a;--mx-mem:#8a5cd8}.dark .lnx-metrics{--mx-chat:#3987e5;--mx-fwd:#199e70;--mx-mem:#9a74e3}"
 
 function StatTile({
   label,
@@ -288,11 +292,55 @@ export function SettingsMetrics() {
         </section>
 
         <section className="rounded-lg border p-3">
+          <div className="mb-2 text-xs font-medium text-muted-foreground">
+            Forward 端点分布(按请求数)
+          </div>
+          {initialLoading ? (
+            <Skeleton className="h-24 rounded-lg" />
+          ) : (
+            <ForwardEndpointsList endpoints={data.forwardEndpoints} />
+          )}
+        </section>
+
+        <section className="rounded-lg border p-3">
+          <div className="mb-2 text-xs font-medium text-muted-foreground">
+            同步不一致分布(按原因)
+          </div>
+          {initialLoading ? (
+            <Skeleton className="h-24 rounded-lg" />
+          ) : (
+            <SyncMismatchBreakdown breakdown={summary?.chat.sync_mismatch_breakdown} />
+          )}
+        </section>
+
+        <section className="rounded-lg border p-3">
+          <div className="mb-2 text-xs font-medium text-muted-foreground">
+            记忆趋势(近 {days} 天)
+          </div>
+          {initialLoading ? (
+            <Skeleton className="h-40 rounded-lg" />
+          ) : (
+            <MemoryTrendChart points={data.memoryTimeline} />
+          )}
+        </section>
+
+        <section className="rounded-lg border p-3">
           <div className="mb-2 text-xs font-medium text-muted-foreground">最近会话(最多 20 条)</div>
           {initialLoading ? (
             <Skeleton className="h-40 rounded-lg" />
           ) : (
             <SessionsTable sessions={data.sessions} />
+          )}
+        </section>
+
+        <section className="rounded-lg border p-3">
+          <div className="mb-2 text-xs font-medium text-muted-foreground">
+            最近 Forward 请求(最多 50 条)
+          </div>
+          {initialLoading ? (
+            <Skeleton className="h-40 rounded-lg" />
+          ) : (
+            <ForwardRequestsTable requests={data.forwardRequests} />
           )}
         </section>
       </div>
