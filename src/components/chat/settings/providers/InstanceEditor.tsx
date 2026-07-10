@@ -4,6 +4,7 @@ import type { ProviderInstance, ProviderType } from "@shared/types/providerConfi
 import { PROVIDER_LABELS } from "@shared/types/providerConfig"
 import { getErrorMessage } from "@services/api"
 import { isMaskedSecret } from "@/lib/secrets"
+import { VENDOR_PRESETS } from "@/lib/providerPresets"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Switch } from "@/components/ui/switch"
@@ -196,9 +197,30 @@ export function InstanceEditor({
   })
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // Purely a form-filling helper — the selection itself is never persisted.
+  const [presetId, setPresetId] = useState("")
 
   const patch = (p: Partial<Draft>) => setDraft((d) => ({ ...d, ...p }))
   const type = draft.type
+  const preset = VENDOR_PRESETS.find((p) => p.id === presetId) ?? null
+
+  const applyPreset = (id: string) => {
+    if (id === UNSET) {
+      setPresetId("")
+      return
+    }
+    const p = VENDOR_PRESETS.find((x) => x.id === id)
+    if (!p) return
+    setPresetId(id)
+    setDraft((d) => ({
+      ...d,
+      // Type is immutable on existing instances; mismatched presets are
+      // disabled in edit mode so this never flips a locked type.
+      type: p.provider_type,
+      baseUrl: p.base_url,
+      label: d.label.trim() === "" ? p.label : d.label,
+    }))
+  }
 
   const submit = async () => {
     const result = buildPayload(draft, isEdit, hasStoredApiKey)
@@ -220,11 +242,41 @@ export function InstanceEditor({
     <div className="space-y-2.5 rounded-lg border bg-muted/30 p-3">
       <label className="block">
         <span className="mb-1 block text-xs text-muted-foreground">
+          厂商预设(可选,仅快速填充表单,不会保存)
+        </span>
+        <Select value={presetId || UNSET} onValueChange={applyPreset}>
+          <SelectTrigger className="w-full">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value={UNSET}>不使用预设</SelectItem>
+            {VENDOR_PRESETS.map((p) => (
+              <SelectItem
+                key={p.id}
+                value={p.id}
+                disabled={isEdit && p.provider_type !== type}
+              >
+                {p.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        {preset?.note ? (
+          <span className="mt-1 block text-xs text-muted-foreground">{preset.note}</span>
+        ) : null}
+      </label>
+
+      <label className="block">
+        <span className="mb-1 block text-xs text-muted-foreground">
           类型{isEdit ? "(创建后不可修改)" : ""}
         </span>
         <Select
           value={type}
-          onValueChange={(v) => patch({ type: v as ProviderType })}
+          onValueChange={(v) => {
+            // A preset implies a type — manual type edits detach the preset.
+            setPresetId("")
+            patch({ type: v as ProviderType })
+          }}
           disabled={isEdit}
         >
           <SelectTrigger className="w-full">
@@ -305,7 +357,12 @@ export function InstanceEditor({
         </div>
       ) : null}
 
-      <Field label="默认模型(可选)" value={draft.model} onChange={(v) => patch({ model: v })} placeholder="glm-5.2" />
+      <Field
+        label="默认模型(可选)"
+        value={draft.model}
+        onChange={(v) => patch({ model: v })}
+        placeholder={preset ? preset.suggested_models.join(", ") : "glm-5.2"}
+      />
 
       <div>
         <label className="block">
