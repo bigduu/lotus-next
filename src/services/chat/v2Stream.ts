@@ -110,6 +110,15 @@ export const onReconnected = (listener: () => void): (() => void) => {
   return () => reconnectedListeners.delete(listener);
 };
 
+/**
+ * Whether the shared v2 socket is currently OPEN (post-handshake). This is the
+ * same state that drives the feed's `onOpen`/`onError` callbacks; exposed so
+ * availability consumers (the HTTP health poll) can defer to the live channel
+ * instead of masking a WS-only outage.
+ */
+export const isSocketOpen = (): boolean =>
+  socket !== null && socket.readyState === WebSocket.OPEN;
+
 let feedChannel: FeedChannel | null = null;
 // Multiple local subscribers may watch the SAME session (e.g. the main pane
 // and a bound split pane), so each channel holds a SET of subscribers. One

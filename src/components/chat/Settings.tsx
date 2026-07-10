@@ -3,6 +3,10 @@ import { X } from "lucide-react"
 import { useShallow } from "zustand/react/shallow"
 import { useThemeStore } from "@shared/store/themeStore"
 import { useAppStore } from "@shared/store/appStore"
+import {
+  useExperienceModeStore,
+  ADVANCED_ONLY_SETTINGS_TABS,
+} from "@shared/store/experienceModeStore"
 import { useProviderStore } from "@shared/store/appStore/slices/providerSlice"
 import { metricsService } from "@services/metrics"
 import type { MetricsSummary } from "@services/metrics/types"
@@ -46,6 +50,8 @@ function Stat({ label, value }: { label: string; value: number | undefined }) {
 function GeneralTab() {
   const themePreference = useThemeStore((s) => s.themePreference)
   const setThemePreference = useThemeStore((s) => s.setThemePreference)
+  const experienceMode = useExperienceModeStore((s) => s.mode)
+  const setExperienceMode = useExperienceModeStore((s) => s.setMode)
   const models = useAppStore(useShallow((s) => s.models))
   const selectedModel = useAppStore((s) => s.selectedModel)
   const setSelectedModel = useAppStore((s) => s.setSelectedModel)
@@ -76,6 +82,25 @@ function GeneralTab() {
             </Button>
           ))}
         </div>
+      </section>
+
+      <section className="rounded-lg border p-3">
+        <div className="mb-2 text-xs font-medium text-muted-foreground">体验模式</div>
+        <div className="flex gap-2">
+          {(["simple", "advanced"] as const).map((m) => (
+            <Button
+              key={m}
+              variant={experienceMode === m ? "default" : "secondary"}
+              className="flex-1"
+              onClick={() => setExperienceMode(m)}
+            >
+              {m === "simple" ? "简洁" : "高级"}
+            </Button>
+          ))}
+        </div>
+        <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
+          简洁模式隐藏高级设置(技能、环境变量、关键词掩码、集群、指标等),适合日常使用。
+        </p>
       </section>
 
       <section className="rounded-lg border p-3">
@@ -147,8 +172,15 @@ const TABS = [
 
 export function Settings({ open, onClose }: { open: boolean; onClose: () => void }) {
   const [tab, setTab] = useState<(typeof TABS)[number]["id"]>("general")
+  const isAdvanced = useExperienceModeStore((s) => s.isAdvanced)
   if (!open) return null
-  const current = TABS.find((t) => t.id === tab) ?? TABS[0]
+  // 简洁 mode hides advanced-only tabs (classification ported from legacy lotus).
+  const visibleTabs = isAdvanced
+    ? TABS
+    : TABS.filter((t) => !ADVANCED_ONLY_SETTINGS_TABS.has(t.id))
+  // Switching to 简洁 while an advanced tab is open falls back to 通用 (always
+  // visible, hosts the mode toggle itself).
+  const current = visibleTabs.find((t) => t.id === tab) ?? TABS[0]
 
   return (
     <ResponsiveDialog
@@ -171,13 +203,13 @@ export function Settings({ open, onClose }: { open: boolean; onClose: () => void
         {/* Tab rail (left on desktop, horizontal scroll on mobile) */}
         <div className="flex min-h-0 flex-1 flex-col md:flex-row">
           <div className="flex shrink-0 gap-1 overflow-x-auto border-b p-2 md:w-40 md:flex-col md:overflow-y-auto md:border-b-0 md:border-r">
-            {TABS.map((t) => (
+            {visibleTabs.map((t) => (
               <button
                 key={t.id}
                 onClick={() => setTab(t.id)}
                 className={cn(
                   "shrink-0 whitespace-nowrap rounded-lg px-3 py-2 text-left text-sm transition-colors md:w-full",
-                  tab === t.id
+                  current.id === t.id
                     ? "bg-accent font-medium text-foreground"
                     : "text-muted-foreground hover:bg-accent/60",
                 )}

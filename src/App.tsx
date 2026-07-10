@@ -10,9 +10,11 @@ import { useResizableWidth } from "@/hooks/useResizableWidth"
 import { ResizeHandle } from "@/components/ui/resize-handle"
 import { useIsWide } from "@shared/hooks/useMediaQuery"
 import { useAppStore } from "@shared/store/appStore"
+import { isVdiSafeModeEnabled, onVdiSafeModeChange } from "@shared/utils/vdiSafeMode"
 import { Sidebar } from "@/components/app/Sidebar"
 import { DeleteSessionDialog } from "@/components/app/DeleteSessionDialog"
 import { ChatPane } from "@/components/app/ChatPane"
+import { AvailabilityBanner } from "@/components/app/AvailabilityBanner"
 
 function App() {
   // The main pane follows the global current session. The same `chat` bundle
@@ -83,6 +85,20 @@ function App() {
     document.documentElement.classList.toggle("dark", themeMode === "dark")
   }, [themeMode])
 
+  // VDI / graphics compatibility mode (ported from legacy lotus): reflect the
+  // persisted flag as a `data-vdi-safe` attribute so CSS can strip blur/glass
+  // effects. onVdiSafeModeChange covers other tabs (key-filtered `storage`) and
+  // this tab (custom event, toggled from 设置 → 系统 → 应用).
+  useEffect(() => {
+    const sync = () => {
+      const enabled = isVdiSafeModeEnabled() ? "true" : "false"
+      document.body.setAttribute("data-vdi-safe", enabled)
+      document.getElementById("root")?.setAttribute("data-vdi-safe", enabled)
+    }
+    sync()
+    return onVdiSafeModeChange(sync)
+  }, [])
+
   const loadSkills = useAppStore((s) => s.loadSkills)
   const persistSessionTitle = useAppStore((s) => s.persistSessionTitle)
   const deleteSession = useAppStore((s) => s.deleteSession)
@@ -97,6 +113,10 @@ function App() {
 
   return (
     <div className="relative flex h-full overflow-hidden bg-background text-foreground">
+      {/* WSS-only transport: surface a dead /v2/stream connection instead of
+          silently freezing. Renders nothing while the connection is healthy. */}
+      <AvailabilityBanner />
+
       <Sidebar
         open={sidebarOpen}
         onClose={() => setSidebarOpen(false)}

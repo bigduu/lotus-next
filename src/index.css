@@ -136,3 +136,12 @@
     padding-right: env(safe-area-inset-right);
   }
 }
+
+/* VDI / graphics compatibility mode — toggled in 设置 → 系统 → 应用 and
+   reflected as a data attribute by App.tsx. Strips GPU-composited blur/glass
+   effects that break dropdowns and hover overlays in some virtual-desktop,
+   remote, or graphics-constrained environments (ported from legacy lotus). */
+body[data-vdi-safe="true"] * {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}

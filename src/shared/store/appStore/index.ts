@@ -12,7 +12,7 @@ import { ExecutionStateSlice, createExecutionStateSlice } from "./slices/executi
 import { BackgroundBashSlice, createBackgroundBashSlice } from "./slices/backgroundBashSlice";
 import type { BashDone } from "./slices/backgroundBashSlice";
 import { AgentClient } from "@services/chat/AgentService";
-import { startAccountFeed } from "@services/chat/accountFeed";
+import { startAccountFeed, isAccountFeedDisconnected } from "@services/chat/accountFeed";
 import { serviceFactory } from "@services/common/ServiceFactory";
 import { readStoredProxyAuth } from "@shared/utils/proxyAuth";
 import { useBambooConfigStore } from "@shared/store/bambooConfigStore";
@@ -81,7 +81,18 @@ export const useAppStore = create<AppState>()(
         agentHealthCheckInFlight = (async () => {
           const available = await agentClient.healthCheck();
 
-          if (get().agentAvailability !== available) {
+          // An HTTP health success must not mask a dead live channel: with the
+          // account feed RUNNING but its WS down (e.g. a proxy dropping WS
+          // upgrades while plain HTTP stays healthy — the WSS-only outage the
+          // availability banner exists to surface), the feed owns the `true`
+          // transition via its `onOpen`/`onChange` callbacks. Only while the
+          // flag is still `null` (startup, before the feed's first connect
+          // resolves) may an HTTP success seed `true`. An HTTP FAILURE stays
+          // authoritative either way: the backend itself is down.
+          const masksWsOutage =
+            available && isAccountFeedDisconnected() && get().agentAvailability !== null;
+
+          if (!masksWsOutage && get().agentAvailability !== available) {
             set({ agentAvailability: available });
           }
 

@@ -9,26 +9,34 @@ const EXPERIENCE_MODE_STORAGE_KEY = "lotus_experience_mode_v1";
  */
 export type ExperienceMode = "simple" | "advanced";
 
-/** Settings tabs visible in simple mode */
+/** Settings tabs visible in simple mode (lotus-next tab ids, see Settings.tsx). */
 export const SIMPLE_MODE_SETTINGS_TABS = new Set([
-  "provider",
-  "model-limits",
-  "prompts",
+  "general",
+  "providers",
   "mcp",
-  "workflows",
+  "permissions",
   "schedules",
-  "app",
+  "notifications",
+  "prompts",
+  "workflows",
+  "system",
 ]);
 
-/** Settings tabs only visible in advanced mode */
+/**
+ * Settings tabs only visible in advanced mode (lotus-next tab ids).
+ *
+ * Ported from legacy lotus's classification (skills / hooks / masking /
+ * env-vars / clusters / metrics / sessions / config): `env-vars` → `env`;
+ * legacy's hooks/sessions/config tabs are consolidated into next's `system`
+ * tab, which stays visible in simple mode but hides those advanced sections
+ * (see SettingsSystem).
+ */
 export const ADVANCED_ONLY_SETTINGS_TABS = new Set([
   "skills",
-  "hooks",
+  "env",
   "masking",
-  "env-vars",
+  "clusters",
   "metrics",
-  "sessions",
-  "config",
 ]);
 
 interface ExperienceModeState {

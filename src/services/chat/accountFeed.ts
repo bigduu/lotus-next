@@ -15,7 +15,7 @@
  * (`agentSubscriptionRunner`); this feed is the cross-session sync channel.
  */
 import { AgentClient, type ChangeEvent, type FeedSubscription } from "./AgentService";
-import { onReconnected } from "./v2Stream";
+import { isSocketOpen, onReconnected } from "./v2Stream";
 import { useAppStore, selectShouldObserve } from "@shared/store/appStore";
 import { notify } from "@/lib/notify";
 
@@ -26,6 +26,15 @@ const REFRESH_DEBOUNCE_MS = 400;
 let feedSubscription: FeedSubscription | null = null;
 let refreshTimer: ReturnType<typeof setTimeout> | null = null;
 let offReconnected: (() => void) | null = null;
+
+/**
+ * True while the account feed is RUNNING but its WebSocket is not currently
+ * open — i.e. the live channel is down and the reconnect loop is retrying.
+ * False when the feed was never started (tests / SSR / no WebSocket), so the
+ * HTTP health poll keeps full authority over availability there.
+ */
+export const isAccountFeedDisconnected = (): boolean =>
+  feedSubscription !== null && !isSocketOpen();
 
 const readCursor = (): number => {
   try {
