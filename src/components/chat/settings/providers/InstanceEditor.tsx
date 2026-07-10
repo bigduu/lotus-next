@@ -3,6 +3,7 @@ import { ChevronDown, ChevronRight } from "lucide-react"
 import type { ProviderInstance, ProviderType } from "@shared/types/providerConfig"
 import { PROVIDER_LABELS } from "@shared/types/providerConfig"
 import { getErrorMessage } from "@services/api"
+import { isMaskedSecret } from "@/lib/secrets"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Switch } from "@/components/ui/switch"
@@ -50,15 +51,6 @@ interface Draft {
 }
 
 const str = (v: unknown) => (typeof v === "string" ? v : v == null ? "" : String(v))
-
-/**
- * The backend redacts configured secrets to `****...****` in GET responses.
- * Never prefill it into the editable field — a paste that doesn't fully clear
- * the placeholder produces `****...****sk-new…`, which used to be treated as
- * "keep the old key" and silently discarded the new token (bamboo #430).
- */
-export const isMaskedSecret = (v: unknown): v is string =>
-  typeof v === "string" && v.trim().length > 0 && [...v.trim()].every((c) => c === "*" || c === ".")
 
 function draftFromInstance(inst: ProviderInstance | null): Draft {
   const cfg = (inst?.config ?? {}) as Record<string, unknown>
