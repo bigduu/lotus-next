@@ -1,9 +1,15 @@
 import { useState } from "react"
 import { AlertTriangle } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { Switch } from "@/components/ui/switch"
 import { agentClient } from "@services/chat/AgentService"
 import { getErrorMessage } from "@services/api"
 import { serviceFactory } from "@services/common/ServiceFactory"
+import {
+  isVdiSafeModeEnabled,
+  setVdiSafeModeEnabled,
+  VDI_SAFE_MODE_CHANGE_EVENT,
+} from "@shared/utils/vdiSafeMode"
 import { ConfirmDialog } from "./ConfirmDialog"
 import { StatusLine } from "./StatusLine"
 import type { SectionMessage } from "./useSystemConfig"
@@ -14,12 +20,21 @@ const APP_VERSION: string =
 
 type PendingAction = "clear-storage" | "reset-app"
 
-/** 应用 — 版本信息 + 本地缓存清理 + 完全重置(危险区). */
+/** 应用 — 版本信息 + 图形兼容模式 + 本地缓存清理 + 完全重置(危险区). */
 export function SectionApp() {
   const [pending, setPending] = useState<PendingAction | null>(null)
   const [busy, setBusy] = useState(false)
   const [actionError, setActionError] = useState<string | null>(null)
   const [msg, setMsg] = useState<SectionMessage>(null)
+  const [vdiSafeMode, setVdiSafeMode] = useState(isVdiSafeModeEnabled())
+
+  const toggleVdiSafeMode = (checked: boolean) => {
+    setVdiSafeMode(checked)
+    setVdiSafeModeEnabled(checked)
+    // `storage` events only reach OTHER tabs — this event lets the App.tsx
+    // attribute sync apply the change immediately in this tab.
+    window.dispatchEvent(new Event(VDI_SAFE_MODE_CHANGE_EVENT))
+  }
 
   const clearStorage = () => {
     localStorage.clear()
@@ -59,6 +74,16 @@ export function SectionApp() {
           v{APP_VERSION}
           {import.meta.env.DEV ? " (dev)" : ""}
         </span>
+      </div>
+
+      <div className="flex items-center justify-between gap-3 border-t pt-2">
+        <div className="min-w-0 space-y-0.5">
+          <div className="text-sm">图形兼容模式</div>
+          <p className="text-xs leading-relaxed text-muted-foreground">
+            禁用模糊与玻璃效果,适用于虚拟桌面(VDI)、远程或图形受限环境。
+          </p>
+        </div>
+        <Switch checked={vdiSafeMode} onCheckedChange={toggleVdiSafeMode} />
       </div>
 
       <div className="flex items-center justify-between gap-2 border-t pt-2">
