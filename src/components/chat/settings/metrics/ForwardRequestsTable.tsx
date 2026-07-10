@@ -3,9 +3,11 @@ import { Badge } from "@/components/ui/badge"
 import { cn } from "@/lib/utils"
 import { formatCompact, formatDateTime, formatDuration, formatExact } from "./format"
 
+/* Dot colors come from the .lnx-metrics tokens (SettingsMetrics SERIES_CSS),
+   which already flip for dark mode — retuning them there restyles this too. */
 const STATUS_META: Record<ForwardStatus, { label: string; dotClass: string }> = {
-  pending: { label: "进行中", dotClass: "bg-[#2a78d6] dark:bg-[#3987e5]" },
-  success: { label: "成功", dotClass: "bg-emerald-600 dark:bg-emerald-500" },
+  pending: { label: "进行中", dotClass: "bg-[var(--mx-chat)]" },
+  success: { label: "成功", dotClass: "bg-[var(--mx-ok)]" },
   error: { label: "失败", dotClass: "bg-destructive" },
 }
 

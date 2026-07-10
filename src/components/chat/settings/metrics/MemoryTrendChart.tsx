@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useCallback, useMemo, useRef, useState } from "react"
 import type { MemoryTimelinePoint } from "@services/metrics"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
@@ -19,18 +19,23 @@ const MARGIN = { top: 8, right: 12, bottom: 20, left: 40 }
 const SVG_HEIGHT = MARGIN.top + PLOT_HEIGHT + MARGIN.bottom
 
 function useContainerWidth() {
-  const ref = useRef<HTMLDivElement>(null)
+  const observerRef = useRef<ResizeObserver | null>(null)
   const [width, setWidth] = useState(0)
-  useEffect(() => {
-    const el = ref.current
+  // Callback ref (not effect with [] deps): the chart container unmounts on the
+  // 图表→表格 toggle, so the observer must re-attach when it remounts — an
+  // effect-once observer would keep watching the detached node and report a
+  // stale width after a window resize in table view.
+  const ref = useCallback((el: HTMLDivElement | null) => {
+    observerRef.current?.disconnect()
+    observerRef.current = null
     if (!el) return
     const observer = new ResizeObserver((entries) => {
       const w = entries[0]?.contentRect.width
       if (typeof w === "number") setWidth(w)
     })
     observer.observe(el)
+    observerRef.current = observer
     setWidth(el.clientWidth)
-    return () => observer.disconnect()
   }, [])
   return { ref, width }
 }

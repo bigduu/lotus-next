@@ -30,9 +30,11 @@ const PRESETS: { id: Exclude<PresetId, "custom">; label: string; days: number }[
   { id: "30d", label: "30 天", days: 30 },
 ]
 
-/* Chart series colors (validated for both surfaces): chat = blue, forward = aqua, memory = violet. */
+/* Chart series colors (validated for both surfaces): chat = blue, forward = aqua, memory = violet.
+   --mx-ok is the success-STATUS color (emerald, matches SessionsTable's completed dot), distinct
+   from --mx-fwd which identifies the forward SERIES in charts. */
 const SERIES_CSS =
-  ".lnx-metrics{--mx-chat:#2a78d6;--mx-fwd:#1baf7a;--mx-mem:#8a5cd8}.dark .lnx-metrics{--mx-chat:#3987e5;--mx-fwd:#199e70;--mx-mem:#9a74e3}"
+  ".lnx-metrics{--mx-chat:#2a78d6;--mx-fwd:#1baf7a;--mx-mem:#8a5cd8;--mx-ok:#059669}.dark .lnx-metrics{--mx-chat:#3987e5;--mx-fwd:#199e70;--mx-mem:#9a74e3;--mx-ok:#10b981}"
 
 function StatTile({
   label,

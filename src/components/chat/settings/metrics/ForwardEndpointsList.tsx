@@ -1,7 +1,9 @@
 import type { ForwardEndpointMetrics } from "@services/metrics"
 import { formatCompact, formatDuration, formatExact } from "./format"
 
-const SUCCESS_COLOR = "var(--mx-fwd)"
+/* Success-STATUS color (shared with ForwardRequestsTable's success dot), not
+   the forward-SERIES color --mx-fwd — these bars encode outcome, not series. */
+const SUCCESS_COLOR = "var(--mx-ok)"
 const FAILED_COLOR = "var(--destructive)"
 
 /** "chat.completions" → "completions" (mirrors legacy's endpoint shortening). */
