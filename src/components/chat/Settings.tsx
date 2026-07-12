@@ -26,6 +26,7 @@ import {
 import { cn } from "@/lib/utils"
 import { SettingsProviders } from "@/components/chat/settings/SettingsProviders"
 import { SettingsMcp } from "@/components/chat/settings/SettingsMcp"
+import { SettingsPlugins } from "@/components/chat/settings/SettingsPlugins"
 import { SettingsSkills } from "@/components/chat/settings/SettingsSkills"
 import { SettingsPermissions } from "@/components/chat/settings/SettingsPermissions"
 import { SettingsEnv } from "@/components/chat/settings/SettingsEnv"
@@ -157,6 +158,7 @@ const TABS = [
   { id: "general", label: "通用", render: () => <GeneralTab /> },
   { id: "providers", label: "提供方", render: () => <SettingsProviders /> },
   { id: "mcp", label: "MCP", render: () => <SettingsMcp /> },
+  { id: "plugins", label: "插件", render: () => <SettingsPlugins /> },
   { id: "skills", label: "技能", render: () => <SettingsSkills /> },
   { id: "permissions", label: "权限", render: () => <SettingsPermissions /> },
   { id: "env", label: "环境变量", render: () => <SettingsEnv /> },
