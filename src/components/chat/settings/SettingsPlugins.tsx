@@ -38,19 +38,19 @@ function sourceSummary(source: PluginSourceSpec): string {
   }
 }
 
-function registeredChips(registered: RegisteredResources): string[] {
-  const chips: string[] = []
+function registeredChips(registered: RegisteredResources): { key: string; label: string }[] {
+  const chips: { key: string; label: string }[] = []
   if (registered.mcp_server_ids?.length) {
-    chips.push(`${registered.mcp_server_ids.length} 个 MCP 服务器`)
+    chips.push({ key: "mcp", label: `${registered.mcp_server_ids.length} 个 MCP 服务器` })
   }
   if (registered.skill_dirs?.length) {
-    chips.push(`${registered.skill_dirs.length} 个技能`)
+    chips.push({ key: "skills", label: `${registered.skill_dirs.length} 个技能` })
   }
   if (registered.preset_ids?.length) {
-    chips.push(`${registered.preset_ids.length} 个提示词`)
+    chips.push({ key: "prompts", label: `${registered.preset_ids.length} 个提示词` })
   }
   if (registered.workflow_filenames?.length) {
-    chips.push(`${registered.workflow_filenames.length} 个工作流`)
+    chips.push({ key: "workflows", label: `${registered.workflow_filenames.length} 个工作流` })
   }
   return chips
 }
@@ -196,11 +196,11 @@ export function SettingsPlugins() {
                     <div className="mt-2 flex flex-wrap items-center gap-1">
                       {chips.map((chip) => (
                         <Badge
-                          key={chip}
+                          key={chip.key}
                           variant="outline"
                           className="text-[10px] font-normal text-muted-foreground"
                         >
-                          {chip}
+                          {chip.label}
                         </Badge>
                       ))}
                     </div>
