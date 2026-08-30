@@ -1,28 +1,41 @@
 # lotus-next
 
-Ground-up rebuild of the [Lotus](https://github.com/bigduu/Lotus) web frontend for the bamboo agent runtime — React 19 + TypeScript + Vite + **Tailwind v4 + shadcn-style components** (radix primitives, hand-written; no antd), designed responsive from the start so one codebase serves desktop and mobile.
+An experimental, ground-up rebuild of the [Lotus](https://github.com/bigduu/Lotus) web frontend for the Bamboo agent runtime. It uses React 19, TypeScript, Vite, Tailwind CSS v4, and hand-written components built on Radix primitives.
 
-> **Status:** feature parity with legacy lotus except i18n (UI is currently zh-CN only; locale resources exist but are unwired). Production still ships legacy lotus; this app runs against the same backend and is developed in parallel.
+This repository documents the implementation that exists here today. It does not claim feature parity with Lotus or production readiness.
 
 ## Quick start
 
-Requires a running bamboo server on `127.0.0.1:9562` (e.g. `bamboo serve`).
+Run a Bamboo server on `127.0.0.1:9562`, then start the frontend:
 
 ```bash
 npm ci
-npm run dev     # vite on :9563, /v1 /api /v2 proxied to 127.0.0.1:9562 (same-origin, shared sessions)
+npm run dev
 ```
 
-`npm run build` → `tsc -b && vite build`; `npm run lint` → oxlint.
+Vite listens on port `9563` and proxies `/v1`, `/api`, and `/v2` to Bamboo on port `9562`.
 
-## Feature surface
+## Implemented surface
 
-- **Chat**: v2 WebSocket streaming (`/v2/stream`, msgpack opt-in, no SSE fallback — a connection-down banner surfaces outages), live tool/task/budget timeline, sub-agent tracking, markdown + syntax highlighting + mermaid, image attachments, question / child-approval dialogs, plan-mode banner, dual interactive split panes, PDF/Markdown export.
-- **Sessions**: date-grouped sidebar, multi-device live reconcile, pending-question rehydration on open, per-session drafts.
-- **Settings** (14 tabs): provider instances with **vendor presets** (DeepSeek / 智谱 GLM / Z.ai / MiniMax / 通义千问 DashScope / Kimi, incl. Anthropic-protocol variants — see `src/lib/providerPresets.ts`), Copilot device-code auth, MCP, skills, permissions + bypass, schedules, notification channels (desktop/ntfy/bark), keyword masking, prompts, workflows, clusters + health, env vars, metrics dashboard (summary / by-model / daily / forward endpoints + requests / sync-mismatch / memory trend), experience mode (简洁/高级), VDI graphics-safe mode.
+- Chat over one shared `/v2/stream` WebSocket, using JSON by default and opt-in MessagePack negotiation.
+- Streaming messages, reasoning, tools, tasks, budgets, sub-agents, Markdown, syntax highlighting, Mermaid, images, and approval or question dialogs.
+- Session navigation, live account reconciliation, drafts, pending-question restoration, Markdown/PDF export, and a desktop split view with a second interactive chat pane.
+- Responsive desktop and mobile layouts, light/dark/system themes, simple/advanced modes, and a graphics-safe mode for constrained environments.
+- Fifteen settings tabs: General, Providers, MCP, Plugins, Skills, Permissions, Environment, Schedules, Notifications, Masking, Prompts, Workflows, Clusters, Metrics, and System.
 
-## Conventions
+## Internationalization
 
-- UI strings are hardcoded zh-CN for now (i18n wiring is the one open parity gap).
-- Secrets follow the mask round-trip contract: settings GET returns `****...****`; forms never prefill the placeholder; an empty key field means "keep the stored key".
-- Path aliases mirror legacy lotus (`@shared @services @components @app`) so logic files port verbatim.
+The i18next runtime currently registers six locales: `en-US`, `zh-CN`, `zh-TW`, `fr-FR`, `ja-JP`, and `hi-IN`. Locale resources load on demand, with `en-US` as the fallback.
+
+Translation coverage is not complete: parts of the newer application shell and settings UI still contain hard-coded Chinese strings. The locale list therefore describes the implemented runtime and resources, not complete localization of every screen.
+
+## Current engineering boundary
+
+The repository currently defines two local verification commands:
+
+```bash
+npm run lint
+npm run build
+```
+
+There is no automated test command, CI workflow, or release workflow in this repository yet. Those capabilities are not implied by this README.
