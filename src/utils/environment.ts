@@ -4,15 +4,13 @@
  * Detects whether the app is running in Tauri desktop or browser mode,
  * and provides feature flags for desktop-only functionality.
  */
+import { getRuntimeConfig } from "@/runtime/runtimeConfig";
 
 /**
  * Check if running in Tauri desktop environment
  */
 export const isTauriEnvironment = (): boolean => {
-  return (
-    typeof window !== "undefined" &&
-    Boolean((window as unknown as Record<string, unknown>).__TAURI_INTERNALS__)
-  );
+  return getRuntimeConfig().host.kind === "bodhi-desktop";
 };
 
 /**

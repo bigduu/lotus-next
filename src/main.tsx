@@ -1,8 +1,8 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import './index.css'
-import Root from './Root.tsx'
-import ErrorBoundary from './components/app/ErrorBoundary.tsx'
+import { resolveDefaultBrowserRuntimeConfig } from './runtime/browserRuntime.ts'
+import { installRuntimeConfig } from './runtime/runtimeConfig.ts'
 
 // Vite surfaces a failed dynamic-import preload — a code-split chunk or its CSS
 // could not be fetched — as a `vite:preloadError` event. This is typically a
@@ -36,10 +36,53 @@ window.addEventListener('vite:preloadError', (event) => {
   window.location.reload()
 })
 
-createRoot(document.getElementById('root')!).render(
-  <StrictMode>
-    <ErrorBoundary name="Root">
-      <Root />
-    </ErrorBoundary>
-  </StrictMode>,
-)
+const rootElement = document.getElementById('root')
+if (!rootElement) {
+  throw new Error('Lotus Next root element is missing.')
+}
+
+const renderBootstrapFailure = (error: unknown) => {
+  const message = error instanceof Error ? error.message : String(error)
+  console.error('[runtime] Lotus Next bootstrap failed:', error)
+
+  // Runtime installation can fail before React is allowed to mount. Keep this
+  // fallback dependency-free and assign error text through textContent.
+  const main = document.createElement('main')
+  main.className =
+    'flex min-h-screen items-center justify-center bg-background p-6 text-foreground'
+  const section = document.createElement('section')
+  section.className = 'w-full max-w-xl rounded-2xl border bg-card p-6 shadow-lg'
+  const heading = document.createElement('h1')
+  heading.className = 'text-xl font-semibold'
+  heading.textContent = 'Lotus Next 无法启动'
+  const explanation = document.createElement('p')
+  explanation.className = 'mt-3 text-sm leading-relaxed text-muted-foreground'
+  explanation.textContent =
+    '当前宿主提供了不受支持或不安全的运行时配置。请升级匹配的完整前端与宿主制品，或修正公开后端地址后重新加载。'
+  const details = document.createElement('pre')
+  details.className = 'mt-4 overflow-auto rounded-lg bg-muted p-3 text-xs'
+  details.textContent = message
+  section.append(heading, explanation, details)
+  main.append(section)
+  rootElement.replaceChildren(main)
+}
+
+const bootstrap = async () => {
+  // This synchronous installation is the composition boundary: Root and every
+  // service singleton are imported only after one immutable runtime exists.
+  installRuntimeConfig(resolveDefaultBrowserRuntimeConfig())
+  const [{ default: Root }, { default: ErrorBoundary }] = await Promise.all([
+    import('./Root.tsx'),
+    import('./components/app/ErrorBoundary.tsx'),
+  ])
+
+  createRoot(rootElement).render(
+    <StrictMode>
+      <ErrorBoundary name="Root">
+        <Root />
+      </ErrorBoundary>
+    </StrictMode>,
+  )
+}
+
+void bootstrap().catch(renderBootstrapFailure)

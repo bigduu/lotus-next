@@ -40,7 +40,7 @@ import type {
   AgentEventHandlers,
   ChangeEvent,
 } from "./AgentService";
-import { getV2StreamUrl } from "@shared/utils/backendBaseUrl";
+import { getRuntimeConfig } from "@/runtime/runtimeConfig";
 import { debugLog, isApiV2MsgpackEnabled } from "@shared/utils/debugFlags";
 import { decode as msgpackDecode, encode as msgpackEncode } from "@msgpack/msgpack";
 
@@ -312,7 +312,7 @@ const connect = (): void => {
 
   connecting = true;
   intentionalClose = false;
-  const url = getV2StreamUrl();
+  const url = getRuntimeConfig().endpoints.v2Stream;
   debugLog("[v2Stream]", "connect", { url });
 
   // Opt-in: offer the msgpack subprotocol so the backend can negotiate binary

@@ -38,17 +38,5 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Type-check
-        run: npm run type-check
-
-      - name: Lint with zero warnings
-        run: npm run lint
-
-      - name: Run unit tests
-        run: npm run test:run
-
-      - name: Build production assets
-        run: npm run build
-
-      - name: Verify package contents
-        run: npm run pack:check
+      - name: Verify architecture, behavior, build, and package contents
+        run: npm run verify

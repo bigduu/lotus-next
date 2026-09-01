@@ -8,8 +8,10 @@ import type {
   ChangeEvent,
 } from "./AgentService"
 
-vi.mock("@shared/utils/backendBaseUrl", () => ({
-  getV2StreamUrl: () => "ws://127.0.0.1:9562/v2/stream",
+vi.mock("@/runtime/runtimeConfig", () => ({
+  getRuntimeConfig: () => ({
+    endpoints: { v2Stream: "ws://127.0.0.1:9562/v2/stream" },
+  }),
 }))
 
 let msgpackEnabled = false
