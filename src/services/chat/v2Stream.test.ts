@@ -22,6 +22,7 @@ vi.mock("@shared/utils/debugFlags", () => ({
 
 import {
   __resetV2StreamForTests,
+  isFeedOpen,
   isSocketOpen,
   onReconnected,
   subscribeAgent,
@@ -157,6 +158,35 @@ describe("v2Stream shared WebSocket client", () => {
     expect(isSocketOpen()).toBe(false)
   })
 
+  it("does not report a feed open when its subscribe frame cannot be sent", () => {
+    const onOpen = vi.fn()
+    const onError = vi.fn()
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {})
+    subscribeFeed({ onChange: vi.fn(), onOpen, onError }, 5)
+    const socket = lastSocket()
+    const originalSend = socket.send.bind(socket)
+    vi.spyOn(socket, "send").mockImplementation((data) => {
+      if (
+        typeof data === "string" &&
+        JSON.parse(data).type === "subscribe" &&
+        JSON.parse(data).ch === "feed"
+      ) {
+        throw new Error("send failed")
+      }
+      originalSend(data)
+    })
+
+    socket.open()
+
+    expect(socket.readyState).toBe(MockWebSocket.CLOSED)
+    expect(isSocketOpen()).toBe(false)
+    expect(isFeedOpen()).toBe(false)
+    expect(onOpen).not.toHaveBeenCalled()
+    expect(onError).toHaveBeenCalledTimes(1)
+    expect(socket.parsedSent()).toContainEqual({ type: "unsubscribe", ch: "feed" })
+    expect(warn).toHaveBeenCalledWith("Failed to subscribe v2 feed:", expect.any(Error))
+  })
+
   it("sends hello and the feed resume cursor when the socket opens", () => {
     subscribeFeed({ onChange: vi.fn() }, 5)
 
@@ -176,7 +206,7 @@ describe("v2Stream shared WebSocket client", () => {
     first.open()
 
     const event = change(11)
-    first.emit({ ch: "feed", seq: 1, event })
+    first.emit({ ch: "feed", seq: 11, event })
     expect(onChange).toHaveBeenCalledWith(event)
 
     first.drop()
@@ -188,6 +218,254 @@ describe("v2Stream shared WebSocket client", () => {
     expect(second.parsedSent()).toContainEqual({ type: "subscribe", ch: "feed", since: 11 })
   })
 
+  it.each([Number.NaN, Number.POSITIVE_INFINITY, -1, 1.5, Number.MAX_SAFE_INTEGER + 1])(
+    "fails a non-canonical initial feed cursor closed to zero (%s)",
+    (since) => {
+      subscribeFeed({ onChange: vi.fn() }, since)
+
+      lastSocket().open()
+
+      expect(lastSocket().parsedSent()).toContainEqual({
+        type: "subscribe",
+        ch: "feed",
+        since: 0,
+      })
+    },
+  )
+
+  it("delivers only structurally valid feed events above the accepted cursor", () => {
+    vi.useFakeTimers()
+    const onChange = vi.fn()
+    subscribeFeed({ onChange }, 5)
+    const first = lastSocket()
+    first.open()
+
+    first.emit({ ch: "feed", seq: 5, event: change(5) })
+    first.emit({ ch: "feed", seq: 4, event: change(4) })
+    first.emit({ ch: "feed", seq: 6, event: change(7) })
+    first.emit({ ch: "feed", seq: 6.5, event: change(6.5) })
+    first.emit({
+      ch: "feed",
+      seq: Number.MAX_SAFE_INTEGER + 1,
+      event: change(Number.MAX_SAFE_INTEGER + 1),
+    })
+    first.emit({ ch: "feed", seq: 6, event: { ...change(6), ts: 42 } })
+    first.emit({ ch: "feed", seq: 6, event: { ...change(6), session_id: 42 } })
+    first.emit({ ch: "feed", seq: 6, event: { ...change(6), event: null } })
+    first.emit({ ch: "feed", seq: 6, event: { ...change(6), event: {} } })
+    first.emit({ ch: "feed", seq: 6, event: change(6) })
+    first.emit({ ch: "feed", seq: 6, event: change(6) })
+
+    expect(onChange).toHaveBeenCalledTimes(1)
+    expect(onChange).toHaveBeenCalledWith(change(6))
+
+    first.drop()
+    vi.advanceTimersByTime(500)
+    lastSocket().open()
+    expect(lastSocket().parsedSent()).toContainEqual({
+      type: "subscribe",
+      ch: "feed",
+      since: 6,
+    })
+  })
+
+  it("isolates a deterministic feed delivery failure without reconnecting agent channels", () => {
+    vi.useFakeTimers()
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {})
+    const onError = vi.fn()
+    const onOpen = vi.fn()
+    const onChange = vi.fn(() => {
+      throw new Error("apply failed")
+    })
+    const onToken = vi.fn()
+    const feed = subscribeFeed({ onChange, onError, onOpen }, 5)
+    const agent = subscribeAgent("session-1", { onToken }, tokenDispatch)
+    const first = lastSocket()
+    first.open()
+    expect(isFeedOpen()).toBe(true)
+
+    first.emit({ ch: "feed", seq: 6, event: change(6) })
+
+    expect(first.readyState).toBe(MockWebSocket.OPEN)
+    expect(isSocketOpen()).toBe(true)
+    expect(isFeedOpen()).toBe(false)
+    expect(onError).toHaveBeenCalledTimes(1)
+    expect(first.parsedSent()).toContainEqual({ type: "unsubscribe", ch: "feed" })
+
+    first.emit({ ch: "feed", seq: 6, event: change(6) })
+    first.emit({ ch: "feed", seq: 7, event: change(7) })
+    first.emit({ ch: "feed", seq: 0, control: { type: "feed_reset", from_seq: 5 } })
+    first.emit({
+      ch: "agent.session-1",
+      seq: 1,
+      event: { type: "token", content: "still-live" },
+    })
+    vi.advanceTimersByTime(10 * 60_000)
+
+    expect(sockets).toHaveLength(1)
+    expect(onChange).toHaveBeenCalledTimes(1)
+    expect(onError).toHaveBeenCalledTimes(1)
+    expect(onOpen).toHaveBeenCalledTimes(1)
+    expect(onToken).toHaveBeenCalledWith("still-live")
+
+    first.drop()
+    vi.advanceTimersByTime(500)
+    const second = lastSocket()
+    second.open()
+    expect(second.parsedSent()).not.toContainEqual({
+      type: "subscribe",
+      ch: "feed",
+      since: 5,
+    })
+    expect(second.parsedSent()).toContainEqual({
+      type: "subscribe",
+      ch: "agent.session-1",
+    })
+    expect(isFeedOpen()).toBe(false)
+    expect(onOpen).toHaveBeenCalledTimes(1)
+
+    feed.close()
+    const replacementChange = vi.fn()
+    const replacement = subscribeFeed({ onChange: replacementChange }, 5)
+    expect(isFeedOpen()).toBe(true)
+    second.emit({ ch: "feed", seq: 6, event: change(6) })
+    expect(replacementChange).toHaveBeenCalledWith(change(6))
+
+    expect(warn).toHaveBeenCalledWith("Failed to apply event v2 feed:", expect.any(Error))
+    replacement.close()
+    agent.close()
+  })
+
+  it("does not keep a zombie socket or reconnect loop for a failed feed alone", () => {
+    vi.useFakeTimers()
+    vi.spyOn(console, "warn").mockImplementation(() => {})
+    const onError = vi.fn()
+    subscribeFeed(
+      {
+        onChange: () => {
+          throw new Error("permanent apply failure")
+        },
+        onError,
+      },
+      5,
+    )
+    const socket = lastSocket()
+    socket.open()
+
+    socket.emit({ ch: "feed", seq: 6, event: change(6) })
+
+    expect(socket.readyState).toBe(MockWebSocket.CLOSED)
+    expect(isSocketOpen()).toBe(false)
+    expect(isFeedOpen()).toBe(false)
+    expect(onError).toHaveBeenCalledTimes(1)
+    expect(vi.getTimerCount()).toBe(0)
+
+    vi.advanceTimersByTime(10 * 60_000)
+    expect(sockets).toHaveLength(1)
+  })
+
+  it("does not let a stale feed handle close a replacement owner", () => {
+    const firstChange = vi.fn()
+    const secondChange = vi.fn()
+    const firstFeed = subscribeFeed({ onChange: firstChange }, 5)
+    const socket = lastSocket()
+    socket.open()
+    const secondFeed = subscribeFeed({ onChange: secondChange }, 5)
+    const unsubscribesBeforeStaleClose = socket
+      .parsedSent()
+      .filter((frame) => frame.type === "unsubscribe" && frame.ch === "feed").length
+
+    firstFeed.close()
+    socket.emit({ ch: "feed", seq: 6, event: change(6) })
+
+    const unsubscribesAfterStaleClose = socket
+      .parsedSent()
+      .filter((frame) => frame.type === "unsubscribe" && frame.ch === "feed").length
+    expect(unsubscribesAfterStaleClose).toBe(unsubscribesBeforeStaleClose)
+    expect(isFeedOpen()).toBe(true)
+    expect(firstChange).not.toHaveBeenCalled()
+    expect(secondChange).toHaveBeenCalledWith(change(6))
+    secondFeed.close()
+  })
+
+  it("does not acknowledge a reset whose handler fails before an explicit feed restart", () => {
+    vi.useFakeTimers()
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {})
+    const onError = vi.fn()
+    const failingReset = vi.fn(() => {
+      throw new Error("reset apply failed")
+    })
+    const firstFeed = subscribeFeed(
+      { onChange: vi.fn(), onReset: failingReset, onError },
+      42,
+    )
+    const first = lastSocket()
+    first.open()
+
+    first.emit({ ch: "feed", seq: 0, control: { type: "feed_reset", from_seq: 42 } })
+    first.emit({ ch: "feed", seq: 0, control: { type: "feed_reset", from_seq: 42 } })
+
+    expect(failingReset).toHaveBeenCalledTimes(1)
+    expect(onError).toHaveBeenCalledTimes(1)
+    expect(isFeedOpen()).toBe(false)
+
+    firstFeed.close()
+    const acceptedReset = vi.fn()
+    subscribeFeed({ onChange: vi.fn(), onReset: acceptedReset }, 42)
+    const second = lastSocket()
+    second.open()
+    expect(second.parsedSent()).toContainEqual({
+      type: "subscribe",
+      ch: "feed",
+      since: 42,
+    })
+
+    second.emit({ ch: "feed", seq: 0, control: { type: "feed_reset", from_seq: 42 } })
+    expect(acceptedReset).toHaveBeenCalledTimes(1)
+
+    second.drop()
+    vi.advanceTimersByTime(500)
+    lastSocket().open()
+    expect(lastSocket().parsedSent()).toContainEqual({
+      type: "subscribe",
+      ch: "feed",
+      since: 0,
+    })
+    expect(warn).toHaveBeenCalledWith("Failed to apply reset v2 feed:", expect.any(Error))
+  })
+
+  it("does not let a replaced handler failure disable the replacement feed epoch", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {})
+    const oldError = vi.fn()
+    const replacementChange = vi.fn()
+    let firstFeed: ReturnType<typeof subscribeFeed>
+    firstFeed = subscribeFeed(
+      {
+        onChange: () => {
+          firstFeed.close()
+          subscribeFeed({ onChange: replacementChange }, 5)
+          throw new Error("old handler failed after replacement")
+        },
+        onError: oldError,
+      },
+      5,
+    )
+    const first = lastSocket()
+    first.open()
+
+    first.emit({ ch: "feed", seq: 6, event: change(6) })
+
+    const second = lastSocket()
+    expect(second).not.toBe(first)
+    second.open()
+    expect(isFeedOpen()).toBe(true)
+    second.emit({ ch: "feed", seq: 6, event: change(6) })
+
+    expect(oldError).not.toHaveBeenCalled()
+    expect(replacementChange).toHaveBeenCalledWith(change(6))
+    expect(warn).toHaveBeenCalledWith("Failed to apply event v2 feed:", expect.any(Error))
+  })
+
   it("resets the feed cursor and calls onReset after feed_reset", () => {
     vi.useFakeTimers()
     const onReset = vi.fn()
@@ -196,6 +474,7 @@ describe("v2Stream shared WebSocket client", () => {
     first.open()
 
     first.emit({ ch: "feed", seq: 0, control: { type: "feed_reset", from_seq: 42 } })
+    first.emit({ ch: "feed", seq: 0, control: { type: "feed_reset", from_seq: 42 } })
     expect(onReset).toHaveBeenCalledTimes(1)
     expect(onReset).toHaveBeenCalledWith()
 
@@ -203,6 +482,96 @@ describe("v2Stream shared WebSocket client", () => {
     vi.advanceTimersByTime(500)
     lastSocket().open()
     expect(lastSocket().parsedSent()).toContainEqual({ type: "subscribe", ch: "feed", since: 0 })
+  })
+
+  it("uses the first accepted post-reset event as the new reconnect cursor", () => {
+    vi.useFakeTimers()
+    const onChange = vi.fn()
+    const onReset = vi.fn()
+    subscribeFeed({ onChange, onReset }, 42)
+    const first = lastSocket()
+    first.open()
+
+    first.emit({ ch: "feed", seq: 0, control: { type: "feed_reset", from_seq: 42 } })
+    first.emit({ ch: "feed", seq: 1, event: change(1) })
+    first.emit({ ch: "feed", seq: 42, event: change(42) })
+    first.emit({ ch: "feed", seq: 43, event: change(43) })
+    first.emit({ ch: "feed", seq: 0, control: { type: "feed_reset", from_seq: 42 } })
+    first.emit({ ch: "feed", seq: 0, control: { type: "feed_reset", from_seq: 43 } })
+    expect(onReset).toHaveBeenCalledTimes(1)
+    expect(onChange).toHaveBeenCalledTimes(1)
+    expect(onChange).toHaveBeenCalledWith(change(43))
+
+    first.drop()
+    vi.advanceTimersByTime(500)
+    lastSocket().open()
+    expect(lastSocket().parsedSent()).toContainEqual({
+      type: "subscribe",
+      ch: "feed",
+      since: 43,
+    })
+  })
+
+  it("ignores malformed reset controls without changing the accepted cursor", () => {
+    vi.useFakeTimers()
+    const onReset = vi.fn()
+    subscribeFeed({ onChange: vi.fn(), onReset }, 42)
+    const first = lastSocket()
+    first.open()
+
+    first.emit({ ch: "feed", seq: 1, control: { type: "feed_reset", from_seq: 42 } })
+    first.emit({ ch: "feed", seq: 0, control: { type: "feed_reset" } })
+    first.emit({ ch: "feed", seq: 0, control: { type: "feed_reset", from_seq: 1.5 } })
+    first.emit({ ch: "feed", seq: 0, control: { type: "feed_reset", from_seq: 41 } })
+    first.emit({ ch: "feed", seq: 0, control: { type: "feed_reset", from_seq: 43 } })
+    expect(onReset).not.toHaveBeenCalled()
+
+    first.drop()
+    vi.advanceTimersByTime(500)
+    lastSocket().open()
+    expect(lastSocket().parsedSent()).toContainEqual({
+      type: "subscribe",
+      ch: "feed",
+      since: 42,
+    })
+  })
+
+  it("ignores feed events and resets captured from an old socket epoch", () => {
+    vi.useFakeTimers()
+    const onChange = vi.fn()
+    const onReset = vi.fn()
+    subscribeFeed({ onChange, onReset }, 5)
+    const first = lastSocket()
+    first.open()
+    const staleMessage = first.onmessage
+
+    first.drop()
+    vi.advanceTimersByTime(500)
+    const second = lastSocket()
+    second.open()
+
+    staleMessage?.({
+      data: JSON.stringify({ ch: "feed", seq: 6, event: change(6) }),
+    } as MessageEvent)
+    staleMessage?.({
+      data: JSON.stringify({
+        ch: "feed",
+        seq: 0,
+        control: { type: "feed_reset", from_seq: 5 },
+      }),
+    } as MessageEvent)
+
+    expect(onChange).not.toHaveBeenCalled()
+    expect(onReset).not.toHaveBeenCalled()
+
+    second.drop()
+    vi.advanceTimersByTime(500)
+    lastSocket().open()
+    expect(lastSocket().parsedSent()).toContainEqual({
+      type: "subscribe",
+      ch: "feed",
+      since: 5,
+    })
   })
 
   it("reports feed open, transport error, and close signals", () => {
@@ -666,6 +1035,85 @@ describe("v2Stream shared WebSocket client", () => {
       const event = change(9)
       socket.emitBinary({ ch: "feed", seq: 9, event })
       expect(onChange).toHaveBeenCalledWith(event)
+    })
+
+    it("applies the same monotonic feed validation to MessagePack frames", () => {
+      vi.useFakeTimers()
+      msgpackEnabled = true
+      const onChange = vi.fn()
+      subscribeFeed({ onChange }, 5)
+      const first = lastSocket()
+      first.open("bamboo.v2.msgpack")
+
+      first.emitBinary({ ch: "feed", seq: 5, event: change(5) })
+      first.emitBinary({ ch: "feed", seq: 6, event: change(7) })
+      first.emitBinary({ ch: "feed", seq: 6, event: { ...change(6), event: null } })
+      first.emitBinary({ ch: "feed", seq: 6, event: change(6) })
+      first.emitBinary({ ch: "feed", seq: 6, event: change(6) })
+
+      expect(onChange).toHaveBeenCalledTimes(1)
+      expect(onChange).toHaveBeenCalledWith(change(6))
+
+      first.drop()
+      vi.advanceTimersByTime(500)
+      lastSocket().open("bamboo.v2.msgpack")
+      expect(lastSocket().msgpackSent()).toContainEqual({
+        type: "subscribe",
+        ch: "feed",
+        since: 6,
+      })
+    })
+
+    it("binds MessagePack resets to one exact subscription cursor", () => {
+      vi.useFakeTimers()
+      msgpackEnabled = true
+      const onChange = vi.fn()
+      const onReset = vi.fn()
+      subscribeFeed({ onChange, onReset }, 5)
+      const first = lastSocket()
+      first.open("bamboo.v2.msgpack")
+
+      first.emitBinary({
+        ch: "feed",
+        seq: 0,
+        control: { type: "feed_reset", from_seq: 4 },
+      })
+      first.emitBinary({
+        ch: "feed",
+        seq: 0,
+        control: { type: "feed_reset", from_seq: 6 },
+      })
+      first.emitBinary({
+        ch: "feed",
+        seq: 0,
+        control: { type: "feed_reset", from_seq: 5 },
+      })
+      first.emitBinary({
+        ch: "feed",
+        seq: 0,
+        control: { type: "feed_reset", from_seq: 5 },
+      })
+      first.emitBinary({ ch: "feed", seq: 1, event: change(1) })
+      first.emitBinary({ ch: "feed", seq: 5, event: change(5) })
+      first.emitBinary({ ch: "feed", seq: 6, event: change(6) })
+      first.emitBinary({
+        ch: "feed",
+        seq: 0,
+        control: { type: "feed_reset", from_seq: 6 },
+      })
+
+      expect(onReset).toHaveBeenCalledTimes(1)
+      expect(onChange).toHaveBeenCalledTimes(1)
+      expect(onChange).toHaveBeenCalledWith(change(6))
+
+      first.drop()
+      vi.advanceTimersByTime(500)
+      lastSocket().open("bamboo.v2.msgpack")
+      expect(lastSocket().msgpackSent()).toContainEqual({
+        type: "subscribe",
+        ch: "feed",
+        since: 6,
+      })
     })
 
     it("stays on JSON when the server does not echo the offered protocol", () => {

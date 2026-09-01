@@ -75,8 +75,18 @@ const MSGPACK_SUBPROTOCOL = "bamboo.v2.msgpack";
 
 interface FeedChannel {
   handlers: AccountStreamHandlers;
-  /** Latest cursor to (re)subscribe with; updated as ChangeEvents arrive. */
+  /** Latest accepted cursor to (re)subscribe with. */
   since: number;
+  /** A synchronous application failure stops this feed until explicit restart. */
+  deliveryFailed: boolean;
+  /** Cursor sent for this socket's exact subscribe epoch. */
+  subscribedSince: number | null;
+  /** Once an event is accepted, a later reset cannot belong to this subscribe. */
+  acceptedInSubscription: boolean;
+  /** At most one reset transition is valid for one subscribe epoch. */
+  resetHandledInSubscription: boolean;
+  /** Reset clears the resume cursor, but live events must still exceed its old floor. */
+  postResetFloor: number | null;
 }
 
 interface AgentChannel {
@@ -93,6 +103,59 @@ type ServerFrame = {
   seq?: number;
   event?: unknown;
   control?: { type?: string; [key: string]: unknown };
+};
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+/**
+ * Feed cursors cross a JSON/MessagePack boundary before becoming JavaScript
+ * numbers. Values outside the positive safe-integer range cannot be compared
+ * losslessly and must never be acknowledged as durable progress.
+ */
+const isFeedCursor = (value: unknown): value is number =>
+  typeof value === "number" && Number.isSafeInteger(value) && value > 0;
+
+/**
+ * Validate the stable outer-envelope/inner-change contract before domain code
+ * sees a feed event. Bamboo deliberately repeats the same durable cursor in
+ * both places; disagreement is protocol corruption, not a compatibility path.
+ */
+const feedChangeFromFrame = (frame: ServerFrame): ChangeEvent | null => {
+  if (
+    !isFeedCursor(frame.seq) ||
+    frame.control !== undefined ||
+    !isRecord(frame.event)
+  ) {
+    return null;
+  }
+
+  const change = frame.event;
+  if (
+    !isFeedCursor(change.seq) ||
+    change.seq !== frame.seq ||
+    typeof change.ts !== "string" ||
+    (change.session_id !== undefined && typeof change.session_id !== "string") ||
+    !isRecord(change.event) ||
+    typeof change.event.type !== "string"
+  ) {
+    return null;
+  }
+
+  return change as unknown as ChangeEvent;
+};
+
+const feedResetCursorFromFrame = (frame: ServerFrame): number | null => {
+  if (
+    frame.seq !== 0 ||
+    frame.event !== undefined ||
+    !isRecord(frame.control) ||
+    frame.control.type !== "feed_reset" ||
+    !isFeedCursor(frame.control.from_seq)
+  ) {
+    return null;
+  }
+  return frame.control.from_seq;
 };
 
 /**
@@ -146,6 +209,13 @@ export const isSocketOpen = (): boolean =>
   socket !== null && socket.readyState === WebSocket.OPEN;
 
 let feedChannel: FeedChannel | null = null;
+
+/** Whether the account feed itself is usable on the shared socket. */
+export const isFeedOpen = (): boolean =>
+  isSocketOpen() &&
+  feedChannel !== null &&
+  !feedChannel.deliveryFailed &&
+  feedChannel.subscribedSince !== null;
 // Multiple local subscribers may watch the SAME session (e.g. the main pane
 // and a bound split pane), so each channel holds a SET of subscribers. One
 // subscribe/unsubscribe frame per channel; events fan out to every subscriber.
@@ -153,7 +223,8 @@ const agentChannels = new Map<string, Set<AgentChannel>>();
 
 const agentCh = (sessionId: string): string => `agent.${sessionId}`;
 
-const hasSubscriptions = (): boolean => feedChannel !== null || agentChannels.size > 0;
+const hasSubscriptions = (): boolean =>
+  (feedChannel !== null && !feedChannel.deliveryFailed) || agentChannels.size > 0;
 
 /**
  * Whether the LIVE socket negotiated the MessagePack subprotocol. Decided from
@@ -179,11 +250,48 @@ const send = (payload: Record<string, unknown>): boolean => {
   return false;
 };
 
+const sendFeedSubscribe = (channel: FeedChannel): boolean => {
+  const subscribedSince = channel.since;
+  channel.subscribedSince = null;
+  channel.acceptedInSubscription = false;
+  channel.resetHandledInSubscription = false;
+  if (!send({ type: "subscribe", ch: "feed", since: subscribedSince })) return false;
+  channel.subscribedSince = subscribedSince;
+  return true;
+};
+
+/**
+ * Isolate only the durable feed when its subscription or acknowledgement
+ * boundary fails. The shared socket and agent channels remain live; recovery
+ * requires the feed owner to close and create a fresh subscription explicitly.
+ */
+const failFeedDelivery = (
+  channel: FeedChannel,
+  operation: "subscribe" | "apply event" | "apply reset",
+  error: unknown,
+): void => {
+  console.warn(`Failed to ${operation} v2 feed:`, error);
+  if (feedChannel !== channel || channel.deliveryFailed) return;
+
+  channel.deliveryFailed = true;
+  channel.subscribedSince = null;
+  send({ type: "unsubscribe", ch: "feed" });
+  try {
+    channel.handlers.onError?.();
+  } catch (onErrorFailure) {
+    console.warn("Failed to report v2 feed handler error:", onErrorFailure);
+  }
+  closeIfIdle();
+};
+
 /** (Re)send the subscribe frames for every live channel after a (re)connect. */
 const resubscribeAll = (): void => {
   send({ type: "hello" });
-  if (feedChannel) {
-    send({ type: "subscribe", ch: "feed", since: feedChannel.since });
+  if (feedChannel && !feedChannel.deliveryFailed) {
+    const channel = feedChannel;
+    if (!sendFeedSubscribe(channel)) {
+      failFeedDelivery(channel, "subscribe", new Error("WebSocket send failed"));
+    }
   }
   for (const ch of agentChannels.keys()) {
     send({ type: "subscribe", ch });
@@ -393,24 +501,68 @@ const handleFrame = (
   if (ch === "sys") return;
 
   if (ch === "feed") {
-    if (!feedChannel) return;
+    const channel = feedChannel;
+    if (!channel || channel.deliveryFailed || channel.subscribedSince === null) return;
     if (control) {
-      if (control.type === "feed_reset") {
+      const resetFrom = feedResetCursorFromFrame(frame);
+      if (
+        resetFrom !== null &&
+        resetFrom === channel.subscribedSince &&
+        !channel.acceptedInSubscription &&
+        !channel.resetHandledInSubscription
+      ) {
         debugLog("[v2Stream]", "feed.reset", {});
-        feedChannel.since = 0;
-        feedChannel.handlers.onReset?.();
+        const onReset = channel.handlers.onReset;
+        if (!onReset) {
+          failFeedDelivery(
+            channel,
+            "apply reset",
+            new Error("feed_reset requires an application reset handler"),
+          );
+          return;
+        }
+        const previousSince = channel.since;
+        channel.since = 0;
+        try {
+          onReset();
+        } catch (error) {
+          channel.since = previousSince;
+          failFeedDelivery(channel, "apply reset", error);
+          return;
+        }
+        if (feedChannel === channel && !channel.deliveryFailed) {
+          channel.resetHandledInSubscription = true;
+          channel.postResetFloor = resetFrom;
+        }
+      } else {
+        debugLog("[v2Stream]", "feed.control.invalid", {});
       }
       return;
     }
-    if (event === undefined) {
-      debugLog("[v2Stream]", "feed.frame.no_event", {});
+    const change = feedChangeFromFrame(frame);
+    if (!change) {
+      debugLog("[v2Stream]", "feed.frame.invalid_event", {});
       return;
     }
-    const change = event as ChangeEvent;
-    if (typeof change.seq === "number" && change.seq > feedChannel.since) {
-      feedChannel.since = change.seq;
+    const acceptanceFloor = Math.max(channel.since, channel.postResetFloor ?? 0);
+    if (change.seq <= acceptanceFloor) {
+      debugLog("[v2Stream]", "feed.frame.stale", {
+        seq: change.seq,
+        since: acceptanceFloor,
+      });
+      return;
     }
-    feedChannel.handlers.onChange(change);
+    try {
+      channel.handlers.onChange(change);
+    } catch (error) {
+      failFeedDelivery(channel, "apply event", error);
+      return;
+    }
+    if (feedChannel === channel) {
+      channel.since = change.seq;
+      channel.acceptedInSubscription = true;
+      channel.postResetFloor = null;
+    }
     return;
   }
 
@@ -495,7 +647,9 @@ const connect = (): void => {
     startSocketLiveness(ws);
     debugLog("[v2Stream]", "open", { afterDrop: wasDropped });
     resubscribeAll();
-    feedChannel?.handlers.onOpen?.();
+    if (feedChannel && !feedChannel.deliveryFailed && feedChannel.subscribedSince !== null) {
+      feedChannel.handlers.onOpen?.();
+    }
     if (wasDropped) {
       for (const listener of [...reconnectedListeners]) {
         try {
@@ -547,15 +701,27 @@ const connect = (): void => {
  * envelopes (full ChangeEvent) to `handlers.onChange`, a `feed_reset` control
  * to `handlers.onReset`, WS open to `handlers.onOpen`, and close/error to
  * `handlers.onError`. The caller owns the cursor (localStorage) and passes the
- * resume point as `since`; the client tracks the max seq seen for reconnects.
+ * resume point as `since`; the client tracks only validated, successfully
+ * delivered cursors for reconnects.
  */
 export const subscribeFeed = (
   handlers: AccountStreamHandlers,
   since: number,
 ): FeedSubscription => {
-  feedChannel = { handlers, since: since > 0 ? since : 0 };
+  feedChannel = {
+    handlers,
+    since: isFeedCursor(since) ? since : 0,
+    deliveryFailed: false,
+    subscribedSince: null,
+    acceptedInSubscription: false,
+    resetHandledInSubscription: false,
+    postResetFloor: null,
+  };
+  const channel = feedChannel;
   if (socket && socket.readyState === WebSocket.OPEN) {
-    send({ type: "subscribe", ch: "feed", since: feedChannel.since });
+    if (!sendFeedSubscribe(channel)) {
+      failFeedDelivery(channel, "subscribe", new Error("WebSocket send failed"));
+    }
   } else {
     connect();
   }
@@ -565,6 +731,7 @@ export const subscribeFeed = (
     close() {
       if (closed) return;
       closed = true;
+      if (feedChannel !== channel) return;
       feedChannel = null;
       send({ type: "unsubscribe", ch: "feed" });
       closeIfIdle();
