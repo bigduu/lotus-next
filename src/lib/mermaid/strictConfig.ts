@@ -33,7 +33,7 @@ export const MERMAID_STRICT_CONFIG = deepFreeze({
   },
 } as const satisfies MermaidConfig)
 
-type MermaidSurface = "app" | "export"
+export type MermaidSurface = "app" | "export"
 
 const MERMAID_SURFACE_CONFIGS = deepFreeze({
   app: {
@@ -46,7 +46,12 @@ const MERMAID_SURFACE_CONFIGS = deepFreeze({
   },
 } as const satisfies Record<MermaidSurface, MermaidConfig>)
 
+/** Return the exact frozen #14 policy for integrations that own a Mermaid instance. */
+export function getTrustedMermaidConfig(surface: MermaidSurface) {
+  return MERMAID_SURFACE_CONFIGS[surface]
+}
+
 /** Initialize Mermaid from a closed set of trusted, recursively frozen configs. */
 export function initializeTrustedMermaid(surface: MermaidSurface): void {
-  mermaid.initialize(MERMAID_SURFACE_CONFIGS[surface])
+  mermaid.initialize(getTrustedMermaidConfig(surface))
 }

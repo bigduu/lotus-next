@@ -247,7 +247,11 @@ export function MessageList({
                   </div>
                 ) : null}
                 {reasoning ? <Reasoning text={reasoning} /> : null}
-                {isUser ? text : text.trim() ? <AssistantMarkdown>{text}</AssistantMarkdown> : null}
+                {isUser ? (
+                  text
+                ) : text.trim() ? (
+                  <AssistantMarkdown isStreaming={false}>{text}</AssistantMarkdown>
+                ) : null}
               </div>
               <div className="mt-1 flex gap-0.5 opacity-100 transition-opacity md:opacity-0 md:group-hover:opacity-100">
                 <button
@@ -322,7 +326,9 @@ export function MessageList({
             <div key={`live-text-${i}`} className="flex justify-start">
               <div className="max-w-[85%] overflow-hidden rounded-2xl bg-muted px-3.5 py-2 text-sm leading-relaxed [overflow-wrap:anywhere]">
                 {seg.reasoning ? <Reasoning text={seg.reasoning} /> : null}
-                {seg.text.trim() ? <AssistantMarkdown>{seg.text}</AssistantMarkdown> : null}
+                {seg.text.trim() ? (
+                  <AssistantMarkdown isStreaming={false}>{seg.text}</AssistantMarkdown>
+                ) : null}
               </div>
             </div>
           ),
@@ -343,7 +349,7 @@ export function MessageList({
                 // Live markdown while streaming (RAF-throttled to once/frame),
                 // with provider built-in-tool blocks folded the same as the
                 // final message — so no raw **/``` flash mid-stream.
-                <AssistantMarkdown>{streaming}</AssistantMarkdown>
+                <AssistantMarkdown isStreaming>{streaming}</AssistantMarkdown>
               ) : streamingReasoning ? null : streamStatus ? (
                 // "what is the agent doing" one-liner (tool running / compacting)
                 // instead of anonymous dots while no text streams.
