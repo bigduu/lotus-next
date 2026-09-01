@@ -3,6 +3,7 @@ import App from "./App"
 import { PasswordGate } from "@/components/auth/PasswordGate"
 import { Button } from "@/components/ui/button"
 import { ServiceFactory } from "@services/common/ServiceFactory"
+import { getRuntimeConfig } from "@/runtime/runtimeConfig"
 
 type Phase = "loading" | "unreachable" | "setup" | "gate" | "ready"
 
@@ -23,6 +24,7 @@ const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve,
  * required). The setup probe itself fails open so local/dev is never blocked.
  */
 export default function Root() {
+  const runtime = getRuntimeConfig()
   const [phase, setPhase] = useState<Phase>("loading")
   const [setupMsg, setSetupMsg] = useState("")
 
@@ -81,7 +83,12 @@ export default function Root() {
         <div className="w-full max-w-sm rounded-2xl border bg-card p-6 text-center shadow-lg">
           <h1 className="text-xl font-semibold">无法连接后端</h1>
           <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
-            后端服务没有响应。请确认它正在运行,然后重试。
+            后端服务没有响应，或不支持当前 Lotus Next 所需的 HTTP v1 与 v2 stream
+            协议。请启动兼容后端；桌面/内嵌宿主应升级为与当前前端制品匹配的完整版本。
+          </p>
+          <p className="mt-3 break-all font-mono text-xs text-muted-foreground">
+            {runtime.endpointSource} · v{runtime.artifact.version}
+            {runtime.artifact.revision ? `@${runtime.artifact.revision}` : ""}
           </p>
           <Button className="mt-5 w-full" onClick={() => void boot()}>
             重试

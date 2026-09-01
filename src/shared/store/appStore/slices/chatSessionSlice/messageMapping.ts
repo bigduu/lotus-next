@@ -8,9 +8,9 @@ import {
   AssistantToolResultMessage,
   MessageImage,
 } from "@shared/types/chat";
-import { SessionSummary } from "@services/chat/AgentService";
+import type { SessionSummary } from "@services/chat/AgentService";
+import { agentApiClient } from "@services/api";
 import { getDefaultSystemPrompts } from "@shared/utils/defaultSystemPrompts";
-import { getBackendBaseUrlSync } from "@shared/utils/backendBaseUrl";
 import i18n from "@shared/i18n";
 import { mapTokenBudgetUsage } from "@shared/types/tokenBudget";
 
@@ -29,15 +29,6 @@ const safeRandomId = (): string => {
   return `id_${Date.now()}_${Math.random().toString(16).slice(2)}`;
 };
 
-const getAgentApiBaseUrlSync = (): string => {
-  let normalized = getBackendBaseUrlSync().trim().replace(/\/+$/, "");
-  // Remove /v1 suffix if present, then add /api/v1
-  if (normalized.endsWith("/v1")) {
-    normalized = normalized.slice(0, -3);
-  }
-  return `${normalized}/api/v1`;
-};
-
 const parseBambooAttachmentUrl = (
   url: string,
 ): { sessionId: string; attachmentId: string } | null => {
@@ -52,8 +43,9 @@ const parseBambooAttachmentUrl = (
 const resolveImageUrlForRender = (rawUrl: string): string => {
   const ref = parseBambooAttachmentUrl(rawUrl);
   if (!ref) return rawUrl;
-  const base = getAgentApiBaseUrlSync();
-  return `${base}/sessions/${encodeURIComponent(ref.sessionId)}/attachments/${encodeURIComponent(ref.attachmentId)}`;
+  return agentApiClient.resolveUrl(
+    `sessions/${encodeURIComponent(ref.sessionId)}/attachments/${encodeURIComponent(ref.attachmentId)}`,
+  );
 };
 
 const normalizeToolName = (name: string | undefined | null): string | undefined => {

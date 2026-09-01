@@ -1,4 +1,6 @@
 import { afterEach, beforeEach, vi } from "vitest"
+import { resolveDefaultBrowserRuntimeConfig } from "../runtime/browserRuntime"
+import { installRuntimeConfig } from "../runtime/runtimeConfig"
 
 const createMemoryStorage = (): Storage => {
   const values = new Map<string, string>()
@@ -39,6 +41,7 @@ const bindStorage = (name: "localStorage" | "sessionStorage", storage: Storage) 
 
 bindStorage("localStorage", localStorageForTests)
 bindStorage("sessionStorage", sessionStorageForTests)
+installRuntimeConfig(resolveDefaultBrowserRuntimeConfig())
 
 beforeEach(() => {
   localStorageForTests.clear()

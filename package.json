@@ -25,7 +25,10 @@
     "lint": "oxlint --deny-warnings",
     "test": "vitest",
     "test:run": "vitest run",
-    "pack:check": "npm run build && node scripts/verify-package.mjs",
+    "architecture:check": "node scripts/check-architecture.mjs",
+    "package:contents": "node scripts/verify-package.mjs",
+    "pack:check": "npm run build && npm run package:contents",
+    "verify": "npm run type-check && npm run lint && npm run test:run && npm run architecture:check && npm run build && npm run package:contents",
     "prepack": "npm run build",
     "preview": "vite preview"
   },

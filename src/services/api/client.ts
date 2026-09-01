@@ -8,8 +8,6 @@
  * - /v1/*       - Standard web_service routes (models, bamboo/*, workspace/*, mcp/*)
  * - /api/v1/*   - Agent server routes (chat, stream, todo, respond, sessions, metrics)
  */
-import { getBackendBaseUrlSync } from "../../shared/utils/backendBaseUrl";
-
 // === DEV-ONLY API REQUEST INSTRUMENTATION ===
 // Enable with: localStorage.setItem('lotus_debug_api_requests', '1')
 
@@ -19,9 +17,11 @@ const AGENT_ENDPOINT_PATTERNS = [
   /\/api\/v1\/events\/[^/]+/,
 ];
 
+let debugInstrumentationEnabled = false;
+
 function shouldLogApiRequest(): boolean {
   return (
-    import.meta.env.DEV &&
+    debugInstrumentationEnabled &&
     typeof localStorage !== "undefined" &&
     localStorage.getItem("lotus_debug_api_requests") === "1"
   );
@@ -50,8 +50,11 @@ function logApiRequest(method: string, url: string): void {
   );
 }
 
-// Expose for manual testing
-if (import.meta.env.DEV && typeof window !== "undefined") {
+/** Called only by the API composition module after runtime installation. */
+export const configureApiDebugInstrumentation = (enabled: boolean): void => {
+  debugInstrumentationEnabled = enabled;
+  if (!enabled || typeof window === "undefined") return;
+
   (window as unknown as Record<string, unknown>).__lotusApiCounters = () => {
     console.table(requestCounters);
     return { ...requestCounters };
@@ -59,11 +62,12 @@ if (import.meta.env.DEV && typeof window !== "undefined") {
   (window as unknown as Record<string, unknown>).__lotusResetApiCounters = () => {
     requestCounters = {};
   };
-}
+};
 
 export interface ApiClientConfig {
-  baseUrl?: string;
+  baseUrl: string;
   defaultHeaders?: Record<string, string>;
+  requestCredentials: RequestCredentials;
 }
 
 export class ApiError extends Error {
@@ -85,26 +89,18 @@ export function isApiError(error: unknown): error is ApiError {
 export class ApiClient {
   private baseUrl: string;
   private defaultHeaders: Record<string, string>;
+  private requestCredentials: RequestCredentials;
 
-  constructor(config: ApiClientConfig = {}) {
-    this.baseUrl = config.baseUrl ?? this.resolveBaseUrl();
+  constructor(config: ApiClientConfig) {
+    this.baseUrl = config.baseUrl.trim().replace(/\/+$/, "");
     this.defaultHeaders = config.defaultHeaders ?? {
       "Content-Type": "application/json",
     };
+    this.requestCredentials = config.requestCredentials;
   }
 
-  private resolveBaseUrl(): string {
-    const normalized = getBackendBaseUrlSync().trim().replace(/\/+$/, "");
-
-    // Default to /v1 (standard web_service routes)
-    if (normalized.endsWith("/v1")) {
-      return normalized;
-    }
-
-    return `${normalized}/v1`;
-  }
-
-  private buildUrl(path: string): string {
+  /** Resolve a relative route through this client's canonical API base. */
+  resolveUrl(path: string): string {
     const cleanPath = path.replace(/^\/+/, "");
     return `${this.baseUrl}/${cleanPath}`;
   }
@@ -218,7 +214,7 @@ export class ApiClient {
    * Make a GET request with timeout and retry
    */
   async get<T>(path: string, options?: RequestInit): Promise<T> {
-    const url = this.buildUrl(path);
+    const url = this.resolveUrl(path);
     logApiRequest("GET", url);
 
     const controller = new AbortController();
@@ -234,7 +230,7 @@ export class ApiClient {
             ...this.defaultHeaders,
             ...options?.headers,
           },
-          credentials: "include",
+          credentials: this.requestCredentials,
           signal: controller.signal,
         },
         3, // 3 retries
@@ -249,7 +245,7 @@ export class ApiClient {
    * Make a POST request with timeout and retry
    */
   async post<T>(path: string, data?: unknown, options?: RequestInit): Promise<T> {
-    const url = this.buildUrl(path);
+    const url = this.resolveUrl(path);
     logApiRequest("POST", url);
 
     const controller = new AbortController();
@@ -265,7 +261,7 @@ export class ApiClient {
             ...this.defaultHeaders,
             ...options?.headers,
           },
-          credentials: "include",
+          credentials: this.requestCredentials,
           body: data ? JSON.stringify(data) : undefined,
           signal: controller.signal,
         },
@@ -281,7 +277,7 @@ export class ApiClient {
    * Make a PUT request with timeout and retry
    */
   async put<T>(path: string, data?: unknown, options?: RequestInit): Promise<T> {
-    const url = this.buildUrl(path);
+    const url = this.resolveUrl(path);
 
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 30000); // 30s timeout
@@ -296,7 +292,7 @@ export class ApiClient {
             ...this.defaultHeaders,
             ...options?.headers,
           },
-          credentials: "include",
+          credentials: this.requestCredentials,
           body: data ? JSON.stringify(data) : undefined,
           signal: controller.signal,
         },
@@ -312,7 +308,7 @@ export class ApiClient {
    * Make a PATCH request with timeout and retry
    */
   async patch<T>(path: string, data?: unknown, options?: RequestInit): Promise<T> {
-    const url = this.buildUrl(path);
+    const url = this.resolveUrl(path);
     logApiRequest("PATCH", url);
 
     const controller = new AbortController();
@@ -328,7 +324,7 @@ export class ApiClient {
             ...this.defaultHeaders,
             ...options?.headers,
           },
-          credentials: "include",
+          credentials: this.requestCredentials,
           body: data ? JSON.stringify(data) : undefined,
           signal: controller.signal,
         },
@@ -344,7 +340,7 @@ export class ApiClient {
    * Make a DELETE request with timeout and retry
    */
   async delete<T>(path: string, options?: RequestInit): Promise<T> {
-    const url = this.buildUrl(path);
+    const url = this.resolveUrl(path);
     logApiRequest("DELETE", url);
 
     const controller = new AbortController();
@@ -360,7 +356,7 @@ export class ApiClient {
             ...this.defaultHeaders,
             ...options?.headers,
           },
-          credentials: "include",
+          credentials: this.requestCredentials,
           signal: controller.signal,
         },
         3, // 3 retries
@@ -375,7 +371,7 @@ export class ApiClient {
    * Make a request with custom method and timeout
    */
   async request<T>(method: string, path: string, options?: RequestInit): Promise<T> {
-    const url = this.buildUrl(path);
+    const url = this.resolveUrl(path);
 
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 30000); // 30s timeout
@@ -390,7 +386,7 @@ export class ApiClient {
             ...this.defaultHeaders,
             ...options?.headers,
           },
-          credentials: "include",
+          credentials: this.requestCredentials,
           signal: controller.signal,
         },
         3, // 3 retries
@@ -406,7 +402,7 @@ export class ApiClient {
    * Note: No retry logic for streaming endpoints
    */
   async fetchRaw(path: string, options?: RequestInit): Promise<Response> {
-    const url = this.buildUrl(path);
+    const url = this.resolveUrl(path);
     logApiRequest("GET", url);
     const response = await fetch(url, {
       ...options,
@@ -414,7 +410,7 @@ export class ApiClient {
         ...this.defaultHeaders,
         ...options?.headers,
       },
-      credentials: "include",
+      credentials: this.requestCredentials,
     });
 
     if (!response.ok) {
@@ -428,25 +424,3 @@ export class ApiClient {
     return response;
   }
 }
-
-// Export singleton instance for standard API (/v1)
-export const apiClient = new ApiClient();
-
-/**
- * Agent API Client for /api/v1 routes
- *
- * Used for agent-specific endpoints:
- * - chat, stream, stop, history
- * - todo, respond, sessions
- * - metrics, health
- */
-export const agentApiClient = new ApiClient({
-  baseUrl: (() => {
-    let normalized = getBackendBaseUrlSync().trim().replace(/\/+$/, "");
-    // Remove /v1 suffix if present, then add /api/v1
-    if (normalized.endsWith("/v1")) {
-      normalized = normalized.slice(0, -3);
-    }
-    return `${normalized}/api/v1`;
-  })(),
-});

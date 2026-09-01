@@ -14,10 +14,10 @@ import {
 import { ConfirmDialog } from "./ConfirmDialog"
 import { StatusLine } from "./StatusLine"
 import type { SectionMessage } from "./useSystemConfig"
+import { getRuntimeConfig } from "@/runtime/runtimeConfig"
 
 // Release trains stamp the real version at publish; dev builds show 0.0.0.
-const APP_VERSION: string =
-  (import.meta.env.VITE_APP_VERSION as string | undefined) ?? "0.0.0"
+const { artifact, publicMetadata } = getRuntimeConfig()
 
 type PendingAction = "clear-storage" | "reset-app"
 
@@ -76,8 +76,8 @@ export function SectionApp() {
       <div className="flex items-center justify-between text-sm">
         <span className="text-muted-foreground">前端版本</span>
         <span className="font-mono text-xs">
-          v{APP_VERSION}
-          {import.meta.env.DEV ? " (dev)" : ""}
+          v{artifact.version}
+          {publicMetadata.development ? " (dev)" : ""}
         </span>
       </div>
 
