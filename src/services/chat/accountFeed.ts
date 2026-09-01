@@ -15,12 +15,13 @@
  * (`agentSubscriptionRunner`); this feed is the cross-session sync channel.
  */
 import { AgentClient, type ChangeEvent, type FeedSubscription } from "./AgentService";
-import { isSocketOpen, onReconnected } from "./v2Stream";
+import { isFeedOpen, onReconnected } from "./v2Stream";
 import { useAppStore, selectShouldObserve } from "@shared/store/appStore";
 import { notify } from "@/lib/notify";
 
 const CURSOR_STORAGE_KEY = "lotus_account_feed_cursor_v1";
 const REFRESH_DEBOUNCE_MS = 400;
+const CANONICAL_CURSOR_PATTERN = /^[1-9][0-9]*$/;
 
 // The live v2 WS feed subscription handle (null while stopped).
 let feedSubscription: FeedSubscription | null = null;
@@ -28,26 +29,38 @@ let refreshTimer: ReturnType<typeof setTimeout> | null = null;
 let offReconnected: (() => void) | null = null;
 
 /**
- * True while the account feed is RUNNING but its WebSocket is not currently
- * open — i.e. the live channel is down and the reconnect loop is retrying.
- * False when the feed was never started (tests / SSR / no WebSocket), so the
- * HTTP health poll keeps full authority over availability there.
+ * True while the account feed is RUNNING but unavailable: either the shared
+ * WebSocket is down or this feed was isolated after a synchronous delivery
+ * failure. False when the feed was never started (tests / SSR / no WebSocket),
+ * so the HTTP health poll keeps full authority over availability there.
  */
 export const isAccountFeedDisconnected = (): boolean =>
-  feedSubscription !== null && !isSocketOpen();
+  feedSubscription !== null && !isFeedOpen();
+
+const parseCursor = (raw: string | null): number => {
+  if (!raw || !CANONICAL_CURSOR_PATTERN.test(raw)) return 0;
+  const parsed = Number(raw);
+  return Number.isSafeInteger(parsed) && parsed > 0 && String(parsed) === raw
+    ? parsed
+    : 0;
+};
 
 const readCursor = (): number => {
   try {
-    const raw = localStorage.getItem(CURSOR_STORAGE_KEY);
-    const parsed = raw ? Number.parseInt(raw, 10) : 0;
-    return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+    return parseCursor(localStorage.getItem(CURSOR_STORAGE_KEY));
   } catch {
     return 0;
   }
 };
 
 const writeCursor = (seq: number): void => {
+  if (!Number.isSafeInteger(seq) || seq <= 0) return;
   try {
+    // Storage is shared with other page lifetimes. Re-read immediately before
+    // writing so a replay can never move a valid durable cursor backwards. If
+    // reading fails, skip the write rather than guessing that the cursor is 0.
+    const current = parseCursor(localStorage.getItem(CURSOR_STORAGE_KEY));
+    if (seq <= current) return;
     localStorage.setItem(CURSOR_STORAGE_KEY, String(seq));
   } catch {
     // Best-effort: a private-mode storage failure must not break the feed.
@@ -59,6 +72,28 @@ const clearCursor = (): void => {
     localStorage.removeItem(CURSOR_STORAGE_KEY);
   } catch {
     /* ignore */
+  }
+};
+
+const cancelScheduledRefresh = (): void => {
+  if (!refreshTimer) return;
+  clearTimeout(refreshTimer);
+  refreshTimer = null;
+};
+
+const refreshSessionsNowAfterReset = (): void => {
+  try {
+    void useAppStore
+      .getState()
+      .refreshChatsNow()
+      .catch((error) =>
+        console.warn(
+          "[AccountFeed] Failed to resync sessions after reset:",
+          error,
+        ),
+      );
+  } catch (error) {
+    console.warn("[AccountFeed] Failed to resync sessions after reset:", error);
   }
 };
 
@@ -194,14 +229,17 @@ export const startAccountFeed = (): void => {
         useAppStore.getState().setAgentAvailability(false);
       },
       onReset: () => {
-        // Cursor predated the retained window — drop it and full-resync.
+        // Cursor predated the retained window. Clear durable progress first,
+        // cancel any stale trailing refresh, then force one authoritative list
+        // fetch instead of entering the ordinary throttled refresh path.
         clearCursor();
-        void useAppStore.getState().refreshSessionsIndex();
+        cancelScheduledRefresh();
+        refreshSessionsNowAfterReset();
       },
       onChange: (change) => {
         useAppStore.getState().setAgentAvailability(true);
-        writeCursor(change.seq);
         applyChange(change);
+        writeCursor(change.seq);
       },
     },
     { since: readCursor() },
@@ -210,10 +248,7 @@ export const startAccountFeed = (): void => {
 
 /** Stop the account feed and tear down the connection. */
 export const stopAccountFeed = (): void => {
-  if (refreshTimer) {
-    clearTimeout(refreshTimer);
-    refreshTimer = null;
-  }
+  cancelScheduledRefresh();
   if (offReconnected) {
     offReconnected();
     offReconnected = null;
