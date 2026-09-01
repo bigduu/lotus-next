@@ -1,18 +1,11 @@
 import { useEffect, useRef, useState } from "react"
 import mermaid from "mermaid"
+import { initializeTrustedMermaid } from "@/lib/mermaid/strictConfig"
 
 let initialized = false
 function ensureInit() {
   if (initialized) return
-  // TOP-LEVEL htmlLabels:false renders native SVG <text> (survives sanitize +
-  // image rasterization) — a known mermaid gotcha; per-diagram alone isn't enough.
-  mermaid.initialize({
-    startOnLoad: false,
-    theme: "dark",
-    securityLevel: "strict",
-    htmlLabels: false,
-    flowchart: { htmlLabels: false },
-  })
+  initializeTrustedMermaid("app")
   initialized = true
 }
 
