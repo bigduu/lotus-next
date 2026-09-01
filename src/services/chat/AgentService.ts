@@ -6,7 +6,6 @@ import { debugLog } from "@shared/utils/debugFlags";
  * Handles SSE streaming and AgentEvent processing
  */
 import { agentApiClient } from "../api";
-import { getBackendBaseUrlSync } from "../../shared/utils/backendBaseUrl";
 import * as v2Stream from "./v2Stream";
 import type { FeedSubscription } from "./v2Stream";
 

@@ -2,7 +2,9 @@
 
 An experimental, ground-up rebuild of the [Lotus](https://github.com/bigduu/Lotus) web frontend for the Bamboo agent runtime. It uses React 19, TypeScript, Vite, Tailwind CSS v4, and hand-written components built on Radix primitives.
 
-This repository documents the implementation that exists here today. It does not claim feature parity with Lotus or production readiness.
+Lotus Next is the canonical forward-development target. Production cutover is tracked in [issue #11](https://github.com/bigduu/lotus-next/issues/11); the legacy Ant Design frontend remains only as the current production and rollback baseline while that migration is incomplete.
+
+This repository documents the implementation that exists here today. It does not yet claim feature parity with Lotus or production readiness.
 
 ## Quick start
 
@@ -29,13 +31,19 @@ The i18next runtime currently registers six locales: `en-US`, `zh-CN`, `zh-TW`, 
 
 Translation coverage is not complete: parts of the newer application shell and settings UI still contain hard-coded Chinese strings. The locale list therefore describes the implemented runtime and resources, not complete localization of every screen.
 
-## Current engineering boundary
+## Production gates
 
-The repository currently defines two local verification commands:
+Run the same checks locally that CI runs for pull requests and `main`:
 
 ```bash
+npm ci
+npm run type-check
 npm run lint
+npm run test:run
 npm run build
+npm run pack:check
 ```
 
-There is no automated test command, CI workflow, or release workflow in this repository yet. Those capabilities are not implied by this README.
+`npm run pack:check` rebuilds the app, asks npm for the exact dry-run tarball manifest, and rejects anything outside `dist/` plus npm's required package metadata. The package remains at version `0.0.0`; this repository intentionally has no publish or release workflow yet.
+
+The initial bundle-size baseline is recorded in [`docs/bundle-baseline.md`](docs/bundle-baseline.md). It is an observation gate, not a size-budget change.

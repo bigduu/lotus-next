@@ -1,12 +1,32 @@
 {
-  "name": "lotus-next",
-  "private": true,
+  "name": "@bigduu/lotus-next",
+  "private": false,
   "version": "0.0.0",
+  "description": "Standalone Lotus Next frontend assets for the Bamboo runtime and Bodhi shell.",
+  "license": "UNLICENSED",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/bigduu/lotus-next.git"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=22.12.0"
+  },
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "type-check": "tsc -b --pretty false",
     "build": "tsc -b && vite build",
-    "lint": "oxlint",
+    "lint": "oxlint --deny-warnings",
+    "test": "vitest",
+    "test:run": "vitest run",
+    "pack:check": "npm run build && node scripts/verify-package.mjs",
+    "prepack": "npm run build",
     "preview": "vite preview"
   },
   "dependencies": {
@@ -51,8 +71,10 @@
     "@types/react-dom": "^19.2.3",
     "@types/react-syntax-highlighter": "^15.5.13",
     "@vitejs/plugin-react": "^6.0.2",
+    "jsdom": "^27.1.0",
     "oxlint": "^1.69.0",
     "typescript": "~6.0.2",
-    "vite": "^8.1.0"
+    "vite": "^8.1.0",
+    "vitest": "^4.0.18"
   }
 }
