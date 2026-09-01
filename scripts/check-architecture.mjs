@@ -10,11 +10,15 @@ const defaultRoot = path.resolve(scriptDirectory, "..");
 const runtimeResolver = "src/runtime/browserRuntime.ts";
 const runtimeContract = "src/runtime/runtimeConfig.ts";
 const compositionRoot = "src/main.tsx";
-const httpOwner = "src/services/api/client.ts";
+const httpOwner = "src/services/api/transport.ts";
 const apiCompositionOwner = "src/services/api/index.ts";
+const apiClientOwner = "src/services/api/client.ts";
+const browserHttpTransportFactory = "createBrowserHttpTransport";
+const httpTransportType = "HttpTransport";
 const websocketOwner = "src/services/chat/v2Stream.ts";
 const websocketReadDebtOwner = "src/services/chat/accountFeed.ts";
-const apiClientValueOwners = new Set([httpOwner, apiCompositionOwner]);
+const apiClientValueOwners = new Set([apiClientOwner, apiCompositionOwner]);
+const browserHttpTransportFactoryOwners = new Set([httpOwner, apiCompositionOwner]);
 const runtimeLocalImportAllowlist = new Map([
   [runtimeResolver, new Set(["./runtimeConfig", "./runtimeConfig.ts"])],
   [runtimeContract, new Set()],
@@ -125,7 +129,13 @@ const expectedInventory = {
     "src/shared/utils/osInfoUtils.ts": 1,
   },
   "fetch-reference": {
-    "src/services/api/client.ts": 2,
+    "src/services/api/transport.ts": 1,
+  },
+  "http-transport-constructor": {
+    "src/services/api/transport.ts": 1,
+  },
+  "browser-http-transport-composition": {
+    "src/services/api/index.ts": 1,
   },
   "websocket-constructor": {
     "src/services/chat/v2Stream.ts": 2,
@@ -171,13 +181,17 @@ const parseSource = (file, source) =>
 
 const staticName = (node) => {
   if (!node) return null;
-  if (ts.isIdentifier(node) || ts.isStringLiteralLike(node)) return node.text;
   if (
-    ts.isComputedPropertyName(node) &&
-    (ts.isStringLiteralLike(node.expression) || ts.isIdentifier(node.expression))
+    ts.isParenthesizedExpression(node) ||
+    ts.isAsExpression(node) ||
+    ts.isTypeAssertionExpression(node) ||
+    ts.isNonNullExpression(node) ||
+    ts.isSatisfiesExpression(node)
   ) {
-    return node.expression.text;
+    return staticName(node.expression);
   }
+  if (ts.isIdentifier(node) || ts.isStringLiteralLike(node)) return node.text;
+  if (ts.isComputedPropertyName(node)) return staticName(node.expression);
   return null;
 };
 
@@ -402,7 +416,8 @@ const analyzeNonCodeSource = (file, source) => {
 
 const analyzeSource = (file, source) => {
   if (!codeExtensions.has(path.extname(file))) return analyzeNonCodeSource(file, source);
-  const sourceFile = parseSource(file, source);
+  const virtualRoot = path.resolve(file.replaceAll("\\", path.sep));
+  const sourceFile = parseSource(virtualRoot, source);
   const inventory = {};
   const violations = [];
 
@@ -410,8 +425,675 @@ const analyzeSource = (file, source) => {
     violations.push(`${positionLabel(file, sourceFile, node)}: ${message}`);
   };
 
-  const globalObjectName = (expression) =>
-    ts.isIdentifier(expression) && ["globalThis", "self", "window"].includes(expression.text);
+  const unwrapStaticExpression = (node) => {
+    let current = node;
+    while (
+      current &&
+      (ts.isParenthesizedExpression(current) ||
+        ts.isAsExpression(current) ||
+        ts.isTypeAssertionExpression(current) ||
+        ts.isNonNullExpression(current) ||
+        ts.isSatisfiesExpression(current))
+    ) {
+      current = current.expression;
+    }
+    return current;
+  };
+
+  const canonicalFileName = (requestedFile) => {
+    const normalized = path.normalize(path.resolve(requestedFile.replaceAll("\\", path.sep)));
+    return ts.sys.useCaseSensitiveFileNames ? normalized : normalized.toLowerCase();
+  };
+  const canonicalVirtualRoot = canonicalFileName(virtualRoot);
+  const isVirtualRoot = (requestedFile) =>
+    canonicalFileName(requestedFile) === canonicalVirtualRoot;
+  const compilerHost = {
+    fileExists: isVirtualRoot,
+    getCanonicalFileName: canonicalFileName,
+    getCurrentDirectory: () => process.cwd(),
+    getDefaultLibFileName: () => "",
+    getDirectories: () => [],
+    getNewLine: () => "\n",
+    getSourceFile: (requestedFile) => (isVirtualRoot(requestedFile) ? sourceFile : undefined),
+    readFile: (requestedFile) => (isVirtualRoot(requestedFile) ? source : undefined),
+    useCaseSensitiveFileNames: () => ts.sys.useCaseSensitiveFileNames,
+    writeFile: () => {},
+  };
+  const program = ts.createProgram({
+    rootNames: [virtualRoot],
+    options: {
+      allowJs: true,
+      jsx: ts.JsxEmit.Preserve,
+      noLib: true,
+      noResolve: true,
+      target: ts.ScriptTarget.Latest,
+    },
+    host: compilerHost,
+  });
+  const typeChecker = program.getTypeChecker();
+
+  const constInitializerFor = (identifier) => {
+    const symbol = typeChecker.getSymbolAtLocation(identifier);
+    const declaration = symbol?.valueDeclaration;
+    if (
+      !declaration ||
+      !ts.isVariableDeclaration(declaration) ||
+      !declaration.initializer ||
+      !ts.isVariableDeclarationList(declaration.parent) ||
+      !(declaration.parent.flags & ts.NodeFlags.Const)
+    ) {
+      return null;
+    }
+    return { initializer: declaration.initializer, symbol };
+  };
+
+  const resolveStaticString = (node, resolvingSymbols = new Set(), allowIdentifierName = true) => {
+    const expression = unwrapStaticExpression(node);
+    if (!expression) return null;
+    if (ts.isStringLiteralLike(expression)) return expression.text;
+    if (ts.isComputedPropertyName(expression)) {
+      return resolveStaticString(expression.expression, resolvingSymbols, allowIdentifierName);
+    }
+    if (ts.isIdentifier(expression)) {
+      const binding = constInitializerFor(expression);
+      if (!binding || resolvingSymbols.has(binding.symbol)) {
+        return allowIdentifierName ? expression.text : null;
+      }
+      const nextResolvingSymbols = new Set(resolvingSymbols);
+      nextResolvingSymbols.add(binding.symbol);
+      return resolveStaticString(binding.initializer, nextResolvingSymbols, false);
+    }
+    if (
+      ts.isBinaryExpression(expression) &&
+      expression.operatorToken.kind === ts.SyntaxKind.PlusToken
+    ) {
+      const left = resolveStaticString(expression.left, resolvingSymbols, false);
+      const right = resolveStaticString(expression.right, resolvingSymbols, false);
+      return left !== null && right !== null ? `${left}${right}` : null;
+    }
+    if (ts.isConditionalExpression(expression)) {
+      const whenTrue = resolveStaticString(expression.whenTrue, resolvingSymbols, false);
+      const whenFalse = resolveStaticString(expression.whenFalse, resolvingSymbols, false);
+      return whenTrue !== null && whenTrue === whenFalse ? whenTrue : null;
+    }
+    if (ts.isTemplateExpression(expression)) {
+      let value = expression.head.text;
+      for (const span of expression.templateSpans) {
+        const interpolation = resolveStaticString(span.expression, resolvingSymbols, false);
+        if (interpolation === null) return null;
+        value += interpolation + span.literal.text;
+      }
+      return value;
+    }
+    return null;
+  };
+
+  const resolveStaticKey = (node) => {
+    const expression = unwrapStaticExpression(node);
+    const resolved = resolveStaticString(expression, new Set(), false);
+    if (resolved !== null) return resolved;
+    return ts.isIdentifier(expression) && expression.text === "fetch" ? "fetch" : null;
+  };
+
+  const resolvedPropertyName = (node) => {
+    if (ts.isPropertyAccessExpression(node)) return node.name.text;
+    if (ts.isElementAccessExpression(node)) {
+      return resolveStaticKey(node.argumentExpression);
+    }
+    return null;
+  };
+
+  const resolvedDeclaredPropertyName = (node) =>
+    ts.isComputedPropertyName(node) ? resolveStaticKey(node.expression) : staticName(node);
+
+  const valueInitializers = new Map();
+  const addValueInitializer = (identifier, initializer) => {
+    const symbol = typeChecker.getSymbolAtLocation(identifier);
+    if (!symbol) return;
+    const initializers = valueInitializers.get(symbol) ?? [];
+    initializers.push(initializer);
+    valueInitializers.set(symbol, initializers);
+  };
+  const collectValueInitializers = (node) => {
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer) {
+      addValueInitializer(node.name, node.initializer);
+    }
+    if (
+      ts.isBinaryExpression(node) &&
+      node.operatorToken.kind === ts.SyntaxKind.EqualsToken
+    ) {
+      const left = unwrapStaticExpression(node.left);
+      if (ts.isIdentifier(left)) addValueInitializer(left, node.right);
+    }
+    ts.forEachChild(node, collectValueInitializers);
+  };
+  collectValueInitializers(sourceFile);
+
+  const projectionCandidates = new Map();
+  const addProjectionCandidate = (identifier, sourceExpression, segments) => {
+    const symbol = typeChecker.getSymbolAtLocation(identifier);
+    if (!symbol || !sourceExpression || segments.some((segment) => segment.value === null)) return;
+    const candidates = projectionCandidates.get(symbol) ?? [];
+    candidates.push({ sourceExpression, segments });
+    projectionCandidates.set(symbol, candidates);
+  };
+  const collectProjectedTargets = (targetNode, sourceExpression, segments = []) => {
+    const target = unwrapStaticExpression(targetNode);
+    if (!target || !sourceExpression) return;
+    if (ts.isIdentifier(target)) {
+      addProjectionCandidate(target, sourceExpression, segments);
+      return;
+    }
+    if (
+      ts.isBinaryExpression(target) &&
+      target.operatorToken.kind === ts.SyntaxKind.EqualsToken
+    ) {
+      collectProjectedTargets(target.left, sourceExpression, segments);
+      collectProjectedTargets(target.left, target.right);
+      return;
+    }
+    if (ts.isObjectBindingPattern(target)) {
+      for (const element of target.elements) {
+        if (element.dotDotDotToken) continue;
+        const propertyName = resolvedDeclaredPropertyName(element.propertyName ?? element.name);
+        collectProjectedTargets(element.name, sourceExpression, [
+          ...segments,
+          { kind: "property", value: propertyName },
+        ]);
+        if (element.initializer) collectProjectedTargets(element.name, element.initializer);
+      }
+      return;
+    }
+    if (ts.isArrayBindingPattern(target)) {
+      for (const [index, element] of target.elements.entries()) {
+        if (!ts.isBindingElement(element) || element.dotDotDotToken) continue;
+        collectProjectedTargets(element.name, sourceExpression, [
+          ...segments,
+          { kind: "index", value: index },
+        ]);
+        if (element.initializer) collectProjectedTargets(element.name, element.initializer);
+      }
+      return;
+    }
+    if (ts.isObjectLiteralExpression(target)) {
+      for (const property of target.properties) {
+        if (ts.isPropertyAssignment(property)) {
+          collectProjectedTargets(property.initializer, sourceExpression, [
+            ...segments,
+            { kind: "property", value: resolvedDeclaredPropertyName(property.name) },
+          ]);
+        } else if (ts.isShorthandPropertyAssignment(property)) {
+          const propertyName = resolvedDeclaredPropertyName(property.name);
+          collectProjectedTargets(property.name, sourceExpression, [
+            ...segments,
+            { kind: "property", value: propertyName },
+          ]);
+          if (property.objectAssignmentInitializer) {
+            collectProjectedTargets(property.name, property.objectAssignmentInitializer);
+          }
+        }
+      }
+      return;
+    }
+    if (ts.isArrayLiteralExpression(target)) {
+      for (const [index, element] of target.elements.entries()) {
+        if (ts.isOmittedExpression(element) || ts.isSpreadElement(element)) continue;
+        collectProjectedTargets(element, sourceExpression, [
+          ...segments,
+          { kind: "index", value: index },
+        ]);
+      }
+    }
+  };
+  const collectProjectionCandidates = (node) => {
+    if (ts.isVariableDeclaration(node) && node.initializer) {
+      collectProjectedTargets(node.name, node.initializer);
+    }
+    if (ts.isParameter(node) && node.initializer) {
+      collectProjectedTargets(node.name, node.initializer);
+    }
+    if (
+      ts.isBinaryExpression(node) &&
+      node.operatorToken.kind === ts.SyntaxKind.EqualsToken
+    ) {
+      collectProjectedTargets(node.left, node.right);
+    }
+    if (ts.isForOfStatement(node) && ts.isArrayLiteralExpression(node.expression)) {
+      const initializer = ts.isVariableDeclarationList(node.initializer)
+        ? node.initializer.declarations[0]?.name
+        : node.initializer;
+      if (initializer) {
+        for (const element of node.expression.elements) {
+          if (!ts.isOmittedExpression(element) && !ts.isSpreadElement(element)) {
+            collectProjectedTargets(initializer, element);
+          }
+        }
+      }
+    }
+    ts.forEachChild(node, collectProjectionCandidates);
+  };
+  collectProjectionCandidates(sourceFile);
+
+  const browserGlobalNames = new Set(["globalThis", "self", "window"]);
+  const resolveProjectionKind = (candidate, resolvingSymbols) => {
+    let sourceExpression = unwrapStaticExpression(candidate.sourceExpression);
+    let kind = null;
+    for (const segment of candidate.segments) {
+      if (segment.kind === "index") {
+        if (kind !== null || !ts.isArrayLiteralExpression(sourceExpression)) return null;
+        sourceExpression = unwrapStaticExpression(sourceExpression.elements[segment.value]);
+        if (!sourceExpression) return null;
+      } else {
+        if (kind === null) {
+          if (!isBrowserGlobalExpression(sourceExpression, resolvingSymbols)) return null;
+          kind = "browser-global";
+        }
+        if (kind !== "browser-global") return null;
+        if (browserGlobalNames.has(segment.value)) continue;
+        if (segment.value === "Reflect") {
+          kind = "reflect";
+        } else {
+          return null;
+        }
+      }
+    }
+    if (kind === null) {
+      if (isBrowserGlobalExpression(sourceExpression, resolvingSymbols)) {
+        kind = "browser-global";
+      } else if (isReflectNamespaceExpression(sourceExpression, resolvingSymbols)) {
+        kind = "reflect";
+      } else {
+        return null;
+      }
+    }
+    return kind;
+  };
+  const isBrowserGlobalExpression = (node, resolvingSymbols = new Set()) => {
+    const expression = unwrapStaticExpression(node);
+    if (!expression) return false;
+    if (ts.isIdentifier(expression)) {
+      const symbol = typeChecker.getSymbolAtLocation(expression);
+      if (!symbol?.declarations?.length) return browserGlobalNames.has(expression.text);
+      const initializers = valueInitializers.get(symbol);
+      const projections = projectionCandidates.get(symbol);
+      if (resolvingSymbols.has(symbol)) return false;
+      const nextResolvingSymbols = new Set(resolvingSymbols);
+      nextResolvingSymbols.add(symbol);
+      return Boolean(
+        initializers?.some((initializer) =>
+          isBrowserGlobalExpression(initializer, nextResolvingSymbols),
+        ) ||
+          projections?.some(
+            (candidate) =>
+              resolveProjectionKind(candidate, nextResolvingSymbols) === "browser-global",
+          ),
+      );
+    }
+    if (ts.isPropertyAccessExpression(expression) || ts.isElementAccessExpression(expression)) {
+      return (
+        browserGlobalNames.has(resolvedPropertyName(expression)) &&
+        isBrowserGlobalExpression(expression.expression, resolvingSymbols)
+      );
+    }
+    if (
+      ts.isBinaryExpression(expression) &&
+      expression.operatorToken.kind === ts.SyntaxKind.EqualsToken
+    ) {
+      return isBrowserGlobalExpression(expression.right, resolvingSymbols);
+    }
+    if (ts.isConditionalExpression(expression)) {
+      return (
+        isBrowserGlobalExpression(expression.whenTrue, resolvingSymbols) ||
+        isBrowserGlobalExpression(expression.whenFalse, resolvingSymbols)
+      );
+    }
+    return false;
+  };
+
+  const isReflectNamespaceExpression = (node, resolvingSymbols = new Set()) => {
+    const expression = unwrapStaticExpression(node);
+    if (!expression) return false;
+    if (ts.isIdentifier(expression)) {
+      const symbol = typeChecker.getSymbolAtLocation(expression);
+      if (!symbol?.declarations?.length) return expression.text === "Reflect";
+      const initializers = valueInitializers.get(symbol);
+      const projections = projectionCandidates.get(symbol);
+      if (resolvingSymbols.has(symbol)) return false;
+      const nextResolvingSymbols = new Set(resolvingSymbols);
+      nextResolvingSymbols.add(symbol);
+      return Boolean(
+        initializers?.some((initializer) =>
+          isReflectNamespaceExpression(initializer, nextResolvingSymbols),
+        ) ||
+          projections?.some(
+            (candidate) => resolveProjectionKind(candidate, nextResolvingSymbols) === "reflect",
+          ),
+      );
+    }
+    if (ts.isPropertyAccessExpression(expression) || ts.isElementAccessExpression(expression)) {
+      return (
+        resolvedPropertyName(expression) === "Reflect" &&
+        isBrowserGlobalExpression(expression.expression)
+      );
+    }
+    if (
+      ts.isBinaryExpression(expression) &&
+      expression.operatorToken.kind === ts.SyntaxKind.EqualsToken
+    ) {
+      return isReflectNamespaceExpression(expression.right, resolvingSymbols);
+    }
+    if (ts.isConditionalExpression(expression)) {
+      return (
+        isReflectNamespaceExpression(expression.whenTrue, resolvingSymbols) ||
+        isReflectNamespaceExpression(expression.whenFalse, resolvingSymbols)
+      );
+    }
+    return false;
+  };
+
+  const reflectivePropertyRead = (node) => {
+    if (!ts.isCallExpression(node) || node.arguments.length < 2) return null;
+    const callee = unwrapStaticExpression(node.expression);
+    if (
+      !callee ||
+      (!ts.isPropertyAccessExpression(callee) && !ts.isElementAccessExpression(callee)) ||
+      resolvedPropertyName(callee) !== "get" ||
+      !isReflectNamespaceExpression(callee.expression)
+    ) {
+      return null;
+    }
+    return { key: resolveStaticKey(node.arguments[1]) };
+  };
+
+  const isReflectivePropertyRead = (node, propertyName) => {
+    const read = reflectivePropertyRead(node);
+    return read?.key === propertyName;
+  };
+
+  const isUnprovenReflectivePropertyRead = (node) => {
+    const read = reflectivePropertyRead(node);
+    return read !== null && read.key === null;
+  };
+
+  const assignmentPatternSource = (node) => {
+    let current = node;
+    while (current.parent) {
+      const parent = current.parent;
+      if (
+        ts.isObjectLiteralExpression(parent) ||
+        ts.isArrayLiteralExpression(parent) ||
+        ts.isPropertyAssignment(parent) ||
+        ts.isSpreadAssignment(parent) ||
+        ts.isSpreadElement(parent) ||
+        ((ts.isParenthesizedExpression(parent) ||
+          ts.isAsExpression(parent) ||
+          ts.isTypeAssertionExpression(parent) ||
+          ts.isNonNullExpression(parent) ||
+          ts.isSatisfiesExpression(parent)) &&
+          parent.expression === current)
+      ) {
+        current = parent;
+        continue;
+      }
+      if (
+        ts.isBinaryExpression(parent) &&
+        parent.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+        parent.left === current
+      ) {
+        return parent.right;
+      }
+      if (
+        (ts.isForOfStatement(parent) || ts.isForInStatement(parent)) &&
+        parent.initializer === current
+      ) {
+        return parent.expression;
+      }
+      return null;
+    }
+    return null;
+  };
+  const isAssignmentPatternProperty = (node) => assignmentPatternSource(node) !== null;
+
+  const bindingPatternSource = (node) => {
+    let current = node.parent;
+    while (current && !ts.isStatement(current)) {
+      if (ts.isVariableDeclaration(current)) return current.initializer ?? null;
+      current = current.parent;
+    }
+    return null;
+  };
+
+  const isDescendantOf = (node, ancestor) => {
+    let current = node;
+    while (current && current !== ancestor) current = current.parent;
+    return current === ancestor;
+  };
+
+  const isInsideAssignmentTarget = (node, target) => {
+    let current = node;
+    while (current && current !== target) {
+      const parent = current.parent;
+      if (!parent) return false;
+      const followsTargetPath =
+        ((ts.isParenthesizedExpression(parent) ||
+          ts.isAsExpression(parent) ||
+          ts.isTypeAssertionExpression(parent) ||
+          ts.isNonNullExpression(parent) ||
+          ts.isSatisfiesExpression(parent)) &&
+          parent.expression === current) ||
+        (ts.isBinaryExpression(parent) &&
+          parent.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+          parent.left === current) ||
+        (ts.isObjectLiteralExpression(parent) && parent.properties.includes(current)) ||
+        (ts.isArrayLiteralExpression(parent) && parent.elements.includes(current)) ||
+        (ts.isPropertyAssignment(parent) && parent.initializer === current) ||
+        (ts.isShorthandPropertyAssignment(parent) && parent.name === current) ||
+        ((ts.isSpreadAssignment(parent) || ts.isSpreadElement(parent)) &&
+          parent.expression === current);
+      if (!followsTargetPath) return false;
+      current = parent;
+    }
+    return current === target;
+  };
+
+  const isFetchAssignmentSite = (node) =>
+    (ts.isPropertyAssignment(node) || ts.isShorthandPropertyAssignment(node)) &&
+    isAssignmentPatternProperty(node) &&
+    (resolvedDeclaredPropertyName(node.name) === "fetch" ||
+      (ts.isComputedPropertyName(node.name) &&
+        resolvedDeclaredPropertyName(node.name) === null &&
+        isBrowserGlobalExpression(assignmentPatternSource(node))));
+
+  const assignmentFetchSiteForDescendant = (node) => {
+    if (isFetchAssignmentSite(node)) return node;
+    let current = node;
+    while (current.parent && !ts.isStatement(current.parent)) {
+      const parent = current.parent;
+      if (isFetchAssignmentSite(parent)) {
+        const target = ts.isPropertyAssignment(parent) ? parent.initializer : parent.name;
+        if (
+          (isDescendantOf(node, parent.name) || isInsideAssignmentTarget(node, target))
+        ) {
+          return parent;
+        }
+      }
+      current = parent;
+    }
+    return null;
+  };
+
+  const structuralFetchSiteForDescendant = (node) => {
+    const assignmentSite = assignmentFetchSiteForDescendant(node);
+    if (assignmentSite) return assignmentSite;
+    let current = node;
+    while (current.parent && !ts.isStatement(current.parent)) {
+      const parent = current.parent;
+      if (
+        ts.isElementAccessExpression(parent) &&
+        parent.argumentExpression === current &&
+        (resolvedPropertyName(parent) === "fetch" ||
+          (resolvedPropertyName(parent) === null &&
+            isBrowserGlobalExpression(parent.expression)))
+      ) {
+        return parent;
+      }
+      if (
+        ts.isCallExpression(parent) &&
+        parent.arguments[1] === current &&
+        (isReflectivePropertyRead(parent, "fetch") ||
+          isUnprovenReflectivePropertyRead(parent))
+      ) {
+        return parent;
+      }
+      if (ts.isComputedPropertyName(parent) && parent.expression === current) {
+        const owner = parent.parent;
+        if (
+          ts.isBindingElement(owner) &&
+          (resolvedDeclaredPropertyName(parent) === "fetch" ||
+            (resolvedDeclaredPropertyName(parent) === null &&
+              isBrowserGlobalExpression(bindingPatternSource(owner))))
+        ) {
+          return owner;
+        }
+      }
+      current = parent;
+    }
+    return null;
+  };
+
+  const isInsideProvenNonFetchKey = (node) => {
+    let current = node;
+    while (current.parent && !ts.isStatement(current.parent)) {
+      const parent = current.parent;
+      if (
+        ts.isElementAccessExpression(parent) &&
+        parent.argumentExpression === current
+      ) {
+        const name = resolvedPropertyName(parent);
+        return name !== null && name !== "fetch";
+      }
+      if (ts.isCallExpression(parent) && parent.arguments[1] === current) {
+        const read = reflectivePropertyRead(parent);
+        if (read) return read.key !== null && read.key !== "fetch";
+      }
+      if (ts.isComputedPropertyName(parent) && parent.expression === current) {
+        const name = resolvedDeclaredPropertyName(parent);
+        return name !== null && name !== "fetch";
+      }
+      current = parent;
+    }
+    return false;
+  };
+
+  const recordedFetchSites = new Set();
+  const recordFetchSite = (node) => {
+    if (recordedFetchSites.has(node)) return;
+    recordedFetchSites.add(node);
+    addCount(inventory, "fetch-reference", file);
+    if (file !== httpOwner) {
+      report(node, "direct or aliased fetch access creates a second HTTP transport owner");
+    }
+  };
+
+  const canonicalTransportModules = new Set(["./transport", "./transport.ts"]);
+  const canonicalClientModules = new Set(["./client", "./client.ts"]);
+  const canonicalNamedImport = (identifier, importedName, moduleNames) => {
+    if (!ts.isIdentifier(identifier) || !ts.isImportSpecifier(identifier.parent)) return false;
+    const specifier = identifier.parent;
+    const importClause = specifier.parent.parent;
+    const declaration = importClause.parent;
+    return (
+      specifier.name === identifier &&
+      !specifier.propertyName &&
+      identifier.text === importedName &&
+      ts.isImportDeclaration(declaration) &&
+      ts.isStringLiteralLike(declaration.moduleSpecifier) &&
+      moduleNames.has(declaration.moduleSpecifier.text)
+    );
+  };
+  const canonicalBrowserTransportImports = [];
+  const canonicalApiClientImports = [];
+  if (file === apiCompositionOwner) {
+    const collectCanonicalImports = (node) => {
+      if (canonicalNamedImport(node, browserHttpTransportFactory, canonicalTransportModules)) {
+        canonicalBrowserTransportImports.push(node);
+      }
+      if (canonicalNamedImport(node, "ApiClient", canonicalClientModules)) {
+        canonicalApiClientImports.push(node);
+      }
+      ts.forEachChild(node, collectCanonicalImports);
+    };
+    collectCanonicalImports(sourceFile);
+    if (canonicalBrowserTransportImports.length !== 1) {
+      report(
+        sourceFile,
+        `${apiCompositionOwner} must import exactly one ${browserHttpTransportFactory} binding directly from ./transport`,
+      );
+    }
+    if (canonicalApiClientImports.length !== 1) {
+      report(
+        sourceFile,
+        `${apiCompositionOwner} must import exactly one ApiClient binding directly from ./client`,
+      );
+    }
+  }
+
+  const isTopLevelConstInitializer = (expression) => {
+    const declaration = expression.parent;
+    if (
+      !ts.isVariableDeclaration(declaration) ||
+      declaration.initializer !== expression ||
+      !ts.isVariableDeclarationList(declaration.parent) ||
+      !(declaration.parent.flags & ts.NodeFlags.Const) ||
+      !ts.isVariableStatement(declaration.parent.parent)
+    ) {
+      return false;
+    }
+    return declaration.parent.parent.parent === sourceFile;
+  };
+
+  const sharedBrowserTransportBindings = new Set();
+  if (file === apiCompositionOwner) {
+    for (const statement of sourceFile.statements) {
+      if (
+        !ts.isVariableStatement(statement) ||
+        !(statement.declarationList.flags & ts.NodeFlags.Const)
+      ) {
+        continue;
+      }
+      for (const declaration of statement.declarationList.declarations) {
+        if (
+          ts.isIdentifier(declaration.name) &&
+          declaration.initializer &&
+          ts.isCallExpression(declaration.initializer) &&
+          ts.isIdentifier(declaration.initializer.expression) &&
+          declaration.initializer.expression.text === browserHttpTransportFactory &&
+          canonicalBrowserTransportImports.length === 1
+        ) {
+          sharedBrowserTransportBindings.add(declaration.name.text);
+        }
+      }
+    }
+  }
+
+  const usesSharedBrowserTransport = (construction) => {
+    if (!isTopLevelConstInitializer(construction)) return false;
+    const config = construction.arguments?.[0];
+    if (!config || !ts.isObjectLiteralExpression(config)) return false;
+    const transportProperty = config.properties.find(
+      (property) => property.name && staticName(property.name) === "transport",
+    );
+    if (!transportProperty) return false;
+    if (ts.isShorthandPropertyAssignment(transportProperty)) {
+      return sharedBrowserTransportBindings.has(transportProperty.name.text);
+    }
+    return (
+      ts.isPropertyAssignment(transportProperty) &&
+      ts.isIdentifier(transportProperty.initializer) &&
+      sharedBrowserTransportBindings.has(transportProperty.initializer.text)
+    );
+  };
+
   const isNamedDeclaration = (identifier) => {
     const parent = identifier.parent;
     return (
@@ -429,14 +1111,54 @@ const analyzeSource = (file, source) => {
       (ts.isImportSpecifier(parent) && parent.name === identifier)
     );
   };
-  const isFetchBindingFromGlobal = (identifier) => {
-    const binding = identifier.parent;
-    if (!ts.isBindingElement(binding) || !ts.isObjectBindingPattern(binding.parent)) return false;
-    const declaration = binding.parent.parent;
+  const isTypeOnlyReference = (node) => {
+    if (ts.isIdentifier(node) && ts.isImportSpecifier(node.parent)) {
+      const importSpecifier = node.parent;
+      const importClause = importSpecifier.parent.parent;
+      return (
+        importSpecifier.isTypeOnly ||
+        (ts.isImportClause(importClause) && importClause.isTypeOnly)
+      );
+    }
+
+    let current = node.parent;
+    while (current && !ts.isStatement(current)) {
+      if (
+        ts.isHeritageClause(current) &&
+        current.token === ts.SyntaxKind.ExtendsKeyword
+      ) {
+        return false;
+      }
+      if (ts.isTypeNode(current)) return true;
+      current = current.parent;
+    }
+    return false;
+  };
+  const isDirectBrowserTransportFactoryUse = (node) => {
+    if (file === httpOwner) return true;
+    if (file !== apiCompositionOwner) return false;
+
+    if (canonicalNamedImport(node, browserHttpTransportFactory, canonicalTransportModules)) {
+      return true;
+    }
     return (
-      ts.isVariableDeclaration(declaration) &&
-      Boolean(declaration.initializer) &&
-      globalObjectName(declaration.initializer)
+      canonicalBrowserTransportImports.length === 1 &&
+      ts.isIdentifier(node) &&
+      ts.isCallExpression(node.parent) &&
+      node.parent.expression === node &&
+      isTopLevelConstInitializer(node.parent)
+    );
+  };
+  const isDirectCanonicalApiClientUse = (node) => {
+    if (file === apiClientOwner) return true;
+    if (file !== apiCompositionOwner) return false;
+    if (canonicalNamedImport(node, "ApiClient", canonicalClientModules)) return true;
+    return (
+      canonicalApiClientImports.length === 1 &&
+      ts.isIdentifier(node) &&
+      ts.isNewExpression(node.parent) &&
+      node.parent.expression === node &&
+      isTopLevelConstInitializer(node.parent)
     );
   };
   const checkRuntimeLocalDependency = (node, moduleName) => {
@@ -603,9 +1325,13 @@ const analyzeSource = (file, source) => {
       node.moduleSpecifier &&
       ts.isStringLiteralLike(node.moduleSpecifier)
     ) {
-      checkRuntimeLocalDependency(node, node.moduleSpecifier.text);
-      checkExcludedTestDependency(node, node.moduleSpecifier.text);
-      checkSourceDependencyBoundary(node, node.moduleSpecifier.text);
+      const moduleName = node.moduleSpecifier.text;
+      checkRuntimeLocalDependency(node, moduleName);
+      checkExcludedTestDependency(node, moduleName);
+      checkSourceDependencyBoundary(node, moduleName);
+      if (isAlternateHttpModule(moduleName)) {
+        report(node, "alternate HTTP/SSE client bypasses the canonical API transport");
+      }
     }
 
     const calledModule = moduleNameFromCall(node);
@@ -649,22 +1375,86 @@ const analyzeSource = (file, source) => {
       report(node, "alternate HTTP/SSE client bypasses the canonical API transport");
     }
 
+    const isFetchMember =
+      (ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) &&
+      resolvedPropertyName(node) === "fetch";
+    const isUnprovenBrowserFetchMember =
+      ts.isElementAccessExpression(node) &&
+      resolvedPropertyName(node) === null &&
+      isBrowserGlobalExpression(node.expression);
+    const isFetchMemberName =
+      ts.isIdentifier(node) &&
+      ((ts.isPropertyAccessExpression(node.parent) && node.parent.name === node) ||
+        (ts.isElementAccessExpression(node.parent) && node.parent.argumentExpression === node));
     const isFetchIdentifier =
       ts.isIdentifier(node) &&
       node.text === "fetch" &&
-      (!ts.isPropertyAccessExpression(node.parent) ||
-        node.parent.name !== node ||
-        globalObjectName(node.parent.expression)) &&
-      (!isNamedDeclaration(node) || isFetchBindingFromGlobal(node));
-    const isFetchElement =
+      !isFetchMemberName &&
+      !isInsideProvenNonFetchKey(node) &&
+      !isNamedDeclaration(node);
+    const isFetchBinding =
+      ts.isBindingElement(node) &&
+      resolvedDeclaredPropertyName(node.propertyName ?? node.name) === "fetch";
+    const isUnprovenFetchBinding =
+      ts.isBindingElement(node) &&
+      node.propertyName &&
+      ts.isComputedPropertyName(node.propertyName) &&
+      resolvedDeclaredPropertyName(node.propertyName) === null &&
+      isBrowserGlobalExpression(bindingPatternSource(node));
+    const isFetchAssignmentProperty =
+      (ts.isPropertyAssignment(node) || ts.isShorthandPropertyAssignment(node)) &&
+      resolvedDeclaredPropertyName(node.name) === "fetch" &&
+      isAssignmentPatternProperty(node);
+    const isUnprovenFetchAssignmentProperty =
+      ts.isPropertyAssignment(node) &&
+      ts.isComputedPropertyName(node.name) &&
+      resolvedDeclaredPropertyName(node.name) === null &&
+      isBrowserGlobalExpression(assignmentPatternSource(node));
+    const isReflectiveFetchRead = isReflectivePropertyRead(node, "fetch");
+    const isUnprovenReflectiveFetchRead = isUnprovenReflectivePropertyRead(node);
+    if (
+      isFetchMember ||
+      isUnprovenBrowserFetchMember ||
+      isFetchIdentifier ||
+      isFetchBinding ||
+      isUnprovenFetchBinding ||
+      isFetchAssignmentProperty ||
+      isUnprovenFetchAssignmentProperty ||
+      isReflectiveFetchRead ||
+      isUnprovenReflectiveFetchRead
+    ) {
+      recordFetchSite(structuralFetchSiteForDescendant(node) ?? node);
+    }
+
+    const browserTransportFactoryIdentifier =
+      ts.isIdentifier(node) && node.text === browserHttpTransportFactory;
+    const browserTransportFactoryElement =
       ts.isElementAccessExpression(node) &&
-      staticName(node.argumentExpression) === "fetch" &&
-      globalObjectName(node.expression);
-    if (isFetchIdentifier || isFetchElement) {
-      addCount(inventory, "fetch-reference", file);
-      if (file !== httpOwner) {
-        report(node, "direct or aliased fetch access creates a second HTTP transport owner");
-      }
+      staticName(node.argumentExpression) === browserHttpTransportFactory;
+    if (
+      (browserTransportFactoryIdentifier || browserTransportFactoryElement) &&
+      (!browserHttpTransportFactoryOwners.has(file) ||
+        !isDirectBrowserTransportFactoryUse(node))
+    ) {
+      report(
+        node,
+        `${browserHttpTransportFactory} is a production composition API owned by ${apiCompositionOwner} and must be called directly`,
+      );
+    }
+
+    const httpTransportIdentifier =
+      ts.isIdentifier(node) && node.text === httpTransportType;
+    const httpTransportElement =
+      ts.isElementAccessExpression(node) && staticName(node.argumentExpression) === httpTransportType;
+    if (
+      (httpTransportIdentifier || httpTransportElement) &&
+      file !== httpOwner &&
+      !isTypeOnlyReference(node)
+    ) {
+      report(
+        node,
+        `${httpTransportType} is an infrastructure transport type outside src/services/api`,
+      );
     }
 
     const alternateTransportIdentifier =
@@ -679,11 +1469,18 @@ const analyzeSource = (file, source) => {
     const apiClientIdentifier = ts.isIdentifier(node) && node.text === "ApiClient";
     const apiClientElement =
       ts.isElementAccessExpression(node) && staticName(node.argumentExpression) === "ApiClient";
-    if ((apiClientIdentifier || apiClientElement) && !apiClientValueOwners.has(file)) {
-      report(
-        node,
-        `ApiClient construction is owned by ${apiCompositionOwner}; concrete value access is forbidden elsewhere`,
-      );
+    if (apiClientIdentifier || apiClientElement) {
+      if (!apiClientValueOwners.has(file)) {
+        report(
+          node,
+          `ApiClient construction is owned by ${apiCompositionOwner}; concrete value access is forbidden elsewhere`,
+        );
+      } else if (file === apiCompositionOwner && !isDirectCanonicalApiClientUse(node)) {
+        report(
+          node,
+          `production ApiClient must be the direct top-level binding imported from ./client`,
+        );
+      }
     }
 
     const websocketIdentifier = ts.isIdentifier(node) && node.text === "WebSocket";
@@ -710,6 +1507,36 @@ const analyzeSource = (file, source) => {
       }
       if (constructorName === "ApiClient") {
         addCount(inventory, "api-client-constructor", file);
+        if (file === apiCompositionOwner && !usesSharedBrowserTransport(node)) {
+          report(
+            node,
+            `both production ApiClient instances must receive the same direct ${browserHttpTransportFactory} binding`,
+          );
+        }
+      }
+      if (constructorName === httpTransportType) {
+        addCount(inventory, "http-transport-constructor", file);
+        if (file !== httpOwner) {
+          report(
+            node,
+            `${httpTransportType} construction is owned by ${httpOwner}; production composition must use ${browserHttpTransportFactory}`,
+          );
+        }
+      }
+    }
+
+    if (ts.isCallExpression(node)) {
+      const callName = ts.isIdentifier(node.expression)
+        ? node.expression.text
+        : accessedPropertyName(node.expression);
+      if (callName === browserHttpTransportFactory) {
+        addCount(inventory, "browser-http-transport-composition", file);
+        if (file !== apiCompositionOwner) {
+          report(
+            node,
+            `${browserHttpTransportFactory} may be called only once by ${apiCompositionOwner}`,
+          );
+        }
       }
     }
 
