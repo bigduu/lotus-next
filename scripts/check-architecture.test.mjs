@@ -24,13 +24,24 @@ describe("architecture boundary fixtures", () => {
           const tauri = window.__TAURI_INTERNALS__;
         `,
       ],
-      ["src/services/api/client.ts", `fetch("/v1/status");`],
+      [
+        "src/services/api/transport.ts",
+        `
+          class HttpTransport {}
+          const createBrowserHttpTransport = () =>
+            new HttpTransport({ fetchImplementation: globalThis.fetch.bind(globalThis) });
+        `,
+      ],
+      ["src/services/api/client.ts", `class ApiClient { transport: HttpTransport; }`],
       [
         "src/services/api/index.ts",
         `
+          import { ApiClient } from "./client";
+          import { createBrowserHttpTransport } from "./transport";
           const runtime = getRuntimeConfig();
-          new ApiClient({ baseUrl: runtime.endpoints.standardApi });
-          new ApiClient({ baseUrl: runtime.endpoints.agentApi });
+          const transport = createBrowserHttpTransport();
+          const apiClient = new ApiClient({ baseUrl: runtime.endpoints.standardApi, transport });
+          const agentApiClient = new ApiClient({ baseUrl: runtime.endpoints.agentApi, transport });
         `,
       ],
       [
@@ -177,21 +188,726 @@ describe("architecture boundary fixtures", () => {
     expect(violations.length).toBeGreaterThanOrEqual(3);
   });
 
-  it("distinguishes domain fetch methods from browser-global fetch access", () => {
-    const safeSources = new Map([
+  it("fails closed on every production Fetch-shaped access outside the owner", () => {
+    const domainSources = new Map([
       ["src/domain/cache.ts", `class Cache { fetch(key) { return key; } } cache.fetch(key);`],
     ]);
     const unsafeSources = new Map([
       [
         "src/domain/cache.ts",
-        `const send = globalThis.fetch; const { fetch: otherSend } = window; send(url); otherSend(url);`,
+        `
+          fetch(url);
+          const send = globalThis.fetch;
+          const { fetch: otherSend } = window;
+          const { ["fetch"]: computedSend } = globalThis;
+          send(url);
+          otherSend(url);
+          computedSend(url);
+        `,
       ],
     ]);
 
-    expect(findArchitectureViolations(safeSources)).toEqual([]);
+    expect(findArchitectureViolations(domainSources).join("\n")).toMatch(
+      /second HTTP transport owner/,
+    );
+    expect(buildInventory(domainSources)["fetch-reference"]).toEqual({
+      "src/domain/cache.ts": 1,
+    });
     expect(findArchitectureViolations(unsafeSources).join("\n")).toMatch(
       /second HTTP transport owner/,
     );
+  });
+
+  it("rejects Fetch through static aliases of the browser global", () => {
+    const fixtures = [
+      [
+        "src/features/chat/unsafe.ts",
+        `
+          const platform = globalThis;
+          platform.fetch(endpoint);
+        `,
+      ],
+      [
+        "src/features/chat/unsafe.ts",
+        `
+          const platform = globalThis.window;
+          platform.fetch(endpoint);
+        `,
+      ],
+      [
+        "src/features/chat/unsafe.ts",
+        `
+          const { window: destructuredPlatform } = globalThis;
+          destructuredPlatform.fetch(endpoint);
+        `,
+      ],
+      [
+        "src/features/chat/unsafe.ts",
+        `
+          let platform = cache;
+          platform = globalThis["self"];
+          const chained = platform.window;
+          chained.fetch(endpoint);
+        `,
+      ],
+      [
+        "src/services/api/client.ts",
+        `
+          const first = window;
+          const second = (first as typeof window);
+          second["fetch"](endpoint);
+        `,
+      ],
+      [
+        "src/features/chat/unsafe.ts",
+        `
+          let first;
+          let second;
+          first = second = globalThis;
+          first.fetch(endpoint);
+        `,
+      ],
+      [
+        "src/features/chat/unsafe.ts",
+        `
+          const { window: { fetch: send } } = globalThis;
+          send(endpoint);
+        `,
+      ],
+      [
+        "src/services/api/client.ts",
+        `
+          const { window: { self: platform } } = globalThis;
+          platform.fetch(endpoint);
+        `,
+      ],
+      [
+        "src/features/chat/unsafe.ts",
+        `
+          let platform;
+          ({ window: platform } = globalThis);
+          platform.fetch(endpoint);
+        `,
+      ],
+      [
+        "src/features/chat/unsafe.ts",
+        `
+          const [platform] = [globalThis];
+          platform.fetch(endpoint);
+        `,
+      ],
+      [
+        "src/services/api/client.ts",
+        `globalThis[(("fetch" as "fetch") satisfies string)!](endpoint);`,
+      ],
+    ];
+
+    for (const [file, source] of fixtures) {
+      const sources = new Map([[file, source]]);
+      const violations = findArchitectureViolations(sources).filter((message) =>
+        message.includes("second HTTP transport owner"),
+      );
+      expect(violations, source).toHaveLength(1);
+      expect(buildInventory(sources)["fetch-reference"]).toEqual({ [file]: 1 });
+    }
+  });
+
+  it("rejects reflective, constant-computed, and assignment-pattern Fetch access", () => {
+    const fixtures = [
+      [
+        "src/features/chat/unsafe.ts",
+        `
+          const send = Reflect.get(globalThis, "fetch");
+          send(endpoint);
+        `,
+      ],
+      [
+        "src/features/chat/unsafe.ts",
+        `
+          const key = "fetch" as const;
+          globalThis[key](endpoint);
+        `,
+      ],
+      [
+        "src/features/chat/unsafe.ts",
+        `globalThis["fe" + "tch"](endpoint);`,
+      ],
+      [
+        "src/features/chat/unsafe.ts",
+        `
+          const fetch = "fe" as const;
+          globalThis[fetch + "tch"](endpoint);
+        `,
+      ],
+      [
+        "src/features/chat/unsafe.ts",
+        "globalThis[`fetch`](endpoint);",
+      ],
+      [
+        "src/features/chat/unsafe.ts",
+        `
+          const prefix = "fe" as const;
+          const key = \`${"${prefix}"}tch\` as const;
+          const send = Reflect.get(globalThis, (key satisfies string)!);
+          send(endpoint);
+        `,
+      ],
+      [
+        "src/features/chat/unsafe.ts",
+        `
+          const send = globalThis.Reflect.get(globalThis, "fetch");
+          send(endpoint);
+        `,
+      ],
+      [
+        "src/features/chat/unsafe.ts",
+        `
+          const reflection = globalThis.Reflect;
+          const send = reflection.get(globalThis, "fetch");
+          send(endpoint);
+        `,
+      ],
+      [
+        "src/features/chat/unsafe.ts",
+        `
+          const reflectName = "Reflect" as const;
+          const method = "get" as const;
+          const prefix = "fe" as const;
+          const key = \`${"${prefix}"}tch\` as const;
+          const send = globalThis[reflectName][method](globalThis, (key satisfies string)!);
+          send(endpoint);
+        `,
+      ],
+      [
+        "src/features/chat/unsafe.ts",
+        `
+          const fetch = "fe" as const;
+          const send = Reflect.get(globalThis, \`${"${fetch}"}tch\`);
+          send(endpoint);
+        `,
+      ],
+      [
+        "src/features/chat/unsafe.ts",
+        `
+          let send;
+          ({ fetch: send } = globalThis);
+          send(endpoint);
+        `,
+      ],
+      [
+        "src/features/chat/unsafe.ts",
+        `
+          let fetch;
+          ({ fetch: fetch } = globalThis);
+        `,
+      ],
+      [
+        "src/features/chat/unsafe.ts",
+        `
+          let fetch;
+          ({ fetch: fetch! } = globalThis);
+        `,
+      ],
+      [
+        "src/features/chat/unsafe.ts",
+        `
+          let fetch;
+          ({ fetch: fetch = fallback } = globalThis);
+        `,
+      ],
+      [
+        "src/features/chat/unsafe.ts",
+        `
+          let fetch;
+          ({ fetch } = globalThis);
+        `,
+      ],
+      [
+        "src/features/chat/unsafe.ts",
+        `
+          const holder = { fetch: undefined };
+          ({ fetch: holder.fetch } = globalThis);
+        `,
+      ],
+      [
+        "src/features/chat/unsafe.ts",
+        `
+          const key = "fetch" as const;
+          const { [key]: send } = globalThis;
+          send(endpoint);
+        `,
+      ],
+      [
+        "src/features/chat/unsafe.ts",
+        `
+          let send;
+          ({ platform: { fetch: send } } = holder);
+          send(endpoint);
+        `,
+      ],
+      [
+        "src/features/chat/unsafe.ts",
+        `
+          let send;
+          for ({ fetch: send } of platforms) {
+            send(endpoint);
+          }
+        `,
+      ],
+      [
+        "src/features/chat/unsafe.ts",
+        `
+          let send;
+          for ({ fetch: send } in platforms) {
+            send(endpoint);
+          }
+        `,
+      ],
+      [
+        "src/features/chat/unsafe.ts",
+        `
+          let send;
+          for ([{ [("fetch" as const satisfies string)!]: send }] of platforms) {
+            send(endpoint);
+          }
+        `,
+      ],
+      [
+        "src/features/chat/unsafe.ts",
+        `
+          declare const key: string;
+          globalThis[key](endpoint);
+        `,
+      ],
+      [
+        "src/features/chat/unsafe.ts",
+        `
+          declare const key: string;
+          const platform = globalThis;
+          platform[key](endpoint);
+        `,
+      ],
+      [
+        "src/features/chat/unsafe.ts",
+        `
+          declare const key: string;
+          const { window: platform } = globalThis;
+          platform[key](endpoint);
+        `,
+      ],
+      [
+        "src/features/chat/unsafe.ts",
+        `
+          declare const key: string;
+          const { window: { self: platform } } = globalThis;
+          platform[key](endpoint);
+        `,
+      ],
+      [
+        "src/features/chat/unsafe.ts",
+        `
+          declare const key: string;
+          const [platform] = [globalThis];
+          platform[key](endpoint);
+        `,
+      ],
+      [
+        "src/features/chat/unsafe.ts",
+        `
+          declare const key: string;
+          let platform;
+          ({ window: platform } = globalThis);
+          platform[key](endpoint);
+        `,
+      ],
+      [
+        "src/features/chat/unsafe.ts",
+        `
+          declare const key: string;
+          let platform;
+          [platform] = [globalThis];
+          platform[key](endpoint);
+        `,
+      ],
+      [
+        "src/features/chat/unsafe.ts",
+        `
+          declare const key: string;
+          let platform;
+          for ({ window: platform } of [globalThis]) {
+            platform[key](endpoint);
+          }
+        `,
+      ],
+      [
+        "src/features/chat/unsafe.ts",
+        `
+          declare const key: string;
+          const holder = {};
+          const { window: platform = globalThis } = holder;
+          platform[key](endpoint);
+        `,
+      ],
+      [
+        "src/features/chat/unsafe.ts",
+        `
+          declare const key: string;
+          function usePlatform(platform = globalThis) {
+            platform[key](endpoint);
+          }
+        `,
+      ],
+      [
+        "src/features/chat/unsafe.ts",
+        `
+          declare const key: string;
+          const send = Reflect.get(globalThis, key);
+          send(endpoint);
+        `,
+      ],
+      [
+        "src/features/chat/unsafe.ts",
+        `
+          declare const key: string;
+          const { Reflect: reflection } = globalThis;
+          const send = reflection.get(globalThis, key);
+          send(endpoint);
+        `,
+      ],
+      [
+        "src/features/chat/unsafe.ts",
+        `
+          declare const key: string;
+          let reflection;
+          [reflection] = [globalThis.Reflect];
+          const send = reflection.get(globalThis, key);
+          send(endpoint);
+        `,
+      ],
+      [
+        "src/features/chat/unsafe.ts",
+        `
+          declare const key: string;
+          const { [key]: send } = globalThis;
+          send(endpoint);
+        `,
+      ],
+      [
+        "src/features/chat/unsafe.ts",
+        `
+          declare const key: string;
+          let send;
+          ({ [key]: send } = globalThis);
+          send(endpoint);
+        `,
+      ],
+      [
+        "src/features/chat/unsafe.ts",
+        `
+          const fetch = "fe" as const;
+          let send;
+          ({ [fetch + "tch"]: send } = globalThis);
+          send(endpoint);
+        `,
+      ],
+    ];
+
+    for (const [file, source] of fixtures) {
+      const sources = new Map([[file, source]]);
+      const violations = findArchitectureViolations(sources).filter((message) =>
+        message.includes("second HTTP transport owner"),
+      );
+      expect(violations, source).toHaveLength(1);
+      expect(buildInventory(sources)["fetch-reference"]).toEqual({ [file]: 1 });
+    }
+
+    const staticallyNonFetchKey = new Map([
+      [
+        "src/features/chat/safe.ts",
+        `
+          const key = "postMessage" as const;
+          globalThis[key](payload);
+          Reflect.get(globalThis, key);
+          const { [key]: send } = globalThis;
+          const descriptor = { fetch: send };
+          const computedDescriptor = { ["fetch"]: send };
+          void descriptor;
+          void computedDescriptor;
+
+          {
+            const shadowedKey = "fetch" as const;
+            void shadowedKey;
+          }
+          {
+            const shadowedKey = "postMessage" as const;
+            globalThis[shadowedKey](payload);
+          }
+
+          {
+            const Reflect = { get: () => send };
+            Reflect.get(globalThis, "fetch");
+          }
+          {
+            const globalThis = { channel: send };
+            const dynamicKey = readKey();
+            globalThis[dynamicKey];
+          }
+
+          {
+            const fetch = "postMessage" as const;
+            globalThis[fetch](payload);
+            Reflect.get(globalThis, fetch);
+            const { [fetch]: safeAlias } = globalThis;
+            let assignedAlias;
+            ({ [fetch]: assignedAlias } = globalThis);
+            const safeDescriptor = { [fetch]: assignedAlias };
+            void safeAlias;
+            void safeDescriptor;
+          }
+
+          {
+            const dynamicKey = readKey();
+            const domainRecord = { channel: send };
+            const { [dynamicKey]: domainValue } = domainRecord;
+            let assignedValue;
+            ({ [dynamicKey]: assignedValue } = domainRecord);
+            for ({ [dynamicKey]: assignedValue } of domainRecords) {
+              void assignedValue;
+            }
+            void domainValue;
+          }
+        `,
+      ],
+    ]);
+    expect(findArchitectureViolations(staticallyNonFetchKey)).toEqual([]);
+    expect(buildInventory(staticallyNonFetchKey)["fetch-reference"]).toBeUndefined();
+
+    const independentDefaultFetch = new Map([
+      [
+        "src/features/chat/unsafe.ts",
+        `
+          let value;
+          ({ fetch: value = fetch(endpoint) } = globalThis);
+        `,
+      ],
+    ]);
+    const defaultViolations = findArchitectureViolations(independentDefaultFetch).filter(
+      (message) => message.includes("second HTTP transport owner"),
+    );
+    expect(defaultViolations).toHaveLength(2);
+    expect(buildInventory(independentDefaultFetch)["fetch-reference"]).toEqual({
+      "src/features/chat/unsafe.ts": 2,
+    });
+
+    const nestedFetchAssignments = [
+      `
+        let value;
+        ({ fetch: { fetch: value } } = globalThis);
+      `,
+      `
+        const key = "fetch" as const;
+        let value;
+        ({ [key]: { [key]: value } } = globalThis);
+      `,
+    ];
+    for (const source of nestedFetchAssignments) {
+      const sources = new Map([["src/features/chat/unsafe.ts", source]]);
+      const violations = findArchitectureViolations(sources).filter((message) =>
+        message.includes("second HTTP transport owner"),
+      );
+      expect(violations, source).toHaveLength(2);
+      expect(buildInventory(sources)["fetch-reference"]).toEqual({
+        "src/features/chat/unsafe.ts": 2,
+      });
+    }
+
+    const safeConstKeySource = `
+      const key = "postMessage" as const;
+      globalThis[key](payload);
+    `;
+    for (const file of [
+      "src/features/chat/safe.ts",
+      "./src/features/chat/safe.ts",
+      "src\\features\\chat\\safe.ts",
+    ]) {
+      const sources = new Map([[file, safeConstKeySource]]);
+      expect(findArchitectureViolations(sources), file).toEqual([]);
+      expect(buildInventory(sources)["fetch-reference"], file).toBeUndefined();
+    }
+  });
+
+  it("rejects every direct Fetch path inside ApiClient", () => {
+    const sources = new Map([
+      [
+        "src/services/api/client.ts",
+        `
+          const first = fetch(url, options);
+          const send = globalThis["fetch"];
+          const second = send(url, options);
+        `,
+      ],
+    ]);
+
+    const violations = findArchitectureViolations(sources).filter((message) =>
+      message.includes("second HTTP transport owner"),
+    );
+    expect(violations).toHaveLength(2);
+  });
+
+  it("rejects alternate HTTP clients and transport construction outside the owner", () => {
+    const sources = new Map([
+      [
+        "src/features/chat/unsafe.ts",
+        `
+          import axios from "axios";
+          import {
+            HttpTransport as RogueTransport,
+            createBrowserHttpTransport as createRogueTransport,
+          } from "../../services/api/transport";
+          const transport = new RogueTransport({ fetchImplementation: globalThis.fetch });
+          const second = createRogueTransport();
+          const stream = new EventSource(endpoint);
+          void axios;
+          void transport;
+          void second;
+          void stream;
+        `,
+      ],
+      [
+        "src/services/api/index.ts",
+        `
+          const shared = createBrowserHttpTransport();
+          const duplicate = new HttpTransport({ fetchImplementation: injectedFetch });
+        `,
+      ],
+    ]);
+
+    const violations = findArchitectureViolations(sources).join("\n");
+    expect(violations).toMatch(/alternate HTTP\/SSE client/);
+    expect(violations).toMatch(/HttpTransport is an infrastructure transport type/);
+    expect(violations).toMatch(/HttpTransport construction is owned by/);
+    expect(violations).toMatch(/createBrowserHttpTransport is a production composition API/);
+    expect(violations).toMatch(/second HTTP transport owner/);
+  });
+
+  it("requires both production API clients to share the direct browser transport binding", () => {
+    const sources = new Map([
+      [
+        "src/services/api/index.ts",
+        `
+          import { ApiClient } from "./client";
+          import { createBrowserHttpTransport } from "./transport";
+          const shared = createBrowserHttpTransport();
+          const alternate = { request() {}, requestOnce() {} };
+          const apiClient = new ApiClient({
+            baseUrl: runtime.endpoints.standardApi,
+            transport: shared,
+          });
+          const agentApiClient = new ApiClient({
+            baseUrl: runtime.endpoints.agentApi,
+            transport: alternate,
+          });
+        `,
+      ],
+    ]);
+
+    const violations = findArchitectureViolations(sources).filter((message) =>
+      message.includes("must receive the same direct createBrowserHttpTransport binding"),
+    );
+    expect(violations).toHaveLength(1);
+  });
+
+  it("rejects non-top-level client composition even when names shadow canonical bindings", () => {
+    const shadowDeclarations = [
+      `const shared = alternate;`,
+      `enum shared { rogue }`,
+      `namespace shared { export const request = alternate.request; }`,
+    ];
+
+    for (const shadowDeclaration of shadowDeclarations) {
+      const sources = new Map([
+        [
+          "src/services/api/index.ts",
+          `
+            import { ApiClient } from "./client";
+            import { createBrowserHttpTransport } from "./transport";
+            const shared = createBrowserHttpTransport();
+            {
+              ${shadowDeclaration}
+              new ApiClient({
+                baseUrl: runtime.endpoints.standardApi,
+                transport: shared,
+              });
+              new ApiClient({
+                baseUrl: runtime.endpoints.agentApi,
+                transport: shared,
+              });
+            }
+          `,
+        ],
+      ]);
+
+      const violations = findArchitectureViolations(sources).filter((message) =>
+        message.includes("must receive the same direct createBrowserHttpTransport binding"),
+      );
+      expect(violations).toHaveLength(2);
+      expect(buildInventory(sources)).toMatchObject({
+        "browser-http-transport-composition": { "src/services/api/index.ts": 1 },
+        "api-client-constructor": { "src/services/api/index.ts": 2 },
+        "runtime-endpoint-read": { "src/services/api/index.ts": 2 },
+      });
+    }
+  });
+
+  it("requires canonical factory and client import provenance", () => {
+    const fixtures = [
+      {
+        source: `
+          import { createBrowserHttpTransport } from "./rogueFactory";
+          import { ApiClient } from "./rogueClient";
+          const shared = createBrowserHttpTransport();
+          const apiClient = new ApiClient({
+            baseUrl: runtime.endpoints.standardApi,
+            transport: shared,
+          });
+          const agentApiClient = new ApiClient({
+            baseUrl: runtime.endpoints.agentApi,
+            transport: shared,
+          });
+        `,
+        expected: [
+          /must import exactly one createBrowserHttpTransport binding directly from \.\/transport/,
+          /must import exactly one ApiClient binding directly from \.\/client/,
+        ],
+      },
+      {
+        source: `
+          import { createBrowserHttpTransport } from "./transport";
+          class ApiClient {}
+          const shared = createBrowserHttpTransport();
+          const apiClient = new ApiClient({
+            baseUrl: runtime.endpoints.standardApi,
+            transport: shared,
+          });
+          const agentApiClient = new ApiClient({
+            baseUrl: runtime.endpoints.agentApi,
+            transport: shared,
+          });
+        `,
+        expected: [/must import exactly one ApiClient binding directly from \.\/client/],
+      },
+    ];
+
+    for (const { source, expected } of fixtures) {
+      const sources = new Map([["src/services/api/index.ts", source]]);
+      const violations = findArchitectureViolations(sources).join("\n");
+      for (const pattern of expected) expect(violations).toMatch(pattern);
+      expect(buildInventory(sources)).toMatchObject({
+        "browser-http-transport-composition": { "src/services/api/index.ts": 1 },
+        "api-client-constructor": { "src/services/api/index.ts": 2 },
+        "runtime-endpoint-read": { "src/services/api/index.ts": 2 },
+      });
+    }
   });
 
   it("rejects destructured and computed runtime endpoint reads", () => {
@@ -429,17 +1145,53 @@ describe("architecture boundary fixtures", () => {
     }
   });
 
-  it("freezes both owner names and occurrence counts", () => {
+  it("fails closed when the Fetch owner moves even if the global count is unchanged", () => {
     const baseline = new Map([
-      ["src/services/api/client.ts", "fetch('/one'); fetch('/two');"],
+      ["src/services/api/transport.ts", "const browserFetch = globalThis.fetch;"],
+      ["src/services/api/index.ts", "const transport = createBrowserHttpTransport();"],
     ]);
-    const changed = new Map([
-      ["src/services/api/client.ts", "fetch('/one'); fetch('/two'); fetch('/three');"],
+    const moved = new Map([
+      ["src/services/api/client.ts", "const browserFetch = globalThis.fetch;"],
+      ["src/services/api/index.ts", "const transport = createBrowserHttpTransport();"],
     ]);
     const expected = buildInventory(baseline);
 
     expect(compareInventory(buildInventory(baseline), expected)).toEqual([]);
-    expect(compareInventory(buildInventory(changed), expected).join("\n")).toMatch(/expected 2/);
+    const failures = compareInventory(buildInventory(moved), expected).join("\n");
+    expect(failures).toMatch(/fetch-reference: src\/services\/api\/transport\.ts.*expected 1/);
+    expect(failures).toMatch(/fetch-reference: src\/services\/api\/client\.ts.*expected 0/);
+  });
+
+  it("fails closed on duplicate production transport construction", () => {
+    const baseline = new Map([
+      [
+        "src/services/api/transport.ts",
+        "const create = () => new HttpTransport({ fetchImplementation: globalThis.fetch });",
+      ],
+      ["src/services/api/index.ts", "const transport = createBrowserHttpTransport();"],
+    ]);
+    const duplicated = new Map([
+      [
+        "src/services/api/transport.ts",
+        `
+          const create = () => new HttpTransport({ fetchImplementation: globalThis.fetch });
+          const duplicate = () => new HttpTransport({ fetchImplementation: injectedFetch });
+        `,
+      ],
+      [
+        "src/services/api/index.ts",
+        `
+          const first = createBrowserHttpTransport();
+          const second = createBrowserHttpTransport();
+        `,
+      ],
+    ]);
+    const expected = buildInventory(baseline);
+    const failures = compareInventory(buildInventory(duplicated), expected).join("\n");
+
+    expect(compareInventory(buildInventory(baseline), expected)).toEqual([]);
+    expect(failures).toMatch(/http-transport-constructor.*has 2 occurrence.*expected 1/);
+    expect(failures).toMatch(/browser-http-transport-composition.*has 2 occurrence.*expected 1/);
   });
 
   it("allows runtime installation before a dynamic Root import", () => {

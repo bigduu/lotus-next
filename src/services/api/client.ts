@@ -1,13 +1,16 @@
 /**
  * Unified HTTP API Client
  *
- * Provides a consistent interface for making HTTP requests to the backend API.
- * Eliminates duplicate fetch logic across services.
- *
- * Backend has two route prefixes:
- * - /v1/*       - Standard web_service routes (models, bamboo/*, workspace/*, mcp/*)
- * - /api/v1/*   - Agent server routes (chat, stream, todo, respond, sessions, metrics)
+ * Owns canonical URL composition, request defaults, and response parsing while
+ * delegating cancellation, deadlines, typed transport failures, and retries to
+ * one injected HTTP transport.
  */
+
+import { ApiError } from "./errors";
+import type { HttpTransport } from "./transport";
+
+export { ApiError, isApiError } from "./errors";
+
 // === DEV-ONLY API REQUEST INSTRUMENTATION ===
 // Enable with: localStorage.setItem('lotus_debug_api_requests', '1')
 
@@ -29,7 +32,10 @@ function shouldLogApiRequest(): boolean {
 
 function isAgentEndpoint(url: string): boolean {
   try {
-    const pathname = new URL(url, typeof window !== "undefined" ? window.location.origin : "http://localhost").pathname;
+    const pathname = new URL(
+      url,
+      typeof window !== "undefined" ? window.location.origin : "http://localhost",
+    ).pathname;
     return AGENT_ENDPOINT_PATTERNS.some((pattern) => pattern.test(pathname));
   } catch {
     return false;
@@ -39,15 +45,16 @@ function isAgentEndpoint(url: string): boolean {
 let requestCounters: Record<string, number> = {};
 
 function logApiRequest(method: string, url: string): void {
-  if (!shouldLogApiRequest()) return;
-  if (!isAgentEndpoint(url)) return;
+  if (!shouldLogApiRequest() || !isAgentEndpoint(url)) return;
 
-  const key = `${method} ${new URL(url, typeof window !== "undefined" ? window.location.origin : "http://localhost").pathname}`;
+  const pathname = new URL(
+    url,
+    typeof window !== "undefined" ? window.location.origin : "http://localhost",
+  ).pathname;
+  const key = `${method} ${pathname}`;
   requestCounters[key] = (requestCounters[key] || 0) + 1;
 
-  console.debug(
-    `[ApiClient] ${method} ${key} (total: ${requestCounters[key]})`
-  );
+  console.debug(`[ApiClient] ${method} ${key} (total: ${requestCounters[key]})`);
 }
 
 /** Called only by the API composition module after runtime installation. */
@@ -68,28 +75,18 @@ export interface ApiClientConfig {
   baseUrl: string;
   defaultHeaders?: Record<string, string>;
   requestCredentials: RequestCredentials;
+  transport: HttpTransport;
 }
 
-export class ApiError extends Error {
-  constructor(
-    message: string,
-    public status: number,
-    public statusText: string,
-    public body?: string,
-  ) {
-    super(message);
-    this.name = "ApiError";
-  }
-}
-
-export function isApiError(error: unknown): error is ApiError {
-  return error instanceof ApiError;
+interface JsonBody {
+  readonly value: unknown;
 }
 
 export class ApiClient {
-  private baseUrl: string;
-  private defaultHeaders: Record<string, string>;
-  private requestCredentials: RequestCredentials;
+  private readonly baseUrl: string;
+  private readonly defaultHeaders: Record<string, string>;
+  private readonly requestCredentials: RequestCredentials;
+  private readonly transport: HttpTransport;
 
   constructor(config: ApiClientConfig) {
     this.baseUrl = config.baseUrl.trim().replace(/\/+$/, "");
@@ -97,6 +94,7 @@ export class ApiClient {
       "Content-Type": "application/json",
     };
     this.requestCredentials = config.requestCredentials;
+    this.transport = config.transport;
   }
 
   /** Resolve a relative route through this client's canonical API base. */
@@ -105,315 +103,136 @@ export class ApiClient {
     return `${this.baseUrl}/${cleanPath}`;
   }
 
+  private mergeHeaders(headers?: HeadersInit): Headers {
+    const merged = new Headers(this.defaultHeaders);
+    if (headers) {
+      new Headers(headers).forEach((value, name) => merged.set(name, value));
+    }
+    return merged;
+  }
+
+  private createRequestInit(
+    method: string,
+    options: RequestInit | undefined,
+    jsonBody?: JsonBody,
+  ): RequestInit {
+    return {
+      ...options,
+      method,
+      headers: this.mergeHeaders(options?.headers),
+      credentials: this.requestCredentials,
+      ...(jsonBody
+        ? { body: jsonBody.value ? JSON.stringify(jsonBody.value) : undefined }
+        : {}),
+    };
+  }
+
   private async handleResponse<T>(response: Response): Promise<T> {
     if (!response.ok) {
-      const body = await response.text().catch(() => undefined);
-
-      // Try to parse error details from response body
+      // The transport owns response-body cancellation and classification after
+      // headers arrive. Let its typed cancellation, timeout, and network errors
+      // cross this adapter boundary instead of relabelling them as HTTP errors.
+      const body = await response.text();
       let errorMessage = response.statusText;
+
       if (body) {
         try {
-          const errorData = JSON.parse(body);
-          // Check for common error field names.
-          //
-          // Bamboo backend ResponseError shape:
-          //   { "error": { "message": "...", "type": "...", "code": "..." } }
-          // Some endpoints also return:
-          //   { "success": false, "error": "..." }
+          const errorData = JSON.parse(body) as {
+            error?: string | { message?: unknown };
+            message?: unknown;
+            detail?: unknown;
+          };
           const nestedMessage =
-            typeof errorData?.error === "object"
-              ? (errorData.error?.message as unknown)
-              : undefined;
-          const directError = typeof errorData?.error === "string" ? errorData.error : undefined;
+            typeof errorData.error === "object" ? errorData.error?.message : undefined;
+          const directError = typeof errorData.error === "string" ? errorData.error : undefined;
+          const directMessage =
+            typeof errorData.message === "string" ? errorData.message : undefined;
+          const detail = typeof errorData.detail === "string" ? errorData.detail : undefined;
 
           errorMessage =
             directError ||
             (typeof nestedMessage === "string" ? nestedMessage : undefined) ||
-            errorData.message ||
-            errorData.detail ||
+            directMessage ||
+            detail ||
             response.statusText;
         } catch {
-          // If not JSON, use the raw body as error message
-          errorMessage = body || response.statusText;
+          errorMessage = body;
         }
       }
 
       throw new ApiError(errorMessage, response.status, response.statusText, body);
     }
 
-    // Handle 204 No Content
     if (response.status === 204) {
       return undefined as T;
     }
 
-    // Check content type to determine how to parse response
     const contentType = response.headers?.get?.("content-type") || "";
     if (contentType.includes("application/json")) {
       return response.json();
     }
-
-    // For non-JSON responses (like health check returning "OK")
-    // Use text() if available, otherwise fall back to json() for test mocks
     if (typeof response.text === "function") {
-      const text = await response.text();
-      return text as T;
+      return (await response.text()) as T;
     }
     return response.json();
   }
 
-  /**
-   * Delay helper for retries
-   */
-  private delay(ms: number): Promise<void> {
-    return new Promise((resolve) => setTimeout(resolve, ms));
+  private async send<T>(
+    method: string,
+    path: string,
+    options?: RequestInit,
+    jsonBody?: JsonBody,
+  ): Promise<T> {
+    const url = this.resolveUrl(path);
+    logApiRequest(method.toUpperCase(), url);
+    const response = await this.transport.request(
+      url,
+      this.createRequestInit(method, options, jsonBody),
+    );
+    return this.handleResponse<T>(response);
   }
 
-  /**
-   * Fetch with retry logic for transient failures
-   */
-  private async fetchWithRetry(
-    url: string,
-    options: RequestInit,
-    maxRetries: number = 3,
-  ): Promise<Response> {
-    let lastError: Error | null = null;
-
-    for (let attempt = 0; attempt < maxRetries; attempt++) {
-      try {
-        const response = await fetch(url, options);
-
-        // Retry on 5xx errors
-        if (response.status >= 500 && attempt < maxRetries - 1) {
-          const delayMs = 1000 * Math.pow(2, attempt); // Exponential backoff: 1s, 2s, 4s
-          console.warn(
-            `Request failed with ${response.status}, retrying in ${delayMs}ms (attempt ${attempt + 1}/${maxRetries})`,
-          );
-          await this.delay(delayMs);
-          continue;
-        }
-
-        return response;
-      } catch (error) {
-        lastError = error as Error;
-
-        // Only retry on network errors, not on client errors
-        if (attempt < maxRetries - 1) {
-          const delayMs = 1000 * Math.pow(2, attempt);
-          console.warn(
-            `Network error: ${lastError.message}, retrying in ${delayMs}ms (attempt ${attempt + 1}/${maxRetries})`,
-          );
-          await this.delay(delayMs);
-        }
-      }
-    }
-
-    throw lastError || new Error("Max retries exceeded");
-  }
-
-  /**
-   * Make a GET request with timeout and retry
-   */
   async get<T>(path: string, options?: RequestInit): Promise<T> {
-    const url = this.resolveUrl(path);
-    logApiRequest("GET", url);
-
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 30000); // 30s timeout
-
-    try {
-      const response = await this.fetchWithRetry(
-        url,
-        {
-          ...options,
-          method: "GET",
-          headers: {
-            ...this.defaultHeaders,
-            ...options?.headers,
-          },
-          credentials: this.requestCredentials,
-          signal: controller.signal,
-        },
-        3, // 3 retries
-      );
-      return this.handleResponse<T>(response);
-    } finally {
-      clearTimeout(timeoutId);
-    }
+    return this.send<T>("GET", path, options);
   }
 
-  /**
-   * Make a POST request with timeout and retry
-   */
   async post<T>(path: string, data?: unknown, options?: RequestInit): Promise<T> {
-    const url = this.resolveUrl(path);
-    logApiRequest("POST", url);
-
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 30000); // 30s timeout
-
-    try {
-      const response = await this.fetchWithRetry(
-        url,
-        {
-          ...options,
-          method: "POST",
-          headers: {
-            ...this.defaultHeaders,
-            ...options?.headers,
-          },
-          credentials: this.requestCredentials,
-          body: data ? JSON.stringify(data) : undefined,
-          signal: controller.signal,
-        },
-        3, // 3 retries
-      );
-      return this.handleResponse<T>(response);
-    } finally {
-      clearTimeout(timeoutId);
-    }
+    return this.send<T>("POST", path, options, { value: data });
   }
 
-  /**
-   * Make a PUT request with timeout and retry
-   */
   async put<T>(path: string, data?: unknown, options?: RequestInit): Promise<T> {
-    const url = this.resolveUrl(path);
-
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 30000); // 30s timeout
-
-    try {
-      const response = await this.fetchWithRetry(
-        url,
-        {
-          ...options,
-          method: "PUT",
-          headers: {
-            ...this.defaultHeaders,
-            ...options?.headers,
-          },
-          credentials: this.requestCredentials,
-          body: data ? JSON.stringify(data) : undefined,
-          signal: controller.signal,
-        },
-        3, // 3 retries
-      );
-      return this.handleResponse<T>(response);
-    } finally {
-      clearTimeout(timeoutId);
-    }
+    return this.send<T>("PUT", path, options, { value: data });
   }
 
-  /**
-   * Make a PATCH request with timeout and retry
-   */
   async patch<T>(path: string, data?: unknown, options?: RequestInit): Promise<T> {
-    const url = this.resolveUrl(path);
-    logApiRequest("PATCH", url);
-
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 30000); // 30s timeout
-
-    try {
-      const response = await this.fetchWithRetry(
-        url,
-        {
-          ...options,
-          method: "PATCH",
-          headers: {
-            ...this.defaultHeaders,
-            ...options?.headers,
-          },
-          credentials: this.requestCredentials,
-          body: data ? JSON.stringify(data) : undefined,
-          signal: controller.signal,
-        },
-        3,
-      );
-      return this.handleResponse<T>(response);
-    } finally {
-      clearTimeout(timeoutId);
-    }
+    return this.send<T>("PATCH", path, options, { value: data });
   }
 
-  /**
-   * Make a DELETE request with timeout and retry
-   */
   async delete<T>(path: string, options?: RequestInit): Promise<T> {
-    const url = this.resolveUrl(path);
-    logApiRequest("DELETE", url);
-
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 30000); // 30s timeout
-
-    try {
-      const response = await this.fetchWithRetry(
-        url,
-        {
-          ...options,
-          method: "DELETE",
-          headers: {
-            ...this.defaultHeaders,
-            ...options?.headers,
-          },
-          credentials: this.requestCredentials,
-          signal: controller.signal,
-        },
-        3, // 3 retries
-      );
-      return this.handleResponse<T>(response);
-    } finally {
-      clearTimeout(timeoutId);
-    }
+    return this.send<T>("DELETE", path, options);
   }
 
-  /**
-   * Make a request with custom method and timeout
-   */
   async request<T>(method: string, path: string, options?: RequestInit): Promise<T> {
-    const url = this.resolveUrl(path);
-
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 30000); // 30s timeout
-
-    try {
-      const response = await this.fetchWithRetry(
-        url,
-        {
-          ...options,
-          method,
-          headers: {
-            ...this.defaultHeaders,
-            ...options?.headers,
-          },
-          credentials: this.requestCredentials,
-          signal: controller.signal,
-        },
-        3, // 3 retries
-      );
-      return this.handleResponse<T>(response);
-    } finally {
-      clearTimeout(timeoutId);
-    }
+    return this.send<T>(method, path, options);
   }
 
-  /**
-   * Make a request and return raw Response for streaming
-   * Note: No retry logic for streaming endpoints
-   */
+  /** Return a raw response through the shared cancellation/deadline kernel. */
   async fetchRaw(path: string, options?: RequestInit): Promise<Response> {
     const url = this.resolveUrl(path);
-    logApiRequest("GET", url);
-    const response = await fetch(url, {
+    logApiRequest(options?.method?.toUpperCase() ?? "GET", url);
+    const response = await this.transport.requestOnce(url, {
       ...options,
-      headers: {
-        ...this.defaultHeaders,
-        ...options?.headers,
-      },
+      headers: this.mergeHeaders(options?.headers),
       credentials: this.requestCredentials,
     });
 
     if (!response.ok) {
+      // The transport transfers caller/deadline cleanup to the returned body.
+      // A rejected raw response has no consumer, so close that lifecycle before
+      // preserving the existing ApiError contract. Cancellation failures must
+      // not replace or delay the HTTP response failure.
+      const cancellation = response.body?.cancel();
+      if (cancellation) void cancellation.catch(() => undefined);
       throw new ApiError(
         `API request failed: ${response.statusText}`,
         response.status,
