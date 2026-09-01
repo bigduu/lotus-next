@@ -224,7 +224,6 @@ export interface UtilityService {
    * Access control / password gate
    */
   getAccessStatus(): Promise<AccessStatusResponse>;
-  verifyAccessPassword(password: string): Promise<ApiSuccessResponse>;
   updateAccessPassword(payload: UpdateAccessPasswordRequest): Promise<UpdateAccessPasswordResponse>;
 }
 
@@ -376,10 +375,6 @@ class HttpUtilityService implements UtilityService {
 
   async getAccessStatus(): Promise<AccessStatusResponse> {
     return apiClient.get<AccessStatusResponse>("bamboo/access/status");
-  }
-
-  async verifyAccessPassword(password: string): Promise<ApiSuccessResponse> {
-    return apiClient.post<ApiSuccessResponse>("bamboo/access/verify", { password });
   }
 
   async updateAccessPassword(
