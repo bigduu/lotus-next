@@ -7,29 +7,6 @@ import mermaid from "mermaid"
 // re-rasterizing the SVG at capture scale. Exposes `data-mermaid-loading` so
 // the export pipeline can wait for render completion and find the images.
 
-export const MERMAID_LOADING_SELECTOR = '[data-mermaid-loading="true"]'
-
-// Mirror of src/components/chat/MermaidChart.tsx ensureInit(): TOP-LEVEL
-// htmlLabels:false renders native SVG <text> (survives sanitize + image
-// rasterization) — a known mermaid gotcha; per-diagram alone isn't enough.
-// mermaid config is a global singleton, so the export flips only the theme
-// (light diagrams on white pages) and must restore the app config afterwards.
-const APP_MERMAID_CONFIG = {
-  startOnLoad: false,
-  theme: "dark",
-  securityLevel: "strict",
-  htmlLabels: false,
-  flowchart: { htmlLabels: false },
-} as const
-
-export function initMermaidForExport(): void {
-  mermaid.initialize({ ...APP_MERMAID_CONFIG, theme: "default" })
-}
-
-export function restoreMermaidAppConfig(): void {
-  mermaid.initialize({ ...APP_MERMAID_CONFIG })
-}
-
 interface RasterResult {
   /** PNG data URL, rendered at `scale`x the diagram's intrinsic size. */
   url: string

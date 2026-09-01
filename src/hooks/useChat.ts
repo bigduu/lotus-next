@@ -491,7 +491,16 @@ export function useChat(
         if (subscribedSidRef.current === runSid) subscribedSidRef.current = null
       })
     },
-    [effectiveModel, reasoningEffort],
+    [
+      effectiveModel,
+      reasoningEffort,
+      freezeTextSegment,
+      pushToken,
+      pushReasoning,
+      setStreamStatus,
+      flushSegments,
+      stopStream,
+    ],
   )
 
   // Sever the live subscription when this hook instance unmounts (a closed
@@ -605,7 +614,7 @@ export function useChat(
         setSending(false)
       }
     },
-    [runStream, sending],
+    [runStream, sending, stopStream],
   )
 
   const regenerate = useCallback(async () => {
@@ -709,19 +718,19 @@ export function useChat(
         setSending(false)
       }
     },
-    [sid, isBound, onSessionCreated, effectiveModel, providerType, sending, runStream],
+    [sid, isBound, onSessionCreated, effectiveModel, providerType, sending, runStream, stopStream],
   )
 
   const stop = useCallback(() => {
     abortRef.current?.abort()
     if (sid) void agentClient.stopGeneration(sid).catch(() => {})
     stopStream(null)
-  }, [sid])
+  }, [sid, stopStream])
 
   const newChat = useCallback(() => {
     useAppStore.getState().selectSession(null)
     stopStream(null)
-  }, [])
+  }, [stopStream])
 
   const deleteMessage = useCallback(
     async (messageId: string) => {

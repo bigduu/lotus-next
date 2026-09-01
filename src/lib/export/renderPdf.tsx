@@ -6,11 +6,12 @@ import rehypeSanitize from "rehype-sanitize"
 import html2canvas from "html2canvas"
 import { jsPDF } from "jspdf"
 
-import StaticMermaid, {
+import StaticMermaid from "./StaticMermaid"
+import {
   MERMAID_LOADING_SELECTOR,
   initMermaidForExport,
   restoreMermaidAppConfig,
-} from "./StaticMermaid"
+} from "./mermaidConfig"
 import { addLandscapeDiagram, addPortraitRange, collectWideDiagrams } from "./pdfPaginator"
 
 // Rendered-HTML → canvas → paginated-PDF pipeline (ported from lotus's
