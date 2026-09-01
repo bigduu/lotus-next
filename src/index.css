@@ -1,6 +1,10 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 @plugin "@tailwindcss/typography";
+@source "../node_modules/streamdown/dist/*.js";
+@source "../node_modules/@streamdown/code/dist/*.js";
+@source "../node_modules/@streamdown/mermaid/dist/*.js";
+@source "../node_modules/@streamdown/cjk/dist/*.js";
 
 @custom-variant dark (&:is(.dark *));
 
@@ -144,4 +148,68 @@
 body[data-vdi-safe="true"] * {
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
+}
+
+@layer components {
+  .assistant-streamdown {
+    width: 100%;
+    min-width: 0;
+    line-break: auto;
+    word-break: normal;
+  }
+
+  .assistant-streamdown [data-streamdown="link"] {
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
+
+  .assistant-streamdown [data-streamdown="table-wrapper"],
+  .assistant-streamdown [data-streamdown="code-block"],
+  .assistant-streamdown [data-mermaid-state] {
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .assistant-streamdown [data-streamdown="table-wrapper"] > div:last-child {
+    max-width: 100%;
+    overflow-x: auto;
+  }
+
+  .assistant-streamdown [data-streamdown="table"] {
+    width: max-content;
+    min-width: 100%;
+  }
+
+  .assistant-streamdown [data-streamdown="table-header-cell"],
+  .assistant-streamdown [data-streamdown="table-cell"] {
+    white-space: normal;
+    overflow-wrap: break-word;
+    word-break: normal;
+  }
+
+  .assistant-streamdown [data-streamdown="code-block-body"] {
+    max-width: 100%;
+    overflow-x: hidden;
+  }
+
+  .assistant-streamdown [data-streamdown="code-block-body"] pre,
+  .assistant-streamdown [data-streamdown="code-block-body"] code {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
+
+  .assistant-streamdown [data-streamdown="image"],
+  .assistant-streamdown [data-mermaid-state="ready"] svg {
+    max-width: 100%;
+    height: auto;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .assistant-streamdown [data-sd-animate],
+  .assistant-streamdown [data-sd-animate-marker]::marker {
+    animation: none !important;
+  }
 }

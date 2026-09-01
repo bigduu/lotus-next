@@ -2,7 +2,11 @@ import mermaid from "mermaid"
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest"
 
 import { initMermaidForExport, restoreMermaidAppConfig } from "../export/mermaidConfig"
-import { MERMAID_STRICT_CONFIG, initializeTrustedMermaid } from "./strictConfig"
+import {
+  getTrustedMermaidConfig,
+  MERMAID_STRICT_CONFIG,
+  initializeTrustedMermaid,
+} from "./strictConfig"
 
 const originalTextLength = Object.getOwnPropertyDescriptor(
   SVGElement.prototype,
@@ -42,6 +46,26 @@ beforeEach(() => {
 })
 
 describe("trusted Mermaid security policy", () => {
+  it("exposes only the frozen app/export policies to integrations", () => {
+    const app = getTrustedMermaidConfig("app")
+    const exportConfig = getTrustedMermaidConfig("export")
+
+    expect(Object.isFrozen(app)).toBe(true)
+    expect(Object.isFrozen(app.flowchart)).toBe(true)
+    expect(app).toMatchObject({
+      securityLevel: "strict",
+      htmlLabels: false,
+      flowchart: { htmlLabels: false },
+      theme: "dark",
+    })
+    expect(exportConfig).toMatchObject({
+      securityLevel: "strict",
+      htmlLabels: false,
+      flowchart: { htmlLabels: false },
+      theme: "default",
+    })
+  })
+
   it("is recursively frozen and renders normal diagrams in strict native-label mode", async () => {
     expect(Object.isFrozen(MERMAID_STRICT_CONFIG)).toBe(true)
     expect(Object.isFrozen(MERMAID_STRICT_CONFIG.flowchart)).toBe(true)
