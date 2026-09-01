@@ -9,9 +9,10 @@
  * Protocol (JSON text frames by default):
  *  - Client to server: {type:"hello"} (optional; no token on loopback/local),
  *    {type:"subscribe", ch:"feed", since}, {type:"subscribe", ch:"agent.<sid>"},
- *    {type:"unsubscribe", ch}, {type:"stop", session_id}.
+ *    {type:"unsubscribe", ch}, {type:"stop", session_id}, {type:"ping"}.
  *  - Server to client: event envelope {ch, seq, event} and control envelope
- *    {ch, seq, control:{type:"terminal"|"feed_reset", ...}}.
+ *    {ch, seq, control:{type:"terminal"|"feed_reset"|"keepalive", ...}}, or
+ *    {type:"pong"}.
  *
  * Wire encoding (opt-in MessagePack): by default the socket speaks JSON text
  * frames. When `isApiV2MsgpackEnabled()` is on, the socket is opened offering
@@ -58,6 +59,12 @@ export type AgentEventDispatch = (event: AgentEvent, handlers: AgentEventHandler
 
 const MAX_BACKOFF_MS = 15_000;
 const BASE_BACKOFF_MS = 500;
+/** Browser-visible heartbeat interval; protocol Ping/Pong is hidden from JS. */
+const HEARTBEAT_INTERVAL_MS = 15_000;
+/** An acknowledged connection is half-open after this much inbound silence. */
+const HEARTBEAT_STALE_MS = 40_000;
+/** Check often enough to recover close to the documented stale threshold. */
+const WATCHDOG_TICK_MS = 1_000;
 
 /**
  * The MessagePack subprotocol token offered via `Sec-WebSocket-Protocol` when
@@ -81,11 +88,28 @@ interface AgentChannel {
 }
 
 type ServerFrame = {
+  type?: string;
   ch?: string;
   seq?: number;
   event?: unknown;
   control?: { type?: string; [key: string]: unknown };
 };
+
+/**
+ * Liveness state belongs to one exact WebSocket epoch. Timers and document
+ * callbacks capture this object and must prove it is still current before they
+ * may send, mutate state, or tear anything down.
+ */
+interface SocketLiveness {
+  socket: WebSocket;
+  lastFrameAt: number;
+  pingSent: boolean;
+  heartbeatAckSeen: boolean;
+  recoveryStarted: boolean;
+  heartbeatTimer: ReturnType<typeof setInterval> | null;
+  watchdogTimer: ReturnType<typeof setInterval> | null;
+  visibilityListener: (() => void) | null;
+}
 
 let socket: WebSocket | null = null;
 let connecting = false;
@@ -94,6 +118,8 @@ let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let intentionalClose = false;
 /** True once a non-intentional drop happened; cleared when the socket reopens. */
 let droppedSinceOpen = false;
+/** The liveness epoch for the currently-open socket, if any. */
+let socketLiveness: SocketLiveness | null = null;
 
 /**
  * Listeners fired when the socket REOPENS after a non-intentional drop (never
@@ -138,17 +164,19 @@ const hasSubscriptions = (): boolean => feedChannel !== null || agentChannels.si
  */
 const isMsgpackActive = (): boolean => socket !== null && socket.protocol === MSGPACK_SUBPROTOCOL;
 
-const send = (payload: Record<string, unknown>): void => {
+const send = (payload: Record<string, unknown>): boolean => {
   if (socket && socket.readyState === WebSocket.OPEN) {
     try {
       // Encoding is chosen from the post-open `ws.protocol`, so frames queued
       // before open (flushed here on open via resubscribeAll) get the correct
       // negotiated encoding — the handshake has completed by the time we send.
       socket.send(isMsgpackActive() ? msgpackEncode(payload) : JSON.stringify(payload));
+      return true;
     } catch (error) {
       debugLog("[v2Stream]", "send.error", { payload, error });
     }
   }
+  return false;
 };
 
 /** (Re)send the subscribe frames for every live channel after a (re)connect. */
@@ -181,19 +209,125 @@ const scheduleReconnect = (): void => {
   }, delay);
 };
 
-const teardownSocket = (): void => {
-  if (socket) {
-    socket.onopen = null;
-    socket.onmessage = null;
-    socket.onerror = null;
-    socket.onclose = null;
-    try {
-      socket.close();
-    } catch {
-      /* ignore */
-    }
-    socket = null;
+const clearSocketLiveness = (expectedSocket?: WebSocket): void => {
+  const liveness = socketLiveness;
+  if (!liveness || (expectedSocket && liveness.socket !== expectedSocket)) return;
+
+  if (liveness.heartbeatTimer !== null) {
+    clearInterval(liveness.heartbeatTimer);
+    liveness.heartbeatTimer = null;
   }
+  if (liveness.watchdogTimer !== null) {
+    clearInterval(liveness.watchdogTimer);
+    liveness.watchdogTimer = null;
+  }
+  if (liveness.visibilityListener && typeof document !== "undefined") {
+    document.removeEventListener("visibilitychange", liveness.visibilityListener);
+    liveness.visibilityListener = null;
+  }
+  if (socketLiveness === liveness) socketLiveness = null;
+};
+
+/**
+ * Close only the expected socket epoch. This identity check keeps a late timer
+ * or browser callback from an old connection from tearing down its replacement.
+ */
+const teardownSocket = (expectedSocket?: WebSocket): boolean => {
+  const current = socket;
+  if (!current || (expectedSocket && current !== expectedSocket)) return false;
+
+  clearSocketLiveness(current);
+  current.onopen = null;
+  current.onmessage = null;
+  current.onerror = null;
+  current.onclose = null;
+  try {
+    current.close();
+  } catch {
+    /* ignore */
+  }
+  if (socket === current) socket = null;
+  return true;
+};
+
+const forceReconnectStaleSocket = (liveness: SocketLiveness): void => {
+  if (
+    socketLiveness !== liveness ||
+    socket !== liveness.socket ||
+    liveness.recoveryStarted
+  ) {
+    return;
+  }
+
+  liveness.recoveryStarted = true;
+  debugLog("[v2Stream]", "watchdog.stale_socket", {
+    silentForMs: Date.now() - liveness.lastFrameAt,
+  });
+  // Match a non-intentional onclose exactly, but do not wait for a half-open
+  // browser socket to emit one: signal availability once, then reconnect WSS.
+  droppedSinceOpen = true;
+  feedChannel?.handlers.onError?.();
+  teardownSocket(liveness.socket);
+  connecting = false;
+  scheduleReconnect();
+};
+
+const watchdogTick = (liveness: SocketLiveness): void => {
+  if (
+    socketLiveness !== liveness ||
+    socket !== liveness.socket ||
+    liveness.socket.readyState !== WebSocket.OPEN ||
+    !liveness.heartbeatAckSeen
+  ) {
+    return;
+  }
+  if (Date.now() - liveness.lastFrameAt >= HEARTBEAT_STALE_MS) {
+    forceReconnectStaleSocket(liveness);
+  }
+};
+
+const startSocketLiveness = (ws: WebSocket): void => {
+  clearSocketLiveness();
+  const liveness: SocketLiveness = {
+    socket: ws,
+    lastFrameAt: Date.now(),
+    pingSent: false,
+    heartbeatAckSeen: false,
+    recoveryStarted: false,
+    heartbeatTimer: null,
+    watchdogTimer: null,
+    visibilityListener: null,
+  };
+  socketLiveness = liveness;
+
+  liveness.heartbeatTimer = setInterval(() => {
+    if (socketLiveness !== liveness || socket !== ws || ws.readyState !== WebSocket.OPEN) return;
+    if (send({ type: "ping" })) liveness.pingSent = true;
+  }, HEARTBEAT_INTERVAL_MS);
+
+  liveness.watchdogTimer = setInterval(() => watchdogTick(liveness), WATCHDOG_TICK_MS);
+
+  if (typeof document !== "undefined") {
+    liveness.visibilityListener = () => {
+      if (document.visibilityState === "visible") watchdogTick(liveness);
+    };
+    document.addEventListener("visibilitychange", liveness.visibilityListener);
+  }
+};
+
+const markInboundFrame = (ws: WebSocket): SocketLiveness | null => {
+  const liveness = socketLiveness;
+  if (!liveness || liveness.socket !== ws || socket !== ws) return null;
+  liveness.lastFrameAt = Date.now();
+  return liveness;
+};
+
+const acknowledgeHeartbeat = (liveness: SocketLiveness | null): void => {
+  // A server may send unrelated/legacy sys keepalives, but only a pong after
+  // this epoch sent a ping proves support for the round-trip heartbeat contract.
+  if (!liveness || !liveness.pingSent || liveness.heartbeatAckSeen) return;
+  liveness.heartbeatAckSeen = true;
+  debugLog("[v2Stream]", "heartbeat.acknowledged", {});
 };
 
 const closeIfIdle = (): void => {
@@ -201,6 +335,9 @@ const closeIfIdle = (): void => {
   intentionalClose = true;
   clearReconnectTimer();
   teardownSocket();
+  // `teardownSocket` normally owns this cleanup; the explicit call keeps test
+  // reset/idle teardown safe even if no WebSocket object remains.
+  clearSocketLiveness();
   connecting = false;
   reconnectAttempts = 0;
   // A drop from a previous subscription epoch must not make the next epoch's
@@ -236,13 +373,24 @@ const decodeFrame = (data: unknown): ServerFrame | undefined => {
   }
 };
 
-const handleFrame = (frame: ServerFrame | undefined): void => {
+const handleFrame = (
+  frame: ServerFrame | undefined,
+  liveness: SocketLiveness | null,
+): void => {
+  if (frame?.type === "pong" && frame.ch === undefined) {
+    acknowledgeHeartbeat(liveness);
+    return;
+  }
   if (!frame || typeof frame.ch !== "string") {
     debugLog("[v2Stream]", "frame.unknown", {});
     return;
   }
 
   const { ch, control, event } = frame;
+
+  // Connection-level keepalive data is intentionally not a domain event. Its
+  // arrival already refreshed `lastFrameAt` in the exact socket's onmessage.
+  if (ch === "sys") return;
 
   if (ch === "feed") {
     if (!feedChannel) return;
@@ -339,10 +487,12 @@ const connect = (): void => {
   socket = ws;
 
   ws.onopen = () => {
+    if (socket !== ws) return;
     connecting = false;
     reconnectAttempts = 0;
     const wasDropped = droppedSinceOpen;
     droppedSinceOpen = false;
+    startSocketLiveness(ws);
     debugLog("[v2Stream]", "open", { afterDrop: wasDropped });
     resubscribeAll();
     feedChannel?.handlers.onOpen?.();
@@ -358,21 +508,27 @@ const connect = (): void => {
   };
 
   ws.onmessage = (messageEvent: MessageEvent) => {
+    if (socket !== ws) return;
+    const liveness = markInboundFrame(ws);
     // Decode by frame shape: string → JSON, ArrayBuffer/binary → msgpack. A
     // malformed/undecodable frame is logged + ignored inside decodeFrame, so
     // this never throws out of onmessage (same discipline as the JSON path).
-    handleFrame(decodeFrame(messageEvent.data));
+    handleFrame(decodeFrame(messageEvent.data), liveness);
   };
 
   ws.onerror = () => {
+    if (socket !== ws) return;
     debugLog("[v2Stream]", "error", {});
     feedChannel?.handlers.onError?.();
   };
 
   ws.onclose = () => {
+    // A late close from an old socket epoch must not affect its replacement.
+    if (socket !== ws) return;
     connecting = false;
+    clearSocketLiveness(ws);
     debugLog("[v2Stream]", "close", { intentional: intentionalClose });
-    if (socket === ws) socket = null;
+    socket = null;
     if (intentionalClose) return;
     // Any non-intentional close — including a close before the socket ever
     // opened — feeds the same bounded-backoff reconnect loop. There is no
@@ -479,6 +635,7 @@ export const __resetV2StreamForTests = (): void => {
   clearReconnectTimer();
   intentionalClose = true;
   teardownSocket();
+  clearSocketLiveness();
   connecting = false;
   reconnectAttempts = 0;
   droppedSinceOpen = false;

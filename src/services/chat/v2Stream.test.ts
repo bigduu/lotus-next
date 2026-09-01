@@ -110,6 +110,10 @@ class MockWebSocket {
   }
 }
 
+class MockDocument extends EventTarget {
+  visibilityState: DocumentVisibilityState = "hidden"
+}
+
 const lastSocket = (): MockWebSocket => sockets.at(-1)!
 
 const change = (seq: number): ChangeEvent => ({
@@ -377,6 +381,251 @@ describe("v2Stream shared WebSocket client", () => {
   it("accepts the public AccountStreamHandlers contract", () => {
     const handlers: AccountStreamHandlers = { onChange: vi.fn() }
     expect(handlers.onChange).toBeTypeOf("function")
+  })
+
+  describe("application heartbeat watchdog", () => {
+    it("sends JSON pings and consumes an acknowledged top-level pong", () => {
+      vi.useFakeTimers()
+      const onChange = vi.fn()
+      const onError = vi.fn()
+      subscribeFeed({ onChange, onError }, 0)
+      const socket = lastSocket()
+      socket.open()
+
+      vi.advanceTimersByTime(15_000)
+      expect(socket.parsedSent()).toContainEqual({ type: "ping" })
+
+      socket.emit({ type: "pong" })
+      expect(onChange).not.toHaveBeenCalled()
+      expect(onError).not.toHaveBeenCalled()
+      expect(socket.readyState).toBe(MockWebSocket.OPEN)
+    })
+
+    it("encodes ping and decodes pong with negotiated MessagePack", () => {
+      vi.useFakeTimers()
+      msgpackEnabled = true
+      const onChange = vi.fn()
+      const onError = vi.fn()
+      subscribeFeed({ onChange, onError }, 0)
+      const socket = lastSocket()
+      socket.open("bamboo.v2.msgpack")
+
+      vi.advanceTimersByTime(15_000)
+      expect(socket.msgpackSent()).toContainEqual({ type: "ping" })
+
+      socket.emitBinary({ type: "pong" })
+      expect(onChange).not.toHaveBeenCalled()
+      vi.advanceTimersByTime(39_999)
+      expect(socket.readyState).toBe(MockWebSocket.OPEN)
+      vi.advanceTimersByTime(1)
+      expect(socket.readyState).toBe(MockWebSocket.CLOSED)
+      expect(onError).toHaveBeenCalledTimes(1)
+    })
+
+    it("never arms or reconnects without a pong acknowledging a sent ping", () => {
+      vi.useFakeTimers()
+      const onError = vi.fn()
+      subscribeFeed({ onChange: vi.fn(), onError }, 0)
+      const socket = lastSocket()
+      socket.open()
+      socket.emit({ type: "pong" })
+
+      vi.advanceTimersByTime(10 * 60_000)
+
+      expect(sockets).toHaveLength(1)
+      expect(socket.readyState).toBe(MockWebSocket.OPEN)
+      expect(onError).not.toHaveBeenCalled()
+      expect(socket.parsedSent().filter((frame) => frame.type === "ping")).toHaveLength(40)
+    })
+
+    it("does not let a legacy sys keepalive arm the pong-gated watchdog", () => {
+      vi.useFakeTimers()
+      const onError = vi.fn()
+      subscribeFeed({ onChange: vi.fn(), onError }, 0)
+      const socket = lastSocket()
+      socket.open()
+
+      vi.advanceTimersByTime(15_000)
+      socket.emit({ ch: "sys", seq: 0, control: { type: "keepalive" } })
+      vi.advanceTimersByTime(10 * 60_000)
+
+      expect(sockets).toHaveLength(1)
+      expect(socket.readyState).toBe(MockWebSocket.OPEN)
+      expect(onError).not.toHaveBeenCalled()
+    })
+
+    it("refreshes acknowledged liveness on feed, agent, pong, and sys frames", () => {
+      vi.useFakeTimers()
+      const onChange = vi.fn()
+      const onToken = vi.fn()
+      const onError = vi.fn()
+      subscribeFeed({ onChange, onError }, 0)
+      subscribeAgent("session-1", { onToken }, tokenDispatch)
+      const socket = lastSocket()
+      socket.open()
+
+      vi.advanceTimersByTime(15_000)
+      socket.emit({ type: "pong" })
+
+      vi.advanceTimersByTime(30_000)
+      socket.emit({ ch: "feed", seq: 1, event: change(1) })
+      vi.advanceTimersByTime(30_000)
+      socket.emit({
+        ch: "agent.session-1",
+        seq: 1,
+        event: { type: "token", content: "alive" },
+      })
+      vi.advanceTimersByTime(30_000)
+      socket.emit({ type: "pong" })
+      vi.advanceTimersByTime(30_000)
+      socket.emit({ ch: "sys", seq: 0, control: { type: "keepalive" } })
+      vi.advanceTimersByTime(39_999)
+
+      expect(sockets).toHaveLength(1)
+      expect(socket.readyState).toBe(MockWebSocket.OPEN)
+      expect(onError).not.toHaveBeenCalled()
+      expect(onChange).toHaveBeenCalledTimes(1)
+      expect(onToken).toHaveBeenCalledWith("alive")
+    })
+
+    it("recovers acknowledged silence over WSS and preserves every live channel", async () => {
+      vi.useFakeTimers()
+      const eventSource = vi.fn()
+      vi.stubGlobal("EventSource", eventSource)
+      const onError = vi.fn()
+      const reconnected = vi.fn()
+      onReconnected(reconnected)
+      subscribeFeed({ onChange: vi.fn(), onError }, 3)
+      const firstAgent = subscribeAgent("session-1", {}, tokenDispatch)
+      const sameSessionAgent = subscribeAgent("session-1", {}, tokenDispatch)
+      const secondAgent = subscribeAgent("session-2", {}, tokenDispatch)
+      const first = lastSocket()
+      first.open()
+      first.emit({ ch: "feed", seq: 11, event: change(11) })
+
+      vi.advanceTimersByTime(15_000)
+      first.emit({ type: "pong" })
+      vi.advanceTimersByTime(39_999)
+      expect(first.readyState).toBe(MockWebSocket.OPEN)
+      vi.advanceTimersByTime(1)
+
+      expect(first.readyState).toBe(MockWebSocket.CLOSED)
+      expect(onError).toHaveBeenCalledTimes(1)
+      expect(sockets).toHaveLength(1)
+      expect(vi.getTimerCount()).toBe(1)
+
+      const settled = vi.fn()
+      void Promise.all([firstAgent.promise, sameSessionAgent.promise, secondAgent.promise]).then(
+        settled,
+      )
+      await Promise.resolve()
+      expect(settled).not.toHaveBeenCalled()
+
+      vi.advanceTimersByTime(500)
+      expect(sockets).toHaveLength(2)
+      const second = lastSocket()
+      second.open()
+
+      expect(second.parsedSent()).toEqual([
+        { type: "hello" },
+        { type: "subscribe", ch: "feed", since: 11 },
+        { type: "subscribe", ch: "agent.session-1" },
+        { type: "subscribe", ch: "agent.session-2" },
+      ])
+      expect(reconnected).toHaveBeenCalledTimes(1)
+      expect(eventSource).not.toHaveBeenCalled()
+
+      second.emit({ ch: "agent.session-1", seq: 1, control: { type: "terminal" } })
+      await expect(Promise.all([firstAgent.promise, sameSessionAgent.promise])).resolves.toEqual([
+        undefined,
+        undefined,
+      ])
+      expect(settled).not.toHaveBeenCalled()
+      secondAgent.close()
+    })
+
+    it("resets ACK state and ignores callbacks captured from an old socket epoch", () => {
+      vi.useFakeTimers()
+      const onError = vi.fn()
+      subscribeFeed({ onChange: vi.fn(), onError }, 0)
+      const first = lastSocket()
+      first.open()
+      vi.advanceTimersByTime(15_000)
+      first.emit({ type: "pong" })
+      const staleMessage = first.onmessage
+      const staleClose = first.onclose
+
+      first.drop()
+      expect(onError).toHaveBeenCalledTimes(1)
+      expect(vi.getTimerCount()).toBe(1)
+      vi.advanceTimersByTime(500)
+      const second = lastSocket()
+      second.open()
+
+      staleMessage?.({ data: JSON.stringify({ type: "pong" }) } as MessageEvent)
+      staleClose?.()
+      vi.advanceTimersByTime(10 * 60_000)
+
+      expect(sockets).toHaveLength(2)
+      expect(second.readyState).toBe(MockWebSocket.OPEN)
+      expect(onError).toHaveBeenCalledTimes(1)
+    })
+
+    it("runs the same stale recovery immediately when the document becomes visible", () => {
+      vi.useFakeTimers()
+      const start = new Date("2026-09-01T00:00:00Z")
+      vi.setSystemTime(start)
+      const mockDocument = new MockDocument()
+      const removeListener = vi.spyOn(mockDocument, "removeEventListener")
+      vi.stubGlobal("document", mockDocument as unknown as Document)
+      const onError = vi.fn()
+      subscribeFeed({ onChange: vi.fn(), onError }, 9)
+      const first = lastSocket()
+      first.open()
+      vi.advanceTimersByTime(15_000)
+      first.emit({ type: "pong" })
+
+      // Model a suspended browser: wall time advances while interval callbacks
+      // do not. Visibility regain must inspect the same per-socket clock now.
+      vi.setSystemTime(new Date(start.getTime() + 55_000))
+      mockDocument.visibilityState = "visible"
+      mockDocument.dispatchEvent(new Event("visibilitychange"))
+
+      expect(first.readyState).toBe(MockWebSocket.CLOSED)
+      expect(onError).toHaveBeenCalledTimes(1)
+      expect(removeListener).toHaveBeenCalledWith("visibilitychange", expect.any(Function))
+      vi.advanceTimersByTime(500)
+      expect(sockets).toHaveLength(2)
+      lastSocket().open()
+      expect(lastSocket().parsedSent()).toContainEqual({
+        type: "subscribe",
+        ch: "feed",
+        since: 9,
+      })
+    })
+
+    it("clears heartbeat, watchdog, and visibility resources when the last subscriber leaves", () => {
+      vi.useFakeTimers()
+      const mockDocument = new MockDocument()
+      const addListener = vi.spyOn(mockDocument, "addEventListener")
+      const removeListener = vi.spyOn(mockDocument, "removeEventListener")
+      vi.stubGlobal("document", mockDocument as unknown as Document)
+      const feed = subscribeFeed({ onChange: vi.fn() }, 0)
+      const socket = lastSocket()
+      socket.open()
+      vi.advanceTimersByTime(15_000)
+      const sentBeforeClose = socket.sent.length
+
+      feed.close()
+
+      expect(addListener).toHaveBeenCalledWith("visibilitychange", expect.any(Function))
+      expect(removeListener).toHaveBeenCalledWith("visibilitychange", expect.any(Function))
+      expect(socket.readyState).toBe(MockWebSocket.CLOSED)
+      expect(vi.getTimerCount()).toBe(0)
+      vi.advanceTimersByTime(60_000)
+      expect(socket.sent).toHaveLength(sentBeforeClose + 1) // final unsubscribe only
+      expect(sockets).toHaveLength(1)
+    })
   })
 
   describe("MessagePack negotiation", () => {
