@@ -34,6 +34,10 @@ const RETRYABLE_STATUSES = new Set([408, 429, 500, 502, 503, 504]);
 const DEFAULT_LOGICAL_TIMEOUT_MS = 30_000;
 const DEFAULT_TOTAL_ATTEMPTS = 3;
 const DEFAULT_MAX_RETRY_DELAY_MS = 2_000;
+const READABLE_STREAM_LOCKED_GETTER =
+  typeof ReadableStream === "undefined"
+    ? undefined
+    : Object.getOwnPropertyDescriptor(ReadableStream.prototype, "locked")?.get;
 
 function defaultRetryDelayMs(completedAttempts: number): number {
   return 250 * 2 ** Math.max(0, completedAttempts - 1);
@@ -160,12 +164,145 @@ function interruptibleDelay(ms: number, signal: AbortSignal): Promise<void> {
   });
 }
 
-function requestMethod(input: RequestInfo | URL, init: RequestInit): string {
-  if (init.method) return init.method.toUpperCase();
-  if (typeof Request !== "undefined" && input instanceof Request) {
-    return input.method.toUpperCase();
+interface RequestInitSnapshot {
+  readonly requestInit: RequestInit;
+  readonly method: unknown;
+  readonly body: unknown;
+  readonly callerSignal: AbortSignal | null | undefined;
+}
+
+function assertCanonicalInput(input: unknown): asserts input is string | URL {
+  if (typeof input === "string") return;
+  if (typeof URL !== "undefined") {
+    try {
+      // Use the platform brand check rather than `instanceof` so a URL from a
+      // different browser realm remains valid without accepting a Request.
+      URL.prototype.toString.call(input);
+      return;
+    } catch {
+      // Fall through to the explicit unsupported-input error.
+    }
   }
-  return "GET";
+  throw new TypeError("HttpTransport input must be a string or URL; Request is unsupported.");
+}
+
+/** Read caller-controlled RequestInit properties once into a plain snapshot. */
+function snapshotRequestInit(init: RequestInit): RequestInitSnapshot {
+  if (
+    init === null ||
+    (typeof init !== "object" && typeof init !== "function")
+  ) {
+    throw new TypeError("RequestInit must be an object.");
+  }
+
+  const source = init as unknown as {
+    method?: unknown;
+    body?: unknown;
+    signal?: AbortSignal | null;
+  };
+  const requestInit = Object.create(null) as RequestInit;
+  let method: unknown;
+  let body: unknown;
+  let signal: AbortSignal | null | undefined;
+  let copiedMethod = false;
+  let copiedBody = false;
+  let copiedSignal = false;
+
+  // Object.entries materializes each own enumerable value once across the
+  // supported Node/browser engines. Avoid object-rest here: Node 22 may invoke
+  // excluded getters again while creating the rest object.
+  for (const [key, value] of Object.entries(init as unknown as object)) {
+    if (key === "method") {
+      method = value;
+      copiedMethod = true;
+      continue;
+    }
+    if (key === "body") {
+      body = value;
+      copiedBody = true;
+      continue;
+    }
+    if (key === "signal") {
+      signal = value as AbortSignal | null | undefined;
+      copiedSignal = true;
+      continue;
+    }
+    Object.defineProperty(requestInit, key, {
+      configurable: true,
+      enumerable: true,
+      value,
+      writable: true,
+    });
+  }
+  if (!copiedMethod) method = source.method;
+  if (!copiedBody) body = source.body;
+  if (!copiedSignal) signal = source.signal;
+  for (const [key, value] of [
+    ["method", method],
+    ["body", body],
+  ] as const) {
+    Object.defineProperty(requestInit, key, {
+      configurable: true,
+      enumerable: true,
+      value,
+      writable: true,
+    });
+  }
+
+  return {
+    method,
+    body,
+    callerSignal: signal,
+    requestInit,
+  };
+}
+
+function requestMethod(method: unknown): string | undefined {
+  if (method === undefined) return "GET";
+  if (typeof method !== "string") return undefined;
+  // Fetch methods are byte strings. Restrict normalization to ASCII letters so
+  // Unicode case folding cannot turn an invalid method into an allowlisted one.
+  return method.replace(/[a-z]/g, (character) =>
+    String.fromCharCode(character.charCodeAt(0) - 32),
+  );
+}
+
+/**
+ * Fetch can consume a ReadableStream body only once. First use the platform's
+ * side-effect-free brand getter, then walk descriptors so streams originating
+ * in another realm or implementation also fail closed without invoking a
+ * caller-controlled `getReader` getter.
+ */
+function hasOneShotBody(body: unknown): boolean {
+  if (typeof body !== "object" || body === null) return false;
+
+  if (READABLE_STREAM_LOCKED_GETTER) {
+    try {
+      READABLE_STREAM_LOCKED_GETTER.call(body);
+      return true;
+    } catch {
+      // Continue with a structural check for cross-realm/polyfilled streams.
+    }
+  }
+
+  try {
+    const seen = new Set<object>();
+    let candidate: object | null = body;
+    while (candidate !== null) {
+      if (seen.has(candidate)) return true;
+      seen.add(candidate);
+      if (Object.getOwnPropertyDescriptor(candidate, "getReader") !== undefined) {
+        return true;
+      }
+      candidate = Object.getPrototypeOf(candidate) as object | null;
+    }
+    return false;
+  } catch {
+    // An exotic body whose brand/prototype cannot be inspected must never
+    // receive an automatic second send. Fetch remains responsible for deciding
+    // whether the first attempt accepts it.
+    return true;
+  }
 }
 
 async function releaseResponseBody(response: Response, signal: AbortSignal): Promise<void> {
@@ -348,24 +485,40 @@ export class HttpTransport {
     this.maxRetryDelayMs = maxRetryDelayMs;
   }
 
-  request(input: RequestInfo | URL, init: RequestInit = {}): Promise<Response> {
+  request(input: string | URL, init: RequestInit = {}): Promise<Response> {
     return this.execute(input, init, this.totalAttempts);
   }
 
   /** Same cancellation/deadline kernel with an explicit zero-retry budget. */
-  requestOnce(input: RequestInfo | URL, init: RequestInit = {}): Promise<Response> {
+  requestOnce(input: string | URL, init: RequestInit = {}): Promise<Response> {
     return this.execute(input, init, 1);
   }
 
   private async execute(
-    input: RequestInfo | URL,
+    input: string | URL,
     init: RequestInit,
     configuredAttempts: number,
   ): Promise<Response> {
-    const method = requestMethod(input, init);
-    const allowedAttempts = RETRYABLE_METHODS.has(method) ? configuredAttempts : 1;
-    const context = createCancellationContext(init.signal, this.logicalTimeoutMs);
-    const requestInit: RequestInit = { ...init, signal: context.signal };
+    assertCanonicalInput(input);
+    let snapshot: RequestInitSnapshot;
+    try {
+      snapshot = snapshotRequestInit(init);
+    } catch (error) {
+      throw new NetworkRequestError(error);
+    }
+
+    const method = requestMethod(snapshot.method);
+    const allowedAttempts =
+      method !== undefined &&
+      RETRYABLE_METHODS.has(method) &&
+      !hasOneShotBody(snapshot.body)
+        ? configuredAttempts
+        : 1;
+    const context = createCancellationContext(snapshot.callerSignal, this.logicalTimeoutMs);
+    const requestInit: RequestInit = Object.freeze({
+      ...snapshot.requestInit,
+      signal: context.signal,
+    });
     let responseOwnsLifecycle = false;
 
     try {
