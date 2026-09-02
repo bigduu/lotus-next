@@ -135,7 +135,7 @@ const expectedInventory = {
     "src/shared/utils/debugFlags.ts": 2,
   },
   "endpoint-override-storage": {
-    "src/runtime/browserRuntime.ts": 29,
+    "src/runtime/browserRuntime.ts": 30,
   },
   "tauri-runtime": {
     "src/runtime/browserRuntime.ts": 4,

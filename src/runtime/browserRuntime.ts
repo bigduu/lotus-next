@@ -20,6 +20,8 @@ export const LEGACY_BACKEND_OVERRIDE_STORAGE_KEY = "copilot_backend_base_url";
 
 const BACKEND_OVERRIDE_MIGRATION_WARNING =
   "Backend override migration could not be verified; the legacy override was preserved.";
+const BACKEND_OVERRIDE_MIGRATION_ROLLBACK_WARNING =
+  "Canonical backend override is active, but legacy override preservation could not be verified.";
 const BACKEND_OVERRIDE_READ_ERROR = "Backend override state could not be read safely.";
 const BACKEND_OVERRIDE_PERSIST_ERROR =
   "Backend override persistence could not be completed safely.";
@@ -336,12 +338,23 @@ const readStoredOverride = (
     // Best-effort restoration below preserves rollback data after partial mutation.
   }
   if (!legacyRemovalVerified) {
+    let legacyRestorationVerified = false;
     try {
       storage.setItem(LEGACY_BACKEND_OVERRIDE_STORAGE_KEY, legacyStored);
     } catch {
+      // Verification below still checks whether the original value survived.
+    }
+    try {
+      legacyRestorationVerified =
+        storage.getItem(LEGACY_BACKEND_OVERRIDE_STORAGE_KEY) === legacyStored;
+    } catch {
       // The fixed warning below deliberately excludes storage errors and values.
     }
-    warn(BACKEND_OVERRIDE_MIGRATION_WARNING);
+    warn(
+      legacyRestorationVerified
+        ? BACKEND_OVERRIDE_MIGRATION_WARNING
+        : BACKEND_OVERRIDE_MIGRATION_ROLLBACK_WARNING,
+    );
   }
   return canonical;
 };

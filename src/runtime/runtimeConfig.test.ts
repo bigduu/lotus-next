@@ -62,6 +62,8 @@ const loopbackPageCases = [
 
 const MIGRATION_WARNING =
   "Backend override migration could not be verified; the legacy override was preserved.";
+const MIGRATION_ROLLBACK_WARNING =
+  "Canonical backend override is active, but legacy override preservation could not be verified.";
 const PERSISTENCE_ERROR = "Backend override persistence could not be completed safely.";
 const CLEAR_ERROR = "Backend overrides could not be cleared safely.";
 const READ_ERROR = "Backend override state could not be read safely.";
@@ -615,6 +617,48 @@ describe("canonical runtime configuration", () => {
     );
     expect(warn).toHaveBeenCalledOnce();
     expect(warn).toHaveBeenCalledWith(MIGRATION_WARNING);
+  });
+
+  it("does not claim legacy preservation when deletion verification and restoration fail", () => {
+    const storage = createMemoryStorage();
+    storage.values.set(LEGACY_BACKEND_OVERRIDE_STORAGE_KEY, "https://legacy.example/v1");
+    const originalGetItem = storage.getItem.bind(storage);
+    let failNextLegacyRead = false;
+    let ignoreLegacyRestore = false;
+    vi.spyOn(storage, "removeItem").mockImplementation((key) => {
+      storage.values.delete(key);
+      if (key === LEGACY_BACKEND_OVERRIDE_STORAGE_KEY) {
+        failNextLegacyRead = true;
+        ignoreLegacyRestore = true;
+      }
+    });
+    vi.spyOn(storage, "getItem").mockImplementation((key) => {
+      if (key === LEGACY_BACKEND_OVERRIDE_STORAGE_KEY && failNextLegacyRead) {
+        failNextLegacyRead = false;
+        throw new DOMException("secret storage detail", "SecurityError");
+      }
+      return originalGetItem(key);
+    });
+    vi.spyOn(storage, "setItem").mockImplementation((key, storedValue) => {
+      if (key === LEGACY_BACKEND_OVERRIDE_STORAGE_KEY && ignoreLegacyRestore) return;
+      storage.values.set(key, storedValue);
+    });
+    const warn = vi.fn();
+
+    const runtime = resolveBrowserRuntimeConfig({
+      location: { href: "https://page.example/app" },
+      storage,
+      warn,
+    });
+
+    expect(runtime.endpoints.nativeApi).toBe("https://legacy.example/api/v1");
+    expect(storage.values.get(BACKEND_OVERRIDE_STORAGE_KEY)).toBe(
+      "https://legacy.example/api/v1",
+    );
+    expect(storage.values.has(LEGACY_BACKEND_OVERRIDE_STORAGE_KEY)).toBe(false);
+    expect(warn).toHaveBeenCalledOnce();
+    expect(warn).toHaveBeenCalledWith(MIGRATION_ROLLBACK_WARNING);
+    expect(warn.mock.calls.flat().join(" ")).not.toContain("secret");
   });
 
   it("prefers a safe public build default over the page origin", () => {
