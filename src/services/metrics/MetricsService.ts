@@ -1,4 +1,4 @@
-import { agentApiClient } from "../api";
+import { apiClient } from "../api";
 import type {
   DailyMetrics,
   ForwardEndpointMetrics,
@@ -44,7 +44,7 @@ export class MetricsService {
       start_date: range.startDate,
       end_date: range.endDate,
     });
-    return agentApiClient.get<MetricsSummary>(`metrics/summary${query}`);
+    return apiClient.get<MetricsSummary>(`metrics/summary${query}`);
   }
 
   async getByModel(range: MetricsDateRange = {}): Promise<ModelMetrics[]> {
@@ -52,7 +52,7 @@ export class MetricsService {
       start_date: range.startDate,
       end_date: range.endDate,
     });
-    return agentApiClient.get<ModelMetrics[]>(`metrics/by-model${query}`);
+    return apiClient.get<ModelMetrics[]>(`metrics/by-model${query}`);
   }
 
   async getSessions(query: MetricsSessionQuery = {}): Promise<SessionMetrics[]> {
@@ -62,12 +62,12 @@ export class MetricsService {
       model: query.model,
       limit: query.limit,
     });
-    return agentApiClient.get<SessionMetrics[]>(`metrics/sessions${queryString}`);
+    return apiClient.get<SessionMetrics[]>(`metrics/sessions${queryString}`);
   }
 
   async getSessionDetail(sessionId: string): Promise<SessionDetail | null> {
     try {
-      return await agentApiClient.get<SessionDetail>(
+      return await apiClient.get<SessionDetail>(
         `metrics/sessions/${encodeURIComponent(sessionId)}`,
       );
     } catch (error) {
@@ -84,7 +84,7 @@ export class MetricsService {
       end_date: query.endDate,
       model: query.model,
     });
-    return agentApiClient.get<MetricsUsageBreakdownResponse>(
+    return apiClient.get<MetricsUsageBreakdownResponse>(
       `metrics/usage-breakdown${queryString}`,
     );
   }
@@ -95,7 +95,7 @@ export class MetricsService {
       end_date: query.endDate,
       granularity: query.granularity,
     });
-    return agentApiClient.get<DailyOrPeriodMetrics>(`metrics/daily${queryString}`);
+    return apiClient.get<DailyOrPeriodMetrics>(`metrics/daily${queryString}`);
   }
 
   // Forward metrics methods
@@ -107,7 +107,7 @@ export class MetricsService {
       model: query.model,
       limit: query.limit,
     });
-    return agentApiClient.get<ForwardMetricsSummary>(`metrics/forward/summary${queryString}`);
+    return apiClient.get<ForwardMetricsSummary>(`metrics/forward/summary${queryString}`);
   }
 
   async getForwardByEndpoint(query: ForwardMetricsQuery = {}): Promise<ForwardEndpointMetrics[]> {
@@ -118,7 +118,7 @@ export class MetricsService {
       model: query.model,
       limit: query.limit,
     });
-    return agentApiClient.get<ForwardEndpointMetrics[]>(
+    return apiClient.get<ForwardEndpointMetrics[]>(
       `metrics/forward/by-endpoint${queryString}`,
     );
   }
@@ -131,7 +131,7 @@ export class MetricsService {
       model: query.model,
       limit: query.limit,
     });
-    return agentApiClient.get<ForwardRequestMetrics[]>(`metrics/forward/requests${queryString}`);
+    return apiClient.get<ForwardRequestMetrics[]>(`metrics/forward/requests${queryString}`);
   }
 
   async getMemorySummary(query: MemoryMetricsQuery = {}): Promise<MemoryMetricsSummary> {
@@ -139,7 +139,7 @@ export class MetricsService {
       scope: query.scope,
       project_key: query.projectKey,
     });
-    return agentApiClient.get<MemoryMetricsSummary>(`metrics/memory/summary${queryString}`);
+    return apiClient.get<MemoryMetricsSummary>(`metrics/memory/summary${queryString}`);
   }
 
   async getMemoryTimeline(query: MemoryMetricsQuery = {}): Promise<MemoryTimelinePoint[]> {
@@ -150,7 +150,7 @@ export class MetricsService {
       end_date: query.endDate,
       granularity: query.granularity,
     });
-    return agentApiClient.get<MemoryTimelinePoint[]>(`metrics/memory/timeline${queryString}`);
+    return apiClient.get<MemoryTimelinePoint[]>(`metrics/memory/timeline${queryString}`);
   }
 
   // Unified API methods (v2)
@@ -159,7 +159,7 @@ export class MetricsService {
       start_date: range.startDate,
       end_date: range.endDate,
     });
-    return agentApiClient.get<UnifiedSummary>(`metrics/v2/summary${query}`);
+    return apiClient.get<UnifiedSummary>(`metrics/v2/summary${query}`);
   }
 
   async getUnifiedTimeline(query: MetricsDailyQuery = {}): Promise<UnifiedTimelinePoint[]> {
@@ -168,7 +168,7 @@ export class MetricsService {
       end_date: query.endDate,
       granularity: query.granularity,
     });
-    return agentApiClient.get<UnifiedTimelinePoint[]>(`metrics/v2/timeline${queryString}`);
+    return apiClient.get<UnifiedTimelinePoint[]>(`metrics/v2/timeline${queryString}`);
   }
 }
 

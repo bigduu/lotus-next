@@ -12,13 +12,7 @@ configureApiDebugInstrumentation(runtime.publicMetadata.development);
 const httpTransport = createBrowserHttpTransport();
 
 export const apiClient = new ApiClient({
-  baseUrl: runtime.endpoints.standardApi,
-  requestCredentials: runtime.auth.requestCredentials,
-  transport: httpTransport,
-});
-
-export const agentApiClient = new ApiClient({
-  baseUrl: runtime.endpoints.agentApi,
+  baseUrl: runtime.endpoints.nativeApi,
   requestCredentials: runtime.auth.requestCredentials,
   transport: httpTransport,
 });

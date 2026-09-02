@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { getRuntimeConfig } from "../../runtime/runtimeConfig";
-import { agentApiClient, apiClient } from ".";
+import { apiClient } from ".";
 import { ApiClient } from "./client";
 import {
   ApiError,
@@ -23,7 +23,7 @@ function createClient(
   options: { logicalTimeoutMs?: number } = {},
 ): ApiClient {
   return new ApiClient({
-    baseUrl: "https://api.example:9443/v1/",
+    baseUrl: "https://api.example:9443/api/v1/",
     requestCredentials: "include",
     transport: new HttpTransport({
       fetchImplementation,
@@ -40,20 +40,29 @@ async function flushMicrotasks(): Promise<void> {
 }
 
 describe("API runtime composition", () => {
-  it("creates the standard and agent clients from the installed endpoint set", () => {
+  it("creates one native client from the installed canonical endpoint", () => {
     const runtime = getRuntimeConfig();
 
-    expect(apiClient.resolveUrl("models")).toBe(`${runtime.endpoints.standardApi}/models`);
-    expect(agentApiClient.resolveUrl("sessions/session-1")).toBe(
-      `${runtime.endpoints.agentApi}/sessions/session-1`,
-    );
+    expect(apiClient.resolveUrl("models")).toBe(`${runtime.endpoints.nativeApi}/models`);
+  });
+
+  it.each([
+    "commands",
+    "bamboo/settings/provider",
+    "workspace/validate",
+    "chat",
+  ])("resolves the representative native route %s under one /api/v1 prefix", (route) => {
+    const runtime = getRuntimeConfig();
+
+    expect(apiClient.resolveUrl(route)).toBe(`${runtime.endpoints.nativeApi}/${route}`);
+    expect(apiClient.resolveUrl(route).match(/\/api\/v1/g)).toHaveLength(1);
   });
 
   it("requires an explicit base URL and joins paths exactly once", () => {
     const client = createClient(vi.fn<FetchFunction>());
 
     expect(client.resolveUrl("///workspace/validate")).toBe(
-      "https://api.example:9443/v1/workspace/validate",
+      "https://api.example:9443/api/v1/workspace/validate",
     );
   });
 });
@@ -80,7 +89,7 @@ describe("ApiClient request and response adaptation", () => {
 
     expect(fetchImplementation).toHaveBeenCalledTimes(1);
     const [url, init] = fetchImplementation.mock.calls[0];
-    expect(url).toBe("https://api.example:9443/v1/workspace/validate");
+    expect(url).toBe("https://api.example:9443/api/v1/workspace/validate");
     expect(init?.method).toBe("POST");
     expect(init?.credentials).toBe("include");
     expect(init?.body).toBe(JSON.stringify({ path: "/workspace" }));
@@ -266,7 +275,7 @@ describe("ApiClient raw response compatibility", () => {
 
     expect(fetchImplementation).toHaveBeenCalledTimes(1);
     const [url, init] = fetchImplementation.mock.calls[0];
-    expect(url).toBe("https://api.example:9443/v1/stream");
+    expect(url).toBe("https://api.example:9443/api/v1/stream");
     expect(init?.method).toBe("HEAD");
     expect(init?.credentials).toBe("include");
     expect(new Headers(init?.headers).get("x-stream")).toBe("1");

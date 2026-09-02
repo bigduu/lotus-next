@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react"
-import { apiClient, agentApiClient, getErrorMessage } from "@services/api"
+import { apiClient, getErrorMessage } from "@services/api"
 import type { BambooConfig, NotificationsConfig } from "@services/common/ServiceFactory"
 import { isMaskedSecret } from "@/lib/secrets"
 import { Button } from "@/components/ui/button"
@@ -165,7 +165,7 @@ export function ChannelsSection() {
     setTestError(null)
     setAttempted(null)
     try {
-      const res = await agentApiClient.post<{ attempted: string[] }>("notifications/test")
+      const res = await apiClient.post<{ attempted: string[] }>("notifications/test")
       setAttempted(res.attempted)
     } catch (e) {
       setTestError(getErrorMessage(e))

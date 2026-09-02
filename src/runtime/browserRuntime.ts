@@ -8,7 +8,35 @@ import {
   type RuntimeHost,
 } from "./runtimeConfig";
 
-export const BACKEND_OVERRIDE_STORAGE_KEY = "copilot_backend_base_url";
+export const BACKEND_OVERRIDE_STORAGE_KEY = "lotus_next_backend_endpoint_v1";
+
+/**
+ * Temporary migration input owned exclusively by this runtime resolver.
+ * Remove its sole read path after the first all-surface artifact containing
+ * the migration reaches every default consumer and its declared rollback
+ * window has ended.
+ */
+export const LEGACY_BACKEND_OVERRIDE_STORAGE_KEY = "copilot_backend_base_url";
+
+const BACKEND_OVERRIDE_MIGRATION_WARNING =
+  "Backend override migration could not be verified; the legacy override was preserved.";
+const BACKEND_OVERRIDE_MIGRATION_ROLLBACK_WARNING =
+  "Canonical backend override is active, but legacy override preservation could not be verified.";
+const BACKEND_OVERRIDE_READ_ERROR = "Backend override state could not be read safely.";
+const BACKEND_OVERRIDE_PERSIST_ERROR =
+  "Backend override persistence could not be completed safely.";
+const BACKEND_OVERRIDE_CLEAR_ERROR = "Backend overrides could not be cleared safely.";
+
+const containsControlCharacter = (value: string): boolean =>
+  Array.from(value).some((character) => {
+    const codePoint = character.charCodeAt(0);
+    return codePoint <= 0x1f || codePoint === 0x7f;
+  });
+
+interface BackendOverrideSnapshot {
+  readonly versioned: string | null;
+  readonly legacy: string | null;
+}
 
 export interface PublicBuildInput {
   readonly backendBaseUrl?: string;
@@ -138,9 +166,54 @@ const getDefaultStorage = (): RuntimeStorage | null => {
   }
 };
 
+const requireDefaultStorage = (failureMessage: string): RuntimeStorage => {
+  try {
+    if (typeof globalThis.localStorage === "undefined") {
+      throw new Error("unavailable");
+    }
+    return globalThis.localStorage;
+  } catch {
+    throw new RuntimeConfigurationError(failureMessage);
+  }
+};
+
+const readBackendOverrideSnapshot = (storage: RuntimeStorage): BackendOverrideSnapshot => ({
+  versioned: storage.getItem(BACKEND_OVERRIDE_STORAGE_KEY),
+  legacy: storage.getItem(LEGACY_BACKEND_OVERRIDE_STORAGE_KEY),
+});
+
+const restoreBackendOverrideSnapshot = (
+  storage: RuntimeStorage,
+  snapshot: BackendOverrideSnapshot,
+): boolean => {
+  let restored = true;
+  const restore = (key: string, value: string | null): void => {
+    try {
+      if (value === null) storage.removeItem(key);
+      else storage.setItem(key, value);
+    } catch {
+      restored = false;
+    }
+  };
+  restore(BACKEND_OVERRIDE_STORAGE_KEY, snapshot.versioned);
+  restore(LEGACY_BACKEND_OVERRIDE_STORAGE_KEY, snapshot.legacy);
+  try {
+    restored =
+      storage.getItem(BACKEND_OVERRIDE_STORAGE_KEY) === snapshot.versioned && restored;
+  } catch {
+    restored = false;
+  }
+  try {
+    restored = storage.getItem(LEGACY_BACKEND_OVERRIDE_STORAGE_KEY) === snapshot.legacy && restored;
+  } catch {
+    restored = false;
+  }
+  return restored;
+};
+
 const assertSafeForPage = (backendBaseUrl: string, pageUrl: URL | null): string => {
   const endpoints = createRuntimeEndpointSet(backendBaseUrl);
-  const endpoint = new URL(endpoints.standardApi);
+  const endpoint = new URL(endpoints.nativeApi);
 
   if (pageUrl?.protocol === "https:" && endpoint.protocol !== "https:") {
     throw new RuntimeConfigurationError(
@@ -159,7 +232,44 @@ const assertSafeForPage = (backendBaseUrl: string, pageUrl: URL | null): string 
     );
   }
 
-  return endpoints.standardApi;
+  return endpoints.nativeApi;
+};
+
+const normalizeLegacyStoredOverrideInput = (value: string): string => {
+  if (containsControlCharacter(value)) return value;
+  const trimmed = value.trim();
+  if (
+    trimmed.includes("\\") ||
+    trimmed.includes("?") ||
+    trimmed.includes("#")
+  ) {
+    return value;
+  }
+  const rawEndpoint = /^([A-Za-z][A-Za-z\d+.-]*:\/\/[^/]+)(\/.*)?$/.exec(trimmed);
+  if (rawEndpoint && /^\/v1\/*$/.test(rawEndpoint[2] ?? "")) {
+    return `${rawEndpoint[1]}/api/v1`;
+  }
+  return value;
+};
+
+const removeUnsafeStoredOverride = (
+  storage: RuntimeStorage,
+  key: string,
+  error: unknown,
+  warn: (message: string) => void,
+): void => {
+  let removed = false;
+  try {
+    storage.removeItem(key);
+    removed = storage.getItem(key) === null;
+  } catch {
+    // A storage implementation can be read-only; rejection still succeeds.
+  }
+  const reason =
+    error instanceof RuntimeConfigurationError
+      ? error.message
+      : "Backend override validation failed.";
+  warn(`${removed ? "Removed" : "Ignored"} unsafe backend override: ${reason}`);
 };
 
 const readStoredOverride = (
@@ -175,20 +285,78 @@ const readStoredOverride = (
   } catch {
     return null;
   }
-  if (!stored) return null;
 
-  try {
-    return assertSafeForPage(stored, pageUrl);
-  } catch (error) {
+  // A present versioned value is authoritative. Never consult the legacy key
+  // as a fallback for a malformed or unsafe canonical value.
+  if (stored !== null) {
     try {
-      storage.removeItem(BACKEND_OVERRIDE_STORAGE_KEY);
-    } catch {
-      // A storage implementation can be read-only; rejection still succeeds.
+      return assertSafeForPage(stored, pageUrl);
+    } catch (error) {
+      removeUnsafeStoredOverride(storage, BACKEND_OVERRIDE_STORAGE_KEY, error, warn);
+      return null;
     }
-    const reason = error instanceof Error ? error.message : String(error);
-    warn(`Removed unsafe backend override: ${reason}`);
+  }
+
+  let legacyStored: string | null;
+  try {
+    legacyStored = storage.getItem(LEGACY_BACKEND_OVERRIDE_STORAGE_KEY);
+  } catch {
     return null;
   }
+  if (legacyStored === null) return null;
+
+  let canonical: string;
+  try {
+    canonical = assertSafeForPage(normalizeLegacyStoredOverrideInput(legacyStored), pageUrl);
+  } catch (error) {
+    removeUnsafeStoredOverride(storage, LEGACY_BACKEND_OVERRIDE_STORAGE_KEY, error, warn);
+    return null;
+  }
+
+  let migrationVerified = false;
+  try {
+    storage.setItem(BACKEND_OVERRIDE_STORAGE_KEY, canonical);
+    migrationVerified = storage.getItem(BACKEND_OVERRIDE_STORAGE_KEY) === canonical;
+  } catch {
+    // The fixed warning below deliberately excludes storage errors and values.
+  }
+
+  if (!migrationVerified) {
+    restoreBackendOverrideSnapshot(storage, {
+      versioned: null,
+      legacy: legacyStored,
+    });
+    warn(BACKEND_OVERRIDE_MIGRATION_WARNING);
+    return canonical;
+  }
+
+  let legacyRemovalVerified = false;
+  try {
+    storage.removeItem(LEGACY_BACKEND_OVERRIDE_STORAGE_KEY);
+    legacyRemovalVerified = storage.getItem(LEGACY_BACKEND_OVERRIDE_STORAGE_KEY) === null;
+  } catch {
+    // Best-effort restoration below preserves rollback data after partial mutation.
+  }
+  if (!legacyRemovalVerified) {
+    let legacyRestorationVerified = false;
+    try {
+      storage.setItem(LEGACY_BACKEND_OVERRIDE_STORAGE_KEY, legacyStored);
+    } catch {
+      // Verification below still checks whether the original value survived.
+    }
+    try {
+      legacyRestorationVerified =
+        storage.getItem(LEGACY_BACKEND_OVERRIDE_STORAGE_KEY) === legacyStored;
+    } catch {
+      // The fixed warning below deliberately excludes storage errors and values.
+    }
+    warn(
+      legacyRestorationVerified
+        ? BACKEND_OVERRIDE_MIGRATION_WARNING
+        : BACKEND_OVERRIDE_MIGRATION_ROLLBACK_WARNING,
+    );
+  }
+  return canonical;
 };
 
 const isTrustedTauriRuntime = (value: unknown): boolean =>
@@ -248,7 +416,7 @@ const resolveSidecarBackend = (input: BrowserRuntimeInput, pageUrl: URL | null):
       "An HTTPS Lotus Next page cannot connect to an HTTP Bodhi sidecar.",
     );
   }
-  return `http://127.0.0.1:${input.sidecarPort}/v1`;
+  return `http://127.0.0.1:${input.sidecarPort}`;
 };
 
 const resolvePageBackend = (pageUrl: URL | null): string => {
@@ -257,7 +425,7 @@ const resolvePageBackend = (pageUrl: URL | null): string => {
       "No supported backend endpoint was provided. Serve Lotus Next over HTTP(S) or inject a trusted Bodhi sidecar port.",
     );
   }
-  return `${pageUrl.origin}/v1`;
+  return pageUrl.origin;
 };
 
 export const resolveBrowserRuntimeConfig = (input: BrowserRuntimeInput = {}): RuntimeConfig => {
@@ -338,15 +506,77 @@ export const persistBackendOverride = (value: string): void => {
     typeof globalThis.location?.href === "string" ? { href: globalThis.location.href } : null,
   );
   const normalized = assertSafeForPage(value, pageUrl);
-  globalThis.localStorage.setItem(BACKEND_OVERRIDE_STORAGE_KEY, normalized);
+  const storage = requireDefaultStorage(BACKEND_OVERRIDE_PERSIST_ERROR);
+  let snapshot: BackendOverrideSnapshot;
+  try {
+    snapshot = readBackendOverrideSnapshot(storage);
+  } catch {
+    throw new RuntimeConfigurationError(BACKEND_OVERRIDE_PERSIST_ERROR);
+  }
+
+  let persisted = false;
+  try {
+    storage.setItem(BACKEND_OVERRIDE_STORAGE_KEY, normalized);
+    if (storage.getItem(BACKEND_OVERRIDE_STORAGE_KEY) === normalized) {
+      storage.removeItem(LEGACY_BACKEND_OVERRIDE_STORAGE_KEY);
+      persisted = storage.getItem(LEGACY_BACKEND_OVERRIDE_STORAGE_KEY) === null;
+    }
+  } catch {
+    // The fixed failure below deliberately excludes storage errors and values.
+  }
+  if (!persisted) {
+    restoreBackendOverrideSnapshot(storage, snapshot);
+    throw new RuntimeConfigurationError(BACKEND_OVERRIDE_PERSIST_ERROR);
+  }
 };
 
 export const clearBackendOverride = (): void => {
-  globalThis.localStorage.removeItem(BACKEND_OVERRIDE_STORAGE_KEY);
+  const storage = requireDefaultStorage(BACKEND_OVERRIDE_CLEAR_ERROR);
+  let snapshot: BackendOverrideSnapshot;
+  try {
+    snapshot = readBackendOverrideSnapshot(storage);
+  } catch {
+    throw new RuntimeConfigurationError(BACKEND_OVERRIDE_CLEAR_ERROR);
+  }
+
+  let cleared = true;
+  try {
+    storage.removeItem(BACKEND_OVERRIDE_STORAGE_KEY);
+  } catch {
+    cleared = false;
+  }
+  try {
+    storage.removeItem(LEGACY_BACKEND_OVERRIDE_STORAGE_KEY);
+  } catch {
+    cleared = false;
+  }
+  try {
+    cleared = storage.getItem(BACKEND_OVERRIDE_STORAGE_KEY) === null && cleared;
+  } catch {
+    cleared = false;
+  }
+  try {
+    cleared = storage.getItem(LEGACY_BACKEND_OVERRIDE_STORAGE_KEY) === null && cleared;
+  } catch {
+    cleared = false;
+  }
+  if (!cleared) {
+    restoreBackendOverrideSnapshot(storage, snapshot);
+    throw new RuntimeConfigurationError(BACKEND_OVERRIDE_CLEAR_ERROR);
+  }
 };
 
-export const hasBackendOverride = (): boolean =>
-  globalThis.localStorage.getItem(BACKEND_OVERRIDE_STORAGE_KEY) !== null;
+export const hasBackendOverride = (): boolean => {
+  const storage = requireDefaultStorage(BACKEND_OVERRIDE_READ_ERROR);
+  try {
+    return (
+      storage.getItem(BACKEND_OVERRIDE_STORAGE_KEY) !== null ||
+      storage.getItem(LEGACY_BACKEND_OVERRIDE_STORAGE_KEY) !== null
+    );
+  } catch {
+    throw new RuntimeConfigurationError(BACKEND_OVERRIDE_READ_ERROR);
+  }
+};
 
 declare global {
   interface Window {

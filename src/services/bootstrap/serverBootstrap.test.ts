@@ -12,7 +12,7 @@ const apiMock = vi.hoisted(() => ({
   post: vi.fn<(path: string, data?: unknown, options?: RequestInit) => Promise<unknown>>(),
 }));
 
-vi.mock("../api", () => ({ agentApiClient: apiMock }));
+vi.mock("../api", () => ({ apiClient: apiMock }));
 
 import {
   classifyServerBootstrapDocument,

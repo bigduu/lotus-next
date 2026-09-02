@@ -12,6 +12,15 @@ import {
   verifyRepositoryArchitecture,
 } from "./check-architecture.mjs";
 
+const fixtureMessages = (file, source) =>
+  findArchitectureViolations(new Map([[file, source]])).join("\n");
+const runtimeSchema = (body = "") =>
+  `interface RuntimeEndpointSet { readonly origin: string; readonly nativeApi: string; readonly v2Stream: string } ${body}`;
+const clientOwner = (member = "", tail = "") =>
+  `export class ApiClient { ${member} } ${tail}`;
+const transportOwner = (member = "", tail = "") =>
+  `export class HttpTransport { ${member} } const canonical = new HttpTransport({}); const fetchOwner = globalThis.fetch; ${tail}`;
+
 describe("architecture boundary fixtures", () => {
   it("allows the designated runtime, composition, and transport adapters", () => {
     const sources = new Map([
@@ -19,11 +28,14 @@ describe("architecture boundary fixtures", () => {
         "src/runtime/browserRuntime.ts",
         `
           const base = import.meta.env.VITE_BACKEND_BASE_URL;
-          const key = "copilot_backend_base_url";
+          const key = "lotus_next_backend_endpoint_v1";
+          const legacyKey = "copilot_backend_base_url";
+          const legacyPath = parsed.pathname === "/v1";
           const port = window.__BAMBOO_BACKEND_PORT__;
           const tauri = window.__TAURI_INTERNALS__;
         `,
       ],
+      ["src/runtime/runtimeConfig.ts", runtimeSchema()],
       [
         "src/services/api/transport.ts",
         `
@@ -40,8 +52,7 @@ describe("architecture boundary fixtures", () => {
           import { createBrowserHttpTransport } from "./transport";
           const runtime = getRuntimeConfig();
           const transport = createBrowserHttpTransport();
-          const apiClient = new ApiClient({ baseUrl: runtime.endpoints.standardApi, transport });
-          const agentApiClient = new ApiClient({ baseUrl: runtime.endpoints.agentApi, transport });
+          const apiClient = new ApiClient({ baseUrl: runtime.endpoints.nativeApi, transport });
         `,
       ],
       [
@@ -114,6 +125,102 @@ describe("architecture boundary fixtures", () => {
     expect(findArchitectureViolations(changed).join("\n")).toMatch(/raw backend endpoint/);
   });
 
+  it.each([
+    ["extra field", "src/runtime/runtimeConfig.ts", `interface RuntimeEndpointSet { readonly origin: string; readonly nativeApi: string; readonly legacyNativeApi: string; readonly v2Stream: string }`, /expose exactly/],
+    ["duplicate field", "src/runtime/runtimeConfig.ts", `interface RuntimeEndpointSet { readonly origin: string; readonly nativeApi: string; readonly nativeApi: string }`, /expose exactly/],
+    ["missing fields", "src/runtime/runtimeConfig.ts", `interface RuntimeEndpointSet { readonly origin: string; readonly origin: string; readonly origin: string }`, /expose exactly/],
+    ["optional field", "src/runtime/runtimeConfig.ts", `interface RuntimeEndpointSet { readonly origin: string; readonly nativeApi?: string; readonly v2Stream: string }`, /expose exactly/],
+    ["mutable field", "src/runtime/runtimeConfig.ts", `interface RuntimeEndpointSet { origin: string; readonly nativeApi: string; readonly v2Stream: string }`, /expose exactly/],
+    ["non-string field", "src/runtime/runtimeConfig.ts", `interface RuntimeEndpointSet { readonly origin: string; readonly nativeApi: unknown; readonly v2Stream: string }`, /expose exactly/],
+    ["inheritance", "src/runtime/runtimeConfig.ts", `interface Extra { mirrorApi: string } interface RuntimeEndpointSet extends Extra { readonly origin: string; readonly nativeApi: string; readonly v2Stream: string }`, /must not extend/],
+    ["augmentation", "src/features/chat/unsafe.ts", `export {}; declare module "@/runtime/runtimeConfig" { interface RuntimeEndpointSet { mirrorApi?: string } }`, /augmentation and shadow schemas/],
+  ])("rejects RuntimeEndpointSet %s", (_label, file, source, expected) => {
+    expect(fixtureMessages(file, source)).toMatch(expected);
+  });
+
+  it("rejects deprecated dual-client names and duplicate canonical composition", () => {
+    const deprecated = fixtureMessages(
+      "src/features/chat/unsafe.ts",
+      `const standardApi = endpoint; const agentApi = endpoint; const agentApiClient = apiClient;`,
+    );
+    for (const name of ["standardApi", "agentApi", "agentApiClient"]) {
+      expect(deprecated).toMatch(new RegExp(`deprecated native REST name ${name}`));
+    }
+    const duplicate = fixtureMessages("src/services/api/index.ts", `
+      import { ApiClient } from "./client"; import { createBrowserHttpTransport } from "./transport";
+      const runtime = getRuntimeConfig(); const transport = createBrowserHttpTransport();
+      new ApiClient({ baseUrl: runtime.endpoints.nativeApi, transport });
+      new ApiClient({ baseUrl: runtime.endpoints.nativeApi, transport });`);
+    expect(duplicate).toMatch(/must construct exactly one native ApiClient/);
+    expect(duplicate).toMatch(/must read exactly one native runtime endpoint/);
+  });
+
+  it.each([
+    ["Api alias", "src/services/api/client.ts", clientOwner("", `const Alias = ApiClient; new Alias({});`)],
+    ["Api subclass", "src/services/api/client.ts", clientOwner("", `class Duplicate extends ApiClient {}; new Duplicate({});`)],
+    ["Api Reflect", "src/services/api/client.ts", clientOwner("", `Reflect.construct(ApiClient, [{}]);`)],
+    ["Api new this", "src/services/api/client.ts", clientOwner(`static duplicate() { return new this(); }`)],
+    ["Api Reflect this", "src/services/api/client.ts", clientOwner(`static duplicate() { return Reflect.construct(this, []); }`)],
+    ["Api this.constructor", "src/services/api/client.ts", clientOwner(`duplicate() { return new this.constructor(); }`)],
+    ["Api dynamic new", "src/services/api/client.ts", clientOwner(`static duplicate(C: typeof ApiClient) { return new C({}); }`)],
+    ["Api dynamic Reflect", "src/services/api/client.ts", clientOwner(`static duplicate(C: typeof ApiClient) { return Reflect.construct(C, []); }`)],
+    ["transport alias", "src/services/api/transport.ts", transportOwner("", `const Alias = HttpTransport; new Alias({});`)],
+    ["transport subclass", "src/services/api/transport.ts", transportOwner("", `class Duplicate extends HttpTransport {}; new Duplicate({});`)],
+    ["transport Reflect", "src/services/api/transport.ts", transportOwner("", `Reflect.construct(HttpTransport, [{}]);`)],
+    ["transport new this", "src/services/api/transport.ts", transportOwner(`static duplicate() { return new this(); }`)],
+    ["transport Reflect this", "src/services/api/transport.ts", transportOwner(`static duplicate() { return Reflect.construct(this, []); }`)],
+    ["transport this.constructor", "src/services/api/transport.ts", transportOwner(`duplicate() { return new this.constructor(); }`)],
+    ["transport dynamic new", "src/services/api/transport.ts", transportOwner(`static duplicate(C: typeof HttpTransport) { return new C({}); }`)],
+    ["transport dynamic Reflect", "src/services/api/transport.ts", transportOwner(`static duplicate(C: typeof HttpTransport) { return Reflect.construct(C, []); }`)],
+  ])("rejects concrete owner escape: %s", (_label, file, source) => {
+    expect(fixtureMessages(file, source)).toMatch(/definition owner/);
+  });
+
+  it("allows definitions, type positions, and the canonical direct transport construction", () => {
+    expect(findArchitectureViolations(new Map([
+      ["src/services/api/client.ts", clientOwner("", `interface Owner { client: ApiClient }`)],
+      ["src/services/api/transport.ts", `export class HttpTransport {} export function create(): HttpTransport { return new HttpTransport({ fetchImplementation: globalThis.fetch }); }`],
+    ]))).toEqual([]);
+  });
+
+  it("allows named /v1 data/parser exceptions but rejects executable native routes", () => {
+    expect(findArchitectureViolations(new Map([
+      ["src/runtime/browserRuntime.ts", `const legacy = parsed.pathname === "/v1";`],
+      ["vite.config.ts", `if (parsed.pathname === "/v1") throw new Error("unsupported");`],
+      ["src/runtime/runtimeConfig.ts", runtimeSchema("const nativeApi = `${origin}/api/v1`; ")],
+      ["src/lib/providerPresets.ts", `const endpoint = "https://api.deepseek.com/v1";`],
+    ]))).toEqual([]);
+    const unsafe = fixtureMessages("src/features/chat/unsafe.ts", `
+      const route = "/v1/sessions"; const composed = origin + "/v1";
+      apiClient.get("/v1/commands");`);
+    expect(unsafe.match(/Lotus native \/v1 routing is legacy-only/g)).toHaveLength(3);
+  });
+
+  it.each([
+    `const route = "/" + "v1/sessions"; apiClient.get(route);`,
+    `const slash = "/"; const version = "v1"; const route = origin + slash + version; apiClient.get(route);`,
+    `const version = "v1"; const route = \`${"${origin}"}/${"${version}"}\`; apiClient.get(route);`,
+    `const route = "/".concat("v1/sessions"); apiClient.get(route);`,
+    `const route = ["", "v1", "sessions"].join("/"); apiClient.get(route);`,
+    `const version = ["v", "1"].join(""); const route = origin + "/" + version; apiClient.get(route);`,
+  ])("rejects a statically composed native /v1 route", (source) => {
+    expect(fixtureMessages("src/features/chat/unsafe.ts", source)).toMatch(/statically composed paths/);
+  });
+
+  it("rejects a statically composed second canonical backend endpoint", () => {
+    expect(fixtureMessages("src/features/chat/unsafe.ts", `
+      const suffix = "/api/" + "v1"; const baseUrl = origin + suffix; void baseUrl;`),
+    ).toMatch(/statically composed backend endpoint is outside/);
+  });
+
+  it.each([
+    `const nativeApi = origin + "/api" + "/v1";`,
+    `const nativeApi = origin.concat("/api", "/v1");`,
+    `const nativeApi = [origin, "api", "v1"].join("/");`,
+  ])("allows canonical runtime endpoint composition", (composition) => {
+    expect(fixtureMessages("src/runtime/runtimeConfig.ts", runtimeSchema(composition))).toBe("");
+  });
+
   it("rejects secret-shaped public Vite variables in every owner", () => {
     const sources = new Map([
       ["src/runtime/browserRuntime.ts", "const secret = import.meta.env.VITE_BAMBOO_API_TOKEN;"],
@@ -128,8 +235,10 @@ describe("architecture boundary fixtures", () => {
         "src/features/chat/documentation.ts",
         `
           // fetch(endpoint)
+          // apiClient.get("/v1/sessions")
           const example = "new WebSocket(endpoint)";
           const note = "import.meta.env.VITE_BACKEND_BASE_URL";
+          const legacyDocumentation = 'apiClient.get("/v1/sessions")';
         `,
       ],
     ]);
@@ -166,6 +275,25 @@ describe("architecture boundary fixtures", () => {
     expect(violations).toMatch(/second HTTP transport owner/);
     expect(violations).toMatch(/WebSocket access is outside/);
     expect(violations).toMatch(/ApiClient construction is owned/);
+  });
+
+  it.each([
+    ["Api" + "Client", /ApiClient construction is owned/],
+    ["Http" + "Transport", /HttpTransport is an infrastructure transport type/],
+    ["createBrowser" + "HttpTransport", /createBrowserHttpTransport is a production composition API/],
+    ["Web" + "Socket", /WebSocket access is outside/],
+  ])("rejects the statically computed concrete owner key %s", (key, expected) => {
+    const middle = Math.floor(key.length / 2);
+    expect(fixtureMessages("src/features/chat/unsafe.ts", `
+      const key = ${JSON.stringify(key.slice(0, middle))} + ${JSON.stringify(key.slice(middle))};
+      void registry[key];`)).toMatch(expected);
+  });
+
+  it("rejects a statically computed runtime endpoint property", () => {
+    expect(fixtureMessages("src/features/chat/unsafe.ts", `
+      const key = "end" + "points"; void runtime[key];`)).toMatch(
+      /runtime endpoints are consumed outside designated transport adapters/,
+    );
   });
 
   it("rejects ApiClient inheritance and reflective construction outside composition", () => {
@@ -790,7 +918,7 @@ describe("architecture boundary fixtures", () => {
     expect(violations).toMatch(/second HTTP transport owner/);
   });
 
-  it("requires both production API clients to share the direct browser transport binding", () => {
+  it("requires the production API client to use the direct browser transport binding", () => {
     const sources = new Map([
       [
         "src/services/api/index.ts",
@@ -800,11 +928,7 @@ describe("architecture boundary fixtures", () => {
           const shared = createBrowserHttpTransport();
           const alternate = { request() {}, requestOnce() {} };
           const apiClient = new ApiClient({
-            baseUrl: runtime.endpoints.standardApi,
-            transport: shared,
-          });
-          const agentApiClient = new ApiClient({
-            baseUrl: runtime.endpoints.agentApi,
+            baseUrl: runtime.endpoints.nativeApi,
             transport: alternate,
           });
         `,
@@ -812,7 +936,7 @@ describe("architecture boundary fixtures", () => {
     ]);
 
     const violations = findArchitectureViolations(sources).filter((message) =>
-      message.includes("must receive the same direct createBrowserHttpTransport binding"),
+      message.includes("must receive the direct createBrowserHttpTransport binding"),
     );
     expect(violations).toHaveLength(1);
   });
@@ -835,11 +959,7 @@ describe("architecture boundary fixtures", () => {
             {
               ${shadowDeclaration}
               new ApiClient({
-                baseUrl: runtime.endpoints.standardApi,
-                transport: shared,
-              });
-              new ApiClient({
-                baseUrl: runtime.endpoints.agentApi,
+                baseUrl: runtime.endpoints.nativeApi,
                 transport: shared,
               });
             }
@@ -848,13 +968,13 @@ describe("architecture boundary fixtures", () => {
       ]);
 
       const violations = findArchitectureViolations(sources).filter((message) =>
-        message.includes("must receive the same direct createBrowserHttpTransport binding"),
+        message.includes("must receive the direct createBrowserHttpTransport binding"),
       );
-      expect(violations).toHaveLength(2);
+      expect(violations).toHaveLength(1);
       expect(buildInventory(sources)).toMatchObject({
         "browser-http-transport-composition": { "src/services/api/index.ts": 1 },
-        "api-client-constructor": { "src/services/api/index.ts": 2 },
-        "runtime-endpoint-read": { "src/services/api/index.ts": 2 },
+        "api-client-constructor": { "src/services/api/index.ts": 1 },
+        "runtime-endpoint-read": { "src/services/api/index.ts": 1 },
       });
     }
   });
@@ -867,11 +987,7 @@ describe("architecture boundary fixtures", () => {
           import { ApiClient } from "./rogueClient";
           const shared = createBrowserHttpTransport();
           const apiClient = new ApiClient({
-            baseUrl: runtime.endpoints.standardApi,
-            transport: shared,
-          });
-          const agentApiClient = new ApiClient({
-            baseUrl: runtime.endpoints.agentApi,
+            baseUrl: runtime.endpoints.nativeApi,
             transport: shared,
           });
         `,
@@ -886,11 +1002,7 @@ describe("architecture boundary fixtures", () => {
           class ApiClient {}
           const shared = createBrowserHttpTransport();
           const apiClient = new ApiClient({
-            baseUrl: runtime.endpoints.standardApi,
-            transport: shared,
-          });
-          const agentApiClient = new ApiClient({
-            baseUrl: runtime.endpoints.agentApi,
+            baseUrl: runtime.endpoints.nativeApi,
             transport: shared,
           });
         `,
@@ -904,8 +1016,8 @@ describe("architecture boundary fixtures", () => {
       for (const pattern of expected) expect(violations).toMatch(pattern);
       expect(buildInventory(sources)).toMatchObject({
         "browser-http-transport-composition": { "src/services/api/index.ts": 1 },
-        "api-client-constructor": { "src/services/api/index.ts": 2 },
-        "runtime-endpoint-read": { "src/services/api/index.ts": 2 },
+        "api-client-constructor": { "src/services/api/index.ts": 1 },
+        "runtime-endpoint-read": { "src/services/api/index.ts": 1 },
       });
     }
   });
@@ -979,13 +1091,32 @@ describe("architecture boundary fixtures", () => {
   });
 
   it.each([
+    "VITE_BACKEND_BASE_URL=https://allowed.example",
+    "VITE_BACKEND_BASE_URL=https://allowed.example/api/v1",
+    "VITE_BACKEND_BASE_URL=https://allowed.example/api/v1/",
+  ])("accepts canonical public backend input %s", (source) => {
+    expect(findArchitectureViolations(new Map([[".env.production", source]]))).toEqual([]);
+  });
+
+  it.each([
     ["VITE_AUTHORIZATION=redacted", /exact public Vite variable allowlist/],
     ["VITE_BEARER=redacted", /exact public Vite variable allowlist/],
     ["VITE_SESSION_COOKIE=redacted", /exact public Vite variable allowlist/],
     ["VITE_ACCESS_KEY=redacted", /exact public Vite variable allowlist/],
-    ["VITE_BACKEND_BASE_URL=https://user:password@example.com/v1", /must not contain credentials/],
-    ["VITE_BACKEND_BASE_URL=https://example.com/v1?token=redacted", /query or fragment/],
-    ["VITE_BACKEND_BASE_URL=https://example.com/v1#redacted", /query or fragment/],
+    ["VITE_BACKEND_BASE_URL=https://user:password@example.com/api/v1", /must not contain credentials/],
+    ["VITE_BACKEND_BASE_URL=https://@example.com/api/v1", /must not contain credentials/],
+    ["VITE_BACKEND_BASE_URL=https://:@example.com/api/v1", /must not contain credentials/],
+    ["VITE_BACKEND_BASE_URL=https://example.com/api/v1?token=redacted", /query or fragment/],
+    ["VITE_BACKEND_BASE_URL=https://example.com/api/v1#redacted", /query or fragment/],
+    ["VITE_BACKEND_BASE_URL=https://example.com/api/v1?", /query or fragment/],
+    ["VITE_BACKEND_BASE_URL=https://example.com/api/v1#", /query or fragment/],
+    ["VITE_BACKEND_BASE_URL=https://example.com/v1", /legacy \/v1 is not supported/],
+    ["VITE_BACKEND_BASE_URL=https://example.com/proxy/api/v1", /path must be empty or \/api\/v1/],
+    ["VITE_BACKEND_BASE_URL=https://example.com/api/./v1", /path must be empty or \/api\/v1/],
+    ["VITE_BACKEND_BASE_URL=https://example.com/api/%2e/v1", /path must be empty or \/api\/v1/],
+    ["VITE_BACKEND_BASE_URL=https://example.com/api\\v1", /path must be empty or \/api\/v1/],
+    ["VITE_BACKEND_BASE_URL=https://exam\tple.com/api/v1", /control characters/],
+    ['VITE_BACKEND_BASE_URL="\thttps://example.com/api/v1"', /control characters/],
   ])("rejects unsafe public environment input %s", (source, expectedMessage) => {
     expect(findArchitectureViolations(new Map([[".env.production", source]])).join("\n")).toMatch(
       expectedMessage,

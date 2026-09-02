@@ -9,6 +9,12 @@ const allowedPublicViteNames = new Set([
   "VITE_BACKEND_BASE_URL",
 ])
 
+const containsControlCharacter = (value: string): boolean =>
+  Array.from(value).some((character) => {
+    const codePoint = character.charCodeAt(0)
+    return codePoint <= 0x1f || codePoint === 0x7f
+  })
+
 export const assertSafePublicBuildEnvironment = (
   environment: Readonly<Record<string, string | undefined>>,
 ) => {
@@ -18,7 +24,11 @@ export const assertSafePublicBuildEnvironment = (
     }
   }
 
-  const backendBaseUrl = environment.VITE_BACKEND_BASE_URL?.trim()
+  const rawBackendBaseUrl = environment.VITE_BACKEND_BASE_URL
+  if (rawBackendBaseUrl && containsControlCharacter(rawBackendBaseUrl)) {
+    throw new Error("VITE_BACKEND_BASE_URL must not contain control characters.")
+  }
+  const backendBaseUrl = rawBackendBaseUrl?.trim()
   if (!backendBaseUrl) return
 
   let parsed: URL
@@ -30,15 +40,32 @@ export const assertSafePublicBuildEnvironment = (
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
     throw new Error("VITE_BACKEND_BASE_URL must use HTTP or HTTPS.")
   }
+  if (backendBaseUrl.includes("\\")) {
+    throw new Error("VITE_BACKEND_BASE_URL path must be empty or /api/v1.")
+  }
+  if (backendBaseUrl.includes("?") || backendBaseUrl.includes("#")) {
+    throw new Error("VITE_BACKEND_BASE_URL must not contain a query or fragment.")
+  }
   if (parsed.username || parsed.password) {
     throw new Error("VITE_BACKEND_BASE_URL must not contain credentials.")
   }
-  if (parsed.search || parsed.hash) {
-    throw new Error("VITE_BACKEND_BASE_URL must not contain a query or fragment.")
+  const rawEndpoint = /^(?:https?):\/\/([^/]+)(\/.*)?$/i.exec(backendBaseUrl)
+  if (!rawEndpoint) {
+    throw new Error("VITE_BACKEND_BASE_URL must be an absolute HTTP(S) URL.")
   }
-  const pathname = parsed.pathname.replace(/\/+$/, "")
-  if (pathname && pathname !== "/v1") {
-    throw new Error("VITE_BACKEND_BASE_URL path must be empty or /v1.")
+  if (rawEndpoint[1].includes("@")) {
+    throw new Error("VITE_BACKEND_BASE_URL must not contain credentials.")
+  }
+  const rawPath = rawEndpoint[2] ?? ""
+  if (/^\/v1\/*$/.test(rawPath)) {
+    throw new Error(
+      "VITE_BACKEND_BASE_URL must use the backend origin or canonical /api/v1; legacy /v1 is not supported by new builds.",
+    )
+  }
+  const isBareOrigin = rawPath === "" || rawPath === "/"
+  const isCanonicalApi = /^\/api\/v1\/*$/.test(rawPath)
+  if (!isBareOrigin && !isCanonicalApi) {
+    throw new Error("VITE_BACKEND_BASE_URL path must be empty or /api/v1.")
   }
 }
 
@@ -199,6 +226,11 @@ export function classifyVendorChunk(id: string): string | undefined {
   return "vendor"
 }
 
+export const developmentProxy = {
+  "/api": { target: "http://127.0.0.1:9562", changeOrigin: true },
+  "/v2": { target: "http://127.0.0.1:9562", changeOrigin: true, ws: true },
+}
+
 // https://vite.dev/config/
 export default defineConfig(({ mode }) => {
   const publicEnvironment = loadEnv(mode, process.cwd(), "VITE_")
@@ -246,11 +278,7 @@ export default defineConfig(({ mode }) => {
       // Proxy the bamboo API to the existing :9562 instance so the dev app shares
       // the same backend + sessions (same-origin → no CORS; loopback bypasses the
       // access password). The old lotus on :9562 stays untouched.
-      proxy: {
-        "/v1": { target: "http://127.0.0.1:9562", changeOrigin: true },
-        "/api": { target: "http://127.0.0.1:9562", changeOrigin: true },
-        "/v2": { target: "http://127.0.0.1:9562", changeOrigin: true, ws: true },
-      },
+      proxy: developmentProxy,
     },
   }
 })

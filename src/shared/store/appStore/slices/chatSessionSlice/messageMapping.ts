@@ -9,7 +9,7 @@ import {
   MessageImage,
 } from "@shared/types/chat";
 import type { SessionSummary } from "@services/chat/AgentService";
-import { agentApiClient } from "@services/api";
+import { apiClient } from "@services/api";
 import { getDefaultSystemPrompts } from "@shared/utils/defaultSystemPrompts";
 import i18n from "@shared/i18n";
 import { mapTokenBudgetUsage } from "@shared/types/tokenBudget";
@@ -43,7 +43,7 @@ const parseBambooAttachmentUrl = (
 const resolveImageUrlForRender = (rawUrl: string): string => {
   const ref = parseBambooAttachmentUrl(rawUrl);
   if (!ref) return rawUrl;
-  return agentApiClient.resolveUrl(
+  return apiClient.resolveUrl(
     `sessions/${encodeURIComponent(ref.sessionId)}/attachments/${encodeURIComponent(ref.attachmentId)}`,
   );
 };

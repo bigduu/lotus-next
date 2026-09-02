@@ -1,4 +1,4 @@
-import { agentApiClient } from "../api";
+import { apiClient } from "../api";
 import {
   createDefaultMcpServerConfig,
   createDefaultRuntimeInfo,
@@ -272,12 +272,12 @@ const normalizeToolInfo = (
 
 export class McpService {
   async getServers(): Promise<McpServer[]> {
-    const response = await agentApiClient.get<ServerListResponse>("mcp/servers");
+    const response = await apiClient.get<ServerListResponse>("mcp/servers");
     return Array.isArray(response.servers) ? response.servers.map(normalizeServer) : [];
   }
 
   async addServer(config: McpServerConfig): Promise<McpActionResponse> {
-    return agentApiClient.post<McpActionResponse>("mcp/servers", config);
+    return apiClient.post<McpActionResponse>("mcp/servers", config);
   }
 
   async updateServer(serverId: string, config: McpServerConfig): Promise<McpActionResponse> {
@@ -285,28 +285,28 @@ export class McpService {
       ...config,
       id: serverId,
     };
-    return agentApiClient.put<McpActionResponse>(`mcp/servers/${serverId}`, payload);
+    return apiClient.put<McpActionResponse>(`mcp/servers/${serverId}`, payload);
   }
 
   async deleteServer(serverId: string): Promise<McpActionResponse> {
-    return agentApiClient.delete<McpActionResponse>(`mcp/servers/${serverId}`);
+    return apiClient.delete<McpActionResponse>(`mcp/servers/${serverId}`);
   }
 
   async connectServer(serverId: string): Promise<McpActionResponse> {
-    return agentApiClient.post<McpActionResponse>(`mcp/servers/${serverId}/connect`);
+    return apiClient.post<McpActionResponse>(`mcp/servers/${serverId}/connect`);
   }
 
   async disconnectServer(serverId: string): Promise<McpActionResponse> {
-    return agentApiClient.post<McpActionResponse>(`mcp/servers/${serverId}/disconnect`);
+    return apiClient.post<McpActionResponse>(`mcp/servers/${serverId}/disconnect`);
   }
 
   async refreshTools(serverId: string): Promise<McpActionResponse> {
-    return agentApiClient.post<McpActionResponse>(`mcp/servers/${serverId}/refresh`);
+    return apiClient.post<McpActionResponse>(`mcp/servers/${serverId}/refresh`);
   }
 
   async getTools(serverId?: string): Promise<McpToolInfo[]> {
     const path = serverId ? `mcp/servers/${serverId}/tools` : "mcp/tools";
-    const response = await agentApiClient.get<ToolListResponse>(path);
+    const response = await apiClient.get<ToolListResponse>(path);
     const rawTools = Array.isArray(response.tools) ? response.tools : [];
     return rawTools
       .map((tool, index) => normalizeToolInfo(tool, serverId, index))
@@ -317,7 +317,7 @@ export class McpService {
     mcpServers: unknown;
     mode?: "merge" | "replace";
   }): Promise<McpImportResponse> {
-    return agentApiClient.post<McpImportResponse>("mcp/servers/import", payload);
+    return apiClient.post<McpImportResponse>("mcp/servers/import", payload);
   }
 }
 
