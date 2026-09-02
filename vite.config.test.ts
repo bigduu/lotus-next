@@ -83,4 +83,13 @@ describe("vendor chunk ownership", () => {
   it("does not put application modules into a vendor group", () => {
     expect(classifyVendorChunk("/repo/src/components/chat/StreamdownMarkdown.tsx")).toBeUndefined()
   })
+
+  it.each([
+    "/repo/node_modules/@radix-ui/react-switch/dist/index.mjs",
+    "/repo/node_modules/@radix-ui/react-label/dist/index.mjs",
+    "/repo/node_modules/html2canvas/dist/html2canvas.esm.js",
+    "/repo/node_modules/jspdf/dist/jspdf.es.min.js",
+  ])("leaves optional-feature package %s with its owning dynamic graph", (id) => {
+    expect(classifyVendorChunk(id)).toBeUndefined()
+  })
 })

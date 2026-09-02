@@ -9,6 +9,7 @@ const defaultRoot = path.resolve(scriptDirectory, "..");
 
 const runtimeResolver = "src/runtime/browserRuntime.ts";
 const runtimeContract = "src/runtime/runtimeConfig.ts";
+const preloadErrorPolicy = "src/runtime/preloadErrorPolicy.ts";
 const compositionRoot = "src/main.tsx";
 const httpOwner = "src/services/api/transport.ts";
 const apiCompositionOwner = "src/services/api/index.ts";
@@ -27,6 +28,7 @@ const ownerClassAllowedConstructors = new Map([
 const runtimeLocalImportAllowlist = new Map([
   [runtimeResolver, new Set(["./runtimeConfig", "./runtimeConfig.ts"])],
   [runtimeContract, new Set()],
+  [preloadErrorPolicy, new Set()],
 ]);
 const runtimeCompositionApiOwners = new Map([
   ["installRuntimeConfig", new Set([compositionRoot, runtimeContract])],
@@ -2099,6 +2101,8 @@ export const verifyBootstrapOrder = (mainSource) => {
     "./index.css",
     "./runtime/browserRuntime",
     "./runtime/browserRuntime.ts",
+    "./runtime/preloadErrorPolicy",
+    "./runtime/preloadErrorPolicy.ts",
     "./runtime/runtimeConfig",
     "./runtime/runtimeConfig.ts",
   ]);

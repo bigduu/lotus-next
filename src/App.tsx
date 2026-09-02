@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react"
 import { Inspector } from "@/components/chat/Inspector"
 import { CommandPalette } from "@/components/chat/CommandPalette"
-import { Settings } from "@/components/chat/Settings"
+import { LazySettings } from "@/components/chat/LazySettings"
 import { Onboarding } from "@/components/chat/Onboarding"
 import { WorkspacePicker } from "@/components/chat/WorkspacePicker"
 import { useThemeStore } from "@shared/store/themeStore"
@@ -214,7 +214,7 @@ function App() {
         />
       ) : null}
 
-      <Settings open={settingsOpen} onClose={() => setSettingsOpen(false)} />
+      <LazySettings open={settingsOpen} onClose={() => setSettingsOpen(false)} />
       <Onboarding />
 
       <WorkspacePicker
