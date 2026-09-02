@@ -1,5 +1,5 @@
 import path from "node:path"
-import { defineConfig, loadEnv } from "vite"
+import { defineConfig, loadEnv, type Plugin } from "vite"
 import react from "@vitejs/plugin-react"
 import tailwindcss from "@tailwindcss/vite"
 
@@ -223,7 +223,51 @@ export function classifyVendorChunk(id: string): string | undefined {
   if (packageName === "react" || packageName === "react-dom" || packageName === "scheduler") {
     return "vendor-react"
   }
-  return "vendor"
+  // Unknown packages follow the owning static/dynamic application graph. A
+  // catch-all vendor group would eagerly merge Settings- and PDF-only packages
+  // into Root merely because Root also imports unrelated third-party code.
+  return undefined
+}
+
+function bundleOwnershipPlugin(): Plugin {
+  let projectRoot = path.resolve(process.cwd())
+  const cleanModuleId = (id: string): string =>
+    (id.startsWith("\0") ? id.slice(1) : id).split("?", 1)[0]
+  const projectModule = (id: string): string | undefined => {
+    const cleanId = cleanModuleId(id)
+    const relative = path.relative(projectRoot, cleanId).replaceAll("\\", "/")
+    return relative.startsWith("src/") ? relative : undefined
+  }
+  const packageModule = (id: string): string | undefined =>
+    packageNameFromModuleId(cleanModuleId(id))
+  const uniqueSorted = (values: Array<string | undefined>): string[] =>
+    [...new Set(values.filter((value): value is string => value !== undefined))].sort()
+
+  return {
+    name: "lotus-next-bundle-ownership",
+    configResolved(config) {
+      projectRoot = path.resolve(config.root)
+    },
+    generateBundle(_options, bundle) {
+      const chunks = Object.values(bundle)
+        .filter((output) => output.type === "chunk")
+        .sort((left, right) => left.fileName.localeCompare(right.fileName))
+        .reduce<Record<string, { modules: string[]; packages: string[] }>>((ownership, chunk) => {
+          const moduleIds = Object.keys(chunk.modules)
+          ownership[chunk.fileName] = {
+            modules: uniqueSorted(moduleIds.map(projectModule)),
+            packages: uniqueSorted(moduleIds.map(packageModule)),
+          }
+          return ownership
+        }, {})
+
+      this.emitFile({
+        type: "asset",
+        fileName: "bundle-ownership.json",
+        source: `${JSON.stringify({ version: 2, chunks }, null, 2)}\n`,
+      })
+    },
+  }
 }
 
 export const developmentProxy = {
@@ -237,8 +281,11 @@ export default defineConfig(({ mode }) => {
   assertSafePublicBuildEnvironment(publicEnvironment)
 
   return {
-    plugins: [react(), tailwindcss()],
+    plugins: [react(), tailwindcss(), bundleOwnershipPlugin()],
     build: {
+      // The package verifier follows this exact generated graph when enforcing
+      // the ordinary-chat startup budget and optional-feature boundaries.
+      manifest: "asset-manifest.json",
       rollupOptions: {
         output: {
           // Keep a lazily imported package's dependency graph out of unrelated

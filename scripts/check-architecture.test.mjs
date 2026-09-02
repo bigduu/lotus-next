@@ -1193,6 +1193,33 @@ describe("architecture boundary fixtures", () => {
     expect(violations).toMatch(/application module @services/);
   });
 
+  it("keeps the preload error policy dependency-free before runtime installation", () => {
+    const safePolicy = new Map([
+      [
+        "src/runtime/preloadErrorPolicy.ts",
+        `export const isSettingsFeaturePreloadError = (payload: unknown) => typeof payload === "string";`,
+      ],
+    ]);
+    expect(findArchitectureViolations(safePolicy)).toEqual([]);
+
+    const applicationImport = new Map([
+      ["src/runtime/preloadErrorPolicy.ts", `import "../App";`],
+    ]);
+    expect(findArchitectureViolations(applicationImport).join("\n")).toMatch(
+      /pre-install runtime module.*cannot depend on application module/,
+    );
+
+    const dynamicImport = new Map([
+      [
+        "src/runtime/preloadErrorPolicy.ts",
+        `const moduleName = "../App"; void import(moduleName);`,
+      ],
+    ]);
+    expect(findArchitectureViolations(dynamicImport).join("\n")).toMatch(
+      /pre-install runtime module.*requires a static approved dependency/,
+    );
+  });
+
   it("rejects production imports of verifier-excluded test modules", () => {
     const sources = new Map([
       [
@@ -1331,7 +1358,9 @@ describe("architecture boundary fixtures", () => {
         import { StrictMode } from "react";
         import { createRoot } from "react-dom/client";
         import { resolveDefaultBrowserRuntimeConfig } from "./runtime/browserRuntime.ts";
+        import { isSettingsFeaturePreloadError } from "./runtime/preloadErrorPolicy.ts";
         import { installRuntimeConfig } from "./runtime/runtimeConfig.ts";
+        void isSettingsFeaturePreloadError;
         const bootstrap = async () => {
           installRuntimeConfig(resolveDefaultBrowserRuntimeConfig());
           const [{ default: Root }, { default: ErrorBoundary }] = await Promise.all([
@@ -1366,6 +1395,10 @@ describe("architecture boundary fixtures", () => {
     ],
     [
       `import "@services";\nconst bootstrap = async () => { installRuntimeConfig(runtime); await import('./Root.tsx'); };\nvoid bootstrap();`,
+      /unsafe static application import/,
+    ],
+    [
+      `import "./runtime/otherPolicy.ts";\nconst bootstrap = async () => { installRuntimeConfig(runtime); await import('./Root.tsx'); };\nvoid bootstrap();`,
       /unsafe static application import/,
     ],
     [

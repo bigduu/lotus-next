@@ -2,6 +2,11 @@ import { spawnSync } from "node:child_process"
 import { readFileSync } from "node:fs"
 import path from "node:path"
 
+import {
+  analyzeBundleBudget,
+  findBundleBudgetViolations,
+  formatBundleBudgetReport,
+} from "./bundle-budget.mjs"
 import { findUnexpectedPackagePaths } from "./package-policy.mjs"
 
 const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm"
@@ -37,8 +42,14 @@ if (!Array.isArray(manifests) || manifests.length !== 1) {
 const [manifest] = manifests
 const paths = (manifest.files ?? []).map((file) => file.path).sort()
 const unexpected = findUnexpectedPackagePaths(paths)
-const missing = ["package.json", "dist/index.html"].filter((file) => !paths.includes(file))
+const missing = [
+  "package.json",
+  "dist/index.html",
+  "dist/asset-manifest.json",
+  "dist/bundle-ownership.json",
+].filter((file) => !paths.includes(file))
 const lazyJavaScriptChunks = [
+  ["Settings", /^dist\/assets\/Settings-[^/]+\.js$/],
   ["StreamdownMarkdown", /^dist\/assets\/StreamdownMarkdown-[^/]+\.js$/],
   ["StreamdownMermaid", /^dist\/assets\/StreamdownMermaid-[^/]+\.js$/],
   ["vendor-streamdown", /^dist\/assets\/vendor-streamdown-(?!code-)[^/]+\.js$/],
@@ -62,8 +73,27 @@ const eagerlyPreloaded = lazyJavaScriptChunks
 
 if (eagerlyPreloaded.length > 0) {
   process.stderr.write(
-    `Lazy assistant chunks leaked into the initial HTML:\n${eagerlyPreloaded
+    `Lazy feature chunks leaked into the initial HTML:\n${eagerlyPreloaded
       .map((chunkName) => `  - ${chunkName}`)
+      .join("\n")}\n`,
+  )
+  process.exit(1)
+}
+
+let bundleReport
+try {
+  bundleReport = analyzeBundleBudget()
+} catch (error) {
+  process.stderr.write(
+    `Could not verify the production bundle graph: ${error instanceof Error ? error.message : String(error)}\n`,
+  )
+  process.exit(1)
+}
+const bundleViolations = findBundleBudgetViolations(bundleReport)
+if (bundleViolations.length > 0) {
+  process.stderr.write(
+    `Production bundle budget failed:\n${bundleViolations
+      .map((violation) => `  - ${violation}`)
       .join("\n")}\n`,
   )
   process.exit(1)
@@ -156,5 +186,5 @@ if (unexpected.length > 0 || missing.length > 0) {
 }
 
 process.stdout.write(
-  `Verified ${manifest.name}@${manifest.version}: ${paths.length} files, ${manifest.unpackedSize} unpacked bytes.\n`,
+  `${formatBundleBudgetReport(bundleReport)}\nVerified ${manifest.name}@${manifest.version}: ${paths.length} files, ${manifest.unpackedSize} unpacked bytes.\n`,
 )
