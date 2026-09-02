@@ -6,7 +6,7 @@
  * parsed defensively (never trust the raw JSON shape) — mirroring the
  * normalize* pattern in mcp/McpService.ts.
  */
-import { agentApiClient } from "../api";
+import { apiClient } from "../api";
 import type {
   InstalledPluginView,
   PluginApiRecord,
@@ -74,17 +74,17 @@ const normalizePlugin = (record: PluginApiRecord): InstalledPluginView => ({
 
 export class PluginService {
   async listPlugins(): Promise<InstalledPluginView[]> {
-    const response = await agentApiClient.get<PluginListResponse>("plugins");
+    const response = await apiClient.get<PluginListResponse>("plugins");
     return Array.isArray(response?.plugins) ? response.plugins.map(normalizePlugin) : [];
   }
 
   async installPlugin(source: PluginSourceSpec): Promise<InstalledPluginView> {
-    const view = await agentApiClient.post<PluginApiRecord>("plugins/install", { source });
+    const view = await apiClient.post<PluginApiRecord>("plugins/install", { source });
     return normalizePlugin(view ?? {});
   }
 
   async updatePlugin(id: string, source: PluginSourceSpec): Promise<InstalledPluginView> {
-    const view = await agentApiClient.post<PluginApiRecord>(
+    const view = await apiClient.post<PluginApiRecord>(
       `plugins/${encodeURIComponent(id)}/update`,
       { source },
     );
@@ -92,7 +92,7 @@ export class PluginService {
   }
 
   async removePlugin(id: string): Promise<void> {
-    await agentApiClient.delete<unknown>(`plugins/${encodeURIComponent(id)}`);
+    await apiClient.delete<unknown>(`plugins/${encodeURIComponent(id)}`);
   }
 }
 

@@ -52,8 +52,8 @@ Runtime schema 1 separates:
   native filesystem, notification, external-shell, and sidecar capabilities;
 - `endpointSource`: `tauri-sidecar`, `stored-override`,
   `public-build-default`, or `page-origin`;
-- `endpoints`: one canonical origin and its `/v1`, `/api/v1`, and `/v2/stream`
-  derivatives;
+- `endpoints`: one canonical origin, one native `/api/v1` base, and the
+  independently versioned `/v2/stream` endpoint;
 - `publicMetadata`: build mode and development status only;
 - `artifact`: package name, `VITE_APP_VERSION`, and `VITE_APP_REVISION`;
 - `auth`: the currently implemented same-site-cookie
@@ -65,8 +65,9 @@ never contain credentials, passwords, API keys, private keys, secrets, or
 tokens. The exact public schema contains only `VITE_BACKEND_BASE_URL`,
 `VITE_APP_VERSION`, and `VITE_APP_REVISION`. Both the architecture verifier and
 the Vite configuration reject every other `VITE_*` name; the build also stops
-before bundling if the backend value is not an absolute canonical HTTP(S) URL
-or contains credentials, a query, a fragment, or an arbitrary path prefix.
+before bundling if the backend value is not a bare HTTP(S) origin or exact
+`/api/v1`, names the historical `/v1` alias, or contains credentials, a query,
+a fragment, ASCII control characters, or an ambiguous/arbitrary path spelling.
 
 ### Authentication boundary and known pairing gap
 
@@ -94,8 +95,8 @@ The precedence is deterministic:
 3. a valid public build default;
 4. the exact HTTP(S) page origin, including its explicit port.
 
-Every accepted base is normalized to an origin plus `/v1`. Its protocol must be
-HTTP(S); credentials, query, fragment, and arbitrary path prefixes are rejected.
+Every accepted base is normalized to an origin plus `/api/v1`. Its protocol
+must be HTTP(S); credentials, query, fragment, and arbitrary path prefixes are rejected.
 An HTTPS page cannot select HTTP, and a remotely served page cannot select a
 loopback backend. An unsafe stored override is removed and resolution continues;
 an unsafe authoritative build or sidecar input fails bootstrap visibly. A
@@ -106,6 +107,13 @@ preserves explicit non-default ports. HTTP clients, the shared v2 WebSocket,
 and attachment rendering consume this set; they never reconstruct an origin.
 There is no health probe during endpoint selection.
 
+Browser persistence uses `lotus_next_backend_endpoint_v1`. If absent,
+`browserRuntime.ts` migrates a safe legacy bare origin, exact `/v1`, or exact
+`/api/v1` from `copilot_backend_base_url`: normalize, write, verify, then remove
+the old key. Any failure preserves a usable value, emits fixed non-sensitive
+diagnostics, and never requests `/v1`. Remove the reader only after every
+Bamboo/Bodhi/standalone consumer has passed the migration artifact's rollback window.
+
 ## Current ownership inventory
 
 | Concern | Authoritative owner | Current production consumer/entry |
@@ -113,12 +121,12 @@ There is no health probe during endpoint selection.
 | Application bootstrap | `src/main.tsx` | installs runtime, then imports `Root` |
 | Endpoint and host resolution | `src/runtime/browserRuntime.ts` | browser globals and safe public input |
 | Immutable contract and endpoint derivation | `src/runtime/runtimeConfig.ts` | schema, freeze/install invariants |
-| HTTP composition | `src/services/api/index.ts` | creates the only standard/agent client pair from installed runtime |
-| HTTP transport | `src/services/api/client.ts` | generic client and the only direct `fetch` owner |
+| HTTP composition | `src/services/api/index.ts` | creates the only native `ApiClient` from `runtime.endpoints.nativeApi` |
+| HTTP transport | `src/services/api/transport.ts` | the only browser `HttpTransport` and direct `fetch` owner |
 | Realtime transport | `src/services/chat/v2Stream.ts` | the only `WebSocket` constructor |
-| Attachment API URL | `messageMapping.ts` | resolves through the canonical agent API client |
+| Attachment API URL | `messageMapping.ts` | resolves through the shared canonical native client |
 | Host detection facade | `src/utils/environment.ts` | reads runtime host kind only |
-| Stored endpoint override | `src/runtime/browserRuntime.ts` | the only storage-key owner |
+| Stored endpoint override and one-time legacy migration | `src/runtime/browserRuntime.ts` | the only storage-key owner |
 | Public build metadata | `src/runtime/browserRuntime.ts` | exact public Vite allowlist |
 
 ## Supported-surface matrix
@@ -136,7 +144,7 @@ There is no health probe during endpoint selection.
 | Boundary | Authoritative owner | Explicit version/capability | Unsupported behavior | Rollback | Retirement condition |
 | --- | --- | --- | --- | --- | --- |
 | Runtime bootstrap | Lotus Next | `RuntimeConfig.schemaVersion = 1` plus typed host capabilities | a second/different config, invalid host input, or unsafe endpoint stops bootstrap with an actionable screen | select the prior complete artifact and matching manifest | superseded only by a documented next schema and coordinated consumers |
-| Standard HTTP | Bamboo API + Lotus HTTP adapter | `/v1` and `/api/v1`; cookie credentials | arbitrary path prefixes, endpoint reconstruction, or silent cross-origin guesses | roll back frontend and matching Bamboo/Bodhi artifact together | an explicit server API version replaces these routes and every consumer migrates |
+| Native HTTP | Bamboo API + Lotus HTTP adapter | canonical `/api/v1`; cookie credentials | frontend `/v1` routing, arbitrary path prefixes, endpoint reconstruction, or silent cross-origin guesses | roll back frontend and matching Bamboo/Bodhi artifact together | an explicit successor API version replaces `/api/v1` and every consumer migrates |
 | Remote/mobile authentication | future coordinated Lotus/Bamboo/Bodhi owner | currently same-site cookie only; no device-token lifecycle or authenticated v2 hello | any deployment requiring device-token pairing is explicitly incompatible and must surface auth/protocol failure | return to a supported same-site deployment and its matching artifact; never expose or persist a token through public runtime input | secure provisioning, protected storage, rotation, revocation, HTTP attachment, and WSS hello ship and are accepted together |
 | Realtime | Bamboo v2 protocol + Lotus v2 adapter | `/v2/stream`; JSON default; optional `bamboo.v2.msgpack` subprotocol | no SSE or legacy transport fallback; a missing v2 stream remains visibly unavailable | select a last-known-good full artifact/server pair | negotiated successor capability is shipped and the v2 retirement condition is recorded |
 | Bodhi sidecar bootstrap | Bodhi | Tauri capability evidence plus valid injected port | default-port guessing, accepting browser-forged injection, or HTTPS mixed content | restore the matching Bodhi bundle and sidecar | Bodhi consumes a versioned replacement bootstrap contract |
@@ -153,7 +161,7 @@ version or negotiated capability and a written removal condition.
 ### Retain
 
 - same-origin browser delivery and explicit page ports;
-- safe, user-selected stored endpoint overrides;
+- safe, user-selected versioned endpoint overrides;
 - one safe public endpoint default for deployments;
 - cookie-backed auth kept outside public configuration;
 - one shared v2 WebSocket with JSON and negotiated MessagePack;
@@ -164,8 +172,8 @@ version or negotiated capability and a written removal condition.
 
 - endpoint discovery becomes synchronous composition-time resolution, not
   module-load singleton discovery or an async probe path;
-- HTTP, agent HTTP, WebSocket, and attachment URLs derive from one immutable
-  endpoint set;
+- all native HTTP consumers share one `ApiClient`; native HTTP, WebSocket, and
+  attachment URLs derive from one immutable endpoint set;
 - raw Tauri detection becomes a runtime host kind for ordinary consumers;
 - page-origin derivation preserves protocol and explicit port;
 - failures identify endpoint source and artifact identity and require a
@@ -175,6 +183,7 @@ version or negotiated capability and a written removal condition.
 
 - backend health probing as a configuration mechanism;
 - the legacy `/v1/health` probe/fallback;
+- every frontend `/v1` request, proxy, client, and endpoint fallback;
 - remote-page-to-loopback guesses and an assumed port 9562;
 - HTTP/WebSocket/attachment origin reconstruction outside runtime/transport;
 - silent fallback to legacy Lotus or a stale local process;
@@ -229,12 +238,17 @@ Existing non-endpoint development-mode reads are likewise frozen by file and
 count; new endpoint/public build access remains exclusive to the runtime
 adapter.
 
-Provider configuration is a separate, frozen data boundary rather than Lotus
-backend routing. Exact OpenAI-compatible `/v1` provider literals are limited to
-`providerPresets.ts`, `InstanceEditor.tsx`, and the named i18n resources with
-file/count budgets. Any other absolute `/v1`, `/api/v1`, or `/v2/stream` URL—or
-direct composition of those paths with an origin—is treated as Lotus backend
-construction and rejected outside the runtime owners.
+Provider configuration is frozen data, not Lotus routing. OpenAI-compatible
+`/v1` literals have file/count budgets in `providerPresets.ts`,
+`InstanceEditor.tsx`, `src/shared/i18n/index.ts`, `en-US.ts`, and `zh-CN.ts`.
+The two locale files also retain frozen, non-executable legacy Bamboo copy as
+raw-endpoint debt; neither exception authorizes an executable `/v1` path.
+
+Two parser comparisons are also named exceptions: `browserRuntime.ts` rewrites
+one-time legacy storage to `/api/v1` without sending it, while `vite.config.ts`
+rejects `/v1` as new build input. Elsewhere, executable native `/v1`, absolute
+`/api/v1` or `/v2/stream`, and direct origin composition are rejected outside
+the runtime owners.
 
 The verifier scans every supported JavaScript/TypeScript module extension under
 `src/`. Production modules cannot import excluded test paths or escape that

@@ -1,4 +1,4 @@
-import { agentApiClient } from "@services/api";
+import { apiClient } from "@services/api";
 import type { UserSystemPrompt } from "@shared/types/chat";
 import { getDefaultSystemPrompts } from "@shared/utils/defaultSystemPrompts";
 
@@ -79,7 +79,7 @@ export class SystemPromptService {
    */
   async getSystemPromptPresets(): Promise<UserSystemPrompt[]> {
     try {
-      const data = await agentApiClient.get<PromptPresetListResponse>("prompt-presets");
+      const data = await apiClient.get<PromptPresetListResponse>("prompt-presets");
       const prompts = Array.isArray(data?.prompts) ? data.prompts : [];
       const presets = prompts
         .filter((preset) => preset.id && preset.id.trim().length > 0)
@@ -109,7 +109,7 @@ export class SystemPromptService {
       payload.description = req.description;
     }
 
-    const data = await agentApiClient.post<PromptPresetResponse>("prompt-presets", payload);
+    const data = await apiClient.post<PromptPresetResponse>("prompt-presets", payload);
     if (!data?.prompt) {
       throw new Error("Backend did not return created prompt preset");
     }
@@ -127,7 +127,7 @@ export class SystemPromptService {
       description: prompt.description,
     };
 
-    const data = await agentApiClient.patch<PromptPresetResponse>(
+    const data = await apiClient.patch<PromptPresetResponse>(
       `prompt-presets/${encodedId}`,
       payload,
     );
@@ -142,7 +142,7 @@ export class SystemPromptService {
    */
   async deleteSystemPromptPreset(promptId: string): Promise<void> {
     const encodedId = encodeURIComponent(promptId);
-    await agentApiClient.delete(`prompt-presets/${encodedId}`);
+    await apiClient.delete(`prompt-presets/${encodedId}`);
   }
 
   /**

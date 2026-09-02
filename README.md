@@ -15,7 +15,18 @@ npm ci
 npm run dev
 ```
 
-Vite listens on port `9563` and proxies `/v1`, `/api`, and `/v2` to Bamboo on port `9562`.
+Vite listens on port `9563` and proxies `/api` and `/v2` to Bamboo on port
+`9562`. Lotus Next sends every Bamboo-native REST request through the single
+canonical `/api/v1` client; the historical `/v1` alias is deliberately not a
+frontend proxy or fallback.
+
+`VITE_BACKEND_BASE_URL` and newly persisted browser overrides accept a bare
+HTTP(S) origin or exact `/api/v1`. New `/v1` input fails closed. During the
+migration window, `src/runtime/browserRuntime.ts` alone may read the legacy
+`copilot_backend_base_url` key, write and verify
+`lotus_next_backend_endpoint_v1`, and only then delete the legacy value. That
+reader is removed after every default consumer has run an artifact containing
+the migration and its declared rollback window has ended.
 
 ## Implemented surface
 

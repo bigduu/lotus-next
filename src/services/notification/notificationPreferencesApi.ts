@@ -8,7 +8,7 @@
  * The backend serializes preferences in snake_case; we keep the camelCase TS
  * shape the settings UI already uses and map at this boundary.
  */
-import { agentApiClient } from "../api";
+import { apiClient } from "../api";
 
 export interface NotificationPreferences {
   /** Master switch for all desktop notifications */
@@ -71,7 +71,7 @@ function toDto(prefs: NotificationPreferences): NotificationPreferencesDto {
 
 /** Fetch the user's notification preferences from the backend. */
 export async function getNotificationPreferences(): Promise<NotificationPreferences> {
-  const dto = await agentApiClient.get<NotificationPreferencesDto>(PREFERENCES_PATH);
+  const dto = await apiClient.get<NotificationPreferencesDto>(PREFERENCES_PATH);
   return fromDto(dto);
 }
 
@@ -79,6 +79,6 @@ export async function getNotificationPreferences(): Promise<NotificationPreferen
 export async function setNotificationPreferences(
   prefs: NotificationPreferences,
 ): Promise<NotificationPreferences> {
-  const dto = await agentApiClient.put<NotificationPreferencesDto>(PREFERENCES_PATH, toDto(prefs));
+  const dto = await apiClient.put<NotificationPreferencesDto>(PREFERENCES_PATH, toDto(prefs));
   return fromDto(dto);
 }

@@ -1,4 +1,4 @@
-import { agentApiClient } from "../api";
+import { apiClient } from "../api";
 import {
   ApiError,
   NetworkRequestError,
@@ -387,7 +387,7 @@ export async function requestServerBootstrap(signal: AbortSignal): Promise<Boots
 
   let response: Response;
   try {
-    response = await agentApiClient.fetchRaw(BOOTSTRAP_RELATIVE_PATH, {
+    response = await apiClient.fetchRaw(BOOTSTRAP_RELATIVE_PATH, {
       method: "GET",
       signal,
       cache: "no-store",
@@ -451,7 +451,7 @@ export async function verifyServerPassword(
 
   let value: unknown;
   try {
-    value = await agentApiClient.post<unknown>(
+    value = await apiClient.post<unknown>(
       PASSWORD_VERIFY_RELATIVE_PATH,
       { password },
       { signal },

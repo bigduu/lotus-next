@@ -5,7 +5,7 @@ import { debugLog } from "@shared/utils/debugFlags";
  * HTTP client for communicating with local copilot-agent endpoints
  * Handles SSE streaming and AgentEvent processing
  */
-import { agentApiClient } from "../api";
+import { apiClient } from "../api";
 import * as v2Stream from "./v2Stream";
 import type { FeedSubscription } from "./v2Stream";
 
@@ -961,7 +961,7 @@ export class AgentClient {
       selectedSkillCount: request.selected_skill_ids?.length ?? 0,
       workspacePath: request.workspace_path ?? null,
     });
-    const response = await agentApiClient.post<ChatResponse>("chat", request);
+    const response = await apiClient.post<ChatResponse>("chat", request);
     debugLog("[AgentClient]", "chat.response", {
       requestedSessionId: request.session_id ?? null,
       sessionId: response.session_id,
@@ -1003,7 +1003,7 @@ export class AgentClient {
       provider: payload.provider ?? null,
       clientSync: summarizeClientSync(payload.client_sync),
     });
-    const response = await agentApiClient.post<ExecuteResponse>(`execute/${sessionId}`, payload);
+    const response = await apiClient.post<ExecuteResponse>(`execute/${sessionId}`, payload);
     debugLog("[AgentClient]", "execute.response", {
       sessionId,
       status: response.status,
@@ -1019,7 +1019,7 @@ export class AgentClient {
    */
   async listSessions(): Promise<ListSessionsResponse> {
     debugLog("[AgentClient]", "sessions.list.request", {});
-    const response = await agentApiClient.get<ListSessionsResponse>("sessions");
+    const response = await apiClient.get<ListSessionsResponse>("sessions");
     debugLog("[AgentClient]", "sessions.list.response", summarizeSessionList(response.sessions));
     return response;
   }
@@ -1032,7 +1032,7 @@ export class AgentClient {
    */
   async getTaskList(sessionId: string): Promise<TaskList | null> {
     const encodedSessionId = encodeURIComponent(sessionId);
-    const snapshot = await agentApiClient.get<TaskListSnapshotResponse>(`task/${encodedSessionId}`);
+    const snapshot = await apiClient.get<TaskListSnapshotResponse>(`task/${encodedSessionId}`);
 
     const hasTaskList = typeof snapshot.title === "string" || snapshot.items.length > 0;
     if (!hasTaskList) {
@@ -1057,7 +1057,7 @@ export class AgentClient {
   async getPendingQuestion(sessionId: string): Promise<PendingQuestionResponse> {
     const encoded = encodeURIComponent(sessionId);
     try {
-      return await agentApiClient.get<PendingQuestionResponse>(`respond/${encoded}/pending`);
+      return await apiClient.get<PendingQuestionResponse>(`respond/${encoded}/pending`);
     } catch (error) {
       console.warn(`[AgentClient] getPendingQuestion failed for ${sessionId}:`, error);
       return { has_pending_question: false };
@@ -1068,7 +1068,7 @@ export class AgentClient {
    * Create a new backend session (root).
    */
   async createSession(req: CreateSessionRequest): Promise<CreateSessionResponse> {
-    return agentApiClient.post<CreateSessionResponse>("sessions", req);
+    return apiClient.post<CreateSessionResponse>("sessions", req);
   }
 
   /**
@@ -1076,7 +1076,7 @@ export class AgentClient {
    */
   async patchSession(sessionId: string, req: PatchSessionRequest): Promise<void> {
     const encodedSessionId = encodeURIComponent(sessionId);
-    await agentApiClient.patch(`sessions/${encodedSessionId}`, req);
+    await apiClient.patch(`sessions/${encodedSessionId}`, req);
   }
 
   /**
@@ -1084,7 +1084,7 @@ export class AgentClient {
    */
   async regenerateSessionTitle(sessionId: string): Promise<void> {
     const encodedSessionId = encodeURIComponent(sessionId);
-    await agentApiClient.post(`sessions/${encodedSessionId}/regenerate-title`);
+    await apiClient.post(`sessions/${encodedSessionId}/regenerate-title`);
   }
 
   /**
@@ -1092,7 +1092,7 @@ export class AgentClient {
    */
   async getSessionSystemPrompt(sessionId: string): Promise<SessionSystemPromptResponse> {
     const encodedSessionId = encodeURIComponent(sessionId);
-    return agentApiClient.get<SessionSystemPromptResponse>(
+    return apiClient.get<SessionSystemPromptResponse>(
       `sessions/${encodedSessionId}/system-prompt`,
     );
   }
@@ -1102,7 +1102,7 @@ export class AgentClient {
    */
   async clearSession(sessionId: string): Promise<void> {
     const encodedSessionId = encodeURIComponent(sessionId);
-    await agentApiClient.post(`sessions/${encodedSessionId}/clear`);
+    await apiClient.post(`sessions/${encodedSessionId}/clear`);
   }
 
   /**
@@ -1110,7 +1110,7 @@ export class AgentClient {
    */
   async runProjectDream(sessionId: string): Promise<RunProjectDreamResponse> {
     const encodedSessionId = encodeURIComponent(sessionId);
-    return agentApiClient.post<RunProjectDreamResponse>(
+    return apiClient.post<RunProjectDreamResponse>(
       `sessions/${encodedSessionId}/project-dream/run`,
     );
   }
@@ -1126,7 +1126,7 @@ export class AgentClient {
     req: TruncateSessionMessagesRequest,
   ): Promise<TruncateSessionMessagesResponse> {
     const encodedSessionId = encodeURIComponent(sessionId);
-    return agentApiClient.post<TruncateSessionMessagesResponse>(
+    return apiClient.post<TruncateSessionMessagesResponse>(
       `sessions/${encodedSessionId}/messages/truncate`,
       req,
     );
@@ -1141,7 +1141,7 @@ export class AgentClient {
     req: RestoreSessionStateRequest,
   ): Promise<RestoreSessionStateResponse> {
     const encodedSessionId = encodeURIComponent(sessionId);
-    return agentApiClient.post<RestoreSessionStateResponse>(
+    return apiClient.post<RestoreSessionStateResponse>(
       `sessions/${encodedSessionId}/restore`,
       req,
     );
@@ -1157,7 +1157,7 @@ export class AgentClient {
   ): Promise<void> {
     const encodedSessionId = encodeURIComponent(sessionId);
     const encodedMessageId = encodeURIComponent(messageId);
-    await agentApiClient.patch(`sessions/${encodedSessionId}/messages/${encodedMessageId}`, req);
+    await apiClient.patch(`sessions/${encodedSessionId}/messages/${encodedMessageId}`, req);
   }
 
   /**
@@ -1168,14 +1168,14 @@ export class AgentClient {
   async deleteSessionMessage(sessionId: string, messageId: string): Promise<void> {
     const encodedSessionId = encodeURIComponent(sessionId);
     const encodedMessageId = encodeURIComponent(messageId);
-    await agentApiClient.delete(`sessions/${encodedSessionId}/messages/${encodedMessageId}`);
+    await apiClient.delete(`sessions/${encodedSessionId}/messages/${encodedMessageId}`);
   }
 
   /**
    * Cleanup sessions by mode.
    */
   async cleanupSessions(mode: "all" | "empty" | "children", keepPinned: boolean): Promise<void> {
-    await agentApiClient.post("sessions/cleanup", {
+    await apiClient.post("sessions/cleanup", {
       mode,
       keep_pinned: keepPinned,
     });
@@ -1193,7 +1193,7 @@ export class AgentClient {
     requestId: string,
     approved: boolean,
   ): Promise<ChildApprovalResponse> {
-    return agentApiClient.post<ChildApprovalResponse>(
+    return apiClient.post<ChildApprovalResponse>(
       `child-approval/${encodeURIComponent(childSessionId)}`,
       { request_id: requestId, approved },
     );
@@ -1203,7 +1203,7 @@ export class AgentClient {
    * Development-only: reset V2 session storage (deletes sessions/ and resets sessions.json index).
    */
   async devResetSessions(): Promise<void> {
-    await agentApiClient.post("dev/reset");
+    await apiClient.post("dev/reset");
   }
 
   /**
@@ -1212,42 +1212,42 @@ export class AgentClient {
    */
   async getRunningSessions(): Promise<RunningSessionsResponse> {
     debugLog("[AgentClient]", "runs.active.request", {});
-    const response = await agentApiClient.get<RunningSessionsResponse>("runs/active");
+    const response = await apiClient.get<RunningSessionsResponse>("runs/active");
     debugLog("[AgentClient]", "runs.active.response", summarizeRunningSessions(response));
     return response;
   }
 
   async listSchedules(): Promise<ListSchedulesResponse> {
-    return agentApiClient.get<ListSchedulesResponse>("schedules");
+    return apiClient.get<ListSchedulesResponse>("schedules");
   }
 
   async createSchedule(req: CreateScheduleRequest): Promise<ScheduleEntry> {
-    return agentApiClient.post<ScheduleEntry>("schedules", req);
+    return apiClient.post<ScheduleEntry>("schedules", req);
   }
 
   async patchSchedule(scheduleId: string, req: PatchScheduleRequest): Promise<ScheduleEntry> {
     const encoded = encodeURIComponent(scheduleId);
-    return agentApiClient.patch<ScheduleEntry>(`schedules/${encoded}`, req);
+    return apiClient.patch<ScheduleEntry>(`schedules/${encoded}`, req);
   }
 
   async deleteSchedule(scheduleId: string): Promise<void> {
     const encoded = encodeURIComponent(scheduleId);
-    await agentApiClient.delete(`schedules/${encoded}`);
+    await apiClient.delete(`schedules/${encoded}`);
   }
 
   async runScheduleNow(scheduleId: string): Promise<void> {
     const encoded = encodeURIComponent(scheduleId);
-    await agentApiClient.post(`schedules/${encoded}/run`);
+    await apiClient.post(`schedules/${encoded}/run`);
   }
 
   async listScheduleSessions(scheduleId: string): Promise<ListScheduleSessionsResponse> {
     const encoded = encodeURIComponent(scheduleId);
-    return agentApiClient.get<ListScheduleSessionsResponse>(`schedules/${encoded}/sessions`);
+    return apiClient.get<ListScheduleSessionsResponse>(`schedules/${encoded}/sessions`);
   }
 
   async listScheduleRuns(scheduleId: string): Promise<ListScheduleRunsResponse> {
     const encoded = encodeURIComponent(scheduleId);
-    return agentApiClient.get<ListScheduleRunsResponse>(`schedules/${encoded}/runs`);
+    return apiClient.get<ListScheduleRunsResponse>(`schedules/${encoded}/runs`);
   }
 
   /**
@@ -1557,7 +1557,7 @@ export class AgentClient {
    * Stop generation for a session
    */
   async stopGeneration(sessionId: string): Promise<void> {
-    await agentApiClient.post(`stop/${sessionId}`);
+    await apiClient.post(`stop/${sessionId}`);
   }
 
   /**
@@ -1565,7 +1565,7 @@ export class AgentClient {
    */
   async deleteSession(sessionId: string): Promise<void> {
     const encodedSessionId = encodeURIComponent(sessionId);
-    await agentApiClient.delete(`sessions/${encodedSessionId}`);
+    await apiClient.delete(`sessions/${encodedSessionId}`);
   }
 
   /**
@@ -1579,7 +1579,7 @@ export class AgentClient {
     const path = sinceMessageId
       ? `history/${sessionId}?since_message_id=${encodeURIComponent(sinceMessageId)}`
       : `history/${sessionId}`;
-    const response = await agentApiClient.get<HistoryResponse>(path);
+    const response = await apiClient.get<HistoryResponse>(path);
     debugLog("[AgentClient]", "history.response", summarizeHistoryResponse(response));
     return response;
   }
@@ -1589,7 +1589,7 @@ export class AgentClient {
    */
   async healthCheck(): Promise<boolean> {
     try {
-      await agentApiClient.get("health");
+      await apiClient.get("health");
       return true;
     } catch {
       return false;

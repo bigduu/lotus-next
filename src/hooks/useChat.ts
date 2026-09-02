@@ -8,7 +8,7 @@ import {
 } from "@shared/store/appStore"
 import { useProviderStore } from "@shared/store/appStore/slices/providerSlice"
 import { agentClient } from "@services/chat/AgentService"
-import { agentApiClient } from "@services/api"
+import { apiClient } from "@services/api"
 import { notify } from "@/lib/notify"
 import { mapTokenBudgetUsage } from "@shared/types/tokenBudget"
 import { getSystemPromptEnhancementText } from "@shared/utils/systemPromptEnhancement"
@@ -556,7 +556,7 @@ export function useChat(
     setPendingQuestion(null)
     if (!sid) return
     let stale = false
-    void agentApiClient
+    void apiClient
       .get<{
         has_pending_question: boolean
         question?: string
@@ -747,7 +747,7 @@ export function useChat(
     async (messageId: string): Promise<string | undefined> => {
       if (!sid) return undefined
       try {
-        const res = await agentApiClient.post<{ session?: { id?: string; session_id?: string } }>(
+        const res = await apiClient.post<{ session?: { id?: string; session_id?: string } }>(
           `sessions/${encodeURIComponent(sid)}/fork`,
           { up_to_message_id: messageId },
         )
@@ -775,7 +775,7 @@ export function useChat(
     async (text: string) => {
       if (!sid) return
       setPendingQuestion(null)
-      await agentApiClient
+      await apiClient
         .post(`respond/${encodeURIComponent(sid)}`, { response: text })
         .catch(() => {})
       // The backend resumes the suspended run — re-subscribe to watch it stream

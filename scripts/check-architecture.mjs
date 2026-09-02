@@ -13,12 +13,17 @@ const compositionRoot = "src/main.tsx";
 const httpOwner = "src/services/api/transport.ts";
 const apiCompositionOwner = "src/services/api/index.ts";
 const apiClientOwner = "src/services/api/client.ts";
+const viteConfiguration = "vite.config.ts";
 const browserHttpTransportFactory = "createBrowserHttpTransport";
 const httpTransportType = "HttpTransport";
 const websocketOwner = "src/services/chat/v2Stream.ts";
 const websocketReadDebtOwner = "src/services/chat/accountFeed.ts";
 const apiClientValueOwners = new Set([apiClientOwner, apiCompositionOwner]);
 const browserHttpTransportFactoryOwners = new Set([httpOwner, apiCompositionOwner]);
+const ownerClassAllowedConstructors = new Map([
+  [apiClientOwner, new Set(["ApiError", "Headers"])],
+  [httpOwner, new Set(["NetworkRequestError", "TypeError"])],
+]);
 const runtimeLocalImportAllowlist = new Map([
   [runtimeResolver, new Set(["./runtimeConfig", "./runtimeConfig.ts"])],
   [runtimeContract, new Set()],
@@ -41,6 +46,17 @@ const tauriDebtOwners = new Set([
 ]);
 
 const endpointConsumers = new Set([apiCompositionOwner, websocketOwner]);
+const runtimeEndpointInterface = "RuntimeEndpointSet";
+const canonicalRuntimeEndpointFields = new Set(["nativeApi", "origin", "v2Stream"]);
+const deprecatedNativeApiNames = new Set(["standardApi", "agentApi", "agentApiClient"]);
+const backendOverrideStorageNames = new Set([
+  "BACKEND_OVERRIDE_STORAGE_KEY",
+  "LEGACY_BACKEND_OVERRIDE_STORAGE_KEY",
+]);
+const backendOverrideStorageKeys = new Set([
+  "lotus_next_backend_endpoint_v1",
+  "copilot_backend_base_url",
+]);
 const nonRuntimeEndpointBindingOwners = new Set([
   "src/components/chat/settings/metrics/ForwardEndpointsList.tsx",
 ]);
@@ -107,8 +123,8 @@ const localAliases = ["@", "@app", "@components", "@hooks", "@pages", "@services
 
 const expectedInventory = {
   "raw-endpoint": {
-    "src/runtime/browserRuntime.ts": 2,
-    "src/runtime/runtimeConfig.ts": 3,
+    "src/runtime/browserRuntime.ts": 1,
+    "src/runtime/runtimeConfig.ts": 2,
     "src/shared/i18n/resources/en-US.ts": 1,
     "src/shared/i18n/resources/zh-CN.ts": 1,
   },
@@ -119,7 +135,7 @@ const expectedInventory = {
     "src/shared/utils/debugFlags.ts": 2,
   },
   "endpoint-override-storage": {
-    "src/runtime/browserRuntime.ts": 7,
+    "src/runtime/browserRuntime.ts": 29,
   },
   "tauri-runtime": {
     "src/runtime/browserRuntime.ts": 4,
@@ -144,10 +160,10 @@ const expectedInventory = {
     "src/services/chat/accountFeed.ts": 1,
   },
   "api-client-constructor": {
-    "src/services/api/index.ts": 2,
+    "src/services/api/index.ts": 1,
   },
   "runtime-endpoint-read": {
-    "src/services/api/index.ts": 2,
+    "src/services/api/index.ts": 1,
     "src/services/chat/v2Stream.ts": 1,
   },
   "non-runtime-endpoint-binding": {
@@ -260,6 +276,33 @@ const resolvesOutsideSource = (file, moduleName) => {
 };
 
 const backendPathPattern = /^\/(?:api\/v1|v1|v2\/stream)(?:\/|$)/;
+const legacyNativePathPattern = /^\/v1(?:\/|$)/;
+const containsAsciiControlCharacter = (text) => {
+  for (let index = 0; index < text.length; index += 1) {
+    const code = text.charCodeAt(index);
+    if (code <= 0x1f || code === 0x7f) return true;
+  }
+  return false;
+};
+
+const backendTextKind = (text) => {
+  const classifyPath = (pathname) => {
+    if (/^\/api\/v1(?:\/|$)/.test(pathname)) return "canonical-native";
+    if (legacyNativePathPattern.test(pathname)) return "legacy-native";
+    if (/^\/v2\/stream(?:\/|$)/.test(pathname)) return "v2-stream";
+    return null;
+  };
+
+  try {
+    const parsed = new URL(text);
+    if (["http:", "https:", "ws:", "wss:"].includes(parsed.protocol)) {
+      return classifyPath(parsed.pathname);
+    }
+  } catch {
+    // Relative and partially static expressions are classified as paths below.
+  }
+  return classifyPath(text);
+};
 
 const isBackendPathComposition = (node) => {
   let parent = node.parent;
@@ -299,6 +342,35 @@ const rawEndpointLiteral = (node) => {
 const isFrozenProviderEndpoint = (file, node) =>
   ts.isStringLiteralLike(node) && providerEndpointDebt.get(file)?.has(node.text);
 
+const legacyNativeTextKind = (text) => {
+  try {
+    const parsed = new URL(text);
+    if (
+      ["http:", "https:"].includes(parsed.protocol) &&
+      legacyNativePathPattern.test(parsed.pathname)
+    ) {
+      return "absolute";
+    }
+  } catch {
+    // Relative literals and interpolated templates are checked below.
+  }
+  return legacyNativePathPattern.test(text) ? "relative" : null;
+};
+
+const legacyNativeLiteralKind = (node) => {
+  if (!ts.isStringLiteralLike(node) && !ts.isTemplateExpression(node)) return null;
+  const text = ts.isStringLiteralLike(node)
+    ? node.text
+    : node.getText().replace(/^`|`$/g, "");
+  if (ts.isTemplateExpression(node)) {
+    // The slash in canonical `/api/v1` is preceded by `i`; require a real
+    // segment boundary so canonical templates never masquerade as legacy
+    // native routing. `${origin}/v1` still matches because `}` is a boundary.
+    return /(?:^|[^A-Za-z0-9_])\/v1(?:\/|\b)/.test(text) ? "relative" : null;
+  }
+  return legacyNativeTextKind(text);
+};
+
 const positionLabel = (file, sourceFile, node) => {
   const { line, character } = sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile));
   return `${file}:${line + 1}:${character + 1}`;
@@ -335,10 +407,24 @@ const publicBackendInputError = (value) => {
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
     return "must use HTTP or HTTPS";
   }
+  if (containsAsciiControlCharacter(value)) {
+    return "must not contain control characters";
+  }
+  if (value.includes("\\")) return "path must be empty or /api/v1";
+  if (value.includes("?") || value.includes("#")) {
+    return "must not contain a query or fragment";
+  }
   if (parsed.username || parsed.password) return "must not contain credentials";
-  if (parsed.search || parsed.hash) return "must not contain a query or fragment";
-  const pathname = parsed.pathname.replace(/\/+$/, "");
-  if (pathname && pathname !== "/v1") return "path must be empty or /v1";
+  const rawEndpoint = /^(?:https?):\/\/([^/]+)(\/.*)?$/i.exec(value);
+  if (!rawEndpoint) return "must be an absolute literal HTTP(S) URL";
+  if (rawEndpoint[1].includes("@")) return "must not contain credentials";
+  const rawPath = rawEndpoint[2] ?? "";
+  if (/^\/v1\/*$/.test(rawPath)) {
+    return "must use the backend origin or canonical /api/v1; legacy /v1 is not supported";
+  }
+  const isBareOrigin = rawPath === "" || rawPath === "/";
+  const isCanonicalApi = /^\/api\/v1\/*$/.test(rawPath);
+  if (!isBareOrigin && !isCanonicalApi) return "path must be empty or /api/v1";
   return null;
 };
 
@@ -425,6 +511,36 @@ const analyzeSource = (file, source) => {
     violations.push(`${positionLabel(file, sourceFile, node)}: ${message}`);
   };
 
+  if (file === runtimeContract) {
+    const endpointInterfaces = sourceFile.statements.filter(
+      (statement) =>
+        ts.isInterfaceDeclaration(statement) && statement.name.text === runtimeEndpointInterface,
+    );
+    const endpoint = endpointInterfaces[0];
+    const endpointFields = endpoint?.members.map((member) => staticName(member.name)) ?? [];
+    const hasExactEndpointSchema =
+      endpointInterfaces.length === 1 &&
+      endpointFields.length === canonicalRuntimeEndpointFields.size &&
+      new Set(endpointFields).size === canonicalRuntimeEndpointFields.size &&
+      endpoint.members.every(
+        (member) =>
+          canonicalRuntimeEndpointFields.has(staticName(member.name)) &&
+          ts.isPropertySignature(member) &&
+          ts.isIdentifier(member.name) &&
+          !member.questionToken &&
+          member.type?.kind === ts.SyntaxKind.StringKeyword &&
+          member.modifiers?.some(({ kind }) => kind === ts.SyntaxKind.ReadonlyKeyword),
+      );
+    if (!hasExactEndpointSchema) {
+      report(
+        endpoint ?? sourceFile,
+        `${runtimeEndpointInterface} must expose exactly origin, nativeApi, and v2Stream`,
+      );
+    }
+    const inherited = endpointInterfaces.find(({ heritageClauses }) => heritageClauses?.length);
+    if (inherited) report(inherited, `${runtimeEndpointInterface} must not extend another type`);
+  }
+
   const unwrapStaticExpression = (node) => {
     let current = node;
     while (
@@ -487,50 +603,152 @@ const analyzeSource = (file, source) => {
     return { initializer: declaration.initializer, symbol };
   };
 
-  const resolveStaticString = (node, resolvingSymbols = new Set(), allowIdentifierName = true) => {
+  const staticCompositionCall = (node) => {
+    if (!ts.isCallExpression(node) || node.questionDotToken) return null;
+    const callee = unwrapStaticExpression(node.expression);
+    if (!callee || (!ts.isPropertyAccessExpression(callee) && !ts.isElementAccessExpression(callee))) {
+      return null;
+    }
+    const name = ts.isPropertyAccessExpression(callee)
+      ? callee.name.text
+      : ts.isStringLiteralLike(callee.argumentExpression)
+        ? callee.argumentExpression.text
+        : null;
+    return name ? { callee, name } : null;
+  };
+
+  const joinedStaticParts = (parts) =>
+    parts.every((part) => part !== null) ? parts.join("") : null;
+
+  const staticStringParts = (node, resolvingSymbols = new Set()) => {
     const expression = unwrapStaticExpression(node);
-    if (!expression) return null;
-    if (ts.isStringLiteralLike(expression)) return expression.text;
+    if (!expression) return [null];
+    if (ts.isStringLiteralLike(expression)) return [expression.text];
     if (ts.isComputedPropertyName(expression)) {
-      return resolveStaticString(expression.expression, resolvingSymbols, allowIdentifierName);
+      return staticStringParts(expression.expression, resolvingSymbols);
     }
     if (ts.isIdentifier(expression)) {
       const binding = constInitializerFor(expression);
-      if (!binding || resolvingSymbols.has(binding.symbol)) {
-        return allowIdentifierName ? expression.text : null;
-      }
-      const nextResolvingSymbols = new Set(resolvingSymbols);
-      nextResolvingSymbols.add(binding.symbol);
-      return resolveStaticString(binding.initializer, nextResolvingSymbols, false);
+      if (!binding || resolvingSymbols.has(binding.symbol)) return [null];
+      const next = new Set(resolvingSymbols).add(binding.symbol);
+      return staticStringParts(binding.initializer, next);
     }
     if (
       ts.isBinaryExpression(expression) &&
       expression.operatorToken.kind === ts.SyntaxKind.PlusToken
     ) {
-      const left = resolveStaticString(expression.left, resolvingSymbols, false);
-      const right = resolveStaticString(expression.right, resolvingSymbols, false);
-      return left !== null && right !== null ? `${left}${right}` : null;
+      return [
+        ...staticStringParts(expression.left, resolvingSymbols),
+        ...staticStringParts(expression.right, resolvingSymbols),
+      ];
     }
     if (ts.isConditionalExpression(expression)) {
-      const whenTrue = resolveStaticString(expression.whenTrue, resolvingSymbols, false);
-      const whenFalse = resolveStaticString(expression.whenFalse, resolvingSymbols, false);
-      return whenTrue !== null && whenTrue === whenFalse ? whenTrue : null;
+      const left = joinedStaticParts(staticStringParts(expression.whenTrue, resolvingSymbols));
+      const right = joinedStaticParts(staticStringParts(expression.whenFalse, resolvingSymbols));
+      return left !== null && left === right ? [left] : [null];
     }
     if (ts.isTemplateExpression(expression)) {
-      let value = expression.head.text;
-      for (const span of expression.templateSpans) {
-        const interpolation = resolveStaticString(span.expression, resolvingSymbols, false);
-        if (interpolation === null) return null;
-        value += interpolation + span.literal.text;
-      }
-      return value;
+      return [
+        expression.head.text,
+        ...expression.templateSpans.flatMap((span) => [
+          ...staticStringParts(span.expression, resolvingSymbols),
+          span.literal.text,
+        ]),
+      ];
     }
-    return null;
+    const call = staticCompositionCall(expression);
+    if (call?.name === "concat") {
+      return [call.callee.expression, ...expression.arguments].flatMap((part) =>
+        staticStringParts(part, resolvingSymbols),
+      );
+    }
+    if (call?.name === "join" && expression.arguments.length <= 1) {
+      const receiver = unwrapStaticExpression(call.callee.expression);
+      const separator = expression.arguments.length
+        ? joinedStaticParts(staticStringParts(expression.arguments[0], resolvingSymbols))
+        : ",";
+      if (!receiver || !ts.isArrayLiteralExpression(receiver) || separator === null) return [null];
+      return receiver.elements.flatMap((element, index) => [
+        ...(index ? [separator] : []),
+        ...(ts.isOmittedExpression(element)
+          ? [""]
+          : ts.isSpreadElement(element)
+            ? [null]
+            : staticStringParts(element, resolvingSymbols)),
+      ]);
+    }
+    return [null];
+  };
+
+  const resolveStaticString = (node) => joinedStaticParts(staticStringParts(node));
+  const staticStringFragments = (node) => {
+    const fragments = [];
+    let current = "";
+    for (const part of staticStringParts(node)) {
+      if (part === null) {
+        if (current) fragments.push(current);
+        current = "";
+      } else {
+        current += part;
+      }
+    }
+    if (current) fragments.push(current);
+    return fragments;
+  };
+
+  const isStaticStringComposition = (node) =>
+    (ts.isBinaryExpression(node) &&
+      node.operatorToken.kind === ts.SyntaxKind.PlusToken) ||
+    ts.isTemplateExpression(node) ||
+    ["concat", "join"].includes(staticCompositionCall(node)?.name);
+
+  const enclosingStaticStringComposition = (node) => {
+    let current = node.parent;
+    let aggregate = null;
+    while (current && !ts.isStatement(current)) {
+      if (isStaticStringComposition(current)) aggregate = current;
+      current = current.parent;
+    }
+    return aggregate;
+  };
+
+  const foldedBackendKinds = (node) => {
+    const expression = unwrapStaticExpression(node);
+    if (!expression) return new Set();
+    const enclosingAggregate = enclosingStaticStringComposition(expression);
+    if (enclosingAggregate && enclosingAggregate !== expression) return new Set();
+    if (!isStaticStringComposition(expression)) return new Set();
+    return new Set(staticStringFragments(expression).map(backendTextKind).filter(Boolean));
+  };
+
+  const hasCompleteLegacyDescendant = (node) => {
+    const expression = unwrapStaticExpression(node);
+    if (!expression) return false;
+    let containsCompleteLegacyLiteral = false;
+    const findCompleteLiteral = (descendant) => {
+      if (descendant !== expression && legacyNativeLiteralKind(descendant)) {
+        containsCompleteLegacyLiteral = true;
+        return;
+      }
+      ts.forEachChild(descendant, findCompleteLiteral);
+    };
+    findCompleteLiteral(expression);
+    return containsCompleteLegacyLiteral;
+  };
+
+  const isLegacyFragmentOfCanonicalAggregate = (node) => {
+    const aggregate = enclosingStaticStringComposition(node);
+    if (!aggregate) return false;
+    const kinds = foldedBackendKinds(aggregate);
+    return (
+      !kinds.has("legacy-native") &&
+      (kinds.has("canonical-native") || kinds.has("v2-stream"))
+    );
   };
 
   const resolveStaticKey = (node) => {
     const expression = unwrapStaticExpression(node);
-    const resolved = resolveStaticString(expression, new Set(), false);
+    const resolved = resolveStaticString(expression);
     if (resolved !== null) return resolved;
     return ts.isIdentifier(expression) && expression.text === "fetch" ? "fetch" : null;
   };
@@ -1094,6 +1312,98 @@ const analyzeSource = (file, source) => {
     );
   };
 
+  const usesCanonicalNativeEndpoint = (construction) => {
+    const config = construction.arguments?.[0];
+    if (!config || !ts.isObjectLiteralExpression(config)) return false;
+    const baseUrlProperty = config.properties.find(
+      (property) => property.name && staticName(property.name) === "baseUrl",
+    );
+    if (!baseUrlProperty || !ts.isPropertyAssignment(baseUrlProperty)) return false;
+    const names = [];
+    let expression = unwrapStaticExpression(baseUrlProperty.initializer);
+    while (ts.isPropertyAccessExpression(expression) || ts.isElementAccessExpression(expression)) {
+      names.unshift(resolvedPropertyName(expression));
+      expression = unwrapStaticExpression(expression.expression);
+    }
+    return ts.isIdentifier(expression) && [expression.text, ...names].join(".") === "runtime.endpoints.nativeApi";
+  };
+
+  const containsPropertyRead = (node, name) => {
+    let found = false;
+    const find = (descendant) => {
+      found ||=
+        (ts.isPropertyAccessExpression(descendant) || ts.isElementAccessExpression(descendant)) &&
+        resolvedPropertyName(descendant) === name;
+      if (!found) ts.forEachChild(descendant, find);
+    };
+    find(node);
+    return found;
+  };
+
+  const isLegacyInputValidationLiteral = (node) => {
+    if (
+      ![runtimeResolver, viteConfiguration].includes(file) ||
+      !ts.isStringLiteralLike(node) ||
+      node.text !== "/v1"
+    ) {
+      return false;
+    }
+    let expression = node;
+    while (expression.parent && ts.isParenthesizedExpression(expression.parent)) {
+      expression = expression.parent;
+    }
+    const comparison = expression.parent;
+    if (
+      !ts.isBinaryExpression(comparison) ||
+      ![
+        ts.SyntaxKind.EqualsEqualsEqualsToken,
+        ts.SyntaxKind.ExclamationEqualsEqualsToken,
+      ].includes(comparison.operatorToken.kind)
+    ) {
+      return false;
+    }
+    const other = comparison.left === expression ? comparison.right : comparison.left;
+    return (
+      containsPropertyRead(other, "pathname") ||
+      (file === viteConfiguration && ts.isIdentifier(other) && other.text === "pathname")
+    );
+  };
+
+  const executableLegacyCallNames = new Set([
+    "ApiClient", "URL", "delete", "fetch", "fetchRaw", "get", "patch", "post", "put",
+    "request", "requestOnce", "resolveUrl", "send",
+  ]);
+  const isExecutableLegacyNativeLiteral = (node) => {
+    if (ts.isTemplateExpression(node)) return true;
+    let current = node;
+    while (current.parent && !ts.isStatement(current.parent)) {
+      const parent = current.parent;
+      if (ts.isBinaryExpression(parent) && parent.operatorToken.kind === ts.SyntaxKind.PlusToken) return true;
+      if (
+        ts.isPropertyAssignment(parent) &&
+        parent.initializer === current &&
+        ["baseUrl", "nativeApi"].includes(staticName(parent.name))
+      ) {
+        return true;
+      }
+      if (ts.isVariableDeclaration(parent) && parent.initializer === current) {
+        const bindingName = staticName(parent.name);
+        if (["baseUrl", "endpoint", "nativeApi"].includes(bindingName)) return true;
+      }
+      if (
+        (ts.isCallExpression(parent) || ts.isNewExpression(parent)) &&
+        parent.arguments?.includes(current)
+      ) {
+        const callName = ts.isIdentifier(parent.expression)
+          ? parent.expression.text
+          : resolvedPropertyName(parent.expression);
+        if (executableLegacyCallNames.has(callName)) return true;
+      }
+      current = parent;
+    }
+    return false;
+  };
+
   const isNamedDeclaration = (identifier) => {
     const parent = identifier.parent;
     return (
@@ -1111,6 +1421,16 @@ const analyzeSource = (file, source) => {
       (ts.isImportSpecifier(parent) && parent.name === identifier)
     );
   };
+  const isClassDeclarationName = (node, name) =>
+    ts.isIdentifier(node) &&
+    node.text === name &&
+    ts.isClassDeclaration(node.parent) &&
+    node.parent.name === node;
+  const isDirectNamedConstructionReference = (node, name) =>
+    ts.isIdentifier(node) &&
+    node.text === name &&
+    ts.isNewExpression(node.parent) &&
+    node.parent.expression === node;
   const isTypeOnlyReference = (node) => {
     if (ts.isIdentifier(node) && ts.isImportSpecifier(node.parent)) {
       const importSpecifier = node.parent;
@@ -1124,8 +1444,11 @@ const analyzeSource = (file, source) => {
     let current = node.parent;
     while (current && !ts.isStatement(current)) {
       if (
-        ts.isHeritageClause(current) &&
-        current.token === ts.SyntaxKind.ExtendsKeyword
+        (ts.isHeritageClause(current) &&
+          current.token === ts.SyntaxKind.ExtendsKeyword) ||
+        (ts.isExpressionWithTypeArguments(current) &&
+          ts.isHeritageClause(current.parent) &&
+          current.parent.token === ts.SyntaxKind.ExtendsKeyword)
       ) {
         return false;
       }
@@ -1133,6 +1456,29 @@ const analyzeSource = (file, source) => {
       current = current.parent;
     }
     return false;
+  };
+  const isInsideNamedClass = (node, name) => {
+    let current = node.parent;
+    while (current) {
+      if (ts.isClassDeclaration(current) || ts.isClassExpression(current)) {
+        return current.name?.text === name;
+      }
+      current = current.parent;
+    }
+    return false;
+  };
+  const reflectiveConstructionTarget = (node) => {
+    if (!ts.isCallExpression(node) || node.arguments.length === 0) return null;
+    const callee = unwrapStaticExpression(node.expression);
+    if (
+      !callee ||
+      (!ts.isPropertyAccessExpression(callee) && !ts.isElementAccessExpression(callee)) ||
+      resolvedPropertyName(callee) !== "construct" ||
+      !isReflectNamespaceExpression(callee.expression)
+    ) {
+      return null;
+    }
+    return node.arguments[0];
   };
   const isDirectBrowserTransportFactoryUse = (node) => {
     if (file === httpOwner) return true;
@@ -1183,6 +1529,16 @@ const analyzeSource = (file, source) => {
 
   const visit = (node) => {
     if (
+      file !== runtimeContract &&
+      ts.isInterfaceDeclaration(node) &&
+      node.name.text === runtimeEndpointInterface
+    ) {
+      report(
+        node,
+        `${runtimeEndpointInterface} may be declared only by ${runtimeContract}; module augmentation and shadow schemas are forbidden`,
+      );
+    }
+    if (
       file.startsWith("src/") &&
       ts.isStringLiteralLike(node) &&
       isLocalModule(node.text) &&
@@ -1194,11 +1550,22 @@ const analyzeSource = (file, source) => {
     ) {
       report(node, "production code cannot reference a verifier-excluded test module");
     }
+    const deprecatedNativeApiName =
+      ((ts.isIdentifier(node) || ts.isStringLiteralLike(node)) &&
+        deprecatedNativeApiNames.has(node.text) &&
+        node.text) ||
+      null;
+    if (deprecatedNativeApiName) {
+      report(
+        node,
+        `deprecated native REST name ${deprecatedNativeApiName} reintroduces the dual-client boundary; use apiClient and runtime.endpoints.nativeApi`,
+      );
+    }
     const runtimeApiName =
       (ts.isIdentifier(node) && runtimeCompositionApiOwners.has(node.text) && node.text) ||
       (ts.isElementAccessExpression(node) &&
-      runtimeCompositionApiOwners.has(staticName(node.argumentExpression))
-        ? staticName(node.argumentExpression)
+      runtimeCompositionApiOwners.has(resolveStaticKey(node.argumentExpression))
+        ? resolveStaticKey(node.argumentExpression)
         : null);
     if (runtimeApiName) {
       addCount(inventory, "runtime-composition-api", file);
@@ -1219,10 +1586,46 @@ const analyzeSource = (file, source) => {
 
     if (isFrozenProviderEndpoint(file, node)) {
       addCount(inventory, "provider-endpoint-debt", file);
-    } else if (rawEndpointLiteral(node)) {
-      addCount(inventory, "raw-endpoint", file);
-      if (!rawEndpointOwners.has(file)) {
-        report(node, "raw backend endpoint is outside the frozen runtime/documentation owners");
+    } else {
+      const legacyNativeKind = legacyNativeLiteralKind(node);
+      if (
+        legacyNativeKind &&
+        !isLegacyInputValidationLiteral(node) &&
+        !isLegacyFragmentOfCanonicalAggregate(node) &&
+        (legacyNativeKind === "relative" || isExecutableLegacyNativeLiteral(node))
+      ) {
+        report(
+          node,
+          "Lotus native /v1 routing is legacy-only; executable paths must use the canonical /api/v1 client",
+        );
+      }
+      const foldedKinds = foldedBackendKinds(node);
+      if (
+        foldedKinds.has("legacy-native") &&
+        !legacyNativeKind &&
+        !hasCompleteLegacyDescendant(node)
+      ) {
+        report(
+          node,
+          "Lotus native /v1 routing is legacy-only; statically composed paths must use the canonical /api/v1 client",
+        );
+      }
+      const isRawEndpoint = rawEndpointLiteral(node);
+      if (
+        !isRawEndpoint &&
+        (foldedKinds.has("canonical-native") || foldedKinds.has("v2-stream")) &&
+        ![runtimeResolver, runtimeContract].includes(file)
+      ) {
+        report(
+          node,
+          "statically composed backend endpoint is outside the frozen runtime owners",
+        );
+      }
+      if (isRawEndpoint) {
+        addCount(inventory, "raw-endpoint", file);
+        if (!rawEndpointOwners.has(file)) {
+          report(node, "raw backend endpoint is outside the frozen runtime/documentation owners");
+        }
       }
     }
 
@@ -1276,8 +1679,8 @@ const analyzeSource = (file, source) => {
     }
 
     if (
-      (ts.isIdentifier(node) && node.text === "BACKEND_OVERRIDE_STORAGE_KEY") ||
-      (ts.isStringLiteralLike(node) && node.text === "copilot_backend_base_url")
+      (ts.isIdentifier(node) && backendOverrideStorageNames.has(node.text)) ||
+      (ts.isStringLiteralLike(node) && backendOverrideStorageKeys.has(node.text))
     ) {
       addCount(inventory, "endpoint-override-storage", file);
       if (file !== runtimeResolver) {
@@ -1293,8 +1696,9 @@ const analyzeSource = (file, source) => {
       node.parent.left === node;
     const tauriName =
       (ts.isIdentifier(node) && tauriGlobalNames.has(node.text) && node.text) ||
-      (ts.isElementAccessExpression(node) && tauriGlobalNames.has(staticName(node.argumentExpression))
-        ? staticName(node.argumentExpression)
+      (ts.isElementAccessExpression(node) &&
+      tauriGlobalNames.has(resolveStaticKey(node.argumentExpression))
+        ? resolveStaticKey(node.argumentExpression)
         : null) ||
       (tauriStringAccess ? node.text : null);
     if (tauriName) {
@@ -1375,6 +1779,33 @@ const analyzeSource = (file, source) => {
       report(node, "alternate HTTP/SSE client bypasses the canonical API transport");
     }
 
+    const concreteOwnerClass =
+      file === apiClientOwner
+        ? "ApiClient"
+        : file === httpOwner
+          ? httpTransportType
+          : null;
+    const directOwnerConstructionTarget = ts.isNewExpression(node)
+      ? unwrapStaticExpression(node.expression)
+      : null;
+    const reflectiveOwnerConstructionTarget = reflectiveConstructionTarget(node);
+    const allowedOwnerConstructors = ownerClassAllowedConstructors.get(file);
+    const hasForbiddenOwnerConstruction =
+      reflectiveOwnerConstructionTarget !== null ||
+      (directOwnerConstructionTarget !== null &&
+        (!ts.isIdentifier(directOwnerConstructionTarget) ||
+          !allowedOwnerConstructors?.has(directOwnerConstructionTarget.text)));
+    if (
+      concreteOwnerClass &&
+      isInsideNamedClass(node, concreteOwnerClass) &&
+      hasForbiddenOwnerConstruction
+    ) {
+      report(
+        node,
+        `${concreteOwnerClass} definition owner may not construct a second instance inside its class body`,
+      );
+    }
+
     const isFetchMember =
       (ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) &&
       resolvedPropertyName(node) === "fetch";
@@ -1430,7 +1861,7 @@ const analyzeSource = (file, source) => {
       ts.isIdentifier(node) && node.text === browserHttpTransportFactory;
     const browserTransportFactoryElement =
       ts.isElementAccessExpression(node) &&
-      staticName(node.argumentExpression) === browserHttpTransportFactory;
+      resolveStaticKey(node.argumentExpression) === browserHttpTransportFactory;
     if (
       (browserTransportFactoryIdentifier || browserTransportFactoryElement) &&
       (!browserHttpTransportFactoryOwners.has(file) ||
@@ -1445,32 +1876,52 @@ const analyzeSource = (file, source) => {
     const httpTransportIdentifier =
       ts.isIdentifier(node) && node.text === httpTransportType;
     const httpTransportElement =
-      ts.isElementAccessExpression(node) && staticName(node.argumentExpression) === httpTransportType;
-    if (
-      (httpTransportIdentifier || httpTransportElement) &&
-      file !== httpOwner &&
-      !isTypeOnlyReference(node)
-    ) {
-      report(
-        node,
-        `${httpTransportType} is an infrastructure transport type outside src/services/api`,
-      );
+      ts.isElementAccessExpression(node) &&
+      resolveStaticKey(node.argumentExpression) === httpTransportType;
+    if (httpTransportIdentifier || httpTransportElement) {
+      if (file === httpOwner) {
+        const allowedOwnerReference =
+          isClassDeclarationName(node, httpTransportType) ||
+          isTypeOnlyReference(node) ||
+          isDirectNamedConstructionReference(node, httpTransportType);
+        if (!allowedOwnerReference) {
+          report(
+            node,
+            `${httpTransportType} definition owner may not alias, extend, or reflectively construct the transport`,
+          );
+        }
+      } else if (!isTypeOnlyReference(node)) {
+        report(
+          node,
+          `${httpTransportType} is an infrastructure transport type outside src/services/api`,
+        );
+      }
     }
 
     const alternateTransportIdentifier =
       ts.isIdentifier(node) && alternateTransportNames.has(node.text);
     const alternateTransportElement =
       ts.isElementAccessExpression(node) &&
-      alternateTransportNames.has(staticName(node.argumentExpression));
+      alternateTransportNames.has(resolveStaticKey(node.argumentExpression));
     if (alternateTransportIdentifier || alternateTransportElement) {
       report(node, "alternate HTTP/SSE client bypasses the canonical API transport");
     }
 
     const apiClientIdentifier = ts.isIdentifier(node) && node.text === "ApiClient";
     const apiClientElement =
-      ts.isElementAccessExpression(node) && staticName(node.argumentExpression) === "ApiClient";
+      ts.isElementAccessExpression(node) &&
+      resolveStaticKey(node.argumentExpression) === "ApiClient";
     if (apiClientIdentifier || apiClientElement) {
-      if (!apiClientValueOwners.has(file)) {
+      if (file === apiClientOwner) {
+        const allowedDefinitionReference =
+          isClassDeclarationName(node, "ApiClient") || isTypeOnlyReference(node);
+        if (!allowedDefinitionReference) {
+          report(
+            node,
+            "ApiClient definition owner may not construct, alias, extend, or reflectively construct a client",
+          );
+        }
+      } else if (!apiClientValueOwners.has(file)) {
         report(
           node,
           `ApiClient construction is owned by ${apiCompositionOwner}; concrete value access is forbidden elsewhere`,
@@ -1485,7 +1936,8 @@ const analyzeSource = (file, source) => {
 
     const websocketIdentifier = ts.isIdentifier(node) && node.text === "WebSocket";
     const websocketElement =
-      ts.isElementAccessExpression(node) && staticName(node.argumentExpression) === "WebSocket";
+      ts.isElementAccessExpression(node) &&
+      resolveStaticKey(node.argumentExpression) === "WebSocket";
     if (websocketIdentifier || websocketElement) {
       const isReadDebt =
         file === websocketReadDebtOwner &&
@@ -1501,7 +1953,7 @@ const analyzeSource = (file, source) => {
     if (ts.isNewExpression(node)) {
       const constructorName = ts.isIdentifier(node.expression)
         ? node.expression.text
-        : accessedPropertyName(node.expression);
+        : resolvedPropertyName(node.expression);
       if (constructorName === "WebSocket") {
         addCount(inventory, "websocket-constructor", file);
       }
@@ -1510,7 +1962,13 @@ const analyzeSource = (file, source) => {
         if (file === apiCompositionOwner && !usesSharedBrowserTransport(node)) {
           report(
             node,
-            `both production ApiClient instances must receive the same direct ${browserHttpTransportFactory} binding`,
+            `the production ApiClient must receive the direct ${browserHttpTransportFactory} binding`,
+          );
+        }
+        if (file === apiCompositionOwner && !usesCanonicalNativeEndpoint(node)) {
+          report(
+            node,
+            "the production ApiClient must use direct runtime.endpoints.nativeApi as its baseUrl",
           );
         }
       }
@@ -1528,7 +1986,7 @@ const analyzeSource = (file, source) => {
     if (ts.isCallExpression(node)) {
       const callName = ts.isIdentifier(node.expression)
         ? node.expression.text
-        : accessedPropertyName(node.expression);
+        : resolvedPropertyName(node.expression);
       if (callName === browserHttpTransportFactory) {
         addCount(inventory, "browser-http-transport-composition", file);
         if (file !== apiCompositionOwner) {
@@ -1542,7 +2000,7 @@ const analyzeSource = (file, source) => {
 
     const endpointPropertyAccess =
       (ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) &&
-      accessedPropertyName(node) === "endpoints";
+      resolvedPropertyName(node) === "endpoints";
     let endpointBinding =
       ts.isBindingElement(node) &&
       staticName(node.propertyName ?? node.name) === "endpoints" &&
@@ -1563,6 +2021,32 @@ const analyzeSource = (file, source) => {
   };
 
   visit(sourceFile);
+  const countFor = (category) => inventory[category]?.[file] ?? 0;
+  if (file === apiCompositionOwner) {
+    if (countFor("api-client-constructor") !== 1) {
+      report(sourceFile, `${apiCompositionOwner} must construct exactly one native ApiClient`);
+    }
+    if (countFor("browser-http-transport-composition") !== 1) {
+      report(
+        sourceFile,
+        `${apiCompositionOwner} must compose exactly one ${browserHttpTransportFactory}`,
+      );
+    }
+    if (countFor("runtime-endpoint-read") !== 1) {
+      report(
+        sourceFile,
+        `${apiCompositionOwner} must read exactly one native runtime endpoint`,
+      );
+    }
+  }
+  if (file === httpOwner) {
+    if (countFor("http-transport-constructor") !== 1) {
+      report(sourceFile, `${httpOwner} must construct exactly one ${httpTransportType}`);
+    }
+    if (countFor("fetch-reference") !== 1) {
+      report(sourceFile, `${httpOwner} must own exactly one browser fetch reference`);
+    }
+  }
   return { inventory, violations };
 };
 

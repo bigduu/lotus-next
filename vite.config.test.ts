@@ -1,14 +1,29 @@
 import { describe, expect, it } from "vitest"
 
-import { assertSafePublicBuildEnvironment, classifyVendorChunk } from "./vite.config"
+import { assertSafePublicBuildEnvironment, classifyVendorChunk, developmentProxy } from "./vite.config"
+
+const nonExactBackendInputs = [
+  "https://backend.example:8443?", "https://backend.example:8443#",
+  "https://backend.example:8443/api/v1?", "https://backend.example:8443/api/v1#",
+  "https://backend.example:8443/api/./v1", "https://backend.example:8443/api/%2e/v1",
+  String.raw`https://backend.example:8443/api\v1`, "https://exam\tple.com/api/v1",
+  "https://exam\nple.com/api/v1", "\thttps://backend.example:8443/api/v1",
+  "https://backend.example:8443/api/v1\n", "https://@backend.example:8443/api/v1",
+  "https://:@backend.example:8443/api/v1",
+]
 
 describe("public Vite build environment", () => {
-  it("accepts only the documented public metadata and canonical backend input", () => {
+  it.each([
+    "https://backend.example:8443",
+    "https://backend.example:8443/",
+    "https://backend.example:8443/api/v1",
+    "https://backend.example:8443/api/v1/",
+  ])("accepts documented metadata with canonical backend input %s", (backendBaseUrl) => {
     expect(() =>
       assertSafePublicBuildEnvironment({
         VITE_APP_REVISION: "revision",
         VITE_APP_VERSION: "1.2.3",
-        VITE_BACKEND_BASE_URL: "https://backend.example:8443/v1",
+        VITE_BACKEND_BASE_URL: backendBaseUrl,
       }),
     ).not.toThrow()
   })
@@ -26,16 +41,21 @@ describe("public Vite build environment", () => {
   })
 
   it.each([
-    ["https://user:password@backend.example/v1", "must not contain credentials"],
-    ["https://backend.example/v1?token=redacted", "must not contain a query or fragment"],
-    ["https://backend.example/v1#redacted", "must not contain a query or fragment"],
-    ["https://backend.example/proxy/v1", "path must be empty or /v1"],
+    ["https://user:password@backend.example/api/v1", "must not contain credentials"],
+    ["https://backend.example/api/v1?token=redacted", "must not contain a query or fragment"],
+    ["https://backend.example/api/v1#redacted", "must not contain a query or fragment"],
+    ["https://backend.example/v1", "legacy /v1 is not supported by new builds"],
+    ["https://backend.example/proxy/api/v1", "path must be empty or /api/v1"],
     ["file:///tmp/backend", "must use HTTP or HTTPS"],
     ["not-a-url", "must be an absolute HTTP(S) URL"],
-  ])("rejects unsafe canonical backend input %s", (backendBaseUrl, message) => {
+    ...nonExactBackendInputs.map((input) => [input, undefined] as const),
+  ])("rejects unsafe or non-exact canonical backend input %s", (backendBaseUrl, message) => {
     expect(() => assertSafePublicBuildEnvironment({ VITE_BACKEND_BASE_URL: backendBaseUrl })).toThrow(
       message,
     )
+  })
+  it("does not expose the legacy native /v1 alias", () => {
+    expect(Object.keys(developmentProxy).sort()).toEqual(["/api", "/v2"])
   })
 })
 

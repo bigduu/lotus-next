@@ -19,8 +19,7 @@ export interface RuntimeHost {
 
 export interface RuntimeEndpointSet {
   readonly origin: string;
-  readonly standardApi: string;
-  readonly agentApi: string;
+  readonly nativeApi: string;
   readonly v2Stream: string;
 }
 
@@ -70,6 +69,12 @@ const normalizeOptionalText = (value: string | null | undefined): string | null 
   return normalized ? normalized : null;
 };
 
+const containsControlCharacter = (value: string): boolean =>
+  Array.from(value).some((character) => {
+    const codePoint = character.charCodeAt(0);
+    return codePoint <= 0x1f || codePoint === 0x7f;
+  });
+
 /**
  * Parse one canonical backend base and derive every transport endpoint from
  * the same origin. Deployments with a path prefix require an explicit future
@@ -77,7 +82,10 @@ const normalizeOptionalText = (value: string | null | undefined): string | null 
  * WebSocket ownership diverge again.
  */
 export const createRuntimeEndpointSet = (backendBaseUrl: string): RuntimeEndpointSet => {
-  const trimmed = backendBaseUrl.trim().replace(/\/+$/, "");
+  if (containsControlCharacter(backendBaseUrl)) {
+    throw new RuntimeConfigurationError("Backend endpoint must not contain control characters.");
+  }
+  const trimmed = backendBaseUrl.trim();
   let parsed: URL;
 
   try {
@@ -89,24 +97,35 @@ export const createRuntimeEndpointSet = (backendBaseUrl: string): RuntimeEndpoin
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
     throw new RuntimeConfigurationError("Backend endpoint must use HTTP or HTTPS.");
   }
+  if (trimmed.includes("\\")) {
+    throw new RuntimeConfigurationError("Backend endpoint path must be empty or /api/v1.");
+  }
+  if (trimmed.includes("?") || trimmed.includes("#")) {
+    throw new RuntimeConfigurationError("Backend endpoint must not contain a query or fragment.");
+  }
   if (parsed.username || parsed.password) {
     throw new RuntimeConfigurationError("Backend endpoint must not contain credentials.");
   }
-  if (parsed.search || parsed.hash) {
-    throw new RuntimeConfigurationError("Backend endpoint must not contain a query or fragment.");
-  }
 
-  const pathname = parsed.pathname.replace(/\/+$/, "");
-  if (pathname && pathname !== "/v1") {
-    throw new RuntimeConfigurationError("Backend endpoint path must be empty or /v1.");
+  const rawEndpoint = /^(?:https?):\/\/([^/]+)(\/.*)?$/i.exec(trimmed);
+  if (!rawEndpoint) {
+    throw new RuntimeConfigurationError("Backend endpoint must be an absolute HTTP(S) URL.");
+  }
+  if (rawEndpoint[1].includes("@")) {
+    throw new RuntimeConfigurationError("Backend endpoint must not contain credentials.");
+  }
+  const rawPath = rawEndpoint[2] ?? "";
+  const isBareOrigin = rawPath === "" || rawPath === "/";
+  const isCanonicalApi = /^\/api\/v1\/*$/.test(rawPath);
+  if (!isBareOrigin && !isCanonicalApi) {
+    throw new RuntimeConfigurationError("Backend endpoint path must be empty or /api/v1.");
   }
 
   const origin = parsed.origin;
   const wsProtocol = parsed.protocol === "https:" ? "wss:" : "ws:";
   return {
     origin,
-    standardApi: `${origin}/v1`,
-    agentApi: `${origin}/api/v1`,
+    nativeApi: `${origin}/api/v1`,
     v2Stream: `${wsProtocol}//${parsed.host}/v2/stream`,
   };
 };
