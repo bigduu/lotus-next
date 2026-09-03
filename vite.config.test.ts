@@ -93,6 +93,12 @@ describe("vendor chunk ownership", () => {
     expect(classifyVendorChunk("/repo/src/components/chat/StreamdownMarkdown.tsx")).toBeUndefined()
   })
 
+  it("leaves cross-renderer URL metadata in a neutral shared chunk", () => {
+    expect(
+      classifyVendorChunk("/repo/node_modules/html-url-attributes/index.js"),
+    ).toBeUndefined()
+  })
+
   it.each([
     "/repo/node_modules/@radix-ui/react-switch/dist/index.mjs",
     "/repo/node_modules/@radix-ui/react-label/dist/index.mjs",

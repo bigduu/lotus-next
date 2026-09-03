@@ -71,12 +71,15 @@ export const assertSafePublicBuildEnvironment = (
 
 const STREAMDOWN_PACKAGES = new Set([
   "@streamdown/cjk",
-  "html-url-attributes",
   "remend",
   "remark-cjk-friendly",
   "remark-cjk-friendly-gfm-strikethrough",
   "streamdown",
 ])
+
+// `html-url-attributes` is shared by Streamdown and the HAST renderer. Let
+// Rolldown place it in a neutral shared chunk: forcing it into either vendor
+// group creates a vendor-streamdown <-> vendor-markdown initialization cycle.
 
 const STREAMDOWN_CODE_PACKAGES = new Set([
   "@shikijs/core",

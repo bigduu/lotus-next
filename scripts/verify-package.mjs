@@ -1,6 +1,5 @@
 import { spawnSync } from "node:child_process"
 import { readFileSync } from "node:fs"
-import path from "node:path"
 
 import {
   analyzeBundleBudget,
@@ -114,14 +113,41 @@ if (bundleViolations.length > 0) {
   process.exit(1)
 }
 
-const streamdownEntry = paths.find((file) =>
-  /^dist\/assets\/StreamdownMarkdown-[^/]+\.js$/.test(file),
+const assetManifest = JSON.parse(
+  readFileSync(new URL("../dist/asset-manifest.json", import.meta.url), "utf8"),
 )
-const javascriptPaths = new Set(paths.filter((file) => file.endsWith(".js")))
-const staticImportPattern =
-  /\b(?:import|export)(?:[\w\s{},*$]+from\s*)?["'](\.[^"']+\.js)["']/g
+const isAssetRecord = (value) =>
+  typeof value === "object" && value !== null && !Array.isArray(value)
+const streamdownEntry = Object.entries(assetManifest).find(
+  ([, record]) =>
+    isAssetRecord(record) && record.src === "src/components/chat/StreamdownMarkdown.tsx",
+)?.[0]
 
-function collectStaticJavaScriptClosure(entry) {
+if (!streamdownEntry) {
+  process.stderr.write(
+    "Production asset manifest has no StreamdownMarkdown dynamic entry.\n",
+  )
+  process.exit(1)
+}
+
+function collectStaticAssetImports(current) {
+  const record = assetManifest[current]
+  if (!isAssetRecord(record)) {
+    throw new Error(`Asset manifest is missing static import target ${current}.`)
+  }
+  if (record.imports === undefined) return []
+  if (!Array.isArray(record.imports) || record.imports.some((value) => typeof value !== "string")) {
+    throw new Error(`Asset manifest imports for ${current} are malformed.`)
+  }
+  for (const imported of record.imports) {
+    if (!isAssetRecord(assetManifest[imported])) {
+      throw new Error(`Asset manifest entry ${current} imports missing target ${imported}.`)
+    }
+  }
+  return record.imports
+}
+
+function collectStaticAssetClosure(entry) {
   const closure = new Set()
   const pending = [entry]
 
@@ -130,22 +156,46 @@ function collectStaticJavaScriptClosure(entry) {
     if (!current || closure.has(current)) continue
     closure.add(current)
 
-    const source = readFileSync(new URL(`../${current}`, import.meta.url), "utf8")
-    staticImportPattern.lastIndex = 0
-    for (const match of source.matchAll(staticImportPattern)) {
-      const imported = path.posix.normalize(
-        path.posix.join(path.posix.dirname(current), match[1]),
-      )
-      if (javascriptPaths.has(imported) && !closure.has(imported)) pending.push(imported)
+    for (const imported of collectStaticAssetImports(current)) {
+      if (!closure.has(imported)) pending.push(imported)
     }
   }
 
   return closure
 }
 
+function findStaticAssetCycle(entry) {
+  const complete = new Set()
+  const active = new Set()
+  const stack = []
+
+  const visit = (current) => {
+    if (active.has(current)) {
+      return [...stack.slice(stack.indexOf(current)), current]
+    }
+    if (complete.has(current)) return undefined
+
+    active.add(current)
+    stack.push(current)
+    for (const imported of collectStaticAssetImports(current)) {
+      const cycle = visit(imported)
+      if (cycle) return cycle
+    }
+    stack.pop()
+    active.delete(current)
+    complete.add(current)
+    return undefined
+  }
+
+  return visit(entry)
+}
+
 if (streamdownEntry) {
-  const firstAssistantClosure = collectStaticJavaScriptClosure(streamdownEntry)
+  const firstAssistantClosure = collectStaticAssetClosure(streamdownEntry)
   const closureFiles = [...firstAssistantClosure]
+    .map((key) => assetManifest[key]?.file)
+    .filter((file) => typeof file === "string" && file.endsWith(".js"))
+    .map((file) => `dist/${file}`)
   const closureChunkPatterns = new Map([
     ["vendor-streamdown", /^dist\/assets\/vendor-streamdown-(?!code-)[^/]+\.js$/],
     ["vendor-markdown", /^dist\/assets\/vendor-markdown-[^/]+\.js$/],
@@ -164,6 +214,14 @@ if (streamdownEntry) {
       `Streamdown first-render closure is incomplete:\n${missingLazyCore
         .map((chunkName) => `  - ${chunkName}`)
         .join("\n")}\n`,
+    )
+    process.exit(1)
+  }
+
+  const staticImportCycle = findStaticAssetCycle(streamdownEntry)
+  if (staticImportCycle) {
+    process.stderr.write(
+      `Streamdown first-render closure contains a static import cycle:\n  - ${staticImportCycle.join("\n  - ")}\n`,
     )
     process.exit(1)
   }
