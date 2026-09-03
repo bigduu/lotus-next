@@ -27,6 +27,8 @@
     "test:run": "vitest run",
     "test:e2e": "npm run build && npm run test:e2e:built",
     "test:e2e:built": "playwright test",
+    "test:e2e:real-bamboo": "npm run build && npm run test:e2e:real-bamboo:built",
+    "test:e2e:real-bamboo:built": "playwright test --config=playwright.real-bamboo.config.ts",
     "architecture:check": "node scripts/check-architecture.mjs",
     "package:contents": "node scripts/verify-package.mjs",
     "pack:check": "npm run build && npm run package:contents",

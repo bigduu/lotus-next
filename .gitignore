@@ -12,6 +12,9 @@ dist
 dist-ssr
 playwright-report
 test-results
+playwright-report-real-bamboo
+test-results-real-bamboo
+.e2e-bamboo
 *.local
 
 # Editor directories and files
