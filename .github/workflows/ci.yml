@@ -60,3 +60,56 @@ jobs:
             test-results/
           if-no-files-found: error
           retention-days: 14
+
+  real-bamboo:
+    name: Real Bamboo / Node 22
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    env:
+      BAMBOO_E2E_REVISION: 655732e24561b09869b7e97ab11bba01cf9bc4df
+
+    steps:
+      - name: Check out Lotus Next
+        uses: actions/checkout@v7
+
+      - name: Check out the paired Bamboo revision
+        uses: actions/checkout@v7
+        with:
+          repository: bigduu/Bamboo-agent
+          ref: ${{ env.BAMBOO_E2E_REVISION }}
+          path: .e2e-bamboo
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build the production Lotus Next artifact
+        run: npm run build
+
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Build exact Bamboo and verify a real chat round trip
+        env:
+          BAMBOO_E2E_SOURCE_DIR: ${{ github.workspace }}/.e2e-bamboo
+        run: npm run test:e2e:real-bamboo:built
+
+      - name: Upload real Bamboo browser evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v5
+        with:
+          name: playwright-report-real-bamboo-node-22
+          path: |
+            playwright-report-real-bamboo/
+            test-results-real-bamboo/
+          if-no-files-found: error
+          retention-days: 14
