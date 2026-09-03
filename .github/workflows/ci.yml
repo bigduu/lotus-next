@@ -40,3 +40,20 @@ jobs:
 
       - name: Verify architecture, behavior, build, and package contents
         run: npm run verify
+
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Verify the all-surface browser contract
+        run: npm run test:e2e:built
+
+      - name: Upload browser evidence
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v5
+        with:
+          name: playwright-report-node-${{ matrix.node }}
+          path: |
+            playwright-report/
+            test-results/
+          if-no-files-found: error
+          retention-days: 14

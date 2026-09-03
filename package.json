@@ -25,6 +25,8 @@
     "lint": "oxlint --deny-warnings",
     "test": "vitest",
     "test:run": "vitest run",
+    "test:e2e": "npm run build && npm run test:e2e:built",
+    "test:e2e:built": "playwright test",
     "architecture:check": "node scripts/check-architecture.mjs",
     "package:contents": "node scripts/verify-package.mjs",
     "pack:check": "npm run build && npm run package:contents",
@@ -72,6 +74,7 @@
     "zustand": "^5.0.14"
   },
   "devDependencies": {
+    "@playwright/test": "^1.62.1",
     "@tailwindcss/typography": "^0.5.20",
     "@types/node": "^24.13.2",
     "@types/react": "^19.2.17",

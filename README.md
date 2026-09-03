@@ -48,12 +48,19 @@ Run the same checks locally that CI runs for pull requests and `main`:
 
 ```bash
 npm ci
-npm run type-check
-npm run lint
-npm run test:run
-npm run build
-npm run pack:check
+npx playwright install chromium
+npm run verify
+npm run test:e2e:built
 ```
+
+`npm run verify` produces the production artifact after the type, lint, unit,
+architecture, bundle, and package checks. `npm run test:e2e:built` then exercises
+that exact output in Chromium at desktop, tablet, and phone viewports. Use
+`npm run test:e2e` as the standalone convenience command when you need it to
+build first. The browser suite checks standalone, secure remote, and nested
+embedded hosting while enforcing the canonical `/api/v1` and `/v2/stream`
+runtime contract. CI retains its HTML report, trace, screenshot, video, and
+runtime observations when a case fails.
 
 `npm run pack:check` rebuilds the app, asks npm for the exact dry-run tarball manifest, and rejects anything outside `dist/` plus npm's required package metadata. The package remains at version `0.0.0`; this repository intentionally has no publish or release workflow yet.
 

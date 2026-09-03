@@ -275,12 +275,19 @@ export const developmentProxy = {
   "/v2": { target: "http://127.0.0.1:9562", changeOrigin: true, ws: true },
 }
 
+// The published dist is mounted at an origin root by standalone Bamboo and at
+// a nested path by embedded hosts. Relative entry URLs keep one immutable
+// artifact portable across both placements; runtime API and WSS endpoints stay
+// origin-rooted through runtimeConfig rather than inheriting this asset base.
+export const portableArtifactBase = "./"
+
 // https://vite.dev/config/
 export default defineConfig(({ mode }) => {
   const publicEnvironment = loadEnv(mode, process.cwd(), "VITE_")
   assertSafePublicBuildEnvironment(publicEnvironment)
 
   return {
+    base: portableArtifactBase,
     plugins: [react(), tailwindcss(), bundleOwnershipPlugin()],
     build: {
       // The package verifier follows this exact generated graph when enforcing
