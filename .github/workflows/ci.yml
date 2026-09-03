@@ -41,6 +41,9 @@ jobs:
       - name: Verify architecture, behavior, build, and package contents
         run: npm run verify
 
+      - name: Verify the deterministic provider fixture
+        run: python3 e2e/support/realBambooProvider.py --self-test
+
       - name: Install Chromium
         run: npx playwright install --with-deps chromium
 
