@@ -256,6 +256,7 @@ const parseClientFrame = (message: string | Buffer): unknown => {
 export const installArtifactRuntime = async (
   page: Page,
   scenario: ArtifactScenario,
+  historyMessages: readonly unknown[] = [],
 ): Promise<RuntimeObservation> => {
   const observation: RuntimeObservation = {
     scenario: scenario.name,
@@ -343,7 +344,10 @@ export const installArtifactRuntime = async (
           return
         }
       }
-      const response = apiResponse(request.method(), `${url.pathname}${url.search}`)
+      const response =
+        request.method() === "GET" && url.pathname === `/api/v1/history/${FIXTURE_SESSION_ID}`
+          ? { session_id: FIXTURE_SESSION_ID, messages: historyMessages }
+          : apiResponse(request.method(), `${url.pathname}${url.search}`)
       if (response === undefined) {
         await route.fulfill({
           status: 501,
