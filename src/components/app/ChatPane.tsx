@@ -32,6 +32,7 @@ import { MessageList } from "@/components/app/MessageList"
 import { Composer } from "@/components/app/Composer"
 import { Toasts } from "@/components/app/Toasts"
 import { ImageLightbox } from "@/components/app/ImageLightbox"
+import { peekPendingTemplatePrompt } from "@/lib/taskTemplates"
 import { ReasoningPicker } from "@/components/chat/ReasoningPicker"
 import { ModelPicker } from "@/components/chat/ModelPicker"
 import {
@@ -52,6 +53,21 @@ type SecondaryConfig = {
 }
 
 type Attachment = { id: string; base64: string; name: string; type: string; size: number; url: string }
+type SelectedWorkflow = { name: string; content: string }
+
+type ComposerSubmissionSnapshot = Readonly<{
+  draftKey: string
+  draftRevision: number
+  attachmentRevision: number
+  skillRevision: number
+  workflowRevision: number
+  text: string
+  attachments: readonly Readonly<Attachment>[]
+  selectedSkill: Readonly<SkillDefinition> | null
+  selectedWorkflow: Readonly<SelectedWorkflow> | null
+  workspacePath: string | null
+  templatePrompt: ReturnType<typeof peekPendingTemplatePrompt>
+}>
 
 function fileToAttachment(file: File): Promise<Attachment> {
   return new Promise((resolve, reject) => {
@@ -118,6 +134,7 @@ export function ChatPane({
     streamStatus,
     pendingUserText,
     sending,
+    submissionPending,
     select,
     send,
     stop,
@@ -126,7 +143,7 @@ export function ChatPane({
     regenerate,
     editMessage,
     retry,
-    sendError,
+    sendFailure,
     pendingQuestion,
     pendingApproval,
     answerQuestion,
@@ -144,6 +161,9 @@ export function ChatPane({
   // main pane's and a split pane's empty composers don't share one draft.
   const draftKey = currentSessionId ?? (secondary ? "__new_chat_pane2__" : "")
   const draft = useAppStore((s) => s.inputStates[draftKey]?.content ?? "")
+  const composerInputRef = useRef<HTMLTextAreaElement>(null)
+  const currentDraftKeyRef = useRef(draftKey)
+  currentDraftKeyRef.current = draftKey
   const setDraft = (value: string | ((prev: string) => string)) => {
     const store = useAppStore.getState()
     const prev = store.inputStates[draftKey]?.content ?? ""
@@ -154,10 +174,23 @@ export function ChatPane({
   // Workflow commands for the slash menu; the picked one expands into the
   // message on send (content + user input).
   const [workflowCmds, setWorkflowCmds] = useState<CommandItem[]>([])
-  const [selectedWorkflow, setSelectedWorkflow] = useState<{ name: string; content: string } | null>(
-    null,
-  )
+  const [selectedWorkflow, setSelectedWorkflow] = useState<SelectedWorkflow | null>(null)
   const [attachments, setAttachments] = useState<Attachment[]>([])
+  const attachmentRevisionRef = useRef(0)
+  const skillRevisionRef = useRef(0)
+  const workflowRevisionRef = useRef(0)
+  const changeAttachments = (value: Attachment[] | ((prev: Attachment[]) => Attachment[])) => {
+    attachmentRevisionRef.current += 1
+    setAttachments(value)
+  }
+  const changeSelectedSkill = (value: SkillDefinition | null) => {
+    skillRevisionRef.current += 1
+    setSelectedSkill(value)
+  }
+  const changeSelectedWorkflow = (value: SelectedWorkflow | null) => {
+    workflowRevisionRef.current += 1
+    setSelectedWorkflow(value)
+  }
   const [preview, setPreview] = useState<string | null>(null)
   const [toast, setToast] = useState<string | null>(null)
   const [forking, setForking] = useState(false)
@@ -181,7 +214,7 @@ export function ChatPane({
     const imgs = Array.from(files).filter((f) => f.type.startsWith("image/"))
     if (imgs.length === 0) return
     const next = await Promise.all(imgs.map(fileToAttachment))
-    setAttachments((prev) => [...prev, ...next])
+    changeAttachments((prev) => [...prev, ...next])
   }
 
   const skills = useAppStore(useShallow((s) => s.skills))
@@ -294,31 +327,88 @@ export function ChatPane({
     // Guard BEFORE clearing anything: a Cmd+Enter while a reply streams must
     // not silently destroy the typed draft (send() would no-op on `sending`).
     if (sending) return
-    const text = draft
+    const storeAtSubmit = useAppStore.getState()
+    const draftAtSubmit = storeAtSubmit.inputStates[draftKey]
+    const text = draftAtSubmit?.content ?? ""
     if (!text.trim() && attachments.length === 0 && !selectedWorkflow) return
-    setDraft("")
+    const snapshot: ComposerSubmissionSnapshot = Object.freeze({
+      draftKey,
+      draftRevision: draftAtSubmit?.contentRevision ?? 0,
+      attachmentRevision: attachmentRevisionRef.current,
+      skillRevision: skillRevisionRef.current,
+      workflowRevision: workflowRevisionRef.current,
+      text,
+      attachments: Object.freeze(attachments.map((attachment) => Object.freeze({ ...attachment }))),
+      selectedSkill: selectedSkill
+        ? Object.freeze({ ...selectedSkill, tool_refs: [...selectedSkill.tool_refs] })
+        : null,
+      selectedWorkflow: selectedWorkflow ? Object.freeze({ ...selectedWorkflow }) : null,
+      workspacePath: pickedWorkspace,
+      templatePrompt: !currentSessionId && !secondary ? peekPendingTemplatePrompt() : null,
+    })
     // Workflow expansion: the workflow's markdown is the message body; any
     // typed text is appended as extra input (lotus token semantics).
-    const finalText = selectedWorkflow
-      ? `${selectedWorkflow.content}${text.trim() ? `\n\n${text.trim()}` : ""}`
+    const finalText = snapshot.selectedWorkflow
+      ? `${snapshot.selectedWorkflow.content}${text.trim() ? `\n\n${text.trim()}` : ""}`
       : text
     void send(finalText, {
-      skillIds: selectedSkill ? [selectedSkill.id] : undefined,
-      images: attachments.length
-        ? attachments.map((a) => ({ base64: a.base64, name: a.name, size: a.size, type: a.type }))
+      skillIds: snapshot.selectedSkill ? [snapshot.selectedSkill.id] : undefined,
+      images: snapshot.attachments.length
+        ? snapshot.attachments.map((a) => ({
+            base64: a.base64,
+            name: a.name,
+            size: a.size,
+            type: a.type,
+          }))
         : undefined,
-      workspacePath: pickedWorkspace,
+      workspacePath: snapshot.workspacePath,
+      templatePrompt: snapshot.templatePrompt,
     })
-    setSelectedSkill(null)
-    setSelectedWorkflow(null)
-    setAttachments([])
+      .then((result) => {
+        if (result.kind === "unconfirmed") {
+          if (currentDraftKeyRef.current === snapshot.draftKey) composerInputRef.current?.focus()
+          return
+        }
+        if (result.kind !== "accepted") return
+
+        // Commit only fields that still have the exact mutation revision captured
+        // by this submission. A late acknowledgement must never erase edits or a
+        // same-value re-selection made while the request was in flight.
+        const store = useAppStore.getState()
+        const cleared = store.setInputContentIfRevision(
+          snapshot.draftKey,
+          snapshot.draftRevision,
+          "",
+        )
+        if (!cleared && result.navigated && snapshot.draftKey !== result.sessionId) {
+          // A new-session acknowledgement re-keys the composer. Carry newer text
+          // into that fresh session instead of leaving it hidden under the old
+          // new-chat sentinel. Never overwrite an independently populated target.
+          const latest = useAppStore.getState()
+          const latestRevision = latest.inputStates[snapshot.draftKey]?.contentRevision ?? 0
+          latest.moveInputContentIfRevision(
+            snapshot.draftKey,
+            latestRevision,
+            result.sessionId,
+          )
+        }
+        if (attachmentRevisionRef.current === snapshot.attachmentRevision) setAttachments([])
+        if (skillRevisionRef.current === snapshot.skillRevision) setSelectedSkill(null)
+        if (workflowRevisionRef.current === snapshot.workflowRevision) setSelectedWorkflow(null)
+      })
+      .catch((err) => {
+        // send() normally resolves a typed outcome. Preserve every composer
+        // field if an unexpected client exception escapes that boundary.
+        console.error("[ChatPane] submission coordinator failed", err)
+        if (currentDraftKeyRef.current === snapshot.draftKey) composerInputRef.current?.focus()
+      })
     // Re-pin to bottom on send — the ResizeObserver keeps it there as the reply
     // grows and as the streaming→markdown swap relayouts.
     pinToBottom()
   }
 
   const pickSkill = (skill: SkillDefinition) => {
-    setSelectedSkill(skill)
+    changeSelectedSkill(skill)
     setDraft("")
   }
 
@@ -327,7 +417,10 @@ export function ChatPane({
     commandService
       .getWorkflowCommand(command.name)
       .then((detail) =>
-        setSelectedWorkflow({ name: command.display_name || command.name, content: detail.content }),
+        changeSelectedWorkflow({
+          name: command.display_name || command.name,
+          content: detail.content,
+        }),
       )
       .catch(() => showToast(`加载工作流 ${command.name} 失败`))
   }
@@ -530,12 +623,31 @@ export function ChatPane({
           </button>
         )}
 
-        {sendError ? (
-          <div className="mx-auto mb-1 flex max-w-2xl items-center justify-between gap-2 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm">
-            <span className="text-destructive">生成失败</span>
-            <Button size="sm" variant="secondary" onClick={() => void retry()}>
-              <RotateCcw className="size-3.5" /> 重试
-            </Button>
+        {sendFailure?.sessionId === currentSessionId ? (
+          <div
+            role="alert"
+            aria-live="assertive"
+            className="mx-auto mb-1 flex w-[calc(100%-1.5rem)] max-w-2xl flex-wrap items-center justify-between gap-2 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm"
+          >
+            <span className="text-destructive">
+              {sendFailure.kind === "submission-unconfirmed"
+                ? "发送状态未确认，内容已保留"
+                : "消息已发送，但生成中断"}
+            </span>
+            {sendFailure.kind === "generation-failed" ? (
+              <Button
+                size="sm"
+                variant="secondary"
+                disabled={sending}
+                onClick={() => void retry(sendFailure)}
+              >
+                <RotateCcw className="size-3.5" /> 重试生成
+              </Button>
+            ) : (
+              <Button size="sm" variant="secondary" onClick={() => composerInputRef.current?.focus()}>
+                继续编辑
+              </Button>
+            )}
           </div>
         ) : null}
 
@@ -545,19 +657,21 @@ export function ChatPane({
           onSubmit={submit}
           onStop={stop}
           sending={sending}
+          submissionPending={submissionPending}
+          inputRef={composerInputRef}
           attachments={attachments}
           onAddFiles={(files) => void addFiles(files)}
           onRemoveAttachment={(id) =>
-            setAttachments((prev) => prev.filter((x) => x.id !== id))
+            changeAttachments((prev) => prev.filter((x) => x.id !== id))
           }
           onPreviewImage={setPreview}
           selectedSkill={selectedSkill}
-          onClearSkill={() => setSelectedSkill(null)}
+          onClearSkill={() => changeSelectedSkill(null)}
           onPickSkill={pickSkill}
           skills={skills}
           workflows={workflowCmds}
           selectedWorkflow={selectedWorkflow}
-          onClearWorkflow={() => setSelectedWorkflow(null)}
+          onClearWorkflow={() => changeSelectedWorkflow(null)}
           onPickWorkflow={pickWorkflow}
           slashQuery={slashQuery}
           atQuery={atQuery}

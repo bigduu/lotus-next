@@ -269,18 +269,52 @@ export const TASK_TEMPLATES: TaskTemplate[] = [
 ]
 
 // ── First-send system-prompt handoff ────────────────────────────────────
-// A picked template's base prompt is consumed exactly once by useChat.send
-// when it creates the new session (it outranks the preset chip for that one
-// send). Cleared when the user picks another template or sends.
+// A picked template's base prompt is handed to useChat.send when it creates a
+// new session (it outranks the preset chip for that send). Sending is async, so
+// reading cannot clear the prompt before the backend acknowledges the request.
 
-let pendingTemplatePrompt: string | null = null
+export type PendingTemplatePromptSnapshot = Readonly<{
+  prompt: string
+  revision: number
+}>
+
+let pendingTemplatePrompt: PendingTemplatePromptSnapshot | null = null
+let pendingTemplatePromptRevision = 0
 
 export const setPendingTemplatePrompt = (prompt: string | null): void => {
-  pendingTemplatePrompt = prompt
+  if (prompt === null) {
+    pendingTemplatePrompt = null
+    return
+  }
+
+  pendingTemplatePromptRevision += 1
+  pendingTemplatePrompt = Object.freeze({
+    prompt,
+    revision: pendingTemplatePromptRevision,
+  })
 }
 
-export const consumePendingTemplatePrompt = (): string | null => {
-  const value = pendingTemplatePrompt
+/** Read the current handoff without consuming it before the send is acknowledged. */
+export const peekPendingTemplatePrompt = (): PendingTemplatePromptSnapshot | null =>
+  pendingTemplatePrompt
+
+/**
+ * Clear only the exact handoff that an acknowledged send used.
+ *
+ * The revision comparison prevents a late acknowledgement from clearing a
+ * template that the user selected while the earlier request was in flight,
+ * including when they selected the same template again.
+ */
+export const acknowledgePendingTemplatePrompt = (
+  snapshot: PendingTemplatePromptSnapshot,
+): boolean => {
+  if (
+    pendingTemplatePrompt?.revision !== snapshot.revision ||
+    pendingTemplatePrompt.prompt !== snapshot.prompt
+  ) {
+    return false
+  }
+
   pendingTemplatePrompt = null
-  return value
+  return true
 }
