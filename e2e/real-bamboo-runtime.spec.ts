@@ -36,7 +36,7 @@ test("source-built isolated Bamboo runtime exposes the canonical contract", asyn
 
   expect(baseUrl.protocol).toBe("http:");
   expect(baseUrl.hostname).toBe("127.0.0.1");
-  expect(revision).toBe("655732e24561b09869b7e97ab11bba01cf9bc4df");
+  expect(revision).toBe("49c6f3b8b4d0f72674f888aa3abcef7cd91cd372");
   expect(sessionId).toMatch(/^[0-9a-f-]{36}$/i);
   expect(path.isAbsolute(observationsPath)).toBe(true);
 
@@ -51,6 +51,13 @@ test("source-built isolated Bamboo runtime exposes the canonical contract", asyn
   expect(asRecord(bootstrapBody?.server)?.product).toBe("bamboo");
   expect(asRecord(bootstrapBody?.api)?.canonical_base_path).toBe("/api/v1");
   expect(asRecord(bootstrapBody?.realtime)?.path).toBe("/v2/stream");
+  expect(
+    Array.isArray(bootstrapBody?.capabilities)
+      ? bootstrapBody.capabilities.filter(
+          (capability) => capability === "auth.ws_hello_ack.v1",
+        )
+      : [],
+  ).toHaveLength(1);
 
   const history = await fetchJson(
     new URL(

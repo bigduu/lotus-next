@@ -23,6 +23,7 @@ const EXPECTED_DEVICE_PAIR_PATH = "/v2/pair";
 const MAX_U32 = 0xffff_ffff;
 
 const REQUIRED_REALTIME_CAPABILITIES = [
+  "auth.ws_hello_ack.v1",
   "realtime.account_feed.v1",
   "realtime.agent_events.v1",
   "realtime.application_heartbeat.v1",

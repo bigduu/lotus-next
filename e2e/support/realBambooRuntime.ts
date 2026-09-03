@@ -22,7 +22,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-export const REAL_BAMBOO_REVISION = "655732e24561b09869b7e97ab11bba01cf9bc4df";
+export const REAL_BAMBOO_REVISION = "49c6f3b8b4d0f72674f888aa3abcef7cd91cd372";
 
 const REAL_BAMBOO_MODEL = "gpt-4o-mini";
 const REAL_BAMBOO_PROVIDER = "e2e-openai";
@@ -1104,6 +1104,16 @@ const validateBootstrap = (bootstrap: unknown): void => {
   ) {
     throw new Error(
       "Bamboo bootstrap must advertise the bamboo.v2 WebSocket subprotocol",
+    );
+  }
+  if (
+    !Array.isArray(bootstrap.capabilities) ||
+    bootstrap.capabilities.filter(
+      (capability) => capability === "auth.ws_hello_ack.v1",
+    ).length !== 1
+  ) {
+    throw new Error(
+      "Bamboo bootstrap must advertise auth.ws_hello_ack.v1 exactly once",
     );
   }
 };

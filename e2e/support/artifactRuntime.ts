@@ -24,6 +24,13 @@ export interface RuntimeObservation {
   readonly webSocketUrls: string[]
   readonly webSocketProtocols: string[][]
   readonly clientFrames: unknown[]
+  readonly bootstrapDocuments: unknown[]
+  readonly webSocketTimeline: Array<{
+    readonly ordinal: number
+    readonly direction: "client-to-server" | "server-to-client"
+    readonly frame: unknown
+  }>
+  readonly protocolErrors: string[]
   readonly consoleErrors: string[]
   readonly pageErrors: string[]
   readonly failedRequests: string[]
@@ -71,6 +78,7 @@ const bootstrapDocument = {
     subprotocols: [{ name: "bamboo.v2", encoding: "json" }],
   },
   capabilities: [
+    "auth.ws_hello_ack.v1",
     "realtime.account_feed.v1",
     "realtime.agent_events.v1",
     "realtime.application_heartbeat.v1",
@@ -253,6 +261,21 @@ const parseClientFrame = (message: string | Buffer): unknown => {
   }
 }
 
+const isExactHello = (frame: unknown): boolean =>
+  typeof frame === "object" &&
+  frame !== null &&
+  !Array.isArray(frame) &&
+  Object.keys(frame).length === 1 &&
+  "type" in frame &&
+  frame.type === "hello"
+
+const isFrameType = (frame: unknown, type: string): boolean =>
+  typeof frame === "object" &&
+  frame !== null &&
+  !Array.isArray(frame) &&
+  "type" in frame &&
+  frame.type === type
+
 export const installArtifactRuntime = async (
   page: Page,
   scenario: ArtifactScenario,
@@ -266,6 +289,9 @@ export const installArtifactRuntime = async (
     webSocketUrls: [],
     webSocketProtocols: [],
     clientFrames: [],
+    bootstrapDocuments: [],
+    webSocketTimeline: [],
+    protocolErrors: [],
     consoleErrors: [],
     pageErrors: [],
     failedRequests: [],
@@ -290,16 +316,37 @@ export const installArtifactRuntime = async (
   await page.routeWebSocket(/.*/, (webSocket) => {
     observation.webSocketUrls.push(webSocket.url())
     observation.webSocketProtocols.push(webSocket.protocols())
+    let welcomeSent = false
     webSocket.onMessage((message) => {
       const frame = parseClientFrame(message)
       observation.clientFrames.push(frame)
-      if (
-        typeof frame === "object" &&
-        frame !== null &&
-        "type" in frame &&
-        frame.type === "ping"
-      ) {
-        webSocket.send(JSON.stringify({ type: "pong" }))
+      observation.webSocketTimeline.push({
+        ordinal: observation.webSocketTimeline.length + 1,
+        direction: "client-to-server",
+        frame,
+      })
+
+      if (isFrameType(frame, "subscribe") && !welcomeSent) {
+        observation.protocolErrors.push("client sent subscribe before exact welcome")
+      }
+
+      if (isExactHello(frame) && !welcomeSent) {
+        const welcome = { type: "welcome" }
+        welcomeSent = true
+        observation.webSocketTimeline.push({
+          ordinal: observation.webSocketTimeline.length + 1,
+          direction: "server-to-client",
+          frame: welcome,
+        })
+        webSocket.send(JSON.stringify(welcome))
+      } else if (isFrameType(frame, "ping") && welcomeSent) {
+        const pong = { type: "pong" }
+        observation.webSocketTimeline.push({
+          ordinal: observation.webSocketTimeline.length + 1,
+          direction: "server-to-client",
+          frame: pong,
+        })
+        webSocket.send(JSON.stringify(pong))
       }
     })
   })
@@ -354,6 +401,9 @@ export const installArtifactRuntime = async (
           json: { error: `Unimplemented fixture route: ${request.method()} ${url.pathname}` },
         })
         return
+      }
+      if (request.method() === "GET" && url.pathname === "/api/v1/bootstrap") {
+        observation.bootstrapDocuments.push(response)
       }
       await route.fulfill({ status: 200, json: response })
       return
