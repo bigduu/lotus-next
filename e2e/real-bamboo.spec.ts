@@ -38,10 +38,17 @@ interface FrameObservation {
   readonly value: unknown;
 }
 
+interface WebSocketTimelineEntry {
+  readonly ordinal: number;
+  readonly direction: "client-to-server" | "server-to-client";
+  readonly frame: FrameObservation;
+}
+
 interface WebSocketObservation {
   readonly url: string;
   readonly sent: FrameObservation[];
   readonly received: FrameObservation[];
+  readonly timeline: WebSocketTimelineEntry[];
   readonly errors: string[];
 }
 
@@ -170,7 +177,18 @@ const summarizeFrame = (frame: FrameObservation): FrameSummary => {
   };
 };
 
+const isExactFrame = (frame: FrameObservation, type: string): boolean => {
+  const root = asRecord(frame.value);
+  return (
+    !frame.malformed &&
+    root !== null &&
+    Object.keys(root).length === 1 &&
+    root.type === type
+  );
+};
+
 const observePage = (page: Page, label: string): PageObservation => {
+  let webSocketFrameOrdinal = 0;
   const observation: PageObservation = {
     label,
     requests: [],
@@ -245,15 +263,28 @@ const observePage = (page: Page, label: string): PageObservation => {
       url: redactedUrl(webSocket.url()),
       sent: [],
       received: [],
+      timeline: [],
       errors: [],
     };
     observation.webSockets.push(socket);
-    webSocket.on("framesent", (event) =>
-      socket.sent.push(decodeFrame(event.payload)),
-    );
-    webSocket.on("framereceived", (event) =>
-      socket.received.push(decodeFrame(event.payload)),
-    );
+    webSocket.on("framesent", (event) => {
+      const frame = decodeFrame(event.payload);
+      socket.sent.push(frame);
+      socket.timeline.push({
+        ordinal: ++webSocketFrameOrdinal,
+        direction: "client-to-server",
+        frame,
+      });
+    });
+    webSocket.on("framereceived", (event) => {
+      const frame = decodeFrame(event.payload);
+      socket.received.push(frame);
+      socket.timeline.push({
+        ordinal: ++webSocketFrameOrdinal,
+        direction: "server-to-client",
+        frame,
+      });
+    });
     webSocket.on("socketerror", (error) => socket.errors.push(error));
   });
 
@@ -355,6 +386,65 @@ const assertBootstrap = async (observation: PageObservation): Promise<void> => {
   expect(stringField(server, "product")).toBe("bamboo");
   expect(stringField(api, "canonical_base_path")).toBe("/api/v1");
   expect(stringField(realtime, "path")).toBe("/v2/stream");
+  const capabilities = Array.isArray(bootstrap?.capabilities)
+    ? bootstrap.capabilities
+    : [];
+  expect(
+    capabilities.filter(
+      (capability) => capability === "auth.ws_hello_ack.v1",
+    ),
+    `${observation.label}: Bamboo must advertise the reliable WebSocket hello acknowledgement`,
+  ).toHaveLength(1);
+};
+
+const assertWelcomeOrdering = (observation: PageObservation): void => {
+  const [socket] = observation.webSockets;
+  const helloFrames = socket.timeline.filter(
+    ({ direction, frame }) =>
+      direction === "client-to-server" &&
+      summarizeFrame(frame).type === "hello",
+  );
+  const welcomeFrames = socket.timeline.filter(
+    ({ direction, frame }) =>
+      direction === "server-to-client" &&
+      summarizeFrame(frame).type === "welcome",
+  );
+  const subscribeFrames = socket.timeline.filter(
+    ({ direction, frame }) =>
+      direction === "client-to-server" &&
+      summarizeFrame(frame).type === "subscribe",
+  );
+
+  expect(
+    helloFrames,
+    `${observation.label}: one socket epoch must send exactly one hello`,
+  ).toHaveLength(1);
+  expect(
+    isExactFrame(helloFrames[0].frame, "hello"),
+    `${observation.label}: hello must use the exact tokenless shape`,
+  ).toBe(true);
+  expect(
+    welcomeFrames,
+    `${observation.label}: one socket epoch must receive exactly one welcome`,
+  ).toHaveLength(1);
+  expect(
+    isExactFrame(welcomeFrames[0].frame, "welcome"),
+    `${observation.label}: welcome must contain no extra fields or secret material`,
+  ).toBe(true);
+  expect(
+    subscribeFrames.length,
+    `${observation.label}: the ready socket must send at least one subscription`,
+  ).toBeGreaterThan(0);
+  expect(
+    helloFrames[0].ordinal,
+    `${observation.label}: hello must precede welcome`,
+  ).toBeLessThan(welcomeFrames[0].ordinal);
+  for (const subscription of subscribeFrames) {
+    expect(
+      subscription.ordinal,
+      `${observation.label}: every subscription must follow exact welcome`,
+    ).toBeGreaterThan(welcomeFrames[0].ordinal);
+  }
 };
 
 const assertLiveSocket = async (
@@ -372,12 +462,16 @@ const assertLiveSocket = async (
   expect(new URL(socket.url).pathname).toBe("/v2/stream");
   await expect
     .poll(
-      () => hasClientFrame(observation, (frame) => frame.type === "hello"),
+      () =>
+        socket.timeline.filter(
+          ({ direction, frame }) =>
+            direction === "server-to-client" && isExactFrame(frame, "welcome"),
+        ).length,
       {
-        message: `${observation.label}: the client must send hello on its real WebSocket`,
+        message: `${observation.label}: Bamboo must acknowledge hello with exact welcome`,
       },
     )
-    .toBe(true);
+    .toBe(1);
   await expect
     .poll(
       () =>
@@ -390,6 +484,7 @@ const assertLiveSocket = async (
       },
     )
     .toBe(true);
+  assertWelcomeOrdering(observation);
 };
 
 const assertCleanPage = (
@@ -454,6 +549,7 @@ const assertCleanPage = (
     `${observation.label}: malformed JSON WebSocket frames`,
   ).toEqual([]);
   expect(socketErrors, `${observation.label}: WebSocket errors`).toEqual([]);
+  assertWelcomeOrdering(observation);
 };
 
 const assertRealAssistantRenderer = async (
@@ -685,6 +781,11 @@ const evidenceFor = (
         serverProduct: stringField(asRecord(root?.server), "product"),
         apiBasePath: stringField(asRecord(root?.api), "canonical_base_path"),
         realtimePath: stringField(asRecord(root?.realtime), "path"),
+        helloAckCapability: Array.isArray(root?.capabilities)
+          ? root.capabilities.filter(
+              (capability) => capability === "auth.ws_hello_ack.v1",
+            ).length === 1
+          : false,
       };
     }),
     history: observation.historyDocuments.map((document) =>
@@ -698,6 +799,13 @@ const evidenceFor = (
       url: socket.url,
       sent: socket.sent.map(summarizeFrame),
       received: socket.received.map(summarizeFrame),
+      timeline: socket.timeline.map(({ ordinal, direction, frame }) => ({
+        ordinal,
+        direction,
+        ...summarizeFrame(frame),
+        exactHello: isExactFrame(frame, "hello"),
+        exactWelcome: isExactFrame(frame, "welcome"),
+      })),
       errors: socket.errors,
     })),
   })),

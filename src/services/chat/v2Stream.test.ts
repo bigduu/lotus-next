@@ -65,10 +65,25 @@ class MockWebSocket {
     this.readyState = MockWebSocket.CLOSED
   }
 
-  open(negotiatedProtocol = ""): void {
+  openAwaitingWelcome(negotiatedProtocol = ""): void {
     this.protocol = negotiatedProtocol
     this.readyState = MockWebSocket.OPEN
     this.onopen?.()
+  }
+
+  welcome(frame: unknown = { type: "welcome" }): void {
+    if (this.protocol === "bamboo.v2.msgpack") this.emitBinary(frame)
+    else this.emit(frame)
+  }
+
+  openReady(negotiatedProtocol = ""): void {
+    this.openAwaitingWelcome(negotiatedProtocol)
+    this.welcome()
+  }
+
+  /** Existing behavior tests use a protocol-ready socket unless stated otherwise. */
+  open(negotiatedProtocol = ""): void {
+    this.openReady(negotiatedProtocol)
   }
 
   emit(frame: unknown): void {
@@ -141,27 +156,39 @@ describe("v2Stream shared WebSocket client", () => {
     vi.unstubAllGlobals()
   })
 
-  it("opens the canonical v2 URL lazily and reports socket readiness", () => {
+  it("opens lazily but keeps physical and protocol readiness distinct", () => {
     expect(isSocketOpen()).toBe(false)
 
-    const feed = subscribeFeed({ onChange: vi.fn() }, 0)
+    const onOpen = vi.fn()
+    const feed = subscribeFeed({ onChange: vi.fn(), onOpen }, 0)
 
     expect(sockets).toHaveLength(1)
     expect(lastSocket().url).toBe("ws://127.0.0.1:9562/v2/stream")
     expect(lastSocket().offeredProtocols).toEqual([])
     expect(isSocketOpen()).toBe(false)
 
-    lastSocket().open()
+    lastSocket().openAwaitingWelcome()
     expect(isSocketOpen()).toBe(true)
+    expect(isFeedOpen()).toBe(false)
+    expect(onOpen).not.toHaveBeenCalled()
+    expect(lastSocket().parsedSent()).toEqual([{ type: "hello" }])
+
+    lastSocket().welcome()
+    expect(isFeedOpen()).toBe(true)
+    expect(onOpen).toHaveBeenCalledTimes(1)
+    expect(lastSocket().parsedSent()).toEqual([
+      { type: "hello" },
+      { type: "subscribe", ch: "feed", since: 0 },
+    ])
 
     feed.close()
     expect(isSocketOpen()).toBe(false)
   })
 
-  it("does not report a feed open when its subscribe frame cannot be sent", () => {
+  it("reconnects the whole epoch when its initial feed subscribe cannot be sent", () => {
+    vi.useFakeTimers()
     const onOpen = vi.fn()
     const onError = vi.fn()
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {})
     subscribeFeed({ onChange: vi.fn(), onOpen, onError }, 5)
     const socket = lastSocket()
     const originalSend = socket.send.bind(socket)
@@ -176,26 +203,278 @@ describe("v2Stream shared WebSocket client", () => {
       originalSend(data)
     })
 
-    socket.open()
+    socket.openReady()
 
     expect(socket.readyState).toBe(MockWebSocket.CLOSED)
     expect(isSocketOpen()).toBe(false)
     expect(isFeedOpen()).toBe(false)
     expect(onOpen).not.toHaveBeenCalled()
     expect(onError).toHaveBeenCalledTimes(1)
-    expect(socket.parsedSent()).toContainEqual({ type: "unsubscribe", ch: "feed" })
-    expect(warn).toHaveBeenCalledWith("Failed to subscribe v2 feed:", expect.any(Error))
+    expect(socket.parsedSent()).toEqual([{ type: "hello" }])
+    expect(vi.getTimerCount()).toBe(1)
+
+    vi.advanceTimersByTime(500)
+    const retry = lastSocket()
+    retry.openReady()
+    expect(isFeedOpen()).toBe(true)
+    expect(retry.parsedSent()).toEqual([
+      { type: "hello" },
+      { type: "subscribe", ch: "feed", since: 5 },
+    ])
   })
 
   it("sends hello and the feed resume cursor when the socket opens", () => {
     subscribeFeed({ onChange: vi.fn() }, 5)
 
-    lastSocket().open()
+    lastSocket().openReady()
 
     expect(lastSocket().parsedSent()).toEqual([
       { type: "hello" },
       { type: "subscribe", ch: "feed", since: 5 },
     ])
+  })
+
+  it("drops every pre-welcome frame and admits only an exact one-shot welcome", async () => {
+    vi.useFakeTimers()
+    const onOpen = vi.fn()
+    const onChange = vi.fn()
+    const onToken = vi.fn()
+    const feed = subscribeFeed({ onChange, onOpen }, 4)
+    const agent = subscribeAgent("session-1", { onToken }, tokenDispatch)
+    const settled = vi.fn()
+    void agent.promise.then(settled)
+    const socket = lastSocket()
+
+    socket.openAwaitingWelcome()
+    socket.emit({ ch: "feed", seq: 5, event: change(5) })
+    socket.emit({
+      ch: "agent.session-1",
+      seq: 1,
+      event: { type: "token", content: "too-early" },
+    })
+    socket.emit({ ch: "agent.session-1", seq: 2, control: { type: "terminal" } })
+    socket.emit({ type: "pong" })
+    socket.emit({ ch: "sys", seq: 0, control: { type: "keepalive" } })
+    socket.welcome({ type: "welcome", ch: "sys" })
+    socket.welcome({ type: "welcome", seq: 0 })
+    socket.welcome({ type: "welcome", extra: true })
+    await Promise.resolve()
+
+    expect(socket.parsedSent()).toEqual([{ type: "hello" }])
+    expect(isSocketOpen()).toBe(true)
+    expect(isFeedOpen()).toBe(false)
+    expect(onOpen).not.toHaveBeenCalled()
+    expect(onChange).not.toHaveBeenCalled()
+    expect(onToken).not.toHaveBeenCalled()
+    expect(settled).not.toHaveBeenCalled()
+    expect(vi.getTimerCount()).toBe(1)
+
+    socket.welcome()
+    expect(socket.parsedSent()).toEqual([
+      { type: "hello" },
+      { type: "subscribe", ch: "feed", since: 4 },
+      { type: "subscribe", ch: "agent.session-1" },
+    ])
+    expect(isFeedOpen()).toBe(true)
+    expect(onOpen).toHaveBeenCalledTimes(1)
+
+    socket.welcome()
+    expect(socket.parsedSent()).toHaveLength(3)
+    expect(onOpen).toHaveBeenCalledTimes(1)
+
+    socket.emit({
+      ch: "agent.session-1",
+      seq: 3,
+      event: { type: "token", content: "accepted" },
+    })
+    expect(onToken).toHaveBeenCalledWith("accepted")
+
+    feed.close()
+    agent.close()
+  })
+
+  it("subscribes the latest live registries exactly once after welcome", () => {
+    const staleFeed = subscribeFeed({ onChange: vi.fn() }, 3)
+    const socket = lastSocket()
+    socket.openAwaitingWelcome()
+
+    const firstAgent = subscribeAgent("session-1", {}, tokenDispatch)
+    const survivingAgent = subscribeAgent("session-1", {}, tokenDispatch)
+    const removedAgent = subscribeAgent("session-2", {}, tokenDispatch)
+    const replacementFeed = subscribeFeed({ onChange: vi.fn() }, 8)
+    firstAgent.close()
+    removedAgent.close()
+    staleFeed.close()
+
+    expect(socket.parsedSent()).toEqual([{ type: "hello" }])
+    socket.welcome()
+
+    expect(socket.parsedSent()).toEqual([
+      { type: "hello" },
+      { type: "subscribe", ch: "feed", since: 8 },
+      { type: "subscribe", ch: "agent.session-1" },
+    ])
+
+    replacementFeed.close()
+    survivingAgent.close()
+  })
+
+  it("keeps exponential backoff, dropped identity, and agent work until ready", async () => {
+    vi.useFakeTimers()
+    const onError = vi.fn()
+    const reconnected = vi.fn()
+    onReconnected(reconnected)
+    const feed = subscribeFeed({ onChange: vi.fn(), onError }, 6)
+    const agent = subscribeAgent("session-1", {}, tokenDispatch)
+    const settled = vi.fn()
+    void agent.promise.then(settled)
+    const first = lastSocket()
+    first.openAwaitingWelcome()
+    const staleMessage = first.onmessage
+
+    vi.advanceTimersByTime(4_999)
+    expect(first.readyState).toBe(MockWebSocket.OPEN)
+    expect(onError).not.toHaveBeenCalled()
+    vi.advanceTimersByTime(1)
+    expect(first.readyState).toBe(MockWebSocket.CLOSED)
+    expect(onError).toHaveBeenCalledTimes(1)
+    await Promise.resolve()
+    expect(settled).not.toHaveBeenCalled()
+
+    vi.advanceTimersByTime(500)
+    const second = lastSocket()
+    second.openAwaitingWelcome()
+    staleMessage?.({ data: JSON.stringify({ type: "welcome" }) } as MessageEvent)
+    expect(second.parsedSent()).toEqual([{ type: "hello" }])
+
+    vi.advanceTimersByTime(5_000)
+    expect(second.readyState).toBe(MockWebSocket.CLOSED)
+    expect(onError).toHaveBeenCalledTimes(2)
+    await Promise.resolve()
+    expect(settled).not.toHaveBeenCalled()
+    vi.advanceTimersByTime(999)
+    expect(sockets).toHaveLength(2)
+    vi.advanceTimersByTime(1)
+
+    const third = lastSocket()
+    third.openReady()
+    expect(reconnected).toHaveBeenCalledTimes(1)
+    expect(third.parsedSent()).toEqual([
+      { type: "hello" },
+      { type: "subscribe", ch: "feed", since: 6 },
+      { type: "subscribe", ch: "agent.session-1" },
+    ])
+    expect(settled).not.toHaveBeenCalled()
+
+    third.drop()
+    vi.advanceTimersByTime(499)
+    expect(sockets).toHaveLength(3)
+    vi.advanceTimersByTime(1)
+    expect(sockets).toHaveLength(4)
+
+    agent.close()
+    feed.close()
+    await expect(agent.promise).resolves.toBeUndefined()
+  })
+
+  it("does not notify reconnect listeners after onOpen tears down the ready epoch", () => {
+    vi.useFakeTimers()
+    const reconnected = vi.fn()
+    onReconnected(reconnected)
+    let feed: ReturnType<typeof subscribeFeed>
+    feed = subscribeFeed(
+      {
+        onChange: vi.fn(),
+        onOpen: () => feed.close(),
+      },
+      0,
+    )
+    const first = lastSocket()
+    first.openAwaitingWelcome()
+    first.drop()
+    vi.advanceTimersByTime(500)
+
+    const retry = lastSocket()
+    retry.openReady()
+
+    expect(retry.readyState).toBe(MockWebSocket.CLOSED)
+    expect(isSocketOpen()).toBe(false)
+    expect(reconnected).not.toHaveBeenCalled()
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it("treats a hello send failure as an unavailable reconnectable epoch", () => {
+    vi.useFakeTimers()
+    const onError = vi.fn()
+    subscribeFeed({ onChange: vi.fn(), onError }, 0)
+    const socket = lastSocket()
+    vi.spyOn(socket, "send").mockImplementation(() => {
+      throw new Error("hello send failed")
+    })
+
+    socket.openAwaitingWelcome()
+
+    expect(socket.readyState).toBe(MockWebSocket.CLOSED)
+    expect(isSocketOpen()).toBe(false)
+    expect(onError).toHaveBeenCalledTimes(1)
+    expect(vi.getTimerCount()).toBe(1)
+    vi.advanceTimersByTime(500)
+    expect(sockets).toHaveLength(2)
+  })
+
+  it("reconnects on a ready-epoch subscribe failure without settling agent work", async () => {
+    vi.useFakeTimers()
+    const onError = vi.fn()
+    subscribeFeed({ onChange: vi.fn(), onError }, 2)
+    const first = lastSocket()
+    first.openReady()
+    const originalSend = first.send.bind(first)
+    vi.spyOn(first, "send").mockImplementation((data) => {
+      if (
+        typeof data === "string" &&
+        JSON.parse(data).type === "subscribe" &&
+        JSON.parse(data).ch === "agent.session-1"
+      ) {
+        throw new Error("agent subscribe failed")
+      }
+      originalSend(data)
+    })
+
+    const agent = subscribeAgent("session-1", {}, tokenDispatch)
+    const settled = vi.fn()
+    void agent.promise.then(settled)
+    await Promise.resolve()
+
+    expect(first.readyState).toBe(MockWebSocket.CLOSED)
+    expect(onError).toHaveBeenCalledTimes(1)
+    expect(settled).not.toHaveBeenCalled()
+
+    vi.advanceTimersByTime(500)
+    const retry = lastSocket()
+    retry.openReady()
+    expect(retry.parsedSent()).toEqual([
+      { type: "hello" },
+      { type: "subscribe", ch: "feed", since: 2 },
+      { type: "subscribe", ch: "agent.session-1" },
+    ])
+
+    retry.emit({ ch: "agent.session-1", seq: 1, control: { type: "terminal" } })
+    await expect(agent.promise).resolves.toBeUndefined()
+  })
+
+  it("cancels the welcome deadline when the last awaiting subscriber leaves", () => {
+    vi.useFakeTimers()
+    const feed = subscribeFeed({ onChange: vi.fn() }, 0)
+    const socket = lastSocket()
+    socket.openAwaitingWelcome()
+    expect(vi.getTimerCount()).toBe(1)
+
+    feed.close()
+
+    expect(socket.readyState).toBe(MockWebSocket.CLOSED)
+    expect(vi.getTimerCount()).toBe(0)
+    vi.advanceTimersByTime(60_000)
+    expect(sockets).toHaveLength(1)
   })
 
   it("routes full feed events and resumes from the latest durable cursor", () => {
@@ -759,7 +1038,11 @@ describe("v2Stream shared WebSocket client", () => {
       const onError = vi.fn()
       subscribeFeed({ onChange, onError }, 0)
       const socket = lastSocket()
-      socket.open()
+      socket.openAwaitingWelcome()
+
+      vi.advanceTimersByTime(4_999)
+      expect(socket.parsedSent()).toEqual([{ type: "hello" }])
+      socket.welcome()
 
       vi.advanceTimersByTime(15_000)
       expect(socket.parsedSent()).toContainEqual({ type: "ping" })
@@ -1025,14 +1308,22 @@ describe("v2Stream shared WebSocket client", () => {
       const onChange = vi.fn()
       subscribeFeed({ onChange }, 5)
       const socket = lastSocket()
-      socket.open("bamboo.v2.msgpack")
+      socket.openAwaitingWelcome("bamboo.v2.msgpack")
+
+      expect(socket.msgpackSent()).toEqual([{ type: "hello" }])
+      const event = change(9)
+      socket.emitBinary({ ch: "feed", seq: 9, event })
+      socket.welcome({ type: "welcome", ch: "feed" })
+      expect(onChange).not.toHaveBeenCalled()
+      expect(socket.msgpackSent()).toEqual([{ type: "hello" }])
+
+      socket.welcome()
 
       expect(socket.msgpackSent()).toEqual([
         { type: "hello" },
         { type: "subscribe", ch: "feed", since: 5 },
       ])
 
-      const event = change(9)
       socket.emitBinary({ ch: "feed", seq: 9, event })
       expect(onChange).toHaveBeenCalledWith(event)
     })

@@ -46,6 +46,7 @@ const exactFixture = () => ({
     "auth.device_bearer.v1",
     "auth.password_cookie.v1",
     "auth.ws_device_hello.v1",
+    "auth.ws_hello_ack.v1",
     "realtime.account_feed.v1",
     "realtime.agent_events.v1",
     "realtime.application_heartbeat.v1",
@@ -96,7 +97,7 @@ beforeEach(() => {
 });
 
 describe("Bamboo bootstrap document admission", () => {
-  it("accepts the exact Bamboo #1040 fixture without deriving support from version 0.0.0", () => {
+  it("accepts the exact post-#1041 fixture without deriving support from version 0.0.0", () => {
     expect(classifyServerBootstrapDocument(exactFixture())).toEqual({ kind: "ready" });
   });
 
@@ -354,6 +355,7 @@ describe("Bamboo bootstrap document admission", () => {
   });
 
   it.each([
+    "auth.ws_hello_ack.v1",
     "realtime.account_feed.v1",
     "realtime.agent_events.v1",
     "realtime.application_heartbeat.v1",
@@ -363,6 +365,18 @@ describe("Bamboo bootstrap document admission", () => {
   ])("rejects a contract missing required capability %s", (capability) => {
     const document = exactFixture();
     document.capabilities = document.capabilities.filter((item) => item !== capability);
+    expect(classifyServerBootstrapDocument(document)).toEqual({
+      kind: "incompatible",
+      reason: "missing-capability",
+    });
+  });
+
+  it("rejects a missing hello acknowledgement before entering the password gate", () => {
+    const document = withAuth("credential_required", "unauthenticated", true, false);
+    document.capabilities = document.capabilities.filter(
+      (capability) => capability !== "auth.ws_hello_ack.v1",
+    );
+
     expect(classifyServerBootstrapDocument(document)).toEqual({
       kind: "incompatible",
       reason: "missing-capability",

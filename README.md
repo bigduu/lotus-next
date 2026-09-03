@@ -64,10 +64,14 @@ runtime observations when a case fails.
 
 The real-runtime gate is intentionally separate from that deterministic matrix.
 It builds a clean checkout of Bamboo revision
-`655732e24561b09869b7e97ab11bba01cf9bc4df` into an isolated Docker image,
+`49c6f3b8b4d0f72674f888aa3abcef7cd91cd372` into an isolated Docker image,
 serves the production Lotus Next artifact from that Bamboo process, and drives
 one complete chat turn through the visible desktop UI and a local deterministic
-OpenAI-compatible provider. The provider shares Bamboo's test-owned network
+OpenAI-compatible provider. It requires the `auth.ws_hello_ack.v1` bootstrap
+capability and records one ordered, bidirectional WebSocket timeline for both
+the initial page and a fresh browser context, proving that exact `hello` is
+acknowledged by exact `welcome` before any subscription is sent. The provider
+shares Bamboo's test-owned network
 namespace and listens only on that namespace's loopback interface; only Bamboo's
 HTTP listener is published on a random host-loopback port. The provider writes
 redacted observations atomically to a test-owned bind mount instead of exposing

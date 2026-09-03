@@ -10,7 +10,8 @@
  *  - Client to server: {type:"hello"} (optional; no token on loopback/local),
  *    {type:"subscribe", ch:"feed", since}, {type:"subscribe", ch:"agent.<sid>"},
  *    {type:"unsubscribe", ch}, {type:"stop", session_id}, {type:"ping"}.
- *  - Server to client: event envelope {ch, seq, event} and control envelope
+ *  - Server to client: an exact {type:"welcome"} acknowledgement, followed by
+ *    event envelope {ch, seq, event} and control envelope
  *    {ch, seq, control:{type:"terminal"|"feed_reset"|"keepalive", ...}}, or
  *    {type:"pong"}.
  *
@@ -27,8 +28,9 @@
  * Reconnect: a single bounded-backoff reconnect loop owns the socket — for
  * initial connect failures AND post-open drops alike (there is no fallback to
  * degrade to, so the loop simply keeps trying while subscriptions exist; the
- * UI reflects unavailability via `onError`). On every (re)connect a `hello` is
- * sent and ALL live channels are re-subscribed (feed with its latest cursor,
+ * UI reflects unavailability via `onError`). On every (re)connect only a
+ * `hello` is sent first. ALL live channels are subscribed only after the
+ * server's exact `welcome` acknowledgement (feed with its latest cursor,
  * agents with their sid). A `feed_reset` control clears the feed cursor so the
  * next (re)subscribe resyncs from scratch.
  *
@@ -65,6 +67,8 @@ const HEARTBEAT_INTERVAL_MS = 15_000;
 const HEARTBEAT_STALE_MS = 40_000;
 /** Check often enough to recover close to the documented stale threshold. */
 const WATCHDOG_TICK_MS = 1_000;
+/** Fail closed before Bamboo's longer authorization deadline can strand UI. */
+const WELCOME_TIMEOUT_MS = 5_000;
 
 /**
  * The MessagePack subprotocol token offered via `Sec-WebSocket-Protocol` when
@@ -165,10 +169,12 @@ const feedResetCursorFromFrame = (frame: ServerFrame): number | null => {
  */
 interface SocketLiveness {
   socket: WebSocket;
+  phase: "awaiting-welcome" | "subscribing" | "ready";
   lastFrameAt: number;
   pingSent: boolean;
   heartbeatAckSeen: boolean;
   recoveryStarted: boolean;
+  welcomeTimer: ReturnType<typeof setTimeout> | null;
   heartbeatTimer: ReturnType<typeof setInterval> | null;
   watchdogTimer: ReturnType<typeof setInterval> | null;
   visibilityListener: (() => void) | null;
@@ -179,9 +185,9 @@ let connecting = false;
 let reconnectAttempts = 0;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let intentionalClose = false;
-/** True once a non-intentional drop happened; cleared when the socket reopens. */
+/** True once a non-intentional drop happened; cleared only after protocol readiness. */
 let droppedSinceOpen = false;
-/** The liveness epoch for the currently-open socket, if any. */
+/** Protocol/liveness state for the exact currently-open socket epoch, if any. */
 let socketLiveness: SocketLiveness | null = null;
 
 /**
@@ -200,19 +206,30 @@ export const onReconnected = (listener: () => void): (() => void) => {
 };
 
 /**
- * Whether the shared v2 socket is currently OPEN (post-handshake). This is the
- * same state that drives the feed's `onOpen`/`onError` callbacks; exposed so
- * availability consumers (the HTTP health poll) can defer to the live channel
- * instead of masking a WS-only outage.
+ * Whether the shared v2 socket is physically OPEN. This deliberately does not
+ * imply that Bamboo acknowledged hello or that subscriptions are usable;
+ * callers that need account-feed readiness must use {@link isFeedOpen}.
  */
 export const isSocketOpen = (): boolean =>
   socket !== null && socket.readyState === WebSocket.OPEN;
+
+const isSocketReady = (expectedSocket: WebSocket | null = socket): boolean => {
+  const liveness = socketLiveness;
+  return (
+    expectedSocket !== null &&
+    socket === expectedSocket &&
+    expectedSocket.readyState === WebSocket.OPEN &&
+    liveness !== null &&
+    liveness.socket === expectedSocket &&
+    liveness.phase === "ready"
+  );
+};
 
 let feedChannel: FeedChannel | null = null;
 
 /** Whether the account feed itself is usable on the shared socket. */
 export const isFeedOpen = (): boolean =>
-  isSocketOpen() &&
+  isSocketReady() &&
   feedChannel !== null &&
   !feedChannel.deliveryFailed &&
   feedChannel.subscribedSince !== null;
@@ -233,15 +250,15 @@ const hasSubscriptions = (): boolean =>
  * backend did not echo it (older JSON-only backend → empty `ws.protocol`), this
  * is false and we stay on JSON. Safe to call any time; defaults to JSON.
  */
-const isMsgpackActive = (): boolean => socket !== null && socket.protocol === MSGPACK_SUBPROTOCOL;
+const isMsgpackActive = (ws: WebSocket): boolean => ws.protocol === MSGPACK_SUBPROTOCOL;
 
-const send = (payload: Record<string, unknown>): boolean => {
-  if (socket && socket.readyState === WebSocket.OPEN) {
+const sendOnSocket = (ws: WebSocket, payload: Record<string, unknown>): boolean => {
+  if (socket === ws && ws.readyState === WebSocket.OPEN) {
     try {
       // Encoding is chosen from the post-open `ws.protocol`, so frames queued
-      // before open (flushed here on open via resubscribeAll) get the correct
+      // before open (flushed after welcome via subscribeAll) get the correct
       // negotiated encoding — the handshake has completed by the time we send.
-      socket.send(isMsgpackActive() ? msgpackEncode(payload) : JSON.stringify(payload));
+      ws.send(isMsgpackActive(ws) ? msgpackEncode(payload) : JSON.stringify(payload));
       return true;
     } catch (error) {
       debugLog("[v2Stream]", "send.error", { payload, error });
@@ -250,12 +267,17 @@ const send = (payload: Record<string, unknown>): boolean => {
   return false;
 };
 
-const sendFeedSubscribe = (channel: FeedChannel): boolean => {
+const send = (payload: Record<string, unknown>): boolean =>
+  socket !== null && sendOnSocket(socket, payload);
+
+const sendFeedSubscribe = (channel: FeedChannel, ws: WebSocket): boolean => {
   const subscribedSince = channel.since;
   channel.subscribedSince = null;
   channel.acceptedInSubscription = false;
   channel.resetHandledInSubscription = false;
-  if (!send({ type: "subscribe", ch: "feed", since: subscribedSince })) return false;
+  if (!sendOnSocket(ws, { type: "subscribe", ch: "feed", since: subscribedSince })) {
+    return false;
+  }
   channel.subscribedSince = subscribedSince;
   return true;
 };
@@ -275,7 +297,7 @@ const failFeedDelivery = (
 
   channel.deliveryFailed = true;
   channel.subscribedSince = null;
-  send({ type: "unsubscribe", ch: "feed" });
+  if (isSocketReady()) send({ type: "unsubscribe", ch: "feed" });
   try {
     channel.handlers.onError?.();
   } catch (onErrorFailure) {
@@ -284,18 +306,15 @@ const failFeedDelivery = (
   closeIfIdle();
 };
 
-/** (Re)send the subscribe frames for every live channel after a (re)connect. */
-const resubscribeAll = (): void => {
-  send({ type: "hello" });
+/** Subscribe every current registry entry for one exact acknowledged socket. */
+const subscribeAll = (ws: WebSocket): boolean => {
   if (feedChannel && !feedChannel.deliveryFailed) {
-    const channel = feedChannel;
-    if (!sendFeedSubscribe(channel)) {
-      failFeedDelivery(channel, "subscribe", new Error("WebSocket send failed"));
-    }
+    if (!sendFeedSubscribe(feedChannel, ws)) return false;
   }
   for (const ch of agentChannels.keys()) {
-    send({ type: "subscribe", ch });
+    if (!sendOnSocket(ws, { type: "subscribe", ch })) return false;
   }
+  return true;
 };
 
 const clearReconnectTimer = (): void => {
@@ -321,6 +340,10 @@ const clearSocketLiveness = (expectedSocket?: WebSocket): void => {
   const liveness = socketLiveness;
   if (!liveness || (expectedSocket && liveness.socket !== expectedSocket)) return;
 
+  if (liveness.welcomeTimer !== null) {
+    clearTimeout(liveness.welcomeTimer);
+    liveness.welcomeTimer = null;
+  }
   if (liveness.heartbeatTimer !== null) {
     clearInterval(liveness.heartbeatTimer);
     liveness.heartbeatTimer = null;
@@ -358,7 +381,20 @@ const teardownSocket = (expectedSocket?: WebSocket): boolean => {
   return true;
 };
 
-const forceReconnectStaleSocket = (liveness: SocketLiveness): void => {
+const reportUnavailable = (): void => {
+  try {
+    feedChannel?.handlers.onError?.();
+  } catch (error) {
+    debugLog("[v2Stream]", "unavailable.listener_error", { error });
+  }
+};
+
+/**
+ * Fail one exact socket epoch without settling agent subscriptions. The live
+ * registries and durable feed cursor survive so the bounded reconnect loop can
+ * subscribe them again after the replacement socket is acknowledged.
+ */
+const failSocketEpoch = (liveness: SocketLiveness, reason: string): void => {
   if (
     socketLiveness !== liveness ||
     socket !== liveness.socket ||
@@ -368,16 +404,34 @@ const forceReconnectStaleSocket = (liveness: SocketLiveness): void => {
   }
 
   liveness.recoveryStarted = true;
+  if (feedChannel) {
+    feedChannel.subscribedSince = null;
+    feedChannel.acceptedInSubscription = false;
+    feedChannel.resetHandledInSubscription = false;
+  }
+  droppedSinceOpen = true;
+  debugLog("[v2Stream]", "epoch.unavailable", { reason });
+  reportUnavailable();
+  teardownSocket(liveness.socket);
+  connecting = false;
+  scheduleReconnect();
+};
+
+const forceReconnectStaleSocket = (liveness: SocketLiveness): void => {
+  if (
+    socketLiveness !== liveness ||
+    socket !== liveness.socket ||
+    liveness.recoveryStarted
+  ) {
+    return;
+  }
+
   debugLog("[v2Stream]", "watchdog.stale_socket", {
     silentForMs: Date.now() - liveness.lastFrameAt,
   });
   // Match a non-intentional onclose exactly, but do not wait for a half-open
   // browser socket to emit one: signal availability once, then reconnect WSS.
-  droppedSinceOpen = true;
-  feedChannel?.handlers.onError?.();
-  teardownSocket(liveness.socket);
-  connecting = false;
-  scheduleReconnect();
+  failSocketEpoch(liveness, "heartbeat-stale");
 };
 
 const watchdogTick = (liveness: SocketLiveness): void => {
@@ -385,6 +439,7 @@ const watchdogTick = (liveness: SocketLiveness): void => {
     socketLiveness !== liveness ||
     socket !== liveness.socket ||
     liveness.socket.readyState !== WebSocket.OPEN ||
+    liveness.phase !== "ready" ||
     !liveness.heartbeatAckSeen
   ) {
     return;
@@ -394,23 +449,54 @@ const watchdogTick = (liveness: SocketLiveness): void => {
   }
 };
 
-const startSocketLiveness = (ws: WebSocket): void => {
+const startAwaitingWelcome = (ws: WebSocket): SocketLiveness => {
   clearSocketLiveness();
   const liveness: SocketLiveness = {
     socket: ws,
+    phase: "awaiting-welcome",
     lastFrameAt: Date.now(),
     pingSent: false,
     heartbeatAckSeen: false,
     recoveryStarted: false,
+    welcomeTimer: null,
     heartbeatTimer: null,
     watchdogTimer: null,
     visibilityListener: null,
   };
   socketLiveness = liveness;
 
+  liveness.welcomeTimer = setTimeout(() => {
+    if (
+      socketLiveness !== liveness ||
+      socket !== ws ||
+      liveness.phase !== "awaiting-welcome"
+    ) {
+      return;
+    }
+    failSocketEpoch(liveness, "welcome-timeout");
+  }, WELCOME_TIMEOUT_MS);
+
+  return liveness;
+};
+
+const startReadyLiveness = (liveness: SocketLiveness): void => {
+  const ws = liveness.socket;
+  if (liveness.welcomeTimer !== null) {
+    clearTimeout(liveness.welcomeTimer);
+    liveness.welcomeTimer = null;
+  }
+  liveness.lastFrameAt = Date.now();
+
   liveness.heartbeatTimer = setInterval(() => {
-    if (socketLiveness !== liveness || socket !== ws || ws.readyState !== WebSocket.OPEN) return;
-    if (send({ type: "ping" })) liveness.pingSent = true;
+    if (
+      socketLiveness !== liveness ||
+      socket !== ws ||
+      ws.readyState !== WebSocket.OPEN ||
+      liveness.phase !== "ready"
+    ) {
+      return;
+    }
+    if (sendOnSocket(ws, { type: "ping" })) liveness.pingSent = true;
   }, HEARTBEAT_INTERVAL_MS);
 
   liveness.watchdogTimer = setInterval(() => watchdogTick(liveness), WATCHDOG_TICK_MS);
@@ -425,7 +511,14 @@ const startSocketLiveness = (ws: WebSocket): void => {
 
 const markInboundFrame = (ws: WebSocket): SocketLiveness | null => {
   const liveness = socketLiveness;
-  if (!liveness || liveness.socket !== ws || socket !== ws) return null;
+  if (
+    !liveness ||
+    liveness.socket !== ws ||
+    socket !== ws ||
+    liveness.phase !== "ready"
+  ) {
+    return null;
+  }
   liveness.lastFrameAt = Date.now();
   return liveness;
 };
@@ -478,6 +571,81 @@ const decodeFrame = (data: unknown): ServerFrame | undefined => {
   } catch (error) {
     console.warn("Failed to parse v2 stream frame:", data, error);
     return undefined;
+  }
+};
+
+const isExactWelcome = (frame: unknown): frame is { type: "welcome" } =>
+  isRecord(frame) &&
+  Object.keys(frame).length === 1 &&
+  Object.prototype.hasOwnProperty.call(frame, "type") &&
+  frame.type === "welcome";
+
+const isWelcomeLike = (frame: unknown): boolean =>
+  isRecord(frame) && frame.type === "welcome";
+
+const acknowledgeWelcome = (liveness: SocketLiveness): void => {
+  const ws = liveness.socket;
+  if (
+    socketLiveness !== liveness ||
+    socket !== ws ||
+    ws.readyState !== WebSocket.OPEN ||
+    liveness.phase !== "awaiting-welcome"
+  ) {
+    return;
+  }
+
+  if (liveness.welcomeTimer !== null) {
+    clearTimeout(liveness.welcomeTimer);
+    liveness.welcomeTimer = null;
+  }
+  liveness.phase = "subscribing";
+
+  if (!hasSubscriptions()) {
+    closeIfIdle();
+    return;
+  }
+  if (!subscribeAll(ws)) {
+    failSocketEpoch(liveness, "subscribe-send-failed");
+    return;
+  }
+  if (socketLiveness !== liveness || socket !== ws || !hasSubscriptions()) {
+    closeIfIdle();
+    return;
+  }
+
+  liveness.phase = "ready";
+  reconnectAttempts = 0;
+  const wasDropped = droppedSinceOpen;
+  droppedSinceOpen = false;
+  startReadyLiveness(liveness);
+  debugLog("[v2Stream]", "ready", { afterDrop: wasDropped });
+
+  if (feedChannel && !feedChannel.deliveryFailed && feedChannel.subscribedSince !== null) {
+    try {
+      feedChannel.handlers.onOpen?.();
+    } catch (error) {
+      debugLog("[v2Stream]", "feed.open_listener_error", { error });
+    }
+  }
+  // onOpen is application code and may synchronously remove the last live
+  // subscription, tearing down this epoch. Never notify reconnect listeners
+  // from a socket that ceased to be current during that callback.
+  if (
+    socketLiveness !== liveness ||
+    socket !== ws ||
+    liveness.phase !== "ready" ||
+    !hasSubscriptions()
+  ) {
+    return;
+  }
+  if (wasDropped) {
+    for (const listener of [...reconnectedListeners]) {
+      try {
+        listener();
+      } catch (error) {
+        debugLog("[v2Stream]", "reconnected.listener_error", { error });
+      }
+    }
   }
 };
 
@@ -641,39 +809,42 @@ const connect = (): void => {
   ws.onopen = () => {
     if (socket !== ws) return;
     connecting = false;
-    reconnectAttempts = 0;
-    const wasDropped = droppedSinceOpen;
-    droppedSinceOpen = false;
-    startSocketLiveness(ws);
-    debugLog("[v2Stream]", "open", { afterDrop: wasDropped });
-    resubscribeAll();
-    if (feedChannel && !feedChannel.deliveryFailed && feedChannel.subscribedSince !== null) {
-      feedChannel.handlers.onOpen?.();
-    }
-    if (wasDropped) {
-      for (const listener of [...reconnectedListeners]) {
-        try {
-          listener();
-        } catch (error) {
-          debugLog("[v2Stream]", "reconnected.listener_error", { error });
-        }
-      }
+    const liveness = startAwaitingWelcome(ws);
+    debugLog("[v2Stream]", "open.awaiting_welcome", {});
+    if (!sendOnSocket(ws, { type: "hello" })) {
+      failSocketEpoch(liveness, "hello-send-failed");
     }
   };
 
   ws.onmessage = (messageEvent: MessageEvent) => {
     if (socket !== ws) return;
-    const liveness = markInboundFrame(ws);
     // Decode by frame shape: string → JSON, ArrayBuffer/binary → msgpack. A
     // malformed/undecodable frame is logged + ignored inside decodeFrame, so
     // this never throws out of onmessage (same discipline as the JSON path).
-    handleFrame(decodeFrame(messageEvent.data), liveness);
+    const frame = decodeFrame(messageEvent.data);
+    const liveness = socketLiveness;
+    if (!liveness || liveness.socket !== ws) return;
+
+    if (liveness.phase === "awaiting-welcome") {
+      if (isExactWelcome(frame)) acknowledgeWelcome(liveness);
+      else debugLog("[v2Stream]", "frame.before_welcome", {});
+      return;
+    }
+    // A synchronous test double or hostile peer can deliver while subscribe
+    // frames are still being written. No application data belongs to a
+    // partially-subscribed epoch.
+    if (liveness.phase === "subscribing") return;
+    // Welcome is a one-shot gate. Exact duplicates and malformed welcome-like
+    // frames cannot refresh liveness or re-run subscription side effects.
+    if (isWelcomeLike(frame)) return;
+
+    handleFrame(frame, markInboundFrame(ws));
   };
 
   ws.onerror = () => {
     if (socket !== ws) return;
     debugLog("[v2Stream]", "error", {});
-    feedChannel?.handlers.onError?.();
+    reportUnavailable();
   };
 
   ws.onclose = () => {
@@ -689,7 +860,8 @@ const connect = (): void => {
     // other transport to degrade to; the UI reflects unavailability via
     // `onError` until a reconnect succeeds.
     droppedSinceOpen = true;
-    feedChannel?.handlers.onError?.();
+    if (feedChannel) feedChannel.subscribedSince = null;
+    reportUnavailable();
     scheduleReconnect();
   };
 };
@@ -718,9 +890,10 @@ export const subscribeFeed = (
     postResetFloor: null,
   };
   const channel = feedChannel;
-  if (socket && socket.readyState === WebSocket.OPEN) {
-    if (!sendFeedSubscribe(channel)) {
-      failFeedDelivery(channel, "subscribe", new Error("WebSocket send failed"));
+  if (socket && isSocketReady(socket)) {
+    if (!sendFeedSubscribe(channel, socket)) {
+      const liveness = socketLiveness;
+      if (liveness) failSocketEpoch(liveness, "feed-subscribe-send-failed");
     }
   } else {
     connect();
@@ -733,7 +906,7 @@ export const subscribeFeed = (
       closed = true;
       if (feedChannel !== channel) return;
       feedChannel = null;
-      send({ type: "unsubscribe", ch: "feed" });
+      if (isSocketReady()) send({ type: "unsubscribe", ch: "feed" });
       closeIfIdle();
     },
   };
@@ -775,7 +948,7 @@ export const subscribeAgent = (
       // another pane may still be watching the same session.
       if (!subscribers || subscribers.size === 0) {
         agentChannels.delete(ch);
-        send({ type: "unsubscribe", ch });
+        if (isSocketReady()) send({ type: "unsubscribe", ch });
         closeIfIdle();
       }
       resolve();
@@ -787,9 +960,12 @@ export const subscribeAgent = (
   if (existing) existing.add(subscriber);
   else agentChannels.set(ch, new Set([subscriber]));
 
-  if (socket && socket.readyState === WebSocket.OPEN) {
+  if (socket && isSocketReady(socket)) {
     // One subscribe frame per channel; later subscribers piggyback on it.
-    if (isFirstSubscriber) send({ type: "subscribe", ch });
+    if (isFirstSubscriber && !sendOnSocket(socket, { type: "subscribe", ch })) {
+      const liveness = socketLiveness;
+      if (liveness) failSocketEpoch(liveness, "agent-subscribe-send-failed");
+    }
   } else {
     connect();
   }

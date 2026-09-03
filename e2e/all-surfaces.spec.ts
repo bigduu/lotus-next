@@ -70,6 +70,9 @@ const frameMatches = (
     ([key, value]) => key in frame && (frame as Record<string, unknown>)[key] === value,
   )
 
+const isExactFrame = (frame: unknown, type: string): boolean =>
+  frameMatches(frame, { type }) && Object.keys(frame as Record<string, unknown>).length === 1
+
 const pathname = (url: string): string => new URL(url).pathname
 
 const expectReadyShell = async (surface: Surface): Promise<void> => {
@@ -100,15 +103,57 @@ const expectCanonicalRuntime = async (
     { message: "deferred bootstrap should settle through the canonical client" },
   ).toBe(true)
   await expect.poll(() => observation.webSocketUrls).toHaveLength(1)
+  await expect.poll(() => observation.bootstrapDocuments).toHaveLength(1)
+  const bootstrap = observation.bootstrapDocuments[0] as { capabilities?: unknown }
+  expect(
+    Array.isArray(bootstrap.capabilities)
+      ? bootstrap.capabilities.filter((capability) => capability === "auth.ws_hello_ack.v1")
+      : [],
+    "the default fixture must advertise the reliable WebSocket hello acknowledgement",
+  ).toHaveLength(1)
+
   await expect.poll(
-    () => observation.clientFrames.some((frame) => frameMatches(frame, { type: "hello" })),
-  ).toBe(true)
+    () =>
+      observation.webSocketTimeline.filter(
+        ({ direction, frame }) =>
+          direction === "server-to-client" && isExactFrame(frame, "welcome"),
+      ),
+  ).toHaveLength(1)
   await expect.poll(
     () =>
       observation.clientFrames.some((frame) =>
         frameMatches(frame, { type: "subscribe", ch: "feed", since: 0 }),
       ),
   ).toBe(true)
+
+  const helloFrames = observation.webSocketTimeline.filter(
+    ({ direction, frame }) =>
+      direction === "client-to-server" && frameMatches(frame, { type: "hello" }),
+  )
+  const welcomeFrames = observation.webSocketTimeline.filter(
+    ({ direction, frame }) =>
+      direction === "server-to-client" && frameMatches(frame, { type: "welcome" }),
+  )
+  const subscribeFrames = observation.webSocketTimeline.filter(
+    ({ direction, frame }) =>
+      direction === "client-to-server" && frameMatches(frame, { type: "subscribe" }),
+  )
+  expect(helloFrames, "one socket epoch must send exactly one hello").toHaveLength(1)
+  expect(isExactFrame(helloFrames[0]?.frame, "hello")).toBe(true)
+  expect(welcomeFrames, "the fixture must return exactly one welcome").toHaveLength(1)
+  expect(
+    isExactFrame(welcomeFrames[0]?.frame, "welcome"),
+    "welcome must contain no extra fields or secret material",
+  ).toBe(true)
+  expect(subscribeFrames.length).toBeGreaterThan(0)
+  expect(helloFrames[0].ordinal).toBeLessThan(welcomeFrames[0].ordinal)
+  for (const subscription of subscribeFrames) {
+    expect(
+      subscription.ordinal,
+      "every subscription must be sent only after the exact welcome",
+    ).toBeGreaterThan(welcomeFrames[0].ordinal)
+  }
+  expect(observation.protocolErrors, "fixture protocol-order violations").toEqual([])
 
   const bootstrapRequests = observation.apiUrls.filter(
     (url) => pathname(url) === "/api/v1/bootstrap",
