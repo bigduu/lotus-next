@@ -1,9 +1,10 @@
-import { defineConfig, devices } from "@playwright/test"
+import { defineConfig, devices } from "@playwright/test";
 
-const chromium = { browserName: "chromium" as const }
+const chromium = { browserName: "chromium" as const };
 
 export default defineConfig({
   testDir: "./e2e",
+  testIgnore: "real-bamboo*.spec.ts",
   outputDir: "test-results",
   fullyParallel: true,
   forbidOnly: Boolean(process.env.CI),
@@ -20,7 +21,9 @@ export default defineConfig({
     locale: "zh-CN",
     screenshot: "only-on-failure",
     trace: "retain-on-failure",
-    video: process.env.CI ? "retain-on-failure-and-retries" : "retain-on-failure",
+    video: process.env.CI
+      ? "retain-on-failure-and-retries"
+      : "retain-on-failure",
   },
   projects: [
     {
@@ -48,4 +51,4 @@ export default defineConfig({
       },
     },
   ],
-})
+});
