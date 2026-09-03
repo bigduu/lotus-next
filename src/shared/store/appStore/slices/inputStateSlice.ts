@@ -15,6 +15,8 @@ export interface Attachment {
 // Input state for a single chat session
 export interface InputState {
   content: string;
+  /** Runtime-only CAS token. Every content mutation receives a unique value. */
+  contentRevision: number;
   referenceText: string | null;
   attachments: Attachment[];
   reasoningEffort: ReasoningEffort;
@@ -28,6 +30,18 @@ export interface InputStateSliceState {
 export interface InputStateSliceActions {
   // Set input content for a chat
   setInputContent: (sessionId: string, content: string) => void;
+  // Replace content only if no writer has changed it since expectedRevision
+  setInputContentIfRevision: (
+    sessionId: string,
+    expectedRevision: number,
+    content: string,
+  ) => boolean;
+  // Atomically move a revision-owned draft into an empty target session
+  moveInputContentIfRevision: (
+    sourceSessionId: string,
+    expectedRevision: number,
+    targetSessionId: string,
+  ) => boolean;
   // Set reference text for a chat
   setReferenceText: (sessionId: string, referenceText: string | null) => void;
   // Set attachments for a chat
@@ -47,9 +61,20 @@ const INPUT_REASONING_LAST_USED_LS_KEY = "chat_input_reasoning_last_used_v1";
 
 const DEFAULT_INPUT_STATE: InputState = {
   content: "",
+  contentRevision: 0,
   referenceText: null,
   attachments: [],
   reasoningEffort: "medium",
+};
+
+// A module-lifetime sequence avoids same-value ABA across panes and component
+// remounts. In-flight browser requests cannot survive a full JavaScript runtime
+// restart, so this token intentionally does not need persistence.
+let inputContentRevisionSequence = 0;
+
+const nextInputContentRevision = (): number => {
+  inputContentRevisionSequence += 1;
+  return inputContentRevisionSequence;
 };
 
 const isReasoningEffort = (value: unknown): value is ReasoningEffort =>
@@ -140,9 +165,58 @@ export const createInputStateSlice: StateCreator<AppState, [], [], InputStateSli
         [sessionId]: {
           ...(state.inputStates[sessionId] || defaultInputStateForSession(sessionId)),
           content,
+          contentRevision: nextInputContentRevision(),
         },
       },
     })),
+
+  setInputContentIfRevision: (sessionId, expectedRevision, content) => {
+    let replaced = false;
+    set((state) => {
+      const current = state.inputStates[sessionId] || defaultInputStateForSession(sessionId);
+      if (current.contentRevision !== expectedRevision) return state;
+      replaced = true;
+      return {
+        inputStates: {
+          ...state.inputStates,
+          [sessionId]: {
+            ...current,
+            content,
+            contentRevision: nextInputContentRevision(),
+          },
+        },
+      };
+    });
+    return replaced;
+  },
+
+  moveInputContentIfRevision: (sourceSessionId, expectedRevision, targetSessionId) => {
+    let moved = false;
+    set((state) => {
+      const source = state.inputStates[sourceSessionId] ||
+        defaultInputStateForSession(sourceSessionId);
+      const target = state.inputStates[targetSessionId] ||
+        defaultInputStateForSession(targetSessionId);
+      if (source.contentRevision !== expectedRevision || target.content) return state;
+      moved = true;
+      return {
+        inputStates: {
+          ...state.inputStates,
+          [sourceSessionId]: {
+            ...source,
+            content: "",
+            contentRevision: nextInputContentRevision(),
+          },
+          [targetSessionId]: {
+            ...target,
+            content: source.content,
+            contentRevision: nextInputContentRevision(),
+          },
+        },
+      };
+    });
+    return moved;
+  },
 
   // Set reference text for a chat
   setReferenceText: (sessionId, referenceText) =>

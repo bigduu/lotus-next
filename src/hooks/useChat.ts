@@ -13,7 +13,10 @@ import { notify } from "@/lib/notify"
 import { mapTokenBudgetUsage } from "@shared/types/tokenBudget"
 import { getSystemPromptEnhancementText } from "@shared/utils/systemPromptEnhancement"
 import { isCopilotConclusionWithOptionsEnhancementEnabled } from "@shared/utils/copilotConclusionWithOptionsEnhancementUtils"
-import { consumePendingTemplatePrompt } from "@/lib/taskTemplates"
+import {
+  acknowledgePendingTemplatePrompt,
+  type PendingTemplatePromptSnapshot,
+} from "@/lib/taskTemplates"
 
 export type PendingQuestion = {
   question: string
@@ -26,6 +29,36 @@ export type PendingApproval = {
   toolName?: string
   permission?: string
   resource?: string
+}
+
+export type SubmissionUnconfirmedFailure = {
+  kind: "submission-unconfirmed"
+  operationId: number
+  sessionId: string | null
+}
+
+export type GenerationFailure = {
+  kind: "generation-failed"
+  operationId: number
+  sessionId: string
+  pendingOperationId?: number
+}
+
+export type SendFailure = SubmissionUnconfirmedFailure | GenerationFailure
+
+export type SendSubmissionResult =
+  | { kind: "accepted"; operationId: number; sessionId: string; navigated: boolean }
+  | { kind: "unconfirmed"; operationId: number }
+  | { kind: "busy" }
+  | { kind: "ignored" }
+
+type ActiveSendOperation = {
+  id: number
+  phase: "submitting" | "preparing" | "generating"
+  originSessionId: string | null
+  originNavigationEpoch: number
+  acknowledgedSessionId?: string
+  pendingOperationId?: number
 }
 
 /** A single live (in-run) tool invocation, streamed over the agent channel. */
@@ -110,12 +143,33 @@ export function useChat(
   // conversation, never leaking into another session the user switched to.
   const [streamSid, setStreamSid] = useState<string | null>(null)
   // Optimistic just-sent user message (shows instantly before history reloads).
-  const [pending, setPending] = useState<{ sid: string | null; text: string } | null>(null)
+  const [pending, setPending] = useState<{
+    operationId: number
+    sid: string
+    text: string
+  } | null>(null)
   const [sending, setSending] = useState(false)
-  const [sendError, setSendError] = useState(false)
+  const [submissionPending, setSubmissionPending] = useState(false)
+  const [sendFailures, setSendFailures] = useState<ReadonlyMap<string | null, SendFailure>>(
+    () => new Map(),
+  )
   const [pendingQuestion, setPendingQuestion] = useState<PendingQuestion | null>(null)
   const [pendingApproval, setPendingApproval] = useState<PendingApproval | null>(null)
   const abortRef = useRef<AbortController | null>(null)
+  const mountedRef = useRef(false)
+  const operationSequenceRef = useRef(0)
+  const activeSendRef = useRef<ActiveSendOperation | null>(null)
+  const sendFailuresRef = useRef<ReadonlyMap<string | null, SendFailure>>(new Map())
+  const latestOperationBySessionRef = useRef<Map<string | null, number>>(new Map())
+  const streamOperationRef = useRef<number | null>(null)
+  const subscriptionRef = useRef<{ operationId: number; sessionId: string } | null>(null)
+  const navigationRef = useRef({ sessionId: sid, epoch: 0 })
+  if (navigationRef.current.sessionId !== sid) {
+    navigationRef.current = {
+      sessionId: sid,
+      epoch: navigationRef.current.epoch + 1,
+    }
+  }
   // The session whose agent channel this instance is CURRENTLY subscribed to
   // (null once the subscription settles). Guards the passive-observe engine
   // against double-subscribing a run we already drive/watch.
@@ -145,8 +199,51 @@ export function useChat(
   const streamingReasoning = streamSid === sid ? streamingReasoningText : null
   const liveSegments = streamSid === sid ? liveSegmentsState : EMPTY_SEGMENTS
   const streamStatus = streamSid === sid ? streamStatusState : null
-  const pendingUserText =
-    pending && (pending.sid === sid || pending.sid === null) ? pending.text : null
+  const pendingUserText = pending?.sid === sid ? pending.text : null
+  const sendFailure = sendFailures.get(sid ?? null) ?? null
+
+  const noteSessionOperation = useCallback((sessionId: string | null, operationId: number) => {
+    const current = latestOperationBySessionRef.current.get(sessionId)
+    if (current === undefined || operationId > current) {
+      latestOperationBySessionRef.current.set(sessionId, operationId)
+    }
+  }, [])
+
+  const publishSendFailure = useCallback((failure: SendFailure) => {
+    const latestOperation = latestOperationBySessionRef.current.get(failure.sessionId)
+    if (latestOperation !== undefined && latestOperation > failure.operationId) return false
+    const current = sendFailuresRef.current.get(failure.sessionId)
+    if (current && current.operationId > failure.operationId) return false
+    const next = new Map(sendFailuresRef.current)
+    next.set(failure.sessionId, failure)
+    sendFailuresRef.current = next
+    if (mountedRef.current) setSendFailures(next)
+    return true
+  }, [])
+
+  const clearSendFailure = useCallback(
+    (sessionId: string | null, expectedOperationId?: number) => {
+      const current = sendFailuresRef.current.get(sessionId)
+      if (!current || (expectedOperationId !== undefined && current.operationId !== expectedOperationId)) {
+        return false
+      }
+      const next = new Map(sendFailuresRef.current)
+      next.delete(sessionId)
+      sendFailuresRef.current = next
+      if (mountedRef.current) setSendFailures(next)
+      return true
+    },
+    [],
+  )
+
+  const getSendFailure = useCallback((sessionId: string | null) => {
+    return sendFailuresRef.current.get(sessionId) ?? null
+  }, [])
+
+  const clearPendingOperation = useCallback((operationId: number) => {
+    if (!mountedRef.current) return
+    setPending((current) => (current?.operationId === operationId ? null : current))
+  }, [])
 
   const setStreamStatus = useCallback((status: string | null) => {
     if (streamStatusRef.current === status) return
@@ -216,7 +313,8 @@ export function useChat(
   }, [])
 
   const stopStream = useCallback(
-    (final: string | null) => {
+    (final: string | null, operationId?: number) => {
+      if (operationId !== undefined && streamOperationRef.current !== operationId) return
       if (rafRef.current != null) {
         cancelAnimationFrame(rafRef.current)
         rafRef.current = null
@@ -233,6 +331,7 @@ export function useChat(
       reasonBufRef.current = ""
       liveSegRef.current = []
       toolCallsByIdRef.current.clear()
+      streamOperationRef.current = null
       setLiveSegmentsState(EMPTY_SEGMENTS)
       setStreamStatus(null)
       setStreamingText(final)
@@ -283,7 +382,16 @@ export function useChat(
   // Execute a session + subscribe to its token stream. Shared by send (after a
   // new user message) and by regenerate / retry / edit (after a truncate).
   const runStream = useCallback(
-    async (runSid: string, opts?: { resume?: boolean }) => {
+    async (
+      runSid: string,
+      opts?: { resume?: boolean; operationId?: number; pendingOperationId?: number },
+    ) => {
+      const operationId = opts?.operationId ?? operationSequenceRef.current + 1
+      operationSequenceRef.current = Math.max(operationSequenceRef.current, operationId)
+      noteSessionOperation(runSid, operationId)
+      streamOperationRef.current = operationId
+      const ownsStream = () => streamOperationRef.current === operationId
+      const terminal = { settlement: null as Promise<void> | null }
       // ONE live subscription per hook instance: sever the previous one FIRST
       // so its handlers can't pollute the buffers we're about to re-key to a
       // (possibly different) session. Abort synchronously removes the
@@ -305,17 +413,26 @@ export function useChat(
       setPendingQuestion(null)
       const ac = new AbortController()
       abortRef.current = ac
+      const subscription = { operationId, sessionId: runSid }
+      subscriptionRef.current = subscription
+      subscribedSidRef.current = runSid
       // On resume (after answering a question/permission) the backend already
       // continues the suspended run — only subscribe, don't kick a fresh execute.
       if (!opts?.resume) {
         void agentClient.execute(runSid, effectiveModel || undefined, reasoningEffort).catch(() => {
+          if (!ownsStream()) return
           // The run never started, so no terminal will ever arrive — settle
           // the subscription instead of leaving it (and the UI) hanging.
-          setSendError(true)
+          publishSendFailure({
+            kind: "generation-failed",
+            operationId,
+            sessionId: runSid,
+            pendingOperationId: opts?.pendingOperationId,
+          })
+          stopStream(null, operationId)
           ac.abort()
         })
       }
-      subscribedSidRef.current = runSid
       await agentClient.subscribeToEvents(
         runSid,
         {
@@ -457,39 +574,98 @@ export function useChat(
               permission: req.permission,
               resource: req.resource,
             }),
-          onComplete: async () => {
-            // Freeze the fully-streamed text in place (cancel any pending RAF) so the
-            // assistant bubble keeps showing it while the persisted message loads —
-            // otherwise it blanks for a beat between "streaming" and "normal".
-            if (rafRef.current != null) {
-              cancelAnimationFrame(rafRef.current)
-              rafRef.current = null
-            }
-            const finalText = streamBufRef.current
-            if (finalText) setStreamingText(finalText)
-            // waitForAssistant is a no-op without retries (its loop guard is
-            // `attempt < retries`), so pass a real retry budget — otherwise the
-            // load can apply a state without the assistant reply and the held
-            // bubble clears into a blank/empty view.
-            await useAppStore
-              .getState()
-              .loadChatHistory(runSid, { waitForAssistant: true, retries: 8, retryDelayMs: 150 })
-            stopStream(null)
+          onComplete: () => {
+            if (!ownsStream() || terminal.settlement) return
+            terminal.settlement = (async () => {
+              // Freeze the fully-streamed text in place while persisted history
+              // loads, so terminal delivery never flashes an empty assistant row.
+              if (rafRef.current != null) {
+                cancelAnimationFrame(rafRef.current)
+                rafRef.current = null
+              }
+              const finalText = streamBufRef.current
+              if (finalText) setStreamingText(finalText)
+              let historyLoaded = false
+              try {
+                // waitForAssistant is a no-op without a real retry budget.
+                await useAppStore.getState().loadChatHistory(runSid, {
+                  waitForAssistant: true,
+                  retries: 8,
+                  retryDelayMs: 150,
+                })
+                historyLoaded = true
+              } catch (err) {
+                console.warn("[useChat] terminal history hydration failed", err)
+              }
+              if (!ownsStream()) return
+              if (historyLoaded && opts?.pendingOperationId !== undefined) {
+                clearPendingOperation(opts.pendingOperationId)
+              }
+              stopStream(historyLoaded ? null : finalText || null, operationId)
+            })()
           },
-          onError: async () => {
-            setSendError(true)
-            await useAppStore.getState().loadChatHistory(runSid)
-            stopStream(null)
+          onError: () => {
+            if (!ownsStream() || terminal.settlement) return
+            publishSendFailure({
+              kind: "generation-failed",
+              operationId,
+              sessionId: runSid,
+              pendingOperationId: opts?.pendingOperationId,
+            })
+            terminal.settlement = (async () => {
+              let historyLoaded = false
+              try {
+                await useAppStore.getState().loadChatHistory(runSid)
+                historyLoaded = true
+              } catch (err) {
+                console.warn("[useChat] failed-generation history hydration failed", err)
+              }
+              if (!ownsStream()) return
+              if (historyLoaded && opts?.pendingOperationId !== undefined) {
+                clearPendingOperation(opts.pendingOperationId)
+              }
+              stopStream(null, operationId)
+            })()
           },
-          onCancelled: async () => {
-            await useAppStore.getState().loadChatHistory(runSid)
-            stopStream(null)
+          onCancelled: () => {
+            if (!ownsStream() || terminal.settlement) return
+            terminal.settlement = (async () => {
+              let historyLoaded = false
+              try {
+                await useAppStore.getState().loadChatHistory(runSid)
+                historyLoaded = true
+              } catch (err) {
+                console.warn("[useChat] cancelled-generation history hydration failed", err)
+              }
+              if (!ownsStream()) return
+              if (historyLoaded && opts?.pendingOperationId !== undefined) {
+                clearPendingOperation(opts.pendingOperationId)
+              }
+              stopStream(null, operationId)
+            })()
           },
         },
         ac,
       ).finally(() => {
-        if (subscribedSidRef.current === runSid) subscribedSidRef.current = null
+        if (subscriptionRef.current === subscription) {
+          subscriptionRef.current = null
+          subscribedSidRef.current = null
+        }
       })
+      if (terminal.settlement) {
+        await terminal.settlement
+      } else if (ownsStream()) {
+        // The transport contract settles only on terminal or abort. Reaching
+        // here while still owning the stream is therefore a broken generation,
+        // not a successful completion.
+        publishSendFailure({
+          kind: "generation-failed",
+          operationId,
+          sessionId: runSid,
+          pendingOperationId: opts?.pendingOperationId,
+        })
+        stopStream(null, operationId)
+      }
     },
     [
       effectiveModel,
@@ -500,17 +676,26 @@ export function useChat(
       setStreamStatus,
       flushSegments,
       stopStream,
+      clearPendingOperation,
+      publishSendFailure,
+      noteSessionOperation,
     ],
   )
 
-  // Sever the live subscription when this hook instance unmounts (a closed
-  // split pane must not keep feeding a dead component's buffers).
-  useEffect(
-    () => () => {
+  // Sever only the UI subscription when this hook instance unmounts. A chat
+  // POST that is already in flight may still be acknowledged afterwards; its
+  // exact template lease is committed and its server-side generation is
+  // started without publishing stale React state or navigation.
+  useEffect(() => {
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+      streamOperationRef.current = null
+      subscriptionRef.current = null
+      subscribedSidRef.current = null
       abortRef.current?.abort()
-    },
-    [],
-  )
+    }
+  }, [])
 
   // ── Passive observation: engage runs driven ELSEWHERE ────────────────
   // A run started on another device, by a schedule, or before a reload flips
@@ -520,9 +705,10 @@ export function useChat(
   const shouldObserve = useAppStore((s) => (sid ? selectShouldObserve(sid)(s) : false))
   useEffect(() => {
     if (!sid || !shouldObserve) return
+    if (activeSendRef.current) return
     if (subscribedSidRef.current === sid) return
     void runStream(sid, { resume: true })
-  }, [sid, shouldObserve, runStream])
+  }, [sid, shouldObserve, sending, runStream])
 
   // ── Stranded-terminal reconcile ───────────────────────────────────────
   // If the summary settles (is_running=false via the feed) while we still hold
@@ -600,45 +786,187 @@ export function useChat(
   // Re-run the conversation after a server-side truncate/restore (regenerate,
   // retry, edit). Shows the streaming placeholder + reloads history on done.
   const rerun = useCallback(
-    async (runSid: string) => {
-      if (sending) return
-      setSending(true)
-      setSendError(false)
+    async (
+      runSid: string,
+      opts?: {
+        prepare?: () => Promise<unknown>
+        expectedFailureOperationId?: number
+        pendingOperationId?: number
+        preserveFailureOnPrepareError?: boolean
+      },
+    ): Promise<boolean> => {
+      if (activeSendRef.current) return false
+      if (
+        opts?.expectedFailureOperationId !== undefined &&
+        getSendFailure(runSid)?.operationId !== opts.expectedFailureOperationId
+      ) {
+        return false
+      }
+      const operation: ActiveSendOperation = {
+        id: operationSequenceRef.current + 1,
+        phase: "preparing",
+        originSessionId: runSid,
+        originNavigationEpoch: navigationRef.current.epoch,
+        acknowledgedSessionId: runSid,
+        pendingOperationId: opts?.pendingOperationId,
+      }
+      operationSequenceRef.current = operation.id
+      noteSessionOperation(runSid, operation.id)
+      activeSendRef.current = operation
+      if (mountedRef.current) {
+        setSending(true)
+        setSubmissionPending(true)
+      }
+      let streamStarted = false
+      let operationReleased = false
+      const releaseOperation = () => {
+        if (activeSendRef.current?.id !== operation.id) return
+        activeSendRef.current = null
+        operationReleased = true
+        if (mountedRef.current) {
+          setSubmissionPending(false)
+          setSending(false)
+        }
+      }
       try {
-        await useAppStore.getState().loadChatHistory(runSid)
-        await runStream(runSid)
+        await opts?.prepare?.()
+        if (activeSendRef.current?.id !== operation.id) return false
+        if (
+          opts?.expectedFailureOperationId !== undefined &&
+          getSendFailure(runSid)?.operationId !== opts.expectedFailureOperationId
+        ) {
+          // The lock makes this unreachable during normal UI operation. If an
+          // external callback replaced the failure after a destructive prepare,
+          // still run the exact session so truncation cannot strand it.
+          console.warn("[useChat] retry failure ownership changed after preparation")
+        } else {
+          clearSendFailure(runSid, opts?.expectedFailureOperationId)
+        }
+        operation.phase = "generating"
+
+        const stillAtOrigin =
+          mountedRef.current &&
+          navigationRef.current.sessionId === operation.originSessionId &&
+          navigationRef.current.epoch === operation.originNavigationEpoch
+        if (!stillAtOrigin) {
+          // Preparation can be destructive (retry truncate / edit restore). If
+          // the user left meanwhile, finish that exact session in the
+          // background without taking over the new pane's subscription or Stop
+          // control. Release the hook first so the newly visible session can
+          // submit immediately while this detached start settles.
+          releaseOperation()
+          try {
+            await agentClient.execute(runSid, effectiveModel || undefined, reasoningEffort)
+            try {
+              await useAppStore.getState().loadChatHistory(runSid)
+              if (operation.pendingOperationId !== undefined) {
+                clearPendingOperation(operation.pendingOperationId)
+              }
+            } catch (err) {
+              console.warn("[useChat] detached rerun history hydration failed", err)
+            }
+            return true
+          } catch (err) {
+            console.warn("[useChat] detached rerun start failed", err)
+            publishSendFailure({
+              kind: "generation-failed",
+              operationId: operation.id,
+              sessionId: runSid,
+              pendingOperationId: operation.pendingOperationId,
+            })
+            return false
+          }
+        }
+
+        if (mountedRef.current) setSubmissionPending(false)
+        const stream = runStream(runSid, {
+          operationId: operation.id,
+          pendingOperationId: operation.pendingOperationId,
+        })
+        streamStarted = true
+        void useAppStore
+          .getState()
+          .loadChatHistory(runSid)
+          .then(() => {
+            if (operation.pendingOperationId !== undefined) {
+              clearPendingOperation(operation.pendingOperationId)
+            }
+          })
+          .catch((err) => console.warn("[useChat] rerun history hydration failed", err))
+        await stream
+        return true
       } catch (err) {
         console.error("[useChat] rerun failed", err)
-        stopStream(null)
+        if (streamStarted || !opts?.preserveFailureOnPrepareError) {
+          publishSendFailure({
+            kind: "generation-failed",
+            operationId: operation.id,
+            sessionId: runSid,
+            pendingOperationId: operation.pendingOperationId,
+          })
+        }
+        stopStream(null, operation.id)
+        return false
       } finally {
-        setSending(false)
+        if (!operationReleased && activeSendRef.current?.id === operation.id) {
+          activeSendRef.current = null
+          if (mountedRef.current) {
+            setSubmissionPending(false)
+            setSending(false)
+          }
+        }
       }
     },
-    [runStream, sending, stopStream],
+    [
+      clearPendingOperation,
+      clearSendFailure,
+      effectiveModel,
+      getSendFailure,
+      noteSessionOperation,
+      publishSendFailure,
+      reasoningEffort,
+      runStream,
+      stopStream,
+    ],
   )
 
   const regenerate = useCallback(async () => {
     if (!sid) return
-    await agentClient.truncateSessionMessages(sid, { mode: "after_last_user" }).catch(() => {})
-    await rerun(sid)
+    await rerun(sid, {
+      prepare: () =>
+        agentClient.truncateSessionMessages(sid, { mode: "after_last_user" }).catch(() => {}),
+    })
   }, [sid, rerun])
 
-  const retry = useCallback(async () => {
-    if (!sid) return
-    await agentClient.truncateSessionMessages(sid, { mode: "error_retry" }).catch(() => {})
-    await rerun(sid)
-  }, [sid, rerun])
+  const retry = useCallback(
+    async (failure?: GenerationFailure) => {
+      const currentFailure = getSendFailure(sid ?? null)
+      const target = failure ?? (currentFailure?.kind === "generation-failed" ? currentFailure : undefined)
+      if (!target || getSendFailure(target.sessionId)?.operationId !== target.operationId) return
+      await rerun(target.sessionId, {
+        expectedFailureOperationId: target.operationId,
+        pendingOperationId: target.pendingOperationId,
+        preserveFailureOnPrepareError: true,
+        prepare: () =>
+          agentClient.truncateSessionMessages(target.sessionId, { mode: "error_retry" }),
+      })
+    },
+    [getSendFailure, rerun, sid],
+  )
 
   // Edit a user message in place, drop everything after it, and re-run.
   const editMessage = useCallback(
     async (messageId: string, text: string) => {
       const body = text.trim()
       if (!sid || !body) return
-      await agentClient.patchSessionMessage(sid, messageId, { content: body }).catch(() => {})
-      await agentClient
-        .restoreSessionState(sid, { target_message_id: messageId, restore_files: false })
-        .catch(() => {})
-      await rerun(sid)
+      await rerun(sid, {
+        prepare: async () => {
+          await agentClient.patchSessionMessage(sid, messageId, { content: body }).catch(() => {})
+          await agentClient
+            .restoreSessionState(sid, { target_message_id: messageId, restore_files: false })
+            .catch(() => {})
+        },
+      })
     },
     [sid, rerun],
   )
@@ -650,19 +978,31 @@ export function useChat(
         skillIds?: string[]
         images?: Array<{ base64: string; name?: string; size?: number; type?: string }>
         workspacePath?: string | null
+        templatePrompt?: PendingTemplatePromptSnapshot | null
       },
-    ) => {
+    ): Promise<SendSubmissionResult> => {
       const body = text.trim()
-      if ((!body && !opts?.images?.length) || sending) return
+      if (!body && !opts?.images?.length) return { kind: "ignored" }
+      if (activeSendRef.current) return { kind: "busy" }
+
       const startSid = sid
-      setSending(true)
-      setSendError(false)
-      // Optimistically show the user's message + streaming placeholder right away,
-      // scoped to the session it's being sent to.
-      if (body) setPending({ sid: startSid, text: body })
-      setStreamSid(startSid)
-      streamBufRef.current = ""
-      setStreamingText("")
+      const operation: ActiveSendOperation = {
+        id: operationSequenceRef.current + 1,
+        phase: "submitting",
+        originSessionId: startSid,
+        originNavigationEpoch: navigationRef.current.epoch,
+      }
+      operationSequenceRef.current = operation.id
+      noteSessionOperation(startSid, operation.id)
+      activeSendRef.current = operation
+      if (mountedRef.current) {
+        setSending(true)
+        setSubmissionPending(true)
+      }
+      clearSendFailure(startSid)
+
+      const templatePrompt = !startSid ? opts?.templatePrompt ?? null : null
+      let acknowledgedSessionId: string
       try {
         // Client-side prompt enhancement (OS info + operational guidance + the
         // user's own enhancement text), recomputed per send like lotus does.
@@ -671,17 +1011,16 @@ export function useChat(
         // template's base prompt, then the selected system-prompt preset;
         // existing sessions keep the prompt they were created with.
         let systemPrompt: string | undefined
-        if (!sid) {
-          const templatePrompt = consumePendingTemplatePrompt()
+        if (!startSid) {
           const st = useAppStore.getState()
           const preset = st.lastSelectedPromptId
             ? st.systemPrompts.find((p) => p.id === st.lastSelectedPromptId)
             : undefined
-          systemPrompt = templatePrompt?.trim() || preset?.content?.trim() || undefined
+          systemPrompt = templatePrompt?.prompt.trim() || preset?.content?.trim() || undefined
         }
         const res = await agentClient.sendMessage({
           message: body,
-          session_id: sid ?? undefined,
+          session_id: startSid ?? undefined,
           model: effectiveModel,
           enhance_prompt: enhancePrompt || undefined,
           copilot_conclusion_with_options_enhancement_enabled:
@@ -691,41 +1030,164 @@ export function useChat(
           images: opts?.images?.length ? opts.images : undefined,
           // Only meaningful when creating a NEW session; an existing session keeps
           // the cwd it was created with.
-          workspace_path: !sid && opts?.workspacePath ? opts.workspacePath : undefined,
+          workspace_path: !startSid && opts?.workspacePath ? opts.workspacePath : undefined,
         })
-        const newSid = res.session_id
-
-        if (newSid !== startSid) {
-          // New session: re-key the optimistic message + stream to the real id.
-          if (body) setPending({ sid: newSid, text: body })
-          setStreamSid(newSid)
-          await useAppStore.getState().refreshChatsNow()
-          // Bound pane: report the new id (caller re-binds) instead of moving the
-          // global current; main pane: select it globally as before.
-          if (isBound) onSessionCreated?.(newSid)
-          else useAppStore.getState().selectSession(newSid)
+        acknowledgedSessionId =
+          typeof res?.session_id === "string" ? res.session_id.trim() : ""
+        if (!acknowledgedSessionId || (startSid && acknowledgedSessionId !== startSid)) {
+          throw new Error("The chat submission response did not acknowledge the expected session.")
         }
-        // Real user message is now persisted — reload, then drop the optimistic one.
-        await useAppStore.getState().loadChatHistory(newSid)
-        setPending(null)
-
-        await runStream(newSid)
       } catch (err) {
-        console.error("[useChat] send failed", err)
-        setSendError(true)
-        stopStream(null)
-      } finally {
-        setSending(false)
+        console.error("[useChat] message submission was not acknowledged", err)
+        if (activeSendRef.current?.id === operation.id) activeSendRef.current = null
+        if (mountedRef.current) {
+          setSubmissionPending(false)
+          setSending(false)
+          publishSendFailure({
+            kind: "submission-unconfirmed",
+            operationId: operation.id,
+            sessionId: startSid,
+          })
+        }
+        return { kind: "unconfirmed", operationId: operation.id }
+      }
+
+      operation.phase = "generating"
+      operation.acknowledgedSessionId = acknowledgedSessionId
+      operation.pendingOperationId = operation.id
+      noteSessionOperation(acknowledgedSessionId, operation.id)
+      if (templatePrompt) acknowledgePendingTemplatePrompt(templatePrompt)
+
+      let navigated = false
+      const stillAtOrigin =
+        mountedRef.current &&
+        navigationRef.current.sessionId === operation.originSessionId &&
+        navigationRef.current.epoch === operation.originNavigationEpoch
+
+      if (!stillAtOrigin) {
+        // A valid late acknowledgement still owns a server-side generation, but
+        // it must not replace the session subscription the user is viewing now.
+        if (mountedRef.current) {
+          setSubmissionPending(false)
+          setSending(false)
+        }
+        if (activeSendRef.current?.id === operation.id) activeSendRef.current = null
+        void agentClient
+          .execute(acknowledgedSessionId, effectiveModel || undefined, reasoningEffort)
+          .catch((err) => {
+            console.warn("[useChat] detached generation start failed", err)
+            publishSendFailure({
+              kind: "generation-failed",
+              operationId: operation.id,
+              sessionId: acknowledgedSessionId,
+            })
+          })
+        if (acknowledgedSessionId !== startSid) {
+          void useAppStore
+            .getState()
+            .refreshChatsNow()
+            .catch((err) => console.warn("[useChat] detached session refresh failed", err))
+        }
+      } else {
+        setSubmissionPending(false)
+        if (body) {
+          setPending({
+            operationId: operation.id,
+            sid: acknowledgedSessionId,
+            text: body,
+          })
+        }
+
+        if (acknowledgedSessionId !== startSid) {
+          if (isBound) {
+            if (onSessionCreated) {
+              onSessionCreated(acknowledgedSessionId)
+              navigated = true
+            }
+          } else {
+            useAppStore.getState().selectSession(acknowledgedSessionId)
+            navigated = true
+          }
+        }
+
+        // Start execute + the exact session subscription before resolving the
+        // acknowledgement to the composer. Session-list/history hydration is
+        // auxiliary and must never prevent an acknowledged message from running.
+        void runStream(acknowledgedSessionId, {
+          operationId: operation.id,
+          pendingOperationId: operation.pendingOperationId,
+        })
+          .catch((err) => {
+            console.error("[useChat] acknowledged generation failed", err)
+            publishSendFailure({
+              kind: "generation-failed",
+              operationId: operation.id,
+              sessionId: acknowledgedSessionId,
+              pendingOperationId: operation.pendingOperationId,
+            })
+            stopStream(null, operation.id)
+          })
+          .finally(() => {
+            if (activeSendRef.current?.id === operation.id) activeSendRef.current = null
+            if (mountedRef.current) setSending(false)
+          })
+
+        void (async () => {
+          if (acknowledgedSessionId !== startSid) {
+            await useAppStore
+              .getState()
+              .refreshChatsNow()
+              .catch((err) => console.warn("[useChat] acknowledged session refresh failed", err))
+          }
+          await useAppStore.getState().loadChatHistory(acknowledgedSessionId)
+          clearPendingOperation(operation.id)
+        })().catch((err) => {
+          console.warn("[useChat] acknowledged message hydration failed", err)
+        })
+      }
+
+      return {
+        kind: "accepted",
+        operationId: operation.id,
+        sessionId: acknowledgedSessionId,
+        navigated,
       }
     },
-    [sid, isBound, onSessionCreated, effectiveModel, providerType, sending, runStream, stopStream],
+    [
+      sid,
+      isBound,
+      onSessionCreated,
+      effectiveModel,
+      providerType,
+      reasoningEffort,
+      runStream,
+      stopStream,
+      clearPendingOperation,
+      clearSendFailure,
+      noteSessionOperation,
+      publishSendFailure,
+    ],
   )
 
   const stop = useCallback(() => {
+    const active = activeSendRef.current
+    if (active?.phase === "submitting" || active?.phase === "preparing") return
+    const targetSessionId = active?.acknowledgedSessionId ?? sid
+    const pendingOperationId = active?.pendingOperationId
+    const operationId = active?.id ?? streamOperationRef.current ?? undefined
     abortRef.current?.abort()
-    if (sid) void agentClient.stopGeneration(sid).catch(() => {})
-    stopStream(null)
-  }, [sid, stopStream])
+    stopStream(null, operationId)
+    if (!targetSessionId) return
+    void (async () => {
+      await agentClient.stopGeneration(targetSessionId).catch(() => {})
+      try {
+        await useAppStore.getState().loadChatHistory(targetSessionId)
+        if (pendingOperationId !== undefined) clearPendingOperation(pendingOperationId)
+      } catch (err) {
+        console.warn("[useChat] stopped-generation history hydration failed", err)
+      }
+    })()
+  }, [clearPendingOperation, sid, stopStream])
 
   const newChat = useCallback(() => {
     useAppStore.getState().selectSession(null)
@@ -809,6 +1271,7 @@ export function useChat(
     streamStatus,
     pendingUserText,
     sending,
+    submissionPending,
     select,
     send,
     stop,
@@ -818,7 +1281,7 @@ export function useChat(
     regenerate,
     retry,
     editMessage,
-    sendError,
+    sendFailure,
     pendingQuestion,
     pendingApproval,
     answerQuestion,

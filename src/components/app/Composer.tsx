@@ -1,5 +1,15 @@
-import { useRef } from "react"
-import { X, Paperclip, FolderGit2, ChevronDown, ArrowUp, Square, BookText, Check } from "lucide-react"
+import { useRef, type Ref } from "react"
+import {
+  X,
+  Paperclip,
+  FolderGit2,
+  ChevronDown,
+  ArrowUp,
+  Square,
+  BookText,
+  Check,
+  LoaderCircle,
+} from "lucide-react"
 import { useShallow } from "zustand/react/shallow"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
@@ -63,6 +73,8 @@ export function Composer({
   onSubmit,
   onStop,
   sending,
+  submissionPending,
+  inputRef,
   attachments,
   onAddFiles,
   onRemoveAttachment,
@@ -89,6 +101,8 @@ export function Composer({
   onSubmit: () => void
   onStop: () => void
   sending: boolean
+  submissionPending: boolean
+  inputRef: Ref<HTMLTextAreaElement>
   attachments: AttachmentView[]
   onAddFiles: (files: FileList | File[]) => void
   onRemoveAttachment: (id: string) => void
@@ -217,7 +231,10 @@ export function Composer({
             <Paperclip className="size-4" />
           </Button>
           <Textarea
+            ref={inputRef}
             value={draft}
+            aria-label="消息"
+            aria-busy={submissionPending}
             onChange={(e) => onDraftChange(e.target.value)}
             onPaste={(e) => {
               const files = Array.from(e.clipboardData.files)
@@ -229,7 +246,14 @@ export function Composer({
               }
             }}
             onKeyDown={(e) => {
-              if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+              const nativeEvent = e.nativeEvent
+              if (nativeEvent.isComposing || nativeEvent.keyCode === 229) return
+              if (
+                e.key === "Enter" &&
+                (e.metaKey || e.ctrlKey) &&
+                !submissionPending &&
+                !sending
+              ) {
                 e.preventDefault()
                 onSubmit()
               }
@@ -239,8 +263,18 @@ export function Composer({
             className="max-h-40"
           />
         </div>
-        {sending ? (
-          <Button size="icon" variant="secondary" onClick={onStop} className="rounded-full">
+        {submissionPending ? (
+          <Button size="icon" disabled aria-label="正在发送" className="rounded-full">
+            <LoaderCircle className="animate-spin" />
+          </Button>
+        ) : sending ? (
+          <Button
+            size="icon"
+            variant="secondary"
+            onClick={onStop}
+            className="rounded-full"
+            aria-label="停止生成"
+          >
             <Square />
           </Button>
         ) : (
@@ -249,6 +283,7 @@ export function Composer({
             onClick={onSubmit}
             disabled={!draft.trim() && attachments.length === 0 && !selectedWorkflow}
             className="rounded-full"
+            aria-label="发送消息"
           >
             <ArrowUp />
           </Button>
