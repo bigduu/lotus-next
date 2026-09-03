@@ -67,6 +67,21 @@ for (const [chunkName, pattern] of lazyJavaScriptChunks) {
 }
 
 const entryHtml = readFileSync(new URL("../dist/index.html", import.meta.url), "utf8")
+const nonPortableEntryReferences = [
+  ...entryHtml.matchAll(/\b(?:href|src)=["'](\/(?!\/)[^"']*)["']/g),
+].map((match) => match[1])
+if (nonPortableEntryReferences.length > 0) {
+  process.stderr.write(
+    `Packaged entrypoint contains origin-root asset references:\n${nonPortableEntryReferences
+      .map((reference) => `  - ${reference}`)
+      .join("\n")}\n`,
+  )
+  process.exit(1)
+}
+if (!entryHtml.includes('="./assets/')) {
+  process.stderr.write("Packaged entrypoint does not reference its entry assets relatively.\n")
+  process.exit(1)
+}
 const eagerlyPreloaded = lazyJavaScriptChunks
   .map(([chunkName]) => chunkName)
   .filter((chunkName) => entryHtml.includes(chunkName))

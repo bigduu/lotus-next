@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest"
 
-import { assertSafePublicBuildEnvironment, classifyVendorChunk, developmentProxy } from "./vite.config"
+import {
+  assertSafePublicBuildEnvironment,
+  classifyVendorChunk,
+  developmentProxy,
+  portableArtifactBase,
+} from "./vite.config"
 
 const nonExactBackendInputs = [
   "https://backend.example:8443?", "https://backend.example:8443#",
@@ -56,6 +61,10 @@ describe("public Vite build environment", () => {
   })
   it("does not expose the legacy native /v1 alias", () => {
     expect(Object.keys(developmentProxy).sort()).toEqual(["/api", "/v2"])
+  })
+
+  it("keeps the production artifact portable across nested host mount paths", () => {
+    expect(portableArtifactBase).toBe("./")
   })
 })
 
