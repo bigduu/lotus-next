@@ -93,7 +93,7 @@ const expectReadyShell = async (surface: Surface): Promise<void> => {
 
 const expectCanonicalRuntime = async (
   observation: RuntimeObservation,
-  expectedWebSocketProtocol: "ws:" | "wss:",
+  scenario: ArtifactScenario,
 ): Promise<void> => {
   await expect.poll(
     () => observation.apiUrls.some((url) => pathname(url) === "/api/v1/prompt-presets"),
@@ -116,12 +116,16 @@ const expectCanonicalRuntime = async (
   expect(bootstrapRequests).toHaveLength(1)
   expect(observation.apiUrls.length).toBeGreaterThan(0)
   for (const url of observation.apiUrls) {
+    expect(new URL(url).origin).toBe(scenario.origin)
     expect(pathname(url)).toMatch(/^\/api\/v1(?:\/|$)/)
     expect(pathname(url)).not.toMatch(/^\/v1(?:\/|$)/)
   }
 
   const [webSocketUrl] = observation.webSocketUrls
-  expect(new URL(webSocketUrl).protocol).toBe(expectedWebSocketProtocol)
+  const pageOrigin = new URL(scenario.origin)
+  const expectedWebSocketOrigin =
+    `${pageOrigin.protocol === "https:" ? "wss:" : "ws:"}//${pageOrigin.host}`
+  expect(new URL(webSocketUrl).origin).toBe(expectedWebSocketOrigin)
   expect(pathname(webSocketUrl)).toBe("/v2/stream")
   expect(observation.webSocketProtocols).toEqual([[]])
   expect(
@@ -141,7 +145,7 @@ test("standalone page-origin artifact reaches a usable canonical shell", async (
 }) => {
   const { surface, observation } = await startRuntime(standaloneScenario)
 
-  await expectCanonicalRuntime(observation, "ws:")
+  await expectCanonicalRuntime(observation, standaloneScenario)
   await expectReadyShell(surface)
   expect(observation.staticUrls.some((url) => pathname(url).startsWith("/assets/"))).toBe(true)
 })
@@ -151,7 +155,7 @@ test("secure remote artifact keeps HTTP and realtime transport encrypted", async
 }) => {
   const { surface, observation } = await startRuntime(secureRemoteScenario)
 
-  await expectCanonicalRuntime(observation, "wss:")
+  await expectCanonicalRuntime(observation, secureRemoteScenario)
   await expectReadyShell(surface)
   expect(observation.apiUrls.every((url) => new URL(url).protocol === "https:")).toBe(true)
   expect(observation.webSocketUrls.every((url) => new URL(url).protocol === "wss:")).toBe(true)
@@ -165,7 +169,7 @@ test("embedded base path owns entry, assets, lazy settings, and return navigatio
   const settingsArtifact = await artifactFileForSource("src/components/chat/Settings.tsx")
   const settingsPath = `${embeddedScenario.appPath}${settingsArtifact}`
 
-  await expectCanonicalRuntime(observation, "ws:")
+  await expectCanonicalRuntime(observation, embeddedScenario)
   await expectReadyShell(surface)
   expect(observation.staticUrls.some((url) => pathname(url) === settingsPath)).toBe(false)
 
