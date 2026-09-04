@@ -33,8 +33,8 @@ vi.mock("@shared/store/appStore", async () => {
   )
   return { useAppStore, selectChildren: () => (state: State) => state.childProgress }
 })
-type ProviderState = { providerConfig: null; defaultProviderInstanceId: null; providerInstances: never[] }
-vi.mock("@shared/store/appStore/slices/providerSlice", () => ({ useProviderStore: <T,>(selector: (state: ProviderState) => T) => selector({ providerConfig: null, defaultProviderInstanceId: null, providerInstances: [] }) }))
+type ProviderState = { providerSnapshot: null }
+vi.mock("@shared/store/appStore/slices/providerSlice", () => ({ useProviderStore: <T,>(selector: (state: ProviderState) => T) => selector({ providerSnapshot: null }) }))
 vi.mock("@/hooks/useStickyScroll", () => ({
   useStickyScroll: () => ({ scrollRef: { current: null }, contentRef: { current: null }, atBottom: true,
     handleScroll: vi.fn(), scrollToBottom: vi.fn(), pinToBottom: vi.fn() }),

@@ -53,13 +53,17 @@ function draftFromDefaults(defaults: DefaultsConfig | undefined, fallbackProvide
  * General-tab default model reflects the persisted value.
  */
 export function DefaultsEditor() {
-  const instances = useProviderStore((s) => s.providerInstances)
-  const defaultId = useProviderStore((s) => s.defaultProviderInstanceId)
-  const defaults = useProviderStore((s) => s.providerConfig.defaults)
+  const snapshot = useProviderStore((s) => s.providerSnapshot)
+  const providerStatus = useProviderStore((s) => s.providerStatus)
+  const providerError = useProviderStore((s) => s.providerError)
   const loadProviderInstances = useProviderStore((s) => s.loadProviderInstances)
   const loadCatalog = useProviderStore((s) => s.loadCatalog)
   const getModelsForProvider = useProviderStore((s) => s.getModelsForProvider)
   const catalog = useProviderStore((s) => s.catalog)
+
+  const instances = snapshot?.instances ?? []
+  const defaultId = snapshot?.default_provider_instance_id ?? null
+  const defaults = snapshot?.defaults
 
   const [draft, setDraft] = useState<DraftRefs>(() => draftFromDefaults(defaults, defaultId ?? ""))
   const [baseline, setBaseline] = useState(() => JSON.stringify(draftFromDefaults(defaults, defaultId ?? "")))
@@ -80,8 +84,8 @@ export function DefaultsEditor() {
   }, [defaults, defaultId])
 
   useEffect(() => {
-    void loadCatalog()
-  }, [loadCatalog])
+    if (providerStatus === "ready") void loadCatalog()
+  }, [loadCatalog, providerStatus])
 
   const setRole = (role: RoleKey, patch: Partial<{ provider: string; model: string }>) =>
     setDraft((d) => ({ ...d, [role]: { ...d[role], ...patch } }))
@@ -105,12 +109,10 @@ export function DefaultsEditor() {
       // Cleared optional roles are sent as explicit null — the backend patch
       // deep-merges, so omitting a key would keep the stored value.
       const payload: Record<string, unknown> = {}
-      const normalized = { ...draft }
       for (const role of ROLES) {
         const v = draft[role.key]
         const filled = v.provider !== "" && v.model.trim() !== ""
         payload[role.key] = filled ? { provider: v.provider, model: v.model.trim() } : null
-        normalized[role.key] = filled ? { provider: v.provider, model: v.model.trim() } : { provider: "", model: "" }
       }
       // BACKEND GOTCHA (bamboo set.rs): every POST /bamboo/config rewrites
       // model_limits.json from the patch — a patch WITHOUT the key DELETES
@@ -120,12 +122,17 @@ export function DefaultsEditor() {
         defaults: payload,
         ...(current?.model_limits !== undefined ? { model_limits: current.model_limits } : {}),
       })
-      // Settle local state on the exact values we sent, then let the store
-      // reload confirm (the resync effect only applies when not dirty).
-      setDraft(normalized)
-      setBaseline(JSON.stringify(normalized))
+      // Success is not acknowledged until the canonical provider snapshot has
+      // been reloaded. This keeps the form aligned with server-authoritative
+      // defaults even if the backend normalized the submitted values.
+      const refreshed = await loadProviderInstances()
+      const confirmed = draftFromDefaults(
+        refreshed.defaults,
+        refreshed.default_provider_instance_id ?? "",
+      )
+      setDraft(confirmed)
+      setBaseline(JSON.stringify(confirmed))
       dirtyRef.current = false
-      await loadProviderInstances()
       setSaved(true)
       setTimeout(() => setSaved(false), 2500)
     } catch (e) {
@@ -147,6 +154,22 @@ export function DefaultsEditor() {
           </SelectItem>
         ))}
       </>
+    )
+  }
+
+  if (providerStatus !== "ready") {
+    const message =
+      providerStatus === "incompatible"
+        ? "当前 Bamboo 的提供方配置格式与 Lotus Next 不兼容。"
+        : providerStatus === "unavailable"
+          ? "提供方设置当前不可用。"
+          : "正在加载提供方设置…"
+    return (
+      <section className="rounded-lg border p-3">
+        <p role={providerStatus === "unavailable" || providerStatus === "incompatible" ? "alert" : undefined} className="text-xs text-muted-foreground">
+          {message}{providerError ? ` ${providerError}` : ""}
+        </p>
+      </section>
     )
   }
 

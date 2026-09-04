@@ -11,6 +11,7 @@ import {
   installArtifactRuntime,
   secureRemoteScenario,
   standaloneScenario,
+  type ArtifactRuntimeOptions,
   type ArtifactScenario,
   type RuntimeObservation,
 } from "./support/artifactRuntime.js"
@@ -18,7 +19,10 @@ import {
 type Surface = Page | FrameLocator
 type RuntimeHandle = { surface: Surface; observation: RuntimeObservation }
 type RuntimeFixtures = {
-  startRuntime(scenario: ArtifactScenario): Promise<RuntimeHandle>
+  startRuntime(
+    scenario: ArtifactScenario,
+    options?: ArtifactRuntimeOptions,
+  ): Promise<RuntimeHandle>
 }
 
 const attachObservations = async (
@@ -34,14 +38,14 @@ const attachObservations = async (
 const test = base.extend<RuntimeFixtures>({
   startRuntime: async ({ page }, activate, testInfo) => {
     const observations: RuntimeObservation[] = []
-    await activate(async (scenario) => {
+    await activate(async (scenario, options) => {
       await page.addInitScript(() => {
         const browserGlobal = globalThis as unknown as {
           localStorage: { setItem(key: string, value: string): void }
         }
         browserGlobal.localStorage.setItem("bodhi_onboarded_v1", "1")
       })
-      const observation = await installArtifactRuntime(page, scenario)
+      const observation = await installArtifactRuntime(page, scenario, [], options)
       observations.push(observation)
       await page.goto(scenario.entryUrl, { waitUntil: "domcontentloaded" })
       const surface = scenario.embedded
@@ -74,6 +78,15 @@ const isExactFrame = (frame: unknown, type: string): boolean =>
   frameMatches(frame, { type }) && Object.keys(frame as Record<string, unknown>).length === 1
 
 const pathname = (url: string): string => new URL(url).pathname
+
+const isRetiredProviderRequest = (request: { method: string; url: string }): boolean => {
+  const path = pathname(request.url)
+  return (
+    ((request.method === "GET" || request.method === "POST") &&
+      path === "/api/v1/bamboo/settings/provider") ||
+    (request.method === "POST" && path === "/api/v1/bamboo/settings/provider/models")
+  )
+}
 
 const expectReadyShell = async (surface: Surface): Promise<void> => {
   const composer = surface.getByRole("textbox", { name: "消息", exact: true })
@@ -160,6 +173,10 @@ const expectCanonicalRuntime = async (
   )
   expect(bootstrapRequests).toHaveLength(1)
   expect(observation.apiUrls.length).toBeGreaterThan(0)
+  expect(
+    observation.httpRequests.filter(isRetiredProviderRequest),
+    "Lotus Next must never request retired provider configuration endpoints",
+  ).toEqual([])
   for (const url of observation.apiUrls) {
     expect(new URL(url).origin).toBe(scenario.origin)
     expect(pathname(url)).toMatch(/^\/api\/v1(?:\/|$)/)
@@ -195,6 +212,38 @@ test("standalone page-origin artifact reaches a usable canonical shell", async (
   expect(observation.staticUrls.some((url) => pathname(url).startsWith("/assets/"))).toBe(true)
 })
 
+test("malformed provider snapshot is visibly incompatible without legacy fallback", async ({
+  page,
+  startRuntime,
+}) => {
+  const credentialCanary = "e2e-provider-secret-canary"
+  const { surface, observation } = await startRuntime(standaloneScenario, {
+    providerInstancesResponse: {
+      instances: "invalid",
+      api_key: "****...****",
+      credentialCanary,
+    },
+  })
+
+  await expectReadyShell(surface)
+  const settingsButton = surface.getByRole("button", { name: "系统设置" })
+  if ((page.viewportSize()?.width ?? 0) < 768) {
+    await surface.getByRole("button", { name: "菜单" }).click()
+    await expect(settingsButton).toBeInViewport()
+  }
+  await settingsButton.click()
+  await surface.getByRole("button", { name: "提供方", exact: true }).click()
+
+  await expect(
+    surface.getByRole("alert").filter({ hasText: "提供方配置格式与 Lotus Next 不兼容" }),
+  ).toBeVisible()
+  await expect(surface.getByText("Fixture provider", { exact: true })).toHaveCount(0)
+  await expect(surface.getByText("GitHub Copilot", { exact: true })).toHaveCount(0)
+  await expect(surface.locator("body")).not.toContainText(credentialCanary)
+  await expect(surface.locator("body")).not.toContainText("****...****")
+  expect(observation.httpRequests.filter(isRetiredProviderRequest)).toEqual([])
+})
+
 test("secure remote artifact keeps HTTP and realtime transport encrypted", async ({
   startRuntime,
 }) => {
@@ -226,6 +275,10 @@ test("embedded base path owns entry, assets, lazy settings, and return navigatio
   await settingsButton.click()
   await expect(surface.getByRole("heading", { name: "系统设置" })).toBeVisible()
   await expect(surface.getByText("Bodhi · lotus-next")).toBeVisible()
+  await expect(surface.getByText("fixture-model", { exact: true }).first()).toBeVisible()
+  await surface.getByRole("button", { name: "提供方", exact: true }).click()
+  await expect(surface.getByText("Fixture provider", { exact: true }).first()).toBeVisible()
+  await expect(surface.getByText("OpenAI · 默认", { exact: true })).toBeVisible()
   await expect.poll(
     () => observation.staticUrls.some((url) => pathname(url) === settingsPath),
     { message: "the Settings feature should load from the embedded artifact base" },

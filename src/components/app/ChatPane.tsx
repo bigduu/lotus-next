@@ -25,6 +25,7 @@ import { useAppStore, selectChildren } from "@shared/store/appStore"
 import { commandService, type CommandItem } from "@services/command"
 import type { ChildProgress } from "@shared/store/appStore/slices/executionStateSlice/types"
 import { useProviderStore } from "@shared/store/appStore/slices/providerSlice"
+import { getReasoningEffortForProvider } from "@shared/utils/reasoningEffort"
 import type { SkillDefinition } from "@shared/types/skill"
 import { ChatHeader } from "@/components/app/ChatHeader"
 import { HomeDashboard } from "@/components/app/HomeDashboard"
@@ -239,10 +240,10 @@ export function ChatPane({
   const models = useAppStore(useShallow((s) => s.models))
   const selectedModel = useAppStore((s) => s.selectedModel)
   const setSelectedModel = useAppStore((s) => s.setSelectedModel)
-  const defaultChatModel = useProviderStore((s) => s.providerConfig?.defaults?.chat?.model)
+  const defaultChatModel = useProviderStore((s) => s.providerSnapshot?.defaults?.chat?.model)
   const globalReasoningEffort = useProviderStore((s) => {
-    const id = s.defaultProviderInstanceId
-    return (id ? s.providerInstances.find((i) => i.id === id) : undefined)?.config?.reasoning_effort
+    const id = s.providerSnapshot?.default_provider_instance_id
+    return getReasoningEffortForProvider(s.providerSnapshot, id)
   })
   const sessionReasoningEffort = useAppStore(
     (s) => s.inputStates[currentSessionId ?? ""]?.reasoningEffort,

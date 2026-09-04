@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react"
 import { Trash2, Plus, Check, Pencil, RefreshCw } from "lucide-react"
-import { settingsService } from "@services/config/SettingsService"
 import { getErrorMessage } from "@services/api"
 import { useProviderStore } from "@shared/store/appStore/slices/providerSlice"
 import type { ProviderInstance } from "@shared/types/providerConfig"
@@ -19,11 +18,18 @@ import { InstanceEditor, type InstanceSavePayload } from "./providers/InstanceEd
 import { DefaultsEditor } from "./providers/DefaultsEditor"
 
 export function SettingsProviders() {
-  const instances = useProviderStore((s) => s.providerInstances)
-  const defaultId = useProviderStore((s) => s.defaultProviderInstanceId)
+  const snapshot = useProviderStore((s) => s.providerSnapshot)
+  const providerStatus = useProviderStore((s) => s.providerStatus)
+  const providerError = useProviderStore((s) => s.providerError)
   const loadInstances = useProviderStore((s) => s.loadProviderInstances)
-  const loadCatalog = useProviderStore((s) => s.loadCatalog)
-  const storeError = useProviderStore((s) => s.error)
+  const createProviderInstance = useProviderStore((s) => s.createProviderInstance)
+  const updateProviderInstance = useProviderStore((s) => s.updateProviderInstance)
+  const deleteProviderInstance = useProviderStore((s) => s.deleteProviderInstance)
+  const setDefaultProviderInstance = useProviderStore((s) => s.setDefaultProviderInstance)
+  const fetchCatalogModels = useProviderStore((s) => s.fetchCatalogModels)
+
+  const instances = snapshot?.instances ?? []
+  const defaultId = snapshot?.default_provider_instance_id ?? null
 
   const [editing, setEditing] = useState<string | null>(null)
   const [adding, setAdding] = useState(false)
@@ -35,38 +41,33 @@ export function SettingsProviders() {
   const [fetchNotice, setFetchNotice] = useState<{ id: string; text: string; error: boolean } | null>(null)
 
   useEffect(() => {
-    void loadInstances()
+    void loadInstances().catch(() => undefined)
   }, [loadInstances])
 
-  const reload = () => void loadInstances()
-
   const createInstance = async (v: InstanceSavePayload) => {
-    await settingsService.createProviderInstance({
+    await createProviderInstance({
       type: v.type,
       label: v.label,
       enabled: v.enabled,
       config: v.config,
     })
     setAdding(false)
-    reload()
   }
 
   const updateInstance = async (id: string, v: InstanceSavePayload) => {
     // The backend PUT ignores `type` — provider type is immutable after create.
-    await settingsService.updateProviderInstance(id, {
+    await updateProviderInstance(id, {
       label: v.label,
       enabled: v.enabled,
       config: v.config,
     })
     setEditing(null)
-    reload()
   }
 
   const toggleEnabled = async (inst: ProviderInstance, next: boolean) => {
     setListError(null)
     try {
-      await settingsService.updateProviderInstance(inst.id, { enabled: next })
-      reload()
+      await updateProviderInstance(inst.id, { enabled: next })
     } catch (e) {
       setListError(`「${inst.label || inst.type}」${next ? "启用" : "停用"}失败:${getErrorMessage(e)}`)
     }
@@ -75,8 +76,7 @@ export function SettingsProviders() {
   const setDefault = async (inst: ProviderInstance) => {
     setListError(null)
     try {
-      await settingsService.setDefaultProviderInstance(inst.id)
-      reload()
+      await setDefaultProviderInstance(inst.id)
     } catch (e) {
       setListError(`设为默认失败:${getErrorMessage(e)}`)
     }
@@ -86,19 +86,9 @@ export function SettingsProviders() {
     setFetchingId(inst.id)
     setFetchNotice(null)
     try {
-      const res = await settingsService.fetchCatalogModels(inst.id)
-      const fetched = res.fetched ?? []
-      const entry =
-        fetched.find((f) => f.provider === inst.id) ??
-        fetched.find((f) => f.provider === inst.type) ??
-        fetched[0]
-      if (entry?.error) {
-        setFetchNotice({ id: inst.id, text: `拉取失败:${entry.error}`, error: true })
-      } else {
-        const count = entry?.models?.length ?? 0
-        setFetchNotice({ id: inst.id, text: `已拉取 ${count} 个模型`, error: false })
-        await loadCatalog()
-      }
+      await fetchCatalogModels(inst.id)
+      const count = useProviderStore.getState().getModelsForProvider(inst.id).length
+      setFetchNotice({ id: inst.id, text: `已刷新 ${count} 个模型`, error: false })
     } catch (e) {
       setFetchNotice({ id: inst.id, text: `拉取失败:${getErrorMessage(e)}`, error: true })
     } finally {
@@ -111,9 +101,8 @@ export function SettingsProviders() {
     setDeleteBusy(true)
     setDeleteError(null)
     try {
-      await settingsService.deleteProviderInstance(deleting.id)
+      await deleteProviderInstance(deleting.id)
       setDeleting(null)
-      reload()
     } catch (e) {
       setDeleteError(getErrorMessage(e))
     } finally {
@@ -125,19 +114,33 @@ export function SettingsProviders() {
     <div className="space-y-3">
       <div className="flex items-center justify-between">
         <p className="text-xs text-muted-foreground">配置 LLM 提供方与 API Key。打勾的是默认。</p>
-        {!adding ? (
+        {!adding && providerStatus === "ready" ? (
           <Button size="sm" variant="secondary" onClick={() => setAdding(true)}>
             <Plus className="size-4" /> 新增
           </Button>
         ) : null}
       </div>
 
-      {storeError ? <p className="text-xs text-destructive">加载失败:{storeError}</p> : null}
+      {providerStatus === "idle" || providerStatus === "loading" ? (
+        <p className="text-xs text-muted-foreground">正在加载提供方设置…</p>
+      ) : null}
+      {providerStatus === "unavailable" ? (
+        <div role="alert" className="rounded-lg border border-destructive/40 p-3 text-xs text-destructive">
+          提供方设置当前不可用。{providerError ? ` ${providerError}` : ""}
+        </div>
+      ) : null}
+      {providerStatus === "incompatible" ? (
+        <div role="alert" className="rounded-lg border border-destructive/40 p-3 text-xs text-destructive">
+          当前 Bamboo 的提供方配置格式与 Lotus Next 不兼容。{providerError ? ` ${providerError}` : ""}
+        </div>
+      ) : null}
       {listError ? <p className="text-xs text-destructive">{listError}</p> : null}
 
-      {adding ? <InstanceEditor instance={null} onCancel={() => setAdding(false)} onSave={createInstance} /> : null}
+      {adding && providerStatus === "ready" ? (
+        <InstanceEditor instance={null} onCancel={() => setAdding(false)} onSave={createInstance} />
+      ) : null}
 
-      <ul className="space-y-2">
+      {providerStatus === "ready" ? <ul className="space-y-2">
         {instances.map((inst: ProviderInstance) => (
           <li key={inst.id} className="rounded-lg border p-3">
             {editing === inst.id ? (
@@ -217,13 +220,13 @@ export function SettingsProviders() {
             )}
           </li>
         ))}
-      </ul>
+      </ul> : null}
 
-      {instances.length === 0 && !adding && !storeError ? (
+      {providerStatus === "ready" && instances.length === 0 && !adding ? (
         <p className="text-xs text-muted-foreground">暂无提供方实例,点击「新增」创建。</p>
       ) : null}
 
-      <DefaultsEditor />
+      {providerStatus === "ready" ? <DefaultsEditor /> : null}
 
       <ResponsiveDialog open={deleting != null} onOpenChange={(open) => (!open ? setDeleting(null) : null)}>
         <ResponsiveDialogContent className="gap-3 p-4">

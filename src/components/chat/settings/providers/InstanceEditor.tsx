@@ -1,6 +1,6 @@
 import { useState } from "react"
 import { ChevronDown, ChevronRight } from "lucide-react"
-import type { ProviderInstance, ProviderType } from "@shared/types/providerConfig"
+import type { ProviderInstance, ProviderKind } from "@shared/types/providerConfig"
 import { PROVIDER_LABELS } from "@shared/types/providerConfig"
 import { getErrorMessage } from "@services/api"
 import { isMaskedSecret } from "@/lib/secrets"
@@ -18,11 +18,11 @@ import {
 } from "@/components/ui/select"
 import { CopilotAuth } from "./CopilotAuth"
 
-const PROVIDER_TYPES: ProviderType[] = ["anthropic", "openai", "gemini", "copilot", "bodhi"]
+const PROVIDER_TYPES: ProviderKind[] = ["anthropic", "openai", "gemini", "copilot", "bodhi"]
 const REASONING_EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const
 const UNSET = "__unset__"
 
-const API_KEY_PLACEHOLDER: Record<ProviderType, string> = {
+const API_KEY_PLACEHOLDER: Record<ProviderKind, string> = {
   anthropic: "sk-ant-…",
   openai: "sk-…",
   gemini: "AIza…",
@@ -31,14 +31,14 @@ const API_KEY_PLACEHOLDER: Record<ProviderType, string> = {
 }
 
 export interface InstanceSavePayload {
-  type: ProviderType
+  type: ProviderKind
   label: string
   enabled: boolean
   config: Record<string, unknown>
 }
 
 interface Draft {
-  type: ProviderType
+  type: ProviderKind
   label: string
   enabled: boolean
   apiKey: string
@@ -95,7 +95,11 @@ function buildPayload(
 
   if (type !== "copilot") {
     const apiKey = draft.apiKey.trim()
-    if (apiKey) {
+    if (apiKey && isMaskedSecret(apiKey)) {
+      if (!(isEdit && hasStoredApiKey)) {
+        return { error: "API Key 不能使用掩码" }
+      }
+    } else if (apiKey) {
       config.api_key = apiKey
     } else if (!(isEdit && hasStoredApiKey)) {
       return { error: "API Key 不能为空" }
@@ -146,6 +150,15 @@ function buildPayload(
       config,
     },
   }
+}
+
+const redactProviderError = (error: unknown, secrets: readonly unknown[]): string => {
+  let message = getErrorMessage(error)
+  for (const secret of secrets) {
+    if (typeof secret !== "string" || secret.trim() === "") continue
+    message = message.replaceAll(secret, "[REDACTED]")
+  }
+  return message.replace(/[*.]{4,}/g, "[REDACTED]")
 }
 
 function Field({
@@ -233,7 +246,8 @@ export function InstanceEditor({
     try {
       await onSave(result.payload)
     } catch (e) {
-      setError(getErrorMessage(e))
+      const storedApiKey = ((instance?.config ?? {}) as Record<string, unknown>).api_key
+      setError(redactProviderError(e, [draft.apiKey.trim(), storedApiKey]))
       setSaving(false)
     }
   }
@@ -275,7 +289,7 @@ export function InstanceEditor({
           onValueChange={(v) => {
             // A preset implies a type — manual type edits detach the preset.
             setPresetId("")
-            patch({ type: v as ProviderType })
+            patch({ type: v as ProviderKind })
           }}
           disabled={isEdit}
         >

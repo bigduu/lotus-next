@@ -6,11 +6,9 @@
 
 import { apiClient } from "../api";
 import type {
-  ProviderConfig,
   ProviderInstance,
   CreateProviderInstanceRequest,
   UpdateProviderInstanceRequest,
-  ProviderInstancesConfig,
 } from "@shared/types/providerConfig";
 import type { ProviderCatalog, ProviderModelDescriptor } from "@shared/types/providerModelRef";
 
@@ -181,20 +179,6 @@ export interface CompleteAuthRequest {
  */
 export class SettingsService {
   /**
-   * Get the current provider configuration
-   */
-  async getProviderConfig(): Promise<ProviderConfig> {
-    return apiClient.get<ProviderConfig>("/bamboo/settings/provider");
-  }
-
-  /**
-   * Save provider configuration
-   */
-  async saveProviderConfig(config: Record<string, unknown>): Promise<void> {
-    return apiClient.post<void>("/bamboo/settings/provider", config);
-  }
-
-  /**
    * Reload configuration (apply changes)
    */
   async reloadConfig(): Promise<void> {
@@ -257,19 +241,6 @@ export class SettingsService {
   }
 
   /**
-   * Fetch available models for a provider (via backend)
-   */
-  async fetchProviderModels(provider: string): Promise<string[]> {
-    const response = await apiClient.post<{ models: string[] }>(
-      "/bamboo/settings/provider/models",
-      {
-        provider,
-      },
-    );
-    return response.models;
-  }
-
-  /**
    * Fetch the full provider catalog (used by ProviderModelPicker).
    */
   async getProviderCatalog(): Promise<ProviderCatalog> {
@@ -292,8 +263,8 @@ export class SettingsService {
   /**
    * Get all provider instances and the default instance id.
    */
-  async getProviderInstances(): Promise<ProviderInstancesConfig> {
-    return apiClient.get<ProviderInstancesConfig>("/bamboo/settings/provider-instances");
+  async getProviderInstances(): Promise<unknown> {
+    return apiClient.get<unknown>("/bamboo/settings/provider-instances");
   }
 
   /**

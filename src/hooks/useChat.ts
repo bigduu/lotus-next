@@ -7,6 +7,7 @@ import {
   selectShouldObserve,
 } from "@shared/store/appStore"
 import { useProviderStore } from "@shared/store/appStore/slices/providerSlice"
+import { getReasoningEffortForProvider } from "@shared/utils/reasoningEffort"
 import { agentClient } from "@services/chat/AgentService"
 import { apiClient } from "@services/api"
 import { notify } from "@/lib/notify"
@@ -122,17 +123,17 @@ export function useChat(
   // Global default model (configured in provider settings). Used when the user
   // hasn't explicitly picked one, so sends honor the default (e.g. glm-5.2)
   // rather than falling back to a session's stale historical model.
-  const defaultChatModel = useProviderStore((s) => s.providerConfig?.defaults?.chat?.model)
+  const defaultChatModel = useProviderStore((s) => s.providerSnapshot?.defaults?.chat?.model)
   const effectiveModel = selectedModel || defaultChatModel || ""
   const globalReasoningEffort = useProviderStore((s) => {
-    const id = s.defaultProviderInstanceId
-    return (id ? s.providerInstances.find((i) => i.id === id) : undefined)?.config?.reasoning_effort
+    const id = s.providerSnapshot?.default_provider_instance_id
+    return getReasoningEffortForProvider(s.providerSnapshot, id)
   })
   // Provider TYPE of the default instance — drives provider-specific prompt
   // enhancement segments (e.g. the Copilot conclusion-with-options contract).
   const providerType = useProviderStore((s) => {
-    const id = s.defaultProviderInstanceId
-    return (id ? s.providerInstances.find((i) => i.id === id) : undefined)?.type
+    const id = s.providerSnapshot?.default_provider_instance_id
+    return id ? s.getProviderType(id) : undefined
   })
   const reasoningEffort =
     useAppStore((s) => s.inputStates[sid ?? ""]?.reasoningEffort) ?? globalReasoningEffort

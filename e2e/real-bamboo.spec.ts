@@ -60,6 +60,7 @@ interface PageObservation {
   readonly consoleErrors: string[];
   readonly pageErrors: string[];
   readonly bootstrapDocuments: unknown[];
+  readonly providerDocuments: unknown[];
   readonly historyDocuments: unknown[];
   readonly webSockets: WebSocketObservation[];
 }
@@ -197,6 +198,7 @@ const observePage = (page: Page, label: string): PageObservation => {
     consoleErrors: [],
     pageErrors: [],
     bootstrapDocuments: [],
+    providerDocuments: [],
     historyDocuments: [],
     webSockets: [],
   };
@@ -233,6 +235,22 @@ const observePage = (page: Page, label: string): PageObservation => {
         .catch((error: unknown) => {
           observation.pageErrors.push(
             `Could not inspect the Bamboo bootstrap response: ${String(error)}`,
+          );
+        });
+    }
+    if (
+      request.method() === "GET" &&
+      pathname === "/api/v1/bamboo/settings/provider-instances" &&
+      response.ok()
+    ) {
+      void response
+        .json()
+        .then((document: unknown) =>
+          observation.providerDocuments.push(document),
+        )
+        .catch((error: unknown) => {
+          observation.pageErrors.push(
+            `Could not inspect the Bamboo provider-instances response: ${String(error)}`,
           );
         });
     }
@@ -500,6 +518,15 @@ const assertCleanPage = (
   const legacyRequests = networkRequests.filter((request) =>
     /^\/v1(?:\/|$)/.test(new URL(request.url).pathname),
   );
+  const retiredProviderRequests = networkRequests.filter((request) => {
+    const pathname = new URL(request.url).pathname;
+    return (
+      ((request.method === "GET" || request.method === "POST") &&
+        pathname === "/api/v1/bamboo/settings/provider") ||
+      (request.method === "POST" &&
+        pathname === "/api/v1/bamboo/settings/provider/models")
+    );
+  });
   const eventSourceRequests = networkRequests.filter(
     (request) =>
       request.resourceType === "eventsource" ||
@@ -526,6 +553,10 @@ const assertCleanPage = (
   expect(legacyRequests, `${observation.label}: legacy /v1 requests`).toEqual(
     [],
   );
+  expect(
+    retiredProviderRequests,
+    `${observation.label}: retired provider configuration requests`,
+  ).toEqual([]);
   expect(
     eventSourceRequests,
     `${observation.label}: SSE/EventSource fallback`,
@@ -788,6 +819,26 @@ const evidenceFor = (
           : false,
       };
     }),
+    providerSnapshots: observation.providerDocuments.map((document) => {
+      const root = asRecord(document);
+      const defaults = asRecord(root?.defaults);
+      const chat = asRecord(defaults?.chat);
+      const instances = Array.isArray(root?.instances) ? root.instances : [];
+      return {
+        defaultInstanceId: stringField(root, "default_provider_instance_id"),
+        chatProvider: stringField(chat, "provider"),
+        chatModel: stringField(chat, "model"),
+        instances: instances.map((instance) => {
+          const record = asRecord(instance);
+          return {
+            id: stringField(record, "id"),
+            type: stringField(record, "type"),
+            label: stringField(record, "label"),
+            enabled: record?.enabled === true,
+          };
+        }),
+      };
+    }),
     history: observation.historyDocuments.map((document) =>
       persistedMarkerState(
         document,
@@ -819,6 +870,33 @@ const attachEvidence = async (
     body: Buffer.from(`${JSON.stringify(evidence, null, 2)}\n`),
     contentType: "application/json",
   });
+};
+
+const assertRealProviderSnapshot = (observation: PageObservation): void => {
+  expect(
+    observation.providerDocuments.length,
+    `${observation.label}: provider-instances response was not observed`,
+  ).toBeGreaterThan(0);
+  const document = asRecord(observation.providerDocuments.at(-1));
+  const instances = document?.instances;
+  const defaults = asRecord(document?.defaults);
+  const chat = asRecord(defaults?.chat);
+
+  expect(document?.default_provider_instance_id).toBe("e2e-openai");
+  expect(chat).toMatchObject({
+    provider: "e2e-openai",
+    model: "gpt-4o-mini",
+  });
+  expect(Array.isArray(instances) ? instances : []).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        id: "e2e-openai",
+        type: "openai",
+        label: "Lotus real Bamboo E2E",
+        enabled: true,
+      }),
+    ]),
+  );
 };
 
 test("production UI completes and rehydrates one real Bamboo chat round trip", async ({
@@ -857,6 +935,30 @@ test("production UI completes and rehydrates one real Bamboo chat round trip", a
     await expect(composer).toBeVisible();
     await assertBootstrap(first);
     await assertLiveSocket(first, contract.baseUrl.origin);
+    await expect
+      .poll(() => first.providerDocuments.length, {
+        message: "Lotus Next must load the authoritative provider-instances snapshot",
+      })
+      .toBeGreaterThan(0);
+    assertRealProviderSnapshot(first);
+
+    await page.getByRole("button", { name: "系统设置" }).click();
+    await expect(page.getByRole("heading", { name: "系统设置" })).toBeVisible();
+    await expect(page.getByText("gpt-4o-mini", { exact: true }).first()).toBeVisible();
+    await page.getByRole("button", { name: "提供方", exact: true }).click();
+    const providerRow = page.locator("li").filter({ hasText: "OpenAI · 默认" });
+    await expect(providerRow.getByText("Lotus real Bamboo E2E", { exact: true })).toBeVisible();
+    await expect(providerRow.getByText("OpenAI · 默认", { exact: true })).toBeVisible();
+    await providerRow.getByRole("button", { name: "编辑", exact: true }).click();
+    const maskedApiKeyInput = page.getByLabel("API Key", { exact: true });
+    await expect(maskedApiKeyInput).toHaveValue("");
+    await expect(maskedApiKeyInput).toHaveAttribute(
+      "placeholder",
+      "已配置，留空保持不变",
+    );
+    await page.getByRole("button", { name: "取消", exact: true }).click();
+    await page.getByRole("button", { name: "关闭设置" }).click();
+    await expect(composer).toBeVisible();
 
     await composer.fill(contract.userMarker);
     const send = page.getByRole("button", { name: "发送消息", exact: true });

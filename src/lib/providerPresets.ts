@@ -1,4 +1,4 @@
-import type { ProviderType } from "@shared/types/providerConfig"
+import type { ProviderKind } from "@shared/types/providerConfig"
 
 /**
  * Vendor presets for the provider InstanceEditor.
@@ -18,7 +18,7 @@ export interface VendorPreset {
   /** Display label(zh-CN,遵循应用内硬编码中文的约定). */
   label: string
   /** Must be a type the backend accepts — presets only use openai/anthropic. */
-  provider_type: ProviderType
+  provider_type: ProviderKind
   base_url: string
   /** Shown as the model input's placeholder — never written into the draft value. */
   suggested_models: string[]

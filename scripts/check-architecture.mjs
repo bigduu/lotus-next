@@ -51,6 +51,10 @@ const endpointConsumers = new Set([apiCompositionOwner, websocketOwner]);
 const runtimeEndpointInterface = "RuntimeEndpointSet";
 const canonicalRuntimeEndpointFields = new Set(["nativeApi", "origin", "v2Stream"]);
 const deprecatedNativeApiNames = new Set(["standardApi", "agentApi", "agentApiClient"]);
+const retiredProviderPaths = new Set([
+  "/bamboo/settings/provider",
+  "/bamboo/settings/provider/models",
+]);
 const backendOverrideStorageNames = new Set([
   "BACKEND_OVERRIDE_STORAGE_KEY",
   "LEGACY_BACKEND_OVERRIDE_STORAGE_KEY",
@@ -1561,6 +1565,16 @@ const analyzeSource = (file, source) => {
       report(
         node,
         `deprecated native REST name ${deprecatedNativeApiName} reintroduces the dual-client boundary; use apiClient and runtime.endpoints.nativeApi`,
+      );
+    }
+    if (
+      file.startsWith("src/") &&
+      ts.isStringLiteralLike(node) &&
+      retiredProviderPaths.has(node.text)
+    ) {
+      report(
+        node,
+        `retired provider endpoint ${node.text} must not re-enter Lotus Next; use the canonical provider-instances or provider-catalog contract`,
       );
     }
     const runtimeApiName =

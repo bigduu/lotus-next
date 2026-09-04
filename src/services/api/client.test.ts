@@ -48,7 +48,7 @@ describe("API runtime composition", () => {
 
   it.each([
     "commands",
-    "bamboo/settings/provider",
+    "bamboo/settings/provider-instances",
     "workspace/validate",
     "chat",
   ])("resolves the representative native route %s under one /api/v1 prefix", (route) => {

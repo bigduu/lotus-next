@@ -50,7 +50,7 @@ function GeneralTab() {
   const models = useAppStore(useShallow((s) => s.models))
   const selectedModel = useAppStore((s) => s.selectedModel)
   const setSelectedModel = useAppStore((s) => s.setSelectedModel)
-  const defaultChatModel = useProviderStore((s) => s.providerConfig?.defaults?.chat?.model)
+  const defaultChatModel = useProviderStore((s) => s.providerSnapshot?.defaults?.chat?.model)
   const activeModel = selectedModel || defaultChatModel || ""
   const [metrics, setMetrics] = useState<MetricsSummary | null>(null)
 
