@@ -155,6 +155,37 @@ describe("architecture boundary fixtures", () => {
     expect(duplicate).toMatch(/must read exactly one native runtime endpoint/);
   });
 
+  it("rejects retired provider configuration endpoints without blocking instance contracts", () => {
+    const retired = new Map([
+      [
+        "src/services/config/unsafe.ts",
+        `
+          apiClient.get("/bamboo/settings/provider");
+          apiClient.post("/bamboo/settings/provider", {});
+          apiClient.post("/bamboo/settings/provider/models", {});
+        `,
+      ],
+    ]);
+    const canonical = new Map([
+      [
+        "src/services/config/safe.ts",
+        `
+          apiClient.get("/bamboo/settings/provider-instances");
+          apiClient.post("/bamboo/settings/provider-instances/default", {});
+          apiClient.get("/bamboo/provider-catalog");
+          apiClient.post("/bamboo/provider-catalog/fetch-models", {});
+        `,
+      ],
+    ]);
+
+    expect(
+      findArchitectureViolations(retired).filter((message) =>
+        message.includes("retired provider endpoint"),
+      ),
+    ).toHaveLength(3);
+    expect(findArchitectureViolations(canonical)).toEqual([]);
+  });
+
   it.each([
     ["Api alias", "src/services/api/client.ts", clientOwner("", `const Alias = ApiClient; new Alias({});`)],
     ["Api subclass", "src/services/api/client.ts", clientOwner("", `class Duplicate extends ApiClient {}; new Duplicate({});`)],

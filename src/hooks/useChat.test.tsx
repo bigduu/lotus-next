@@ -1,5 +1,6 @@
 import { act } from "react"
 import { createRoot, type Root } from "react-dom/client"
+import type { ProviderInstancesConfig, ProviderKind } from "@shared/types/providerConfig"
 import {
   afterAll,
   afterEach,
@@ -14,7 +15,7 @@ const mocks = vi.hoisted(() => {
   const appState = {
     chats: [] as Array<{ id: string; messages?: unknown[]; isRunning?: boolean }>,
     currentSessionId: null as string | null,
-    selectedModel: "test-model",
+    selectedModel: "test-model" as string | undefined,
     inputStates: {} as Record<string, { reasoningEffort?: string }>,
     lastSelectedPromptId: null as string | null,
     systemPrompts: [] as Array<{ id: string; content?: string }>,
@@ -37,6 +38,13 @@ const mocks = vi.hoisted(() => {
     apiGet: vi.fn(),
     apiPost: vi.fn(),
     acknowledgeTemplate: vi.fn(),
+    providerState: {
+      providerSnapshot: null,
+      getProviderType: vi.fn<(instanceId: string) => ProviderKind | undefined>(() => undefined),
+    } as {
+      providerSnapshot: ProviderInstancesConfig | null
+      getProviderType: ReturnType<typeof vi.fn<(instanceId: string) => ProviderKind | undefined>>
+    },
   }
 })
 vi.mock("@shared/store/appStore", () => {
@@ -55,11 +63,7 @@ vi.mock("@shared/store/appStore", () => {
 })
 vi.mock("@shared/store/appStore/slices/providerSlice", () => ({
   useProviderStore: (selector: (state: unknown) => unknown) =>
-    selector({
-      providerConfig: null,
-      defaultProviderInstanceId: null,
-      providerInstances: [],
-    }),
+    selector(mocks.providerState),
 }))
 vi.mock("@services/chat/AgentService", () => ({
   agentClient: {
@@ -225,6 +229,9 @@ beforeEach(() => {
   mocks.appState.inputStates = {}
   mocks.appState.lastSelectedPromptId = null
   mocks.appState.systemPrompts = []
+  mocks.providerState.providerSnapshot = null
+  mocks.providerState.getProviderType.mockReset()
+  mocks.providerState.getProviderType.mockReturnValue(undefined)
   for (const mock of [
     mocks.appState.selectSession,
     mocks.appState.loadChatHistory,
@@ -393,6 +400,46 @@ describe("useChat two-phase send lifecycle", () => {
       expect.any(Object),
       expect.any(AbortController),
     )
+  })
+  it("uses the authoritative default instance model and reasoning effort", async () => {
+    mocks.appState.selectedModel = undefined
+    mocks.providerState.providerSnapshot = {
+      default_provider_instance_id: "instance-openai",
+      instances: [
+        {
+          id: "instance-openai",
+          type: "openai",
+          label: "Primary OpenAI",
+          enabled: true,
+          config: { reasoning_effort: "max" },
+        },
+      ],
+      defaults: {
+        chat: { provider: "instance-openai", model: "gpt-authoritative" },
+      },
+      features: { provider_model_ref: true },
+    }
+    mocks.providerState.getProviderType.mockReturnValue("openai")
+    mocks.sendMessage.mockResolvedValueOnce({ session_id: "provider-session" })
+    mocks.subscribeToEvents.mockReturnValueOnce(pendingForever())
+
+    const hook = await mountUseChat({ mode: "bound", sessionId: "provider-session" })
+    await act(async () => {
+      await hook.current.send("use provider defaults")
+    })
+
+    expect(mocks.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        session_id: "provider-session",
+        model: "gpt-authoritative",
+      }),
+    )
+    expect(mocks.execute).toHaveBeenCalledWith(
+      "provider-session",
+      "gpt-authoritative",
+      "max",
+    )
+    expect(mocks.providerState.getProviderType).toHaveBeenCalledWith("instance-openai")
   })
   it.each(["complete", "error"] as const)(
     "waits for %s terminal settlement after the transport closes",

@@ -51,8 +51,10 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
   addChat: async (chatData) => {
     const title = (chatData.title || i18n.t("chat.sidebar.newSession")).trim();
     const basePrompt = chatData.config?.baseSystemPrompt?.trim() || "";
-    const activeModel = useProviderStore.getState().getActiveModel()?.trim();
-    const model = chatData.config?.model?.trim() || activeModel || undefined;
+    const providerState = useProviderStore.getState();
+    const providerSnapshot = providerState.providerSnapshot;
+    const defaultChat = providerSnapshot?.defaults?.chat;
+    const model = chatData.config?.model?.trim() || defaultChat?.model?.trim() || undefined;
 
     // Resolve model_ref when feature flag is ON
     // Always use provider defaults for new sessions, not the global selectedModelRef.
@@ -66,17 +68,10 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
         modelRef = callerModelRef;
         providerValue = callerModelRef.provider;
       } else {
-        // Fall back to provider defaults (settings default model)
-        const defaultChat = useProviderStore.getState().providerConfig.defaults?.chat;
+        // Fall back to the authoritative instance-based provider defaults.
         if (defaultChat?.provider?.trim() && defaultChat?.model?.trim()) {
           modelRef = defaultChat;
           providerValue = defaultChat.provider;
-        } else {
-          const m = useProviderStore.getState().getActiveModel();
-          if (m) {
-            modelRef = { provider: useProviderStore.getState().currentProvider, model: m };
-            providerValue = useProviderStore.getState().currentProvider;
-          }
         }
       }
     }
@@ -88,10 +83,9 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
     const reasoningEffort =
       chatData.config?.reasoningEffort ??
       resolveProviderDefaultReasoningEffort(
-        useProviderStore.getState().providerConfig,
+        providerSnapshot,
         modelRef ?? null,
         providerValue ?? null,
-        useProviderStore.getState().providerInstances,
       );
 
     const created = await agentClient.createSession({
@@ -497,8 +491,8 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
     let list = await agentClient.listSessions();
     if (!list.sessions || list.sessions.length === 0) {
       // Use provider defaults when creating the initial session on startup
-      const defaultModel = useProviderStore.getState().getActiveModel()?.trim();
-      const defaultModelRef = useProviderStore.getState().providerConfig.defaults?.chat;
+      const defaultModelRef = useProviderStore.getState().providerSnapshot?.defaults?.chat;
+      const defaultModel = defaultModelRef?.model?.trim();
       debugLog("[ChatSlice]", "loadChats.createInitialSession", {
         defaultModel: defaultModel ?? null,
         defaultModelRef: defaultModelRef ?? null,

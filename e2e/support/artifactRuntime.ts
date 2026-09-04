@@ -37,6 +37,11 @@ export interface RuntimeObservation {
   readonly errorResponses: string[]
 }
 
+export interface ArtifactRuntimeOptions {
+  /** Override only the canonical provider snapshot for failure-path acceptance. */
+  readonly providerInstancesResponse?: unknown
+}
+
 export const standaloneScenario: ArtifactScenario = {
   name: "standalone",
   origin: "http://127.0.0.1:4173",
@@ -189,6 +194,8 @@ const apiResponse = (method: string, pathnameWithSearch: string): unknown => {
       }
     case "POST /api/v1/bamboo/provider-catalog/fetch-models":
       return { fetched: [{ provider: "fixture-provider", models: [fixtureModel] }] }
+    case "GET /api/v1/bamboo/provider-catalog":
+      return { providers: [], models: [fixtureModel] }
     case "GET /api/v1/prompt-presets":
       return { prompts: [] }
     case "GET /api/v1/skills":
@@ -280,6 +287,7 @@ export const installArtifactRuntime = async (
   page: Page,
   scenario: ArtifactScenario,
   historyMessages: readonly unknown[] = [],
+  options: ArtifactRuntimeOptions = {},
 ): Promise<RuntimeObservation> => {
   const observation: RuntimeObservation = {
     scenario: scenario.name,
@@ -392,9 +400,13 @@ export const installArtifactRuntime = async (
         }
       }
       const response =
-        request.method() === "GET" && url.pathname === `/api/v1/history/${FIXTURE_SESSION_ID}`
-          ? { session_id: FIXTURE_SESSION_ID, messages: historyMessages }
-          : apiResponse(request.method(), `${url.pathname}${url.search}`)
+        request.method() === "GET" &&
+        url.pathname === "/api/v1/bamboo/settings/provider-instances" &&
+        options.providerInstancesResponse !== undefined
+          ? options.providerInstancesResponse
+          : request.method() === "GET" && url.pathname === `/api/v1/history/${FIXTURE_SESSION_ID}`
+            ? { session_id: FIXTURE_SESSION_ID, messages: historyMessages }
+            : apiResponse(request.method(), `${url.pathname}${url.search}`)
       if (response === undefined) {
         await route.fulfill({
           status: 501,
