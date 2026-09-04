@@ -186,6 +186,58 @@ describe("architecture boundary fixtures", () => {
     expect(findArchitectureViolations(canonical)).toEqual([]);
   });
 
+  it("keeps Notification Channels off the whole-config endpoint", () => {
+    const owners = [
+      "src/components/chat/settings/SettingsNotifications.tsx",
+      "src/components/chat/settings/notifications/ChannelsSection.tsx",
+      "src/components/chat/settings/notifications/notificationConfigHelper.ts",
+      "src/services/notification/notificationChannelsApi.ts",
+    ];
+    for (const file of owners) {
+      const violations = fixtureMessages(
+        file,
+        `
+          const wholeConfig = ["bamboo", "config"].join("/");
+          apiClient.get(wholeConfig);
+          apiClient.post("/api/v1/bamboo/config", {});
+        `,
+      );
+      expect(violations.match(/Notification Channels must use the dedicated/g)).toHaveLength(2);
+    }
+  });
+
+  it("blocks whole-config facades throughout the Notification Channels subtree", () => {
+    const violations = fixtureMessages(
+      "src/components/chat/settings/notifications/notificationConfigHelper.ts",
+      `
+        import { serviceFactory } from "@services/common/ServiceFactory";
+        import { useBambooConfigStore } from "@shared/store/bambooConfigStore";
+        serviceFactory.getBambooConfig();
+        useBambooConfigStore.getState().patchConfig({});
+      `,
+    );
+    expect(violations).toContain("must not import a whole-config facade or store");
+    expect(violations).toContain("must use the dedicated bamboo/config/notifications");
+  });
+
+  it("allows the dedicated notification section and scopes the prohibition to its owners", () => {
+    expect(
+      fixtureMessages(
+        "src/services/notification/notificationChannelsApi.ts",
+        `
+          apiClient.get("bamboo/config/notifications");
+          apiClient.put("bamboo/config/notifications", {});
+        `,
+      ),
+    ).toBe("");
+    expect(
+      fixtureMessages(
+        "src/components/chat/settings/SystemSettings.tsx",
+        `apiClient.get("bamboo/config");`,
+      ),
+    ).toBe("");
+  });
+
   it.each([
     ["Api alias", "src/services/api/client.ts", clientOwner("", `const Alias = ApiClient; new Alias({});`)],
     ["Api subclass", "src/services/api/client.ts", clientOwner("", `class Duplicate extends ApiClient {}; new Duplicate({});`)],

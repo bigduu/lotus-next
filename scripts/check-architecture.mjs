@@ -55,6 +55,26 @@ const retiredProviderPaths = new Set([
   "/bamboo/settings/provider",
   "/bamboo/settings/provider/models",
 ]);
+const notificationChannelComponentRoot = "src/components/chat/settings/notifications/";
+const notificationChannelPageOwner = "src/components/chat/settings/SettingsNotifications.tsx";
+const notificationChannelServiceOwner = "src/services/notification/notificationChannelsApi.ts";
+const notificationWholeConfigCallNames = new Set([
+  "delete",
+  "fetchRaw",
+  "get",
+  "patch",
+  "post",
+  "put",
+]);
+const notificationWholeConfigFacadeCallNames = new Set([
+  "getBambooConfig",
+  "loadConfig",
+  "patchConfig",
+  "resetBambooConfig",
+  "saveConfig",
+  "setBambooConfig",
+  "validateBambooConfigPatch",
+]);
 const backendOverrideStorageNames = new Set([
   "BACKEND_OVERRIDE_STORAGE_KEY",
   "LEGACY_BACKEND_OVERRIDE_STORAGE_KEY",
@@ -687,6 +707,30 @@ const analyzeSource = (file, source) => {
   };
 
   const resolveStaticString = (node) => joinedStaticParts(staticStringParts(node));
+  const isNotificationChannelConfigOwner =
+    file === notificationChannelPageOwner ||
+    file === notificationChannelServiceOwner ||
+    file.startsWith(notificationChannelComponentRoot);
+  const isNotificationWholeConfigCall = (node) => {
+    if (!isNotificationChannelConfigOwner || !ts.isCallExpression(node)) return false;
+    const callee = unwrapStaticExpression(node.expression);
+    const callName = ts.isIdentifier(callee) ? callee.text : resolvedPropertyName(callee);
+    if (notificationWholeConfigFacadeCallNames.has(callName)) return true;
+    const routeArgument =
+      callName === "request"
+        ? node.arguments[1]
+        : notificationWholeConfigCallNames.has(callName)
+          ? node.arguments[0]
+          : null;
+    if (!routeArgument) return false;
+    const route = resolveStaticString(routeArgument);
+    if (route === null) return false;
+    const normalized = route
+      .trim()
+      .replace(/[?#].*$/, "")
+      .replace(/^\/+|\/+$/g, "");
+    return ["bamboo/config", "api/v1/bamboo/config", "v1/bamboo/config"].includes(normalized);
+  };
   const staticStringFragments = (node) => {
     const fragments = [];
     let current = "";
@@ -1534,6 +1578,12 @@ const analyzeSource = (file, source) => {
   };
 
   const visit = (node) => {
+    if (isNotificationWholeConfigCall(node)) {
+      report(
+        node,
+        "Notification Channels must use the dedicated bamboo/config/notifications section contract, never the whole-config endpoint",
+      );
+    }
     if (
       file !== runtimeContract &&
       ts.isInterfaceDeclaration(node) &&
@@ -1726,6 +1776,13 @@ const analyzeSource = (file, source) => {
 
     if (ts.isImportDeclaration(node) && ts.isStringLiteralLike(node.moduleSpecifier)) {
       const moduleName = node.moduleSpecifier.text;
+      if (
+        isNotificationChannelConfigOwner &&
+        (moduleName.endsWith("/common/ServiceFactory") ||
+          moduleName.endsWith("/store/bambooConfigStore"))
+      ) {
+        report(node, "Notification Channels must not import a whole-config facade or store");
+      }
       checkRuntimeLocalDependency(node, moduleName);
       checkExcludedTestDependency(node, moduleName);
       checkSourceDependencyBoundary(node, moduleName);

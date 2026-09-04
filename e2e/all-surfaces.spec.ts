@@ -79,6 +79,21 @@ const isExactFrame = (frame: unknown, type: string): boolean =>
 
 const pathname = (url: string): string => new URL(url).pathname
 
+const rootConfigRequestCount = (observation: RuntimeObservation): number =>
+  observation.httpRequests.filter(
+    ({ url }) => pathname(url) === "/api/v1/bamboo/config",
+  ).length
+
+const openSettings = async (surface: Surface, page: Page): Promise<void> => {
+  const settingsButton = surface.getByRole("button", { name: "系统设置" })
+  if ((page.viewportSize()?.width ?? 0) < 768) {
+    await surface.getByRole("button", { name: "菜单" }).click()
+    await expect(settingsButton).toBeInViewport()
+  }
+  await settingsButton.click()
+  await expect(surface.getByRole("heading", { name: "系统设置" })).toBeVisible()
+}
+
 const isRetiredProviderRequest = (request: { method: string; url: string }): boolean => {
   const path = pathname(request.url)
   return (
@@ -212,6 +227,72 @@ test("standalone page-origin artifact reaches a usable canonical shell", async (
   expect(observation.staticUrls.some((url) => pathname(url).startsWith("/assets/"))).toBe(true)
 })
 
+test("notification channels use one stateful section CAS and install returned revisions", async ({
+  page,
+  startRuntime,
+}) => {
+  const { surface, observation } = await startRuntime(standaloneScenario)
+  await expectReadyShell(surface)
+  await openSettings(surface, page)
+  await page.waitForLoadState("networkidle")
+  const rootRequestsBefore = rootConfigRequestCount(observation)
+
+  await surface.getByRole("button", { name: "通知", exact: true }).click()
+  const topic = surface.getByRole("textbox", { name: "Topic", exact: true })
+  await expect(topic).toHaveValue("fixture-topic")
+  await topic.fill("artifact-topic-one")
+  await surface.getByRole("button", { name: "保存渠道设置" }).click()
+  await expect(surface.getByText("已保存", { exact: true })).toBeVisible()
+  await topic.fill("artifact-topic-two")
+  await surface.getByRole("button", { name: "保存渠道设置" }).click()
+  await expect.poll(
+    () => observation.notificationConfigRequests.filter(({ method }) => method === "PUT"),
+  ).toHaveLength(2)
+
+  expect(observation.notificationConfigRequests.map((request) => [
+    request.method,
+    request.path,
+    request.expectedRevision,
+    request.responseRevision,
+    request.ntfyCredentialAction,
+    request.barkCredentialAction,
+  ])).toEqual([
+    ["GET", "/api/v1/bamboo/config/notifications", null, 7, null, null],
+    ["PUT", "/api/v1/bamboo/config/notifications", 7, 8, "keep", "keep"],
+    ["PUT", "/api/v1/bamboo/config/notifications", 8, 9, "keep", "keep"],
+  ])
+  expect(rootConfigRequestCount(observation)).toBe(rootRequestsBefore)
+})
+
+test("malformed notification authority fails visibly without whole-config fallback", async ({
+  page,
+  startRuntime,
+}) => {
+  const { surface, observation } = await startRuntime(standaloneScenario, {
+    notificationConfigResponse: { revision: "malformed" },
+  })
+  await expectReadyShell(surface)
+  await openSettings(surface, page)
+  await page.waitForLoadState("networkidle")
+  const rootRequestsBefore = rootConfigRequestCount(observation)
+
+  await surface.getByRole("button", { name: "通知", exact: true }).click()
+  await expect(
+    surface.getByRole("alert").filter({
+      hasText: "通知渠道配置格式与 Lotus Next 不兼容",
+    }),
+  ).toBeVisible()
+  await expect(surface.getByRole("textbox", { name: "Topic", exact: true })).toHaveCount(0)
+  expect(observation.notificationConfigRequests).toEqual([
+    expect.objectContaining({
+      method: "GET",
+      path: "/api/v1/bamboo/config/notifications",
+      responseRevision: null,
+    }),
+  ])
+  expect(rootConfigRequestCount(observation)).toBe(rootRequestsBefore)
+})
+
 test("malformed provider snapshot is visibly incompatible without legacy fallback", async ({
   page,
   startRuntime,
@@ -226,12 +307,7 @@ test("malformed provider snapshot is visibly incompatible without legacy fallbac
   })
 
   await expectReadyShell(surface)
-  const settingsButton = surface.getByRole("button", { name: "系统设置" })
-  if ((page.viewportSize()?.width ?? 0) < 768) {
-    await surface.getByRole("button", { name: "菜单" }).click()
-    await expect(settingsButton).toBeInViewport()
-  }
-  await settingsButton.click()
+  await openSettings(surface, page)
   await surface.getByRole("button", { name: "提供方", exact: true }).click()
 
   await expect(
@@ -267,13 +343,7 @@ test("embedded base path owns entry, assets, lazy settings, and return navigatio
   await expectReadyShell(surface)
   expect(observation.staticUrls.some((url) => pathname(url) === settingsPath)).toBe(false)
 
-  const settingsButton = surface.getByRole("button", { name: "系统设置" })
-  if ((page.viewportSize()?.width ?? 0) < 768) {
-    await surface.getByRole("button", { name: "菜单" }).click()
-    await expect(settingsButton).toBeInViewport()
-  }
-  await settingsButton.click()
-  await expect(surface.getByRole("heading", { name: "系统设置" })).toBeVisible()
+  await openSettings(surface, page)
   await expect(surface.getByText("Bodhi · lotus-next")).toBeVisible()
   await expect(surface.getByText("fixture-model", { exact: true }).first()).toBeVisible()
   await surface.getByRole("button", { name: "提供方", exact: true }).click()

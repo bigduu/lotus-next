@@ -5,6 +5,7 @@ import {
   type Page,
   type TestInfo,
 } from "@playwright/test";
+import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 
@@ -389,6 +390,68 @@ const successfulResponse = (
     );
   });
 
+const requestCount = (
+  observation: PageObservation,
+  method: string,
+  pathname: string,
+): number =>
+  observation.requests.filter(
+    (request) =>
+      request.method === method && new URL(request.url).pathname === pathname,
+  ).length;
+
+const notificationRevision = (document: unknown): number => {
+  const revision = numberField(asRecord(document), "revision");
+  if (revision === undefined || !Number.isSafeInteger(revision) || revision < 0) {
+    throw new Error("Bamboo returned an invalid notification revision");
+  }
+  return revision;
+};
+
+type DirectCredentialAction =
+  | { action: "keep" }
+  | { action: "replace"; value: string };
+
+const notificationMutationData = (
+  document: unknown,
+  topic: string,
+  ntfyCredentialChange: DirectCredentialAction,
+): JsonRecord => {
+  const data = asRecord(asRecord(document)?.data);
+  const desktop = asRecord(data?.desktop);
+  const ntfy = asRecord(data?.ntfy);
+  const bark = asRecord(data?.bark);
+  if (!desktop || !ntfy || !bark) {
+    throw new Error("Bamboo returned invalid notification channel data");
+  }
+  return {
+    desktop: { enabled: desktop.enabled },
+    ntfy: {
+      enabled: ntfy.enabled,
+      base_url: ntfy.base_url,
+      topic,
+      credential_change: ntfyCredentialChange,
+    },
+    bark: {
+      enabled: bark.enabled,
+      base_url: bark.base_url,
+      credential_change: { action: "keep" },
+    },
+  };
+};
+
+const summarizeNotificationMutation = (value: unknown) => {
+  const body = asRecord(value);
+  const data = asRecord(body?.data);
+  const action = (channel: "ntfy" | "bark") =>
+    stringField(asRecord(asRecord(data?.[channel])?.credential_change), "action") ?? null;
+  return {
+    expectedRevision: numberField(body, "expected_revision") ?? null,
+    ntfyCredentialAction: action("ntfy"),
+    barkCredentialAction: action("bark"),
+  };
+};
+
 const assertBootstrap = async (observation: PageObservation): Promise<void> => {
   await expect
     .poll(() => observation.bootstrapDocuments.length, {
@@ -508,6 +571,7 @@ const assertLiveSocket = async (
 const assertCleanPage = (
   observation: PageObservation,
   baseOrigin: string,
+  expectedNotificationConflicts = 0,
 ): void => {
   const networkRequests = observation.requests.filter((request) =>
     /^https?:$/.test(new URL(request.url).protocol),
@@ -532,8 +596,22 @@ const assertCleanPage = (
       request.resourceType === "eventsource" ||
       request.accept.toLowerCase().includes("text/event-stream"),
   );
+  const notificationConflicts = observation.responses.filter(
+    (response) =>
+      response.method === "PUT" &&
+      new URL(response.url).pathname === "/api/v1/bamboo/config/notifications" &&
+      response.status === 409,
+  );
   const errorResponses = observation.responses.filter(
-    (response) => response.status >= 400,
+    (response) => response.status >= 400 && !notificationConflicts.includes(response),
+  );
+  const notificationConflictMessage =
+    "Failed to load resource: the server responded with a status of 409 (Conflict)";
+  const notificationConflictConsole = observation.consoleErrors.filter(
+    (message) => message === notificationConflictMessage,
+  );
+  const consoleErrors = observation.consoleErrors.filter(
+    (message) => message !== notificationConflictMessage,
   );
   const malformedFrames = observation.webSockets.flatMap((socket) =>
     [...socket.sent, ...socket.received].filter((frame) => frame.malformed),
@@ -565,6 +643,10 @@ const assertCleanPage = (
     [],
   );
   expect(
+    notificationConflicts,
+    `${observation.label}: expected notification revision conflicts`,
+  ).toHaveLength(expectedNotificationConflicts);
+  expect(
     observation.failedRequests,
     `${observation.label}: failed requests`,
   ).toEqual([]);
@@ -572,7 +654,11 @@ const assertCleanPage = (
     [],
   );
   expect(
-    observation.consoleErrors,
+    notificationConflictConsole,
+    `${observation.label}: expected browser conflict diagnostics`,
+  ).toHaveLength(expectedNotificationConflicts);
+  expect(
+    consoleErrors,
     `${observation.label}: console errors`,
   ).toEqual([]);
   expect(
@@ -641,6 +727,23 @@ const fetchJson = async (url: URL): Promise<unknown> => {
     return JSON.parse(body) as unknown;
   } catch {
     throw new Error(`GET ${url.href} did not return JSON`);
+  }
+};
+
+const putJson = async (url: URL, value: unknown): Promise<unknown> => {
+  const response = await fetch(url, {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(value),
+    signal: AbortSignal.timeout(5_000),
+  });
+  if (!response.ok) {
+    throw new Error(`PUT ${url.pathname} returned ${response.status}`);
+  }
+  try {
+    return (await response.json()) as unknown;
+  } catch {
+    throw new Error(`PUT ${url.pathname} did not return JSON`);
   }
 };
 
@@ -792,11 +895,13 @@ const evidenceFor = (
   observations: PageObservation[],
   providerDocument: unknown,
   persisted: { user: boolean; assistant: boolean; messageCount: number } | null,
+  notificationCas: JsonRecord | null,
 ): JsonRecord => ({
   bambooRevision: contract.bambooRevision,
   baseOrigin: contract.baseUrl.origin,
   providerHostExposure: "none",
   persisted,
+  notificationCas,
   provider: summarizeProviderObservations(providerDocument),
   pages: observations.map((observation) => ({
     label: observation.label,
@@ -912,8 +1017,11 @@ test("production UI completes and rehydrates one real Bamboo chat round trip", a
   );
   const clientHistoryPath = `/api/v1/history/${encodeURIComponent(contract.sessionId)}`;
   const executePath = `/api/v1/execute/${encodeURIComponent(contract.sessionId)}`;
+  const notificationPath = "/api/v1/bamboo/config/notifications";
+  const notificationUrl = new URL(notificationPath, contract.baseUrl);
   const pageObservations: PageObservation[] = [];
   let providerDocument: unknown = null;
+  let notificationCas: JsonRecord | null = null;
   let persisted: {
     user: boolean;
     assistant: boolean;
@@ -942,6 +1050,26 @@ test("production UI completes and rehydrates one real Bamboo chat round trip", a
       .toBeGreaterThan(0);
     assertRealProviderSnapshot(first);
 
+    const initialNotification = await fetchJson(notificationUrl);
+    const initialNotificationRevision = notificationRevision(initialNotification);
+    const notificationSecret = `lotus-notification-${randomUUID()}`;
+    const seededNotification = await putJson(notificationUrl, {
+      expected_revision: initialNotificationRevision,
+      data: notificationMutationData(
+        initialNotification,
+        "real-bamboo-seeded-topic",
+        { action: "replace", value: notificationSecret },
+      ),
+    });
+    const seededNotificationRevision = notificationRevision(seededNotification);
+    expect(
+      JSON.stringify(seededNotification).includes(notificationSecret),
+      "the real notification response must not return the configured credential",
+    ).toBe(false);
+    expect(
+      asRecord(asRecord(asRecord(seededNotification)?.data)?.ntfy)?.credential,
+    ).toMatchObject({ configured: true, state: "configured" });
+
     await page.getByRole("button", { name: "系统设置" }).click();
     await expect(page.getByRole("heading", { name: "系统设置" })).toBeVisible();
     await expect(page.getByText("gpt-4o-mini", { exact: true }).first()).toBeVisible();
@@ -957,6 +1085,112 @@ test("production UI completes and rehydrates one real Bamboo chat round trip", a
       "已配置，留空保持不变",
     );
     await page.getByRole("button", { name: "取消", exact: true }).click();
+    await page.waitForLoadState("networkidle");
+    const rootConfigRequestsBefore = first.requests.filter(
+      (request) =>
+        new URL(request.url).pathname === "/api/v1/bamboo/config",
+    ).length;
+    expect(requestCount(first, "GET", notificationPath)).toBe(0);
+
+    await page.getByRole("button", { name: "通知", exact: true }).click();
+    const notificationToken = page.getByLabel(
+      "Token(可选,自托管实例)",
+      { exact: true },
+    );
+    const notificationTopic = page.getByRole("textbox", {
+      name: "Topic",
+      exact: true,
+    });
+    await expect(notificationToken).toHaveValue("");
+    await expect(notificationToken).toHaveAttribute(
+      "placeholder",
+      "已配置，留空保持不变",
+    );
+    await expect(notificationTopic).toHaveValue("real-bamboo-seeded-topic");
+    await expect
+      .poll(() => requestCount(first, "GET", notificationPath))
+      .toBe(1);
+
+    const draftTopic = "real-bamboo-preserved-draft";
+    await notificationTopic.fill(draftTopic);
+    const externalNotification = await putJson(notificationUrl, {
+      expected_revision: seededNotificationRevision,
+      data: notificationMutationData(
+        seededNotification,
+        "real-bamboo-external-topic",
+        { action: "keep" },
+      ),
+    });
+    const externalNotificationRevision = notificationRevision(externalNotification);
+
+    const stalePut = page.waitForRequest(
+      (request) =>
+        request.method() === "PUT" &&
+        new URL(request.url()).pathname === notificationPath,
+    );
+    await page.getByRole("button", { name: "保存渠道设置" }).click();
+    const staleMutation = summarizeNotificationMutation(
+      (await stalePut).postDataJSON() as unknown,
+    );
+    const conflictAlert = page
+      .getByRole("alert")
+      .filter({ hasText: "通知渠道配置已被其他客户端更新" });
+    await expect(conflictAlert).toBeVisible();
+    const retryNotification = page.getByRole("button", {
+      name: "用当前修改重试",
+      exact: true,
+    });
+    await expect(retryNotification).toBeEnabled();
+    await expect(notificationTopic).toHaveValue(draftTopic);
+    await page.waitForTimeout(250);
+    expect(staleMutation).toEqual({
+      expectedRevision: seededNotificationRevision,
+      ntfyCredentialAction: "keep",
+      barkCredentialAction: "keep",
+    });
+    expect(requestCount(first, "PUT", notificationPath)).toBe(1);
+    expect(requestCount(first, "GET", notificationPath)).toBe(2);
+
+    const retryPut = page.waitForRequest(
+      (request) =>
+        request.method() === "PUT" &&
+        new URL(request.url()).pathname === notificationPath,
+    );
+    await retryNotification.click();
+    const retryMutation = summarizeNotificationMutation(
+      (await retryPut).postDataJSON() as unknown,
+    );
+    await expect(page.getByText("已保存", { exact: true })).toBeVisible();
+    expect(requestCount(first, "PUT", notificationPath)).toBe(2);
+    expect(retryMutation).toEqual({
+      expectedRevision: externalNotificationRevision,
+      ntfyCredentialAction: "keep",
+      barkCredentialAction: "keep",
+    });
+    const finalNotification = await fetchJson(notificationUrl);
+    const finalNotificationRevision = notificationRevision(finalNotification);
+    expect(finalNotificationRevision).toBe(externalNotificationRevision + 1);
+    expect(
+      stringField(
+        asRecord(asRecord(asRecord(finalNotification)?.data)?.ntfy),
+        "topic",
+      ),
+    ).toBe(draftTopic);
+    expect(
+      first.requests.filter(
+        (request) =>
+          new URL(request.url).pathname === "/api/v1/bamboo/config",
+      ),
+    ).toHaveLength(rootConfigRequestsBefore);
+    notificationCas = {
+      initialRevision: initialNotificationRevision,
+      seededRevision: seededNotificationRevision,
+      conflictRevision: externalNotificationRevision,
+      finalRevision: finalNotificationRevision,
+      configuredCredentialRedacted: true,
+      rootConfigFallbackRequests: 0,
+      pageMutations: [staleMutation, retryMutation],
+    };
     await page.getByRole("button", { name: "关闭设置" }).click();
     await expect(composer).toBeVisible();
 
@@ -1023,7 +1257,7 @@ test("production UI completes and rehydrates one real Bamboo chat round trip", a
     assertExactProviderRoundTrip(providerDocument, contract);
 
     await page.waitForLoadState("networkidle");
-    assertCleanPage(first, contract.baseUrl.origin);
+    assertCleanPage(first, contract.baseUrl.origin, 1);
     await assertRealAssistantRenderer(page, contract.assistantMarker);
 
     // A new browser context has no React, IndexedDB, or localStorage state from
@@ -1087,7 +1321,7 @@ test("production UI completes and rehydrates one real Bamboo chat round trip", a
       // Both pages remain live while the second client hydrates. Recheck the
       // accumulated observations at the end so a late reconnect, HTTP error,
       // or console failure cannot arrive after an earlier clean snapshot.
-      assertCleanPage(first, contract.baseUrl.origin);
+      assertCleanPage(first, contract.baseUrl.origin, 1);
       assertCleanPage(reopened, contract.baseUrl.origin);
     } finally {
       await reopenedContext.close();
@@ -1115,7 +1349,13 @@ test("production UI completes and rehydrates one real Bamboo chat round trip", a
     }
     await attachEvidence(
       testInfo,
-      evidenceFor(contract, pageObservations, providerDocument, persisted),
+      evidenceFor(
+        contract,
+        pageObservations,
+        providerDocument,
+        persisted,
+        notificationCas,
+      ),
     );
   }
 });
