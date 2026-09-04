@@ -1,5 +1,8 @@
 import { create } from "zustand";
-import { settingsService } from "@services/config/SettingsService";
+import {
+  settingsService,
+  type FetchModelsResponse,
+} from "@services/config/SettingsService";
 import {
   parseProviderInstancesConfig,
   ProviderSnapshotValidationError,
@@ -46,7 +49,7 @@ export interface ProviderState {
   deleteProviderInstance: (instanceId: string) => Promise<ProviderInstancesConfig>;
   setDefaultProviderInstance: (instanceId: string) => Promise<ProviderInstancesConfig>;
   loadCatalog: () => Promise<void>;
-  fetchCatalogModels: (provider?: string) => Promise<void>;
+  fetchCatalogModels: (provider?: string) => Promise<FetchModelsResponse>;
 
   getActiveModel: () => string | undefined;
   getFastModel: () => string | undefined;
@@ -136,10 +139,20 @@ export const useProviderStore = create<ProviderState>((set, get) => {
     fetchCatalogModels: async (provider) => {
       set({ isCatalogFetching: true });
       try {
-        await settingsService.fetchCatalogModels(provider);
-        await get().loadCatalog();
-      } catch {
-        // Catalog lifecycle is intentionally outside the provider-authority migration.
+        const response = await settingsService.fetchCatalogModels(provider);
+        if (provider) {
+          const result = Array.isArray(response.fetched)
+            ? response.fetched.find((item) => item.provider === provider)
+            : undefined;
+          if (!result) throw new Error("Provider model refresh returned no result");
+          if (result.error?.trim()) throw new Error(result.error);
+        }
+
+        // A user-triggered refresh is only successful once the supplementary
+        // catalog has also been reloaded; otherwise the UI could count stale models.
+        const catalog = await settingsService.getProviderCatalog();
+        set({ catalog });
+        return response;
       } finally {
         set({ isCatalogFetching: false });
       }

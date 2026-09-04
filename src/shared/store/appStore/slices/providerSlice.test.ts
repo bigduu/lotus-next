@@ -116,6 +116,30 @@ describe("provider instance authority", () => {
     ]);
   });
 
+  it("rejects a provider model refresh when the request fails", async () => {
+    service.fetchCatalogModels.mockRejectedValue(new Error("catalog transport failed"));
+
+    await expect(useProviderStore.getState().fetchCatalogModels("work")).rejects.toThrow(
+      "catalog transport failed",
+    );
+
+    expect(service.getProviderCatalog).not.toHaveBeenCalled();
+    expect(useProviderStore.getState().isCatalogFetching).toBe(false);
+  });
+
+  it("rejects a provider model refresh when Bamboo reports an instance error", async () => {
+    service.fetchCatalogModels.mockResolvedValue({
+      fetched: [{ provider: "work", error: "provider discovery failed" }],
+    });
+
+    await expect(useProviderStore.getState().fetchCatalogModels("work")).rejects.toThrow(
+      "provider discovery failed",
+    );
+
+    expect(service.getProviderCatalog).not.toHaveBeenCalled();
+    expect(useProviderStore.getState().isCatalogFetching).toBe(false);
+  });
+
   it.each([
     ["createProviderInstance", "createProviderInstance", [{ type: "openai", config: {} }]],
     ["updateProviderInstance", "updateProviderInstance", ["work", { enabled: false }]],
