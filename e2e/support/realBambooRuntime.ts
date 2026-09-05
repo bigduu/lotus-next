@@ -28,6 +28,8 @@ const REAL_BAMBOO_MODEL = "gpt-4o-mini";
 const REAL_BAMBOO_PROVIDER = "e2e-openai";
 const BAMBOO_CONTAINER_PORT = 9562;
 const PROVIDER_CONTAINER_PORT = 18_080;
+const PRIMARY_PROJECT_CONTAINER_PATH = "/data/project-workspaces/primary";
+const SECONDARY_PROJECT_CONTAINER_PATH = "/data/project-workspaces/secondary";
 const COMMAND_BUFFER_BYTES = 256 * 1024 * 1024;
 const READY_TIMEOUT_MS = 90_000;
 const PROVIDER_READY_TIMEOUT_MS = 15_000;
@@ -50,6 +52,7 @@ const EVIDENCE_BASE = path.join(
 const EXPORTED_ENVIRONMENT_KEYS = [
   "LOTUS_REAL_BAMBOO_BASE_URL",
   "LOTUS_REAL_BAMBOO_SESSION_ID",
+  "LOTUS_REAL_BAMBOO_OTHER_PROJECT_SESSION_ID",
   "LOTUS_REAL_PROVIDER_OBSERVATIONS_PATH",
   "LOTUS_REAL_USER_MARKER",
   "LOTUS_REAL_ASSISTANT_MARKER",
@@ -124,6 +127,9 @@ interface RuntimeState {
   requiresHostChown: boolean;
   baseUrl?: string;
   sessionId?: string;
+  otherProjectSessionId?: string;
+  projectId?: string;
+  otherProjectId?: string;
   userMarker?: string;
   assistantMarker?: string;
   smokeMarker?: string;
@@ -606,6 +612,27 @@ const writeBambooConfig = async (state: RuntimeState): Promise<void> => {
   await applyContainerOwnership(state, state.runtimeDataRoot);
   await applyContainerOwnership(state, bambooDataRoot);
   await applyContainerOwnership(state, configPath);
+};
+
+const prepareProjectWorkspaces = async (state: RuntimeState): Promise<void> => {
+  if (!state.runtimeDataRoot) {
+    throw new Error("Internal error: runtime data root is not initialized");
+  }
+
+  const projectWorkspacesRoot = path.join(
+    state.runtimeDataRoot,
+    "project-workspaces",
+  );
+  const primary = path.join(projectWorkspacesRoot, "primary");
+  const secondary = path.join(projectWorkspacesRoot, "secondary");
+  await mkdir(primary, { recursive: true, mode: 0o700 });
+  await mkdir(secondary, { recursive: true, mode: 0o700 });
+  await chmod(projectWorkspacesRoot, 0o700);
+  await chmod(primary, 0o700);
+  await chmod(secondary, 0o700);
+  await applyContainerOwnership(state, projectWorkspacesRoot);
+  await applyContainerOwnership(state, primary);
+  await applyContainerOwnership(state, secondary);
 };
 
 const publishedBambooPort = async (containerId: string): Promise<number> => {
@@ -1141,12 +1168,42 @@ const fetchSetupStatus = async (baseUrl: string): Promise<unknown> => {
   return result.body;
 };
 
-const createFinalizedSession = async (baseUrl: string): Promise<string> => {
+const createProject = async (
+  baseUrl: string,
+  name: string,
+  projectPath: string,
+): Promise<string> => {
+  const result = await requestJson(`${baseUrl}/api/v1/projects`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ name, project_path: projectPath }),
+  });
+  if (
+    result.status !== 201 ||
+    !isJsonObject(result.body) ||
+    typeof result.body.id !== "string" ||
+    result.body.id.length === 0 ||
+    result.body.name !== name ||
+    result.body.project_path !== projectPath
+  ) {
+    throw new Error(
+      `POST /api/v1/projects did not persist the isolated ${name} fixture (HTTP ${result.status})`,
+    );
+  }
+  return result.body.id;
+};
+
+const createFinalizedSession = async (
+  baseUrl: string,
+  title: string,
+  projectId: string,
+): Promise<string> => {
   const result = await requestJson(`${baseUrl}/api/v1/sessions`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
-      title: "Lotus real Bamboo E2E",
+      project_id: projectId,
+      title,
       title_generated: true,
       model: REAL_BAMBOO_MODEL,
       model_ref: { provider: REAL_BAMBOO_PROVIDER, model: REAL_BAMBOO_MODEL },
@@ -1166,14 +1223,17 @@ const createFinalizedSession = async (baseUrl: string): Promise<string> => {
   if (
     typeof session.id !== "string" ||
     session.id.length === 0 ||
-    session.title !== "Lotus real Bamboo E2E" ||
+    session.project_id !== projectId ||
+    session.kind !== "root" ||
+    session.root_session_id !== session.id ||
+    session.title !== title ||
     session.title_generated !== true ||
     !isJsonObject(session.model_ref) ||
     session.model_ref.provider !== REAL_BAMBOO_PROVIDER ||
     session.model_ref.model !== REAL_BAMBOO_MODEL
   ) {
     throw new Error(
-      "POST /api/v1/sessions did not persist the finalized E2E session contract",
+      `POST /api/v1/sessions did not persist the finalized ${title} Project session contract`,
     );
   }
   return session.id;
@@ -1404,6 +1464,9 @@ const runtimeSummary = (
     privateNetwork: state.networkName ?? null,
     baseUrl: state.baseUrl ?? null,
     sessionId: state.sessionId ?? null,
+    projectId: state.projectId ?? null,
+    otherProjectSessionId: state.otherProjectSessionId ?? null,
+    otherProjectId: state.otherProjectId ?? null,
     model: REAL_BAMBOO_MODEL,
     provider: REAL_BAMBOO_PROVIDER,
     userMarker: state.userMarker ?? null,
@@ -1807,6 +1870,9 @@ const globalSetup = async (): Promise<() => Promise<void>> => {
     advanceStage(state, "writing isolated Bamboo configuration");
     await writeBambooConfig(state);
 
+    advanceStage(state, "creating isolated Project workspaces");
+    await prepareProjectWorkspaces(state);
+
     advanceStage(state, "creating private Docker network");
     await createPrivateNetwork(state);
 
@@ -1838,8 +1904,29 @@ const globalSetup = async (): Promise<() => Promise<void>> => {
     const setupStatus = await fetchSetupStatus(state.baseUrl);
     await writeEvidence(state, "setup-status.json", setupStatus);
 
-    advanceStage(state, "creating finalized Bamboo session");
-    state.sessionId = await createFinalizedSession(state.baseUrl);
+    advanceStage(state, "creating isolated Bamboo Projects");
+    state.projectId = await createProject(
+      state.baseUrl,
+      "Lotus real Bamboo E2E",
+      PRIMARY_PROJECT_CONTAINER_PATH,
+    );
+    state.otherProjectId = await createProject(
+      state.baseUrl,
+      "Lotus other Project E2E",
+      SECONDARY_PROJECT_CONTAINER_PATH,
+    );
+
+    advanceStage(state, "creating Project-bound Bamboo sessions");
+    state.sessionId = await createFinalizedSession(
+      state.baseUrl,
+      "Lotus real Bamboo E2E",
+      state.projectId,
+    );
+    state.otherProjectSessionId = await createFinalizedSession(
+      state.baseUrl,
+      "Lotus other Project E2E",
+      state.otherProjectId,
+    );
 
     advanceStage(state, "ready");
     await writeEvidence(state, "runtime-summary.json", {
@@ -1850,6 +1937,8 @@ const globalSetup = async (): Promise<() => Promise<void>> => {
 
     process.env.LOTUS_REAL_BAMBOO_BASE_URL = state.baseUrl;
     process.env.LOTUS_REAL_BAMBOO_SESSION_ID = state.sessionId;
+    process.env.LOTUS_REAL_BAMBOO_OTHER_PROJECT_SESSION_ID =
+      state.otherProjectSessionId;
     process.env.LOTUS_REAL_PROVIDER_OBSERVATIONS_PATH =
       state.providerObservationsPath;
     process.env.LOTUS_REAL_USER_MARKER = state.userMarker;
