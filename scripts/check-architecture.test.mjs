@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -224,7 +224,7 @@ describe("architecture boundary fixtures", () => {
     const violations = fixtureMessages(
       "src/services/notification/notificationChannelsApi.ts",
       `
-        import { apiClient } from "../api";
+        import { apiClient } from "../api/index.ts";
         import { ROOT_CONFIG_PATH } from "./rootConfigPath";
         apiClient.get(ROOT_CONFIG_PATH);
         const load = (route) => apiClient.get(route);
@@ -238,7 +238,7 @@ describe("architecture boundary fixtures", () => {
     const violations = fixtureMessages(
       "src/services/notification/notificationChannelsApi.ts",
       `
-        import { apiClient as client } from "../api";
+        import { apiClient as client } from "../api/index.ts";
         import ky from "ky";
         apiClient.post("bamboo/config/notifications");
         apiClient.get("bamboo/config/notifications?secret=value");
@@ -257,7 +257,7 @@ describe("architecture boundary fixtures", () => {
     const violations = fixtureMessages(
       "src/services/notification/notificationChannelsApi.ts",
       `
-        import { apiClient, relay } from "../api";
+        import { apiClient, relay } from "../api/index.ts";
         apiClient.get("bamboo/config/notifications");
         relay();
       `,
@@ -412,14 +412,14 @@ describe("architecture boundary fixtures", () => {
         [
           "src/components/chat/settings/SettingsNotifications.tsx",
           `
-            import { relay } from "@services/notification/notificationPreferencesApi";
+            import { relay } from "@services/notification/notificationPreferencesApi.ts";
             relay();
           `,
         ],
         [
           "src/services/notification/notificationPreferencesApi.ts",
           `
-            import { apiClient } from "@services/api";
+            import { apiClient } from "../api/index.ts";
             export const relay = () => apiClient.get("bamboo/config");
           `,
         ],
@@ -439,7 +439,7 @@ describe("architecture boundary fixtures", () => {
       fixtureMessages(
         "src/services/notification/notificationPreferencesApi.ts",
         `
-          import { apiClient } from "../api";
+          import { apiClient } from "../api/index.ts";
           const path = "notifications/preferences";
           apiClient.get(path);
           apiClient.put(path, {});
@@ -450,7 +450,7 @@ describe("architecture boundary fixtures", () => {
     const violations = fixtureMessages(
       "src/services/notification/notificationPreferencesApi.ts",
       `
-        import { apiClient as client } from "../api";
+        import { apiClient as client } from "../api/index.ts";
         import { load } from "../common/ServiceFactory";
         const route = getRoute();
         apiClient.post("notifications/preferences", {});
@@ -463,6 +463,199 @@ describe("architecture boundary fixtures", () => {
     expect(violations).toContain("named, unaliased binding");
     expect(violations).toContain("may import only the canonical API authority");
     expect(violations.match(/routes must resolve statically/g)).toHaveLength(2);
+  });
+
+  it.each([
+    [
+      "page UI dependency",
+      "src/components/chat/settings/SettingsNotifications.tsx",
+      'import { Button } from "@/components/ui/button.tsx"; void Button;',
+    ],
+    [
+      "page preferences dependency",
+      "src/components/chat/settings/SettingsNotifications.tsx",
+      'import { getPreferences } from "@services/notification/notificationPreferencesApi.ts"; void getPreferences;',
+    ],
+    [
+      "channel component service dependency",
+      "src/components/chat/settings/notifications/ChannelsSection.tsx",
+      'import { loadChannels } from "@services/notification/notificationChannelsApi.ts"; void loadChannels;',
+    ],
+    [
+      "channel component secret dependency",
+      "src/components/chat/settings/notifications/ChannelsSection.tsx",
+      'import { isMaskedSecret } from "@/lib/secrets.ts"; void isMaskedSecret;',
+    ],
+    [
+      "channel service API dependency",
+      "src/services/notification/notificationChannelsApi.ts",
+      'import { apiClient } from "../api/index.ts"; apiClient.get("bamboo/config/notifications");',
+    ],
+    [
+      "channel service secret dependency",
+      "src/services/notification/notificationChannelsApi.ts",
+      'import { isMaskedSecret } from "@/lib/secrets.ts"; void isMaskedSecret;',
+    ],
+    [
+      "preferences service API dependency",
+      "src/services/notification/notificationPreferencesApi.ts",
+      'import { apiClient } from "../api/index.ts"; apiClient.get("notifications/preferences");',
+    ],
+    [
+      "trusted UI utility dependency",
+      "src/components/ui/button.tsx",
+      'import { cn } from "@/lib/utils.ts"; void cn;',
+    ],
+  ])("allows the canonical physical %s", (_label, owner, source) => {
+    expect(fixtureMessages(owner, source)).toBe("");
+  });
+
+  it.each([
+    [
+      "directory package entry",
+      "src/components/chat/settings/notifications/ChannelsSection.tsx",
+      'import { relay } from "@/lib/secrets/index"; relay();',
+      "src/lib/secrets/index/package.json",
+      '{"main":"./relay.ts","types":"./relay.ts"}',
+      "src/lib/secrets/index/relay.ts",
+    ],
+    [
+      "API barrel package entry",
+      "src/services/notification/notificationChannelsApi.ts",
+      'import { apiClient } from "../api"; apiClient.get("bamboo/config/notifications");',
+      "src/services/api/package.json",
+      '{"main":"./relay.ts","types":"./relay.ts"}',
+      "src/services/api/relay.ts",
+    ],
+  ])(
+    "rejects a protected dependency redirected through a %s",
+    (_label, owner, source, manifest, manifestSource, relay) => {
+      const violations = findArchitectureViolations(
+        new Map([
+          [owner, source],
+          [manifest, manifestSource],
+          [
+            relay,
+            'import { apiClient } from "@services/api"; export const relay = () => apiClient.get("bamboo/config");',
+          ],
+        ]),
+      ).join("\n");
+
+      expect(violations).toMatch(
+        /Notification (?:Channels may import only its audited local authority dependencies|preferences service may import only the canonical API authority)/,
+      );
+    },
+  );
+
+  it.each([
+    [
+      "trusted leaf",
+      "src/components/chat/settings/notifications/ChannelsSection.tsx",
+      'import { isMaskedSecret } from "@/lib/secrets.ts"; void isMaskedSecret;',
+      "src/lib/secrets.ts/package.json",
+      "src/lib/secrets.ts/relay.ts",
+    ],
+    [
+      "preferences service",
+      "src/components/chat/settings/SettingsNotifications.tsx",
+      'import { relay } from "@services/notification/notificationPreferencesApi.ts"; relay();',
+      "src/services/notification/notificationPreferencesApi.ts/package.json",
+      "src/services/notification/notificationPreferencesApi.ts/relay.ts",
+    ],
+    [
+      "canonical API barrel",
+      "src/services/notification/notificationChannelsApi.ts",
+      'import { apiClient } from "../api/index.ts"; apiClient.get("bamboo/config/notifications");',
+      "src/services/api/index.ts/package.json",
+      "src/services/api/index.ts/relay.ts",
+    ],
+  ])(
+    "rejects replacing a canonical %s file with a package directory",
+    (_label, owner, source, manifest, relay) => {
+      const violations = findArchitectureViolations(
+        new Map([
+          [owner, source],
+          [manifest, '{"main":"./relay.ts","types":"./relay.ts"}'],
+          [relay, "export const relay = () => undefined;"],
+        ]),
+      ).join("\n");
+
+      expect(violations).toContain("must remain a regular source file");
+      expect(violations).toContain("same-name directory entry is forbidden");
+    },
+  );
+
+  it.each([
+    [
+      "preferences directory index",
+      "src/components/chat/settings/SettingsNotifications.tsx",
+      `import { relay } from "@services/notification/notificationPreferencesApi/index"; relay();`,
+      "src/services/notification/notificationPreferencesApi/index.ts",
+    ],
+    [
+      "secrets directory index",
+      "src/components/chat/settings/notifications/ChannelsSection.tsx",
+      `import { relay } from "@/lib/secrets/index"; relay();`,
+      "src/lib/secrets/index.ts",
+    ],
+    [
+      "UI alternate extension",
+      "src/components/chat/settings/notifications/ChannelsSection.tsx",
+      `import { relay } from "@/components/ui/button.ts"; relay();`,
+      "src/components/ui/button.ts",
+    ],
+    [
+      "channel service directory index",
+      "src/components/chat/settings/notifications/ChannelsSection.tsx",
+      `import { relay } from "@services/notification/notificationChannelsApi/index"; relay();`,
+      "src/services/notification/notificationChannelsApi/index.ts",
+    ],
+    [
+      "API barrel alternate extension",
+      "src/services/notification/notificationChannelsApi.ts",
+      `import { apiClient } from "../api.ts"; apiClient.get("bamboo/config/notifications");`,
+      "src/services/api.ts",
+    ],
+    [
+      "secrets nested directory index",
+      "src/components/chat/settings/notifications/ChannelsSection.tsx",
+      "import { relay } from \"@/lib/secrets/index\"; relay();",
+      "src/lib/secrets/index/index.ts",
+    ],
+    [
+      "channel service nested directory index",
+      "src/components/chat/settings/notifications/ChannelsSection.tsx",
+      "import { relay } from \"@services/notification/notificationChannelsApi/index\"; relay();",
+      "src/services/notification/notificationChannelsApi/index/index.ts",
+    ],
+    [
+      "API barrel extension-directory combination",
+      "src/services/notification/notificationChannelsApi.ts",
+      "import { apiClient } from \"../api.ts\"; apiClient.get(\"bamboo/config/notifications\");",
+      "src/services/api.ts/index.ts",
+    ],
+    [
+      "API barrel repeated extension",
+      "src/services/notification/notificationChannelsApi.ts",
+      "import { apiClient } from \"../api.ts\"; apiClient.get(\"bamboo/config/notifications\");",
+      "src/services/api.ts.ts",
+    ],
+  ])("rejects a protected %s module identity collision", (_label, owner, source, collision) => {
+    const violations = findArchitectureViolations(
+      new Map([
+        [owner, source],
+        [
+          collision,
+          `
+            import { apiClient } from "@services/api";
+            export const relay = () => apiClient.get("bamboo/config");
+          `,
+        ],
+      ]),
+    ).join("\n");
+
+    expect(violations).toContain("alternate physical module");
+    expect(violations).toContain("is forbidden");
   });
 
   it("allows the dedicated notification section and scopes the prohibition to its owners", () => {
@@ -1626,6 +1819,68 @@ describe("architecture boundary fixtures", () => {
       expect(failures).toMatch(/\.env\.production.*secret-shaped variable VITE_DEVICE_TOKEN/);
       expect(failures).toMatch(/index\.html.*inline application scripts/);
       expect(failures).toMatch(/transport\.mts.*second HTTP transport owner/);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    [
+      "static import",
+      'import { relay } from "@services/notification/notificationPreferencesApi.ts"; void relay;',
+    ],
+    [
+      "re-export",
+      'export { relay } from "@services/notification/notificationPreferencesApi.ts";',
+    ],
+    [
+      "static dynamic import",
+      'void import("@services/notification/notificationPreferencesApi.ts");',
+    ],
+    [
+      "static require",
+      'void require("@services/notification/notificationPreferencesApi.ts");',
+    ],
+  ])("requires a protected dependency referenced by %s to remain a canonical source file", async (_label, ownerSource) => {
+    const root = await mkdtemp(path.join(tmpdir(), "lotus-next-notification-identity-"));
+    try {
+      const ownerDirectory = path.join(root, "src/components/chat/settings");
+      await mkdir(ownerDirectory, { recursive: true });
+      await writeFile(
+        path.join(ownerDirectory, "SettingsNotifications.tsx"),
+        ownerSource,
+      );
+
+      const failures = (await verifyRepositoryArchitecture(root)).join("\n");
+      expect(failures).toContain(
+        "src/services/notification/notificationPreferencesApi.ts: Notification authority dependency must remain present as its canonical regular source file",
+      );
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects a symbolic link at a referenced protected dependency path", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "lotus-next-notification-symlink-"));
+    try {
+      const ownerDirectory = path.join(root, "src/components/chat/settings");
+      const serviceDirectory = path.join(root, "src/services/notification");
+      await mkdir(ownerDirectory, { recursive: true });
+      await mkdir(serviceDirectory, { recursive: true });
+      await writeFile(
+        path.join(ownerDirectory, "SettingsNotifications.tsx"),
+        'import { relay } from "@services/notification/notificationPreferencesApi.ts"; void relay;',
+      );
+      await writeFile(path.join(serviceDirectory, "relay.ts"), "export const relay = undefined;");
+      await symlink(
+        "relay.ts",
+        path.join(serviceDirectory, "notificationPreferencesApi.ts"),
+      );
+
+      const failures = (await verifyRepositoryArchitecture(root)).join("\n");
+      expect(failures).toContain(
+        "src/services/notification/notificationPreferencesApi.ts: Notification authority dependency must be a regular file reached only through real directories",
+      );
     } finally {
       await rm(root, { recursive: true, force: true });
     }

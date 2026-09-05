@@ -8,7 +8,7 @@
  * The backend serializes preferences in snake_case; we keep the camelCase TS
  * shape the settings UI already uses and map at this boundary.
  */
-import { apiClient } from "../api";
+import { apiClient } from "../api/index.ts";
 
 export interface NotificationPreferences {
   /** Master switch for all desktop notifications */

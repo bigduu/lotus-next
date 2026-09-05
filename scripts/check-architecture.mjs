@@ -1,4 +1,4 @@
-import { readdir, readFile } from "node:fs/promises";
+import { lstat, readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -99,6 +99,40 @@ const notificationChannelTrustedLeafAllowedDependencies = new Map([
   ["src/components/ui/input.tsx", new Set(["src/lib/utils"])],
   ["src/components/ui/select.tsx", new Set(["src/lib/utils"])],
   ["src/components/ui/switch.tsx", new Set(["src/lib/utils"])],
+]);
+const notificationProtectedPhysicalDependencies = new Map([
+  ["src/components/chat/settings/SettingsNotifications", notificationChannelPageOwner],
+  ["src/services/notification/notificationChannelsApi", notificationChannelServiceOwner],
+  ["src/services/notification/notificationPreferencesApi", notificationPreferencesServiceOwner],
+  ["src/services/api", "src/services/api/index.ts"],
+  ["src/lib/secrets", "src/lib/secrets.ts"],
+  ["src/lib/notify", "src/lib/notify.ts"],
+  ["src/lib/utils", "src/lib/utils.ts"],
+  ["src/components/ui/button", "src/components/ui/button.tsx"],
+  ["src/components/ui/input", "src/components/ui/input.tsx"],
+  ["src/components/ui/select", "src/components/ui/select.tsx"],
+  ["src/components/ui/switch", "src/components/ui/switch.tsx"],
+]);
+const notificationProtectedPhysicalFiles = new Set(
+  notificationProtectedPhysicalDependencies.values(),
+);
+const notificationProtectedDependencySpecifiers = new Map([
+  [
+    "src/services/notification/notificationChannelsApi",
+    "@services/notification/notificationChannelsApi.ts",
+  ],
+  [
+    "src/services/notification/notificationPreferencesApi",
+    "@services/notification/notificationPreferencesApi.ts",
+  ],
+  ["src/services/api", "../api/index.ts"],
+  ["src/lib/secrets", "@/lib/secrets.ts"],
+  ["src/lib/notify", "@/lib/notify.ts"],
+  ["src/lib/utils", "@/lib/utils.ts"],
+  ["src/components/ui/button", "@/components/ui/button.tsx"],
+  ["src/components/ui/input", "@/components/ui/input.tsx"],
+  ["src/components/ui/select", "@/components/ui/select.tsx"],
+  ["src/components/ui/switch", "@/components/ui/switch.tsx"],
 ]);
 const notificationWholeConfigCallNames = new Set([
   "delete",
@@ -332,6 +366,17 @@ const isLocalModule = (moduleName) =>
   localAliases.some((alias) => moduleName === alias || moduleName.startsWith(`${alias}/`));
 
 const normalizedModuleName = (moduleName) => moduleName.split(/[?#]/, 1)[0];
+const logicalModuleIdentity = (file) => {
+  let identity = path.posix.normalize(file.replaceAll("\\", "/"));
+  let previousIdentity;
+  do {
+    previousIdentity = identity;
+    identity = identity
+      .replace(/\.(?:[cm]?[jt]sx?)$/, "")
+      .replace(/(?:\/index)+$/, "");
+  } while (identity !== previousIdentity);
+  return identity;
+};
 const localModulePath = (file, moduleName) => {
   const normalized = normalizedModuleName(moduleName);
   const aliases = [
@@ -351,15 +396,17 @@ const localModulePath = (file, moduleName) => {
     if (!alias) return null;
     resolved = `${alias[1]}${normalized.slice(alias[0].length)}`;
   }
-  return path.posix
-    .normalize(resolved)
-    .replace(/\.(?:[cm]?[jt]sx?)$/, "")
-    .replace(/\/index$/, "");
+  return logicalModuleIdentity(resolved);
+};
+const isCanonicalNotificationProtectedDependency = (moduleName, resolved) => {
+  const canonicalSpecifier = notificationProtectedDependencySpecifiers.get(resolved);
+  return canonicalSpecifier === undefined || moduleName === canonicalSpecifier;
 };
 const isAllowedNotificationChannelDependency = (file, moduleName) => {
   if (!isLocalModule(moduleName)) return file !== notificationChannelServiceOwner;
   const resolved = localModulePath(file, moduleName);
   if (!resolved) return false;
+  if (!isCanonicalNotificationProtectedDependency(moduleName, resolved)) return false;
   if (file === notificationChannelServiceOwner) {
     return resolved === "src/services/api" || resolved === "src/lib/secrets";
   }
@@ -376,7 +423,9 @@ const isAllowedNotificationChannelDependency = (file, moduleName) => {
 };
 const isAllowedNotificationPreferencesDependency = (file, moduleName) =>
   file !== notificationPreferencesServiceOwner ||
-  (isLocalModule(moduleName) && localModulePath(file, moduleName) === "src/services/api");
+  (isLocalModule(moduleName) &&
+    localModulePath(file, moduleName) === "src/services/api" &&
+    isCanonicalNotificationProtectedDependency(moduleName, "src/services/api"));
 const isExcludedTestModule = (moduleName) =>
   /(?:^|\/)(?:__tests__|test)(?:\/|$)|\.(?:test|spec)(?:\.[cm]?[jt]sx?)?$/.test(
     normalizedModuleName(moduleName),
@@ -624,6 +673,15 @@ const analyzeSource = (file, source) => {
     violations.push(`${positionLabel(file, sourceFile, node)}: ${message}`);
   };
 
+  const logicalIdentity = logicalModuleIdentity(file);
+  const expectedPhysicalDependency = notificationProtectedPhysicalDependencies.get(logicalIdentity);
+  if (expectedPhysicalDependency && file !== expectedPhysicalDependency) {
+    report(
+      sourceFile,
+      `Notification authority dependency ${logicalIdentity} must resolve only to ${expectedPhysicalDependency}; alternate physical module ${file} is forbidden`,
+    );
+  }
+
   if (file === runtimeContract) {
     const endpointInterfaces = sourceFile.statements.filter(
       (statement) =>
@@ -804,7 +862,11 @@ const analyzeSource = (file, source) => {
   const isAllowedNotificationTrustedLeafDependency = (moduleName) => {
     if (!notificationChannelTrustedLeafDependencies || !isLocalModule(moduleName)) return true;
     const resolved = localModulePath(file, moduleName);
-    return resolved !== null && notificationChannelTrustedLeafDependencies.has(resolved);
+    return (
+      resolved !== null &&
+      notificationChannelTrustedLeafDependencies.has(resolved) &&
+      isCanonicalNotificationProtectedDependency(moduleName, resolved)
+    );
   };
   const isNotificationWholeConfigCall = (node) => {
     if (
@@ -2466,8 +2528,87 @@ export const findArchitectureViolations = (sources) => {
   const violations = [];
   for (const [file, source] of sources) {
     violations.push(...analyzeSource(file, source).violations);
+    for (const protectedFile of notificationProtectedPhysicalFiles) {
+      if (file.startsWith(protectedFile + "/")) {
+        violations.push(
+          file +
+            ": Notification authority dependency " +
+            protectedFile +
+            " must remain a regular source file; a same-name directory entry is forbidden",
+        );
+      }
+    }
   }
   return violations;
+};
+
+const referencedNotificationProtectedPhysicalFiles = (sources) => {
+  const referencedPhysicalFiles = new Set();
+  for (const [file, source] of sources) {
+    if (!codeExtensions.has(path.extname(file))) continue;
+    const sourceFile = parseSource(file, source);
+    const recordProtectedDependency = (moduleName) => {
+      if (!isLocalModule(moduleName)) return;
+      const resolved = localModulePath(file, moduleName);
+      const protectedFile = notificationProtectedPhysicalDependencies.get(resolved);
+      if (
+        protectedFile &&
+        isCanonicalNotificationProtectedDependency(moduleName, resolved)
+      ) {
+        referencedPhysicalFiles.add(protectedFile);
+      }
+    };
+    const visit = (node) => {
+      if (ts.isImportDeclaration(node) && ts.isStringLiteralLike(node.moduleSpecifier)) {
+        recordProtectedDependency(node.moduleSpecifier.text);
+      }
+      if (
+        ts.isExportDeclaration(node) &&
+        node.moduleSpecifier &&
+        ts.isStringLiteralLike(node.moduleSpecifier)
+      ) {
+        recordProtectedDependency(node.moduleSpecifier.text);
+      }
+      const calledModule = moduleNameFromCall(node);
+      if (calledModule) recordProtectedDependency(calledModule);
+      ts.forEachChild(node, visit);
+    };
+    visit(sourceFile);
+  }
+  return referencedPhysicalFiles;
+};
+
+const verifyNotificationProtectedPhysicalFiles = (sources) =>
+  [...referencedNotificationProtectedPhysicalFiles(sources)]
+    .filter((file) => !sources.has(file))
+    .map(
+      (file) =>
+        file +
+        ": Notification authority dependency must remain present as its canonical regular source file",
+    );
+
+const verifyNotificationProtectedFilesystemFiles = async (root, sources) => {
+  const failures = [];
+  for (const file of referencedNotificationProtectedPhysicalFiles(sources)) {
+    if (!sources.has(file)) continue;
+    const segments = file.split("/");
+    let currentPath = root;
+    for (const [index, segment] of segments.entries()) {
+      currentPath = path.join(currentPath, segment);
+      const fileStatus = await lstat(currentPath);
+      const isTarget = index === segments.length - 1;
+      if ((isTarget && fileStatus.isFile()) || (!isTarget && fileStatus.isDirectory())) continue;
+      const relativePath = path.relative(root, currentPath).split(path.sep).join("/");
+      failures.push(
+        file +
+          ": Notification authority dependency must be a regular file reached only through real directories; " +
+          relativePath +
+          " is a directory, symbolic link, or other non-canonical path entry",
+      );
+      break;
+    }
+  }
+  return failures;
 };
 
 export const verifyBootstrapOrder = (mainSource) => {
@@ -2905,6 +3046,8 @@ export const verifyRepositoryArchitecture = async (root = defaultRoot) => {
   const sources = await collectSourceFiles(root);
   return [
     ...findArchitectureViolations(sources),
+    ...verifyNotificationProtectedPhysicalFiles(sources),
+    ...(await verifyNotificationProtectedFilesystemFiles(root, sources)),
     ...compareInventory(buildInventory(sources), expectedInventory),
     ...verifyBootstrapOrder(sources.get("src/main.tsx") ?? ""),
   ];

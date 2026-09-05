@@ -9,18 +9,18 @@ import {
   type NotificationConfigEnvelope,
   type NotificationCredentialStatus,
   type NotificationMutationData,
-} from "@services/notification/notificationChannelsApi"
-import { isMaskedSecret } from "@/lib/secrets"
-import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import { Switch } from "@/components/ui/switch"
+} from "@services/notification/notificationChannelsApi.ts"
+import { isMaskedSecret } from "@/lib/secrets.ts"
+import { Button } from "@/components/ui/button.tsx"
+import { Input } from "@/components/ui/input.tsx"
+import { Switch } from "@/components/ui/switch.tsx"
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/components/ui/select"
+} from "@/components/ui/select.tsx"
 
 type DesktopMode = "auto" | "on" | "off"
 type CredentialIntent = CredentialChange["action"]

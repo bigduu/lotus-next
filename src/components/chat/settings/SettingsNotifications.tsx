@@ -5,15 +5,15 @@ import {
   requestNotifyPermission,
   notifyPermission,
   notify,
-} from "@/lib/notify"
+} from "@/lib/notify.ts"
 import {
   getNotificationPreferences,
   setNotificationPreferences,
   type NotificationPreferences,
-} from "@services/notification/notificationPreferencesApi"
-import { Button } from "@/components/ui/button"
-import { Switch } from "@/components/ui/switch"
-import { cn } from "@/lib/utils"
+} from "@services/notification/notificationPreferencesApi.ts"
+import { Button } from "@/components/ui/button.tsx"
+import { Switch } from "@/components/ui/switch.tsx"
+import { cn } from "@/lib/utils.ts"
 import { ChannelsSection } from "@/components/chat/settings/notifications/ChannelsSection"
 
 const EVENT_ROWS: {

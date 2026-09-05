@@ -1,5 +1,5 @@
-import { apiClient, getErrorMessage, isApiError, isRequestError } from "../api"
-import { isMaskedSecret } from "@/lib/secrets"
+import { apiClient, getErrorMessage, isApiError, isRequestError } from "../api/index.ts"
+import { isMaskedSecret } from "@/lib/secrets.ts"
 
 const NOTIFICATION_CONFIG_PATH = "bamboo/config/notifications"
 
