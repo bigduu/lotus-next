@@ -103,7 +103,24 @@ function change(textarea: HTMLTextAreaElement, value: string) {
 async function flush() { await act(async () => { await Promise.resolve(); await Promise.resolve() }) }
 async function pickWorkflow(command: CommandItem) { await act(async () => { composer().onPickWorkflow(command); await Promise.resolve() }) }
 async function addImage(name: string) {
-  await act(async () => { composer().onAddFiles([new File([name], name, { type: "image/png" })]); await new Promise((resolve) => setTimeout(resolve, 0)) })
+  const readComplete = deferred<void>()
+  const nativeReadAsDataUrl = FileReader.prototype.readAsDataURL
+  const readSpy = vi.spyOn(FileReader.prototype, "readAsDataURL").mockImplementation(function (this: FileReader, blob: Blob) {
+    this.addEventListener("loadend", () => readComplete.resolve(), { once: true })
+    nativeReadAsDataUrl.call(this, blob)
+  })
+  try {
+    await act(async () => {
+      composer().onAddFiles([new File([name], name, { type: "image/png" })])
+      await readComplete.promise
+    })
+  } finally {
+    readSpy.mockRestore()
+  }
+  await vi.waitFor(
+    () => expect(composer().attachments.some((attachment) => attachment.name === name)).toBe(true),
+    { timeout: 1_000 },
+  )
 }
 async function fill(textarea: HTMLTextAreaElement) {
   act(() => composer().onPickSkill(skillA)); await pickWorkflow(workflowA); await addImage("before.png"); change(textarea, "original request")
