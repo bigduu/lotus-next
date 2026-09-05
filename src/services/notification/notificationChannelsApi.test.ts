@@ -4,6 +4,7 @@ import { ApiError, NetworkRequestError } from "../api/errors"
 
 const apiMock = vi.hoisted(() => ({
   get: vi.fn<(path: string, options?: RequestInit) => Promise<unknown>>(),
+  post: vi.fn<(path: string, data?: unknown) => Promise<unknown>>(),
   put: vi.fn<(path: string, data?: unknown) => Promise<unknown>>(),
 }))
 
@@ -20,6 +21,7 @@ import {
   getSafeNotificationErrorMessage,
   parseNotificationConfigEnvelope,
   putNotificationChannelsConfig,
+  testNotificationChannels,
   type NotificationMutationData,
 } from "./notificationChannelsApi"
 
@@ -101,9 +103,14 @@ type Fixture = ReturnType<typeof envelopeFixture>
 
 const credential = (fixture: Fixture) => fixture.data.ntfy.credential
 const sectionNtfy = (fixture: Fixture) => fixture.section.data.notifications.ntfy
+const setNtfyBaseUrl = (fixture: Fixture, value: string) => {
+  fixture.data.ntfy.base_url = value
+  sectionNtfy(fixture).base_url = value
+}
 
 beforeEach(() => {
   apiMock.get.mockReset()
+  apiMock.post.mockReset()
   apiMock.put.mockReset()
 })
 
@@ -137,7 +144,11 @@ describe("notification section envelope", () => {
         bark: {
           enabled: false,
           baseUrl: "https://api.day.app",
-          credential: { credentialRef: null, state: "missing", configured: false },
+          credential: {
+            credentialRef: null,
+            state: "missing",
+            configured: false,
+          },
         },
       },
     })
@@ -228,6 +239,25 @@ describe("notification section envelope", () => {
         credential(fixture).configured = false
       },
     ],
+    [
+      "missing with credential reference",
+      (fixture: Fixture) => {
+        credential(fixture).state = "missing"
+        credential(fixture).configured = false
+        Reflect.deleteProperty(credential(fixture), "source")
+        Reflect.deleteProperty(credential(fixture), "updated_at")
+      },
+    ],
+    [
+      "error without credential reference",
+      (fixture: Fixture) => {
+        Reflect.set(credential(fixture), "credential_ref", null)
+        credential(fixture).state = "error"
+        credential(fixture).configured = false
+        Reflect.deleteProperty(credential(fixture), "source")
+        Reflect.deleteProperty(credential(fixture), "updated_at")
+      },
+    ],
   ])("rejects inconsistent credential metadata: %s", (_label, mutate) => {
     const fixture = envelopeFixture()
     mutate(fixture)
@@ -241,6 +271,22 @@ describe("notification section envelope", () => {
     ["non-RFC3339 timestamp", (fixture: Fixture) => (fixture.loaded_at = "September 4, 2026")],
     ["duplicated metadata mismatch", (fixture: Fixture) => (fixture.section.revision = 8)],
     ["unknown top-level field", (fixture: Fixture) => Reflect.set(fixture, "legacy", true)],
+    [
+      "unknown section-data field",
+      (fixture: Fixture) => Reflect.set(fixture.section.data, "legacy", true),
+    ],
+    [
+      "unknown notifications field",
+      (fixture: Fixture) => Reflect.set(fixture.section.data.notifications, "legacy", true),
+    ],
+    [
+      "unknown desktop field",
+      (fixture: Fixture) => Reflect.set(fixture.section.data.notifications.desktop, "legacy", true),
+    ],
+    [
+      "unknown secret-shaped nested field",
+      (fixture: Fixture) => Reflect.set(sectionNtfy(fixture), "access_token", "plaintext"),
+    ],
     [
       "contradictory section data",
       (fixture: Fixture) => (sectionNtfy(fixture).base_url = "https://stale.example"),
@@ -257,11 +303,39 @@ describe("notification section envelope", () => {
       NotificationConfigContractError,
     )
   })
+
+  it.each([
+    ["empty", ""],
+    ["whitespace", "   "],
+    ["non-canonical whitespace", " https://ntfy.example"],
+    ["relative", "/notification-endpoint"],
+    ["non-HTTP", "ftp://ntfy.example"],
+    ["username", "https://user@ntfy.example"],
+    ["password", "https://user:plaintext-secret@ntfy.example"],
+    ["query", "https://ntfy.example?token=plaintext-secret"],
+    ["empty query", "https://ntfy.example?"],
+    ["fragment", "https://ntfy.example#plaintext-secret"],
+    ["empty fragment", "https://ntfy.example#"],
+  ])("rejects %s notification authority URLs", (_label, value) => {
+    const fixture = envelopeFixture()
+    setNtfyBaseUrl(fixture, value)
+
+    expect(() => parseNotificationConfigEnvelope(fixture)).toThrow(NotificationConfigContractError)
+  })
+
+  it("accepts a secret-free absolute HTTP URL with a path", () => {
+    const fixture = envelopeFixture()
+    setNtfyBaseUrl(fixture, "http://ntfy.example/custom/path")
+
+    expect(parseNotificationConfigEnvelope(fixture).data.ntfy.baseUrl).toBe(
+      "http://ntfy.example/custom/path",
+    )
+  })
 })
 
 describe("notification section requests", () => {
   const mutation: NotificationMutationData = {
-    desktop: { enabled: null },
+    desktop: { enabled: true },
     ntfy: {
       enabled: true,
       base_url: "https://ntfy.example",
@@ -271,8 +345,54 @@ describe("notification section requests", () => {
     bark: {
       enabled: false,
       base_url: "https://api.day.app",
-      credential_change: { action: "replace", value: "bark-device-key" },
+      credential_change: { action: "keep" },
     },
+  }
+  const changedMutation = (): NotificationMutationData => ({
+    ...mutation,
+    ntfy: { ...mutation.ntfy, topic: "changed-alerts" },
+  })
+  const authority = () => parseNotificationConfigEnvelope(envelopeFixture())
+  const responseFor = (revision: number, data: NotificationMutationData): Fixture => {
+    const response = envelopeFixture()
+    response.revision = revision
+    response.section.revision = revision
+    Reflect.set(response.data.desktop, "enabled", data.desktop.enabled)
+    Reflect.set(response.section.data.notifications.desktop, "enabled", data.desktop.enabled)
+    response.data.ntfy.enabled = data.ntfy.enabled
+    response.data.ntfy.base_url = data.ntfy.base_url
+    response.data.ntfy.topic = data.ntfy.topic
+    response.section.data.notifications.ntfy.enabled = data.ntfy.enabled
+    response.section.data.notifications.ntfy.base_url = data.ntfy.base_url
+    response.section.data.notifications.ntfy.topic = data.ntfy.topic
+    response.data.bark.enabled = data.bark.enabled
+    response.data.bark.base_url = data.bark.base_url
+    response.section.data.notifications.bark.enabled = data.bark.enabled
+    response.section.data.notifications.bark.base_url = data.bark.base_url
+    return response
+  }
+  const setNtfyMissing = (response: Fixture) => {
+    Reflect.set(response.data.ntfy.credential, "credential_ref", null)
+    response.data.ntfy.credential.state = "missing"
+    response.data.ntfy.credential.configured = false
+    Reflect.deleteProperty(response.data.ntfy.credential, "source")
+    Reflect.deleteProperty(response.data.ntfy.credential, "updated_at")
+    response.section.data.notifications.ntfy.configured = false
+    Reflect.deleteProperty(response.section.data.notifications.ntfy, "credential_ref")
+  }
+  const setBarkConfigured = (response: Fixture) => {
+    const value = response.data.bark.credential
+    Reflect.set(value, "credential_ref", "notification.bark.device_key")
+    value.state = "configured"
+    value.configured = true
+    Reflect.set(value, "source", "user")
+    Reflect.set(value, "updated_at", UPDATED_AT)
+    response.section.data.notifications.bark.configured = true
+    Reflect.set(
+      response.section.data.notifications.bark,
+      "credential_ref",
+      "notification.bark.device_key",
+    )
   }
 
   it("uses the dedicated GET and forwards cancellation options", async () => {
@@ -288,41 +408,158 @@ describe("notification section requests", () => {
   })
 
   it("sends one exact full-section PUT and accepts the returned authority", async () => {
-    const response = envelopeFixture()
-    response.revision = 8
-    response.section.revision = 8
+    const data = changedMutation()
+    const response = responseFor(8, data)
     apiMock.put.mockResolvedValue(response)
 
-    await expect(putNotificationChannelsConfig(7, mutation)).resolves.toMatchObject({ revision: 8 })
+    await expect(putNotificationChannelsConfig(authority(), data)).resolves.toMatchObject({
+      revision: 8,
+    })
     expect(apiMock.put).toHaveBeenCalledTimes(1)
     expect(apiMock.put).toHaveBeenCalledWith("bamboo/config/notifications", {
       expected_revision: 7,
-      data: mutation,
+      data,
     })
   })
 
+  it("accepts Bamboo's same-revision semantic no-op authority", async () => {
+    apiMock.put.mockResolvedValue(envelopeFixture())
+
+    await expect(putNotificationChannelsConfig(authority(), mutation)).resolves.toMatchObject({
+      revision: 7,
+    })
+    expect(apiMock.put).toHaveBeenCalledTimes(1)
+  })
+
+  it("rejects a spurious revision advance for a semantic no-op", async () => {
+    apiMock.put.mockResolvedValue(responseFor(8, mutation))
+
+    await expect(putNotificationChannelsConfig(authority(), mutation)).rejects.toBeInstanceOf(
+      NotificationConfigContractError,
+    )
+  })
+
   it.each([Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER + 1])(
-    "rejects unsafe expected revision %s before issuing a PUT",
+    "rejects unsafe advancing revision %s before issuing a PUT",
     async (revision) => {
-      await expect(putNotificationChannelsConfig(revision, mutation)).rejects.toBeInstanceOf(
+      const before = { ...authority(), revision }
+      await expect(putNotificationChannelsConfig(before, changedMutation())).rejects.toBeInstanceOf(
         NotificationConfigContractError,
       )
       expect(apiMock.put).not.toHaveBeenCalled()
     },
   )
 
-  it.each([6, 7, 9])(
-    "rejects an unrelated successful response revision %s",
-    async (revision) => {
-      const response = envelopeFixture()
-      response.revision = revision
-      response.section.revision = revision
-      apiMock.put.mockResolvedValue(response)
-      await expect(putNotificationChannelsConfig(7, mutation)).rejects.toBeInstanceOf(
-        NotificationConfigContractError,
-      )
-    },
-  )
+  it.each([6, 7, 9])("rejects an unrelated successful response revision %s", async (revision) => {
+    const data = changedMutation()
+    const response = responseFor(revision, data)
+    apiMock.put.mockResolvedValue(response)
+    await expect(putNotificationChannelsConfig(authority(), data)).rejects.toBeInstanceOf(
+      NotificationConfigContractError,
+    )
+  })
+
+  it("rejects a successful response whose public authority does not match the mutation", async () => {
+    const response = envelopeFixture()
+    response.revision = 8
+    response.section.revision = 8
+    response.data.ntfy.topic = "server-returned-something-else"
+    response.section.data.notifications.ntfy.topic = "server-returned-something-else"
+    apiMock.put.mockResolvedValue(response)
+
+    await expect(putNotificationChannelsConfig(authority(), changedMutation())).rejects.toBeInstanceOf(
+      NotificationConfigContractError,
+    )
+  })
+
+  it("requires replace and clear responses to reflect the credential outcome", async () => {
+    apiMock.put.mockResolvedValue(responseFor(8, mutation))
+    await expect(
+      putNotificationChannelsConfig(authority(), {
+        ...mutation,
+        bark: {
+          ...mutation.bark,
+          credential_change: { action: "replace", value: "bark-device-key" },
+        },
+      }),
+    ).rejects.toBeInstanceOf(NotificationConfigContractError)
+
+    const configured = responseFor(8, mutation)
+    configured.data.ntfy.credential.configured = true
+    apiMock.put.mockResolvedValue(configured)
+    await expect(
+      putNotificationChannelsConfig(authority(), {
+        ...mutation,
+        ntfy: { ...mutation.ntfy, credential_change: { action: "clear" } },
+      }),
+    ).rejects.toBeInstanceOf(NotificationConfigContractError)
+  })
+
+  it("accepts exact replace, clear, and already-missing clear outcomes", async () => {
+    const replace = {
+      ...mutation,
+      bark: {
+        ...mutation.bark,
+        credential_change: { action: "replace", value: "bark-device-key" } as const,
+      },
+    }
+    const replaced = responseFor(8, replace)
+    setBarkConfigured(replaced)
+    apiMock.put.mockResolvedValueOnce(replaced)
+    await expect(putNotificationChannelsConfig(authority(), replace)).resolves.toMatchObject({
+      revision: 8,
+      data: { bark: { credential: { state: "configured", source: "user" } } },
+    })
+
+    const clear = {
+      ...mutation,
+      ntfy: { ...mutation.ntfy, credential_change: { action: "clear" } as const },
+    }
+    const cleared = responseFor(8, clear)
+    setNtfyMissing(cleared)
+    apiMock.put.mockResolvedValueOnce(cleared)
+    await expect(putNotificationChannelsConfig(authority(), clear)).resolves.toMatchObject({
+      revision: 8,
+      data: { ntfy: { credential: { state: "missing", credentialRef: null } } },
+    })
+
+    const clearAlreadyMissing = {
+      ...mutation,
+      bark: { ...mutation.bark, credential_change: { action: "clear" } as const },
+    }
+    apiMock.put.mockResolvedValueOnce(envelopeFixture())
+    await expect(
+      putNotificationChannelsConfig(authority(), clearAlreadyMissing),
+    ).resolves.toMatchObject({ revision: 7 })
+  })
+
+  it.each([
+    "",
+    " https://ntfy.example",
+    "ftp://ntfy.example",
+    "https://user:secret@ntfy.example",
+    "https://ntfy.example?token=secret",
+    "https://ntfy.example?",
+    "https://ntfy.example#secret",
+    "https://ntfy.example#",
+  ])("rejects unsafe mutation URL %s before issuing a PUT", async (baseUrl) => {
+    await expect(
+      putNotificationChannelsConfig(authority(), {
+        ...mutation,
+        ntfy: { ...mutation.ntfy, base_url: baseUrl },
+      }),
+    ).rejects.toBeInstanceOf(NotificationConfigContractError)
+    expect(apiMock.put).not.toHaveBeenCalled()
+  })
+
+  it("keeps notification delivery testing on its existing dedicated endpoint", async () => {
+    apiMock.post.mockResolvedValue({ attempted: ["desktop"] })
+
+    await expect(testNotificationChannels()).resolves.toEqual({
+      attempted: ["desktop"],
+    })
+    expect(apiMock.post).toHaveBeenCalledWith("notifications/test")
+  })
 })
 
 describe("notification section errors", () => {

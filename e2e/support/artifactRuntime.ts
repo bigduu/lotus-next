@@ -552,9 +552,17 @@ export const installArtifactRuntime = async (
           barkAction === "replace" ||
           (ntfyAction === "clear" && notificationState.ntfy.configured) ||
           (barkAction === "clear" && notificationState.bark.configured)
+        const publicChanged =
+          desktop?.enabled !== notificationState.desktopEnabled ||
+          ntfy?.enabled !== notificationState.ntfy.enabled ||
+          ntfy?.base_url !== notificationState.ntfy.baseUrl ||
+          ntfy?.topic !== notificationState.ntfy.topic ||
+          bark?.enabled !== notificationState.bark.enabled ||
+          bark?.base_url !== notificationState.bark.baseUrl
         notificationState = {
-          revision: notificationState.revision + 1,
-          credentialRevision: notificationState.credentialRevision + Number(credentialChanged),
+          revision: notificationState.revision + Number(publicChanged || credentialChanged),
+          credentialRevision:
+            notificationState.credentialRevision + Number(publicChanged || credentialChanged),
           desktopEnabled: desktop?.enabled as boolean | null,
           ntfy: {
             enabled: ntfy?.enabled as boolean,

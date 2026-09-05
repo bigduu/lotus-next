@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from "react"
-import { apiClient } from "@services/api"
 import {
   getNotificationChannelsConfig,
   getNotificationConfigErrorCode,
   getSafeNotificationErrorMessage,
   putNotificationChannelsConfig,
+  testNotificationChannels,
   type CredentialChange,
   type NotificationConfigEnvelope,
   type NotificationCredentialStatus,
@@ -55,12 +55,12 @@ const draftFromSnapshot = (snapshot: NotificationConfigEnvelope): ChannelsDraft 
         ? "off"
         : "auto",
   ntfyEnabled: snapshot.data.ntfy.enabled,
-  ntfyBaseUrl: snapshot.data.ntfy.baseUrl || DEFAULT_NTFY_BASE_URL,
+  ntfyBaseUrl: snapshot.data.ntfy.baseUrl,
   ntfyTopic: snapshot.data.ntfy.topic,
   ntfyToken: "",
   ntfyCredentialIntent: "keep",
   barkEnabled: snapshot.data.bark.enabled,
-  barkBaseUrl: snapshot.data.bark.baseUrl || DEFAULT_BARK_BASE_URL,
+  barkBaseUrl: snapshot.data.bark.baseUrl,
   barkDeviceKey: "",
   barkCredentialIntent: "keep",
 })
@@ -79,6 +79,14 @@ const initialDraft = (): ChannelsDraft => ({
 })
 
 class DraftValidationError extends Error {}
+
+const requiredBaseUrl = (rawValue: string, label: string): string => {
+  if (!rawValue.trim()) throw new DraftValidationError(`${label} 不能为空。`)
+  if (rawValue.trim() !== rawValue) {
+    throw new DraftValidationError(`${label} 不能包含首尾空格。`)
+  }
+  return rawValue
+}
 
 const credentialChange = (
   intent: CredentialIntent,
@@ -109,7 +117,7 @@ const mutationFromDraft = (
   },
   ntfy: {
     enabled: draft.ntfyEnabled,
-    base_url: draft.ntfyBaseUrl.trim() || DEFAULT_NTFY_BASE_URL,
+    base_url: requiredBaseUrl(draft.ntfyBaseUrl, "ntfy Base URL"),
     topic: draft.ntfyTopic.trim(),
     credential_change: credentialChange(
       draft.ntfyCredentialIntent,
@@ -120,7 +128,7 @@ const mutationFromDraft = (
   },
   bark: {
     enabled: draft.barkEnabled,
-    base_url: draft.barkBaseUrl.trim() || DEFAULT_BARK_BASE_URL,
+    base_url: requiredBaseUrl(draft.barkBaseUrl, "Bark Base URL"),
     credential_change: credentialChange(
       draft.barkCredentialIntent,
       draft.barkDeviceKey,
@@ -186,6 +194,8 @@ export function ChannelsSection() {
   const [attempted, setAttempted] = useState<string[] | null>(null)
   const mounted = useRef(false)
   const getGeneration = useRef(0)
+  const conflictActionRef = useRef<HTMLButtonElement | null>(null)
+  const savedTimer = useRef<number | null>(null)
 
   const installAuthority = (snapshot: NotificationConfigEnvelope) => {
     setAuthority(snapshot)
@@ -216,8 +226,13 @@ export function ChannelsSection() {
     return () => {
       mounted.current = false
       getGeneration.current += 1
+      if (savedTimer.current !== null) window.clearTimeout(savedTimer.current)
     }
   }, [])
+
+  useEffect(() => {
+    if (!saving && conflict && !conflict.refreshing) conflictActionRef.current?.focus()
+  }, [saving, conflict])
 
   const patch = (next: Partial<ChannelsDraft>) => {
     if (saving) return
@@ -262,12 +277,14 @@ export function ChannelsSection() {
     setSaveError(null)
     setSaved(false)
     try {
-      const savedSnapshot = await putNotificationChannelsConfig(snapshot.revision, data)
+      const savedSnapshot = await putNotificationChannelsConfig(snapshot, data)
       if (!mounted.current) return
       installAuthority(savedSnapshot)
       setSaved(true)
-      window.setTimeout(() => {
+      if (savedTimer.current !== null) window.clearTimeout(savedTimer.current)
+      savedTimer.current = window.setTimeout(() => {
         if (mounted.current) setSaved(false)
+        savedTimer.current = null
       }, 2500)
     } catch (error) {
       if (!mounted.current) return
@@ -286,7 +303,7 @@ export function ChannelsSection() {
     setTestError(null)
     setAttempted(null)
     try {
-      const response = await apiClient.post<{ attempted: string[] }>("notifications/test")
+      const response = await testNotificationChannels()
       if (mounted.current) setAttempted(response.attempted)
     } catch (error) {
       if (mounted.current) setTestError(getSafeNotificationErrorMessage(error))
@@ -366,7 +383,7 @@ export function ChannelsSection() {
             />
           </div>
           <Field
-            label="Base URL"
+            label="ntfy Base URL"
             value={draft.ntfyBaseUrl}
             onChange={(value) => patch({ ntfyBaseUrl: value })}
             placeholder={DEFAULT_NTFY_BASE_URL}
@@ -435,7 +452,7 @@ export function ChannelsSection() {
             />
           </div>
           <Field
-            label="Base URL"
+            label="Bark Base URL"
             value={draft.barkBaseUrl}
             onChange={(value) => patch({ barkBaseUrl: value })}
             placeholder={DEFAULT_BARK_BASE_URL}
@@ -479,8 +496,8 @@ export function ChannelsSection() {
         </div>
 
         {conflict ? (
-          <div className="space-y-2 rounded-md border border-destructive/50 p-2" role="alert">
-            <p className="text-xs text-destructive">
+          <div className="space-y-2 rounded-md border border-destructive/50 p-2">
+            <p className="text-xs text-destructive" role="alert">
               通知渠道配置已被其他客户端更新。你的未保存修改仍保留；请选择载入服务器版本或用最新修订重试。
             </p>
             {conflict.refreshing ? (
@@ -488,6 +505,7 @@ export function ChannelsSection() {
             ) : conflict.latest ? (
               <div className="flex flex-wrap gap-2">
                 <Button
+                  ref={conflictActionRef}
                   size="sm"
                   variant="secondary"
                   onClick={() => installAuthority(conflict.latest!)}
@@ -501,10 +519,11 @@ export function ChannelsSection() {
               </div>
             ) : (
               <div className="space-y-2">
-                <p className="text-xs text-destructive">
+                <p className="text-xs text-destructive" role="alert">
                   {conflict.refreshError ?? "无法获取服务器最新版本。"}
                 </p>
                 <Button
+                  ref={conflictActionRef}
                   size="sm"
                   variant="secondary"
                   onClick={() => void refreshConflict()}
@@ -540,7 +559,11 @@ export function ChannelsSection() {
             ) : null}
           </div>
           <div className="flex items-center gap-2">
-            {saved ? <span className="text-xs text-emerald-500">已保存</span> : null}
+            {saved ? (
+              <span className="text-xs text-emerald-500" role="status" aria-live="polite">
+                已保存
+              </span>
+            ) : null}
             <Button
               size="sm"
               onClick={() => void save(authority)}

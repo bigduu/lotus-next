@@ -201,6 +201,21 @@ describe("Notification Channels section authority", () => {
 })
 
 describe("Notification Channels mutations", () => {
+  it("installs and reports Bamboo's same-revision semantic no-op response", async () => {
+    notificationApi.get.mockResolvedValue(snapshot(7))
+    notificationApi.put.mockResolvedValue(snapshot(7))
+    const { container } = await mount(<ChannelsSection />)
+
+    await click(button(container, "保存渠道设置"))
+
+    expect(notificationApi.put).toHaveBeenCalledWith(
+      expect.objectContaining({ revision: 7 }),
+      expect.any(Object),
+    )
+    expect(container.querySelector('[role="status"]')?.textContent).toBe("已保存")
+    expect(button(container, "保存渠道设置")?.disabled).toBe(false)
+  })
+
   it("freezes every draft control while an accepted PUT is in flight", async () => {
     notificationApi.get.mockResolvedValue(snapshot(7))
     const pending = deferred<NotificationConfigEnvelope>()
@@ -241,11 +256,13 @@ describe("Notification Channels mutations", () => {
 
   it("uses the exact installed revision and sends explicit keep, replace, and clear intents", async () => {
     notificationApi.get.mockResolvedValue(snapshot(7))
-    notificationApi.put.mockImplementation(async (revision: number) => snapshot(revision + 1))
+    notificationApi.put.mockImplementation(async (current: NotificationConfigEnvelope) =>
+      snapshot(current.revision + 1),
+    )
     const { container } = await mount(<ChannelsSection />)
 
     await click(button(container, "保存渠道设置"))
-    expect(notificationApi.put).toHaveBeenNthCalledWith(1, 7, {
+    expect(notificationApi.put).toHaveBeenNthCalledWith(1, expect.objectContaining({ revision: 7 }), {
       desktop: { enabled: null },
       ntfy: {
         enabled: false,
@@ -267,12 +284,14 @@ describe("Notification Channels mutations", () => {
 
     expect(notificationApi.put).toHaveBeenNthCalledWith(
       2,
-      8,
+      expect.objectContaining({ revision: 8 }),
       expect.objectContaining({
         ntfy: expect.objectContaining({
           credential_change: { action: "replace", value: newToken },
         }),
-        bark: expect.objectContaining({ credential_change: { action: "clear" } }),
+        bark: expect.objectContaining({
+          credential_change: { action: "clear" },
+        }),
       }),
     )
     expect(input(container, "Token(可选,自托管实例)").value).toBe("")
@@ -292,9 +311,11 @@ describe("Notification Channels mutations", () => {
     await click(button(container, "清除 ntfy Token"))
     await click(button(container, "保存渠道设置"))
     expect(notificationApi.put).toHaveBeenCalledWith(
-      4,
+      expect.objectContaining({ revision: 4 }),
       expect.objectContaining({
-        ntfy: expect.objectContaining({ credential_change: { action: "clear" } }),
+        ntfy: expect.objectContaining({
+          credential_change: { action: "clear" },
+        }),
       }),
     )
   })
@@ -341,22 +362,50 @@ describe("Notification Channels mutations", () => {
     await flush()
 
     expect(notificationApi.put).toHaveBeenCalledTimes(1)
-    expect(notificationApi.put.mock.calls[0]?.[0]).toBe(10)
+    expect(notificationApi.put.mock.calls[0]?.[0]).toMatchObject({ revision: 10 })
     expect(notificationApi.get).toHaveBeenCalledTimes(2)
     expect(topic.value).toBe("local-draft")
     expect(container.querySelector('[role="alert"]')?.textContent).toContain("已被其他客户端更新")
     expect(button(container, "载入服务器版本")).not.toBeNull()
     expect(button(container, "用当前修改重试")).not.toBeNull()
+    expect(document.activeElement).toBe(button(container, "载入服务器版本"))
 
     await click(button(container, "用当前修改重试"))
     expect(notificationApi.put).toHaveBeenCalledTimes(2)
-    expect(notificationApi.put.mock.calls[1]?.[0]).toBe(11)
+    expect(notificationApi.put.mock.calls[1]?.[0]).toMatchObject({ revision: 11 })
     expect(notificationApi.put.mock.calls[1]?.[1]).toMatchObject({
       ntfy: { topic: "local-draft" },
     })
     expect(input(container, "Topic").value).toBe("local-draft")
     expect(container.textContent).toContain("已保存")
   })
+
+  it("does not silently replace an explicitly cleared Base URL with a default", async () => {
+    notificationApi.get.mockResolvedValue(snapshot(7))
+    const { container } = await mount(<ChannelsSection />)
+
+    await changeInput(input(container, "ntfy Base URL"), "   ")
+    await click(button(container, "保存渠道设置"))
+
+    expect(notificationApi.put).not.toHaveBeenCalled()
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain(
+      "ntfy Base URL 不能为空",
+    )
+  })
+
+  it.each([" https://ntfy.example", "https://ntfy.example "])(
+    "does not trim a non-canonical Base URL before mutation: %s",
+    async (baseUrl) => {
+      notificationApi.get.mockResolvedValue(snapshot(7))
+      const { container } = await mount(<ChannelsSection />)
+
+      await changeInput(input(container, "ntfy Base URL"), baseUrl)
+      await click(button(container, "保存渠道设置"))
+
+      expect(notificationApi.put).not.toHaveBeenCalled()
+      expect(container.querySelector('[role="alert"]')?.textContent).toContain("不能包含首尾空格")
+    },
+  )
 
   it("lets the user explicitly discard the preserved draft for the fetched server version", async () => {
     notificationApi.get
@@ -379,6 +428,29 @@ describe("Notification Channels mutations", () => {
     expect(input(container, "Topic").value).toBe("server-latest")
     expect(notificationApi.put).toHaveBeenCalledTimes(1)
     expect(container.textContent).not.toContain("已被其他客户端更新")
+  })
+
+  it("moves focus to the explicit refresh action when conflict recovery cannot load", async () => {
+    notificationApi.get
+      .mockResolvedValueOnce(snapshot(20, { topic: "loaded" }))
+      .mockRejectedValueOnce(new Error("unavailable"))
+    notificationApi.put.mockRejectedValueOnce(
+      new ApiError(
+        "revision conflict",
+        409,
+        "Conflict",
+        '{"error":{"message":"revision conflict","type":"api_error","code":"config_revision_conflict"}}',
+      ),
+    )
+    const { container } = await mount(<ChannelsSection />)
+
+    await click(button(container, "保存渠道设置"))
+    await flush()
+
+    expect(document.activeElement).toBe(button(container, "重新获取最新版本"))
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain(
+      "通知渠道配置已被其他客户端更新",
+    )
   })
 
   it("keeps the notification test endpoint and behavior unchanged", async () => {

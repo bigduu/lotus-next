@@ -135,6 +135,27 @@ const nonemptyString = (value: unknown, label: string): string => {
   return parsed
 }
 
+const secretFreeHttpUrl = (value: unknown, label: string): string => {
+  const parsed = stringValue(value, label)
+  if (parsed.trim().length === 0 || parsed.trim() !== parsed) {
+    incompatible(`${label} must be nonempty and canonical`)
+  }
+  const url = (() => {
+    try {
+      return new URL(parsed)
+    } catch {
+      return incompatible(`${label} must be an absolute HTTP(S) URL`)
+    }
+  })()
+  if (!["http:", "https:"].includes(url.protocol) || !url.hostname) {
+    incompatible(`${label} must be an absolute HTTP(S) URL`)
+  }
+  if (url.username || url.password || parsed.includes("?") || parsed.includes("#")) {
+    incompatible(`${label} must not contain userinfo, query parameters, or a fragment`)
+  }
+  return parsed
+}
+
 const nullableString = (value: unknown, label: string): string | null => {
   if (value !== null && typeof value !== "string") {
     incompatible(`${label} must be a string or null`)
@@ -241,6 +262,12 @@ const parseCredential = (value: unknown, label: string): NotificationCredentialS
   if (configuredState && (!credentialRef || !source)) {
     incompatible(`${label} configured metadata is incomplete`)
   }
+  if (state === "missing" && credentialRef !== null) {
+    incompatible(`${label} missing metadata cannot retain a credential reference`)
+  }
+  if (state === "error" && credentialRef === null) {
+    incompatible(`${label} error metadata requires a credential reference`)
+  }
   if (
     (state === "from_env" && source !== "environment") ||
     (state === "configured" && source === "environment")
@@ -283,13 +310,13 @@ const parseData = (value: unknown): NotificationChannelData => {
     desktop: { enabled: desktop.enabled as boolean | null },
     ntfy: {
       enabled: ntfy.enabled as boolean,
-      baseUrl: stringValue(ntfy.base_url, "Notification data.ntfy.base_url"),
+      baseUrl: secretFreeHttpUrl(ntfy.base_url, "Notification data.ntfy.base_url"),
       topic: stringValue(ntfy.topic, "Notification data.ntfy.topic"),
       credential: parseCredential(ntfy.credential, "Notification data.ntfy.credential"),
     },
     bark: {
       enabled: bark.enabled as boolean,
-      baseUrl: stringValue(bark.base_url, "Notification data.bark.base_url"),
+      baseUrl: secretFreeHttpUrl(bark.base_url, "Notification data.bark.base_url"),
       credential: parseCredential(bark.credential, "Notification data.bark.credential"),
     },
   }
@@ -311,6 +338,13 @@ const assertSectionChannelMatches = (
   label: string,
 ): void => {
   const raw = record(value, label)
+  exactKeys(
+    raw,
+    expected.topic === undefined
+      ? ["enabled", "base_url", "credential_ref", "configured"]
+      : ["enabled", "base_url", "topic", "credential_ref", "configured"],
+    label,
+  )
   if (raw.enabled !== expected.enabled || raw.base_url !== expected.baseUrl) {
     incompatible(`${label} public settings are inconsistent with the typed response`)
   }
@@ -331,14 +365,21 @@ const assertSectionChannelMatches = (
 
 const assertSectionDataMatches = (value: unknown, expected: NotificationChannelData): void => {
   const section = record(value, "Notification response.section.data")
+  exactKeys(section, ["notifications"], "Notification response.section.data")
   const notifications = record(
     section.notifications,
+    "Notification response.section.data.notifications",
+  )
+  exactKeys(
+    notifications,
+    ["desktop", "ntfy", "bark"],
     "Notification response.section.data.notifications",
   )
   const desktop = record(
     notifications.desktop,
     "Notification response.section.data.notifications.desktop",
   )
+  exactKeys(desktop, ["enabled"], "Notification response.section.data.notifications.desktop")
   const desktopEnabled = desktop.enabled === undefined ? null : desktop.enabled
   if (desktopEnabled !== expected.desktop.enabled) {
     incompatible(
@@ -487,27 +528,116 @@ export const getNotificationChannelsConfig = async (
     await apiClient.get<unknown>(NOTIFICATION_CONFIG_PATH, options),
   )
 
+const credentialChangeWillMutate = (
+  change: CredentialChange,
+  current: NotificationCredentialStatus,
+): boolean =>
+  change.action === "replace" || (change.action === "clear" && current.state !== "missing")
+
+const mutationWillChange = (
+  before: NotificationConfigEnvelope,
+  data: NotificationMutationData,
+): boolean =>
+  before.data.desktop.enabled !== data.desktop.enabled ||
+  before.data.ntfy.enabled !== data.ntfy.enabled ||
+  before.data.ntfy.baseUrl !== data.ntfy.base_url ||
+  before.data.ntfy.topic !== data.ntfy.topic ||
+  before.data.bark.enabled !== data.bark.enabled ||
+  before.data.bark.baseUrl !== data.bark.base_url ||
+  credentialChangeWillMutate(data.ntfy.credential_change, before.data.ntfy.credential) ||
+  credentialChangeWillMutate(data.bark.credential_change, before.data.bark.credential)
+
+const assertCredentialMutationResult = (
+  label: string,
+  before: NotificationCredentialStatus,
+  change: CredentialChange,
+  after: NotificationCredentialStatus,
+): void => {
+  if (
+    change.action === "keep" &&
+    (before.credentialRef !== after.credentialRef ||
+      (before.state === "missing") !== (after.state === "missing"))
+  ) {
+    incompatible(`Notification ${label} keep response changed credential metadata`)
+  }
+  if (
+    change.action === "replace" &&
+    (!after.configured ||
+      after.state !== "configured" ||
+      after.source !== "user" ||
+      after.credentialRef === null ||
+      after.updatedAt === undefined)
+  ) {
+    incompatible(`Notification ${label} replacement was not installed`)
+  }
+  if (
+    change.action === "clear" &&
+    (after.configured || after.state !== "missing" || after.credentialRef !== null)
+  ) {
+    incompatible(`Notification ${label} credential was not cleared`)
+  }
+}
+
+const assertMutationResultMatches = (
+  before: NotificationConfigEnvelope,
+  authority: NotificationConfigEnvelope,
+  data: NotificationMutationData,
+): void => {
+  if (
+    authority.data.desktop.enabled !== data.desktop.enabled ||
+    authority.data.ntfy.enabled !== data.ntfy.enabled ||
+    authority.data.ntfy.baseUrl !== data.ntfy.base_url ||
+    authority.data.ntfy.topic !== data.ntfy.topic ||
+    authority.data.bark.enabled !== data.bark.enabled ||
+    authority.data.bark.baseUrl !== data.bark.base_url
+  ) {
+    incompatible("Notification mutation response does not match the submitted public data")
+  }
+  assertCredentialMutationResult(
+    "ntfy",
+    before.data.ntfy.credential,
+    data.ntfy.credential_change,
+    authority.data.ntfy.credential,
+  )
+  assertCredentialMutationResult(
+    "Bark",
+    before.data.bark.credential,
+    data.bark.credential_change,
+    authority.data.bark.credential,
+  )
+}
+
 export const putNotificationChannelsConfig = async (
-  expectedRevision: number,
+  before: NotificationConfigEnvelope,
   data: NotificationMutationData,
 ): Promise<NotificationConfigEnvelope> => {
-  if (
-    !Number.isSafeInteger(expectedRevision) ||
-    expectedRevision < 0 ||
-    expectedRevision === Number.MAX_SAFE_INTEGER
-  ) {
+  const willChange = mutationWillChange(before, data)
+  if (!Number.isSafeInteger(before.revision) || before.revision < 0) {
     throw new NotificationConfigContractError("Notification expected revision is invalid")
   }
+  if (willChange && before.revision === Number.MAX_SAFE_INTEGER) {
+    throw new NotificationConfigContractError("Notification expected revision cannot advance")
+  }
+  secretFreeHttpUrl(data.ntfy.base_url, "Notification mutation ntfy.base_url")
+  secretFreeHttpUrl(data.bark.base_url, "Notification mutation bark.base_url")
   const response = await apiClient.put<unknown>(NOTIFICATION_CONFIG_PATH, {
-    expected_revision: expectedRevision,
+    expected_revision: before.revision,
     data,
   })
   const authority = parseNotificationConfigEnvelope(response)
-  if (authority.revision !== expectedRevision + 1) {
-    throw new NotificationConfigContractError("Notification mutation revision did not advance")
+  const expectedResultRevision = before.revision + Number(willChange)
+  if (authority.revision !== expectedResultRevision) {
+    throw new NotificationConfigContractError(
+      "Notification mutation returned an unrelated revision",
+    )
   }
+  assertMutationResultMatches(before, authority, data)
   return authority
 }
+
+export const testNotificationChannels = async (): Promise<{
+  attempted: string[]
+}> => apiClient.post<{ attempted: string[] }>("notifications/test")
 
 export const getNotificationConfigErrorCode = (
   error: unknown,

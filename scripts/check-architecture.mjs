@@ -58,6 +58,26 @@ const retiredProviderPaths = new Set([
 const notificationChannelComponentRoot = "src/components/chat/settings/notifications/";
 const notificationChannelPageOwner = "src/components/chat/settings/SettingsNotifications.tsx";
 const notificationChannelServiceOwner = "src/services/notification/notificationChannelsApi.ts";
+const notificationChannelAllowedRequests = new Set([
+  "get:bamboo/config/notifications",
+  "put:bamboo/config/notifications",
+  "post:notifications/test",
+]);
+const notificationChannelComponentAllowedDependencies = new Set([
+  "src/components/ui/button",
+  "src/components/ui/input",
+  "src/components/ui/select",
+  "src/components/ui/switch",
+  "src/lib/secrets",
+  "src/services/notification/notificationChannelsApi",
+]);
+const notificationChannelPageAllowedDependencies = new Set([
+  "src/components/ui/button",
+  "src/components/ui/switch",
+  "src/lib/notify",
+  "src/lib/utils",
+  "src/services/notification/notificationPreferencesApi",
+]);
 const notificationWholeConfigCallNames = new Set([
   "delete",
   "fetchRaw",
@@ -290,6 +310,45 @@ const isLocalModule = (moduleName) =>
   localAliases.some((alias) => moduleName === alias || moduleName.startsWith(`${alias}/`));
 
 const normalizedModuleName = (moduleName) => moduleName.split(/[?#]/, 1)[0];
+const localModulePath = (file, moduleName) => {
+  const normalized = normalizedModuleName(moduleName);
+  const aliases = [
+    ["@/", "src/"],
+    ["@app/", "src/app/"],
+    ["@components/", "src/components/"],
+    ["@hooks/", "src/hooks/"],
+    ["@pages/", "src/pages/"],
+    ["@services/", "src/services/"],
+    ["@shared/", "src/shared/"],
+  ];
+  let resolved = normalized;
+  if (normalized.startsWith(".")) {
+    resolved = path.posix.normalize(path.posix.join(path.posix.dirname(file), normalized));
+  } else {
+    const alias = aliases.find(([prefix]) => normalized.startsWith(prefix));
+    if (!alias) return null;
+    resolved = `${alias[1]}${normalized.slice(alias[0].length)}`;
+  }
+  return resolved.replace(/\.(?:[cm]?[jt]sx?)$/, "").replace(/\/index$/, "");
+};
+const isAllowedNotificationChannelDependency = (file, moduleName) => {
+  if (!isLocalModule(moduleName)) return file !== notificationChannelServiceOwner;
+  const resolved = localModulePath(file, moduleName);
+  if (!resolved) return false;
+  if (file === notificationChannelServiceOwner) {
+    return resolved === "src/services/api" || resolved === "src/lib/secrets";
+  }
+  if (file === notificationChannelPageOwner) {
+    return (
+      resolved.startsWith(notificationChannelComponentRoot) ||
+      notificationChannelPageAllowedDependencies.has(resolved)
+    );
+  }
+  return (
+    resolved.startsWith(notificationChannelComponentRoot) ||
+    notificationChannelComponentAllowedDependencies.has(resolved)
+  );
+};
 const isExcludedTestModule = (moduleName) =>
   /(?:^|\/)(?:__tests__|test)(?:\/|$)|\.(?:test|spec)(?:\.[cm]?[jt]sx?)?$/.test(
     normalizedModuleName(moduleName),
@@ -731,6 +790,37 @@ const analyzeSource = (file, source) => {
       .replace(/^\/+|\/+$/g, "");
     return ["bamboo/config", "api/v1/bamboo/config", "v1/bamboo/config"].includes(normalized);
   };
+  const isUnverifiableNotificationServiceRoute = (node) => {
+    if (file !== notificationChannelServiceOwner || !ts.isCallExpression(node)) return false;
+    const callee = unwrapStaticExpression(node.expression);
+    if (
+      !callee ||
+      !ts.isPropertyAccessExpression(callee) ||
+      !ts.isIdentifier(callee.expression) ||
+      callee.expression.text !== "apiClient"
+    ) {
+      return false;
+    }
+    const callName = callee.name.text;
+    const routeArgument = node.arguments[0];
+    if (!routeArgument) return true;
+    const route = resolveStaticString(routeArgument);
+    if (route === null) return true;
+    const normalized = route.trim().replace(/^\/+|\/+$/g, "");
+    return !notificationChannelAllowedRequests.has(`${callName}:${normalized}`);
+  };
+  const isApiClientImportBinding = (node) =>
+    ts.isIdentifier(node) &&
+    ts.isImportSpecifier(node.parent) &&
+    node.parent.name === node &&
+    (node.parent.propertyName?.text ?? node.parent.name.text) === "apiClient";
+  const isDirectNotificationApiClientReceiver = (node) =>
+    ts.isIdentifier(node) &&
+    node.text === "apiClient" &&
+    ts.isPropertyAccessExpression(node.parent) &&
+    node.parent.expression === node &&
+    ts.isCallExpression(node.parent.parent) &&
+    node.parent.parent.expression === node.parent;
   const staticStringFragments = (node) => {
     const fragments = [];
     let current = "";
@@ -1584,6 +1674,24 @@ const analyzeSource = (file, source) => {
         "Notification Channels must use the dedicated bamboo/config/notifications section contract, never the whole-config endpoint",
       );
     }
+    if (isUnverifiableNotificationServiceRoute(node)) {
+      report(
+        node,
+        "Notification Channels service routes must resolve statically to an approved dedicated endpoint",
+      );
+    }
+    if (
+      file === notificationChannelServiceOwner &&
+      ts.isIdentifier(node) &&
+      node.text === "apiClient" &&
+      !isApiClientImportBinding(node) &&
+      !isDirectNotificationApiClientReceiver(node)
+    ) {
+      report(
+        node,
+        "Notification Channels service may use apiClient only through direct approved calls",
+      );
+    }
     if (
       file !== runtimeContract &&
       ts.isInterfaceDeclaration(node) &&
@@ -1783,6 +1891,33 @@ const analyzeSource = (file, source) => {
       ) {
         report(node, "Notification Channels must not import a whole-config facade or store");
       }
+      if (
+        isNotificationChannelConfigOwner &&
+        !isAllowedNotificationChannelDependency(file, moduleName)
+      ) {
+        report(
+          node,
+          "Notification Channels may import only its audited local authority dependencies",
+        );
+      }
+      if (
+        file === notificationChannelServiceOwner &&
+        localModulePath(file, moduleName) === "src/services/api"
+      ) {
+        const bindings = node.importClause?.namedBindings;
+        const apiClientBinding =
+          bindings && ts.isNamedImports(bindings)
+            ? bindings.elements.find(
+                (element) => (element.propertyName?.text ?? element.name.text) === "apiClient",
+              )
+            : null;
+        if (!apiClientBinding || apiClientBinding.name.text !== "apiClient") {
+          report(
+            node,
+            "Notification Channels service must import the canonical apiClient as a named, unaliased binding",
+          );
+        }
+      }
       checkRuntimeLocalDependency(node, moduleName);
       checkExcludedTestDependency(node, moduleName);
       checkSourceDependencyBoundary(node, moduleName);
@@ -1803,6 +1938,15 @@ const analyzeSource = (file, source) => {
       ts.isStringLiteralLike(node.moduleSpecifier)
     ) {
       const moduleName = node.moduleSpecifier.text;
+      if (
+        isNotificationChannelConfigOwner &&
+        !isAllowedNotificationChannelDependency(file, moduleName)
+      ) {
+        report(
+          node,
+          "Notification Channels may re-export only its audited local authority dependencies",
+        );
+      }
       checkRuntimeLocalDependency(node, moduleName);
       checkExcludedTestDependency(node, moduleName);
       checkSourceDependencyBoundary(node, moduleName);
@@ -1813,9 +1957,27 @@ const analyzeSource = (file, source) => {
 
     const calledModule = moduleNameFromCall(node);
     if (calledModule) {
+      if (
+        isNotificationChannelConfigOwner &&
+        !isAllowedNotificationChannelDependency(file, calledModule)
+      ) {
+        report(
+          node,
+          "Notification Channels may load only its audited local authority dependencies",
+        );
+      }
       checkRuntimeLocalDependency(node, calledModule);
       checkExcludedTestDependency(node, calledModule);
       checkSourceDependencyBoundary(node, calledModule);
+    }
+    if (
+      isNotificationChannelConfigOwner &&
+      ts.isCallExpression(node) &&
+      (node.expression.kind === ts.SyntaxKind.ImportKeyword ||
+        (ts.isIdentifier(node.expression) && node.expression.text === "require")) &&
+      !calledModule
+    ) {
+      report(node, "Notification Channels requires a static approved runtime dependency");
     }
     if (
       ts.isNewExpression(node) &&

@@ -1111,6 +1111,30 @@ test("production UI completes and rehydrates one real Bamboo chat round trip", a
       .poll(() => requestCount(first, "GET", notificationPath))
       .toBe(1);
 
+    const noOpPut = page.waitForRequest(
+      (request) =>
+        request.method() === "PUT" &&
+        new URL(request.url()).pathname === notificationPath,
+    );
+    const noOpResponse = page.waitForResponse(
+      (response) =>
+        response.request().method() === "PUT" &&
+        new URL(response.url()).pathname === notificationPath,
+    );
+    await page.getByRole("button", { name: "保存渠道设置" }).click();
+    const noOpMutation = summarizeNotificationMutation(
+      (await noOpPut).postDataJSON() as unknown,
+    );
+    const noOpHttpResponse = await noOpResponse;
+    const noOpAuthority = (await noOpHttpResponse.json()) as unknown;
+    expect(notificationRevision(noOpAuthority)).toBe(seededNotificationRevision);
+    await expect(page.getByRole("status").filter({ hasText: "已保存" })).toBeVisible();
+    expect(noOpMutation).toEqual({
+      expectedRevision: seededNotificationRevision,
+      ntfyCredentialAction: "keep",
+      barkCredentialAction: "keep",
+    });
+
     const draftTopic = "real-bamboo-preserved-draft";
     await notificationTopic.fill(draftTopic);
     const externalNotification = await putJson(notificationUrl, {
@@ -1141,6 +1165,9 @@ test("production UI completes and rehydrates one real Bamboo chat round trip", a
       exact: true,
     });
     await expect(retryNotification).toBeEnabled();
+    await expect(
+      page.getByRole("button", { name: "载入服务器版本", exact: true }),
+    ).toBeFocused();
     await expect(notificationTopic).toHaveValue(draftTopic);
     await page.waitForTimeout(250);
     expect(staleMutation).toEqual({
@@ -1148,7 +1175,7 @@ test("production UI completes and rehydrates one real Bamboo chat round trip", a
       ntfyCredentialAction: "keep",
       barkCredentialAction: "keep",
     });
-    expect(requestCount(first, "PUT", notificationPath)).toBe(1);
+    expect(requestCount(first, "PUT", notificationPath)).toBe(2);
     expect(requestCount(first, "GET", notificationPath)).toBe(2);
 
     const retryPut = page.waitForRequest(
@@ -1161,7 +1188,7 @@ test("production UI completes and rehydrates one real Bamboo chat round trip", a
       (await retryPut).postDataJSON() as unknown,
     );
     await expect(page.getByText("已保存", { exact: true })).toBeVisible();
-    expect(requestCount(first, "PUT", notificationPath)).toBe(2);
+    expect(requestCount(first, "PUT", notificationPath)).toBe(3);
     expect(retryMutation).toEqual({
       expectedRevision: externalNotificationRevision,
       ntfyCredentialAction: "keep",
@@ -1189,7 +1216,8 @@ test("production UI completes and rehydrates one real Bamboo chat round trip", a
       finalRevision: finalNotificationRevision,
       configuredCredentialRedacted: true,
       rootConfigFallbackRequests: 0,
-      pageMutations: [staleMutation, retryMutation],
+      semanticNoOpRevisionStable: true,
+      pageMutations: [noOpMutation, staleMutation, retryMutation],
     };
     await page.getByRole("button", { name: "关闭设置" }).click();
     await expect(composer).toBeVisible();

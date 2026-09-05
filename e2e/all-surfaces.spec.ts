@@ -240,6 +240,8 @@ test("notification channels use one stateful section CAS and install returned re
   await surface.getByRole("button", { name: "通知", exact: true }).click()
   const topic = surface.getByRole("textbox", { name: "Topic", exact: true })
   await expect(topic).toHaveValue("fixture-topic")
+  await surface.getByRole("button", { name: "保存渠道设置" }).click()
+  await expect(surface.getByRole("status").filter({ hasText: "已保存" })).toBeVisible()
   await topic.fill("artifact-topic-one")
   await surface.getByRole("button", { name: "保存渠道设置" }).click()
   await expect(surface.getByText("已保存", { exact: true })).toBeVisible()
@@ -247,7 +249,7 @@ test("notification channels use one stateful section CAS and install returned re
   await surface.getByRole("button", { name: "保存渠道设置" }).click()
   await expect.poll(
     () => observation.notificationConfigRequests.filter(({ method }) => method === "PUT"),
-  ).toHaveLength(2)
+  ).toHaveLength(3)
 
   expect(observation.notificationConfigRequests.map((request) => [
     request.method,
@@ -258,6 +260,7 @@ test("notification channels use one stateful section CAS and install returned re
     request.barkCredentialAction,
   ])).toEqual([
     ["GET", "/api/v1/bamboo/config/notifications", null, 7, null, null],
+    ["PUT", "/api/v1/bamboo/config/notifications", 7, 7, "keep", "keep"],
     ["PUT", "/api/v1/bamboo/config/notifications", 7, 8, "keep", "keep"],
     ["PUT", "/api/v1/bamboo/config/notifications", 8, 9, "keep", "keep"],
   ])

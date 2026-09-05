@@ -220,6 +220,97 @@ describe("architecture boundary fixtures", () => {
     expect(violations).toContain("must use the dedicated bamboo/config/notifications");
   });
 
+  it("rejects imported or dynamic routes in the dedicated notification service", () => {
+    const violations = fixtureMessages(
+      "src/services/notification/notificationChannelsApi.ts",
+      `
+        import { apiClient } from "../api";
+        import { ROOT_CONFIG_PATH } from "./rootConfigPath";
+        apiClient.get(ROOT_CONFIG_PATH);
+        const load = (route) => apiClient.get(route);
+      `,
+    );
+    expect(violations.match(/routes must resolve statically/g)).toHaveLength(2);
+    expect(violations).toContain("only its audited local authority dependencies");
+  });
+
+  it("freezes notification service transport method, binding, and endpoint pairs", () => {
+    const violations = fixtureMessages(
+      "src/services/notification/notificationChannelsApi.ts",
+      `
+        import { apiClient as client } from "../api";
+        import ky from "ky";
+        apiClient.post("bamboo/config/notifications");
+        apiClient.get("bamboo/config/notifications?secret=value");
+        const load = apiClient.get;
+        void client;
+        void ky;
+      `,
+    );
+    expect(violations).toContain("named, unaliased binding");
+    expect(violations).toContain("only its audited local authority dependencies");
+    expect(violations.match(/routes must resolve statically/g)).toHaveLength(2);
+    expect(violations).toContain("only through direct approved calls");
+  });
+
+  it("rejects dynamic imports and re-exports outside the notification authority closure", () => {
+    const dynamicImport = fixtureMessages(
+      "src/components/chat/settings/notifications/ChannelsSection.tsx",
+      `
+        const legacy = await import("@services/notification/legacyChannels");
+        void legacy;
+      `,
+    );
+    const dynamicUnknown = fixtureMessages(
+      "src/components/chat/settings/notifications/ChannelsSection.tsx",
+      `
+        const path = getLegacyPath();
+        const legacy = await import(path);
+        void legacy;
+      `,
+    );
+    const reexport = fixtureMessages(
+      "src/services/notification/notificationChannelsApi.ts",
+      `export { loadConfig } from "./legacyChannels";`,
+    );
+    expect(dynamicImport).toContain("load only its audited local authority dependencies");
+    expect(dynamicUnknown).toContain("requires a static approved runtime dependency");
+    expect(reexport).toContain("re-export only its audited local authority dependencies");
+  });
+
+  it("rejects transitive service wrappers and barrel aliases from notification owners", () => {
+    const wrapper = fixtureMessages(
+      "src/components/chat/settings/notifications/notificationConfigHelper.ts",
+      `
+        import { loadNotificationConfig } from "@services/notification/rootConfigWrapper";
+        loadNotificationConfig();
+      `,
+    );
+    const barrel = fixtureMessages(
+      "src/components/chat/settings/SettingsNotifications.tsx",
+      `
+        import { serviceFactory as config } from "@services";
+        config.getBambooConfig();
+      `,
+    );
+    expect(wrapper).toContain("only its audited local authority dependencies");
+    expect(barrel).toContain("only its audited local authority dependencies");
+    expect(barrel).toContain("must use the dedicated bamboo/config/notifications");
+  });
+
+  it("keeps the canonical service and channel component on separate frozen dependency sets", () => {
+    const serviceToComponent = fixtureMessages(
+      "src/services/notification/notificationChannelsApi.ts",
+      `import { loadLegacy } from "@components/chat/settings/notifications/legacyLoader";`,
+    );
+    const channelToPreferences = fixtureMessages(
+      "src/components/chat/settings/notifications/ChannelsSection.tsx",
+      `import { getNotificationPreferences } from "@services/notification/notificationPreferencesApi";`,
+    );
+    expect(serviceToComponent).toContain("only its audited local authority dependencies");
+    expect(channelToPreferences).toContain("only its audited local authority dependencies");
+  });
+
   it("allows the dedicated notification section and scopes the prohibition to its owners", () => {
     expect(
       fixtureMessages(
