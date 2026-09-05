@@ -37,6 +37,7 @@ export const ADVANCED_ONLY_SETTINGS_TABS = new Set([
   "masking",
   "clusters",
   "metrics",
+  "jiandu",
 ]);
 
 interface ExperienceModeState {

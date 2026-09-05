@@ -2,6 +2,7 @@ import {
   expect,
   test,
   type BrowserContext,
+  type Locator,
   type Page,
   type TestInfo,
 } from "@playwright/test";
@@ -344,6 +345,131 @@ const installSessionEntry = async (
       selectedSessionId: contract.sessionId,
     },
   );
+};
+
+const JIANDU_SURFACES = [
+  { label: "desktop", phone: false, viewport: { width: 1_440, height: 900 } },
+  { label: "phone", phone: true, viewport: { width: 390, height: 844 } },
+] as const;
+
+const openSidebar = async (page: Page, phone: boolean): Promise<Locator> => {
+  if (phone) {
+    await page.getByRole("button", { name: "菜单", exact: true }).click();
+  }
+  const sidebar = page.locator("aside");
+  await expect(sidebar).toBeVisible();
+  return sidebar;
+};
+
+const selectRootSession = async (
+  page: Page,
+  phone: boolean,
+  title: string,
+): Promise<void> => {
+  const sidebar = await openSidebar(page, phone);
+  await sidebar.getByPlaceholder("搜索会话").fill(title);
+  const session = sidebar.getByRole("button", { name: title, exact: true });
+  await expect(session).toBeVisible();
+  await session.click();
+  await expect(
+    page.locator("header").getByText(title, { exact: true }),
+    `the ${title} root must be selected through the visible sidebar`,
+  ).toBeVisible();
+};
+
+const openJianduSettings = async (
+  page: Page,
+  phone: boolean,
+  sessionTitle: string,
+): Promise<Locator> => {
+  const sidebar = await openSidebar(page, phone);
+  await sidebar.getByRole("button", { name: "系统设置", exact: true }).click();
+  const settings = page.getByRole("dialog", { name: "系统设置" });
+  await expect(settings).toBeVisible();
+  await settings
+    .getByRole("button", { name: "Jiandu 记忆", exact: true })
+    .click();
+  await expect(
+    settings.getByRole("heading", { name: "项目记忆", exact: true }),
+  ).toBeVisible();
+  await expect(settings.getByText(sessionTitle, { exact: true })).toBeVisible();
+  return settings;
+};
+
+const selectJianduOption = async (
+  page: Page,
+  control: Locator,
+  option: string,
+): Promise<void> => {
+  await control.click();
+  await page.getByRole("option", { name: option, exact: true }).click();
+};
+
+const searchJiandu = async (
+  page: Page,
+  settings: Locator,
+  query: string,
+  status: "活跃" | "已归档",
+): Promise<void> => {
+  await settings
+    .getByRole("textbox", { name: "搜索项目记忆", exact: true })
+    .fill(query);
+  await selectJianduOption(
+    page,
+    settings.getByRole("combobox", { name: "记忆状态", exact: true }),
+    status,
+  );
+  await settings.getByRole("button", { name: "搜索", exact: true }).click();
+};
+
+const createJianduMemory = async (
+  page: Page,
+  settings: Locator,
+  input: {
+    readonly title: string;
+    readonly type: "项目" | "参考";
+    readonly body: string;
+    readonly token: string;
+  },
+): Promise<void> => {
+  await settings.getByRole("button", { name: "新建记忆", exact: true }).click();
+  const create = page.getByRole("dialog", { name: "新建项目记忆" });
+  await expect(create).toBeVisible();
+  await create.getByLabel("记忆标题", { exact: true }).fill(input.title);
+  await selectJianduOption(
+    page,
+    create.getByRole("combobox", { name: "记忆类型", exact: true }),
+    input.type,
+  );
+  await create.getByLabel("记忆正文", { exact: true }).fill(input.body);
+  await create
+    .getByLabel("标签（逗号分隔）", { exact: true })
+    .fill(`real-ui,${input.token}`);
+  await create
+    .getByLabel("关键词（逗号分隔）", { exact: true })
+    .fill(input.token);
+  await create.getByLabel("实体（逗号分隔）", { exact: true }).fill("Jiandu");
+  await create
+    .getByRole("button", { name: "查找相似记忆", exact: true })
+    .click();
+  await expect(
+    create.getByText(/^(?:可能相关的记忆|未找到相似记忆)$/),
+  ).toBeVisible();
+  await create.getByRole("button", { name: "明确创建", exact: true }).click();
+  await expect(create).toHaveCount(0);
+  await expect(
+    settings.getByText(`已创建“${input.title}”，并从项目权威数据刷新列表。`, {
+      exact: true,
+    }),
+  ).toBeVisible();
+};
+
+const memoryRow = (settings: Locator, title: string): Locator =>
+  settings.getByRole("listitem").filter({ hasText: title });
+
+const closeSettings = async (settings: Locator): Promise<void> => {
+  await settings.getByRole("button", { name: "关闭设置", exact: true }).click();
+  await expect(settings).toHaveCount(0);
 };
 
 const webSocketHttpOrigin = (url: string): string => {
@@ -1117,5 +1243,194 @@ test("production UI completes and rehydrates one real Bamboo chat round trip", a
       testInfo,
       evidenceFor(contract, pageObservations, providerDocument, persisted),
     );
+  }
+});
+
+test("production Jiandu settings manage and isolate real Project memory on desktop and phone", async ({
+  browser,
+}, testInfo) => {
+  const contract = readRuntimeContract();
+  const uiSessionId = requiredEnvironment("LOTUS_REAL_BAMBOO_UI_SESSION_ID");
+  const otherSessionId = requiredEnvironment(
+    "LOTUS_REAL_BAMBOO_OTHER_PROJECT_SESSION_ID",
+  );
+  const uiSessionTitle = "Lotus UI memory Project E2E";
+  const otherSessionTitle = "Lotus other Project E2E";
+  expect(new Set([contract.sessionId, uiSessionId, otherSessionId]).size).toBe(
+    3,
+  );
+
+  for (const surface of JIANDU_SURFACES) {
+    const idSuffix = `${surface.label}${uiSessionId.replaceAll("-", "")}`;
+    const primaryToken = `uiprimary${idSuffix}`;
+    const secondaryToken = `uisecondary${idSuffix}`;
+    const primaryTitle = `UI ${surface.label} ${primaryToken}`;
+    const secondaryTitle = `UI ${surface.label} ${secondaryToken}`;
+    const primaryBody = `Only the UI Project can read ${primaryToken}.`;
+    const secondaryBody = `Only the other Project can read ${secondaryToken}.`;
+    const context = await browser.newContext({
+      colorScheme: "dark",
+      locale: "zh-CN",
+      viewport: surface.viewport,
+      isMobile: surface.phone,
+      hasTouch: surface.phone,
+    });
+    await installSessionEntry(context, contract);
+    const page = await context.newPage();
+    const observation = observePage(page, `jiandu-${surface.label}`);
+
+    try {
+      await page.goto(new URL("/", contract.baseUrl).href, {
+        waitUntil: "domcontentloaded",
+      });
+      await expect(
+        page.getByRole("textbox", { name: "消息", exact: true }),
+      ).toBeVisible();
+      await assertBootstrap(observation);
+      await assertLiveSocket(observation, contract.baseUrl.origin);
+
+      await selectRootSession(page, surface.phone, uiSessionTitle);
+      let settings = await openJianduSettings(
+        page,
+        surface.phone,
+        uiSessionTitle,
+      );
+      if (surface.label === "desktop") {
+        await expect(
+          settings.getByText("没有匹配的项目记忆", { exact: true }),
+          "the dedicated UI Project must begin without seeded memory",
+        ).toBeVisible();
+      }
+
+      await createJianduMemory(page, settings, {
+        title: primaryTitle,
+        type: "参考",
+        body: primaryBody,
+        token: primaryToken,
+      });
+      await searchJiandu(page, settings, primaryToken, "活跃");
+      let row = memoryRow(settings, primaryTitle);
+      await expect(row).toHaveCount(1);
+      await expect(row.getByText("活跃", { exact: true })).toBeVisible();
+      await row
+        .getByRole("button", { name: primaryTitle, exact: true })
+        .click();
+      let detail = page.getByRole("dialog", { name: primaryTitle });
+      await expect(detail).toBeVisible();
+      await expect(
+        detail.getByText(primaryBody, { exact: true }),
+      ).toBeVisible();
+      await expect(detail.getByText("参考", { exact: true })).toBeVisible();
+      await detail
+        .getByRole("button", { name: "归档记忆", exact: true })
+        .click();
+      const archive = page.getByRole("dialog", {
+        name: `归档“${primaryTitle}”？`,
+      });
+      await expect(archive).toBeVisible();
+      await archive
+        .getByRole("button", { name: "确认归档", exact: true })
+        .click();
+      await expect(archive).toHaveCount(0);
+      await expect(detail).toHaveCount(0);
+      await expect(
+        settings.getByRole("button", { name: primaryTitle, exact: true }),
+      ).toHaveCount(0);
+      await expect(
+        settings.getByText("没有匹配的项目记忆", { exact: true }),
+      ).toBeVisible();
+
+      await selectJianduOption(
+        page,
+        settings.getByRole("combobox", { name: "记忆状态", exact: true }),
+        "已归档",
+      );
+      await expect(
+        settings.getByRole("button", { name: primaryTitle, exact: true }),
+        "changing the status draft must not query until Search is pressed",
+      ).toHaveCount(0);
+      await settings.getByRole("button", { name: "搜索", exact: true }).click();
+      row = memoryRow(settings, primaryTitle);
+      await expect(row).toHaveCount(1);
+      await expect(row.getByText("已归档", { exact: true })).toBeVisible();
+      await row
+        .getByRole("button", { name: primaryTitle, exact: true })
+        .click();
+      detail = page.getByRole("dialog", { name: primaryTitle });
+      await expect(
+        detail.getByText(primaryBody, { exact: true }),
+      ).toBeVisible();
+      await expect(
+        detail.getByRole("button", { name: "归档记忆", exact: true }),
+      ).toHaveCount(0);
+      await detail
+        .getByRole("button", { name: "关闭详情", exact: true })
+        .click();
+
+      const screenshotPath = testInfo.outputPath(
+        `jiandu-${surface.label}-archived.png`,
+      );
+      await page.screenshot({ path: screenshotPath, animations: "disabled" });
+      await testInfo.attach(`Jiandu ${surface.label} archived Project memory`, {
+        path: screenshotPath,
+        contentType: "image/png",
+      });
+
+      await closeSettings(settings);
+      await selectRootSession(page, surface.phone, otherSessionTitle);
+      settings = await openJianduSettings(
+        page,
+        surface.phone,
+        otherSessionTitle,
+      );
+      await createJianduMemory(page, settings, {
+        title: secondaryTitle,
+        type: "项目",
+        body: secondaryBody,
+        token: secondaryToken,
+      });
+      await searchJiandu(page, settings, secondaryToken, "活跃");
+      row = memoryRow(settings, secondaryTitle);
+      await expect(row).toHaveCount(1);
+      await expect(row.getByText("活跃", { exact: true })).toBeVisible();
+      await searchJiandu(page, settings, primaryToken, "已归档");
+      await expect(
+        settings.getByRole("button", { name: primaryTitle, exact: true }),
+        "the other Project must not discover the UI Project token",
+      ).toHaveCount(0);
+      await expect(
+        settings.getByText("没有匹配的项目记忆", { exact: true }),
+      ).toBeVisible();
+
+      await closeSettings(settings);
+      await selectRootSession(page, surface.phone, uiSessionTitle);
+      settings = await openJianduSettings(page, surface.phone, uiSessionTitle);
+      await searchJiandu(page, settings, secondaryToken, "活跃");
+      await expect(
+        settings.getByRole("button", { name: secondaryTitle, exact: true }),
+        "the UI Project must not discover the other Project token",
+      ).toHaveCount(0);
+      await expect(
+        settings.getByText("没有匹配的项目记忆", { exact: true }),
+      ).toBeVisible();
+      await closeSettings(settings);
+
+      await page.waitForLoadState("networkidle");
+      expect(
+        observation.responses.filter((response) => {
+          const url = new URL(response.url);
+          return (
+            response.method === "POST" &&
+            url.pathname === "/api/v1/tools/execute" &&
+            response.status >= 200 &&
+            response.status < 300
+          );
+        }).length,
+        `${surface.label}: settings must complete native memory calls through Bamboo`,
+      ).toBeGreaterThan(0);
+      assertCleanPage(observation, contract.baseUrl.origin);
+    } finally {
+      await context.close();
+    }
   }
 });

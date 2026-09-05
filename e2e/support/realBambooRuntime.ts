@@ -30,6 +30,7 @@ const BAMBOO_CONTAINER_PORT = 9562;
 const PROVIDER_CONTAINER_PORT = 18_080;
 const PRIMARY_PROJECT_CONTAINER_PATH = "/data/bamboo/workspaces/primary";
 const SECONDARY_PROJECT_CONTAINER_PATH = "/data/bamboo/workspaces/secondary";
+const UI_PROJECT_CONTAINER_PATH = "/data/bamboo/workspaces/ui-primary";
 const COMMAND_BUFFER_BYTES = 256 * 1024 * 1024;
 const READY_TIMEOUT_MS = 90_000;
 const PROVIDER_READY_TIMEOUT_MS = 15_000;
@@ -53,6 +54,7 @@ const EXPORTED_ENVIRONMENT_KEYS = [
   "LOTUS_REAL_BAMBOO_BASE_URL",
   "LOTUS_REAL_BAMBOO_SESSION_ID",
   "LOTUS_REAL_BAMBOO_MEMORY_SESSION_ID",
+  "LOTUS_REAL_BAMBOO_UI_SESSION_ID",
   "LOTUS_REAL_BAMBOO_OTHER_PROJECT_SESSION_ID",
   "LOTUS_REAL_PROVIDER_OBSERVATIONS_PATH",
   "LOTUS_REAL_USER_MARKER",
@@ -129,8 +131,10 @@ interface RuntimeState {
   baseUrl?: string;
   sessionId?: string;
   memorySessionId?: string;
+  uiSessionId?: string;
   otherProjectSessionId?: string;
   projectId?: string;
+  uiProjectId?: string;
   otherProjectId?: string;
   userMarker?: string;
   assistantMarker?: string;
@@ -632,14 +636,18 @@ const prepareProjectWorkspaces = async (state: RuntimeState): Promise<void> => {
   );
   const primary = path.join(projectWorkspacesRoot, "primary");
   const secondary = path.join(projectWorkspacesRoot, "secondary");
+  const uiPrimary = path.join(projectWorkspacesRoot, "ui-primary");
   await mkdir(primary, { recursive: true, mode: 0o700 });
   await mkdir(secondary, { recursive: true, mode: 0o700 });
+  await mkdir(uiPrimary, { recursive: true, mode: 0o700 });
   await chmod(projectWorkspacesRoot, 0o700);
   await chmod(primary, 0o700);
   await chmod(secondary, 0o700);
+  await chmod(uiPrimary, 0o700);
   await applyContainerOwnership(state, projectWorkspacesRoot);
   await applyContainerOwnership(state, primary);
   await applyContainerOwnership(state, secondary);
+  await applyContainerOwnership(state, uiPrimary);
 };
 
 const publishedBambooPort = async (containerId: string): Promise<number> => {
@@ -1478,7 +1486,9 @@ const runtimeSummary = (
     baseUrl: state.baseUrl ?? null,
     sessionId: state.sessionId ?? null,
     memorySessionId: state.memorySessionId ?? null,
+    uiSessionId: state.uiSessionId ?? null,
     projectId: state.projectId ?? null,
+    uiProjectId: state.uiProjectId ?? null,
     otherProjectSessionId: state.otherProjectSessionId ?? null,
     otherProjectId: state.otherProjectId ?? null,
     model: REAL_BAMBOO_MODEL,
@@ -1929,6 +1939,11 @@ const globalSetup = async (): Promise<() => Promise<void>> => {
       "Lotus other Project E2E",
       SECONDARY_PROJECT_CONTAINER_PATH,
     );
+    state.uiProjectId = await createProject(
+      state.baseUrl,
+      "Lotus UI memory Project E2E",
+      UI_PROJECT_CONTAINER_PATH,
+    );
 
     advanceStage(state, "creating Project-bound Bamboo memory sessions");
     state.memorySessionId = await createFinalizedSession(
@@ -1940,6 +1955,11 @@ const globalSetup = async (): Promise<() => Promise<void>> => {
       state.baseUrl,
       "Lotus other Project E2E",
       state.otherProjectId,
+    );
+    state.uiSessionId = await createFinalizedSession(
+      state.baseUrl,
+      "Lotus UI memory Project E2E",
+      state.uiProjectId,
     );
 
     advanceStage(state, "creating unassigned Bamboo chat session");
@@ -1958,6 +1978,7 @@ const globalSetup = async (): Promise<() => Promise<void>> => {
     process.env.LOTUS_REAL_BAMBOO_BASE_URL = state.baseUrl;
     process.env.LOTUS_REAL_BAMBOO_SESSION_ID = state.sessionId;
     process.env.LOTUS_REAL_BAMBOO_MEMORY_SESSION_ID = state.memorySessionId;
+    process.env.LOTUS_REAL_BAMBOO_UI_SESSION_ID = state.uiSessionId;
     process.env.LOTUS_REAL_BAMBOO_OTHER_PROJECT_SESSION_ID =
       state.otherProjectSessionId;
     process.env.LOTUS_REAL_PROVIDER_OBSERVATIONS_PATH =
