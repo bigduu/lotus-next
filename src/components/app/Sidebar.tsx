@@ -1,9 +1,9 @@
-import { useMemo, useState } from "react"
-import { Plus, Search, X, Cog, PanelLeftClose } from "lucide-react"
+import { useId, useMemo, useState } from "react"
+import { ChevronRight, Plus, Search, X, Cog, PanelLeftClose } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { SessionRow } from "@/components/chat/SessionRow"
-import { groupChats } from "@/lib/groupChats"
+import { groupChats, type ChatGroup } from "@/lib/groupChats"
 import { cn } from "@/lib/utils"
 import type { ChatItem } from "@shared/types/chatMessages"
 
@@ -41,17 +41,96 @@ export function Sidebar({
   onOpenSettings: () => void
 }) {
   const [search, setSearch] = useState("")
+  const disclosureId = useId()
+  const query = search.trim().toLowerCase()
 
   const groups = useMemo(() => {
-    const q = search.trim().toLowerCase()
     // Only root sessions in the sidebar — child sub-agent sessions live in the
     // inspector's sub-agents panel, not as top-level chats.
-    let filtered = chats.filter(
-      (c) => !(c as { parentSessionId?: string | null }).parentSessionId,
-    )
-    if (q) filtered = filtered.filter((c) => (c.title || "").toLowerCase().includes(q))
+    const filtered = chats.filter((c) => !c.parentSessionId)
     return groupChats(filtered, new Date())
-  }, [chats, search])
+  }, [chats])
+
+  const dateGroups = groups.filter((group) => group.key !== "__pinned")
+  const olderGroups = dateGroups.slice(5)
+  const activeGroup = dateGroups.find((group) => group.chats.some((c) => c.id === currentSessionId))
+  const activeIsOlder = olderGroups.some((group) => group.key === activeGroup?.key)
+  const activePath = JSON.stringify([currentSessionId ?? null, activeGroup?.key, activeIsOlder])
+  const [disclosures, setDisclosures] = useState(() => ({
+    activePath,
+    olderExpanded: activeIsOlder,
+    closedDates: new Set<string>(),
+  }))
+
+  // Reveal a newly selected session (including one loaded after navigation).
+  // Adjust during render so its row is visible immediately, then leave explicit
+  // user folds alone until the active session or its enclosing date changes.
+  if (disclosures.activePath !== activePath) {
+    const closedDates = new Set(disclosures.closedDates)
+    if (activeGroup) closedDates.delete(activeGroup.key)
+    setDisclosures({
+      activePath,
+      olderExpanded: disclosures.olderExpanded || activeIsOlder,
+      closedDates,
+    })
+  }
+
+  const visibleGroups = query
+    ? groups.map((group) => ({
+        ...group,
+        chats: group.chats.filter((c) => (c.title || "").toLowerCase().includes(query)),
+      })).filter((group) => group.chats.length > 0)
+    : groups.filter((group) => group.key === "__pinned" || !olderGroups.includes(group))
+  const olderCount = olderGroups.reduce((count, group) => count + group.chats.length, 0)
+
+  const renderGroup = (group: ChatGroup) => {
+    const pinned = group.key === "__pinned"
+    const expanded = pinned || !!query || !disclosures.closedDates.has(group.key)
+    const contentId = `${disclosureId}-${group.key}`
+    return (
+      <div key={group.key} className="mb-1">
+        {pinned ? (
+          <div className="px-2 pt-3 pb-1 text-xs font-medium text-muted-foreground">
+            {group.label}
+          </div>
+        ) : (
+          <button
+            type="button"
+            aria-expanded={expanded}
+            aria-controls={contentId}
+            disabled={!!query}
+            className="flex w-full items-center gap-1 rounded-md px-2 pt-3 pb-1 text-left text-xs font-medium text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default"
+            onClick={() => setDisclosures((previous) => {
+              const closedDates = new Set(previous.closedDates)
+              if (closedDates.has(group.key)) closedDates.delete(group.key)
+              else closedDates.add(group.key)
+              return { ...previous, closedDates }
+            })}
+          >
+            <ChevronRight aria-hidden="true" className={cn("size-3 shrink-0", expanded && "rotate-90")} />
+            <span>{group.label}</span>
+            <span className="ml-auto whitespace-nowrap pl-2 font-normal">{group.chats.length} 个会话</span>
+          </button>
+        )}
+        <div id={contentId} hidden={!expanded}>
+          {expanded ? group.chats.map((c) => (
+            <SessionRow
+              key={c.id}
+              chat={c}
+              active={c.id === currentSessionId}
+              onSelect={() => {
+                onSelect(c.id)
+                onClose()
+              }}
+              onRename={(title) => onRename(c.id, title)}
+              onDelete={() => onDelete(c)}
+              onTogglePin={() => onTogglePin(c)}
+            />
+          )) : null}
+        </div>
+      </div>
+    )
+  }
 
   return (
     <>
@@ -120,27 +199,28 @@ export function Sidebar({
               {booted ? "暂无会话" : "加载中…"}
             </p>
           )}
-          {groups.map((g) => (
-            <div key={g.key} className="mb-1">
-              <div className="px-2 pt-3 pb-1 text-xs font-medium text-muted-foreground">
-                {g.label}
+          {visibleGroups.map(renderGroup)}
+          {!query && olderGroups.length > 0 ? (
+            <div className="mb-1">
+              <button
+                type="button"
+                aria-expanded={disclosures.olderExpanded}
+                aria-controls={`${disclosureId}-older`}
+                className="mt-2 flex w-full items-center gap-1 rounded-md px-2 py-2 text-left text-xs font-medium text-muted-foreground outline-none hover:bg-sidebar-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+                onClick={() => setDisclosures((previous) => ({
+                  ...previous,
+                  olderExpanded: !previous.olderExpanded,
+                }))}
+              >
+                <ChevronRight aria-hidden="true" className={cn("size-3 shrink-0", disclosures.olderExpanded && "rotate-90")} />
+                <span>更早</span>
+                <span className="ml-auto whitespace-nowrap pl-2 font-normal">{olderGroups.length} 天 · {olderCount} 个会话</span>
+              </button>
+              <div id={`${disclosureId}-older`} hidden={!disclosures.olderExpanded}>
+                {disclosures.olderExpanded ? olderGroups.map(renderGroup) : null}
               </div>
-              {g.chats.map((c) => (
-                <SessionRow
-                  key={c.id}
-                  chat={c}
-                  active={c.id === currentSessionId}
-                  onSelect={() => {
-                    onSelect(c.id)
-                    onClose()
-                  }}
-                  onRename={(title) => onRename(c.id, title)}
-                  onDelete={() => onDelete(c)}
-                  onTogglePin={() => onTogglePin(c)}
-                />
-              ))}
             </div>
-          ))}
+          ) : null}
         </div>
         <div className="border-t p-2">
           <Button

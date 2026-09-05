@@ -11,16 +11,14 @@ function chatTime(c: ChatItem): number {
   return typeof c.createdAt === "number" ? c.createdAt : 0
 }
 
-const DAY_MS = 86_400_000
-const startOfDay = (d: Date) =>
-  new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime()
+const dayKey = (d: Date) =>
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`
 
 function dayLabel(ts: number, now: Date): string {
   const d = new Date(ts)
-  const today = startOfDay(now)
-  const that = startOfDay(d)
-  if (that === today) return "今天"
-  if (that === today - DAY_MS) return "昨天"
+  const yesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1)
+  if (dayKey(d) === dayKey(now)) return "今天"
+  if (dayKey(d) === dayKey(yesterday)) return "昨天"
   if (d.getFullYear() === now.getFullYear()) return `${d.getMonth() + 1}月${d.getDate()}日`
   return `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日`
 }
@@ -35,16 +33,17 @@ export function groupChats(chats: ChatItem[], now: Date): ChatGroup[] {
     (a, b) => chatTime(b) - chatTime(a),
   )
 
-  const byDay = new Map<string, ChatItem[]>()
+  const byDay = new Map<string, ChatGroup>()
   for (const c of rest) {
-    const label = dayLabel(chatTime(c), now)
-    const bucket = byDay.get(label)
-    if (bucket) bucket.push(c)
-    else byDay.set(label, [c])
+    const time = chatTime(c)
+    const key = dayKey(new Date(time))
+    const bucket = byDay.get(key)
+    if (bucket) bucket.chats.push(c)
+    else byDay.set(key, { key, label: dayLabel(time, now), chats: [c] })
   }
 
   const groups: ChatGroup[] = []
   if (pinned.length) groups.push({ key: "__pinned", label: "置顶", chats: pinned })
-  for (const [label, cs] of byDay) groups.push({ key: label, label, chats: cs })
+  groups.push(...byDay.values())
   return groups
 }
