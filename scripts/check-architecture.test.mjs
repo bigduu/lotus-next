@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -21,7 +21,320 @@ const clientOwner = (member = "", tail = "") =>
 const transportOwner = (member = "", tail = "") =>
   `export class HttpTransport { ${member} } const canonical = new HttpTransport({}); const fetchOwner = globalThis.fetch; ${tail}`;
 
+const viteSourceAliasConfiguration = (extraAlias = "", sourceReplacement = "./src") => `
+  import path from "node:path";
+  import { defineConfig } from "vite";
+  export default defineConfig(() => {
+    return {
+      plugins: [react(), tailwindcss(), bundleOwnershipPlugin(), canonicalSourceAliasPlugin()],
+      resolve: {
+        alias: {
+          ${extraAlias}
+          "@": path.resolve(__dirname, ${JSON.stringify(sourceReplacement)}),
+          "@services": path.resolve(__dirname, "./src/services"),
+          "@shared": path.resolve(__dirname, "./src/shared"),
+          "@pages": path.resolve(__dirname, "./src/pages"),
+          "@components": path.resolve(__dirname, "./src/components"),
+          "@app": path.resolve(__dirname, "./src/app"),
+        },
+      },
+    };
+  });
+`;
+const vitestSourceAliasConfiguration = (extraAlias = "", sourceReplacement = "./src") => `
+  import path from "node:path";
+  import { defineConfig } from "vitest/config";
+  export default defineConfig({
+    plugins: [react(), canonicalSourceAliasPlugin()],
+    resolve: {
+      alias: {
+        ${extraAlias}
+        "@": path.resolve(__dirname, ${JSON.stringify(sourceReplacement)}),
+        "@services": path.resolve(__dirname, "./src/services"),
+        "@shared": path.resolve(__dirname, "./src/shared"),
+        "@pages": path.resolve(__dirname, "./src/pages"),
+        "@components": path.resolve(__dirname, "./src/components"),
+        "@app": path.resolve(__dirname, "./src/app"),
+      },
+    },
+  });
+`;
+
 describe("architecture boundary fixtures", () => {
+  it("freezes the complete Vite source alias table to the six canonical roots", () => {
+    expect(fixtureMessages("vite.config.ts", viteSourceAliasConfiguration())).not.toMatch(/Vite source aliases/);
+    expect(fixtureMessages("vitest.config.ts", vitestSourceAliasConfiguration())).not.toMatch(/Vite source aliases/);
+
+    for (const source of [
+      viteSourceAliasConfiguration(
+        '"@/lib/secrets.ts": path.resolve(__dirname, "./src/services/notificationRelay.ts"),',
+      ),
+      viteSourceAliasConfiguration(
+        '"@services/notification/notificationChannelsApi.ts": path.resolve(__dirname, "./src/services/notificationRelay.ts"),',
+      ),
+      viteSourceAliasConfiguration(
+        '"../api/index.ts": path.resolve(__dirname, "./src/services/notificationRelay.ts"),',
+      ),
+      viteSourceAliasConfiguration("", "./src/services/notificationRelay.ts"),
+      viteSourceAliasConfiguration().replace("alias: {", "alias: sourceAliases,"),
+      viteSourceAliasConfiguration().replace("return {", "return { ...redirectedConfig,"),
+      viteSourceAliasConfiguration().replace(
+        "plugins: [react(), tailwindcss(), bundleOwnershipPlugin(), canonicalSourceAliasPlugin()]",
+        "plugins: [redirectPlugin(), react(), tailwindcss(), bundleOwnershipPlugin(), canonicalSourceAliasPlugin()]",
+      ),
+      viteSourceAliasConfiguration().replace(
+        "return {",
+        `if (mode === "production") return { resolve: { alias: { "@/lib/secrets.ts": path.resolve(__dirname, "./src/services/notificationRelay.ts") } } }; return {`,
+      ),
+    ]) {
+      expect(fixtureMessages("vite.config.ts", source)).toMatch(/Vite source aliases/);
+    }
+
+    for (const source of [
+      vitestSourceAliasConfiguration(
+        '"@/lib/secrets.ts": path.resolve(__dirname, "./src/services/notificationRelay.ts"),',
+      ),
+      vitestSourceAliasConfiguration("", "./src/services/notificationRelay.ts"),
+      vitestSourceAliasConfiguration().replace("alias: {", "alias: sourceAliases,"),
+      vitestSourceAliasConfiguration().replace(
+        "plugins: [react(), canonicalSourceAliasPlugin()]",
+        "plugins: [redirectPlugin(), react(), canonicalSourceAliasPlugin()]",
+      ),
+    ]) {
+      expect(fixtureMessages("vitest.config.ts", source)).toMatch(/Vite source aliases/);
+    }
+  });
+
+  it.each([
+    ["direct access", `navigator.sendBeacon(dynamicPath, new Blob([payload], { type: "application/json" }));`],
+    ["computed access", `navigator["send" + "Beacon"](dynamicPath, payload);`],
+    ["destructured access", `const { sendBeacon: beacon } = navigator; beacon(dynamicPath, payload);`],
+    [
+      "aliased navigator access",
+      `const browserNavigator = navigator; const beacon = browserNavigator.sendBeacon; beacon(dynamicPath, payload);`,
+    ],
+    [
+      "dynamic navigator access",
+      `const key = String.fromCharCode(115, 101, 110, 100, 66, 101, 97, 99, 111, 110); navigator[key](dynamicPath, payload);`,
+    ],
+    ["reflective access", `const beacon = Reflect.get(navigator, "sendBeacon"); beacon(dynamicPath, payload);`],
+    [
+      "dynamic computed destructuring",
+      `const key = String.fromCharCode(115, 101, 110, 100, 66, 101, 97, 99, 111, 110); const { [key]: beacon } = navigator; beacon.call(navigator, dynamicPath, payload);`,
+    ],
+    [
+      "destructured navigator with a dynamic key",
+      `const { navigator: browserNavigator } = window; const key = String.fromCharCode(115, 101, 110, 100, 66, 101, 97, 99, 111, 110); browserNavigator[key](dynamicPath, payload);`,
+    ],
+    [
+      "destructured Reflect.get",
+      `const { get } = Reflect; get(navigator, "sendBeacon").call(navigator, dynamicPath, payload);`,
+    ],
+    [
+      "nested navigator projection",
+      `const { window: { navigator: browserNavigator } } = globalThis; const key = String.fromCharCode(115, 101, 110, 100, 66, 101, 97, 99, 111, 110); browserNavigator[key](dynamicPath, payload);`,
+    ],
+    [
+      "array navigator projection",
+      `const [browserNavigator] = [navigator]; const key = String.fromCharCode(115, 101, 110, 100, 66, 101, 97, 99, 111, 110); browserNavigator[key](dynamicPath, payload);`,
+    ],
+    [
+      "array Reflect.get projection",
+      `const [get] = [Reflect.get]; get(navigator, "sendBeacon").call(navigator, dynamicPath, payload);`,
+    ],
+    [
+      "bound Reflect.get",
+      `const get = Reflect.get.bind(Reflect); get(navigator, "sendBeacon").call(navigator, dynamicPath, payload);`,
+    ],
+    [
+      "Reflect.get with bound target and key",
+      `const getBeacon = Reflect.get.bind(Reflect, navigator, "sendBeacon"); getBeacon().call(navigator, dynamicPath, payload);`,
+    ],
+    [
+      "Reflect.get.call",
+      `Reflect.get.call(Reflect, navigator, "sendBeacon").call(navigator, dynamicPath, payload);`,
+    ],
+    [
+      "Reflect.get.apply",
+      `Reflect.get.apply(Reflect, [navigator, "sendBeacon"]).call(navigator, dynamicPath, payload);`,
+    ],
+    [
+      "projected bound Reflect.get",
+      `const [get] = [Reflect.get.bind(Reflect, navigator, "sendBeacon")]; get().call(navigator, dynamicPath, payload);`,
+    ],
+    [
+      "conditional bound Reflect.get",
+      `const get = flag ? Reflect.get.bind(Reflect, { language: "en" }, "language") : Reflect.get.bind(Reflect, navigator, "sendBeacon"); get().call(navigator, dynamicPath, payload);`,
+    ],
+    [
+      "Reflect.get.apply with an aliased argument tuple",
+      `const args = [navigator, "sendBeacon"]; Reflect.get.apply(Reflect, args).call(navigator, dynamicPath, payload);`,
+    ],
+    [
+      "Reflect.get.apply with a statically spread argument tuple",
+      `Reflect.get.apply(Reflect, [...[navigator, "sendBeacon"]]).call(navigator, dynamicPath, payload);`,
+    ],
+    [
+      "Reflect.apply of Reflect.get",
+      `Reflect.apply(Reflect.get, Reflect, [navigator, "sendBeacon"]).call(navigator, dynamicPath, payload);`,
+    ],
+    [
+      "aliased Reflect.apply of projected Reflect.get",
+      `const { apply } = Reflect; const [get] = [Reflect.get]; const args = [navigator, "sendBeacon"]; apply(get, Reflect, args).call(navigator, dynamicPath, payload);`,
+    ],
+    [
+      "bound Reflect.apply",
+      `const invoke = Reflect.apply.bind(Reflect); invoke(Reflect.get, Reflect, [navigator, "sendBeacon"]).call(navigator, dynamicPath, payload);`,
+    ],
+    [
+      "Reflect.apply.call",
+      `Reflect.apply.call(Reflect, Reflect.get, Reflect, [navigator, "sendBeacon"]).call(navigator, dynamicPath, payload);`,
+    ],
+    [
+      "bound Reflect.get.call",
+      `const get = Reflect.get; const invoke = get.call.bind(get); invoke(Reflect, navigator, "sendBeacon").call(navigator, dynamicPath, payload);`,
+    ],
+    [
+      "Function.prototype.call bound to Reflect.get",
+      `const invoke = Function.prototype.call.bind(Reflect.get); invoke(Reflect, navigator, "sendBeacon").call(navigator, dynamicPath, payload);`,
+    ],
+    [
+      "nested reflective navigator access",
+      `Reflect.get(Reflect.get(globalThis, "navigator"), "sendBeacon").call(navigator, dynamicPath, payload);`,
+    ],
+    [
+      "aliased reflective navigator access",
+      `const browserNavigator = Reflect.get(globalThis, "navigator"); const key = String.fromCharCode(115, 101, 110, 100, 66, 101, 97, 99, 111, 110); browserNavigator[key](dynamicPath, payload);`,
+    ],
+    [
+      "nested reflective window and navigator access",
+      `const browserNavigator = Reflect.get(Reflect.get(globalThis, "window"), "navigator"); Reflect.get(browserNavigator, "sendBeacon").call(browserNavigator, dynamicPath, payload);`,
+    ],
+    [
+      "reflected Reflect namespace access",
+      `const reflection = Reflect.get(globalThis, "Reflect"); const browserNavigator = reflection.get(globalThis, "navigator"); reflection.get(browserNavigator, "sendBeacon").call(browserNavigator, dynamicPath, payload);`,
+    ],
+    [
+      "reflected Reflect.get capability",
+      `const get = Reflect.get(Reflect, "get"); get(navigator, "sendBeacon").call(navigator, dynamicPath, payload);`,
+    ],
+    [
+      "navigator prototype access",
+      `Reflect.get(Object.getPrototypeOf(navigator), "sendBeacon").call(navigator, dynamicPath, payload);`,
+    ],
+    [
+      "navigator through an object container",
+      `const browserNavigator = { current: navigator }.current; const key = String.fromCharCode(115, 101, 110, 100, 66, 101, 97, 99, 111, 110); browserNavigator[key](dynamicPath, payload);`,
+    ],
+    [
+      "navigator through an array container",
+      `const browserNavigator = [navigator][0]; const key = String.fromCharCode(115, 101, 110, 100, 66, 101, 97, 99, 111, 110); browserNavigator[key](dynamicPath, payload);`,
+    ],
+    [
+      "navigator through a comma expression",
+      `const browserNavigator = (recordAudit(), navigator); const key = String.fromCharCode(115, 101, 110, 100, 66, 101, 97, 99, 111, 110); browserNavigator[key](dynamicPath, payload);`,
+    ],
+    [
+      "navigator through an identity function",
+      `function identity<T>(value: T) { return value; } const browserNavigator = identity(navigator); const key = String.fromCharCode(115, 101, 110, 100, 66, 101, 97, 99, 111, 110); browserNavigator[key](dynamicPath, payload);`,
+    ],
+    [
+      "navigator through its global property descriptor",
+      `const browserNavigator = Object.getOwnPropertyDescriptor(globalThis, "navigator")?.get?.call(globalThis); const key = String.fromCharCode(115, 101, 110, 100, 66, 101, 97, 99, 111, 110); browserNavigator[key](dynamicPath, payload);`,
+    ],
+    [
+      "navigator through its global descriptor table",
+      `const browserNavigator = Object.getOwnPropertyDescriptors(globalThis).navigator.get.call(globalThis); const key = String.fromCharCode(115, 101, 110, 100, 66, 101, 97, 99, 111, 110); browserNavigator[key](dynamicPath, payload);`,
+    ],
+    [
+      "navigator through an aliased global descriptor table",
+      `const describe = Object.getOwnPropertyDescriptors; const key = String.fromCharCode(110, 97, 118, 105, 103, 97, 116, 111, 114); const browserNavigator = describe(globalThis)[key].get.call(globalThis); const method = String.fromCharCode(115, 101, 110, 100, 66, 101, 97, 99, 111, 110); browserNavigator[method](dynamicPath, payload);`,
+    ],
+    [
+      "navigator through Reflect.getOwnPropertyDescriptor",
+      `const key = String.fromCharCode(110, 97, 118, 105, 103, 97, 116, 111, 114); const browserNavigator = Reflect.getOwnPropertyDescriptor(globalThis, key)?.get?.call(globalThis); const method = String.fromCharCode(115, 101, 110, 100, 66, 101, 97, 99, 111, 110); browserNavigator[method](dynamicPath, payload);`,
+    ],
+    [
+      "navigator through __lookupGetter__",
+      `const key = String.fromCharCode(110, 97, 118, 105, 103, 97, 116, 111, 114); const browserNavigator = globalThis.__lookupGetter__(key)?.call(globalThis); const method = String.fromCharCode(115, 101, 110, 100, 66, 101, 97, 99, 111, 110); browserNavigator[method](dynamicPath, payload);`,
+    ],
+    [
+      "navigator through document.defaultView",
+      `const key = String.fromCharCode(110, 97, 118, 105, 103, 97, 116, 111, 114); const root = document.defaultView; const browserNavigator = Reflect.getOwnPropertyDescriptor(root, key)?.get?.call(root); const method = String.fromCharCode(115, 101, 110, 100, 66, 101, 97, 99, 111, 110); browserNavigator[method](dynamicPath, payload);`,
+    ],
+    [
+      "navigator through parent Window",
+      `const key = String.fromCharCode(110, 97, 118, 105, 103, 97, 116, 111, 114); const root = parent; const browserNavigator = Reflect.getOwnPropertyDescriptor(root, key)?.get?.call(root); const method = String.fromCharCode(115, 101, 110, 100, 66, 101, 97, 99, 111, 110); browserNavigator[method](dynamicPath, payload);`,
+    ],
+    [
+      "navigator through top Window",
+      `const key = String.fromCharCode(110, 97, 118, 105, 103, 97, 116, 111, 114); const root = top; const browserNavigator = Reflect.getOwnPropertyDescriptor(root, key)?.get?.call(root); const method = String.fromCharCode(115, 101, 110, 100, 66, 101, 97, 99, 111, 110); browserNavigator[method](dynamicPath, payload);`,
+    ],
+    [
+      "navigator through an aliased document.defaultView",
+      `const doc = document; const root = doc.defaultView; const key = String.fromCharCode(110, 97, 118, 105, 103, 97, 116, 111, 114); const browserNavigator = Reflect.getOwnPropertyDescriptor(root, key)?.get?.call(root); const method = String.fromCharCode(115, 101, 110, 100, 66, 101, 97, 99, 111, 110); browserNavigator[method](dynamicPath, payload);`,
+    ],
+    [
+      "navigator through a destructured document.defaultView",
+      `const { defaultView: root } = document; const key = String.fromCharCode(110, 97, 118, 105, 103, 97, 116, 111, 114); const browserNavigator = Reflect.getOwnPropertyDescriptor(root, key)?.get?.call(root); const method = String.fromCharCode(115, 101, 110, 100, 66, 101, 97, 99, 111, 110); browserNavigator[method](dynamicPath, payload);`,
+    ],
+    [
+      "navigator through frames Window",
+      `const root = frames; const key = String.fromCharCode(110, 97, 118, 105, 103, 97, 116, 111, 114); const browserNavigator = Reflect.getOwnPropertyDescriptor(root, key)?.get?.call(root); const method = String.fromCharCode(115, 101, 110, 100, 66, 101, 97, 99, 111, 110); browserNavigator[method](dynamicPath, payload);`,
+    ],
+    [
+      "navigator through a Window timer callback this value",
+      `window.setTimeout(function (this: Window) { const root = this; const key = String.fromCharCode(110, 97, 118, 105, 103, 97, 116, 111, 114); const browserNavigator = Reflect.getOwnPropertyDescriptor(root, key)?.get?.call(root); const method = String.fromCharCode(115, 101, 110, 100, 66, 101, 97, 99, 111, 110); browserNavigator[method](dynamicPath, payload); }, 0);`,
+    ],
+    [
+      "navigator through an unqualified timer callback this value",
+      `setTimeout(function (this: Window) { const root = this; const key = String.fromCharCode(110, 97, 118, 105, 103, 97, 116, 111, 114); const browserNavigator = Object.getOwnPropertyDescriptors(root)[key].get.call(root); const method = String.fromCharCode(115, 101, 110, 100, 66, 101, 97, 99, 111, 110); browserNavigator[method](dynamicPath, payload); }, 0);`,
+    ],
+    [
+      "navigator through an interval callback this value",
+      `setInterval(function (this: Window) { const root = this; const key = String.fromCharCode(110, 97, 118, 105, 103, 97, 116, 111, 114); const browserNavigator = Object.getOwnPropertyDescriptors(root)[key].get.call(root); const method = String.fromCharCode(115, 101, 110, 100, 66, 101, 97, 99, 111, 110); browserNavigator[method](dynamicPath, payload); }, 1000);`,
+    ],
+    [
+      "navigator through an unqualified Window event listener",
+      `addEventListener("click", function (this: Window) { const root = this; const key = String.fromCharCode(110, 97, 118, 105, 103, 97, 116, 111, 114); const browserNavigator = Object.getOwnPropertyDescriptors(root)[key].get.call(root); const method = String.fromCharCode(115, 101, 110, 100, 66, 101, 97, 99, 111, 110); browserNavigator[method](dynamicPath, payload); });`,
+    ],
+    [
+      "navigator through a React native event view",
+      `const handleClick = (event: React.MouseEvent) => { const root = event.nativeEvent.view; const key = String.fromCharCode(110, 97, 118, 105, 103, 97, 116, 111, 114); const browserNavigator = Object.getOwnPropertyDescriptors(root)[key].get.call(root); const method = String.fromCharCode(115, 101, 110, 100, 66, 101, 97, 99, 111, 110); browserNavigator[method](dynamicPath, payload); };`,
+    ],
+  ])("rejects sendBeacon as a second browser transport through %s", (_label, source) => {
+    expect(fixtureMessages("src/components/chat/settings/notifications/ChannelsSection.tsx", source)).toMatch(
+      /sendBeacon bypasses the canonical API transport/,
+    );
+  });
+
+  it("allows ordinary non-transport navigator capabilities", () => {
+    expect(
+      fixtureMessages(
+        "src/shared/utils/navigationMetadata.ts",
+        `const language = window.navigator.language; void navigator.clipboard?.writeText(language); const reflectedLanguage = Reflect.get(navigator, "language"); void Reflect.get(navigator, "clipboard").writeText(reflectedLanguage);`,
+      ),
+    ).not.toMatch(/sendBeacon/);
+  });
+
+  it("does not treat a local navigator parameter as the browser capability", () => {
+    expect(
+      fixtureMessages(
+        "src/shared/utils/navigationMetadata.ts",
+        `const inspect = (navigator: { channel: string }) => navigator.channel; void inspect({ channel: "stable" });`,
+      ),
+    ).not.toMatch(/sendBeacon/);
+  });
+
+  it("allows a direct timer call through document.defaultView", () => {
+    expect(
+      fixtureMessages(
+        "src/components/chat/settings/notifications/ChannelsSection.tsx",
+        `document.defaultView?.setTimeout(() => recordAudit(), 0);`,
+      ),
+    ).not.toMatch(/sendBeacon/);
+  });
+
   it("allows the designated runtime, composition, and transport adapters", () => {
     const sources = new Map([
       [
@@ -186,6 +499,496 @@ describe("architecture boundary fixtures", () => {
     expect(findArchitectureViolations(canonical)).toEqual([]);
   });
 
+  it("keeps Notification Channels off the whole-config endpoint", () => {
+    const owners = [
+      "src/components/chat/settings/SettingsNotifications.tsx",
+      "src/components/chat/settings/notifications/ChannelsSection.tsx",
+      "src/components/chat/settings/notifications/notificationConfigHelper.ts",
+      "src/services/notification/notificationChannelsApi.ts",
+    ];
+    for (const file of owners) {
+      const violations = fixtureMessages(
+        file,
+        `
+          const wholeConfig = ["bamboo", "config"].join("/");
+          apiClient.get(wholeConfig);
+          apiClient.post("/api/v1/bamboo/config", {});
+        `,
+      );
+      expect(violations.match(/Notification Channels must use the dedicated/g)).toHaveLength(2);
+    }
+  });
+
+  it("blocks whole-config facades throughout the Notification Channels subtree", () => {
+    const violations = fixtureMessages(
+      "src/components/chat/settings/notifications/notificationConfigHelper.ts",
+      `
+        import { serviceFactory } from "@services/common/ServiceFactory";
+        import { useBambooConfigStore } from "@shared/store/bambooConfigStore";
+        serviceFactory.getBambooConfig();
+        useBambooConfigStore.getState().patchConfig({});
+      `,
+    );
+    expect(violations).toContain("must not import a whole-config facade or store");
+    expect(violations).toContain("must use the dedicated bamboo/config/notifications");
+  });
+
+  it("rejects imported or dynamic routes in the dedicated notification service", () => {
+    const violations = fixtureMessages(
+      "src/services/notification/notificationChannelsApi.ts",
+      `
+        import { apiClient } from "../api/index.ts";
+        import { ROOT_CONFIG_PATH } from "./rootConfigPath";
+        apiClient.get(ROOT_CONFIG_PATH);
+        const load = (route) => apiClient.get(route);
+      `,
+    );
+    expect(violations.match(/routes must resolve statically/g)).toHaveLength(2);
+    expect(violations).toContain("only its audited local authority dependencies");
+  });
+
+  it("freezes notification service transport method, binding, and endpoint pairs", () => {
+    const violations = fixtureMessages(
+      "src/services/notification/notificationChannelsApi.ts",
+      `
+        import { apiClient as client } from "../api/index.ts";
+        import ky from "ky";
+        apiClient.post("bamboo/config/notifications");
+        apiClient.get("bamboo/config/notifications?secret=value");
+        const load = apiClient.get;
+        void client;
+        void ky;
+      `,
+    );
+    expect(violations).toContain("named, unaliased binding");
+    expect(violations).toContain("only its audited local authority dependencies");
+    expect(violations.match(/routes must resolve statically/g)).toHaveLength(2);
+    expect(violations).toContain("only through direct approved calls");
+  });
+
+  it("freezes notification authority services to audited API barrel bindings", () => {
+    const violations = fixtureMessages(
+      "src/services/notification/notificationChannelsApi.ts",
+      `
+        import { apiClient, relay } from "../api/index.ts";
+        apiClient.get("bamboo/config/notifications");
+        relay();
+      `,
+    );
+
+    expect(violations).toContain(
+      "must import only audited named, unaliased bindings including apiClient",
+    );
+  });
+
+  it.each([
+    `export { relay } from "../api";`,
+    `const runtime = await import("../api"); runtime.relay();`,
+    `const runtime = require("../api"); runtime.relay();`,
+  ])("rejects notification authority dependency forwarding", (source) => {
+    const violations = fixtureMessages(
+      "src/services/notification/notificationChannelsApi.ts",
+      source,
+    );
+
+    expect(violations).toMatch(
+      /must not (?:re-export dependency authority|dynamically load dependencies)/,
+    );
+  });
+
+  it("rejects dynamic imports and re-exports outside the notification authority closure", () => {
+    const dynamicImport = fixtureMessages(
+      "src/components/chat/settings/notifications/ChannelsSection.tsx",
+      `
+        const legacy = await import("@services/notification/legacyChannels");
+        void legacy;
+      `,
+    );
+    const dynamicUnknown = fixtureMessages(
+      "src/components/chat/settings/notifications/ChannelsSection.tsx",
+      `
+        const path = getLegacyPath();
+        const legacy = await import(path);
+        void legacy;
+      `,
+    );
+    const reexport = fixtureMessages(
+      "src/services/notification/notificationChannelsApi.ts",
+      `export { loadConfig } from "./legacyChannels";`,
+    );
+    expect(dynamicImport).toContain("load only its audited local authority dependencies");
+    expect(dynamicUnknown).toContain("requires a static approved runtime dependency");
+    expect(reexport).toContain("re-export only its audited local authority dependencies");
+  });
+
+  it("normalizes alias traversal before checking the notification authority closure", () => {
+    const violations = fixtureMessages(
+      "src/components/chat/settings/notifications/escape.ts",
+      `
+        import { useSystemConfig } from "@components/chat/settings/notifications/../system/useSystemConfig";
+        export const useEscapedAuthority = () => useSystemConfig();
+      `,
+    );
+
+    expect(violations).toContain(
+      "Notification Channels may import only its audited local authority dependencies",
+    );
+  });
+
+  it.each(["glob", "globEager"])(
+    "rejects import.meta.%s from a notification authority owner",
+    (method) => {
+      const violations = fixtureMessages(
+        "src/components/chat/settings/notifications/ChannelsSection.tsx",
+        `
+          const modules = import.meta.${method}(
+            "/src/components/chat/settings/system/useSystemConfig.ts",
+            { eager: true },
+          );
+          void modules;
+        `,
+      );
+
+      expect(violations).toContain(
+        "import.meta.glob bypasses the Notification Channels authority boundary",
+      );
+    },
+  );
+
+  it("rejects transitive service wrappers and barrel aliases from notification owners", () => {
+    const wrapper = fixtureMessages(
+      "src/components/chat/settings/notifications/notificationConfigHelper.ts",
+      `
+        import { loadNotificationConfig } from "@services/notification/rootConfigWrapper";
+        loadNotificationConfig();
+      `,
+    );
+    const barrel = fixtureMessages(
+      "src/components/chat/settings/SettingsNotifications.tsx",
+      `
+        import { serviceFactory as config } from "@services";
+        config.getBambooConfig();
+      `,
+    );
+    expect(wrapper).toContain("only its audited local authority dependencies");
+    expect(barrel).toContain("only its audited local authority dependencies");
+    expect(barrel).toContain("must use the dedicated bamboo/config/notifications");
+  });
+
+  it("keeps the canonical service and channel component on separate frozen dependency sets", () => {
+    const serviceToComponent = fixtureMessages(
+      "src/services/notification/notificationChannelsApi.ts",
+      `import { loadLegacy } from "@components/chat/settings/notifications/legacyLoader";`,
+    );
+    const channelToPreferences = fixtureMessages(
+      "src/components/chat/settings/notifications/ChannelsSection.tsx",
+      `import { getNotificationPreferences } from "@services/notification/notificationPreferencesApi";`,
+    );
+    expect(serviceToComponent).toContain("only its audited local authority dependencies");
+    expect(channelToPreferences).toContain("only its audited local authority dependencies");
+  });
+
+  it("freezes trusted notification leaves against transitive runtime authority", () => {
+    const violations = findArchitectureViolations(
+      new Map([
+        [
+          "src/components/chat/settings/notifications/ChannelsSection.tsx",
+          `import { isMaskedSecret } from "@/lib/secrets"; void isMaskedSecret;`,
+        ],
+        [
+          "src/lib/secrets.ts",
+          `
+            import { apiClient } from "@services/api";
+            export const isMaskedSecret = (value) => {
+              void apiClient.get("bamboo/config");
+              return Boolean(value);
+            };
+          `,
+        ],
+      ]),
+    ).join("\n");
+
+    expect(violations).toContain(
+      "Notification Channels dependency closure may import only audited pure dependencies",
+    );
+    expect(violations).toContain(
+      "Notification Channels dependency closure must not use runtime authority",
+    );
+    expect(violations).toContain(
+      "Notification Channels must use the dedicated bamboo/config/notifications section contract",
+    );
+  });
+
+  it("freezes the allowed preferences service onto its dedicated authority", () => {
+    const violations = findArchitectureViolations(
+      new Map([
+        [
+          "src/components/chat/settings/SettingsNotifications.tsx",
+          `
+            import { relay } from "@services/notification/notificationPreferencesApi.ts";
+            relay();
+          `,
+        ],
+        [
+          "src/services/notification/notificationPreferencesApi.ts",
+          `
+            import { apiClient } from "../api/index.ts";
+            export const relay = () => apiClient.get("bamboo/config");
+          `,
+        ],
+      ]),
+    ).join("\n");
+
+    expect(violations).toContain(
+      "Notification Channels must use the dedicated bamboo/config/notifications section contract",
+    );
+    expect(violations).toContain(
+      "Notification preferences service routes must resolve statically to its approved dedicated endpoint",
+    );
+  });
+
+  it("allows only direct GET and PUT calls to the notification preferences endpoint", () => {
+    expect(
+      fixtureMessages(
+        "src/services/notification/notificationPreferencesApi.ts",
+        `
+          import { apiClient } from "../api/index.ts";
+          const path = "notifications/preferences";
+          apiClient.get(path);
+          apiClient.put(path, {});
+        `,
+      ),
+    ).toBe("");
+
+    const violations = fixtureMessages(
+      "src/services/notification/notificationPreferencesApi.ts",
+      `
+        import { apiClient as client } from "../api/index.ts";
+        import { load } from "../common/ServiceFactory";
+        const route = getRoute();
+        apiClient.post("notifications/preferences", {});
+        apiClient.get(route);
+        void client;
+        void load;
+      `,
+    );
+
+    expect(violations).toContain("named, unaliased binding");
+    expect(violations).toContain("may import only the canonical API authority");
+    expect(violations.match(/routes must resolve statically/g)).toHaveLength(2);
+  });
+
+  it.each([
+    [
+      "page UI dependency",
+      "src/components/chat/settings/SettingsNotifications.tsx",
+      'import { Button } from "@/components/ui/button.tsx"; void Button;',
+    ],
+    [
+      "page preferences dependency",
+      "src/components/chat/settings/SettingsNotifications.tsx",
+      'import { getPreferences } from "@services/notification/notificationPreferencesApi.ts"; void getPreferences;',
+    ],
+    [
+      "channel component service dependency",
+      "src/components/chat/settings/notifications/ChannelsSection.tsx",
+      'import { loadChannels } from "@services/notification/notificationChannelsApi.ts"; void loadChannels;',
+    ],
+    [
+      "channel component secret dependency",
+      "src/components/chat/settings/notifications/ChannelsSection.tsx",
+      'import { isMaskedSecret } from "@/lib/secrets.ts"; void isMaskedSecret;',
+    ],
+    [
+      "channel service API dependency",
+      "src/services/notification/notificationChannelsApi.ts",
+      'import { apiClient } from "../api/index.ts"; apiClient.get("bamboo/config/notifications");',
+    ],
+    [
+      "channel service secret dependency",
+      "src/services/notification/notificationChannelsApi.ts",
+      'import { isMaskedSecret } from "@/lib/secrets.ts"; void isMaskedSecret;',
+    ],
+    [
+      "preferences service API dependency",
+      "src/services/notification/notificationPreferencesApi.ts",
+      'import { apiClient } from "../api/index.ts"; apiClient.get("notifications/preferences");',
+    ],
+    [
+      "trusted UI utility dependency",
+      "src/components/ui/button.tsx",
+      'import { cn } from "@/lib/utils.ts"; void cn;',
+    ],
+  ])("allows the canonical physical %s", (_label, owner, source) => {
+    expect(fixtureMessages(owner, source)).toBe("");
+  });
+
+  it.each([
+    [
+      "directory package entry",
+      "src/components/chat/settings/notifications/ChannelsSection.tsx",
+      'import { relay } from "@/lib/secrets/index"; relay();',
+      "src/lib/secrets/index/package.json",
+      '{"main":"./relay.ts","types":"./relay.ts"}',
+      "src/lib/secrets/index/relay.ts",
+    ],
+    [
+      "API barrel package entry",
+      "src/services/notification/notificationChannelsApi.ts",
+      'import { apiClient } from "../api"; apiClient.get("bamboo/config/notifications");',
+      "src/services/api/package.json",
+      '{"main":"./relay.ts","types":"./relay.ts"}',
+      "src/services/api/relay.ts",
+    ],
+  ])(
+    "rejects a protected dependency redirected through a %s",
+    (_label, owner, source, manifest, manifestSource, relay) => {
+      const violations = findArchitectureViolations(
+        new Map([
+          [owner, source],
+          [manifest, manifestSource],
+          [
+            relay,
+            'import { apiClient } from "@services/api"; export const relay = () => apiClient.get("bamboo/config");',
+          ],
+        ]),
+      ).join("\n");
+
+      expect(violations).toMatch(
+        /Notification (?:Channels may import only its audited local authority dependencies|preferences service may import only the canonical API authority)/,
+      );
+    },
+  );
+
+  it.each([
+    [
+      "trusted leaf",
+      "src/components/chat/settings/notifications/ChannelsSection.tsx",
+      'import { isMaskedSecret } from "@/lib/secrets.ts"; void isMaskedSecret;',
+      "src/lib/secrets.ts/package.json",
+      "src/lib/secrets.ts/relay.ts",
+    ],
+    [
+      "preferences service",
+      "src/components/chat/settings/SettingsNotifications.tsx",
+      'import { relay } from "@services/notification/notificationPreferencesApi.ts"; relay();',
+      "src/services/notification/notificationPreferencesApi.ts/package.json",
+      "src/services/notification/notificationPreferencesApi.ts/relay.ts",
+    ],
+    [
+      "canonical API barrel",
+      "src/services/notification/notificationChannelsApi.ts",
+      'import { apiClient } from "../api/index.ts"; apiClient.get("bamboo/config/notifications");',
+      "src/services/api/index.ts/package.json",
+      "src/services/api/index.ts/relay.ts",
+    ],
+  ])(
+    "rejects replacing a canonical %s file with a package directory",
+    (_label, owner, source, manifest, relay) => {
+      const violations = findArchitectureViolations(
+        new Map([
+          [owner, source],
+          [manifest, '{"main":"./relay.ts","types":"./relay.ts"}'],
+          [relay, "export const relay = () => undefined;"],
+        ]),
+      ).join("\n");
+
+      expect(violations).toContain("must remain a regular source file");
+      expect(violations).toContain("same-name directory entry is forbidden");
+    },
+  );
+
+  it.each([
+    [
+      "preferences directory index",
+      "src/components/chat/settings/SettingsNotifications.tsx",
+      `import { relay } from "@services/notification/notificationPreferencesApi/index"; relay();`,
+      "src/services/notification/notificationPreferencesApi/index.ts",
+    ],
+    [
+      "secrets directory index",
+      "src/components/chat/settings/notifications/ChannelsSection.tsx",
+      `import { relay } from "@/lib/secrets/index"; relay();`,
+      "src/lib/secrets/index.ts",
+    ],
+    [
+      "UI alternate extension",
+      "src/components/chat/settings/notifications/ChannelsSection.tsx",
+      `import { relay } from "@/components/ui/button.ts"; relay();`,
+      "src/components/ui/button.ts",
+    ],
+    [
+      "channel service directory index",
+      "src/components/chat/settings/notifications/ChannelsSection.tsx",
+      `import { relay } from "@services/notification/notificationChannelsApi/index"; relay();`,
+      "src/services/notification/notificationChannelsApi/index.ts",
+    ],
+    [
+      "API barrel alternate extension",
+      "src/services/notification/notificationChannelsApi.ts",
+      `import { apiClient } from "../api.ts"; apiClient.get("bamboo/config/notifications");`,
+      "src/services/api.ts",
+    ],
+    [
+      "secrets nested directory index",
+      "src/components/chat/settings/notifications/ChannelsSection.tsx",
+      "import { relay } from \"@/lib/secrets/index\"; relay();",
+      "src/lib/secrets/index/index.ts",
+    ],
+    [
+      "channel service nested directory index",
+      "src/components/chat/settings/notifications/ChannelsSection.tsx",
+      "import { relay } from \"@services/notification/notificationChannelsApi/index\"; relay();",
+      "src/services/notification/notificationChannelsApi/index/index.ts",
+    ],
+    [
+      "API barrel extension-directory combination",
+      "src/services/notification/notificationChannelsApi.ts",
+      "import { apiClient } from \"../api.ts\"; apiClient.get(\"bamboo/config/notifications\");",
+      "src/services/api.ts/index.ts",
+    ],
+    [
+      "API barrel repeated extension",
+      "src/services/notification/notificationChannelsApi.ts",
+      "import { apiClient } from \"../api.ts\"; apiClient.get(\"bamboo/config/notifications\");",
+      "src/services/api.ts.ts",
+    ],
+  ])("rejects a protected %s module identity collision", (_label, owner, source, collision) => {
+    const violations = findArchitectureViolations(
+      new Map([
+        [owner, source],
+        [
+          collision,
+          `
+            import { apiClient } from "@services/api";
+            export const relay = () => apiClient.get("bamboo/config");
+          `,
+        ],
+      ]),
+    ).join("\n");
+
+    expect(violations).toContain("alternate physical module");
+    expect(violations).toContain("is forbidden");
+  });
+
+  it("allows the dedicated notification section and scopes the prohibition to its owners", () => {
+    expect(
+      fixtureMessages(
+        "src/services/notification/notificationChannelsApi.ts",
+        `
+          apiClient.get("bamboo/config/notifications");
+          apiClient.put("bamboo/config/notifications", {});
+        `,
+      ),
+    ).toBe("");
+    expect(
+      fixtureMessages(
+        "src/components/chat/settings/SystemSettings.tsx",
+        `apiClient.get("bamboo/config");`,
+      ),
+    ).toBe("");
+  });
+
   it.each([
     ["Api alias", "src/services/api/client.ts", clientOwner("", `const Alias = ApiClient; new Alias({});`)],
     ["Api subclass", "src/services/api/client.ts", clientOwner("", `class Duplicate extends ApiClient {}; new Duplicate({});`)],
@@ -217,7 +1020,7 @@ describe("architecture boundary fixtures", () => {
   it("allows named /v1 data/parser exceptions but rejects executable native routes", () => {
     expect(findArchitectureViolations(new Map([
       ["src/runtime/browserRuntime.ts", `const legacy = parsed.pathname === "/v1";`],
-      ["vite.config.ts", `if (parsed.pathname === "/v1") throw new Error("unsupported");`],
+      ["vite.config.ts", `${viteSourceAliasConfiguration()} if (parsed.pathname === "/v1") throw new Error("unsupported");`],
       ["src/runtime/runtimeConfig.ts", runtimeSchema("const nativeApi = `${origin}/api/v1`; ")],
       ["src/lib/providerPresets.ts", `const endpoint = "https://api.deepseek.com/v1";`],
     ]))).toEqual([]);
@@ -1329,6 +2132,68 @@ describe("architecture boundary fixtures", () => {
       expect(failures).toMatch(/\.env\.production.*secret-shaped variable VITE_DEVICE_TOKEN/);
       expect(failures).toMatch(/index\.html.*inline application scripts/);
       expect(failures).toMatch(/transport\.mts.*second HTTP transport owner/);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    [
+      "static import",
+      'import { relay } from "@services/notification/notificationPreferencesApi.ts"; void relay;',
+    ],
+    [
+      "re-export",
+      'export { relay } from "@services/notification/notificationPreferencesApi.ts";',
+    ],
+    [
+      "static dynamic import",
+      'void import("@services/notification/notificationPreferencesApi.ts");',
+    ],
+    [
+      "static require",
+      'void require("@services/notification/notificationPreferencesApi.ts");',
+    ],
+  ])("requires a protected dependency referenced by %s to remain a canonical source file", async (_label, ownerSource) => {
+    const root = await mkdtemp(path.join(tmpdir(), "lotus-next-notification-identity-"));
+    try {
+      const ownerDirectory = path.join(root, "src/components/chat/settings");
+      await mkdir(ownerDirectory, { recursive: true });
+      await writeFile(
+        path.join(ownerDirectory, "SettingsNotifications.tsx"),
+        ownerSource,
+      );
+
+      const failures = (await verifyRepositoryArchitecture(root)).join("\n");
+      expect(failures).toContain(
+        "src/services/notification/notificationPreferencesApi.ts: Notification authority dependency must remain present as its canonical regular source file",
+      );
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects a symbolic link at a referenced protected dependency path", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "lotus-next-notification-symlink-"));
+    try {
+      const ownerDirectory = path.join(root, "src/components/chat/settings");
+      const serviceDirectory = path.join(root, "src/services/notification");
+      await mkdir(ownerDirectory, { recursive: true });
+      await mkdir(serviceDirectory, { recursive: true });
+      await writeFile(
+        path.join(ownerDirectory, "SettingsNotifications.tsx"),
+        'import { relay } from "@services/notification/notificationPreferencesApi.ts"; void relay;',
+      );
+      await writeFile(path.join(serviceDirectory, "relay.ts"), "export const relay = undefined;");
+      await symlink(
+        "relay.ts",
+        path.join(serviceDirectory, "notificationPreferencesApi.ts"),
+      );
+
+      const failures = (await verifyRepositoryArchitecture(root)).join("\n");
+      expect(failures).toContain(
+        "src/services/notification/notificationPreferencesApi.ts: Notification authority dependency must be a regular file reached only through real directories",
+      );
     } finally {
       await rm(root, { recursive: true, force: true });
     }

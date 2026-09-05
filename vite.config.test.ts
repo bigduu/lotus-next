@@ -1,11 +1,33 @@
+import path from "node:path"
+
 import { describe, expect, it } from "vitest"
+import { resolveConfig } from "vite"
 
 import {
+  assertCanonicalSourceAliases,
   assertSafePublicBuildEnvironment,
+  canonicalSourceAliasPlugin,
   classifyVendorChunk,
   developmentProxy,
   portableArtifactBase,
 } from "./vite.config"
+
+const canonicalResolvedAliases = (projectRoot: string) => [
+  { find: "@", replacement: `${projectRoot}/src` },
+  { find: "@services", replacement: `${projectRoot}/src/services` },
+  { find: "@shared", replacement: `${projectRoot}/src/shared` },
+  { find: "@pages", replacement: `${projectRoot}/src/pages` },
+  { find: "@components", replacement: `${projectRoot}/src/components` },
+  { find: "@app", replacement: `${projectRoot}/src/app` },
+  {
+    find: /^\/?@vite\/env/,
+    replacement: "/@fs/node_modules/vite/dist/client/env.mjs",
+  },
+  {
+    find: /^\/?@vite\/client/,
+    replacement: "/@fs/node_modules/vite/dist/client/client.mjs",
+  },
+]
 
 const nonExactBackendInputs = [
   "https://backend.example:8443?", "https://backend.example:8443#",
@@ -65,6 +87,153 @@ describe("public Vite build environment", () => {
 
   it("keeps the production artifact portable across nested host mount paths", () => {
     expect(portableArtifactBase).toBe("./")
+  })
+})
+
+describe("Vite source alias identity", () => {
+  const projectRoot = "/workspace/lotus-next"
+
+  it("accepts only the resolved canonical roots plus Vite's internal aliases", () => {
+    expect(() => assertCanonicalSourceAliases(canonicalResolvedAliases(projectRoot), projectRoot)).not.toThrow()
+  })
+
+  it("allows harmless reordering within the complete canonical user alias table", () => {
+    const aliases = canonicalResolvedAliases(projectRoot)
+    const reordered = [aliases[1], aliases[0], ...aliases.slice(2)]
+    expect(() => assertCanonicalSourceAliases(reordered, projectRoot)).not.toThrow()
+  })
+
+  it.each([
+    ["Vite development", "vite.config.ts", "serve", "development"],
+    ["Vite production", "vite.config.ts", "build", "production"],
+    ["Vitest", "vitest.config.ts", "serve", "test"],
+  ] as const)(
+    "resolves protected imports to their physical sources after %s config hooks",
+    async (_label, configFile, command, mode) => {
+      const repositoryRoot = path.resolve(process.cwd())
+      const config = await resolveConfig(
+        {
+          configFile: path.join(repositoryRoot, configFile),
+          logLevel: "silent",
+          mode,
+        },
+        command,
+      )
+      assertCanonicalSourceAliases(config.resolve.alias, repositoryRoot)
+      const resolve = config.createResolver()
+      const channelService = path.join(repositoryRoot, "src/services/notification/notificationChannelsApi.ts")
+      const cases = [
+        ["@/lib/secrets.ts", channelService, "src/lib/secrets.ts"],
+        ["@/lib/secrets", channelService, "src/lib/secrets.ts"],
+        [
+          "@services/notification/notificationChannelsApi.ts",
+          path.join(repositoryRoot, "src/components/chat/settings/notifications/ChannelsSection.tsx"),
+          "src/services/notification/notificationChannelsApi.ts",
+        ],
+        [
+          "@components/chat/settings/SettingsNotifications.tsx",
+          path.join(repositoryRoot, "src/pages/Settings.tsx"),
+          "src/components/chat/settings/SettingsNotifications.tsx",
+        ],
+        ["../api/index.ts", channelService, "src/services/api/index.ts"],
+      ] as const
+      for (const [specifier, importer, expected] of cases) {
+        expect(path.normalize((await resolve(specifier, importer)) ?? "")).toBe(
+          path.normalize(path.join(repositoryRoot, expected)),
+        )
+      }
+    },
+  )
+
+  it("rejects an alias injected by a completed config hook", async () => {
+    const repositoryRoot = path.resolve(process.cwd())
+    const rawAliases = Object.fromEntries(
+      canonicalResolvedAliases(repositoryRoot)
+        .slice(0, 6)
+        .map((alias) => [alias.find, alias.replacement]),
+    )
+    await expect(
+      resolveConfig(
+        {
+          configFile: false,
+          root: repositoryRoot,
+          logLevel: "silent",
+          mode: "production",
+          resolve: { alias: rawAliases },
+          plugins: [
+            {
+              name: "redirect-protected-source",
+              config() {
+                return {
+                  resolve: {
+                    alias: [
+                      {
+                        find: "@/lib/secrets.ts",
+                        replacement: path.join(repositoryRoot, "src/services/notification/notificationPreferencesApi.ts"),
+                      },
+                    ],
+                  },
+                }
+              },
+            },
+            canonicalSourceAliasPlugin(),
+          ],
+        },
+        "build",
+      ),
+    ).rejects.toThrow("only the six canonical source roots")
+  })
+
+  it.each([
+    [
+      "an exact protected redirect",
+      [
+        {
+          find: "@/lib/secrets.ts",
+          replacement: `${projectRoot}/src/services/notificationRelay.ts`,
+        },
+        ...canonicalResolvedAliases(projectRoot),
+      ],
+    ],
+    [
+      "a relative protected redirect",
+      [
+        {
+          find: "../api/index.ts",
+          replacement: `${projectRoot}/src/services/notificationRelay.ts`,
+        },
+        ...canonicalResolvedAliases(projectRoot),
+      ],
+    ],
+    [
+      "a changed canonical replacement",
+      canonicalResolvedAliases(projectRoot).map((alias, index) =>
+        index === 0
+          ? {
+              ...alias,
+              replacement: `${projectRoot}/src/services/notificationRelay.ts`,
+            }
+          : alias,
+      ),
+    ],
+    [
+      "a relative canonical replacement",
+      canonicalResolvedAliases(projectRoot).map((alias, index) =>
+        index === 4 ? { ...alias, replacement: "./src/components" } : alias,
+      ),
+    ],
+    [
+      "a custom alias resolver",
+      canonicalResolvedAliases(projectRoot).map((alias, index) =>
+        index === 0 ? { ...alias, customResolver: () => null } : alias,
+      ),
+    ],
+    [
+      "an appended alias",
+      [...canonicalResolvedAliases(projectRoot), { find: "@extra", replacement: `${projectRoot}/src/extra` }],
+    ],
+  ])("rejects %s after Vite resolves configuration hooks", (_label, aliases) => {
+    expect(() => assertCanonicalSourceAliases(aliases, projectRoot)).toThrow("only the six canonical source roots")
   })
 })
 

@@ -1,5 +1,5 @@
 import path from "node:path"
-import { defineConfig, loadEnv, type Plugin } from "vite"
+import { defineConfig, loadEnv, type Alias, type Plugin } from "vite"
 import react from "@vitejs/plugin-react"
 import tailwindcss from "@tailwindcss/vite"
 
@@ -8,6 +8,68 @@ const allowedPublicViteNames = new Set([
   "VITE_APP_VERSION",
   "VITE_BACKEND_BASE_URL",
 ])
+
+const canonicalSourceAliases = [
+  ["@", "src"],
+  ["@services", "src/services"],
+  ["@shared", "src/shared"],
+  ["@pages", "src/pages"],
+  ["@components", "src/components"],
+  ["@app", "src/app"],
+] as const
+const viteInternalAliasPatterns = new Set(["^\\/?@vite\\/env", "^\\/?@vite\\/client"])
+
+export const assertCanonicalSourceAliases = (aliases: readonly Alias[], projectRoot: string): void => {
+  const expectedAliasCount = canonicalSourceAliases.length + viteInternalAliasPatterns.size
+  if (aliases.length !== expectedAliasCount) {
+    throw new Error("Vite source aliases must contain only the six canonical source roots.")
+  }
+
+  const configuredAliases = new Map<string, Alias>()
+  for (const alias of aliases.slice(0, canonicalSourceAliases.length)) {
+    if (typeof alias.find !== "string" || configuredAliases.has(alias.find)) {
+      throw new Error("Vite source aliases must contain only the six canonical source roots.")
+    }
+    configuredAliases.set(alias.find, alias)
+  }
+
+  for (const [find, relativeReplacement] of canonicalSourceAliases) {
+    const alias = configuredAliases.get(find)
+    if (
+      !alias ||
+      !path.isAbsolute(alias.replacement) ||
+      path.normalize(alias.replacement) !== path.resolve(projectRoot, relativeReplacement) ||
+      alias.customResolver != null
+    ) {
+      throw new Error("Vite source aliases must contain only the six canonical source roots.")
+    }
+  }
+
+  const internalPatterns = new Set<string>()
+  for (const alias of aliases.slice(canonicalSourceAliases.length)) {
+    if (
+      !(alias.find instanceof RegExp) ||
+      alias.find.flags !== "" ||
+      !viteInternalAliasPatterns.has(alias.find.source) ||
+      alias.customResolver != null ||
+      internalPatterns.has(alias.find.source)
+    ) {
+      throw new Error("Vite source aliases must contain only the six canonical source roots.")
+    }
+    internalPatterns.add(alias.find.source)
+  }
+  if (internalPatterns.size !== viteInternalAliasPatterns.size) {
+    throw new Error("Vite source aliases must contain only the six canonical source roots.")
+  }
+}
+
+export const canonicalSourceAliasPlugin = (): Plugin => ({
+  name: "lotus-next-canonical-source-aliases",
+  enforce: "post",
+  configResolved(config) {
+    assertCanonicalSourceAliases(config.resolve.alias, path.resolve(config.root))
+  },
+})
 
 const containsControlCharacter = (value: string): boolean =>
   Array.from(value).some((character) => {
@@ -291,7 +353,7 @@ export default defineConfig(({ mode }) => {
 
   return {
     base: portableArtifactBase,
-    plugins: [react(), tailwindcss(), bundleOwnershipPlugin()],
+    plugins: [react(), tailwindcss(), bundleOwnershipPlugin(), canonicalSourceAliasPlugin()],
     build: {
       // The package verifier follows this exact generated graph when enforcing
       // the ordinary-chat startup budget and optional-feature boundaries.

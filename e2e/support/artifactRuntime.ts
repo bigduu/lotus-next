@@ -35,11 +35,22 @@ export interface RuntimeObservation {
   readonly pageErrors: string[]
   readonly failedRequests: string[]
   readonly errorResponses: string[]
+  /** Secret-free summaries of the dedicated notification section contract. */
+  readonly notificationConfigRequests: Array<{
+    readonly method: "GET" | "PUT"
+    readonly path: string
+    readonly expectedRevision: number | null
+    readonly responseRevision: number | null
+    readonly ntfyCredentialAction: string | null
+    readonly barkCredentialAction: string | null
+  }>
 }
 
 export interface ArtifactRuntimeOptions {
   /** Override only the canonical provider snapshot for failure-path acceptance. */
   readonly providerInstancesResponse?: unknown
+  /** Override only notification GETs; used to exercise malformed authority failure. */
+  readonly notificationConfigResponse?: unknown
 }
 
 export const standaloneScenario: ArtifactScenario = {
@@ -138,6 +149,104 @@ const fixtureModel = {
   source: "static",
 }
 
+type FixtureNotificationState = {
+  revision: number
+  credentialRevision: number
+  desktopEnabled: boolean | null
+  ntfy: { enabled: boolean; baseUrl: string; topic: string; configured: boolean }
+  bark: { enabled: boolean; baseUrl: string; configured: boolean }
+}
+
+type JsonRecord = Record<string, unknown>
+type CredentialAction = "keep" | "replace" | "clear"
+const asRecord = (value: unknown): JsonRecord | null =>
+  typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as JsonRecord)
+    : null
+
+const initialNotificationState = (): FixtureNotificationState => ({
+  revision: 7,
+  credentialRevision: 3,
+  desktopEnabled: null,
+  ntfy: { enabled: false, baseUrl: "https://ntfy.sh", topic: "fixture-topic", configured: false },
+  bark: { enabled: false, baseUrl: "https://api.day.app", configured: false },
+})
+
+const notificationEnvelope = (state: FixtureNotificationState): unknown => {
+  const sourcePath = "/fixture/notifications.json"
+  const ntfyRef = "notification.ntfy.token"
+  const barkRef = "notification.bark.device_key"
+  const credential = (configured: boolean, credentialRef: string) =>
+    configured
+      ? {
+          credential_ref: credentialRef,
+          state: "configured",
+          configured: true,
+          source: "user",
+          updated_at: FIXTURE_TIME,
+        }
+      : { credential_ref: null, state: "missing", configured: false }
+
+  return {
+    revision: state.revision,
+    status: "healthy",
+    source: "file",
+    source_path: sourcePath,
+    loaded_at: FIXTURE_TIME,
+    last_error: null,
+    section: {
+      data: {
+        notifications: {
+          desktop: state.desktopEnabled === null ? {} : { enabled: state.desktopEnabled },
+          ntfy: {
+            enabled: state.ntfy.enabled,
+            base_url: state.ntfy.baseUrl,
+            topic: state.ntfy.topic,
+            configured: state.ntfy.configured,
+            ...(state.ntfy.configured ? { credential_ref: ntfyRef } : {}),
+          },
+          bark: {
+            enabled: state.bark.enabled,
+            base_url: state.bark.baseUrl,
+            configured: state.bark.configured,
+            ...(state.bark.configured ? { credential_ref: barkRef } : {}),
+          },
+        },
+      },
+      revision: state.revision,
+      loaded_at: FIXTURE_TIME,
+      source_path: sourcePath,
+      source_kind: "file",
+      status: "healthy",
+      last_error: null,
+    },
+    credential_revision: state.credentialRevision,
+    credential_status: "healthy",
+    credential_source: "file",
+    credential_last_error: null,
+    credential_health: {
+      revision: state.credentialRevision,
+      status: "healthy",
+      source: "file",
+      last_error: null,
+    },
+    data: {
+      desktop: { enabled: state.desktopEnabled },
+      ntfy: {
+        enabled: state.ntfy.enabled,
+        base_url: state.ntfy.baseUrl,
+        topic: state.ntfy.topic,
+        credential: credential(state.ntfy.configured, ntfyRef),
+      },
+      bark: {
+        enabled: state.bark.enabled,
+        base_url: state.bark.baseUrl,
+        credential: credential(state.bark.configured, barkRef),
+      },
+    },
+  }
+}
+
 const apiResponse = (method: string, pathnameWithSearch: string): unknown => {
   switch (`${method} ${pathnameWithSearch}`) {
     case "GET /api/v1/bootstrap":
@@ -178,6 +287,17 @@ const apiResponse = (method: string, pathnameWithSearch: string): unknown => {
       return { status: "ok" }
     case "GET /api/v1/bamboo/config":
       return { proxy_auth_mode: "auto" }
+    case "GET /api/v1/notifications/preferences":
+      return {
+        enabled: true,
+        on_clarification: true,
+        on_tool_approval: true,
+        on_context_pressure: true,
+        on_subagent_complete: true,
+        on_background_task_complete: true,
+        on_run_complete: true,
+        on_run_failed: true,
+      }
     case "GET /api/v1/metrics/summary":
       return {
         total_sessions: 1,
@@ -304,7 +424,9 @@ export const installArtifactRuntime = async (
     pageErrors: [],
     failedRequests: [],
     errorResponses: [],
+    notificationConfigRequests: [],
   }
+  let notificationState = initialNotificationState()
 
   page.on("console", (message) => {
     if (message.type() === "error") observation.consoleErrors.push(message.text())
@@ -374,6 +496,95 @@ export const installArtifactRuntime = async (
 
     if (url.pathname.startsWith("/api/v1/")) {
       observation.apiUrls.push(url.href)
+      if (
+        request.method() === "GET" &&
+        url.pathname === "/api/v1/bamboo/config/notifications"
+      ) {
+        const response = options.notificationConfigResponse ?? notificationEnvelope(notificationState)
+        const responseRecord = asRecord(response)
+        observation.notificationConfigRequests.push({
+          method: "GET",
+          path: url.pathname,
+          expectedRevision: null,
+          responseRevision:
+            Number.isSafeInteger(responseRecord?.revision)
+              ? (responseRecord?.revision as number)
+              : null,
+          ntfyCredentialAction: null,
+          barkCredentialAction: null,
+        })
+        await route.fulfill({ status: 200, json: response })
+        return
+      }
+      if (
+        request.method() === "PUT" &&
+        url.pathname === "/api/v1/bamboo/config/notifications"
+      ) {
+        const body = asRecord(request.postDataJSON() as unknown)
+        const data = asRecord(body?.data)
+        const desktop = asRecord(data?.desktop)
+        const ntfy = asRecord(data?.ntfy)
+        const bark = asRecord(data?.bark)
+        const ntfyAction = asRecord(ntfy?.credential_change)?.action as CredentialAction
+        const barkAction = asRecord(bark?.credential_change)?.action as CredentialAction
+        const expectedRevision = body?.expected_revision as number
+        const requestSummary = {
+          method: "PUT" as const,
+          path: url.pathname,
+          expectedRevision,
+          ntfyCredentialAction: ntfyAction,
+          barkCredentialAction: barkAction,
+        }
+        if (expectedRevision !== notificationState.revision) {
+          observation.notificationConfigRequests.push({
+            ...requestSummary,
+            responseRevision: notificationState.revision,
+          })
+          await route.fulfill({
+            status: 409,
+            json: { error: { code: "config_revision_conflict" } },
+          })
+          return
+        }
+
+        const credentialChanged =
+          ntfyAction === "replace" ||
+          barkAction === "replace" ||
+          (ntfyAction === "clear" && notificationState.ntfy.configured) ||
+          (barkAction === "clear" && notificationState.bark.configured)
+        const publicChanged =
+          desktop?.enabled !== notificationState.desktopEnabled ||
+          ntfy?.enabled !== notificationState.ntfy.enabled ||
+          ntfy?.base_url !== notificationState.ntfy.baseUrl ||
+          ntfy?.topic !== notificationState.ntfy.topic ||
+          bark?.enabled !== notificationState.bark.enabled ||
+          bark?.base_url !== notificationState.bark.baseUrl
+        notificationState = {
+          revision: notificationState.revision + Number(publicChanged || credentialChanged),
+          credentialRevision:
+            notificationState.credentialRevision + Number(publicChanged || credentialChanged),
+          desktopEnabled: desktop?.enabled as boolean | null,
+          ntfy: {
+            enabled: ntfy?.enabled as boolean,
+            baseUrl: ntfy?.base_url as string,
+            topic: ntfy?.topic as string,
+            configured:
+              ntfyAction === "keep" ? notificationState.ntfy.configured : ntfyAction === "replace",
+          },
+          bark: {
+            enabled: bark?.enabled as boolean,
+            baseUrl: bark?.base_url as string,
+            configured:
+              barkAction === "keep" ? notificationState.bark.configured : barkAction === "replace",
+          },
+        }
+        observation.notificationConfigRequests.push({
+          ...requestSummary,
+          responseRevision: notificationState.revision,
+        })
+        await route.fulfill({ status: 200, json: notificationEnvelope(notificationState) })
+        return
+      }
       if (
         request.method() === "PATCH" &&
         `${url.pathname}${url.search}` === `/api/v1/sessions/${FIXTURE_SESSION_ID}`
