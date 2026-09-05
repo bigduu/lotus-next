@@ -15,6 +15,7 @@ const httpOwner = "src/services/api/transport.ts";
 const apiCompositionOwner = "src/services/api/index.ts";
 const apiClientOwner = "src/services/api/client.ts";
 const viteConfiguration = "vite.config.ts";
+const vitestConfiguration = "vitest.config.ts";
 const browserHttpTransportFactory = "createBrowserHttpTransport";
 const httpTransportType = "HttpTransport";
 const websocketOwner = "src/services/chat/v2Stream.ts";
@@ -134,6 +135,18 @@ const notificationProtectedDependencySpecifiers = new Map([
   ["src/components/ui/select", "@/components/ui/select.tsx"],
   ["src/components/ui/switch", "@/components/ui/switch.tsx"],
 ]);
+const canonicalViteSourceAliases = new Map([
+  ["@", "./src"],
+  ["@services", "./src/services"],
+  ["@shared", "./src/shared"],
+  ["@pages", "./src/pages"],
+  ["@components", "./src/components"],
+  ["@app", "./src/app"],
+]);
+const canonicalConfigurationPluginCalls = new Map([
+  [viteConfiguration, ["react", "tailwindcss", "bundleOwnershipPlugin", "canonicalSourceAliasPlugin"]],
+  [vitestConfiguration, ["react", "canonicalSourceAliasPlugin"]],
+]);
 const notificationWholeConfigCallNames = new Set([
   "delete",
   "fetchRaw",
@@ -221,6 +234,12 @@ const alternateHttpPackages = new Set([
   "wretch",
 ]);
 const alternateTransportNames = new Set(["EventSource", "XMLHttpRequest"]);
+const forbiddenBrowserTransportNames = new Set(["sendBeacon"]);
+const allowedDirectNavigatorCapabilities = new Set(["clipboard", "language", "platform", "userAgent"]);
+const allowedNotificationBrowserGlobalCapabilities = new Set(["clearTimeout", "navigator", "setTimeout"]);
+const allowedNotificationDocumentCapabilities = new Set(["defaultView"]);
+const notificationGlobalTimerNames = new Set(["setInterval", "setTimeout"]);
+const forbiddenNotificationGlobalCallbackNames = new Set(["addEventListener"]);
 const localAliases = ["@", "@app", "@components", "@hooks", "@pages", "@services", "@shared"];
 
 const expectedInventory = {
@@ -317,6 +336,210 @@ const accessedPropertyName = (node) => {
   if (ts.isPropertyAccessExpression(node)) return node.name.text;
   if (ts.isElementAccessExpression(node)) return staticName(node.argumentExpression);
   return null;
+};
+
+const unwrappedExpression = (node) => {
+  let current = node;
+  while (
+    current &&
+    (ts.isParenthesizedExpression(current) ||
+      ts.isAsExpression(current) ||
+      ts.isTypeAssertionExpression(current) ||
+      ts.isNonNullExpression(current) ||
+      ts.isSatisfiesExpression(current))
+  ) {
+    current = current.expression;
+  }
+  return current;
+};
+
+const isCanonicalViteAliasTarget = (node, expectedTarget) => {
+  const expression = unwrappedExpression(node);
+  return (
+    expression &&
+    ts.isCallExpression(expression) &&
+    expression.arguments.length === 2 &&
+    ts.isPropertyAccessExpression(expression.expression) &&
+    ts.isIdentifier(expression.expression.expression) &&
+    expression.expression.expression.text === "path" &&
+    expression.expression.name.text === "resolve" &&
+    ts.isIdentifier(expression.arguments[0]) &&
+    expression.arguments[0].text === "__dirname" &&
+    ts.isStringLiteralLike(expression.arguments[1]) &&
+    expression.arguments[1].text === expectedTarget
+  );
+};
+
+const hasBindingName = (name, expected) => {
+  if (ts.isIdentifier(name)) return name.text === expected;
+  if (ts.isObjectBindingPattern(name) || ts.isArrayBindingPattern(name)) {
+    return name.elements.some((element) => ts.isBindingElement(element) && hasBindingName(element.name, expected));
+  }
+  return false;
+};
+
+const hasShadowedVitePathBinding = (sourceFile) => {
+  let shadowed = false;
+  const visit = (node) => {
+    if (
+      (ts.isVariableDeclaration(node) || ts.isParameter(node)) &&
+      (hasBindingName(node.name, "path") || hasBindingName(node.name, "__dirname"))
+    ) {
+      shadowed = true;
+    }
+    if (!shadowed) ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  return shadowed;
+};
+
+const hasCanonicalViteSourceAliasConfiguration = (sourceFile, configurationFile) => {
+  const pathImports = sourceFile.statements.filter(
+    (statement) =>
+      ts.isImportDeclaration(statement) &&
+      ts.isStringLiteralLike(statement.moduleSpecifier) &&
+      statement.moduleSpecifier.text === "node:path",
+  );
+  if (
+    pathImports.length !== 1 ||
+    pathImports[0].importClause?.name?.text !== "path" ||
+    pathImports[0].importClause?.namedBindings ||
+    hasShadowedVitePathBinding(sourceFile)
+  ) {
+    return false;
+  }
+
+  const defineConfigModule = configurationFile === viteConfiguration ? "vite" : "vitest/config";
+  const defineConfigImports = sourceFile.statements.filter(
+    (statement) =>
+      ts.isImportDeclaration(statement) &&
+      ts.isStringLiteralLike(statement.moduleSpecifier) &&
+      statement.moduleSpecifier.text === defineConfigModule,
+  );
+  const defineConfigBindings = defineConfigImports.flatMap((statement) => {
+    const bindings = statement.importClause?.namedBindings;
+    return bindings && ts.isNamedImports(bindings) ? bindings.elements : [];
+  });
+  if (
+    defineConfigImports.length !== 1 ||
+    defineConfigBindings.filter(
+      (binding) =>
+        !binding.isTypeOnly &&
+        !binding.propertyName &&
+        binding.name.text === "defineConfig",
+    ).length !== 1
+  ) {
+    return false;
+  }
+
+  const defaultExports = sourceFile.statements.filter(
+    (statement) => ts.isExportAssignment(statement) && !statement.isExportEquals,
+  );
+  if (defaultExports.length !== 1) return false;
+  const exportExpression = unwrappedExpression(defaultExports[0].expression);
+  if (
+    !exportExpression ||
+    !ts.isCallExpression(exportExpression) ||
+    !ts.isIdentifier(exportExpression.expression) ||
+    exportExpression.expression.text !== "defineConfig" ||
+    exportExpression.arguments.length !== 1
+  ) {
+    return false;
+  }
+  const configArgument = unwrappedExpression(exportExpression.arguments[0]);
+  let configObject;
+  if (configurationFile === viteConfiguration) {
+    if (
+      !configArgument ||
+      (!ts.isArrowFunction(configArgument) && !ts.isFunctionExpression(configArgument)) ||
+      !ts.isBlock(configArgument.body)
+    ) {
+      return false;
+    }
+    const returnStatements = [];
+    const collectConfigReturns = (node) => {
+      if (node !== configArgument.body && ts.isFunctionLike(node)) return;
+      if (ts.isReturnStatement(node)) returnStatements.push(node);
+      ts.forEachChild(node, collectConfigReturns);
+    };
+    collectConfigReturns(configArgument.body);
+    if (returnStatements.length !== 1 || !returnStatements[0].expression) return false;
+    configObject = unwrappedExpression(returnStatements[0].expression);
+  } else {
+    configObject = configArgument;
+  }
+  if (!configObject || !ts.isObjectLiteralExpression(configObject)) return false;
+  if (
+    configObject.properties.some(
+      (property) => ts.isSpreadAssignment(property) || ("name" in property && ts.isComputedPropertyName(property.name)),
+    )
+  ) {
+    return false;
+  }
+
+  const pluginProperties = configObject.properties.filter(
+    (property) => "name" in property && staticName(property.name) === "plugins",
+  );
+  if (pluginProperties.length !== 1 || !ts.isPropertyAssignment(pluginProperties[0])) return false;
+  const pluginArray = unwrappedExpression(pluginProperties[0].initializer);
+  const expectedPluginCalls = canonicalConfigurationPluginCalls.get(configurationFile);
+  if (
+    !pluginArray ||
+    !ts.isArrayLiteralExpression(pluginArray) ||
+    !expectedPluginCalls ||
+    pluginArray.elements.length !== expectedPluginCalls.length ||
+    pluginArray.elements.some((element, index) => {
+      const expression = unwrappedExpression(element);
+      return (
+        !expression ||
+        !ts.isCallExpression(expression) ||
+        expression.arguments.length !== 0 ||
+        !ts.isIdentifier(expression.expression) ||
+        expression.expression.text !== expectedPluginCalls[index]
+      );
+    })
+  ) {
+    return false;
+  }
+
+  const resolveProperties = configObject.properties.filter(
+    (property) => "name" in property && staticName(property.name) === "resolve",
+  );
+  if (resolveProperties.length !== 1 || !ts.isPropertyAssignment(resolveProperties[0])) return false;
+  const resolveObject = unwrappedExpression(resolveProperties[0].initializer);
+  if (!resolveObject || !ts.isObjectLiteralExpression(resolveObject)) return false;
+  if (
+    resolveObject.properties.some(
+      (property) => ts.isSpreadAssignment(property) || ("name" in property && ts.isComputedPropertyName(property.name)),
+    )
+  ) {
+    return false;
+  }
+  const aliasProperties = resolveObject.properties.filter(
+    (property) => "name" in property && staticName(property.name) === "alias",
+  );
+  if (aliasProperties.length !== 1 || !ts.isPropertyAssignment(aliasProperties[0])) return false;
+  const aliasObject = unwrappedExpression(aliasProperties[0].initializer);
+  if (!aliasObject || !ts.isObjectLiteralExpression(aliasObject)) return false;
+  if (aliasObject.properties.length !== canonicalViteSourceAliases.size) return false;
+
+  const seenAliases = new Set();
+  for (const property of aliasObject.properties) {
+    if (!ts.isPropertyAssignment(property) || ts.isComputedPropertyName(property.name)) {
+      return false;
+    }
+    const alias = staticName(property.name);
+    const expectedTarget = canonicalViteSourceAliases.get(alias);
+    if (
+      expectedTarget === undefined ||
+      seenAliases.has(alias) ||
+      !isCanonicalViteAliasTarget(property.initializer, expectedTarget)
+    ) {
+      return false;
+    }
+    seenAliases.add(alias);
+  }
+  return seenAliases.size === canonicalViteSourceAliases.size;
 };
 
 const isImportMeta = (node) =>
@@ -673,6 +896,16 @@ const analyzeSource = (file, source) => {
     violations.push(`${positionLabel(file, sourceFile, node)}: ${message}`);
   };
 
+  if (
+    [viteConfiguration, vitestConfiguration].includes(file) &&
+    !hasCanonicalViteSourceAliasConfiguration(sourceFile, file)
+  ) {
+    report(
+      sourceFile,
+      "Vite source aliases and Vitest source aliases must remain the exact six canonical source roots with no redirect or configuration indirection",
+    );
+  }
+
   const logicalIdentity = logicalModuleIdentity(file);
   const expectedPhysicalDependency = notificationProtectedPhysicalDependencies.get(logicalIdentity);
   if (expectedPhysicalDependency && file !== expectedPhysicalDependency) {
@@ -859,6 +1092,10 @@ const analyzeSource = (file, source) => {
   const isNotificationAuthorityService = notificationAuthorityServiceApiBindings.has(file);
   const notificationChannelTrustedLeafDependencies =
     notificationChannelTrustedLeafAllowedDependencies.get(file);
+  const isNotificationAuthorityBoundary =
+    isNotificationChannelConfigOwner ||
+    isNotificationAuthorityService ||
+    Boolean(notificationChannelTrustedLeafDependencies);
   const isAllowedNotificationTrustedLeafDependency = (moduleName) => {
     if (!notificationChannelTrustedLeafDependencies || !isLocalModule(moduleName)) return true;
     const resolved = localModulePath(file, moduleName);
@@ -1166,7 +1403,33 @@ const analyzeSource = (file, source) => {
   };
   collectProjectionCandidates(sourceFile);
 
-  const browserGlobalNames = new Set(["globalThis", "self", "window"]);
+  const browserGlobalNames = new Set(["frames", "globalThis", "opener", "parent", "self", "top", "window"]);
+  const projectedExpression = (candidate) => {
+    let sourceExpression = unwrapStaticExpression(candidate.sourceExpression);
+    for (const segment of candidate.segments) {
+      if (segment.kind === "index") {
+        if (!sourceExpression || !ts.isArrayLiteralExpression(sourceExpression)) return null;
+        const element = sourceExpression.elements[segment.value];
+        if (!element || ts.isOmittedExpression(element) || ts.isSpreadElement(element)) return null;
+        sourceExpression = unwrapStaticExpression(element);
+        continue;
+      }
+      if (!sourceExpression || !ts.isObjectLiteralExpression(sourceExpression)) return null;
+      const property = sourceExpression.properties.find(
+        (candidateProperty) =>
+          "name" in candidateProperty &&
+          resolvedDeclaredPropertyName(candidateProperty.name) === segment.value,
+      );
+      if (property && ts.isPropertyAssignment(property)) {
+        sourceExpression = unwrapStaticExpression(property.initializer);
+      } else if (property && ts.isShorthandPropertyAssignment(property)) {
+        sourceExpression = property.name;
+      } else {
+        return null;
+      }
+    }
+    return sourceExpression;
+  };
   const resolveProjectionKind = (candidate, resolvingSymbols) => {
     let sourceExpression = unwrapStaticExpression(candidate.sourceExpression);
     let kind = null;
@@ -1177,13 +1440,29 @@ const analyzeSource = (file, source) => {
         if (!sourceExpression) return null;
       } else {
         if (kind === null) {
-          if (!isBrowserGlobalExpression(sourceExpression, resolvingSymbols)) return null;
-          kind = "browser-global";
+          if (isBrowserGlobalExpression(sourceExpression, resolvingSymbols)) {
+            kind = "browser-global";
+          } else if (isReflectNamespaceExpression(sourceExpression, resolvingSymbols)) {
+            kind = "reflect";
+          } else if (isNavigatorExpression(sourceExpression, resolvingSymbols)) {
+            kind = "navigator";
+          } else if (isReflectGetExpression(sourceExpression, resolvingSymbols)) {
+            kind = "reflect-get";
+          } else if (isReflectApplyExpression(sourceExpression, resolvingSymbols)) {
+            kind = "reflect-apply";
+          } else {
+            return null;
+          }
         }
-        if (kind !== "browser-global") return null;
-        if (browserGlobalNames.has(segment.value)) continue;
-        if (segment.value === "Reflect") {
+        if (kind === "browser-global" && browserGlobalNames.has(segment.value)) continue;
+        if (kind === "browser-global" && segment.value === "Reflect") {
           kind = "reflect";
+        } else if (kind === "browser-global" && segment.value === "navigator") {
+          kind = "navigator";
+        } else if (kind === "reflect" && segment.value === "get") {
+          kind = "reflect-get";
+        } else if (kind === "reflect" && segment.value === "apply") {
+          kind = "reflect-apply";
         } else {
           return null;
         }
@@ -1194,6 +1473,12 @@ const analyzeSource = (file, source) => {
         kind = "browser-global";
       } else if (isReflectNamespaceExpression(sourceExpression, resolvingSymbols)) {
         kind = "reflect";
+      } else if (isNavigatorExpression(sourceExpression, resolvingSymbols)) {
+        kind = "navigator";
+      } else if (isReflectGetExpression(sourceExpression, resolvingSymbols)) {
+        kind = "reflect-get";
+      } else if (isReflectApplyExpression(sourceExpression, resolvingSymbols)) {
+        kind = "reflect-apply";
       } else {
         return null;
       }
@@ -1222,9 +1507,18 @@ const analyzeSource = (file, source) => {
       );
     }
     if (ts.isPropertyAccessExpression(expression) || ts.isElementAccessExpression(expression)) {
+      if (resolvedPropertyName(expression) === "defaultView") return true;
+      if (resolvedPropertyName(expression) === "view") return true;
       return (
         browserGlobalNames.has(resolvedPropertyName(expression)) &&
         isBrowserGlobalExpression(expression.expression, resolvingSymbols)
+      );
+    }
+    if (ts.isCallExpression(expression)) {
+      return reflectivePropertyReads(expression).some(
+        (read) =>
+          browserGlobalNames.has(read.key) &&
+          isBrowserGlobalExpression(read.target, resolvingSymbols),
       );
     }
     if (
@@ -1268,6 +1562,13 @@ const analyzeSource = (file, source) => {
         isBrowserGlobalExpression(expression.expression)
       );
     }
+    if (ts.isCallExpression(expression)) {
+      return reflectivePropertyReads(expression).some(
+        (read) =>
+          read.key === "Reflect" &&
+          isBrowserGlobalExpression(read.target, resolvingSymbols),
+      );
+    }
     if (
       ts.isBinaryExpression(expression) &&
       expression.operatorToken.kind === ts.SyntaxKind.EqualsToken
@@ -1283,28 +1584,439 @@ const analyzeSource = (file, source) => {
     return false;
   };
 
-  const reflectivePropertyRead = (node) => {
-    if (!ts.isCallExpression(node) || node.arguments.length < 2) return null;
-    const callee = unwrapStaticExpression(node.expression);
-    if (
-      !callee ||
-      (!ts.isPropertyAccessExpression(callee) && !ts.isElementAccessExpression(callee)) ||
-      resolvedPropertyName(callee) !== "get" ||
-      !isReflectNamespaceExpression(callee.expression)
-    ) {
-      return null;
+  const isReflectApplyExpression = (node, resolvingSymbols = new Set()) => {
+    const expression = unwrapStaticExpression(node);
+    if (!expression) return false;
+    if (ts.isIdentifier(expression)) {
+      const symbol = typeChecker.getSymbolAtLocation(expression);
+      if (!symbol?.declarations?.length || resolvingSymbols.has(symbol)) return false;
+      const initializers = valueInitializers.get(symbol);
+      const projections = projectionCandidates.get(symbol);
+      const nextResolvingSymbols = new Set(resolvingSymbols).add(symbol);
+      return Boolean(
+        initializers?.some((initializer) =>
+          isReflectApplyExpression(initializer, nextResolvingSymbols),
+        ) ||
+          projections?.some(
+            (candidate) =>
+              resolveProjectionKind(candidate, nextResolvingSymbols) === "reflect-apply",
+          ),
+      );
     }
-    return { key: resolveStaticKey(node.arguments[1]) };
+    if (ts.isPropertyAccessExpression(expression) || ts.isElementAccessExpression(expression)) {
+      return (
+        resolvedPropertyName(expression) === "apply" &&
+        isReflectNamespaceExpression(expression.expression, resolvingSymbols)
+      );
+    }
+    if (ts.isBinaryExpression(expression) && expression.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
+      return isReflectApplyExpression(expression.right, resolvingSymbols);
+    }
+    if (ts.isConditionalExpression(expression)) {
+      return (
+        isReflectApplyExpression(expression.whenTrue, resolvingSymbols) ||
+        isReflectApplyExpression(expression.whenFalse, resolvingSymbols)
+      );
+    }
+    return false;
   };
 
-  const isReflectivePropertyRead = (node, propertyName) => {
-    const read = reflectivePropertyRead(node);
-    return read?.key === propertyName;
+  const reflectGetFunctionBindings = (node, resolvingSymbols = new Set()) => {
+    const expression = unwrapStaticExpression(node);
+    if (!expression) return [];
+    if (ts.isIdentifier(expression)) {
+      const symbol = typeChecker.getSymbolAtLocation(expression);
+      if (!symbol?.declarations?.length || resolvingSymbols.has(symbol)) return [];
+      const initializers = valueInitializers.get(symbol);
+      const projections = projectionCandidates.get(symbol);
+      const nextResolvingSymbols = new Set(resolvingSymbols).add(symbol);
+      const bindings = (initializers ?? []).flatMap((initializer) =>
+        reflectGetFunctionBindings(initializer, nextResolvingSymbols),
+      );
+      for (const candidate of projections ?? []) {
+        const projected = projectedExpression(candidate);
+        if (projected) {
+          bindings.push(...reflectGetFunctionBindings(projected, nextResolvingSymbols));
+        } else if (resolveProjectionKind(candidate, nextResolvingSymbols) === "reflect-get") {
+          bindings.push({ boundArguments: [] });
+        }
+      }
+      return bindings;
+    }
+    if (ts.isPropertyAccessExpression(expression) || ts.isElementAccessExpression(expression)) {
+      return resolvedPropertyName(expression) === "get" && isReflectNamespaceExpression(expression.expression)
+        ? [{ boundArguments: [] }]
+        : [];
+    }
+    if (ts.isCallExpression(expression)) {
+      const callee = unwrapStaticExpression(expression.expression);
+      if (
+        callee &&
+        (ts.isPropertyAccessExpression(callee) || ts.isElementAccessExpression(callee)) &&
+        resolvedPropertyName(callee) === "bind"
+      ) {
+        return reflectGetFunctionBindings(callee.expression, resolvingSymbols).map((binding) => ({
+          boundArguments: [...binding.boundArguments, ...expression.arguments.slice(1)],
+        }));
+      }
+      return [];
+    }
+    if (ts.isBinaryExpression(expression) && expression.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
+      return reflectGetFunctionBindings(expression.right, resolvingSymbols);
+    }
+    if (ts.isConditionalExpression(expression)) {
+      return [
+        ...reflectGetFunctionBindings(expression.whenTrue, resolvingSymbols),
+        ...reflectGetFunctionBindings(expression.whenFalse, resolvingSymbols),
+      ];
+    }
+    return [];
   };
 
-  const isUnprovenReflectivePropertyRead = (node) => {
-    const read = reflectivePropertyRead(node);
-    return read !== null && read.key === null;
+  const isReflectGetExpression = (node, resolvingSymbols = new Set()) =>
+    reflectGetFunctionBindings(node, resolvingSymbols).length > 0;
+
+  const isDirectCallCallee = (node) => {
+    let current = node;
+    while (
+      current.parent &&
+      (ts.isParenthesizedExpression(current.parent) ||
+        ts.isAsExpression(current.parent) ||
+        ts.isTypeAssertionExpression(current.parent) ||
+        ts.isNonNullExpression(current.parent) ||
+        ts.isSatisfiesExpression(current.parent)) &&
+      current.parent.expression === current
+    ) {
+      current = current.parent;
+    }
+    return Boolean(
+      current.parent &&
+        ts.isCallExpression(current.parent) &&
+        current.parent.expression === current,
+    );
+  };
+
+  const expandStaticArgumentList = (argumentsList, resolvingSymbols = new Set()) => {
+    let alternatives = [[]];
+    for (const argument of argumentsList) {
+      if (ts.isOmittedExpression(argument)) return null;
+      if (!ts.isSpreadElement(argument)) {
+        alternatives = alternatives.map((current) => [...current, argument]);
+        continue;
+      }
+      const spreadAlternatives = resolveStaticArgumentArray(argument.expression, resolvingSymbols);
+      if (!spreadAlternatives) return null;
+      alternatives = alternatives.flatMap((current) =>
+        spreadAlternatives.map((spread) => [...current, ...spread]),
+      );
+      if (alternatives.length > 32) return null;
+    }
+    return alternatives;
+  };
+
+  const resolveStaticArgumentArray = (node, resolvingSymbols = new Set()) => {
+    const expression = unwrapStaticExpression(node);
+    if (!expression) return null;
+    if (ts.isArrayLiteralExpression(expression)) {
+      return expandStaticArgumentList(expression.elements, resolvingSymbols);
+    }
+    if (ts.isIdentifier(expression)) {
+      const symbol = typeChecker.getSymbolAtLocation(expression);
+      if (!symbol?.declarations?.length || resolvingSymbols.has(symbol)) return null;
+      const nextResolvingSymbols = new Set(resolvingSymbols).add(symbol);
+      const alternatives = (valueInitializers.get(symbol) ?? []).flatMap(
+        (initializer) => resolveStaticArgumentArray(initializer, nextResolvingSymbols) ?? [],
+      );
+      return alternatives.length ? alternatives : null;
+    }
+    if (ts.isBinaryExpression(expression) && expression.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
+      return resolveStaticArgumentArray(expression.right, resolvingSymbols);
+    }
+    if (ts.isConditionalExpression(expression)) {
+      const alternatives = [
+        ...(resolveStaticArgumentArray(expression.whenTrue, resolvingSymbols) ?? []),
+        ...(resolveStaticArgumentArray(expression.whenFalse, resolvingSymbols) ?? []),
+      ];
+      return alternatives.length ? alternatives : null;
+    }
+    return null;
+  };
+
+  const reflectivePropertyReads = (node) => {
+    if (!ts.isCallExpression(node)) return [];
+    const callee = unwrapStaticExpression(node.expression);
+    if (!callee) return [];
+
+    let bindings = reflectGetFunctionBindings(callee);
+    let invocationArgumentAlternatives = bindings.length
+      ? expandStaticArgumentList(node.arguments)
+      : null;
+    if (
+      !bindings.length &&
+      (ts.isPropertyAccessExpression(callee) || ts.isElementAccessExpression(callee))
+    ) {
+      const invocationKind = resolvedPropertyName(callee);
+      bindings = reflectGetFunctionBindings(callee.expression);
+      if (bindings.length && invocationKind === "call") {
+        invocationArgumentAlternatives = expandStaticArgumentList(node.arguments.slice(1));
+      } else if (bindings.length && invocationKind === "apply") {
+        invocationArgumentAlternatives = resolveStaticArgumentArray(node.arguments[1]);
+      } else {
+        bindings = [];
+      }
+    }
+    if (!bindings.length && isReflectApplyExpression(callee)) {
+      bindings = reflectGetFunctionBindings(node.arguments[0]);
+      if (bindings.length) {
+        invocationArgumentAlternatives = resolveStaticArgumentArray(node.arguments[2]);
+      }
+    }
+    if (!bindings.length) return [];
+    if (!invocationArgumentAlternatives) return [{ target: null, key: null }];
+
+    const reads = [];
+    for (const binding of bindings) {
+      const boundArgumentAlternatives = expandStaticArgumentList(binding.boundArguments);
+      if (!boundArgumentAlternatives) return [{ target: null, key: null }];
+      for (const boundArguments of boundArgumentAlternatives) {
+        for (const invocationArguments of invocationArgumentAlternatives) {
+          const normalizedArguments = [...boundArguments, ...invocationArguments];
+          reads.push({
+            target: normalizedArguments[0] ?? null,
+            key: normalizedArguments.length > 1 ? resolveStaticKey(normalizedArguments[1]) : null,
+          });
+          if (reads.length > 64) return [{ target: null, key: null }];
+        }
+      }
+    }
+    return reads;
+  };
+
+  const isReflectivePropertyRead = (node, propertyName) =>
+    reflectivePropertyReads(node).some((read) => read.key === propertyName);
+
+  const isUnprovenReflectivePropertyRead = (node) =>
+    reflectivePropertyReads(node).some((read) => read.key === null);
+
+  const isNavigatorExpression = (node, resolvingSymbols = new Set()) => {
+    const expression = unwrapStaticExpression(node);
+    if (!expression) return false;
+    if (ts.isIdentifier(expression)) {
+      const symbol = typeChecker.getSymbolAtLocation(expression);
+      if (!symbol?.declarations?.length) return expression.text === "navigator";
+      const initializers = valueInitializers.get(symbol);
+      const projections = projectionCandidates.get(symbol);
+      if (resolvingSymbols.has(symbol)) return false;
+      const nextResolvingSymbols = new Set(resolvingSymbols).add(symbol);
+      return Boolean(
+        initializers?.some((initializer) => isNavigatorExpression(initializer, nextResolvingSymbols)) ||
+          projections?.some((candidate) => resolveProjectionKind(candidate, nextResolvingSymbols) === "navigator"),
+      );
+    }
+    if (ts.isPropertyAccessExpression(expression) || ts.isElementAccessExpression(expression)) {
+      return resolvedPropertyName(expression) === "navigator" && isBrowserGlobalExpression(expression.expression);
+    }
+    if (ts.isCallExpression(expression)) {
+      return reflectivePropertyReads(expression).some(
+        (read) => read.key === "navigator",
+      );
+    }
+    if (ts.isBinaryExpression(expression) && expression.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
+      return isNavigatorExpression(expression.right, resolvingSymbols);
+    }
+    if (ts.isConditionalExpression(expression)) {
+      return (
+        isNavigatorExpression(expression.whenTrue, resolvingSymbols) ||
+        isNavigatorExpression(expression.whenFalse, resolvingSymbols)
+      );
+    }
+    return false;
+  };
+
+  const isUnsafeNavigatorReference = (node) => {
+    if (
+      ts.isIdentifier(node) &&
+      ((ts.isPropertyAccessExpression(node.parent) && node.parent.name === node) ||
+        (ts.isElementAccessExpression(node.parent) && node.parent.argumentExpression === node))
+    ) {
+      return false;
+    }
+    const explicitNavigatorMember =
+      (ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) &&
+      resolvedPropertyName(node) === "navigator";
+    const unboundNavigatorIdentifier = (() => {
+      if (!ts.isIdentifier(node) || node.text !== "navigator") return false;
+      const symbol = typeChecker.getSymbolAtLocation(node);
+      return !symbol?.declarations?.some(
+        (declaration) => declaration.getSourceFile() === sourceFile,
+      );
+    })();
+    if (
+      !unboundNavigatorIdentifier &&
+      !explicitNavigatorMember &&
+      !isNavigatorExpression(node)
+    ) {
+      return false;
+    }
+
+    let current = node;
+    while (
+      current.parent &&
+      (ts.isParenthesizedExpression(current.parent) ||
+        ts.isAsExpression(current.parent) ||
+        ts.isTypeAssertionExpression(current.parent) ||
+        ts.isNonNullExpression(current.parent) ||
+        ts.isSatisfiesExpression(current.parent)) &&
+      current.parent.expression === current
+    ) {
+      current = current.parent;
+    }
+    if (ts.isTypeOfExpression(current.parent) && current.parent.expression === current) return false;
+    if (current.parent && ts.isCallExpression(current.parent)) {
+      const reflectiveReads = reflectivePropertyReads(current.parent);
+      const currentExpression = unwrapStaticExpression(current);
+      if (
+        reflectiveReads.length > 0 &&
+        reflectiveReads.every(
+          (read) =>
+            unwrapStaticExpression(read.target) === currentExpression &&
+            allowedDirectNavigatorCapabilities.has(read.key),
+        )
+      ) {
+        return false;
+      }
+    }
+    return !(
+      current.parent &&
+      (ts.isPropertyAccessExpression(current.parent) || ts.isElementAccessExpression(current.parent)) &&
+      current.parent.expression === current &&
+      allowedDirectNavigatorCapabilities.has(resolvedPropertyName(current.parent))
+    );
+  };
+
+  const isUnsafeNotificationBrowserGlobalReference = (node) => {
+    if (!isNotificationAuthorityBoundary) return false;
+    if (
+      ts.isIdentifier(node) &&
+      ((ts.isPropertyAccessExpression(node.parent) && node.parent.name === node) ||
+        (ts.isElementAccessExpression(node.parent) && node.parent.argumentExpression === node))
+    ) {
+      return false;
+    }
+    if (!isBrowserGlobalExpression(node)) return false;
+
+    let current = node;
+    while (
+      current.parent &&
+      (ts.isParenthesizedExpression(current.parent) ||
+        ts.isAsExpression(current.parent) ||
+        ts.isTypeAssertionExpression(current.parent) ||
+        ts.isNonNullExpression(current.parent) ||
+        ts.isSatisfiesExpression(current.parent)) &&
+      current.parent.expression === current
+    ) {
+      current = current.parent;
+    }
+    if (ts.isTypeOfExpression(current.parent) && current.parent.expression === current) return false;
+    if (
+      !current.parent ||
+      (!ts.isPropertyAccessExpression(current.parent) && !ts.isElementAccessExpression(current.parent)) ||
+      current.parent.expression !== current
+    ) {
+      return true;
+    }
+    const member = current.parent;
+    const capability = resolvedPropertyName(member);
+    if (!allowedNotificationBrowserGlobalCapabilities.has(capability)) return true;
+    if (capability === "navigator") return false;
+    const call = member.parent;
+    if (!ts.isCallExpression(call) || call.expression !== member) return true;
+    const callback = call.arguments[0] && unwrapStaticExpression(call.arguments[0]);
+    return capability === "setTimeout" && (!callback || !ts.isArrowFunction(callback));
+  };
+
+  const isUnsafeNotificationDocumentReference = (node) => {
+    if (!isNotificationAuthorityBoundary || !ts.isIdentifier(node) || node.text !== "document") {
+      return false;
+    }
+    if (
+      (ts.isPropertyAccessExpression(node.parent) && node.parent.name === node) ||
+      (ts.isElementAccessExpression(node.parent) && node.parent.argumentExpression === node)
+    ) {
+      return false;
+    }
+    const symbol = typeChecker.getSymbolAtLocation(node);
+    if (
+      symbol?.declarations?.some((declaration) => declaration.getSourceFile() === sourceFile)
+    ) {
+      return false;
+    }
+
+    let current = node;
+    while (
+      current.parent &&
+      (ts.isParenthesizedExpression(current.parent) ||
+        ts.isAsExpression(current.parent) ||
+        ts.isTypeAssertionExpression(current.parent) ||
+        ts.isNonNullExpression(current.parent) ||
+        ts.isSatisfiesExpression(current.parent)) &&
+      current.parent.expression === current
+    ) {
+      current = current.parent;
+    }
+    if (ts.isTypeOfExpression(current.parent) && current.parent.expression === current) return false;
+    return !(
+      current.parent &&
+      (ts.isPropertyAccessExpression(current.parent) || ts.isElementAccessExpression(current.parent)) &&
+      current.parent.expression === current &&
+      allowedNotificationDocumentCapabilities.has(resolvedPropertyName(current.parent))
+    );
+  };
+
+  const isUnsafeNotificationGlobalTimerReference = (node) => {
+    if (
+      !isNotificationAuthorityBoundary ||
+      !ts.isIdentifier(node) ||
+      !notificationGlobalTimerNames.has(node.text)
+    ) {
+      return false;
+    }
+    if (
+      (ts.isPropertyAccessExpression(node.parent) && node.parent.name === node) ||
+      (ts.isElementAccessExpression(node.parent) && node.parent.argumentExpression === node)
+    ) {
+      return false;
+    }
+    const symbol = typeChecker.getSymbolAtLocation(node);
+    if (
+      symbol?.declarations?.some((declaration) => declaration.getSourceFile() === sourceFile)
+    ) {
+      return false;
+    }
+    const call = node.parent;
+    if (!ts.isCallExpression(call) || call.expression !== node) return true;
+    const callback = call.arguments[0] && unwrapStaticExpression(call.arguments[0]);
+    return !callback || !ts.isArrowFunction(callback);
+  };
+
+  const isForbiddenNotificationGlobalCallbackReference = (node) => {
+    if (
+      !isNotificationAuthorityBoundary ||
+      !ts.isIdentifier(node) ||
+      !forbiddenNotificationGlobalCallbackNames.has(node.text)
+    ) {
+      return false;
+    }
+    if (
+      (ts.isPropertyAccessExpression(node.parent) && node.parent.name === node) ||
+      (ts.isElementAccessExpression(node.parent) && node.parent.argumentExpression === node)
+    ) {
+      return false;
+    }
+    const symbol = typeChecker.getSymbolAtLocation(node);
+    return !symbol?.declarations?.some(
+      (declaration) => declaration.getSourceFile() === sourceFile,
+    );
   };
 
   const assignmentPatternSource = (node) => {
@@ -1465,8 +2177,10 @@ const analyzeSource = (file, source) => {
         return name !== null && name !== "fetch";
       }
       if (ts.isCallExpression(parent) && parent.arguments[1] === current) {
-        const read = reflectivePropertyRead(parent);
-        if (read) return read.key !== null && read.key !== "fetch";
+        const reads = reflectivePropertyReads(parent);
+        if (reads.length) {
+          return reads.every((read) => read.key !== null && read.key !== "fetch");
+        }
       }
       if (ts.isComputedPropertyName(parent) && parent.expression === current) {
         const name = resolvedDeclaredPropertyName(parent);
@@ -2348,6 +3062,114 @@ const analyzeSource = (file, source) => {
       alternateTransportNames.has(resolveStaticKey(node.argumentExpression));
     if (alternateTransportIdentifier || alternateTransportElement) {
       report(node, "alternate HTTP/SSE client bypasses the canonical API transport");
+    }
+
+    const staticNavigatorKey =
+      (ts.isStringLiteralLike(node) ||
+        ts.isTemplateExpression(node) ||
+        ts.isBinaryExpression(node) ||
+        ts.isCallExpression(node)) &&
+      resolveStaticString(node) === "navigator";
+    const objectDescriptorReflection = (() => {
+      if (!ts.isCallExpression(node)) return false;
+      const callee = unwrapStaticExpression(node.expression);
+      if (
+        !callee ||
+        (!ts.isPropertyAccessExpression(callee) && !ts.isElementAccessExpression(callee)) ||
+        !ts.isIdentifier(unwrapStaticExpression(callee.expression)) ||
+        unwrapStaticExpression(callee.expression).text !== "Object"
+      ) {
+        return false;
+      }
+      const method = resolvedPropertyName(callee);
+      if (!isBrowserGlobalExpression(node.arguments[0])) return false;
+      return (
+        method === "getOwnPropertyDescriptors" ||
+        (method === "getOwnPropertyDescriptor" &&
+          (resolveStaticKey(node.arguments[1]) === null ||
+            resolveStaticKey(node.arguments[1]) === "navigator"))
+      );
+    })();
+    if (staticNavigatorKey || objectDescriptorReflection) {
+      report(
+        node,
+        "sendBeacon bypasses the canonical API transport through reflected navigator capability access",
+      );
+    }
+
+    if (isUnsafeNavigatorReference(node)) {
+      report(
+        node,
+        "sendBeacon bypasses the canonical API transport when navigator escapes the audited direct capability allowlist",
+      );
+    }
+    if (isUnsafeNotificationBrowserGlobalReference(node)) {
+      report(
+        node,
+        "sendBeacon bypasses the canonical API transport when a browser global escapes the notification authority allowlist",
+      );
+    }
+    if (isUnsafeNotificationDocumentReference(node)) {
+      report(
+        node,
+        "sendBeacon bypasses the canonical API transport when document escapes the notification authority allowlist",
+      );
+    }
+    if (isUnsafeNotificationGlobalTimerReference(node)) {
+      report(
+        node,
+        "sendBeacon bypasses the canonical API transport through an unsafe global timer callback",
+      );
+    }
+    if (isForbiddenNotificationGlobalCallbackReference(node)) {
+      report(
+        node,
+        "sendBeacon bypasses the canonical API transport through a global Window callback",
+      );
+    }
+
+    const nodeReflectiveReads = ts.isCallExpression(node) ? reflectivePropertyReads(node) : [];
+    const reflectedReflectionCapability = nodeReflectiveReads.some(
+      (read) =>
+        ["get", "apply"].includes(read.key) &&
+        isReflectNamespaceExpression(read.target),
+    );
+    const escapedReflectGet = isReflectGetExpression(node) && !isDirectCallCallee(node);
+    const reflectApplyUse = isReflectApplyExpression(node);
+    if (reflectedReflectionCapability || escapedReflectGet || reflectApplyUse) {
+      report(
+        node,
+        "sendBeacon bypasses the canonical API transport through escaped or adapted reflection and is forbidden",
+      );
+    }
+
+    const forbiddenBrowserTransportIdentifier = ts.isIdentifier(node) && forbiddenBrowserTransportNames.has(node.text);
+    const forbiddenBrowserTransportElement =
+      ts.isElementAccessExpression(node) &&
+      (forbiddenBrowserTransportNames.has(resolveStaticKey(node.argumentExpression)) ||
+        (resolveStaticKey(node.argumentExpression) === null && isNavigatorExpression(node.expression)));
+    const forbiddenBrowserTransportComputedProperty =
+      ts.isComputedPropertyName(node) && forbiddenBrowserTransportNames.has(resolveStaticKey(node.expression));
+    const dynamicNavigatorComputedProperty =
+      ts.isComputedPropertyName(node) &&
+      resolveStaticKey(node.expression) === null &&
+      ((ts.isBindingElement(node.parent) && isNavigatorExpression(bindingPatternSource(node.parent))) ||
+        (ts.isPropertyAssignment(node.parent) && isNavigatorExpression(assignmentPatternSource(node.parent))));
+    const reflectiveBrowserTransportRead =
+      ts.isCallExpression(node) &&
+      nodeReflectiveReads.some(
+        (read) =>
+          forbiddenBrowserTransportNames.has(read.key) ||
+          (read.key === null && isNavigatorExpression(read.target)),
+      );
+    if (
+      forbiddenBrowserTransportIdentifier ||
+      forbiddenBrowserTransportElement ||
+      forbiddenBrowserTransportComputedProperty ||
+      dynamicNavigatorComputedProperty ||
+      reflectiveBrowserTransportRead
+    ) {
+      report(node, "sendBeacon bypasses the canonical API transport and is forbidden");
     }
 
     const apiClientIdentifier = ts.isIdentifier(node) && node.text === "ApiClient";

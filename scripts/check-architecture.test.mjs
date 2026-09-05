@@ -21,7 +21,320 @@ const clientOwner = (member = "", tail = "") =>
 const transportOwner = (member = "", tail = "") =>
   `export class HttpTransport { ${member} } const canonical = new HttpTransport({}); const fetchOwner = globalThis.fetch; ${tail}`;
 
+const viteSourceAliasConfiguration = (extraAlias = "", sourceReplacement = "./src") => `
+  import path from "node:path";
+  import { defineConfig } from "vite";
+  export default defineConfig(() => {
+    return {
+      plugins: [react(), tailwindcss(), bundleOwnershipPlugin(), canonicalSourceAliasPlugin()],
+      resolve: {
+        alias: {
+          ${extraAlias}
+          "@": path.resolve(__dirname, ${JSON.stringify(sourceReplacement)}),
+          "@services": path.resolve(__dirname, "./src/services"),
+          "@shared": path.resolve(__dirname, "./src/shared"),
+          "@pages": path.resolve(__dirname, "./src/pages"),
+          "@components": path.resolve(__dirname, "./src/components"),
+          "@app": path.resolve(__dirname, "./src/app"),
+        },
+      },
+    };
+  });
+`;
+const vitestSourceAliasConfiguration = (extraAlias = "", sourceReplacement = "./src") => `
+  import path from "node:path";
+  import { defineConfig } from "vitest/config";
+  export default defineConfig({
+    plugins: [react(), canonicalSourceAliasPlugin()],
+    resolve: {
+      alias: {
+        ${extraAlias}
+        "@": path.resolve(__dirname, ${JSON.stringify(sourceReplacement)}),
+        "@services": path.resolve(__dirname, "./src/services"),
+        "@shared": path.resolve(__dirname, "./src/shared"),
+        "@pages": path.resolve(__dirname, "./src/pages"),
+        "@components": path.resolve(__dirname, "./src/components"),
+        "@app": path.resolve(__dirname, "./src/app"),
+      },
+    },
+  });
+`;
+
 describe("architecture boundary fixtures", () => {
+  it("freezes the complete Vite source alias table to the six canonical roots", () => {
+    expect(fixtureMessages("vite.config.ts", viteSourceAliasConfiguration())).not.toMatch(/Vite source aliases/);
+    expect(fixtureMessages("vitest.config.ts", vitestSourceAliasConfiguration())).not.toMatch(/Vite source aliases/);
+
+    for (const source of [
+      viteSourceAliasConfiguration(
+        '"@/lib/secrets.ts": path.resolve(__dirname, "./src/services/notificationRelay.ts"),',
+      ),
+      viteSourceAliasConfiguration(
+        '"@services/notification/notificationChannelsApi.ts": path.resolve(__dirname, "./src/services/notificationRelay.ts"),',
+      ),
+      viteSourceAliasConfiguration(
+        '"../api/index.ts": path.resolve(__dirname, "./src/services/notificationRelay.ts"),',
+      ),
+      viteSourceAliasConfiguration("", "./src/services/notificationRelay.ts"),
+      viteSourceAliasConfiguration().replace("alias: {", "alias: sourceAliases,"),
+      viteSourceAliasConfiguration().replace("return {", "return { ...redirectedConfig,"),
+      viteSourceAliasConfiguration().replace(
+        "plugins: [react(), tailwindcss(), bundleOwnershipPlugin(), canonicalSourceAliasPlugin()]",
+        "plugins: [redirectPlugin(), react(), tailwindcss(), bundleOwnershipPlugin(), canonicalSourceAliasPlugin()]",
+      ),
+      viteSourceAliasConfiguration().replace(
+        "return {",
+        `if (mode === "production") return { resolve: { alias: { "@/lib/secrets.ts": path.resolve(__dirname, "./src/services/notificationRelay.ts") } } }; return {`,
+      ),
+    ]) {
+      expect(fixtureMessages("vite.config.ts", source)).toMatch(/Vite source aliases/);
+    }
+
+    for (const source of [
+      vitestSourceAliasConfiguration(
+        '"@/lib/secrets.ts": path.resolve(__dirname, "./src/services/notificationRelay.ts"),',
+      ),
+      vitestSourceAliasConfiguration("", "./src/services/notificationRelay.ts"),
+      vitestSourceAliasConfiguration().replace("alias: {", "alias: sourceAliases,"),
+      vitestSourceAliasConfiguration().replace(
+        "plugins: [react(), canonicalSourceAliasPlugin()]",
+        "plugins: [redirectPlugin(), react(), canonicalSourceAliasPlugin()]",
+      ),
+    ]) {
+      expect(fixtureMessages("vitest.config.ts", source)).toMatch(/Vite source aliases/);
+    }
+  });
+
+  it.each([
+    ["direct access", `navigator.sendBeacon(dynamicPath, new Blob([payload], { type: "application/json" }));`],
+    ["computed access", `navigator["send" + "Beacon"](dynamicPath, payload);`],
+    ["destructured access", `const { sendBeacon: beacon } = navigator; beacon(dynamicPath, payload);`],
+    [
+      "aliased navigator access",
+      `const browserNavigator = navigator; const beacon = browserNavigator.sendBeacon; beacon(dynamicPath, payload);`,
+    ],
+    [
+      "dynamic navigator access",
+      `const key = String.fromCharCode(115, 101, 110, 100, 66, 101, 97, 99, 111, 110); navigator[key](dynamicPath, payload);`,
+    ],
+    ["reflective access", `const beacon = Reflect.get(navigator, "sendBeacon"); beacon(dynamicPath, payload);`],
+    [
+      "dynamic computed destructuring",
+      `const key = String.fromCharCode(115, 101, 110, 100, 66, 101, 97, 99, 111, 110); const { [key]: beacon } = navigator; beacon.call(navigator, dynamicPath, payload);`,
+    ],
+    [
+      "destructured navigator with a dynamic key",
+      `const { navigator: browserNavigator } = window; const key = String.fromCharCode(115, 101, 110, 100, 66, 101, 97, 99, 111, 110); browserNavigator[key](dynamicPath, payload);`,
+    ],
+    [
+      "destructured Reflect.get",
+      `const { get } = Reflect; get(navigator, "sendBeacon").call(navigator, dynamicPath, payload);`,
+    ],
+    [
+      "nested navigator projection",
+      `const { window: { navigator: browserNavigator } } = globalThis; const key = String.fromCharCode(115, 101, 110, 100, 66, 101, 97, 99, 111, 110); browserNavigator[key](dynamicPath, payload);`,
+    ],
+    [
+      "array navigator projection",
+      `const [browserNavigator] = [navigator]; const key = String.fromCharCode(115, 101, 110, 100, 66, 101, 97, 99, 111, 110); browserNavigator[key](dynamicPath, payload);`,
+    ],
+    [
+      "array Reflect.get projection",
+      `const [get] = [Reflect.get]; get(navigator, "sendBeacon").call(navigator, dynamicPath, payload);`,
+    ],
+    [
+      "bound Reflect.get",
+      `const get = Reflect.get.bind(Reflect); get(navigator, "sendBeacon").call(navigator, dynamicPath, payload);`,
+    ],
+    [
+      "Reflect.get with bound target and key",
+      `const getBeacon = Reflect.get.bind(Reflect, navigator, "sendBeacon"); getBeacon().call(navigator, dynamicPath, payload);`,
+    ],
+    [
+      "Reflect.get.call",
+      `Reflect.get.call(Reflect, navigator, "sendBeacon").call(navigator, dynamicPath, payload);`,
+    ],
+    [
+      "Reflect.get.apply",
+      `Reflect.get.apply(Reflect, [navigator, "sendBeacon"]).call(navigator, dynamicPath, payload);`,
+    ],
+    [
+      "projected bound Reflect.get",
+      `const [get] = [Reflect.get.bind(Reflect, navigator, "sendBeacon")]; get().call(navigator, dynamicPath, payload);`,
+    ],
+    [
+      "conditional bound Reflect.get",
+      `const get = flag ? Reflect.get.bind(Reflect, { language: "en" }, "language") : Reflect.get.bind(Reflect, navigator, "sendBeacon"); get().call(navigator, dynamicPath, payload);`,
+    ],
+    [
+      "Reflect.get.apply with an aliased argument tuple",
+      `const args = [navigator, "sendBeacon"]; Reflect.get.apply(Reflect, args).call(navigator, dynamicPath, payload);`,
+    ],
+    [
+      "Reflect.get.apply with a statically spread argument tuple",
+      `Reflect.get.apply(Reflect, [...[navigator, "sendBeacon"]]).call(navigator, dynamicPath, payload);`,
+    ],
+    [
+      "Reflect.apply of Reflect.get",
+      `Reflect.apply(Reflect.get, Reflect, [navigator, "sendBeacon"]).call(navigator, dynamicPath, payload);`,
+    ],
+    [
+      "aliased Reflect.apply of projected Reflect.get",
+      `const { apply } = Reflect; const [get] = [Reflect.get]; const args = [navigator, "sendBeacon"]; apply(get, Reflect, args).call(navigator, dynamicPath, payload);`,
+    ],
+    [
+      "bound Reflect.apply",
+      `const invoke = Reflect.apply.bind(Reflect); invoke(Reflect.get, Reflect, [navigator, "sendBeacon"]).call(navigator, dynamicPath, payload);`,
+    ],
+    [
+      "Reflect.apply.call",
+      `Reflect.apply.call(Reflect, Reflect.get, Reflect, [navigator, "sendBeacon"]).call(navigator, dynamicPath, payload);`,
+    ],
+    [
+      "bound Reflect.get.call",
+      `const get = Reflect.get; const invoke = get.call.bind(get); invoke(Reflect, navigator, "sendBeacon").call(navigator, dynamicPath, payload);`,
+    ],
+    [
+      "Function.prototype.call bound to Reflect.get",
+      `const invoke = Function.prototype.call.bind(Reflect.get); invoke(Reflect, navigator, "sendBeacon").call(navigator, dynamicPath, payload);`,
+    ],
+    [
+      "nested reflective navigator access",
+      `Reflect.get(Reflect.get(globalThis, "navigator"), "sendBeacon").call(navigator, dynamicPath, payload);`,
+    ],
+    [
+      "aliased reflective navigator access",
+      `const browserNavigator = Reflect.get(globalThis, "navigator"); const key = String.fromCharCode(115, 101, 110, 100, 66, 101, 97, 99, 111, 110); browserNavigator[key](dynamicPath, payload);`,
+    ],
+    [
+      "nested reflective window and navigator access",
+      `const browserNavigator = Reflect.get(Reflect.get(globalThis, "window"), "navigator"); Reflect.get(browserNavigator, "sendBeacon").call(browserNavigator, dynamicPath, payload);`,
+    ],
+    [
+      "reflected Reflect namespace access",
+      `const reflection = Reflect.get(globalThis, "Reflect"); const browserNavigator = reflection.get(globalThis, "navigator"); reflection.get(browserNavigator, "sendBeacon").call(browserNavigator, dynamicPath, payload);`,
+    ],
+    [
+      "reflected Reflect.get capability",
+      `const get = Reflect.get(Reflect, "get"); get(navigator, "sendBeacon").call(navigator, dynamicPath, payload);`,
+    ],
+    [
+      "navigator prototype access",
+      `Reflect.get(Object.getPrototypeOf(navigator), "sendBeacon").call(navigator, dynamicPath, payload);`,
+    ],
+    [
+      "navigator through an object container",
+      `const browserNavigator = { current: navigator }.current; const key = String.fromCharCode(115, 101, 110, 100, 66, 101, 97, 99, 111, 110); browserNavigator[key](dynamicPath, payload);`,
+    ],
+    [
+      "navigator through an array container",
+      `const browserNavigator = [navigator][0]; const key = String.fromCharCode(115, 101, 110, 100, 66, 101, 97, 99, 111, 110); browserNavigator[key](dynamicPath, payload);`,
+    ],
+    [
+      "navigator through a comma expression",
+      `const browserNavigator = (recordAudit(), navigator); const key = String.fromCharCode(115, 101, 110, 100, 66, 101, 97, 99, 111, 110); browserNavigator[key](dynamicPath, payload);`,
+    ],
+    [
+      "navigator through an identity function",
+      `function identity<T>(value: T) { return value; } const browserNavigator = identity(navigator); const key = String.fromCharCode(115, 101, 110, 100, 66, 101, 97, 99, 111, 110); browserNavigator[key](dynamicPath, payload);`,
+    ],
+    [
+      "navigator through its global property descriptor",
+      `const browserNavigator = Object.getOwnPropertyDescriptor(globalThis, "navigator")?.get?.call(globalThis); const key = String.fromCharCode(115, 101, 110, 100, 66, 101, 97, 99, 111, 110); browserNavigator[key](dynamicPath, payload);`,
+    ],
+    [
+      "navigator through its global descriptor table",
+      `const browserNavigator = Object.getOwnPropertyDescriptors(globalThis).navigator.get.call(globalThis); const key = String.fromCharCode(115, 101, 110, 100, 66, 101, 97, 99, 111, 110); browserNavigator[key](dynamicPath, payload);`,
+    ],
+    [
+      "navigator through an aliased global descriptor table",
+      `const describe = Object.getOwnPropertyDescriptors; const key = String.fromCharCode(110, 97, 118, 105, 103, 97, 116, 111, 114); const browserNavigator = describe(globalThis)[key].get.call(globalThis); const method = String.fromCharCode(115, 101, 110, 100, 66, 101, 97, 99, 111, 110); browserNavigator[method](dynamicPath, payload);`,
+    ],
+    [
+      "navigator through Reflect.getOwnPropertyDescriptor",
+      `const key = String.fromCharCode(110, 97, 118, 105, 103, 97, 116, 111, 114); const browserNavigator = Reflect.getOwnPropertyDescriptor(globalThis, key)?.get?.call(globalThis); const method = String.fromCharCode(115, 101, 110, 100, 66, 101, 97, 99, 111, 110); browserNavigator[method](dynamicPath, payload);`,
+    ],
+    [
+      "navigator through __lookupGetter__",
+      `const key = String.fromCharCode(110, 97, 118, 105, 103, 97, 116, 111, 114); const browserNavigator = globalThis.__lookupGetter__(key)?.call(globalThis); const method = String.fromCharCode(115, 101, 110, 100, 66, 101, 97, 99, 111, 110); browserNavigator[method](dynamicPath, payload);`,
+    ],
+    [
+      "navigator through document.defaultView",
+      `const key = String.fromCharCode(110, 97, 118, 105, 103, 97, 116, 111, 114); const root = document.defaultView; const browserNavigator = Reflect.getOwnPropertyDescriptor(root, key)?.get?.call(root); const method = String.fromCharCode(115, 101, 110, 100, 66, 101, 97, 99, 111, 110); browserNavigator[method](dynamicPath, payload);`,
+    ],
+    [
+      "navigator through parent Window",
+      `const key = String.fromCharCode(110, 97, 118, 105, 103, 97, 116, 111, 114); const root = parent; const browserNavigator = Reflect.getOwnPropertyDescriptor(root, key)?.get?.call(root); const method = String.fromCharCode(115, 101, 110, 100, 66, 101, 97, 99, 111, 110); browserNavigator[method](dynamicPath, payload);`,
+    ],
+    [
+      "navigator through top Window",
+      `const key = String.fromCharCode(110, 97, 118, 105, 103, 97, 116, 111, 114); const root = top; const browserNavigator = Reflect.getOwnPropertyDescriptor(root, key)?.get?.call(root); const method = String.fromCharCode(115, 101, 110, 100, 66, 101, 97, 99, 111, 110); browserNavigator[method](dynamicPath, payload);`,
+    ],
+    [
+      "navigator through an aliased document.defaultView",
+      `const doc = document; const root = doc.defaultView; const key = String.fromCharCode(110, 97, 118, 105, 103, 97, 116, 111, 114); const browserNavigator = Reflect.getOwnPropertyDescriptor(root, key)?.get?.call(root); const method = String.fromCharCode(115, 101, 110, 100, 66, 101, 97, 99, 111, 110); browserNavigator[method](dynamicPath, payload);`,
+    ],
+    [
+      "navigator through a destructured document.defaultView",
+      `const { defaultView: root } = document; const key = String.fromCharCode(110, 97, 118, 105, 103, 97, 116, 111, 114); const browserNavigator = Reflect.getOwnPropertyDescriptor(root, key)?.get?.call(root); const method = String.fromCharCode(115, 101, 110, 100, 66, 101, 97, 99, 111, 110); browserNavigator[method](dynamicPath, payload);`,
+    ],
+    [
+      "navigator through frames Window",
+      `const root = frames; const key = String.fromCharCode(110, 97, 118, 105, 103, 97, 116, 111, 114); const browserNavigator = Reflect.getOwnPropertyDescriptor(root, key)?.get?.call(root); const method = String.fromCharCode(115, 101, 110, 100, 66, 101, 97, 99, 111, 110); browserNavigator[method](dynamicPath, payload);`,
+    ],
+    [
+      "navigator through a Window timer callback this value",
+      `window.setTimeout(function (this: Window) { const root = this; const key = String.fromCharCode(110, 97, 118, 105, 103, 97, 116, 111, 114); const browserNavigator = Reflect.getOwnPropertyDescriptor(root, key)?.get?.call(root); const method = String.fromCharCode(115, 101, 110, 100, 66, 101, 97, 99, 111, 110); browserNavigator[method](dynamicPath, payload); }, 0);`,
+    ],
+    [
+      "navigator through an unqualified timer callback this value",
+      `setTimeout(function (this: Window) { const root = this; const key = String.fromCharCode(110, 97, 118, 105, 103, 97, 116, 111, 114); const browserNavigator = Object.getOwnPropertyDescriptors(root)[key].get.call(root); const method = String.fromCharCode(115, 101, 110, 100, 66, 101, 97, 99, 111, 110); browserNavigator[method](dynamicPath, payload); }, 0);`,
+    ],
+    [
+      "navigator through an interval callback this value",
+      `setInterval(function (this: Window) { const root = this; const key = String.fromCharCode(110, 97, 118, 105, 103, 97, 116, 111, 114); const browserNavigator = Object.getOwnPropertyDescriptors(root)[key].get.call(root); const method = String.fromCharCode(115, 101, 110, 100, 66, 101, 97, 99, 111, 110); browserNavigator[method](dynamicPath, payload); }, 1000);`,
+    ],
+    [
+      "navigator through an unqualified Window event listener",
+      `addEventListener("click", function (this: Window) { const root = this; const key = String.fromCharCode(110, 97, 118, 105, 103, 97, 116, 111, 114); const browserNavigator = Object.getOwnPropertyDescriptors(root)[key].get.call(root); const method = String.fromCharCode(115, 101, 110, 100, 66, 101, 97, 99, 111, 110); browserNavigator[method](dynamicPath, payload); });`,
+    ],
+    [
+      "navigator through a React native event view",
+      `const handleClick = (event: React.MouseEvent) => { const root = event.nativeEvent.view; const key = String.fromCharCode(110, 97, 118, 105, 103, 97, 116, 111, 114); const browserNavigator = Object.getOwnPropertyDescriptors(root)[key].get.call(root); const method = String.fromCharCode(115, 101, 110, 100, 66, 101, 97, 99, 111, 110); browserNavigator[method](dynamicPath, payload); };`,
+    ],
+  ])("rejects sendBeacon as a second browser transport through %s", (_label, source) => {
+    expect(fixtureMessages("src/components/chat/settings/notifications/ChannelsSection.tsx", source)).toMatch(
+      /sendBeacon bypasses the canonical API transport/,
+    );
+  });
+
+  it("allows ordinary non-transport navigator capabilities", () => {
+    expect(
+      fixtureMessages(
+        "src/shared/utils/navigationMetadata.ts",
+        `const language = window.navigator.language; void navigator.clipboard?.writeText(language); const reflectedLanguage = Reflect.get(navigator, "language"); void Reflect.get(navigator, "clipboard").writeText(reflectedLanguage);`,
+      ),
+    ).not.toMatch(/sendBeacon/);
+  });
+
+  it("does not treat a local navigator parameter as the browser capability", () => {
+    expect(
+      fixtureMessages(
+        "src/shared/utils/navigationMetadata.ts",
+        `const inspect = (navigator: { channel: string }) => navigator.channel; void inspect({ channel: "stable" });`,
+      ),
+    ).not.toMatch(/sendBeacon/);
+  });
+
+  it("allows a direct timer call through document.defaultView", () => {
+    expect(
+      fixtureMessages(
+        "src/components/chat/settings/notifications/ChannelsSection.tsx",
+        `document.defaultView?.setTimeout(() => recordAudit(), 0);`,
+      ),
+    ).not.toMatch(/sendBeacon/);
+  });
+
   it("allows the designated runtime, composition, and transport adapters", () => {
     const sources = new Map([
       [
@@ -707,7 +1020,7 @@ describe("architecture boundary fixtures", () => {
   it("allows named /v1 data/parser exceptions but rejects executable native routes", () => {
     expect(findArchitectureViolations(new Map([
       ["src/runtime/browserRuntime.ts", `const legacy = parsed.pathname === "/v1";`],
-      ["vite.config.ts", `if (parsed.pathname === "/v1") throw new Error("unsupported");`],
+      ["vite.config.ts", `${viteSourceAliasConfiguration()} if (parsed.pathname === "/v1") throw new Error("unsupported");`],
       ["src/runtime/runtimeConfig.ts", runtimeSchema("const nativeApi = `${origin}/api/v1`; ")],
       ["src/lib/providerPresets.ts", `const endpoint = "https://api.deepseek.com/v1";`],
     ]))).toEqual([]);
