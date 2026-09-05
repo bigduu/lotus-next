@@ -32,6 +32,7 @@ import { SettingsWorkflows } from "@/components/chat/settings/SettingsWorkflows"
 import { SettingsClusters } from "@/components/chat/settings/SettingsClusters"
 import { SettingsMetrics } from "@/components/chat/settings/SettingsMetrics"
 import { SettingsSystem } from "@/components/chat/settings/SettingsSystem"
+import { SettingsJiandu } from "@/components/chat/settings/SettingsJiandu"
 
 function Stat({ label, value }: { label: string; value: number | undefined }) {
   return (
@@ -163,6 +164,7 @@ const TABS = [
   { id: "workflows", label: "工作流", render: () => <SettingsWorkflows /> },
   { id: "clusters", label: "集群", render: () => <SettingsClusters /> },
   { id: "metrics", label: "指标", render: () => <SettingsMetrics /> },
+  { id: "jiandu", label: "Jiandu 记忆", render: () => <SettingsJiandu /> },
   { id: "system", label: "系统", render: () => <SettingsSystem /> },
 ] as const
 
