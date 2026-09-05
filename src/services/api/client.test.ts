@@ -135,6 +135,79 @@ describe("ApiClient request and response adaptation", () => {
   });
 });
 
+describe("ApiClient explicit single-attempt PUT", () => {
+  it("keeps canonical request defaults and JSON response parsing", async () => {
+    const fetchImplementation = vi.fn<FetchFunction>().mockResolvedValue(
+      new Response(JSON.stringify({ revision: 8 }), {
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    const client = createClient(fetchImplementation);
+
+    await expect(
+      client.putOnce("bamboo/config/notifications", { expected_revision: 7 }, {
+        headers: { "x-request-id": "single-write" },
+      }),
+    ).resolves.toEqual({ revision: 8 });
+    expect(fetchImplementation).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchImplementation.mock.calls[0];
+    expect(url).toBe("https://api.example:9443/api/v1/bamboo/config/notifications");
+    expect(init).toMatchObject({
+      method: "PUT",
+      credentials: "include",
+      body: JSON.stringify({ expected_revision: 7 }),
+    });
+    expect(new Headers(init?.headers).get("content-type")).toBe("application/json");
+    expect(new Headers(init?.headers).get("x-request-id")).toBe("single-write");
+  });
+
+  it.each([500, 503, 409])("does not retry HTTP %s and preserves its typed body", async (status) => {
+    const body = JSON.stringify({ error: { code: "config_revision_conflict", message: "detail" } });
+    const fetchImplementation = vi.fn<FetchFunction>(() => Promise.resolve(new Response(body, { status })));
+    const client = createClient(fetchImplementation);
+
+    const error = await client.putOnce("mutate", {}).catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(ApiError);
+    expect(error).toMatchObject({ status, body, message: "detail" });
+    expect(fetchImplementation).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not retry a network failure", async () => {
+    const fetchImplementation = vi.fn<FetchFunction>().mockRejectedValue(new TypeError("connection lost"));
+    const client = createClient(fetchImplementation);
+
+    await expect(client.putOnce("mutate", {})).rejects.toBeInstanceOf(NetworkRequestError);
+    expect(fetchImplementation).toHaveBeenCalledTimes(1);
+  });
+
+  it("preserves pre-aborted caller cancellation without sending a request", async () => {
+    const fetchImplementation = vi.fn<FetchFunction>();
+    const client = createClient(fetchImplementation);
+    const caller = new AbortController();
+    caller.abort();
+
+    await expect(client.putOnce("mutate", {}, { signal: caller.signal })).rejects.toBeInstanceOf(
+      RequestCancelledError,
+    );
+    expect(fetchImplementation).not.toHaveBeenCalled();
+  });
+
+  it.each(["network", "HTTP 503"])("keeps the default PUT's three attempts after %s", async (failure) => {
+    const fetchImplementation = vi.fn<FetchFunction>(() =>
+      failure === "network"
+        ? Promise.reject(new TypeError("connection lost"))
+        : Promise.resolve(new Response("unavailable", { status: 503 })),
+    );
+    const client = createClient(fetchImplementation);
+
+    await expect(client.put("mutate", {})).rejects.toBeInstanceOf(
+      failure === "network" ? NetworkRequestError : ApiError,
+    );
+    expect(fetchImplementation).toHaveBeenCalledTimes(3);
+  });
+});
+
 describe("ApiError compatibility", () => {
   it.each([
     [JSON.stringify({ error: { message: "nested Bamboo error" } }), "nested Bamboo error"],
