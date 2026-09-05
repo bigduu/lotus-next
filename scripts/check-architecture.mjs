@@ -58,10 +58,23 @@ const retiredProviderPaths = new Set([
 const notificationChannelComponentRoot = "src/components/chat/settings/notifications/";
 const notificationChannelPageOwner = "src/components/chat/settings/SettingsNotifications.tsx";
 const notificationChannelServiceOwner = "src/services/notification/notificationChannelsApi.ts";
+const notificationPreferencesServiceOwner =
+  "src/services/notification/notificationPreferencesApi.ts";
 const notificationChannelAllowedRequests = new Set([
   "get:bamboo/config/notifications",
   "put:bamboo/config/notifications",
   "post:notifications/test",
+]);
+const notificationPreferencesAllowedRequests = new Set([
+  "get:notifications/preferences",
+  "put:notifications/preferences",
+]);
+const notificationAuthorityServiceApiBindings = new Map([
+  [
+    notificationChannelServiceOwner,
+    new Set(["apiClient", "getErrorMessage", "isApiError", "isRequestError"]),
+  ],
+  [notificationPreferencesServiceOwner, new Set(["apiClient"])],
 ]);
 const notificationChannelComponentAllowedDependencies = new Set([
   "src/components/ui/button",
@@ -361,6 +374,9 @@ const isAllowedNotificationChannelDependency = (file, moduleName) => {
     notificationChannelComponentAllowedDependencies.has(resolved)
   );
 };
+const isAllowedNotificationPreferencesDependency = (file, moduleName) =>
+  file !== notificationPreferencesServiceOwner ||
+  (isLocalModule(moduleName) && localModulePath(file, moduleName) === "src/services/api");
 const isExcludedTestModule = (moduleName) =>
   /(?:^|\/)(?:__tests__|test)(?:\/|$)|\.(?:test|spec)(?:\.[cm]?[jt]sx?)?$/.test(
     normalizedModuleName(moduleName),
@@ -782,6 +798,7 @@ const analyzeSource = (file, source) => {
     file === notificationChannelPageOwner ||
     file === notificationChannelServiceOwner ||
     file.startsWith(notificationChannelComponentRoot);
+  const isNotificationAuthorityService = notificationAuthorityServiceApiBindings.has(file);
   const notificationChannelTrustedLeafDependencies =
     notificationChannelTrustedLeafAllowedDependencies.get(file);
   const isAllowedNotificationTrustedLeafDependency = (moduleName) => {
@@ -791,7 +808,9 @@ const analyzeSource = (file, source) => {
   };
   const isNotificationWholeConfigCall = (node) => {
     if (
-      (!isNotificationChannelConfigOwner && !notificationChannelTrustedLeafDependencies) ||
+      (!isNotificationChannelConfigOwner &&
+        file !== notificationPreferencesServiceOwner &&
+        !notificationChannelTrustedLeafDependencies) ||
       !ts.isCallExpression(node)
     ) {
       return false;
@@ -842,6 +861,25 @@ const analyzeSource = (file, source) => {
     if (route === null) return true;
     const normalized = route.trim().replace(/^\/+|\/+$/g, "");
     return !notificationChannelAllowedRequests.has(`${callName}:${normalized}`);
+  };
+  const isUnverifiableNotificationPreferencesRoute = (node) => {
+    if (file !== notificationPreferencesServiceOwner || !ts.isCallExpression(node)) return false;
+    const callee = unwrapStaticExpression(node.expression);
+    if (
+      !callee ||
+      !ts.isPropertyAccessExpression(callee) ||
+      !ts.isIdentifier(callee.expression) ||
+      callee.expression.text !== "apiClient"
+    ) {
+      return false;
+    }
+    const callName = callee.name.text;
+    const routeArgument = node.arguments[0];
+    if (!routeArgument) return true;
+    const route = resolveStaticString(routeArgument);
+    if (route === null) return true;
+    const normalized = route.trim().replace(/^\/+|\/+$/g, "");
+    return !notificationPreferencesAllowedRequests.has(`${callName}:${normalized}`);
   };
   const isApiClientImportBinding = (node) =>
     ts.isIdentifier(node) &&
@@ -1717,8 +1755,14 @@ const analyzeSource = (file, source) => {
         "Notification Channels service routes must resolve statically to an approved dedicated endpoint",
       );
     }
+    if (isUnverifiableNotificationPreferencesRoute(node)) {
+      report(
+        node,
+        "Notification preferences service routes must resolve statically to its approved dedicated endpoint",
+      );
+    }
     if (
-      file === notificationChannelServiceOwner &&
+      (file === notificationChannelServiceOwner || file === notificationPreferencesServiceOwner) &&
       ts.isIdentifier(node) &&
       node.text === "apiClient" &&
       !isApiClientImportBinding(node) &&
@@ -1726,7 +1770,7 @@ const analyzeSource = (file, source) => {
     ) {
       report(
         node,
-        "Notification Channels service may use apiClient only through direct approved calls",
+        "Notification authority services may use apiClient only through direct approved calls",
       );
     }
     if (
@@ -1799,6 +1843,9 @@ const analyzeSource = (file, source) => {
     }
     if (isImportMetaGlobCall(node) && notificationChannelTrustedLeafDependencies) {
       report(node, "import.meta.glob bypasses the Notification Channels dependency closure");
+    }
+    if (isImportMetaGlobCall(node) && file === notificationPreferencesServiceOwner) {
+      report(node, "import.meta.glob bypasses the Notification preferences authority boundary");
     }
 
     if (isFrozenProviderEndpoint(file, node)) {
@@ -1949,21 +1996,39 @@ const analyzeSource = (file, source) => {
           "Notification Channels may import only its audited local authority dependencies",
         );
       }
+      if (!isAllowedNotificationPreferencesDependency(file, moduleName)) {
+        report(
+          node,
+          "Notification preferences service may import only the canonical API authority",
+        );
+      }
       if (
-        file === notificationChannelServiceOwner &&
+        (file === notificationChannelServiceOwner || file === notificationPreferencesServiceOwner) &&
         localModulePath(file, moduleName) === "src/services/api"
       ) {
+        const allowedBindings = notificationAuthorityServiceApiBindings.get(file);
+        const clause = node.importClause;
         const bindings = node.importClause?.namedBindings;
-        const apiClientBinding =
-          bindings && ts.isNamedImports(bindings)
-            ? bindings.elements.find(
-                (element) => (element.propertyName?.text ?? element.name.text) === "apiClient",
-              )
-            : null;
-        if (!apiClientBinding || apiClientBinding.name.text !== "apiClient") {
+        const elements = bindings && ts.isNamedImports(bindings) ? bindings.elements : [];
+        const hasOnlyAuditedBindings =
+          !clause?.isTypeOnly &&
+          !clause?.name &&
+          bindings &&
+          ts.isNamedImports(bindings) &&
+          elements.length > 0 &&
+          elements.every((element) => {
+            const imported = element.propertyName?.text ?? element.name.text;
+            return (
+              !element.isTypeOnly &&
+              element.name.text === imported &&
+              allowedBindings?.has(imported) === true
+            );
+          }) &&
+          elements.some((element) => element.name.text === "apiClient");
+        if (!hasOnlyAuditedBindings) {
           report(
             node,
-            "Notification Channels service must import the canonical apiClient as a named, unaliased binding",
+            "Notification authority services must import only audited named, unaliased bindings including apiClient",
           );
         }
       }
@@ -1987,6 +2052,9 @@ const analyzeSource = (file, source) => {
       ts.isStringLiteralLike(node.moduleSpecifier)
     ) {
       const moduleName = node.moduleSpecifier.text;
+      if (isNotificationAuthorityService) {
+        report(node, "Notification authority services must not re-export dependency authority");
+      }
       if (!isAllowedNotificationTrustedLeafDependency(moduleName)) {
         report(
           node,
@@ -2002,6 +2070,12 @@ const analyzeSource = (file, source) => {
           "Notification Channels may re-export only its audited local authority dependencies",
         );
       }
+      if (!isAllowedNotificationPreferencesDependency(file, moduleName)) {
+        report(
+          node,
+          "Notification preferences service may re-export only the canonical API authority",
+        );
+      }
       checkRuntimeLocalDependency(node, moduleName);
       checkExcludedTestDependency(node, moduleName);
       checkSourceDependencyBoundary(node, moduleName);
@@ -2012,6 +2086,9 @@ const analyzeSource = (file, source) => {
 
     const calledModule = moduleNameFromCall(node);
     if (calledModule) {
+      if (isNotificationAuthorityService) {
+        report(node, "Notification authority services must not dynamically load dependencies");
+      }
       if (!isAllowedNotificationTrustedLeafDependency(calledModule)) {
         report(
           node,
@@ -2027,12 +2104,20 @@ const analyzeSource = (file, source) => {
           "Notification Channels may load only its audited local authority dependencies",
         );
       }
+      if (!isAllowedNotificationPreferencesDependency(file, calledModule)) {
+        report(
+          node,
+          "Notification preferences service may load only the canonical API authority",
+        );
+      }
       checkRuntimeLocalDependency(node, calledModule);
       checkExcludedTestDependency(node, calledModule);
       checkSourceDependencyBoundary(node, calledModule);
     }
     if (
-      (isNotificationChannelConfigOwner || notificationChannelTrustedLeafDependencies) &&
+      (isNotificationChannelConfigOwner ||
+        file === notificationPreferencesServiceOwner ||
+        notificationChannelTrustedLeafDependencies) &&
       ts.isCallExpression(node) &&
       (node.expression.kind === ts.SyntaxKind.ImportKeyword ||
         (ts.isIdentifier(node.expression) && node.expression.text === "require")) &&

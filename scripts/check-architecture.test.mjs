@@ -253,6 +253,36 @@ describe("architecture boundary fixtures", () => {
     expect(violations).toContain("only through direct approved calls");
   });
 
+  it("freezes notification authority services to audited API barrel bindings", () => {
+    const violations = fixtureMessages(
+      "src/services/notification/notificationChannelsApi.ts",
+      `
+        import { apiClient, relay } from "../api";
+        apiClient.get("bamboo/config/notifications");
+        relay();
+      `,
+    );
+
+    expect(violations).toContain(
+      "must import only audited named, unaliased bindings including apiClient",
+    );
+  });
+
+  it.each([
+    `export { relay } from "../api";`,
+    `const runtime = await import("../api"); runtime.relay();`,
+    `const runtime = require("../api"); runtime.relay();`,
+  ])("rejects notification authority dependency forwarding", (source) => {
+    const violations = fixtureMessages(
+      "src/services/notification/notificationChannelsApi.ts",
+      source,
+    );
+
+    expect(violations).toMatch(
+      /must not (?:re-export dependency authority|dynamically load dependencies)/,
+    );
+  });
+
   it("rejects dynamic imports and re-exports outside the notification authority closure", () => {
     const dynamicImport = fixtureMessages(
       "src/components/chat/settings/notifications/ChannelsSection.tsx",
@@ -374,6 +404,65 @@ describe("architecture boundary fixtures", () => {
     expect(violations).toContain(
       "Notification Channels must use the dedicated bamboo/config/notifications section contract",
     );
+  });
+
+  it("freezes the allowed preferences service onto its dedicated authority", () => {
+    const violations = findArchitectureViolations(
+      new Map([
+        [
+          "src/components/chat/settings/SettingsNotifications.tsx",
+          `
+            import { relay } from "@services/notification/notificationPreferencesApi";
+            relay();
+          `,
+        ],
+        [
+          "src/services/notification/notificationPreferencesApi.ts",
+          `
+            import { apiClient } from "@services/api";
+            export const relay = () => apiClient.get("bamboo/config");
+          `,
+        ],
+      ]),
+    ).join("\n");
+
+    expect(violations).toContain(
+      "Notification Channels must use the dedicated bamboo/config/notifications section contract",
+    );
+    expect(violations).toContain(
+      "Notification preferences service routes must resolve statically to its approved dedicated endpoint",
+    );
+  });
+
+  it("allows only direct GET and PUT calls to the notification preferences endpoint", () => {
+    expect(
+      fixtureMessages(
+        "src/services/notification/notificationPreferencesApi.ts",
+        `
+          import { apiClient } from "../api";
+          const path = "notifications/preferences";
+          apiClient.get(path);
+          apiClient.put(path, {});
+        `,
+      ),
+    ).toBe("");
+
+    const violations = fixtureMessages(
+      "src/services/notification/notificationPreferencesApi.ts",
+      `
+        import { apiClient as client } from "../api";
+        import { load } from "../common/ServiceFactory";
+        const route = getRoute();
+        apiClient.post("notifications/preferences", {});
+        apiClient.get(route);
+        void client;
+        void load;
+      `,
+    );
+
+    expect(violations).toContain("named, unaliased binding");
+    expect(violations).toContain("may import only the canonical API authority");
+    expect(violations.match(/routes must resolve statically/g)).toHaveLength(2);
   });
 
   it("allows the dedicated notification section and scopes the prohibition to its owners", () => {
