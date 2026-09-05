@@ -52,6 +52,7 @@ const EVIDENCE_BASE = path.join(
 const EXPORTED_ENVIRONMENT_KEYS = [
   "LOTUS_REAL_BAMBOO_BASE_URL",
   "LOTUS_REAL_BAMBOO_SESSION_ID",
+  "LOTUS_REAL_BAMBOO_MEMORY_SESSION_ID",
   "LOTUS_REAL_BAMBOO_OTHER_PROJECT_SESSION_ID",
   "LOTUS_REAL_PROVIDER_OBSERVATIONS_PATH",
   "LOTUS_REAL_USER_MARKER",
@@ -127,6 +128,7 @@ interface RuntimeState {
   requiresHostChown: boolean;
   baseUrl?: string;
   sessionId?: string;
+  memorySessionId?: string;
   otherProjectSessionId?: string;
   projectId?: string;
   otherProjectId?: string;
@@ -1206,13 +1208,13 @@ const createProject = async (
 const createFinalizedSession = async (
   baseUrl: string,
   title: string,
-  projectId: string,
+  projectId?: string,
 ): Promise<string> => {
   const result = await requestJson(`${baseUrl}/api/v1/sessions`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
-      project_id: projectId,
+      ...(projectId === undefined ? {} : { project_id: projectId }),
       title,
       title_generated: true,
       model: REAL_BAMBOO_MODEL,
@@ -1230,10 +1232,11 @@ const createFinalizedSession = async (
   }
 
   const session = result.body.session;
+  const sessionProjectId = session.project_id ?? undefined;
   if (
     typeof session.id !== "string" ||
     session.id.length === 0 ||
-    session.project_id !== projectId ||
+    sessionProjectId !== projectId ||
     session.kind !== "root" ||
     session.root_session_id !== session.id ||
     session.title !== title ||
@@ -1243,7 +1246,7 @@ const createFinalizedSession = async (
     session.model_ref.model !== REAL_BAMBOO_MODEL
   ) {
     throw new Error(
-      `POST /api/v1/sessions did not persist the finalized ${title} Project session contract`,
+      `POST /api/v1/sessions did not persist the finalized ${title} session contract`,
     );
   }
   return session.id;
@@ -1474,6 +1477,7 @@ const runtimeSummary = (
     privateNetwork: state.networkName ?? null,
     baseUrl: state.baseUrl ?? null,
     sessionId: state.sessionId ?? null,
+    memorySessionId: state.memorySessionId ?? null,
     projectId: state.projectId ?? null,
     otherProjectSessionId: state.otherProjectSessionId ?? null,
     otherProjectId: state.otherProjectId ?? null,
@@ -1926,16 +1930,22 @@ const globalSetup = async (): Promise<() => Promise<void>> => {
       SECONDARY_PROJECT_CONTAINER_PATH,
     );
 
-    advanceStage(state, "creating Project-bound Bamboo sessions");
-    state.sessionId = await createFinalizedSession(
+    advanceStage(state, "creating Project-bound Bamboo memory sessions");
+    state.memorySessionId = await createFinalizedSession(
       state.baseUrl,
-      "Lotus real Bamboo E2E",
+      "Lotus primary memory Project E2E",
       state.projectId,
     );
     state.otherProjectSessionId = await createFinalizedSession(
       state.baseUrl,
       "Lotus other Project E2E",
       state.otherProjectId,
+    );
+
+    advanceStage(state, "creating unassigned Bamboo chat session");
+    state.sessionId = await createFinalizedSession(
+      state.baseUrl,
+      "Lotus real Bamboo E2E",
     );
 
     advanceStage(state, "ready");
@@ -1947,6 +1957,7 @@ const globalSetup = async (): Promise<() => Promise<void>> => {
 
     process.env.LOTUS_REAL_BAMBOO_BASE_URL = state.baseUrl;
     process.env.LOTUS_REAL_BAMBOO_SESSION_ID = state.sessionId;
+    process.env.LOTUS_REAL_BAMBOO_MEMORY_SESSION_ID = state.memorySessionId;
     process.env.LOTUS_REAL_BAMBOO_OTHER_PROJECT_SESSION_ID =
       state.otherProjectSessionId;
     process.env.LOTUS_REAL_PROVIDER_OBSERVATIONS_PATH =

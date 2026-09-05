@@ -169,11 +169,14 @@ test("source-built isolated Bamboo runtime exposes the canonical contract", asyn
 
 test("native memory tool keeps Project records isolated through archive", async () => {
   const baseUrl = new URL(requiredEnvironment("LOTUS_REAL_BAMBOO_BASE_URL"));
-  const primarySessionId = requiredEnvironment("LOTUS_REAL_BAMBOO_SESSION_ID");
+  const chatSessionId = requiredEnvironment("LOTUS_REAL_BAMBOO_SESSION_ID");
+  const primarySessionId = requiredEnvironment(
+    "LOTUS_REAL_BAMBOO_MEMORY_SESSION_ID",
+  );
   const otherSessionId = requiredEnvironment(
     "LOTUS_REAL_BAMBOO_OTHER_PROJECT_SESSION_ID",
   );
-  expect(primarySessionId).not.toBe(otherSessionId);
+  expect(new Set([chatSessionId, primarySessionId, otherSessionId]).size).toBe(3);
   const primarySessionResponse = await fetchJson(
     new URL(`/api/v1/sessions/${encodeURIComponent(primarySessionId)}`, baseUrl),
   );
