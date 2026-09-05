@@ -1,11 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
 import { ApiError, NetworkRequestError } from "../api/errors"
+import { ApiClient } from "../api/client"
+import { HttpTransport, type FetchFunction } from "../api/transport"
 
 const apiMock = vi.hoisted(() => ({
   get: vi.fn<(path: string, options?: RequestInit) => Promise<unknown>>(),
   post: vi.fn<(path: string, data?: unknown) => Promise<unknown>>(),
   put: vi.fn<(path: string, data?: unknown) => Promise<unknown>>(),
+  putOnce: vi.fn<(path: string, data?: unknown) => Promise<unknown>>(),
 }))
 
 vi.mock("../api", async (importOriginal) => ({
@@ -112,6 +115,7 @@ beforeEach(() => {
   apiMock.get.mockReset()
   apiMock.post.mockReset()
   apiMock.put.mockReset()
+  apiMock.putOnce.mockReset()
 })
 
 describe("notification section envelope", () => {
@@ -441,25 +445,70 @@ describe("notification section requests", () => {
   it("sends one exact full-section PUT and accepts the returned authority", async () => {
     const data = changedMutation()
     const response = responseFor(8, data)
-    apiMock.put.mockResolvedValue(response)
+    apiMock.putOnce.mockResolvedValue(response)
 
     await expect(putNotificationChannelsConfig(authority(), data)).resolves.toMatchObject({
       revision: 8,
     })
-    expect(apiMock.put).toHaveBeenCalledTimes(1)
-    expect(apiMock.put).toHaveBeenCalledWith("bamboo/config/notifications", {
+    expect(apiMock.putOnce).toHaveBeenCalledTimes(1)
+    expect(apiMock.putOnce).toHaveBeenCalledWith("bamboo/config/notifications", {
       expected_revision: 7,
       data,
     })
+    expect(apiMock.put).not.toHaveBeenCalled()
   })
 
+  it.each(["network loss", "server error", "revision conflict"] as const)(
+    "sends exactly one low-level fetch after %s through the real client and transport",
+    async (failure) => {
+      const code = "config_revision_conflict"
+      const body = JSON.stringify({ error: { code, message: "server detail" } })
+      const status = failure === "revision conflict" ? 409 : 503
+      const fetchImplementation = vi.fn<FetchFunction>(() =>
+        failure === "network loss"
+          ? Promise.reject(new TypeError("connection lost after submission"))
+          : Promise.resolve(new Response(body, { status })),
+      )
+      const client = new ApiClient({
+        baseUrl: "https://api.example/api/v1",
+        requestCredentials: "include",
+        transport: new HttpTransport({ fetchImplementation, retryDelayMs: () => 0 }),
+      })
+      apiMock.putOnce.mockImplementation((path, data) => client.putOnce(path, data))
+
+      const error = await putNotificationChannelsConfig(authority(), changedMutation()).catch(
+        (caught: unknown) => caught,
+      )
+
+      expect(fetchImplementation).toHaveBeenCalledTimes(1)
+      const [url, init] = fetchImplementation.mock.calls[0]
+      expect(url).toBe("https://api.example/api/v1/bamboo/config/notifications")
+      expect(init?.method).toBe("PUT")
+      expect(init?.credentials).toBe("include")
+      expect(JSON.parse(init?.body as string)).toEqual({
+        expected_revision: 7,
+        data: changedMutation(),
+      })
+      if (failure === "network loss") {
+        expect(error).toBeInstanceOf(NetworkRequestError)
+      } else {
+        expect(error).toBeInstanceOf(ApiError)
+        expect(error).toMatchObject({ status, body })
+        expect(getNotificationConfigErrorCode(error)).toBe(status === 409 ? code : null)
+      }
+      expect(apiMock.put).not.toHaveBeenCalled()
+      expect(apiMock.get).not.toHaveBeenCalled()
+      expect(apiMock.post).not.toHaveBeenCalled()
+    },
+  )
+
   it("accepts Bamboo's same-revision semantic no-op authority", async () => {
-    apiMock.put.mockResolvedValue(envelopeFixture())
+    apiMock.putOnce.mockResolvedValue(envelopeFixture())
 
     await expect(putNotificationChannelsConfig(authority(), mutation)).resolves.toMatchObject({
       revision: 7,
     })
-    expect(apiMock.put).toHaveBeenCalledTimes(1)
+    expect(apiMock.putOnce).toHaveBeenCalledTimes(1)
   })
 
   describe.each(["ntfy", "bark"] as const)("%s credential intent", (channel) => {
@@ -485,7 +534,7 @@ describe("notification section requests", () => {
       await expect(putNotificationChannelsConfig(authority(), data)).rejects.toBeInstanceOf(
         NotificationConfigContractError,
       )
-      expect(apiMock.put).not.toHaveBeenCalled()
+      expect(apiMock.putOnce).not.toHaveBeenCalled()
       expect(apiMock.get).not.toHaveBeenCalled()
       expect(apiMock.post).not.toHaveBeenCalled()
     })
@@ -504,11 +553,11 @@ describe("notification section requests", () => {
     await expect(putNotificationChannelsConfig(authority(), data)).rejects.toBeInstanceOf(
       NotificationConfigContractError,
     )
-    expect(apiMock.put).not.toHaveBeenCalled()
+    expect(apiMock.putOnce).not.toHaveBeenCalled()
   })
 
   it("rejects a spurious revision advance for a semantic no-op", async () => {
-    apiMock.put.mockResolvedValue(responseFor(8, mutation))
+    apiMock.putOnce.mockResolvedValue(responseFor(8, mutation))
 
     await expect(putNotificationChannelsConfig(authority(), mutation)).rejects.toBeInstanceOf(
       NotificationConfigContractError,
@@ -522,14 +571,14 @@ describe("notification section requests", () => {
       await expect(putNotificationChannelsConfig(before, changedMutation())).rejects.toBeInstanceOf(
         NotificationConfigContractError,
       )
-      expect(apiMock.put).not.toHaveBeenCalled()
+      expect(apiMock.putOnce).not.toHaveBeenCalled()
     },
   )
 
   it.each([6, 7, 9])("rejects an unrelated successful response revision %s", async (revision) => {
     const data = changedMutation()
     const response = responseFor(revision, data)
-    apiMock.put.mockResolvedValue(response)
+    apiMock.putOnce.mockResolvedValue(response)
     await expect(putNotificationChannelsConfig(authority(), data)).rejects.toBeInstanceOf(
       NotificationConfigContractError,
     )
@@ -541,7 +590,7 @@ describe("notification section requests", () => {
     response.section.revision = 8
     response.data.ntfy.topic = "server-returned-something-else"
     response.section.data.notifications.ntfy.topic = "server-returned-something-else"
-    apiMock.put.mockResolvedValue(response)
+    apiMock.putOnce.mockResolvedValue(response)
 
     await expect(putNotificationChannelsConfig(authority(), changedMutation())).rejects.toBeInstanceOf(
       NotificationConfigContractError,
@@ -549,7 +598,7 @@ describe("notification section requests", () => {
   })
 
   it("requires replace and clear responses to reflect the credential outcome", async () => {
-    apiMock.put.mockResolvedValue(responseFor(8, mutation))
+    apiMock.putOnce.mockResolvedValue(responseFor(8, mutation))
     await expect(
       putNotificationChannelsConfig(authority(), {
         ...mutation,
@@ -562,7 +611,7 @@ describe("notification section requests", () => {
 
     const configured = responseFor(8, mutation)
     configured.data.ntfy.credential.configured = true
-    apiMock.put.mockResolvedValue(configured)
+    apiMock.putOnce.mockResolvedValue(configured)
     await expect(
       putNotificationChannelsConfig(authority(), {
         ...mutation,
@@ -581,12 +630,12 @@ describe("notification section requests", () => {
     }
     const replaced = responseFor(8, replace)
     setBarkConfigured(replaced)
-    apiMock.put.mockResolvedValueOnce(replaced)
+    apiMock.putOnce.mockResolvedValueOnce(replaced)
     await expect(putNotificationChannelsConfig(authority(), replace)).resolves.toMatchObject({
       revision: 8,
       data: { bark: { credential: { state: "configured", source: "user" } } },
     })
-    expect(apiMock.put).toHaveBeenLastCalledWith("bamboo/config/notifications", {
+    expect(apiMock.putOnce).toHaveBeenLastCalledWith("bamboo/config/notifications", {
       expected_revision: 7,
       data: replace,
     })
@@ -597,12 +646,12 @@ describe("notification section requests", () => {
     }
     const cleared = responseFor(8, clear)
     setNtfyMissing(cleared)
-    apiMock.put.mockResolvedValueOnce(cleared)
+    apiMock.putOnce.mockResolvedValueOnce(cleared)
     await expect(putNotificationChannelsConfig(authority(), clear)).resolves.toMatchObject({
       revision: 8,
       data: { ntfy: { credential: { state: "missing", credentialRef: null } } },
     })
-    expect(apiMock.put).toHaveBeenLastCalledWith("bamboo/config/notifications", {
+    expect(apiMock.putOnce).toHaveBeenLastCalledWith("bamboo/config/notifications", {
       expected_revision: 7,
       data: clear,
     })
@@ -611,7 +660,7 @@ describe("notification section requests", () => {
       ...mutation,
       bark: { ...mutation.bark, credential_change: { action: "clear" } as const },
     }
-    apiMock.put.mockResolvedValueOnce(envelopeFixture())
+    apiMock.putOnce.mockResolvedValueOnce(envelopeFixture())
     await expect(
       putNotificationChannelsConfig(authority(), clearAlreadyMissing),
     ).resolves.toMatchObject({ revision: 7 })
@@ -633,7 +682,7 @@ describe("notification section requests", () => {
         ntfy: { ...mutation.ntfy, base_url: baseUrl },
       }),
     ).rejects.toBeInstanceOf(NotificationConfigContractError)
-    expect(apiMock.put).not.toHaveBeenCalled()
+    expect(apiMock.putOnce).not.toHaveBeenCalled()
   })
 
   it("keeps notification delivery testing on its existing dedicated endpoint", async () => {
@@ -655,13 +704,13 @@ describe("notification section requests", () => {
         JSON.stringify({ error: { code } }),
       )
       apiMock.get.mockRejectedValue(error)
-      apiMock.put.mockRejectedValue(error)
+      apiMock.putOnce.mockRejectedValue(error)
 
       await expect(getNotificationChannelsConfig()).rejects.toBe(error)
       await expect(putNotificationChannelsConfig(authority(), mutation)).rejects.toBe(error)
       expect(getNotificationConfigErrorCode(error)).toBe(code)
       expect(apiMock.get).toHaveBeenCalledTimes(1)
-      expect(apiMock.put).toHaveBeenCalledTimes(1)
+      expect(apiMock.putOnce).toHaveBeenCalledTimes(1)
       expect(apiMock.post).not.toHaveBeenCalled()
     },
   )

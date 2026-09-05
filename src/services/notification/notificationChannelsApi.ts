@@ -698,7 +698,7 @@ export const putNotificationChannelsConfig = async (
   if (willChange && before.revision === Number.MAX_SAFE_INTEGER) {
     throw new NotificationConfigContractError("Notification expected revision cannot advance")
   }
-  const response = await apiClient.put<unknown>(NOTIFICATION_CONFIG_PATH, {
+  const response = await apiClient.putOnce<unknown>(NOTIFICATION_CONFIG_PATH, {
     expected_revision: before.revision,
     data,
   })

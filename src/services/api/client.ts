@@ -204,6 +204,17 @@ export class ApiClient {
     return this.send<T>("PUT", path, options, { value: data });
   }
 
+  /** Submit a CAS mutation once; an ambiguous failure must not replay the write. */
+  async putOnce<T>(path: string, data?: unknown, options?: RequestInit): Promise<T> {
+    const url = this.resolveUrl(path);
+    logApiRequest("PUT", url);
+    const response = await this.transport.requestOnce(
+      url,
+      this.createRequestInit("PUT", options, { value: data }),
+    );
+    return this.handleResponse<T>(response);
+  }
+
   async patch<T>(path: string, data?: unknown, options?: RequestInit): Promise<T> {
     return this.send<T>("PATCH", path, options, { value: data });
   }
