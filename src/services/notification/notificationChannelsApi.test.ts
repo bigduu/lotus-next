@@ -269,6 +269,29 @@ describe("notification section envelope", () => {
   it.each([
     ["unsafe revision", (fixture: Fixture) => Reflect.set(fixture, "revision", 2 ** 53)],
     ["non-RFC3339 timestamp", (fixture: Fixture) => (fixture.loaded_at = "September 4, 2026")],
+    [
+      "impossible RFC3339 calendar date",
+      (fixture: Fixture) => {
+        fixture.loaded_at = "2026-02-30T12:00:00Z"
+        fixture.section.loaded_at = "2026-02-30T12:00:00Z"
+      },
+    ],
+    [
+      "non-leap-year date",
+      (fixture: Fixture) => (credential(fixture).updated_at = "2026-02-29T12:00:00Z"),
+    ],
+    [
+      "impossible short-month date",
+      (fixture: Fixture) => (credential(fixture).updated_at = "2026-04-31T12:00:00Z"),
+    ],
+    [
+      "invalid 24-hour clock",
+      (fixture: Fixture) => (credential(fixture).updated_at = "2026-09-04T24:00:00Z"),
+    ],
+    [
+      "invalid timezone offset",
+      (fixture: Fixture) => (credential(fixture).updated_at = "2026-09-04T12:00:00+24:00"),
+    ],
     ["duplicated metadata mismatch", (fixture: Fixture) => (fixture.section.revision = 8)],
     ["unknown top-level field", (fixture: Fixture) => Reflect.set(fixture, "legacy", true)],
     [
@@ -302,6 +325,14 @@ describe("notification section envelope", () => {
     expect(() => parseNotificationConfigEnvelope(fixture)).toThrow(
       NotificationConfigContractError,
     )
+  })
+
+  it("accepts a valid leap-day RFC3339 timestamp", () => {
+    const fixture = envelopeFixture()
+    fixture.loaded_at = "2024-02-29T12:00:00Z"
+    fixture.section.loaded_at = "2024-02-29T12:00:00Z"
+
+    expect(parseNotificationConfigEnvelope(fixture).loadedAt).toBe("2024-02-29T12:00:00Z")
   })
 
   it.each([

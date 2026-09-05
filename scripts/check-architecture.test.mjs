@@ -278,6 +278,40 @@ describe("architecture boundary fixtures", () => {
     expect(reexport).toContain("re-export only its audited local authority dependencies");
   });
 
+  it("normalizes alias traversal before checking the notification authority closure", () => {
+    const violations = fixtureMessages(
+      "src/components/chat/settings/notifications/escape.ts",
+      `
+        import { useSystemConfig } from "@components/chat/settings/notifications/../system/useSystemConfig";
+        export const useEscapedAuthority = () => useSystemConfig();
+      `,
+    );
+
+    expect(violations).toContain(
+      "Notification Channels may import only its audited local authority dependencies",
+    );
+  });
+
+  it.each(["glob", "globEager"])(
+    "rejects import.meta.%s from a notification authority owner",
+    (method) => {
+      const violations = fixtureMessages(
+        "src/components/chat/settings/notifications/ChannelsSection.tsx",
+        `
+          const modules = import.meta.${method}(
+            "/src/components/chat/settings/system/useSystemConfig.ts",
+            { eager: true },
+          );
+          void modules;
+        `,
+      );
+
+      expect(violations).toContain(
+        "import.meta.glob bypasses the Notification Channels authority boundary",
+      );
+    },
+  );
+
   it("rejects transitive service wrappers and barrel aliases from notification owners", () => {
     const wrapper = fixtureMessages(
       "src/components/chat/settings/notifications/notificationConfigHelper.ts",
@@ -309,6 +343,37 @@ describe("architecture boundary fixtures", () => {
     );
     expect(serviceToComponent).toContain("only its audited local authority dependencies");
     expect(channelToPreferences).toContain("only its audited local authority dependencies");
+  });
+
+  it("freezes trusted notification leaves against transitive runtime authority", () => {
+    const violations = findArchitectureViolations(
+      new Map([
+        [
+          "src/components/chat/settings/notifications/ChannelsSection.tsx",
+          `import { isMaskedSecret } from "@/lib/secrets"; void isMaskedSecret;`,
+        ],
+        [
+          "src/lib/secrets.ts",
+          `
+            import { apiClient } from "@services/api";
+            export const isMaskedSecret = (value) => {
+              void apiClient.get("bamboo/config");
+              return Boolean(value);
+            };
+          `,
+        ],
+      ]),
+    ).join("\n");
+
+    expect(violations).toContain(
+      "Notification Channels dependency closure may import only audited pure dependencies",
+    );
+    expect(violations).toContain(
+      "Notification Channels dependency closure must not use runtime authority",
+    );
+    expect(violations).toContain(
+      "Notification Channels must use the dedicated bamboo/config/notifications section contract",
+    );
   });
 
   it("allows the dedicated notification section and scopes the prohibition to its owners", () => {

@@ -78,6 +78,15 @@ const notificationChannelPageAllowedDependencies = new Set([
   "src/lib/utils",
   "src/services/notification/notificationPreferencesApi",
 ]);
+const notificationChannelTrustedLeafAllowedDependencies = new Map([
+  ["src/lib/secrets.ts", new Set()],
+  ["src/lib/notify.ts", new Set()],
+  ["src/lib/utils.ts", new Set()],
+  ["src/components/ui/button.tsx", new Set(["src/lib/utils"])],
+  ["src/components/ui/input.tsx", new Set(["src/lib/utils"])],
+  ["src/components/ui/select.tsx", new Set(["src/lib/utils"])],
+  ["src/components/ui/switch.tsx", new Set(["src/lib/utils"])],
+]);
 const notificationWholeConfigCallNames = new Set([
   "delete",
   "fetchRaw",
@@ -329,7 +338,10 @@ const localModulePath = (file, moduleName) => {
     if (!alias) return null;
     resolved = `${alias[1]}${normalized.slice(alias[0].length)}`;
   }
-  return resolved.replace(/\.(?:[cm]?[jt]sx?)$/, "").replace(/\/index$/, "");
+  return path.posix
+    .normalize(resolved)
+    .replace(/\.(?:[cm]?[jt]sx?)$/, "")
+    .replace(/\/index$/, "");
 };
 const isAllowedNotificationChannelDependency = (file, moduleName) => {
   if (!isLocalModule(moduleName)) return file !== notificationChannelServiceOwner;
@@ -770,8 +782,20 @@ const analyzeSource = (file, source) => {
     file === notificationChannelPageOwner ||
     file === notificationChannelServiceOwner ||
     file.startsWith(notificationChannelComponentRoot);
+  const notificationChannelTrustedLeafDependencies =
+    notificationChannelTrustedLeafAllowedDependencies.get(file);
+  const isAllowedNotificationTrustedLeafDependency = (moduleName) => {
+    if (!notificationChannelTrustedLeafDependencies || !isLocalModule(moduleName)) return true;
+    const resolved = localModulePath(file, moduleName);
+    return resolved !== null && notificationChannelTrustedLeafDependencies.has(resolved);
+  };
   const isNotificationWholeConfigCall = (node) => {
-    if (!isNotificationChannelConfigOwner || !ts.isCallExpression(node)) return false;
+    if (
+      (!isNotificationChannelConfigOwner && !notificationChannelTrustedLeafDependencies) ||
+      !ts.isCallExpression(node)
+    ) {
+      return false;
+    }
     const callee = unwrapStaticExpression(node.expression);
     const callName = ts.isIdentifier(callee) ? callee.text : resolvedPropertyName(callee);
     if (notificationWholeConfigFacadeCallNames.has(callName)) return true;
@@ -789,6 +813,16 @@ const analyzeSource = (file, source) => {
       .replace(/[?#].*$/, "")
       .replace(/^\/+|\/+$/g, "");
     return ["bamboo/config", "api/v1/bamboo/config", "v1/bamboo/config"].includes(normalized);
+  };
+  const isNotificationTrustedLeafRuntimeCall = (node) => {
+    if (!notificationChannelTrustedLeafDependencies || !ts.isCallExpression(node)) return false;
+    const callee = unwrapStaticExpression(node.expression);
+    return (
+      callee &&
+      ts.isPropertyAccessExpression(callee) &&
+      ts.isIdentifier(callee.expression) &&
+      callee.expression.text === "apiClient"
+    );
   };
   const isUnverifiableNotificationServiceRoute = (node) => {
     if (file !== notificationChannelServiceOwner || !ts.isCallExpression(node)) return false;
@@ -1674,6 +1708,9 @@ const analyzeSource = (file, source) => {
         "Notification Channels must use the dedicated bamboo/config/notifications section contract, never the whole-config endpoint",
       );
     }
+    if (isNotificationTrustedLeafRuntimeCall(node)) {
+      report(node, "Notification Channels dependency closure must not use runtime authority");
+    }
     if (isUnverifiableNotificationServiceRoute(node)) {
       report(
         node,
@@ -1756,6 +1793,12 @@ const analyzeSource = (file, source) => {
       (file === compositionRoot || runtimeLocalImportAllowlist.has(file))
     ) {
       report(node, "eager or deferred import.meta.glob bypasses the pre-install dependency boundary");
+    }
+    if (isImportMetaGlobCall(node) && isNotificationChannelConfigOwner) {
+      report(node, "import.meta.glob bypasses the Notification Channels authority boundary");
+    }
+    if (isImportMetaGlobCall(node) && notificationChannelTrustedLeafDependencies) {
+      report(node, "import.meta.glob bypasses the Notification Channels dependency closure");
     }
 
     if (isFrozenProviderEndpoint(file, node)) {
@@ -1884,6 +1927,12 @@ const analyzeSource = (file, source) => {
 
     if (ts.isImportDeclaration(node) && ts.isStringLiteralLike(node.moduleSpecifier)) {
       const moduleName = node.moduleSpecifier.text;
+      if (!isAllowedNotificationTrustedLeafDependency(moduleName)) {
+        report(
+          node,
+          "Notification Channels dependency closure may import only audited pure dependencies",
+        );
+      }
       if (
         isNotificationChannelConfigOwner &&
         (moduleName.endsWith("/common/ServiceFactory") ||
@@ -1938,6 +1987,12 @@ const analyzeSource = (file, source) => {
       ts.isStringLiteralLike(node.moduleSpecifier)
     ) {
       const moduleName = node.moduleSpecifier.text;
+      if (!isAllowedNotificationTrustedLeafDependency(moduleName)) {
+        report(
+          node,
+          "Notification Channels dependency closure may re-export only audited pure dependencies",
+        );
+      }
       if (
         isNotificationChannelConfigOwner &&
         !isAllowedNotificationChannelDependency(file, moduleName)
@@ -1957,6 +2012,12 @@ const analyzeSource = (file, source) => {
 
     const calledModule = moduleNameFromCall(node);
     if (calledModule) {
+      if (!isAllowedNotificationTrustedLeafDependency(calledModule)) {
+        report(
+          node,
+          "Notification Channels dependency closure may load only audited pure dependencies",
+        );
+      }
       if (
         isNotificationChannelConfigOwner &&
         !isAllowedNotificationChannelDependency(file, calledModule)
@@ -1971,7 +2032,7 @@ const analyzeSource = (file, source) => {
       checkSourceDependencyBoundary(node, calledModule);
     }
     if (
-      isNotificationChannelConfigOwner &&
+      (isNotificationChannelConfigOwner || notificationChannelTrustedLeafDependencies) &&
       ts.isCallExpression(node) &&
       (node.expression.kind === ts.SyntaxKind.ImportKeyword ||
         (ts.isIdentifier(node.expression) && node.expression.text === "require")) &&
