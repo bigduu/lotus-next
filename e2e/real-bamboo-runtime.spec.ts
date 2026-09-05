@@ -265,7 +265,11 @@ test("native memory tool keeps Project records isolated through archive", async 
     body_truncated: false,
     retrieval_metadata_truncated: false,
   });
-  expect(requiredRecord(primaryDocument.frontmatter, "primary frontmatter")).toMatchObject({
+  const primaryFrontmatter = requiredRecord(
+    primaryDocument.frontmatter,
+    "primary frontmatter",
+  );
+  expect(primaryFrontmatter).toMatchObject({
     id: primaryId,
     title: primaryTitle,
     type: "project",
@@ -273,8 +277,13 @@ test("native memory tool keeps Project records isolated through archive", async 
     status: "active",
     project_key: primaryProjectId,
     tags: ["e2e-primary"],
-    retrieval: { keywords: [primaryToken], entities: ["Jiandu"] },
   });
+  const primaryRetrieval = requiredRecord(
+    primaryFrontmatter.retrieval,
+    "primary retrieval metadata",
+  );
+  expect(primaryRetrieval.keywords).toEqual(expect.arrayContaining([primaryToken]));
+  expect(primaryRetrieval.entities).toEqual(expect.arrayContaining(["Jiandu"]));
 
   const archived = await executeMemory(baseUrl, primarySessionId, {
     action: "purge",

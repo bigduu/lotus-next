@@ -28,8 +28,8 @@ const REAL_BAMBOO_MODEL = "gpt-4o-mini";
 const REAL_BAMBOO_PROVIDER = "e2e-openai";
 const BAMBOO_CONTAINER_PORT = 9562;
 const PROVIDER_CONTAINER_PORT = 18_080;
-const PRIMARY_PROJECT_CONTAINER_PATH = "/data/project-workspaces/primary";
-const SECONDARY_PROJECT_CONTAINER_PATH = "/data/project-workspaces/secondary";
+const PRIMARY_PROJECT_CONTAINER_PATH = "/data/bamboo/workspaces/primary";
+const SECONDARY_PROJECT_CONTAINER_PATH = "/data/bamboo/workspaces/secondary";
 const COMMAND_BUFFER_BYTES = 256 * 1024 * 1024;
 const READY_TIMEOUT_MS = 90_000;
 const PROVIDER_READY_TIMEOUT_MS = 15_000;
@@ -619,9 +619,14 @@ const prepareProjectWorkspaces = async (state: RuntimeState): Promise<void> => {
     throw new Error("Internal error: runtime data root is not initialized");
   }
 
+  // Docker sets BAMBOO_WORKSPACE_ROOT=/data/bamboo/workspaces, which enables
+  // confinement. Project paths must already live below that exact root;
+  // otherwise Bamboo correctly redirects the candidate and rejects it as a
+  // non-authoritative project_path.
   const projectWorkspacesRoot = path.join(
     state.runtimeDataRoot,
-    "project-workspaces",
+    "bamboo",
+    "workspaces",
   );
   const primary = path.join(projectWorkspacesRoot, "primary");
   const secondary = path.join(projectWorkspacesRoot, "secondary");
@@ -1186,8 +1191,13 @@ const createProject = async (
     result.body.name !== name ||
     result.body.project_path !== projectPath
   ) {
+    const error = isJsonObject(result.body) ? result.body.error : null;
+    const errorCode =
+      isJsonObject(error) && typeof error.code === "string"
+        ? error.code
+        : "unknown";
     throw new Error(
-      `POST /api/v1/projects did not persist the isolated ${name} fixture (HTTP ${result.status})`,
+      `POST /api/v1/projects did not persist the isolated ${name} fixture (HTTP ${result.status}, code ${errorCode})`,
     );
   }
   return result.body.id;
