@@ -123,6 +123,8 @@ const fixtureSession = {
   has_pending_question: false,
   running_child_count: 0,
   placement: { kind: "local", host: "fixture" },
+  permission_mode: "default",
+  bypass_permissions: false,
 }
 
 const fixtureModel = {
@@ -168,6 +170,8 @@ const apiResponse = (method: string, pathnameWithSearch: string): unknown => {
       }
     case "GET /api/v1/sessions":
       return { sessions: [fixtureSession] }
+    case `GET /api/v1/sessions/${FIXTURE_SESSION_ID}`:
+      return { session: fixtureSession }
     case "GET /api/v1/runs/active":
       return { sessions: [] }
     case `GET /api/v1/history/${FIXTURE_SESSION_ID}`:
@@ -417,7 +421,13 @@ export const installArtifactRuntime = async (
       if (request.method() === "GET" && url.pathname === "/api/v1/bootstrap") {
         observation.bootstrapDocuments.push(response)
       }
-      await route.fulfill({ status: 200, json: response })
+      await route.fulfill({
+        status: 200,
+        json: response,
+        ...(request.method() === "GET" && url.pathname === `/api/v1/sessions/${FIXTURE_SESSION_ID}`
+          ? { headers: { ETag: '"1"' } }
+          : {}),
+      })
       return
     }
 

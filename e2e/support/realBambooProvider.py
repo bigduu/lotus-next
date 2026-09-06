@@ -28,6 +28,9 @@ MAX_REQUEST_BODY_BYTES = 4 * 1024 * 1024
 MAX_SMOKE_RESPONSE_BYTES = 1024 * 1024
 SMOKE_SUCCESS_MESSAGE = "deterministic provider smoke passed"
 SELF_TEST_SUCCESS_MESSAGE = "deterministic provider self-test passed"
+PERMISSION_TOOL_MARKER = "LOTUS_PERMISSION_TOOL_EXECUTED"
+PERMISSION_TOOL_COMMAND = f"printf '{PERMISSION_TOOL_MARKER}'"
+PERMISSION_TOOL_CALL_ID = "call_lotus_permission_e2e"
 
 
 def required_environment(name: str) -> str:
@@ -244,6 +247,69 @@ class ProviderHandler(BaseHTTPRequestHandler):
             )
             return
 
+        # The permission acceptance scenario uses the same isolated provider
+        # and safe observation schema. It emits one harmless, real Bash call;
+        # Bamboo, not this fixture, owns the approval/execution decision.
+        messages = body.get("messages", [])
+        last_user = next(
+            (
+                message
+                for message in reversed(messages)
+                if isinstance(message, dict) and message.get("role") == "user"
+            ),
+            {},
+        ) if isinstance(messages, list) else {}
+        permission_scenario = contains_marker(
+            last_user.get("content"), f"{self.user_marker}:permission"
+        )
+        delta: dict[str, Any] = {
+            "role": "assistant", "content": self.assistant_marker
+        }
+        finish_reason = "stop"
+        if permission_scenario:
+            has_tool_result = any(
+                isinstance(message, dict)
+                and message.get("role") == "tool"
+                and message.get("tool_call_id") == PERMISSION_TOOL_CALL_ID
+                for message in messages
+            )
+            if has_tool_result:
+                delta["content"] = f"{self.assistant_marker}:permission"
+            else:
+                tools = body.get("tools", [])
+                bash_name = next(
+                    (
+                        tool["function"]["name"]
+                        for tool in tools
+                        if isinstance(tool, dict)
+                        and isinstance(tool.get("function"), dict)
+                        and isinstance(tool["function"].get("name"), str)
+                        and tool["function"]["name"].lower() == "bash"
+                    ),
+                    None,
+                ) if isinstance(tools, list) else None
+                if bash_name is None:
+                    self._send_json(422, {"error": {"message": (
+                        "permission fixture requires an offered Bash tool"
+                    )}})
+                    return
+                delta = {
+                    "role": "assistant",
+                    "tool_calls": [{
+                        "index": 0,
+                        "id": PERMISSION_TOOL_CALL_ID,
+                        "type": "function",
+                        "function": {
+                            "name": bash_name,
+                            "arguments": json.dumps({
+                                "command": PERMISSION_TOOL_COMMAND,
+                                "description": "Print the isolated permission acceptance marker",
+                            }),
+                        },
+                    }],
+                }
+                finish_reason = "tool_calls"
+
         chunk_base = {
             "id": "chatcmpl-lotus-real-bamboo-e2e",
             "object": "chat.completion.chunk",
@@ -256,10 +322,7 @@ class ProviderHandler(BaseHTTPRequestHandler):
                 "choices": [
                     {
                         "index": 0,
-                        "delta": {
-                            "role": "assistant",
-                            "content": self.assistant_marker,
-                        },
+                        "delta": delta,
                         "finish_reason": None,
                     }
                 ],
@@ -267,7 +330,7 @@ class ProviderHandler(BaseHTTPRequestHandler):
             {
                 **chunk_base,
                 "choices": [
-                    {"index": 0, "delta": {}, "finish_reason": "stop"}
+                    {"index": 0, "delta": {}, "finish_reason": finish_reason}
                 ],
                 "usage": None,
             },
@@ -546,6 +609,63 @@ def run_smoke() -> None:
     print(SMOKE_SUCCESS_MESSAGE, flush=True)
 
 
+def validate_permission_scenario(*, port: int, api_key: str, user_marker: str,
+                                 assistant_marker: str) -> None:
+    messages: list[dict[str, Any]] = [{
+        "role": "user", "content": f"{user_marker}:permission"
+    }]
+    document = {
+        "model": MODEL,
+        "stream": True,
+        "messages": messages,
+        "tools": [{"type": "function", "function": {
+            "name": "Bash", "parameters": {"type": "object"}
+        }}],
+    }
+
+    def frames_for(request_document: dict[str, Any]) -> list[dict[str, Any]]:
+        status, content_type, response_body = request_completion(
+            api_key=api_key, port=port, request_document=request_document
+        )
+        if status != 200 or not content_type.startswith("text/event-stream"):
+            raise RuntimeError("permission fixture did not produce an SSE response")
+        data = [line.removeprefix("data:").strip()
+                for line in response_body.decode("utf-8").splitlines()
+                if line.startswith("data:")]
+        if not data or data[-1] != "[DONE]":
+            raise RuntimeError("permission fixture did not terminate its stream")
+        return [json.loads(value) for value in data[:-1]]
+
+    first = frames_for(document)
+    call = first[0]["choices"][0]["delta"]["tool_calls"][0]
+    if (call["id"] != PERMISSION_TOOL_CALL_ID
+            or call["function"]["name"] != "Bash"
+            or json.loads(call["function"]["arguments"])["command"]
+            != PERMISSION_TOOL_COMMAND
+            or first[1]["choices"][0]["finish_reason"] != "tool_calls"):
+        raise RuntimeError("permission fixture did not request the exact safe command")
+
+    messages.extend([
+        {"role": "assistant", "tool_calls": [{
+            key: value for key, value in call.items() if key != "index"
+        }]},
+        {"role": "tool", "tool_call_id": PERMISSION_TOOL_CALL_ID,
+         "content": PERMISSION_TOOL_MARKER},
+    ])
+    second = frames_for(document)
+    if (second[0]["choices"][0]["delta"].get("content")
+            != f"{assistant_marker}:permission"
+            or second[1]["choices"][0]["finish_reason"] != "stop"):
+        raise RuntimeError("permission fixture did not complete after the tool result")
+
+    no_tool_document = {**document, "messages": messages[:1], "tools": []}
+    rejected_status, _, _ = request_completion(
+        api_key=api_key, port=port, request_document=no_tool_document
+    )
+    if rejected_status != 422:
+        raise RuntimeError("permission fixture invented a tool not offered by Bamboo")
+
+
 def create_provider_server(bind_port: int) -> ProviderServer:
     if bind_port < 0 or bind_port > 65535:
         raise RuntimeError("provider bind port is outside the TCP port range")
@@ -634,6 +754,14 @@ def run_self_test() -> None:
                     api_key=environment["LOTUS_REAL_PROVIDER_API_KEY"],
                 )
                 validate_smoke()
+                validate_permission_scenario(
+                    port=server.server_port,
+                    api_key=environment["LOTUS_REAL_PROVIDER_API_KEY"],
+                    user_marker=environment["LOTUS_REAL_PROVIDER_USER_MARKER"],
+                    assistant_marker=environment["LOTUS_REAL_PROVIDER_ASSISTANT_MARKER"],
+                )
+                if PERMISSION_TOOL_MARKER in observations_path.read_text(encoding="utf-8"):
+                    raise RuntimeError("permission fixture persisted raw tool content")
             finally:
                 if thread_started and server_thread.is_alive():
                     server.shutdown()

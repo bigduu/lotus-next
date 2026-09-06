@@ -37,6 +37,8 @@ const sessions = [
   has_pending_question: false,
   running_child_count: 0,
   placement: { kind: "local", host: "fixture" },
+  permission_mode: "default",
+  bypass_permissions: false,
 }))
 
 type Surface = Page | FrameLocator
@@ -62,6 +64,10 @@ for (const scenario of [standaloneScenario, embeddedScenario, secureRemoteScenar
       const pathname = new URL(request.url()).pathname
       if (request.method() === "GET" && pathname === "/api/v1/sessions") {
         await route.fulfill({ json: { sessions } })
+      } else if (request.method() === "GET" && /^\/api\/v1\/sessions\/[^/]+$/.test(pathname)) {
+        const session = sessions.find(({ id }) => id === pathname.split("/").pop())
+        if (session) await route.fulfill({ json: { session }, headers: { ETag: '"1"' } })
+        else await route.fallback()
       } else if (request.method() === "GET" && pathname.startsWith("/api/v1/history/")) {
         await route.fulfill({ json: { session_id: pathname.split("/").pop(), messages: [] } })
       } else if (request.method() === "GET" && /^\/api\/v1\/respond\/[^/]+\/pending$/.test(pathname)) {

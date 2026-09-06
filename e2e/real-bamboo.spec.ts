@@ -1434,3 +1434,322 @@ test("production Jiandu settings manage and isolate real Project memory on deskt
     }
   }
 });
+
+// Keep this after the original chat test: its provider request count is an
+// exact protocol assertion, while this scenario deliberately adds tool rounds.
+test("production session modes keep Bypass confirmation distinct from Auto execution", async ({
+  browser,
+}, testInfo) => {
+  const contract = readRuntimeContract();
+  const toolMarker = "LOTUS_PERMISSION_TOOL_EXECUTED";
+  const command = `printf '${toolMarker}'`;
+  const toolCallId = "call_lotus_permission_e2e";
+  const userMarker = `${contract.userMarker}:permission`;
+  const assistantMarker = `${contract.assistantMarker}:permission`;
+  const ruleId = `lotus-permission-${contract.sessionId}`;
+  const sessions: { id: string; title: string; mode: "bypass" | "auto" }[] = [];
+  let ruleCreated = false;
+
+  const apiUrl = (pathname: string): URL => new URL(pathname, contract.baseUrl);
+  const sessionUrl = (id: string, suffix = ""): URL =>
+    apiUrl(`/api/v1/sessions/${encodeURIComponent(id)}${suffix}`);
+  const mutate = async (
+    url: URL,
+    method: "POST" | "DELETE",
+    body?: unknown,
+  ): Promise<unknown> => {
+    const response = await fetch(url, {
+      method,
+      ...(body === undefined
+        ? {}
+        : {
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify(body),
+          }),
+      signal: AbortSignal.timeout(10_000),
+    });
+    expect(response.ok, `${method} ${url.pathname}: ${response.status}`).toBe(true);
+    const text = await response.text();
+    return text ? (JSON.parse(text) as unknown) : null;
+  };
+  const currentMode = async (id: string): Promise<unknown> => {
+    const document = asRecord(await fetchJson(sessionUrl(id)));
+    return asRecord(document?.session)?.permission_mode;
+  };
+  const historyMessages = async (id: string): Promise<JsonRecord[]> => {
+    const document = asRecord(await fetchJson(sessionUrl(id, "/history")));
+    return (Array.isArray(document?.messages) ? document.messages : [])
+      .map(asRecord)
+      .filter((message): message is JsonRecord => message !== null);
+  };
+  const toolPayload = (message: JsonRecord): JsonRecord | null => {
+    if (message.role !== "tool" || message.tool_call_id !== toolCallId ||
+      message.tool_success !== true || typeof message.content !== "string") return null;
+    try {
+      return asRecord(JSON.parse(message.content) as unknown);
+    } catch {
+      // A recorded denial is plain text, not an executed Bash result.
+      return null;
+    }
+  };
+  const executedSafeCommand = (message: JsonRecord): boolean => {
+    const payload = toolPayload(message);
+    // A successful permission-placeholder message also contains the command
+    // text. Only real stdout plus a zero exit code proves Bash executed it.
+    return payload?.command === command && payload.exit_code === 0 &&
+      payload.timed_out === false &&
+      typeof payload.stdout === "string" && payload.stdout.trim() === toolMarker;
+  };
+  const permissionPromptSeen = (observation: PageObservation, id: string): boolean =>
+    observation.webSockets.some((socket) =>
+      socket.received.some((frame) => {
+        const summary = summarizeFrame(frame);
+        return (
+          summary.channel === `agent.${id}` &&
+          (summary.eventType === "need_clarification" ||
+            summary.nestedEventType === "need_clarification")
+        );
+      }),
+    );
+
+  try {
+    const memorySessionId = requiredEnvironment("LOTUS_REAL_BAMBOO_MEMORY_SESSION_ID");
+    const projectSession = asRecord(await fetchJson(sessionUrl(memorySessionId)));
+    const projectId = asRecord(projectSession?.session)?.project_id;
+    expect(typeof projectId).toBe("string");
+    for (const mode of ["bypass", "auto"] as const) {
+      const title = `Lotus ${mode} permission E2E`;
+      const document = asRecord(await mutate(apiUrl("/api/v1/sessions"), "POST", {
+        title,
+        title_generated: true,
+        project_id: projectId,
+        model: "gpt-4o-mini",
+        model_ref: { provider: "e2e-openai", model: "gpt-4o-mini" },
+      }));
+      const session = asRecord(document?.session);
+      const id = stringField(session, "id");
+      expect(id).toBeTruthy();
+      if (!id) throw new Error("The permission fixture needs a real session ID");
+      sessions.push({ id, title, mode });
+      expect(session).toMatchObject({ permission_mode: "default", project_id: projectId });
+    }
+
+    const policy = asRecord(await fetchJson(apiUrl("/api/v1/bamboo/permission/policy")));
+    expect(Number.isSafeInteger(policy?.revision)).toBe(true);
+    await mutate(apiUrl("/api/v1/bamboo/permission/rules"), "POST", {
+      expected_revision: policy?.revision,
+      rule: {
+        id: ruleId,
+        permission_type: "execute_command",
+        effect: "always_ask",
+        scope: "global",
+        matcher: { id: ruleId, kind: "exact_resource", value: command },
+        source: "user",
+      },
+    });
+    ruleCreated = true;
+
+    for (const surface of JIANDU_SURFACES) {
+      const context = await browser.newContext({
+        colorScheme: "dark",
+        locale: "zh-CN",
+        viewport: surface.viewport,
+        isMobile: surface.phone,
+        hasTouch: surface.phone,
+      });
+      await installSessionEntry(context, { ...contract, sessionId: sessions[0]!.id });
+      const page = await context.newPage();
+      let observation = observePage(page, `permission-${surface.label}`);
+      const modeControl = page.getByRole("combobox", { name: "权限模式", exact: true });
+      const reloadPermissionPage = async (label: string): Promise<void> => {
+        await page.waitForLoadState("networkidle");
+        // The existing transport gate requires one socket per document, not
+        // one across deliberate reloads. Verify each document before moving on.
+        assertCleanPage(observation, contract.baseUrl.origin);
+        observation = observePage(page, `permission-${surface.label}-${label}`);
+        await page.reload({ waitUntil: "domcontentloaded" });
+        await assertBootstrap(observation);
+        await assertLiveSocket(observation, contract.baseUrl.origin);
+      };
+      try {
+        await page.goto(apiUrl("/").href, { waitUntil: "domcontentloaded" });
+        await expect(page.getByRole("textbox", { name: "消息", exact: true })).toBeVisible();
+        await assertBootstrap(observation);
+        await assertLiveSocket(observation, contract.baseUrl.origin);
+
+        for (const session of sessions) {
+          await selectRootSession(page, surface.phone, session.title);
+          // Entry also synchronizes model metadata. Its completed write must
+          // be reflected in the permission revision before a settled UI edit.
+          await page.waitForLoadState("networkidle");
+          await expect(modeControl).toBeEnabled();
+          const modeLabel = session.mode === "auto" ? "Auto" : "Bypass";
+          if (surface.label === "desktop") {
+            await expect(modeControl).toHaveValue("default");
+            const detailResponse = await fetch(sessionUrl(session.id), {
+              signal: AbortSignal.timeout(5_000),
+            });
+            expect(detailResponse.ok).toBe(true);
+            const expectedEtag = detailResponse.headers.get("etag");
+            expect(expectedEtag).toMatch(/^"\d+"$/);
+            const patched = page.waitForResponse((response) =>
+              response.request().method() === "PATCH" &&
+              new URL(response.url()).pathname === sessionUrl(session.id).pathname &&
+              asRecord(response.request().postDataJSON())?.permission_mode === session.mode,
+            );
+            await modeControl.selectOption(session.mode);
+            if (session.mode === "auto") {
+              const confirmation = page.getByRole("dialog", { name: "为当前会话启用 Auto？", exact: true });
+              await expect(confirmation).toBeVisible();
+              expect(await currentMode(session.id)).toBe("default");
+              await expect(confirmation.getByRole("button", { name: "取消", exact: true })).toBeFocused();
+              await confirmation.getByRole("button", { name: "启用 Auto", exact: true }).click();
+            }
+            const patchResponse = await patched;
+            expect(patchResponse.ok(), `permission PATCH returned ${patchResponse.status()}`).toBe(true);
+            expect(patchResponse.request().postDataJSON()).toEqual({ permission_mode: session.mode });
+            expect(patchResponse.request().headers()["if-match"]).toBe(expectedEtag);
+          }
+          await expect(modeControl).toHaveValue(session.mode);
+          expect(await currentMode(session.id)).toBe(session.mode);
+
+          if (surface.phone && session.mode === "auto") {
+            await modeControl.selectOption("default");
+            await expect.poll(() => currentMode(session.id)).toBe("default");
+            await expect(modeControl).toBeEnabled();
+            await modeControl.selectOption("auto");
+            let confirmation = page.getByRole("dialog", { name: "为当前会话启用 Auto？", exact: true });
+            await expect(confirmation).toBeVisible();
+            await confirmation.getByRole("button", { name: "取消", exact: true }).press("Enter");
+            await expect(confirmation).toHaveCount(0);
+            await expect(modeControl).toHaveValue("default");
+            expect(await currentMode(session.id)).toBe("default");
+            await modeControl.selectOption("auto");
+            confirmation = page.getByRole("dialog", { name: "为当前会话启用 Auto？", exact: true });
+            await confirmation.getByRole("button", { name: "启用 Auto", exact: true }).click();
+            await expect(modeControl).toHaveValue("auto");
+            await expect.poll(() => currentMode(session.id)).toBe("auto");
+          }
+
+          if (surface.label === "desktop") {
+            await page.getByRole("textbox", { name: "消息", exact: true }).fill(userMarker);
+            await page.getByRole("button", { name: "发送消息", exact: true }).click();
+            if (session.mode === "bypass") {
+              const pendingUrl = sessionUrl(session.id, "/respond/pending");
+              await expect.poll(async () =>
+                asRecord(await fetchJson(pendingUrl))?.has_pending_question,
+              ).toBe(true);
+              const pending = asRecord(await fetchJson(pendingUrl));
+              expect(pending).toMatchObject({
+                has_pending_question: true,
+                interaction_kind: "permission",
+                tool_name: "Bash",
+                permission_request: {
+                  reason_code: "configured_always_ask",
+                  bypass_requested: true,
+                  auto_approve_requested: false,
+                  resource: command,
+                  matched_rule: { id: ruleId, effect: "always_ask" },
+                },
+              });
+              await expect.poll(() => permissionPromptSeen(observation, session.id)).toBe(true);
+              const messages = await historyMessages(session.id);
+              expect(messages.some(executedSafeCommand)).toBe(false);
+              const placeholder = messages.map(toolPayload).find((payload) => payload !== null);
+              expect(placeholder).toMatchObject({
+                status: "awaiting_permission_approval",
+                resource: command,
+                permission_request: { reason_code: "configured_always_ask" },
+              });
+              expect(placeholder?.stdout).toBeUndefined();
+              expect(placeholder?.exit_code).toBeUndefined();
+              expect(messages.some((message) => message.content === assistantMarker)).toBe(false);
+            } else {
+              await expect.poll(async () => {
+                const messages = await historyMessages(session.id);
+                return messages.some(executedSafeCommand) && messages.some((message) =>
+                  message.role === "assistant" && message.content === assistantMarker,
+                );
+              }).toBe(true);
+              await expect.poll(() => hasTerminalFrame(observation, session.id)).toBe(true);
+              expect(asRecord(await fetchJson(sessionUrl(session.id, "/respond/pending"))))
+                .toMatchObject({ has_pending_question: false });
+              expect(permissionPromptSeen(observation, session.id)).toBe(false);
+              await expect(page.getByText(assistantMarker, { exact: true })).toBeVisible();
+            }
+          }
+
+          const screenshotPath = testInfo.outputPath(`permission-${surface.label}-${session.mode}.png`);
+          await page.screenshot({ path: screenshotPath, animations: "disabled" });
+          await testInfo.attach(`${surface.label} ${modeLabel} authoritative mode`, {
+            path: screenshotPath,
+            contentType: "image/png",
+          });
+          if (surface.label === "desktop" && session.mode === "bypass") {
+            // The existing forced-confirmation dialog intentionally blocks
+            // navigation. After proving and capturing the wait, deny only this
+            // fixture's exact request through the canonical endpoint. Approval
+            // card response routing is a separate migration slice.
+            const pending = asRecord(await fetchJson(sessionUrl(session.id, "/respond/pending")));
+            const request = asRecord(pending?.permission_request);
+            expect(request?.request_id).toBe(toolCallId);
+            expect(typeof request?.request_generation).toBe("string");
+            await mutate(sessionUrl(session.id, "/permission-decisions"), "POST", {
+              request_id: request?.request_id,
+              request_generation: request?.request_generation,
+              decision: "deny_once",
+            });
+            await expect.poll(async () =>
+              asRecord(await fetchJson(sessionUrl(session.id, "/respond/pending")))?.has_pending_question,
+            ).toBe(false);
+            expect((await historyMessages(session.id)).some(executedSafeCommand)).toBe(false);
+            await reloadPermissionPage("after-fixture-denial");
+            await expect(modeControl).toHaveValue("bypass");
+            await expect(page.getByRole("dialog", { name: "需要你确认", exact: true })).toHaveCount(0);
+          }
+        }
+
+        await reloadPermissionPage("persisted-modes");
+        // Select each persisted session through the visible UI after reload;
+        // session restoration itself is a separate contract. Each mode must
+        // still match authoritative detail, never browser-persisted mode data.
+        await selectRootSession(page, surface.phone, sessions[1]!.title);
+        await expect(modeControl).toHaveValue("auto");
+        await selectRootSession(page, surface.phone, sessions[0]!.title);
+        await expect(modeControl).toHaveValue("bypass");
+        expect(await currentMode(sessions[0]!.id)).toBe("bypass");
+        expect(await currentMode(sessions[1]!.id)).toBe("auto");
+        await page.waitForLoadState("networkidle");
+        assertCleanPage(observation, contract.baseUrl.origin);
+      } catch (error) {
+        const screenshotPath = testInfo.outputPath(`permission-${surface.label}-failure.png`);
+        await page.screenshot({ path: screenshotPath, animations: "disabled" });
+        await testInfo.attach(`${surface.label} permission failure`, {
+          path: screenshotPath,
+          contentType: "image/png",
+        });
+        throw error;
+      } finally {
+        await context.close();
+      }
+    }
+  } finally {
+    // These IDs were created by this test inside the harness's private data
+    // root. Stop the waiting fixture without exercising unrelated card routing.
+    for (const session of sessions) {
+      const stop = await fetch(sessionUrl(session.id, "/stop"), {
+        method: "POST",
+        signal: AbortSignal.timeout(10_000),
+      });
+      // Completed or suspended runners may no longer have a cancel token.
+      expect([200, 404]).toContain(stop.status);
+      await mutate(sessionUrl(session.id), "DELETE");
+    }
+    if (ruleCreated) {
+      const policy = asRecord(await fetchJson(apiUrl("/api/v1/bamboo/permission/policy")));
+      const deleteUrl = apiUrl(`/api/v1/bamboo/permission/rules/${encodeURIComponent(ruleId)}`);
+      deleteUrl.searchParams.set("expected_revision", String(policy?.revision));
+      await mutate(deleteUrl, "DELETE");
+    }
+  }
+});

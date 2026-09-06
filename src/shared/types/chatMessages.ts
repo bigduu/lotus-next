@@ -242,10 +242,12 @@ export interface ChatItem {
     model?: string;
     model_ref?: ProviderModelRef | null;
     reasoningEffort?: import("@services/chat/AgentService").ReasoningEffort | null;
-    /** Per-session "bypass permissions" toggle, mirrored from the backend
-     * session detail (`SessionSummary.bypass_permissions`). When true, tool
-     * permission checks are skipped for this session only. */
+    /** Compatibility mirror only; never distinguishes Bypass from Auto. */
     bypassPermissions?: boolean;
+    /** Single server-owned mode snapshot. Null means missing/unknown typed support. */
+    permissionMode?: import("@services/chat/AgentService").SessionPermissionMode | null;
+    /** Exact detail/PATCH ETag, held in memory only and never a browser preference. */
+    permissionModeEtag?: string;
     goldConfig?: GoldConfig | null;
     goalState?: GoalState | null;
     tokenUsage?: TokenUsage;

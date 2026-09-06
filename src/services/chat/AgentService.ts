@@ -55,6 +55,54 @@ export type AgentEventType =
 
 export type ReasoningEffort = "low" | "medium" | "high" | "xhigh" | "max";
 
+export type SessionPermissionMode = "default" | "bypass" | "auto";
+
+export const parseSessionPermissionMode = (value: unknown): SessionPermissionMode | null =>
+  value === "default" || value === "bypass" || value === "auto" ? value : null;
+
+/** Only inspect the numeric revision for ordering; keep the exact ETag for CAS. */
+export const sessionPermissionRevision = (etag: unknown): bigint | null => {
+  if (typeof etag !== "string" || !/^"\d{1,20}"$/.test(etag)) return null;
+  const revision = BigInt(etag.slice(1, -1));
+  return revision <= 18446744073709551615n ? revision : null;
+};
+
+export interface SessionPermissionSnapshot {
+  sessionId: string;
+  mode: SessionPermissionMode;
+  etag: string;
+}
+
+export interface PatchSessionPermissionRequest {
+  permission_mode: SessionPermissionMode;
+}
+
+export class SessionPermissionContractError extends Error {
+  constructor() {
+    super("The backend did not confirm a supported, revisioned session permission mode.");
+    this.name = "SessionPermissionContractError";
+  }
+}
+
+const readSessionPermissionSnapshot = async (
+  sessionId: string,
+  response: Response,
+): Promise<SessionPermissionSnapshot> => {
+  const body: unknown = await response.json();
+  const session = body && typeof body === "object" && "session" in body ? body.session : null;
+  const mode = session && typeof session === "object" && "permission_mode" in session
+    ? parseSessionPermissionMode(session.permission_mode)
+    : null;
+  const etag = response.headers.get("ETag");
+  if (
+    !session || typeof session !== "object" || !("id" in session) || session.id !== sessionId ||
+    !mode || !etag || sessionPermissionRevision(etag) === null
+  ) {
+    throw new SessionPermissionContractError();
+  }
+  return { sessionId, mode, etag };
+};
+
 export interface GoldConfig {
   enabled: boolean;
   auto_answer_enabled?: boolean;
@@ -479,12 +527,10 @@ export interface SessionSummary {
    * for root/local/legacy sessions, or the target node for remote children.
    */
   placement?: SessionPlacement;
-  /**
-   * Per-session "bypass permissions" toggle, read from the session's runtime
-   * state. Only populated by the detail endpoint (`GET /v1/sessions/{id}`);
-   * list endpoints leave it `false`.
-   */
+  /** Compatibility mirror: true for both Bypass and Auto; never infer Auto from it. */
   bypass_permissions?: boolean;
+  /** Missing or unknown typed support must not enable permission-mode writes. */
+  permission_mode?: SessionPermissionMode;
 }
 
 export interface RunningSessionEntry {
@@ -574,8 +620,8 @@ export interface PatchSessionRequest {
   reasoning_effort?: ReasoningEffort;
   clear_reasoning_effort?: boolean;
   gold_config?: GoldConfig;
-  /** Per-session "bypass permissions" toggle: when true, tool permission
-   * checks are skipped for this session only. */
+  /** Legacy Bypass only; forced confirmations still apply. Typed writes use
+   * patchSessionPermissionMode so they cannot omit the required If-Match. */
   bypass_permissions?: boolean;
 }
 
@@ -1077,6 +1123,33 @@ export class AgentClient {
   async patchSession(sessionId: string, req: PatchSessionRequest): Promise<void> {
     const encodedSessionId = encodeURIComponent(sessionId);
     await apiClient.patch(`sessions/${encodedSessionId}`, req);
+  }
+
+  /** Read the authoritative typed mode and its exact metadata ETag. */
+  async getSessionPermissionMode(sessionId: string): Promise<SessionPermissionSnapshot> {
+    const response = await apiClient.fetchRaw(`sessions/${encodeURIComponent(sessionId)}`, {
+      cache: "no-store",
+    });
+    return readSessionPermissionSnapshot(sessionId, response);
+  }
+
+  /** A narrow, one-shot CAS write. Never replay an ambiguous PATCH or mix fields. */
+  async patchSessionPermissionMode(
+    sessionId: string,
+    mode: SessionPermissionMode,
+    etag: string,
+  ): Promise<SessionPermissionSnapshot> {
+    if (!parseSessionPermissionMode(mode) || sessionPermissionRevision(etag) === null) {
+      throw new SessionPermissionContractError();
+    }
+    const request: PatchSessionPermissionRequest = { permission_mode: mode };
+    const response = await apiClient.fetchRaw(`sessions/${encodeURIComponent(sessionId)}`, {
+      method: "PATCH",
+      headers: { "If-Match": etag },
+      body: JSON.stringify(request),
+      cache: "no-store",
+    });
+    return readSessionPermissionSnapshot(sessionId, response);
   }
 
   /**

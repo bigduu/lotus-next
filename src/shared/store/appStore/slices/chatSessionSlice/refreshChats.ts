@@ -154,12 +154,13 @@ export function applySessionsList(sessions: SessionSummary[], set: ChatSliceSet)
             ? prevConfig.goldConfig
             : nextConfig.goldConfig
           : nextConfig.goldConfig,
-        // `bypass_permissions` is only carried by the detail endpoint, never the
-        // The session index DOES carry bypass_permissions, so the server value is
-        // authoritative (it only changes via patchSession, which is confirmed
-        // before we refresh). Fall back to the local value only if the summary
-        // omits it, so a hypothetical lightweight list can't reset it to `false`.
-        bypassPermissions: nextConfig.bypassPermissions ?? prevConfig.bypassPermissions,
+        // Index rows have no metadata ETag. Once detail has confirmed a mode,
+        // only another revisioned detail/PATCH response may replace it.
+        permissionMode: prevConfig.permissionModeEtag ? prevConfig.permissionMode : nextConfig.permissionMode,
+        permissionModeEtag: prevConfig.permissionModeEtag,
+        bypassPermissions: prevConfig.permissionModeEtag
+          ? prevConfig.bypassPermissions
+          : nextConfig.bypassPermissions,
         compressionEvents: prev.config?.compressionEvents ?? c.config?.compressionEvents,
         syncCursor: prev.config?.syncCursor ?? c.config?.syncCursor,
       };
@@ -203,7 +204,7 @@ export function applySessionsList(sessions: SessionSummary[], set: ChatSliceSet)
   });
 }
 
-export async function executeRefreshChats(set: ChatSliceSet): Promise<void> {
+export async function executeRefreshChats(set: ChatSliceSet, get: () => AppState): Promise<void> {
   if (refreshChatsState.inFlight) {
     debugLog("[ChatSlice]", "refreshChats.inFlight.reuse", {});
     return refreshChatsState.inFlight;
@@ -218,6 +219,7 @@ export async function executeRefreshChats(set: ChatSliceSet): Promise<void> {
         runningCount: list.sessions.filter((session) => session.is_running).length,
       });
       applySessionsList(list.sessions, set);
+      get().reconcileSessionPermissionModes(list.sessions);
     } catch (error) {
       console.error("[ChatSlice] Failed to refresh sessions:", error);
       debugLog("[ChatSlice]", "refreshChats.error", { error });
@@ -231,7 +233,7 @@ export async function executeRefreshChats(set: ChatSliceSet): Promise<void> {
   return refreshChatsState.inFlight;
 }
 
-export function executeForcedRefreshChats(set: ChatSliceSet): Promise<void> {
+export function executeForcedRefreshChats(set: ChatSliceSet, get: () => AppState): Promise<void> {
   if (refreshChatsState.forcedPromise) {
     debugLog("[ChatSlice]", "refreshChatsNow.forced.reuse", {});
     return refreshChatsState.forcedPromise;
@@ -244,7 +246,7 @@ export function executeForcedRefreshChats(set: ChatSliceSet): Promise<void> {
     if (refreshChatsState.inFlight) {
       await refreshChatsState.inFlight;
     }
-    await executeRefreshChats(set);
+    await executeRefreshChats(set, get);
   })().finally(() => {
     debugLog("[ChatSlice]", "refreshChatsNow.forced.finally", {});
     refreshChatsState.forcedPromise = null;

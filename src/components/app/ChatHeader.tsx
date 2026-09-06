@@ -9,7 +9,6 @@ import { ModelPicker } from "@/components/chat/ModelPicker"
 import { ReasoningPicker } from "@/components/chat/ReasoningPicker"
 import { OverflowMenu } from "@/components/chat/OverflowMenu"
 import { ContextUsageRing } from "@/components/app/ContextUsageRing"
-import { BypassToggle } from "@/components/app/BypassToggle"
 import type { ReasoningEffort } from "@services/chat/AgentService"
 
 type OverflowItem = { label: string; icon?: ReactNode; onClick: () => void }
@@ -23,8 +22,6 @@ export function ChatHeader({
   models,
   activeModel,
   onChangeModel,
-  bypassPermissions,
-  onToggleBypass,
   overflowItems,
   onOpenSidebar,
   onOpenInspector,
@@ -38,8 +35,6 @@ export function ChatHeader({
   models: string[]
   activeModel: string
   onChangeModel: (model: string) => void
-  bypassPermissions: boolean
-  onToggleBypass: () => void
   overflowItems: OverflowItem[]
   onOpenSidebar: () => void
   onOpenInspector: () => void
@@ -95,7 +90,6 @@ export function ChatHeader({
           menuAlign="right"
         />
       ) : null}
-      {bypassPermissions ? <BypassToggle onClick={onToggleBypass} /> : null}
       <OverflowMenu items={overflowItems} />
       {hasSession ? (
         <Button size="icon" variant="ghost" aria-label="检查器" onClick={onOpenInspector}>

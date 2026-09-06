@@ -8,7 +8,7 @@ import {
   AssistantToolResultMessage,
   MessageImage,
 } from "@shared/types/chat";
-import type { SessionSummary } from "@services/chat/AgentService";
+import { parseSessionPermissionMode, type SessionSummary } from "@services/chat/AgentService";
 import { apiClient } from "@services/api";
 import { getDefaultSystemPrompts } from "@shared/utils/defaultSystemPrompts";
 import i18n from "@shared/i18n";
@@ -117,6 +117,7 @@ export const sessionSummaryToChatItem = (s: SessionSummary): ChatItem => {
       model_ref: s.model_ref ?? null,
       reasoningEffort: s.reasoning_effort ?? null,
       bypassPermissions: s.bypass_permissions ?? false,
+      permissionMode: parseSessionPermissionMode(s.permission_mode),
       goldConfig: s.gold_config ?? null,
       tokenUsage,
       truncationOccurred: s.token_usage?.truncation_occurred,

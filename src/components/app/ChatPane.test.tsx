@@ -53,6 +53,7 @@ vi.mock("@/components/app/Toasts", () => ({ Toasts: () => null }))
 vi.mock("@/components/app/ImageLightbox", () => ({ ImageLightbox: () => null }))
 vi.mock("@/components/chat/ReasoningPicker", () => ({ ReasoningPicker: () => null }))
 vi.mock("@/components/chat/ModelPicker", () => ({ ModelPicker: () => null }))
+vi.mock("@/components/chat/PermissionModeControl", () => ({ PermissionModeControl: () => null }))
 vi.mock("@/components/app/Composer", () => ({
   Composer: (props: ComposerProps) => (runtime.composer = props,
     <textarea ref={props.inputRef} aria-label="消息" value={props.draft} onChange={(event) => props.onDraftChange(event.currentTarget.value)} />),
