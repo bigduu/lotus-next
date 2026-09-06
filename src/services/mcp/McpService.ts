@@ -1,4 +1,5 @@
-import { apiClient } from "../api";
+import { apiClient, isApiError } from "../api";
+import { isMcpRecord, McpImportFailure, readMcpImportResult } from "./importConfig";
 import {
   createDefaultMcpServerConfig,
   createDefaultRuntimeInfo,
@@ -8,7 +9,8 @@ import {
   DEFAULT_STDIO_STARTUP_TIMEOUT_MS,
   ServerStatus,
   type McpActionResponse,
-  type McpImportResponse,
+  type McpImportRequest,
+  type McpImportResult,
   type McpServer,
   type McpServerApiRecord,
   type McpServerConfig,
@@ -55,7 +57,7 @@ const normalizeTransport = (value: unknown, fallback: TransportConfig): Transpor
   }
 
   const transport = value as Record<string, unknown>;
-  if (transport.type === "sse") {
+  if (transport.type === "sse" || transport.type === "streamablehttp" || transport.type === "streamable_http") {
     const headers = Array.isArray(transport.headers)
       ? transport.headers
           .map((item) => {
@@ -73,7 +75,7 @@ const normalizeTransport = (value: unknown, fallback: TransportConfig): Transpor
       : [];
 
     return {
-      type: "sse",
+      type: transport.type === "sse" ? "sse" : "streamable_http",
       url: typeof transport.url === "string" ? transport.url : "",
       headers,
       connect_timeout_ms: toNumber(transport.connect_timeout_ms, DEFAULT_SSE_CONNECT_TIMEOUT_MS),
@@ -106,7 +108,7 @@ const normalizeTransport = (value: unknown, fallback: TransportConfig): Transpor
 
 const normalizeServerConfig = (
   record: McpServerApiRecord,
-  config: Partial<McpServerConfig> | undefined,
+  config: McpServerApiRecord["config"],
 ): McpServerConfig => {
   const base = createDefaultMcpServerConfig(record.id);
   const incoming = config ?? {};
@@ -271,9 +273,29 @@ const normalizeToolInfo = (
 };
 
 export class McpService {
+  private importInFlight = false;
+
   async getServers(): Promise<McpServer[]> {
-    const response = await apiClient.get<ServerListResponse>("mcp/servers");
-    return Array.isArray(response.servers) ? response.servers.map(normalizeServer) : [];
+    const response = await apiClient.get<unknown>("mcp/servers");
+    // An unknown inventory must never become an empty destructive-import preview.
+    const ids = new Set<string>();
+    if (!isMcpRecord(response) || !Array.isArray(response.servers) || !response.servers.every((record) => {
+      if (!isMcpRecord(record) || typeof record.id !== "string" || !record.id.trim() || ids.has(record.id) ||
+        typeof record.enabled !== "boolean" || !isMcpRecord(record.config) || !isMcpRecord(record.config.transport)) return false;
+      const transport = record.config.transport;
+      if (record.config.id !== undefined && record.config.id !== record.id) return false;
+      if (transport.type === "stdio") {
+        if (typeof transport.command !== "string" || (transport.args !== undefined &&
+          (!Array.isArray(transport.args) || !transport.args.every((arg) => typeof arg === "string"))) ||
+          (transport.env !== undefined && (!isMcpRecord(transport.env) || !Object.values(transport.env).every((value) => typeof value === "string")))) return false;
+      } else if (["sse", "streamablehttp", "streamable_http"].includes(transport.type as string)) {
+        if (typeof transport.url !== "string" || (transport.headers !== undefined && (!Array.isArray(transport.headers) ||
+          !transport.headers.every((header) => isMcpRecord(header) && typeof header.name === "string" && typeof header.value === "string")))) return false;
+      } else return false;
+      ids.add(record.id);
+      return true;
+    })) throw new Error("MCP server list could not be verified.");
+    return (response as unknown as ServerListResponse).servers.map(normalizeServer);
   }
 
   async addServer(config: McpServerConfig): Promise<McpActionResponse> {
@@ -313,11 +335,18 @@ export class McpService {
       .filter((tool): tool is McpToolInfo => Boolean(tool));
   }
 
-  async importServers(payload: {
-    mcpServers: unknown;
-    mode?: "merge" | "replace";
-  }): Promise<McpImportResponse> {
-    return apiClient.post<McpImportResponse>("mcp/servers/import", payload);
+  async importServers(payload: McpImportRequest): Promise<McpImportResult> {
+    // This instance outlives dialogs: closing/reopening cannot overlap a POST.
+    if (this.importInFlight) throw new McpImportFailure("busy");
+    this.importInFlight = true;
+    try {
+      return readMcpImportResult(await apiClient.post<unknown>("mcp/servers/import", payload), payload);
+    } catch (error) {
+      if (error instanceof McpImportFailure) throw error;
+      throw new McpImportFailure(isApiError(error) && error.status >= 400 && error.status < 500 ? "rejected" : "uncertain");
+    } finally {
+      this.importInFlight = false;
+    }
   }
 }
 

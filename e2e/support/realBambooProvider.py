@@ -17,9 +17,10 @@ import sys
 import threading
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from io import StringIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Any, Iterator
+from typing import Any, Iterator, TextIO
 from urllib.parse import urlsplit
 
 
@@ -31,6 +32,78 @@ SELF_TEST_SUCCESS_MESSAGE = "deterministic provider self-test passed"
 PERMISSION_TOOL_MARKER = "LOTUS_PERMISSION_TOOL_EXECUTED"
 PERMISSION_TOOL_COMMAND = f"printf '{PERMISSION_TOOL_MARKER}'"
 PERMISSION_TOOL_CALL_ID = "call_lotus_permission_e2e"
+
+
+def mcp_fixture_response(request: Any) -> dict[str, Any] | None:
+    """A private stdio MCP fixture; never read, log, or echo credentials."""
+    if not isinstance(request, dict) or "id" not in request:
+        return None
+    response: dict[str, Any] = {"jsonrpc": "2.0", "id": request["id"]}
+    method = request.get("method")
+    if method == "initialize":
+        response["result"] = {
+            "protocolVersion": "2025-11-25",
+            "capabilities": {"tools": {}},
+            "serverInfo": {"name": "lotus-import-fixture", "version": "1"},
+        }
+    elif method == "tools/list":
+        response["result"] = {"tools": [{
+            "name": "import_probe",
+            "description": "Harmless local import acceptance probe",
+            "inputSchema": {"type": "object", "additionalProperties": False},
+            "annotations": {"readOnlyHint": True},
+        }]}
+    elif method == "ping":
+        response["result"] = {}
+    elif (method == "tools/call" and isinstance(request.get("params"), dict)
+          and request["params"].get("name") == "import_probe"):
+        response["result"] = {
+            "content": [{"type": "text", "text": "LOTUS_MCP_IMPORT_TOOL_OK"}],
+            "isError": False,
+        }
+    else:
+        # Bamboo's modern discovery probe must fall back immediately to the
+        # supported initialization-based contract, not wait for a timeout.
+        response["error"] = {"code": -32601, "message": "Unsupported fixture method"}
+    return response
+
+
+def serve_mcp_stdio(source: TextIO, output: TextIO) -> None:
+    for line in source:
+        if len(line) > MAX_REQUEST_BODY_BYTES:
+            raise RuntimeError("MCP fixture request exceeds the test limit")
+        try:
+            request = json.loads(line)
+        except json.JSONDecodeError:
+            raise RuntimeError("Invalid MCP fixture request") from None
+        response = mcp_fixture_response(request)
+        if response is not None:
+            output.write(json.dumps(response, separators=(",", ":")) + "\n")
+            output.flush()
+
+
+def validate_mcp_fixture() -> None:
+    canary = "synthetic-mcp-secret-never-echo"
+    requests = [
+        {"id": 1, "method": "server/discover", "params": {"canary": canary}},
+        {"id": 2, "method": "initialize"},
+        {"method": "notifications/initialized"},
+        {"id": 3, "method": "tools/list"},
+        {"id": 4, "method": "tools/call", "params": {
+            "name": "import_probe", "arguments": {"canary": canary},
+        }},
+        {"id": 5, "method": "ping"},
+    ]
+    output = StringIO()
+    serve_mcp_stdio(StringIO("\n".join(json.dumps(item) for item in requests)), output)
+    responses = [json.loads(line) for line in output.getvalue().splitlines()]
+    if (len(responses) != 5 or canary in output.getvalue()
+            or responses[0]["error"]["code"] != -32601
+            or responses[1]["result"]["protocolVersion"] != "2025-11-25"
+            or responses[2]["result"]["tools"][0]["name"] != "import_probe"
+            or responses[3]["result"]["content"][0]["text"] != "LOTUS_MCP_IMPORT_TOOL_OK"
+            or responses[4]["result"] != {}):
+        raise RuntimeError("MCP fixture protocol or redaction self-test failed")
 
 
 def required_environment(name: str) -> str:
@@ -719,6 +792,7 @@ def temporary_environment(values: dict[str, str]) -> Iterator[None]:
 
 
 def run_self_test() -> None:
+    validate_mcp_fixture()
     self_test_id = str(os.getpid())
     with TemporaryDirectory(prefix="lotus-real-provider-self-test-") as directory:
         observations_path = Path(directory) / "observations.json"
@@ -785,6 +859,9 @@ def run_self_test() -> None:
 
 def main() -> None:
     arguments = sys.argv[1:]
+    if arguments == ["--mcp-stdio"]:
+        serve_mcp_stdio(sys.stdin, sys.stdout)
+        return
     if arguments == ["--smoke"]:
         run_smoke()
         return

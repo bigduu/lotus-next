@@ -60,6 +60,9 @@ const EXPORTED_ENVIRONMENT_KEYS = [
   "LOTUS_REAL_USER_MARKER",
   "LOTUS_REAL_ASSISTANT_MARKER",
   "LOTUS_REAL_BAMBOO_REVISION",
+  "LOTUS_REAL_BAMBOO_CONTAINER_ID",
+  "LOTUS_REAL_PROVIDER_CONTAINER_ID",
+  "LOTUS_REAL_BAMBOO_RUN_ID",
 ] as const;
 
 type ExportedEnvironmentKey = (typeof EXPORTED_ENVIRONMENT_KEYS)[number];
@@ -1986,6 +1989,9 @@ const globalSetup = async (): Promise<() => Promise<void>> => {
     process.env.LOTUS_REAL_USER_MARKER = state.userMarker;
     process.env.LOTUS_REAL_ASSISTANT_MARKER = state.assistantMarker;
     process.env.LOTUS_REAL_BAMBOO_REVISION = REAL_BAMBOO_REVISION;
+    process.env.LOTUS_REAL_BAMBOO_CONTAINER_ID = state.containerId;
+    process.env.LOTUS_REAL_PROVIDER_CONTAINER_ID = state.providerContainerId;
+    process.env.LOTUS_REAL_BAMBOO_RUN_ID = state.runId;
     throwIfInterrupted(state);
     state.runtimeReadyForTests = true;
     // Restore Playwright's normal test watcher, while the earlier-registered
