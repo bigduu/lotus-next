@@ -6,7 +6,6 @@ import {
   Download,
   FileDown,
   Columns2,
-  ShieldAlert,
   X,
   PanelRightOpen,
 } from "lucide-react"
@@ -14,11 +13,9 @@ import { useShallow } from "zustand/react/shallow"
 import { Button } from "@/components/ui/button"
 import { workspaceService } from "@services/workspace"
 import type { WorkspaceFileEntry } from "@services/workspace/types"
-import { agentClient } from "@services/chat/AgentService"
 import { QuestionDialog, ApprovalDialog } from "@/components/chat/Dialogs"
 import { downloadMarkdown } from "@/lib/exportMarkdown"
 import { downloadPdf } from "@/lib/exportPdf"
-import { cn } from "@/lib/utils"
 import type { useChat } from "@/hooks/useChat"
 import { useStickyScroll } from "@/hooks/useStickyScroll"
 import { useAppStore, selectChildren } from "@shared/store/appStore"
@@ -36,6 +33,7 @@ import { ImageLightbox } from "@/components/app/ImageLightbox"
 import { peekPendingTemplatePrompt } from "@/lib/taskTemplates"
 import { ReasoningPicker } from "@/components/chat/ReasoningPicker"
 import { ModelPicker } from "@/components/chat/ModelPicker"
+import { PermissionModeControl } from "@/components/chat/PermissionModeControl"
 import {
   Select,
   SelectContent,
@@ -275,16 +273,6 @@ export function ChatPane({
   })()
   const workspacePath = currentChat?.config?.workspacePath
   const displayWorkspace = workspacePath ?? pickedWorkspace
-  const bypassPermissions = currentChat?.config?.bypassPermissions ?? false
-  const toggleBypass = async () => {
-    if (!currentSessionId) return
-    await agentClient
-      .patchSession(currentSessionId, { bypass_permissions: !bypassPermissions })
-      .catch(() => {})
-    // bypassPermissions is mirrored from the session summary, not chat history —
-    // refresh the index so the badge/toggle state reflects the change.
-    await useAppStore.getState().refreshChatsNow()
-  }
   const [workspaceFiles, setWorkspaceFiles] = useState<WorkspaceFileEntry[]>([])
   const filesLoadedForRef = useRef<string | null>(null)
   useEffect(() => {
@@ -455,15 +443,6 @@ export function ChatPane({
       icon: <Columns2 className="size-4" />,
       onClick: onToggleSplit,
     },
-    ...(currentSessionId
-      ? [
-          {
-            label: bypassPermissions ? "绕过权限审批 · 已开启" : "绕过权限审批",
-            icon: <ShieldAlert className={cn("size-4", bypassPermissions && "text-amber-500")} />,
-            onClick: () => void toggleBypass(),
-          },
-        ]
-      : []),
   ]
 
   return (
@@ -555,14 +534,16 @@ export function ChatPane({
             models={models}
             activeModel={activeModel}
             onChangeModel={setSelectedModel}
-            bypassPermissions={bypassPermissions}
-            onToggleBypass={() => void toggleBypass()}
             overflowItems={overflowItems}
             onOpenSidebar={onOpenSidebar}
             onOpenInspector={onOpenInspector}
             sidebarCollapsed={sidebarCollapsed}
           />
         )}
+
+        {currentSessionId ? (
+          <PermissionModeControl sessionId={currentSessionId} title={currentChat?.title || currentSessionId} />
+        ) : null}
 
         {currentChat?.planMode ? (
           <div className="border-b bg-primary/10 px-3 py-1.5 text-center text-xs font-medium text-primary">

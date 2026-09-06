@@ -1,6 +1,6 @@
 import { StateCreator } from "zustand";
 import { ChatItem, Message } from "@shared/types/chat";
-import { AgentClient } from "@services/chat/AgentService";
+import { AgentClient, parseSessionPermissionMode } from "@services/chat/AgentService";
 import { ApiError } from "@services/api";
 import type { AppState } from "../";
 import { useProviderStore } from "./providerSlice";
@@ -103,6 +103,9 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
       title,
       config: {
         ...chatData.config,
+        permissionMode: parseSessionPermissionMode(created.session.permission_mode),
+        permissionModeEtag: undefined,
+        bypassPermissions: created.session.bypass_permissions ?? false,
         model: created.session.model,
         model_ref: created.session.model_ref ?? null,
         reasoningEffort: created.session.reasoning_effort ?? null,
@@ -141,6 +144,10 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
       console.error(`[ChatSlice] Failed to delete backend session ${sessionId}:`, error);
     }
 
+    const removedIds = get().chats
+      .filter((chat) => chat.id === sessionId || chat.rootSessionId === sessionId)
+      .map((chat) => chat.id);
+    get().resetSessionPermissionModes(removedIds);
     set((state) => {
       const toDelete = new Set<string>();
       for (const chat of state.chats) {
@@ -465,12 +472,12 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
 
       if (refreshChatsState.trailingPromise) {
         const callbacks = consumeTrailingRefreshCallbacks();
-        settleTrailingRefreshCallbacks(executeRefreshChats(set), callbacks);
+        settleTrailingRefreshCallbacks(executeRefreshChats(set, get), callbacks);
       }
     }, REFRESH_CHATS_THROTTLE_MS);
 
     // Execute immediately
-    return executeRefreshChats(set);
+    return executeRefreshChats(set, get);
   },
 
   refreshChatsNow: async () => {
@@ -480,8 +487,8 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
       hasInflight: Boolean(refreshChatsState.inFlight),
     });
     const refreshPromise = refreshChatsState.inFlight
-      ? executeForcedRefreshChats(set)
-      : executeRefreshChats(set);
+      ? executeForcedRefreshChats(set, get)
+      : executeRefreshChats(set, get);
     settleTrailingRefreshCallbacks(refreshPromise, trailingCallbacks);
     return refreshPromise;
   },
@@ -570,6 +577,7 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
       // fall back to the summary-based reconciliation above.
     }
 
+    get().resetSessionPermissionModes();
     set({
       chats,
       latestActiveSessionId: currentSessionId,
@@ -691,11 +699,15 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
           }
         }
 
+        // History owns only its hydrated fields. A permission read/write may
+        // have confirmed a newer mode/ETag while getHistory was in flight.
+        const currentChat = get().chats.find((item) => item.id === sessionId);
+        if (!currentChat) return;
         get().updateSession(sessionId, {
           messages: nextMessages,
           messageCount: history.messages.length,
           config: {
-            ...(chat.config || {}),
+            ...currentChat.config,
             ...(history.gold_config != null ? { goldConfig: history.gold_config } : {}),
             ...(history.goal_state != null ? { goalState: history.goal_state } : {}),
             compressionEvents: (history.compression_events || []).map((event) => ({
@@ -715,7 +727,7 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
                 null,
             },
           },
-        });
+        }, { skipBackendPatch: true });
         debugLog("[ChatSlice]", "loadChatHistory.applied", {
           sessionId,
           attempt,
