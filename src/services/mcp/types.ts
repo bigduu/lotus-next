@@ -34,7 +34,14 @@ export interface SseTransportConfig {
   connect_timeout_ms?: number;
 }
 
-export type TransportConfig = StdioTransportConfig | SseTransportConfig;
+export interface StreamableHttpTransportConfig {
+  type: "streamable_http";
+  url: string;
+  headers: HeaderConfig[];
+  connect_timeout_ms?: number;
+}
+
+export type TransportConfig = StdioTransportConfig | SseTransportConfig | StreamableHttpTransportConfig;
 
 export interface McpServerConfig {
   id: string;
@@ -105,7 +112,7 @@ export interface McpServerApiRecord {
   tool_count?: number;
   last_error?: string;
   restart_count?: number;
-  config?: Partial<McpServerConfig>;
+  config?: Omit<Partial<McpServerConfig>, "transport"> & { transport?: unknown };
   runtime?: Partial<RuntimeInfo>;
 }
 
@@ -133,6 +140,14 @@ export interface McpImportResponse {
   server_ids: string[];
   start_errors?: Array<{ server_id: string; error: string }>;
 }
+
+export type McpImportMode = "merge" | "replace";
+export interface McpImportRequest {
+  mcpServers: Record<string, unknown>;
+  mode: McpImportMode;
+}
+/** Safe, validated result: raw backend messages/start errors are never UI data. */
+export type McpImportResult = Pick<McpImportResponse, "mode" | "added" | "updated" | "removed" | "server_ids">;
 
 export const DEFAULT_REQUEST_TIMEOUT_MS = 60_000;
 export const DEFAULT_HEALTHCHECK_INTERVAL_MS = 30_000;

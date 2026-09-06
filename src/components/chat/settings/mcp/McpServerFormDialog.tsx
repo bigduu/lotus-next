@@ -154,9 +154,9 @@ export function McpServerFormDialog({
     setEnvEntries(
       t?.type === "stdio" ? Object.entries(t.env ?? {}).map(([k, v]) => ({ k, v })) : [],
     )
-    setUrl(t?.type === "sse" ? t.url : "")
+    setUrl(t && t.type !== "stdio" ? t.url : "")
     setHeaderEntries(
-      t?.type === "sse" ? t.headers.map((h) => ({ k: h.name, v: h.value })) : [],
+      t && t.type !== "stdio" ? t.headers.map((h) => ({ k: h.name, v: h.value })) : [],
     )
     setError(null)
     setBusy(false)
@@ -205,13 +205,13 @@ export function McpServerFormDialog({
                 : DEFAULT_STDIO_STARTUP_TIMEOUT_MS,
           }
         : {
-            type: "sse",
+            type: kind,
             url: url.trim(),
             headers: headerEntries
               .filter((e) => e.k.trim())
               .map((e) => ({ name: e.k.trim(), value: e.v })),
             connect_timeout_ms:
-              initial?.transport.type === "sse"
+              initial && initial.transport.type !== "stdio"
                 ? (initial.transport.connect_timeout_ms ?? DEFAULT_SSE_CONNECT_TIMEOUT_MS)
                 : DEFAULT_SSE_CONNECT_TIMEOUT_MS,
           }
@@ -285,17 +285,18 @@ export function McpServerFormDialog({
 
           <div>
             <div className="mb-1 text-xs text-muted-foreground">传输方式</div>
-            <div className="flex gap-2">
-              {(["stdio", "sse"] as const).map((k) => (
+            <div className="flex flex-wrap gap-2">
+              {(["stdio", "sse", "streamable_http"] as const).map((k) => (
                 <Button
                   key={k}
                   type="button"
                   size="sm"
                   variant={kind === k ? "default" : "secondary"}
+                  aria-pressed={kind === k}
                   className="flex-1"
                   onClick={() => setKind(k)}
                 >
-                  {k === "stdio" ? "stdio(本地进程)" : "sse / http(远程)"}
+                  {k === "stdio" ? "stdio(本地进程)" : k === "sse" ? "SSE(远程)" : "Streamable HTTP(远程)"}
                 </Button>
               ))}
             </div>

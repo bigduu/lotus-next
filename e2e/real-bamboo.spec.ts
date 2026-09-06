@@ -8,6 +8,7 @@ import {
 } from "@playwright/test";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
+import { restartRealBamboo } from "./support/restartRealBamboo.ts";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -1751,5 +1752,258 @@ test("production session modes keep Bypass confirmation distinct from Auto execu
       deleteUrl.searchParams.set("expected_revision", String(policy?.revision));
       await mutate(deleteUrl, "DELETE");
     }
+  }
+});
+
+// Keep this last: it restarts the lane's disposable Bamboo process and Docker
+// may assign a new host port. Earlier real-provider evidence is already checked.
+test("MCP JSON import merges, replaces, rolls back and survives a real restart", async ({ browser }, testInfo) => {
+  const contract = readRuntimeContract();
+  const importPath = "/api/v1/mcp/servers/import";
+  const secret = "synthetic-lotus-mcp-credential-never-persist-in-browser";
+  const stdio = (key: string): JsonRecord => ({
+    command: "python3",
+    args: ["/usr/local/libexec/lotus-real-bamboo-provider.py", "--mcp-stdio"],
+    env: { [key]: secret },
+  });
+  const initial = { mcpServers: {
+    "lotus-import-keep": stdio("KEEP_TOKEN"),
+    "lotus-import-update": { ...stdio("OLD_TOKEN"), enabled: false },
+  } };
+  const merged = { mcpServers: {
+    "lotus-import-update": { ...stdio("NEW_TOKEN"), enabled: false },
+    "lotus-import-sse": {
+      url: "http://127.0.0.1:1/sse", disabled: true,
+      headers: { Authorization: `Bearer ${secret}` },
+    },
+    "lotus-import-http": {
+      url: "http://127.0.0.1:1/mcp", transport_kind: "streamable_http", enabled: false,
+      headers: [{ name: "Authorization", value: `Bearer ${secret}` }],
+    },
+  } };
+  const final = { mcpServers: { "lotus-import-final": stdio("PERSISTED_TOKEN") } };
+  const fetchDocument = async (origin: string, pathname: string): Promise<JsonRecord> => {
+    const response = await fetch(new URL(pathname, origin), { signal: AbortSignal.timeout(10_000) });
+    expect(response.ok, `MCP read returned ${response.status}`).toBe(true);
+    const document = asRecord(await response.json());
+    expect(document).not.toBeNull();
+    return document!;
+  };
+  const readServers = async (origin: string): Promise<JsonRecord[]> => {
+    const document = await fetchDocument(origin, "/api/v1/mcp/servers");
+    expect(Array.isArray(document.servers)).toBe(true);
+    return (document.servers as unknown[]).map((entry) => {
+      const record = asRecord(entry);
+      expect(record).not.toBeNull();
+      return record!;
+    }).sort((a, b) => String(a.id).localeCompare(String(b.id)));
+  };
+  const openMcp = async (page: Page, phone: boolean): Promise<Locator> => {
+    const sidebar = await openSidebar(page, phone);
+    await sidebar.getByRole("button", { name: "系统设置", exact: true }).click();
+    const settings = page.getByRole("dialog", { name: "系统设置", exact: true });
+    await settings.getByRole("button", { name: "MCP", exact: true }).click();
+    await expect(settings.getByRole("button", { name: "导入 JSON", exact: true })).toBeEnabled();
+    return settings;
+  };
+  const importDialog = (page: Page): Locator => page.getByRole("dialog", { name: "导入 MCP JSON", exact: true });
+  const openImport = async (page: Page, settings: Locator): Promise<Locator> => {
+    await settings.getByRole("button", { name: "导入 JSON", exact: true }).click();
+    const dialog = importDialog(page);
+    await expect(dialog).toBeVisible();
+    await expect(dialog.getByRole("radio", { name: "Merge（按 ID 合并）", exact: true })).toBeChecked();
+    return dialog;
+  };
+  const row = (page: Page, settings: Locator, id: string): Locator => settings.locator("li").filter({
+    has: page.getByText(id, { exact: true }),
+  });
+  const capture = async (page: Page, name: string): Promise<void> => {
+    const screenshotPath = testInfo.outputPath(`mcp-${name}.png`);
+    await page.screenshot({ path: screenshotPath, animations: "disabled" });
+    await testInfo.attach(`MCP ${name}`, { path: screenshotPath, contentType: "image/png" });
+  };
+  const assertNoBrowserSecrets = async (page: Page): Promise<void> => {
+    const storage = await page.evaluate(() => {
+      const state = globalThis as unknown as {
+        localStorage: Record<string, string>;
+        sessionStorage: Record<string, string>;
+      };
+      return JSON.stringify([Object.entries(state.localStorage), Object.entries(state.sessionStorage)]);
+    });
+    expect(storage).not.toContain(secret);
+    expect(storage).not.toContain("mcpServers");
+  };
+  const submit = async (page: Page, document: { mcpServers: JsonRecord }, mode: "merge" | "replace", status = 200): Promise<JsonRecord> => {
+    const responsePromise = page.waitForResponse((response) =>
+      new URL(response.url()).pathname === importPath && response.request().method() === "POST",
+    );
+    await importDialog(page).getByRole("button", { name: "导入", exact: true }).click();
+    const response = await responsePromise;
+    expect(response.status()).toBe(status);
+    expect(response.request().postDataJSON()).toEqual({ ...document, mode });
+    const result = asRecord(await response.json());
+    expect(result).not.toBeNull();
+    if (status === 200) {
+      const dialog = importDialog(page);
+      await expect(dialog.getByText("导入已完成", { exact: true })).toBeVisible();
+      await expect(dialog.getByText(`新增 ${result!.added} · 更新 ${result!.updated} · 删除 ${result!.removed}`, { exact: true })).toBeVisible();
+      await dialog.getByRole("button", { name: "完成", exact: true }).click();
+      await expect(dialog).toHaveCount(0);
+    }
+    return result!;
+  };
+  const readyWithTool = async (page: Page, settings: Locator, origin: string, id: string): Promise<void> => {
+    await expect.poll(async () => (await readServers(origin)).find((server) => server.id === id)?.status).toBe("ready");
+    const serverRow = row(page, settings, id);
+    await expect(serverRow.getByText("已连接 · 1 工具", { exact: true })).toBeVisible();
+    await serverRow.getByRole("button", { name: "展开工具列表", exact: true }).click();
+    await expect(serverRow.getByText("import_probe", { exact: true })).toBeVisible();
+    const tools = await fetchDocument(origin, `/api/v1/mcp/servers/${id}/tools`);
+    expect(tools.tools).toEqual([expect.objectContaining({ server_id: id, original_name: "import_probe" })]);
+    await assertNoBrowserSecrets(page);
+  };
+
+  expect(await readServers(contract.baseUrl.origin)).toEqual([]);
+  const context = await browser.newContext({ viewport: { width: 1_440, height: 900 }, locale: "zh-CN", colorScheme: "dark" });
+  await installSessionEntry(context, contract);
+  const page = await context.newPage();
+  const observation = observePage(page, "mcp-desktop-before-restart");
+  const postCount = (): number => observation.requests.filter((request) =>
+    request.method === "POST" && new URL(request.url).pathname === importPath,
+  ).length;
+  try {
+    await page.goto(contract.baseUrl.href);
+    await expect(page.getByRole("textbox", { name: "消息", exact: true })).toBeVisible();
+    await assertBootstrap(observation);
+    await assertLiveSocket(observation, contract.baseUrl.origin);
+    const settings = await openMcp(page, false);
+    let dialog = await openImport(page, settings);
+    await dialog.getByRole("textbox", { name: "MCP JSON 配置", exact: true }).fill(JSON.stringify(initial, null, 2));
+    await expect(dialog.getByText("lotus-import-keep", { exact: true })).toBeVisible();
+    expect(await submit(page, initial, "merge")).toMatchObject({ mode: "merge", added: 2, updated: 0, removed: 0 });
+    await readyWithTool(page, settings, contract.baseUrl.origin, "lotus-import-keep");
+
+    dialog = await openImport(page, settings);
+    await dialog.getByLabel("选择 JSON 文件", { exact: true }).setInputFiles({
+      name: "mcp-import.json", mimeType: "application/json", buffer: Buffer.from(JSON.stringify(merged)),
+    });
+    await expect(dialog.getByText("lotus-import-http", { exact: true })).toBeVisible();
+    await capture(page, "desktop-file-merge-preview");
+    expect(await submit(page, merged, "merge")).toMatchObject({ mode: "merge", added: 2, updated: 1, removed: 0 });
+    const afterMerge = await readServers(contract.baseUrl.origin);
+    expect(afterMerge.map((server) => server.id)).toEqual(["lotus-import-http", "lotus-import-keep", "lotus-import-sse", "lotus-import-update"]);
+    const updated = asRecord(afterMerge.find((server) => server.id === "lotus-import-update")?.config);
+    expect(asRecord(updated?.transport)?.env).toEqual({ NEW_TOKEN: "****...****" });
+    for (const [id, transport] of [["lotus-import-sse", "sse"], ["lotus-import-http", "streamablehttp"]]) {
+      const server = afterMerge.find((entry) => entry.id === id)!;
+      expect(server.enabled).toBe(false);
+      expect(asRecord(asRecord(server.config)?.transport)).toMatchObject({
+        type: transport, headers: [{ name: "Authorization", value: "****...****" }],
+      });
+    }
+    await expect(row(page, settings, "lotus-import-http").getByText(/Streamable HTTP/)).toBeVisible();
+    await capture(page, "desktop-merged-runtime");
+    expect(postCount()).toBe(2);
+
+    dialog = await openImport(page, settings);
+    const input = dialog.getByRole("textbox", { name: "MCP JSON 配置", exact: true });
+    await input.fill(`{"mcpServers": invalid-${secret}}`);
+    await expect(dialog.getByRole("alert")).toBeVisible();
+    await expect(dialog.getByRole("button", { name: "导入", exact: true })).toBeDisabled();
+    expect(postCount()).toBe(2);
+    const rejected = { mcpServers: { "lotus-import-broken": {
+      ...stdio("REJECTED_TOKEN"), command: "/lotus-mcp-intentionally-missing",
+    } } };
+    await input.fill(JSON.stringify(rejected));
+    await dialog.getByRole("radio", { name: "Replace（替换全部）", exact: true }).check();
+    const confirmation = dialog.getByRole("checkbox", { name: "我确认使用当前配置替换，并删除以上服务器", exact: true });
+    for (const server of afterMerge) await expect(dialog.getByText(String(server.id), { exact: true })).toBeVisible();
+    await expect(dialog.getByRole("button", { name: "导入", exact: true })).toBeDisabled();
+    await confirmation.check();
+    await input.fill(`${JSON.stringify(rejected)} `);
+    await expect(confirmation).not.toBeChecked();
+    await expect(dialog.getByRole("button", { name: "导入", exact: true })).toBeDisabled();
+    await confirmation.check();
+    // This pinned Bamboo maps failed pre-commit runtime staging to HTTP 500.
+    // The UI must conservatively show an uncertain outcome, then permit only
+    // read verification until the user provides a new import intent.
+    const rejection = await submit(page, rejected, "replace", 500);
+    expect(asRecord(rejection.error)?.message).toContain("MCP runtime initialization failed before commit; retaining last-known-good generation");
+    await expect(dialog.getByRole("alert")).toBeVisible();
+    await expect(dialog.getByRole("alert")).toContainText("导入结果尚未确认");
+    await expect(dialog.getByRole("alert")).not.toContainText(secret);
+    await expect(dialog.getByRole("button", { name: "导入", exact: true })).toBeDisabled();
+    expect((await readServers(contract.baseUrl.origin)).map((server) => server.config)).toEqual(afterMerge.map((server) => server.config));
+    expect((await readServers(contract.baseUrl.origin)).find((server) => server.id === "lotus-import-keep")?.status).toBe("ready");
+    expect(postCount()).toBe(3);
+    await capture(page, "desktop-rejected-import-preserves-config");
+
+    await input.fill(JSON.stringify(final));
+    await expect(confirmation).not.toBeChecked();
+    await confirmation.check();
+    expect(await submit(page, final, "replace")).toMatchObject({ mode: "replace", added: 1, updated: 0, removed: 4 });
+    await readyWithTool(page, settings, contract.baseUrl.origin, "lotus-import-final");
+    expect((await readServers(contract.baseUrl.origin)).map((server) => server.id)).toEqual(["lotus-import-final"]);
+    expect(postCount()).toBe(4);
+    await capture(page, "desktop-replaced-runtime");
+    await page.waitForLoadState("networkidle");
+    const expectedError = { method: "POST", url: new URL(importPath, contract.baseUrl).href, status: 500 };
+    expect(observation.responses.filter((response) => response.status >= 400)).toEqual([expectedError]);
+    expect(observation.consoleErrors).toEqual(["Failed to load resource: the server responded with a status of 500 (Internal Server Error)"]);
+    // Assert the one intentional rejection first; all existing network, origin,
+    // page-error and one-WebSocket guards remain strict for everything else.
+    assertCleanPage({ ...observation, responses: observation.responses.filter((response) => response.status < 400), consoleErrors: [] }, contract.baseUrl.origin);
+  } catch (error) {
+    await capture(page, "desktop-failure");
+    throw error;
+  } finally {
+    await context.close();
+  }
+
+  const restart = await restartRealBamboo(contract.baseUrl.origin);
+  await expect.poll(async () => {
+    try { return (await fetch(new URL("/readyz", restart.baseUrl), { signal: AbortSignal.timeout(2_000) })).ok; }
+    catch { return false; }
+  }).toBe(true);
+  await testInfo.attach("MCP real restart evidence", {
+    body: JSON.stringify({ startedBefore: restart.startedBefore, startedAfter: restart.startedAfter, loopbackOnly: true }),
+    contentType: "application/json",
+  });
+  const restartedServers = await readServers(restart.baseUrl.origin);
+  expect(restartedServers.map((server) => server.id)).toEqual(["lotus-import-final"]);
+  expect(asRecord(asRecord(restartedServers[0]!.config)?.transport)).toMatchObject({
+    type: "stdio", env: { PERSISTED_TOKEN: "****...****" },
+  });
+  const phoneContext = await browser.newContext({ viewport: { width: 390, height: 844 }, locale: "zh-CN", colorScheme: "dark" });
+  const restartedContract = { ...contract, baseUrl: restart.baseUrl };
+  await installSessionEntry(phoneContext, restartedContract);
+  const phone = await phoneContext.newPage();
+  const phoneObservation = observePage(phone, "mcp-phone-after-restart");
+  try {
+    await phone.goto(restart.baseUrl.href);
+    await expect(phone.getByRole("textbox", { name: "消息", exact: true })).toBeVisible();
+    await assertBootstrap(phoneObservation);
+    await assertLiveSocket(phoneObservation, restart.baseUrl.origin);
+    const settings = await openMcp(phone, true);
+    await readyWithTool(phone, settings, restart.baseUrl.origin, "lotus-import-final");
+    await capture(phone, "phone-persisted-runtime-after-restart");
+    const dialog = await openImport(phone, settings);
+    await dialog.getByRole("textbox", { name: "MCP JSON 配置", exact: true }).fill(JSON.stringify(initial, null, 2));
+    await dialog.getByRole("radio", { name: "Replace（替换全部）", exact: true }).check();
+    await expect(dialog.getByText("lotus-import-final", { exact: true })).toBeVisible();
+    await expect(dialog.getByRole("button", { name: "导入", exact: true })).toBeDisabled();
+    await capture(phone, "phone-replace-confirmation");
+    await dialog.getByRole("button", { name: "取消", exact: true }).press("Enter");
+    await expect(dialog).toHaveCount(0);
+    await expect(settings.getByRole("button", { name: "导入 JSON", exact: true })).toBeFocused();
+    expect(phoneObservation.requests.filter((request) => request.method === "POST" && new URL(request.url).pathname === importPath)).toEqual([]);
+    await assertNoBrowserSecrets(phone);
+    await phone.waitForLoadState("networkidle");
+    assertCleanPage(phoneObservation, restart.baseUrl.origin);
+  } catch (error) {
+    await capture(phone, "phone-failure");
+    throw error;
+  } finally {
+    await phoneContext.close();
   }
 });
