@@ -35,6 +35,24 @@ describe("MCP JSON import validation and safe preview", () => {
     if (!result.ok) expect(result.error).not.toContain(secret);
   });
 
+  it.each(["scope/server", "x?y", "x#y", ".", "..", "scope/../server", "../../sessions/session-fixture", "encoded%2Fid", "%3Fquery", "%23hash",
+    " leading", "trailing ", "white space", "tab\tid", "line\nid", "trailing\n", "\t", "",
+  ])("rejects IDs outside the existing form contract without echoing their contents", (id) => {
+    expect(parseMcpImport(json({ [id]: stdio }))).toEqual({
+      ok: false, error: "第 1 项：服务器 ID 只能包含字母、数字、- 和 _，不能包含空白。",
+    });
+  });
+
+  it("accepts letters, digits, hyphens and underscores as exact map IDs", () => {
+    const mcpServers = { "Abc-09_XYZ": stdio, "_": stdio, "-": stdio, "9": stdio };
+    const result = parseMcpImport(json(mcpServers));
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.mcpServers).toEqual(mcpServers);
+      expect(result.value.servers.map((server) => server.id)).toEqual(Object.keys(mcpServers));
+    }
+  });
+
   it.each([
     { type: "http", url: "https://example.test/mcp" }, { transport: "sse", url: "https://example.test/sse" },
     { transport: { type: "streamablehttp", url: "https://example.test/mcp" } },

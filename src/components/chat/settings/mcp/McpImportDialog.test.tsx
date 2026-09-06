@@ -23,9 +23,9 @@ const fill = async (value = source) => act(async () => {
   Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(input, value)
   input.dispatchEvent(new Event("input", { bubbles: true }))
 })
-const file = async (pending: Promise<string>, name = "import.json") => act(async () => {
+const file = async (pending: Promise<string>, name = "import.json", contents = "fixture") => act(async () => {
   const input = document.querySelector<HTMLInputElement>('input[type="file"]')!
-  const selected = new File(["fixture"], name, { type: "application/json" })
+  const selected = new File([contents], name, { type: "application/json" })
   Object.defineProperty(selected, "text", { value: () => pending })
   Object.defineProperty(input, "files", { configurable: true, value: [selected] })
   input.dispatchEvent(new Event("change", { bubbles: true }))
@@ -54,6 +54,7 @@ describe("McpImportDialog", () => {
     expect(document.querySelector<HTMLInputElement>('input[value="merge"]')?.checked).toBe(true)
     expect(document.activeElement).toBe(button("取消"))
     expect(button("导入").disabled).toBe(true)
+    expect(document.querySelector('[role="alert"]')).toBeNull()
     await fill()
     const preview = document.querySelector('[aria-label="导入预览"]')!
     expect(preview.textContent).toContain("incoming")
@@ -136,6 +137,38 @@ describe("McpImportDialog", () => {
     await fill('{"mcpServers": PRIVATE_IMPORT_MARKER}')
     expect(document.querySelector('[role="alert"]')?.textContent).not.toContain("PRIVATE_IMPORT_MARKER")
     expect(button("导入").disabled).toBe(true); expect(props.onImport).not.toHaveBeenCalled()
+  })
+
+  it.each(["scope/server", "x?y", "x#y", "..", "encoded%2Fid", "white space", "trailing\n"])("blocks unsafe map IDs before submitting from the dialog", async (id) => {
+    const { props } = await mount()
+    await fill(JSON.stringify({ mcpServers: { [id]: { command: "fixture", env: { TOKEN: "PRIVATE_IMPORT_MARKER" } } } }))
+    expect(document.querySelector('[role="alert"]')?.textContent).toBe("第 1 项：服务器 ID 只能包含字母、数字、- 和 _，不能包含空白。")
+    expect(button("导入").disabled).toBe(true)
+    await click("导入")
+    expect(props.onImport).not.toHaveBeenCalled()
+  })
+
+  it.each(["", " \t\n"])("explains an empty or whitespace file only after its current read completes", async (contents) => {
+    const { props } = await mount()
+    const pending = deferred<string>()
+    await file(pending.promise, "empty.json", contents)
+    expect(document.querySelector('[role="alert"]')).toBeNull()
+    expect(button("导入").disabled).toBe(true)
+    await act(async () => { pending.resolve(contents) })
+    expect(document.querySelector('[role="alert"]')?.textContent).toContain("完整 JSON 配置")
+    expect(button("导入").disabled).toBe(true)
+    await click("导入")
+    expect(props.onImport).not.toHaveBeenCalled()
+  })
+
+  it.each(["", " \t\n"])("explains a cleared or whitespace draft but resets to neutral after reopening", async (contents) => {
+    const { props, render } = await mount()
+    await fill(); await fill(contents)
+    expect(document.querySelector('[role="alert"]')?.textContent).toContain("完整 JSON 配置")
+    expect(button("导入").disabled).toBe(true)
+    await click("取消"); await render()
+    expect(document.querySelector('[role="alert"]')).toBeNull()
+    expect(props.onImport).not.toHaveBeenCalled()
   })
 
   it("keeps uncertain outcomes distinct from success and permits only read refresh until a new intent", async () => {

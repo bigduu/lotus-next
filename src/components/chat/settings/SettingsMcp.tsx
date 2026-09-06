@@ -68,6 +68,7 @@ export function SettingsMcp() {
   const importTrigger = useRef<HTMLButtonElement>(null)
   const importBusy = useRef(false)
   const readGeneration = useRef(0)
+  const readInFlight = useRef<number | null>(null)
   const mountedRef = useRef(true)
   useEffect(() => {
     mountedRef.current = true
@@ -79,6 +80,7 @@ export function SettingsMcp() {
 
   const reload = useCallback(async (silent = false) => {
     const generation = ++readGeneration.current
+    readInFlight.current = generation
     try {
       const list = await mcpService.getServers()
       if (!mountedRef.current || generation !== readGeneration.current) return null
@@ -93,13 +95,15 @@ export function SettingsMcp() {
       if (!silent) setError("无法确认 MCP 服务器列表，请刷新后重试。错误详情已隐藏。")
       return null
     } finally {
+      if (readInFlight.current === generation) readInFlight.current = null
       if (mountedRef.current && generation === readGeneration.current) setLoading(false)
     }
   }, [])
 
   useEffect(() => {
     void reload()
-    const timer = window.setInterval(() => { if (!importBusy.current) void reload(true) }, POLL_MS)
+    // Slow reads must finish; explicit/preflight refreshes can still supersede them.
+    const timer = window.setInterval(() => { if (!importBusy.current && readInFlight.current === null) void reload(true) }, POLL_MS)
     return () => window.clearInterval(timer)
   }, [reload])
 

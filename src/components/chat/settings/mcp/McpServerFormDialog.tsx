@@ -7,6 +7,7 @@ import {
   type McpServerConfig,
   type TransportConfig,
 } from "@services/mcp"
+import { MCP_SERVER_ID_PATTERN } from "@services/mcp/types"
 import { getErrorMessage } from "@services/api"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -107,8 +108,6 @@ function KeyValueEditor({
   )
 }
 
-const ID_PATTERN = /^[a-zA-Z0-9_-]+$/
-
 export function McpServerFormDialog({
   open,
   mode,
@@ -165,7 +164,7 @@ export function McpServerFormDialog({
   const validate = (): string | null => {
     if (mode === "create") {
       if (!id.trim()) return "服务器 ID 不能为空"
-      if (!ID_PATTERN.test(id.trim())) return "服务器 ID 只能包含字母、数字、- 和 _"
+      if (!MCP_SERVER_ID_PATTERN.test(id.trim())) return "服务器 ID 只能包含字母、数字、- 和 _"
       if (existingIds.includes(id.trim())) return "该服务器 ID 已存在"
     }
     if (kind === "stdio") {

@@ -1878,6 +1878,23 @@ test("MCP JSON import merges, replaces, rolls back and survives a real restart",
     await assertLiveSocket(observation, contract.baseUrl.origin);
     const settings = await openMcp(page, false);
     let dialog = await openImport(page, settings);
+    await expect(dialog.getByRole("alert")).toHaveCount(0);
+    for (const [name, buffer] of [["empty.json", Buffer.alloc(0)], ["whitespace.json", Buffer.from(" \n\t")]] as const) {
+      await dialog.getByLabel("选择 JSON 文件", { exact: true }).setInputFiles({ name, mimeType: "application/json", buffer });
+      await expect(dialog.getByRole("alert")).toContainText("完整 JSON 配置");
+      await expect(dialog.getByRole("button", { name: "导入", exact: true })).toBeDisabled();
+      expect(postCount()).toBe(0);
+    }
+    for (const id of ["scope/server", "x?y", "x#y", "..", "../../sessions/session-fixture", "encoded%2Fid"]) {
+      await dialog.getByRole("textbox", { name: "MCP JSON 配置", exact: true }).fill(JSON.stringify({
+        mcpServers: { [id]: { ...stdio("INVALID_ID_TOKEN"), enabled: false } },
+      }));
+      await expect(dialog.getByRole("alert")).toContainText("服务器 ID");
+      await expect(dialog.getByRole("alert")).not.toContainText(secret);
+      await expect(dialog.getByRole("button", { name: "导入", exact: true })).toBeDisabled();
+      expect(postCount()).toBe(0);
+    }
+    expect(await readServers(contract.baseUrl.origin)).toEqual([]);
     await dialog.getByRole("textbox", { name: "MCP JSON 配置", exact: true }).fill(JSON.stringify(initial, null, 2));
     await expect(dialog.getByText("lotus-import-keep", { exact: true })).toBeVisible();
     expect(await submit(page, initial, "merge")).toMatchObject({ mode: "merge", added: 2, updated: 0, removed: 0 });

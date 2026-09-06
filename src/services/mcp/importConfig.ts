@@ -1,4 +1,4 @@
-import type { McpImportRequest, McpImportResult, TransportConfig } from "./types";
+import { MCP_SERVER_ID_PATTERN, type McpImportRequest, type McpImportResult, type TransportConfig } from "./types";
 
 export const MAX_MCP_IMPORT_BYTES = 1024 * 1024;
 const MAX_SERVERS = 500;
@@ -71,7 +71,9 @@ export function parseMcpImport(text: string): McpImportValidation {
   const servers: McpImportPreviewServer[] = [];
   for (const [index, [id, raw]] of entries.entries()) {
     const invalid = (reason: string) => fail(`第 ${index + 1} 项：${reason}`);
-    if (!id.trim() || !isMcpRecord(raw)) return invalid("服务器 ID 不能为空，配置必须是对象。");
+    // Unlike form input, map keys cannot be trimmed without changing the target ID.
+    if (id !== id.trim() || !MCP_SERVER_ID_PATTERN.test(id)) return invalid("服务器 ID 只能包含字母、数字、- 和 _，不能包含空白。");
+    if (!isMcpRecord(raw)) return invalid("服务器配置必须是对象。");
     const internal = has(raw, "transport");
     if (internal && has(raw, "disabled")) return invalid("内部 transport 配置请使用 enabled；disabled 会被后端忽略。");
     if (!only(raw, internal ? [...commonKeys, "transport"] : flatKeys)) {

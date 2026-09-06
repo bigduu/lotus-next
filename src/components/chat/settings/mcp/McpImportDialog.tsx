@@ -140,7 +140,8 @@ export function McpImportDialog({ existingIds, listConfirmed, listRevision, onCl
               </label>
               <p className="text-xs text-muted-foreground">最多 1 MiB、500 个服务器。预览只显示 ID、传输方式和启用状态，不显示环境变量或请求头值。</p>
               {reading ? <p role="status" className="text-xs">正在读取 JSON 文件…</p> : null}
-              {draft.text && !parsed.ok ? <p role="alert" className="text-xs text-destructive">{parsed.error}</p> : null}
+              {/* The revision records an attempted input even when a selected file is empty. */}
+              {draft.revision > 0 && !reading && !error && !parsed.ok ? <p role="alert" className="text-xs text-destructive">{parsed.error}</p> : null}
               <fieldset disabled={busy} className="space-y-2">
                 <legend className="mb-1 text-xs font-medium">导入模式</legend>
                 {(["merge", "replace"] as const).map((value) => (

@@ -149,6 +149,7 @@ export interface McpImportRequest {
 /** Safe, validated result: raw backend messages/start errors are never UI data. */
 export type McpImportResult = Pick<McpImportResponse, "mode" | "added" | "updated" | "removed" | "server_ids">;
 
+export const MCP_SERVER_ID_PATTERN = /^[a-zA-Z0-9_-]+$/;
 export const DEFAULT_REQUEST_TIMEOUT_MS = 60_000;
 export const DEFAULT_HEALTHCHECK_INTERVAL_MS = 30_000;
 export const DEFAULT_STDIO_STARTUP_TIMEOUT_MS = 20_000;
