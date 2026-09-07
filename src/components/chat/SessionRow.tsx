@@ -15,6 +15,7 @@ type Chat = { id: string; title?: string | null; isRunning?: boolean; pinned?: b
 export function SessionRow({
   chat,
   active,
+  unread = false,
   onSelect,
   onRename,
   onDelete,
@@ -22,6 +23,7 @@ export function SessionRow({
 }: {
   chat: Chat
   active: boolean
+  unread?: boolean
   onSelect: () => void
   onRename: (title: string) => void
   onDelete: () => void
@@ -76,11 +78,13 @@ export function SessionRow({
         onClick={onSelect}
         className={cn(
           "flex min-w-0 flex-1 items-center gap-2 py-2 pl-2 pr-1 text-left text-sm",
-          active && "font-medium",
+          (active || unread) && "font-medium",
         )}
       >
         {chat.isRunning ? (
           <span className="size-1.5 shrink-0 animate-pulse rounded-full bg-primary" />
+        ) : unread ? (
+          <span aria-label="未读消息" title="有新消息" className="size-1.5 shrink-0 rounded-full bg-primary" />
         ) : (
           <span className="size-1.5 shrink-0" />
         )}
