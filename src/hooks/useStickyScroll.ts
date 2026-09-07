@@ -1,59 +1,47 @@
-import { useEffect, useRef, useState } from "react"
+import { useCallback, useLayoutEffect, useRef, useState } from "react"
 
-/**
- * Keeps a scroll container pinned to the latest message.
- *
- * A ResizeObserver on the content catches EVERY height change — streaming
- * growth, the streaming→markdown swap, and async (lazy) markdown layout — and
- * re-pins to the bottom whenever the user is already there. Opening a session
- * re-pins. `pinToBottom()` is called on send so the reply grows pinned.
- *
- * The three refs + their effects are intentionally one cohesive unit: splitting
- * them across components breaks pinning (the audit's note on this seam).
- */
+/** Follow content and viewport growth until the reader scrolls upward. */
 export function useStickyScroll(currentSessionId: string | null | undefined) {
-  const scrollRef = useRef<HTMLDivElement>(null)
-  const contentRef = useRef<HTMLDivElement>(null)
+  // Callback refs reconnect when HomeDashboard gives way to MessageList.
+  const [scrollElement, scrollRef] = useState<HTMLDivElement | null>(null)
+  const [contentElement, contentRef] = useState<HTMLDivElement | null>(null)
   const stickRef = useRef(true)
+  const lastScrollTop = useRef(0)
   const [atBottom, setAtBottom] = useState(true)
 
+  const followBottom = useCallback(() => {
+    if (!scrollElement || !stickRef.current) return
+    // Instant scrolling cannot unpin itself through intermediate smooth-scroll events.
+    scrollElement.scrollTo({ top: scrollElement.scrollHeight, behavior: "instant" })
+    lastScrollTop.current = scrollElement.scrollTop
+    setAtBottom(true)
+  }, [scrollElement])
+
   const handleScroll = () => {
-    const el = scrollRef.current
-    if (!el) return
-    const near = el.scrollHeight - el.scrollTop - el.clientHeight < 80
-    stickRef.current = near
-    setAtBottom(near)
+    if (!scrollElement) return
+    const near = scrollElement.scrollHeight - scrollElement.scrollTop - scrollElement.clientHeight <= 2
+    if (near) stickRef.current = true
+    else if (scrollElement.scrollTop < lastScrollTop.current - 1) stickRef.current = false
+    lastScrollTop.current = scrollElement.scrollTop
+    setAtBottom(stickRef.current)
   }
 
-  const scrollToBottom = () => {
-    const el = scrollRef.current
-    if (!el) return
-    stickRef.current = true
-    el.scrollTo({ top: el.scrollHeight, behavior: "smooth" })
-  }
-
-  /** Re-pin to the bottom (e.g. right after sending a message). */
   const pinToBottom = () => {
     stickRef.current = true
+    followBottom()
   }
 
-  useEffect(() => {
-    const content = contentRef.current
-    const el = scrollRef.current
-    if (!content || !el) return
-    const ro = new ResizeObserver(() => {
-      if (stickRef.current) el.scrollTo({ top: el.scrollHeight })
-    })
-    ro.observe(content)
-    return () => ro.disconnect()
-  }, [])
-
-  // Opening a session re-pins to the bottom.
-  useEffect(() => {
+  useLayoutEffect(() => {
     stickRef.current = true
-    const el = scrollRef.current
-    if (el) requestAnimationFrame(() => el.scrollTo({ top: el.scrollHeight }))
-  }, [currentSessionId])
+    setAtBottom(true)
+    followBottom()
+    if (!scrollElement || !contentElement) return
+    const observer = new ResizeObserver(followBottom)
+    observer.observe(contentElement)
+    // Composer, queue, and window resizing change the available message height.
+    observer.observe(scrollElement)
+    return () => observer.disconnect()
+  }, [scrollElement, contentElement, currentSessionId, followBottom])
 
-  return { scrollRef, contentRef, atBottom, handleScroll, scrollToBottom, pinToBottom }
+  return { scrollRef, contentRef, atBottom, handleScroll, scrollToBottom: pinToBottom, pinToBottom }
 }

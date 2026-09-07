@@ -1,4 +1,4 @@
-import { Fragment, useMemo, useState, type RefObject } from "react"
+import { Fragment, useMemo, useState, type Ref } from "react"
 import { Copy, Pencil, RotateCcw, GitFork, Trash2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
@@ -100,8 +100,8 @@ export function MessageList({
   onDelete,
   onEditMessage,
 }: {
-  scrollRef: RefObject<HTMLDivElement | null>
-  contentRef: RefObject<HTMLDivElement | null>
+  scrollRef: Ref<HTMLDivElement>
+  contentRef: Ref<HTMLDivElement>
   onScroll: () => void
   messages: Message[]
   mergedSubAgents: Record<string, ChildProgress>
