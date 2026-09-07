@@ -151,7 +151,7 @@ export function useChat(
     text: string
   } | null>(null)
   const [sending, setSending] = useState(false)
-  const { rate: outputRate, record: recordOutput, reset: resetOutputRate } = useOutputRate(sid, sending && streamSid === sid)
+  const { rate: outputRate, record: recordOutput, reset: resetOutputRate } = useOutputRate(sid, (sending || currentChat?.isRunning === true) && streamSid === sid)
   const [submissionPending, setSubmissionPending] = useState(false)
   const [sendFailures, setSendFailures] = useState<ReadonlyMap<string | null, SendFailure>>(
     () => new Map(),
