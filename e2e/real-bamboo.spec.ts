@@ -1379,6 +1379,19 @@ test("production session modes keep Bypass confirmation distinct from Auto execu
       await installSessionEntry(context, { ...contract, sessionId: sessions[0]!.id });
       const page = await context.newPage();
       let observation = observePage(page, `permission-${surface.label}`);
+      let permissionFailure: unknown;
+      const finishPermissionObservation = async () => {
+        try {
+          await observation.stop();
+        } catch (cleanupError) {
+          if (permissionFailure !== undefined && permissionFailure !== cleanupError) {
+            throw new AggregateError([permissionFailure, cleanupError], "Permission acceptance and observer cleanup both failed");
+          }
+          throw cleanupError;
+        } finally {
+          await context.close();
+        }
+      };
       const modeControl = page.getByRole("combobox", { name: "权限模式", exact: true });
       const reloadPermissionPage = async (label: string): Promise<void> => {
         await page.waitForLoadState("networkidle");
@@ -1386,7 +1399,7 @@ test("production session modes keep Bypass confirmation distinct from Auto execu
         // one across deliberate reloads. Verify each document before moving on.
         await observation.stop();
         await assertCleanPage(observation, contract.baseUrl.origin);
-        observation = observePage(page, `permission-${surface.label}-${label}`);
+        observation = observePage(page, `permission-${surface.label}-${label}`, { nextDocument: true });
         await page.reload({ waitUntil: "domcontentloaded" });
         await assertBootstrap(observation);
         await assertLiveSocket(observation, contract.baseUrl.origin);
@@ -1542,6 +1555,7 @@ test("production session modes keep Bypass confirmation distinct from Auto execu
         await page.waitForLoadState("networkidle");
         await assertCleanPage(observation, contract.baseUrl.origin);
       } catch (error) {
+        permissionFailure = error;
         const screenshotPath = testInfo.outputPath(`permission-${surface.label}-failure.png`);
         await page.screenshot({ path: screenshotPath, animations: "disabled" });
         await testInfo.attach(`${surface.label} permission failure`, {
@@ -1550,8 +1564,7 @@ test("production session modes keep Bypass confirmation distinct from Auto execu
         });
         throw error;
       } finally {
-        await observation.stop();
-        await context.close();
+        await finishPermissionObservation();
       }
     }
   } finally {

@@ -1,4 +1,4 @@
-import type { Page, Request, Response, ConsoleMessage, WebSocket } from "@playwright/test";
+import type { Page, Request, Response, ConsoleMessage, WebSocket, Frame } from "@playwright/test";
 
 interface RequestObservation {
   readonly method: string;
@@ -72,30 +72,60 @@ const redactedUrl = (value: string): string => {
   return parsed.href;
 };
 
-export const observePage = (page: Page, label: string): PageObservation => {
+interface ObservationOptions {
+  /**
+   * Arm before the real-Bamboo fixture reload. Its app resources begin after
+   * main-frame commit; this fixture does not serve 103 Early Hints preloads.
+   */
+  readonly nextDocument?: boolean;
+  /** A drain failure is explicit; it never converts unfinished work to success. */
+  readonly drainTimeoutMs?: number;
+}
+
+export const observePage = (page: Page, label: string, options: ObservationOptions = {}): PageObservation => {
   let webSocketFrameOrdinal = 0;
   const ownedRequests = new WeakSet<Request>();
-  const pending = new Set<Promise<void>>();
+  const pending = new Map<Promise<void>, string>();
+  let documentActive = !options.nextDocument;
+  let navigationObserved = false;
+  const drainTimeoutMs = options.drainTimeoutMs ?? 10_000;
   const inFlight = new Set<Request>();
   const progressWaiters = new Set<() => void>();
   const progress = () => {
     for (const wake of progressWaiters) wake();
     progressWaiters.clear();
   };
-  const waitForProgress = () => new Promise<void>((resolve) => { progressWaiters.add(resolve); });
+  const pendingDescription = (values: string[]) =>
+    `${values.length} [${values.slice(0, 5).map((value) => value.slice(0, 200)).join(", ")}]`;
+  const waitForProgress = (deadline: number) => new Promise<void>((resolve, reject) => {
+    const wake = () => { clearTimeout(timer); progressWaiters.delete(wake); resolve(); };
+    const timer = setTimeout(() => {
+      progressWaiters.delete(wake);
+      reject(new Error(`${label}: observation drain exceeded ${drainTimeoutMs}ms; pending requests: ${
+        pendingDescription([...inFlight].map((request) => `${request.method()} ${redactedUrl(request.url())}`))
+      }; pending body reads: ${pendingDescription([...pending.values()])}`));
+    }, Math.max(0, deadline - performance.now()));
+    progressWaiters.add(wake);
+  });
   const detach: Array<() => void> = [];
   const drain = async (): Promise<void> => {
     // Network-idle alone does not wait for response.json(). Requests arriving
     // while earlier work settles also belong to this document's observation.
-    while (inFlight.size || pending.size) await waitForProgress();
+    const deadline = performance.now() + drainTimeoutMs;
+    while (inFlight.size || pending.size) await waitForProgress(deadline);
   };
-  const stop = async (): Promise<void> => {
+  let retirement: Promise<void> | undefined;
+  const stop = (): Promise<void> => retirement ??= (async () => {
     // Keep collecting owned HTTP failures until requests AND body reads settle.
-    // No await between the final empty check and detachment: no request can
-    // enter an unobserved gap at this document's retirement boundary.
-    while (inFlight.size || pending.size) await waitForProgress();
-    for (const removeListener of detach.splice(0)) removeListener();
-  };
+    // No await between the final empty check and detachment. On failure, detach
+    // too, but retain the rejected retirement promise and diagnostic evidence.
+    const deadline = performance.now() + drainTimeoutMs;
+    try {
+      while (inFlight.size || pending.size) await waitForProgress(deadline);
+    } finally {
+      for (const removeListener of detach.splice(0)) removeListener();
+    }
+  })();
   const observation: PageObservation = {
     label,
     drain,
@@ -112,6 +142,13 @@ export const observePage = (page: Page, label: string): PageObservation => {
   };
 
   const onRequest = (request: Request) => {
+    if (!documentActive) {
+      // The reload call can dispatch old-document lazy imports before the new
+      // main navigation even starts. Own the navigation HTTP exchange, but do
+      // not admit app traffic until its main-frame commit.
+      if (!request.isNavigationRequest() || request.frame() !== page.mainFrame()) return;
+      navigationObserved = true;
+    }
     ownedRequests.add(request);
     inFlight.add(request);
     const headers = request.headers();
@@ -152,7 +189,7 @@ export const observePage = (page: Page, label: string): PageObservation => {
           observation.pageErrors.push(`Could not inspect the Bamboo ${description} response: ${String(error)}`);
         })
         .finally(() => { pending.delete(task); progress(); });
-      pending.add(task);
+      pending.set(task, `${request.method()} ${redactedUrl(response.url())}`);
     };
     if (pathname === "/api/v1/bootstrap" && response.ok()) {
       inspect(observation.bootstrapDocuments, "bootstrap");
@@ -164,12 +201,16 @@ export const observePage = (page: Page, label: string): PageObservation => {
       inspect(observation.historyDocuments, "history");
     }
   };
+  const onFrameNavigated = (frame: Frame) => {
+    if (navigationObserved && frame === page.mainFrame()) documentActive = true;
+  };
   const onConsole = (message: ConsoleMessage) => {
-    if (message.type() === "error")
+    if (documentActive && message.type() === "error")
       observation.consoleErrors.push(message.text());
   };
-  const onPageError = (error: Error) => { observation.pageErrors.push(error.message); };
+  const onPageError = (error: Error) => { if (documentActive) observation.pageErrors.push(error.message); };
   const onWebSocket = (webSocket: WebSocket) => {
+    if (!documentActive) return;
     const socket: WebSocketObservation = {
       url: redactedUrl(webSocket.url()),
       sent: [],
@@ -213,6 +254,7 @@ export const observePage = (page: Page, label: string): PageObservation => {
   page.on("console", onConsole);
   page.on("pageerror", onPageError);
   page.on("websocket", onWebSocket);
+  page.on("framenavigated", onFrameNavigated);
   detach.push(() => {
     page.off("request", onRequest);
     page.off("requestfailed", onRequestFailed);
@@ -221,6 +263,7 @@ export const observePage = (page: Page, label: string): PageObservation => {
     page.off("console", onConsole);
     page.off("pageerror", onPageError);
     page.off("websocket", onWebSocket);
+    page.off("framenavigated", onFrameNavigated);
   });
 
   return observation;
