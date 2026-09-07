@@ -1,3 +1,5 @@
+import { useMarkSessionRead } from "@/lib/sessionReadState"
+import { useMediaQuery } from "@shared/hooks/useMediaQuery"
 import { useEffect, useMemo, useRef, useState } from "react"
 import {
   ChevronDown,
@@ -148,6 +150,10 @@ export function ChatPane({
     answerQuestion,
     respondApproval,
   } = chat
+  // The secondary chat hook remains mounted when its pane closes. Read state
+  // follows the rendered pane, including the same breakpoint as its md:flex.
+  const splitVisible = useMediaQuery("(min-width: 768px)")
+  useMarkSessionRead(!secondary || splitVisible ? currentChat : null)
 
   // Live in-run token budget (pushed over the agent channel) — beats the
   // persisted config snapshot, which only refreshes on history reload.
