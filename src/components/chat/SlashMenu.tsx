@@ -5,6 +5,7 @@ import { cn } from "@/lib/utils"
 import { useMenuKeyboardNav } from "./useMenuKeyboardNav"
 
 type Entry =
+  | { kind: "goal"; id: string; name: string; description: string }
   | { kind: "skill"; id: string; name: string; description: string; skill: SkillDefinition }
   | { kind: "workflow"; id: string; name: string; description: string; command: CommandItem }
 
@@ -21,6 +22,7 @@ export function SlashMenu({
   query,
   onPick,
   onPickWorkflow,
+  onPickGoal,
   onDismiss,
 }: {
   skills: SkillDefinition[]
@@ -28,6 +30,7 @@ export function SlashMenu({
   query: string
   onPick: (skill: SkillDefinition) => void
   onPickWorkflow: (command: CommandItem) => void
+  onPickGoal?: () => void
   onDismiss?: () => void
 }) {
   const q = query.trim().toLowerCase()
@@ -35,6 +38,7 @@ export function SlashMenu({
     !q || name.toLowerCase().includes(q) || description.toLowerCase().includes(q)
 
   const entries: Entry[] = [
+    ...(onPickGoal && matches("goal", "设置会话目标") ? [{ kind: "goal" as const, id: "builtin-goal", name: "goal", description: "/goal 目标内容 · 单独发送 /goal 打开设置" }] : []),
     ...skills
       .filter((s) => matches(s.name, s.description))
       .map((s) => ({
@@ -57,7 +61,8 @@ export function SlashMenu({
 
   const pick = (e: Entry) => {
     if (e.kind === "skill") onPick(e.skill)
-    else onPickWorkflow(e.command)
+    else if (e.kind === "workflow") onPickWorkflow(e.command)
+    else onPickGoal?.()
   }
 
   const active = useMenuKeyboardNav(
@@ -77,7 +82,7 @@ export function SlashMenu({
 
   return (
     <div className="mx-auto mb-2 max-w-2xl overflow-hidden rounded-xl border bg-popover shadow-lg">
-      <div className="border-b px-3 py-1.5 text-xs text-muted-foreground">技能 / 工作流</div>
+      <div className="border-b px-3 py-1.5 text-xs text-muted-foreground">指令 / 技能 / 工作流</div>
       <div className="max-h-64 overflow-y-auto p-1">
         {entries.map((e, i) => (
           <button
@@ -99,7 +104,7 @@ export function SlashMenu({
                     : "bg-muted text-muted-foreground",
                 )}
               >
-                {e.kind === "workflow" ? "工作流" : "技能"}
+                {e.kind === "goal" ? "指令" : e.kind === "workflow" ? "工作流" : "技能"}
               </span>
             </span>
             {e.description ? (

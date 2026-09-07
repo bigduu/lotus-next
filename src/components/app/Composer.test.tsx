@@ -133,3 +133,11 @@ describe("Composer submission controls", () => {
     expect(idleView.textarea.getAttribute("aria-busy")).toBe("false")
   })
 })
+
+it("offers queue submission and Stop together while generating", () => {
+  const { container, props, textarea } = mountComposer({ sending: true, queueMode: "after_round", onQueueModeChange: vi.fn() })
+  expect(container.querySelector('button[aria-label="加入队列"]')).not.toBeNull()
+  expect(container.querySelector('button[aria-label="停止生成"]')).not.toBeNull()
+  act(() => textarea.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", ctrlKey: true, bubbles: true })))
+  expect(props.onSubmit).toHaveBeenCalledOnce()
+})

@@ -1,4 +1,4 @@
-import { useRef, type Ref } from "react"
+import { useRef, type Ref, type ReactNode } from "react"
 import {
   X,
   Paperclip,
@@ -9,6 +9,7 @@ import {
   BookText,
   Check,
   LoaderCircle,
+  Clock3,
 } from "lucide-react"
 import { useShallow } from "zustand/react/shallow"
 import { Button } from "@/components/ui/button"
@@ -24,6 +25,7 @@ import { FileMenu } from "@/components/chat/FileMenu"
 import { useAppStore } from "@shared/store/appStore"
 import type { SkillDefinition } from "@shared/types/skill"
 import type { CommandItem } from "@services/command"
+import type { GuidanceMode } from "@services/chat/guidance"
 import type { WorkspaceFileEntry } from "@services/workspace/types"
 
 /**
@@ -73,6 +75,9 @@ export function Composer({
   onSubmit,
   onStop,
   sending,
+  queueMode,
+  onQueueModeChange,
+  queueControls,
   submissionPending,
   inputRef,
   attachments,
@@ -87,6 +92,7 @@ export function Composer({
   selectedWorkflow,
   onClearWorkflow,
   onPickWorkflow,
+  onPickGoal,
   slashQuery,
   atQuery,
   displayWorkspace,
@@ -101,6 +107,9 @@ export function Composer({
   onSubmit: () => void
   onStop: () => void
   sending: boolean
+  queueMode?: GuidanceMode
+  onQueueModeChange?: (mode: GuidanceMode) => void
+  queueControls?: ReactNode
   submissionPending: boolean
   inputRef: Ref<HTMLTextAreaElement>
   attachments: AttachmentView[]
@@ -115,6 +124,7 @@ export function Composer({
   selectedWorkflow: { name: string; content: string } | null
   onClearWorkflow: () => void
   onPickWorkflow: (command: CommandItem) => void
+  onPickGoal?: () => void
   slashQuery: string | null
   atQuery: string | null
   displayWorkspace: string | null | undefined
@@ -125,6 +135,8 @@ export function Composer({
   onDismissMenus?: () => void
 }) {
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const canQueue = sending && !!onQueueModeChange
+  const hasContent = !!draft.trim() || attachments.length > 0 || !!selectedWorkflow
 
   return (
     <div className="border-t px-3 py-3">
@@ -135,6 +147,7 @@ export function Composer({
           query={slashQuery}
           onPick={onPickSkill}
           onPickWorkflow={onPickWorkflow}
+          onPickGoal={onPickGoal}
           onDismiss={onDismissMenus}
         />
       )}
@@ -219,8 +232,8 @@ export function Composer({
           <PromptChip />
         </div>
       ) : null}
-      <div className="mx-auto flex max-w-2xl items-center gap-2">
-        <div className="flex min-w-0 flex-1 items-center gap-1 overflow-hidden rounded-2xl border bg-card px-2 py-1">
+      <div className="relative mx-auto flex max-w-2xl items-center gap-2">
+        <div className="flex min-w-0 flex-1 items-center gap-1 rounded-2xl border bg-card px-2 py-1">
           <Button
             size="icon"
             variant="ghost"
@@ -252,42 +265,37 @@ export function Composer({
                 e.key === "Enter" &&
                 (e.metaKey || e.ctrlKey) &&
                 !submissionPending &&
-                !sending
+                (!sending || canQueue)
               ) {
                 e.preventDefault()
                 onSubmit()
               }
             }}
-            placeholder="发送消息…"
+            placeholder={canQueue ? "输入消息，发送后加入队列…" : "发送消息…"}
             rows={1}
             className="max-h-40"
           />
+          {canQueue && <div className="relative h-8 w-8 shrink-0 sm:w-24">
+            <Clock3 aria-hidden="true" className="pointer-events-none absolute left-2 top-2 size-4 text-muted-foreground sm:hidden" />
+            <select aria-label="发送时机" value={queueMode ?? "after_round"} disabled={submissionPending}
+              onChange={(event) => onQueueModeChange?.(event.target.value as GuidanceMode)}
+              title={queueMode === "after_run" ? "运行结束后发送" : "本轮结束后发送"}
+              className="h-full w-full appearance-none rounded border-0 bg-transparent text-xs text-transparent sm:appearance-auto sm:text-foreground">
+              <option className="text-foreground" value="after_round">本轮结束后</option>
+              <option className="text-foreground" value="after_run">运行结束后</option>
+            </select>
+          </div>}
+          {queueControls}
         </div>
         {submissionPending ? (
           <Button size="icon" disabled aria-label="正在发送" className="rounded-full">
             <LoaderCircle className="animate-spin" />
           </Button>
-        ) : sending ? (
-          <Button
-            size="icon"
-            variant="secondary"
-            onClick={onStop}
-            className="rounded-full"
-            aria-label="停止生成"
-          >
-            <Square />
-          </Button>
-        ) : (
-          <Button
-            size="icon"
-            onClick={onSubmit}
-            disabled={!draft.trim() && attachments.length === 0 && !selectedWorkflow}
-            className="rounded-full"
-            aria-label="发送消息"
-          >
-            <ArrowUp />
-          </Button>
-        )}
+        ) : (!sending || (canQueue && hasContent)) ? (
+          <Button size="icon" onClick={onSubmit} disabled={!hasContent} className="rounded-full"
+            aria-label={canQueue ? "加入队列" : "发送消息"} title={canQueue ? "加入队列" : "发送消息"}><ArrowUp /></Button>
+        ) : null}
+        {sending && (!submissionPending || canQueue) && <Button size="icon" variant="secondary" onClick={onStop} className="rounded-full" aria-label="停止生成"><Square /></Button>}
       </div>
     </div>
   )
