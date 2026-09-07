@@ -28,17 +28,33 @@ function GoalSection({
 }) {
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState("")
+  const [autoContinue, setAutoContinue] = useState(false)
+  const [recoverTimeouts, setRecoverTimeouts] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [saveError, setSaveError] = useState("")
   const goal = goldConfig?.goal
+  const recoveryPolicy = (goldConfig?.recovery?.max_attempts ?? 0) > 0
+    ? goldConfig!.recovery!
+    : { max_attempts: 3, max_elapsed_seconds: 900 }
 
   const save = async () => {
+    if (saving) return
     const g = draft.trim()
-    setEditing(false)
-    await agentClient
-      .patchSession(sessionId, {
-        gold_config: { ...(goldConfig ?? { enabled: true }), enabled: true, goal: g || null },
+    setSaving(true); setSaveError("")
+    try {
+      await agentClient.patchSession(sessionId, {
+        gold_config: {
+          ...(goldConfig ?? { enabled: true }), enabled: true, goal: g || null,
+          auto_continue_enabled: autoContinue,
+          recovery: recoverTimeouts && autoContinue
+            ? recoveryPolicy
+            : { max_attempts: 0, max_elapsed_seconds: 0 },
+        },
       })
-      .catch(() => {})
-    await useAppStore.getState().loadChatHistory(sessionId)
+      setEditing(false)
+      await useAppStore.getState().loadChatHistory(sessionId)
+    } catch { setSaveError("保存目标失败，请重试。") }
+    finally { setSaving(false) }
   }
 
   return (
@@ -49,6 +65,9 @@ function GoalSection({
           <button
             onClick={() => {
               setDraft(goal ?? "")
+              setAutoContinue(goldConfig?.auto_continue_enabled ?? false)
+              setRecoverTimeouts((goldConfig?.recovery?.max_attempts ?? 0) > 0)
+              setSaveError("")
               setEditing(true)
             }}
             className="text-xs text-primary hover:underline"
@@ -57,6 +76,7 @@ function GoalSection({
           </button>
         ) : null}
       </div>
+      <p className="mb-2 text-xs text-muted-foreground">聊天指令：<code>/goal 目标内容</code> 设置并推进，<code>/goal off</code> 暂停，<code>/goal clear</code> 清除。</p>
       {editing ? (
         <>
           <textarea
@@ -66,11 +86,21 @@ function GoalSection({
             placeholder="描述这段会话要达成的目标…"
             className="min-h-16 w-full resize-y rounded-md border bg-background px-2.5 py-1.5 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
           />
+          <label className="mt-2 flex items-center gap-2 text-xs">
+            <input type="checkbox" checked={autoContinue} onChange={(event) => setAutoContinue(event.target.checked)} />
+            自动继续推进目标
+          </label>
+          <label className="mt-2 flex items-center gap-2 text-xs">
+            <input type="checkbox" checked={recoverTimeouts} disabled={!autoContinue} onChange={(event) => setRecoverTimeouts(event.target.checked)} />
+            无输出超时后尝试恢复
+          </label>
+          {autoContinue && recoverTimeouts && <p className="mt-1 text-xs text-muted-foreground">每个目标额外尝试最多 {Math.min(recoveryPolicy.max_attempts, 10)} 次，恢复窗口 {Math.min(recoveryPolicy.max_elapsed_seconds, 3600) / 60} 分钟。停止操作会结束等待。</p>}
+          {saveError && <p role="alert" className="mt-1 text-xs text-destructive">{saveError}</p>}
           <div className="mt-1.5 flex justify-end gap-2">
-            <Button size="sm" variant="secondary" onClick={() => setEditing(false)}>
+            <Button size="sm" variant="secondary" disabled={saving} onClick={() => setEditing(false)}>
               取消
             </Button>
-            <Button size="sm" onClick={save}>
+            <Button size="sm" disabled={saving} onClick={save}>
               保存
             </Button>
           </div>
@@ -200,6 +230,7 @@ export function Inspector({
 
           {sessionId ? (
             <GoalSection
+              key={sessionId}
               sessionId={sessionId}
               goldConfig={(cfg as { goldConfig?: GoldConfig | null })?.goldConfig}
               goalState={goal}
