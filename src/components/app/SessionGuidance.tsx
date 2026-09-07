@@ -9,9 +9,9 @@ export function SessionGuidance({ sessionId, messages, busy, onCancel, onPreview
   onPreview: (url: string) => void
 }) {
   if (!messages.length) return null
-  return <details className="group text-xs">
-    <summary aria-label={`待发 ${messages.length} 条消息`} className="cursor-pointer list-none whitespace-nowrap rounded px-1.5 py-1 tabular-nums text-muted-foreground hover:bg-accent"><span className="hidden sm:inline">待发 </span>{messages.length}</summary>
-    <div className="absolute inset-x-0 bottom-full z-30 mb-2 max-h-64 overflow-y-auto rounded-lg border bg-popover p-2 shadow-md">
+  return <details aria-label="待发送队列" className="group mx-auto mb-2 max-w-2xl rounded-lg border bg-card text-xs">
+    <summary aria-label={`待发 ${messages.length} 条消息`} className="cursor-pointer whitespace-nowrap rounded px-3 py-2 tabular-nums text-muted-foreground hover:bg-accent">待发 {messages.length}</summary>
+    <div className="max-h-[min(12rem,25dvh)] overflow-y-auto overscroll-contain border-t px-3 py-1">
       {messages.map((item) => <div key={item.id} className="flex items-center gap-2 border-b py-2 last:border-0">
         <div className="min-w-0 flex-1">
           <div className="mb-1 text-muted-foreground">{item.mode === "after_run" ? "运行结束后" : "本轮结束后"}</div>

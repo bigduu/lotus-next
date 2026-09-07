@@ -139,7 +139,8 @@ export function Composer({
   const hasContent = !!draft.trim() || attachments.length > 0 || !!selectedWorkflow
 
   return (
-    <div className="border-t px-3 py-3">
+    <div className="shrink-0 border-t px-3 py-3">
+      {queueControls}
       {slashQuery !== null && (
         <SlashMenu
           skills={skills}
@@ -285,7 +286,6 @@ export function Composer({
               <option className="text-foreground" value="after_run">运行结束后</option>
             </select>
           </div>}
-          {queueControls}
         </div>
         {submissionPending ? (
           <Button size="icon" disabled aria-label="正在发送" className="rounded-full">
