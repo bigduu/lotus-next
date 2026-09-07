@@ -225,4 +225,3 @@ export const observePage = (page: Page, label: string): PageObservation => {
 
   return observation;
 };
-
