@@ -5,16 +5,20 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest
 import { Composer } from "./Composer"
 
 const mountedRoots: Root[] = []
+const originalScrollIntoView = HTMLElement.prototype.scrollIntoView
 const reactActEnvironment = globalThis as typeof globalThis & {
   IS_REACT_ACT_ENVIRONMENT?: boolean
 }
 
 beforeAll(() => {
   reactActEnvironment.IS_REACT_ACT_ENVIRONMENT = true
+  HTMLElement.prototype.scrollIntoView = vi.fn()
 })
 
 afterAll(() => {
   Reflect.deleteProperty(reactActEnvironment, "IS_REACT_ACT_ENVIRONMENT")
+  if (originalScrollIntoView) HTMLElement.prototype.scrollIntoView = originalScrollIntoView
+  else Reflect.deleteProperty(HTMLElement.prototype, "scrollIntoView")
 })
 
 afterEach(() => {
@@ -68,41 +72,88 @@ function mountComposer(overrides: Partial<ComponentProps<typeof Composer>> = {})
 
 function dispatchSubmitShortcut(
   textarea: HTMLTextAreaElement,
-  options: { isComposing?: boolean; keyCode?: number } = {},
+  options: KeyboardEventInit = {},
 ) {
   const event = new KeyboardEvent("keydown", {
     bubbles: true,
     cancelable: true,
     key: "Enter",
-    ctrlKey: true,
-    isComposing: options.isComposing,
+    ...options,
   })
   if (options.keyCode !== undefined) {
     Object.defineProperty(event, "keyCode", { value: options.keyCode })
   }
   act(() => textarea.dispatchEvent(event))
+  return event
 }
 
 describe("Composer submission controls", () => {
   it.each([
     ["native composition", { isComposing: true }],
     ["legacy IME key code", { keyCode: 229 }],
-  ])("does not submit the Cmd/Ctrl+Enter shortcut during %s", (_label, eventInit) => {
+  ])("does not submit Enter during %s", (_label, eventInit) => {
     const onSubmit = vi.fn()
     const { textarea } = mountComposer({ onSubmit })
 
-    dispatchSubmitShortcut(textarea, eventInit)
+    for (const modifiers of [{}, { ctrlKey: true }, { metaKey: true }]) {
+      expect(dispatchSubmitShortcut(textarea, { ...eventInit, ...modifiers }).defaultPrevented).toBe(false)
+    }
 
     expect(onSubmit).not.toHaveBeenCalled()
   })
 
-  it("submits once for a normal Cmd/Ctrl+Enter shortcut", () => {
+  it.each([{}, { ctrlKey: true }, { metaKey: true }])("submits once for Enter with modifiers %j", (modifiers) => {
     const onSubmit = vi.fn()
     const { textarea } = mountComposer({ onSubmit })
 
-    dispatchSubmitShortcut(textarea)
+    expect(dispatchSubmitShortcut(textarea, modifiers).defaultPrevented).toBe(true)
 
     expect(onSubmit).toHaveBeenCalledTimes(1)
+  })
+
+  it.each([{}, { ctrlKey: true }, { metaKey: true }])("leaves Shift+Enter to insert a newline with modifiers %j", (modifiers) => {
+    const { textarea, props } = mountComposer()
+    expect(dispatchSubmitShortcut(textarea, { ...modifiers, shiftKey: true }).defaultPrevented).toBe(false)
+    expect(props.onSubmit).not.toHaveBeenCalled()
+  })
+
+  it.each<Partial<ComponentProps<typeof Composer>>>([
+    { draft: "  \n " },
+    { submissionPending: true },
+    { sending: true },
+    { sending: true, onQueueModeChange: vi.fn(), submissionPending: true },
+    { sending: true, onQueueModeChange: vi.fn(), draft: "" },
+  ])("keeps guarded Enter submission safe: %j", (overrides) => {
+    const { textarea, props } = mountComposer(overrides)
+    expect(dispatchSubmitShortcut(textarea).defaultPrevented).toBe(true)
+    expect(props.onSubmit).not.toHaveBeenCalled()
+  })
+
+  it.each<Partial<ComponentProps<typeof Composer>>>([
+    { attachments: [{ id: "image", name: "image.png", url: "data:image/png;base64," }] },
+    { selectedWorkflow: { name: "review", content: "Review the change" } },
+  ])("submits non-text content through the same handler: %j", (overrides) => {
+    const { textarea, props } = mountComposer({ ...overrides, draft: "" })
+    dispatchSubmitShortcut(textarea)
+    expect(props.onSubmit).toHaveBeenCalledOnce()
+  })
+
+  it.each(["slash", "file"])("lets the open %s picker select on Enter without sending", (picker) => {
+    const onPick = vi.fn()
+    const { textarea, props } = mountComposer(picker === "slash" ? {
+      draft: "/goal", slashQuery: "goal", onPickGoal: onPick,
+    } : {
+      draft: "@read", atQuery: "read", displayWorkspace: "/workspace", onPickFile: onPick,
+      workspaceFiles: [{ name: "README.md", path: "README.md", is_directory: false }],
+    })
+    // The real window capture listener must leave IME and Shift+Enter alone.
+    expect(dispatchSubmitShortcut(textarea, { isComposing: true }).defaultPrevented).toBe(false)
+    expect(dispatchSubmitShortcut(textarea, { keyCode: 229 }).defaultPrevented).toBe(false)
+    expect(dispatchSubmitShortcut(textarea, { shiftKey: true }).defaultPrevented).toBe(false)
+    expect(onPick).not.toHaveBeenCalled()
+    expect(dispatchSubmitShortcut(textarea).defaultPrevented).toBe(true)
+    expect(onPick).toHaveBeenCalledOnce()
+    expect(props.onSubmit).not.toHaveBeenCalled()
   })
 
   it("shows a disabled pending control without exposing the generation stop action", () => {
@@ -138,6 +189,6 @@ it("offers queue submission and Stop together while generating", () => {
   const { container, props, textarea } = mountComposer({ sending: true, queueMode: "after_round", onQueueModeChange: vi.fn() })
   expect(container.querySelector('button[aria-label="加入队列"]')).not.toBeNull()
   expect(container.querySelector('button[aria-label="停止生成"]')).not.toBeNull()
-  act(() => textarea.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", ctrlKey: true, bubbles: true })))
+  dispatchSubmitShortcut(textarea)
   expect(props.onSubmit).toHaveBeenCalledOnce()
 })

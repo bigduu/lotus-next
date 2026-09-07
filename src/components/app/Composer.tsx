@@ -261,17 +261,13 @@ export function Composer({
             }}
             onKeyDown={(e) => {
               const nativeEvent = e.nativeEvent
-              if (nativeEvent.isComposing || nativeEvent.keyCode === 229) return
-              if (
-                e.key === "Enter" &&
-                (e.metaKey || e.ctrlKey) &&
-                !submissionPending &&
-                (!sending || canQueue)
-              ) {
+              if (e.defaultPrevented || nativeEvent.isComposing || nativeEvent.keyCode === 229) return
+              if (e.key === "Enter" && !e.shiftKey) {
                 e.preventDefault()
-                onSubmit()
+                if (!submissionPending && hasContent && (!sending || canQueue)) onSubmit()
               }
             }}
+            title="Enter 发送，Shift+Enter 换行"
             placeholder={canQueue ? "输入消息，发送后加入队列…" : "发送消息…"}
             rows={1}
             className="max-h-40"
