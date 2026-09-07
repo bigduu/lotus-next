@@ -76,6 +76,7 @@ function GoalSection({
           </button>
         ) : null}
       </div>
+      <p className="mb-2 text-xs text-muted-foreground">聊天指令：<code>/goal 目标内容</code> 设置并推进，<code>/goal off</code> 暂停，<code>/goal clear</code> 清除。</p>
       {editing ? (
         <>
           <textarea

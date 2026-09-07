@@ -16,7 +16,10 @@ for (const scenario of [standaloneScenario, embeddedScenario, secureRemoteScenar
       },
     }
     await page.route("**/api/v1/task/all-surface-session", (route) => route.fulfill({ json: { session_id: "all-surface-session", items: [] } }))
-    let queue: Array<{ id: string; text: string; created_at: string }> = []
+    const pixel = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=", "base64")
+    let queue: Array<{ id: string; text: string; created_at: string; mode: string; images: string[] }> = []
+    let queuedImages: Array<{ base64: string }> = []
+    await page.route("**/api/v1/sessions/all-surface-session/attachments/*", (route) => route.fulfill({ body: pixel, contentType: "image/png" }))
     let goalPatch: unknown
     await page.route("**/api/v1/sessions", (route) => route.fulfill({ json: { sessions: [session] } }))
     await page.route("**/api/v1/sessions/all-surface-session", async (route) => {
@@ -27,8 +30,9 @@ for (const scenario of [standaloneScenario, embeddedScenario, secureRemoteScenar
     })
     await page.route("**/api/v1/sessions/all-surface-session/guidance", async (route) => {
       if (route.request().method() === "POST") {
-        const body = route.request().postDataJSON() as { id: string; text: string }
-        queue.push({ ...body, created_at: new Date().toISOString() })
+        const body = route.request().postDataJSON() as { id: string; text: string; mode: string; images: Array<{ base64: string }> }
+        queuedImages = body.images
+        queue.push({ ...body, images: body.images.map((_image, index) => `image-${index}`), created_at: new Date().toISOString() })
         await route.fulfill({ status: 202, json: { id: body.id, activation_pending: false } })
       } else await route.fulfill({ json: { messages: queue } })
     })
@@ -39,17 +43,37 @@ for (const scenario of [standaloneScenario, embeddedScenario, secureRemoteScenar
     })
     await page.goto(scenario.entryUrl, { waitUntil: "domcontentloaded" })
     const surface = scenario.embedded ? page.frameLocator('iframe[title="Lotus Next embedded surface"]') : page
-    const input = surface.getByRole("textbox", { name: "指导内容" })
+    const input = surface.getByRole("textbox", { name: "消息", exact: true })
     await expect(input).toBeVisible()
     await expect(surface.getByRole("button", { name: "停止生成", exact: true })).toBeVisible()
+    await expect(surface.getByRole("textbox", { name: "指导内容" })).toHaveCount(0)
+    await surface.getByRole("combobox", { name: "发送时机" }).selectOption("after_run")
+    await surface.locator('input[type="file"]').setInputFiles({ name: "queued.png", mimeType: "image/png", buffer: pixel })
+    await expect(surface.getByAltText("queued.png", { exact: true })).toBeVisible()
     await input.fill("保留已有内容，并补充验证结果。")
-    await surface.getByRole("button", { name: "发送指导", exact: true }).click()
+    await surface.getByRole("button", { name: "加入队列", exact: true }).click()
     await expect(input).toHaveValue("")
-    await expect(surface.getByText("待应用：保留已有内容，并补充验证结果。", { exact: true })).toBeVisible()
+    expect(queue[0]?.mode).toBe("after_run")
+    expect(queuedImages[0]?.base64).toBe(pixel.toString("base64"))
+    await expect(surface.getByAltText("queued.png", { exact: true })).toHaveCount(0)
+    await surface.getByText("待发 1", { exact: true }).click()
+    await expect(surface.getByText("保留已有内容，并补充验证结果。", { exact: true })).toBeVisible()
+    await expect(surface.getByAltText("待发图片 1")).toBeVisible()
     await page.reload({ waitUntil: "domcontentloaded" })
-    await expect(surface.getByText("待应用：保留已有内容，并补充验证结果。", { exact: true })).toBeVisible()
+    await surface.getByText("待发 1", { exact: true }).click()
+    await expect(surface.getByText("保留已有内容，并补充验证结果。", { exact: true })).toBeVisible()
+    await expect(surface.getByAltText("待发图片 1")).toBeVisible()
     await surface.getByRole("button", { name: "撤回", exact: true }).click()
-    await expect(surface.getByText("待应用：保留已有内容，并补充验证结果。", { exact: true })).toHaveCount(0)
+    await expect(surface.getByText("保留已有内容，并补充验证结果。", { exact: true })).toHaveCount(0)
+    await surface.locator('input[type="file"]').setInputFiles({ name: "only-image.png", mimeType: "image/png", buffer: pixel })
+    await surface.getByRole("combobox", { name: "发送时机" }).selectOption("after_round")
+    await surface.getByRole("button", { name: "加入队列", exact: true }).click()
+    await expect.poll(() => queue.length).toBe(1)
+    expect(queue[0].text).toBe("")
+    expect(queue[0].mode).toBe("after_round")
+    await surface.getByText("待发 1", { exact: true }).click()
+    await expect(surface.getByAltText("待发图片 1")).toBeVisible()
+    await surface.getByRole("button", { name: "撤回", exact: true }).click()
     await surface.getByRole("button", { name: "检查器", exact: true }).click()
     const goal = surface.locator("section").filter({ has: surface.getByText("目标", { exact: true }) })
     await goal.getByRole("button", { name: "编辑", exact: true }).click()

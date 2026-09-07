@@ -19,6 +19,7 @@ import { downloadPdf } from "@/lib/exportPdf"
 import type { useChat } from "@/hooks/useChat"
 import { useStickyScroll } from "@/hooks/useStickyScroll"
 import { useAppStore, selectChildren } from "@shared/store/appStore"
+import { agentClient } from "@services/chat/AgentService"
 import { commandService, type CommandItem } from "@services/command"
 import type { ChildProgress } from "@shared/store/appStore/slices/executionStateSlice/types"
 import { useProviderStore } from "@shared/store/appStore/slices/providerSlice"
@@ -27,6 +28,7 @@ import type { SkillDefinition } from "@shared/types/skill"
 import { ChatHeader } from "@/components/app/ChatHeader"
 import { HomeDashboard } from "@/components/app/HomeDashboard"
 import { MessageList } from "@/components/app/MessageList"
+import { useGuidanceQueue } from "@/hooks/useGuidanceQueue"
 import { SessionGuidance } from "@/components/app/SessionGuidance"
 import { Composer } from "@/components/app/Composer"
 import { Toasts } from "@/components/app/Toasts"
@@ -149,6 +151,8 @@ export function ChatPane({
     answerQuestion,
     respondApproval,
   } = chat
+  const currentlyRunning = sending || currentChat?.isRunning === true
+  const queue = useGuidanceQueue(currentSessionId, currentlyRunning)
 
   // Live in-run token budget (pushed over the agent channel) — beats the
   // persisted config snapshot, which only refreshes on history reload.
@@ -170,6 +174,8 @@ export function ChatPane({
     store.setInputContent(draftKey, typeof value === "function" ? value(prev) : value)
   }
   const [dragOver, setDragOver] = useState(false)
+  const [goalSaving, setGoalSaving] = useState(false)
+  const goalRequestActive = useRef(false)
   const [selectedSkill, setSelectedSkill] = useState<SkillDefinition | null>(null)
   // Workflow commands for the slash menu; the picked one expands into the
   // message on send (content + user input).
@@ -314,13 +320,48 @@ export function ChatPane({
   }, [slashQuery])
 
   const submit = () => {
-    // Guard BEFORE clearing anything: a Cmd+Enter while a reply streams must
-    // not silently destroy the typed draft (send() would no-op on `sending`).
-    if (sending) return
+    // Keep an in-flight admission from capturing or clearing a second draft.
+    if (submissionPending || queue.busy || goalRequestActive.current) return
     const storeAtSubmit = useAppStore.getState()
     const draftAtSubmit = storeAtSubmit.inputStates[draftKey]
     const text = draftAtSubmit?.content ?? ""
+    const goalCommand = !selectedWorkflow && !selectedSkill && attachments.length === 0
+      ? /^\/goal(?:\s+([\s\S]*))?$/i.exec(text.trim()) : null
+    if (goalCommand && (currentSessionId || !goalCommand[1]?.trim())) {
+      if (!currentSessionId) { showToast("请先打开一个会话，再设置目标。"); return }
+      const revision = draftAtSubmit?.contentRevision ?? 0
+      const objective = goalCommand[1]?.trim()
+      if (!objective) {
+        onOpenInspector()
+        storeAtSubmit.setInputContentIfRevision(draftKey, revision, "")
+        return
+      }
+      const sessionId = currentSessionId
+      goalRequestActive.current = true; setGoalSaving(true)
+      void agentClient.sendMessage({ message: text.trim(), session_id: sessionId, model: currentChat?.config?.model ?? "" }).then(async (response) => {
+        if (response.session_id !== sessionId || !response.goal_command) throw new Error("Goal command was not acknowledged")
+        useAppStore.getState().setInputContentIfRevision(draftKey, revision, "")
+        if (currentDraftKeyRef.current === draftKey) {
+          const action = response.goal_command.action
+          showToast(action === "off" ? "目标已暂停" : action === "clear" ? "目标已清除" : action === "on_no_prompt" ? "请先设置目标" : action === "status" ? "已打开目标设置" : "目标已设置")
+          if (action === "status" || action === "on_no_prompt") onOpenInspector()
+        }
+        try { await useAppStore.getState().loadChatHistory(sessionId) }
+        catch { /* The command acknowledgement already confirms the saved configuration. */ }
+        if (response.goal_command.should_execute && !currentlyRunning) {
+          try { await agentClient.execute(sessionId, currentChat?.config?.model) }
+          catch { if (currentDraftKeyRef.current === draftKey) showToast("目标已保存，发送消息即可继续推进") }
+        }
+      }).catch(() => {
+        if (currentDraftKeyRef.current === draftKey) showToast("目标保存失败，指令已保留，请重试")
+      }).finally(() => { goalRequestActive.current = false; setGoalSaving(false) })
+      return
+    }
     if (!text.trim() && attachments.length === 0 && !selectedWorkflow) return
+    if ((currentlyRunning || queue.hasUnconfirmed) && selectedSkill) {
+      showToast("请先移除已选技能，再把消息加入队列。")
+      return
+    }
     const snapshot: ComposerSubmissionSnapshot = Object.freeze({
       draftKey,
       draftRevision: draftAtSubmit?.contentRevision ?? 0,
@@ -341,19 +382,16 @@ export function ChatPane({
     const finalText = snapshot.selectedWorkflow
       ? `${snapshot.selectedWorkflow.content}${text.trim() ? `\n\n${text.trim()}` : ""}`
       : text
-    void send(finalText, {
-      skillIds: snapshot.selectedSkill ? [snapshot.selectedSkill.id] : undefined,
-      images: snapshot.attachments.length
-        ? snapshot.attachments.map((a) => ({
-            base64: a.base64,
-            name: a.name,
-            size: a.size,
-            type: a.type,
-          }))
-        : undefined,
-      workspacePath: snapshot.workspacePath,
-      templatePrompt: snapshot.templatePrompt,
-    })
+    const images = snapshot.attachments.map((a) => ({ base64: a.base64, name: a.name, size: a.size, type: a.type }))
+    const submission = currentSessionId && (currentlyRunning || queue.hasUnconfirmed)
+      ? queue.send(finalText, images)
+      : send(finalText, {
+          skillIds: snapshot.selectedSkill ? [snapshot.selectedSkill.id] : undefined,
+          images: images.length ? images : undefined,
+          workspacePath: snapshot.workspacePath,
+          templatePrompt: snapshot.templatePrompt,
+        })
+    void submission
       .then((result) => {
         if (result.kind === "unconfirmed") {
           if (currentDraftKeyRef.current === snapshot.draftKey) composerInputRef.current?.focus()
@@ -579,7 +617,7 @@ export function ChatPane({
           onScroll={handleScroll}
           messages={messages}
           mergedSubAgents={mergedSubAgents}
-          sending={sending || currentChat?.isRunning === true}
+          sending={currentlyRunning}
           streaming={streaming}
           streamingReasoning={streamingReasoning}
           liveSegments={liveSegments}
@@ -634,14 +672,17 @@ export function ChatPane({
           </div>
         ) : null}
 
-        {currentSessionId && <SessionGuidance key={currentSessionId} sessionId={currentSessionId} running={sending || currentChat?.isRunning === true} />}
+        {queue.error && <div role="alert" className="mx-auto mb-1 w-[calc(100%-1.5rem)] max-w-2xl rounded-lg border border-destructive/40 px-3 py-2 text-xs text-destructive">{queue.error}</div>}
         <Composer
           draft={draft}
           onDraftChange={setDraft}
           onSubmit={submit}
           onStop={stop}
-          sending={sending || currentChat?.isRunning === true}
-          submissionPending={submissionPending}
+          sending={currentlyRunning}
+          queueMode={queue.mode}
+          onQueueModeChange={currentSessionId && !submissionPending ? queue.setMode : undefined}
+          queueControls={currentSessionId ? <SessionGuidance key={currentSessionId} sessionId={currentSessionId} messages={queue.pending} busy={queue.busy} onCancel={(id) => void queue.cancel(id)} onPreview={setPreview} /> : null}
+          submissionPending={submissionPending || goalSaving || queue.busy}
           inputRef={composerInputRef}
           attachments={attachments}
           onAddFiles={(files) => void addFiles(files)}
@@ -657,6 +698,7 @@ export function ChatPane({
           selectedWorkflow={selectedWorkflow}
           onClearWorkflow={() => changeSelectedWorkflow(null)}
           onPickWorkflow={pickWorkflow}
+          onPickGoal={currentSessionId ? () => { onOpenInspector(); setDraft(""); setMenusDismissed(true) } : undefined}
           slashQuery={slashQuery}
           atQuery={atQuery}
           displayWorkspace={displayWorkspace}

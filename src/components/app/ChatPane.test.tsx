@@ -17,7 +17,7 @@ type State = {
 }
 const runtime = vi.hoisted(() => ({
   state: {} as State, listeners: new Set<() => void>(), composer: null as ComposerProps | null,
-  revision: 0, getWorkflow: vi.fn(), listCommands: vi.fn(), peekTemplate: vi.fn(),
+  queueSend: vi.fn(), revision: 0, getWorkflow: vi.fn(), listCommands: vi.fn(), peekTemplate: vi.fn(),
 }))
 vi.mock("zustand/react/shallow", () => ({ useShallow: <T,>(selector: T) => selector }))
 vi.mock("@shared/store/appStore", async () => {
@@ -35,13 +35,18 @@ vi.mock("@shared/store/appStore", async () => {
 })
 type ProviderState = { providerSnapshot: null }
 vi.mock("@shared/store/appStore/slices/providerSlice", () => ({ useProviderStore: <T,>(selector: (state: ProviderState) => T) => selector({ providerSnapshot: null }) }))
+vi.mock("@/hooks/useGuidanceQueue", () => ({ useGuidanceQueue: () => ({ mode: "after_round", setMode: vi.fn(), send: runtime.queueSend, cancel: vi.fn(), pending: [], error: null, busy: false, hasUnconfirmed: false }) }))
 vi.mock("@/hooks/useStickyScroll", () => ({
   useStickyScroll: () => ({ scrollRef: { current: null }, contentRef: { current: null }, atBottom: true,
     handleScroll: vi.fn(), scrollToBottom: vi.fn(), pinToBottom: vi.fn() }),
 }))
 vi.mock("@services/command", () => ({ commandService: { listCommands: runtime.listCommands, getWorkflowCommand: runtime.getWorkflow } }))
 vi.mock("@services/workspace", () => ({ workspaceService: { listWorkspaceFiles: vi.fn().mockResolvedValue([]) } }))
-vi.mock("@services/chat/AgentService", () => ({ agentClient: { patchSession: vi.fn().mockResolvedValue(undefined) } }))
+vi.mock("@services/chat/AgentService", () => ({ agentClient: {
+  patchSession: vi.fn().mockResolvedValue(undefined),
+  sendMessage: vi.fn().mockImplementation(async (request) => ({ session_id: request.session_id, goal_command: { action: "set_prompt", should_execute: true } })),
+  execute: vi.fn().mockResolvedValue(undefined),
+} }))
 vi.mock("@/lib/taskTemplates", () => ({ peekPendingTemplatePrompt: runtime.peekTemplate }))
 vi.mock("@/lib/exportMarkdown", () => ({ downloadMarkdown: vi.fn() }))
 vi.mock("@/lib/exportPdf", () => ({ downloadPdf: vi.fn() }))
@@ -58,6 +63,7 @@ vi.mock("@/components/app/Composer", () => ({
   Composer: (props: ComposerProps) => (runtime.composer = props,
     <textarea ref={props.inputRef} aria-label="消息" value={props.draft} onChange={(event) => props.onDraftChange(event.currentTarget.value)} />),
 }))
+import { agentClient } from "@services/chat/AgentService"
 import { ChatPane } from "./ChatPane"
 const skill = (id: string): SkillDefinition => ({ id, name: id, description: id, prompt: id, tool_refs: [`tool-${id}`] })
 const workflow = (id: string): CommandItem => ({ id, name: id, display_name: id, description: id, type: "workflow", metadata: null })
@@ -87,10 +93,10 @@ function createChat(send: Send, id: string | null) {
     editMessage: vi.fn(), answerQuestion: vi.fn(), respondApproval: vi.fn(),
   } as unknown as ChatPaneProps["chat"]
 }
-async function mount(send: Send, id: string | null) {
+async function mount(send: Send, id: string | null, running = false) {
   const container = document.body.appendChild(document.createElement("div")); const root = createRoot(container); roots.push(root)
   await act(async () => {
-    root.render(<ChatPane chat={createChat(send, id)} pickedWorkspace="/picked"
+    root.render(<ChatPane chat={{ ...createChat(send, id), sending: running }} pickedWorkspace="/picked"
       onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()} splitOpen={false}
       onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false} />)
   })
@@ -127,6 +133,7 @@ async function fill(textarea: HTMLTextAreaElement) {
   act(() => composer().onPickSkill(skillA)); await pickWorkflow(workflowA); await addImage("before.png"); change(textarea, "original request")
 }
 beforeEach(() => {
+  runtime.queueSend.mockResolvedValue({ kind: "accepted", operationId: 0, sessionId: "queue-chat", navigated: false })
   runtime.composer = null; runtime.listeners.clear(); runtime.revision = 0
   runtime.state = {
     tokenUsages: {}, inputStates: {}, skills: [skillA, skillB], childProgress: {}, models: [],
@@ -204,4 +211,61 @@ describe("ChatPane composer acknowledgement", () => {
     await flush()
     expect(runtime.state.inputStates["created"]?.content).toBe("second request"); expect(runtime.state.inputStates[""]?.content).toBe("")
   })
+})
+
+it("handles a goal command without sending it to the conversation", async () => {
+  const send = vi.fn<Send>()
+  const input = await mount(send, "goal-chat")
+  change(input, "/goal 完成测试并说明结果")
+  act(() => composer().onSubmit())
+  await flush()
+  expect(agentClient.sendMessage).toHaveBeenCalledWith({ session_id: "goal-chat", model: "", message: "/goal 完成测试并说明结果" })
+  expect(send).not.toHaveBeenCalled()
+  expect(input.value).toBe("")
+})
+
+it("retains a goal command when saving fails", async () => {
+  vi.mocked(agentClient.sendMessage).mockRejectedValueOnce(new Error("offline"))
+  const send = vi.fn<Send>()
+  const input = await mount(send, "goal-chat")
+  change(input, "/goal 保留草稿")
+  act(() => composer().onSubmit())
+  await flush()
+  expect(send).not.toHaveBeenCalled()
+  expect(input.value).toBe("/goal 保留草稿")
+})
+
+it("queues text and images from the normal composer while a run is active", async () => {
+  const send = vi.fn<Send>()
+  const input = await mount(send, "queue-chat", true)
+  await addImage("queue.png")
+  change(input, "请结合图片继续")
+  act(() => composer().onSubmit())
+  await flush()
+  expect(runtime.queueSend).toHaveBeenCalledWith("请结合图片继续", [expect.objectContaining({ name: "queue.png", type: "image/png", base64: btoa("queue.png") })])
+  expect(send).not.toHaveBeenCalled()
+  expect(input.value).toBe("")
+  expect(composer().attachments).toHaveLength(0)
+})
+
+it("keeps queued text and images in the composer until admission is confirmed", async () => {
+  runtime.queueSend.mockResolvedValueOnce({ kind: "unconfirmed", operationId: 0 })
+  const input = await mount(vi.fn<Send>(), "queue-chat", true)
+  await addImage("retry.png")
+  change(input, "保留图片")
+  act(() => composer().onSubmit())
+  await flush()
+  expect(input.value).toBe("保留图片")
+  expect(composer().attachments).toHaveLength(1)
+})
+
+it("honors goal control responses that must not start a new execution", async () => {
+  vi.mocked(agentClient.execute).mockClear()
+  vi.mocked(agentClient.sendMessage).mockResolvedValueOnce({ session_id: "goal-chat", status: "accepted", goal_command: { action: "off", should_execute: false } })
+  const input = await mount(vi.fn<Send>(), "goal-chat")
+  change(input, "/goal off")
+  act(() => composer().onSubmit())
+  await flush()
+  expect(agentClient.execute).not.toHaveBeenCalled()
+  expect(input.value).toBe("")
 })
