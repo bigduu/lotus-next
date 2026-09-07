@@ -131,6 +131,7 @@ export function ChatPane({
     streamingReasoning,
     liveSegments,
     streamStatus,
+    outputRate,
     pendingUserText,
     sending,
     submissionPending,
@@ -633,6 +634,11 @@ export function ChatPane({
           </div>
         ) : null}
 
+        {typeof outputRate === "number" && (
+          <div className="mx-auto w-full max-w-2xl px-3 text-right text-xs tabular-nums text-muted-foreground" title="根据流式文本估算，不用于计费">
+            约 {outputRate.toFixed(1)} token/秒
+          </div>
+        )}
         <Composer
           draft={draft}
           onDraftChange={setDraft}
