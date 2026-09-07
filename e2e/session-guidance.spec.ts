@@ -11,7 +11,9 @@ for (const scenario of [standaloneScenario, embeddedScenario, secureRemoteScenar
       model: "fixture-model", model_ref: { provider: "fixture-provider", model: "fixture-model" },
       created_at: "2026-09-07T00:00:00Z", updated_at: "2026-09-07T00:00:00Z", last_activity_at: "2026-09-07T00:00:00Z",
       message_count: 0, is_running: true, last_run_status: "running", has_pending_question: false,
-      permission_mode: "default", gold_config: { enabled: true, goal: "完成验收", auto_continue_enabled: true },
+      permission_mode: "default", gold_config: { enabled: true, goal: "完成验收", auto_continue_enabled: true,
+        ...(scenario.name === "secure-remote" ? { recovery: { max_attempts: 2, max_elapsed_seconds: 120 } } : {}),
+      },
     }
     await page.route("**/api/v1/task/all-surface-session", (route) => route.fulfill({ json: { session_id: "all-surface-session", items: [] } }))
     let queue: Array<{ id: string; text: string; created_at: string }> = []
@@ -53,7 +55,9 @@ for (const scenario of [standaloneScenario, embeddedScenario, secureRemoteScenar
     await goal.getByRole("button", { name: "编辑", exact: true }).click()
     await goal.getByRole("checkbox", { name: "无输出超时后尝试恢复" }).check()
     await goal.getByRole("button", { name: "保存", exact: true }).click()
-    await expect.poll(() => goalPatch).toMatchObject({ gold_config: { recovery: { max_attempts: 3, max_elapsed_seconds: 900 } } })
+    await expect.poll(() => goalPatch).toMatchObject({ gold_config: { recovery: scenario.name === "secure-remote"
+      ? { max_attempts: 2, max_elapsed_seconds: 120 }
+      : { max_attempts: 3, max_elapsed_seconds: 900 } } })
     await testInfo.attach("guidance-goal-layout", { body: await page.screenshot({ fullPage: true }), contentType: "image/png" })
     expect(observation.pageErrors).toEqual([])
     expect(observation.errorResponses).toEqual([])
