@@ -104,6 +104,7 @@ const readSessionPermissionSnapshot = async (
 };
 
 export interface GoldConfig {
+  recovery?: { max_attempts: number; max_elapsed_seconds: number };
   enabled: boolean;
   auto_answer_enabled?: boolean;
   auto_continue_enabled?: boolean;
