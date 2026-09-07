@@ -1,3 +1,4 @@
+import { useMarkSessionRead } from "@/lib/sessionReadState"
 import { useCallback, useEffect, useRef, useState } from "react"
 import { useShallow } from "zustand/react/shallow"
 import {
@@ -118,6 +119,7 @@ export function useChat(
   // main pane follows the global current. Everything below keys off `sid`.
   const sid = isBound ? boundSessionId : globalCurrentSessionId
   const currentChat = useAppStore(selectSessionById(sid))
+  useMarkSessionRead(currentChat)
   const messages = useAppStore(useShallow((s) => selectSessionById(sid)(s)?.messages ?? []))
   const selectedModel = useAppStore((s) => s.selectedModel)
   // Global default model (configured in provider settings). Used when the user
