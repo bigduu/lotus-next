@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useId, useRef, useState } from "react"
 import { MoreHorizontal, Pencil, Pin, PinOff, Sparkles, Trash2 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { agentClient } from "@services/chat/AgentService"
@@ -32,6 +32,7 @@ export function SessionRow({
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(chat.title ?? "")
   const inputRef = useRef<HTMLInputElement>(null)
+  const unreadDescriptionId = useId()
 
   useEffect(() => {
     if (editing) {
@@ -76,6 +77,7 @@ export function SessionRow({
     >
       <button
         onClick={onSelect}
+        aria-describedby={unread ? unreadDescriptionId : undefined}
         className={cn(
           "flex min-w-0 flex-1 items-center gap-2 py-2 pl-2 pr-1 text-left text-sm",
           (active || unread) && "font-medium",
@@ -84,12 +86,13 @@ export function SessionRow({
         {chat.isRunning ? (
           <span className="size-1.5 shrink-0 animate-pulse rounded-full bg-primary" />
         ) : unread ? (
-          <span aria-label="未读消息" title="有新消息" className="size-1.5 shrink-0 rounded-full bg-primary" />
+          <span aria-hidden="true" title="有新消息" className="size-1.5 shrink-0 rounded-full bg-primary" />
         ) : (
           <span className="size-1.5 shrink-0" />
         )}
         <span className="truncate">{chat.title || "新会话"}</span>
       </button>
+      {unread && <span id={unreadDescriptionId} className="sr-only">未读消息</span>}
 
       <DropdownMenu>
         <DropdownMenuTrigger
