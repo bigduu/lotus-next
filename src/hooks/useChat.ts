@@ -1,3 +1,4 @@
+import { useOutputRate } from "./useOutputRate"
 import { useCallback, useEffect, useRef, useState } from "react"
 import { useShallow } from "zustand/react/shallow"
 import {
@@ -150,7 +151,7 @@ export function useChat(
     text: string
   } | null>(null)
   const [sending, setSending] = useState(false)
-
+  const { rate: outputRate, record: recordOutput, reset: resetOutputRate } = useOutputRate(sid, (sending || currentChat?.isRunning === true) && streamSid === sid)
   const [submissionPending, setSubmissionPending] = useState(false)
   const [sendFailures, setSendFailures] = useState<ReadonlyMap<string | null, SendFailure>>(
     () => new Map(),
@@ -293,6 +294,7 @@ export function useChat(
     (c: string) => {
       // Text is flowing again — the "running tool…" status line is stale.
       setStreamStatus(null)
+      recordOutput(c)
       streamBufRef.current += c
       if (rafRef.current == null) {
         rafRef.current = requestAnimationFrame(() => {
@@ -301,10 +303,11 @@ export function useChat(
         })
       }
     },
-    [setStreamStatus],
+    [setStreamStatus, recordOutput],
   )
 
   const pushReasoning = useCallback((c: string) => {
+    recordOutput(c)
     reasonBufRef.current += c
     if (reasonRafRef.current == null) {
       reasonRafRef.current = requestAnimationFrame(() => {
@@ -312,7 +315,7 @@ export function useChat(
         setStreamingReasoningText(reasonBufRef.current)
       })
     }
-  }, [])
+  }, [recordOutput])
 
   const stopStream = useCallback(
     (final: string | null, operationId?: number) => {
@@ -400,6 +403,7 @@ export function useChat(
       // subscriber from the shared WS channel.
       abortRef.current?.abort()
       setStreamSid(runSid)
+      resetOutputRate()
       streamBufRef.current = ""
       reasonBufRef.current = ""
       childBufRef.current = {}
@@ -674,6 +678,7 @@ export function useChat(
       reasoningEffort,
       freezeTextSegment,
       pushToken,
+      resetOutputRate,
       pushReasoning,
       setStreamStatus,
       flushSegments,
@@ -1271,6 +1276,7 @@ export function useChat(
     streamingReasoning,
     liveSegments,
     streamStatus,
+    outputRate,
     pendingUserText,
     sending,
     submissionPending,

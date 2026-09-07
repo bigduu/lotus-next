@@ -1,3 +1,5 @@
+import { useMarkSessionRead } from "@/lib/sessionReadState"
+import { useMediaQuery } from "@shared/hooks/useMediaQuery"
 import { useEffect, useMemo, useRef, useState } from "react"
 import {
   ChevronDown,
@@ -134,6 +136,7 @@ export function ChatPane({
     streamingReasoning,
     liveSegments,
     streamStatus,
+    outputRate,
     pendingUserText,
     sending,
     submissionPending,
@@ -153,6 +156,10 @@ export function ChatPane({
   } = chat
   const currentlyRunning = sending || currentChat?.isRunning === true
   const queue = useGuidanceQueue(currentSessionId, currentlyRunning)
+  // The secondary chat hook remains mounted when its pane closes. Read state
+  // follows the rendered pane, including the same breakpoint as its md:flex.
+  const splitVisible = useMediaQuery("(min-width: 768px)")
+  useMarkSessionRead(!secondary || splitVisible ? currentChat : null)
 
   // Live in-run token budget (pushed over the agent channel) — beats the
   // persisted config snapshot, which only refreshes on history reload.
@@ -675,6 +682,11 @@ export function ChatPane({
         ) : null}
 
         {queue.error && <div role="alert" className="mx-auto mb-1 w-[calc(100%-1.5rem)] max-w-2xl rounded-lg border border-destructive/40 px-3 py-2 text-xs text-destructive">{queue.error}</div>}
+        {typeof outputRate === "number" && (
+          <div className="mx-auto w-full max-w-2xl px-3 text-right text-xs tabular-nums text-muted-foreground" title="根据流式文本估算，不用于计费">
+            约 {outputRate.toFixed(1)} token/秒
+          </div>
+        )}
         <Composer
           draft={draft}
           onDraftChange={setDraft}

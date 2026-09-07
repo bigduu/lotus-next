@@ -65,6 +65,7 @@ vi.mock("@/components/app/Composer", () => ({
 }))
 import { agentClient } from "@services/chat/AgentService"
 import { ChatPane } from "./ChatPane"
+import { isSessionUnread, useSessionReadState } from "@/lib/sessionReadState"
 const skill = (id: string): SkillDefinition => ({ id, name: id, description: id, prompt: id, tool_refs: [`tool-${id}`] })
 const workflow = (id: string): CommandItem => ({ id, name: id, display_name: id, description: id, type: "workflow", metadata: null })
 const skillA = skill("skill-a")
@@ -132,8 +133,21 @@ async function addImage(name: string) {
 async function fill(textarea: HTMLTextAreaElement) {
   act(() => composer().onPickSkill(skillA)); await pickWorkflow(workflowA); await addImage("before.png"); change(textarea, "original request")
 }
+let mediaMatches = true
+const mediaListeners = new Set<(event: MediaQueryListEvent) => void>()
+function resizePane(wide: boolean) {
+  act(() => {
+    mediaMatches = wide
+    for (const listener of mediaListeners) listener({ matches: wide } as MediaQueryListEvent)
+  })
+}
 beforeEach(() => {
   runtime.queueSend.mockResolvedValue({ kind: "accepted", operationId: 0, sessionId: "queue-chat", navigated: false })
+  mediaMatches = true; mediaListeners.clear()
+  vi.stubGlobal("matchMedia", vi.fn(() => ({ matches: mediaMatches,
+    addEventListener: (_name: string, listener: (event: MediaQueryListEvent) => void) => mediaListeners.add(listener),
+    removeEventListener: (_name: string, listener: (event: MediaQueryListEvent) => void) => mediaListeners.delete(listener),
+  })))
   runtime.composer = null; runtime.listeners.clear(); runtime.revision = 0
   runtime.state = {
     tokenUsages: {}, inputStates: {}, skills: [skillA, skillB], childProgress: {}, models: [],
@@ -162,7 +176,7 @@ beforeEach(() => {
   runtime.getWorkflow.mockReset().mockImplementation((name: string) => Promise.resolve({ name, content: `${name} body`, type: "workflow" }))
   runtime.listCommands.mockReset().mockResolvedValue({ commands: [], total: 0 }); runtime.peekTemplate.mockReset().mockReturnValue(null)
 })
-afterEach(() => { for (const root of roots.splice(0)) act(() => root.unmount()); document.body.replaceChildren() })
+afterEach(() => { for (const root of roots.splice(0)) act(() => root.unmount()); document.body.replaceChildren(); vi.unstubAllGlobals() })
 describe("ChatPane composer acknowledgement", () => {
   it("preserves an exact raw draft, focus, and template ownership before ACK", async () => {
     const templatePrompt = Object.freeze({ prompt: "template prompt", revision: 7 })
@@ -284,4 +298,38 @@ it("admits an acknowledged Goal even when submitted during a running session", a
   expect(agentClient.execute).toHaveBeenCalledTimes(1)
   expect(agentClient.execute).toHaveBeenCalledWith("goal-race", undefined)
   expect(input.value).toBe("")
+})
+
+describe("ChatPane read visibility", () => {
+  for (const hiddenBy of ["closed", "narrow viewport"] as const) {
+    it(`retains unread background messages while secondary pane is ${hiddenBy}`, async () => {
+      const container = document.body.appendChild(document.createElement("div"))
+      const root = createRoot(container); roots.push(root)
+      const id = `read-visibility-${hiddenBy}`
+      const base = createChat(vi.fn<Send>(), id)
+      const session = (count: number) => ({ ...base.currentChat!, messageCount: count })
+      function Surface({ open, count }: { open: boolean; count: number }) {
+        const current = session(count)
+        const markers = useSessionReadState()
+        return <>
+          <span data-testid="unread">{String(isSessionUnread(current, markers))}</span>
+          {open && <ChatPane chat={{ ...base, currentChat: current }} pickedWorkspace={null}
+            secondary={{ sessionId: id, chats: [], onPickSession: vi.fn(), onClose: vi.fn() }}
+            onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()} splitOpen
+            onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false} />}
+        </>
+      }
+      const unread = () => container.querySelector('[data-testid="unread"]')?.textContent
+      await act(async () => root.render(<Surface open count={1} />))
+      expect(unread()).toBe("false")
+      if (hiddenBy === "narrow viewport") resizePane(false)
+      await act(async () => root.render(<Surface open={hiddenBy !== "closed"} count={2} />))
+      expect(unread()).toBe("true")
+      act(() => document.dispatchEvent(new Event("visibilitychange")))
+      expect(unread()).toBe("true")
+      if (hiddenBy === "narrow viewport") resizePane(true)
+      await act(async () => root.render(<Surface open count={2} />))
+      expect(unread()).toBe("false")
+    })
+  }
 })

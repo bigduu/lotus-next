@@ -1,3 +1,4 @@
+import { isSessionUnread, useSessionReadState } from "@/lib/sessionReadState"
 import { useId, useMemo, useState } from "react"
 import { ChevronRight, Plus, Search, X, Cog, PanelLeftClose } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -41,6 +42,7 @@ export function Sidebar({
   onOpenSettings: () => void
 }) {
   const [search, setSearch] = useState("")
+  const readState = useSessionReadState()
   const disclosureId = useId()
   const query = search.trim().toLowerCase()
 
@@ -118,6 +120,7 @@ export function Sidebar({
               key={c.id}
               chat={c}
               active={c.id === currentSessionId}
+              unread={c.id !== currentSessionId && isSessionUnread(c, readState)}
               onSelect={() => {
                 onSelect(c.id)
                 onClose()
