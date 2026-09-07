@@ -27,6 +27,7 @@ import type { SkillDefinition } from "@shared/types/skill"
 import { ChatHeader } from "@/components/app/ChatHeader"
 import { HomeDashboard } from "@/components/app/HomeDashboard"
 import { MessageList } from "@/components/app/MessageList"
+import { SessionGuidance } from "@/components/app/SessionGuidance"
 import { Composer } from "@/components/app/Composer"
 import { Toasts } from "@/components/app/Toasts"
 import { ImageLightbox } from "@/components/app/ImageLightbox"
@@ -633,6 +634,7 @@ export function ChatPane({
           </div>
         ) : null}
 
+        {currentSessionId && <SessionGuidance key={currentSessionId} sessionId={currentSessionId} running={sending} />}
         <Composer
           draft={draft}
           onDraftChange={setDraft}
