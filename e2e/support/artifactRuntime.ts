@@ -141,6 +141,7 @@ const fixtureModel = {
 }
 
 const apiResponse = (method: string, pathnameWithSearch: string): unknown => {
+  if (method === "GET" && /^\/api\/v1\/sessions\/[^/]+\/guidance$/.test(pathnameWithSearch)) return { messages: [] }
   switch (`${method} ${pathnameWithSearch}`) {
     case "GET /api/v1/bootstrap":
       return bootstrapDocument

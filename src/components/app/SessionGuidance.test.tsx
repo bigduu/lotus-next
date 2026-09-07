@@ -7,6 +7,7 @@ vi.mock("@services/chat/guidance", () => ({ guidanceService: { list: vi.fn(), se
 let root: Root
 let container: HTMLDivElement
 beforeEach(() => {
+  sessionStorage.clear()
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
   vi.mocked(guidanceService.list).mockResolvedValue({ messages: [] })
   container = document.createElement("div"); document.body.append(container); root = createRoot(container)
@@ -40,4 +41,12 @@ it("keeps a pending item visible if withdrawal loses the claim race", async () =
   await act(async () => container.querySelector("button")!.click())
   expect(container.textContent).toContain("待应用：等待确认")
   expect(container.querySelector('[role="alert"]')!.textContent).toContain("已经开始应用")
+})
+
+it("restores the retry identity after a reload", async () => {
+  sessionStorage.setItem("lotus-next.guidance-draft.s/1", JSON.stringify({ id: "persisted-id", text: "恢复指导" }))
+  vi.mocked(guidanceService.send).mockResolvedValue({ id: "persisted-id", activation_pending: false })
+  await mount(); await send()
+  expect(guidanceService.send).toHaveBeenCalledWith("s/1", "persisted-id", "恢复指导")
+  expect(sessionStorage.getItem("lotus-next.guidance-draft.s/1")).toBeNull()
 })

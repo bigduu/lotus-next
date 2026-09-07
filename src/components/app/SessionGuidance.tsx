@@ -2,14 +2,32 @@ import { useEffect, useRef, useState } from "react"
 import { guidanceService, type PendingGuidance } from "@services/chat/guidance"
 import { Button } from "@/components/ui/button"
 
+const draftKey = (sessionId: string) => `lotus-next.guidance-draft.${sessionId}`
+const readDraft = (sessionId: string): { id: string | null; text: string } => {
+  try {
+    const value = JSON.parse(sessionStorage.getItem(draftKey(sessionId)) ?? "null")
+    if (value && typeof value.text === "string" && value.text.length <= 65536)
+      return { text: value.text, id: typeof value.id === "string" ? value.id : null }
+  } catch { /* A draft is optional; server admission remains authoritative. */ }
+  return { id: null, text: "" }
+}
+const saveDraft = (sessionId: string, text: string, id: string | null) => {
+  try {
+    if (text) sessionStorage.setItem(draftKey(sessionId), JSON.stringify({ id, text }))
+    else sessionStorage.removeItem(draftKey(sessionId))
+  } catch { /* Keep the in-memory draft when browser storage is unavailable. */ }
+}
+
 /** Mount with a session key so late responses cannot clear another chat's draft. */
 export function SessionGuidance({ sessionId, running }: { sessionId: string; running: boolean }) {
-  const [text, setText] = useState("")
+  const [initialDraft] = useState(() => readDraft(sessionId))
+  const [text, setText] = useState(initialDraft.text)
   const [pending, setPending] = useState<PendingGuidance[]>([])
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState("")
   const [notice, setNotice] = useState("")
-  const retry = useRef<{ id: string; text: string } | null>(null)
+  const retry = useRef<{ id: string; text: string } | null>(initialDraft.id ? { id: initialDraft.id, text: initialDraft.text } : null)
+  useEffect(() => { saveDraft(sessionId, text, retry.current?.text === text ? retry.current.id : null) }, [sessionId, text])
   const requestActive = useRef(false)
   const refreshVersion = useRef(0)
   const alive = useRef(true)
@@ -35,6 +53,7 @@ export function SessionGuidance({ sessionId, running }: { sessionId: string; run
     setBusy(true); setError(""); setNotice("")
     const submission = retry.current?.text === text ? retry.current : { id: crypto.randomUUID(), text }
     retry.current = submission
+    saveDraft(sessionId, submission.text, submission.id)
     try {
       const receipt = await guidanceService.send(sessionId, submission.id, submission.text)
       if (!alive.current) return

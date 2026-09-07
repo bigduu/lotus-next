@@ -580,7 +580,7 @@ export function ChatPane({
           onScroll={handleScroll}
           messages={messages}
           mergedSubAgents={mergedSubAgents}
-          sending={sending}
+          sending={sending || currentChat?.isRunning === true}
           streaming={streaming}
           streamingReasoning={streamingReasoning}
           liveSegments={liveSegments}
@@ -640,13 +640,13 @@ export function ChatPane({
             约 {outputRate.toFixed(1)} token/秒
           </div>
         )}
-        {currentSessionId && <SessionGuidance key={currentSessionId} sessionId={currentSessionId} running={sending} />}
+        {currentSessionId && <SessionGuidance key={currentSessionId} sessionId={currentSessionId} running={sending || currentChat?.isRunning === true} />}
         <Composer
           draft={draft}
           onDraftChange={setDraft}
           onSubmit={submit}
           onStop={stop}
-          sending={sending}
+          sending={sending || currentChat?.isRunning === true}
           submissionPending={submissionPending}
           inputRef={composerInputRef}
           attachments={attachments}
