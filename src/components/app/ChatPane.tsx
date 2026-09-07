@@ -348,7 +348,9 @@ export function ChatPane({
         }
         try { await useAppStore.getState().loadChatHistory(sessionId) }
         catch { /* The command acknowledgement already confirms the saved configuration. */ }
-        if (response.goal_command.should_execute && !currentlyRunning) {
+        // Execution admission handles an already-running session atomically.
+        // The run may finish while the Goal command is being acknowledged.
+        if (response.goal_command.should_execute) {
           try { await agentClient.execute(sessionId, currentChat?.config?.model) }
           catch { if (currentDraftKeyRef.current === draftKey) showToast("目标已保存，发送消息即可继续推进") }
         }
