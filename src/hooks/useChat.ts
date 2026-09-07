@@ -150,6 +150,7 @@ export function useChat(
     text: string
   } | null>(null)
   const [sending, setSending] = useState(false)
+
   const [submissionPending, setSubmissionPending] = useState(false)
   const [sendFailures, setSendFailures] = useState<ReadonlyMap<string | null, SendFailure>>(
     () => new Map(),
