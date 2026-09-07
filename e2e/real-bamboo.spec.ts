@@ -8,6 +8,7 @@ import {
 } from "@playwright/test";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
+import { observePage, type PageObservation, type FrameObservation } from "./support/pageObservation.ts";
 import { restartRealBamboo } from "./support/restartRealBamboo.ts";
 
 type JsonRecord = Record<string, unknown>;
@@ -19,52 +20,6 @@ interface RuntimeContract {
   readonly userMarker: string;
   readonly assistantMarker: string;
   readonly bambooRevision: string;
-}
-
-interface RequestObservation {
-  readonly method: string;
-  readonly url: string;
-  readonly resourceType: string;
-  readonly accept: string;
-}
-
-interface ResponseObservation {
-  readonly method: string;
-  readonly url: string;
-  readonly status: number;
-}
-
-interface FrameObservation {
-  readonly malformed: boolean;
-  readonly binary: boolean;
-  readonly value: unknown;
-}
-
-interface WebSocketTimelineEntry {
-  readonly ordinal: number;
-  readonly direction: "client-to-server" | "server-to-client";
-  readonly frame: FrameObservation;
-}
-
-interface WebSocketObservation {
-  readonly url: string;
-  readonly sent: FrameObservation[];
-  readonly received: FrameObservation[];
-  readonly timeline: WebSocketTimelineEntry[];
-  readonly errors: string[];
-}
-
-interface PageObservation {
-  readonly label: string;
-  readonly requests: RequestObservation[];
-  readonly responses: ResponseObservation[];
-  readonly failedRequests: string[];
-  readonly consoleErrors: string[];
-  readonly pageErrors: string[];
-  readonly bootstrapDocuments: unknown[];
-  readonly providerDocuments: unknown[];
-  readonly historyDocuments: unknown[];
-  readonly webSockets: WebSocketObservation[];
 }
 
 interface FrameSummary {
@@ -137,28 +92,6 @@ const numberField = (
   return typeof value === "number" ? value : undefined;
 };
 
-const decodeFrame = (payload: string | Buffer): FrameObservation => {
-  const binary = typeof payload !== "string";
-  const text = typeof payload === "string" ? payload : payload.toString("utf8");
-  try {
-    return { malformed: false, binary, value: JSON.parse(text) as unknown };
-  } catch {
-    return { malformed: true, binary, value: null };
-  }
-};
-
-const redactedUrl = (value: string): string => {
-  const parsed = new URL(value);
-  if (!["http:", "https:", "ws:", "wss:"].includes(parsed.protocol)) {
-    return `${parsed.protocol}<redacted>`;
-  }
-  parsed.username = "";
-  parsed.password = "";
-  parsed.search = "";
-  parsed.hash = "";
-  return parsed.href;
-};
-
 const summarizeFrame = (frame: FrameObservation): FrameSummary => {
   const root = asRecord(frame.value);
   const control = asRecord(root?.control);
@@ -188,127 +121,6 @@ const isExactFrame = (frame: FrameObservation, type: string): boolean => {
     Object.keys(root).length === 1 &&
     root.type === type
   );
-};
-
-const observePage = (page: Page, label: string): PageObservation => {
-  let webSocketFrameOrdinal = 0;
-  const observation: PageObservation = {
-    label,
-    requests: [],
-    responses: [],
-    failedRequests: [],
-    consoleErrors: [],
-    pageErrors: [],
-    bootstrapDocuments: [],
-    providerDocuments: [],
-    historyDocuments: [],
-    webSockets: [],
-  };
-
-  page.on("request", (request) => {
-    const headers = request.headers();
-    observation.requests.push({
-      method: request.method(),
-      url: redactedUrl(request.url()),
-      resourceType: request.resourceType(),
-      accept: headers.accept ?? "",
-    });
-  });
-  page.on("requestfailed", (request) => {
-    observation.failedRequests.push(
-      `${request.method()} ${redactedUrl(request.url())} ${request.failure()?.errorText ?? "unknown failure"}`,
-    );
-  });
-  page.on("response", (response) => {
-    const request = response.request();
-    const pathname = new URL(response.url()).pathname;
-    observation.responses.push({
-      method: request.method(),
-      url: redactedUrl(response.url()),
-      status: response.status(),
-    });
-
-    if (pathname === "/api/v1/bootstrap" && response.ok()) {
-      void response
-        .json()
-        .then((document: unknown) =>
-          observation.bootstrapDocuments.push(document),
-        )
-        .catch((error: unknown) => {
-          observation.pageErrors.push(
-            `Could not inspect the Bamboo bootstrap response: ${String(error)}`,
-          );
-        });
-    }
-    if (
-      request.method() === "GET" &&
-      pathname === "/api/v1/bamboo/settings/provider-instances" &&
-      response.ok()
-    ) {
-      void response
-        .json()
-        .then((document: unknown) =>
-          observation.providerDocuments.push(document),
-        )
-        .catch((error: unknown) => {
-          observation.pageErrors.push(
-            `Could not inspect the Bamboo provider-instances response: ${String(error)}`,
-          );
-        });
-    }
-    if (
-      request.method() === "GET" &&
-      pathname.startsWith("/api/v1/history/") &&
-      response.ok()
-    ) {
-      void response
-        .json()
-        .then((document: unknown) =>
-          observation.historyDocuments.push(document),
-        )
-        .catch((error: unknown) => {
-          observation.pageErrors.push(
-            `Could not inspect the Bamboo history response: ${String(error)}`,
-          );
-        });
-    }
-  });
-  page.on("console", (message) => {
-    if (message.type() === "error")
-      observation.consoleErrors.push(message.text());
-  });
-  page.on("pageerror", (error) => observation.pageErrors.push(error.message));
-  page.on("websocket", (webSocket) => {
-    const socket: WebSocketObservation = {
-      url: redactedUrl(webSocket.url()),
-      sent: [],
-      received: [],
-      timeline: [],
-      errors: [],
-    };
-    observation.webSockets.push(socket);
-    webSocket.on("framesent", (event) => {
-      const frame = decodeFrame(event.payload);
-      socket.sent.push(frame);
-      socket.timeline.push({
-        ordinal: ++webSocketFrameOrdinal,
-        direction: "client-to-server",
-        frame,
-      });
-    });
-    webSocket.on("framereceived", (event) => {
-      const frame = decodeFrame(event.payload);
-      socket.received.push(frame);
-      socket.timeline.push({
-        ordinal: ++webSocketFrameOrdinal,
-        direction: "server-to-client",
-        frame,
-      });
-    });
-    webSocket.on("socketerror", (error) => socket.errors.push(error));
-  });
-
-  return observation;
 };
 
 const installSessionEntry = async (
@@ -632,10 +444,11 @@ const assertLiveSocket = async (
   assertWelcomeOrdering(observation);
 };
 
-const assertCleanPage = (
+const assertCleanPage = async (
   observation: PageObservation,
   baseOrigin: string,
-): void => {
+): Promise<void> => {
+  await observation.drain();
   const networkRequests = observation.requests.filter((request) =>
     /^https?:$/.test(new URL(request.url).protocol),
   );
@@ -1150,7 +963,7 @@ test("production UI completes and rehydrates one real Bamboo chat round trip", a
     assertExactProviderRoundTrip(providerDocument, contract);
 
     await page.waitForLoadState("networkidle");
-    assertCleanPage(first, contract.baseUrl.origin);
+    await assertCleanPage(first, contract.baseUrl.origin);
     await assertRealAssistantRenderer(page, contract.assistantMarker);
 
     // A new browser context has no React, IndexedDB, or localStorage state from
@@ -1161,10 +974,12 @@ test("production UI completes and rehydrates one real Bamboo chat round trip", a
       locale: "zh-CN",
       viewport: { width: 1_440, height: 900 },
     });
+    let reopenedForCleanup: PageObservation | undefined;
     try {
       await installSessionEntry(reopenedContext, contract);
       const reopenedPage = await reopenedContext.newPage();
       const reopened = observePage(reopenedPage, "reopened-page");
+      reopenedForCleanup = reopened;
       pageObservations.push(reopened);
       await reopenedPage.goto(entryUrl.href, { waitUntil: "domcontentloaded" });
       await expect(
@@ -1189,7 +1004,7 @@ test("production UI completes and rehydrates one real Bamboo chat round trip", a
         "the reopened page must show one persisted user message",
       );
       await reopenedPage.waitForLoadState("networkidle");
-      assertCleanPage(reopened, contract.baseUrl.origin);
+      await assertCleanPage(reopened, contract.baseUrl.origin);
       await assertRealAssistantRenderer(reopenedPage, contract.assistantMarker);
 
       const replayRequests = reopened.requests.filter((request) => {
@@ -1214,12 +1029,14 @@ test("production UI completes and rehydrates one real Bamboo chat round trip", a
       // Both pages remain live while the second client hydrates. Recheck the
       // accumulated observations at the end so a late reconnect, HTTP error,
       // or console failure cannot arrive after an earlier clean snapshot.
-      assertCleanPage(first, contract.baseUrl.origin);
-      assertCleanPage(reopened, contract.baseUrl.origin);
+      await assertCleanPage(first, contract.baseUrl.origin);
+      await assertCleanPage(reopened, contract.baseUrl.origin);
     } finally {
+      await reopenedForCleanup?.stop();
       await reopenedContext.close();
     }
   } finally {
+    await first.stop();
     if (persisted === null) {
       try {
         persisted = persistedMarkerState(
@@ -1429,8 +1246,9 @@ test("production Jiandu settings manage and isolate real Project memory on deskt
         }).length,
         `${surface.label}: settings must complete native memory calls through Bamboo`,
       ).toBeGreaterThan(0);
-      assertCleanPage(observation, contract.baseUrl.origin);
+      await assertCleanPage(observation, contract.baseUrl.origin);
     } finally {
+      await observation.stop();
       await context.close();
     }
   }
@@ -1561,13 +1379,27 @@ test("production session modes keep Bypass confirmation distinct from Auto execu
       await installSessionEntry(context, { ...contract, sessionId: sessions[0]!.id });
       const page = await context.newPage();
       let observation = observePage(page, `permission-${surface.label}`);
+      let permissionFailure: unknown;
+      const finishPermissionObservation = async () => {
+        try {
+          await observation.stop();
+        } catch (cleanupError) {
+          if (permissionFailure !== undefined && permissionFailure !== cleanupError) {
+            throw new AggregateError([permissionFailure, cleanupError], "Permission acceptance and observer cleanup both failed");
+          }
+          throw cleanupError;
+        } finally {
+          await context.close();
+        }
+      };
       const modeControl = page.getByRole("combobox", { name: "权限模式", exact: true });
       const reloadPermissionPage = async (label: string): Promise<void> => {
         await page.waitForLoadState("networkidle");
         // The existing transport gate requires one socket per document, not
         // one across deliberate reloads. Verify each document before moving on.
-        assertCleanPage(observation, contract.baseUrl.origin);
-        observation = observePage(page, `permission-${surface.label}-${label}`);
+        await observation.stop();
+        await assertCleanPage(observation, contract.baseUrl.origin);
+        observation = observePage(page, `permission-${surface.label}-${label}`, { nextDocument: true });
         await page.reload({ waitUntil: "domcontentloaded" });
         await assertBootstrap(observation);
         await assertLiveSocket(observation, contract.baseUrl.origin);
@@ -1721,8 +1553,9 @@ test("production session modes keep Bypass confirmation distinct from Auto execu
         expect(await currentMode(sessions[0]!.id)).toBe("bypass");
         expect(await currentMode(sessions[1]!.id)).toBe("auto");
         await page.waitForLoadState("networkidle");
-        assertCleanPage(observation, contract.baseUrl.origin);
+        await assertCleanPage(observation, contract.baseUrl.origin);
       } catch (error) {
+        permissionFailure = error;
         const screenshotPath = testInfo.outputPath(`permission-${surface.label}-failure.png`);
         await page.screenshot({ path: screenshotPath, animations: "disabled" });
         await testInfo.attach(`${surface.label} permission failure`, {
@@ -1731,7 +1564,7 @@ test("production session modes keep Bypass confirmation distinct from Auto execu
         });
         throw error;
       } finally {
-        await context.close();
+        await finishPermissionObservation();
       }
     }
   } finally {
@@ -1969,11 +1802,12 @@ test("MCP JSON import merges, replaces, rolls back and survives a real restart",
     expect(observation.consoleErrors).toEqual(["Failed to load resource: the server responded with a status of 500 (Internal Server Error)"]);
     // Assert the one intentional rejection first; all existing network, origin,
     // page-error and one-WebSocket guards remain strict for everything else.
-    assertCleanPage({ ...observation, responses: observation.responses.filter((response) => response.status < 400), consoleErrors: [] }, contract.baseUrl.origin);
+    await assertCleanPage({ ...observation, responses: observation.responses.filter((response) => response.status < 400), consoleErrors: [] }, contract.baseUrl.origin);
   } catch (error) {
     await capture(page, "desktop-failure");
     throw error;
   } finally {
+    await observation.stop();
     await context.close();
   }
 
@@ -2016,11 +1850,12 @@ test("MCP JSON import merges, replaces, rolls back and survives a real restart",
     expect(phoneObservation.requests.filter((request) => request.method === "POST" && new URL(request.url).pathname === importPath)).toEqual([]);
     await assertNoBrowserSecrets(phone);
     await phone.waitForLoadState("networkidle");
-    assertCleanPage(phoneObservation, restart.baseUrl.origin);
+    await assertCleanPage(phoneObservation, restart.baseUrl.origin);
   } catch (error) {
     await capture(phone, "phone-failure");
     throw error;
   } finally {
+    await phoneObservation.stop();
     await phoneContext.close();
   }
 });
