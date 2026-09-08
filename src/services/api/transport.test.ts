@@ -52,6 +52,41 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+describe("HttpTransport null-body responses", () => {
+  it.each([101, 103, 204, 205, 304])(
+    "preserves HTTP %i with a native-like empty stream and releases cancellation resources",
+    async (status) => {
+      vi.useFakeTimers();
+      const caller = new AbortController();
+      const removeListener = vi.spyOn(caller.signal, "removeEventListener");
+      // The Response constructor disallows these streams, although browsers'
+      // real fetch responses can expose them for null-body statuses.
+      const nativeLike = new Response(new ReadableStream<Uint8Array>({
+        start(controller) { controller.close(); },
+      }), { headers: { "x-response-marker": "preserved" } });
+      Object.defineProperty(nativeLike, "status", { value: status });
+      const getReader = vi.spyOn(nativeLike.body!, "getReader");
+      const cancel = vi.spyOn(nativeLike.body!, "cancel");
+      const fetchImplementation = vi.fn<FetchFunction>().mockResolvedValue(nativeLike);
+      const response = await transportWith(fetchImplementation, { logicalTimeoutMs: 50 })
+        .request("https://api.example/resource", { method: "DELETE", signal: caller.signal });
+
+      expect(response).toBe(nativeLike);
+      expect(response.status).toBe(status);
+      expect(response.headers.get("x-response-marker")).toBe("preserved");
+      expect(getReader).not.toHaveBeenCalled();
+      expect(cancel).not.toHaveBeenCalled();
+      expect(removeListener).toHaveBeenCalledWith("abort", expect.any(Function));
+      expect(vi.getTimerCount()).toBe(0);
+      caller.abort();
+      await vi.advanceTimersByTimeAsync(100);
+      expect(fetchImplementation.mock.calls[0][1]?.signal?.aborted).toBe(false);
+      await expect(response.text()).resolves.toBe("");
+      expect(fetchImplementation).toHaveBeenCalledTimes(1);
+    },
+  );
+});
+
 describe("HttpTransport cancellation and deadlines", () => {
   it("classifies a pre-aborted caller as cancellation and performs zero fetches", async () => {
     const caller = new AbortController();

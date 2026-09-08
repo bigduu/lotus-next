@@ -54,3 +54,14 @@ it("retains queued images if withdrawal loses the claim race", async () => {
   expect(queue.pending[0].images).toEqual(["image"])
   expect(queue.error).toContain("已经开始应用")
 })
+
+it("clears a previous withdrawal failure when the next withdrawal succeeds", async () => {
+  vi.mocked(guidanceService.list).mockResolvedValue({ messages: [{ id: "m", text: "", images: ["image"], created_at: "now" }] })
+  vi.mocked(guidanceService.cancel).mockRejectedValueOnce(new Error("offline")).mockResolvedValueOnce(undefined)
+  await mount()
+  await act(async () => queue.cancel("m"))
+  expect(queue.error).toContain("已经开始应用")
+  await act(async () => queue.cancel("m"))
+  expect(queue.pending).toHaveLength(0)
+  expect(queue.error).toBeNull()
+})

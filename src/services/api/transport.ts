@@ -30,6 +30,8 @@ interface CancellationContext {
 
 const RETRYABLE_METHODS = new Set(["GET", "HEAD", "OPTIONS", "PUT", "DELETE"]);
 const RETRYABLE_STATUSES = new Set([408, 429, 500, 502, 503, 504]);
+// https://fetch.spec.whatwg.org/#null-body-status
+const NULL_BODY_STATUSES = new Set([101, 103, 204, 205, 304]);
 
 const DEFAULT_LOGICAL_TIMEOUT_MS = 30_000;
 const DEFAULT_TOTAL_ATTEMPTS = 3;
@@ -325,7 +327,10 @@ function manageResponseLifecycle(
   response: Response,
   context: CancellationContext,
 ): Response {
-  if (!response.body) {
+  // Browsers can expose an empty stream even for a null-body status. Its
+  // request is complete at headers: preserve the native response and release
+  // the deadline/listener without reconstructing or cancelling that stream.
+  if (NULL_BODY_STATUSES.has(response.status) || !response.body) {
     context.cleanup();
     return response;
   }

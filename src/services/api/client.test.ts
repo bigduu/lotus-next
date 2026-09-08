@@ -121,6 +121,26 @@ describe("ApiClient request and response adaptation", () => {
     await expect(client.delete<void>("empty")).resolves.toBeUndefined();
   });
 
+  it("accepts browser-like 204 bodies without swallowing a non-success 304", async () => {
+    const empty = new Response(null, { status: 204 });
+    const notModified = new Response(null, { status: 304, statusText: "Not Modified" });
+    for (const response of [empty, notModified]) {
+      Object.defineProperty(response, "body", { value: new ReadableStream<Uint8Array>({
+        start(controller) { controller.close(); },
+      }) });
+    }
+    const fetchImplementation = vi.fn<FetchFunction>()
+      .mockResolvedValueOnce(empty)
+      .mockResolvedValueOnce(notModified);
+    const client = createClient(fetchImplementation);
+
+    await expect(client.delete<void>("guidance/message")).resolves.toBeUndefined();
+    await expect(client.get("not-modified")).rejects.toMatchObject({
+      status: 304, statusText: "Not Modified", message: "Not Modified",
+    });
+    expect(fetchImplementation).toHaveBeenCalledTimes(2);
+  });
+
   it("does not retry a response parsing failure", async () => {
     const fetchImplementation = vi.fn<FetchFunction>().mockResolvedValue(
       new Response("not-json", {
