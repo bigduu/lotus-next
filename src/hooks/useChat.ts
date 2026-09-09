@@ -193,7 +193,7 @@ export function useChat(
   }))
   const questionStateRef = useRef(questionState)
   const questionReadSequenceRef = useRef(0)
-  const questionSubmitRef = useRef<{ scope: QuestionScope; key: string } | null>(null)
+  const questionSubmitRef = useRef<{ scope: QuestionScope; key: string; awaitingResponse: boolean } | null>(null)
   const visibleQuestionState = sameQuestionScope(questionState.scope, navigationRef.current) ? questionState : null
   const pendingQuestion = visibleQuestionState?.question ?? null
   const updateQuestionState = useCallback((update: (current: QuestionState) => QuestionState) => {
@@ -225,8 +225,12 @@ export function useChat(
         if (changed) questionSubmitRef.current = null
         const retry = changed ? null : current.retry
         const recordedKey = changed ? null : current.recordedKey
-        // An empty GET is not a receipt for an ambiguous permission POST.
-        return { scope, question: question ?? (retry ? current.question : null),
+        const submission = questionSubmitRef.current
+        const awaitingResponse = submission?.awaitingResponse && sameQuestionScope(submission.scope, scope)
+          && current.question && questionKey(current.question) === submission.key
+        // Absence cannot settle a POST whose response is still pending, or an
+        // ambiguous permission POST awaiting an explicit exact retry.
+        return { scope, question: question ?? (retry || awaitingResponse ? current.question : null),
           loading: false, submitting: changed ? false : current.submitting, unavailable: false,
           retry, recordedKey,
           error: preserveError || retry || recordedKey ? current.error : null }
@@ -639,7 +643,8 @@ export function useChat(
               if (result !== "absent" || !ownsQuestionScope(scope)) return
               // A notification can precede publication. Follow up once only on
               // confirmed absence; stale or unavailable reads are not absence.
-              if (await reconcileQuestion(scope) === "absent" && ownsQuestionScope(scope)) {
+              if (await reconcileQuestion(scope) === "absent" && ownsQuestionScope(scope)
+                  && !questionStateRef.current.question) {
                 updateQuestionState((current) => ({ ...current,
                   error: current.error ?? "确认请求尚未准备好，请刷新。" }))
               }
@@ -1336,7 +1341,7 @@ export function useChat(
           expected_policy_revision: request.policy_revision, decision: text }
       }
     } else if (!text.trim() || (!question.allow_custom && !question.options.includes(text))) return
-    const token = { scope, key }
+    const token = { scope, key, awaitingResponse: true }
     questionSubmitRef.current = token
     const ownsSubmission = () => questionSubmitRef.current === token && ownsQuestionScope(scope)
       && questionStateRef.current.question !== null && questionKey(questionStateRef.current.question) === key
@@ -1356,6 +1361,7 @@ export function useChat(
         status = result.auto_resume_status
         continuationConfirmed = ["started", "already_running", "completed"].includes(status ?? "")
       }
+      token.awaitingResponse = false
       if (!ownsSubmission()) return
       ++questionReadSequenceRef.current
       updateQuestionState((state) => ({ ...state, question: null, retry: null, recordedKey: key,
@@ -1370,6 +1376,7 @@ export function useChat(
         void runStream(scope.sessionId, { resume: true })
       }
     } catch (error) {
+      token.awaitingResponse = false
       if (!ownsSubmission()) return
       const rejected = isApiError(error) && error.status >= 400 && error.status < 500
       updateQuestionState((state) => ({ ...state, retry: !rejected ? decision : null,
