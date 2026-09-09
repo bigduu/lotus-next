@@ -9,8 +9,9 @@ import {
 } from "@shared/store/appStore"
 import { useProviderStore } from "@shared/store/appStore/slices/providerSlice"
 import { getReasoningEffortForProvider } from "@shared/utils/reasoningEffort"
-import { agentClient } from "@services/chat/AgentService"
+import { agentClient, type PendingQuestionResponse, type PermissionDecisionRequest } from "@services/chat/AgentService"
 import { apiClient } from "@services/api"
+import { isApiError } from "@services/api/errors"
 import { notify } from "@/lib/notify"
 import { mapTokenBudgetUsage } from "@shared/types/tokenBudget"
 import { getSystemPromptEnhancementText } from "@shared/utils/systemPromptEnhancement"
@@ -20,11 +21,25 @@ import {
   type PendingTemplatePromptSnapshot,
 } from "@/lib/taskTemplates"
 
-export type PendingQuestion = {
-  question: string
-  options: string[]
-  allowCustom: boolean
+export type PendingQuestion = Extract<PendingQuestionResponse, { has_pending_question: true }>
+type QuestionScope = { sessionId: string | null | undefined; epoch: number }
+type QuestionState = {
+  scope: QuestionScope
+  question: PendingQuestion | null
+  loading: boolean
+  submitting: boolean
+  unavailable: boolean
+  error: string | null
+  retry: PermissionDecisionRequest | null
+  recordedKey: string | null
 }
+const questionKey = (q: PendingQuestion) => JSON.stringify([
+  q.interaction_kind, q.tool_call_id,
+  q.interaction_kind === "permission" ? q.permission_request.request_generation : null,
+  q.interaction_kind === "permission" ? q.permission_request.policy_revision : null,
+])
+const sameQuestionScope = (a: QuestionScope, b: QuestionScope) =>
+  a.sessionId === b.sessionId && a.epoch === b.epoch
 export type PendingApproval = {
   childSessionId: string
   requestId: string
@@ -156,7 +171,6 @@ export function useChat(
   const [sendFailures, setSendFailures] = useState<ReadonlyMap<string | null, SendFailure>>(
     () => new Map(),
   )
-  const [pendingQuestion, setPendingQuestion] = useState<PendingQuestion | null>(null)
   const [pendingApproval, setPendingApproval] = useState<PendingApproval | null>(null)
   const abortRef = useRef<AbortController | null>(null)
   const mountedRef = useRef(false)
@@ -173,6 +187,60 @@ export function useChat(
       epoch: navigationRef.current.epoch + 1,
     }
   }
+  const [questionState, setQuestionState] = useState<QuestionState>(() => ({
+    scope: navigationRef.current, question: null, loading: false, submitting: false,
+    unavailable: false, error: null, retry: null, recordedKey: null,
+  }))
+  const questionStateRef = useRef(questionState)
+  const questionReadSequenceRef = useRef(0)
+  const questionSubmitRef = useRef<{ scope: QuestionScope; key: string } | null>(null)
+  const visibleQuestionState = sameQuestionScope(questionState.scope, navigationRef.current) ? questionState : null
+  const pendingQuestion = visibleQuestionState?.question ?? null
+  const updateQuestionState = useCallback((update: (current: QuestionState) => QuestionState) => {
+    const next = update(questionStateRef.current)
+    questionStateRef.current = next
+    setQuestionState(next)
+  }, [])
+  const ownsQuestionScope = useCallback((scope: QuestionScope) =>
+    mountedRef.current && sameQuestionScope(scope, navigationRef.current), [])
+
+  // Event payloads are notifications only. Opening and explicit refresh use
+  // this same canonical reader, with ownership independent of stream completion.
+  const reconcileQuestion = useCallback(async (
+    scope: QuestionScope = navigationRef.current,
+    preserveError = false,
+  ): Promise<"pending" | "absent" | "unavailable" | "stale"> => {
+    if (!scope.sessionId || !ownsQuestionScope(scope)) return "stale"
+    const sequence = ++questionReadSequenceRef.current
+    updateQuestionState((current) => ({ ...current, loading: true }))
+    try {
+      const result = await agentClient.getPendingQuestion(scope.sessionId)
+      if (!ownsQuestionScope(scope) || questionReadSequenceRef.current !== sequence) return "stale"
+      const question = result.has_pending_question ? result : null
+      updateQuestionState((current) => {
+        const previousKey = current.question ? questionKey(current.question) : current.recordedKey
+        const changed = !!question && (questionKey(question) !== previousKey
+          || (current.retry && question.interaction_kind === "permission"
+            && !question.permission_request.allowed_decisions.includes(current.retry.decision)))
+        if (changed) questionSubmitRef.current = null
+        const retry = changed ? null : current.retry
+        const recordedKey = changed ? null : current.recordedKey
+        // An empty GET is not a receipt for an ambiguous permission POST.
+        return { scope, question: question ?? (retry ? current.question : null),
+          loading: false, submitting: changed ? false : current.submitting, unavailable: false,
+          retry, recordedKey,
+          error: preserveError || retry || recordedKey ? current.error : null }
+      })
+      return question ? "pending" : "absent"
+    } catch {
+      if (!ownsQuestionScope(scope) || questionReadSequenceRef.current !== sequence) return "stale"
+      updateQuestionState((current) => ({ ...current, loading: false, unavailable: true,
+        error: current.recordedKey ? "决定已记录，但暂时无法读取后续状态。请刷新。"
+          : current.retry ? "上次提交结果尚未确认，当前请求也暂时无法读取。请刷新或重试上次提交。"
+            : "暂时无法读取确认请求，请刷新后重试。" }))
+      return "unavailable"
+    }
+  }, [ownsQuestionScope, updateQuestionState])
   // The session whose agent channel this instance is CURRENTLY subscribed to
   // (null once the subscription settles). Guards the passive-observe engine
   // against double-subscribing a run we already drive/watch.
@@ -396,7 +464,7 @@ export function useChat(
       noteSessionOperation(runSid, operationId)
       streamOperationRef.current = operationId
       const ownsStream = () => streamOperationRef.current === operationId
-      const terminal = { settlement: null as Promise<void> | null }
+      const terminal = { settlement: null as Promise<void> | null, pendingRead: null as Promise<void> | null }
       // ONE live subscription per hook instance: sever the previous one FIRST
       // so its handlers can't pollute the buffers we're about to re-key to a
       // (possibly different) session. Abort synchronously removes the
@@ -413,10 +481,7 @@ export function useChat(
       setStreamStatus(null)
       setStreamingText("")
       setStreamingReasoningText(null)
-      // Clear any stale question only when a (re)run actually starts. A pending
-      // question must NOT be cleared by the terminal that accompanies a
-      // suspend-for-permission, or the approval dialog flashes and vanishes.
-      setPendingQuestion(null)
+      // Only canonical pending reads and matching acknowledgements settle a question.
       const ac = new AbortController()
       abortRef.current = ac
       const subscription = { operationId, sessionId: runSid }
@@ -566,12 +631,20 @@ export function useChat(
             const e = event as { title?: string; body?: string }
             notify(e.title ?? "", e.body ?? "")
           },
-          onNeedClarification: (event) =>
-            setPendingQuestion({
-              question: event.question ?? "",
-              options: event.options ?? [],
-              allowCustom: event.allow_custom ?? true,
-            }),
+          onNeedClarification: () => {
+            const scope = navigationRef.current
+            if (!ownsStream() || scope.sessionId !== runSid || !ownsQuestionScope(scope)) return
+            terminal.pendingRead = (async () => {
+              const result = await reconcileQuestion(scope)
+              if (result !== "absent" || !ownsQuestionScope(scope)) return
+              // A notification can precede publication. Follow up once only on
+              // confirmed absence; stale or unavailable reads are not absence.
+              if (await reconcileQuestion(scope) === "absent" && ownsQuestionScope(scope)) {
+                updateQuestionState((current) => ({ ...current,
+                  error: current.error ?? "确认请求尚未准备好，请刷新。" }))
+              }
+            })()
+          },
           onChildApprovalRequested: (childSessionId, requestId, req) =>
             setPendingApproval({
               childSessionId,
@@ -661,6 +734,18 @@ export function useChat(
       if (terminal.settlement) {
         await terminal.settlement
       } else if (ownsStream()) {
+        if (terminal.pendingRead) await terminal.pendingRead
+        if (!ownsStream()) return
+        const currentQuestion = questionStateRef.current
+        if (currentQuestion.scope.sessionId === runSid && ownsQuestionScope(currentQuestion.scope)
+            && currentQuestion.question) {
+          try {
+            await useAppStore.getState().loadChatHistory(runSid)
+            if (opts?.pendingOperationId !== undefined) clearPendingOperation(opts.pendingOperationId)
+          } catch { /* Keep the current history while awaiting the user's answer. */ }
+          stopStream(null, operationId)
+          return
+        }
         // The transport contract settles only on terminal or abort. Reaching
         // here while still owning the stream is therefore a broken generation,
         // not a successful completion.
@@ -686,6 +771,9 @@ export function useChat(
       clearPendingOperation,
       publishSendFailure,
       noteSessionOperation,
+      ownsQuestionScope,
+      reconcileQuestion,
+      updateQuestionState,
     ],
   )
 
@@ -746,31 +834,13 @@ export function useChat(
   // fired. On every session open, ask the backend for the pending question so
   // the dialog reappears (and stale dialogs from the previous session clear).
   useEffect(() => {
-    setPendingQuestion(null)
+    const scope = navigationRef.current
+    questionSubmitRef.current = null
+    updateQuestionState(() => ({ scope, question: null, loading: false, submitting: false,
+      unavailable: false, error: null, retry: null, recordedKey: null }))
     if (!sid) return
-    let stale = false
-    void apiClient
-      .get<{
-        has_pending_question: boolean
-        question?: string
-        options?: string[]
-        allow_custom?: boolean
-      }>(`respond/${encodeURIComponent(sid)}/pending`)
-      .then((res) => {
-        if (stale || !res?.has_pending_question) return
-        setPendingQuestion({
-          question: res.question ?? "",
-          options: res.options ?? [],
-          allowCustom: res.allow_custom ?? true,
-        })
-      })
-      .catch(() => {
-        /* best-effort rehydration */
-      })
-    return () => {
-      stale = true
-    }
-  }, [sid])
+    void reconcileQuestion(scope)
+  }, [sid, reconcileQuestion, updateQuestionState])
 
   // ── Tab-visibility reconcile (main instance only) ────────────────────
   // A backgrounded tab/webview freezes the WS and every reconnect timer; runs
@@ -1237,22 +1307,94 @@ export function useChat(
     [sid, isBound, onSessionCreated],
   )
 
-  // Answering a clarification resumes the SAME run — the original subscription
-  // is still open (a pending question keeps the stream live), so tokens keep
-  // flowing into onToken. No new run / no `sending` conflict.
-  const answerQuestion = useCallback(
-    async (text: string) => {
-      if (!sid) return
-      setPendingQuestion(null)
-      await apiClient
-        .post(`respond/${encodeURIComponent(sid)}`, { response: text })
-        .catch(() => {})
-      // The backend resumes the suspended run — re-subscribe to watch it stream
-      // live (and to catch a follow-up permission prompt). Don't re-execute.
-      await runStream(sid, { resume: true })
-    },
-    [sid, runStream],
-  )
+  const submitQuestion = useCallback(async (
+    text: string,
+    displayedScope: QuestionScope | undefined,
+    displayedKey: string | null,
+    retryPrevious = false,
+  ) => {
+    const current = questionStateRef.current
+    const { scope, question } = current
+    if (!scope.sessionId || !ownsQuestionScope(scope) || !question
+        || questionSubmitRef.current || current.loading || current.submitting) return
+    const key = questionKey(question)
+    if (!displayedScope || !sameQuestionScope(displayedScope, scope) || displayedKey !== key) return
+    if (current.recordedKey === key || (!retryPrevious && (current.unavailable || current.retry))) return
+    if (retryPrevious && !current.retry) return
+    let decision: PermissionDecisionRequest | null = null
+    if (question.interaction_kind === "permission") {
+      const request = question.permission_request
+      if (retryPrevious) {
+        const retry = current.retry!
+        if (retry.request_id !== request.request_id || retry.request_generation !== request.request_generation
+            || retry.expected_policy_revision !== request.policy_revision
+            || !request.allowed_decisions.includes(retry.decision)) return
+        decision = retry
+      } else {
+        if ((text !== "allow_once" && text !== "deny_once") || !request.allowed_decisions.includes(text)) return
+        decision = { request_id: request.request_id, request_generation: request.request_generation,
+          expected_policy_revision: request.policy_revision, decision: text }
+      }
+    } else if (!text.trim() || (!question.allow_custom && !question.options.includes(text))) return
+    const token = { scope, key }
+    questionSubmitRef.current = token
+    const ownsSubmission = () => questionSubmitRef.current === token && ownsQuestionScope(scope)
+      && questionStateRef.current.question !== null && questionKey(questionStateRef.current.question) === key
+    updateQuestionState((state) => ({ ...state, submitting: true, error: null }))
+    try {
+      let status: string | undefined
+      let continuationConfirmed: boolean
+      if (decision) {
+        const result = await agentClient.submitPermissionDecision(scope.sessionId, decision)
+        status = result.autoResumeStatus
+        continuationConfirmed = result.continuationConfirmed
+      } else {
+        const result = await apiClient.post<{ success?: boolean; auto_resume_status?: string }>(
+          `respond/${encodeURIComponent(scope.sessionId)}`, { response: text, expected_tool_call_id: question.tool_call_id },
+        )
+        if (result?.success !== true) throw new Error("Unconfirmed clarification response")
+        status = result.auto_resume_status
+        continuationConfirmed = ["started", "already_running", "completed"].includes(status ?? "")
+      }
+      if (!ownsSubmission()) return
+      ++questionReadSequenceRef.current
+      updateQuestionState((state) => ({ ...state, question: null, retry: null, recordedKey: key,
+        unavailable: false, loading: false,
+        error: continuationConfirmed ? null : "回答已记录，但暂时无法确认任务是否继续。请刷新。" }))
+      await reconcileQuestion(scope, !continuationConfirmed)
+      if (!ownsQuestionScope(scope) || questionSubmitRef.current !== token) return
+      void useAppStore.getState().loadChatHistory(scope.sessionId).catch(() => {})
+      if (continuationConfirmed && (status === "started" || status === "already_running")
+          && !questionStateRef.current.question && subscribedSidRef.current !== scope.sessionId) {
+        // The server owns continuation. Reuse the existing observation path only.
+        void runStream(scope.sessionId, { resume: true })
+      }
+    } catch (error) {
+      if (!ownsSubmission()) return
+      const rejected = isApiError(error) && error.status >= 400 && error.status < 500
+      updateQuestionState((state) => ({ ...state, retry: !rejected ? decision : null,
+        unavailable: rejected,
+        error: rejected ? "当前请求或权限已变化，请按刷新后的选项重新确认。"
+          : decision ? "提交结果尚未确认。请刷新，或重试上次提交以确认结果。"
+            : "回答结果尚未确认，请刷新当前问题后重试。" }))
+      await reconcileQuestion(scope, true)
+    } finally {
+      if (questionSubmitRef.current === token) {
+        questionSubmitRef.current = null
+        if (ownsQuestionScope(scope)) updateQuestionState((state) => ({ ...state, submitting: false }))
+      }
+    }
+  }, [ownsQuestionScope, reconcileQuestion, runStream, updateQuestionState])
+
+  const displayedQuestionScope = visibleQuestionState?.scope
+  const displayedQuestionKey = pendingQuestion ? questionKey(pendingQuestion) : null
+  const answerQuestion = useCallback((text: string) =>
+    submitQuestion(text, displayedQuestionScope, displayedQuestionKey),
+  [submitQuestion, displayedQuestionScope, displayedQuestionKey])
+  const retryQuestion = useCallback(() =>
+    submitQuestion("", displayedQuestionScope, displayedQuestionKey, true),
+  [submitQuestion, displayedQuestionScope, displayedQuestionKey])
+  const refreshQuestion = useCallback(() => reconcileQuestion(), [reconcileQuestion])
 
   const respondApproval = useCallback(
     async (approved: boolean) => {
@@ -1291,6 +1433,14 @@ export function useChat(
     editMessage,
     sendFailure,
     pendingQuestion,
+    questionLoading: visibleQuestionState?.loading ?? false,
+    questionSubmitting: visibleQuestionState?.submitting ?? false,
+    questionUnavailable: (visibleQuestionState?.unavailable ?? false)
+      || (!!pendingQuestion && visibleQuestionState?.recordedKey === questionKey(pendingQuestion)),
+    questionError: visibleQuestionState?.error ?? null,
+    questionCanRetry: !!visibleQuestionState?.retry,
+    refreshQuestion,
+    retryQuestion,
     pendingApproval,
     answerQuestion,
     respondApproval,

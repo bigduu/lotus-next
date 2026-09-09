@@ -1,6 +1,8 @@
 import { act } from "react"
 import { createRoot, type Root } from "react-dom/client"
 import type { ProviderInstancesConfig, ProviderKind } from "@shared/types/providerConfig"
+import type { PermissionDecisionResult } from "@services/chat/AgentService"
+import { ApiError, NetworkRequestError } from "@services/api/errors"
 import {
   afterAll,
   afterEach,
@@ -35,6 +37,9 @@ const mocks = vi.hoisted(() => {
     patchSessionMessage: vi.fn(),
     restoreSessionState: vi.fn(),
     respondToChildApproval: vi.fn(),
+    getPendingQuestion: vi.fn(),
+    submitPermissionDecision: vi.fn(),
+    shouldObserve: false,
     apiGet: vi.fn(),
     apiPost: vi.fn(),
     acknowledgeTemplate: vi.fn(),
@@ -58,7 +63,7 @@ vi.mock("@shared/store/appStore", () => {
     selectSessionById:
       (sessionId: string | null) => (state: typeof mocks.appState) =>
         sessionId ? state.chats.find((chat) => chat.id === sessionId) ?? null : null,
-    selectShouldObserve: () => () => false,
+    selectShouldObserve: () => () => mocks.shouldObserve,
   }
 })
 vi.mock("@shared/store/appStore/slices/providerSlice", () => ({
@@ -76,6 +81,8 @@ vi.mock("@services/chat/AgentService", () => ({
     patchSessionMessage: mocks.patchSessionMessage,
     restoreSessionState: mocks.restoreSessionState,
     respondToChildApproval: mocks.respondToChildApproval,
+    getPendingQuestion: mocks.getPendingQuestion,
+    submitPermissionDecision: mocks.submitPermissionDecision,
   },
 }))
 vi.mock("@services/api", () => ({
@@ -107,6 +114,7 @@ type SubscriptionHandlers = {
   onComplete(): void
   onError(error?: unknown): void
   onCancelled(): void
+  onNeedClarification(event: { question?: string; options?: string[]; allow_custom?: boolean }): void
 }
 type Deferred<T> = {
   promise: Promise<T>
@@ -223,6 +231,7 @@ afterAll(() => {
   Reflect.deleteProperty(reactActEnvironment, "IS_REACT_ACT_ENVIRONMENT")
 })
 beforeEach(() => {
+  mocks.shouldObserve = false
   mocks.appState.chats = []
   mocks.appState.currentSessionId = null
   mocks.appState.selectedModel = "test-model"
@@ -246,6 +255,8 @@ beforeEach(() => {
     mocks.patchSessionMessage,
     mocks.restoreSessionState,
     mocks.respondToChildApproval,
+    mocks.getPendingQuestion,
+    mocks.submitPermissionDecision,
     mocks.apiGet,
     mocks.apiPost,
     mocks.acknowledgeTemplate,
@@ -261,6 +272,7 @@ beforeEach(() => {
   mocks.execute.mockResolvedValue(undefined)
   mocks.subscribeToEvents.mockResolvedValue(undefined)
   mocks.truncateSessionMessages.mockResolvedValue(undefined)
+  mocks.getPendingQuestion.mockResolvedValue({ has_pending_question: false })
   mocks.apiGet.mockRejectedValue(new Error("no pending question"))
   mocks.apiPost.mockResolvedValue(undefined)
   consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {})
@@ -791,5 +803,425 @@ describe("useChat two-phase send lifecycle", () => {
     expect(hook.current.sending).toBe(false)
     expect(hook.current.submissionPending).toBe(false)
     expect(hook.current.streaming).toBeNull()
+  })
+})
+
+const permissionQuestion = (generation = "generation/a", revision = 7, callId = "call/a", sessionId = "session/a") => ({
+  has_pending_question: true as const, interaction_kind: "permission" as const,
+  question: "Allow this followup?", options: ["Approve", "Deny"], allow_custom: false,
+  tool_call_id: callId, permission_request: {
+    session_id: sessionId, request_id: callId, request_generation: generation,
+    policy_revision: revision, tool_name: "session_control", permission_type: "execute_command",
+    resource: "root-a", operation_summary: "Follow up with the existing Root",
+    allowed_decisions: ["allow_once", "deny_once"],
+  },
+})
+const clarificationQuestion = (callId = "clarification/a") => ({
+  has_pending_question: true as const, interaction_kind: "clarification" as const,
+  question: "Which branch?", options: ["main", "dev"], allow_custom: true,
+  tool_call_id: callId, permission_request: null,
+})
+const noQuestion = { has_pending_question: false as const }
+const confirmedDecision = (status?: string, replayed = false): PermissionDecisionResult => ({
+  replayed, autoResumeStatus: status, continuationConfirmed: true,
+})
+const expectedDecision = { request_id: "call/a", request_generation: "generation/a",
+  decision: "allow_once", expected_policy_revision: 7 }
+async function mountPermission() {
+  mocks.getPendingQuestion.mockResolvedValue(permissionQuestion())
+  return mountUseChat({ mode: "bound", sessionId: "session/a" })
+}
+async function mountObservedSession() {
+  mocks.shouldObserve = true
+  mocks.appState.chats = [{ id: "session/a", isRunning: true }]
+  const stream = deferred<void>()
+  mocks.subscribeToEvents.mockReturnValue(stream.promise)
+  const hook = await mountUseChat({ mode: "bound", sessionId: "session/a" })
+  const handlers = mocks.subscribeToEvents.mock.calls[0][1] as SubscriptionHandlers
+  return { hook, stream, handlers }
+}
+
+describe("useChat typed permission approval", () => {
+  it("submits once synchronously and keeps the question until its matching acknowledgement", async () => {
+    const response = deferred<PermissionDecisionResult>()
+    mocks.submitPermissionDecision.mockReturnValue(response.promise)
+    const hook = await mountPermission()
+    let answering!: Promise<void>
+    act(() => {
+      answering = hook.current.answerQuestion("allow_once")
+      void hook.current.answerQuestion("allow_once")
+      void hook.current.answerQuestion("deny_once")
+    })
+    expect(mocks.submitPermissionDecision).toHaveBeenCalledExactlyOnceWith("session/a", expectedDecision)
+    expect(mocks.apiPost).not.toHaveBeenCalled()
+    expect(hook.current.pendingQuestion).toEqual(permissionQuestion())
+    expect(hook.current.questionSubmitting).toBe(true)
+    mocks.getPendingQuestion.mockResolvedValue(noQuestion)
+    await act(async () => { response.resolve(confirmedDecision("completed")); await answering })
+    expect(hook.current.pendingQuestion).toBeNull()
+    expect(hook.current.questionSubmitting).toBe(false)
+    expect(hook.current.questionError).toBeNull()
+    expect(mocks.execute).not.toHaveBeenCalled()
+    expect(mocks.subscribeToEvents).not.toHaveBeenCalled()
+  })
+
+  it("uses the exact typed DenyOnce and rejects text and remembered choices", async () => {
+    const hook = await mountPermission()
+    await act(async () => {
+      await hook.current.answerQuestion("Approve")
+      await hook.current.answerQuestion("allow_session")
+    })
+    expect(mocks.submitPermissionDecision).not.toHaveBeenCalled()
+    mocks.submitPermissionDecision.mockResolvedValue(confirmedDecision("completed"))
+    mocks.getPendingQuestion.mockResolvedValue(noQuestion)
+    await act(async () => { await hook.current.answerQuestion("deny_once") })
+    expect(mocks.submitPermissionDecision).toHaveBeenCalledExactlyOnceWith("session/a", {
+      ...expectedDecision, decision: "deny_once",
+    })
+    expect(mocks.apiPost).not.toHaveBeenCalled()
+    expect(mocks.execute).not.toHaveBeenCalled()
+  })
+
+  it.each(["started", "already_running"])("observes a confirmed %s continuation without executing again", async (status) => {
+    const hook = await mountPermission()
+    mocks.appState.chats = [{ id: "session/a", isRunning: true }]
+    mocks.submitPermissionDecision.mockResolvedValue(confirmedDecision(status))
+    mocks.getPendingQuestion.mockResolvedValue(noQuestion)
+    mocks.subscribeToEvents.mockReturnValue(pendingForever())
+    await act(async () => { await hook.current.answerQuestion("allow_once") })
+    expect(mocks.subscribeToEvents).toHaveBeenCalledTimes(1)
+    expect(mocks.subscribeToEvents.mock.calls[0][0]).toBe("session/a")
+    expect(mocks.execute).not.toHaveBeenCalled()
+    expect(hook.current.pendingQuestion).toBeNull()
+  })
+
+  it("keeps the existing subscription when the server continues the original session", async () => {
+    mocks.getPendingQuestion.mockResolvedValue(permissionQuestion())
+    const { hook } = await mountObservedSession()
+    const originalController = mocks.subscribeToEvents.mock.calls[0][2] as AbortController
+    mocks.submitPermissionDecision.mockResolvedValue(confirmedDecision("started"))
+    mocks.getPendingQuestion.mockResolvedValue(noQuestion)
+    await act(async () => { await hook.current.answerQuestion("allow_once") })
+    expect(mocks.subscribeToEvents).toHaveBeenCalledTimes(1)
+    expect(originalController.signal.aborted).toBe(false)
+    expect(mocks.execute).not.toHaveBeenCalled()
+    expect(hook.current.pendingQuestion).toBeNull()
+  })
+
+  it("settles a matching replay without inventing a continuation", async () => {
+    const hook = await mountPermission()
+    mocks.submitPermissionDecision.mockResolvedValue(confirmedDecision(undefined, true))
+    mocks.getPendingQuestion.mockResolvedValue(noQuestion)
+    await act(async () => { await hook.current.answerQuestion("allow_once") })
+    expect(hook.current.pendingQuestion).toBeNull()
+    expect(hook.current.questionError).toBeNull()
+    expect(mocks.appState.loadChatHistory).toHaveBeenCalledWith("session/a")
+    expect(mocks.execute).not.toHaveBeenCalled()
+    expect(mocks.subscribeToEvents).not.toHaveBeenCalled()
+  })
+
+  it("retains recorded-decision evidence when continuation is malformed, without retry or execute", async () => {
+    const hook = await mountPermission()
+    mocks.submitPermissionDecision.mockResolvedValue({ replayed: false, autoResumeStatus: "started", continuationConfirmed: false })
+    mocks.getPendingQuestion.mockResolvedValue(noQuestion)
+    await act(async () => { await hook.current.answerQuestion("allow_once") })
+    expect(hook.current.pendingQuestion).toBeNull()
+    expect(hook.current.questionError).toContain("已记录")
+    expect(hook.current.questionCanRetry).toBe(false)
+    await act(async () => { await hook.current.refreshQuestion(); await hook.current.retryQuestion() })
+    expect(hook.current.questionError).toContain("已记录")
+    expect(mocks.submitPermissionDecision).toHaveBeenCalledTimes(1)
+    expect(mocks.execute).not.toHaveBeenCalled()
+    expect(mocks.subscribeToEvents).not.toHaveBeenCalled()
+  })
+
+  it.each([new NetworkRequestError(), new ApiError("unavailable", 503, "Unavailable"), new Error("mismatched receipt")])(
+    "does not treat an empty GET as acknowledgement of an uncertain POST: %s", async (error) => {
+      const hook = await mountPermission()
+      mocks.submitPermissionDecision.mockRejectedValue(error)
+      mocks.getPendingQuestion.mockResolvedValue(noQuestion)
+      await act(async () => { await hook.current.answerQuestion("allow_once") })
+      expect(hook.current.pendingQuestion).toEqual(permissionQuestion())
+      expect(hook.current.questionError).toContain("尚未确认")
+      expect(hook.current.questionCanRetry).toBe(true)
+      await act(async () => { await hook.current.answerQuestion("deny_once"); await hook.current.refreshQuestion() })
+      expect(mocks.submitPermissionDecision).toHaveBeenCalledTimes(1)
+      expect(hook.current.questionCanRetry).toBe(true)
+      expect(mocks.apiPost).not.toHaveBeenCalled()
+      expect(mocks.execute).not.toHaveBeenCalled()
+      expect(mocks.subscribeToEvents).not.toHaveBeenCalled()
+    },
+  )
+
+  it("replays only the identical user-selected tuple after a lost reply", async () => {
+    const hook = await mountPermission()
+    mocks.submitPermissionDecision.mockRejectedValueOnce(new NetworkRequestError())
+      .mockResolvedValueOnce(confirmedDecision(undefined, true))
+    mocks.getPendingQuestion.mockResolvedValue(noQuestion)
+    await act(async () => { await hook.current.answerQuestion("allow_once") })
+    expect(mocks.submitPermissionDecision).toHaveBeenCalledTimes(1)
+    await act(async () => { await hook.current.retryQuestion() })
+    expect(mocks.submitPermissionDecision.mock.calls).toEqual([
+      ["session/a", expectedDecision], ["session/a", expectedDecision],
+    ])
+    expect(hook.current.pendingQuestion).toBeNull()
+    expect(hook.current.questionError).toBeNull()
+    expect(hook.current.questionCanRetry).toBe(false)
+    expect(mocks.execute).not.toHaveBeenCalled()
+    expect(mocks.subscribeToEvents).not.toHaveBeenCalled()
+  })
+
+  it.each([403, 409])("refreshes a %s into the narrowed policy and requires a fresh explicit decision", async (status) => {
+    const hook = await mountPermission()
+    const changed = permissionQuestion("generation/a", 8)
+    changed.permission_request.allowed_decisions = ["deny_once", "deny_session"]
+    mocks.getPendingQuestion.mockResolvedValue(changed)
+    mocks.submitPermissionDecision.mockRejectedValueOnce(new ApiError("changed", status, "Rejected"))
+    await act(async () => { await hook.current.answerQuestion("allow_once") })
+    expect(hook.current.pendingQuestion).toEqual(changed)
+    expect(hook.current.questionError).toContain("已变化")
+    expect(hook.current.questionCanRetry).toBe(false)
+    await act(async () => { await hook.current.retryQuestion(); await hook.current.answerQuestion("allow_once") })
+    expect(mocks.submitPermissionDecision).toHaveBeenCalledTimes(1)
+    mocks.submitPermissionDecision.mockResolvedValueOnce(confirmedDecision("completed"))
+    mocks.getPendingQuestion.mockResolvedValue(noQuestion)
+    await act(async () => { await hook.current.answerQuestion("deny_once") })
+    expect(mocks.submitPermissionDecision).toHaveBeenLastCalledWith("session/a", {
+      ...expectedDecision, decision: "deny_once", expected_policy_revision: 8,
+    })
+    expect(mocks.execute).not.toHaveBeenCalled()
+  })
+
+  it.each([["generation/b", 7], ["generation/a", 8]] as const)("does not carry an uncertain approval onto %s revision %s", async (generation, revision) => {
+    const hook = await mountPermission()
+    mocks.submitPermissionDecision.mockRejectedValueOnce(new NetworkRequestError())
+    mocks.getPendingQuestion.mockResolvedValue(noQuestion)
+    await act(async () => { await hook.current.answerQuestion("allow_once") })
+    const next = permissionQuestion(generation, revision)
+    mocks.getPendingQuestion.mockResolvedValue(next)
+    await act(async () => { await hook.current.refreshQuestion(); await hook.current.retryQuestion() })
+    expect(hook.current.pendingQuestion).toEqual(next)
+    expect(hook.current.questionCanRetry).toBe(false)
+    expect(mocks.submitPermissionDecision).toHaveBeenCalledTimes(1)
+  })
+
+  it.each([["generation/b", 7], ["generation/a", 8]] as const)("rejects a stale visible click after refreshing to %s revision %s", async (generation, revision) => {
+    const hook = await mountPermission()
+    const oldClick = hook.current.answerQuestion
+    const next = permissionQuestion(generation, revision)
+    mocks.getPendingQuestion.mockResolvedValue(next)
+    await act(async () => { await hook.current.refreshQuestion() })
+    await act(async () => { await oldClick("allow_once") })
+    expect(mocks.submitPermissionDecision).not.toHaveBeenCalled()
+    expect(hook.current.pendingQuestion).toEqual(next)
+    mocks.submitPermissionDecision.mockResolvedValue(confirmedDecision("completed"))
+    mocks.getPendingQuestion.mockResolvedValue(noQuestion)
+    await act(async () => { await hook.current.answerQuestion("allow_once") })
+    expect(mocks.submitPermissionDecision).toHaveBeenCalledExactlyOnceWith("session/a", {
+      ...expectedDecision, request_generation: generation, expected_policy_revision: revision,
+    })
+  })
+})
+
+describe("useChat pending question ownership", () => {
+  it("discards an earlier GET after a newer canonical question is displayed", async () => {
+    const hook = await mountPermission()
+    const older = deferred<typeof noQuestion>()
+    const next = permissionQuestion("generation/b")
+    mocks.getPendingQuestion.mockReturnValueOnce(older.promise).mockResolvedValueOnce(next)
+    let firstRead!: ReturnType<HookValue["refreshQuestion"]>
+    act(() => { firstRead = hook.current.refreshQuestion() })
+    await act(async () => { await hook.current.refreshQuestion() })
+    await act(async () => { older.resolve(noQuestion); await firstRead })
+    expect(hook.current.pendingQuestion).toEqual(next)
+    expect(hook.current.questionLoading).toBe(false)
+    expect(mocks.submitPermissionDecision).not.toHaveBeenCalled()
+  })
+
+  it("discards a previous visit's GET after A to B to A navigation", async () => {
+    const older = deferred<ReturnType<typeof permissionQuestion>>()
+    const next = permissionQuestion("generation/b")
+    mocks.getPendingQuestion.mockReturnValueOnce(older.promise)
+      .mockResolvedValueOnce(permissionQuestion("generation/b", 7, "call/b", "session/b"))
+      .mockResolvedValueOnce(next)
+    const hook = await mountUseChat({ mode: "bound", sessionId: "session/a" })
+    await hook.rerender({ mode: "bound", sessionId: "session/b" })
+    await hook.rerender({ mode: "bound", sessionId: "session/a" })
+    await act(async () => { older.resolve(permissionQuestion()); await older.promise })
+    expect(hook.current.pendingQuestion).toEqual(next)
+    expect(hook.current.questionLoading).toBe(false)
+    expect(mocks.getPendingQuestion).toHaveBeenCalledTimes(3)
+  })
+
+  it("discards old submission and click callbacks after A to B to A, even with the same question identity", async () => {
+    const response = deferred<PermissionDecisionResult>()
+    mocks.submitPermissionDecision.mockReturnValue(response.promise)
+    const hook = await mountPermission()
+    const oldClick = hook.current.answerQuestion
+    let submission!: Promise<void>
+    act(() => { submission = oldClick("allow_once") })
+    mocks.getPendingQuestion.mockResolvedValueOnce(permissionQuestion("generation/b", 7, "call/b", "session/b"))
+      .mockResolvedValueOnce(permissionQuestion())
+    await hook.rerender({ mode: "bound", sessionId: "session/b" })
+    await hook.rerender({ mode: "bound", sessionId: "session/a" })
+    await act(async () => { response.resolve(confirmedDecision("started")); await submission; await oldClick("deny_once") })
+    expect(hook.current.pendingQuestion).toEqual(permissionQuestion())
+    expect(hook.current.questionSubmitting).toBe(false)
+    expect(mocks.submitPermissionDecision).toHaveBeenCalledTimes(1)
+    expect(mocks.getPendingQuestion).toHaveBeenCalledTimes(3)
+    expect(mocks.appState.loadChatHistory).not.toHaveBeenCalled()
+    expect(mocks.subscribeToEvents).not.toHaveBeenCalled()
+    expect(mocks.execute).not.toHaveBeenCalled()
+  })
+
+  it.each([["generation/b", 7], ["generation/a", 8]] as const)("an old POST cannot settle a new submission for %s revision %s", async (generation, revision) => {
+    const oldResponse = deferred<PermissionDecisionResult>()
+    const newResponse = deferred<PermissionDecisionResult>()
+    mocks.submitPermissionDecision.mockReturnValueOnce(oldResponse.promise).mockReturnValueOnce(newResponse.promise)
+    const hook = await mountPermission()
+    let oldSubmission!: Promise<void>
+    act(() => { oldSubmission = hook.current.answerQuestion("allow_once") })
+    const next = permissionQuestion(generation, revision)
+    mocks.getPendingQuestion.mockResolvedValue(next)
+    await act(async () => { await hook.current.refreshQuestion() })
+    let newSubmission!: Promise<void>
+    act(() => { newSubmission = hook.current.answerQuestion("deny_once") })
+    await act(async () => { oldResponse.resolve(confirmedDecision("started")); await oldSubmission })
+    expect(hook.current.pendingQuestion).toEqual(next)
+    expect(hook.current.questionSubmitting).toBe(true)
+    expect(mocks.getPendingQuestion).toHaveBeenCalledTimes(2)
+    expect(mocks.subscribeToEvents).not.toHaveBeenCalled()
+    mocks.getPendingQuestion.mockResolvedValue(noQuestion)
+    await act(async () => { newResponse.resolve(confirmedDecision("completed")); await newSubmission })
+    expect(hook.current.pendingQuestion).toBeNull()
+    expect(hook.current.questionSubmitting).toBe(false)
+    expect(mocks.submitPermissionDecision).toHaveBeenLastCalledWith("session/a", {
+      ...expectedDecision, request_generation: generation, expected_policy_revision: revision, decision: "deny_once",
+    })
+  })
+
+  it("keeps an unavailable initial read visible until an explicit refresh confirms the question", async () => {
+    mocks.getPendingQuestion.mockRejectedValueOnce(new NetworkRequestError())
+    const hook = await mountUseChat({ mode: "bound", sessionId: "session/a" })
+    expect(hook.current.pendingQuestion).toBeNull()
+    expect(hook.current.questionUnavailable).toBe(true)
+    expect(hook.current.questionError).toContain("无法读取")
+    mocks.getPendingQuestion.mockResolvedValue(permissionQuestion())
+    await act(async () => { await hook.current.refreshQuestion() })
+    expect(hook.current.pendingQuestion).toEqual(permissionQuestion())
+    expect(hook.current.questionUnavailable).toBe(false)
+    expect(hook.current.questionError).toBeNull()
+    expect(mocks.submitPermissionDecision).not.toHaveBeenCalled()
+  })
+
+  it("does not offer a different decision if a matching receipt is followed by the same pending question", async () => {
+    const hook = await mountPermission()
+    mocks.submitPermissionDecision.mockResolvedValue({ replayed: false, continuationConfirmed: false })
+    await act(async () => { await hook.current.answerQuestion("allow_once") })
+    expect(hook.current.pendingQuestion).toEqual(permissionQuestion())
+    expect(hook.current.questionUnavailable).toBe(true)
+    expect(hook.current.questionError).toContain("已记录")
+    await act(async () => { await hook.current.answerQuestion("deny_once"); await hook.current.retryQuestion() })
+    expect(mocks.submitPermissionDecision).toHaveBeenCalledTimes(1)
+    expect(mocks.execute).not.toHaveBeenCalled()
+  })
+})
+
+describe("useChat permission wait and ordinary clarification", () => {
+  it("rehydrates canonical permission after Complete without using notification display text", async () => {
+    const { hook, stream, handlers } = await mountObservedSession()
+    const pending = deferred<ReturnType<typeof permissionQuestion>>()
+    mocks.getPendingQuestion.mockReturnValueOnce(pending.promise)
+    await act(async () => {
+      handlers.onNeedClarification({ question: "untrusted old text", options: ["Approve"], allow_custom: true })
+      handlers.onComplete()
+      stream.resolve()
+      await stream.promise
+    })
+    await act(async () => { pending.resolve(permissionQuestion()); await pending.promise })
+    expect(hook.current.pendingQuestion).toEqual(permissionQuestion())
+    expect(hook.current.sendFailure).toBeNull()
+    expect(mocks.submitPermissionDecision).not.toHaveBeenCalled()
+    expect(mocks.execute).not.toHaveBeenCalled()
+  })
+
+  it("settles a stream's permission wait without reporting interrupted generation", async () => {
+    const { hook, stream, handlers } = await mountObservedSession()
+    mocks.getPendingQuestion.mockResolvedValueOnce(permissionQuestion())
+    await act(async () => { handlers.onNeedClarification({}); stream.resolve(); await stream.promise })
+    await flushMicrotasks()
+    expect(hook.current.pendingQuestion).toEqual(permissionQuestion())
+    expect(hook.current.sendFailure).toBeNull()
+    expect(hook.current.streaming).toBeNull()
+    expect(mocks.execute).not.toHaveBeenCalled()
+  })
+
+  it("does not turn a superseded pending read into absence or a generation failure", async () => {
+    const { hook, stream, handlers } = await mountObservedSession()
+    const older = deferred<typeof noQuestion>()
+    mocks.getPendingQuestion.mockReturnValueOnce(older.promise).mockResolvedValueOnce(permissionQuestion())
+    act(() => handlers.onNeedClarification({}))
+    await act(async () => { await hook.current.refreshQuestion() })
+    await act(async () => { older.resolve(noQuestion); stream.resolve(); await stream.promise })
+    await flushMicrotasks()
+    expect(hook.current.pendingQuestion).toEqual(permissionQuestion())
+    expect(hook.current.sendFailure).toBeNull()
+    expect(mocks.getPendingQuestion).toHaveBeenCalledTimes(3)
+  })
+
+  it("follows an event with one additional read only when publication is absent", async () => {
+    const { hook, stream, handlers } = await mountObservedSession()
+    mocks.getPendingQuestion.mockResolvedValueOnce(noQuestion).mockResolvedValueOnce(permissionQuestion())
+    await act(async () => { handlers.onNeedClarification({}); stream.resolve(); await stream.promise })
+    await flushMicrotasks()
+    expect(mocks.getPendingQuestion).toHaveBeenCalledTimes(3)
+    expect(hook.current.pendingQuestion).toEqual(permissionQuestion())
+    expect(hook.current.sendFailure).toBeNull()
+  })
+
+  it("keeps a real stream error visible even when a permission is pending", async () => {
+    mocks.getPendingQuestion.mockResolvedValue(permissionQuestion())
+    const { hook, stream, handlers } = await mountObservedSession()
+    await act(async () => { handlers.onError(new Error("generation failed")); stream.resolve(); await stream.promise })
+    expect(hook.current.sendFailure?.kind).toBe("generation-failed")
+    expect(hook.current.pendingQuestion).toEqual(permissionQuestion())
+  })
+
+  it("submits ordinary clarification text with its expected call ID and waits for acknowledgement", async () => {
+    const question = clarificationQuestion()
+    mocks.getPendingQuestion.mockResolvedValue(question)
+    const response = deferred<{ success: boolean; auto_resume_status: string }>()
+    mocks.apiPost.mockReturnValue(response.promise)
+    const hook = await mountUseChat({ mode: "bound", sessionId: "session/a" })
+    let answering!: Promise<void>
+    act(() => { answering = hook.current.answerQuestion("release/next") })
+    expect(mocks.apiPost).toHaveBeenCalledExactlyOnceWith("respond/session%2Fa", {
+      response: "release/next", expected_tool_call_id: "clarification/a",
+    })
+    expect(hook.current.pendingQuestion).toEqual(question)
+    mocks.getPendingQuestion.mockResolvedValue(noQuestion)
+    await act(async () => { response.resolve({ success: true, auto_resume_status: "completed" }); await answering })
+    expect(hook.current.pendingQuestion).toBeNull()
+    expect(mocks.submitPermissionDecision).not.toHaveBeenCalled()
+    expect(mocks.execute).not.toHaveBeenCalled()
+    expect(mocks.subscribeToEvents).not.toHaveBeenCalled()
+  })
+
+  it("preserves a failed clarification and does not observe an unacknowledged answer", async () => {
+    const question = { ...clarificationQuestion(), allow_custom: false }
+    mocks.getPendingQuestion.mockResolvedValue(question)
+    mocks.apiPost.mockRejectedValueOnce(new NetworkRequestError())
+    const hook = await mountUseChat({ mode: "bound", sessionId: "session/a" })
+    await act(async () => { await hook.current.answerQuestion("not offered") })
+    expect(mocks.apiPost).not.toHaveBeenCalled()
+    await act(async () => { await hook.current.answerQuestion("dev") })
+    expect(hook.current.pendingQuestion).toEqual(question)
+    expect(hook.current.questionError).toContain("尚未确认")
+    expect(mocks.apiPost).toHaveBeenCalledExactlyOnceWith("respond/session%2Fa", {
+      response: "dev", expected_tool_call_id: "clarification/a",
+    })
+    expect(mocks.submitPermissionDecision).not.toHaveBeenCalled()
+    expect(mocks.subscribeToEvents).not.toHaveBeenCalled()
+    expect(mocks.execute).not.toHaveBeenCalled()
   })
 })

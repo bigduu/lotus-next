@@ -411,14 +411,84 @@ export interface ExecuteRequest {
   client_sync?: ExecuteClientSync;
 }
 
-/** Response of `GET respond/{sessionId}/pending`: the session's current pending clarification. */
-export type PendingQuestionResponse = {
-  has_pending_question: boolean;
-  question?: string;
-  options?: string[];
-  allow_custom?: boolean;
-  tool_call_id?: string;
+export type PermissionOnceDecision = "allow_once" | "deny_once";
+export type PermissionRequest = {
+  session_id: string;
+  request_id: string;
+  request_generation: string;
+  policy_revision: number;
+  tool_name: string;
+  permission_type: string;
+  resource: string;
+  operation_summary: string;
+  allowed_decisions: string[];
 };
+type PendingQuestionFields = {
+  has_pending_question: true;
+  question: string;
+  options: string[];
+  allow_custom: boolean;
+  tool_call_id: string;
+};
+/** Canonical pending state. An unavailable or malformed read rejects. */
+export type PendingQuestionResponse =
+  | { has_pending_question: false; tool_call_id?: never }
+  | (PendingQuestionFields & { interaction_kind: "clarification"; permission_request?: null })
+  | (PendingQuestionFields & { interaction_kind: "permission"; permission_request: PermissionRequest });
+
+export type PermissionDecisionRequest = {
+  request_id: string;
+  request_generation: string;
+  decision: PermissionOnceDecision;
+  expected_policy_revision: number;
+};
+/** A matching receipt confirms the decision independently of continuation. */
+export type PermissionDecisionResult = {
+  replayed: boolean;
+  autoResumeStatus?: string;
+  continuationConfirmed: boolean;
+};
+
+export class PendingInteractionContractError extends Error {
+  constructor() {
+    super("无法确认当前请求，请刷新后重试。");
+    this.name = "PendingInteractionContractError";
+  }
+}
+const interactionRecord = (value: unknown): Record<string, unknown> | null =>
+  value !== null && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown> : null;
+const nonemptyInteractionString = (value: unknown): value is string =>
+  typeof value === "string" && value.trim().length > 0;
+const safePolicyRevision = (value: unknown): value is number =>
+  typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+
+function parsePendingQuestion(sessionId: string, value: unknown): PendingQuestionResponse {
+  const data = interactionRecord(value);
+  if (!data) throw new PendingInteractionContractError();
+  if (data.has_pending_question === false && data.interaction_kind == null && data.permission_request == null) {
+    return { has_pending_question: false };
+  }
+  if (data.has_pending_question !== true || typeof data.question !== "string"
+      || !Array.isArray(data.options) || !data.options.every((option) => typeof option === "string")
+      || typeof data.allow_custom !== "boolean" || !nonemptyInteractionString(data.tool_call_id)) {
+    throw new PendingInteractionContractError();
+  }
+  if (data.interaction_kind === "clarification" && data.permission_request == null) {
+    return data as PendingQuestionResponse;
+  }
+  const request = interactionRecord(data.permission_request);
+  if (data.interaction_kind !== "permission" || !request
+      || request.session_id !== sessionId || request.request_id !== data.tool_call_id
+      || !nonemptyInteractionString(request.request_generation) || !safePolicyRevision(request.policy_revision)
+      || !["tool_name", "permission_type", "resource", "operation_summary"].every((key) => typeof request[key] === "string")
+      || !Array.isArray(request.allowed_decisions)
+      || !request.allowed_decisions.every((decision) => typeof decision === "string")) {
+    throw new PendingInteractionContractError();
+  }
+  // The resolved permission tool name may differ from its invocation alias.
+  return data as PendingQuestionResponse;
+}
 
 export interface HistoryResponse {
   session_id: string;
@@ -1103,12 +1173,39 @@ export class AgentClient {
    */
   async getPendingQuestion(sessionId: string): Promise<PendingQuestionResponse> {
     const encoded = encodeURIComponent(sessionId);
-    try {
-      return await apiClient.get<PendingQuestionResponse>(`respond/${encoded}/pending`);
-    } catch (error) {
-      console.warn(`[AgentClient] getPendingQuestion failed for ${sessionId}:`, error);
-      return { has_pending_question: false };
+    const value = await apiClient.get<unknown>(`respond/${encoded}/pending`, { cache: "no-store" });
+    return parsePendingQuestion(sessionId, value);
+  }
+
+  /** One explicit attempt, without implicit replay or ordinary-text fallback. */
+  async submitPermissionDecision(sessionId: string, request: PermissionDecisionRequest): Promise<PermissionDecisionResult> {
+    if (!nonemptyInteractionString(request.request_id) || !nonemptyInteractionString(request.request_generation)
+        || !safePolicyRevision(request.expected_policy_revision)
+        || (request.decision !== "allow_once" && request.decision !== "deny_once")) {
+      throw new PendingInteractionContractError();
     }
+    const data = interactionRecord(await apiClient.post<unknown>(
+      `sessions/${encodeURIComponent(sessionId)}/permission-decisions`, request,
+    ));
+    const receipt = interactionRecord(data?.receipt);
+    const recorded = interactionRecord(receipt?.decision);
+    if (data?.success !== true || typeof data.replayed !== "boolean" || receipt?.session_id !== sessionId
+        || recorded?.request_id !== request.request_id || recorded?.request_generation !== request.request_generation
+        || recorded?.decision !== request.decision || recorded?.matcher_id != null
+        || (recorded?.expected_policy_revision != null && !safePolicyRevision(recorded.expected_policy_revision))
+        || (recorded?.confirm_global != null && recorded.confirm_global !== false)) {
+      throw new PendingInteractionContractError();
+    }
+    // The receipt may retain an earlier CAS revision. It confirms the effect,
+    // even if the continuation response is malformed or could not be confirmed.
+    const resume = interactionRecord(data.resume);
+    const status = resume?.auto_resume_status;
+    const continuationConfirmed = data.replayed && data.resume == null && data.auto_resume_status == null
+      || resume?.success === true && typeof status === "string"
+        && ["started", "already_running", "completed"].includes(status)
+        && data.auto_resume_status === status;
+    return { replayed: data.replayed, autoResumeStatus: typeof status === "string" ? status : undefined,
+      continuationConfirmed };
   }
 
   /**
