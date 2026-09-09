@@ -333,3 +333,21 @@ describe("ChatPane read visibility", () => {
     })
   }
 })
+
+it("shows an unreadable pending request with a working refresh control outside the dialog", async () => {
+  const container = document.body.appendChild(document.createElement("div"))
+  const root = createRoot(container); roots.push(root)
+  const refresh = vi.fn().mockResolvedValue("pending")
+  const chat = { ...createChat(vi.fn<Send>(), "approval-root"), pendingQuestion: null,
+    questionError: "暂时无法读取确认请求，请刷新后重试。", questionUnavailable: true,
+    questionLoading: false, questionSubmitting: false, refreshQuestion: refresh }
+  await act(async () => root.render(<ChatPane chat={chat} pickedWorkspace="/picked"
+    onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()} splitOpen={false}
+    onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false} />))
+  const alert = container.querySelector('[role="alert"]')
+  expect(alert?.textContent).toContain("无法读取确认请求")
+  const refreshButton = alert?.querySelector("button")
+  expect(refreshButton?.textContent).toBe("刷新请求")
+  act(() => refreshButton?.click())
+  expect(refresh).toHaveBeenCalledTimes(1)
+})

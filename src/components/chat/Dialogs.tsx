@@ -5,17 +5,40 @@ import { Textarea } from "@/components/ui/textarea"
 import {
   ResponsiveDialog,
   ResponsiveDialogContent,
+  ResponsiveDialogDescription,
   ResponsiveDialogTitle,
 } from "@/components/ui/responsive-dialog"
 
 export function QuestionDialog({
   q,
   onAnswer,
+  loading = false,
+  submitting = false,
+  unavailable = false,
+  error = null,
+  canRetry = false,
+  onRefresh,
+  onRetry,
 }: {
   q: PendingQuestion
   onAnswer: (text: string) => void
+  loading?: boolean
+  submitting?: boolean
+  unavailable?: boolean
+  error?: string | null
+  canRetry?: boolean
+  onRefresh: () => void
+  onRetry: () => void
 }) {
-  const [custom, setCustom] = useState("")
+  const permission = q.interaction_kind === "permission" ? q.permission_request : null
+  const identity = JSON.stringify([q.interaction_kind, q.tool_call_id, permission?.request_generation])
+  const [draft, setDraft] = useState({ identity, text: "" })
+  const custom = draft.identity === identity ? draft.text : ""
+  const disabled = loading || submitting || unavailable || canRetry
+  const options = permission
+    ? [{ value: "allow_once", label: "仅本次允许" }, { value: "deny_once", label: "仅本次拒绝" }]
+      .filter((option) => permission.allowed_decisions.includes(option.value))
+    : q.options.map((value) => ({ value, label: value }))
   return (
     <ResponsiveDialog open>
       <ResponsiveDialogContent
@@ -23,40 +46,49 @@ export function QuestionDialog({
         showCloseButton={false}
         className="p-5"
       >
-        <ResponsiveDialogTitle>需要你确认</ResponsiveDialogTitle>
-        <p className="mt-2 whitespace-pre-wrap text-sm leading-relaxed">
+        <ResponsiveDialogTitle>{permission ? "需要操作授权" : "需要你确认"}</ResponsiveDialogTitle>
+        <ResponsiveDialogDescription className="mt-2 whitespace-pre-wrap text-sm leading-relaxed text-foreground">
           {q.question}
-        </p>
+        </ResponsiveDialogDescription>
         <div className="mt-4 flex flex-col gap-2">
-          {q.options.map((opt) => (
+          {options.map((opt) => (
             <Button
-              key={opt}
+              key={opt.value}
               variant="secondary"
               className="h-auto justify-start whitespace-normal py-2 text-left"
-              onClick={() => onAnswer(opt)}
+              disabled={disabled}
+              onClick={() => onAnswer(opt.value)}
             >
-              {opt}
+              {opt.label}
             </Button>
           ))}
         </div>
-        {q.allowCustom ? (
+        {!permission && q.allow_custom ? (
           <div className="mt-3">
             <Textarea
               value={custom}
-              onChange={(e) => setCustom(e.target.value)}
+              disabled={disabled}
+              onChange={(e) => setDraft({ identity, text: e.target.value })}
               placeholder="或输入自定义回答…"
               rows={2}
               className="rounded-lg border px-3 py-2"
             />
             <Button
               className="mt-2 w-full"
-              disabled={!custom.trim()}
+              disabled={disabled || !custom.trim()}
               onClick={() => onAnswer(custom.trim())}
             >
               提交回答
             </Button>
           </div>
         ) : null}
+        {submitting || loading ? <p role="status" className="mt-3 text-sm text-muted-foreground">{submitting ? "正在提交…" : "正在刷新…"}</p> : null}
+        {error ? <p role="alert" className="mt-3 text-sm text-destructive">{error}</p> : null}
+        {permission && options.length === 0 ? <p className="mt-3 text-sm text-muted-foreground">当前没有可用的本次操作选项，请刷新请求。</p> : null}
+        <div className="mt-3 flex gap-2">
+          <Button variant="outline" disabled={loading || submitting} onClick={onRefresh}>刷新请求</Button>
+          {canRetry ? <Button variant="secondary" disabled={loading || submitting} onClick={onRetry}>重试上次提交</Button> : null}
+        </div>
       </ResponsiveDialogContent>
     </ResponsiveDialog>
   )

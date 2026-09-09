@@ -150,6 +150,13 @@ export function ChatPane({
     retry,
     sendFailure,
     pendingQuestion,
+    questionLoading,
+    questionSubmitting,
+    questionUnavailable,
+    questionError,
+    questionCanRetry,
+    refreshQuestion,
+    retryQuestion,
     pendingApproval,
     answerQuestion,
     respondApproval,
@@ -728,10 +735,22 @@ export function ChatPane({
 
       <ImageLightbox src={preview} onClose={() => setPreview(null)} />
 
+      {!pendingQuestion && questionError ? (
+        <div role="alert" className="mx-4 mb-3 flex items-center gap-3 rounded-lg border p-3 text-sm">
+          <span>{questionError}</span>
+          <button type="button" className="shrink-0 underline" disabled={questionLoading || questionSubmitting} onClick={() => void refreshQuestion()}>
+            {questionLoading ? "正在刷新…" : "刷新请求"}
+          </button>
+        </div>
+      ) : null}
+
       {pendingApproval ? (
         <ApprovalDialog a={pendingApproval} onRespond={(ok) => void respondApproval(ok)} />
       ) : pendingQuestion ? (
-        <QuestionDialog q={pendingQuestion} onAnswer={(t) => void answerQuestion(t)} />
+        <QuestionDialog q={pendingQuestion} onAnswer={(t) => void answerQuestion(t)}
+          loading={questionLoading} submitting={questionSubmitting} unavailable={questionUnavailable}
+          error={questionError} canRetry={questionCanRetry}
+          onRefresh={() => void refreshQuestion()} onRetry={() => void retryQuestion()} />
       ) : null}
     </>
   )
