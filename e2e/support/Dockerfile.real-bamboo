@@ -16,7 +16,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 
 FROM debian:bookworm-slim AS runtime
 
-LABEL org.opencontainers.image.revision="2471d98e09b16f8d7f23fff145b7324f5fa60cf0"
+LABEL org.opencontainers.image.revision="2171e406a18c9f48509f1372560ef6e8c1749eca"
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates libssl3 python3 \

@@ -109,7 +109,7 @@ test("source-built isolated Bamboo runtime exposes the canonical contract", asyn
 
   expect(baseUrl.protocol).toBe("http:");
   expect(baseUrl.hostname).toBe("127.0.0.1");
-  expect(revision).toBe("2471d98e09b16f8d7f23fff145b7324f5fa60cf0");
+  expect(revision).toBe("2171e406a18c9f48509f1372560ef6e8c1749eca");
   expect(sessionId).toMatch(/^[0-9a-f-]{36}$/i);
   expect(path.isAbsolute(observationsPath)).toBe(true);
 
