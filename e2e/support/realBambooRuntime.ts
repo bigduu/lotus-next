@@ -22,7 +22,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-export const REAL_BAMBOO_REVISION = "aaadf8b85df47bfa41e22f29dfb373ba5ca08fde";
+export const REAL_BAMBOO_REVISION = "2171e406a18c9f48509f1372560ef6e8c1749eca";
 
 const REAL_BAMBOO_MODEL = "gpt-4o-mini";
 const REAL_BAMBOO_PROVIDER = "e2e-openai";
@@ -57,6 +57,7 @@ const EXPORTED_ENVIRONMENT_KEYS = [
   "LOTUS_REAL_BAMBOO_UI_SESSION_ID",
   "LOTUS_REAL_BAMBOO_OTHER_PROJECT_SESSION_ID",
   "LOTUS_REAL_PROVIDER_OBSERVATIONS_PATH",
+  "LOTUS_REAL_PROVIDER_API_KEY",
   "LOTUS_REAL_USER_MARKER",
   "LOTUS_REAL_ASSISTANT_MARKER",
   "LOTUS_REAL_BAMBOO_REVISION",
@@ -1986,6 +1987,7 @@ const globalSetup = async (): Promise<() => Promise<void>> => {
       state.otherProjectSessionId;
     process.env.LOTUS_REAL_PROVIDER_OBSERVATIONS_PATH =
       state.providerObservationsPath;
+    process.env.LOTUS_REAL_PROVIDER_API_KEY = state.fakeApiKey;
     process.env.LOTUS_REAL_USER_MARKER = state.userMarker;
     process.env.LOTUS_REAL_ASSISTANT_MARKER = state.assistantMarker;
     process.env.LOTUS_REAL_BAMBOO_REVISION = REAL_BAMBOO_REVISION;

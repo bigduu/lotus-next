@@ -1,10 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from "react"
 import { useProviderStore } from "@shared/store/appStore/slices/providerSlice"
-import type { DefaultsConfig } from "@shared/types/providerConfig"
+import {
+  PROVIDER_DEFAULT_MODEL_REF_KEYS,
+  findProviderSnapshotRelationIssues,
+  type DefaultsConfig,
+  type ProviderDefaultModelRefKey,
+  type ProviderSnapshotRelationIssue,
+} from "@shared/types/providerConfig"
 import type { ProviderModelRef } from "@shared/types/providerModelRef"
 import { apiClient, getErrorMessage } from "@services/api"
 import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
 import {
   Select,
   SelectContent,
@@ -12,6 +17,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
+import { cn } from "@/lib/utils"
+import { EditableModelCombobox } from "./EditableModelCombobox"
 
 const UNSET = "__unset__"
 
@@ -21,143 +28,223 @@ const ROLES = [
   { key: "task_summary", label: "任务摘要", required: false },
   { key: "vision", label: "视觉", required: false },
   { key: "memory_background", label: "记忆后台", required: false },
+  { key: "planning", label: "规划", required: false },
+  { key: "search", label: "搜索", required: false },
+  { key: "code_review", label: "代码审查", required: false },
   { key: "sub_agent", label: "子代理", required: false },
-] as const
+] as const satisfies readonly {
+  key: ProviderDefaultModelRefKey
+  label: string
+  required: boolean
+}[]
 
-type RoleKey = (typeof ROLES)[number]["key"]
+type DraftRef = { provider: string; model: string }
+type DraftRefs = Record<ProviderDefaultModelRefKey, DraftRef>
 
-type DraftRefs = Record<RoleKey, { provider: string; model: string }>
-
-function draftFromDefaults(defaults: DefaultsConfig | undefined, fallbackProvider: string): DraftRefs {
-  const pick = (ref?: ProviderModelRef) => ({
-    provider: ref?.provider ?? "",
-    model: ref?.model ?? "",
-  })
-  const d: DraftRefs = {
-    chat: pick(defaults?.chat),
-    fast: pick(defaults?.fast),
-    task_summary: pick(defaults?.task_summary),
-    vision: pick(defaults?.vision),
-    memory_background: pick(defaults?.memory_background),
-    sub_agent: pick(defaults?.sub_agent),
-  }
-  if (!d.chat.provider && fallbackProvider) d.chat.provider = fallbackProvider
-  return d
+interface DefaultsDraft {
+  roles: DraftRefs
+  subagentModels: Record<string, DraftRef>
 }
 
-/**
- * defaults.* model-preference editor.
- *
- * Persists via `POST /bamboo/config` (deep-merge config patch) — the same
- * instance-mode save path lotus uses — then reloads the provider store so the
- * General-tab default model reflects the persisted value.
- */
-export function DefaultsEditor() {
-  const snapshot = useProviderStore((s) => s.providerSnapshot)
-  const providerStatus = useProviderStore((s) => s.providerStatus)
-  const providerError = useProviderStore((s) => s.providerError)
-  const loadProviderInstances = useProviderStore((s) => s.loadProviderInstances)
-  const loadCatalog = useProviderStore((s) => s.loadCatalog)
-  const getModelsForProvider = useProviderStore((s) => s.getModelsForProvider)
-  const catalog = useProviderStore((s) => s.catalog)
+const emptyRef = (): DraftRef => ({ provider: "", model: "" })
 
+const copyRef = (ref?: ProviderModelRef): DraftRef => ({
+  provider: ref?.provider ?? "",
+  model: ref?.model ?? "",
+})
+
+function draftFromDefaults(
+  defaults: DefaultsConfig | undefined,
+  fallbackProvider: string,
+): DefaultsDraft {
+  const roles = Object.fromEntries(
+    PROVIDER_DEFAULT_MODEL_REF_KEYS.map((key) => [key, copyRef(defaults?.[key])]),
+  ) as DraftRefs
+  if (!roles.chat.provider && fallbackProvider) roles.chat.provider = fallbackProvider
+
+  const subagentModels = Object.fromEntries(
+    Object.entries(defaults?.subagent_models ?? {}).map(([name, ref]) => [
+      name,
+      copyRef(ref),
+    ]),
+  )
+  return { roles, subagentModels }
+}
+
+const serializeDraft = (draft: DefaultsDraft): string => JSON.stringify(draft)
+
+const hasDefaultIdIssue = (issues: readonly ProviderSnapshotRelationIssue[]) =>
+  issues.some((issue) => issue.kind === "default_provider_instance")
+
+const hasRoleIssue = (
+  issues: readonly ProviderSnapshotRelationIssue[],
+  role: ProviderDefaultModelRefKey,
+) => issues.some((issue) => issue.kind === "default_model_ref" && issue.role === role)
+
+const hasSubagentIssue = (
+  issues: readonly ProviderSnapshotRelationIssue[],
+  subagent: string,
+) => issues.some((issue) => issue.kind === "subagent_model_ref" && issue.subagent === subagent)
+
+/** Edit all defaults.* references while preserving server authority. */
+export function DefaultsEditor() {
+  const runtimeSnapshot = useProviderStore((state) => state.providerSnapshot)
+  const repairSnapshot = useProviderStore((state) => state.providerRepairSnapshot)
+  const repairIssues = useProviderStore((state) => state.providerRepairIssues)
+  const providerStatus = useProviderStore((state) => state.providerStatus)
+  const providerError = useProviderStore((state) => state.providerError)
+  const loadProviderInstances = useProviderStore((state) => state.loadProviderInstances)
+  const getModelsForProvider = useProviderStore((state) => state.getModelsForProvider)
+  const catalog = useProviderStore((state) => state.catalog)
+
+  const snapshot = runtimeSnapshot ?? repairSnapshot
   const instances = snapshot?.instances ?? []
   const defaultId = snapshot?.default_provider_instance_id ?? null
   const defaults = snapshot?.defaults
+  const canManage = providerStatus === "ready" || providerStatus === "degraded"
+  const fallbackProvider =
+    defaultId && instances.some((instance) => instance.id === defaultId) ? defaultId : ""
 
-  const [draft, setDraft] = useState<DraftRefs>(() => draftFromDefaults(defaults, defaultId ?? ""))
-  const [baseline, setBaseline] = useState(() => JSON.stringify(draftFromDefaults(defaults, defaultId ?? "")))
+  const initialDraft = draftFromDefaults(defaults, fallbackProvider)
+  const [draft, setDraft] = useState<DefaultsDraft>(() => initialDraft)
+  const [baseline, setBaseline] = useState(() => serializeDraft(initialDraft))
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [saved, setSaved] = useState(false)
 
-  const dirty = useMemo(() => JSON.stringify(draft) !== baseline, [draft, baseline])
+  const dirty = useMemo(() => serializeDraft(draft) !== baseline, [draft, baseline])
   const dirtyRef = useRef(dirty)
   dirtyRef.current = dirty
 
-  // Re-sync when the store (re)loads — but never clobber in-progress edits.
   useEffect(() => {
     if (dirtyRef.current) return
-    const next = draftFromDefaults(defaults, defaultId ?? "")
+    const next = draftFromDefaults(defaults, fallbackProvider)
     setDraft(next)
-    setBaseline(JSON.stringify(next))
-  }, [defaults, defaultId])
+    setBaseline(serializeDraft(next))
+  }, [defaults, fallbackProvider])
 
-  useEffect(() => {
-    if (providerStatus === "ready") void loadCatalog()
-  }, [loadCatalog, providerStatus])
+  const setRole = (role: ProviderDefaultModelRefKey, patch: Partial<DraftRef>) =>
+    setDraft((current) => ({
+      ...current,
+      roles: {
+        ...current.roles,
+        [role]: { ...current.roles[role], ...patch },
+      },
+    }))
 
-  const setRole = (role: RoleKey, patch: Partial<{ provider: string; model: string }>) =>
-    setDraft((d) => ({ ...d, [role]: { ...d[role], ...patch } }))
+  const setSubagent = (subagent: string, patch: Partial<DraftRef>) =>
+    setDraft((current) => ({
+      ...current,
+      subagentModels: {
+        ...current.subagentModels,
+        [subagent]: { ...(current.subagentModels[subagent] ?? emptyRef()), ...patch },
+      },
+    }))
 
   const save = async () => {
-    if (!draft.chat.provider || !draft.chat.model.trim()) {
-      setError("对话(chat)默认模型必须选择提供方并填写模型")
-      return
-    }
+    const instanceIds = new Set(instances.map((instance) => instance.id))
     for (const role of ROLES) {
-      const v = draft[role.key]
-      if (!role.required && v.provider && !v.model.trim()) {
-        setError(`「${role.label}」已选择提供方但未填写模型`)
+      const value = draft.roles[role.key]
+      if (!value.provider && !value.model.trim()) {
+        if (role.required) {
+          setError("对话(chat)默认模型必须选择提供方并填写模型")
+          return
+        }
+        if (hasRoleIssue(repairIssues, role.key)) {
+          setError(`「${role.label}」的失效引用必须显式替换为现有实例和模型`)
+          return
+        }
+        continue
+      }
+      if (!value.provider || !value.model.trim()) {
+        setError(`「${role.label}」必须同时选择提供方并填写模型`)
+        return
+      }
+      if (!instanceIds.has(value.provider)) {
+        setError(`「${role.label}」引用的提供方已失效，请选择现有实例`)
         return
       }
     }
+
+    for (const [subagent, value] of Object.entries(draft.subagentModels)) {
+      if (!value.provider || !value.model.trim() || !instanceIds.has(value.provider)) {
+        setError(`子代理「${subagent}」的失效引用必须显式替换为现有实例和模型`)
+        return
+      }
+    }
+
     setSaving(true)
     setError(null)
     setSaved(false)
     try {
-      // Cleared optional roles are sent as explicit null — the backend patch
-      // deep-merges, so omitting a key would keep the stored value.
       const payload: Record<string, unknown> = {}
       for (const role of ROLES) {
-        const v = draft[role.key]
-        const filled = v.provider !== "" && v.model.trim() !== ""
-        payload[role.key] = filled ? { provider: v.provider, model: v.model.trim() } : null
+        const value = draft.roles[role.key]
+        const filled = value.provider !== "" && value.model.trim() !== ""
+        payload[role.key] = filled
+          ? { provider: value.provider, model: value.model.trim() }
+          : null
       }
-      // BACKEND GOTCHA (bamboo set.rs): every POST /bamboo/config rewrites
-      // model_limits.json from the patch — a patch WITHOUT the key DELETES
-      // the file. Fetch the current value and carry it along.
+      payload.subagent_models = Object.fromEntries(
+        Object.entries(draft.subagentModels).map(([subagent, value]) => [
+          subagent,
+          { provider: value.provider, model: value.model.trim() },
+        ]),
+      )
+
+      // Bamboo rewrites model_limits.json on every config write, so carry the
+      // current value to avoid deleting an unrelated authoritative sidecar.
       const current = await apiClient.get<{ model_limits?: unknown }>("/bamboo/config")
       await apiClient.post("/bamboo/config", {
         defaults: payload,
         ...(current?.model_limits !== undefined ? { model_limits: current.model_limits } : {}),
       })
-      // Success is not acknowledged until the canonical provider snapshot has
-      // been reloaded. This keeps the form aligned with server-authoritative
-      // defaults even if the backend normalized the submitted values.
+
       const refreshed = await loadProviderInstances()
       const confirmed = draftFromDefaults(
         refreshed.defaults,
         refreshed.default_provider_instance_id ?? "",
       )
       setDraft(confirmed)
-      setBaseline(JSON.stringify(confirmed))
+      setBaseline(serializeDraft(confirmed))
       dirtyRef.current = false
-      setSaved(true)
-      setTimeout(() => setSaved(false), 2500)
-    } catch (e) {
-      setError(getErrorMessage(e))
+
+      const remainingIssues = findProviderSnapshotRelationIssues(refreshed)
+      if (remainingIssues.length > 0) {
+        setError(
+          `偏好已保存，但仍有 ${remainingIssues.length} 处失效引用；请完成其余替换后再使用聊天。`,
+        )
+      } else {
+        setSaved(true)
+        setTimeout(() => setSaved(false), 2500)
+      }
+    } catch (caught) {
+      setError(getErrorMessage(caught))
     } finally {
       setSaving(false)
     }
   }
 
   const providerOptions = (current: string) => {
-    const known = instances.some((i) => i.id === current)
+    const known = instances.some((instance) => instance.id === current)
     return (
       <>
-        {current && !known ? <SelectItem value={current}>{current}(已删除)</SelectItem> : null}
-        {instances.map((i) => (
-          <SelectItem key={i.id} value={i.id}>
-            {i.label || i.type}
-            {i.id === defaultId ? " · 默认" : ""}
+        {current && !known ? (
+          <SelectItem value={current} disabled>
+            {current}(已失效，请替换)
+          </SelectItem>
+        ) : null}
+        {instances.map((instance) => (
+          <SelectItem key={instance.id} value={instance.id}>
+            {instance.label || instance.type}
+            {instance.id === defaultId ? " · 默认" : ""}
           </SelectItem>
         ))}
       </>
     )
   }
 
-  if (providerStatus !== "ready") {
+  if (!canManage) {
     const message =
       providerStatus === "incompatible"
         ? "当前 Bamboo 的提供方配置格式与 Lotus Next 不兼容。"
@@ -166,8 +253,16 @@ export function DefaultsEditor() {
           : "正在加载提供方设置…"
     return (
       <section className="rounded-lg border p-3">
-        <p role={providerStatus === "unavailable" || providerStatus === "incompatible" ? "alert" : undefined} className="text-xs text-muted-foreground">
-          {message}{providerError ? ` ${providerError}` : ""}
+        <p
+          role={
+            providerStatus === "unavailable" || providerStatus === "incompatible"
+              ? "alert"
+              : undefined
+          }
+          className="text-xs text-muted-foreground"
+        >
+          {message}
+          {providerError ? ` ${providerError}` : ""}
         </p>
       </section>
     )
@@ -177,50 +272,109 @@ export function DefaultsEditor() {
     <section className="rounded-lg border p-3">
       <div className="mb-2 text-xs font-medium text-muted-foreground">默认模型偏好</div>
       <p className="mb-2 text-xs text-muted-foreground">
-        按用途指定模型;未设置的用途回落到「对话」模型。
+        按用途指定模型；未设置的用途回落到「对话」模型。模型 ID 可从发现结果选择，也可手动输入。
       </p>
+
+      {hasDefaultIdIssue(repairIssues) ? (
+        <p role="alert" className="mb-2 rounded-md border border-amber-500/50 p-2 text-xs text-amber-700 dark:text-amber-300">
+          默认实例已失效。请在上方实例列表中点击一个现有实例的圆形勾选按钮，将它显式设为默认。
+        </p>
+      ) : null}
+
       <div className="space-y-2">
         {ROLES.map((role) => {
-          const v = draft[role.key]
-          const models = v.provider && catalog ? getModelsForProvider(v.provider) : []
-          const listId = `defaults-models-${role.key}`
+          const value = draft.roles[role.key]
+          const models = value.provider && catalog ? getModelsForProvider(value.provider) : []
+          const invalid = hasRoleIssue(repairIssues, role.key)
           return (
-            <div key={role.key} className="grid grid-cols-[5.5rem_1fr_1fr] items-center gap-2">
+            <div
+              key={role.key}
+              className={cn(
+                "grid grid-cols-[5.5rem_1fr_1fr] items-center gap-2 rounded-md",
+                invalid && "border border-amber-500/50 bg-amber-500/5 p-1",
+              )}
+            >
               <span className="truncate text-xs text-muted-foreground">{role.label}</span>
               <Select
-                value={v.provider || UNSET}
-                onValueChange={(val) =>
-                  setRole(role.key, val === UNSET ? { provider: "", model: "" } : { provider: val })
-                }
+                value={value.provider || UNSET}
+                onValueChange={(provider) => {
+                  if (provider === UNSET) {
+                    setRole(role.key, emptyRef())
+                    return
+                  }
+                  setRole(role.key, {
+                    provider,
+                    model: provider === value.provider ? value.model : "",
+                  })
+                }}
               >
-                <SelectTrigger className="w-full">
+                <SelectTrigger className="w-full" aria-label={`${role.label}提供方`}>
                   <SelectValue placeholder="提供方" />
                 </SelectTrigger>
                 <SelectContent>
-                  {role.required ? null : <SelectItem value={UNSET}>未设置</SelectItem>}
-                  {providerOptions(v.provider)}
+                  {!role.required && !invalid ? <SelectItem value={UNSET}>未设置</SelectItem> : null}
+                  {providerOptions(value.provider)}
                 </SelectContent>
               </Select>
-              <div>
-                <Input
-                  value={v.model}
-                  placeholder="模型名"
-                  list={models.length > 0 ? listId : undefined}
-                  disabled={!v.provider}
-                  onChange={(e) => setRole(role.key, { model: e.target.value })}
-                />
-                {models.length > 0 ? (
-                  <datalist id={listId}>
-                    {models.map((m) => (
-                      <option key={m.reference.model} value={m.reference.model} />
-                    ))}
-                  </datalist>
-                ) : null}
-              </div>
+              <EditableModelCombobox
+                label={`${role.label}模型`}
+                hideLabel
+                value={value.model}
+                models={models}
+                placeholder="模型 ID"
+                disabled={!value.provider}
+                onChange={(model) => setRole(role.key, { model })}
+              />
             </div>
           )
         })}
       </div>
+
+      {Object.keys(draft.subagentModels).length > 0 ? (
+        <div className="mt-3 space-y-2">
+          <div className="text-xs font-medium text-muted-foreground">子代理模型映射</div>
+          {Object.entries(draft.subagentModels).map(([subagent, value]) => {
+            const models = value.provider && catalog ? getModelsForProvider(value.provider) : []
+            const invalid = hasSubagentIssue(repairIssues, subagent)
+            return (
+              <div
+                key={subagent}
+                className={cn(
+                  "grid grid-cols-[5.5rem_1fr_1fr] items-center gap-2 rounded-md",
+                  invalid && "border border-amber-500/50 bg-amber-500/5 p-1",
+                )}
+              >
+                <span className="truncate text-xs text-muted-foreground" title={subagent}>
+                  {subagent}
+                </span>
+                <Select
+                  value={value.provider}
+                  onValueChange={(provider) =>
+                    setSubagent(subagent, {
+                      provider,
+                      model: provider === value.provider ? value.model : "",
+                    })
+                  }
+                >
+                  <SelectTrigger className="w-full" aria-label={`子代理 ${subagent} 提供方`}>
+                    <SelectValue placeholder="提供方" />
+                  </SelectTrigger>
+                  <SelectContent>{providerOptions(value.provider)}</SelectContent>
+                </Select>
+                <EditableModelCombobox
+                  label={`子代理 ${subagent} 模型`}
+                  hideLabel
+                  value={value.model}
+                  models={models}
+                  placeholder="模型 ID"
+                  disabled={!value.provider}
+                  onChange={(model) => setSubagent(subagent, { model })}
+                />
+              </div>
+            )
+          })}
+        </div>
+      ) : null}
 
       {error ? <p className="mt-2 text-xs text-destructive">{error}</p> : null}
 

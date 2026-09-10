@@ -1064,6 +1064,323 @@ test("production UI completes and rehydrates one real Bamboo chat round trip", a
   }
 });
 
+test("production Provider add discovers models, accepts custom IDs, and repairs defaults", async ({
+  context,
+  page,
+}) => {
+  const contract = readRuntimeContract();
+  const apiKey = requiredEnvironment("LOTUS_REAL_PROVIDER_API_KEY");
+  const providerLabel = "Lotus Provider picker E2E";
+  const providerBaseUrl = "http://127.0.0.1:18080/v1";
+  const instancesPath = "/api/v1/bamboo/settings/provider-instances";
+  const setDefaultPath = `${instancesPath}/default`;
+  const configPath = "/api/v1/bamboo/config";
+  const fetchModelsPath = "/api/v1/bamboo/provider-catalog/fetch-models";
+  const selectedModel = "gpt-4o-mini";
+  const customModel = "lotus-custom-model-e2e";
+  const observation = observePage(page, "provider-add-real-bamboo");
+  let createdId: string | undefined;
+
+  const initialConfig = asRecord(
+    await fetchJson(new URL(configPath, contract.baseUrl)),
+  );
+  const initialDefaults = asRecord(initialConfig?.defaults);
+  const initialProviderDocument = asRecord(
+    await fetchJson(new URL(instancesPath, contract.baseUrl)),
+  );
+  const initialDefaultId = stringField(
+    initialProviderDocument,
+    "default_provider_instance_id",
+  );
+  if (!initialDefaults || !initialDefaultId) {
+    throw new Error("Real Bamboo provider defaults were not initialized");
+  }
+
+  const mutateJson = async (
+    method: "POST" | "DELETE",
+    path: string,
+    body?: unknown,
+  ): Promise<Response> => {
+    const response = await fetch(new URL(path, contract.baseUrl), {
+      method,
+      ...(body === undefined
+        ? {}
+        : {
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify(body),
+          }),
+      signal: AbortSignal.timeout(5_000),
+    });
+    if (!response.ok) {
+      throw new Error(
+        `${method} ${path} returned ${response.status}: ${await response.text()}`,
+      );
+    }
+    return response;
+  };
+  const readProviderDocument = async (): Promise<JsonRecord | null> =>
+    asRecord(await fetchJson(new URL(instancesPath, contract.baseUrl)));
+  const readCreatedConfig = async (): Promise<JsonRecord | null> => {
+    const document = await readProviderDocument();
+    const instances = Array.isArray(document?.instances)
+      ? document.instances
+      : [];
+    const created = instances
+      .map(asRecord)
+      .find((instance) => stringField(instance, "id") === createdId);
+    return asRecord(created?.config);
+  };
+  const saveModel = async (input: Locator, expectedModel: string) => {
+    const responsePromise = page.waitForResponse(
+      (response) =>
+        response.request().method() === "PUT" &&
+        new URL(response.url()).pathname ===
+          `${instancesPath}/${encodeURIComponent(createdId!)}`,
+    );
+    await input
+      .locator("xpath=ancestor::li[1]")
+      .getByRole("button", { name: "保存", exact: true })
+      .click();
+    expect((await responsePromise).ok()).toBe(true);
+    await expect
+      .poll(async () => stringField(await readCreatedConfig(), "model"))
+      .toBe(expectedModel);
+  };
+
+  await installSessionEntry(context, contract);
+  try {
+    await page.goto(contract.baseUrl.href, { waitUntil: "domcontentloaded" });
+    await expect(
+      page.getByRole("textbox", { name: "消息", exact: true }),
+    ).toBeVisible();
+    await assertBootstrap(observation);
+    await assertLiveSocket(observation, contract.baseUrl.origin);
+    await page.getByRole("button", { name: "系统设置" }).click();
+    await page.getByRole("button", { name: "提供方", exact: true }).click();
+    await page.getByRole("button", { name: "新增", exact: true }).click();
+
+    const providerType = page.getByRole("combobox", {
+      name: "提供方类型",
+    });
+    await providerType.click();
+    const selectContent = page.locator('[data-slot="select-content"]');
+    const settingsDialog = page.locator(
+      '[data-slot="responsive-dialog-content"]',
+    );
+    const zIndex = (locator: Locator) =>
+      locator.evaluate((element) =>
+        Number.parseInt(
+          element.ownerDocument.defaultView?.getComputedStyle(element).zIndex ??
+            "0",
+          10,
+        ),
+      );
+    await expect(selectContent).toBeVisible();
+    expect(await zIndex(selectContent)).toBeGreaterThan(
+      await zIndex(settingsDialog),
+    );
+    const openAiOption = page.getByRole("option", {
+      name: "OpenAI",
+      exact: true,
+    });
+    await expect(openAiOption).toBeVisible();
+    await openAiOption.click();
+
+    const nameInput = page.getByLabel("名称", { exact: true });
+    await nameInput.fill(providerLabel);
+    await page.getByLabel("API Key", { exact: true }).fill(apiKey);
+    await page
+      .getByLabel("Base URL(可选)", { exact: true })
+      .fill(providerBaseUrl);
+
+    const createResponsePromise = page.waitForResponse(
+      (response) =>
+        response.request().method() === "POST" &&
+        new URL(response.url()).pathname === instancesPath,
+    );
+    const discoveryRequestPromise = page.waitForRequest(
+      (request) =>
+        request.method() === "POST" &&
+        new URL(request.url()).pathname === fetchModelsPath,
+    );
+    const discoveryResponsePromise = page.waitForResponse(
+      (response) =>
+        response.request().method() === "POST" &&
+        new URL(response.url()).pathname === fetchModelsPath,
+    );
+    await nameInput
+      .locator("..")
+      .locator("..")
+      .getByRole("button", { name: "保存", exact: true })
+      .click();
+
+    const createResponse = await createResponsePromise;
+    expect(createResponse.status()).toBe(201);
+    const created = asRecord((await createResponse.json()) as unknown);
+    createdId = stringField(created, "id");
+    expect(createdId).toBeTruthy();
+    expect(created).toMatchObject({
+      type: "openai",
+      label: providerLabel,
+      enabled: true,
+    });
+    expect((await discoveryResponsePromise).ok()).toBe(true);
+    expect((await discoveryRequestPromise).postDataJSON()).toEqual({
+      provider: createdId,
+    });
+    await expect(
+      page.getByText("实例已保存，并发现 1 个模型。请选择模型后再次保存。", {
+        exact: true,
+      }),
+    ).toBeVisible();
+
+    let modelInput = page.getByRole("combobox", {
+      name: "默认模型(可选)",
+    });
+    await modelInput.click();
+    await expect(
+      page.getByRole("option", { name: selectedModel, exact: true }),
+    ).toBeVisible();
+    await modelInput.press("ArrowDown");
+    await modelInput.press("Enter");
+    await expect(modelInput).toHaveValue(selectedModel);
+    await saveModel(modelInput, selectedModel);
+
+    await page
+      .locator("li")
+      .filter({ hasText: providerLabel })
+      .getByRole("button", { name: "编辑", exact: true })
+      .click();
+    modelInput = page.getByRole("combobox", {
+      name: "默认模型(可选)",
+    });
+    await modelInput.fill(customModel);
+    await expect(modelInput).toHaveValue(customModel);
+    await saveModel(modelInput, customModel);
+    expect(stringField(await readCreatedConfig(), "api_key")).toBe(
+      "****...****",
+    );
+    expect(await page.locator("body").innerText()).not.toContain(apiKey);
+
+    const createdRow = page.locator("li").filter({ hasText: providerLabel });
+    const setDefaultResponsePromise = page.waitForResponse(
+      (response) =>
+        response.request().method() === "POST" &&
+        new URL(response.url()).pathname === setDefaultPath,
+    );
+    await createdRow
+      .getByRole("button", { name: "设为默认", exact: true })
+      .click();
+    expect((await setDefaultResponsePromise).ok()).toBe(true);
+    await expect(createdRow).toBeVisible();
+    await expect
+      .poll(async () =>
+        stringField(
+          await readProviderDocument(),
+          "default_provider_instance_id",
+        ),
+      )
+      .toBe(createdId);
+
+    const chatProvider = page.getByRole("combobox", {
+      name: "对话(必填)提供方",
+    });
+    await chatProvider.click();
+    await page
+      .getByRole("option", {
+        name: `${providerLabel} · 默认`,
+        exact: true,
+      })
+      .click();
+    const chatModel = page.getByRole("combobox", {
+      name: "对话(必填)模型",
+    });
+    await chatModel.fill(customModel);
+    const initialDefaultsSavePromise = page.waitForResponse(
+      (response) =>
+        response.request().method() === "POST" &&
+        new URL(response.url()).pathname === configPath,
+    );
+    await page
+      .getByRole("button", { name: "保存偏好", exact: true })
+      .click();
+    expect((await initialDefaultsSavePromise).ok()).toBe(true);
+    await expect(page.getByText("已保存", { exact: true })).toBeVisible();
+
+    await mutateJson(
+      "DELETE",
+      `${instancesPath}/${encodeURIComponent(createdId!)}`,
+    );
+    await page.getByRole("button", { name: "通用", exact: true }).click();
+    await page.getByRole("button", { name: "提供方", exact: true }).click();
+    await expect(page.getByText(/默认提供方引用已失效/)).toBeVisible();
+
+    const repairProvider = page.getByRole("combobox", {
+      name: "对话(必填)提供方",
+    });
+    await repairProvider.click();
+    await page
+      .getByRole("option", { name: /Lotus real Bamboo E2E/ })
+      .click();
+    const repairModel = page.getByRole("combobox", {
+      name: "对话(必填)模型",
+    });
+    await repairModel.fill(selectedModel);
+    const repairResponsePromise = page.waitForResponse(
+      (response) =>
+        response.request().method() === "POST" &&
+        new URL(response.url()).pathname === configPath,
+    );
+    await page
+      .getByRole("button", { name: "保存偏好", exact: true })
+      .click();
+    expect((await repairResponsePromise).ok()).toBe(true);
+    await expect(page.getByText("已保存", { exact: true })).toBeVisible();
+    await expect(page.getByText(/默认提供方引用已失效/)).toHaveCount(0);
+
+    const repaired = await readProviderDocument();
+    expect(stringField(repaired, "default_provider_instance_id")).toBe(
+      initialDefaultId,
+    );
+    expect(asRecord(asRecord(repaired?.defaults)?.chat)).toEqual({
+      provider: initialDefaultId,
+      model: selectedModel,
+    });
+
+    await page.getByRole("button", { name: "关闭设置" }).click();
+    await page.waitForLoadState("networkidle");
+    await assertCleanPage(observation, contract.baseUrl.origin);
+  } finally {
+    await observation.stop();
+    await mutateJson("POST", configPath, {
+      defaults: initialDefaults,
+      ...(initialConfig?.model_limits !== undefined
+        ? { model_limits: initialConfig.model_limits }
+        : {}),
+    });
+    await mutateJson("POST", setDefaultPath, {
+      default_provider_instance_id: initialDefaultId,
+    });
+    const document = await readProviderDocument();
+    const instances = Array.isArray(document?.instances)
+      ? document.instances
+      : [];
+    const cleanupId = instances
+      .map(asRecord)
+      .find(
+        (instance) =>
+          stringField(instance, "id") === createdId ||
+          stringField(instance, "label") === providerLabel,
+      )?.id;
+    if (typeof cleanupId === "string") {
+      await mutateJson(
+        "DELETE",
+        `${instancesPath}/${encodeURIComponent(cleanupId)}`,
+      );
+    }
+  }
+});
+
 test("production Jiandu settings manage and isolate real Project memory on desktop and phone", async ({
   browser,
 }, testInfo) => {

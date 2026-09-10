@@ -19,6 +19,20 @@ export interface DefaultsConfig {
   subagent_models?: Record<string, ProviderModelRef>;
 }
 
+export const PROVIDER_DEFAULT_MODEL_REF_KEYS = [
+  "chat",
+  "fast",
+  "task_summary",
+  "vision",
+  "memory_background",
+  "planning",
+  "search",
+  "code_review",
+  "sub_agent",
+] as const;
+
+export type ProviderDefaultModelRefKey = (typeof PROVIDER_DEFAULT_MODEL_REF_KEYS)[number];
+
 export interface RequestOverridesConfig {
   common?: RequestScopeOverride;
   endpoints?: Record<string, RequestScopeOverride>;
@@ -142,6 +156,25 @@ export class ProviderSnapshotValidationError extends Error {
   }
 }
 
+export type ProviderSnapshotRelationIssue =
+  | {
+      kind: "default_provider_instance";
+      path: "default_provider_instance_id";
+      provider: string;
+    }
+  | {
+      kind: "default_model_ref";
+      path: `defaults.${ProviderDefaultModelRefKey}`;
+      provider: string;
+      role: ProviderDefaultModelRefKey;
+    }
+  | {
+      kind: "subagent_model_ref";
+      path: `defaults.subagent_models.${string}`;
+      provider: string;
+      subagent: string;
+    };
+
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
@@ -152,30 +185,35 @@ const isModelRef = (value: unknown): value is ProviderModelRef =>
   typeof value.model === "string" &&
   value.model.trim().length > 0;
 
-const assertDefaults = (value: unknown, instanceIds: ReadonlySet<string>): DefaultsConfig | undefined => {
+/** Validate one untrusted provider instance, including create responses. */
+export const parseProviderInstance = (
+  value: unknown,
+  context = "Provider instance",
+): ProviderInstance => {
+  if (
+    !isRecord(value) ||
+    typeof value.id !== "string" ||
+    value.id.trim().length === 0 ||
+    !PROVIDER_KINDS.includes(value.type as ProviderKind) ||
+    typeof value.label !== "string" ||
+    typeof value.enabled !== "boolean" ||
+    !isRecord(value.config)
+  ) {
+    throw new ProviderSnapshotValidationError(`${context} is invalid`);
+  }
+  return value as unknown as ProviderInstance;
+};
+
+const assertDefaults = (value: unknown): DefaultsConfig | undefined => {
   if (value === undefined) return undefined;
   if (!isRecord(value) || !isModelRef(value.chat)) {
     throw new ProviderSnapshotValidationError("Provider defaults must contain a valid chat model reference");
   }
 
-  const modelRefKeys = [
-    "chat",
-    "fast",
-    "task_summary",
-    "vision",
-    "memory_background",
-    "planning",
-    "search",
-    "code_review",
-    "sub_agent",
-  ] as const;
-  for (const key of modelRefKeys) {
+  for (const key of PROVIDER_DEFAULT_MODEL_REF_KEYS) {
     const modelRef = value[key];
     if (modelRef !== undefined && !isModelRef(modelRef)) {
       throw new ProviderSnapshotValidationError(`Provider defaults.${key} is invalid`);
-    }
-    if (isModelRef(modelRef) && !instanceIds.has(modelRef.provider)) {
-      throw new ProviderSnapshotValidationError(`Provider defaults.${key} references an unknown instance`);
     }
   }
 
@@ -185,7 +223,7 @@ const assertDefaults = (value: unknown, instanceIds: ReadonlySet<string>): Defau
       throw new ProviderSnapshotValidationError("Provider defaults.subagent_models is invalid");
     }
     for (const modelRef of Object.values(subagentModels)) {
-      if (!isModelRef(modelRef) || !instanceIds.has(modelRef.provider)) {
+      if (!isModelRef(modelRef)) {
         throw new ProviderSnapshotValidationError("Provider defaults.subagent_models contains an invalid reference");
       }
     }
@@ -200,20 +238,9 @@ export const parseProviderInstancesConfig = (value: unknown): ProviderInstancesC
     throw new ProviderSnapshotValidationError("Provider instances payload is invalid");
   }
 
-  const instances: ProviderInstance[] = value.instances.map((entry, index) => {
-    if (
-      !isRecord(entry) ||
-      typeof entry.id !== "string" ||
-      entry.id.trim().length === 0 ||
-      !PROVIDER_KINDS.includes(entry.type as ProviderKind) ||
-      typeof entry.label !== "string" ||
-      typeof entry.enabled !== "boolean" ||
-      !isRecord(entry.config)
-    ) {
-      throw new ProviderSnapshotValidationError(`Provider instance at index ${index} is invalid`);
-    }
-    return entry as unknown as ProviderInstance;
-  });
+  const instances: ProviderInstance[] = value.instances.map((entry, index) =>
+    parseProviderInstance(entry, `Provider instance at index ${index}`),
+  );
 
   const instanceIds = new Set(instances.map((instance) => instance.id));
   if (instanceIds.size !== instances.length) {
@@ -228,10 +255,6 @@ export const parseProviderInstancesConfig = (value: unknown): ProviderInstancesC
     throw new ProviderSnapshotValidationError("Default provider instance id is invalid");
   }
   const defaultId = typeof rawDefault === "string" ? rawDefault : null;
-  if (defaultId && !instanceIds.has(defaultId)) {
-    throw new ProviderSnapshotValidationError("Default provider instance id references an unknown instance");
-  }
-
   let features: ProviderInstancesConfig["features"];
   if (value.features !== undefined) {
     if (!isRecord(value.features) ||
@@ -245,9 +268,57 @@ export const parseProviderInstancesConfig = (value: unknown): ProviderInstancesC
   return {
     default_provider_instance_id: defaultId,
     instances,
-    defaults: assertDefaults(value.defaults, instanceIds),
+    defaults: assertDefaults(value.defaults),
     features,
   };
+};
+
+/**
+ * Find reference-integrity failures that are safe to expose for repair.
+ *
+ * The payload has already passed structural validation at this point. Unknown
+ * instance references must remain unavailable to chat/runtime consumers, but
+ * they must not hide otherwise valid instances from the Settings repair UI.
+ */
+export const findProviderSnapshotRelationIssues = (
+  snapshot: ProviderInstancesConfig,
+): ProviderSnapshotRelationIssue[] => {
+  const instanceIds = new Set(snapshot.instances.map((instance) => instance.id));
+  const issues: ProviderSnapshotRelationIssue[] = [];
+
+  const defaultId = snapshot.default_provider_instance_id;
+  if (defaultId && !instanceIds.has(defaultId)) {
+    issues.push({
+      kind: "default_provider_instance",
+      path: "default_provider_instance_id",
+      provider: defaultId,
+    });
+  }
+
+  for (const role of PROVIDER_DEFAULT_MODEL_REF_KEYS) {
+    const modelRef = snapshot.defaults?.[role];
+    if (modelRef && !instanceIds.has(modelRef.provider)) {
+      issues.push({
+        kind: "default_model_ref",
+        path: `defaults.${role}`,
+        provider: modelRef.provider,
+        role,
+      });
+    }
+  }
+
+  for (const [subagent, modelRef] of Object.entries(snapshot.defaults?.subagent_models ?? {})) {
+    if (!instanceIds.has(modelRef.provider)) {
+      issues.push({
+        kind: "subagent_model_ref",
+        path: `defaults.subagent_models.${subagent}`,
+        provider: modelRef.provider,
+        subagent,
+      });
+    }
+  }
+
+  return issues;
 };
 
 export const OPENAI_MODELS = [
