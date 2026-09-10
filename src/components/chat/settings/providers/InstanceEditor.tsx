@@ -1,6 +1,7 @@
 import { useState } from "react"
 import { ChevronDown, ChevronRight } from "lucide-react"
 import type { ProviderInstance, ProviderKind } from "@shared/types/providerConfig"
+import type { ProviderModelDescriptor } from "@shared/types/providerModelRef"
 import { PROVIDER_LABELS } from "@shared/types/providerConfig"
 import { getErrorMessage } from "@services/api"
 import { isMaskedSecret } from "@/lib/secrets"
@@ -17,6 +18,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { CopilotAuth } from "./CopilotAuth"
+import { EditableModelCombobox } from "./EditableModelCombobox"
 
 const PROVIDER_TYPES: ProviderKind[] = ["anthropic", "openai", "gemini", "copilot", "bodhi"]
 const REASONING_EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const
@@ -192,12 +194,15 @@ export function InstanceEditor({
   instance,
   onSave,
   onCancel,
+  modelOptions = [],
 }: {
   /** null = create mode */
   instance: ProviderInstance | null
   /** Should throw on failure — the error is surfaced inline. */
   onSave: (payload: InstanceSavePayload) => Promise<void>
   onCancel: () => void
+  /** Server-discovered suggestions; custom ids remain valid without them. */
+  modelOptions?: readonly ProviderModelDescriptor[]
 }) {
   const isEdit = instance != null
   const hasStoredApiKey = isMaskedSecret(
@@ -259,7 +264,7 @@ export function InstanceEditor({
           厂商预设(可选,仅快速填充表单,不会保存)
         </span>
         <Select value={presetId || UNSET} onValueChange={applyPreset}>
-          <SelectTrigger className="w-full">
+          <SelectTrigger className="w-full" aria-label="厂商预设">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -293,7 +298,7 @@ export function InstanceEditor({
           }}
           disabled={isEdit}
         >
-          <SelectTrigger className="w-full">
+          <SelectTrigger className="w-full" aria-label="提供方类型">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -371,10 +376,11 @@ export function InstanceEditor({
         </div>
       ) : null}
 
-      <Field
+      <EditableModelCombobox
         label="默认模型(可选)"
         value={draft.model}
         onChange={(v) => patch({ model: v })}
+        models={modelOptions}
         placeholder={preset ? preset.suggested_models.join(", ") : "glm-5.2"}
       />
 

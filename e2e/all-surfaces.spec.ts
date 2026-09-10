@@ -279,6 +279,36 @@ test("embedded base path owns entry, assets, lazy settings, and return navigatio
   await surface.getByRole("button", { name: "提供方", exact: true }).click()
   await expect(surface.getByText("Fixture provider", { exact: true }).first()).toBeVisible()
   await expect(surface.getByText("OpenAI · 默认", { exact: true })).toBeVisible()
+
+  await surface.getByRole("button", { name: "新增", exact: true }).click()
+  const providerType = surface.getByRole("combobox", { name: "提供方类型" })
+  await providerType.click()
+  const selectContent = surface.locator('[data-slot="select-content"]')
+  const settingsDialog = surface.locator('[data-slot="responsive-dialog-content"]')
+  await expect(selectContent).toBeVisible()
+  const [selectZIndex, dialogZIndex] = await Promise.all([
+    selectContent.evaluate((element) =>
+      Number.parseInt(element.ownerDocument.defaultView?.getComputedStyle(element).zIndex ?? "0", 10),
+    ),
+    settingsDialog.evaluate((element) =>
+      Number.parseInt(element.ownerDocument.defaultView?.getComputedStyle(element).zIndex ?? "0", 10),
+    ),
+  ])
+  expect(selectZIndex, "portalled Select content must render above System Settings").toBeGreaterThan(
+    dialogZIndex,
+  )
+  await surface.getByRole("option", { name: "Anthropic", exact: true }).press("Escape")
+  await expect(selectContent).toBeHidden()
+  await expect(surface.getByRole("heading", { name: "系统设置" })).toBeVisible()
+
+  await providerType.press("ArrowDown")
+  await expect(selectContent).toBeVisible()
+  await surface.getByRole("option", { name: "OpenAI", exact: true }).press("Enter")
+  await expect(providerType).toContainText("OpenAI")
+  await providerType.press("ArrowDown")
+  await surface.getByRole("option", { name: "OpenAI", exact: true }).press("Escape")
+  await expect(selectContent).toBeHidden()
+  await expect(surface.getByRole("heading", { name: "系统设置" })).toBeVisible()
   await expect.poll(
     () => observation.staticUrls.some((url) => pathname(url) === settingsPath),
     { message: "the Settings feature should load from the embedded artifact base" },

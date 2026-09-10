@@ -36,6 +36,7 @@ function ResponsiveDialogContent({
   showCloseButton = true,
   /** When false, clicking outside / pressing Esc will NOT close (required prompts). */
   dismissable = true,
+  onEscapeKeyDown,
   ...props
 }: React.ComponentProps<typeof DialogPrimitive.Content> & {
   showCloseButton?: boolean
@@ -49,7 +50,20 @@ function ResponsiveDialogContent({
       <DialogPrimitive.Content
         data-slot="responsive-dialog-content"
         onInteractOutside={dismissable ? undefined : (e) => e.preventDefault()}
-        onEscapeKeyDown={dismissable ? undefined : (e) => e.preventDefault()}
+        onEscapeKeyDown={(event) => {
+          const target = event.target
+          const ownerDocument =
+            (target as { ownerDocument?: Document | null } | null)?.ownerDocument ?? document
+          const targetElement =
+            typeof (target as { closest?: unknown } | null)?.closest === "function"
+              ? (target as Element)
+              : ownerDocument.activeElement
+          const expandedCombobox = Boolean(
+            targetElement?.closest('[role="combobox"][aria-expanded="true"]'),
+          )
+          if (!dismissable || expandedCombobox) event.preventDefault()
+          onEscapeKeyDown?.(event)
+        }}
         className={cn(
           "bg-card text-card-foreground data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 fixed z-[130] flex flex-col border shadow-xl outline-none duration-200",
           // Mobile: bottom sheet
