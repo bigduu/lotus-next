@@ -277,8 +277,11 @@ test("embedded base path owns entry, assets, lazy settings, and return navigatio
   await expect(surface.getByText("Bodhi · lotus-next")).toBeVisible()
   await expect(surface.getByText("fixture-model", { exact: true }).first()).toBeVisible()
   await surface.getByRole("button", { name: "提供方", exact: true }).click()
-  await expect(surface.getByText("Fixture provider", { exact: true }).first()).toBeVisible()
-  await expect(surface.getByText("OpenAI · 默认", { exact: true })).toBeVisible()
+  const fixtureProviderRow = surface.locator("li").filter({ hasText: "Fixture provider" })
+  await expect(fixtureProviderRow.getByText("Fixture provider", { exact: true })).toBeVisible()
+  await expect(fixtureProviderRow.getByText("OpenAI", { exact: true })).toBeVisible()
+  await expect(fixtureProviderRow.getByRole("button", { name: "设为默认" })).toHaveCount(0)
+  await expect(surface.getByText("OpenAI · 默认", { exact: true })).toHaveCount(0)
 
   await surface.getByRole("button", { name: "新增", exact: true }).click()
   const providerType = surface.getByRole("combobox", { name: "提供方类型" })

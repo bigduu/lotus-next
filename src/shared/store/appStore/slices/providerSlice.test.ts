@@ -5,7 +5,6 @@ const service = vi.hoisted(() => ({
   createProviderInstance: vi.fn(),
   updateProviderInstance: vi.fn(),
   deleteProviderInstance: vi.fn(),
-  setDefaultProviderInstance: vi.fn(),
   getProviderCatalog: vi.fn(),
   fetchCatalogModels: vi.fn(),
 }));
@@ -323,7 +322,6 @@ describe("provider instance authority", () => {
   it.each([
     ["updateProviderInstance", "updateProviderInstance", ["work", { enabled: false }]],
     ["deleteProviderInstance", "deleteProviderInstance", ["work"]],
-    ["setDefaultProviderInstance", "setDefaultProviderInstance", ["work"]],
   ] as const)("refreshes the authoritative snapshot after %s", async (action, method, args) => {
     service[method].mockResolvedValue(undefined);
     service.getProviderInstances.mockResolvedValue(snapshot("refreshed"));

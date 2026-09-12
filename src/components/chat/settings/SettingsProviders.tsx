@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react"
-import { Trash2, Plus, Check, Pencil, RefreshCw } from "lucide-react"
+import { Trash2, Plus, Pencil, RefreshCw } from "lucide-react"
 import { getErrorMessage } from "@services/api"
 import { useProviderStore } from "@shared/store/appStore/slices/providerSlice"
 import type { ProviderInstance } from "@shared/types/providerConfig"
@@ -27,14 +27,14 @@ export function SettingsProviders() {
   const createProviderInstance = useProviderStore((s) => s.createProviderInstance)
   const updateProviderInstance = useProviderStore((s) => s.updateProviderInstance)
   const deleteProviderInstance = useProviderStore((s) => s.deleteProviderInstance)
-  const setDefaultProviderInstance = useProviderStore((s) => s.setDefaultProviderInstance)
   const loadCatalog = useProviderStore((s) => s.loadCatalog)
   const fetchCatalogModels = useProviderStore((s) => s.fetchCatalogModels)
   const catalog = useProviderStore((s) => s.catalog)
 
   const settingsSnapshot = snapshot ?? repairSnapshot
   const instances = settingsSnapshot?.instances ?? []
-  const defaultId = settingsSnapshot?.default_provider_instance_id ?? null
+  const chatProviderId = settingsSnapshot?.defaults?.chat.provider ?? null
+  const compatibilityProviderId = settingsSnapshot?.default_provider_instance_id ?? null
   const canManage = providerStatus === "ready" || providerStatus === "degraded"
 
   const [editing, setEditing] = useState<string | null>(null)
@@ -128,7 +128,21 @@ export function SettingsProviders() {
     }
   }
 
+  const disabledProviderGuidance = (id: string): string | null => {
+    if (id === chatProviderId) {
+      return "请先将「对话」模型偏好切换到其他已启用提供方并保存，再停用此实例。"
+    }
+    if (id === compatibilityProviderId) {
+      return "请先在「默认模型偏好」中确认并保存「对话」提供方，再停用此实例。"
+    }
+    return null
+  }
+
   const updateInstance = async (id: string, v: InstanceSavePayload) => {
+    if (!v.enabled) {
+      const guidance = disabledProviderGuidance(id)
+      if (guidance) throw new Error(guidance)
+    }
     // The backend PUT ignores `type` — provider type is immutable after create.
     await updateProviderInstance(id, {
       label: v.label,
@@ -141,19 +155,17 @@ export function SettingsProviders() {
 
   const toggleEnabled = async (inst: ProviderInstance, next: boolean) => {
     setListError(null)
+    if (!next) {
+      const guidance = disabledProviderGuidance(inst.id)
+      if (guidance) {
+        setListError(guidance)
+        return
+      }
+    }
     try {
       await updateProviderInstance(inst.id, { enabled: next })
     } catch (e) {
       setListError(`「${inst.label || inst.type}」${next ? "启用" : "停用"}失败:${getErrorMessage(e)}`)
-    }
-  }
-
-  const setDefault = async (inst: ProviderInstance) => {
-    setListError(null)
-    try {
-      await setDefaultProviderInstance(inst.id)
-    } catch (e) {
-      setListError(`设为默认失败:${getErrorMessage(e)}`)
     }
   }
 
@@ -220,7 +232,7 @@ export function SettingsProviders() {
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between">
-        <p className="text-xs text-muted-foreground">配置 LLM 提供方与 API Key。打勾的是默认。</p>
+        <p className="text-xs text-muted-foreground">配置 LLM 提供方、API Key 与可用模型。</p>
         {!adding && canManage && !createRecoveryNotice ? (
           <Button
             size="sm"
@@ -249,7 +261,7 @@ export function SettingsProviders() {
       ) : null}
       {providerStatus === "degraded" ? (
         <div role="alert" className="rounded-lg border border-amber-500/50 bg-amber-500/5 p-3 text-xs text-amber-700 dark:text-amber-300">
-          默认提供方引用已失效（{repairIssues.length} 处）。有效实例仍可管理，但聊天与运行时不会使用这些默认值；请显式选择现有实例和模型完成修复。
+          提供方或模型偏好中有失效引用（{repairIssues.length} 处）。有效实例仍可管理，但聊天与运行时暂不会使用这些偏好；请在下方选择现有实例和模型并保存偏好完成修复。
         </div>
       ) : null}
       {createRecoveryNotice ? (
@@ -279,18 +291,6 @@ export function SettingsProviders() {
             ) : (
               <>
                 <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => void setDefault(inst)}
-                    aria-label="设为默认"
-                    className={cn(
-                      "flex size-5 shrink-0 items-center justify-center rounded-full border",
-                      inst.id === defaultId
-                        ? "border-primary bg-primary text-primary-foreground"
-                        : "text-transparent hover:border-primary",
-                    )}
-                  >
-                    <Check className="size-3" />
-                  </button>
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-1.5">
                       <span className="truncate text-sm font-medium">{inst.label || inst.type}</span>
@@ -302,7 +302,6 @@ export function SettingsProviders() {
                     </div>
                     <div className="truncate text-xs text-muted-foreground">
                       {PROVIDER_LABELS[inst.type] ?? inst.type}
-                      {inst.id === defaultId ? " · 默认" : ""}
                     </div>
                   </div>
                   <Switch

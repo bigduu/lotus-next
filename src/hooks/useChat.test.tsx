@@ -413,11 +413,18 @@ describe("useChat two-phase send lifecycle", () => {
       expect.any(AbortController),
     )
   })
-  it("uses the authoritative default instance model and reasoning effort", async () => {
+  it("uses the authoritative Chat preference instead of the compatibility provider", async () => {
     mocks.appState.selectedModel = undefined
     mocks.providerState.providerSnapshot = {
-      default_provider_instance_id: "instance-openai",
+      default_provider_instance_id: "compatibility-openai",
       instances: [
+        {
+          id: "compatibility-openai",
+          type: "openai",
+          label: "Compatibility OpenAI",
+          enabled: true,
+          config: { reasoning_effort: "low" },
+        },
         {
           id: "instance-openai",
           type: "openai",

@@ -886,9 +886,11 @@ test("production UI completes and rehydrates one real Bamboo chat round trip", a
     await expect(page.getByRole("heading", { name: "系统设置" })).toBeVisible();
     await expect(page.getByText("gpt-4o-mini", { exact: true }).first()).toBeVisible();
     await page.getByRole("button", { name: "提供方", exact: true }).click();
-    const providerRow = page.locator("li").filter({ hasText: "OpenAI · 默认" });
+    const providerRow = page.locator("li").filter({ hasText: "Lotus real Bamboo E2E" });
     await expect(providerRow.getByText("Lotus real Bamboo E2E", { exact: true })).toBeVisible();
-    await expect(providerRow.getByText("OpenAI · 默认", { exact: true })).toBeVisible();
+    await expect(providerRow.getByText("OpenAI", { exact: true })).toBeVisible();
+    await expect(providerRow.getByRole("button", { name: "设为默认" })).toHaveCount(0);
+    await expect(page.getByText("OpenAI · 默认", { exact: true })).toHaveCount(0);
     await providerRow.getByRole("button", { name: "编辑", exact: true }).click();
     const maskedApiKeyInput = page.getByLabel("API Key", { exact: true });
     await expect(maskedApiKeyInput).toHaveValue("");
@@ -1073,7 +1075,6 @@ test("production Provider add discovers models, accepts custom IDs, and repairs 
   const providerLabel = "Lotus Provider picker E2E";
   const providerBaseUrl = "http://127.0.0.1:18080/v1";
   const instancesPath = "/api/v1/bamboo/settings/provider-instances";
-  const setDefaultPath = `${instancesPath}/default`;
   const configPath = "/api/v1/bamboo/config";
   const fetchModelsPath = "/api/v1/bamboo/provider-catalog/fetch-models";
   const selectedModel = "gpt-4o-mini";
@@ -1263,24 +1264,9 @@ test("production Provider add discovers models, accepts custom IDs, and repairs 
     expect(await page.locator("body").innerText()).not.toContain(apiKey);
 
     const createdRow = page.locator("li").filter({ hasText: providerLabel });
-    const setDefaultResponsePromise = page.waitForResponse(
-      (response) =>
-        response.request().method() === "POST" &&
-        new URL(response.url()).pathname === setDefaultPath,
-    );
-    await createdRow
-      .getByRole("button", { name: "设为默认", exact: true })
-      .click();
-    expect((await setDefaultResponsePromise).ok()).toBe(true);
     await expect(createdRow).toBeVisible();
-    await expect
-      .poll(async () =>
-        stringField(
-          await readProviderDocument(),
-          "default_provider_instance_id",
-        ),
-      )
-      .toBe(createdId);
+    await expect(createdRow.getByRole("button", { name: "设为默认" })).toHaveCount(0);
+    await expect(createdRow.getByText(/· 默认/)).toHaveCount(0);
 
     const chatProvider = page.getByRole("combobox", {
       name: "对话(必填)提供方",
@@ -1288,7 +1274,7 @@ test("production Provider add discovers models, accepts custom IDs, and repairs 
     await chatProvider.click();
     await page
       .getByRole("option", {
-        name: `${providerLabel} · 默认`,
+        name: providerLabel,
         exact: true,
       })
       .click();
@@ -1296,6 +1282,11 @@ test("production Provider add discovers models, accepts custom IDs, and repairs 
       name: "对话(必填)模型",
     });
     await chatModel.fill(customModel);
+    const initialDefaultsSaveRequestPromise = page.waitForRequest(
+      (request) =>
+        request.method() === "POST" &&
+        new URL(request.url()).pathname === configPath,
+    );
     const initialDefaultsSavePromise = page.waitForResponse(
       (response) =>
         response.request().method() === "POST" &&
@@ -1305,7 +1296,21 @@ test("production Provider add discovers models, accepts custom IDs, and repairs 
       .getByRole("button", { name: "保存偏好", exact: true })
       .click();
     expect((await initialDefaultsSavePromise).ok()).toBe(true);
+    expect((await initialDefaultsSaveRequestPromise).postDataJSON()).toMatchObject({
+      default_provider_instance: createdId,
+      defaults: {
+        chat: { provider: createdId, model: customModel },
+      },
+    });
     await expect(page.getByText("已保存", { exact: true })).toBeVisible();
+    await expect
+      .poll(async () =>
+        stringField(
+          await readProviderDocument(),
+          "default_provider_instance_id",
+        ),
+      )
+      .toBe(createdId);
 
     await mutateJson(
       "DELETE",
@@ -1313,7 +1318,7 @@ test("production Provider add discovers models, accepts custom IDs, and repairs 
     );
     await page.getByRole("button", { name: "通用", exact: true }).click();
     await page.getByRole("button", { name: "提供方", exact: true }).click();
-    await expect(page.getByText(/默认提供方引用已失效/)).toBeVisible();
+    await expect(page.getByText(/提供方或模型偏好中有失效引用/)).toBeVisible();
 
     const repairProvider = page.getByRole("combobox", {
       name: "对话(必填)提供方",
@@ -1326,6 +1331,11 @@ test("production Provider add discovers models, accepts custom IDs, and repairs 
       name: "对话(必填)模型",
     });
     await repairModel.fill(selectedModel);
+    const repairRequestPromise = page.waitForRequest(
+      (request) =>
+        request.method() === "POST" &&
+        new URL(request.url()).pathname === configPath,
+    );
     const repairResponsePromise = page.waitForResponse(
       (response) =>
         response.request().method() === "POST" &&
@@ -1335,8 +1345,14 @@ test("production Provider add discovers models, accepts custom IDs, and repairs 
       .getByRole("button", { name: "保存偏好", exact: true })
       .click();
     expect((await repairResponsePromise).ok()).toBe(true);
+    expect((await repairRequestPromise).postDataJSON()).toMatchObject({
+      default_provider_instance: initialDefaultId,
+      defaults: {
+        chat: { provider: initialDefaultId, model: selectedModel },
+      },
+    });
     await expect(page.getByText("已保存", { exact: true })).toBeVisible();
-    await expect(page.getByText(/默认提供方引用已失效/)).toHaveCount(0);
+    await expect(page.getByText(/提供方或模型偏好中有失效引用/)).toHaveCount(0);
 
     const repaired = await readProviderDocument();
     expect(stringField(repaired, "default_provider_instance_id")).toBe(
@@ -1354,12 +1370,10 @@ test("production Provider add discovers models, accepts custom IDs, and repairs 
     await observation.stop();
     await mutateJson("POST", configPath, {
       defaults: initialDefaults,
+      default_provider_instance: initialDefaultId,
       ...(initialConfig?.model_limits !== undefined
         ? { model_limits: initialConfig.model_limits }
         : {}),
-    });
-    await mutateJson("POST", setDefaultPath, {
-      default_provider_instance_id: initialDefaultId,
     });
     const document = await readProviderDocument();
     const instances = Array.isArray(document?.instances)

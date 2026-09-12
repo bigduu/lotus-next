@@ -260,9 +260,7 @@ export class SettingsService {
 
   // ── Provider Instances (multi-instance) ──────────────────────────
 
-  /**
-   * Get all provider instances and the default instance id.
-   */
+  /** Get the canonical provider instances and model preferences snapshot. */
   async getProviderInstances(): Promise<unknown> {
     return apiClient.get<unknown>("/bamboo/settings/provider-instances");
   }
@@ -294,15 +292,6 @@ export class SettingsService {
     return apiClient.delete<void>(
       `/bamboo/settings/provider-instances/${encodeURIComponent(instanceId)}`,
     );
-  }
-
-  /**
-   * Set the default provider instance.
-   */
-  async setDefaultProviderInstance(instanceId: string): Promise<void> {
-    return apiClient.post<void>("/bamboo/settings/provider-instances/default", {
-      default_provider_instance_id: instanceId,
-    });
   }
 
   // ── Env Vars ────────────────────────────────────────────────────
