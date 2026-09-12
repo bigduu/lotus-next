@@ -329,15 +329,7 @@ jobs:
         run: npm publish "${PACKED_FILENAME}" --provenance --access public
 
       - name: Wait for the immutable registry version
-        run: |
-          for _attempt in $(seq 1 24); do
-            if [ "$(npm view "@bigduu/lotus-next@${LOTUS_NEXT_RELEASE_VERSION}" version 2>/dev/null || true)" = "${LOTUS_NEXT_RELEASE_VERSION}" ]; then
-              exit 0
-            fi
-            sleep 5
-          done
-          echo "::error::The published version did not become readable within two minutes."
-          exit 1
+        run: node scripts/wait-for-registry-version.mjs "@bigduu/lotus-next" "${LOTUS_NEXT_RELEASE_VERSION}"
 
       - name: Download and verify the registry copy
         env:
