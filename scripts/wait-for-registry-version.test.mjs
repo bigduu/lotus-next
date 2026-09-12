@@ -56,10 +56,23 @@ describe("npm registry visibility gate", () => {
         expectedVersion,
       }),
     ).toEqual({ kind: "missing" })
+  })
 
+  it("fails closed when any npm error code is not E404", () => {
     expect(() =>
       classifyNpmViewResult({
         result: { status: 1, stdout: "", stderr: "npm error code E401\n" },
+        expectedVersion,
+      }),
+    ).toThrow(/non-404 response/)
+
+    expect(() =>
+      classifyNpmViewResult({
+        result: {
+          status: 1,
+          stdout: "",
+          stderr: "npm error code E404\nnpm error code E401\n",
+        },
         expectedVersion,
       }),
     ).toThrow(/non-404 response/)

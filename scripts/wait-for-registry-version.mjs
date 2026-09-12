@@ -38,7 +38,8 @@ export const classifyNpmViewResult = ({ result, expectedVersion }) => {
     )
   }
 
-  if (/\bE404\b/.test(stderr)) {
+  const npmErrorCodes = stderr.match(/\bE\d{3}\b/g) ?? []
+  if (npmErrorCodes.length > 0 && npmErrorCodes.every((code) => code === "E404")) {
     return { kind: "missing" }
   }
 
