@@ -99,7 +99,6 @@ export interface ProviderState {
     request: UpdateProviderInstanceRequest,
   ) => Promise<ProviderInstancesConfig>;
   deleteProviderInstance: (instanceId: string) => Promise<ProviderInstancesConfig>;
-  setDefaultProviderInstance: (instanceId: string) => Promise<ProviderInstancesConfig>;
   loadCatalog: () => Promise<void>;
   fetchCatalogModels: (provider?: string) => Promise<FetchModelsResponse>;
 
@@ -170,7 +169,7 @@ export const useProviderStore = create<ProviderState>((set, get) => {
             providerRepairIssues: repairIssues,
             providerStatus: degraded ? "degraded" : "ready",
             providerError: degraded
-              ? `Provider defaults contain ${repairIssues.length} unknown instance reference${repairIssues.length === 1 ? "" : "s"}`
+              ? `Provider routing or model preferences contain ${repairIssues.length} unknown instance reference${repairIssues.length === 1 ? "" : "s"}`
               : null,
           });
         }
@@ -233,9 +232,6 @@ export const useProviderStore = create<ProviderState>((set, get) => {
 
     deleteProviderInstance: (instanceId) =>
       mutateAndRefresh("delete", () => settingsService.deleteProviderInstance(instanceId)),
-
-    setDefaultProviderInstance: (instanceId) =>
-      mutateAndRefresh("set default", () => settingsService.setDefaultProviderInstance(instanceId)),
 
     loadCatalog: () => {
       // StrictMode and provider-authority reloads can remount Settings content.

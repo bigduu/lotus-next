@@ -53,14 +53,10 @@ const copyRef = (ref?: ProviderModelRef): DraftRef => ({
   model: ref?.model ?? "",
 })
 
-function draftFromDefaults(
-  defaults: DefaultsConfig | undefined,
-  fallbackProvider: string,
-): DefaultsDraft {
+function draftFromDefaults(defaults: DefaultsConfig | undefined): DefaultsDraft {
   const roles = Object.fromEntries(
     PROVIDER_DEFAULT_MODEL_REF_KEYS.map((key) => [key, copyRef(defaults?.[key])]),
   ) as DraftRefs
-  if (!roles.chat.provider && fallbackProvider) roles.chat.provider = fallbackProvider
 
   const subagentModels = Object.fromEntries(
     Object.entries(defaults?.subagent_models ?? {}).map(([name, ref]) => [
@@ -73,7 +69,7 @@ function draftFromDefaults(
 
 const serializeDraft = (draft: DefaultsDraft): string => JSON.stringify(draft)
 
-const hasDefaultIdIssue = (issues: readonly ProviderSnapshotRelationIssue[]) =>
+const hasCompatibilityRouteIssue = (issues: readonly ProviderSnapshotRelationIssue[]) =>
   issues.some((issue) => issue.kind === "default_provider_instance")
 
 const hasRoleIssue = (
@@ -99,13 +95,10 @@ export function DefaultsEditor() {
 
   const snapshot = runtimeSnapshot ?? repairSnapshot
   const instances = snapshot?.instances ?? []
-  const defaultId = snapshot?.default_provider_instance_id ?? null
   const defaults = snapshot?.defaults
   const canManage = providerStatus === "ready" || providerStatus === "degraded"
-  const fallbackProvider =
-    defaultId && instances.some((instance) => instance.id === defaultId) ? defaultId : ""
 
-  const initialDraft = draftFromDefaults(defaults, fallbackProvider)
+  const initialDraft = draftFromDefaults(defaults)
   const [draft, setDraft] = useState<DefaultsDraft>(() => initialDraft)
   const [baseline, setBaseline] = useState(() => serializeDraft(initialDraft))
   const [saving, setSaving] = useState(false)
@@ -113,15 +106,19 @@ export function DefaultsEditor() {
   const [saved, setSaved] = useState(false)
 
   const dirty = useMemo(() => serializeDraft(draft) !== baseline, [draft, baseline])
+  const compatibilitySyncRequired =
+    (defaults?.chat.provider ?? "") !== "" &&
+    defaults?.chat.provider !== (snapshot?.default_provider_instance_id ?? "")
   const dirtyRef = useRef(dirty)
+  const savingRef = useRef(false)
   dirtyRef.current = dirty
 
   useEffect(() => {
-    if (dirtyRef.current) return
-    const next = draftFromDefaults(defaults, fallbackProvider)
+    if (dirtyRef.current || savingRef.current) return
+    const next = draftFromDefaults(defaults)
     setDraft(next)
     setBaseline(serializeDraft(next))
-  }, [defaults, fallbackProvider])
+  }, [defaults])
 
   const setRole = (role: ProviderDefaultModelRefKey, patch: Partial<DraftRef>) =>
     setDraft((current) => ({
@@ -142,7 +139,7 @@ export function DefaultsEditor() {
     }))
 
   const save = async () => {
-    const instanceIds = new Set(instances.map((instance) => instance.id))
+    const instancesById = new Map(instances.map((instance) => [instance.id, instance]))
     for (const role of ROLES) {
       const value = draft.roles[role.key]
       if (!value.provider && !value.model.trim()) {
@@ -160,19 +157,30 @@ export function DefaultsEditor() {
         setError(`「${role.label}」必须同时选择提供方并填写模型`)
         return
       }
-      if (!instanceIds.has(value.provider)) {
+      const selectedInstance = instancesById.get(value.provider)
+      if (!selectedInstance) {
         setError(`「${role.label}」引用的提供方已失效，请选择现有实例`)
+        return
+      }
+      if (!selectedInstance.enabled) {
+        setError(`「${role.label}」引用的提供方已停用，请先启用该实例或选择其他已启用实例`)
         return
       }
     }
 
     for (const [subagent, value] of Object.entries(draft.subagentModels)) {
-      if (!value.provider || !value.model.trim() || !instanceIds.has(value.provider)) {
+      const selectedInstance = instancesById.get(value.provider)
+      if (!value.provider || !value.model.trim() || !selectedInstance) {
         setError(`子代理「${subagent}」的失效引用必须显式替换为现有实例和模型`)
+        return
+      }
+      if (!selectedInstance.enabled) {
+        setError(`子代理「${subagent}」引用的提供方已停用，请先启用该实例或选择其他已启用实例`)
         return
       }
     }
 
+    savingRef.current = true
     setSaving(true)
     setError(null)
     setSaved(false)
@@ -197,14 +205,14 @@ export function DefaultsEditor() {
       const current = await apiClient.get<{ model_limits?: unknown }>("/bamboo/config")
       await apiClient.post("/bamboo/config", {
         defaults: payload,
+        // Bamboo still needs this compatibility route internally. The Chat
+        // model preference is the sole user choice, so keep both values atomic.
+        default_provider_instance: draft.roles.chat.provider,
         ...(current?.model_limits !== undefined ? { model_limits: current.model_limits } : {}),
       })
 
       const refreshed = await loadProviderInstances()
-      const confirmed = draftFromDefaults(
-        refreshed.defaults,
-        refreshed.default_provider_instance_id ?? "",
-      )
+      const confirmed = draftFromDefaults(refreshed.defaults)
       setDraft(confirmed)
       setBaseline(serializeDraft(confirmed))
       dirtyRef.current = false
@@ -221,6 +229,7 @@ export function DefaultsEditor() {
     } catch (caught) {
       setError(getErrorMessage(caught))
     } finally {
+      savingRef.current = false
       setSaving(false)
     }
   }
@@ -235,9 +244,9 @@ export function DefaultsEditor() {
           </SelectItem>
         ) : null}
         {instances.map((instance) => (
-          <SelectItem key={instance.id} value={instance.id}>
+          <SelectItem key={instance.id} value={instance.id} disabled={!instance.enabled}>
             {instance.label || instance.type}
-            {instance.id === defaultId ? " · 默认" : ""}
+            {!instance.enabled ? "（已停用）" : ""}
           </SelectItem>
         ))}
       </>
@@ -275,9 +284,9 @@ export function DefaultsEditor() {
         按用途指定模型；未设置的用途回落到「对话」模型。模型 ID 可从发现结果选择，也可手动输入。
       </p>
 
-      {hasDefaultIdIssue(repairIssues) ? (
+      {hasCompatibilityRouteIssue(repairIssues) || compatibilitySyncRequired ? (
         <p role="alert" className="mb-2 rounded-md border border-amber-500/50 p-2 text-xs text-amber-700 dark:text-amber-300">
-          默认实例已失效。请在上方实例列表中点击一个现有实例的圆形勾选按钮，将它显式设为默认。
+          当前提供方路由尚未与「对话」模型偏好同步。确认「对话」提供方和模型后保存偏好，Lotus Next 会自动完成同步。
         </p>
       ) : null}
 
@@ -380,7 +389,11 @@ export function DefaultsEditor() {
 
       <div className="mt-2.5 flex items-center justify-end gap-2">
         {saved ? <span className="text-xs text-emerald-500">已保存</span> : null}
-        <Button size="sm" onClick={() => void save()} disabled={saving || !dirty}>
+        <Button
+          size="sm"
+          onClick={() => void save()}
+          disabled={saving || (!dirty && !compatibilitySyncRequired)}
+        >
           {saving ? "保存中…" : "保存偏好"}
         </Button>
       </div>

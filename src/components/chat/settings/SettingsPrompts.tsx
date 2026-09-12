@@ -68,8 +68,8 @@ export function SettingsPrompts() {
   const deleteSystemPrompt = useAppStore((state) => state.deleteSystemPrompt)
 
   const showCopilotToggle = useProviderStore((state) => {
-    const defaultId = state.providerSnapshot?.default_provider_instance_id
-    return defaultId ? state.getProviderType(defaultId) === "copilot" : false
+    const chatProvider = state.providerSnapshot?.defaults?.chat.provider
+    return chatProvider ? state.getProviderType(chatProvider) === "copilot" : false
   })
 
   // ── preset editor dialog ──────────────────────────────────────

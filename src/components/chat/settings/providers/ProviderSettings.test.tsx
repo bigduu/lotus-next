@@ -125,7 +125,6 @@ const setStore = (patch: Partial<ProviderState>) => {
     createProviderInstance: vi.fn().mockResolvedValue(snapshot()),
     updateProviderInstance: vi.fn().mockResolvedValue(snapshot()),
     deleteProviderInstance: vi.fn().mockResolvedValue(snapshot()),
-    setDefaultProviderInstance: vi.fn().mockResolvedValue(snapshot()),
     ...patch,
   })
 }
@@ -174,28 +173,68 @@ describe("Provider Settings authority states", () => {
   })
 
   it("routes list mutations through the canonical store actions", async () => {
+    const spareInstance: ProviderInstance = {
+      ...instance,
+      id: "openai-spare",
+      label: "Spare OpenAI",
+    }
+    const current = { ...snapshot(), instances: [instance, spareInstance] }
     const updateProviderInstance = vi.fn().mockResolvedValue(snapshot())
-    const setDefaultProviderInstance = vi.fn().mockResolvedValue(snapshot())
     const deleteProviderInstance = vi.fn().mockResolvedValue(snapshot())
     setStore({
+      providerSnapshot: current,
       updateProviderInstance,
-      setDefaultProviderInstance,
       deleteProviderInstance,
     })
     const container = await mount(<SettingsProviders />)
+    const spareRow = [...container.querySelectorAll("li")].find((row) =>
+      row.textContent?.includes(spareInstance.label),
+    )
 
-    await click(container.querySelector('button[role="switch"]'))
-    expect(updateProviderInstance).toHaveBeenCalledWith(instance.id, {
+    await click(spareRow?.querySelector('button[role="switch"]') ?? null)
+    expect(updateProviderInstance).toHaveBeenCalledWith(spareInstance.id, {
       enabled: false,
     })
 
-    await click(container.querySelector('button[aria-label="设为默认"]'))
-    expect(setDefaultProviderInstance).toHaveBeenCalledWith(instance.id)
-
-    await click(container.querySelector('button[aria-label="删除"]'))
+    await click(spareRow?.querySelector('button[aria-label="删除"]') ?? null)
     const confirm = [...document.querySelectorAll("button")].find((button) => button.textContent === "删除")
     await click(confirm ?? null)
-    expect(deleteProviderInstance).toHaveBeenCalledWith(instance.id)
+    expect(deleteProviderInstance).toHaveBeenCalledWith(spareInstance.id)
+  })
+
+  it("routes disabling the Chat provider through model preferences", async () => {
+    const updateProviderInstance = vi.fn().mockResolvedValue(snapshot())
+    setStore({ updateProviderInstance })
+    const container = await mount(<SettingsProviders />)
+
+    await click(container.querySelector('button[role="switch"]'))
+
+    expect(updateProviderInstance).not.toHaveBeenCalled()
+    expect(container.textContent).toContain(
+      "请先将「对话」模型偏好切换到其他已启用提供方并保存，再停用此实例。",
+    )
+  })
+
+  it("does not expose a separate global default Provider choice", async () => {
+    const current = snapshot()
+    setStore({
+      loadProviderInstances: vi.fn(async () => {
+        useProviderStore.setState({
+          providerSnapshot: current,
+          providerRepairSnapshot: null,
+          providerRepairIssues: [],
+          providerStatus: "ready",
+        })
+        return current
+      }),
+    })
+    const container = await mount(<SettingsProviders />)
+    await flush()
+
+    expect(container.querySelector('button[aria-label="设为默认"]')).toBeNull()
+    expect(container.textContent).not.toContain("打勾的是默认")
+    expect(container.textContent).not.toContain("· 默认")
+    expect(container.textContent).toContain("默认模型偏好")
   })
 
   it("keeps every repair path visible while degraded defaults remain runtime-ineligible", async () => {
@@ -210,28 +249,24 @@ describe("Provider Settings authority states", () => {
         },
       },
     }
-    const setDefaultProviderInstance = vi.fn().mockResolvedValue(degraded)
     setStore({
       providerSnapshot: null,
       providerRepairSnapshot: degraded,
       providerRepairIssues: findProviderSnapshotRelationIssues(degraded),
       providerStatus: "degraded",
-      setDefaultProviderInstance,
       loadProviderInstances: vi.fn().mockResolvedValue(degraded),
     })
 
     const container = await mount(<SettingsProviders />)
 
-    expect(container.textContent).toContain("默认提供方引用已失效")
+    expect(container.textContent).toContain("提供方或模型偏好中有失效引用")
     expect(container.textContent).toContain("Primary OpenAI")
     expect(container.textContent).toContain("新增")
-    expect(container.textContent).toContain("默认实例已失效")
+    expect(container.textContent).toContain("当前提供方路由尚未与「对话」模型偏好同步")
     expect(container.textContent).toContain("deleted-chat(已失效，请替换)")
     expect(container.textContent).toContain("deleted-planning(已失效，请替换)")
     expect(container.textContent).toContain("reviewer")
-
-    await click(container.querySelector('button[aria-label="设为默认"]'))
-    expect(setDefaultProviderInstance).toHaveBeenCalledWith(instance.id)
+    expect(container.querySelector('button[aria-label="设为默认"]')).toBeNull()
   })
 })
 
@@ -710,11 +745,11 @@ describe("Provider defaults authoritative refresh", () => {
     const post = vi.spyOn(apiClient, "post").mockResolvedValue(undefined)
     const container = await mount(<DefaultsEditor />)
 
-    await chooseSelectOption("对话(必填)提供方", "Primary OpenAI · 默认")
+    await chooseSelectOption("对话(必填)提供方", "Primary OpenAI")
     await changeInput(roleByName("combobox", "对话(必填)模型", container) as HTMLInputElement, "new-chat")
-    await chooseSelectOption("规划提供方", "Primary OpenAI · 默认")
+    await chooseSelectOption("规划提供方", "Primary OpenAI")
     await changeInput(roleByName("combobox", "规划模型", container) as HTMLInputElement, "new-planning")
-    await chooseSelectOption("子代理 reviewer 提供方", "Primary OpenAI · 默认")
+    await chooseSelectOption("子代理 reviewer 提供方", "Primary OpenAI")
     await changeInput(roleByName("combobox", "子代理 reviewer 模型", container) as HTMLInputElement, "new-review")
     await click([...container.querySelectorAll("button")].find((button) => button.textContent === "保存偏好") ?? null)
     await flush()
@@ -722,6 +757,7 @@ describe("Provider defaults authoritative refresh", () => {
     expect(post).toHaveBeenCalledWith(
       "/bamboo/config",
       expect.objectContaining({
+        default_provider_instance: instance.id,
         defaults: expect.objectContaining({
           chat: { provider: instance.id, model: "new-chat" },
           planning: { provider: instance.id, model: "new-planning" },
@@ -732,6 +768,94 @@ describe("Provider defaults authoritative refresh", () => {
       }),
     )
     expect(container.querySelector(".text-emerald-500")?.textContent).toBe("已保存")
+  })
+
+  it("repairs hidden compatibility routing from an unchanged Chat preference", async () => {
+    const staleRoute: ProviderInstancesConfig = {
+      ...snapshot(),
+      default_provider_instance_id: "deleted-route",
+    }
+    const repaired = snapshot()
+    const loadProviderInstances = vi.fn(async () => {
+      useProviderStore.setState({
+        providerSnapshot: repaired,
+        providerRepairSnapshot: null,
+        providerRepairIssues: [],
+        providerStatus: "ready",
+      })
+      return repaired
+    })
+    setStore({
+      providerSnapshot: null,
+      providerRepairSnapshot: staleRoute,
+      providerRepairIssues: findProviderSnapshotRelationIssues(staleRoute),
+      providerStatus: "degraded",
+      loadProviderInstances,
+    })
+    vi.spyOn(apiClient, "get").mockResolvedValue({
+      model_limits: { default: 4096 },
+    })
+    const post = vi.spyOn(apiClient, "post").mockResolvedValue(undefined)
+    const container = await mount(<DefaultsEditor />)
+
+    expect(container.textContent).toContain("当前提供方路由尚未与「对话」模型偏好同步")
+    const saveButton = [...container.querySelectorAll("button")].find(
+      (button) => button.textContent === "保存偏好",
+    )
+    expect(saveButton?.disabled).toBe(false)
+    await click(saveButton ?? null)
+    await flush()
+
+    expect(post).toHaveBeenCalledWith("/bamboo/config", {
+      defaults: expect.objectContaining({
+        chat: { provider: instance.id, model: "gpt-5.4" },
+      }),
+      default_provider_instance: instance.id,
+      model_limits: { default: 4096 },
+    })
+    expect(loadProviderInstances).toHaveBeenCalledOnce()
+    expect(container.querySelector(".text-emerald-500")?.textContent).toBe("已保存")
+    expect(container.textContent).not.toContain("当前提供方路由尚未与「对话」模型偏好同步")
+  })
+
+  it("keeps disabled instances visible but refuses to save them as model preferences", async () => {
+    const disabledInstance: ProviderInstance = {
+      ...instance,
+      id: "openai-disabled",
+      label: "Disabled OpenAI",
+      enabled: false,
+    }
+    const invalidPreference: ProviderInstancesConfig = {
+      ...snapshot(),
+      instances: [instance, disabledInstance],
+      defaults: {
+        chat: { provider: disabledInstance.id, model: "disabled-model" },
+      },
+    }
+    setStore({ providerSnapshot: invalidPreference })
+    const get = vi.spyOn(apiClient, "get").mockResolvedValue({})
+    const post = vi.spyOn(apiClient, "post").mockResolvedValue(undefined)
+    const container = await mount(<DefaultsEditor />)
+
+    await press(roleByName("combobox", "对话(必填)提供方", container), "ArrowDown")
+    const disabledOption = [...document.querySelectorAll('[role="option"]')].find(
+      (candidate) => candidate.textContent === "Disabled OpenAI（已停用）",
+    )
+    expect(disabledOption).toBeDefined()
+    expect(disabledOption?.getAttribute("aria-disabled")).toBe("true")
+    await press(roleByName("combobox", "对话(必填)提供方", container), "Escape")
+
+    const saveButton = [...container.querySelectorAll("button")].find(
+      (button) => button.textContent === "保存偏好",
+    )
+    expect(saveButton?.disabled).toBe(false)
+    await click(saveButton ?? null)
+
+    expect(container.textContent).toContain(
+      "「对话(必填)」引用的提供方已停用，请先启用该实例或选择其他已启用实例",
+    )
+    expect(get).not.toHaveBeenCalled()
+    expect(post).not.toHaveBeenCalled()
   })
 
   it("reports partial defaults save while another relation issue remains", async () => {

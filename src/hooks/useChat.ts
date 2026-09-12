@@ -141,18 +141,18 @@ export function useChat(
   // rather than falling back to a session's stale historical model.
   const defaultChatModel = useProviderStore((s) => s.providerSnapshot?.defaults?.chat?.model)
   const effectiveModel = selectedModel || defaultChatModel || ""
-  const globalReasoningEffort = useProviderStore((s) => {
-    const id = s.providerSnapshot?.default_provider_instance_id
+  const chatReasoningEffort = useProviderStore((s) => {
+    const id = s.providerSnapshot?.defaults?.chat.provider
     return getReasoningEffortForProvider(s.providerSnapshot, id)
   })
-  // Provider TYPE of the default instance — drives provider-specific prompt
+  // Provider type of the Chat model preference drives provider-specific prompt
   // enhancement segments (e.g. the Copilot conclusion-with-options contract).
   const providerType = useProviderStore((s) => {
-    const id = s.providerSnapshot?.default_provider_instance_id
+    const id = s.providerSnapshot?.defaults?.chat.provider
     return id ? s.getProviderType(id) : undefined
   })
   const reasoningEffort =
-    useAppStore((s) => s.inputStates[sid ?? ""]?.reasoningEffort) ?? globalReasoningEffort
+    useAppStore((s) => s.inputStates[sid ?? ""]?.reasoningEffort) ?? chatReasoningEffort
 
   const [booted, setBooted] = useState(false)
   const [streamingText, setStreamingText] = useState<string | null>(null)

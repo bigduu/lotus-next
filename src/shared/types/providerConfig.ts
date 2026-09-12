@@ -140,7 +140,7 @@ export interface UpdateProviderInstanceRequest {
  * This is the sole provider authority consumed by the frontend.
  */
 export interface ProviderInstancesConfig {
-  /** The default provider instance id, or null when no default is configured. */
+  /** Bamboo's internal compatibility route. It is not a user-facing preference. */
   default_provider_instance_id: string | null;
   instances: ProviderInstance[];
   defaults?: DefaultsConfig;
@@ -249,10 +249,10 @@ export const parseProviderInstancesConfig = (value: unknown): ProviderInstancesC
 
   const rawDefault = value.default_provider_instance_id;
   if (rawDefault !== undefined && rawDefault !== null && typeof rawDefault !== "string") {
-    throw new ProviderSnapshotValidationError("Default provider instance id is invalid");
+    throw new ProviderSnapshotValidationError("Provider compatibility route id is invalid");
   }
   if (typeof rawDefault === "string" && rawDefault.trim().length === 0) {
-    throw new ProviderSnapshotValidationError("Default provider instance id is invalid");
+    throw new ProviderSnapshotValidationError("Provider compatibility route id is invalid");
   }
   const defaultId = typeof rawDefault === "string" ? rawDefault : null;
   let features: ProviderInstancesConfig["features"];

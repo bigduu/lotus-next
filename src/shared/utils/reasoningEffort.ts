@@ -72,8 +72,7 @@ export const resolveProviderDefaultReasoningEffort = (
   const instanceId =
     modelRef?.provider?.trim() ||
     providerSnapshot?.defaults?.chat.provider.trim() ||
-    fallbackInstanceId?.trim() ||
-    providerSnapshot?.default_provider_instance_id?.trim();
+    fallbackInstanceId?.trim();
 
   return resolveReasoningEffortByKey(providerSnapshot, instanceId);
 };

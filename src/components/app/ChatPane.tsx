@@ -260,16 +260,16 @@ export function ChatPane({
   const selectedModel = useAppStore((s) => s.selectedModel)
   const setSelectedModel = useAppStore((s) => s.setSelectedModel)
   const defaultChatModel = useProviderStore((s) => s.providerSnapshot?.defaults?.chat?.model)
-  const globalReasoningEffort = useProviderStore((s) => {
-    const id = s.providerSnapshot?.default_provider_instance_id
+  const chatReasoningEffort = useProviderStore((s) => {
+    const id = s.providerSnapshot?.defaults?.chat.provider
     return getReasoningEffortForProvider(s.providerSnapshot, id)
   })
   const sessionReasoningEffort = useAppStore(
     (s) => s.inputStates[currentSessionId ?? ""]?.reasoningEffort,
   )
-  const reasoningEffort = sessionReasoningEffort ?? globalReasoningEffort ?? "medium"
+  const reasoningEffort = sessionReasoningEffort ?? chatReasoningEffort ?? "medium"
   const setInputReasoningEffort = useAppStore((s) => s.setInputReasoningEffort)
-  // What the next send will use: explicit pick → configured global default →
+  // What the next send will use: explicit pick → configured Chat default →
   // (last resort) the session's own historical model.
   const activeModel =
     selectedModel ||
