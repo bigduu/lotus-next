@@ -1,0 +1,363 @@
+name: Publish verified frontend artifact
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Exact new SemVer to publish (for example, 2026.9.12)"
+        required: true
+        type: string
+
+run-name: Publish @bigduu/lotus-next@${{ inputs.version }}
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: publish-lotus-next-${{ inputs.version }}
+  cancel-in-progress: false
+
+env:
+  LOTUS_NEXT_RELEASE_VERSION: ${{ inputs.version }}
+  LOTUS_NEXT_SOURCE_REVISION: ${{ github.sha }}
+  LOTUS_NEXT_SOURCE_DIRTY: "false"
+  LOTUS_NEXT_EXPECTED_SOURCE_REVISION: ${{ github.sha }}
+  LOTUS_NEXT_EXPECTED_SOURCE_DIRTY: "false"
+  NPM_CONFIG_AUDIT: "false"
+  NPM_CONFIG_FUND: "false"
+  NPM_CONFIG_PROGRESS: "false"
+
+jobs:
+  preflight:
+    name: Validate publication request
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out exact source
+        uses: actions/checkout@v7
+
+      - name: Set up current npm
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+          scope: "@bigduu"
+          package-manager-cache: false
+
+      - name: Validate version, source, credentials, and registry vacancy
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          node --input-type=module - <<'NODE'
+          import { assertPackageVersion } from "./scripts/artifact-manifest.mjs"
+          const version = assertPackageVersion(process.env.LOTUS_NEXT_RELEASE_VERSION)
+          if (version === "0.0.0") throw new Error("The source placeholder cannot be published")
+          NODE
+          test "${GITHUB_REF}" = "refs/heads/${DEFAULT_BRANCH}"
+          test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
+          test -z "$(git status --porcelain --untracked-files=all)"
+          if [ -z "${NODE_AUTH_TOKEN}" ]; then
+            echo "::error::The first @bigduu/lotus-next publication requires the repository NPM_TOKEN secret."
+            exit 1
+          fi
+          if npm view "@bigduu/lotus-next@${LOTUS_NEXT_RELEASE_VERSION}" version \
+            > "${RUNNER_TEMP}/npm-view.out" 2> "${RUNNER_TEMP}/npm-view.err"; then
+            echo "::error::@bigduu/lotus-next@${LOTUS_NEXT_RELEASE_VERSION} is already published."
+            exit 1
+          fi
+          if ! grep -q "E404" "${RUNNER_TEMP}/npm-view.err"; then
+            cat "${RUNNER_TEMP}/npm-view.err" >&2
+            echo "::error::The registry did not prove that the requested version is vacant."
+            exit 1
+          fi
+
+  verify:
+    name: Node ${{ matrix.node }} release artifact
+    needs: preflight
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node:
+          - 22
+          - 24
+
+    steps:
+      - name: Check out exact source
+        uses: actions/checkout@v7
+
+      - name: Require a clean default-branch source commit
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          test "${GITHUB_REF}" = "refs/heads/${DEFAULT_BRANCH}"
+          test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
+          test -z "$(git status --porcelain --untracked-files=all)"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install exact dependencies
+        run: npm ci
+
+      - name: Apply the release identity without a Git commit
+        run: |
+          node --input-type=module - <<'NODE'
+          import { assertPackageVersion } from "./scripts/artifact-manifest.mjs"
+          const version = assertPackageVersion(process.env.LOTUS_NEXT_RELEASE_VERSION)
+          if (version === "0.0.0") throw new Error("The source placeholder cannot be published")
+          NODE
+          npm version "${LOTUS_NEXT_RELEASE_VERSION}" --no-git-tag-version
+          test "$(node -p "require('./package.json').version")" = "${LOTUS_NEXT_RELEASE_VERSION}"
+
+      - name: Verify architecture, behavior, build, and package contents
+        run: npm run verify
+
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Verify the all-surface production artifact
+        run: npm run test:e2e:built
+
+      - name: Upload browser evidence
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v5
+        with:
+          name: publish-playwright-node-${{ matrix.node }}
+          path: |
+            playwright-report/
+            test-results/
+          if-no-files-found: error
+          retention-days: 30
+
+  real-bamboo:
+    name: Real Bamboo / Node 22 release artifact
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      BAMBOO_E2E_REVISION: 2171e406a18c9f48509f1372560ef6e8c1749eca
+
+    steps:
+      - name: Check out exact Lotus Next source
+        uses: actions/checkout@v7
+
+      - name: Check out the paired Bamboo revision
+        uses: actions/checkout@v7
+        with:
+          repository: bigduu/Bamboo-agent
+          ref: ${{ env.BAMBOO_E2E_REVISION }}
+          path: .e2e-bamboo
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install exact dependencies
+        run: npm ci
+
+      - name: Apply the release identity without a Git commit
+        run: |
+          node --input-type=module - <<'NODE'
+          import { assertPackageVersion } from "./scripts/artifact-manifest.mjs"
+          const version = assertPackageVersion(process.env.LOTUS_NEXT_RELEASE_VERSION)
+          if (version === "0.0.0") throw new Error("The source placeholder cannot be published")
+          NODE
+          npm version "${LOTUS_NEXT_RELEASE_VERSION}" --no-git-tag-version
+          test "$(node -p "require('./package.json').version")" = "${LOTUS_NEXT_RELEASE_VERSION}"
+
+      - name: Build the release artifact
+        run: npm run build
+
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Verify the exact Bamboo round trip
+        env:
+          BAMBOO_E2E_SOURCE_DIR: ${{ github.workspace }}/.e2e-bamboo
+        run: npm run test:e2e:real-bamboo:built
+
+      - name: Upload real Bamboo evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v5
+        with:
+          name: publish-real-bamboo-node-22
+          path: |
+            playwright-report-real-bamboo/
+            test-results-real-bamboo/
+          if-no-files-found: error
+          retention-days: 30
+
+  publish:
+    name: Pack, publish, and verify registry artifact
+    needs:
+      - verify
+      - real-bamboo
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out exact source
+        uses: actions/checkout@v7
+
+      - name: Require a clean default-branch source commit
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          test "${GITHUB_REF}" = "refs/heads/${DEFAULT_BRANCH}"
+          test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
+          test -z "$(git status --porcelain --untracked-files=all)"
+
+      - name: Set up publishing Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+          scope: "@bigduu"
+          package-manager-cache: false
+
+      - name: Install exact dependencies
+        run: npm ci
+
+      - name: Apply and verify a new release identity
+        run: |
+          node --input-type=module - <<'NODE'
+          import { assertPackageVersion } from "./scripts/artifact-manifest.mjs"
+          const version = assertPackageVersion(process.env.LOTUS_NEXT_RELEASE_VERSION)
+          if (version === "0.0.0") throw new Error("The source placeholder cannot be published")
+          NODE
+          npm version "${LOTUS_NEXT_RELEASE_VERSION}" --no-git-tag-version
+          VERSION="$(node -p "require('./package.json').version")"
+          test "${VERSION}" != "0.0.0"
+          test "${VERSION}" = "${LOTUS_NEXT_RELEASE_VERSION}"
+          if npm view "@bigduu/lotus-next@${VERSION}" version \
+            > "${RUNNER_TEMP}/npm-view.out" 2> "${RUNNER_TEMP}/npm-view.err"; then
+            echo "::error::@bigduu/lotus-next@${VERSION} is already published."
+            exit 1
+          fi
+          if ! grep -q "E404" "${RUNNER_TEMP}/npm-view.err"; then
+            cat "${RUNNER_TEMP}/npm-view.err" >&2
+            echo "::error::The registry did not prove that the requested version is vacant."
+            exit 1
+          fi
+
+      - name: Build and verify the final package tree
+        run: npm run verify
+
+      - name: Pack once without another lifecycle build
+        id: pack
+        run: |
+          npm pack --ignore-scripts --json > "${RUNNER_TEMP}/pack.json"
+          node --input-type=module <<'NODE'
+          import { appendFileSync, readFileSync } from "node:fs"
+          const [packed] = JSON.parse(readFileSync(process.env.RUNNER_TEMP + "/pack.json", "utf8"))
+          if (!packed?.filename || !packed?.integrity || !packed?.shasum) {
+            throw new Error("npm pack did not return one complete tarball identity")
+          }
+          appendFileSync(process.env.GITHUB_OUTPUT, `filename=${packed.filename}\nintegrity=${packed.integrity}\nshasum=${packed.shasum}\n`)
+          NODE
+
+      - name: Verify the exact local tarball
+        env:
+          PACKED_FILENAME: ${{ steps.pack.outputs.filename }}
+        run: |
+          mkdir -p "${RUNNER_TEMP}/local-roundtrip"
+          tar -xzf "${PACKED_FILENAME}" -C "${RUNNER_TEMP}/local-roundtrip"
+          node scripts/artifact-manifest.mjs verify \
+            --dist "${RUNNER_TEMP}/local-roundtrip/package/dist" \
+            --expected-name "@bigduu/lotus-next" \
+            --expected-version "${LOTUS_NEXT_RELEASE_VERSION}" \
+            --expected-revision "${GITHUB_SHA}" \
+            --expected-dirty false
+
+      - name: Require npm publication credentials
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ -z "${NODE_AUTH_TOKEN}" ]; then
+            echo "::error::The first @bigduu/lotus-next publication requires the repository NPM_TOKEN secret."
+            exit 1
+          fi
+
+      - name: Publish the exact verified tarball with provenance
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          PACKED_FILENAME: ${{ steps.pack.outputs.filename }}
+        run: npm publish "${PACKED_FILENAME}" --provenance --access public
+
+      - name: Wait for the immutable registry version
+        run: |
+          for _attempt in $(seq 1 24); do
+            if [ "$(npm view "@bigduu/lotus-next@${LOTUS_NEXT_RELEASE_VERSION}" version 2>/dev/null || true)" = "${LOTUS_NEXT_RELEASE_VERSION}" ]; then
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "::error::The published version did not become readable within two minutes."
+          exit 1
+
+      - name: Download and verify the registry copy
+        env:
+          LOCAL_TARBALL: ${{ steps.pack.outputs.filename }}
+          EXPECTED_INTEGRITY: ${{ steps.pack.outputs.integrity }}
+          EXPECTED_SHASUM: ${{ steps.pack.outputs.shasum }}
+        run: |
+          mkdir -p "${RUNNER_TEMP}/registry" "${RUNNER_TEMP}/registry-roundtrip"
+          npm pack "@bigduu/lotus-next@${LOTUS_NEXT_RELEASE_VERSION}" --ignore-scripts --pack-destination "${RUNNER_TEMP}/registry"
+          REGISTRY_TARBALL="$(find "${RUNNER_TEMP}/registry" -maxdepth 1 -type f -name '*.tgz' -print -quit)"
+          test -n "${REGISTRY_TARBALL}"
+          npm view "@bigduu/lotus-next@${LOTUS_NEXT_RELEASE_VERSION}" dist --json > "${RUNNER_TEMP}/registry-dist.json"
+          export REGISTRY_TARBALL
+          node --input-type=module - <<'NODE'
+          import { createHash } from "node:crypto"
+          import { readFileSync } from "node:fs"
+
+          const digest = (algorithm, file, encoding) =>
+            createHash(algorithm).update(readFileSync(file)).digest(encoding)
+          const localSha1 = digest("sha1", process.env.LOCAL_TARBALL, "hex")
+          const registrySha1 = digest("sha1", process.env.REGISTRY_TARBALL, "hex")
+          const localIntegrity = `sha512-${digest("sha512", process.env.LOCAL_TARBALL, "base64")}`
+          const registryIntegrity = `sha512-${digest("sha512", process.env.REGISTRY_TARBALL, "base64")}`
+          const dist = JSON.parse(readFileSync(process.env.RUNNER_TEMP + "/registry-dist.json", "utf8"))
+
+          if (localSha1 !== process.env.EXPECTED_SHASUM || registrySha1 !== localSha1) {
+            throw new Error("The registry tarball SHA-1 does not match the verified local tarball")
+          }
+          if (localIntegrity !== process.env.EXPECTED_INTEGRITY || registryIntegrity !== localIntegrity) {
+            throw new Error("The registry tarball integrity does not match the verified local tarball")
+          }
+          if (dist.shasum !== localSha1 || dist.integrity !== localIntegrity) {
+            throw new Error("The registry metadata does not identify the verified tarball")
+          }
+          if (dist.attestations?.provenance?.predicateType !== "https://slsa.dev/provenance/v1") {
+            throw new Error("The published package has no SLSA provenance attestation")
+          }
+          NODE
+          tar -xzf "${REGISTRY_TARBALL}" -C "${RUNNER_TEMP}/registry-roundtrip"
+          node scripts/artifact-manifest.mjs verify \
+            --dist "${RUNNER_TEMP}/registry-roundtrip/package/dist" \
+            --expected-name "@bigduu/lotus-next" \
+            --expected-version "${LOTUS_NEXT_RELEASE_VERSION}" \
+            --expected-revision "${GITHUB_SHA}" \
+            --expected-dirty false
+
+      - name: Record immutable publication identity
+        run: |
+          MANIFEST_SHA256="$(sha256sum "${RUNNER_TEMP}/registry-roundtrip/package/dist/lotus-next-manifest.json" | cut -d ' ' -f 1)"
+          {
+            echo "### Published artifact"
+            echo "- Package: \`@bigduu/lotus-next@${LOTUS_NEXT_RELEASE_VERSION}\`"
+            echo "- Source: \`${GITHUB_SHA}\`"
+            echo "- npm integrity: \`${{ steps.pack.outputs.integrity }}\`"
+            echo "- npm shasum: \`${{ steps.pack.outputs.shasum }}\`"
+            echo "- Universal manifest SHA-256: \`${MANIFEST_SHA256}\`"
+          } >> "${GITHUB_STEP_SUMMARY}"

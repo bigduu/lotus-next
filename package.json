@@ -21,7 +21,7 @@
   "scripts": {
     "dev": "vite",
     "type-check": "tsc -b --pretty false",
-    "build": "tsc -b && vite build",
+    "build": "tsc -b && vite build && node scripts/artifact-manifest.mjs generate",
     "lint": "oxlint --deny-warnings",
     "test": "vitest",
     "test:run": "vitest run",
@@ -30,6 +30,7 @@
     "test:e2e:real-bamboo": "npm run build && npm run test:e2e:real-bamboo:built",
     "test:e2e:real-bamboo:built": "playwright test --config=playwright.real-bamboo.config.ts",
     "architecture:check": "node scripts/check-architecture.mjs",
+    "artifact:verify": "node scripts/artifact-manifest.mjs verify",
     "package:contents": "node scripts/verify-package.mjs",
     "pack:check": "npm run build && npm run package:contents",
     "verify": "npm run type-check && npm run lint && npm run test:run && npm run architecture:check && npm run build && npm run package:contents",
