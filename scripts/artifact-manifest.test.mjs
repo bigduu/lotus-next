@@ -199,7 +199,16 @@ describe("universal artifact manifest", () => {
     },
   )
 
-  it.each(["v1.2.3", "01.2.3", "1.02.3", "1.2", "latest", "1.2.3.4"])(
+  it.each([
+    "v1.2.3",
+    "01.2.3",
+    "1.02.3",
+    "1.2",
+    "latest",
+    "1.2.3.4",
+    "1.2.3\n",
+    "1.2.3\r\n",
+  ])(
     "rejects non-canonical version %s",
     (version) => {
       expect(() => assertPackageVersion(version)).toThrow(/strict SemVer/)

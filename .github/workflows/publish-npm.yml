@@ -108,16 +108,26 @@ jobs:
 
       - name: Apply the release identity without a Git commit
         run: |
+          test -z "$(git status --porcelain --untracked-files=all)"
           node --input-type=module - <<'NODE'
           import { assertPackageVersion } from "./scripts/artifact-manifest.mjs"
           const version = assertPackageVersion(process.env.LOTUS_NEXT_RELEASE_VERSION)
           if (version === "0.0.0") throw new Error("The source placeholder cannot be published")
           NODE
-          npm version "${LOTUS_NEXT_RELEASE_VERSION}" --no-git-tag-version
+          npm version "${LOTUS_NEXT_RELEASE_VERSION}" --no-git-tag-version --ignore-scripts
           test "$(node -p "require('./package.json').version")" = "${LOTUS_NEXT_RELEASE_VERSION}"
+          test "$(node -p "require('./package-lock.json').version")" = "${LOTUS_NEXT_RELEASE_VERSION}"
+          test "$(node -p "require('./package-lock.json').packages[''].version")" = "${LOTUS_NEXT_RELEASE_VERSION}"
+          git diff --exit-code -- . ':(exclude)package.json' ':(exclude)package-lock.json'
+          test -z "$(git ls-files --others --exclude-standard)"
+          git diff -- package.json package-lock.json > "${RUNNER_TEMP}/release-identity.patch"
 
       - name: Verify architecture, behavior, build, and package contents
-        run: npm run verify
+        run: |
+          npm run verify
+          git diff -- package.json package-lock.json | cmp - "${RUNNER_TEMP}/release-identity.patch"
+          git diff --exit-code -- . ':(exclude)package.json' ':(exclude)package-lock.json'
+          test -z "$(git ls-files --others --exclude-standard)"
 
       - name: Install Chromium
         run: npx playwright install --with-deps chromium
@@ -168,16 +178,26 @@ jobs:
 
       - name: Apply the release identity without a Git commit
         run: |
+          test -z "$(git status --porcelain --untracked-files=all)"
           node --input-type=module - <<'NODE'
           import { assertPackageVersion } from "./scripts/artifact-manifest.mjs"
           const version = assertPackageVersion(process.env.LOTUS_NEXT_RELEASE_VERSION)
           if (version === "0.0.0") throw new Error("The source placeholder cannot be published")
           NODE
-          npm version "${LOTUS_NEXT_RELEASE_VERSION}" --no-git-tag-version
+          npm version "${LOTUS_NEXT_RELEASE_VERSION}" --no-git-tag-version --ignore-scripts
           test "$(node -p "require('./package.json').version")" = "${LOTUS_NEXT_RELEASE_VERSION}"
+          test "$(node -p "require('./package-lock.json').version")" = "${LOTUS_NEXT_RELEASE_VERSION}"
+          test "$(node -p "require('./package-lock.json').packages[''].version")" = "${LOTUS_NEXT_RELEASE_VERSION}"
+          git diff --exit-code -- . ':(exclude)package.json' ':(exclude)package-lock.json'
+          test -z "$(git ls-files --others --exclude-standard)"
+          git diff -- package.json package-lock.json > "${RUNNER_TEMP}/release-identity.patch"
 
       - name: Build the release artifact
-        run: npm run build
+        run: |
+          npm run build
+          git diff -- package.json package-lock.json | cmp - "${RUNNER_TEMP}/release-identity.patch"
+          git diff --exit-code -- . ':(exclude)package.json' ':(exclude)package-lock.json'
+          test -z "$(git ls-files --others --exclude-standard)"
 
       - name: Install Chromium
         run: npx playwright install --with-deps chromium
@@ -230,15 +250,21 @@ jobs:
 
       - name: Apply and verify a new release identity
         run: |
+          test -z "$(git status --porcelain --untracked-files=all)"
           node --input-type=module - <<'NODE'
           import { assertPackageVersion } from "./scripts/artifact-manifest.mjs"
           const version = assertPackageVersion(process.env.LOTUS_NEXT_RELEASE_VERSION)
           if (version === "0.0.0") throw new Error("The source placeholder cannot be published")
           NODE
-          npm version "${LOTUS_NEXT_RELEASE_VERSION}" --no-git-tag-version
+          npm version "${LOTUS_NEXT_RELEASE_VERSION}" --no-git-tag-version --ignore-scripts
           VERSION="$(node -p "require('./package.json').version")"
           test "${VERSION}" != "0.0.0"
           test "${VERSION}" = "${LOTUS_NEXT_RELEASE_VERSION}"
+          test "$(node -p "require('./package-lock.json').version")" = "${VERSION}"
+          test "$(node -p "require('./package-lock.json').packages[''].version")" = "${VERSION}"
+          git diff --exit-code -- . ':(exclude)package.json' ':(exclude)package-lock.json'
+          test -z "$(git ls-files --others --exclude-standard)"
+          git diff -- package.json package-lock.json > "${RUNNER_TEMP}/release-identity.patch"
           if npm view "@bigduu/lotus-next@${VERSION}" version \
             > "${RUNNER_TEMP}/npm-view.out" 2> "${RUNNER_TEMP}/npm-view.err"; then
             echo "::error::@bigduu/lotus-next@${VERSION} is already published."
@@ -251,7 +277,11 @@ jobs:
           fi
 
       - name: Build and verify the final package tree
-        run: npm run verify
+        run: |
+          npm run verify
+          git diff -- package.json package-lock.json | cmp - "${RUNNER_TEMP}/release-identity.patch"
+          git diff --exit-code -- . ':(exclude)package.json' ':(exclude)package-lock.json'
+          test -z "$(git ls-files --others --exclude-standard)"
 
       - name: Pack once without another lifecycle build
         id: pack

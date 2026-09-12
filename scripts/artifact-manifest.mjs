@@ -26,9 +26,9 @@ const manifestKeys = [
 ]
 const resourceKeys = ["path", "size", "sha256"]
 const strictSemver =
-  /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*))?(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$/
-const revisionPattern = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/
-const sha256Pattern = /^[0-9a-f]{64}$/
+  /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*))?(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?![\s\S])/
+const revisionPattern = /^(?:[0-9a-f]{40}|[0-9a-f]{64})(?![\s\S])/
+const sha256Pattern = /^[0-9a-f]{64}(?![\s\S])/
 const containsControlCharacter = (value) => /\p{Cc}/u.test(value)
 
 const sha256 = (value) => createHash("sha256").update(value).digest("hex")
