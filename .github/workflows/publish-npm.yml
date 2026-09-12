@@ -12,7 +12,6 @@ run-name: Publish @bigduu/lotus-next@${{ inputs.version }}
 
 permissions:
   contents: read
-  id-token: write
 
 concurrency:
   group: publish-lotus-next-${{ inputs.version }}
@@ -224,6 +223,9 @@ jobs:
       - verify
       - real-bamboo
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
 
     steps:
       - name: Check out exact source
@@ -249,6 +251,8 @@ jobs:
         run: npm ci
 
       - name: Apply and verify a new release identity
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           test -z "$(git status --porcelain --untracked-files=all)"
           node --input-type=module - <<'NODE'

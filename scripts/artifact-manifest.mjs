@@ -65,7 +65,8 @@ export const assertResourcePath = (resourcePath) => {
     typeof resourcePath !== "string" ||
     resourcePath.length === 0 ||
     resourcePath !== resourcePath.normalize("NFC") ||
-    resourcePath.startsWith("/") ||
+    path.posix.isAbsolute(resourcePath) ||
+    path.win32.isAbsolute(resourcePath) ||
     resourcePath.includes("\\") ||
     containsControlCharacter(resourcePath)
   ) {

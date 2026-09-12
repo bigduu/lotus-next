@@ -99,6 +99,7 @@ describe("universal artifact manifest", () => {
   it.each([
     "../secret.txt",
     "/absolute.js",
+    "C:/absolute.js",
     "assets\\main.js",
     "assets//main.js",
     "assets/./main.js",
