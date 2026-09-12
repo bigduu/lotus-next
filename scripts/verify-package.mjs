@@ -1,6 +1,12 @@
 import { spawnSync } from "node:child_process"
 import { readFileSync } from "node:fs"
+import { fileURLToPath } from "node:url"
 
+import {
+  ARTIFACT_MANIFEST_FILE,
+  LOTUS_NEXT_PACKAGE_NAME,
+  verifyArtifactManifest,
+} from "./artifact-manifest.mjs"
 import {
   analyzeBundleBudget,
   findBundleBudgetViolations,
@@ -9,6 +15,18 @@ import {
 import { findUnexpectedPackagePaths } from "./package-policy.mjs"
 
 const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm"
+const packageDocument = JSON.parse(
+  readFileSync(new URL("../package.json", import.meta.url), "utf8"),
+)
+const expectedDirtyInput = process.env.LOTUS_NEXT_EXPECTED_SOURCE_DIRTY
+if (
+  expectedDirtyInput !== undefined &&
+  expectedDirtyInput !== "true" &&
+  expectedDirtyInput !== "false"
+) {
+  process.stderr.write("LOTUS_NEXT_EXPECTED_SOURCE_DIRTY must be exactly true or false.\n")
+  process.exit(1)
+}
 const result = spawnSync(
   npmCommand,
   ["pack", "--dry-run", "--json", "--ignore-scripts", "--loglevel=error"],
@@ -46,6 +64,7 @@ const missing = [
   "dist/index.html",
   "dist/asset-manifest.json",
   "dist/bundle-ownership.json",
+  `dist/${ARTIFACT_MANIFEST_FILE}`,
 ].filter((file) => !paths.includes(file))
 const lazyJavaScriptChunks = [
   ["Settings", /^dist\/assets\/Settings-[^/]+\.js$/],
@@ -241,9 +260,48 @@ if (streamdownEntry) {
   }
 }
 
-if (manifest.name !== "@bigduu/lotus-next" || manifest.version !== "0.0.0") {
+if (
+  manifest.name !== LOTUS_NEXT_PACKAGE_NAME ||
+  manifest.version !== packageDocument.version
+) {
   process.stderr.write(
     `Unexpected package identity: ${String(manifest.name)}@${String(manifest.version)}.\n`,
+  )
+  process.exit(1)
+}
+
+let artifactManifest
+try {
+  artifactManifest = verifyArtifactManifest({
+    distDirectory: fileURLToPath(new URL("../dist/", import.meta.url)),
+    expectedPackageName: manifest.name,
+    expectedPackageVersion: manifest.version,
+    expectedSourceRevision: process.env.LOTUS_NEXT_EXPECTED_SOURCE_REVISION,
+    expectedSourceDirty:
+      expectedDirtyInput === undefined
+        ? undefined
+        : expectedDirtyInput === "true",
+  })
+} catch (error) {
+  process.stderr.write(
+    `Universal artifact verification failed: ${error instanceof Error ? error.message : String(error)}\n`,
+  )
+  process.exit(1)
+}
+
+const packedDistPaths = paths.filter((file) => file.startsWith("dist/")).sort()
+const declaredDistPaths = [
+  `dist/${ARTIFACT_MANIFEST_FILE}`,
+  ...artifactManifest.resources.map((resource) => `dist/${resource.path}`),
+].sort()
+if (
+  packedDistPaths.length !== declaredDistPaths.length ||
+  packedDistPaths.some((file, index) => file !== declaredDistPaths[index])
+) {
+  const omitted = declaredDistPaths.filter((file) => !packedDistPaths.includes(file))
+  const undeclared = packedDistPaths.filter((file) => !declaredDistPaths.includes(file))
+  process.stderr.write(
+    `Packed dist does not match the universal manifest (omitted: ${omitted.join(", ") || "none"}; undeclared: ${undeclared.join(", ") || "none"}).\n`,
   )
   process.exit(1)
 }
@@ -259,5 +317,5 @@ if (unexpected.length > 0 || missing.length > 0) {
 }
 
 process.stdout.write(
-  `${formatBundleBudgetReport(bundleReport)}\nVerified ${manifest.name}@${manifest.version}: ${paths.length} files, ${manifest.unpackedSize} unpacked bytes.\n`,
+  `${formatBundleBudgetReport(bundleReport)}\nVerified ${manifest.name}@${manifest.version}: ${paths.length} files, ${manifest.unpackedSize} unpacked bytes, source ${artifactManifest.sourceRevision}, resources ${artifactManifest.resourcesSha256}.\n`,
 )

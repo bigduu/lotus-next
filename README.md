@@ -93,6 +93,21 @@ containers, private network, temporary image, observation mount, and data root
 it created. CI runs this single desktop lane once on Node 22; it does not repeat
 it across the mock suite's viewport/runtime matrix.
 
-`npm run pack:check` rebuilds the app, asks npm for the exact dry-run tarball manifest, and rejects anything outside `dist/` plus npm's required package metadata. The package remains at version `0.0.0`; this repository intentionally has no publish or release workflow yet.
+`npm run pack:check` rebuilds the app, asks npm for the exact dry-run tarball
+manifest, and rejects anything outside `dist/` plus npm's required package
+metadata. Every build also writes `dist/lotus-next-manifest.json`. That
+versioned universal-web manifest binds the package name/version, exact source
+revision and dirty state, relative `index.html` entrypoint, and every other
+regular `dist/` resource by portable path, byte size, and SHA-256. Its combined
+digest is deterministic for one resource set. Consumers must verify this file
+before serving or staging an artifact; a dirty source manifest is never a
+release artifact.
+
+The committed package version remains the `0.0.0` source placeholder. The
+manual publication workflow accepts one explicit SemVer, verifies the complete
+Node 22/24 and real-Bamboo gates from a clean `main` commit, packs without a
+second build, verifies the tarball, publishes with npm provenance, then
+downloads and verifies the registry copy. Publishing does not switch any
+Bamboo, Bodhi, or Zenith consumer.
 
 The initial bundle-size baseline is recorded in [`docs/bundle-baseline.md`](docs/bundle-baseline.md). It is an observation gate, not a size-budget change.
