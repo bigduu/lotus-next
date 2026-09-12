@@ -337,11 +337,13 @@ jobs:
           EXPECTED_INTEGRITY: ${{ steps.pack.outputs.integrity }}
           EXPECTED_SHASUM: ${{ steps.pack.outputs.shasum }}
         run: |
+          REGISTRY_CACHE="${RUNNER_TEMP}/registry-roundtrip-cache"
+          test ! -e "${REGISTRY_CACHE}"
           mkdir -p "${RUNNER_TEMP}/registry" "${RUNNER_TEMP}/registry-roundtrip"
-          npm pack "@bigduu/lotus-next@${LOTUS_NEXT_RELEASE_VERSION}" --ignore-scripts --pack-destination "${RUNNER_TEMP}/registry"
+          npm pack "@bigduu/lotus-next@${LOTUS_NEXT_RELEASE_VERSION}" --ignore-scripts --prefer-online --cache="${REGISTRY_CACHE}" --registry=https://registry.npmjs.org/ --pack-destination "${RUNNER_TEMP}/registry"
           REGISTRY_TARBALL="$(find "${RUNNER_TEMP}/registry" -maxdepth 1 -type f -name '*.tgz' -print -quit)"
           test -n "${REGISTRY_TARBALL}"
-          npm view "@bigduu/lotus-next@${LOTUS_NEXT_RELEASE_VERSION}" dist --json > "${RUNNER_TEMP}/registry-dist.json"
+          npm view "@bigduu/lotus-next@${LOTUS_NEXT_RELEASE_VERSION}" dist --json --prefer-online --cache="${REGISTRY_CACHE}" --registry=https://registry.npmjs.org/ > "${RUNNER_TEMP}/registry-dist.json"
           export REGISTRY_TARBALL
           node --input-type=module - <<'NODE'
           import { createHash } from "node:crypto"
