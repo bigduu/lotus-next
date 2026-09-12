@@ -136,7 +136,7 @@ jobs:
 
       - name: Upload browser evidence
         if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: publish-playwright-node-${{ matrix.node }}
           path: |
@@ -208,7 +208,7 @@ jobs:
 
       - name: Upload real Bamboo evidence
         if: ${{ always() }}
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: publish-real-bamboo-node-22
           path: |
