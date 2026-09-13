@@ -1,5 +1,5 @@
 import { execFile, spawnSync, type ChildProcess } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   chmodSync,
   mkdirSync,
@@ -11,18 +11,18 @@ import {
   chown,
   chmod,
   copyFile,
+  lstat,
   mkdir,
   readFile,
   realpath,
   rm,
-  stat,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-export const REAL_BAMBOO_REVISION = "2171e406a18c9f48509f1372560ef6e8c1749eca";
+export const REAL_BAMBOO_REVISION = "a8b5385dc4318ab02ba35c0692bdf48914275f6c";
 
 const REAL_BAMBOO_MODEL = "gpt-4o-mini";
 const REAL_BAMBOO_PROVIDER = "e2e-openai";
@@ -39,19 +39,25 @@ const CLEANUP_COMMAND_TIMEOUT_MS = 15_000;
 
 const SUPPORT_ROOT = path.dirname(fileURLToPath(import.meta.url));
 const REPOSITORY_ROOT = path.resolve(SUPPORT_ROOT, "../..");
-const DIST_ROOT = path.join(REPOSITORY_ROOT, "dist");
+const CONFIGURED_ARTIFACT_ROOT = process.env.LOTUS_REAL_ARTIFACT_DIR?.trim();
+const DIST_ROOT = path.resolve(
+  CONFIGURED_ARTIFACT_ROOT || path.join(REPOSITORY_ROOT, "dist"),
+);
 const DOCKERFILE_PATH = path.join(SUPPORT_ROOT, "Dockerfile.real-bamboo");
 const PROVIDER_SCRIPT_PATH = path.join(SUPPORT_ROOT, "realBambooProvider.py");
 const PROVIDER_BUILD_CONTEXT_FILENAME = ".lotus-real-bamboo-provider.py";
 const PROVIDER_OBSERVATIONS_FILENAME = "provider-observations.json";
+const ACCEPTANCE_MODE = process.env.LOTUS_REAL_ACCEPTANCE_MODE?.trim();
 const EVIDENCE_BASE = path.join(
   REPOSITORY_ROOT,
   "test-results-real-bamboo",
+  ...(ACCEPTANCE_MODE ? [ACCEPTANCE_MODE] : []),
   "evidence",
 );
 
 const EXPORTED_ENVIRONMENT_KEYS = [
   "LOTUS_REAL_BAMBOO_BASE_URL",
+  "LOTUS_REAL_BAMBOO_REMOTE_URL",
   "LOTUS_REAL_BAMBOO_SESSION_ID",
   "LOTUS_REAL_BAMBOO_MEMORY_SESSION_ID",
   "LOTUS_REAL_BAMBOO_UI_SESSION_ID",
@@ -132,7 +138,10 @@ interface RuntimeState {
   containerUid?: number;
   containerGid?: number;
   requiresHostChown: boolean;
+  tlsEnabled: boolean;
   baseUrl?: string;
+  remoteUrl?: string;
+  artifactIdentity?: JsonObject;
   sessionId?: string;
   memorySessionId?: string;
   uiSessionId?: string;
@@ -169,6 +178,9 @@ const advanceStage = (state: RuntimeState, stage: string): void => {
 
 const isJsonObject = (value: unknown): value is JsonObject =>
   typeof value === "object" && value !== null && !Array.isArray(value);
+
+const sha256 = (contents: string | Buffer): string =>
+  createHash("sha256").update(contents).digest("hex");
 
 const truncateTail = (value: string, maxLength = 12_000): string =>
   value.length <= maxLength ? value : value.slice(value.length - maxLength);
@@ -344,21 +356,105 @@ const writeTextEvidenceSync = (
   chmodSync(evidencePath, 0o600);
 };
 
-const ensureProductionArtifact = async (): Promise<void> => {
+const ARTIFACT_IDENTITY_KEYS = [
+  "schemaVersion",
+  "registry",
+  "packageName",
+  "packageVersion",
+  "sourceRevision",
+  "sourceDirty",
+  "entrypoint",
+  "npmShasum",
+  "npmIntegrity",
+  "manifestSha256",
+  "resourcesSha256",
+  "resourceCount",
+] as const;
+
+const publishedArtifactIdentity = (): JsonObject | undefined => {
+  const raw = process.env.LOTUS_REAL_ARTIFACT_IDENTITY?.trim();
+  if (!raw) return undefined;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw) as unknown;
+  } catch (error) {
+    throw new Error(
+      `LOTUS_REAL_ARTIFACT_IDENTITY is invalid JSON: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  if (!isJsonObject(parsed)) {
+    throw new Error("LOTUS_REAL_ARTIFACT_IDENTITY must be a JSON object");
+  }
+  const keys = Object.keys(parsed);
+  if (
+    keys.length !== ARTIFACT_IDENTITY_KEYS.length ||
+    keys.some((key, index) => key !== ARTIFACT_IDENTITY_KEYS[index])
+  ) {
+    throw new Error(
+      `LOTUS_REAL_ARTIFACT_IDENTITY must contain exactly: ${ARTIFACT_IDENTITY_KEYS.join(", ")}`,
+    );
+  }
+  return parsed;
+};
+
+const ensureProductionArtifact = async (
+  state: RuntimeState,
+): Promise<void> => {
+  if (CONFIGURED_ARTIFACT_ROOT && !path.isAbsolute(CONFIGURED_ARTIFACT_ROOT)) {
+    throw new Error("LOTUS_REAL_ARTIFACT_DIR must be an absolute path");
+  }
+  let distStat;
+  try {
+    distStat = await lstat(DIST_ROOT);
+  } catch {
+    throw new Error(`Lotus production artifact is missing at ${DIST_ROOT}.`);
+  }
+  if (distStat.isSymbolicLink() || !distStat.isDirectory()) {
+    throw new Error(
+      `Lotus production artifact root must be a real directory: ${DIST_ROOT}`,
+    );
+  }
   const indexPath = path.join(DIST_ROOT, "index.html");
   let indexStat;
   try {
-    indexStat = await stat(indexPath);
+    indexStat = await lstat(indexPath);
   } catch {
     throw new Error(
       `Lotus production artifact is missing at ${indexPath}. Run the production build before the real-Bamboo suite.`,
     );
   }
-  if (!indexStat.isFile()) {
+  if (indexStat.isSymbolicLink() || !indexStat.isFile()) {
     throw new Error(
       `Lotus production artifact entry is not a file: ${indexPath}`,
     );
   }
+
+  const identity = publishedArtifactIdentity();
+  if (!identity) return;
+  const manifestPath = path.join(DIST_ROOT, "lotus-next-manifest.json");
+  const manifestSource = await readFile(manifestPath, "utf8");
+  const manifest = JSON.parse(manifestSource) as unknown;
+  if (!isJsonObject(manifest) || !Array.isArray(manifest.resources)) {
+    throw new Error("Published Lotus Next manifest is not an object with resources");
+  }
+  const checks: ReadonlyArray<readonly [string, unknown, unknown]> = [
+    ["package name", manifest.packageName, identity.packageName],
+    ["package version", manifest.packageVersion, identity.packageVersion],
+    ["source revision", manifest.sourceRevision, identity.sourceRevision],
+    ["source dirty state", manifest.sourceDirty, identity.sourceDirty],
+    ["entrypoint", manifest.entrypoint, identity.entrypoint],
+    ["resource digest", manifest.resourcesSha256, identity.resourcesSha256],
+    ["resource count", manifest.resources.length, identity.resourceCount],
+    ["manifest digest", sha256(manifestSource), identity.manifestSha256],
+  ];
+  for (const [label, actual, expected] of checks) {
+    if (actual !== expected) {
+      throw new Error(
+        `Published artifact ${label} ${JSON.stringify(actual)} does not match identity ${JSON.stringify(expected)}`,
+      );
+    }
+  }
+  state.artifactIdentity = identity;
 };
 
 const ensureDocker = async (): Promise<string> => {
@@ -507,6 +603,8 @@ const buildPinnedBambooImage = async (
       "build",
       "--file",
       DOCKERFILE_PATH,
+      "--build-arg",
+      `BAMBOO_REVISION=${REAL_BAMBOO_REVISION}`,
       "--tag",
       image,
       "--label",
@@ -562,12 +660,69 @@ const applyContainerOwnership = async (
   await chown(target, state.containerUid, state.containerGid);
 };
 
-const createBambooConfig = (fakeApiKey: string): Record<string, unknown> => ({
+const prepareRuntimeTls = async (state: RuntimeState): Promise<void> => {
+  const certificateSource = process.env.LOTUS_REAL_BAMBOO_TLS_CERT?.trim();
+  const keySource = process.env.LOTUS_REAL_BAMBOO_TLS_KEY?.trim();
+  if (Boolean(certificateSource) !== Boolean(keySource)) {
+    throw new Error(
+      "LOTUS_REAL_BAMBOO_TLS_CERT and LOTUS_REAL_BAMBOO_TLS_KEY must be provided together",
+    );
+  }
+  if (ACCEPTANCE_MODE === "remote" && !certificateSource) {
+    throw new Error("Remote acceptance requires an ephemeral TLS certificate");
+  }
+  if (ACCEPTANCE_MODE === "local" && certificateSource) {
+    throw new Error("Local acceptance must keep the native HTTP loopback path");
+  }
+  if (!certificateSource || !keySource) return;
+  if (!state.runtimeDataRoot) {
+    throw new Error("Internal error: runtime data root is not initialized");
+  }
+
+  for (const [label, source] of [
+    ["certificate", certificateSource],
+    ["private key", keySource],
+  ] as const) {
+    const metadata = await lstat(source).catch(() => undefined);
+    if (!metadata || metadata.isSymbolicLink() || !metadata.isFile()) {
+      throw new Error(`TLS ${label} must be a regular non-symlink file`);
+    }
+  }
+
+  const tlsRoot = path.join(state.runtimeDataRoot, "tls");
+  const certificateTarget = path.join(tlsRoot, "server.crt");
+  const keyTarget = path.join(tlsRoot, "server.key");
+  await mkdir(tlsRoot, { mode: 0o700 });
+  await copyFile(certificateSource, certificateTarget);
+  await copyFile(keySource, keyTarget);
+  await chmod(tlsRoot, 0o700);
+  await chmod(certificateTarget, 0o600);
+  await chmod(keyTarget, 0o600);
+  await applyContainerOwnership(state, tlsRoot);
+  await applyContainerOwnership(state, certificateTarget);
+  await applyContainerOwnership(state, keyTarget);
+  state.tlsEnabled = true;
+};
+
+const createBambooConfig = (
+  fakeApiKey: string,
+  tlsEnabled: boolean,
+): Record<string, unknown> => ({
   setup: {
     completed: true,
     completed_at: "1970-01-01T00:00:00Z",
     version: 1,
   },
+  ...(tlsEnabled
+    ? {
+        server: {
+          tls: {
+            cert_file: "/data/tls/server.crt",
+            key_file: "/data/tls/server.key",
+          },
+        },
+      }
+    : {}),
   features: { provider_model_ref: true },
   provider_instances: {
     [REAL_BAMBOO_PROVIDER]: {
@@ -615,7 +770,7 @@ const writeBambooConfig = async (state: RuntimeState): Promise<void> => {
   const configPath = path.join(bambooDataRoot, "config.json");
   await writeFile(
     configPath,
-    `${JSON.stringify(createBambooConfig(state.fakeApiKey), null, 2)}\n`,
+    `${JSON.stringify(createBambooConfig(state.fakeApiKey, state.tlsEnabled), null, 2)}\n`,
     { encoding: "utf8", mode: 0o600 },
   );
   await chmod(configPath, 0o600);
@@ -998,7 +1153,7 @@ const startBambooContainer = async (state: RuntimeState): Promise<string> => {
   state.containerId = containerId;
 
   const hostPort = await publishedBambooPort(containerId);
-  return `http://127.0.0.1:${hostPort}`;
+  return `${state.tlsEnabled ? "https" : "http"}://127.0.0.1:${hostPort}`;
 };
 
 const delay = async (milliseconds: number): Promise<void> =>
@@ -1488,6 +1643,7 @@ const runtimeSummary = (
     providerContainerName: state.providerContainerName ?? null,
     privateNetwork: state.networkName ?? null,
     baseUrl: state.baseUrl ?? null,
+    remoteUrl: state.remoteUrl ?? null,
     sessionId: state.sessionId ?? null,
     memorySessionId: state.memorySessionId ?? null,
     uiSessionId: state.uiSessionId ?? null,
@@ -1500,6 +1656,10 @@ const runtimeSummary = (
     userMarker: state.userMarker ?? null,
     assistantMarker: state.assistantMarker ?? null,
   },
+  artifact: state.artifactIdentity ?? {
+    mode: "repository build",
+    distRoot: "repository dist",
+  },
   isolation: {
     containerUser: state.containerUser ?? null,
     containerRunsAsRoot: state.containerUser?.startsWith("0:") ?? null,
@@ -1508,7 +1668,8 @@ const runtimeSummary = (
     jianduDataDir: "/data/.jiandu",
     frontendMount: "/frontend:ro",
     dataMountOwnership: "single harness-created temporary root",
-    exposure: "Docker port published on 127.0.0.1 only",
+    exposure: `Docker ${state.tlsEnabled ? "TLS" : "HTTP"} port published on 127.0.0.1 only`,
+    tlsTermination: state.tlsEnabled ? "Bamboo rustls in-process" : "none",
     providerTransport: `sibling container sharing Bamboo's network namespace -> 127.0.0.1:${PROVIDER_CONTAINER_PORT}`,
     providerHostTcpExposure:
       "none (provider binds container loopback; only Bamboo port 9562 is published)",
@@ -1841,18 +2002,29 @@ const globalSetup = async (): Promise<() => Promise<void>> => {
     containerUid: containerIdentity.uid,
     containerGid: containerIdentity.gid,
     requiresHostChown: containerIdentity.requiresHostChown,
+    tlsEnabled: false,
     runtimeReadyForTests: false,
     environmentBefore: new Map(
       EXPORTED_ENVIRONMENT_KEYS.map((key) => [key, process.env[key]] as const),
     ),
   };
+  delete process.env.LOTUS_REAL_BAMBOO_REMOTE_URL;
   registerSignalHandlers(state);
 
   try {
     await mkdir(state.evidenceRoot, { recursive: true, mode: 0o700 });
     await chmod(state.evidenceRoot, 0o700);
+    if (ACCEPTANCE_MODE && !new Set(["local", "remote"]).has(ACCEPTANCE_MODE)) {
+      throw new Error(
+        "LOTUS_REAL_ACCEPTANCE_MODE must be exactly local or remote",
+      );
+    }
     advanceStage(state, "validating production artifact");
-    await ensureProductionArtifact();
+    await ensureProductionArtifact(state);
+    await writeEvidence(state, "artifact.json", state.artifactIdentity ?? {
+      schemaVersion: 1,
+      mode: "repository-build",
+    });
 
     advanceStage(state, "validating Docker");
     state.dockerServerVersion = await ensureDocker();
@@ -1895,6 +2067,9 @@ const globalSetup = async (): Promise<() => Promise<void>> => {
     state.assistantMarker = `lotus-real-assistant-${randomUUID()}`;
     state.smokeMarker = `lotus-real-smoke-${randomUUID()}`;
 
+    advanceStage(state, "preparing optional Bamboo TLS identity");
+    await prepareRuntimeTls(state);
+
     advanceStage(state, "writing isolated Bamboo configuration");
     await writeBambooConfig(state);
 
@@ -1906,6 +2081,19 @@ const globalSetup = async (): Promise<() => Promise<void>> => {
 
     advanceStage(state, "starting Bamboo container");
     state.baseUrl = await startBambooContainer(state);
+    const remoteHostname = process.env.LOTUS_REAL_REMOTE_HOSTNAME?.trim();
+    if (state.tlsEnabled) {
+      if (remoteHostname !== "remote.lotus.test") {
+        throw new Error(
+          "TLS acceptance requires LOTUS_REAL_REMOTE_HOSTNAME=remote.lotus.test",
+        );
+      }
+      const remoteUrl = new URL(state.baseUrl);
+      remoteUrl.hostname = remoteHostname;
+      state.remoteUrl = remoteUrl.origin;
+    } else if (remoteHostname) {
+      throw new Error("A remote hostname is invalid without Bamboo TLS");
+    }
 
     advanceStage(state, "starting loopback provider sidecar");
     await startProviderContainer(state);
@@ -1980,6 +2168,9 @@ const globalSetup = async (): Promise<() => Promise<void>> => {
     });
 
     process.env.LOTUS_REAL_BAMBOO_BASE_URL = state.baseUrl;
+    if (state.remoteUrl) {
+      process.env.LOTUS_REAL_BAMBOO_REMOTE_URL = state.remoteUrl;
+    }
     process.env.LOTUS_REAL_BAMBOO_SESSION_ID = state.sessionId;
     process.env.LOTUS_REAL_BAMBOO_MEMORY_SESSION_ID = state.memorySessionId;
     process.env.LOTUS_REAL_BAMBOO_UI_SESSION_ID = state.uiSessionId;

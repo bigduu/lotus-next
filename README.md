@@ -34,7 +34,7 @@ the migration and its declared rollback window has ended.
 - Streaming messages, reasoning, tools, tasks, budgets, sub-agents, Markdown, syntax highlighting, Mermaid, images, and approval or question dialogs.
 - Session navigation, live account reconciliation, drafts, pending-question restoration, Markdown/PDF export, and a desktop split view with a second interactive chat pane.
 - Responsive desktop and mobile layouts, light/dark/system themes, simple/advanced modes, and a graphics-safe mode for constrained environments.
-- Fifteen settings tabs: General, Providers, MCP, Plugins, Skills, Permissions, Environment, Schedules, Notifications, Masking, Prompts, Workflows, Clusters, Metrics, and System.
+- Sixteen settings tabs: General, Providers, MCP, Plugins, Skills, Permissions, Environment, Schedules, Notifications, Masking, Prompts, Workflows, Clusters, Metrics, Jiandu memory, and System.
 
 ## Internationalization
 
@@ -62,9 +62,9 @@ embedded hosting while enforcing the canonical `/api/v1` and `/v2/stream`
 runtime contract. CI retains its HTML report, trace, screenshot, video, and
 runtime observations when a case fails.
 
-The real-runtime gate is intentionally separate from that deterministic matrix.
-It builds a clean checkout of Bamboo revision
-`2171e406a18c9f48509f1372560ef6e8c1749eca` into an isolated Docker image,
+The source-built real-runtime gate is intentionally separate from that
+deterministic matrix. It builds a clean checkout of Bamboo revision
+`a8b5385dc4318ab02ba35c0692bdf48914275f6c` into an isolated Docker image,
 serves the production Lotus Next artifact from that Bamboo process, and drives
 one complete chat turn through the visible desktop UI and a local deterministic
 OpenAI-compatible provider. It requires the `auth.ws_hello_ack.v1` bootstrap
@@ -73,9 +73,9 @@ the initial page and a fresh browser context, proving that exact `hello` is
 acknowledged by exact `welcome` before any subscription is sent. The provider
 shares Bamboo's test-owned network
 namespace and listens only on that namespace's loopback interface; only Bamboo's
-HTTP listener is published on a random host-loopback port. The provider writes
-redacted observations atomically to a test-owned bind mount instead of exposing
-its own API to the host.
+HTTP or in-process rustls TLS listener is published on a random host-loopback
+port. The provider writes redacted observations atomically to a test-owned bind
+mount instead of exposing its own API to the host.
 Both Bamboo data and its Jiandu home stay inside a separate
 test-owned temporary `/data` mount, so the lane never reads the workstation's
 live Bamboo or Jiandu state. To run it locally, provide the absolute path to a
@@ -92,6 +92,35 @@ failure, `SIGINT`, and `SIGTERM` share one exact-resource teardown for the two
 containers, private network, temporary image, observation mount, and data root
 it created. CI runs this single desktop lane once on Node 22; it does not repeat
 it across the mock suite's viewport/runtime matrix.
+
+The published-artifact acceptance is a second real-runtime lane. It downloads
+`@bigduu/lotus-next@2026.9.14` from the public npm registry into a fresh cache
+with lifecycle scripts disabled, then requires the committed SHA-1, SHA-512
+integrity, manifest SHA-256, resource-set digest, 34-resource inventory, and
+source revision `ae17b50574ccd86395cbc226b50c9fb2f0f51e0f`. It refuses any
+different artifact before launching Bamboo. The same verified bytes are tested
+first through native loopback HTTP and then through Bamboo's own HTTPS/WSS
+listener using an ephemeral one-day certificate for `remote.lotus.test`.
+Desktop, tablet, and phone viewports must keep the shell, settings, and composer
+usable while every application request remains same-origin on canonical
+`/api/v1` and the single `/v2/stream` WebSocket.
+
+Run the immutable public-artifact lane with the same clean Bamboo checkout:
+
+```bash
+BAMBOO_E2E_SOURCE_DIR=/absolute/path/to/bamboo \
+  npm run test:e2e:published-bamboo
+```
+
+This command additionally requires `openssl`. It creates no public tunnel: the
+named remote topology resolves only to `127.0.0.1`, and the self-signed
+certificate is trusted only by the ephemeral test processes. It proves the
+browser contract and responsive viewports, not a physical-device or
+public-network path. HTML reports and Playwright artifacts are written to the
+`playwright-report-real-bamboo-{local,remote}` and
+`test-results-real-bamboo-{local,remote}` directories; runtime identity and
+redacted observations remain under `test-results-real-bamboo/{local,remote}`.
+CI uploads all three evidence roots even when a lane fails.
 
 `npm run pack:check` rebuilds the app, asks npm for the exact dry-run tarball
 manifest, and rejects anything outside `dist/` plus npm's required package

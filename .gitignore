@@ -12,8 +12,8 @@ dist
 dist-ssr
 playwright-report
 test-results
-playwright-report-real-bamboo
-test-results-real-bamboo
+playwright-report-real-bamboo*
+test-results-real-bamboo*
 .e2e-bamboo
 *.local
 
