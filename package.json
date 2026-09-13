@@ -29,6 +29,7 @@
     "test:e2e:built": "playwright test",
     "test:e2e:real-bamboo": "npm run build && npm run test:e2e:real-bamboo:built",
     "test:e2e:real-bamboo:built": "playwright test --config=playwright.real-bamboo.config.ts",
+    "test:e2e:published-bamboo": "node scripts/published-real-bamboo-acceptance.mjs",
     "architecture:check": "node scripts/check-architecture.mjs",
     "artifact:verify": "node scripts/artifact-manifest.mjs verify",
     "package:contents": "node scripts/verify-package.mjs",

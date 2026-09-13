@@ -68,7 +68,7 @@ jobs:
     timeout-minutes: 60
 
     env:
-      BAMBOO_E2E_REVISION: 2171e406a18c9f48509f1372560ef6e8c1749eca
+      BAMBOO_E2E_REVISION: a8b5385dc4318ab02ba35c0692bdf48914275f6c
 
     steps:
       - name: Check out Lotus Next
@@ -103,6 +103,11 @@ jobs:
           BAMBOO_E2E_SOURCE_DIR: ${{ github.workspace }}/.e2e-bamboo
         run: npm run test:e2e:real-bamboo:built
 
+      - name: Verify the locked public artifact on local and secure browser surfaces
+        env:
+          BAMBOO_E2E_SOURCE_DIR: ${{ github.workspace }}/.e2e-bamboo
+        run: npm run test:e2e:published-bamboo
+
       - name: Upload real Bamboo browser evidence
         if: ${{ always() }}
         uses: actions/upload-artifact@v5
@@ -110,6 +115,10 @@ jobs:
           name: playwright-report-real-bamboo-node-22
           path: |
             playwright-report-real-bamboo/
+            playwright-report-real-bamboo-local/
+            playwright-report-real-bamboo-remote/
             test-results-real-bamboo/
+            test-results-real-bamboo-local/
+            test-results-real-bamboo-remote/
           if-no-files-found: error
           retention-days: 14
