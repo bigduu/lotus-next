@@ -50,9 +50,10 @@ const page = (
   sessions: SessionSummary[],
   offset: number,
   nextOffset?: number,
+  total = sessions.length + (nextOffset ?? offset),
 ): ListSessionsResponse => ({
   sessions,
-  total: sessions.length + (nextOffset ?? offset),
+  total,
   limit: 2,
   offset,
   ...(nextOffset === undefined ? {} : { next_offset: nextOffset }),
@@ -87,21 +88,43 @@ afterEach(() => {
 });
 
 describe("lazy session index loading", () => {
-  it("follows every filtered page and deduplicates rows if a mutable offset shifts", async () => {
+  it("retries every page when a mutable offset overlaps and omits a row", async () => {
     const listSessions = vi.fn()
-      .mockResolvedValueOnce(page([summary("root-3"), summary("root-2")], 0, 2))
-      .mockResolvedValueOnce(page([summary("root-2"), summary("root-1")], 2));
+      .mockResolvedValueOnce(page([summary("root-3"), summary("root-2")], 0, 2, 3))
+      .mockResolvedValueOnce(page([summary("root-2"), summary("root-1")], 2, undefined, 4))
+      .mockResolvedValueOnce(page([summary("root-4"), summary("root-3")], 0, 2, 4))
+      .mockResolvedValueOnce(page([summary("root-2"), summary("root-1")], 2, undefined, 4));
 
     const result = await listAllSessionPages(
       { kind: "root", limit: 2 },
       { listSessions },
     );
 
-    expect(result.map((session) => session.id)).toEqual(["root-3", "root-2", "root-1"]);
+    expect(result.map((session) => session.id)).toEqual([
+      "root-4",
+      "root-3",
+      "root-2",
+      "root-1",
+    ]);
     expect(listSessions.mock.calls).toEqual([
       [{ kind: "root", limit: 2, offset: 0 }],
       [{ kind: "root", limit: 2, offset: 2 }],
+      [{ kind: "root", limit: 2, offset: 0 }],
+      [{ kind: "root", limit: 2, offset: 2 }],
     ]);
+  });
+
+  it("fails closed when both bounded snapshot attempts are incomplete", async () => {
+    const listSessions = vi.fn()
+      .mockResolvedValueOnce(page([summary("root-3"), summary("root-2")], 0, 2, 4))
+      .mockResolvedValueOnce(page([summary("root-2"), summary("root-1")], 2, undefined, 4))
+      .mockResolvedValueOnce(page([summary("root-3"), summary("root-2")], 0, 2, 4))
+      .mockResolvedValueOnce(page([summary("root-2"), summary("root-1")], 2, undefined, 4));
+
+    await expect(listAllSessionPages(
+      { kind: "root", limit: 2 },
+      { listSessions },
+    )).rejects.toThrow("changed while reading");
   });
 
   it("fails closed when a filtered response leaks a row from another scope", async () => {
@@ -256,6 +279,27 @@ describe("lazy session index loading", () => {
     await Promise.all([first, second, third]);
 
     expect(list).toHaveBeenCalledTimes(2);
+  });
+
+  it("discards a late child-tree response after its root is removed", async () => {
+    const root = summary("root", { subagentCount: 1 });
+    const child = summary("child", { kind: "child", rootSessionId: "root" });
+    const store = minimalStore([root]);
+    const pending = deferred<ListSessionsResponse>();
+    vi.spyOn(agentClient, "listSessions").mockReturnValueOnce(pending.promise);
+
+    const hydration = executeLoadSubagentSessions(
+      "root",
+      store.setState,
+      store.getState,
+      { force: true },
+    );
+    applySessionsList([], store.setState, { kind: "roots" });
+    pending.resolve({ sessions: [child], total: 1, limit: 200, offset: 0 });
+    await hydration;
+
+    expect(store.getState().chats).toEqual([]);
+    expect(store.getState().reconcileSessionPermissionModes).not.toHaveBeenCalled();
   });
 
   it("bootstraps through root-only pages and never calls the legacy unfiltered list", async () => {

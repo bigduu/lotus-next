@@ -14,6 +14,7 @@ import type { ChatSlice } from "./types";
 
 const agentClient = AgentClient.getInstance();
 const SESSION_INDEX_PAGE_SIZE = 200;
+const SESSION_INDEX_SNAPSHOT_ATTEMPTS = 2;
 
 export type SessionListScope =
   | { kind: "all" }
@@ -37,42 +38,64 @@ export async function listAllSessionPages(
   query: Omit<ListSessionsQuery, "offset">,
   client: Pick<AgentClient, "listSessions"> = agentClient,
 ): Promise<SessionSummary[]> {
-  const sessionsById = new Map<string, SessionSummary>();
-  const seenOffsets = new Set<number>();
-  let offset = 0;
+  for (let attempt = 0; attempt < SESSION_INDEX_SNAPSHOT_ATTEMPTS; attempt += 1) {
+    const sessionsById = new Map<string, SessionSummary>();
+    const seenOffsets = new Set<number>();
+    let expectedTotal: number | null = null;
+    let snapshotChanged = false;
+    let offset = 0;
 
-  while (true) {
-    if (seenOffsets.has(offset)) {
-      throw new Error(`Session pagination repeated offset ${offset}`);
-    }
-    seenOffsets.add(offset);
+    while (true) {
+      if (seenOffsets.has(offset)) {
+        throw new Error(`Session pagination repeated offset ${offset}`);
+      }
+      seenOffsets.add(offset);
 
-    const page = await client.listSessions({
-      ...query,
-      limit: query.limit ?? SESSION_INDEX_PAGE_SIZE,
-      offset,
-    });
-    for (const session of page.sessions) {
-      if (query.kind && session.kind !== query.kind) {
-        throw new Error(`Session list returned ${session.kind} for ${query.kind} query`);
+      const page = await client.listSessions({
+        ...query,
+        limit: query.limit ?? SESSION_INDEX_PAGE_SIZE,
+        offset,
+      });
+      if (!Number.isSafeInteger(page.total) || page.total < 0) {
+        throw new Error(`Session pagination returned invalid total ${page.total}`);
       }
-      if (query.root_session_id && session.root_session_id !== query.root_session_id) {
-        throw new Error("Session list returned a row from another root tree");
+      if (expectedTotal === null) {
+        expectedTotal = page.total;
+      } else if (page.total !== expectedTotal) {
+        snapshotChanged = true;
       }
-      if (!sessionsById.has(session.id)) {
-        sessionsById.set(session.id, session);
-      }
-    }
 
-    const nextOffset = page.next_offset;
-    if (typeof nextOffset !== "number") break;
-    if (!Number.isSafeInteger(nextOffset) || nextOffset <= offset) {
-      throw new Error(`Session pagination did not advance from offset ${offset}`);
+      for (const session of page.sessions) {
+        if (query.kind && session.kind !== query.kind) {
+          throw new Error(`Session list returned ${session.kind} for ${query.kind} query`);
+        }
+        if (query.root_session_id && session.root_session_id !== query.root_session_id) {
+          throw new Error("Session list returned a row from another root tree");
+        }
+        if (sessionsById.has(session.id)) {
+          snapshotChanged = true;
+        } else {
+          sessionsById.set(session.id, session);
+        }
+      }
+
+      const nextOffset = page.next_offset;
+      if (typeof nextOffset === "number") {
+        if (!Number.isSafeInteger(nextOffset) || nextOffset <= offset) {
+          throw new Error(`Session pagination did not advance from offset ${offset}`);
+        }
+        offset = nextOffset;
+        continue;
+      }
+
+      if (!snapshotChanged && sessionsById.size === page.total) {
+        return [...sessionsById.values()];
+      }
+      break;
     }
-    offset = nextOffset;
   }
 
-  return [...sessionsById.values()];
+  throw new Error("Session pagination changed while reading; retry the refresh");
 }
 
 /**
@@ -391,6 +414,15 @@ export function executeLoadSubagentSessions(
             root_session_id: rootSessionId,
             limit: SESSION_INDEX_PAGE_SIZE,
           });
+      const liveRoot = get().chats.find((chat) => chat.id === rootSessionId);
+      if (!liveRoot || liveRoot.kind !== "root") {
+        debugLog("[ChatSlice]", "subagents.load.discarded", {
+          rootSessionId,
+          reason: "root_removed",
+          sessionIndexRevision: fetchRevision,
+        });
+        return;
+      }
       applySessionsList(sessions, set, { kind: "children", rootSessionId });
       get().reconcileSessionPermissionModes(sessions);
       completedRevision = fetchRevision;
