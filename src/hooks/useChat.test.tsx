@@ -17,6 +17,7 @@ const mocks = vi.hoisted(() => {
   const appState = {
     chats: [] as Array<{ id: string; messages?: unknown[]; isRunning?: boolean }>,
     currentSessionId: null as string | null,
+    sessionIndexRevision: 0,
     selectedModel: "test-model" as string | undefined,
     inputStates: {} as Record<string, { reasoningEffort?: string }>,
     lastSelectedPromptId: null as string | null,
@@ -237,6 +238,7 @@ beforeEach(() => {
   mocks.shouldObserve = false
   mocks.appState.chats = []
   mocks.appState.currentSessionId = null
+  mocks.appState.sessionIndexRevision = 0
   mocks.appState.selectedModel = "test-model"
   mocks.appState.inputStates = {}
   mocks.appState.lastSelectedPromptId = null
@@ -439,6 +441,25 @@ describe("useChat two-phase send lifecycle", () => {
     expect(mocks.appState.restoreSession).toHaveBeenCalledExactlyOnceWith("saved-child")
     expect(mocks.appState.loadChatHistory).toHaveBeenCalledWith("saved-child")
     expect(localStorage.getItem("lotus_next_last_session")).toBe("saved-child")
+  })
+  it("force-refreshes a bound pane tree when the root index advances without navigation", async () => {
+    mocks.appState.chats = [{ id: "split-root", messages: [] }]
+    const hook = await mountUseChat({ mode: "bound", sessionId: "split-root" })
+    await vi.waitFor(() => {
+      expect(mocks.appState.loadSubagentSessions).toHaveBeenCalledExactlyOnceWith(
+        "split-root",
+        { force: true },
+      )
+    })
+
+    mocks.appState.loadSubagentSessions.mockClear()
+    mocks.appState.sessionIndexRevision += 1
+    await hook.rerender({ mode: "bound", sessionId: "split-root" })
+
+    expect(mocks.appState.loadSubagentSessions).toHaveBeenCalledExactlyOnceWith(
+      "split-root",
+      { force: true },
+    )
   })
   it("uses the authoritative Chat preference instead of the compatibility provider", async () => {
     mocks.appState.selectedModel = undefined

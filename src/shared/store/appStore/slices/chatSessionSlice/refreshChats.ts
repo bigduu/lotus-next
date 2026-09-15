@@ -21,7 +21,12 @@ export type SessionListScope =
   | { kind: "children"; rootSessionId: string }
   | { kind: "upsert" };
 
-const subagentTreeRequests = new Map<string, Promise<void>>();
+interface SubagentTreeRequest {
+  requestedRevision: number;
+  promise: Promise<void>;
+}
+
+const subagentTreeRequests = new Map<string, SubagentTreeRequest>();
 
 /**
  * Follow the backend's opaque `next_offset` cursor until the filtered result is
@@ -301,8 +306,15 @@ export function applySessionsList(
     const chatsChanged =
       merged.length !== state.chats.length ||
       merged.some((chat, index) => chat !== state.chats[index]);
+    const sessionIndexRevision = scope.kind === "roots"
+      ? state.sessionIndexRevision + 1
+      : state.sessionIndexRevision;
 
-    if (!chatsChanged && executionBySession === state.executionBySession) {
+    if (
+      !chatsChanged &&
+      executionBySession === state.executionBySession &&
+      sessionIndexRevision === state.sessionIndexRevision
+    ) {
       return state;
     }
 
@@ -310,6 +322,7 @@ export function applySessionsList(
       ...state,
       chats: chatsChanged ? merged : state.chats,
       executionBySession,
+      sessionIndexRevision,
     };
   });
 }
@@ -333,11 +346,16 @@ export function executeLoadSubagentSessions(
 
   const existingRequest = subagentTreeRequests.get(rootSessionId);
   if (existingRequest) {
-    // A root refresh is authoritative even if an older selection-triggered read
-    // is still running. Queue one fresh read after it; ordinary selections join.
-    return options.force
-      ? existingRequest.then(() => executeLoadSubagentSessions(rootSessionId, set, get, options))
-      : existingRequest;
+    // All panes targeting the same root share one worker. If the root index
+    // advanced after its current read began, the worker makes exactly one more
+    // pass before settling, regardless of how many panes requested it.
+    if (options.force) {
+      existingRequest.requestedRevision = Math.max(
+        existingRequest.requestedRevision,
+        get().sessionIndexRevision,
+      );
+    }
+    return existingRequest.promise;
   }
 
   const currentChildren = get().chats.filter(
@@ -348,35 +366,47 @@ export function executeLoadSubagentSessions(
     return Promise.resolve();
   }
 
-  if (expectedChildren === 0) {
-    applySessionsList([], set, { kind: "children", rootSessionId });
-    return Promise.resolve();
-  }
+  const request: SubagentTreeRequest = {
+    requestedRevision: get().sessionIndexRevision,
+    promise: Promise.resolve(),
+  };
+  request.promise = (async () => {
+    let completedRevision = -1;
+    while (completedRevision < request.requestedRevision) {
+      const fetchRevision = request.requestedRevision;
+      const latestRoot = get().chats.find((chat) => chat.id === rootSessionId);
+      const latestExpectedChildren = latestRoot?.kind === "root"
+        ? (latestRoot.subagentCount ?? 0)
+        : 0;
 
-  let request: Promise<void>;
-  request = (async () => {
-    debugLog("[ChatSlice]", "subagents.load.start", {
-      rootSessionId,
-      expectedChildren,
-    });
-    const sessions = await listAllSessionPages({
-      kind: "child",
-      root_session_id: rootSessionId,
-      limit: SESSION_INDEX_PAGE_SIZE,
-    });
-    applySessionsList(sessions, set, { kind: "children", rootSessionId });
-    get().reconcileSessionPermissionModes(sessions);
-    debugLog("[ChatSlice]", "subagents.load.applied", {
-      rootSessionId,
-      count: sessions.length,
-    });
+      debugLog("[ChatSlice]", "subagents.load.start", {
+        rootSessionId,
+        expectedChildren: latestExpectedChildren,
+        sessionIndexRevision: fetchRevision,
+      });
+      const sessions = latestExpectedChildren === 0
+        ? []
+        : await listAllSessionPages({
+            kind: "child",
+            root_session_id: rootSessionId,
+            limit: SESSION_INDEX_PAGE_SIZE,
+          });
+      applySessionsList(sessions, set, { kind: "children", rootSessionId });
+      get().reconcileSessionPermissionModes(sessions);
+      completedRevision = fetchRevision;
+      debugLog("[ChatSlice]", "subagents.load.applied", {
+        rootSessionId,
+        count: sessions.length,
+        sessionIndexRevision: fetchRevision,
+      });
+    }
   })().finally(() => {
     if (subagentTreeRequests.get(rootSessionId) === request) {
       subagentTreeRequests.delete(rootSessionId);
     }
   });
   subagentTreeRequests.set(rootSessionId, request);
-  return request;
+  return request.promise;
 }
 
 export async function executeRefreshChats(set: ChatSliceSet, get: () => AppState): Promise<void> {
@@ -398,11 +428,6 @@ export async function executeRefreshChats(set: ChatSliceSet, get: () => AppState
       });
       applySessionsList(sessions, set, { kind: "roots" });
       get().reconcileSessionPermissionModes(sessions);
-
-      const currentSessionId = get().currentSessionId;
-      if (currentSessionId) {
-        await get().loadSubagentSessions(currentSessionId, { force: true });
-      }
     } catch (error) {
       console.error("[ChatSlice] Failed to refresh sessions:", error);
       debugLog("[ChatSlice]", "refreshChats.error", { error });

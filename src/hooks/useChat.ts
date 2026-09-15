@@ -130,6 +130,7 @@ export function useChat(
 
   const chats = useAppStore(useShallow((s) => s.chats))
   const globalCurrentSessionId = useAppStore((s) => s.currentSessionId)
+  const sessionIndexRevision = useAppStore((s) => s.sessionIndexRevision)
   // The session this hook instance drives: a bound pane uses its own id; the
   // main pane follows the global current. Everything below keys off `sid`.
   const sid = isBound ? boundSessionId : globalCurrentSessionId
@@ -472,10 +473,11 @@ export function useChat(
 
   // Session summaries for children are tree-scoped. Hydrate only the tree that
   // a visible pane needs; repeated panes/selections share the in-flight request.
+  const canHydrateSessionTree = isBound || booted
   useEffect(() => {
-    if (!sid || (!isBound && !booted)) return
-    void useAppStore.getState().loadSubagentSessions(sid).catch(() => {})
-  }, [booted, isBound, sid])
+    if (!sid || !canHydrateSessionTree) return
+    void useAppStore.getState().loadSubagentSessions(sid, { force: true }).catch(() => {})
+  }, [canHydrateSessionTree, sessionIndexRevision, sid])
 
   const select = useCallback((id: string) => {
     useAppStore.getState().selectSession(id)

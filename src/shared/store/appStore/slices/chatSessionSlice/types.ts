@@ -27,6 +27,8 @@ export interface ChatSlice {
   chats: ChatItem[];
   currentSessionId: string | null;
   latestActiveSessionId: string | null;
+  /** Advances after each authoritative root-index refresh. */
+  sessionIndexRevision: number;
 
   // Actions
   addChat: (chat: Omit<ChatItem, "id">) => Promise<string>;

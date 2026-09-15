@@ -50,6 +50,7 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
   chats: [],
   currentSessionId: null,
   latestActiveSessionId: null,
+  sessionIndexRevision: 0,
 
   addChat: async (chatData) => {
     const title = (chatData.title || i18n.t("chat.sidebar.newSession")).trim();

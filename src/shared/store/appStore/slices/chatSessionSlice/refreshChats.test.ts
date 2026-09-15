@@ -63,6 +63,7 @@ const minimalStore = (sessions: SessionSummary[]) =>
     chats: sessions.map(sessionSummaryToChatItem),
     currentSessionId: sessions[0]?.id ?? null,
     latestActiveSessionId: sessions[0]?.id ?? null,
+    sessionIndexRevision: 0,
     executionBySession: {},
     reconcileSessionPermissionModes: vi.fn(),
   }) as unknown as AppState);
@@ -128,6 +129,7 @@ describe("lazy session index loading", () => {
     expect(store.getState().chats.map((chat) => chat.id)).toEqual(["root", "child"]);
     expect(store.getState().chats[0].title).toBe("Fresh root");
     expect(store.getState().chats[1]).toBe(childBefore);
+    expect(store.getState().sessionIndexRevision).toBe(1);
   });
 
   it("drops an orphaned child tree when its root disappears", () => {
@@ -163,6 +165,7 @@ describe("lazy session index loading", () => {
       "fresh-a",
     ]);
     expect(store.getState().chats.find((chat) => chat.id === "child-b")).toBe(unrelatedBefore);
+    expect(store.getState().sessionIndexRevision).toBe(0);
   });
 
   it("removes a stale tree without a request when the root reports no children", async () => {
@@ -213,6 +216,46 @@ describe("lazy session index loading", () => {
       "child/a",
       "child/b",
     ]);
+  });
+
+  it("coalesces panes while replaying once when the root index advances mid-request", async () => {
+    const root = summary("root", { subagentCount: 1 });
+    const child = summary("child", { kind: "child", rootSessionId: "root" });
+    const store = minimalStore([root]);
+    const firstPage = deferred<ListSessionsResponse>();
+    const refreshedPage = deferred<ListSessionsResponse>();
+    const list = vi.spyOn(agentClient, "listSessions")
+      .mockReturnValueOnce(firstPage.promise)
+      .mockReturnValueOnce(refreshedPage.promise);
+
+    const first = executeLoadSubagentSessions(
+      "root",
+      store.setState,
+      store.getState,
+      { force: true },
+    );
+    store.setState({ sessionIndexRevision: 1 });
+    const second = executeLoadSubagentSessions(
+      "root",
+      store.setState,
+      store.getState,
+      { force: true },
+    );
+    const third = executeLoadSubagentSessions(
+      "root",
+      store.setState,
+      store.getState,
+      { force: true },
+    );
+    expect(second).toBe(third);
+    expect(list).toHaveBeenCalledTimes(1);
+
+    firstPage.resolve({ sessions: [child], total: 1, limit: 200, offset: 0 });
+    await vi.waitFor(() => expect(list).toHaveBeenCalledTimes(2));
+    refreshedPage.resolve({ sessions: [child], total: 1, limit: 200, offset: 0 });
+    await Promise.all([first, second, third]);
+
+    expect(list).toHaveBeenCalledTimes(2);
   });
 
   it("bootstraps through root-only pages and never calls the legacy unfiltered list", async () => {
