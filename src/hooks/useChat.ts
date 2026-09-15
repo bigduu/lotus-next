@@ -426,30 +426,56 @@ export function useChat(
       setBooted(true)
       return
     }
-    void initializeStore().finally(() => {
+    let savedSessionId: string | null = null
+    try {
+      // Capture this before bootstrap selects its default root. The persistence
+      // effect is gated on `booted`, so it cannot overwrite a saved child id.
+      savedSessionId = localStorage.getItem(LAST_SESSION_KEY)
+    } catch {
+      /* ignore */
+    }
+    void (async () => {
+      try {
+        await initializeStore()
+      } catch {
+        // The store exposes backend availability separately; still let the shell boot.
+      }
+
       // Restore the last session the user was on (not whatever loadChats defaulted to).
       try {
-        const saved = localStorage.getItem(LAST_SESSION_KEY)
-        if (saved && useAppStore.getState().chats.some((c) => c.id === saved)) {
-          useAppStore.getState().selectSession(saved)
-          void useAppStore.getState().loadChatHistory(saved)
+        if (savedSessionId) {
+          const store = useAppStore.getState()
+          const restored = store.chats.some((c) => c.id === savedSessionId)
+            || await store.restoreSession(savedSessionId)
+          if (restored) {
+            useAppStore.getState().selectSession(savedSessionId)
+            void useAppStore.getState().loadChatHistory(savedSessionId)
+          }
         }
       } catch {
         /* ignore */
       }
+    })().finally(() => {
       setBooted(true)
     })
   }, [isBound])
 
   // Persist the active session so it's restored next launch — main pane only.
   useEffect(() => {
-    if (isBound || !globalCurrentSessionId) return
+    if (!booted || isBound || !globalCurrentSessionId) return
     try {
       localStorage.setItem(LAST_SESSION_KEY, globalCurrentSessionId)
     } catch {
       /* ignore */
     }
-  }, [globalCurrentSessionId, isBound])
+  }, [booted, globalCurrentSessionId, isBound])
+
+  // Session summaries for children are tree-scoped. Hydrate only the tree that
+  // a visible pane needs; repeated panes/selections share the in-flight request.
+  useEffect(() => {
+    if (!sid || (!isBound && !booted)) return
+    void useAppStore.getState().loadSubagentSessions(sid).catch(() => {})
+  }, [booted, isBound, sid])
 
   const select = useCallback((id: string) => {
     useAppStore.getState().selectSession(id)

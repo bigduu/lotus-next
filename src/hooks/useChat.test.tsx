@@ -22,6 +22,8 @@ const mocks = vi.hoisted(() => {
     lastSelectedPromptId: null as string | null,
     systemPrompts: [] as Array<{ id: string; content?: string }>,
     selectSession: vi.fn(),
+    loadSubagentSessions: vi.fn(),
+    restoreSession: vi.fn(),
     loadChatHistory: vi.fn(),
     refreshChatsNow: vi.fn(),
   }
@@ -231,6 +233,7 @@ afterAll(() => {
   Reflect.deleteProperty(reactActEnvironment, "IS_REACT_ACT_ENVIRONMENT")
 })
 beforeEach(() => {
+  localStorage.clear()
   mocks.shouldObserve = false
   mocks.appState.chats = []
   mocks.appState.currentSessionId = null
@@ -243,6 +246,8 @@ beforeEach(() => {
   mocks.providerState.getProviderType.mockReturnValue(undefined)
   for (const mock of [
     mocks.appState.selectSession,
+    mocks.appState.loadSubagentSessions,
+    mocks.appState.restoreSession,
     mocks.appState.loadChatHistory,
     mocks.appState.refreshChatsNow,
     mocks.initializeStore,
@@ -267,6 +272,8 @@ beforeEach(() => {
   mocks.appState.selectSession.mockImplementation((sessionId: string | null) => {
     mocks.appState.currentSessionId = sessionId
   })
+  mocks.appState.loadSubagentSessions.mockResolvedValue(undefined)
+  mocks.appState.restoreSession.mockResolvedValue(false)
   mocks.appState.loadChatHistory.mockResolvedValue(undefined)
   mocks.appState.refreshChatsNow.mockResolvedValue(undefined)
   mocks.execute.mockResolvedValue(undefined)
@@ -412,6 +419,26 @@ describe("useChat two-phase send lifecycle", () => {
       expect.any(Object),
       expect.any(AbortController),
     )
+  })
+  it("restores a persisted child before allowing the default root to be persisted", async () => {
+    localStorage.setItem("lotus_next_last_session", "saved-child")
+    mocks.initializeStore.mockImplementationOnce(async () => {
+      mocks.appState.chats = [{ id: "default-root", messages: [] }]
+      mocks.appState.currentSessionId = "default-root"
+    })
+    mocks.appState.restoreSession.mockImplementationOnce(async (sessionId: string) => {
+      mocks.appState.chats = [...mocks.appState.chats, { id: sessionId, messages: [] }]
+      return true
+    })
+
+    await mountUseChat({ mode: "main" })
+    await vi.waitFor(() => {
+      expect(mocks.appState.selectSession).toHaveBeenCalledWith("saved-child")
+    })
+
+    expect(mocks.appState.restoreSession).toHaveBeenCalledExactlyOnceWith("saved-child")
+    expect(mocks.appState.loadChatHistory).toHaveBeenCalledWith("saved-child")
+    expect(localStorage.getItem("lotus_next_last_session")).toBe("saved-child")
   })
   it("uses the authoritative Chat preference instead of the compatibility provider", async () => {
     mocks.appState.selectedModel = undefined

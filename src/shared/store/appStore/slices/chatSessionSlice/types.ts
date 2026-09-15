@@ -64,6 +64,13 @@ export interface ChatSlice {
   loadChats: () => Promise<void>;
   refreshChats: () => Promise<void>;
   refreshChatsNow: () => Promise<void>;
+  /** Hydrate the flattened child tree for the selected root/child session. */
+  loadSubagentSessions: (
+    sessionId: string,
+    options?: { force?: boolean },
+  ) => Promise<void>;
+  /** Restore a persisted session id that may refer to an unloaded child. */
+  restoreSession: (sessionId: string) => Promise<boolean>;
   loadChatHistory: (
     sessionId: string,
     options?: {

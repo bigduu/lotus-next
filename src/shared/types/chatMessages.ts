@@ -213,6 +213,8 @@ export interface ChatItem {
   lifecycle?: string | null;
   /** For a resident agent, its stable reuse key (e.g. "essayist"). */
   residentName?: string | null;
+  /** Total descendants in this root's flattened sub-agent tree. Children report zero. */
+  subagentCount?: number;
   /**
    * Which machine this session's agent runs on (deployment kind + host),
    * mirrored from the backend `SessionSummary.placement`. Present for every

@@ -244,12 +244,23 @@ describe("server-authoritative session permission state", () => {
 
   it("cannot let a pre-PATCH session-index request roll back the confirmed mode", async () => {
     const store = harness(); await ready(store);
-    const stale = deferred<{ sessions: SessionSummary[] }>(); list.mockReturnValueOnce(stale.promise);
+    const stale = deferred<{
+      sessions: SessionSummary[];
+      total: number;
+      limit: number;
+      offset: number;
+    }>();
+    list.mockReturnValueOnce(stale.promise);
     const refresh = store.getState().refreshChatsNow();
     patch.mockResolvedValueOnce(snapshot("auto", '"8"'));
     await store.getState().changeSessionPermissionMode("a", "auto", '"7"');
     read.mockResolvedValueOnce(snapshot("auto", '"8"'));
-    stale.resolve({ sessions: [{ ...summary(), updated_at: "2099-01-01T00:00:00Z" }] });
+    stale.resolve({
+      sessions: [{ ...summary(), updated_at: "2099-01-01T00:00:00Z" }],
+      total: 1,
+      limit: 200,
+      offset: 0,
+    });
     await refresh;
     await vi.waitFor(() => expect(store.getState().permissionModeRequests.a.status).toBe("ready"));
     expect(config(store)).toMatchObject({ permissionMode: "auto", permissionModeEtag: '"8"', bypassPermissions: true });

@@ -142,6 +142,11 @@ const fixtureModel = {
 
 const apiResponse = (method: string, pathnameWithSearch: string): unknown => {
   if (method === "GET" && /^\/api\/v1\/sessions\/[^/]+\/guidance$/.test(pathnameWithSearch)) return { messages: [] }
+  if (method === "GET" && /^\/api\/v1\/sessions(?:\?.*)?$/.test(pathnameWithSearch)) {
+    const url = new URL(pathnameWithSearch, "http://fixture.invalid")
+    const sessions = url.searchParams.get("kind") === "child" ? [] : [fixtureSession]
+    return { sessions, total: sessions.length, limit: 200, offset: 0 }
+  }
   switch (`${method} ${pathnameWithSearch}`) {
     case "GET /api/v1/bootstrap":
       return bootstrapDocument
@@ -169,8 +174,6 @@ const apiResponse = (method: string, pathnameWithSearch: string): unknown => {
         },
         features: { provider_model_ref: true },
       }
-    case "GET /api/v1/sessions":
-      return { sessions: [fixtureSession] }
     case `GET /api/v1/sessions/${FIXTURE_SESSION_ID}`:
       return { session: fixtureSession }
     case "GET /api/v1/runs/active":
