@@ -352,6 +352,33 @@ export function applySessionsList(
       return true;
     });
 
+    // If a scoped tree refresh proves that its currently selected child was
+    // deleted, keep navigation valid by returning to that child's root. Other
+    // scopes and selections are untouched.
+    const removedCurrent = state.currentSessionId
+      ? prevById.get(state.currentSessionId)
+      : undefined;
+    const scopedRootFallback = scope.kind === "children" && merged.some(
+      (chat) => chat.id === scope.rootSessionId && chat.kind !== "child",
+    )
+      ? scope.rootSessionId
+      : null;
+    const currentSessionId = scope.kind === "children" &&
+      removedCurrent?.kind === "child" &&
+      removedCurrent.rootSessionId === scope.rootSessionId &&
+      !seen.has(removedCurrent.id)
+      ? scopedRootFallback
+      : state.currentSessionId;
+    const removedLatest = state.latestActiveSessionId
+      ? prevById.get(state.latestActiveSessionId)
+      : undefined;
+    const latestActiveSessionId = scope.kind === "children" &&
+      removedLatest?.kind === "child" &&
+      removedLatest.rootSessionId === scope.rootSessionId &&
+      !seen.has(removedLatest.id)
+      ? scopedRootFallback
+      : state.latestActiveSessionId;
+
     const chatsChanged =
       merged.length !== state.chats.length ||
       merged.some((chat, index) => chat !== state.chats[index]);
@@ -362,6 +389,8 @@ export function applySessionsList(
     if (
       !chatsChanged &&
       executionBySession === state.executionBySession &&
+      currentSessionId === state.currentSessionId &&
+      latestActiveSessionId === state.latestActiveSessionId &&
       sessionIndexRevision === state.sessionIndexRevision
     ) {
       return state;
@@ -371,6 +400,8 @@ export function applySessionsList(
       ...state,
       chats: chatsChanged ? merged : state.chats,
       executionBySession,
+      currentSessionId,
+      latestActiveSessionId,
       sessionIndexRevision,
     };
   });

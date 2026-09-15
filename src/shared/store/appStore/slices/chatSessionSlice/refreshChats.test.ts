@@ -245,6 +245,19 @@ describe("lazy session index loading", () => {
     expect(store.getState().sessionIndexRevision).toBe(0);
   });
 
+  it("returns selection to the root when its scoped refresh deletes the active child", () => {
+    const root = summary("root", { subagentCount: 0 });
+    const stale = summary("stale", { kind: "child", rootSessionId: "root" });
+    const store = minimalStore([root, stale]);
+    store.setState({ currentSessionId: "stale", latestActiveSessionId: "stale" });
+
+    applySessionsList([], store.setState, { kind: "children", rootSessionId: "root" });
+
+    expect(store.getState().chats.map((chat) => chat.id)).toEqual(["root"]);
+    expect(store.getState().currentSessionId).toBe("root");
+    expect(store.getState().latestActiveSessionId).toBe("root");
+  });
+
   it("removes a stale tree without a request when the root reports no children", async () => {
     const root = summary("root", { subagentCount: 0 });
     const stale = summary("stale", { kind: "child", rootSessionId: "root" });
