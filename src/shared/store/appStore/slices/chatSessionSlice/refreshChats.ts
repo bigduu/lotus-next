@@ -14,7 +14,7 @@ import type { ChatSlice } from "./types";
 
 const agentClient = AgentClient.getInstance();
 const SESSION_INDEX_PAGE_SIZE = 200;
-const SESSION_INDEX_SNAPSHOT_ATTEMPTS = 2;
+const SESSION_INDEX_SNAPSHOT_ATTEMPTS = 3;
 
 export type SessionListScope =
   | { kind: "all" }
@@ -38,6 +38,8 @@ export async function listAllSessionPages(
   query: Omit<ListSessionsQuery, "offset">,
   client: Pick<AgentClient, "listSessions"> = agentClient,
 ): Promise<SessionSummary[]> {
+  let previousCandidateIds: string[] | null = null;
+
   for (let attempt = 0; attempt < SESSION_INDEX_SNAPSHOT_ATTEMPTS; attempt += 1) {
     const sessionsById = new Map<string, SessionSummary>();
     const seenOffsets = new Set<number>();
@@ -89,7 +91,25 @@ export async function listAllSessionPages(
       }
 
       if (!snapshotChanged && sessionsById.size === page.total) {
-        return [...sessionsById.values()];
+        const sessions = [...sessionsById.values()];
+        if (seenOffsets.size === 1) {
+          return sessions;
+        }
+
+        // Offset pagination has no server snapshot token. Even a read with a
+        // stable total and no duplicates can mix two same-cardinality index
+        // versions, so accept a multi-page result only after the next complete
+        // read confirms the same ordered membership.
+        const candidateIds = sessions.map((session) => session.id);
+        if (
+          previousCandidateIds?.length === candidateIds.length &&
+          previousCandidateIds.every((id, index) => id === candidateIds[index])
+        ) {
+          return sessions;
+        }
+        previousCandidateIds = candidateIds;
+      } else {
+        previousCandidateIds = null;
       }
       break;
     }

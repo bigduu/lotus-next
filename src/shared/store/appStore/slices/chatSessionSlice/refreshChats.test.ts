@@ -93,6 +93,8 @@ describe("lazy session index loading", () => {
       .mockResolvedValueOnce(page([summary("root-3"), summary("root-2")], 0, 2, 3))
       .mockResolvedValueOnce(page([summary("root-2"), summary("root-1")], 2, undefined, 4))
       .mockResolvedValueOnce(page([summary("root-4"), summary("root-3")], 0, 2, 4))
+      .mockResolvedValueOnce(page([summary("root-2"), summary("root-1")], 2, undefined, 4))
+      .mockResolvedValueOnce(page([summary("root-4"), summary("root-3")], 0, 2, 4))
       .mockResolvedValueOnce(page([summary("root-2"), summary("root-1")], 2, undefined, 4));
 
     const result = await listAllSessionPages(
@@ -111,11 +113,38 @@ describe("lazy session index loading", () => {
       [{ kind: "root", limit: 2, offset: 2 }],
       [{ kind: "root", limit: 2, offset: 0 }],
       [{ kind: "root", limit: 2, offset: 2 }],
+      [{ kind: "root", limit: 2, offset: 0 }],
+      [{ kind: "root", limit: 2, offset: 2 }],
     ]);
   });
 
-  it("fails closed when both bounded snapshot attempts are incomplete", async () => {
+  it("confirms multi-page membership across same-cardinality replacement", async () => {
     const listSessions = vi.fn()
+      .mockResolvedValueOnce(page([summary("root-4"), summary("root-3")], 0, 2, 4))
+      .mockResolvedValueOnce(page([summary("root-2"), summary("root-1")], 2, undefined, 4))
+      .mockResolvedValueOnce(page([summary("root-5"), summary("root-4")], 0, 2, 4))
+      .mockResolvedValueOnce(page([summary("root-2"), summary("root-1")], 2, undefined, 4))
+      .mockResolvedValueOnce(page([summary("root-5"), summary("root-4")], 0, 2, 4))
+      .mockResolvedValueOnce(page([summary("root-2"), summary("root-1")], 2, undefined, 4));
+
+    const result = await listAllSessionPages(
+      { kind: "root", limit: 2 },
+      { listSessions },
+    );
+
+    expect(result.map((session) => session.id)).toEqual([
+      "root-5",
+      "root-4",
+      "root-2",
+      "root-1",
+    ]);
+    expect(listSessions).toHaveBeenCalledTimes(6);
+  });
+
+  it("fails closed when all bounded snapshot attempts are incomplete", async () => {
+    const listSessions = vi.fn()
+      .mockResolvedValueOnce(page([summary("root-3"), summary("root-2")], 0, 2, 4))
+      .mockResolvedValueOnce(page([summary("root-2"), summary("root-1")], 2, undefined, 4))
       .mockResolvedValueOnce(page([summary("root-3"), summary("root-2")], 0, 2, 4))
       .mockResolvedValueOnce(page([summary("root-2"), summary("root-1")], 2, undefined, 4))
       .mockResolvedValueOnce(page([summary("root-3"), summary("root-2")], 0, 2, 4))
@@ -211,6 +240,14 @@ describe("lazy session index loading", () => {
     const pending = deferred<ListSessionsResponse>();
     const list = vi.spyOn(agentClient, "listSessions")
       .mockReturnValueOnce(pending.promise)
+      .mockResolvedValueOnce({ sessions: [childB], total: 2, limit: 200, offset: 1 })
+      .mockResolvedValueOnce({
+        sessions: [childA],
+        total: 2,
+        limit: 200,
+        offset: 0,
+        next_offset: 1,
+      })
       .mockResolvedValueOnce({ sessions: [childB], total: 2, limit: 200, offset: 1 });
 
     const first = executeLoadSubagentSessions("root/a", store.setState, store.getState);
@@ -231,6 +268,8 @@ describe("lazy session index loading", () => {
     });
     await Promise.all([first, second]);
     expect(list.mock.calls).toEqual([
+      [{ kind: "child", root_session_id: "root/a", limit: 200, offset: 0 }],
+      [{ kind: "child", root_session_id: "root/a", limit: 200, offset: 1 }],
       [{ kind: "child", root_session_id: "root/a", limit: 200, offset: 0 }],
       [{ kind: "child", root_session_id: "root/a", limit: 200, offset: 1 }],
     ]);
@@ -314,6 +353,14 @@ describe("lazy session index loading", () => {
         offset: 0,
         next_offset: 1,
       })
+      .mockResolvedValueOnce({ sessions: [older], total: 2, limit: 200, offset: 1 })
+      .mockResolvedValueOnce({
+        sessions: [newest],
+        total: 2,
+        limit: 200,
+        offset: 0,
+        next_offset: 1,
+      })
       .mockResolvedValueOnce({ sessions: [older], total: 2, limit: 200, offset: 1 });
     vi.spyOn(agentClient, "getRunningSessions").mockResolvedValueOnce({ sessions: [] });
     vi.spyOn(agentClient, "getHistory").mockResolvedValueOnce({
@@ -324,6 +371,8 @@ describe("lazy session index loading", () => {
     await store.getState().loadChats();
 
     expect(list.mock.calls).toEqual([
+      [{ kind: "root", limit: 200, offset: 0 }],
+      [{ kind: "root", limit: 200, offset: 1 }],
       [{ kind: "root", limit: 200, offset: 0 }],
       [{ kind: "root", limit: 200, offset: 1 }],
     ]);
