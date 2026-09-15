@@ -21,7 +21,9 @@ for (const scenario of [standaloneScenario, embeddedScenario, secureRemoteScenar
     let queuedImages: Array<{ base64: string }> = []
     await page.route("**/api/v1/sessions/all-surface-session/attachments/*", (route) => route.fulfill({ body: pixel, contentType: "image/png" }))
     let goalPatch: unknown
-    await page.route("**/api/v1/sessions", (route) => route.fulfill({ json: { sessions: [session] } }))
+    await page.route("**/api/v1/sessions?*", (route) => route.fulfill({
+      json: { sessions: [session], total: 1, limit: 200, offset: 0 },
+    }))
     await page.route("**/api/v1/sessions/all-surface-session", async (route) => {
       if (route.request().method() === "PATCH") {
         goalPatch = route.request().postDataJSON()

@@ -17,11 +17,14 @@ const mocks = vi.hoisted(() => {
   const appState = {
     chats: [] as Array<{ id: string; messages?: unknown[]; isRunning?: boolean }>,
     currentSessionId: null as string | null,
+    sessionIndexRevision: 0,
     selectedModel: "test-model" as string | undefined,
     inputStates: {} as Record<string, { reasoningEffort?: string }>,
     lastSelectedPromptId: null as string | null,
     systemPrompts: [] as Array<{ id: string; content?: string }>,
     selectSession: vi.fn(),
+    loadSubagentSessions: vi.fn(),
+    restoreSession: vi.fn(),
     loadChatHistory: vi.fn(),
     refreshChatsNow: vi.fn(),
   }
@@ -231,9 +234,11 @@ afterAll(() => {
   Reflect.deleteProperty(reactActEnvironment, "IS_REACT_ACT_ENVIRONMENT")
 })
 beforeEach(() => {
+  localStorage.clear()
   mocks.shouldObserve = false
   mocks.appState.chats = []
   mocks.appState.currentSessionId = null
+  mocks.appState.sessionIndexRevision = 0
   mocks.appState.selectedModel = "test-model"
   mocks.appState.inputStates = {}
   mocks.appState.lastSelectedPromptId = null
@@ -243,6 +248,8 @@ beforeEach(() => {
   mocks.providerState.getProviderType.mockReturnValue(undefined)
   for (const mock of [
     mocks.appState.selectSession,
+    mocks.appState.loadSubagentSessions,
+    mocks.appState.restoreSession,
     mocks.appState.loadChatHistory,
     mocks.appState.refreshChatsNow,
     mocks.initializeStore,
@@ -267,6 +274,8 @@ beforeEach(() => {
   mocks.appState.selectSession.mockImplementation((sessionId: string | null) => {
     mocks.appState.currentSessionId = sessionId
   })
+  mocks.appState.loadSubagentSessions.mockResolvedValue(undefined)
+  mocks.appState.restoreSession.mockResolvedValue(false)
   mocks.appState.loadChatHistory.mockResolvedValue(undefined)
   mocks.appState.refreshChatsNow.mockResolvedValue(undefined)
   mocks.execute.mockResolvedValue(undefined)
@@ -411,6 +420,45 @@ describe("useChat two-phase send lifecycle", () => {
       "main-session",
       expect.any(Object),
       expect.any(AbortController),
+    )
+  })
+  it("restores a persisted child before allowing the default root to be persisted", async () => {
+    localStorage.setItem("lotus_next_last_session", "saved-child")
+    mocks.initializeStore.mockImplementationOnce(async () => {
+      mocks.appState.chats = [{ id: "default-root", messages: [] }]
+      mocks.appState.currentSessionId = "default-root"
+    })
+    mocks.appState.restoreSession.mockImplementationOnce(async (sessionId: string) => {
+      mocks.appState.chats = [...mocks.appState.chats, { id: sessionId, messages: [] }]
+      return true
+    })
+
+    await mountUseChat({ mode: "main" })
+    await vi.waitFor(() => {
+      expect(mocks.appState.selectSession).toHaveBeenCalledWith("saved-child")
+    })
+
+    expect(mocks.appState.restoreSession).toHaveBeenCalledExactlyOnceWith("saved-child")
+    expect(mocks.appState.loadChatHistory).toHaveBeenCalledWith("saved-child")
+    expect(localStorage.getItem("lotus_next_last_session")).toBe("saved-child")
+  })
+  it("force-refreshes a bound pane tree when the root index advances without navigation", async () => {
+    mocks.appState.chats = [{ id: "split-root", messages: [] }]
+    const hook = await mountUseChat({ mode: "bound", sessionId: "split-root" })
+    await vi.waitFor(() => {
+      expect(mocks.appState.loadSubagentSessions).toHaveBeenCalledExactlyOnceWith(
+        "split-root",
+        { force: true },
+      )
+    })
+
+    mocks.appState.loadSubagentSessions.mockClear()
+    mocks.appState.sessionIndexRevision += 1
+    await hook.rerender({ mode: "bound", sessionId: "split-root" })
+
+    expect(mocks.appState.loadSubagentSessions).toHaveBeenCalledExactlyOnceWith(
+      "split-root",
+      { force: true },
     )
   })
   it("uses the authoritative Chat preference instead of the compatibility provider", async () => {

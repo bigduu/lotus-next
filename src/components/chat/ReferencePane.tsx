@@ -47,7 +47,7 @@ export function ReferencePane({ onClose, width }: { onClose: () => void; width?:
             <SelectValue placeholder="选择会话对比…" />
           </SelectTrigger>
           <SelectContent>
-            {chats.map((c) => (
+            {chats.filter((c) => c.kind !== "child" && !c.parentSessionId).map((c) => (
               <SelectItem key={c.id} value={c.id}>
                 {c.title || "新会话"}
               </SelectItem>

@@ -36,6 +36,7 @@ const sessions = [
   last_run_status: "completed",
   has_pending_question: false,
   running_child_count: 0,
+  subagent_count: id === "all-surface-session" ? 1 : 0,
   placement: { kind: "local", host: "fixture" },
   permission_mode: "default",
   bypass_permissions: false,
@@ -61,9 +62,28 @@ for (const scenario of [standaloneScenario, embeddedScenario, secureRemoteScenar
     // fixture and its single-session acceptance behavior stay independent.
     await page.route("**/api/v1/**", async (route) => {
       const request = route.request()
-      const pathname = new URL(request.url()).pathname
+      const url = new URL(request.url())
+      const pathname = url.pathname
       if (request.method() === "GET" && pathname === "/api/v1/sessions") {
-        await route.fulfill({ json: { sessions } })
+        const kind = url.searchParams.get("kind")
+        const rootSessionId = url.searchParams.get("root_session_id")
+        const filtered = sessions.filter((session) =>
+          (!kind || session.kind === kind) &&
+          (!rootSessionId || session.root_session_id === rootSessionId),
+        )
+        const offset = Number(url.searchParams.get("offset") ?? 0)
+        const limit = Number(url.searchParams.get("limit") ?? 200)
+        const page = filtered.slice(offset, offset + limit)
+        const nextOffset = offset + page.length
+        await route.fulfill({
+          json: {
+            sessions: page,
+            total: filtered.length,
+            limit,
+            offset,
+            ...(nextOffset < filtered.length ? { next_offset: nextOffset } : {}),
+          },
+        })
       } else if (request.method() === "GET" && /^\/api\/v1\/sessions\/[^/]+$/.test(pathname)) {
         const session = sessions.find(({ id }) => id === pathname.split("/").pop())
         if (session) await route.fulfill({ json: { session }, headers: { ETag: '"1"' } })

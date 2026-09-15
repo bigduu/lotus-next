@@ -15,7 +15,11 @@ test("unread sessions retain their title name and expose a separate read-state d
   }))
   await page.route("**/api/v1/**", async (route) => {
     const pathname = new URL(route.request().url()).pathname
-    if (pathname === "/api/v1/sessions") await route.fulfill({ json: { sessions } })
+    if (pathname === "/api/v1/sessions") {
+      await route.fulfill({
+        json: { sessions, total: sessions.length, limit: 200, offset: 0 },
+      })
+    }
     else if (/^\/api\/v1\/sessions\/[^/]+$/.test(pathname)) {
       const session = sessions.find(({ id }) => id === pathname.split("/").pop())
       if (session) await route.fulfill({ json: { session }, headers: { ETag: '"1"' } })

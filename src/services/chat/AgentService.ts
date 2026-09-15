@@ -592,6 +592,8 @@ export interface SessionSummary {
   has_pending_question?: boolean;
   /** Number of child sessions currently running under this session. */
   running_child_count?: number;
+  /** Total number of child sessions in this root's flattened sub-agent tree. */
+  subagent_count?: number;
   /**
    * Which machine this session's agent runs on (deployment kind + host).
    * Always present from the backend; defaults to the backend's own local host
@@ -622,6 +624,17 @@ export interface RunningSessionsResponse {
 
 export interface ListSessionsResponse {
   sessions: SessionSummary[];
+  total: number;
+  limit: number;
+  offset: number;
+  next_offset?: number;
+}
+
+export interface ListSessionsQuery {
+  limit?: number;
+  offset?: number;
+  kind?: SessionKind;
+  root_session_id?: string;
 }
 
 export interface CreateSessionRequest {
@@ -635,6 +648,10 @@ export interface CreateSessionRequest {
 }
 
 export interface CreateSessionResponse {
+  session: SessionSummary;
+}
+
+export interface GetSessionResponse {
   session: SessionSummary;
 }
 
@@ -1134,11 +1151,24 @@ export class AgentClient {
   /**
    * List backend sessions (V2 index-backed).
    */
-  async listSessions(): Promise<ListSessionsResponse> {
-    debugLog("[AgentClient]", "sessions.list.request", {});
-    const response = await apiClient.get<ListSessionsResponse>("sessions");
+  async listSessions(query: ListSessionsQuery = {}): Promise<ListSessionsResponse> {
+    const params = new URLSearchParams();
+    if (query.limit !== undefined) params.set("limit", String(query.limit));
+    if (query.offset !== undefined) params.set("offset", String(query.offset));
+    if (query.kind !== undefined) params.set("kind", query.kind);
+    if (query.root_session_id !== undefined) {
+      params.set("root_session_id", query.root_session_id);
+    }
+    const suffix = params.size > 0 ? `?${params.toString()}` : "";
+    debugLog("[AgentClient]", "sessions.list.request", query);
+    const response = await apiClient.get<ListSessionsResponse>(`sessions${suffix}`);
     debugLog("[AgentClient]", "sessions.list.response", summarizeSessionList(response.sessions));
     return response;
+  }
+
+  /** Get one session summary, including its root tree size. */
+  async getSession(sessionId: string): Promise<GetSessionResponse> {
+    return apiClient.get<GetSessionResponse>(`sessions/${encodeURIComponent(sessionId)}`);
   }
 
   /**

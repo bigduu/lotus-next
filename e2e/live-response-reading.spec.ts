@@ -18,7 +18,9 @@ test("home-to-chat follows streaming and late layout, pauses for reading, and re
     })
   })
   const session = { id: "all-surface-session", title: "Live reading", kind: "root", model: "fixture-model", model_ref: { provider: "fixture-provider", model: "fixture-model" }, created_at: "2026-09-07T00:00:00Z", updated_at: "2026-09-07T00:00:00Z", permission_mode: "default", is_running: false }
-  await page.route("**/api/v1/sessions", (route) => route.fulfill({ json: { sessions: [session] } }))
+  await page.route("**/api/v1/sessions?*", (route) => route.fulfill({
+    json: { sessions: [session], total: 1, limit: 200, offset: 0 },
+  }))
   await page.route("**/api/v1/sessions/all-surface-session", (route) => route.fulfill({ json: { session } }))
   await page.route("**/api/v1/chat", (route) => route.fulfill({ json: { session_id: session.id, status: "success" } }))
   await page.route("**/api/v1/execute/all-surface-session", (route) => route.fulfill({ json: { status: "started", session_id: session.id } }))

@@ -2,7 +2,12 @@ import { useEffect, useMemo, useRef, useState } from "react"
 import { Search, Plus, Settings as SettingsIcon, MessageSquare } from "lucide-react"
 import { cn } from "@/lib/utils"
 
-type Chat = { id: string; title?: string | null }
+type Chat = {
+  id: string
+  title?: string | null
+  kind?: "root" | "child"
+  parentSessionId?: string | null
+}
 
 type Item =
   | { kind: "action"; id: string; label: string; icon: React.ReactNode; run: () => void }
@@ -56,7 +61,11 @@ export function CommandPalette({
         run: onSettings,
       },
     ]
+    // Child sessions belong to the currently hydrated sub-agent tree. Keeping
+    // them out of this global switcher prevents an inactive, preserved tree
+    // from exposing a child that may already have been deleted remotely.
     const sessionItems: Item[] = chats
+      .filter((c) => c.kind !== "child" && !c.parentSessionId)
       .filter((c) => !query || (c.title || "").toLowerCase().includes(query))
       .slice(0, 50)
       .map((c) => ({

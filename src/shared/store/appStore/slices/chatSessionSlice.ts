@@ -16,10 +16,13 @@ import {
 } from "./chatSessionSlice/messageMapping";
 import {
   REFRESH_CHATS_THROTTLE_MS,
+  applySessionsList,
   clearRefreshChatsThrottleWindow,
   consumeTrailingRefreshCallbacks,
+  executeLoadSubagentSessions,
   executeForcedRefreshChats,
   executeRefreshChats,
+  listAllSessionPages,
   refreshChatsState,
   settleTrailingRefreshCallbacks,
 } from "./chatSessionSlice/refreshChats";
@@ -47,6 +50,7 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
   chats: [],
   currentSessionId: null,
   latestActiveSessionId: null,
+  sessionIndexRevision: 0,
 
   addChat: async (chatData) => {
     const title = (chatData.title || i18n.t("chat.sidebar.newSession")).trim();
@@ -495,8 +499,8 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
 
   loadChats: async () => {
     debugLog("[ChatSlice]", "loadChats.start", {});
-    let list = await agentClient.listSessions();
-    if (!list.sessions || list.sessions.length === 0) {
+    let sessions = await listAllSessionPages({ kind: "root" });
+    if (sessions.length === 0) {
       // Use provider defaults when creating the initial session on startup
       const defaultModelRef = useProviderStore.getState().providerSnapshot?.defaults?.chat;
       const defaultModel = defaultModelRef?.model?.trim();
@@ -510,19 +514,19 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
         model_ref: defaultModelRef,
         provider: defaultModelRef?.provider,
       });
-      list = { sessions: [created.session] };
+      sessions = [created.session];
     }
 
-    const chats = list.sessions.map(sessionSummaryToChatItem);
+    const chats = sessions.map(sessionSummaryToChatItem);
     const currentSessionId = chats[0]?.id ?? null;
     debugLog("[ChatSlice]", "loadChats.listResolved", {
-      count: list.sessions.length,
+      count: sessions.length,
       currentSessionId,
     });
 
     // Reconcile executionBySession against every summary.
     let executionBySession = get().executionBySession;
-    for (const summary of list.sessions) {
+    for (const summary of sessions) {
       executionBySession = applyExecutionEvent(executionBySession, {
         type: "applySessionSummary",
         sessionId: summary.id,
@@ -595,6 +599,36 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
       // Lazy load history for the initial session.
       debugLog("[ChatSlice]", "loadChats.loadInitialHistory", { currentSessionId });
       await get().loadChatHistory(currentSessionId);
+    }
+  },
+
+  loadSubagentSessions: (sessionId, options) =>
+    executeLoadSubagentSessions(sessionId, set, get, options),
+
+  restoreSession: async (sessionId) => {
+    const existing = get().chats.find((chat) => chat.id === sessionId);
+    if (existing) {
+      await get().loadSubagentSessions(sessionId);
+      return true;
+    }
+
+    try {
+      const detail = await agentClient.getSession(sessionId);
+      if (detail.session.kind === "root") {
+        applySessionsList([detail.session], set, { kind: "upsert" });
+        await get().loadSubagentSessions(detail.session.id, { force: true });
+      } else {
+        // Re-read the root so `subagent_count` is authoritative even when the
+        // root page raced with creation/deletion of this persisted child.
+        const rootDetail = await agentClient.getSession(detail.session.root_session_id);
+        if (rootDetail.session.kind !== "root") return false;
+        applySessionsList([rootDetail.session], set, { kind: "upsert" });
+        await get().loadSubagentSessions(rootDetail.session.id, { force: true });
+      }
+      return get().chats.some((chat) => chat.id === sessionId);
+    } catch (error) {
+      debugLog("[ChatSlice]", "restoreSession.error", { sessionId, error });
+      return false;
     }
   },
 

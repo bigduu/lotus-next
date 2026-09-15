@@ -12,7 +12,9 @@ for (const running of [false, true]) {
       created_at: "2026-09-07T00:00:00Z", updated_at: "2026-09-07T00:00:00Z",
       permission_mode: "default", is_running: running, last_run_status: running ? "running" : "completed",
     }
-    await page.route("**/api/v1/sessions", (route) => route.fulfill({ json: { sessions: [session] } }))
+    await page.route("**/api/v1/sessions?*", (route) => route.fulfill({
+      json: { sessions: [session], total: 1, limit: 200, offset: 0 },
+    }))
     await page.route("**/api/v1/sessions/all-surface-session", (route) => route.fulfill({ json: { session }, headers: { ETag: '"1"' } }))
     await page.route("**/api/v1/task/all-surface-session", (route) => route.fulfill({ json: { session_id: session.id, items: [] } }))
     await page.route("**/api/v1/commands", (route) => route.fulfill({ json: { commands: [] } }))

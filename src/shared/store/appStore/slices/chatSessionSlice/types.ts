@@ -27,6 +27,8 @@ export interface ChatSlice {
   chats: ChatItem[];
   currentSessionId: string | null;
   latestActiveSessionId: string | null;
+  /** Advances after each authoritative root-index refresh. */
+  sessionIndexRevision: number;
 
   // Actions
   addChat: (chat: Omit<ChatItem, "id">) => Promise<string>;
@@ -64,6 +66,13 @@ export interface ChatSlice {
   loadChats: () => Promise<void>;
   refreshChats: () => Promise<void>;
   refreshChatsNow: () => Promise<void>;
+  /** Hydrate the flattened child tree for the selected root/child session. */
+  loadSubagentSessions: (
+    sessionId: string,
+    options?: { force?: boolean },
+  ) => Promise<void>;
+  /** Restore a persisted session id that may refer to an unloaded child. */
+  restoreSession: (sessionId: string) => Promise<boolean>;
   loadChatHistory: (
     sessionId: string,
     options?: {
