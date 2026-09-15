@@ -141,6 +141,31 @@ describe("lazy session index loading", () => {
     expect(listSessions).toHaveBeenCalledTimes(6);
   });
 
+  it("reserves confirmation after an inconsistent read follows a candidate", async () => {
+    const listSessions = vi.fn()
+      .mockResolvedValueOnce(page([summary("root-4"), summary("root-3")], 0, 2, 4))
+      .mockResolvedValueOnce(page([summary("root-2"), summary("root-1")], 2, undefined, 4))
+      .mockResolvedValueOnce(page([summary("root-5"), summary("root-4")], 0, 2, 4))
+      .mockResolvedValueOnce(page([summary("root-4"), summary("root-2")], 2, undefined, 4))
+      .mockResolvedValueOnce(page([summary("root-5"), summary("root-4")], 0, 2, 4))
+      .mockResolvedValueOnce(page([summary("root-2"), summary("root-1")], 2, undefined, 4))
+      .mockResolvedValueOnce(page([summary("root-5"), summary("root-4")], 0, 2, 4))
+      .mockResolvedValueOnce(page([summary("root-2"), summary("root-1")], 2, undefined, 4));
+
+    const result = await listAllSessionPages(
+      { kind: "root", limit: 2 },
+      { listSessions },
+    );
+
+    expect(result.map((session) => session.id)).toEqual([
+      "root-5",
+      "root-4",
+      "root-2",
+      "root-1",
+    ]);
+    expect(listSessions).toHaveBeenCalledTimes(8);
+  });
+
   it("fails closed when all bounded snapshot attempts are incomplete", async () => {
     const listSessions = vi.fn()
       .mockResolvedValueOnce(page([summary("root-3"), summary("root-2")], 0, 2, 4))

@@ -14,7 +14,7 @@ import type { ChatSlice } from "./types";
 
 const agentClient = AgentClient.getInstance();
 const SESSION_INDEX_PAGE_SIZE = 200;
-const SESSION_INDEX_SNAPSHOT_ATTEMPTS = 3;
+const SESSION_INDEX_MAX_UNSTABLE_READS = 2;
 
 export type SessionListScope =
   | { kind: "all" }
@@ -39,8 +39,9 @@ export async function listAllSessionPages(
   client: Pick<AgentClient, "listSessions"> = agentClient,
 ): Promise<SessionSummary[]> {
   let previousCandidateIds: string[] | null = null;
+  let unstableReads = 0;
 
-  for (let attempt = 0; attempt < SESSION_INDEX_SNAPSHOT_ATTEMPTS; attempt += 1) {
+  while (true) {
     const sessionsById = new Map<string, SessionSummary>();
     const seenOffsets = new Set<number>();
     let expectedTotal: number | null = null;
@@ -107,15 +108,20 @@ export async function listAllSessionPages(
         ) {
           return sessions;
         }
+        if (previousCandidateIds) {
+          unstableReads += 1;
+        }
         previousCandidateIds = candidateIds;
       } else {
+        unstableReads += 1;
         previousCandidateIds = null;
+      }
+      if (unstableReads > SESSION_INDEX_MAX_UNSTABLE_READS) {
+        throw new Error("Session pagination changed while reading; retry the refresh");
       }
       break;
     }
   }
-
-  throw new Error("Session pagination changed while reading; retry the refresh");
 }
 
 /**
