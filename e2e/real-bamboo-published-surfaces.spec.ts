@@ -3,6 +3,7 @@ import {
   test,
   type Browser,
   type BrowserContext,
+  type Response,
   type TestInfo,
 } from "@playwright/test";
 import { chmod, stat, writeFile } from "node:fs/promises";
@@ -12,6 +13,7 @@ import {
   type FrameObservation,
   type PageObservation,
 } from "./support/pageObservation.ts";
+import { navigateWithNetworkChangeRecovery } from "./support/transientNavigation.ts";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -82,6 +84,27 @@ const installPublishedArtifactEntry = async (
     storage.removeItem("lotus_next_backend_endpoint_v1");
     storage.setItem("lotus_next_last_session", selectedSessionId);
   }, sessionId);
+};
+
+const assertSuccessfulDocumentNavigation = (
+  response: Response | null,
+  entryUrl: URL,
+  phase: "preflight" | "observed",
+): void => {
+  if (!response) {
+    throw new Error(`${phase} navigation returned no HTTP response`);
+  }
+  const responseUrl = new URL(response.url());
+  if (responseUrl.origin !== entryUrl.origin) {
+    throw new Error(
+      `${phase} navigation left ${entryUrl.origin} for ${responseUrl.origin}`,
+    );
+  }
+  if (!response.ok()) {
+    throw new Error(
+      `${phase} navigation returned HTTP ${response.status()} from ${responseUrl.href}`,
+    );
+  }
 };
 
 const assertCanonicalPage = async (
@@ -187,12 +210,25 @@ const exerciseSurface = async ({
   });
   await installPublishedArtifactEntry(context, sessionId);
   const page = await context.newPage();
-  const observation = observePage(
-    page,
-    `published-${entryUrl.protocol.slice(0, -1)}-${definition.label}`,
-  );
+  const observationLabel =
+    `published-${entryUrl.protocol.slice(0, -1)}-${definition.label}`;
+  let observation: PageObservation | undefined;
   try {
-    await page.goto(entryUrl.href, { waitUntil: "domcontentloaded" });
+    if (entryUrl.protocol === "https:") {
+      const preflight = await navigateWithNetworkChangeRecovery(() =>
+        page.goto(entryUrl.href, { waitUntil: "domcontentloaded" }),
+      );
+      assertSuccessfulDocumentNavigation(preflight, entryUrl, "preflight");
+      observation = observePage(page, observationLabel, { nextDocument: true });
+      const observed = await page.reload({ waitUntil: "domcontentloaded" });
+      assertSuccessfulDocumentNavigation(observed, entryUrl, "observed");
+    } else {
+      observation = observePage(page, observationLabel);
+      const observed = await page.goto(entryUrl.href, {
+        waitUntil: "domcontentloaded",
+      });
+      assertSuccessfulDocumentNavigation(observed, entryUrl, "observed");
+    }
     const composer = page.getByRole("textbox", { name: "消息", exact: true });
     await expect(composer).toBeVisible();
     await expect(
@@ -266,7 +302,7 @@ const exerciseSurface = async ({
       contentType: "application/json",
     });
   } finally {
-    await observation.stop().catch(() => undefined);
+    await observation?.stop().catch(() => undefined);
     await context.close();
   }
 };
