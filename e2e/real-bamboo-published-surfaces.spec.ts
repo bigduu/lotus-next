@@ -107,6 +107,22 @@ const assertSuccessfulDocumentNavigation = (
   }
 };
 
+const preflightSecureSurface = async (
+  browser: Browser,
+  entryUrl: URL,
+): Promise<void> => {
+  const context = await browser.newContext({ ignoreHTTPSErrors: true });
+  try {
+    const page = await context.newPage();
+    const response = await navigateWithNetworkChangeRecovery(() =>
+      page.goto(entryUrl.href, { waitUntil: "domcontentloaded" }),
+    );
+    assertSuccessfulDocumentNavigation(response, entryUrl, "preflight");
+  } finally {
+    await context.close();
+  }
+};
+
 const assertCanonicalPage = async (
   observation: PageObservation,
   pageOrigin: string,
@@ -200,6 +216,13 @@ const exerciseSurface = async ({
   readonly sessionId: string;
   readonly testInfo: TestInfo;
 }): Promise<void> => {
+  if (entryUrl.protocol === "https:") {
+    // Chromium can report one browser-global network-change transition when
+    // the secure fixture first comes online. Consume only that transition in
+    // a throwaway page so the acceptance page keeps one clean, fully observed
+    // document epoch (including StrictMode's cancellable bootstrap request).
+    await preflightSecureSurface(browser, entryUrl);
+  }
   const context = await browser.newContext({
     viewport: definition.viewport,
     isMobile: definition.mobile,
@@ -214,21 +237,11 @@ const exerciseSurface = async ({
     `published-${entryUrl.protocol.slice(0, -1)}-${definition.label}`;
   let observation: PageObservation | undefined;
   try {
-    if (entryUrl.protocol === "https:") {
-      const preflight = await navigateWithNetworkChangeRecovery(() =>
-        page.goto(entryUrl.href, { waitUntil: "domcontentloaded" }),
-      );
-      assertSuccessfulDocumentNavigation(preflight, entryUrl, "preflight");
-      observation = observePage(page, observationLabel, { nextDocument: true });
-      const observed = await page.reload({ waitUntil: "domcontentloaded" });
-      assertSuccessfulDocumentNavigation(observed, entryUrl, "observed");
-    } else {
-      observation = observePage(page, observationLabel);
-      const observed = await page.goto(entryUrl.href, {
-        waitUntil: "domcontentloaded",
-      });
-      assertSuccessfulDocumentNavigation(observed, entryUrl, "observed");
-    }
+    observation = observePage(page, observationLabel);
+    const observed = await page.goto(entryUrl.href, {
+      waitUntil: "domcontentloaded",
+    });
+    assertSuccessfulDocumentNavigation(observed, entryUrl, "observed");
     const composer = page.getByRole("textbox", { name: "消息", exact: true });
     await expect(composer).toBeVisible();
     await expect(
