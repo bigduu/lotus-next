@@ -6,6 +6,7 @@ import { debugLog } from "@shared/utils/debugFlags";
  * Handles SSE streaming and AgentEvent processing
  */
 import { apiClient } from "../api";
+import { isApiError } from "../api/errors";
 import * as v2Stream from "./v2Stream";
 import type { FeedSubscription } from "./v2Stream";
 
@@ -342,6 +343,7 @@ export interface AccountStreamHandlers {
 export interface ChatRequest {
   message: string;
   session_id?: string;
+  project_id?: string;
   system_prompt?: string;
   enhance_prompt?: string;
   copilot_conclusion_with_options_enhancement_enabled?: boolean;
@@ -1067,6 +1069,36 @@ const summarizeStreamControlEvent = (event: AgentEvent): Record<string, unknown>
   tool_call_id: event.tool_call_id ?? null,
 });
 
+const projectOwnerRetryId = (request: ChatRequest, error: unknown): string | null => {
+  if (
+    request.session_id !== undefined ||
+    request.project_id !== undefined ||
+    !request.workspace_path?.trim() ||
+    !isApiError(error) ||
+    error.status !== 409 ||
+    !error.body
+  ) {
+    return null;
+  }
+
+  try {
+    const body = JSON.parse(error.body) as unknown;
+    if (typeof body !== "object" || body === null) return null;
+
+    const conflict = body as Record<string, unknown>;
+    const detail = conflict.error;
+    if (typeof detail !== "object" || detail === null) return null;
+    if ((detail as Record<string, unknown>).code !== "project_workspace_conflict") return null;
+    if (conflict.session_project_id !== "unassigned") return null;
+
+    const ownerProjectId = conflict.owner_project_id;
+    if (typeof ownerProjectId !== "string" || !ownerProjectId.trim()) return null;
+    return ownerProjectId.trim();
+  } catch {
+    return null;
+  }
+};
+
 /**
  * Agent Client - HTTP client for copilot-agent-server
  */
@@ -1094,8 +1126,24 @@ export class AgentClient {
       imageCount: request.images?.length ?? 0,
       selectedSkillCount: request.selected_skill_ids?.length ?? 0,
       workspacePath: request.workspace_path ?? null,
+      projectId: request.project_id ?? null,
     });
-    const response = await apiClient.post<ChatResponse>("chat", request);
+    let response: ChatResponse;
+    try {
+      response = await apiClient.post<ChatResponse>("chat", request);
+    } catch (error) {
+      // Bamboo rejects an Unassigned new session before persistence when its
+      // explicit Workspace is already registered to a Project. The structured
+      // conflict is the authoritative owner lookup: carry that typed Project
+      // identity into one fresh admission attempt without weakening the server
+      // boundary or replaying ambiguous failures.
+      const ownerProjectId = projectOwnerRetryId(request, error);
+      if (!ownerProjectId) throw error;
+      response = await apiClient.post<ChatResponse>("chat", {
+        ...request,
+        project_id: ownerProjectId,
+      });
+    }
     debugLog("[AgentClient]", "chat.response", {
       requestedSessionId: request.session_id ?? null,
       sessionId: response.session_id,
