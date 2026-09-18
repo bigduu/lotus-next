@@ -3,6 +3,7 @@ import {
   test,
   type Browser,
   type BrowserContext,
+  type Response,
   type TestInfo,
 } from "@playwright/test";
 import { chmod, stat, writeFile } from "node:fs/promises";
@@ -12,6 +13,7 @@ import {
   type FrameObservation,
   type PageObservation,
 } from "./support/pageObservation.ts";
+import { navigateWithNetworkChangeRecovery } from "./support/transientNavigation.ts";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -82,6 +84,43 @@ const installPublishedArtifactEntry = async (
     storage.removeItem("lotus_next_backend_endpoint_v1");
     storage.setItem("lotus_next_last_session", selectedSessionId);
   }, sessionId);
+};
+
+const assertSuccessfulDocumentNavigation = (
+  response: Response | null,
+  entryUrl: URL,
+  phase: "preflight" | "observed",
+): void => {
+  if (!response) {
+    throw new Error(`${phase} navigation returned no HTTP response`);
+  }
+  const responseUrl = new URL(response.url());
+  if (responseUrl.origin !== entryUrl.origin) {
+    throw new Error(
+      `${phase} navigation left ${entryUrl.origin} for ${responseUrl.origin}`,
+    );
+  }
+  if (!response.ok()) {
+    throw new Error(
+      `${phase} navigation returned HTTP ${response.status()} from ${responseUrl.href}`,
+    );
+  }
+};
+
+const preflightSecureSurface = async (
+  browser: Browser,
+  entryUrl: URL,
+): Promise<void> => {
+  const context = await browser.newContext({ ignoreHTTPSErrors: true });
+  try {
+    const page = await context.newPage();
+    const response = await navigateWithNetworkChangeRecovery(() =>
+      page.goto(entryUrl.href, { waitUntil: "domcontentloaded" }),
+    );
+    assertSuccessfulDocumentNavigation(response, entryUrl, "preflight");
+  } finally {
+    await context.close();
+  }
 };
 
 const assertCanonicalPage = async (
@@ -177,6 +216,13 @@ const exerciseSurface = async ({
   readonly sessionId: string;
   readonly testInfo: TestInfo;
 }): Promise<void> => {
+  if (entryUrl.protocol === "https:") {
+    // Chromium can report one browser-global network-change transition when
+    // the secure fixture first comes online. Consume only that transition in
+    // a throwaway page so the acceptance page keeps one clean, fully observed
+    // document epoch (including StrictMode's cancellable bootstrap request).
+    await preflightSecureSurface(browser, entryUrl);
+  }
   const context = await browser.newContext({
     viewport: definition.viewport,
     isMobile: definition.mobile,
@@ -187,12 +233,15 @@ const exerciseSurface = async ({
   });
   await installPublishedArtifactEntry(context, sessionId);
   const page = await context.newPage();
-  const observation = observePage(
-    page,
-    `published-${entryUrl.protocol.slice(0, -1)}-${definition.label}`,
-  );
+  const observationLabel =
+    `published-${entryUrl.protocol.slice(0, -1)}-${definition.label}`;
+  let observation: PageObservation | undefined;
   try {
-    await page.goto(entryUrl.href, { waitUntil: "domcontentloaded" });
+    observation = observePage(page, observationLabel);
+    const observed = await page.goto(entryUrl.href, {
+      waitUntil: "domcontentloaded",
+    });
+    assertSuccessfulDocumentNavigation(observed, entryUrl, "observed");
     const composer = page.getByRole("textbox", { name: "消息", exact: true });
     await expect(composer).toBeVisible();
     await expect(
@@ -266,7 +315,7 @@ const exerciseSurface = async ({
       contentType: "application/json",
     });
   } finally {
-    await observation.stop().catch(() => undefined);
+    await observation?.stop().catch(() => undefined);
     await context.close();
   }
 };
