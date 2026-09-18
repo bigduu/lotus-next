@@ -151,13 +151,13 @@ describe("published real-Bamboo acceptance policy", () => {
     }
   })
 
-  it("keeps real Bamboo off routine pull requests", () => {
+  it("reserves real Bamboo for manual CI runs", () => {
     const ci = readRepositoryFile(".github/workflows/ci.yml")
 
     expect(ci).toContain("  workflow_dispatch:")
     expect(ci).toContain("    branches:\n      - main")
     expect(ci).toContain(
-      "    if: ${{ github.event_name != 'pull_request' }}",
+      "    if: ${{ github.event_name == 'workflow_dispatch' }}",
     )
   })
 })
