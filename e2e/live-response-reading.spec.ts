@@ -37,7 +37,11 @@ test("home-to-chat follows streaming and late layout, pauses for reading, and re
   await input.fill("Please give a long response")
   await page.getByRole("button", { name: "发送消息", exact: true }).click()
   await expect.poll(() => subscribed).toBe(true)
-  const emit = (type: string, content: string) => socket!.send(JSON.stringify({ ch: `agent.${session.id}`, seq: ++seq, event: { type, content } }))
+  let streamedText = ""
+  const emit = (type: string, content: string) => {
+    if (type === "token") streamedText += content
+    socket!.send(JSON.stringify({ ch: `agent.${session.id}`, seq: ++seq, event: { type, content } }))
+  }
   emit("reasoning_token", "Detailed reasoning.\n".repeat(100))
   const reasoning = page.getByRole("button", { name: "思考中…", exact: true })
   await expect(reasoning).toHaveAttribute("aria-expanded", "false")
@@ -78,12 +82,13 @@ test("home-to-chat follows streaming and late layout, pauses for reading, and re
   await expect.poll(gap).toBeLessThanOrEqual(2)
   await page.route("**/api/v1/history/all-surface-session", (route) => route.fulfill({ json: {
     session_id: session.id,
-    messages: [{ id: "completed", role: "assistant", content: "Completed answer.\n\n".repeat(80), reasoning: "Saved reasoning.\n".repeat(80), created_at: "2026-09-07T00:00:00Z" }],
+    messages: [{ id: "completed", role: "assistant", content: streamedText, reasoning: "Saved reasoning.\n".repeat(80), created_at: "2026-09-07T00:00:00Z" }],
   } }))
   emit("complete", "")
   socket!.send(JSON.stringify({ ch: `agent.${session.id}`, seq: ++seq, control: { type: "terminal" } }))
   await expect(reasoning).toHaveCount(0)
-  await expect(page.locator(".assistant-streamdown")).toContainText("Completed answer.")
+  await expect(page.locator(".assistant-streamdown")).toHaveCount(1)
+  await expect(page.locator(".assistant-streamdown")).toContainText("Following restored.")
   await expect.poll(gap).toBeLessThanOrEqual(2)
   const savedReasoning = page.getByRole("button", { name: "思考过程", exact: true })
   await expect(savedReasoning).toHaveAttribute("aria-expanded", "false")

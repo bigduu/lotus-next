@@ -163,6 +163,12 @@ const apiResponse = (method: string, pathnameWithSearch: string): unknown => {
         has_proxy_env: false,
         message: "",
       }
+    case "GET /api/v1/bamboo/permission/default-session-mode":
+      return {
+        mode: "default",
+        revision: 1,
+        loaded_at: FIXTURE_TIME,
+      }
     case "GET /api/v1/bamboo/settings/provider-instances":
       return {
         default_provider_instance_id: "fixture-provider",
