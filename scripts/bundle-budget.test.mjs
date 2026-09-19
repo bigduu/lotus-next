@@ -250,14 +250,14 @@ describe("ordinary-chat production bundle budget", () => {
     const violations = findBundleBudgetViolations({
       ...report,
       javascript: { rawBytes: 1_950_000, gzipBytes: 568_000 },
-      css: { rawBytes: 105_001, gzipBytes: 18_001 },
+      css: { rawBytes: 106_001, gzipBytes: 18_001 },
     }).join("\n")
 
     expect(violations).toMatch(/raw size 1950000 exceeds 1820000/)
     expect(violations).toMatch(/gzip size 568000 exceeds 535000/)
     expect(violations).toMatch(/raw reduction .* is below 6\.00%/)
     expect(violations).toMatch(/gzip reduction .* is below 5\.00%/)
-    expect(violations).toMatch(/CSS raw size 105001 exceeds 105000/)
+    expect(violations).toMatch(/CSS raw size 106001 exceeds 106000/)
     expect(violations).toMatch(/CSS gzip size 18001 exceeds 18000/)
   })
 

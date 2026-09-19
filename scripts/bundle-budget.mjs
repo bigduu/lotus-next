@@ -16,7 +16,10 @@ export const BUNDLE_BUDGET = Object.freeze({
   javascriptGzipBytes: 535_000,
   minimumRawReduction: 0.06,
   minimumGzipReduction: 0.05,
-  cssRawBytes: 105_000,
+  // Keep a narrow raw-CSS ceiling for the current ordinary-chat UI while the
+  // gzip limit remains the release-size authority. Recalibrated after the
+  // model-limit, sidebar-folding, message-surface, and cache-inspector slices.
+  cssRawBytes: 106_000,
   cssGzipBytes: 18_000,
 })
 
