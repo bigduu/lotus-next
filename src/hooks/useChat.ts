@@ -9,7 +9,12 @@ import {
 } from "@shared/store/appStore"
 import { useProviderStore } from "@shared/store/appStore/slices/providerSlice"
 import { getReasoningEffortForProvider } from "@shared/utils/reasoningEffort"
-import { agentClient, type PendingQuestionResponse, type PermissionDecisionRequest } from "@services/chat/AgentService"
+import {
+  agentClient,
+  type PendingQuestionResponse,
+  type PermissionDecisionRequest,
+  type SessionPermissionMode,
+} from "@services/chat/AgentService"
 import { apiClient } from "@services/api"
 import { isApiError } from "@services/api/errors"
 import { notify } from "@/lib/notify"
@@ -414,6 +419,10 @@ export function useChat(
       setStreamStatus(null)
       setStreamingText(final)
       setStreamingReasoningText(null)
+      // A null final means the live buffer has been fully retired.  Drop its
+      // ownership too, so a late callback cannot make a completed/left session
+      // look live again when the user returns to it.
+      if (final === null) setStreamSid(null)
     },
     [setStreamStatus],
   )
@@ -480,9 +489,15 @@ export function useChat(
   }, [canHydrateSessionTree, sessionIndexRevision, sid])
 
   const select = useCallback((id: string) => {
+    if (navigationRef.current.sessionId !== id) {
+      // Navigation detaches only this pane's observer.  The backend run keeps
+      // going and can be observed again when its session is reopened.
+      abortRef.current?.abort()
+      stopStream(null)
+    }
     useAppStore.getState().selectSession(id)
     void useAppStore.getState().loadChatHistory(id)
-  }, [])
+  }, [stopStream])
 
   // Execute a session + subscribe to its token stream. Shared by send (after a
   // new user message) and by regenerate / retry / edit (after a truncate).
@@ -1090,6 +1105,8 @@ export function useChat(
         workspacePath?: string | null
         projectId?: string | null
         templatePrompt?: PendingTemplatePromptSnapshot | null
+        /** Initial permission mode when this send creates a NEW session. */
+        permissionMode?: SessionPermissionMode
       },
     ): Promise<SendSubmissionResult> => {
       const body = text.trim()
@@ -1145,6 +1162,9 @@ export function useChat(
           // Explicit Project for a NEW session; an existing session keeps the
           // Project it was created with (PATCH is the only reassignment path).
           project_id: !startSid && opts?.projectId ? opts.projectId : undefined,
+          // Initial permission mode for a NEW session; existing sessions keep
+          // their stored mode (PATCH is the only change path).
+          permission_mode: !startSid && opts?.permissionMode ? opts.permissionMode : undefined,
         })
         acknowledgedSessionId =
           typeof res?.session_id === "string" ? res.session_id.trim() : ""
@@ -1304,8 +1324,13 @@ export function useChat(
   }, [clearPendingOperation, sid, stopStream])
 
   const newChat = useCallback(() => {
+    if (navigationRef.current.sessionId !== null) {
+      // A new composer must not inherit the previous session's live observer or
+      // stream buffer.  This does not cancel the server-side generation.
+      abortRef.current?.abort()
+      stopStream(null)
+    }
     useAppStore.getState().selectSession(null)
-    stopStream(null)
   }, [stopStream])
 
   const deleteMessage = useCallback(

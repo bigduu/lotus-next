@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest"
 import {
   assertSafePublicBuildEnvironment,
   classifyVendorChunk,
+  developmentDependencyOptimization,
   developmentProxy,
   portableArtifactBase,
 } from "./vite.config"
@@ -65,6 +66,20 @@ describe("public Vite build environment", () => {
 
   it("keeps the production artifact portable across nested host mount paths", () => {
     expect(portableArtifactBase).toBe("./")
+  })
+
+  it("keeps Streamdown's lazy development chunks stable across optimizer updates", () => {
+    expect(developmentDependencyOptimization).toEqual({
+      exclude: ["streamdown"],
+      include: [
+        "@streamdown/cjk",
+        "@streamdown/code",
+        "@streamdown/mermaid",
+        "streamdown > debug",
+        "streamdown > extend",
+        "streamdown > style-to-js",
+      ],
+    })
   })
 })
 

@@ -18,7 +18,11 @@ vi.mock("@/components/chat/AssistantMarkdown", () => ({
 vi.mock("@/components/chat/Reasoning", () => ({ Reasoning: () => null }))
 vi.mock("@/components/chat/StreamingReasoning", () => ({ StreamingReasoning: () => null }))
 vi.mock("@/components/chat/SubAgents", () => ({ SubAgents: () => null }))
-vi.mock("@/components/chat/ToolCalls", () => ({ ToolCalls: () => null }))
+vi.mock("@/components/chat/ToolCalls", () => ({
+  ToolCalls: ({ active }: { active?: boolean }) => (
+    <div data-tool-active={String(active)} />
+  ),
+}))
 
 import { MessageList } from "./MessageList"
 import type { Message } from "@shared/types/chatMessages"
@@ -91,5 +95,47 @@ describe("MessageList assistant streaming ownership", () => {
       "frozen round": "false",
       "active tail": "true",
     })
+  })
+
+  it("does not animate a persisted tool round from retained stream content alone", () => {
+    const container = document.createElement("div")
+    document.body.appendChild(container)
+    const root = createRoot(container)
+    mountedRoots.push(root)
+    const toolCall = {
+      id: "persisted-tool",
+      role: "assistant",
+      type: "tool_call",
+      toolCalls: [{ toolCallId: "call-1", toolName: "Read", parameters: {} }],
+      createdAt: "2026-09-01T00:00:00Z",
+    } as unknown as Message
+
+    act(() => {
+      root.render(
+        <MessageList
+          scrollRef={createRef<HTMLDivElement>()}
+          contentRef={createRef<HTMLDivElement>()}
+          onScroll={vi.fn()}
+          messages={[toolCall]}
+          mergedSubAgents={{}}
+          sending={false}
+          streaming="retained final text"
+          streamingReasoning={null}
+          liveSegments={[]}
+          streamStatus={null}
+          pendingUserText={null}
+          forking={false}
+          onSelectSubAgent={vi.fn()}
+          onPreviewImage={vi.fn()}
+          onRegenerate={vi.fn()}
+          onFork={vi.fn()}
+          onDelete={vi.fn()}
+          onEditMessage={vi.fn()}
+        />,
+      )
+    })
+
+    expect(container.querySelector("[data-tool-active]")?.getAttribute("data-tool-active"))
+      .toBe("false")
   })
 })

@@ -43,11 +43,11 @@ const choose = (mode: string) => act(() => {
 })
 const click = (name: string) => act(() => button(name).click())
 const flush = () => act(async () => { await Promise.resolve(); await Promise.resolve() })
-async function mount(id = "a") {
+async function mount(id = "a", compact = false) {
   const container = document.body.appendChild(document.createElement("div"))
   const root = createRoot(container); roots.push(root)
   const render = async (sessionId: string) => act(async () => {
-    root.render(<PermissionModeControl sessionId={sessionId} title={`Session ${sessionId}`} />)
+    root.render(<PermissionModeControl sessionId={sessionId} title={`Session ${sessionId}`} compact={compact} />)
   })
   await render(id)
   return { render }
@@ -69,6 +69,21 @@ afterEach(() => {
 })
 
 describe("PermissionModeControl", () => {
+  it("uses the compact composer presentation without dropping its accessible help", async () => {
+    await mount("a", true)
+    const section = document.querySelector("section")
+    const helpId = selector().getAttribute("aria-describedby")?.split(" ")[0]
+    const help = document.getElementById(helpId ?? "")
+
+    expect(section?.dataset.variant).toBe("composer")
+    expect(help?.className).toContain("sr-only")
+    expect(section?.getAttribute("title")).toBe(help?.textContent)
+    expect(selector().className).toContain("appearance-none")
+    expect(selector().className).toContain("[text-align-last:center]")
+    expect(selector().className).toContain("w-[4.5rem]")
+    expect(section?.querySelector("[data-permission-chevron]")).not.toBeNull()
+  })
+
   it.each(["en-US", "zh-CN"] as const)("registers all permission copy in the actual %s chat namespace", async (locale) => {
     await changeLocale(locale)
     for (const key of ["section", "label", "loading", "saving", "unavailable", "unconfirmed", "refresh", "readRequired",

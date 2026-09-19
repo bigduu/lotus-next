@@ -222,15 +222,61 @@ describe("StreamdownMarkdown streaming behavior", () => {
     const transitioning = await mountMarkdown(finalSource, true)
 
     expect(transitioning.container.querySelector("[data-sd-animate]")).not.toBeNull()
-    expect(transitioning.container.innerHTML).toContain("--streamdown-caret")
+    expect(
+      document.querySelector('[data-assistant-typewriter-caret="true"]'),
+    ).not.toBeNull()
+    expect(transitioning.container.innerHTML).not.toContain("--streamdown-caret")
 
     await transitioning.render(finalSource, false)
     expect(transitioning.container.querySelector("[data-sd-animate]")).toBeNull()
-    expect(transitioning.container.innerHTML).not.toContain("--streamdown-caret")
+    expect(
+      document.querySelector('[data-assistant-typewriter-caret="true"]'),
+    ).toBeNull()
     const transitionedStaticDom = semanticHtml(transitioning.container)
 
     const persisted = await mountMarkdown(finalSource, false)
     expect(semanticHtml(persisted.container)).toBe(transitionedStaticDom)
+  })
+
+  it("animates newly appended CJK characters within the same line", async () => {
+    const view = await mountMarkdown("你好", true)
+
+    await view.render("你好世界", true)
+
+    const animatedCharacters = [
+      ...view.container.querySelectorAll<HTMLElement>("[data-sd-animate]"),
+    ]
+    expect(animatedCharacters.map((node) => node.textContent)).toEqual(["你", "好", "世", "界"])
+    expect(
+      animatedCharacters.slice(-2).map((node) => node.style.getPropertyValue("--sd-duration")),
+    ).toEqual(["120ms", "120ms"])
+  })
+
+  it("moves the caret with the character whose animation has started", async () => {
+    const view = await mountMarkdown("你好", true)
+    await view.render("你好世界", true)
+
+    const animatedCharacters = [
+      ...view.container.querySelectorAll<HTMLElement>("[data-sd-animate]"),
+    ]
+    const token = (text: string) =>
+      animatedCharacters.find((node) => node.textContent === text) as HTMLElement
+    const activeCaretTarget = () =>
+      view.container.querySelector('[data-assistant-typewriter-caret-target="true"]')
+    const startAnimation = (target: HTMLElement) => {
+      const event = new Event("animationstart", { bubbles: true })
+      Object.defineProperty(event, "animationName", { value: "sd-fadeIn" })
+      target.dispatchEvent(event)
+    }
+
+    // The newly appended characters already exist in final DOM order, but the
+    // caret remains beside the last settled character until their animation
+    // starts instead of jumping straight to the final character.
+    expect(activeCaretTarget()?.textContent).toBe("好")
+    act(() => startAnimation(token("世")))
+    expect(activeCaretTarget()?.textContent).toBe("世")
+    act(() => startAnimation(token("界")))
+    expect(activeCaretTarget()?.textContent).toBe("界")
   })
 })
 
@@ -282,7 +328,7 @@ describe("StreamdownMarkdown security, layout and theme semantics", () => {
     ].join("\n")
     applyResolvedAppTheme("light", "light")
     const view = await mountMarkdown(source, false)
-    const root = view.container.firstElementChild
+    const root = view.container.querySelector(".assistant-streamdown")
     const lightDom = semanticHtml(view.container)
 
     expect(window.innerWidth).toBe(320)

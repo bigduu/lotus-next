@@ -1,4 +1,4 @@
-import { lazy, Suspense } from "react"
+import { lazy, Suspense, useLayoutEffect, useRef, type RefObject } from "react"
 import { cjk } from "@streamdown/cjk"
 import rehypeSanitize from "rehype-sanitize"
 import {
@@ -20,9 +20,138 @@ const STREAMDOWN_ANIMATION = {
   animation: "fadeIn",
   duration: 120,
   maxBacklogMs: 240,
-  sep: "word",
-  stagger: 24,
+  // Unspaced CJK prose is a single "word" to Streamdown, so word-level
+  // splitting only animates when a new Markdown block starts.
+  sep: "char",
+  stagger: 16,
 } as const
+
+const ANIMATED_TOKEN_SELECTOR = 'span[data-sd-animate="true"]'
+
+function animationDurationMs(element: HTMLElement): number {
+  return Number.parseFloat(element.style.getPropertyValue("--sd-duration")) || 0
+}
+
+type TypewriterCaretTracker = {
+  positionAt: (target: HTMLElement | null) => void
+  root: HTMLElement
+}
+
+/**
+ * Streamdown's built-in caret is attached to the final Markdown block, while
+ * every animated token already occupies its final layout position. That makes
+ * the caret jump to the completed text before the staggered characters become
+ * visible. Follow each token's animationstart event instead, keeping the caret
+ * beside the character the user can currently see.
+ */
+function useTrackedTypewriterCaret(
+  hostRef: RefObject<HTMLDivElement | null>,
+  content: string,
+  isStreaming: boolean,
+): void {
+  const trackerRef = useRef<TypewriterCaretTracker | null>(null)
+
+  useLayoutEffect(() => {
+    if (!isStreaming) return
+
+    const root = hostRef.current?.querySelector<HTMLElement>(".assistant-streamdown")
+    if (!root) return
+
+    // Keep the visual caret outside React's text spans. Portaling or appending
+    // into a span whose text children React owns causes reconciliation warnings.
+    // A fixed, pointer-transparent overlay can follow the same glyph coordinates
+    // without affecting wrapping or the Markdown DOM.
+    const caret = document.createElement("span")
+    caret.className = "animate-pulse"
+    caret.dataset.assistantTypewriterCaret = "true"
+    caret.setAttribute("aria-hidden", "true")
+    Object.assign(caret.style, {
+      borderRadius: "1px",
+      display: "none",
+      pointerEvents: "none",
+      position: "fixed",
+      zIndex: "30",
+    })
+    document.body.append(caret)
+
+    let positionedTarget: HTMLElement | null = null
+    const updateCaretPosition = () => {
+      if (!positionedTarget?.isConnected) {
+        caret.style.display = "none"
+        return
+      }
+      const rect = positionedTarget.getBoundingClientRect()
+      const computed = window.getComputedStyle(positionedTarget)
+      const fontSize = Number.parseFloat(computed.fontSize) || rect.height
+      const height = Math.min(rect.height, fontSize * 0.9)
+      const width = Math.max(3, fontSize * 0.45)
+      const gap = Math.max(1, fontSize * 0.08)
+      const left = computed.direction === "rtl" ? rect.left - width - gap : rect.right + gap
+
+      Object.assign(caret.style, {
+        backgroundColor: computed.color,
+        display: "block",
+        height: `${height}px`,
+        left: `${left}px`,
+        top: `${rect.top + (rect.height - height) / 2}px`,
+        width: `${width}px`,
+      })
+    }
+    const positionAt = (target: HTMLElement | null) => {
+      if (positionedTarget === target) return
+      positionedTarget?.removeAttribute("data-assistant-typewriter-caret-target")
+      positionedTarget = target
+      target?.setAttribute("data-assistant-typewriter-caret-target", "true")
+      updateCaretPosition()
+    }
+
+    const handleAnimationStart = (event: Event) => {
+      const animationEvent = event as AnimationEvent
+      const target = event.target
+      if (!animationEvent.animationName.startsWith("sd-")) return
+      if (!(target instanceof HTMLElement) || !target.matches(ANIMATED_TOKEN_SELECTOR)) return
+      if (animationDurationMs(target) === 0) return
+      positionAt(target)
+    }
+
+    trackerRef.current = { positionAt, root }
+    root.addEventListener("animationstart", handleAnimationStart)
+    window.addEventListener("resize", updateCaretPosition)
+    window.addEventListener("scroll", updateCaretPosition, true)
+    return () => {
+      root.removeEventListener("animationstart", handleAnimationStart)
+      window.removeEventListener("resize", updateCaretPosition)
+      window.removeEventListener("scroll", updateCaretPosition, true)
+      positionedTarget?.removeAttribute("data-assistant-typewriter-caret-target")
+      caret.remove()
+      trackerRef.current = null
+    }
+  }, [hostRef, isStreaming])
+
+  useLayoutEffect(() => {
+    if (!isStreaming) return
+    const tracker = trackerRef.current
+    if (!tracker) return
+
+    const tokens = [
+      ...tracker.root.querySelectorAll<HTMLElement>(ANIMATED_TOKEN_SELECTOR),
+    ]
+    const prefersReducedMotion =
+      typeof window.matchMedia === "function" &&
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches
+
+    if (prefersReducedMotion) {
+      tracker.positionAt(tokens.at(-1) ?? null)
+      return
+    }
+
+    const settledTokens = tokens.filter((token) => animationDurationMs(token) === 0)
+    const animatingTokens = tokens.filter((token) => animationDurationMs(token) > 0)
+    // During a streaming update, remain at the last settled character until
+    // the first new character's animation actually begins.
+    tracker.positionAt(settledTokens.at(-1) ?? animatingTokens.at(0) ?? null)
+  }, [content, isStreaming])
+}
 
 const LazyStreamdownMermaid = lazy(() => import("./StreamdownMermaid"))
 
@@ -89,32 +218,36 @@ export function StreamdownMarkdown({
   className?: string
   isStreaming: boolean
 }) {
+  const hostRef = useRef<HTMLDivElement>(null)
+  useTrackedTypewriterCaret(hostRef, children, isStreaming)
+
   return (
-    <Streamdown
-      animated={isStreaming ? STREAMDOWN_ANIMATION : false}
-      caret={isStreaming ? "block" : undefined}
-      className={cn(
-        "assistant-streamdown prose prose-sm dark:prose-invert max-w-none min-w-0 space-y-0",
-        "[overflow-wrap:anywhere] prose-p:my-2 prose-headings:mt-3 prose-headings:mb-1.5",
-        "prose-a:text-primary prose-li:my-0.5",
-        className,
-      )}
-      codeBlockMaxHeight={Number.POSITIVE_INFINITY}
-      controls={false}
-      dir="auto"
-      isAnimating={isStreaming}
-      lineNumbers={false}
-      linkSafety={LINK_SAFETY}
-      mode={isStreaming ? "streaming" : "static"}
-      parseIncompleteMarkdown={isStreaming}
-      plugins={STREAMDOWN_PLUGINS}
-      rehypePlugins={SAFE_REHYPE_PLUGINS}
-      remend={REMEND_OPTIONS}
-      shikiTheme={STREAMDOWN_THEMES}
-      tableMaxHeight={Number.POSITIVE_INFINITY}
-      urlTransform={safeAssistantUrlTransform}
-    >
-      {children}
-    </Streamdown>
+    <div ref={hostRef} style={{ display: "contents" }}>
+      <Streamdown
+        animated={isStreaming ? STREAMDOWN_ANIMATION : false}
+        className={cn(
+          "assistant-streamdown prose prose-sm dark:prose-invert max-w-none min-w-0 space-y-0",
+          "[overflow-wrap:anywhere] prose-p:my-2 prose-headings:mt-3 prose-headings:mb-1.5",
+          "prose-a:text-primary prose-li:my-0.5",
+          className,
+        )}
+        codeBlockMaxHeight={Number.POSITIVE_INFINITY}
+        controls={false}
+        dir="auto"
+        isAnimating={isStreaming}
+        lineNumbers={false}
+        linkSafety={LINK_SAFETY}
+        mode={isStreaming ? "streaming" : "static"}
+        parseIncompleteMarkdown={isStreaming}
+        plugins={STREAMDOWN_PLUGINS}
+        rehypePlugins={SAFE_REHYPE_PLUGINS}
+        remend={REMEND_OPTIONS}
+        shikiTheme={STREAMDOWN_THEMES}
+        tableMaxHeight={Number.POSITIVE_INFINITY}
+        urlTransform={safeAssistantUrlTransform}
+      >
+        {children}
+      </Streamdown>
+    </div>
   )
 }

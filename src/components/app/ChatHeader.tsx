@@ -5,23 +5,13 @@ import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import { useAppStore } from "@shared/store/appStore"
 import { MachineTag } from "@/components/chat/MachineTag"
-import { ModelPicker } from "@/components/chat/ModelPicker"
-import { ReasoningPicker } from "@/components/chat/ReasoningPicker"
 import { OverflowMenu } from "@/components/chat/OverflowMenu"
-import { ContextUsageRing } from "@/components/app/ContextUsageRing"
-import type { ReasoningEffort } from "@services/chat/AgentService"
 
 type OverflowItem = { label: string; icon?: ReactNode; onClick: () => void }
 
 export function ChatHeader({
   title,
   hasSession,
-  tokenUsage,
-  reasoningEffort,
-  onChangeReasoning,
-  models,
-  activeModel,
-  onChangeModel,
   overflowItems,
   onOpenSidebar,
   onOpenInspector,
@@ -29,12 +19,6 @@ export function ChatHeader({
 }: {
   title: string
   hasSession: boolean
-  tokenUsage: { totalTokens: number; maxContextTokens?: number } | undefined
-  reasoningEffort: ReasoningEffort
-  onChangeReasoning: (effort: ReasoningEffort) => void
-  models: string[]
-  activeModel: string
-  onChangeModel: (model: string) => void
   overflowItems: OverflowItem[]
   onOpenSidebar: () => void
   onOpenInspector: () => void
@@ -65,30 +49,6 @@ export function ChatHeader({
       <span className="flex-1 truncate text-sm font-semibold">{title}</span>
       {placement && placement.kind !== "local" ? (
         <MachineTag placement={placement} compact className="max-w-36 shrink-0" />
-      ) : null}
-      {tokenUsage ? (
-        <ContextUsageRing
-          totalTokens={tokenUsage.totalTokens}
-          maxContextTokens={tokenUsage.maxContextTokens}
-          onClick={onOpenInspector}
-        />
-      ) : null}
-      <ReasoningPicker
-        value={reasoningEffort}
-        onChange={onChangeReasoning}
-        menuPlacement="down"
-        menuAlign="right"
-      />
-      {models.length > 0 ? (
-        <ModelPicker
-          models={
-            activeModel && !models.includes(activeModel) ? [activeModel, ...models] : models
-          }
-          value={activeModel}
-          onChange={onChangeModel}
-          menuPlacement="down"
-          menuAlign="right"
-        />
       ) : null}
       <OverflowMenu items={overflowItems} />
       {hasSession ? (

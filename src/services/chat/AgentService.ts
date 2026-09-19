@@ -358,6 +358,8 @@ export interface ChatRequest {
   model: string; // Required for chat/create compatibility; backend persists to session
   model_ref?: { provider: string; model: string };
   provider?: string;
+  /** Initial permission mode for a NEW session; existing sessions ignore it. */
+  permission_mode?: SessionPermissionMode;
 }
 
 export interface GoalCommandResponse {
@@ -651,6 +653,8 @@ export interface CreateSessionRequest {
   provider?: string;
   reasoning_effort?: ReasoningEffort;
   gold_config?: GoldConfig;
+  /** Initial permission mode; omitted falls back to the durable policy default. */
+  permission_mode?: SessionPermissionMode;
 }
 
 export interface CreateSessionResponse {

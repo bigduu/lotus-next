@@ -100,6 +100,16 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
       provider: providerValue,
       reasoning_effort: reasoningEffort || undefined,
       gold_config: chatData.config?.goldConfig ?? undefined,
+      // Explicit caller mode wins; when omitted the server stamps its durable
+      // permission-policy default. The authoritative mode read back below.
+      permission_mode:
+        chatData.config?.permissionMode === "default"
+          ? "default"
+          : chatData.config?.permissionMode === "bypass"
+            ? "bypass"
+            : chatData.config?.permissionMode === "auto"
+              ? "auto"
+              : undefined,
     });
 
     const newChat: ChatItem = {

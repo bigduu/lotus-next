@@ -284,6 +284,29 @@ export const developmentProxy = {
 // origin-rooted through runtimeConfig rather than inheriting this asset base.
 export const portableArtifactBase = "./"
 
+export const developmentDependencyOptimization = {
+  // Streamdown ships internal lazy ESM chunks. If Vite re-optimizes an
+  // unrelated dependency during HMR, WebKit can retain the immutable optimized
+  // entry while its generated child filename has changed, leaving a request to
+  // a removed `highlighted-body-*` file that Vite answers with 504. Serving the
+  // valid ESM package directly keeps those internal URLs stable.
+  exclude: ["streamdown"],
+  // These plugins are intentionally reached only by assistant-content paths.
+  // Pre-bundle them at startup so the first code block or Mermaid diagram does
+  // not trigger another dependency-optimizer pass mid-session. Streamdown's
+  // raw dependency graph also reaches CommonJS leaves through micromark,
+  // unified, and hast-util-to-jsx-runtime; those leaves must stay optimized
+  // when their ESM parent is excluded (per Vite's nested-dep include contract).
+  include: [
+    "@streamdown/cjk",
+    "@streamdown/code",
+    "@streamdown/mermaid",
+    "streamdown > debug",
+    "streamdown > extend",
+    "streamdown > style-to-js",
+  ],
+} as const
+
 // https://vite.dev/config/
 export default defineConfig(({ mode }) => {
   const publicEnvironment = loadEnv(mode, process.cwd(), "VITE_")
@@ -292,6 +315,10 @@ export default defineConfig(({ mode }) => {
   return {
     base: portableArtifactBase,
     plugins: [react(), tailwindcss(), bundleOwnershipPlugin()],
+    optimizeDeps: {
+      exclude: [...developmentDependencyOptimization.exclude],
+      include: [...developmentDependencyOptimization.include],
+    },
     build: {
       // The package verifier follows this exact generated graph when enforcing
       // the ordinary-chat startup budget and optional-feature boundaries.

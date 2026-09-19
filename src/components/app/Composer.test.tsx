@@ -91,6 +91,22 @@ function dispatchSubmitShortcut(
 }
 
 describe("Composer submission controls", () => {
+  it("keeps permission, runtime, and submission controls inside the composer surface", () => {
+    const { container } = mountComposer({
+      permissionControl: <span data-testid="permission-control">Auto</span>,
+      runtimeControls: <span data-testid="runtime-controls">Model</span>,
+    })
+    const surface = container.querySelector("[data-composer-surface]")
+    const permission = container.querySelector('[data-testid="permission-control"]')
+    const runtimeControls = container.querySelector('[data-testid="runtime-controls"]')
+    const send = container.querySelector('button[aria-label="发送消息"]')
+
+    expect(surface).not.toBeNull()
+    expect(surface?.contains(permission)).toBe(true)
+    expect(surface?.contains(runtimeControls)).toBe(true)
+    expect(surface?.contains(send)).toBe(true)
+  })
+
   it.each([
     ["native composition", { isComposing: true }],
     ["legacy IME key code", { keyCode: 229 }],

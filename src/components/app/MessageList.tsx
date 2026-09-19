@@ -159,7 +159,10 @@ export function MessageList({
               <ToolCalls
                 key={it.items[0]?.id ?? `tools-${idx}`}
                 items={it.items}
-                active={isLast && (sending || streaming !== null)}
+                // A retained final stream is display content, not evidence that
+                // the persisted tool round is still running.  ChatPane passes a
+                // session-scoped running value here.
+                active={isLast && sending}
               />
             )
             if (idx === spawnItemIdx) {

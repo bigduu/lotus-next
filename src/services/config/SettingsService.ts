@@ -51,6 +51,21 @@ export interface ReplaceEnvVarsRequest {
   entries: UpsertEnvVarRequest[];
 }
 
+// ── Default session permission mode ─────────────────────────────
+// The durable permission-policy seed stamped onto NEW sessions
+// ("default" | "bypass" | "auto"), editable from Settings → Permissions.
+
+export type SessionPermissionModeValue = "default" | "bypass" | "auto";
+
+export interface DefaultSessionPermissionMode {
+  mode: SessionPermissionModeValue;
+  /** Store revision for CAS on update. */
+  revision: number;
+  loaded_at: string;
+  status: string;
+  last_error?: string | null;
+}
+
 // ── Cluster Fabric types ────────────────────────────────────────
 //
 // Mirrors bamboo-config `cluster_fabric`. SSH secrets are redacted in
@@ -203,6 +218,28 @@ export class SettingsService {
       rules,
     });
     return response.rules;
+  }
+
+  /**
+   * Get the default session permission mode stamped onto NEW sessions
+   * ("default" | "bypass" | "auto") from the durable permission policy.
+   */
+  async getDefaultSessionPermissionMode(): Promise<DefaultSessionPermissionMode> {
+    return apiClient.get<DefaultSessionPermissionMode>("/bamboo/permission/default-session-mode");
+  }
+
+  /**
+   * Replace the default session permission mode. Send the revision from GET
+   * to keep the store-level CAS; a conflict rejects with an error.
+   */
+  async updateDefaultSessionPermissionMode(
+    mode: SessionPermissionModeValue,
+    expectedRevision?: number,
+  ): Promise<DefaultSessionPermissionMode> {
+    return apiClient.put<DefaultSessionPermissionMode>("/bamboo/permission/default-session-mode", {
+      mode,
+      expected_revision: expectedRevision,
+    });
   }
 
   /**

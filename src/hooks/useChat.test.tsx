@@ -422,6 +422,46 @@ describe("useChat two-phase send lifecycle", () => {
       expect.any(AbortController),
     )
   })
+  it.each([
+    ["a blank new chat", null],
+    ["another session", "session-b"],
+  ] as const)("detaches the old UI stream when navigating to %s", async (_label, destination) => {
+    mocks.appState.currentSessionId = "session-a"
+    mocks.appState.chats = [{ id: "session-a", messages: [], isRunning: true }]
+    mocks.sendMessage.mockResolvedValueOnce({ session_id: "session-a" })
+    let controller: AbortController | undefined
+    mocks.subscribeToEvents.mockImplementationOnce(
+      (_sessionId: string, _handlers: SubscriptionHandlers, nextController: AbortController) => {
+        controller = nextController
+        return new Promise<void>((resolve) => {
+          nextController.signal.addEventListener("abort", () => resolve(), { once: true })
+        })
+      },
+    )
+    const hook = await mountUseChat({ mode: "main" })
+    await act(async () => {
+      await hook.current.send("keep running in session A")
+    })
+    expect(hook.current.sending).toBe(true)
+    expect(hook.current.streaming).toBe("")
+
+    await act(async () => {
+      if (destination === null) hook.current.newChat()
+      else hook.current.select(destination)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(controller?.signal.aborted).toBe(true)
+    expect(mocks.stopGeneration).not.toHaveBeenCalled()
+    expect(mocks.appState.selectSession).toHaveBeenLastCalledWith(destination)
+    if (destination !== null) {
+      expect(mocks.appState.loadChatHistory).toHaveBeenCalledWith(destination)
+    }
+    expect(hook.current.currentSessionId).toBe(destination)
+    expect(hook.current.sending).toBe(false)
+    expect(hook.current.streaming).toBeNull()
+  })
   it("restores a persisted child before allowing the default root to be persisted", async () => {
     localStorage.setItem("lotus_next_last_session", "saved-child")
     mocks.initializeStore.mockImplementationOnce(async () => {

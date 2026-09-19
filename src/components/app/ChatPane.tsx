@@ -36,9 +36,10 @@ import { Composer } from "@/components/app/Composer"
 import { Toasts } from "@/components/app/Toasts"
 import { ImageLightbox } from "@/components/app/ImageLightbox"
 import { peekPendingTemplatePrompt } from "@/lib/taskTemplates"
+import { ContextUsageRing } from "@/components/app/ContextUsageRing"
 import { ReasoningPicker } from "@/components/chat/ReasoningPicker"
 import { ModelPicker } from "@/components/chat/ModelPicker"
-import { PermissionModeControl } from "@/components/chat/PermissionModeControl"
+import { NewSessionPermissionControl, PermissionModeControl } from "@/components/chat/PermissionModeControl"
 import {
   Select,
   SelectContent,
@@ -47,6 +48,8 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import type { ChatItem } from "@shared/types/chatMessages"
+import type { SessionPermissionMode } from "@services/chat/AgentService"
+import { useNewSessionPermission } from "@shared/store/newSessionPermission"
 
 /** Secondary (split) pane config — a slim header with its own session picker. */
 type SecondaryConfig = {
@@ -72,6 +75,8 @@ type ComposerSubmissionSnapshot = Readonly<{
   workspacePath: string | null
   projectId: string | null
   templatePrompt: ReturnType<typeof peekPendingTemplatePrompt>
+  /** Permission mode to stamp when this submission creates a NEW session. */
+  permissionMode: SessionPermissionMode | null
 }>
 
 function fileToAttachment(file: File): Promise<Attachment> {
@@ -168,7 +173,10 @@ export function ChatPane({
     answerQuestion,
     respondApproval,
   } = chat
-  const currentlyRunning = sending || currentChat?.isRunning === true
+  // `sending` belongs to this hook instance, while `streaming` is already
+  // scoped to the session rendered by this pane.  Do not let a run from the
+  // session we just left turn a blank/new conversation into a Stop button.
+  const currentlyRunning = currentChat?.isRunning === true || (sending && streaming !== null)
   const queue = useGuidanceQueue(currentSessionId, currentlyRunning)
   // The secondary chat hook remains mounted when its pane closes. Read state
   // follows the rendered pane, including the same breakpoint as its md:flex.
@@ -180,6 +188,7 @@ export function ChatPane({
   const liveTokenUsage = useAppStore((s) =>
     currentSessionId ? s.tokenUsages[currentSessionId] : undefined,
   )
+  const tokenUsage = liveTokenUsage ?? currentChat?.config?.tokenUsage
 
   // Per-session persisted draft (survives session switches + reloads via the
   // inputStates slice). New-chat drafts key off a per-pane sentinel so the
@@ -272,7 +281,7 @@ export function ChatPane({
     return getReasoningEffortForProvider(s.providerSnapshot, id)
   })
   const sessionReasoningEffort = useAppStore(
-    (s) => s.inputStates[currentSessionId ?? ""]?.reasoningEffort,
+    (s) => s.inputStates[draftKey]?.reasoningEffort,
   )
   const reasoningEffort = sessionReasoningEffort ?? chatReasoningEffort ?? "medium"
   const setInputReasoningEffort = useAppStore((s) => s.setInputReasoningEffort)
@@ -405,6 +414,9 @@ export function ChatPane({
       workspacePath: selectedProjectPath ?? pickedWorkspace,
       projectId: pendingProjectId ?? null,
       templatePrompt: !currentSessionId && !secondary ? peekPendingTemplatePrompt() : null,
+      // The home picker's selection only applies when this send creates a new
+      // session; an existing session keeps its stored permission mode.
+      permissionMode: !currentSessionId ? useNewSessionPermission.getState().mode : null,
     })
     // Workflow expansion: the workflow's markdown is the message body; any
     // typed text is appended as extra input (lotus token semantics).
@@ -420,6 +432,7 @@ export function ChatPane({
           workspacePath: snapshot.workspacePath,
           projectId: snapshot.projectId,
           templatePrompt: snapshot.templatePrompt,
+          permissionMode: snapshot.permissionMode ?? undefined,
         })
     void submission
       .then((result) => {
@@ -560,25 +573,6 @@ export function ChatPane({
             </Select>
             {currentSessionId ? (
               <>
-                <ReasoningPicker
-                  value={reasoningEffort}
-                  onChange={(effort) => setInputReasoningEffort(currentSessionId ?? "", effort)}
-                  menuPlacement="down"
-                  menuAlign="right"
-                />
-                {models.length > 0 ? (
-                  <ModelPicker
-                    models={
-                      activeModel && !models.includes(activeModel)
-                        ? [activeModel, ...models]
-                        : models
-                    }
-                    value={activeModel}
-                    onChange={setSelectedModel}
-                    menuPlacement="down"
-                    menuAlign="right"
-                  />
-                ) : null}
                 <Button
                   size="icon"
                   variant="ghost"
@@ -597,22 +591,12 @@ export function ChatPane({
           <ChatHeader
             title={currentChat?.title || "Bodhi"}
             hasSession={!!currentSessionId}
-            tokenUsage={liveTokenUsage ?? currentChat?.config?.tokenUsage}
-            reasoningEffort={reasoningEffort}
-            onChangeReasoning={(effort) => setInputReasoningEffort(currentSessionId ?? "", effort)}
-            models={models}
-            activeModel={activeModel}
-            onChangeModel={setSelectedModel}
             overflowItems={overflowItems}
             onOpenSidebar={onOpenSidebar}
             onOpenInspector={onOpenInspector}
             sidebarCollapsed={sidebarCollapsed}
           />
         )}
-
-        {currentSessionId ? (
-          <PermissionModeControl sessionId={currentSessionId} title={currentChat?.title || currentSessionId} />
-        ) : null}
 
         {currentChat?.planMode ? (
           <div className="border-b bg-primary/10 px-3 py-1.5 text-center text-xs font-medium text-primary">
@@ -717,6 +701,45 @@ export function ChatPane({
           queueMode={queue.mode}
           onQueueModeChange={currentSessionId && !submissionPending ? queue.setMode : undefined}
           queueControls={currentSessionId ? <SessionGuidance key={currentSessionId} sessionId={currentSessionId} messages={queue.pending} busy={queue.busy} onCancel={(id) => void queue.cancel(id)} onPreview={setPreview} /> : null}
+          permissionControl={currentSessionId ? (
+            <PermissionModeControl
+              sessionId={currentSessionId}
+              title={currentChat?.title || currentSessionId}
+              compact
+            />
+          ) : (
+            <NewSessionPermissionControl />
+          )}
+          runtimeControls={(
+            <>
+              {tokenUsage ? (
+                <ContextUsageRing
+                  totalTokens={tokenUsage.totalTokens}
+                  maxContextTokens={tokenUsage.maxContextTokens}
+                  onClick={onOpenInspector}
+                />
+              ) : null}
+              <ReasoningPicker
+                value={reasoningEffort}
+                onChange={(effort) => setInputReasoningEffort(draftKey, effort)}
+                menuPlacement="up"
+                menuAlign="right"
+              />
+              {models.length > 0 ? (
+                <ModelPicker
+                  models={
+                    activeModel && !models.includes(activeModel)
+                      ? [activeModel, ...models]
+                      : models
+                  }
+                  value={activeModel}
+                  onChange={setSelectedModel}
+                  menuPlacement="up"
+                  menuAlign="right"
+                />
+              ) : null}
+            </>
+          )}
           submissionPending={submissionPending || goalSaving || queue.busy}
           inputRef={composerInputRef}
           attachments={attachments}

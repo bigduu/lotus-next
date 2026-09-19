@@ -126,6 +126,8 @@ export function Composer({
   queueMode,
   onQueueModeChange,
   queueControls,
+  permissionControl,
+  runtimeControls,
   submissionPending,
   inputRef,
   attachments,
@@ -160,6 +162,10 @@ export function Composer({
   queueMode?: GuidanceMode
   onQueueModeChange?: (mode: GuidanceMode) => void
   queueControls?: ReactNode
+  /** Permission selector shown in the lower-left composer toolbar. */
+  permissionControl?: ReactNode
+  /** Context, reasoning, and model controls shown in the lower-right toolbar. */
+  runtimeControls?: ReactNode
   submissionPending: boolean
   inputRef: Ref<HTMLTextAreaElement>
   attachments: AttachmentView[]
@@ -268,39 +274,11 @@ export function Composer({
           e.target.value = ""
         }}
       />
-      {!hasSession ? (
-        <div className="mx-auto mb-1.5 flex max-w-2xl items-center gap-1.5">
-          <ProjectChip
-            selectedProjectId={selectedProjectId}
-            onSelect={onSelectProject}
-          />
-          <button
-            onClick={onOpenWorkspacePicker}
-            className={selectedProjectId ? "hidden" : "flex max-w-full items-center gap-1.5 rounded-full border bg-card px-2.5 py-1 text-xs text-muted-foreground hover:text-foreground"}
-            title={displayWorkspace || "默认工作目录"}
-          >
-            <FolderGit2 className="size-3.5 shrink-0" />
-            <span className="truncate">
-              {displayWorkspace
-                ? displayWorkspace.split("/").filter(Boolean).pop() || displayWorkspace
-                : "选择工作目录"}
-            </span>
-            <ChevronDown className="size-3 shrink-0 opacity-60" />
-          </button>
-          <PromptChip />
-        </div>
-      ) : null}
-      <div className="relative mx-auto flex max-w-2xl items-center gap-2">
-        <div className="flex min-w-0 flex-1 items-center gap-1 rounded-2xl border bg-card px-2 py-1">
-          <Button
-            size="icon"
-            variant="ghost"
-            className="size-8 shrink-0 text-muted-foreground"
-            aria-label="添加图片"
-            onClick={() => fileInputRef.current?.click()}
-          >
-            <Paperclip className="size-4" />
-          </Button>
+      <div className="relative mx-auto w-full max-w-2xl">
+        <div
+          data-composer-surface
+          className="rounded-2xl border bg-card p-1.5 shadow-sm focus-within:ring-2 focus-within:ring-ring/40"
+        >
           <Textarea
             ref={inputRef}
             value={draft}
@@ -327,28 +305,73 @@ export function Composer({
             title="Enter 发送，Shift+Enter 换行"
             placeholder={canQueue ? "输入消息，发送后加入队列…" : "发送消息…"}
             rows={1}
-            className="max-h-40"
+            className="max-h-40 min-h-11 resize-none border-0 bg-transparent px-2 py-2 shadow-none focus-visible:ring-0 dark:bg-transparent"
           />
-          {canQueue && <div className="relative h-8 w-8 shrink-0 sm:w-24">
-            <Clock3 aria-hidden="true" className="pointer-events-none absolute left-2 top-2 size-4 text-muted-foreground sm:hidden" />
-            <select aria-label="发送时机" value={queueMode ?? "after_round"} disabled={submissionPending}
-              onChange={(event) => onQueueModeChange?.(event.target.value as GuidanceMode)}
-              title={queueMode === "after_run" ? "运行结束后发送" : "本轮结束后发送"}
-              className="h-full w-full appearance-none rounded border-0 bg-transparent text-xs text-transparent sm:appearance-auto sm:text-foreground">
-              <option className="text-foreground" value="after_round">本轮结束后</option>
-              <option className="text-foreground" value="after_run">运行结束后</option>
-            </select>
-          </div>}
+          <div className="flex flex-wrap items-end gap-1.5">
+            <div className="flex min-w-0 basis-full flex-wrap items-center gap-1 sm:basis-auto sm:flex-1">
+              <Button
+                size="icon"
+                variant="ghost"
+                className="size-8 shrink-0 text-muted-foreground"
+                aria-label="添加图片"
+                onClick={() => fileInputRef.current?.click()}
+              >
+                <Paperclip className="size-4" />
+              </Button>
+              {permissionControl}
+              {!hasSession ? (
+                <>
+                  <ProjectChip
+                    selectedProjectId={selectedProjectId}
+                    onSelect={onSelectProject}
+                  />
+                  <button
+                    onClick={onOpenWorkspacePicker}
+                    className={selectedProjectId ? "hidden" : "flex max-w-full items-center gap-1.5 rounded-full border bg-card px-2.5 py-1 text-xs text-muted-foreground hover:text-foreground"}
+                    title={displayWorkspace || "默认工作目录"}
+                  >
+                    <FolderGit2 className="size-3.5 shrink-0" />
+                    <span className="truncate">
+                      {displayWorkspace
+                        ? displayWorkspace.split("/").filter(Boolean).pop() || displayWorkspace
+                        : "选择工作目录"}
+                    </span>
+                    <ChevronDown className="size-3 shrink-0 opacity-60" />
+                  </button>
+                  <PromptChip />
+                </>
+              ) : null}
+            </div>
+            <div className="ml-auto flex w-full max-w-full flex-wrap items-center justify-end gap-1 sm:w-auto">
+              {canQueue ? (
+                <div className="relative h-8 w-8 shrink-0 sm:w-24">
+                  <Clock3 aria-hidden="true" className="pointer-events-none absolute left-2 top-2 size-4 text-muted-foreground sm:hidden" />
+                  <select aria-label="发送时机" value={queueMode ?? "after_round"} disabled={submissionPending}
+                    onChange={(event) => onQueueModeChange?.(event.target.value as GuidanceMode)}
+                    title={queueMode === "after_run" ? "运行结束后发送" : "本轮结束后发送"}
+                    className="h-full w-full appearance-none rounded border-0 bg-transparent text-xs text-transparent sm:appearance-auto sm:text-foreground">
+                    <option className="text-foreground" value="after_round">本轮结束后</option>
+                    <option className="text-foreground" value="after_run">运行结束后</option>
+                  </select>
+                </div>
+              ) : null}
+              {runtimeControls}
+              {submissionPending ? (
+                <Button size="icon" disabled aria-label="正在发送" className="rounded-full">
+                  <LoaderCircle className="animate-spin" />
+                </Button>
+              ) : (!sending || (canQueue && hasContent)) ? (
+                <Button size="icon" onClick={onSubmit} disabled={!hasContent} className="rounded-full"
+                  aria-label={canQueue ? "加入队列" : "发送消息"} title={canQueue ? "加入队列" : "发送消息"}><ArrowUp /></Button>
+              ) : null}
+              {sending && (!submissionPending || canQueue) ? (
+                <Button size="icon" variant="secondary" onClick={onStop} className="rounded-full" aria-label="停止生成">
+                  <Square />
+                </Button>
+              ) : null}
+            </div>
+          </div>
         </div>
-        {submissionPending ? (
-          <Button size="icon" disabled aria-label="正在发送" className="rounded-full">
-            <LoaderCircle className="animate-spin" />
-          </Button>
-        ) : (!sending || (canQueue && hasContent)) ? (
-          <Button size="icon" onClick={onSubmit} disabled={!hasContent} className="rounded-full"
-            aria-label={canQueue ? "加入队列" : "发送消息"} title={canQueue ? "加入队列" : "发送消息"}><ArrowUp /></Button>
-        ) : null}
-        {sending && (!submissionPending || canQueue) && <Button size="icon" variant="secondary" onClick={onStop} className="rounded-full" aria-label="停止生成"><Square /></Button>}
       </div>
     </div>
   )

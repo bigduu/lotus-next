@@ -56,12 +56,20 @@ vi.mock("@/components/app/HomeDashboard", () => ({ HomeDashboard: () => null }))
 vi.mock("@/components/app/MessageList", () => ({ MessageList: () => null }))
 vi.mock("@/components/app/Toasts", () => ({ Toasts: () => null }))
 vi.mock("@/components/app/ImageLightbox", () => ({ ImageLightbox: () => null }))
-vi.mock("@/components/chat/ReasoningPicker", () => ({ ReasoningPicker: () => null }))
-vi.mock("@/components/chat/ModelPicker", () => ({ ModelPicker: () => null }))
-vi.mock("@/components/chat/PermissionModeControl", () => ({ PermissionModeControl: () => null }))
+vi.mock("@/components/app/ContextUsageRing", () => ({ ContextUsageRing: () => <span data-testid="context-usage" /> }))
+vi.mock("@/components/chat/ReasoningPicker", () => ({ ReasoningPicker: () => <span data-testid="reasoning-picker" /> }))
+vi.mock("@/components/chat/ModelPicker", () => ({ ModelPicker: () => <span data-testid="model-picker" /> }))
+vi.mock("@/components/chat/PermissionModeControl", () => ({
+  PermissionModeControl: () => <span data-testid="session-permission" />,
+  NewSessionPermissionControl: () => <span data-testid="new-session-permission" />,
+}))
 vi.mock("@/components/app/Composer", () => ({
   Composer: (props: ComposerProps) => (runtime.composer = props,
-    <textarea ref={props.inputRef} aria-label="消息" value={props.draft} onChange={(event) => props.onDraftChange(event.currentTarget.value)} />),
+    <div data-testid="composer-shell">
+      <textarea ref={props.inputRef} aria-label="消息" value={props.draft} onChange={(event) => props.onDraftChange(event.currentTarget.value)} />
+      {props.permissionControl}
+      {props.runtimeControls}
+    </div>),
 }))
 import { agentClient } from "@services/chat/AgentService"
 import { ChatPane } from "./ChatPane"
@@ -94,10 +102,15 @@ function createChat(send: Send, id: string | null) {
     editMessage: vi.fn(), answerQuestion: vi.fn(), respondApproval: vi.fn(),
   } as unknown as ChatPaneProps["chat"]
 }
-async function mount(send: Send, id: string | null, running = false) {
+async function mount(
+  send: Send,
+  id: string | null,
+  running = false,
+  streaming: string | null = id ? "" : null,
+) {
   const container = document.body.appendChild(document.createElement("div")); const root = createRoot(container); roots.push(root)
   await act(async () => {
-    root.render(<ChatPane chat={{ ...createChat(send, id), sending: running }} pickedWorkspace="/picked"
+    root.render(<ChatPane chat={{ ...createChat(send, id), sending: running, streaming }} pickedWorkspace="/picked"
       onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()} splitOpen={false}
       onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false} />)
   })
@@ -178,6 +191,35 @@ beforeEach(() => {
 })
 afterEach(() => { for (const root of roots.splice(0)) act(() => root.unmount()); document.body.replaceChildren(); vi.unstubAllGlobals() })
 describe("ChatPane composer acknowledgement", () => {
+  it("routes session controls through the composer instead of the header", async () => {
+    runtime.state.models = ["test-model"]
+    await mount(vi.fn<Send>(), "session-1")
+    const composerShell = document.querySelector('[data-testid="composer-shell"]')
+
+    expect(composerShell?.querySelector('[data-testid="session-permission"]')).not.toBeNull()
+    expect(composerShell?.querySelector('[data-testid="reasoning-picker"]')).not.toBeNull()
+    expect(composerShell?.querySelector('[data-testid="model-picker"]')).not.toBeNull()
+    expect(document.querySelector('[data-testid="new-session-permission"]')).toBeNull()
+  })
+
+  it("puts the next-session permission selector in a blank composer", async () => {
+    await mount(vi.fn<Send>(), null)
+    const composerShell = document.querySelector('[data-testid="composer-shell"]')
+
+    expect(composerShell?.querySelector('[data-testid="new-session-permission"]')).not.toBeNull()
+    expect(document.querySelector('[data-testid="session-permission"]')).toBeNull()
+  })
+
+  it("does not inherit a previous session's sending flag in a blank new chat", async () => {
+    await mount(vi.fn<Send>(), null, true, null)
+    expect(composer().sending).toBe(false)
+  })
+
+  it("keeps Stop available while the visible session owns the live stream", async () => {
+    await mount(vi.fn<Send>(), "session-1", true, "")
+    expect(composer().sending).toBe(true)
+  })
+
   it("preserves an exact raw draft, focus, and template ownership before ACK", async () => {
     const templatePrompt = Object.freeze({ prompt: "template prompt", revision: 7 })
     runtime.peekTemplate.mockReturnValue(templatePrompt)
@@ -187,6 +229,7 @@ describe("ChatPane composer acknowledgement", () => {
     document.body.tabIndex = -1; document.body.focus(); act(() => composer().onSubmit()); await flush()
     expect(send).toHaveBeenCalledWith("  exact raw draft  ", {
       skillIds: undefined, images: undefined, workspacePath: "/picked", projectId: null, templatePrompt,
+      permissionMode: "default",
     })
     expect(runtime.state.inputStates[""]?.content).toBe("  exact raw draft  "); expect(runtime.peekTemplate).toHaveBeenCalledTimes(1); expect(document.activeElement).toBe(textarea)
   })
@@ -200,6 +243,7 @@ describe("ChatPane composer acknowledgement", () => {
     expect(send).toHaveBeenCalledWith("workflow-a body\n\noriginal request", {
       skillIds: ["skill-a"], images: [expect.objectContaining({ name: "before.png" })],
       workspacePath: "/picked", projectId: null, templatePrompt: null,
+      permissionMode: undefined,
     })
     expect(runtime.state.inputStates["session-1"]?.content).toBe(""); expect(composer()).toMatchObject({ attachments: [], selectedSkill: null, selectedWorkflow: null })
   })
