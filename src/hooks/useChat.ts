@@ -1088,6 +1088,7 @@ export function useChat(
         skillIds?: string[]
         images?: Array<{ base64: string; name?: string; size?: number; type?: string }>
         workspacePath?: string | null
+        projectId?: string | null
         templatePrompt?: PendingTemplatePromptSnapshot | null
       },
     ): Promise<SendSubmissionResult> => {
@@ -1141,6 +1142,9 @@ export function useChat(
           // Only meaningful when creating a NEW session; an existing session keeps
           // the cwd it was created with.
           workspace_path: !startSid && opts?.workspacePath ? opts.workspacePath : undefined,
+          // Explicit Project for a NEW session; an existing session keeps the
+          // Project it was created with (PATCH is the only reassignment path).
+          project_id: !startSid && opts?.projectId ? opts.projectId : undefined,
         })
         acknowledgedSessionId =
           typeof res?.session_id === "string" ? res.session_id.trim() : ""

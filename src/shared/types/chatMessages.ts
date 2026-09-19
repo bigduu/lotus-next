@@ -241,6 +241,8 @@ export interface ChatItem {
     lastUsedEnhancedPrompt: string | null;
     agentRole?: AgentRole;
     workspacePath?: string;
+    /** Authoritative Project identity assigned at creation or via PATCH. */
+    projectId?: string | null;
     model?: string;
     model_ref?: ProviderModelRef | null;
     reasoningEffort?: import("@services/chat/AgentService").ReasoningEffort | null;

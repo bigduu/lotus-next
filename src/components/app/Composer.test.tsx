@@ -3,6 +3,7 @@ import { createRoot, type Root } from "react-dom/client"
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest"
 
 import { Composer } from "./Composer"
+import { useAppStore } from "@shared/store/appStore"
 
 const mountedRoots: Root[] = []
 const originalScrollIntoView = HTMLElement.prototype.scrollIntoView
@@ -59,6 +60,8 @@ function mountComposer(overrides: Partial<ComponentProps<typeof Composer>> = {})
     onPickFile: vi.fn(),
     hasSession: true,
     onOpenWorkspacePicker: vi.fn(),
+    selectedProjectId: null,
+    onSelectProject: vi.fn(),
     onDismissMenus: vi.fn(),
     ...overrides,
   }
@@ -191,4 +194,40 @@ it("offers queue submission and Stop together while generating", () => {
   expect(container.querySelector('button[aria-label="停止生成"]')).not.toBeNull()
   dispatchSubmitShortcut(textarea)
   expect(props.onSubmit).toHaveBeenCalledOnce()
+})
+
+describe("Composer new-chat project chip", () => {
+  it("shows the project chip for new chats and hides the manual workspace button once a project is selected", () => {
+    useAppStore.setState({
+      projectsAvailable: true,
+      projects: {
+        p1: {
+          id: "p1", name: "Zenith", status: "active", revision: 1, resource_revision: 1,
+          project_path: "/tmp/zenith", project_path_status: "configured", workspace_count: 1,
+          created_at: "2026-01-01T00:00:00Z", updated_at: "2026-01-01T00:00:00Z",
+          schema_version: 2, workspace_bindings: [],
+        },
+      },
+    })
+
+    const bare = mountComposer({ hasSession: false })
+    expect(bare.container.textContent).toContain("选择项目")
+    expect(bare.container.textContent).toContain("选择工作目录")
+
+    const picked = mountComposer({ hasSession: false, selectedProjectId: "p1" })
+    expect(picked.container.textContent).toContain("Zenith")
+    const workspaceButton = [...picked.container.querySelectorAll("button")].find((b) =>
+      b.textContent?.includes("工作目录"),
+    )
+    expect(workspaceButton?.className).toContain("hidden")
+
+    useAppStore.setState({ projects: {}, projectsAvailable: null })
+  })
+
+  it("hides the project chip entirely when the backend has no Project API", () => {
+    useAppStore.setState({ projectsAvailable: false, projects: {} })
+    const view = mountComposer({ hasSession: false })
+    expect(view.container.textContent).not.toContain("选择项目")
+    useAppStore.setState({ projectsAvailable: null })
+  })
 })

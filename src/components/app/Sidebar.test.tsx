@@ -18,6 +18,7 @@ vi.mock("@/components/chat/SessionRow", () => ({
 }))
 
 import { Sidebar } from "./Sidebar"
+import { useAppStore } from "@shared/store/appStore"
 
 type Props = ComponentProps<typeof Sidebar>
 let root: Root
@@ -72,6 +73,7 @@ beforeEach(() => {
     chats: Array.from({ length: 7 }, (_, index) => chat(`day-${index}`, 5 - index)),
     booted: true, currentSessionId: "day-0", onNewChat: vi.fn(), onSelect: vi.fn(),
     onRename: vi.fn(), onDelete: vi.fn(), onTogglePin: vi.fn(), onOpenSettings: vi.fn(),
+    onOpenProjectManager: vi.fn(),
   }
 })
 
@@ -183,5 +185,58 @@ describe("Sidebar date disclosures", () => {
     render({ chats: [...props.chats] })
     expect(button("昨天").getAttribute("aria-expanded")).toBe("false")
     expect(row("day-0")).toBeNull()
+  })
+})
+
+function buttonByLabel(label: string): HTMLButtonElement {
+  const found = [...container.querySelectorAll("button")].find(
+    (candidate) => candidate.getAttribute("aria-label") === label,
+  )
+  expect(found, `button[aria-label=${label}]`).toBeDefined()
+  return found!
+}
+
+describe("Sidebar project grouping", () => {
+  beforeEach(() => {
+    localStorage.removeItem("lotus.sidebar.grouping-mode.v1")
+  })
+
+  it("groups sessions by project after switching the grouping mode", () => {
+    useAppStore.setState({
+      projects: {
+        p1: {
+          id: "p1", name: "Zenith", status: "active", revision: 1, resource_revision: 1,
+          project_path: "/tmp/zenith", project_path_status: "configured", workspace_count: 1,
+          created_at: "2026-01-01T00:00:00Z", updated_at: "2026-01-01T00:00:00Z",
+          schema_version: 2, workspace_bindings: [],
+        },
+      },
+    })
+    render({
+      chats: [
+        chat("in-project", 5, { config: { systemPromptId: "", baseSystemPrompt: "", lastUsedEnhancedPrompt: null, projectId: "p1" } }),
+        chat("no-project", 4, { config: { systemPromptId: "", baseSystemPrompt: "", lastUsedEnhancedPrompt: null, projectId: null } }),
+      ],
+    })
+    act(() => buttonByLabel("按日期分组").click())
+    expect(row("in-project")).not.toBeNull()
+    expect(row("no-project")).not.toBeNull()
+    // Project label renders as the group header button.
+    expect(button("Zenith")).toBeDefined()
+    expect(button("未分配")).toBeDefined()
+  })
+
+  it("preselects the enclosing project for a new chat in project mode", () => {
+    render({
+      currentSessionId: "solo",
+      chats: [chat("solo", 5, { config: { systemPromptId: "", baseSystemPrompt: "", lastUsedEnhancedPrompt: null, projectId: "p2" } })],
+    })
+    act(() => buttonByLabel("按日期分组").click())
+    const newChat = [...container.querySelectorAll("button")].find((b) =>
+      b.textContent?.trim().startsWith("新建"),
+    )
+    expect(newChat).toBeDefined()
+    act(() => newChat!.click())
+    expect(props.onNewChat).toHaveBeenCalledWith("p2")
   })
 })

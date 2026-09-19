@@ -563,6 +563,10 @@ export interface SessionSummary {
   model_ref?: { provider: string; model: string } | null;
   reasoning_effort?: ReasoningEffort | null;
   gold_config?: GoldConfig | null;
+  /** Authoritative Project identity mirrored from the session index. */
+  project_id?: string | null;
+  /** Session working directory mirrored from the session index. */
+  workspace_path?: string | null;
   created_by_schedule_id?: string | null;
   token_usage?: TokenBudgetUsage;
   created_at: string;

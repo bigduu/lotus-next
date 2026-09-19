@@ -11,6 +11,7 @@ import { InputStateSlice, createInputStateSlice } from "./slices/inputStateSlice
 import { ExecutionStateSlice, createExecutionStateSlice } from "./slices/executionStateSlice";
 import { BackgroundBashSlice, createBackgroundBashSlice } from "./slices/backgroundBashSlice";
 import { createPermissionModeSlice, type PermissionModeSlice } from "./slices/permissionModeSlice";
+import { createProjectSlice, type ProjectSlice } from "./slices/projectSlice";
 import type { BashDone } from "./slices/backgroundBashSlice";
 import { AgentClient } from "@services/chat/AgentService";
 import { startAccountFeed, isAccountFeedDisconnected } from "@services/chat/accountFeed";
@@ -55,6 +56,7 @@ export type AppState = ChatSlice &
   ExecutionStateSlice &
   BackgroundBashSlice &
   PermissionModeSlice &
+  ProjectSlice &
   AgentAvailabilitySlice &
   SessionIndexSyncSlice;
 
@@ -72,6 +74,7 @@ export const useAppStore = create<AppState>()(
       ...createExecutionStateSlice(set, get, api),
       ...createBackgroundBashSlice(set, get, api),
       ...createPermissionModeSlice(set, get, api),
+      ...createProjectSlice(set, get, api),
       agentAvailability: null,
       setAgentAvailability: (available) => {
         set({ agentAvailability: available });

@@ -186,7 +186,7 @@ describe("ChatPane composer acknowledgement", () => {
     change(textarea, "  exact raw draft  ")
     document.body.tabIndex = -1; document.body.focus(); act(() => composer().onSubmit()); await flush()
     expect(send).toHaveBeenCalledWith("  exact raw draft  ", {
-      skillIds: undefined, images: undefined, workspacePath: "/picked", templatePrompt,
+      skillIds: undefined, images: undefined, workspacePath: "/picked", projectId: null, templatePrompt,
     })
     expect(runtime.state.inputStates[""]?.content).toBe("  exact raw draft  "); expect(runtime.peekTemplate).toHaveBeenCalledTimes(1); expect(document.activeElement).toBe(textarea)
   })
@@ -199,7 +199,7 @@ describe("ChatPane composer acknowledgement", () => {
     await fill(textarea); act(() => composer().onSubmit()); await flush()
     expect(send).toHaveBeenCalledWith("workflow-a body\n\noriginal request", {
       skillIds: ["skill-a"], images: [expect.objectContaining({ name: "before.png" })],
-      workspacePath: "/picked", templatePrompt: null,
+      workspacePath: "/picked", projectId: null, templatePrompt: null,
     })
     expect(runtime.state.inputStates["session-1"]?.content).toBe(""); expect(composer()).toMatchObject({ attachments: [], selectedSkill: null, selectedWorkflow: null })
   })
