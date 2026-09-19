@@ -15,7 +15,12 @@ import {
 } from "vitest"
 const mocks = vi.hoisted(() => {
   const appState = {
-    chats: [] as Array<{ id: string; messages?: unknown[]; isRunning?: boolean }>,
+    chats: [] as Array<{
+      id: string
+      messages?: unknown[]
+      isRunning?: boolean
+      lastRunStatus?: string | null
+    }>,
     currentSessionId: null as string | null,
     sessionIndexRevision: 0,
     selectedModel: "test-model" as string | undefined,
@@ -115,6 +120,8 @@ type HookProps =
       onSessionCreated?: (sessionId: string) => void
     }
 type SubscriptionHandlers = {
+  onToken(content: string): void
+  onSessionHistoryCommitted(sessionId: string): void
   onComplete(): void
   onError(error?: unknown): void
   onCancelled(): void
@@ -599,6 +606,7 @@ describe("useChat two-phase send lifecycle", () => {
       if (terminalKind === "complete") {
         expect(hook.current.sendFailure).toBeNull()
         expect(mocks.appState.loadChatHistory).toHaveBeenNthCalledWith(2, "terminal-session", {
+          mode: "monotonic",
           waitForAssistant: true,
           retries: 8,
           retryDelayMs: 150,
@@ -630,6 +638,131 @@ describe("useChat two-phase send lifecycle", () => {
       }
     },
   )
+  it("retains the completed live tail until WebSocket history reconciliation commits it", async () => {
+    const sessionId = "tool-tail-session"
+    const subscription = deferred<void>()
+    let handlers: SubscriptionHandlers | undefined
+    mocks.appState.chats = [{
+      id: sessionId,
+      isRunning: true,
+      messages: [{
+        id: "tool-result",
+        role: "assistant",
+        type: "tool_result",
+        createdAt: "2026-09-19T12:00:00Z",
+      }],
+    }]
+    mocks.sendMessage.mockResolvedValueOnce({ session_id: sessionId })
+    mocks.subscribeToEvents.mockImplementationOnce(
+      (_sessionId: string, nextHandlers: SubscriptionHandlers) => {
+        handlers = nextHandlers
+        return subscription.promise
+      },
+    )
+
+    const props = { mode: "bound", sessionId } as const
+    const hook = await mountUseChat(props)
+    await act(async () => {
+      await hook.current.send("finish after the tool")
+    })
+
+    await act(async () => {
+      handlers?.onToken("durable final answer")
+      handlers?.onComplete()
+      subscription.resolve()
+      await Promise.resolve()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(hook.current.sending).toBe(false)
+    expect(hook.current.streamPhase).toBe("finalizing")
+    expect(hook.current.streaming).toBe("durable final answer")
+
+    mocks.appState.chats = [{
+      id: sessionId,
+      isRunning: false,
+      messages: [{
+        id: "persisted-final",
+        role: "assistant",
+        type: "text",
+        content: "durable final answer",
+        createdAt: "2026-09-19T12:00:01Z",
+      }],
+    }]
+    handlers?.onSessionHistoryCommitted(sessionId)
+    await hook.rerender(props)
+    await flushMicrotasks()
+
+    expect(mocks.appState.loadChatHistory).toHaveBeenLastCalledWith(sessionId, {
+      mode: "monotonic",
+    })
+    expect(hook.current.streaming).toBeNull()
+    expect(hook.current.streamPhase).toBeNull()
+  })
+  it("reconciles a control-only WebSocket terminal instead of reporting an interrupted generation", async () => {
+    const sessionId = "control-only-terminal"
+    mocks.appState.chats = [{
+      id: sessionId,
+      isRunning: true,
+      lastRunStatus: null,
+      messages: [{
+        id: "tool-result",
+        role: "assistant",
+        type: "tool_result",
+        createdAt: "2026-09-19T12:00:00Z",
+      }],
+    }]
+    mocks.sendMessage.mockResolvedValueOnce({ session_id: sessionId })
+    mocks.subscribeToEvents.mockImplementationOnce(
+      async (_sessionId: string, handlers: SubscriptionHandlers) => {
+        handlers.onToken("final reply after recovered terminal")
+        // The v2 channel resolves on its terminal control, but the semantic
+        // Complete frame was not observed by this subscriber.
+      },
+    )
+    mocks.appState.refreshChatsNow.mockImplementation(async () => {
+      const chat = mocks.appState.chats.find((candidate) => candidate.id === sessionId)
+      if (chat) {
+        chat.isRunning = false
+        chat.lastRunStatus = "completed"
+      }
+    })
+    mocks.appState.loadChatHistory.mockImplementation(async (_sessionId, options) => {
+      if (!options?.waitForAssistant) return
+      const chat = mocks.appState.chats.find((candidate) => candidate.id === sessionId)
+      if (chat) {
+        chat.messages = [{
+          id: "persisted-final",
+          role: "assistant",
+          type: "text",
+          content: "final reply after recovered terminal",
+          createdAt: "2026-09-19T12:00:01Z",
+        }]
+      }
+    })
+
+    const hook = await mountUseChat({ mode: "bound", sessionId })
+    await act(async () => {
+      await hook.current.send("recover the missing semantic terminal")
+      await Promise.resolve()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    await flushMicrotasks()
+
+    expect(mocks.appState.refreshChatsNow).toHaveBeenCalled()
+    expect(mocks.appState.loadChatHistory).toHaveBeenCalledWith(sessionId, {
+      mode: "monotonic",
+      waitForAssistant: true,
+      retries: 8,
+      retryDelayMs: 150,
+    })
+    expect(hook.current.sendFailure).toBeNull()
+    expect(hook.current.pendingUserText).toBeNull()
+    expect(hook.current.streaming).toBeNull()
+    expect(hook.current.streamPhase).toBeNull()
+  })
   it.each(["refresh", "history"] as const)(
     "starts exact-session generation before resolving accepted when %s hydration fails",
     async (failurePoint) => {

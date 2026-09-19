@@ -26,6 +26,7 @@ import {
   acknowledgePendingTemplatePrompt,
   type PendingTemplatePromptSnapshot,
 } from "@/lib/taskTemplates"
+import type { Message } from "@shared/types/chat"
 
 export type PendingQuestion = Extract<PendingQuestionResponse, { has_pending_question: true }>
 type QuestionScope = { sessionId: string | null | undefined; epoch: number }
@@ -99,12 +100,37 @@ export type LiveToolCall = {
  * One frozen segment of the CURRENT run's live timeline. Text the model
  * finished streaming before a tool round freezes into a `text` segment; the
  * round's tool calls accumulate in a `tools` segment. The still-streaming tail
- * stays in `streaming`/`streamingReasoning`. On terminal the whole timeline is
- * dropped in favor of the reloaded persisted history.
+ * stays in `streaming`/`streamingReasoning`. On terminal, persisted segments
+ * replace the timeline while an uncommitted final text tail remains visible.
  */
 export type LiveSegment =
   | { kind: "text"; text: string; reasoning: string | null }
   | { kind: "tools"; calls: LiveToolCall[] }
+
+export type StreamPhase = "streaming" | "finalizing" | null
+
+type RetainedTerminal = {
+  sessionId: string
+  operationId: number
+  text: string
+  baselineMessageId: string | null
+}
+
+const hasPersistedTerminalText = (
+  messages: Message[],
+  finalText: string,
+  baselineMessageId: string | null,
+): boolean => {
+  const tail = messages.findLast((message) => message.role !== "system")
+  if (tail?.role !== "assistant" || tail.type !== "text") return false
+  // Once a baseline exists, a new terminal assistant id is the durable turn
+  // boundary. Prefer it over byte equality because persistence may normalize
+  // harmless whitespace/markdown. With no local baseline, keep the stricter
+  // text check so an older assistant tail cannot settle a brand-new run.
+  return baselineMessageId !== null
+    ? tail.id !== baselineMessageId
+    : tail.content.trim() === finalText.trim()
+}
 
 // Stable empty array so instances not owning the live stream don't re-render.
 const EMPTY_SEGMENTS: LiveSegment[] = []
@@ -114,8 +140,9 @@ const EMPTY_SEGMENTS: LiveSegment[] = []
  *
  * Session list, history and persisted messages come from the store; live token
  * streaming is held locally here (the full jotai streaming machine is a later
- * port). On terminal we reload history so the persisted assistant message
- * replaces the live buffer.
+ * port). On terminal the live tail enters `finalizing` and remains visible
+ * until a history reconciliation proves that the persisted assistant message
+ * is readable.
  *
  * `boundSessionId` makes the hook drive a SPECIFIC session instead of the global
  * "current" one — this is what lets multiple panes each run an independent live
@@ -165,6 +192,7 @@ export function useChat(
 
   const [booted, setBooted] = useState(false)
   const [streamingText, setStreamingText] = useState<string | null>(null)
+  const [streamPhaseState, setStreamPhaseState] = useState<StreamPhase>(null)
   // The session the live stream belongs to — so streaming only renders in ITS
   // conversation, never leaking into another session the user switched to.
   const [streamSid, setStreamSid] = useState<string | null>(null)
@@ -188,6 +216,7 @@ export function useChat(
   const sendFailuresRef = useRef<ReadonlyMap<string | null, SendFailure>>(new Map())
   const latestOperationBySessionRef = useRef<Map<string | null, number>>(new Map())
   const streamOperationRef = useRef<number | null>(null)
+  const streamBaselineMessageIdRef = useRef<string | null>(null)
   const subscriptionRef = useRef<{ operationId: number; sessionId: string } | null>(null)
   const navigationRef = useRef({ sessionId: sid, epoch: 0 })
   if (navigationRef.current.sessionId !== sid) {
@@ -277,12 +306,23 @@ export function useChat(
   // shown while no text is streaming.
   const [streamStatusState, setStreamStatusState] = useState<string | null>(null)
   const streamStatusRef = useRef<string | null>(null)
+  // A completed live tail remains renderable until the WebSocket/SSE-triggered
+  // history reconciliation contains that exact terminal assistant message.
+  const retainedTerminalRef = useRef<RetainedTerminal | null>(null)
 
   // Streaming / optimistic message are scoped to this instance's session.
-  const streaming = streamSid === sid ? streamingText : null
+  const retainedTerminal = retainedTerminalRef.current
+  const retainedTerminalIsHydrated = retainedTerminal?.sessionId === sid
+    && hasPersistedTerminalText(
+      messages,
+      retainedTerminal.text,
+      retainedTerminal.baselineMessageId,
+    )
+  const streaming = streamSid === sid && !retainedTerminalIsHydrated ? streamingText : null
   const streamingReasoning = streamSid === sid ? streamingReasoningText : null
   const liveSegments = streamSid === sid ? liveSegmentsState : EMPTY_SEGMENTS
   const streamStatus = streamSid === sid ? streamStatusState : null
+  const streamPhase = streamSid === sid ? streamPhaseState : null
   const pendingUserText = pending?.sid === sid ? pending.text : null
   const sendFailure = sendFailures.get(sid ?? null) ?? null
 
@@ -425,10 +465,28 @@ export function useChat(
       // A null final means the live buffer has been fully retired.  Drop its
       // ownership too, so a late callback cannot make a completed/left session
       // look live again when the user returns to it.
-      if (final === null) setStreamSid(null)
+      if (final === null) {
+        retainedTerminalRef.current = null
+        setStreamPhaseState(null)
+        setStreamSid(null)
+      } else {
+        setStreamPhaseState("finalizing")
+      }
     },
     [setStreamStatus],
   )
+
+  // Account-feed WebSocket reconciliation updates `messages`. Retire a locally
+  // retained terminal tail only after the matching durable assistant message is
+  // present, avoiding both disappearance and a one-frame duplicate.
+  useEffect(() => {
+    const retained = retainedTerminalRef.current
+    if (!retained || retained.sessionId !== sid) return
+    if (streamOperationRef.current !== null) return
+    if (!hasPersistedTerminalText(messages, retained.text, retained.baselineMessageId)) return
+    retainedTerminalRef.current = null
+    stopStream(null)
+  }, [messages, sid, stopStream])
 
   const LAST_SESSION_KEY = "lotus_next_last_session"
 
@@ -513,6 +571,10 @@ export function useChat(
       operationSequenceRef.current = Math.max(operationSequenceRef.current, operationId)
       noteSessionOperation(runSid, operationId)
       streamOperationRef.current = operationId
+      streamBaselineMessageIdRef.current = useAppStore
+        .getState()
+        .chats.find((chat) => chat.id === runSid)
+        ?.messages?.findLast((message) => message.role !== "system")?.id ?? null
       const ownsStream = () => streamOperationRef.current === operationId
       const terminal = { settlement: null as Promise<void> | null, pendingRead: null as Promise<void> | null }
       // ONE live subscription per hook instance: sever the previous one FIRST
@@ -520,7 +582,9 @@ export function useChat(
       // (possibly different) session. Abort synchronously removes the
       // subscriber from the shared WS channel.
       abortRef.current?.abort()
+      retainedTerminalRef.current = null
       setStreamSid(runSid)
+      setStreamPhaseState("streaming")
       resetOutputRate()
       streamBufRef.current = ""
       reasonBufRef.current = ""
@@ -554,6 +618,107 @@ export function useChat(
           ac.abort()
         })
       }
+
+      const settleCompleted = (historyReady = false): void => {
+        if (!ownsStream() || terminal.settlement) return
+        setStreamPhaseState("finalizing")
+        terminal.settlement = (async () => {
+          // Freeze the fully-streamed text in place while persisted history
+          // loads, so terminal delivery never flashes an empty assistant row.
+          if (rafRef.current != null) {
+            cancelAnimationFrame(rafRef.current)
+            rafRef.current = null
+          }
+          const finalText = streamBufRef.current
+          if (finalText) setStreamingText(finalText)
+          if (!historyReady) {
+            try {
+              // waitForAssistant is a no-op without a real retry budget.
+              await useAppStore.getState().loadChatHistory(runSid, {
+                mode: "monotonic",
+                waitForAssistant: true,
+                retries: 8,
+                retryDelayMs: 150,
+              })
+            } catch (err) {
+              console.warn("[useChat] terminal history hydration failed", err)
+            }
+          }
+          if (!ownsStream()) return
+          if (opts?.pendingOperationId !== undefined) {
+            clearPendingOperation(opts.pendingOperationId)
+          }
+          const persistedMessages = useAppStore
+            .getState()
+            .chats.find((chat) => chat.id === runSid)?.messages ?? []
+          const baselineMessageId = streamBaselineMessageIdRef.current
+          if (
+            !finalText.trim()
+            || hasPersistedTerminalText(persistedMessages, finalText, baselineMessageId)
+          ) {
+            stopStream(null, operationId)
+            return
+          }
+
+          // The terminal frame won the race with the final checkpoint. Keep the
+          // exact streamed reply visible; the account WebSocket's durable change
+          // reconciliation retires it once history catches up.
+          retainedTerminalRef.current = {
+            sessionId: runSid,
+            operationId,
+            text: finalText,
+            baselineMessageId,
+          }
+          stopStream(finalText, operationId)
+        })()
+      }
+
+      const settleFailed = (historyReady = false): void => {
+        if (!ownsStream() || terminal.settlement) return
+        publishSendFailure({
+          kind: "generation-failed",
+          operationId,
+          sessionId: runSid,
+          pendingOperationId: opts?.pendingOperationId,
+        })
+        terminal.settlement = (async () => {
+          let historyLoaded = historyReady
+          if (!historyReady) {
+            try {
+              await useAppStore.getState().loadChatHistory(runSid)
+              historyLoaded = true
+            } catch (err) {
+              console.warn("[useChat] failed-generation history hydration failed", err)
+            }
+          }
+          if (!ownsStream()) return
+          if (historyLoaded && opts?.pendingOperationId !== undefined) {
+            clearPendingOperation(opts.pendingOperationId)
+          }
+          stopStream(null, operationId)
+        })()
+      }
+
+      const settleCancelled = (historyReady = false): void => {
+        if (!ownsStream() || terminal.settlement) return
+        terminal.settlement = (async () => {
+          let historyLoaded = historyReady
+          if (!historyReady) {
+            try {
+              await useAppStore.getState().loadChatHistory(runSid)
+              historyLoaded = true
+            } catch (err) {
+              console.warn("[useChat] cancelled-generation history hydration failed", err)
+            }
+          }
+          if (!ownsStream()) return
+          if (historyLoaded && opts?.pendingOperationId !== undefined) {
+            clearPendingOperation(opts.pendingOperationId)
+          }
+          stopStream(null, operationId)
+        })()
+      }
+
       await agentClient.subscribeToEvents(
         runSid,
         {
@@ -704,75 +869,23 @@ export function useChat(
               permission: req.permission,
               resource: req.resource,
             }),
+          onSessionHistoryCommitted: (committedSessionId) => {
+            if (committedSessionId !== runSid) return
+            // This event is the server's post-persistence barrier. Re-read once;
+            // the retained terminal effect above swaps the live tail out only
+            // after this authoritative history lands in the store.
+            void useAppStore.getState().loadChatHistory(runSid, {
+              mode: "monotonic",
+            })
+          },
           onComplete: () => {
-            if (!ownsStream() || terminal.settlement) return
-            terminal.settlement = (async () => {
-              // Freeze the fully-streamed text in place while persisted history
-              // loads, so terminal delivery never flashes an empty assistant row.
-              if (rafRef.current != null) {
-                cancelAnimationFrame(rafRef.current)
-                rafRef.current = null
-              }
-              const finalText = streamBufRef.current
-              if (finalText) setStreamingText(finalText)
-              let historyLoaded = false
-              try {
-                // waitForAssistant is a no-op without a real retry budget.
-                await useAppStore.getState().loadChatHistory(runSid, {
-                  waitForAssistant: true,
-                  retries: 8,
-                  retryDelayMs: 150,
-                })
-                historyLoaded = true
-              } catch (err) {
-                console.warn("[useChat] terminal history hydration failed", err)
-              }
-              if (!ownsStream()) return
-              if (historyLoaded && opts?.pendingOperationId !== undefined) {
-                clearPendingOperation(opts.pendingOperationId)
-              }
-              stopStream(historyLoaded ? null : finalText || null, operationId)
-            })()
+            settleCompleted()
           },
           onError: () => {
-            if (!ownsStream() || terminal.settlement) return
-            publishSendFailure({
-              kind: "generation-failed",
-              operationId,
-              sessionId: runSid,
-              pendingOperationId: opts?.pendingOperationId,
-            })
-            terminal.settlement = (async () => {
-              let historyLoaded = false
-              try {
-                await useAppStore.getState().loadChatHistory(runSid)
-                historyLoaded = true
-              } catch (err) {
-                console.warn("[useChat] failed-generation history hydration failed", err)
-              }
-              if (!ownsStream()) return
-              if (historyLoaded && opts?.pendingOperationId !== undefined) {
-                clearPendingOperation(opts.pendingOperationId)
-              }
-              stopStream(null, operationId)
-            })()
+            settleFailed()
           },
           onCancelled: () => {
-            if (!ownsStream() || terminal.settlement) return
-            terminal.settlement = (async () => {
-              let historyLoaded = false
-              try {
-                await useAppStore.getState().loadChatHistory(runSid)
-                historyLoaded = true
-              } catch (err) {
-                console.warn("[useChat] cancelled-generation history hydration failed", err)
-              }
-              if (!ownsStream()) return
-              if (historyLoaded && opts?.pendingOperationId !== undefined) {
-                clearPendingOperation(opts.pendingOperationId)
-              }
-              stopStream(null, operationId)
-            })()
+            settleCancelled()
           },
         },
         ac,
@@ -797,20 +910,85 @@ export function useChat(
           stopStream(null, operationId)
           return
         }
-        // The transport contract settles only on terminal or abort. Reaching
-        // here while still owning the stream is therefore a broken generation,
-        // not a successful completion.
-        publishSendFailure({
-          kind: "generation-failed",
-          operationId,
-          sessionId: runSid,
-          pendingOperationId: opts?.pendingOperationId,
-        })
-        stopStream(null, operationId)
+        // The WS transport can deliver its terminal control even if the
+        // immediately preceding semantic Complete/Error frame was lost during
+        // subscription admission or recovery. Reconcile authoritative summary
+        // + history before turning that control-only close into a false error.
+        const readRunStatus = () => useAppStore
+          .getState()
+          .chats.find((chat) => chat.id === runSid)?.lastRunStatus
+        try {
+          await useAppStore.getState().refreshChatsNow()
+        } catch (err) {
+          console.warn("[useChat] terminal-control summary reconciliation failed", err)
+        }
+        if (!ownsStream()) return
+
+        let status = readRunStatus()
+        if (status === "completed") {
+          settleCompleted()
+        } else if (status === "error") {
+          settleFailed()
+        } else if (status === "cancelled") {
+          settleCancelled()
+        } else if (status === "suspended") {
+          try {
+            await reconcileQuestion(navigationRef.current)
+            await useAppStore.getState().loadChatHistory(runSid)
+            if (opts?.pendingOperationId !== undefined) {
+              clearPendingOperation(opts.pendingOperationId)
+            }
+          } catch { /* Keep the current history while awaiting the user's answer. */ }
+          stopStream(null, operationId)
+          return
+        } else {
+          const finalText = streamBufRef.current
+          let historyReady = false
+          try {
+            await useAppStore.getState().loadChatHistory(runSid, {
+              mode: "monotonic",
+              waitForAssistant: Boolean(finalText.trim()),
+              retries: finalText.trim() ? 8 : 0,
+              retryDelayMs: 150,
+            })
+            historyReady = true
+          } catch (err) {
+            console.warn("[useChat] terminal-control history reconciliation failed", err)
+          }
+          if (!ownsStream()) return
+          const persistedMessages = useAppStore
+            .getState()
+            .chats.find((chat) => chat.id === runSid)?.messages ?? []
+          if (
+            finalText.trim()
+            && hasPersistedTerminalText(
+              persistedMessages,
+              finalText,
+              streamBaselineMessageIdRef.current,
+            )
+          ) {
+            settleCompleted(historyReady)
+          } else {
+            // The first summary read can still race the runner's post-save
+            // status transition. Re-read after the bounded history wait.
+            try {
+              await useAppStore.getState().refreshChatsNow()
+            } catch (err) {
+              console.warn("[useChat] terminal-control final summary reconciliation failed", err)
+            }
+            if (!ownsStream()) return
+            status = readRunStatus()
+            if (status === "completed") settleCompleted(historyReady)
+            else if (status === "cancelled") settleCancelled(historyReady)
+            else settleFailed(historyReady)
+          }
+        }
+        if (terminal.settlement) await terminal.settlement
       }
     },
     [
       effectiveModel,
+      effectiveModelRef,
       reasoningEffort,
       freezeTextSegment,
       pushToken,
@@ -1484,6 +1662,7 @@ export function useChat(
     currentChat,
     messages,
     streaming,
+    streamPhase,
     streamingReasoning,
     liveSegments,
     streamStatus,

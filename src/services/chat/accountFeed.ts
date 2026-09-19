@@ -112,6 +112,7 @@ const scheduleRefresh = (): void => {
 // no-op — see `reconcileOpenSession`.)
 const OPEN_SESSION_RECONCILE_TYPES = new Set<string>([
   "message_appended",
+  "session_history_committed",
   "task_list_updated",
   "task_list_item_progress",
   "task_list_completed",
@@ -138,10 +139,14 @@ const applyChange = (change: ChangeEvent): void => {
   }
 
   // Multi-device: keep the OPEN conversation live (not just the list) when it
-  // changes elsewhere.
+  // changes elsewhere. A history-commit barrier also reconciles any locally
+  // loaded session (for example a bound split pane), because the per-session
+  // channel has already closed after Complete and cannot carry this later event.
+  const isLoadedHistoryCommit = event.type === "session_history_committed"
+    && Boolean(sessionId && store.chats.some((chat) => chat.id === sessionId));
   if (
     sessionId &&
-    sessionId === store.currentSessionId &&
+    (sessionId === store.currentSessionId || isLoadedHistoryCommit) &&
     OPEN_SESSION_RECONCILE_TYPES.has(event.type)
   ) {
     store.reconcileOpenSession(sessionId, event.type);
@@ -183,6 +188,7 @@ const applyChange = (change: ChangeEvent): void => {
     case "session_deleted":
     case "session_cleared":
     case "message_appended":
+    case "session_history_committed":
     case "task_list_updated":
     case "task_list_item_progress":
     case "task_list_completed":

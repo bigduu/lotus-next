@@ -1,6 +1,10 @@
 import { StateCreator } from "zustand";
 import { ChatItem, Message } from "@shared/types/chat";
-import { AgentClient, parseSessionPermissionMode } from "@services/chat/AgentService";
+import {
+  AgentClient,
+  parseSessionPermissionMode,
+  type HistoryResponse,
+} from "@services/chat/AgentService";
 import { ApiError } from "@services/api";
 import type { AppState } from "../";
 import { useProviderStore } from "./providerSlice";
@@ -39,6 +43,19 @@ export { mapHistoryMessagesToUi } from "./chatSessionSlice/messageMapping";
 import type { ChatSlice } from "./chatSessionSlice/types";
 
 const agentClient = AgentClient.getInstance();
+
+/**
+ * A completed turn is readable only when history ends in a non-tool assistant
+ * message. `complete` can arrive on the live agent channel before the final
+ * session checkpoint, in which case history commonly still ends in `user`, an
+ * assistant tool-call, or a `tool` result.
+ */
+export const hasTerminalAssistantTail = (
+  messages: HistoryResponse["messages"],
+): boolean => {
+  const tail = messages.findLast((message) => message.role !== "system");
+  return tail?.role === "assistant" && (tail.tool_calls?.length ?? 0) === 0;
+};
 
 // Multi-device reconcile debounce: coalesce a burst of account-feed events for
 // the open session (e.g. a turn driven on another device emits several change
@@ -676,14 +693,17 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
           lastRole: history.messages[history.messages.length - 1]?.role ?? null,
         });
 
-        const lastRole = history.messages[history.messages.length - 1]?.role;
-        if (options?.waitForAssistant && lastRole === "user" && attempt < retries) {
-          // Backoff to give the backend time to persist the assistant reply.
+        const terminalAssistantReady = hasTerminalAssistantTail(history.messages);
+        if (options?.waitForAssistant && !terminalAssistantReady && attempt < retries) {
+          // A live terminal event may precede the final history checkpoint. A
+          // tool tail is just as incomplete as a user tail, so keep waiting for
+          // the durable, non-tool assistant message before applying history.
           const delay = retryDelayMs > 0 ? retryDelayMs * (attempt + 1) : 200 * (attempt + 1);
           debugLog("[ChatSlice]", "loadChatHistory.waitForAssistant.retry", {
             sessionId,
             attempt,
             delay,
+            lastRole: history.messages[history.messages.length - 1]?.role ?? null,
           });
           await new Promise((resolve) => setTimeout(resolve, delay));
           continue;

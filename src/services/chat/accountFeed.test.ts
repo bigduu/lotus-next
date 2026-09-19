@@ -48,6 +48,7 @@ const CURSOR_STORAGE_KEY = "lotus_account_feed_cursor_v1";
 
 const createStore = () => ({
   currentSessionId: null as string | null,
+  chats: [] as Array<{ id: string }>,
   setAgentAvailability: vi.fn(),
   refreshSessionsIndex: vi.fn(async () => {}),
   refreshChatsNow: vi.fn(async () => {}),
@@ -232,6 +233,34 @@ describe("accountFeed cursor and reset lifecycle", () => {
     expect(store.refreshChatsNow).toHaveBeenCalledTimes(1);
     expect(store.refreshSessionsIndex).not.toHaveBeenCalled();
     expect(localStorage.getItem(CURSOR_STORAGE_KEY)).toBeNull();
+  });
+
+  it.each(["complete", "session_history_committed"] as const)(
+    "uses the %s WebSocket change to reconcile the open conversation",
+    (eventType) => {
+      store.currentSessionId = "session-1";
+      startAccountFeed();
+
+      capturedHandlers().onChange(change(1, { type: eventType }));
+
+      expect(store.reconcileOpenSession).toHaveBeenCalledExactlyOnceWith(
+        "session-1",
+        eventType,
+      );
+    },
+  );
+
+  it("uses the history-commit barrier to reconcile a loaded bound session", () => {
+    store.currentSessionId = "session-current";
+    store.chats = [{ id: "session-current" }, { id: "session-1" }];
+    startAccountFeed();
+
+    capturedHandlers().onChange(change(1, { type: "session_history_committed" }));
+
+    expect(store.reconcileOpenSession).toHaveBeenCalledExactlyOnceWith(
+      "session-1",
+      "session_history_committed",
+    );
   });
 
   it("cleans up the debounce, reconnect listener, and subscription on stop", () => {

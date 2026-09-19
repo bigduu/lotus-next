@@ -42,6 +42,7 @@ export type AgentEventType =
   | "session_deleted"
   | "session_cleared"
   | "message_appended"
+  | "session_history_committed"
   | "plan_mode_entered"
   | "plan_mode_exited"
   | "plan_file_updated"
@@ -968,6 +969,7 @@ export interface AgentEventHandlers {
     summary?: string,
     error?: string,
   ) => void;
+  onSessionHistoryCommitted?: (sessionId: string) => void;
   onComplete?: (usage: AgentEvent["usage"]) => void;
   onCancelled?: (message?: string) => void;
   onError?: (message: string) => void;
@@ -1791,6 +1793,11 @@ export class AgentClient {
         break;
       case "goal_status_changed":
         handlers.onGoalStatusChanged?.(event);
+        break;
+      case "session_history_committed":
+        if (event.session_id) {
+          handlers.onSessionHistoryCommitted?.(event.session_id);
+        }
         break;
       case "complete":
         debugLog("[AgentClient]", "events.dispatch.complete", summarizeStreamControlEvent(event));
