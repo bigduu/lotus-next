@@ -149,7 +149,7 @@ export function MessageList({
 
   return (
     <div ref={scrollRef} onScroll={onScroll} className="min-h-0 flex-1 overflow-y-auto">
-      <div ref={contentRef} className="mx-auto flex max-w-2xl flex-col gap-4 px-3 py-4">
+      <div ref={contentRef} className="mx-auto flex w-full max-w-6xl flex-col gap-4 px-3 py-4">
         {messages.length === 0 && !streaming && !pendingUserText && liveSegments.length === 0 && (
           <div className="flex flex-col items-center gap-2 py-20 text-center">
             <div className="size-10 rounded-xl bg-primary" />

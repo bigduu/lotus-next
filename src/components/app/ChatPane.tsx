@@ -662,7 +662,7 @@ export function ChatPane({
           <div
             role="alert"
             aria-live="assertive"
-            className="mx-auto mb-1 flex w-[calc(100%-1.5rem)] max-w-2xl flex-wrap items-center justify-between gap-2 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm"
+            className="mx-auto mb-1 flex w-[calc(100%-1.5rem)] max-w-6xl flex-wrap items-center justify-between gap-2 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm"
           >
             <span className="text-destructive">
               {sendFailure.kind === "submission-unconfirmed"
@@ -686,9 +686,9 @@ export function ChatPane({
           </div>
         ) : null}
 
-        {queue.error && <div role="alert" className="mx-auto mb-1 w-[calc(100%-1.5rem)] max-w-2xl rounded-lg border border-destructive/40 px-3 py-2 text-xs text-destructive">{queue.error}</div>}
+        {queue.error && <div role="alert" className="mx-auto mb-1 w-[calc(100%-1.5rem)] max-w-6xl rounded-lg border border-destructive/40 px-3 py-2 text-xs text-destructive">{queue.error}</div>}
         {typeof outputRate === "number" && (
-          <div className="mx-auto w-full max-w-2xl px-3 text-right text-xs tabular-nums text-muted-foreground" title="根据流式文本估算，不用于计费">
+          <div className="mx-auto w-full max-w-6xl px-3 text-right text-xs tabular-nums text-muted-foreground" title="根据流式文本估算，不用于计费">
             约 {outputRate.toFixed(1)} token/秒
           </div>
         )}
@@ -716,6 +716,9 @@ export function ChatPane({
                 <ContextUsageRing
                   totalTokens={tokenUsage.totalTokens}
                   maxContextTokens={tokenUsage.maxContextTokens}
+                  cacheReadInputTokens={tokenUsage.cacheReadInputTokens}
+                  cacheReadInputTokensRetained={tokenUsage.cacheReadInputTokensRetained}
+                  prefixCache={tokenUsage.prefixCache}
                   onClick={onOpenInspector}
                 />
               ) : null}

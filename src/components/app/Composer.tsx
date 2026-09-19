@@ -215,7 +215,7 @@ export function Composer({
         <FileMenu files={workspaceFiles} query={atQuery} onPick={onPickFile} onDismiss={onDismissMenus} />
       ) : null}
       {selectedSkill && (
-        <div className="mx-auto mb-2 flex max-w-2xl">
+        <div className="mx-auto mb-2 flex w-full max-w-6xl">
           <span className="inline-flex items-center gap-1 rounded-full bg-primary/15 px-2.5 py-1 text-xs font-medium text-primary">
             /{selectedSkill.name}
             <button
@@ -229,7 +229,7 @@ export function Composer({
         </div>
       )}
       {selectedWorkflow && (
-        <div className="mx-auto mb-2 flex max-w-2xl">
+        <div className="mx-auto mb-2 flex w-full max-w-6xl">
           <span className="inline-flex items-center gap-1 rounded-full bg-primary/15 px-2.5 py-1 text-xs font-medium text-primary">
             工作流 /{selectedWorkflow.name}
             <button
@@ -243,7 +243,7 @@ export function Composer({
         </div>
       )}
       {attachments.length > 0 && (
-        <div className="mx-auto mb-2 flex max-w-2xl flex-wrap gap-2">
+        <div className="mx-auto mb-2 flex w-full max-w-6xl flex-wrap gap-2">
           {attachments.map((a) => (
             <div key={a.id} className="relative size-24 overflow-hidden rounded-2xl border">
               <img
@@ -274,7 +274,7 @@ export function Composer({
           e.target.value = ""
         }}
       />
-      <div className="relative mx-auto w-full max-w-2xl">
+      <div className="relative mx-auto w-full max-w-6xl">
         <div
           data-composer-surface
           className="rounded-2xl border bg-card p-1.5 shadow-sm focus-within:ring-2 focus-within:ring-ring/40"

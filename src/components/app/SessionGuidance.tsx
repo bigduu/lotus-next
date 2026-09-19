@@ -9,7 +9,7 @@ export function SessionGuidance({ sessionId, messages, busy, onCancel, onPreview
   onPreview: (url: string) => void
 }) {
   if (!messages.length) return null
-  return <details aria-label="待发送队列" className="group mx-auto mb-2 max-w-2xl rounded-lg border bg-card text-xs">
+  return <details aria-label="待发送队列" className="group mx-auto mb-2 w-full max-w-6xl rounded-lg border bg-card text-xs">
     <summary aria-label={`待发 ${messages.length} 条消息`} className="cursor-pointer whitespace-nowrap rounded px-3 py-2 tabular-nums text-muted-foreground hover:bg-accent">待发 {messages.length}</summary>
     <div className="max-h-[min(12rem,25dvh)] overflow-y-auto overscroll-contain border-t px-3 py-1">
       {messages.map((item) => <div key={item.id} className="flex items-center gap-2 border-b py-2 last:border-0">

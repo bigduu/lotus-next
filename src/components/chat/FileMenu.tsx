@@ -40,7 +40,7 @@ export function FileMenu({
   if (filtered.length === 0) return null
 
   return (
-    <div className="mx-auto mb-2 max-w-2xl overflow-hidden rounded-xl border bg-popover shadow-lg">
+    <div className="mx-auto mb-2 w-full max-w-6xl overflow-hidden rounded-xl border bg-popover shadow-lg">
       <div className="border-b px-3 py-1.5 text-xs text-muted-foreground">工作区文件</div>
       <div className="max-h-64 overflow-y-auto p-1">
         {filtered.map((f, i) => (

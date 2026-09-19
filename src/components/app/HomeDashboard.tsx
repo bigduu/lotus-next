@@ -132,7 +132,7 @@ export function HomeDashboard({
 
   return (
     <div className="min-h-0 flex-1 overflow-y-auto">
-      <div className="mx-auto max-w-2xl px-4 py-6">
+      <div className="mx-auto w-full max-w-6xl px-4 py-6">
         <div className="mb-5 flex items-center gap-3">
           <div className="size-9 rounded-xl bg-primary" />
           <div>
