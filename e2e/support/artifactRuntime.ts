@@ -142,6 +142,12 @@ const fixtureModel = {
 
 const apiResponse = (method: string, pathnameWithSearch: string): unknown => {
   if (method === "GET" && /^\/api\/v1\/sessions\/[^/]+\/guidance$/.test(pathnameWithSearch)) return { messages: [] }
+  if (method === "GET" && /^\/api\/v1\/projects(?:\?.*)?$/.test(pathnameWithSearch)) {
+    // The app bootstraps the Project store on every surface (App.tsx
+    // loadProjects). Serve an authoritative empty list so the projects
+    // fetch succeeds without changing any other fixture-driven UI.
+    return { projects: [] }
+  }
   if (method === "GET" && /^\/api\/v1\/sessions(?:\?.*)?$/.test(pathnameWithSearch)) {
     const url = new URL(pathnameWithSearch, "http://fixture.invalid")
     const sessions = url.searchParams.get("kind") === "child" ? [] : [fixtureSession]
