@@ -33,6 +33,7 @@ import { SettingsClusters } from "@/components/chat/settings/SettingsClusters"
 import { SettingsMetrics } from "@/components/chat/settings/SettingsMetrics"
 import { SettingsSystem } from "@/components/chat/settings/SettingsSystem"
 import { SettingsJiandu } from "@/components/chat/settings/SettingsJiandu"
+import { SettingsModelLimits } from "@/components/chat/settings/SettingsModelLimits"
 
 function Stat({ label, value }: { label: string; value: number | undefined }) {
   return (
@@ -152,6 +153,7 @@ function GeneralTab() {
 const TABS = [
   { id: "general", label: "通用", render: () => <GeneralTab /> },
   { id: "providers", label: "提供方", render: () => <SettingsProviders /> },
+  { id: "model-limits", label: "模型限额", render: () => <SettingsModelLimits /> },
   { id: "mcp", label: "MCP", render: () => <SettingsMcp /> },
   { id: "plugins", label: "插件", render: () => <SettingsPlugins /> },
   { id: "skills", label: "技能", render: () => <SettingsSkills /> },

@@ -105,6 +105,7 @@ vi.mock("@shared/utils/copilotConclusionWithOptionsEnhancementUtils", () => ({
   isCopilotConclusionWithOptionsEnhancementEnabled: () => false,
 }))
 import { useChat, type GenerationFailure, type SendSubmissionResult } from "./useChat"
+import { getUsedModels } from "@shared/utils/usedModels"
 type HookValue = ReturnType<typeof useChat>
 type HookProps =
   | { mode: "main" }
@@ -325,6 +326,17 @@ describe("useChat two-phase send lifecycle", () => {
     expect(mocks.truncateSessionMessages).not.toHaveBeenCalled()
     expect(mocks.appState.refreshChatsNow).not.toHaveBeenCalled()
     expect(mocks.appState.loadChatHistory).not.toHaveBeenCalled()
+    expect(getUsedModels()).toEqual([])
+  })
+  it("records the selected model only after the submission is acknowledged", async () => {
+    mocks.sendMessage.mockResolvedValueOnce({ session_id: "used-model-session" })
+    const hook = await mountUseChat({ mode: "bound", sessionId: "used-model-session" })
+
+    await act(async () => {
+      await hook.current.send("remember this model")
+    })
+
+    expect(getUsedModels()).toEqual(["test-model"])
   })
   it("acknowledges the exact template lease only after a valid submission acknowledgement", async () => {
     const templatePrompt = { prompt: "Use the exact template", revision: 17 }

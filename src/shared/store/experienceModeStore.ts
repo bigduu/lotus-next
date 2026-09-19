@@ -13,6 +13,7 @@ export type ExperienceMode = "simple" | "advanced";
 export const SIMPLE_MODE_SETTINGS_TABS = new Set([
   "general",
   "providers",
+  "model-limits",
   "mcp",
   "permissions",
   "schedules",
@@ -27,9 +28,9 @@ export const SIMPLE_MODE_SETTINGS_TABS = new Set([
  *
  * Ported from legacy lotus's classification (skills / hooks / masking /
  * env-vars / clusters / metrics / sessions / config): `env-vars` → `env`;
- * legacy's hooks/sessions/config tabs are consolidated into next's `system`
- * tab, which stays visible in simple mode but hides those advanced sections
- * (see SettingsSystem).
+ * legacy's model-limits tab stays independently visible; hooks/sessions/config
+ * are consolidated into next's `system` tab, which stays visible in simple
+ * mode but hides those advanced sections (see SettingsSystem).
  */
 export const ADVANCED_ONLY_SETTINGS_TABS = new Set([
   "skills",

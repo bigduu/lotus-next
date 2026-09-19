@@ -7,19 +7,17 @@ import { SectionMemory } from "./system/SectionMemory"
 import { SectionSubagents } from "./system/SectionSubagents"
 import { SectionTools } from "./system/SectionTools"
 import { SectionAccessPassword } from "./system/SectionAccessPassword"
-import { SectionModelLimits } from "./system/SectionModelLimits"
 import { SectionHooks } from "./system/SectionHooks"
 import { SectionSessions } from "./system/SectionSessions"
 import { SectionApp } from "./system/SectionApp"
 
 /**
  * 系统 — consolidates lotus's system/config/app/sessions tabs:
- * 代理 / 记忆 / 子代理 / 工具 / 访问密码 / 模型限额 / Hooks / 会话维护 / 应用.
+ * 代理 / 记忆 / 子代理 / 工具 / 访问密码 / Hooks / 会话维护 / 应用.
  *
- * The tab itself stays visible in 简洁 (simple) experience mode, but only the
- * sections that were simple-mode tabs in legacy lotus remain: 模型限额
- * (model-limits) and 应用 (app). The rest came from legacy's advanced-only
- * config/hooks/sessions tabs and hide until 高级 mode.
+ * The tab itself stays visible in 简洁 (simple) experience mode for 应用.
+ * Model limits now has its own top-level tab; advanced config/hooks/sessions
+ * sections continue to hide until 高级 mode.
  */
 export function SettingsSystem() {
   const { config, loading, loadError, reload, saveSection } = useSystemConfig()
@@ -50,7 +48,6 @@ export function SettingsSystem() {
               <SectionTools config={config} saveSection={saveSection} />
             </>
           ) : null}
-          <SectionModelLimits config={config} saveSection={saveSection} />
           {isAdvanced ? <SectionHooks config={config} saveSection={saveSection} /> : null}
         </>
       ) : null}

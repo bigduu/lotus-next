@@ -12,6 +12,7 @@ import {
   ResponsiveDialogContent,
   ResponsiveDialogTitle,
 } from "@/components/ui/responsive-dialog"
+import { cn } from "@/lib/utils"
 import type { SettingsTabId } from "./Settings"
 
 export interface SettingsProps {
@@ -89,7 +90,18 @@ export function LazySettings({
     >
       <ResponsiveDialogContent
         showCloseButton={false}
-        className="h-[88dvh] p-0 sm:h-[80vh] sm:max-w-3xl"
+        onInteractOutside={(event) => {
+          const target = event.detail.originalEvent.target
+          if (target instanceof Element && target.closest('[data-slot="popover-content"]')) {
+            // Radix portals live outside the Dialog DOM tree. Keep an intentional
+            // nested combobox selection from dismissing the whole Settings shell.
+            event.preventDefault()
+          }
+        }}
+        className={cn(
+          "h-[88dvh] p-0 sm:h-[80vh]",
+          tab === "model-limits" ? "sm:max-w-5xl" : "sm:max-w-3xl",
+        )}
       >
         <div className="flex items-center justify-between border-b px-4 py-3">
           <ResponsiveDialogTitle>系统设置</ResponsiveDialogTitle>

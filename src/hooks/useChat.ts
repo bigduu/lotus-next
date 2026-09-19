@@ -9,6 +9,7 @@ import {
 } from "@shared/store/appStore"
 import { useProviderStore } from "@shared/store/appStore/slices/providerSlice"
 import { getReasoningEffortForProvider } from "@shared/utils/reasoningEffort"
+import { recordUsedModel } from "@shared/utils/usedModels"
 import {
   agentClient,
   type PendingQuestionResponse,
@@ -147,6 +148,8 @@ export function useChat(
   // rather than falling back to a session's stale historical model.
   const defaultChatModel = useProviderStore((s) => s.providerSnapshot?.defaults?.chat?.model)
   const effectiveModel = selectedModel || defaultChatModel || ""
+  const acknowledgedModel =
+    effectiveModel || currentChat?.config.model_ref?.model || currentChat?.config.model || ""
   const chatReasoningEffort = useProviderStore((s) => {
     const id = s.providerSnapshot?.defaults?.chat.provider
     return getReasoningEffortForProvider(s.providerSnapshot, id)
@@ -1171,6 +1174,7 @@ export function useChat(
         if (!acknowledgedSessionId || (startSid && acknowledgedSessionId !== startSid)) {
           throw new Error("The chat submission response did not acknowledge the expected session.")
         }
+        recordUsedModel(acknowledgedModel)
       } catch (err) {
         console.error("[useChat] message submission was not acknowledged", err)
         if (activeSendRef.current?.id === operation.id) activeSendRef.current = null
@@ -1292,6 +1296,7 @@ export function useChat(
       isBound,
       onSessionCreated,
       effectiveModel,
+      acknowledgedModel,
       providerType,
       reasoningEffort,
       runStream,
