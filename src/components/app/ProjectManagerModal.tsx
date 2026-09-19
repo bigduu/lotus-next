@@ -6,7 +6,6 @@ import { isApiError } from "@services/api"
 import type { ProjectManifest } from "@services/project"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
 import {
   ResponsiveDialog,
   ResponsiveDialogContent,
@@ -63,7 +62,7 @@ function CreateProjectForm({ onCreated }: { onCreated: (project: ProjectManifest
       <div className="text-xs font-medium text-muted-foreground">新建项目</div>
       <div className="grid gap-2">
         <div className="grid gap-1">
-          <Label htmlFor="project-name" className="text-xs">名称</Label>
+          <label htmlFor="project-name" className="text-xs">名称</label>
           <Input
             id="project-name"
             className="h-8"
@@ -73,7 +72,7 @@ function CreateProjectForm({ onCreated }: { onCreated: (project: ProjectManifest
           />
         </div>
         <div className="grid gap-1">
-          <Label htmlFor="project-path" className="text-xs">主目录（绝对路径）</Label>
+          <label htmlFor="project-path" className="text-xs">主目录（绝对路径）</label>
           <Input
             id="project-path"
             className="h-8"
