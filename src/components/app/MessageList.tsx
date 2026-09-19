@@ -63,6 +63,11 @@ function messageReasoning(m: Message): string {
 
 type RenderItem = { kind: "msg"; m: Message } | { kind: "tools"; items: Message[] }
 
+const MESSAGE_SURFACE_LAYOUT =
+  "max-w-[85%] overflow-hidden rounded-2xl px-3.5 py-2 [overflow-wrap:anywhere]"
+const ASSISTANT_MESSAGE_SURFACE =
+  "bg-transparent text-[15px] font-medium leading-7 text-foreground"
+
 // Collapse consecutive tool messages into one group so a round's tool calls
 // show as a single compact chip instead of many full-width lines.
 function buildRenderItems(messages: Message[]): RenderItem[] {
@@ -226,11 +231,12 @@ export function MessageList({
               className={cn("group flex flex-col", isUser ? "items-end" : "items-start")}
             >
               <div
+                data-message-role={isUser ? "user" : "assistant"}
                 className={cn(
-                  "max-w-[85%] overflow-hidden rounded-2xl px-3.5 py-2 text-sm leading-relaxed [overflow-wrap:anywhere]",
+                  MESSAGE_SURFACE_LAYOUT,
                   isUser
-                    ? "whitespace-pre-wrap bg-primary text-primary-foreground"
-                    : "bg-muted text-foreground",
+                    ? "whitespace-pre-wrap bg-primary text-sm leading-relaxed text-primary-foreground"
+                    : ASSISTANT_MESSAGE_SURFACE,
                 )}
               >
                 {imgs?.length ? (
@@ -327,7 +333,13 @@ export function MessageList({
             />
           ) : (
             <div key={`live-text-${i}`} className="flex justify-start">
-              <div className="max-w-[85%] overflow-hidden rounded-2xl bg-muted px-3.5 py-2 text-sm leading-relaxed [overflow-wrap:anywhere]">
+              <div
+                data-message-role="assistant"
+                className={cn(
+                  MESSAGE_SURFACE_LAYOUT,
+                  ASSISTANT_MESSAGE_SURFACE,
+                )}
+              >
                 {seg.reasoning ? <Reasoning text={seg.reasoning} /> : null}
                 {seg.text.trim() ? (
                   <AssistantMarkdown isStreaming={false}>{seg.text}</AssistantMarkdown>
@@ -340,7 +352,11 @@ export function MessageList({
         {streaming !== null && (
           <div className="flex justify-start">
             <div
-              className="max-w-[85%] overflow-hidden rounded-2xl bg-muted px-3.5 py-2 text-sm leading-relaxed [overflow-wrap:anywhere]"
+              data-message-role="assistant"
+              className={cn(
+                MESSAGE_SURFACE_LAYOUT,
+                ASSISTANT_MESSAGE_SURFACE,
+              )}
               style={{ transform: "translateZ(0)" }}
             >
               {streamingReasoning ? (

@@ -97,6 +97,66 @@ describe("MessageList assistant streaming ownership", () => {
     })
   })
 
+  it("keeps user bubbles colored while assistant surfaces stay transparent", () => {
+    const container = document.createElement("div")
+    document.body.appendChild(container)
+    const root = createRoot(container)
+    mountedRoots.push(root)
+    const user: Message = {
+      id: "user",
+      role: "user",
+      content: "user bubble",
+      createdAt: "2026-09-01T00:00:00Z",
+    }
+    const assistant: Message = {
+      id: "assistant",
+      role: "assistant",
+      type: "text",
+      content: "assistant response",
+      createdAt: "2026-09-01T00:00:01Z",
+    }
+
+    act(() => {
+      root.render(
+        <MessageList
+          scrollRef={createRef<HTMLDivElement>()}
+          contentRef={createRef<HTMLDivElement>()}
+          onScroll={vi.fn()}
+          messages={[user, assistant]}
+          mergedSubAgents={{}}
+          sending
+          streaming="streaming response"
+          streamingActive
+          streamingReasoning={null}
+          liveSegments={[{ kind: "text", text: "frozen response", reasoning: null }]}
+          streamStatus={null}
+          pendingUserText={null}
+          forking={false}
+          onSelectSubAgent={vi.fn()}
+          onPreviewImage={vi.fn()}
+          onRegenerate={vi.fn()}
+          onFork={vi.fn()}
+          onDelete={vi.fn()}
+          onEditMessage={vi.fn()}
+        />,
+      )
+    })
+
+    const userSurface = container.querySelector<HTMLElement>('[data-message-role="user"]')
+    expect(userSurface?.classList.contains("bg-primary")).toBe(true)
+
+    const assistantSurfaces = container.querySelectorAll<HTMLElement>(
+      '[data-message-role="assistant"]',
+    )
+    expect(assistantSurfaces).toHaveLength(3)
+    for (const surface of assistantSurfaces) {
+      expect(surface.classList.contains("bg-transparent")).toBe(true)
+      expect(surface.classList.contains("bg-muted")).toBe(false)
+      expect(surface.classList.contains("text-[15px]")).toBe(true)
+      expect(surface.classList.contains("font-medium")).toBe(true)
+    }
+  })
+
   it("does not animate a persisted tool round from retained stream content alone", () => {
     const container = document.createElement("div")
     document.body.appendChild(container)
