@@ -70,6 +70,7 @@ type ComposerSubmissionSnapshot = Readonly<{
   selectedSkill: Readonly<SkillDefinition> | null
   selectedWorkflow: Readonly<SelectedWorkflow> | null
   workspacePath: string | null
+  projectId: string | null
   templatePrompt: ReturnType<typeof peekPendingTemplatePrompt>
 }>
 
@@ -108,6 +109,7 @@ type ChatState = ReturnType<typeof useChat>
 export function ChatPane({
   chat,
   pickedWorkspace,
+  pendingProjectId,
   onOpenWorkspacePicker,
   onOpenInspector,
   splitOpen,
@@ -118,6 +120,8 @@ export function ChatPane({
 }: {
   chat: ChatState
   pickedWorkspace: string | null
+  /** Project preselected for the next NEW session (project-grouped sidebar). */
+  pendingProjectId?: string | null
   onOpenWorkspacePicker: () => void
   onOpenInspector: () => void
   splitOpen: boolean
@@ -391,6 +395,7 @@ export function ChatPane({
         : null,
       selectedWorkflow: selectedWorkflow ? Object.freeze({ ...selectedWorkflow }) : null,
       workspacePath: pickedWorkspace,
+      projectId: pendingProjectId ?? null,
       templatePrompt: !currentSessionId && !secondary ? peekPendingTemplatePrompt() : null,
     })
     // Workflow expansion: the workflow's markdown is the message body; any
@@ -405,6 +410,7 @@ export function ChatPane({
           skillIds: snapshot.selectedSkill ? [snapshot.selectedSkill.id] : undefined,
           images: images.length ? images : undefined,
           workspacePath: snapshot.workspacePath,
+          projectId: snapshot.projectId,
           templatePrompt: snapshot.templatePrompt,
         })
     void submission

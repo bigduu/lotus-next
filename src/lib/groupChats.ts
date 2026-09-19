@@ -1,4 +1,5 @@
 import type { ChatItem } from "@shared/types/chatMessages"
+import { NO_PROJECT_GROUP_KEY } from "@services/project"
 
 export type ChatGroup = { key: string; label: string; chats: ChatItem[] }
 
@@ -45,5 +46,48 @@ export function groupChats(chats: ChatItem[], now: Date): ChatGroup[] {
   const groups: ChatGroup[] = []
   if (pinned.length) groups.push({ key: "__pinned", label: "置顶", chats: pinned })
   groups.push(...byDay.values())
+  return groups
+}
+
+/**
+ * Group sessions by their authoritative Project: pinned first, then one group
+ * per Project (label resolved from the Project store by the caller), with
+ * unassigned sessions falling into a trailing "未分配" group. Within a group,
+ * newest activity first.
+ */
+export function groupChatsByProject(
+  chats: ChatItem[],
+  resolveLabel: (projectId: string | null) => string,
+): ChatGroup[] {
+  const pinned = chats.filter((c) => c.pinned)
+  const rest = [...chats.filter((c) => !c.pinned)].sort(
+    (a, b) => chatTime(b) - chatTime(a),
+  )
+
+  const order: string[] = []
+  const byProject = new Map<string, ChatGroup>()
+  for (const c of rest) {
+    const raw = c.config?.projectId?.trim()
+    const key = raw || NO_PROJECT_GROUP_KEY
+    const bucket = byProject.get(key)
+    if (bucket) bucket.chats.push(c)
+    else {
+      byProject.set(key, { key, label: resolveLabel(raw || null), chats: [c] })
+      order.push(key)
+    }
+  }
+
+  const groups: ChatGroup[] = []
+  if (pinned.length) groups.push({ key: "__pinned", label: "置顶", chats: pinned })
+  // Unassigned sessions always render last; keep first-seen order otherwise
+  // (already sorted by newest activity, which approximates recency).
+  const sortedKeys = [
+    ...order.filter((key) => key !== NO_PROJECT_GROUP_KEY),
+    ...(order.includes(NO_PROJECT_GROUP_KEY) ? [NO_PROJECT_GROUP_KEY] : []),
+  ]
+  for (const key of sortedKeys) {
+    const group = byProject.get(key)
+    if (group) groups.push(group)
+  }
   return groups
 }

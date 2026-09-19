@@ -1,12 +1,28 @@
 import { isSessionUnread, useSessionReadState } from "@/lib/sessionReadState"
 import { useId, useMemo, useState } from "react"
-import { ChevronRight, Plus, Search, X, Cog, PanelLeftClose } from "lucide-react"
+import { ChevronRight, Plus, Search, X, Cog, PanelLeftClose, FolderClosed, CalendarDays } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { SessionRow } from "@/components/chat/SessionRow"
-import { groupChats, type ChatGroup } from "@/lib/groupChats"
+import { groupChats, groupChatsByProject, type ChatGroup } from "@/lib/groupChats"
+import { useAppStore } from "@shared/store/appStore"
 import { cn } from "@/lib/utils"
 import type { ChatItem } from "@shared/types/chatMessages"
+
+export type SidebarGroupingMode = "date" | "project"
+
+const GROUPING_MODE_STORAGE_KEY = "lotus.sidebar.grouping-mode.v1"
+
+/** Read the persisted grouping mode; falls back to "date" for legacy users. */
+const readGroupingMode = (): SidebarGroupingMode => {
+  try {
+    if (typeof localStorage === "undefined") return "date"
+    const raw = localStorage.getItem(GROUPING_MODE_STORAGE_KEY)
+    return raw === "project" ? "project" : "date"
+  } catch {
+    return "date"
+  }
+}
 
 export function Sidebar({
   open,
@@ -23,6 +39,7 @@ export function Sidebar({
   onDelete,
   onTogglePin,
   onOpenSettings,
+  onOpenProjectManager,
 }: {
   open: boolean
   onClose: () => void
@@ -34,28 +51,50 @@ export function Sidebar({
   chats: ChatItem[]
   booted: boolean
   currentSessionId: string | null | undefined
-  onNewChat: () => void
+  onNewChat: (projectId?: string | null) => void
   onSelect: (id: string) => void
   onRename: (id: string, title: string) => void
   onDelete: (chat: ChatItem) => void
   onTogglePin: (chat: ChatItem) => void
   onOpenSettings: () => void
+  onOpenProjectManager: () => void
 }) {
   const [search, setSearch] = useState("")
+  const [groupingMode, setGroupingMode] = useState<SidebarGroupingMode>(readGroupingMode)
+  const projects = useAppStore((state) => state.projects)
   const readState = useSessionReadState()
   const disclosureId = useId()
   const query = search.trim().toLowerCase()
+
+  const switchGroupingMode = (mode: SidebarGroupingMode) => {
+    setGroupingMode(mode)
+    try {
+      localStorage.setItem(GROUPING_MODE_STORAGE_KEY, mode)
+    } catch {
+      // Best-effort preference only.
+    }
+  }
 
   const groups = useMemo(() => {
     // Only root sessions in the sidebar — child sub-agent sessions live in the
     // inspector's sub-agents panel, not as top-level chats.
     const filtered = chats.filter((c) => !c.parentSessionId)
+    if (groupingMode === "project") {
+      return groupChatsByProject(filtered, (projectId) => {
+        if (!projectId) return "未分配"
+        const project = projects[projectId]
+        if (!project) return "未知项目"
+        return project.status === "archived" ? `${project.name} · 已归档` : project.name
+      })
+    }
     return groupChats(filtered, new Date())
-  }, [chats])
+  }, [chats, groupingMode, projects])
 
-  const dateGroups = groups.filter((group) => group.key !== "__pinned")
+  const isProjectMode = groupingMode === "project"
+  // Project groups are few and stable — the "older" fold is a date-mode concept.
+  const dateGroups = isProjectMode ? [] : groups.filter((group) => group.key !== "__pinned")
   const olderGroups = dateGroups.slice(5)
-  const activeGroup = dateGroups.find((group) => group.chats.some((c) => c.id === currentSessionId))
+  const activeGroup = groups.find((group) => group.chats.some((c) => c.id === currentSessionId))
   const activeIsOlder = olderGroups.some((group) => group.key === activeGroup?.key)
   const activePath = JSON.stringify([currentSessionId ?? null, activeGroup?.key, activeIsOlder])
   const [disclosures, setDisclosures] = useState(() => ({
@@ -82,7 +121,9 @@ export function Sidebar({
         ...group,
         chats: group.chats.filter((c) => (c.title || "").toLowerCase().includes(query)),
       })).filter((group) => group.chats.length > 0)
-    : groups.filter((group) => group.key === "__pinned" || !olderGroups.includes(group))
+    : isProjectMode
+      ? groups
+      : groups.filter((group) => group.key === "__pinned" || !olderGroups.includes(group))
   const olderCount = olderGroups.reduce((count, group) => count + group.chats.length, 0)
 
   const renderGroup = (group: ChatGroup) => {
@@ -159,6 +200,38 @@ export function Sidebar({
           <Button
             size="icon"
             variant="ghost"
+            className={cn(
+              "size-8 text-muted-foreground",
+              groupingMode === "project" ? "bg-sidebar-accent text-foreground" : "",
+            )}
+            aria-label={groupingMode === "project" ? "按项目分组" : "按日期分组"}
+            title={groupingMode === "project" ? "切换为日期分组" : "切换为项目分组"}
+            onClick={() => switchGroupingMode(groupingMode === "project" ? "date" : "project")}
+          >
+            {groupingMode === "project" ? (
+              <FolderClosed className="size-4" />
+            ) : (
+              <CalendarDays className="size-4" />
+            )}
+          </Button>
+          {isProjectMode ? (
+            <Button
+              size="icon"
+              variant="ghost"
+              className="size-8 text-muted-foreground"
+              aria-label="管理项目"
+              title="管理项目"
+              onClick={() => {
+                onOpenProjectManager()
+                onClose()
+              }}
+            >
+              <Cog className="size-4" />
+            </Button>
+          ) : null}
+          <Button
+            size="icon"
+            variant="ghost"
             className="hidden size-8 text-muted-foreground md:inline-flex"
             aria-label="收起侧栏"
             onClick={onToggleCollapse}
@@ -169,7 +242,7 @@ export function Sidebar({
             size="sm"
             variant="secondary"
             onClick={() => {
-              onNewChat()
+              onNewChat(isProjectMode ? activeGroup?.key && activeGroup.key !== "__pinned" && activeGroup.key !== "__no_project__" ? activeGroup.key : null : null)
               onClose()
             }}
           >

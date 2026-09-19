@@ -12,6 +12,7 @@ import { useIsWide } from "@shared/hooks/useMediaQuery"
 import { useAppStore } from "@shared/store/appStore"
 import { isVdiSafeModeEnabled, onVdiSafeModeChange } from "@shared/utils/vdiSafeMode"
 import { Sidebar } from "@/components/app/Sidebar"
+import { ProjectManagerModal } from "@/components/app/ProjectManagerModal"
 import { DeleteSessionDialog } from "@/components/app/DeleteSessionDialog"
 import { ChatPane } from "@/components/app/ChatPane"
 import { AvailabilityBanner } from "@/components/app/AvailabilityBanner"
@@ -79,6 +80,20 @@ function App() {
   // inspector). The session's own cwd wins for display; otherwise the picked one.
   const [pickedWorkspace, setPickedWorkspace] = useState<string | null>(null)
   const [wsPickerOpen, setWsPickerOpen] = useState(false)
+  // Project selected for the NEXT new chat (project-grouped sidebar "新建").
+  const [pendingProjectId, setPendingProjectId] = useState<string | null>(null)
+  const [projectManagerOpen, setProjectManagerOpen] = useState(false)
+
+  // Project store bootstrap: needed for project grouping labels + the manager.
+  useEffect(() => {
+    useAppStore
+      .getState()
+      .loadProjects()
+      .catch(() => {
+        // projectsAvailable=false hides the surface on 404; other failures retry
+        // the next time the manager modal opens.
+      })
+  }, [])
 
   const themeMode = useThemeStore((s) => s.themeMode)
   useEffect(() => {
@@ -126,18 +141,23 @@ function App() {
         chats={chats}
         booted={booted}
         currentSessionId={currentSessionId}
-        onNewChat={newChat}
+        onNewChat={(projectId) => {
+          setPendingProjectId(projectId ?? null)
+          newChat()
+        }}
         onSelect={select}
         onRename={(id, title) => void persistSessionTitle(id, title)}
         onDelete={(c) => setPendingDelete({ id: c.id, title: c.title || "新会话" })}
         onTogglePin={(c) => (c.pinned ? unpinSession(c.id) : pinSession(c.id))}
         onOpenSettings={() => setSettingsOpen(true)}
+        onOpenProjectManager={() => setProjectManagerOpen(true)}
       />
       {!sidebarCollapsed ? <ResizeHandle onPointerDown={sidebarResize.startResize} /> : null}
 
       <ChatPane
         chat={chat}
         pickedWorkspace={pickedWorkspace}
+        pendingProjectId={pendingProjectId}
         onOpenWorkspacePicker={() => setWsPickerOpen(true)}
         onOpenInspector={() => setInspectorOpen(true)}
         splitOpen={splitOpen}
@@ -224,6 +244,8 @@ function App() {
         onClose={() => setWsPickerOpen(false)}
         onSelect={(p) => setPickedWorkspace(p)}
       />
+
+      <ProjectManagerModal open={projectManagerOpen} onClose={() => setProjectManagerOpen(false)} />
 
       <CommandPalette
         open={paletteOpen}
