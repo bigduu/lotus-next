@@ -145,6 +145,7 @@ export function ChatPane({
     currentChat,
     messages,
     streaming,
+    streamPhase,
     streamingReasoning,
     liveSegments,
     streamStatus,
@@ -633,6 +634,7 @@ export function ChatPane({
           mergedSubAgents={mergedSubAgents}
           sending={currentlyRunning}
           streaming={streaming}
+          streamingActive={streamPhase === "streaming"}
           streamingReasoning={streamingReasoning}
           liveSegments={liveSegments}
           streamStatus={streamStatus}

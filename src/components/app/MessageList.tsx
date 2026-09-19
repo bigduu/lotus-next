@@ -93,6 +93,7 @@ export function MessageList({
   mergedSubAgents,
   sending,
   streaming,
+  streamingActive,
   streamingReasoning,
   liveSegments,
   streamStatus,
@@ -112,6 +113,7 @@ export function MessageList({
   mergedSubAgents: Record<string, ChildProgress>
   sending: boolean
   streaming: string | null
+  streamingActive: boolean
   streamingReasoning: string | null
   liveSegments: LiveSegment[]
   streamStatus: string | null
@@ -368,7 +370,7 @@ export function MessageList({
                 // Live markdown while streaming (RAF-throttled to once/frame),
                 // with provider built-in-tool blocks folded the same as the
                 // final message — so no raw **/``` flash mid-stream.
-                <AssistantMarkdown isStreaming>{streaming}</AssistantMarkdown>
+                <AssistantMarkdown isStreaming={streamingActive}>{streaming}</AssistantMarkdown>
               ) : streamingReasoning ? null : streamStatus ? (
                 // "what is the agent doing" one-liner (tool running / compacting)
                 // instead of anonymous dots while no text streams.

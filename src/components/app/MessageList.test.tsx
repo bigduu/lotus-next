@@ -69,6 +69,7 @@ describe("MessageList assistant streaming ownership", () => {
           mergedSubAgents={{}}
           sending
           streaming="active tail"
+          streamingActive
           streamingReasoning={null}
           liveSegments={[{ kind: "text", text: "frozen round", reasoning: null }]}
           streamStatus={null}
@@ -180,6 +181,7 @@ describe("MessageList assistant streaming ownership", () => {
           mergedSubAgents={{}}
           sending={false}
           streaming="retained final text"
+          streamingActive={false}
           streamingReasoning={null}
           liveSegments={[]}
           streamStatus={null}
@@ -197,5 +199,7 @@ describe("MessageList assistant streaming ownership", () => {
 
     expect(container.querySelector("[data-tool-active]")?.getAttribute("data-tool-active"))
       .toBe("false")
+    expect(container.querySelector("[data-assistant-content='retained final text']")
+      ?.getAttribute("data-streaming")).toBe("false")
   })
 })
