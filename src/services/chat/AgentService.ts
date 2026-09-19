@@ -1828,7 +1828,12 @@ export class AgentClient {
    * Stop generation for a session
    */
   async stopGeneration(sessionId: string): Promise<void> {
-    await apiClient.post(`stop/${sessionId}`);
+    // Send the control frame first: it shares the already-live agent socket and
+    // cannot sit behind chat submission work. REST is a fallback only when no
+    // protocol-ready socket exists. Sending both could let a late REST request
+    // cancel a successor run that starts under the same session id.
+    if (v2Stream.stopAgent(sessionId)) return;
+    await apiClient.post(`stop/${encodeURIComponent(sessionId)}`);
   }
 
   /**

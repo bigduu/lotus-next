@@ -1535,11 +1535,28 @@ export function useChat(
     const targetSessionId = active?.acknowledgedSessionId ?? sid
     const pendingOperationId = active?.pendingOperationId
     const operationId = active?.id ?? streamOperationRef.current ?? undefined
+    // Dispatch realtime Stop while this pane still owns the live subscription.
+    // `stopGeneration` sends its WebSocket control frame synchronously before
+    // its first await; only then detach the local observer.
+    const stopRequest = targetSessionId
+      ? agentClient.stopGeneration(targetSessionId)
+      : null
+    if (targetSessionId) {
+      const store = useAppStore.getState()
+      store.markCancel(targetSessionId)
+      store.updateSession(targetSessionId, { isRunning: false }, { skipBackendPatch: true })
+    }
     abortRef.current?.abort()
     stopStream(null, operationId)
-    if (!targetSessionId) return
+    if (!targetSessionId || !stopRequest) return
     void (async () => {
-      await agentClient.stopGeneration(targetSessionId).catch(() => {})
+      const dispatched = await stopRequest.then(
+        () => true,
+        () => false,
+      )
+      if (!dispatched) {
+        await useAppStore.getState().refreshChatsNow().catch(() => {})
+      }
       try {
         await useAppStore.getState().loadChatHistory(targetSessionId)
         if (pendingOperationId !== undefined) clearPendingOperation(pendingOperationId)

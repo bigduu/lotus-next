@@ -25,6 +25,7 @@ import {
   isFeedOpen,
   isSocketOpen,
   onReconnected,
+  stopAgent,
   subscribeAgent,
   subscribeFeed,
   type AgentEventDispatch,
@@ -915,6 +916,38 @@ describe("v2Stream shared WebSocket client", () => {
 
     agent.close()
     expect(close).toHaveBeenCalledTimes(1)
+  })
+
+  it("dispatches Stop only on a protocol-ready realtime socket", () => {
+    subscribeAgent("session-1", {}, tokenDispatch)
+    const socket = lastSocket()
+
+    expect(stopAgent("session-1")).toBe(false)
+    expect(socket.sent).toEqual([])
+
+    socket.openAwaitingWelcome()
+    expect(stopAgent("session-1")).toBe(false)
+    expect(socket.parsedSent()).toEqual([{ type: "hello" }])
+
+    socket.welcome()
+    expect(stopAgent("session-1")).toBe(true)
+    expect(socket.parsedSent()).toContainEqual({
+      type: "stop",
+      session_id: "session-1",
+    })
+  })
+
+  it("encodes Stop with the negotiated MessagePack transport", () => {
+    msgpackEnabled = true
+    subscribeAgent("session-1", {}, tokenDispatch)
+    const socket = lastSocket()
+    socket.open("bamboo.v2.msgpack")
+
+    expect(stopAgent("session-1")).toBe(true)
+    expect(socket.msgpackSent()).toContainEqual({
+      type: "stop",
+      session_id: "session-1",
+    })
   })
 
   it("uses one wire channel for multiple local subscribers to the same session", async () => {

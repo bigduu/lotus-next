@@ -365,8 +365,8 @@ export function Composer({
                   aria-label={canQueue ? "加入队列" : "发送消息"} title={canQueue ? "加入队列" : "发送消息"}><ArrowUp /></Button>
               ) : null}
               {sending && (!submissionPending || canQueue) ? (
-                <Button size="icon" variant="secondary" onClick={onStop} className="rounded-full" aria-label="停止生成">
-                  <Square />
+                <Button size="icon" onClick={onStop} className="rounded-full" aria-label="停止生成">
+                  <Square fill="white" stroke="white" />
                 </Button>
               ) : null}
             </div>

@@ -32,6 +32,8 @@ const mocks = vi.hoisted(() => {
     restoreSession: vi.fn(),
     loadChatHistory: vi.fn(),
     refreshChatsNow: vi.fn(),
+    markCancel: vi.fn(),
+    updateSession: vi.fn(),
   }
   return {
     appState,
@@ -260,6 +262,8 @@ beforeEach(() => {
     mocks.appState.restoreSession,
     mocks.appState.loadChatHistory,
     mocks.appState.refreshChatsNow,
+    mocks.appState.markCancel,
+    mocks.appState.updateSession,
     mocks.initializeStore,
     mocks.sendMessage,
     mocks.execute,
@@ -995,12 +999,20 @@ describe("useChat two-phase send lifecycle", () => {
   it("clears the acknowledged optimistic payload after an immediate stop hydrates history", async () => {
     const initialHistory = deferred<void>()
     const subscription = deferred<void>()
+    let subscriptionController: AbortController | undefined
     mocks.sendMessage.mockResolvedValueOnce({ session_id: "stopped-session" })
     mocks.appState.loadChatHistory
       .mockReturnValueOnce(initialHistory.promise)
       .mockResolvedValueOnce(undefined)
-    mocks.subscribeToEvents.mockReturnValueOnce(subscription.promise)
-    mocks.stopGeneration.mockResolvedValueOnce(undefined)
+    mocks.subscribeToEvents.mockImplementationOnce(
+      (_sessionId: string, _handlers: SubscriptionHandlers, controller: AbortController) => {
+        subscriptionController = controller
+        return subscription.promise
+      },
+    )
+    mocks.stopGeneration.mockImplementationOnce(async () => {
+      expect(subscriptionController?.signal.aborted).toBe(false)
+    })
     const hook = await mountUseChat({ mode: "bound", sessionId: "stopped-session" })
     await act(async () => {
       await hook.current.send("stop this acknowledged run")
@@ -1016,10 +1028,38 @@ describe("useChat two-phase send lifecycle", () => {
     })
     expect(mocks.stopGeneration).toHaveBeenCalledTimes(1)
     expect(mocks.stopGeneration).toHaveBeenCalledWith("stopped-session")
+    expect(mocks.appState.markCancel).toHaveBeenCalledExactlyOnceWith("stopped-session")
+    expect(mocks.appState.updateSession).toHaveBeenCalledExactlyOnceWith(
+      "stopped-session",
+      { isRunning: false },
+      { skipBackendPatch: true },
+    )
+    expect(subscriptionController?.signal.aborted).toBe(true)
     expect(mocks.appState.loadChatHistory).toHaveBeenNthCalledWith(2, "stopped-session")
     expect(hook.current.sending).toBe(false)
     expect(hook.current.streaming).toBeNull()
     expect(hook.current.pendingUserText).toBeNull()
+  })
+  it("reconciles the optimistic idle state when Stop dispatch fails", async () => {
+    mocks.appState.chats = [{ id: "stop-failed", isRunning: true }]
+    mocks.stopGeneration.mockRejectedValueOnce(new Error("offline"))
+    const hook = await mountUseChat({ mode: "bound", sessionId: "stop-failed" })
+
+    await act(async () => {
+      hook.current.stop()
+      await Promise.resolve()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(mocks.appState.markCancel).toHaveBeenCalledExactlyOnceWith("stop-failed")
+    expect(mocks.appState.updateSession).toHaveBeenCalledExactlyOnceWith(
+      "stop-failed",
+      { isRunning: false },
+      { skipBackendPatch: true },
+    )
+    expect(mocks.appState.refreshChatsNow).toHaveBeenCalledTimes(1)
+    expect(mocks.appState.loadChatHistory).toHaveBeenCalledWith("stop-failed")
   })
   it("does not let a late acknowledgement navigate after the pane has moved", async () => {
     const acknowledgement = deferred<{ session_id: string }>()
