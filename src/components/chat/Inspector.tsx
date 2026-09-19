@@ -15,6 +15,12 @@ import {
   parseFileChangeResultPayload,
   type FileChangeResultPayload,
 } from "@shared/utils/resultFormatters"
+import {
+  formatTokenCount,
+  getPrefixCachePercentage,
+  getPrefixCacheTotalInputTokens,
+  type TokenUsage,
+} from "@shared/types/tokenBudget"
 import { FileChangeView } from "./FileChangeView"
 
 function GoalSection({
@@ -138,6 +144,111 @@ function Row({ label, value }: { label: string; value: string }) {
   )
 }
 
+const formatTokenValue = (count: number): string => `${formatTokenCount(count)} tokens`
+
+export function PrefixCacheDetails({ usage }: { usage?: TokenUsage }) {
+  const prefixCache = usage?.prefixCache
+  const prefixCachePercentage = prefixCache
+    ? getPrefixCachePercentage(prefixCache)
+    : undefined
+  const prefixCacheRateLabel =
+    typeof prefixCachePercentage === "number"
+      ? `${prefixCachePercentage.toFixed(1).replace(/\.0$/, "")}%`
+      : null
+  const cacheReadTokens = prefixCache?.cacheReadInputTokens ?? usage?.cacheReadInputTokens
+  const cacheValueRetained = Boolean(
+    prefixCache?.retainedFromPreviousRound || usage?.cacheReadInputTokensRetained,
+  )
+
+  return (
+    <div data-prefix-cache-details>
+      <div className="mb-1 text-xs text-muted-foreground">Prefix Cache</div>
+      {prefixCache && prefixCacheRateLabel ? (
+        <>
+          <Row label="命中率" value={prefixCacheRateLabel} />
+          <Row
+            label="缓存读取"
+            value={formatTokenValue(prefixCache.cacheReadInputTokens)}
+          />
+          <Row
+            label="新输入"
+            value={formatTokenValue(prefixCache.inputTokens)}
+          />
+          <Row
+            label="缓存创建"
+            value={formatTokenValue(prefixCache.cacheCreationInputTokens)}
+          />
+          <Row
+            label="Provider 输入"
+            value={formatTokenValue(getPrefixCacheTotalInputTokens(prefixCache))}
+          />
+          <Row
+            label="数据状态"
+            value={cacheValueRetained ? "上一次已完成轮次" : "最新已完成轮次"}
+          />
+          <p className="mt-1.5 text-[11px] leading-relaxed text-muted-foreground">
+            命中率 = 缓存读取 ÷（新输入 + 缓存创建 + 缓存读取）。
+          </p>
+        </>
+      ) : typeof cacheReadTokens === "number" && cacheReadTokens > 0 ? (
+        <>
+          <Row label="缓存读取" value={formatTokenValue(cacheReadTokens)} />
+          <Row label="Provider 输入" value="等待完整数据" />
+          <Row label="命中率" value="等待精确数据" />
+          <Row
+            label="数据状态"
+            value={cacheValueRetained ? "上一次有效值" : "最新兼容数据"}
+          />
+          <p className="mt-1.5 text-[11px] leading-relaxed text-muted-foreground">
+            命中率必须使用同一轮 Provider 输入计算；上方预估总量口径不同，不能作为分母。
+          </p>
+        </>
+      ) : (
+        <>
+          <Row label="命中率" value="暂无数据" />
+          <p className="mt-1.5 text-[11px] leading-relaxed text-muted-foreground">
+            完成一次带 Provider usage 的模型调用后显示。
+          </p>
+        </>
+      )}
+    </div>
+  )
+}
+
+export function ContextUsageDetails({ usage }: { usage: TokenUsage }) {
+  return (
+    <div data-context-usage-details>
+      <div className="mb-1 text-xs text-muted-foreground">上下文估算</div>
+      <Row label="预估总量" value={formatTokenValue(usage.totalTokens)} />
+      <Row label="系统提示词" value={formatTokenValue(usage.systemTokens)} />
+      <Row label="会话窗口" value={formatTokenValue(usage.windowTokens)} />
+      {usage.summaryTokens > 0 ? (
+        <Row label="摘要" value={formatTokenValue(usage.summaryTokens)} />
+      ) : null}
+      {(usage.thinkingTokens ?? 0) > 0 ? (
+        <Row label="推理" value={formatTokenValue(usage.thinkingTokens!)} />
+      ) : null}
+      {usage.maxContextTokens ? (
+        <>
+          <Row label="上下文窗口" value={formatTokenValue(usage.maxContextTokens)} />
+          <Row
+            label="上下文占用"
+            value={`${Math.min(100, (usage.totalTokens / usage.maxContextTokens) * 100).toFixed(1).replace(/\.0$/, "")}%`}
+          />
+          <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-muted">
+            <div
+              className="h-full rounded-full bg-primary"
+              style={{
+                width: `${Math.min(100, Math.round((usage.totalTokens / usage.maxContextTokens) * 100))}%`,
+              }}
+            />
+          </div>
+        </>
+      ) : null}
+    </div>
+  )
+}
+
 export function Inspector({
   sessionId,
   open,
@@ -157,7 +268,12 @@ export function Inspector({
   /** Docked column width in px (resizable). */
   width?: number
 }) {
-  const chat = useAppStore(selectCurrentChat)
+  const chat = useAppStore((s) =>
+    sessionId ? selectSessionById(sessionId)(s) : selectCurrentChat(s),
+  )
+  const liveTokenUsage = useAppStore((s) =>
+    sessionId ? s.tokenUsages[sessionId] : undefined,
+  )
   const taskList = useAppStore((s) => (sessionId ? s.taskLists[sessionId] : undefined))
   const evaluation = useAppStore((s) => (sessionId ? s.evaluationStates[sessionId] : undefined))
   const loadTaskList = useAppStore((s) => s.loadTaskList)
@@ -193,7 +309,7 @@ export function Inspector({
   const providerId = cfg?.model_ref?.provider
   const provider = providerId ? getProviderLabel(providerId) : null
   const goal = cfg?.goalState
-  const usage = cfg?.tokenUsage
+  const usage = liveTokenUsage ?? cfg?.tokenUsage
   const childList = Object.entries(children ?? {})
 
   const body = (
@@ -346,25 +462,8 @@ export function Inspector({
                   <Row label="推理强度" value={cfg.reasoningEffort} />
                 ) : null}
               </div>
-              {usage ? (
-                <div>
-                  <div className="mb-1 text-xs text-muted-foreground">上下文用量</div>
-                  <Row label="总 tokens" value={usage.totalTokens.toLocaleString()} />
-                  {usage.maxContextTokens ? (
-                    <>
-                      <Row label="上下文窗口" value={usage.maxContextTokens.toLocaleString()} />
-                      <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-muted">
-                        <div
-                          className="h-full rounded-full bg-primary"
-                          style={{
-                            width: `${Math.min(100, Math.round((usage.totalTokens / usage.maxContextTokens) * 100))}%`,
-                          }}
-                        />
-                      </div>
-                    </>
-                  ) : null}
-                </div>
-              ) : null}
+              {usage ? <ContextUsageDetails usage={usage} /> : null}
+              <PrefixCacheDetails usage={usage} />
             </div>
           </details>
         </div>

@@ -163,6 +163,13 @@ export interface TokenBudgetUsage {
   prompt_cached_tool_tokens_saved?: number;
   thinking_tokens?: number;
   cache_read_input_tokens?: number;
+  provider_prompt_usage?: {
+    /** Fresh, non-cached provider input for the completed call. */
+    input_tokens: number;
+    cache_creation_input_tokens: number;
+    cache_read_input_tokens: number;
+    retained_from_previous_call?: boolean;
+  };
 }
 
 export interface ContextSummaryInfo {

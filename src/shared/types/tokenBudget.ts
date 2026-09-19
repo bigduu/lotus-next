@@ -27,6 +27,18 @@ export interface TokenBudget {
   safetyMargin?: number;
 }
 
+/** Exact provider-reported prompt/cache split for one completed model call. */
+export interface PrefixCacheUsage {
+  /** Fresh, non-cached provider input tokens. */
+  inputTokens: number;
+  /** Tokens written into the provider cache during the call. */
+  cacheCreationInputTokens: number;
+  /** Tokens served from the provider cache during the call. */
+  cacheReadInputTokens: number;
+  /** True while a new round is preparing and the last completed value is retained. */
+  retainedFromPreviousRound?: boolean;
+}
+
 /**
  * Detailed token usage breakdown.
  */
@@ -51,6 +63,10 @@ export interface TokenUsage {
   thinkingTokens?: number;
   /** Provider-side cache hits on input tokens */
   cacheReadInputTokens?: number;
+  /** Whether the compatibility cache-read counter was retained across a transient zero. */
+  cacheReadInputTokensRetained?: boolean;
+  /** Exact prompt/cache split from the latest completed provider call. */
+  prefixCache?: PrefixCacheUsage;
 }
 
 /**
@@ -98,7 +114,30 @@ export function mapTokenBudgetUsage(usage?: AgentTokenBudgetUsage | null): Token
     tokenUsage.cacheReadInputTokens = usage.cache_read_input_tokens;
   }
 
+  if (usage.provider_prompt_usage) {
+    tokenUsage.prefixCache = {
+      inputTokens: usage.provider_prompt_usage.input_tokens,
+      cacheCreationInputTokens: usage.provider_prompt_usage.cache_creation_input_tokens,
+      cacheReadInputTokens: usage.provider_prompt_usage.cache_read_input_tokens,
+      retainedFromPreviousRound:
+        usage.provider_prompt_usage.retained_from_previous_call ?? false,
+    };
+  }
+
   return tokenUsage;
+}
+
+export function getPrefixCacheTotalInputTokens(usage: PrefixCacheUsage): number {
+  return (
+    usage.inputTokens + usage.cacheCreationInputTokens + usage.cacheReadInputTokens
+  );
+}
+
+/** Exact prefix-cache hit percentage for one completed provider call. */
+export function getPrefixCachePercentage(usage: PrefixCacheUsage): number | undefined {
+  const total = getPrefixCacheTotalInputTokens(usage);
+  if (total <= 0) return undefined;
+  return Math.min(100, Math.max(0, (usage.cacheReadInputTokens / total) * 100));
 }
 
 // NOTE: Per-model context-window limits are no longer hardcoded in the
