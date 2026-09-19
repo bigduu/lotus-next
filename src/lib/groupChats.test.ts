@@ -23,21 +23,22 @@ describe("groupChats", () => {
     ])
   })
 
-  it("keeps pinned separate and sorts populated dates and rows by latest activity", () => {
+  it("keeps pinned separate and sorts populated dates and rows by creation time", () => {
     const chats = [
       chat("older", "2026-08-01T12:00:00"),
-      chat("updated", "2026-08-01T12:00:00", { updatedAt: "2026-09-03T15:00:00" }),
-      chat("active", "2026-08-01T12:00:00", { updatedAt: "2026-09-05T15:00:00", lastActivityAt: "2026-09-03T16:00:00" }),
+      // Backend activity/updatedAt must not move a session out of its creation day.
+      chat("updated", "2026-08-01T13:00:00", { updatedAt: "2026-09-03T15:00:00", lastActivityAt: "2026-09-03T16:00:00" }),
+      chat("created-later", "2026-08-02T09:00:00", { lastActivityAt: "2026-08-01T10:00:00" }),
       chat("pinned", "2026-07-01T12:00:00", { pinned: true }),
     ]
     expect(groupChats(chats, new Date("2026-09-05T15:00:00")).map((group) => ({
       key: group.key, ids: group.chats.map((c) => c.id),
     }))).toEqual([
       { key: "__pinned", ids: ["pinned"] },
-      { key: "2026-09-03", ids: ["active", "updated"] },
-      { key: "2026-08-01", ids: ["older"] },
+      { key: "2026-08-02", ids: ["created-later"] },
+      { key: "2026-08-01", ids: ["updated", "older"] },
     ])
-    expect(chats.map((c) => c.id)).toEqual(["older", "updated", "active", "pinned"])
+    expect(chats.map((c) => c.id)).toEqual(["older", "updated", "created-later", "pinned"])
   })
 
   it("uses local calendar dates across midnight and year boundaries", () => {

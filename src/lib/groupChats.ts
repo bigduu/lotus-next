@@ -4,11 +4,8 @@ import { NO_PROJECT_GROUP_KEY } from "@services/project"
 export type ChatGroup = { key: string; label: string; chats: ChatItem[] }
 
 function chatTime(c: ChatItem): number {
-  const iso = c.lastActivityAt ?? c.updatedAt
-  if (iso) {
-    const t = Date.parse(iso)
-    if (!Number.isNaN(t)) return t
-  }
+  // Sidebar ordering follows creation time: a session stays in the day group
+  // where it was created instead of jumping to the top whenever it is updated.
   return typeof c.createdAt === "number" ? c.createdAt : 0
 }
 
@@ -25,11 +22,11 @@ function dayLabel(ts: number, now: Date): string {
 }
 
 /**
- * Group sessions for the sidebar: pinned first, then by activity date
- * (今天 / 昨天 / M月D日), newest day first and newest chat first within a day.
+ * Group sessions for the sidebar: pinned first, then by creation date
+ * (今天 / 昨天 / M月D日), newest day first and newest created first within a day.
  */
 export function groupChats(chats: ChatItem[], now: Date): ChatGroup[] {
-  const pinned = chats.filter((c) => c.pinned)
+  const pinned = chats.filter((c) => c.pinned).sort((a, b) => chatTime(b) - chatTime(a))
   const rest = [...chats.filter((c) => !c.pinned)].sort(
     (a, b) => chatTime(b) - chatTime(a),
   )
@@ -53,13 +50,13 @@ export function groupChats(chats: ChatItem[], now: Date): ChatGroup[] {
  * Group sessions by their authoritative Project: pinned first, then one group
  * per Project (label resolved from the Project store by the caller), with
  * unassigned sessions falling into a trailing "未分配" group. Within a group,
- * newest activity first.
+ * newest created first.
  */
 export function groupChatsByProject(
   chats: ChatItem[],
   resolveLabel: (projectId: string | null) => string,
 ): ChatGroup[] {
-  const pinned = chats.filter((c) => c.pinned)
+  const pinned = chats.filter((c) => c.pinned).sort((a, b) => chatTime(b) - chatTime(a))
   const rest = [...chats.filter((c) => !c.pinned)].sort(
     (a, b) => chatTime(b) - chatTime(a),
   )
@@ -80,7 +77,7 @@ export function groupChatsByProject(
   const groups: ChatGroup[] = []
   if (pinned.length) groups.push({ key: "__pinned", label: "置顶", chats: pinned })
   // Unassigned sessions always render last; keep first-seen order otherwise
-  // (already sorted by newest activity, which approximates recency).
+  // (already sorted by newest creation time).
   const sortedKeys = [
     ...order.filter((key) => key !== NO_PROJECT_GROUP_KEY),
     ...(order.includes(NO_PROJECT_GROUP_KEY) ? [NO_PROJECT_GROUP_KEY] : []),
