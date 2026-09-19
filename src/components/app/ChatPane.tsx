@@ -110,6 +110,7 @@ export function ChatPane({
   chat,
   pickedWorkspace,
   pendingProjectId,
+  onSelectProject,
   onOpenWorkspacePicker,
   onOpenInspector,
   splitOpen,
@@ -122,6 +123,8 @@ export function ChatPane({
   pickedWorkspace: string | null
   /** Project preselected for the next NEW session (project-grouped sidebar). */
   pendingProjectId?: string | null
+  /** Chip-driven project selection for the next NEW session. */
+  onSelectProject?: (projectId: string | null) => void
   onOpenWorkspacePicker: () => void
   onOpenInspector: () => void
   splitOpen: boolean
@@ -297,7 +300,12 @@ export function ChatPane({
     return m ? m[1] : null
   })()
   const workspacePath = currentChat?.config?.workspacePath
-  const displayWorkspace = workspacePath ?? pickedWorkspace
+  // For a NEW session, a selected Project owns the workspace: its primary
+  // path overrides a manually-picked one, and @-file completion follows it.
+  const selectedProjectPath = useAppStore((state) =>
+    pendingProjectId ? state.projects[pendingProjectId]?.project_path : undefined,
+  )
+  const displayWorkspace = workspacePath ?? selectedProjectPath ?? pickedWorkspace
   const [workspaceFiles, setWorkspaceFiles] = useState<WorkspaceFileEntry[]>([])
   const filesLoadedForRef = useRef<string | null>(null)
   useEffect(() => {
@@ -394,7 +402,7 @@ export function ChatPane({
         ? Object.freeze({ ...selectedSkill, tool_refs: [...selectedSkill.tool_refs] })
         : null,
       selectedWorkflow: selectedWorkflow ? Object.freeze({ ...selectedWorkflow }) : null,
-      workspacePath: pickedWorkspace,
+      workspacePath: selectedProjectPath ?? pickedWorkspace,
       projectId: pendingProjectId ?? null,
       templatePrompt: !currentSessionId && !secondary ? peekPendingTemplatePrompt() : null,
     })
@@ -733,6 +741,8 @@ export function ChatPane({
           onPickFile={pickFile}
           hasSession={!!currentSessionId}
           onOpenWorkspacePicker={onOpenWorkspacePicker}
+          selectedProjectId={pendingProjectId ?? null}
+          onSelectProject={(projectId) => onSelectProject?.(projectId)}
           onDismissMenus={() => setMenusDismissed(true)}
         />
       </div>

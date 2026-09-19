@@ -3,6 +3,7 @@ import {
   X,
   Paperclip,
   FolderGit2,
+  FolderClosed,
   ChevronDown,
   ArrowUp,
   Square,
@@ -67,6 +68,53 @@ function PromptChip() {
   )
 }
 
+/**
+ * Project chip for NEW chats: picking a Project pins the next session to it
+ * (project_id on first send) and the workspace follows the Project's primary
+ * path. Selecting a Project clears a manually-picked workspace and vice versa.
+ */
+function ProjectChip({
+  selectedProjectId,
+  onSelect,
+}: {
+  selectedProjectId: string | null
+  onSelect: (projectId: string | null) => void
+}) {
+  const projects = useAppStore(useShallow((s) => s.projects))
+  const projectsAvailable = useAppStore((s) => s.projectsAvailable)
+  if (projectsAvailable === false) return null
+  const active = Object.values(projects)
+    .filter((p) => p.status === "active" && p.project_path_status === "configured")
+    .sort((a, b) => b.updated_at.localeCompare(a.updated_at))
+  const selected = selectedProjectId ? projects[selectedProjectId] : undefined
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button
+          className="flex max-w-full items-center gap-1.5 rounded-full border bg-card px-2.5 py-1 text-xs text-muted-foreground hover:text-foreground"
+          title={selected ? `项目:${selected.name}` : "选择项目"}
+        >
+          <FolderClosed className="size-3.5 shrink-0" />
+          <span className="truncate">{selected ? selected.name : "选择项目"}</span>
+          <ChevronDown className="size-3 shrink-0 opacity-60" />
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start">
+        <DropdownMenuItem onClick={() => onSelect(null)}>
+          {!selected ? <Check className="size-3.5" /> : <span className="size-3.5" />}
+          不指定项目
+        </DropdownMenuItem>
+        {active.map((p) => (
+          <DropdownMenuItem key={p.id} onClick={() => onSelect(p.id)}>
+            {selected?.id === p.id ? <Check className="size-3.5" /> : <span className="size-3.5" />}
+            <span className="truncate">{p.name}</span>
+          </DropdownMenuItem>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  )
+}
+
 type AttachmentView = { id: string; url: string; name: string }
 
 export function Composer({
@@ -100,6 +148,8 @@ export function Composer({
   onPickFile,
   hasSession,
   onOpenWorkspacePicker,
+  selectedProjectId,
+  onSelectProject,
   onDismissMenus,
 }: {
   draft: string
@@ -132,6 +182,9 @@ export function Composer({
   onPickFile: (entry: WorkspaceFileEntry) => void
   hasSession: boolean
   onOpenWorkspacePicker: () => void
+  /** Project pinned for the next NEW session (composer chip). */
+  selectedProjectId: string | null
+  onSelectProject: (projectId: string | null) => void
   onDismissMenus?: () => void
 }) {
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -217,9 +270,13 @@ export function Composer({
       />
       {!hasSession ? (
         <div className="mx-auto mb-1.5 flex max-w-2xl items-center gap-1.5">
+          <ProjectChip
+            selectedProjectId={selectedProjectId}
+            onSelect={onSelectProject}
+          />
           <button
             onClick={onOpenWorkspacePicker}
-            className="flex max-w-full items-center gap-1.5 rounded-full border bg-card px-2.5 py-1 text-xs text-muted-foreground hover:text-foreground"
+            className={selectedProjectId ? "hidden" : "flex max-w-full items-center gap-1.5 rounded-full border bg-card px-2.5 py-1 text-xs text-muted-foreground hover:text-foreground"}
             title={displayWorkspace || "默认工作目录"}
           >
             <FolderGit2 className="size-3.5 shrink-0" />

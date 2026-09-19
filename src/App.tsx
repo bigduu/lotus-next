@@ -143,6 +143,8 @@ function App() {
         currentSessionId={currentSessionId}
         onNewChat={(projectId) => {
           setPendingProjectId(projectId ?? null)
+          // The project (or its default workspace) owns the next session's cwd.
+          if (projectId) setPickedWorkspace(null)
           newChat()
         }}
         onSelect={select}
@@ -158,6 +160,11 @@ function App() {
         chat={chat}
         pickedWorkspace={pickedWorkspace}
         pendingProjectId={pendingProjectId}
+        onSelectProject={(projectId) => {
+          setPendingProjectId(projectId)
+          // A manual project pick owns the workspace; drop a manual choice.
+          if (projectId) setPickedWorkspace(null)
+        }}
         onOpenWorkspacePicker={() => setWsPickerOpen(true)}
         onOpenInspector={() => setInspectorOpen(true)}
         splitOpen={splitOpen}
@@ -242,7 +249,11 @@ function App() {
         current={displayWorkspace}
         locked={!!workspacePath}
         onClose={() => setWsPickerOpen(false)}
-        onSelect={(p) => setPickedWorkspace(p)}
+        onSelect={(p) => {
+          setPickedWorkspace(p)
+          // Manual workspace choice overrides a project pick for the next chat.
+          if (p) setPendingProjectId(null)
+        }}
       />
 
       <ProjectManagerModal open={projectManagerOpen} onClose={() => setProjectManagerOpen(false)} />
