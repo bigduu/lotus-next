@@ -270,6 +270,19 @@ const sendOnSocket = (ws: WebSocket, payload: Record<string, unknown>): boolean 
 const send = (payload: Record<string, unknown>): boolean =>
   socket !== null && sendOnSocket(socket, payload);
 
+/**
+ * Dispatch Stop on the already-authorized realtime connection.
+ *
+ * Stop is control-plane traffic, not a queued chat message.  Returning `true`
+ * means the frame was handed to the live socket synchronously. Callers may use
+ * REST only when this returns `false`; duplicating a session-scoped Stop across
+ * transports could otherwise race with a newly-started run for the same session.
+ */
+export const stopAgent = (sessionId: string): boolean => {
+  if (!sessionId || !isSocketReady()) return false;
+  return send({ type: "stop", session_id: sessionId });
+};
+
 const sendFeedSubscribe = (channel: FeedChannel, ws: WebSocket): boolean => {
   const subscribedSince = channel.since;
   channel.subscribedSince = null;

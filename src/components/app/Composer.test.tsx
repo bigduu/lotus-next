@@ -196,7 +196,12 @@ describe("Composer submission controls", () => {
 
   it("exposes distinct accessible actions for generation and idle states", () => {
     const sendingView = mountComposer({ sending: true })
-    expect(sendingView.container.querySelector('button[aria-label="停止生成"]')).not.toBeNull()
+    const stop = sendingView.container.querySelector<HTMLButtonElement>('button[aria-label="停止生成"]')
+    expect(stop).not.toBeNull()
+    expect(stop?.className).toContain("bg-primary")
+    expect(stop?.className).toContain("text-primary-foreground")
+    expect(stop?.querySelector("svg")?.getAttribute("fill")).toBe("white")
+    expect(stop?.querySelector("svg")?.getAttribute("stroke")).toBe("white")
 
     const idleView = mountComposer()
     expect(idleView.container.querySelector('button[aria-label="发送消息"]')).not.toBeNull()
