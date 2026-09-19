@@ -1,6 +1,6 @@
 import { isSessionUnread, useSessionReadState } from "@/lib/sessionReadState"
 import { useId, useMemo, useState } from "react"
-import { ChevronRight, Plus, Search, X, Cog, PanelLeftClose, FolderClosed, CalendarDays } from "lucide-react"
+import { ChevronRight, Plus, Search, X, Cog, PanelLeftClose, FolderClosed, CalendarDays, ChevronDown } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { SessionRow } from "@/components/chat/SessionRow"
@@ -12,6 +12,9 @@ import type { ChatItem } from "@shared/types/chatMessages"
 export type SidebarGroupingMode = "date" | "project"
 
 const GROUPING_MODE_STORAGE_KEY = "lotus.sidebar.grouping-mode.v1"
+
+/** Max sessions rendered per project group before the rest folds away. */
+const PROJECT_GROUP_PREVIEW_COUNT = 7
 
 /** Read the persisted grouping mode; falls back to "date" for legacy users. */
 const readGroupingMode = (): SidebarGroupingMode => {
@@ -101,6 +104,12 @@ export function Sidebar({
     activePath,
     olderExpanded: activeIsOlder,
     closedDates: new Set<string>(),
+    // Reveal the active session even when it sits beyond the preview fold.
+    expandedProjectGroups: new Set(
+      isProjectMode && activeGroup && activeGroup.chats.findIndex((c) => c.id === currentSessionId) >= PROJECT_GROUP_PREVIEW_COUNT
+        ? [activeGroup.key]
+        : [],
+    ),
   }))
 
   // Reveal a newly selected session (including one loaded after navigation).
@@ -109,10 +118,16 @@ export function Sidebar({
   if (disclosures.activePath !== activePath) {
     const closedDates = new Set(disclosures.closedDates)
     if (activeGroup) closedDates.delete(activeGroup.key)
+    // A session in a project group beyond the preview fold must be revealed.
+    const expandedProjectGroups = new Set(disclosures.expandedProjectGroups)
+    if (activeGroup && activeGroup.chats.findIndex((c) => c.id === currentSessionId) >= PROJECT_GROUP_PREVIEW_COUNT) {
+      expandedProjectGroups.add(activeGroup.key)
+    }
     setDisclosures({
       activePath,
       olderExpanded: disclosures.olderExpanded || activeIsOlder,
       closedDates,
+      expandedProjectGroups,
     })
   }
 
@@ -130,6 +145,12 @@ export function Sidebar({
     const pinned = group.key === "__pinned"
     const expanded = pinned || !!query || !disclosures.closedDates.has(group.key)
     const contentId = `${disclosureId}-${group.key}`
+    // Project groups cap their visible rows; date groups and search show all.
+    const projectFold = isProjectMode && !query && !pinned && group.chats.length > PROJECT_GROUP_PREVIEW_COUNT
+    const projectExpanded = projectFold && disclosures.expandedProjectGroups.has(group.key)
+    const shownChats = projectFold && !projectExpanded
+      ? group.chats.slice(0, PROJECT_GROUP_PREVIEW_COUNT)
+      : group.chats
     return (
       <div key={group.key} className="mb-1">
         {pinned ? (
@@ -156,7 +177,7 @@ export function Sidebar({
           </button>
         )}
         <div id={contentId} hidden={!expanded}>
-          {expanded ? group.chats.map((c) => (
+          {expanded ? shownChats.map((c) => (
             <SessionRow
               key={c.id}
               chat={c}
@@ -171,6 +192,30 @@ export function Sidebar({
               onTogglePin={() => onTogglePin(c)}
             />
           )) : null}
+          {projectFold ? (
+            <button
+              type="button"
+              className="flex w-full items-center gap-1 rounded-md px-2 py-1.5 text-left text-xs text-muted-foreground outline-none hover:bg-sidebar-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+              onClick={() => setDisclosures((previous) => {
+                const expandedProjectGroups = new Set(previous.expandedProjectGroups)
+                if (expandedProjectGroups.has(group.key)) expandedProjectGroups.delete(group.key)
+                else expandedProjectGroups.add(group.key)
+                return { ...previous, expandedProjectGroups }
+              })}
+            >
+              {projectExpanded ? (
+                <>
+                  <ChevronDown aria-hidden="true" className="size-3 shrink-0" />
+                  <span>收起</span>
+                </>
+              ) : (
+                <>
+                  <ChevronRight aria-hidden="true" className="size-3 shrink-0" />
+                  <span>展开 {group.chats.length - PROJECT_GROUP_PREVIEW_COUNT} 个</span>
+                </>
+              )}
+            </button>
+          ) : null}
         </div>
       </div>
     )

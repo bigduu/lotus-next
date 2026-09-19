@@ -239,4 +239,49 @@ describe("Sidebar project grouping", () => {
     act(() => newChat!.click())
     expect(props.onNewChat).toHaveBeenCalledWith("p2")
   })
+
+  it("folds a project group's sessions beyond seven behind an expand button", () => {
+    render({
+      chats: Array.from({ length: 10 }, (_, index) =>
+        chat(`p-session-${index}`, 5, { config: { systemPromptId: "", baseSystemPrompt: "", lastUsedEnhancedPrompt: null, projectId: "p1" } })),
+    })
+    act(() => buttonByLabel("按日期分组").click())
+    // Only the first seven are visible, plus the expand affordance.
+    expect(container.querySelectorAll("[data-session]")).toHaveLength(7)
+    expect(container.textContent).toContain("展开 3 个")
+    act(() => button("展开 3 个").click())
+    expect(container.querySelectorAll("[data-session]")).toHaveLength(10)
+    expect(button("收起")).toBeDefined()
+    act(() => button("收起").click())
+    expect(container.querySelectorAll("[data-session]")).toHaveLength(7)
+  })
+
+  it("reveals all matching sessions during search in project mode", () => {
+    render({
+      chats: Array.from({ length: 9 }, (_, index) =>
+        chat(`day-${index}-s`, 5, { title: `s${index}`, config: { systemPromptId: "", baseSystemPrompt: "", lastUsedEnhancedPrompt: null, projectId: "p1" } })),
+    })
+    act(() => buttonByLabel("按日期分组").click())
+    expect(container.querySelectorAll("[data-session]")).toHaveLength(7)
+    search("s")
+    expect(container.querySelectorAll("[data-session]")).toHaveLength(9)
+    expect(container.textContent).not.toContain("展开")
+  })
+
+  it("auto-reveals an active session beyond the project preview fold", () => {
+    render({
+      currentSessionId: "p-session-8",
+      chats: Array.from({ length: 9 }, (_, index) =>
+        chat(`p-session-${index}`, 5, { config: { systemPromptId: "", baseSystemPrompt: "", lastUsedEnhancedPrompt: null, projectId: "p1" } })),
+    })
+    act(() => buttonByLabel("按日期分组").click())
+    expect(row("p-session-8")?.getAttribute("data-active")).toBe("true")
+    expect(container.querySelectorAll("[data-session]")).toHaveLength(9)
+    // Selecting a session inside the preview fold keeps the group expanded…
+    render({ currentSessionId: "p-session-0" })
+    expect(container.querySelectorAll("[data-session]")).toHaveLength(9)
+    // …and folding back to the preview only happens through the collapse button.
+    act(() => button("收起").click())
+    expect(container.querySelectorAll("[data-session]")).toHaveLength(7)
+  })
 })
