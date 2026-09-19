@@ -14,7 +14,7 @@ export function SessionGuidance({ sessionId, messages, busy, onCancel, onPreview
     <div className="max-h-[min(12rem,25dvh)] overflow-y-auto overscroll-contain border-t px-3 py-1">
       {messages.map((item) => <div key={item.id} className="flex items-center gap-2 border-b py-2 last:border-0">
         <div className="min-w-0 flex-1">
-          <div className="mb-1 text-muted-foreground">{item.mode === "after_run" ? "运行结束后" : "本轮结束后"}</div>
+          <div className="mb-1 text-muted-foreground">{item.mode === "after_run" ? "运行结束后" : "工具调用后"}</div>
           {item.text && <div className="whitespace-pre-wrap break-words">{item.text}</div>}
           {!!item.images?.length && <div className="mt-1 flex flex-wrap gap-1">{item.images.map((id, index) => {
             const url = guidanceService.imageUrl(sessionId, id)

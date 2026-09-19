@@ -235,7 +235,7 @@ describe("accountFeed cursor and reset lifecycle", () => {
     expect(localStorage.getItem(CURSOR_STORAGE_KEY)).toBeNull();
   });
 
-  it.each(["complete", "session_history_committed"] as const)(
+  it.each(["message_appended", "complete", "session_history_committed"] as const)(
     "uses the %s WebSocket change to reconcile the open conversation",
     (eventType) => {
       store.currentSessionId = "session-1";

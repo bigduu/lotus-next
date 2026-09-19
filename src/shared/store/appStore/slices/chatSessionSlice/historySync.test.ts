@@ -83,6 +83,7 @@ const harness = () => {
 };
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.restoreAllMocks();
 });
 
@@ -111,6 +112,37 @@ describe("terminal history synchronization", () => {
       role: "assistant",
       type: "text",
       content: "final answer",
+    });
+  });
+
+  it("applies an appended queued user message without waiting for an assistant tail", async () => {
+    vi.useFakeTimers();
+    const queuedHistory: HistoryResponse = {
+      ...staleToolTail,
+      messages: [
+        ...staleToolTail.messages,
+        {
+          id: "queued-user",
+          role: "user",
+          content: "use this correction next",
+          created_at: "2026-09-19T12:00:03Z",
+        },
+      ],
+    };
+    const getHistory = vi.spyOn(agentClient, "getHistory").mockResolvedValue(queuedHistory);
+    vi.spyOn(agentClient, "getPendingQuestion").mockResolvedValue({
+      has_pending_question: false,
+    });
+    const store = harness();
+
+    store.getState().reconcileOpenSession("session-1", "message_appended");
+    await vi.advanceTimersByTimeAsync(300);
+
+    expect(getHistory).toHaveBeenCalledTimes(1);
+    expect(store.getState().chats[0].messages.at(-1)).toMatchObject({
+      id: "queued-user",
+      role: "user",
+      content: "use this correction next",
     });
   });
 });

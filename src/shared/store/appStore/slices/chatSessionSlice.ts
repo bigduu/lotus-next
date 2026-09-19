@@ -847,11 +847,13 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
             reason: reason ?? null,
           });
           // monotonic: catches a behind (passive-viewer) device up; a no-op on
-          // the device driving the run (its local state is ahead). waitForAssistant
-          // so a freshly-completed turn picks up the assistant reply.
+          // the device driving the run (its local state is ahead). A durable
+          // message append must render immediately — especially queued guidance
+          // admitted between a tool result and the next provider call. Terminal
+          // events still wait for the assistant tail to reach durable history.
           await get().loadChatHistory(sessionId, {
             mode: "monotonic",
-            waitForAssistant: true,
+            waitForAssistant: reason !== "message_appended",
             retries: 3,
             retryDelayMs: 250,
           });

@@ -348,9 +348,9 @@ export function Composer({
                   <Clock3 aria-hidden="true" className="pointer-events-none absolute left-2 top-2 size-4 text-muted-foreground sm:hidden" />
                   <select aria-label="发送时机" value={queueMode ?? "after_round"} disabled={submissionPending}
                     onChange={(event) => onQueueModeChange?.(event.target.value as GuidanceMode)}
-                    title={queueMode === "after_run" ? "运行结束后发送" : "本轮结束后发送"}
+                    title={queueMode === "after_run" ? "运行结束后发送" : "当前工具调用完成后、下一次模型调用前发送"}
                     className="h-full w-full appearance-none rounded border-0 bg-transparent text-xs text-transparent sm:appearance-auto sm:text-foreground">
-                    <option className="text-foreground" value="after_round">本轮结束后</option>
+                    <option className="text-foreground" value="after_round">工具调用后</option>
                     <option className="text-foreground" value="after_run">运行结束后</option>
                   </select>
                 </div>
