@@ -1,5 +1,5 @@
 import { useOutputRate } from "./useOutputRate"
-import { useCallback, useEffect, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useShallow } from "zustand/react/shallow"
 import {
   useAppStore,
@@ -174,9 +174,47 @@ export function useChat(
   // hasn't explicitly picked one, so sends honor the default (e.g. glm-5.2)
   // rather than falling back to a session's stale historical model.
   const defaultChatModel = useProviderStore((s) => s.providerSnapshot?.defaults?.chat?.model)
+  // The full provider+model ref for the configured Chat default. Under Bamboo's
+  // `features.provider_model_ref` cascade a bare model id (no provider) is
+  // outranked by the server's `defaults.chat` — so the client must send the
+  // complete ref for the user's pick to actually win. Same session affinity:
+  // an existing session keeps the ref it was created with unless the user
+  // explicitly switches models.
+  const defaultChatRef = useProviderStore((s) => s.providerSnapshot?.defaults?.chat)
+  // Models offered by the chat-header picker are flattened across ALL provider
+  // instances. Only pair the default provider with a model that actually
+  // belongs to it (its own configured default, or one discovered for that
+  // instance); a pick from another instance must NOT be re-bound onto this
+  // provider — that would send a wrong provider+model pair. It degrades to the
+  // bare model and the server-side legacy cascade instead.
+  const defaultProviderModelIds = useProviderStore(useShallow((s) => {
+    const providerId = s.providerSnapshot?.defaults?.chat?.provider
+    if (!providerId?.trim()) return null
+    const known = new Set<string>()
+    const configured = s.providerSnapshot?.defaults?.chat?.model
+    if (configured?.trim()) known.add(configured)
+    for (const m of s.catalog?.models ?? []) {
+      if (m.reference.provider === providerId) known.add(m.reference.model)
+    }
+    return known
+  }))
   const effectiveModel = selectedModel || defaultChatModel || ""
   const acknowledgedModel =
     effectiveModel || currentChat?.config.model_ref?.model || currentChat?.config.model || ""
+  // Full ref to send alongside `model`: the configured default's provider
+  // carrying the effective (user-picked or default) model id. Kept undefined
+  // when either half is missing, or when the picked model belongs to another
+  // provider instance, so the request degrades to the bare model. Memoized:
+  // a fresh object literal per render would rebuild every useCallback below.
+  const effectiveModelRef = useMemo(
+    () =>
+      defaultChatRef?.provider?.trim() &&
+        effectiveModel &&
+        defaultProviderModelIds?.has(effectiveModel)
+        ? { provider: defaultChatRef.provider, model: effectiveModel }
+        : undefined,
+    [defaultChatRef, effectiveModel, defaultProviderModelIds],
+  )
   const chatReasoningEffort = useProviderStore((s) => {
     const id = s.providerSnapshot?.defaults?.chat.provider
     return getReasoningEffortForProvider(s.providerSnapshot, id)
@@ -604,7 +642,7 @@ export function useChat(
       // On resume (after answering a question/permission) the backend already
       // continues the suspended run — only subscribe, don't kick a fresh execute.
       if (!opts?.resume) {
-        void agentClient.execute(runSid, effectiveModel || undefined, reasoningEffort).catch(() => {
+        void agentClient.execute(runSid, effectiveModel || undefined, reasoningEffort, undefined, effectiveModelRef).catch(() => {
           if (!ownsStream()) return
           // The run never started, so no terminal will ever arrive — settle
           // the subscription instead of leaving it (and the UI) hanging.
@@ -1162,7 +1200,7 @@ export function useChat(
           // submit immediately while this detached start settles.
           releaseOperation()
           try {
-            await agentClient.execute(runSid, effectiveModel || undefined, reasoningEffort)
+            await agentClient.execute(runSid, effectiveModel || undefined, reasoningEffort, undefined, effectiveModelRef)
             try {
               await useAppStore.getState().loadChatHistory(runSid)
               if (operation.pendingOperationId !== undefined) {
@@ -1227,6 +1265,7 @@ export function useChat(
       clearPendingOperation,
       clearSendFailure,
       effectiveModel,
+      effectiveModelRef,
       getSendFailure,
       noteSessionOperation,
       publishSendFailure,
@@ -1331,6 +1370,9 @@ export function useChat(
           message: body,
           session_id: startSid ?? undefined,
           model: effectiveModel,
+          // Complete provider+model ref: a bare `model` alone is outranked by
+          // the server's `defaults.chat` under `features.provider_model_ref`.
+          model_ref: effectiveModelRef,
           enhance_prompt: enhancePrompt || undefined,
           copilot_conclusion_with_options_enhancement_enabled:
             providerType === "copilot" && isCopilotConclusionWithOptionsEnhancementEnabled(),
@@ -1389,7 +1431,7 @@ export function useChat(
         }
         if (activeSendRef.current?.id === operation.id) activeSendRef.current = null
         void agentClient
-          .execute(acknowledgedSessionId, effectiveModel || undefined, reasoningEffort)
+          .execute(acknowledgedSessionId, effectiveModel || undefined, reasoningEffort, undefined, effectiveModelRef)
           .catch((err) => {
             console.warn("[useChat] detached generation start failed", err)
             publishSendFailure({
@@ -1475,6 +1517,7 @@ export function useChat(
       onSessionCreated,
       effectiveModel,
       acknowledgedModel,
+      effectiveModelRef,
       providerType,
       reasoningEffort,
       runStream,

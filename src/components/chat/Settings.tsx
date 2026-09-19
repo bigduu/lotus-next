@@ -1,22 +1,12 @@
 import { useEffect, useState } from "react"
-import { useShallow } from "zustand/react/shallow"
 import { useThemeStore } from "@shared/store/themeStore"
-import { useAppStore } from "@shared/store/appStore"
 import {
   useExperienceModeStore,
   ADVANCED_ONLY_SETTINGS_TABS,
 } from "@shared/store/experienceModeStore"
-import { useProviderStore } from "@shared/store/appStore/slices/providerSlice"
 import { metricsService } from "@services/metrics"
 import type { MetricsSummary } from "@services/metrics/types"
 import { Button } from "@/components/ui/button"
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
 import { cn } from "@/lib/utils"
 import { SettingsProviders } from "@/components/chat/settings/SettingsProviders"
 import { SettingsMcp } from "@/components/chat/settings/SettingsMcp"
@@ -49,11 +39,6 @@ function GeneralTab() {
   const setThemePreference = useThemeStore((s) => s.setThemePreference)
   const experienceMode = useExperienceModeStore((s) => s.mode)
   const setExperienceMode = useExperienceModeStore((s) => s.setMode)
-  const models = useAppStore(useShallow((s) => s.models))
-  const selectedModel = useAppStore((s) => s.selectedModel)
-  const setSelectedModel = useAppStore((s) => s.setSelectedModel)
-  const defaultChatModel = useProviderStore((s) => s.providerSnapshot?.defaults?.chat?.model)
-  const activeModel = selectedModel || defaultChatModel || ""
   const [metrics, setMetrics] = useState<MetricsSummary | null>(null)
 
   useEffect(() => {
@@ -102,25 +87,10 @@ function GeneralTab() {
 
       <section className="rounded-lg border p-3">
         <div className="mb-2 text-xs font-medium text-muted-foreground">默认模型</div>
-        {models.length === 0 ? (
-          <p className="text-xs text-muted-foreground">模型列表加载中或为空</p>
-        ) : (
-          <Select value={activeModel} onValueChange={setSelectedModel}>
-            <SelectTrigger className="w-full">
-              <SelectValue placeholder="选择模型" />
-            </SelectTrigger>
-            <SelectContent>
-              {activeModel && !models.includes(activeModel) ? (
-                <SelectItem value={activeModel}>{activeModel}</SelectItem>
-              ) : null}
-              {models.map((m) => (
-                <SelectItem key={m} value={m}>
-                  {m}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        )}
+        <p className="text-xs leading-relaxed text-muted-foreground">
+          默认模型在「提供方 → 默认模型偏好」中配置，所有新会话都将使用该配置；
+          会话内临时切换模型请使用聊天输入框上方的模型选择器。
+        </p>
       </section>
 
       <section className="rounded-lg border p-3">

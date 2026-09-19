@@ -391,7 +391,7 @@ describe("useChat two-phase send lifecycle", () => {
     expect(mocks.acknowledgeTemplate).toHaveBeenCalledTimes(1)
     expect(mocks.acknowledgeTemplate).toHaveBeenCalledWith(templatePrompt)
     expect(mocks.execute).toHaveBeenCalledTimes(1)
-    expect(mocks.execute).toHaveBeenCalledWith("detached-session", "test-model", undefined)
+    expect(mocks.execute).toHaveBeenCalledWith("detached-session", "test-model", undefined, undefined, undefined)
     expect(mocks.subscribeToEvents).not.toHaveBeenCalled()
     expect(mocks.appState.selectSession).not.toHaveBeenCalled()
   })
@@ -417,7 +417,7 @@ describe("useChat two-phase send lifecycle", () => {
     expect(firstResult).toMatchObject({ kind: "accepted", sessionId: "session-one" })
     expect(mocks.sendMessage).toHaveBeenCalledTimes(1)
     expect(mocks.execute).toHaveBeenCalledTimes(1)
-    expect(mocks.execute).toHaveBeenCalledWith("session-one", "test-model", undefined)
+    expect(mocks.execute).toHaveBeenCalledWith("session-one", "test-model", undefined, undefined, undefined)
   })
   it("routes a main-pane new session through the global session store", async () => {
     mocks.sendMessage.mockResolvedValueOnce({ session_id: "main-session" })
@@ -434,7 +434,7 @@ describe("useChat two-phase send lifecycle", () => {
     })
     expect(mocks.appState.selectSession).toHaveBeenCalledTimes(1)
     expect(mocks.appState.selectSession).toHaveBeenCalledWith("main-session")
-    expect(mocks.execute).toHaveBeenCalledWith("main-session", "test-model", undefined)
+    expect(mocks.execute).toHaveBeenCalledWith("main-session", "test-model", undefined, undefined, undefined)
     expect(mocks.subscribeToEvents).toHaveBeenCalledWith(
       "main-session",
       expect.any(Object),
@@ -558,12 +558,15 @@ describe("useChat two-phase send lifecycle", () => {
       expect.objectContaining({
         session_id: "provider-session",
         model: "gpt-authoritative",
+        model_ref: { provider: "instance-openai", model: "gpt-authoritative" },
       }),
     )
     expect(mocks.execute).toHaveBeenCalledWith(
       "provider-session",
       "gpt-authoritative",
       "max",
+      undefined,
+      { provider: "instance-openai", model: "gpt-authoritative" },
     )
     expect(mocks.providerState.getProviderType).toHaveBeenCalledWith("instance-openai")
   })
@@ -801,7 +804,7 @@ describe("useChat two-phase send lifecycle", () => {
         "subscribe:ack-session",
         "accepted",
       ])
-      expect(mocks.execute).toHaveBeenCalledWith("ack-session", "test-model", undefined)
+      expect(mocks.execute).toHaveBeenCalledWith("ack-session", "test-model", undefined, undefined, undefined)
       expect(mocks.appState.refreshChatsNow).toHaveBeenCalledTimes(1)
       expect(mocks.appState.loadChatHistory).toHaveBeenCalledWith("ack-session")
       expect(hook.current.sendFailure).toBeNull()
@@ -862,7 +865,7 @@ describe("useChat two-phase send lifecycle", () => {
       mode: "error_retry",
     })
     expect(mocks.execute).toHaveBeenCalledTimes(2)
-    expect(mocks.execute).toHaveBeenLastCalledWith("exact-session", "test-model", undefined)
+    expect(mocks.execute).toHaveBeenLastCalledWith("exact-session", "test-model", undefined, undefined, undefined)
     expect(consoleErrorSpy).not.toHaveBeenCalled()
     expect(hook.current.sendFailure).toBeNull()
     expect(hook.current.pendingUserText).toBeNull()
@@ -883,7 +886,7 @@ describe("useChat two-phase send lifecycle", () => {
       mode: "error_retry",
     })
     expect(mocks.execute).toHaveBeenCalledTimes(callCounts.execute + 1)
-    expect(mocks.execute).toHaveBeenLastCalledWith("session-a", "test-model", undefined)
+    expect(mocks.execute).toHaveBeenLastCalledWith("session-a", "test-model", undefined, undefined, undefined)
     expect(mocks.subscribeToEvents).toHaveBeenCalledTimes(callCounts.subscribe)
     expect(mocks.appState.loadChatHistory.mock.calls.length).toBeGreaterThan(callCounts.history)
     expect(mocks.appState.loadChatHistory).toHaveBeenLastCalledWith("session-a")
@@ -957,7 +960,7 @@ describe("useChat two-phase send lifecycle", () => {
     expect(mocks.truncateSessionMessages).toHaveBeenLastCalledWith("detached-a", {
       mode: "error_retry",
     })
-    expect(mocks.execute).toHaveBeenLastCalledWith("detached-a", "test-model", undefined)
+    expect(mocks.execute).toHaveBeenLastCalledWith("detached-a", "test-model", undefined, undefined, undefined)
     expect(mocks.sendMessage).toHaveBeenCalledTimes(postCount)
     expect(hook.current.sendFailure).toBeNull()
   })
@@ -980,6 +983,8 @@ describe("useChat two-phase send lifecycle", () => {
     expect(mocks.execute).toHaveBeenLastCalledWith(
       "unmounted-session-a",
       "test-model",
+      undefined,
+      undefined,
       undefined,
     )
     expect(mocks.subscribeToEvents).toHaveBeenCalledTimes(callCounts.subscribe)
@@ -1039,7 +1044,7 @@ describe("useChat two-phase send lifecycle", () => {
     })
     expect(onSessionCreated).not.toHaveBeenCalled()
     expect(mocks.subscribeToEvents).not.toHaveBeenCalled()
-    expect(mocks.execute).toHaveBeenCalledWith("late-session", "test-model", undefined)
+    expect(mocks.execute).toHaveBeenCalledWith("late-session", "test-model", undefined, undefined, undefined)
     expect(hook.current.sending).toBe(false)
     expect(hook.current.submissionPending).toBe(false)
     expect(hook.current.streaming).toBeNull()
