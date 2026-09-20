@@ -30,9 +30,10 @@ import type { GuidanceMode } from "@services/chat/guidance"
 import type { WorkspaceFileEntry } from "@services/workspace/types"
 
 /**
- * System-prompt preset chip for NEW chats: the selected preset's content is
- * sent as `system_prompt` on the first message (useChat.send reads
- * lastSelectedPromptId). Hidden when the user has no presets.
+ * Base system-prompt preset chip for NEW chats: the selected preset's content
+ * is sent as `system_prompt` on the first message (useChat.send reads
+ * lastSelectedPromptId). A picked task template is appended to, rather than
+ * substituted for, this base prompt. Hidden when the user has no presets.
  */
 function PromptChip() {
   const systemPrompts = useAppStore(useShallow((s) => s.systemPrompts))

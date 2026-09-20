@@ -79,8 +79,8 @@ function SessionMiniRow({ chat, onOpen }: { chat: ChatItem; onOpen: () => void }
 /**
  * No-session home view for the MAIN pane: running/pinned/recent sessions at a
  * glance + the quick-start template grid. Picking a template prefills the
- * composer (the user can edit before sending) and stashes the template's base
- * system prompt for the first send of the new session.
+ * composer (the user can edit before sending) and stashes the template's task
+ * prompt for composition after the selected base prompt on the first send.
  */
 export function HomeDashboard({
   chats,
@@ -120,7 +120,7 @@ export function HomeDashboard({
   })).filter((g) => g.items.length > 0)
 
   const pick = (tpl: TaskTemplate) => {
-    setPendingTemplatePrompt(tpl.baseSystemPrompt ?? null)
+    setPendingTemplatePrompt(tpl.taskPrompt ?? null)
     onPickTemplate(tpl.prefill)
   }
 

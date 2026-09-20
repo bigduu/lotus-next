@@ -132,6 +132,42 @@ const hasPersistedTerminalText = (
     : tail.content.trim() === finalText.trim()
 }
 
+type PromptPresetForComposition = {
+  id: string
+  content?: string
+  isDefault?: boolean
+}
+
+/**
+ * Compose a new session's durable base prompt.
+ *
+ * A task template narrows the selected/default assistant prompt; it must not
+ * replace that prompt and silently discard its identity or operating policy.
+ */
+const composeNewSessionSystemPrompt = (
+  prompts: PromptPresetForComposition[],
+  selectedPromptId: string | null,
+  taskPrompt?: string,
+): string | undefined => {
+  const selectedPrompt = selectedPromptId
+    ? prompts.find((prompt) => prompt.id === selectedPromptId)
+    : undefined
+  const selectedContent = selectedPrompt?.content?.trim()
+  const taskContent = taskPrompt?.trim()
+
+  if (!taskContent) return selectedContent || undefined
+
+  const defaultContent = (
+    prompts.find((prompt) => prompt.isDefault)?.content
+    ?? prompts[0]?.content
+  )?.trim()
+  const baseContent = selectedContent || defaultContent
+
+  return baseContent
+    ? `${baseContent}\n\n## Task Mode\n${taskContent}`
+    : taskContent
+}
+
 // Stable empty array so instances not owning the live stream don't re-render.
 const EMPTY_SEGMENTS: LiveSegment[] = []
 
@@ -1355,16 +1391,18 @@ export function useChat(
         // Client-side prompt enhancement (OS info + operational guidance + the
         // user's own enhancement text), recomputed per send like lotus does.
         const enhancePrompt = getSystemPromptEnhancementText(providerType).trim()
-        // New sessions honor (in priority order) a just-picked home-dashboard
-        // template's base prompt, then the selected system-prompt preset;
-        // existing sessions keep the prompt they were created with.
+        // New sessions keep the selected/default system-prompt preset as their
+        // durable base. A just-picked home-dashboard template is appended as a
+        // task-mode block instead of replacing that base prompt. Existing
+        // sessions keep the prompt they were created with.
         let systemPrompt: string | undefined
         if (!startSid) {
           const st = useAppStore.getState()
-          const preset = st.lastSelectedPromptId
-            ? st.systemPrompts.find((p) => p.id === st.lastSelectedPromptId)
-            : undefined
-          systemPrompt = templatePrompt?.prompt.trim() || preset?.content?.trim() || undefined
+          systemPrompt = composeNewSessionSystemPrompt(
+            st.systemPrompts,
+            st.lastSelectedPromptId,
+            templatePrompt?.prompt,
+          )
         }
         const res = await agentClient.sendMessage({
           message: body,

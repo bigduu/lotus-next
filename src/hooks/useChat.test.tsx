@@ -26,7 +26,7 @@ const mocks = vi.hoisted(() => {
     selectedModel: "test-model" as string | undefined,
     inputStates: {} as Record<string, { reasoningEffort?: string }>,
     lastSelectedPromptId: null as string | null,
-    systemPrompts: [] as Array<{ id: string; content?: string }>,
+    systemPrompts: [] as Array<{ id: string; content?: string; isDefault?: boolean }>,
     selectSession: vi.fn(),
     loadSubagentSessions: vi.fn(),
     restoreSession: vi.fn(),
@@ -351,6 +351,12 @@ describe("useChat two-phase send lifecycle", () => {
   })
   it("acknowledges the exact template lease only after a valid submission acknowledgement", async () => {
     const templatePrompt = { prompt: "Use the exact template", revision: 17 }
+    mocks.appState.lastSelectedPromptId = "general_assistant"
+    mocks.appState.systemPrompts = [{
+      id: "general_assistant",
+      content: "You are the selected Bodhi assistant.",
+      isDefault: true,
+    }]
     mocks.sendMessage
       .mockRejectedValueOnce(new Error("submission not acknowledged"))
       .mockResolvedValueOnce({ session_id: "template-session" })
@@ -369,7 +375,31 @@ describe("useChat two-phase send lifecycle", () => {
     expect(mocks.acknowledgeTemplate).toHaveBeenCalledWith(templatePrompt)
     expect(mocks.sendMessage).toHaveBeenNthCalledWith(
       2,
-      expect.objectContaining({ system_prompt: "Use the exact template" }),
+      expect.objectContaining({
+        system_prompt:
+          "You are the selected Bodhi assistant.\n\n## Task Mode\nUse the exact template",
+      }),
+    )
+  })
+  it("keeps the default prompt when a task template is selected without an explicit preset", async () => {
+    const templatePrompt = { prompt: "Investigate the reported failure.", revision: 18 }
+    mocks.appState.systemPrompts = [
+      { id: "custom", content: "Custom prompt" },
+      { id: "general_assistant", content: "Default Bodhi prompt", isDefault: true },
+    ]
+    mocks.sendMessage.mockResolvedValueOnce({ session_id: "default-template-session" })
+    mocks.subscribeToEvents.mockReturnValueOnce(pendingForever())
+    const hook = await mountUseChat({ mode: "bound", sessionId: null })
+
+    await act(async () => {
+      await hook.current.send("start investigation", { templatePrompt })
+    })
+
+    expect(mocks.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        system_prompt:
+          "Default Bodhi prompt\n\n## Task Mode\nInvestigate the reported failure.",
+      }),
     )
   })
   it("commits an acknowledged template and starts generation after the submitting pane unmounts", async () => {
