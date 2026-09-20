@@ -19,6 +19,7 @@ vi.mock("@/components/chat/SessionRow", () => ({
 
 import { Sidebar } from "./Sidebar"
 import { useAppStore } from "@shared/store/appStore"
+import { PINNED_PROJECTS_STORAGE_KEY } from "@/lib/projectSidebarPreferences"
 
 type Props = ComponentProps<typeof Sidebar>
 let root: Root
@@ -233,6 +234,7 @@ describe("Sidebar navigation hierarchy", () => {
 describe("Sidebar project grouping", () => {
   beforeEach(() => {
     localStorage.removeItem("lotus.sidebar.grouping-mode.v1")
+    localStorage.removeItem(PINNED_PROJECTS_STORAGE_KEY)
   })
 
   it("groups sessions by project after switching the grouping mode", () => {
@@ -317,5 +319,26 @@ describe("Sidebar project grouping", () => {
     // …and folding back to the preview only happens through the collapse button.
     act(() => button("收起").click())
     expect(container.querySelectorAll("[data-session]")).toHaveLength(7)
+  })
+
+  it("shows empty Projects and exposes a Codex-style project details affordance", () => {
+    useAppStore.setState({
+      projects: {
+        empty: {
+          id: "empty", name: "Empty project", status: "active", revision: 1, resource_revision: 1,
+          project_path: "/tmp/empty", project_path_status: "configured", workspace_count: 1,
+          created_at: "2026-01-01T00:00:00Z", updated_at: "2026-01-01T00:00:00Z",
+          schema_version: 2, workspace_bindings: [],
+        },
+      },
+    })
+    render({ chats: [] })
+    act(() => buttonByLabel("切换为项目视图").click())
+
+    expect(button("Empty project").textContent).toContain("0")
+    const details = buttonByLabel("查看 Empty project 项目详情")
+    act(() => details.click())
+    expect(document.body.textContent).toContain("/tmp/empty")
+    expect(document.body.textContent).toContain("0 个会话")
   })
 })

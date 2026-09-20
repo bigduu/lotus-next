@@ -22,13 +22,16 @@ export interface SaveFileResult {
 
 interface PlatformFileOperations {
   saveFile(options: SaveFileOptions): Promise<SaveFileResult>;
+  pickDirectory(): Promise<string | null>;
 }
+
+const loadTauriDialog = () => import("@tauri-apps/plugin-dialog");
 
 class TauriFileOperations implements PlatformFileOperations {
   async saveFile(options: SaveFileOptions): Promise<SaveFileResult> {
     const { content, filters, defaultPath } = options;
 
-    const { save } = await import("@tauri-apps/plugin-dialog");
+    const { save } = await loadTauriDialog();
     const { writeFile, writeTextFile } = await import("@tauri-apps/plugin-fs");
 
     const filePath = await save({
@@ -50,6 +53,12 @@ class TauriFileOperations implements PlatformFileOperations {
       filename: extractFilename(filePath, defaultPath),
       success: true,
     };
+  }
+
+  async pickDirectory(): Promise<string | null> {
+    const { open } = await loadTauriDialog();
+    const selected = await open({ directory: true, multiple: false });
+    return typeof selected === "string" ? selected : null;
   }
 }
 
@@ -82,6 +91,10 @@ class BrowserFileOperations implements PlatformFileOperations {
     }
 
     return { filename, success: true };
+  }
+
+  async pickDirectory(): Promise<string | null> {
+    return null;
   }
 }
 
@@ -122,6 +135,10 @@ const getPlatformFileOperations = (): PlatformFileOperations =>
   isTauriEnvironment() ? tauriFileOperations : browserFileOperations;
 
 export class FileOperationsService {
+  static async pickDirectory(): Promise<string | null> {
+    return getPlatformFileOperations().pickDirectory();
+  }
+
   static async saveFile(options: SaveFileOptions): Promise<SaveFileResult> {
     try {
       return await getPlatformFileOperations().saveFile(options);

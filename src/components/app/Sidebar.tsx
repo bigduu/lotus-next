@@ -4,8 +4,13 @@ import { ChevronRight, Plus, Search, X, Cog, PanelLeftClose, FolderClosed, Calen
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { SessionRow } from "@/components/chat/SessionRow"
+import { ProjectArchiveDialog } from "@/components/app/ProjectArchiveDialog"
+import { ProjectEditDialog } from "@/components/app/ProjectEditDialog"
+import { ProjectGroupHeader } from "@/components/app/ProjectGroupHeader"
 import { groupChats, groupChatsByProject, type ChatGroup } from "@/lib/groupChats"
+import { readPinnedProjectIds, writePinnedProjectIds } from "@/lib/projectSidebarPreferences"
 import { useAppStore } from "@shared/store/appStore"
+import { openLocalFolder } from "@shared/utils/openExternalLink"
 import { cn } from "@/lib/utils"
 import type { ChatItem } from "@shared/types/chatMessages"
 
@@ -64,6 +69,11 @@ export function Sidebar({
 }) {
   const [search, setSearch] = useState("")
   const [groupingMode, setGroupingMode] = useState<SidebarGroupingMode>(readGroupingMode)
+  const [pinnedProjectIds, setPinnedProjectIds] = useState(readPinnedProjectIds)
+  const [editingProjectId, setEditingProjectId] = useState<string | null>(null)
+  const [pendingArchiveProjectId, setPendingArchiveProjectId] = useState<string | null>(null)
+  const [projectActionBusy, setProjectActionBusy] = useState(false)
+  const [projectActionError, setProjectActionError] = useState<string | null>(null)
   const projects = useAppStore((state) => state.projects)
   const readState = useSessionReadState()
   const disclosureId = useId()
@@ -78,20 +88,45 @@ export function Sidebar({
     }
   }
 
+  const rootChats = useMemo(() => chats.filter((chat) => !chat.parentSessionId), [chats])
+  const projectSessionCounts = useMemo(() => {
+    const counts = new Map<string, number>()
+    for (const chat of rootChats) {
+      const key = chat.config?.projectId?.trim() || "__no_project__"
+      counts.set(key, (counts.get(key) ?? 0) + 1)
+    }
+    return counts
+  }, [rootChats])
+
   const groups = useMemo(() => {
     // Only root sessions in the sidebar — child sub-agent sessions live in the
     // inspector's sub-agents panel, not as top-level chats.
-    const filtered = chats.filter((c) => !c.parentSessionId)
     if (groupingMode === "project") {
-      return groupChatsByProject(filtered, (projectId) => {
+      const grouped = groupChatsByProject(rootChats, (projectId) => {
         if (!projectId) return "未分配"
         const project = projects[projectId]
         if (!project) return "未知项目"
         return project.status === "archived" ? `${project.name} · 已归档` : project.name
       })
+      const pinnedSessions = grouped.find((group) => group.key === "__pinned")
+      const projectGroups = grouped.filter((group) => group.key !== "__pinned")
+      const seen = new Set(projectGroups.map((group) => group.key))
+      for (const project of Object.values(projects)) {
+        if (project.status !== "active" || seen.has(project.id)) continue
+        projectGroups.push({ key: project.id, label: project.name, chats: [] })
+      }
+      // Keep the established session-recency order within each tier. Pinning a
+      // Project only changes sidebar presentation; Project identity/data stay
+      // authoritative in Bamboo.
+      projectGroups.sort((left, right) => {
+        const leftPinned = pinnedProjectIds.has(left.key)
+        const rightPinned = pinnedProjectIds.has(right.key)
+        return leftPinned === rightPinned ? 0 : leftPinned ? -1 : 1
+      })
+      return pinnedSessions ? [pinnedSessions, ...projectGroups] : projectGroups
     }
-    return groupChats(filtered, new Date())
-  }, [chats, groupingMode, projects])
+    return groupChats(rootChats, new Date())
+  }, [groupingMode, pinnedProjectIds, projects, rootChats])
 
   const isProjectMode = groupingMode === "project"
   // Project groups are few and stable — the "older" fold is a date-mode concept.
@@ -140,6 +175,33 @@ export function Sidebar({
       ? groups
       : groups.filter((group) => group.key === "__pinned" || !olderGroups.includes(group))
   const olderCount = olderGroups.reduce((count, group) => count + group.chats.length, 0)
+  const pendingArchiveProject = pendingArchiveProjectId
+    ? projects[pendingArchiveProjectId]
+    : undefined
+
+  const toggleProjectPin = (projectId: string) => {
+    setPinnedProjectIds((previous) => {
+      const next = new Set(previous)
+      if (next.has(projectId)) next.delete(projectId)
+      else next.add(projectId)
+      writePinnedProjectIds(next)
+      return next
+    })
+  }
+
+  const restoreProject = async (projectId: string) => {
+    const project = useAppStore.getState().projects[projectId]
+    if (!project || projectActionBusy) return
+    setProjectActionBusy(true)
+    setProjectActionError(null)
+    try {
+      await useAppStore.getState().unarchiveProject(project.id, project.revision)
+    } catch (error) {
+      setProjectActionError(error instanceof Error ? error.message : "恢复项目失败")
+    } finally {
+      setProjectActionBusy(false)
+    }
+  }
 
   const renderGroup = (group: ChatGroup) => {
     const pinned = group.key === "__pinned"
@@ -151,12 +213,52 @@ export function Sidebar({
     const shownChats = projectFold && !projectExpanded
       ? group.chats.slice(0, PROJECT_GROUP_PREVIEW_COUNT)
       : group.chats
+    const project = isProjectMode ? projects[group.key] : undefined
+    const toggleExpanded = () => setDisclosures((previous) => {
+      const closedDates = new Set(previous.closedDates)
+      if (closedDates.has(group.key)) closedDates.delete(group.key)
+      else closedDates.add(group.key)
+      return { ...previous, closedDates }
+    })
     return (
       <div key={group.key} className="mb-1">
         {pinned ? (
           <div className="px-2 pt-3 pb-1 text-xs font-medium text-muted-foreground">
             {group.label}
           </div>
+        ) : project ? (
+          <ProjectGroupHeader
+            project={project}
+            label={group.label}
+            sessionCount={projectSessionCounts.get(group.key) ?? group.chats.length}
+            expanded={expanded}
+            contentId={contentId}
+            disabled={!!query}
+            pinned={pinnedProjectIds.has(project.id)}
+            onToggleExpanded={toggleExpanded}
+            onNewChat={() => {
+              onNewChat(project.id)
+              onClose()
+            }}
+            onEdit={() => {
+              setProjectActionError(null)
+              setEditingProjectId(project.id)
+            }}
+            onTogglePin={() => toggleProjectPin(project.id)}
+            onReveal={() => {
+              setProjectActionError(null)
+              void openLocalFolder(project.project_path ?? "").catch((error) => {
+                setProjectActionError(error instanceof Error ? error.message : "无法打开项目目录")
+              })
+            }}
+            onArchive={() => {
+              if (project.status === "archived") void restoreProject(project.id)
+              else {
+                setProjectActionError(null)
+                setPendingArchiveProjectId(project.id)
+              }
+            }}
+          />
         ) : (
           <button
             type="button"
@@ -164,12 +266,7 @@ export function Sidebar({
             aria-controls={contentId}
             disabled={!!query}
             className="flex w-full items-center gap-1 rounded-md px-2 pt-3 pb-1 text-left text-xs font-medium text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default"
-            onClick={() => setDisclosures((previous) => {
-              const closedDates = new Set(previous.closedDates)
-              if (closedDates.has(group.key)) closedDates.delete(group.key)
-              else closedDates.add(group.key)
-              return { ...previous, closedDates }
-            })}
+            onClick={toggleExpanded}
           >
             <ChevronRight aria-hidden="true" className={cn("size-3 shrink-0", expanded && "rotate-90")} />
             <span>{group.label}</span>
@@ -314,6 +411,15 @@ export function Sidebar({
           </Button>
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-3">
+          {projectActionError ? (
+            <button
+              type="button"
+              className="mb-2 w-full rounded-md bg-destructive/10 px-2 py-1.5 text-left text-xs text-destructive"
+              onClick={() => setProjectActionError(null)}
+            >
+              {projectActionError}
+            </button>
+          ) : null}
           {chats.length === 0 && (
             <p className="px-2 py-4 text-xs text-muted-foreground">
               {booted ? "暂无会话" : "加载中…"}
@@ -355,6 +461,35 @@ export function Sidebar({
           </Button>
         </div>
       </aside>
+
+      <ProjectEditDialog projectId={editingProjectId} onClose={() => setEditingProjectId(null)} />
+
+      <ProjectArchiveDialog
+        projectName={pendingArchiveProject?.name ?? null}
+        busy={projectActionBusy}
+        error={pendingArchiveProject ? projectActionError : null}
+        onClose={() => {
+          if (!projectActionBusy) {
+            setPendingArchiveProjectId(null)
+            setProjectActionError(null)
+          }
+        }}
+        onConfirm={() => {
+          if (!pendingArchiveProject || projectActionBusy) return
+          setProjectActionBusy(true)
+          setProjectActionError(null)
+          void useAppStore.getState().archiveProject(
+            pendingArchiveProject.id,
+            pendingArchiveProject.revision,
+          ).then(() => {
+            setPendingArchiveProjectId(null)
+          }).catch((error) => {
+            setProjectActionError(error instanceof Error ? error.message : "移除项目失败")
+          }).finally(() => {
+            setProjectActionBusy(false)
+          })
+        }}
+      />
     </>
   )
 }
