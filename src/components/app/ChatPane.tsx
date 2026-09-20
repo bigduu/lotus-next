@@ -200,12 +200,14 @@ export function ChatPane({
   const splitVisible = useMediaQuery("(min-width: 768px)")
   const environmentWide = useMediaQuery("(min-width: 1280px)")
   useMarkSessionRead(!secondary || splitVisible ? currentChat : null)
-  const [environmentOpen, setEnvironmentOpen] = useState(false)
+  const [environmentOpen, setEnvironmentOpen] = useState(true)
   const environmentId = useId()
 
   useEffect(() => {
-    setEnvironmentOpen(false)
+    setEnvironmentOpen(true)
   }, [currentSessionId])
+
+  const environmentVisible = environmentOpen && !(sidePaneOpen ?? false)
 
   // Live in-run token budget (pushed over the agent channel) — beats the
   // persisted config snapshot, which only refreshes on history reload.
@@ -579,7 +581,6 @@ export function ChatPane({
   }
 
   const launchWorkbench = (action: () => void) => {
-    setEnvironmentOpen(false)
     action()
   }
   const selectSubAgentInPane = onSelectSubAgent ?? secondary?.onPickSession ?? select
@@ -604,7 +605,7 @@ export function ChatPane({
       onClick: () => launchWorkbench(onToggleSplit),
     },
   ]
-  const environmentCard = !secondary && currentSessionId && environmentOpen ? (
+  const environmentCard = !secondary && currentSessionId && environmentVisible ? (
     <EnvironmentCard
       id={environmentId}
       workspace={displayWorkspace}
@@ -688,7 +689,7 @@ export function ChatPane({
             onOpenSidebar={onOpenSidebar}
             environment={
               <EnvironmentLauncher
-                open={environmentOpen}
+                open={environmentVisible}
                 controlsId={environmentId}
                 onToggle={() => setEnvironmentOpen((open) => !open)}
               />
@@ -769,7 +770,6 @@ export function ChatPane({
           pendingUserText={pendingUserText}
           forking={forking}
           onSelectSubAgent={(childId) => {
-            setEnvironmentOpen(false)
             selectSubAgentInPane(childId)
           }}
           onPreviewImage={setPreview}

@@ -437,6 +437,27 @@ it("routes a sub-agent card to the side-preview callback without replacing the m
   expect(chat.select).not.toHaveBeenCalled()
 })
 
+it("shows Environment by default and only suppresses it while the side pane is open", async () => {
+  const container = document.body.appendChild(document.createElement("div"))
+  const root = createRoot(container); roots.push(root)
+  const chat = createChat(vi.fn<Send>(), "parent")
+  const render = (sidePaneOpen: boolean) => (
+    <ChatPane chat={chat} pickedWorkspace="/picked"
+      onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()}
+      sidePaneOpen={sidePaneOpen} splitOpen={false}
+      onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false} />
+  )
+
+  await act(async () => root.render(render(false)))
+  expect(container.querySelector("[data-environment-card]")).not.toBeNull()
+
+  await act(async () => root.render(render(true)))
+  expect(container.querySelector("[data-environment-card]")).toBeNull()
+
+  await act(async () => root.render(render(false)))
+  expect(container.querySelector("[data-environment-card]")).not.toBeNull()
+})
+
 it("returns from a child inside the side pane without changing the main session", async () => {
   const container = document.body.appendChild(document.createElement("div"))
   const root = createRoot(container); roots.push(root)
