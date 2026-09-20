@@ -63,6 +63,21 @@ function messageReasoning(m: Message): string {
 
 type RenderItem = { kind: "msg"; m: Message } | { kind: "tools"; items: Message[] }
 
+type CompletedProcessGroup = {
+  startIndex: number
+  endIndex: number
+  key: string
+  label: string
+  toolCallCount: number
+  finalReasoning: string
+}
+
+type CompletedProcessLayout = {
+  byStart: Map<number, CompletedProcessGroup>
+  foldedIndexes: Set<number>
+  finalReasoningIndexes: Set<number>
+}
+
 const MESSAGE_SURFACE_LAYOUT =
   "max-w-[85%] overflow-hidden rounded-2xl px-3.5 py-2 [overflow-wrap:anywhere]"
 const ASSISTANT_MESSAGE_SURFACE =
@@ -85,6 +100,123 @@ function buildRenderItems(messages: Message[]): RenderItem[] {
   return out
 }
 
+function itemTimestamp(item: RenderItem, edge: "first" | "last" = "first"): number | null {
+  const messages = item.kind === "msg" ? [item.m] : item.items
+  const ordered = edge === "first" ? messages : [...messages].reverse()
+  for (const message of ordered) {
+    const timestamp = Date.parse(String(message.createdAt || ""))
+    if (Number.isFinite(timestamp)) return timestamp
+  }
+  return null
+}
+
+function formatElapsedDuration(durationMs: number): string | null {
+  if (!Number.isFinite(durationMs) || durationMs <= 0) return null
+  const totalSeconds = Math.max(1, Math.round(durationMs / 1000))
+  const hours = Math.floor(totalSeconds / 3600)
+  const minutes = Math.floor((totalSeconds % 3600) / 60)
+  const seconds = totalSeconds % 60
+  if (hours > 0) return `${hours}小时${minutes > 0 ? `${minutes}分` : ""}`
+  if (minutes > 0) return `${minutes}分${seconds > 0 ? `${seconds}秒` : ""}`
+  return `${seconds}秒`
+}
+
+function isFinalAssistantResponse(item: RenderItem): boolean {
+  if (item.kind !== "msg" || item.m.role !== "assistant") return false
+  const images = (item.m as { images?: unknown[] }).images
+  return Boolean(messageText(item.m).trim() || messageReasoning(item.m).trim() || images?.length)
+}
+
+function toolCallCount(items: RenderItem[]): number {
+  const ids = new Set<string>()
+  for (const item of items) {
+    if (item.kind !== "tools") continue
+    for (const message of item.items) {
+      for (const call of (message as { toolCalls?: { toolCallId?: string }[] }).toolCalls ?? []) {
+        if (call.toolCallId) ids.add(call.toolCallId)
+      }
+    }
+  }
+  return ids.size
+}
+
+/**
+ * Fold the process portion of completed turns while leaving the final answer
+ * visible. Earlier turns are known to be terminal once a later user message
+ * exists; the latest turn waits for Bamboo's persisted `completed` run state,
+ * which is Lotus's equivalent of a provider `stop_reason = finished`.
+ */
+function buildCompletedProcessLayout(
+  items: RenderItem[],
+  latestRunFinished: boolean,
+): CompletedProcessLayout {
+  const byStart = new Map<number, CompletedProcessGroup>()
+  const foldedIndexes = new Set<number>()
+  const finalReasoningIndexes = new Set<number>()
+  const userIndexes = items.flatMap((item, index) =>
+    item.kind === "msg" && item.m.role === "user" ? [index] : [],
+  )
+
+  userIndexes.forEach((userIndex, turnIndex) => {
+    const isLatestTurn = turnIndex === userIndexes.length - 1
+    if (isLatestTurn && !latestRunFinished) return
+    const turnEnd = (userIndexes[turnIndex + 1] ?? items.length) - 1
+    const processStart = userIndex + 1
+    let lastToolIndex = -1
+    for (let index = processStart; index <= turnEnd; index += 1) {
+      if (items[index]?.kind === "tools") lastToolIndex = index
+    }
+    if (lastToolIndex < processStart) return
+
+    let finalResponseIndex = -1
+    for (let index = turnEnd; index > lastToolIndex; index -= 1) {
+      if (isFinalAssistantResponse(items[index])) {
+        finalResponseIndex = index
+        break
+      }
+    }
+    // For older turns, a final response is the only durable evidence available
+    // that the tool process finished normally. The latest turn has the explicit
+    // completed status and may legitimately end without a text response.
+    if (!isLatestTurn && finalResponseIndex < 0) return
+
+    const processEnd = finalResponseIndex >= 0 ? finalResponseIndex - 1 : turnEnd
+    if (processEnd < processStart) return
+    const processItems = items.slice(processStart, processEnd + 1)
+    const calls = toolCallCount(processItems)
+    if (calls === 0) return
+
+    const startedAt = itemTimestamp(items[userIndex])
+    const finishedAt = itemTimestamp(
+      items[finalResponseIndex >= 0 ? finalResponseIndex : processEnd],
+      "last",
+    )
+    const elapsed = startedAt != null && finishedAt != null
+      ? formatElapsedDuration(finishedAt - startedAt)
+      : null
+    const userMessage = items[userIndex]
+    const key = userMessage.kind === "msg" ? userMessage.m.id : String(userIndex)
+    const finalResponse = finalResponseIndex >= 0 ? items[finalResponseIndex] : null
+    const finalReasoning = finalResponse?.kind === "msg"
+      ? messageReasoning(finalResponse.m)
+      : ""
+    byStart.set(processStart, {
+      startIndex: processStart,
+      endIndex: processEnd,
+      key: `completed-process-${key}`,
+      label: elapsed ? `处理了 ${elapsed}` : "已完成的处理过程",
+      toolCallCount: calls,
+      finalReasoning,
+    })
+    for (let index = processStart; index <= processEnd; index += 1) {
+      foldedIndexes.add(index)
+    }
+    if (finalReasoning) finalReasoningIndexes.add(finalResponseIndex)
+  })
+
+  return { byStart, foldedIndexes, finalReasoningIndexes }
+}
+
 export function MessageList({
   scrollRef,
   contentRef,
@@ -92,6 +224,7 @@ export function MessageList({
   messages,
   mergedSubAgents,
   sending,
+  latestRunFinished,
   streaming,
   streamingActive,
   streamingReasoning,
@@ -112,6 +245,8 @@ export function MessageList({
   messages: Message[]
   mergedSubAgents: Record<string, ChildProgress>
   sending: boolean
+  /** The latest persisted run completed normally (`stop_reason = finished`). */
+  latestRunFinished: boolean
   streaming: string | null
   streamingActive: boolean
   streamingReasoning: string | null
@@ -129,6 +264,10 @@ export function MessageList({
   const [editingMsg, setEditingMsg] = useState<{ id: string; text: string } | null>(null)
 
   const renderItems = useMemo(() => buildRenderItems(messages), [messages])
+  const completedProcessLayout = useMemo(
+    () => buildCompletedProcessLayout(renderItems, latestRunFinished),
+    [latestRunFinished, renderItems],
+  )
   // Anchor the sub-agent block after the tool-group that spawned them, so it
   // scrolls up with the conversation instead of staying pinned at the bottom.
   const spawnItemIdx = useMemo(() => {
@@ -149,6 +288,164 @@ export function MessageList({
     return -1
   }, [renderItems, mergedSubAgents])
 
+  const renderItem = (
+    it: RenderItem,
+    idx: number,
+    options?: { suppressReasoning?: boolean },
+  ) => {
+    if (it.kind === "tools") {
+      const isLast = idx === renderItems.length - 1
+      const tools = (
+        <ToolCalls
+          key={it.items[0]?.id ?? `tools-${idx}`}
+          items={it.items}
+          // A retained final stream is display content, not evidence that
+          // the persisted tool round is still running. ChatPane passes a
+          // session-scoped running value here.
+          active={isLast && sending}
+        />
+      )
+      if (idx === spawnItemIdx) {
+        return (
+          <Fragment key={`spawn-${idx}`}>
+            {tools}
+            <SubAgents agents={mergedSubAgents} onOpen={onSelectSubAgent} />
+          </Fragment>
+        )
+      }
+      return tools
+    }
+    const m = it.m
+    const text = messageText(m)
+    const imgs = (
+      m as { images?: Array<{ url?: string; base64?: string; type?: string }> }
+    ).images
+    const isUser = m.role === "user"
+    const reasoning = isUser || options?.suppressReasoning ? "" : messageReasoning(m)
+    // Truly empty (no text, no images, no reasoning) → skip the blank bubble.
+    if (!text.trim() && !imgs?.length && !reasoning) return null
+
+    if (isUser && editingMsg?.id === m.id) {
+      return (
+        <div key={m.id} className="flex flex-col items-end">
+          <div className="w-full max-w-[85%]">
+            <Textarea
+              value={editingMsg.text}
+              onChange={(e) => setEditingMsg({ id: m.id, text: e.target.value })}
+              onKeyDown={(e) => {
+                if (e.key === "Escape") setEditingMsg(null)
+                if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+                  onEditMessage(m.id, editingMsg.text)
+                  setEditingMsg(null)
+                }
+              }}
+              autoFocus
+              className="min-h-16 bg-card"
+            />
+            <div className="mt-1.5 flex justify-end gap-2">
+              <Button size="sm" variant="secondary" onClick={() => setEditingMsg(null)}>
+                取消
+              </Button>
+              <Button
+                size="sm"
+                onClick={() => {
+                  onEditMessage(m.id, editingMsg.text)
+                  setEditingMsg(null)
+                }}
+              >
+                保存并重发
+              </Button>
+            </div>
+          </div>
+        </div>
+      )
+    }
+    return (
+      <div
+        key={m.id}
+        className={cn("group flex flex-col", isUser ? "items-end" : "items-start")}
+      >
+        <div
+          data-message-role={isUser ? "user" : "assistant"}
+          className={cn(
+            MESSAGE_SURFACE_LAYOUT,
+            isUser
+              ? "whitespace-pre-wrap bg-primary text-sm leading-relaxed text-primary-foreground"
+              : ASSISTANT_MESSAGE_SURFACE,
+          )}
+        >
+          {imgs?.length ? (
+            <div className="mb-1.5 flex flex-wrap gap-1.5">
+              {imgs.map((im, i) => {
+                const src = im.url || `data:${im.type || "image/png"};base64,${im.base64}`
+                return (
+                  <img
+                    key={i}
+                    src={src}
+                    alt=""
+                    className="max-h-48 cursor-zoom-in rounded-xl transition-opacity hover:opacity-90"
+                    onClick={() => onPreviewImage(src)}
+                  />
+                )
+              })}
+            </div>
+          ) : null}
+          {reasoning ? <Reasoning text={reasoning} /> : null}
+          {isUser ? (
+            text
+          ) : text.trim() ? (
+            <AssistantMarkdown isStreaming={false}>{text}</AssistantMarkdown>
+          ) : null}
+        </div>
+        <div className="mt-1 flex gap-0.5 opacity-100 transition-opacity md:opacity-0 md:group-hover:opacity-100">
+          <button
+            onClick={() => void navigator.clipboard?.writeText(text)}
+            className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
+            aria-label="复制"
+          >
+            <Copy className="size-3.5" />
+          </button>
+          {isUser ? (
+            <button
+              onClick={() => setEditingMsg({ id: m.id, text })}
+              className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
+              aria-label="编辑"
+              title="编辑并重发"
+            >
+              <Pencil className="size-3.5" />
+            </button>
+          ) : (
+            <button
+              onClick={onRegenerate}
+              disabled={sending}
+              className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-50"
+              aria-label="重新生成"
+              title="重新生成"
+            >
+              <RotateCcw className="size-3.5" />
+            </button>
+          )}
+          <button
+            onClick={() => onFork(m.id)}
+            disabled={forking}
+            className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-50"
+            aria-label="从这里分叉"
+            title="从这里分叉成新会话"
+          >
+            <GitFork className="size-3.5" />
+          </button>
+          <button
+            onClick={() => onDelete(m.id)}
+            className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-destructive"
+            aria-label="删除"
+          >
+            <Trash2 className="size-3.5" />
+          </button>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div ref={scrollRef} onScroll={onScroll} className="min-h-0 flex-1 overflow-y-auto">
       <div ref={contentRef} className="mx-auto flex w-full max-w-6xl flex-col gap-4 px-3 py-4">
@@ -160,157 +457,44 @@ export function MessageList({
         )}
 
         {renderItems.map((it, idx) => {
-          if (it.kind === "tools") {
-            const isLast = idx === renderItems.length - 1
-            const tools = (
-              <ToolCalls
-                key={it.items[0]?.id ?? `tools-${idx}`}
-                items={it.items}
-                // A retained final stream is display content, not evidence that
-                // the persisted tool round is still running.  ChatPane passes a
-                // session-scoped running value here.
-                active={isLast && sending}
-              />
-            )
-            if (idx === spawnItemIdx) {
-              return (
-                <Fragment key={`spawn-${idx}`}>
-                  {tools}
-                  <SubAgents agents={mergedSubAgents} onOpen={onSelectSubAgent} />
-                </Fragment>
-              )
-            }
-            return tools
-          }
-          const m = it.m
-          const text = messageText(m)
-          const imgs = (
-            m as { images?: Array<{ url?: string; base64?: string; type?: string }> }
-          ).images
-          const isUser = m.role === "user"
-          const reasoning = isUser ? "" : messageReasoning(m)
-          // Truly empty (no text, no images, no reasoning) → skip the blank bubble.
-          if (!text.trim() && !imgs?.length && !reasoning) return null
-
-          if (isUser && editingMsg?.id === m.id) {
+          const completedProcess = completedProcessLayout.byStart.get(idx)
+          if (completedProcess) {
             return (
-              <div key={m.id} className="flex flex-col items-end">
-                <div className="w-full max-w-[85%]">
-                  <Textarea
-                    value={editingMsg.text}
-                    onChange={(e) => setEditingMsg({ id: m.id, text: e.target.value })}
-                    onKeyDown={(e) => {
-                      if (e.key === "Escape") setEditingMsg(null)
-                      if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
-                        onEditMessage(m.id, editingMsg.text)
-                        setEditingMsg(null)
-                      }
-                    }}
-                    autoFocus
-                    className="min-h-16 bg-card"
-                  />
-                  <div className="mt-1.5 flex justify-end gap-2">
-                    <Button size="sm" variant="secondary" onClick={() => setEditingMsg(null)}>
-                      取消
-                    </Button>
-                    <Button
-                      size="sm"
-                      onClick={() => {
-                        onEditMessage(m.id, editingMsg.text)
-                        setEditingMsg(null)
-                      }}
-                    >
-                      保存并重发
-                    </Button>
-                  </div>
+              <details
+                key={completedProcess.key}
+                data-completed-process
+                className="w-full"
+              >
+                <summary
+                  className="cursor-pointer select-none text-xs text-muted-foreground hover:text-foreground"
+                  title={`${completedProcess.toolCallCount} 次工具调用`}
+                >
+                  {completedProcess.label}
+                </summary>
+                <div className="mt-3 flex flex-col gap-4 border-l-2 border-border pl-2.5">
+                  {renderItems
+                    .slice(completedProcess.startIndex, completedProcess.endIndex + 1)
+                    .map((processItem, processOffset) =>
+                      renderItem(processItem, completedProcess.startIndex + processOffset),
+                    )}
+                  {completedProcess.finalReasoning ? (
+                    <div className="flex justify-start">
+                      <div
+                        data-completed-final-reasoning
+                        className={cn(MESSAGE_SURFACE_LAYOUT, ASSISTANT_MESSAGE_SURFACE)}
+                      >
+                        <Reasoning text={completedProcess.finalReasoning} />
+                      </div>
+                    </div>
+                  ) : null}
                 </div>
-              </div>
+              </details>
             )
           }
-          return (
-            <div
-              key={m.id}
-              className={cn("group flex flex-col", isUser ? "items-end" : "items-start")}
-            >
-              <div
-                data-message-role={isUser ? "user" : "assistant"}
-                className={cn(
-                  MESSAGE_SURFACE_LAYOUT,
-                  isUser
-                    ? "whitespace-pre-wrap bg-primary text-sm leading-relaxed text-primary-foreground"
-                    : ASSISTANT_MESSAGE_SURFACE,
-                )}
-              >
-                {imgs?.length ? (
-                  <div className="mb-1.5 flex flex-wrap gap-1.5">
-                    {imgs.map((im, i) => {
-                      const src = im.url || `data:${im.type || "image/png"};base64,${im.base64}`
-                      return (
-                        <img
-                          key={i}
-                          src={src}
-                          alt=""
-                          className="max-h-48 cursor-zoom-in rounded-xl transition-opacity hover:opacity-90"
-                          onClick={() => onPreviewImage(src)}
-                        />
-                      )
-                    })}
-                  </div>
-                ) : null}
-                {reasoning ? <Reasoning text={reasoning} /> : null}
-                {isUser ? (
-                  text
-                ) : text.trim() ? (
-                  <AssistantMarkdown isStreaming={false}>{text}</AssistantMarkdown>
-                ) : null}
-              </div>
-              <div className="mt-1 flex gap-0.5 opacity-100 transition-opacity md:opacity-0 md:group-hover:opacity-100">
-                <button
-                  onClick={() => void navigator.clipboard?.writeText(text)}
-                  className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
-                  aria-label="复制"
-                >
-                  <Copy className="size-3.5" />
-                </button>
-                {isUser ? (
-                  <button
-                    onClick={() => setEditingMsg({ id: m.id, text })}
-                    className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
-                    aria-label="编辑"
-                    title="编辑并重发"
-                  >
-                    <Pencil className="size-3.5" />
-                  </button>
-                ) : (
-                  <button
-                    onClick={onRegenerate}
-                    disabled={sending}
-                    className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-50"
-                    aria-label="重新生成"
-                    title="重新生成"
-                  >
-                    <RotateCcw className="size-3.5" />
-                  </button>
-                )}
-                <button
-                  onClick={() => onFork(m.id)}
-                  disabled={forking}
-                  className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-50"
-                  aria-label="从这里分叉"
-                  title="从这里分叉成新会话"
-                >
-                  <GitFork className="size-3.5" />
-                </button>
-                <button
-                  onClick={() => onDelete(m.id)}
-                  className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-destructive"
-                  aria-label="删除"
-                >
-                  <Trash2 className="size-3.5" />
-                </button>
-              </div>
-            </div>
-          )
+          if (completedProcessLayout.foldedIndexes.has(idx)) return null
+          return renderItem(it, idx, {
+            suppressReasoning: completedProcessLayout.finalReasoningIndexes.has(idx),
+          })
         })}
 
         {pendingUserText ? (

@@ -15,12 +15,14 @@ vi.mock("@/components/chat/AssistantMarkdown", () => ({
     </div>
   ),
 }))
-vi.mock("@/components/chat/Reasoning", () => ({ Reasoning: () => null }))
+vi.mock("@/components/chat/Reasoning", () => ({
+  Reasoning: ({ text }: { text: string }) => <div data-reasoning={text}>{text}</div>,
+}))
 vi.mock("@/components/chat/StreamingReasoning", () => ({ StreamingReasoning: () => null }))
 vi.mock("@/components/chat/SubAgents", () => ({ SubAgents: () => null }))
 vi.mock("@/components/chat/ToolCalls", () => ({
-  ToolCalls: ({ active }: { active?: boolean }) => (
-    <div data-tool-active={String(active)} />
+  ToolCalls: ({ active, items }: { active?: boolean; items: Message[] }) => (
+    <div data-tool-active={String(active)} data-tool-items={items.length} />
   ),
 }))
 
@@ -45,6 +47,40 @@ afterEach(() => {
   document.body.replaceChildren()
 })
 
+function renderMessageList(messages: Message[], latestRunFinished: boolean) {
+  const container = document.createElement("div")
+  document.body.appendChild(container)
+  const root = createRoot(container)
+  mountedRoots.push(root)
+  act(() => {
+    root.render(
+      <MessageList
+        scrollRef={createRef<HTMLDivElement>()}
+        contentRef={createRef<HTMLDivElement>()}
+        onScroll={vi.fn()}
+        messages={messages}
+        mergedSubAgents={{}}
+        sending={false}
+        latestRunFinished={latestRunFinished}
+        streaming={null}
+        streamingActive={false}
+        streamingReasoning={null}
+        liveSegments={[]}
+        streamStatus={null}
+        pendingUserText={null}
+        forking={false}
+        onSelectSubAgent={vi.fn()}
+        onPreviewImage={vi.fn()}
+        onRegenerate={vi.fn()}
+        onFork={vi.fn()}
+        onDelete={vi.fn()}
+        onEditMessage={vi.fn()}
+      />,
+    )
+  })
+  return container
+}
+
 describe("MessageList assistant streaming ownership", () => {
   it("renders persisted and frozen text statically, and only the active tail as streaming", () => {
     const container = document.createElement("div")
@@ -68,6 +104,7 @@ describe("MessageList assistant streaming ownership", () => {
           messages={[persisted]}
           mergedSubAgents={{}}
           sending
+          latestRunFinished={false}
           streaming="active tail"
           streamingActive
           streamingReasoning={null}
@@ -126,6 +163,7 @@ describe("MessageList assistant streaming ownership", () => {
           messages={[user, assistant]}
           mergedSubAgents={{}}
           sending
+          latestRunFinished={false}
           streaming="streaming response"
           streamingActive
           streamingReasoning={null}
@@ -180,6 +218,7 @@ describe("MessageList assistant streaming ownership", () => {
           messages={[toolCall]}
           mergedSubAgents={{}}
           sending={false}
+          latestRunFinished={false}
           streaming="retained final text"
           streamingActive={false}
           streamingReasoning={null}
@@ -201,5 +240,114 @@ describe("MessageList assistant streaming ownership", () => {
       .toBe("false")
     expect(container.querySelector("[data-assistant-content='retained final text']")
       ?.getAttribute("data-streaming")).toBe("false")
+  })
+})
+
+function toolTurn(prefix: string, start: string, finish: string): Message[] {
+  return [
+    {
+      id: `${prefix}-user`,
+      role: "user",
+      content: `${prefix} request`,
+      createdAt: start,
+    },
+    {
+      id: `${prefix}-process`,
+      role: "assistant",
+      type: "text",
+      content: `${prefix} process`,
+      createdAt: "2026-09-20T00:00:10Z",
+    },
+    {
+      id: `${prefix}-call`,
+      role: "assistant",
+      type: "tool_call",
+      toolCalls: [{ toolCallId: `${prefix}-tool`, toolName: "Read", parameters: {} }],
+      createdAt: "2026-09-20T00:00:20Z",
+    },
+    {
+      id: `${prefix}-result`,
+      role: "assistant",
+      type: "tool_result",
+      toolName: "Read",
+      toolCallId: `${prefix}-tool`,
+      result: { tool_name: "Read", result: "done", display_preference: "Default" },
+      isError: false,
+      createdAt: "2026-09-20T00:00:30Z",
+    },
+    {
+      id: `${prefix}-final`,
+      role: "assistant",
+      type: "text",
+      content: `${prefix} final`,
+      metadata: { reasoning: `${prefix} final reasoning` },
+      createdAt: finish,
+    },
+  ] as Message[]
+}
+
+describe("MessageList completed process disclosure", () => {
+  it("folds the latest finished tool process while keeping its final answer visible", () => {
+    const container = renderMessageList(
+      toolTurn("latest", "2026-09-20T00:00:00Z", "2026-09-20T00:01:05Z"),
+      true,
+    )
+
+    const process = container.querySelector<HTMLDetailsElement>("details[data-completed-process]")
+    expect(process).not.toBeNull()
+    expect(process?.open).toBe(false)
+    expect(process?.querySelector("summary")?.textContent).toBe("处理了 1分5秒")
+    expect(process?.querySelector("summary")?.getAttribute("title")).toBe("1 次工具调用")
+    expect(process?.querySelector('[data-assistant-content="latest process"]')).not.toBeNull()
+    expect(process?.querySelector('[data-reasoning="latest final reasoning"]')).not.toBeNull()
+    const final = container.querySelector('[data-assistant-content="latest final"]')
+    expect(final).not.toBeNull()
+    expect(process?.contains(final)).toBe(false)
+    expect(container.querySelectorAll('[data-reasoning="latest final reasoning"]')).toHaveLength(1)
+
+    act(() => process?.querySelector("summary")?.click())
+    expect(process?.open).toBe(true)
+  })
+
+  it("does not fold the latest process before the run finishes normally", () => {
+    const container = renderMessageList(
+      toolTurn("active", "2026-09-20T00:00:00Z", "2026-09-20T00:01:05Z"),
+      false,
+    )
+
+    expect(container.querySelector("details[data-completed-process]")).toBeNull()
+    expect(container.querySelector('[data-assistant-content="active process"]')).not.toBeNull()
+    expect(container.querySelector('[data-assistant-content="active final"]')).not.toBeNull()
+    expect(container.querySelector('[data-reasoning="active final reasoning"]')).not.toBeNull()
+  })
+
+  it("keeps an earlier completed process folded while a newer turn is unfinished", () => {
+    const earlier = toolTurn(
+      "earlier",
+      "2026-09-20T00:00:00Z",
+      "2026-09-20T00:01:05Z",
+    )
+    const latest: Message[] = [
+      {
+        id: "new-user",
+        role: "user",
+        content: "new request",
+        createdAt: "2026-09-20T00:02:00Z",
+      },
+      {
+        id: "new-response",
+        role: "assistant",
+        type: "text",
+        content: "new response",
+        createdAt: "2026-09-20T00:02:05Z",
+      },
+    ]
+    const container = renderMessageList([...earlier, ...latest], false)
+
+    const disclosures = container.querySelectorAll("details[data-completed-process]")
+    expect(disclosures).toHaveLength(1)
+    expect(disclosures[0]?.querySelector('[data-assistant-content="earlier process"]')).not.toBeNull()
+    expect(disclosures[0]?.contains(container.querySelector('[data-assistant-content="earlier final"]'))).toBe(false)
+    expect(container.querySelector('[data-assistant-content="new response"]')).not.toBeNull()
   })
 })

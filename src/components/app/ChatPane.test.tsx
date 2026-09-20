@@ -5,6 +5,7 @@ import type { CommandItem } from "@services/command"
 import type { SkillDefinition } from "@shared/types/skill"
 
 type ComposerProps = ComponentProps<(typeof import("./Composer"))["Composer"]>
+type MessageListProps = ComponentProps<(typeof import("./MessageList"))["MessageList"]>
 type ChatPaneProps = ComponentProps<(typeof import("./ChatPane"))["ChatPane"]>
 type Send = ChatPaneProps["chat"]["send"]
 type State = {
@@ -17,6 +18,7 @@ type State = {
 }
 const runtime = vi.hoisted(() => ({
   state: {} as State, listeners: new Set<() => void>(), composer: null as ComposerProps | null,
+  messageList: null as MessageListProps | null,
   queueSend: vi.fn(), revision: 0, getWorkflow: vi.fn(), listCommands: vi.fn(), peekTemplate: vi.fn(),
 }))
 vi.mock("zustand/react/shallow", () => ({ useShallow: <T,>(selector: T) => selector }))
@@ -53,7 +55,12 @@ vi.mock("@/lib/exportPdf", () => ({ downloadPdf: vi.fn() }))
 vi.mock("@/components/chat/Dialogs", () => ({ QuestionDialog: () => null, ApprovalDialog: () => null }))
 vi.mock("@/components/app/ChatHeader", () => ({ ChatHeader: () => null }))
 vi.mock("@/components/app/HomeDashboard", () => ({ HomeDashboard: () => null }))
-vi.mock("@/components/app/MessageList", () => ({ MessageList: () => null }))
+vi.mock("@/components/app/MessageList", () => ({
+  MessageList: (props: MessageListProps) => {
+    runtime.messageList = props
+    return null
+  },
+}))
 vi.mock("@/components/app/Toasts", () => ({ Toasts: () => null }))
 vi.mock("@/components/app/ImageLightbox", () => ({ ImageLightbox: () => null }))
 vi.mock("@/components/app/ContextUsageRing", () => ({ ContextUsageRing: () => <span data-testid="context-usage" /> }))
@@ -90,11 +97,13 @@ function deferred<T>() {
   let resolve!: (value: T) => void; const promise = new Promise<T>((done) => { resolve = done })
   return { promise, resolve }
 }
-function createChat(send: Send, id: string | null) {
+function createChat(send: Send, id: string | null, lastRunStatus: string | null = null) {
   return {
     booted: true, chats: [], currentSessionId: id,
-    currentChat: id ? { id, title: "Test", config: { workspacePath: "/session" } } : null,
-    messages: [], streaming: "", streamingReasoning: "", liveSegments: [], streamStatus: null,
+    currentChat: id
+      ? { id, title: "Test", lastRunStatus, config: { workspacePath: "/session" } }
+      : null,
+    messages: [], streaming: "", streamPhase: null, streamingReasoning: "", liveSegments: [], streamStatus: null,
     pendingUserText: null, sending: false, submissionPending: false, sendFailure: null,
     pendingQuestion: null, pendingApproval: null, send,
     select: vi.fn(), stop: vi.fn(), newChat: vi.fn(),
@@ -107,10 +116,11 @@ async function mount(
   id: string | null,
   running = false,
   streaming: string | null = id ? "" : null,
+  lastRunStatus: string | null = null,
 ) {
   const container = document.body.appendChild(document.createElement("div")); const root = createRoot(container); roots.push(root)
   await act(async () => {
-    root.render(<ChatPane chat={{ ...createChat(send, id), sending: running, streaming }} pickedWorkspace="/picked"
+    root.render(<ChatPane chat={{ ...createChat(send, id, lastRunStatus), sending: running, streaming }} pickedWorkspace="/picked"
       onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()} splitOpen={false}
       onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false} />)
   })
@@ -161,7 +171,7 @@ beforeEach(() => {
     addEventListener: (_name: string, listener: (event: MediaQueryListEvent) => void) => mediaListeners.add(listener),
     removeEventListener: (_name: string, listener: (event: MediaQueryListEvent) => void) => mediaListeners.delete(listener),
   })))
-  runtime.composer = null; runtime.listeners.clear(); runtime.revision = 0
+  runtime.composer = null; runtime.messageList = null; runtime.listeners.clear(); runtime.revision = 0
   runtime.state = {
     tokenUsages: {}, inputStates: {}, skills: [skillA, skillB], childProgress: {}, models: [],
     selectedModel: "test-model", setInputReasoningEffort: vi.fn(),
@@ -219,6 +229,21 @@ describe("ChatPane composer acknowledgement", () => {
     await mount(vi.fn<Send>(), "session-1", true, "")
     expect(composer().sending).toBe(true)
   })
+
+  it.each([
+    ["completed", false, true],
+    ["completed", true, false],
+    ["cancelled", false, false],
+    ["error", false, false],
+    [null, false, false],
+  ] as const)(
+    "folds process only for a settled completed run (status=%s, running=%s)",
+    async (lastRunStatus, running, expected) => {
+      await mount(vi.fn<Send>(), "session-1", running, "", lastRunStatus)
+
+      expect(runtime.messageList?.latestRunFinished).toBe(expected)
+    },
+  )
 
   it("preserves an exact raw draft, focus, and template ownership before ACK", async () => {
     const templatePrompt = Object.freeze({ prompt: "template prompt", revision: 7 })

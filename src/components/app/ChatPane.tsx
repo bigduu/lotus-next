@@ -633,6 +633,11 @@ export function ChatPane({
           messages={messages}
           mergedSubAgents={mergedSubAgents}
           sending={currentlyRunning}
+          latestRunFinished={
+            !currentlyRunning &&
+            streamPhase === null &&
+            currentChat?.lastRunStatus === "completed"
+          }
           streaming={streaming}
           streamingActive={streamPhase === "streaming"}
           streamingReasoning={streamingReasoning}
