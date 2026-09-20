@@ -11,10 +11,7 @@ import { useProviderStore } from "@shared/store/appStore/slices/providerSlice"
 import { agentClient, type GoldConfig, type GoalState } from "@services/chat/AgentService"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
-import {
-  parseFileChangeResultPayload,
-  type FileChangeResultPayload,
-} from "@shared/utils/resultFormatters"
+import { collectSessionFileChanges } from "@/lib/sessionFileChanges"
 import {
   formatTokenCount,
   getPrefixCachePercentage,
@@ -257,6 +254,7 @@ export function Inspector({
   onEditWorkspace,
   docked = false,
   width,
+  embedded = false,
 }: {
   sessionId: string | null
   open: boolean
@@ -267,6 +265,8 @@ export function Inspector({
   docked?: boolean
   /** Docked column width in px (resizable). */
   width?: number
+  /** Render only the Inspector content inside a parent workbench shell. */
+  embedded?: boolean
 }) {
   const chat = useAppStore((s) =>
     sessionId ? selectSessionById(sessionId)(s) : selectCurrentChat(s),
@@ -282,17 +282,7 @@ export function Inspector({
   const sessionMessages = useAppStore(
     useShallow((s) => (sessionId ? (selectSessionById(sessionId)(s)?.messages ?? []) : [])),
   )
-  const fileChanges = useMemo(() => {
-    const out: Array<{ id: string; payload: FileChangeResultPayload }> = []
-    for (const m of sessionMessages) {
-      if ((m as { type?: string }).type !== "tool_result") continue
-      const content = (m as { result?: { result?: unknown } }).result?.result
-      if (typeof content !== "string") continue
-      const payload = parseFileChangeResultPayload(content)
-      if (payload) out.push({ id: (m as { id: string }).id, payload })
-    }
-    return out
-  }, [sessionMessages])
+  const fileChanges = useMemo(() => collectSessionFileChanges(sessionMessages), [sessionMessages])
   const getProviderLabel = useProviderStore((s) => s.getProviderDisplayLabel)
   const children = useAppStore(
     useShallow((s) => (sessionId ? selectChildren(sessionId)(s) : {})),
@@ -314,12 +304,12 @@ export function Inspector({
 
   const body = (
     <>
-        <div className="flex items-center justify-between border-b px-4 py-3">
+        {!embedded ? <div className="flex items-center justify-between border-b px-4 py-3">
           <span className="text-sm font-semibold">检查器</span>
           <Button size="icon" variant="ghost" onClick={onClose}>
             <X />
           </Button>
-        </div>
+        </div> : null}
 
         <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4">
           <section className="rounded-lg border p-3">
@@ -469,6 +459,10 @@ export function Inspector({
         </div>
     </>
   )
+
+  if (embedded) {
+    return <div className="flex min-h-0 flex-1 flex-col">{body}</div>
+  }
 
   // Wide desktop: dock as an in-flow right column alongside the chat (no
   // backdrop, both visible at once). Narrow/mobile: overlay bottom-sheet / rail.

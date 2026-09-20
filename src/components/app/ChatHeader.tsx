@@ -1,11 +1,12 @@
 import { type ReactNode } from "react"
-import { Menu, PanelRightOpen } from "lucide-react"
+import { Menu } from "lucide-react"
 import { useShallow } from "zustand/react/shallow"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import { useAppStore } from "@shared/store/appStore"
 import { MachineTag } from "@/components/chat/MachineTag"
 import { OverflowMenu } from "@/components/chat/OverflowMenu"
+import { RightPanelLauncher } from "@/components/app/RightPanelLauncher"
 
 type OverflowItem = { label: string; icon?: ReactNode; onClick: () => void }
 
@@ -14,14 +15,18 @@ export function ChatHeader({
   hasSession,
   overflowItems,
   onOpenSidebar,
-  onOpenInspector,
+  workbenchMenuOpen,
+  workbenchMenuId,
+  onToggleWorkbenchMenu,
   sidebarCollapsed,
 }: {
   title: string
   hasSession: boolean
   overflowItems: OverflowItem[]
   onOpenSidebar: () => void
-  onOpenInspector: () => void
+  workbenchMenuOpen: boolean
+  workbenchMenuId: string
+  onToggleWorkbenchMenu: () => void
   /** Desktop: sidebar is collapsed, so show the menu button to bring it back. */
   sidebarCollapsed: boolean
 }) {
@@ -52,9 +57,11 @@ export function ChatHeader({
       ) : null}
       <OverflowMenu items={overflowItems} />
       {hasSession ? (
-        <Button size="icon" variant="ghost" aria-label="检查器" onClick={onOpenInspector}>
-          <PanelRightOpen />
-        </Button>
+        <RightPanelLauncher
+          open={workbenchMenuOpen}
+          controlsId={workbenchMenuId}
+          onToggle={onToggleWorkbenchMenu}
+        />
       ) : null}
     </header>
   )

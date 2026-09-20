@@ -1,6 +1,6 @@
 import { useMarkSessionRead } from "@/lib/sessionReadState"
 import { useMediaQuery } from "@shared/hooks/useMediaQuery"
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useEffect, useId, useMemo, useRef, useState } from "react"
 import {
   ChevronDown,
   ChevronLeft,
@@ -28,6 +28,7 @@ import { useProviderStore } from "@shared/store/appStore/slices/providerSlice"
 import { getReasoningEffortForProvider } from "@shared/utils/reasoningEffort"
 import type { SkillDefinition } from "@shared/types/skill"
 import { ChatHeader } from "@/components/app/ChatHeader"
+import { RightPanelMenu } from "@/components/app/RightPanelLauncher"
 import { HomeDashboard } from "@/components/app/HomeDashboard"
 import { MessageList } from "@/components/app/MessageList"
 import { useGuidanceQueue } from "@/hooks/useGuidanceQueue"
@@ -57,6 +58,7 @@ type SecondaryConfig = {
   chats: ChatItem[]
   onPickSession: (id: string | null) => void
   onClose: () => void
+  hideClose?: boolean
 }
 
 type Attachment = { id: string; base64: string; name: string; type: string; size: number; url: string }
@@ -118,8 +120,10 @@ export function ChatPane({
   onSelectProject,
   onOpenWorkspacePicker,
   onOpenInspector,
+  onOpenReview,
   splitOpen,
   onToggleSplit,
+  onSelectSubAgent,
   onOpenSidebar,
   sidebarCollapsed,
   secondary,
@@ -132,8 +136,11 @@ export function ChatPane({
   onSelectProject?: (projectId: string | null) => void
   onOpenWorkspacePicker: () => void
   onOpenInspector: () => void
+  onOpenReview?: () => void
   splitOpen: boolean
   onToggleSplit: () => void
+  /** Opens a child without replacing this pane's current session. */
+  onSelectSubAgent?: (childId: string) => void
   onOpenSidebar: () => void
   sidebarCollapsed: boolean
   /** When set, render a slim split-pane header (session picker) instead of the full one. */
@@ -182,7 +189,14 @@ export function ChatPane({
   // The secondary chat hook remains mounted when its pane closes. Read state
   // follows the rendered pane, including the same breakpoint as its md:flex.
   const splitVisible = useMediaQuery("(min-width: 768px)")
+  const workbenchMenuWide = useMediaQuery("(min-width: 1280px)")
   useMarkSessionRead(!secondary || splitVisible ? currentChat : null)
+  const [workbenchMenuOpen, setWorkbenchMenuOpen] = useState(false)
+  const workbenchMenuId = useId()
+
+  useEffect(() => {
+    setWorkbenchMenuOpen(false)
+  }, [currentSessionId])
 
   // Live in-run token budget (pushed over the agent channel) — beats the
   // persisted config snapshot, which only refreshes on history reload.
@@ -506,6 +520,11 @@ export function ChatPane({
     })
   }
 
+  const launchWorkbench = (action: () => void) => {
+    setWorkbenchMenuOpen(false)
+    action()
+  }
+  const selectSubAgentInPane = onSelectSubAgent ?? secondary?.onPickSession ?? select
   const overflowItems = [
     ...(currentSessionId && messages.length > 0
       ? [
@@ -524,9 +543,17 @@ export function ChatPane({
     {
       label: splitOpen ? "关闭分屏对比" : "分屏对比",
       icon: <Columns2 className="size-4" />,
-      onClick: onToggleSplit,
+      onClick: () => launchWorkbench(onToggleSplit),
     },
   ]
+  const workbenchMenu = !secondary && currentSessionId && workbenchMenuOpen ? (
+    <RightPanelMenu
+      id={workbenchMenuId}
+      onOpenInspector={() => launchWorkbench(onOpenInspector)}
+      onOpenReview={() => launchWorkbench(onOpenReview ?? onOpenInspector)}
+      onOpenSession={() => launchWorkbench(onToggleSplit)}
+    />
+  ) : null
 
   return (
     <>
@@ -564,7 +591,7 @@ export function ChatPane({
               </SelectTrigger>
               <SelectContent>
                 {secondary.chats
-                  .filter((c) => !c.parentSessionId)
+                  .filter((c) => !c.parentSessionId || c.id === secondary.sessionId)
                   .map((c) => (
                     <SelectItem key={c.id} value={c.id}>
                       {c.title || "新会话"}
@@ -578,15 +605,17 @@ export function ChatPane({
                   size="icon"
                   variant="ghost"
                   aria-label="检查器"
-                  onClick={onOpenInspector}
+                  onClick={() => launchWorkbench(onOpenInspector)}
                 >
                   <PanelRightOpen />
                 </Button>
               </>
             ) : null}
-            <Button size="icon" variant="ghost" aria-label="关闭分栏" onClick={secondary.onClose}>
-              <X />
-            </Button>
+            {!secondary.hideClose ? (
+              <Button size="icon" variant="ghost" aria-label="关闭分栏" onClick={secondary.onClose}>
+                <X />
+              </Button>
+            ) : null}
           </div>
         ) : (
           <ChatHeader
@@ -594,10 +623,23 @@ export function ChatPane({
             hasSession={!!currentSessionId}
             overflowItems={overflowItems}
             onOpenSidebar={onOpenSidebar}
-            onOpenInspector={onOpenInspector}
+            workbenchMenuOpen={workbenchMenuOpen}
+            workbenchMenuId={workbenchMenuId}
+            onToggleWorkbenchMenu={() => setWorkbenchMenuOpen((open) => !open)}
             sidebarCollapsed={sidebarCollapsed}
           />
         )}
+
+        <div data-chat-layout className="flex min-h-0 flex-1">
+          <div data-chat-body className="relative flex min-w-0 flex-1 flex-col">
+            {!workbenchMenuWide && workbenchMenu ? (
+              <div
+                data-workbench-launcher-inline
+                className="flex shrink-0 justify-end border-b p-3"
+              >
+                {workbenchMenu}
+              </div>
+            ) : null}
 
         {currentChat?.planMode ? (
           <div className="border-b bg-primary/10 px-3 py-1.5 text-center text-xs font-medium text-primary">
@@ -610,7 +652,11 @@ export function ChatPane({
 
         {currentChat?.parentSessionId ? (
           <button
-            onClick={() => select(currentChat.parentSessionId as string)}
+            onClick={() =>
+              secondary
+                ? secondary.onPickSession(currentChat.parentSessionId as string)
+                : select(currentChat.parentSessionId as string)
+            }
             className="flex w-full items-center gap-1.5 border-b bg-muted/40 px-3 py-1.5 text-xs font-medium text-muted-foreground hover:text-foreground"
           >
             <ChevronLeft className="size-3.5" /> 子代理 · 返回父会话
@@ -645,7 +691,10 @@ export function ChatPane({
           streamStatus={streamStatus}
           pendingUserText={pendingUserText}
           forking={forking}
-          onSelectSubAgent={select}
+          onSelectSubAgent={(childId) => {
+            setWorkbenchMenuOpen(false)
+            selectSubAgentInPane(childId)
+          }}
           onPreviewImage={setPreview}
           onRegenerate={() => void regenerate()}
           onFork={handleFork}
@@ -726,7 +775,7 @@ export function ChatPane({
                   cacheReadInputTokens={tokenUsage.cacheReadInputTokens}
                   cacheReadInputTokensRetained={tokenUsage.cacheReadInputTokensRetained}
                   prefixCache={tokenUsage.prefixCache}
-                  onClick={onOpenInspector}
+                  onClick={() => launchWorkbench(onOpenInspector)}
                 />
               ) : null}
               <ReasoningPicker
@@ -766,7 +815,7 @@ export function ChatPane({
           selectedWorkflow={selectedWorkflow}
           onClearWorkflow={() => changeSelectedWorkflow(null)}
           onPickWorkflow={pickWorkflow}
-          onPickGoal={currentSessionId ? () => { onOpenInspector(); setDraft(""); setMenusDismissed(true) } : undefined}
+          onPickGoal={currentSessionId ? () => { launchWorkbench(onOpenInspector); setDraft(""); setMenusDismissed(true) } : undefined}
           slashQuery={slashQuery}
           atQuery={atQuery}
           displayWorkspace={displayWorkspace}
@@ -778,6 +827,18 @@ export function ChatPane({
           onSelectProject={(projectId) => onSelectProject?.(projectId)}
           onDismissMenus={() => setMenusDismissed(true)}
         />
+          </div>
+
+          {workbenchMenuWide && workbenchMenu ? (
+            <aside
+              data-workbench-launcher-rail
+              aria-label="工作面板快捷区域"
+              className="shrink-0 p-3"
+            >
+              {workbenchMenu}
+            </aside>
+          ) : null}
+        </div>
       </div>
 
       <Toasts forking={forking} toast={toast} />

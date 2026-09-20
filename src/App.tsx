@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { Inspector } from "@/components/chat/Inspector"
 import { CommandPalette } from "@/components/chat/CommandPalette"
 import { LazySettings } from "@/components/chat/LazySettings"
@@ -16,6 +16,11 @@ import { ProjectManagerModal } from "@/components/app/ProjectManagerModal"
 import { DeleteSessionDialog } from "@/components/app/DeleteSessionDialog"
 import { ChatPane } from "@/components/app/ChatPane"
 import { AvailabilityBanner } from "@/components/app/AvailabilityBanner"
+import { ReviewPane } from "@/components/app/ReviewPane"
+import {
+  RightWorkbench,
+  type RightWorkbenchTab,
+} from "@/components/app/RightWorkbench"
 
 function App() {
   // The main pane follows the global current session. The same `chat` bundle
@@ -29,14 +34,37 @@ function App() {
   // useChat instance streams its own session concurrently. Bound to null while
   // no session is picked (cheap; bootstrap is skipped for bound instances).
   const [secondSid, setSecondSid] = useState<string | null>(null)
+  const [secondLoadState, setSecondLoadState] = useState<"idle" | "loading" | "error">("idle")
+  const secondLoadRequest = useRef(0)
   // onSessionCreated: when a send/fork in the 2nd pane spawns a new session,
   // re-bind THIS pane to it (no global-current change → main pane untouched).
   const secondChat = useChat(secondSid, (newSid) => setSecondSid(newSid))
   const pickSecond = (id: string | null) => {
+    const request = ++secondLoadRequest.current
     setSecondSid(id)
-    // Load the picked session's history into the store WITHOUT touching the
-    // global current session (so the main pane is unaffected).
-    if (id) void useAppStore.getState().loadChatHistory(id)
+    if (!id) {
+      setSecondLoadState("idle")
+      return
+    }
+
+    // Hydrate the picked session WITHOUT touching the global current session.
+    // A newly-started child can exist in live progress before it reaches the
+    // lazy session index, so restore it by id first when necessary.
+    setSecondLoadState("loading")
+    const store = useAppStore.getState()
+    void (async () => {
+      const exists = store.chats.some((chat) => chat.id === id)
+      if (!exists && !(await store.restoreSession(id))) {
+        throw new Error("session unavailable")
+      }
+      await useAppStore.getState().loadChatHistory(id)
+    })()
+      .then(() => {
+        if (secondLoadRequest.current === request) setSecondLoadState("idle")
+      })
+      .catch(() => {
+        if (secondLoadRequest.current === request) setSecondLoadState("error")
+      })
   }
 
   const [sidebarOpen, setSidebarOpen] = useState(false)
@@ -54,8 +82,8 @@ function App() {
     return () => window.removeEventListener("keydown", onKey)
   }, [])
 
-  const [inspectorOpen, setInspectorOpen] = useState(false)
-  const [secondInspectorOpen, setSecondInspectorOpen] = useState(false)
+  const [workbenchOpen, setWorkbenchOpen] = useState(false)
+  const [workbenchTab, setWorkbenchTab] = useState<RightWorkbenchTab>("inspector")
   const isWide = useIsWide()
   // Draggable, persisted widths for the resizable side panels (desktop).
   const sidebarResize = useResizableWidth("lotus_next_sidebar_w", 288, {
@@ -63,18 +91,12 @@ function App() {
     max: 420,
     edge: "right",
   })
-  const inspectorResize = useResizableWidth("lotus_next_inspector_w", 384, {
-    min: 280,
-    max: 640,
-    edge: "left",
-  })
-  const referenceResize = useResizableWidth("lotus_next_reference_w", 420, {
-    min: 300,
-    max: 720,
+  const workbenchResize = useResizableWidth("lotus_next_inspector_w", 520, {
+    min: 360,
+    max: 840,
     edge: "left",
   })
   const [settingsOpen, setSettingsOpen] = useState(false)
-  const [splitOpen, setSplitOpen] = useState(false)
   const [pendingDelete, setPendingDelete] = useState<{ id: string; title: string } | null>(null)
   // Workspace chosen in the picker — shared across the main pane (composer +
   // inspector). The session's own cwd wins for display; otherwise the picked one.
@@ -125,6 +147,22 @@ function App() {
 
   const workspacePath = currentChat?.config?.workspacePath
   const displayWorkspace = workspacePath ?? pickedWorkspace
+  const secondSession = chats.find((item) => item.id === secondSid)
+  const openWorkbench = (tab: RightWorkbenchTab) => {
+    setWorkbenchTab(tab)
+    setWorkbenchOpen(true)
+  }
+  const toggleSideSession = () => {
+    if (workbenchOpen && workbenchTab === "session") {
+      setWorkbenchOpen(false)
+      return
+    }
+    openWorkbench("session")
+  }
+  const openSubagentPreview = (childId: string) => {
+    pickSecond(childId)
+    openWorkbench("session")
+  }
 
   return (
     <div className="relative flex h-full overflow-hidden bg-background text-foreground">
@@ -166,9 +204,11 @@ function App() {
           if (projectId) setPickedWorkspace(null)
         }}
         onOpenWorkspacePicker={() => setWsPickerOpen(true)}
-        onOpenInspector={() => setInspectorOpen(true)}
-        splitOpen={splitOpen}
-        onToggleSplit={() => setSplitOpen((v) => !v)}
+        onOpenInspector={() => openWorkbench("inspector")}
+        onOpenReview={() => openWorkbench("review")}
+        splitOpen={workbenchOpen && workbenchTab === "session"}
+        onToggleSplit={toggleSideSession}
+        onSelectSubAgent={openSubagentPreview}
         onOpenSidebar={() => {
           setSidebarOpen(true)
           setSidebarCollapsed(false)
@@ -176,69 +216,63 @@ function App() {
         sidebarCollapsed={sidebarCollapsed}
       />
 
-      {/* Wide desktop: inspector docks as a resizable in-flow third column. */}
-      {isWide && inspectorOpen ? (
+      {workbenchOpen ? (
         <>
-          <ResizeHandle onPointerDown={inspectorResize.startResize} />
-          <Inspector
-            docked
-            width={inspectorResize.width}
-            sessionId={currentSessionId}
-            open={inspectorOpen}
-            onClose={() => setInspectorOpen(false)}
-            workspace={displayWorkspace}
-            onEditWorkspace={() => setWsPickerOpen(true)}
+          {isWide ? <ResizeHandle onPointerDown={workbenchResize.startResize} /> : null}
+          <RightWorkbench
+            docked={isWide}
+            width={workbenchResize.width}
+            activeTab={workbenchTab}
+            onTabChange={setWorkbenchTab}
+            onClose={() => setWorkbenchOpen(false)}
+            sessionTitle={secondSession?.title}
+            inspector={
+              <Inspector
+                embedded
+                sessionId={currentSessionId}
+                open={workbenchTab === "inspector"}
+                onClose={() => setWorkbenchOpen(false)}
+                workspace={displayWorkspace}
+                onEditWorkspace={() => setWsPickerOpen(true)}
+              />
+            }
+            review={<ReviewPane sessionId={currentSessionId} />}
+            session={
+              <div className="relative flex min-h-0 flex-1">
+                {secondLoadState === "loading" ? (
+                  <div
+                    className="absolute inset-x-0 top-0 z-30 h-0.5 animate-pulse bg-primary"
+                    aria-label="正在加载并排会话"
+                  />
+                ) : null}
+                {secondLoadState === "error" ? (
+                  <div role="alert" className="absolute inset-x-0 top-2 z-30 rounded-lg border border-destructive/40 bg-card px-3 py-2 text-xs text-destructive shadow">
+                    子代理会话暂时无法加载，请稍后重试。
+                  </div>
+                ) : null}
+                <ChatPane
+                  chat={secondChat}
+                  secondary={{
+                    sessionId: secondSid,
+                    chats,
+                    onPickSession: pickSecond,
+                    onClose: () => setWorkbenchOpen(false),
+                    hideClose: true,
+                  }}
+                  pickedWorkspace={null}
+                  onOpenWorkspacePicker={() => {}}
+                  onOpenInspector={() => setWorkbenchTab("inspector")}
+                  onOpenReview={() => setWorkbenchTab("review")}
+                  splitOpen={workbenchOpen && workbenchTab === "session"}
+                  onToggleSplit={() => setWorkbenchOpen(false)}
+                  onSelectSubAgent={pickSecond}
+                  onOpenSidebar={() => {}}
+                  sidebarCollapsed={false}
+                />
+              </div>
+            }
           />
         </>
-      ) : null}
-
-      {/* Split: a second interactive pane bound to another session (desktop). */}
-      {splitOpen ? (
-        <>
-          <ResizeHandle onPointerDown={referenceResize.startResize} />
-          <div
-            className="hidden shrink-0 flex-col border-l md:flex"
-            style={{ width: referenceResize.width, maxWidth: "45vw" }}
-          >
-            <ChatPane
-              chat={secondChat}
-              secondary={{
-                sessionId: secondSid,
-                chats,
-                onPickSession: pickSecond,
-                onClose: () => setSplitOpen(false),
-              }}
-              pickedWorkspace={null}
-              onOpenWorkspacePicker={() => {}}
-              onOpenInspector={() => setSecondInspectorOpen(true)}
-              splitOpen
-              onToggleSplit={() => setSplitOpen(false)}
-              onOpenSidebar={() => {}}
-              sidebarCollapsed={false}
-            />
-          </div>
-        </>
-      ) : null}
-
-      {/* Second pane's own inspector (overlay), bound to its session. */}
-      {splitOpen && secondInspectorOpen && secondSid ? (
-        <Inspector
-          sessionId={secondSid}
-          open={secondInspectorOpen}
-          onClose={() => setSecondInspectorOpen(false)}
-          workspace={null}
-        />
-      ) : null}
-
-      {/* Narrow/mobile: inspector overlays as a bottom-sheet / right rail. */}
-      {!isWide ? (
-        <Inspector
-          sessionId={currentSessionId}
-          open={inspectorOpen}
-          onClose={() => setInspectorOpen(false)}
-          workspace={displayWorkspace}
-          onEditWorkspace={() => setWsPickerOpen(true)}
-        />
       ) : null}
 
       <LazySettings open={settingsOpen} onClose={() => setSettingsOpen(false)} />

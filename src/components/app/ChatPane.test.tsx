@@ -420,3 +420,39 @@ it("shows an unreadable pending request with a working refresh control outside t
   act(() => refreshButton?.click())
   expect(refresh).toHaveBeenCalledTimes(1)
 })
+
+it("routes a sub-agent card to the side-preview callback without replacing the main session", async () => {
+  const container = document.body.appendChild(document.createElement("div"))
+  const root = createRoot(container); roots.push(root)
+  const chat = createChat(vi.fn<Send>(), "parent")
+  const openPreview = vi.fn()
+  await act(async () => root.render(<ChatPane chat={chat} pickedWorkspace="/picked"
+    onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()} splitOpen={false}
+    onToggleSplit={vi.fn()} onSelectSubAgent={openPreview}
+    onOpenSidebar={vi.fn()} sidebarCollapsed={false} />))
+
+  act(() => runtime.messageList?.onSelectSubAgent("child"))
+
+  expect(openPreview).toHaveBeenCalledExactlyOnceWith("child")
+  expect(chat.select).not.toHaveBeenCalled()
+})
+
+it("returns from a child inside the side pane without changing the main session", async () => {
+  const container = document.body.appendChild(document.createElement("div"))
+  const root = createRoot(container); roots.push(root)
+  const chat = createChat(vi.fn<Send>(), "child")
+  chat.currentChat = { ...chat.currentChat!, parentSessionId: "parent" }
+  const pickSideSession = vi.fn()
+  await act(async () => root.render(<ChatPane chat={chat} pickedWorkspace={null}
+    secondary={{ sessionId: "child", chats: [], onPickSession: pickSideSession, onClose: vi.fn() }}
+    onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()} splitOpen
+    onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false} />))
+
+  const back = Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find((button) =>
+    button.textContent?.includes("返回父会话"),
+  )
+  act(() => back?.click())
+
+  expect(pickSideSession).toHaveBeenCalledExactlyOnceWith("parent")
+  expect(chat.select).not.toHaveBeenCalled()
+})
