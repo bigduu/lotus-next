@@ -1,5 +1,16 @@
 import { useState } from "react"
-import { Wrench, ChevronRight, Loader2 } from "lucide-react"
+import {
+  ChevronRight,
+  FileText,
+  Globe,
+  Image,
+  Loader2,
+  Pencil,
+  Search,
+  Terminal,
+  Wrench,
+  type LucideIcon,
+} from "lucide-react"
 import type { Message } from "@shared/types/chatMessages"
 import { cn } from "@/lib/utils"
 import { Badge } from "@/components/ui/badge"
@@ -14,6 +25,13 @@ type Entry = {
   result?: { text: string; isError: boolean }
   /** Set when the result marks a background/async shell (see parseBackgroundBash). */
   background?: { bashId: string; command: string }
+}
+
+type ToolPresentation = {
+  label: string
+  icon: LucideIcon
+  detail?: string
+  multipleLabel?: (count: number) => string
 }
 
 /**
@@ -59,6 +77,7 @@ const NOISE_KEYS = new Set(["environment", "env", "cwd", "import_shell", "path_e
 // The "headline" argument to show prominently, per tool.
 const PRIMARY_KEYS = [
   "command",
+  "cmd",
   "query",
   "file_path",
   "path",
@@ -69,6 +88,160 @@ const PRIMARY_KEYS = [
   "description",
   "action",
 ]
+
+const compactText = (value: string, maxLength = 72) => {
+  const compact = value.replace(/\s+/g, " ").trim()
+  return compact.length > maxLength ? `${compact.slice(0, maxLength - 1)}…` : compact
+}
+
+const compactPath = (value: string) => {
+  const normalized = value.replace(/\\/g, "/").replace(/\/+$/, "")
+  const parts = normalized.split("/").filter(Boolean)
+  return compactText(parts.slice(-2).join("/") || normalized)
+}
+
+const firstString = (params: Record<string, unknown> | undefined, keys: string[]) => {
+  for (const key of keys) {
+    const value = params?.[key]
+    if (typeof value === "string" && value.trim()) return value
+  }
+  return undefined
+}
+
+const readableToolName = (toolName: string) =>
+  toolName
+    .replace(/^.*__/, "")
+    .replace(/^.*\./, "")
+    .replace(/[_-]+/g, " ")
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .trim() || "工具调用"
+
+function presentTool(entry: Entry): ToolPresentation {
+  const normalized = entry.toolName.toLowerCase().replace(/[^a-z0-9]+/g, "")
+  const path = firstString(entry.params, ["file_path", "path"])
+  const command = firstString(entry.params, ["command", "cmd"])
+  const query = firstString(entry.params, ["query", "pattern"])
+
+  if (/bashoutput|shelloutput|writestdin/.test(normalized)) {
+    return { label: "读取命令输出", icon: Terminal }
+  }
+  if (/bashinput|shellinput/.test(normalized)) {
+    return { label: "向命令发送输入", icon: Terminal }
+  }
+  if (/killshell|stopcommand|terminateprocess/.test(normalized)) {
+    return { label: "停止命令", icon: Terminal }
+  }
+  if (/bash|execcommand|runshell|terminal/.test(normalized)) {
+    return {
+      label: "运行命令",
+      icon: Terminal,
+      detail: command ? compactText(command) : undefined,
+      multipleLabel: (count) => `运行 ${count} 个命令`,
+    }
+  }
+  if (/viewimage|openimage|imageview/.test(normalized)) {
+    return {
+      label: "查看图片",
+      icon: Image,
+      detail: path ? compactPath(path) : undefined,
+      multipleLabel: (count) => `查看 ${count} 张图片`,
+    }
+  }
+  if (/imagegen|generateimage/.test(normalized)) {
+    return { label: "生成图片", icon: Image }
+  }
+  if (
+    normalized === "edit" ||
+    normalized === "write" ||
+    /applypatch|editfile|writefile|notebookedit/.test(normalized)
+  ) {
+    return {
+      label: /notebook/.test(normalized) ? "编辑 Notebook" : "编辑文件",
+      icon: Pencil,
+      detail: path ? compactPath(path) : undefined,
+      multipleLabel: (count) => `编辑 ${count} 个文件`,
+    }
+  }
+  if (/glob|findfiles|listfiles/.test(normalized)) {
+    return {
+      label: "查找文件",
+      icon: Search,
+      detail: query ? compactText(query) : undefined,
+      multipleLabel: (count) => `执行 ${count} 次文件查找`,
+    }
+  }
+  if (/grep|codesearch|searchcode|rgsearch/.test(normalized)) {
+    return {
+      label: "搜索代码",
+      icon: Search,
+      detail: query ? compactText(query) : undefined,
+      multipleLabel: (count) => `执行 ${count} 次代码搜索`,
+    }
+  }
+  if (normalized === "read" || /readfile|openfile/.test(normalized)) {
+    return {
+      label: "读取文件",
+      icon: FileText,
+      detail: path ? compactPath(path) : undefined,
+      multipleLabel: (count) => `读取 ${count} 个文件`,
+    }
+  }
+  if (/webfetch|fetchurl|openurl/.test(normalized)) {
+    const url = firstString(entry.params, ["url"])
+    return { label: "获取网页", icon: Globe, detail: url ? compactText(url) : undefined }
+  }
+  if (/websearch|searchweb/.test(normalized)) {
+    return { label: "搜索网页", icon: Globe, detail: query ? compactText(query) : undefined }
+  }
+  if (/sleep|wait/.test(normalized)) {
+    return { label: "等待", icon: Wrench }
+  }
+  if (normalized === "task" || /subagent|spawnagent|delegatetask/.test(normalized)) {
+    const description = firstString(entry.params, ["description", "prompt"])
+    return { label: "委派任务", icon: Wrench, detail: description ? compactText(description) : undefined }
+  }
+  if (normalized === "plan" || /updateplan/.test(normalized)) {
+    return { label: "更新计划", icon: Wrench }
+  }
+  if (/getfileinfo|filestat/.test(normalized)) {
+    return { label: "查看文件信息", icon: FileText, detail: path ? compactPath(path) : undefined }
+  }
+  if (/skill/.test(normalized)) {
+    return { label: "加载技能", icon: Wrench }
+  }
+  if (/memory/.test(normalized)) {
+    return { label: "查询记忆", icon: Wrench }
+  }
+  if (/project/.test(normalized)) {
+    return { label: "管理项目", icon: Wrench }
+  }
+
+  return { label: readableToolName(entry.toolName), icon: Wrench }
+}
+
+function summarizeEntries(entries: Entry[]): ToolPresentation {
+  if (entries.length === 0) return { label: "工具调用", icon: Wrench }
+  const presentations = entries.map(presentTool)
+  const uniqueLabels = Array.from(new Set(presentations.map((item) => item.label)))
+
+  if (uniqueLabels.length === 1) {
+    const first = presentations[0]
+    return {
+      ...first,
+      label: entries.length > 1 && first.multipleLabel
+        ? first.multipleLabel(entries.length)
+        : first.label,
+      detail: entries.length === 1 ? first.detail : undefined,
+    }
+  }
+
+  return {
+    label: uniqueLabels.length <= 3
+      ? uniqueLabels.join("、")
+      : `${uniqueLabels.slice(0, 2).join("、")}等 ${uniqueLabels.length} 项操作`,
+    icon: presentations[0].icon,
+  }
+}
 
 function cleanParams(params?: Record<string, unknown>): {
   primary?: string
@@ -179,18 +352,22 @@ function BackgroundBadge({ bashId }: { bashId: string }) {
 
 function EntryRow({ e }: { e: Entry }) {
   const { primary, rest } = cleanParams(e.params)
+  const presentation = presentTool(e)
   // File-editing tool results render as a real diff instead of raw JSON.
   const fileChange = e.result?.text ? parseFileChangeResultPayload(e.result.text) : null
   const result = e.result?.text ? prettyResult(e.result.text) : ""
   return (
-    <div className="rounded-md bg-background/40 px-2.5 py-2">
+    <div data-tool-call-entry className="py-1">
       <div className="flex items-center gap-1.5">
-        <span className="text-xs font-medium text-foreground">{e.toolName}</span>
+        <span className="text-xs font-medium text-foreground">{presentation.label}</span>
+        {presentation.label !== e.toolName ? (
+          <span className="text-[10px] text-muted-foreground opacity-70">{e.toolName}</span>
+        ) : null}
         {e.result?.isError ? <span className="text-[10px] text-destructive">出错</span> : null}
         {e.background ? <BackgroundBadge bashId={e.background.bashId} /> : null}
       </div>
       {primary ? (
-        <div className="mt-1 line-clamp-3 break-all rounded bg-muted/50 px-2 py-1 font-mono text-[11px] text-foreground [overflow-wrap:anywhere]">
+        <div className="mt-1 line-clamp-3 break-all font-mono text-[11px] text-foreground [overflow-wrap:anywhere]">
           {primary}
         </div>
       ) : null}
@@ -212,7 +389,7 @@ function EntryRow({ e }: { e: Entry }) {
           <summary className="cursor-pointer select-none text-[11px] text-muted-foreground hover:text-foreground">
             结果
           </summary>
-          <pre className="mt-1 max-h-44 overflow-auto whitespace-pre-wrap break-all rounded bg-background/60 p-2 text-[11px] text-muted-foreground">
+          <pre className="mt-1 max-h-44 overflow-auto whitespace-pre-wrap break-all border-l border-border pl-2 text-[11px] text-muted-foreground">
             {result.length > 1000 ? result.slice(0, 1000) + "…" : result}
           </pre>
         </details>
@@ -222,9 +399,9 @@ function EntryRow({ e }: { e: Entry }) {
 }
 
 /**
- * Compact, balanced tool-call display. Collapsed = a single pill showing real
- * tool names. Active rounds stay collapsed by default while their spinner
- * remains visible; users can expand a group without streaming updates
+ * Compact, balanced tool-call display. Collapsed = a transparent action row
+ * with a readable summary and one small identifying detail. Active rounds stay
+ * collapsed by default while their spinner remains visible; users can expand a group without streaming updates
  * overriding that choice.
  * To avoid a wall of detail, only the latest {VISIBLE_CAP} tools render expanded
  * — earlier ones fold behind a "展开更早的 N 个" toggle.
@@ -235,12 +412,8 @@ export function ToolCalls({ items, active }: { items: Message[]; active?: boolea
 
   const entries = buildEntries(items)
   const uniqueNames = Array.from(new Set(entries.map((e) => e.toolName).filter(Boolean)))
-  const label =
-    uniqueNames.length === 0
-      ? `${items.length} 次工具调用`
-      : uniqueNames.length <= 2
-        ? uniqueNames.join("、")
-        : `${uniqueNames.slice(0, 2).join("、")} 等 ${uniqueNames.length} 个工具`
+  const summary = summarizeEntries(entries)
+  const SummaryIcon = active ? Loader2 : summary.icon
 
   const visible = showAll ? entries : entries.slice(-VISIBLE_CAP)
   const hidden = entries.length - visible.length
@@ -252,19 +425,22 @@ export function ToolCalls({ items, active }: { items: Message[]; active?: boolea
           type="button"
           onClick={() => setOpen((v) => !v)}
           aria-expanded={open}
-          className="inline-flex max-w-full items-center gap-1.5 rounded-full bg-muted/60 px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted"
+          data-tool-call-toggle
+          title={uniqueNames.join("、") || undefined}
+          className="inline-flex max-w-full items-center gap-1.5 rounded-sm py-1 text-xs text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
-          {active ? (
-            <Loader2 className="size-3 shrink-0 animate-spin" />
-          ) : (
-            <Wrench className="size-3 shrink-0" />
-          )}
-          <span className="truncate">{label}</span>
+          <SummaryIcon className={cn("size-3.5 shrink-0", active && "animate-spin")} />
+          <span className="truncate">{summary.label}</span>
+          {summary.detail ? (
+            <span className="min-w-0 truncate font-mono text-[11px] text-muted-foreground opacity-70">
+              {summary.detail}
+            </span>
+          ) : null}
           <ChevronRight className={cn("size-3 shrink-0 transition-transform", open && "rotate-90")} />
         </button>
 
         {open ? (
-          <div className="mt-1.5 space-y-2 rounded-lg border bg-card/50 p-2.5 text-xs">
+          <div data-tool-call-panel className="mt-1.5 space-y-2 border-l border-border pl-4 text-xs">
             {hidden > 0 ? (
               <button
                 type="button"
