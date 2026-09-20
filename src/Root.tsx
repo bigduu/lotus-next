@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react"
+import { Loader2 } from "lucide-react"
 import App from "./App"
 import { PasswordGate } from "@/components/auth/PasswordGate"
 import { Button } from "@/components/ui/button"
@@ -11,6 +12,8 @@ import { ServiceFactory } from "@services/common/ServiceFactory"
 import { getRuntimeConfig } from "@/runtime/runtimeConfig"
 
 const RETRY_DELAYS_MS = [250, 500] as const
+const SIDECAR_STARTUP_RETRY_WINDOW_MS = 60_000
+const SIDECAR_RETRY_MAX_DELAY_MS = 2_000
 
 type NonReadyBootstrapOutcome = Exclude<BootstrapOutcome, { kind: "ready" }>
 type DiagnosticOutcome = Exclude<NonReadyBootstrapOutcome, { kind: "auth-required" }>
@@ -25,7 +28,11 @@ type RootView =
 interface ActiveOperation {
   generation: number
   controller: AbortController
+  startedAt: number
 }
+
+const sidecarRetryDelay = (attempt: number): number =>
+  Math.min(250 * 2 ** Math.min(attempt, 3), SIDECAR_RETRY_MAX_DELAY_MS)
 
 const waitForRetry = (ms: number, signal: AbortSignal): Promise<boolean> =>
   new Promise((resolve) => {
@@ -107,6 +114,7 @@ export default function Root() {
     const operation = {
       generation: generationRef.current + 1,
       controller: new AbortController(),
+      startedAt: Date.now(),
     }
     generationRef.current = operation.generation
     activeOperationRef.current = operation
@@ -147,7 +155,7 @@ export default function Root() {
 
   const runBootstrap = useCallback(
     async (operation: ActiveOperation) => {
-      for (let attempt = 0; attempt < RETRY_DELAYS_MS.length + 1; attempt += 1) {
+      for (let attempt = 0; ; attempt += 1) {
         let outcome: BootstrapOutcome
         try {
           outcome = await requestServerBootstrap(operation.controller.signal)
@@ -161,11 +169,20 @@ export default function Root() {
 
         if (!isCurrent(operation)) return
 
-        if (outcome.kind === "unavailable" && attempt < RETRY_DELAYS_MS.length) {
-          const completed = await waitForRetry(
-            RETRY_DELAYS_MS[attempt],
-            operation.controller.signal,
-          )
+        if (outcome.kind === "unavailable") {
+          const sidecarStartup = runtime.host.capabilities.sidecarBackend
+          const elapsed = Date.now() - operation.startedAt
+          const remaining = SIDECAR_STARTUP_RETRY_WINDOW_MS - elapsed
+          const delay = sidecarStartup
+            ? Math.min(sidecarRetryDelay(attempt), remaining)
+            : RETRY_DELAYS_MS[attempt]
+
+          if (delay === undefined || delay <= 0) {
+            setView(outcome)
+            return
+          }
+
+          const completed = await waitForRetry(delay, operation.controller.signal)
           if (!completed || !isCurrent(operation)) return
           continue
         }
@@ -179,7 +196,7 @@ export default function Root() {
         return
       }
     },
-    [isCurrent, resolveSetup],
+    [isCurrent, resolveSetup, runtime.host.capabilities.sidecarBackend],
   )
 
   const startBootstrap = useCallback(() => {
@@ -208,9 +225,30 @@ export default function Root() {
   }, [startBootstrap])
 
   if (view.kind === "loading") {
+    const sidecarStartup = runtime.host.capabilities.sidecarBackend
     return (
-      <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-        加载中…
+      <div className="flex h-full items-center justify-center bg-background p-6">
+        <div
+          role="status"
+          aria-live="polite"
+          className="w-full max-w-sm rounded-2xl border bg-card p-6 text-center shadow-lg"
+        >
+          <div className="mx-auto flex size-12 items-center justify-center rounded-full bg-primary/10">
+            <Loader2
+              aria-hidden="true"
+              className="size-6 animate-spin text-primary motion-reduce:animate-none"
+            />
+          </div>
+          <h1 className="mt-4 text-xl font-semibold">
+            {sidecarStartup ? "正在启动 Bodhi" : "正在连接 Bamboo"}
+          </h1>
+          <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
+            {sidecarStartup ? "正在等待本地 Bamboo 引擎准备就绪…" : "正在确认后端服务状态…"}
+          </p>
+          <p className="mt-2 text-xs text-muted-foreground">
+            {sidecarStartup ? "首次启动或配置较多时可能需要一些时间，请稍候。" : "请稍候。"}
+          </p>
+        </div>
       </div>
     )
   }

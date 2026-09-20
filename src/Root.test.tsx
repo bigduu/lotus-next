@@ -15,6 +15,7 @@ const bootstrapMocks = vi.hoisted(() => ({
   requestServerBootstrap: vi.fn(),
   verifyServerPassword: vi.fn(),
 }))
+const runtimeMocks = vi.hoisted(() => ({ sidecarBackend: false }))
 
 vi.mock("./App", () => ({
   default: () => <div data-app-mounted>Lotus Next App</div>,
@@ -23,6 +24,30 @@ vi.mock("./App", () => ({
 vi.mock("@/services/bootstrap/serverBootstrap", () => ({
   requestServerBootstrap: bootstrapMocks.requestServerBootstrap,
   verifyServerPassword: bootstrapMocks.verifyServerPassword,
+}))
+
+vi.mock("@/runtime/runtimeConfig", () => ({
+  getRuntimeConfig: () => ({
+    schemaVersion: 1,
+    host: {
+      kind: runtimeMocks.sidecarBackend ? "bodhi-desktop" : "browser",
+      capabilities: {
+        nativeFileSystem: runtimeMocks.sidecarBackend,
+        nativeNotifications: runtimeMocks.sidecarBackend,
+        externalShell: runtimeMocks.sidecarBackend,
+        sidecarBackend: runtimeMocks.sidecarBackend,
+      },
+    },
+    endpointSource: runtimeMocks.sidecarBackend ? "tauri-sidecar" : "page-origin",
+    endpoints: {
+      origin: "http://127.0.0.1:9562",
+      nativeApi: "http://127.0.0.1:9562/api/v1",
+      v2Stream: "ws://127.0.0.1:9562/v2/stream",
+    },
+    publicMetadata: { mode: "test", development: false },
+    artifact: { version: "0.0.0", revision: "test-revision" },
+    auth: { source: "http-cookie", requestCredentials: "include" },
+  }),
 }))
 
 import Root from "./Root"
@@ -121,6 +146,7 @@ afterAll(() => {
 })
 
 beforeEach(() => {
+  runtimeMocks.sidecarBackend = false
   bootstrapMocks.requestServerBootstrap.mockReset()
   bootstrapMocks.verifyServerPassword.mockReset()
   getSetupStatusMock = vi.fn().mockResolvedValue({
@@ -196,7 +222,7 @@ describe("Root canonical bootstrap composition", () => {
     const view = await mountRoot()
     expect(getSetupStatusMock).toHaveBeenCalledTimes(1)
     expect(bootstrapSignal?.aborted).toBe(false)
-    expect(view.container.textContent).toContain("加载中")
+    expect(view.container.textContent).toContain("正在连接 Bamboo")
 
     unmountView(view)
     expect(bootstrapSignal?.aborted).toBe(true)
@@ -244,7 +270,7 @@ describe("Root canonical bootstrap composition", () => {
 
     const { container } = await mountRoot()
     expect(bootstrapMocks.requestServerBootstrap).toHaveBeenCalledTimes(1)
-    expect(container.textContent).toContain("加载中")
+    expect(container.textContent).toContain("正在连接 Bamboo")
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(249)
@@ -268,6 +294,55 @@ describe("Root canonical bootstrap composition", () => {
     expect(container.textContent).toContain("暂时无法连接后端")
     expect(vi.getTimerCount()).toBe(0)
     expect(container.querySelector("[data-app-mounted]")).toBeNull()
+  })
+
+  it("keeps a slow sidecar in an animated loading state until it becomes ready", async () => {
+    vi.useFakeTimers()
+    runtimeMocks.sidecarBackend = true
+    bootstrapMocks.requestServerBootstrap.mockResolvedValue({
+      kind: "unavailable",
+      reason: "network",
+    })
+
+    const { container } = await mountRoot()
+    expect(container.querySelector('[role="status"]')?.textContent).toContain("正在启动 Bodhi")
+    expect(container.querySelector(".animate-spin")).not.toBeNull()
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10_000)
+    })
+    expect(bootstrapMocks.requestServerBootstrap.mock.calls.length).toBeGreaterThan(3)
+    expect(container.textContent).toContain("正在等待本地 Bamboo 引擎")
+    expect(container.textContent).not.toContain("暂时无法连接后端")
+
+    bootstrapMocks.requestServerBootstrap.mockResolvedValue({ kind: "ready" })
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2_000)
+    })
+    expect(container.querySelector("[data-app-mounted]")).not.toBeNull()
+    expect(getSetupStatusMock).toHaveBeenCalledTimes(1)
+  })
+
+  it("turns a sidecar startup into a diagnostic only after the 60 second window", async () => {
+    vi.useFakeTimers()
+    runtimeMocks.sidecarBackend = true
+    bootstrapMocks.requestServerBootstrap.mockResolvedValue({
+      kind: "unavailable",
+      reason: "network",
+    })
+
+    const { container } = await mountRoot()
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(59_999)
+    })
+    expect(container.textContent).toContain("正在启动 Bodhi")
+    expect(container.textContent).not.toContain("暂时无法连接后端")
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1)
+    })
+    expect(container.textContent).toContain("暂时无法连接后端")
+    expect(vi.getTimerCount()).toBe(0)
   })
 
   it("does not retry a permanent result and manual retry starts one fresh request", async () => {
@@ -379,7 +454,7 @@ describe("Root password revalidation", () => {
 
     expect(bootstrapMocks.verifyServerPassword).toHaveBeenCalledTimes(1)
     expect(bootstrapMocks.requestServerBootstrap).toHaveBeenCalledTimes(2)
-    expect(container.textContent).toContain("加载中")
+    expect(container.textContent).toContain("正在连接 Bamboo")
     expect(container.querySelector("[data-app-mounted]")).toBeNull()
     expect(getSetupStatusMock).not.toHaveBeenCalled()
 
