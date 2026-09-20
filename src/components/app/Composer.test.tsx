@@ -25,6 +25,7 @@ afterAll(() => {
 afterEach(() => {
   for (const root of mountedRoots.splice(0)) act(() => root.unmount())
   document.body.replaceChildren()
+  useAppStore.setState({ systemPrompts: [], lastSelectedPromptId: null })
 })
 
 function mountComposer(overrides: Partial<ComponentProps<typeof Composer>> = {}) {
@@ -253,5 +254,33 @@ describe("Composer new-chat project chip", () => {
     const view = mountComposer({ hasSession: false })
     expect(view.container.textContent).not.toContain("选择项目")
     useAppStore.setState({ projectsAvailable: null })
+  })
+})
+
+describe("Composer new-chat prompt chip", () => {
+  it("uses the real default preset without rendering a duplicate fallback option", () => {
+    useAppStore.setState({
+      lastSelectedPromptId: null,
+      systemPrompts: [{
+        id: "general_assistant",
+        name: "Bodhi",
+        content: "Default Bodhi prompt",
+        isDefault: true,
+      }],
+    })
+
+    const { container } = mountComposer({ hasSession: false })
+    const trigger = container.querySelector<HTMLButtonElement>('button[title="系统提示词:Bodhi"]')
+
+    expect(trigger?.textContent).toContain("Bodhi")
+    expect(trigger?.textContent).not.toContain("默认提示词")
+
+    act(() => {
+      trigger?.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }))
+    })
+    const options = [...document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')]
+      .map((item) => item.textContent?.trim())
+
+    expect(options).toEqual(["Bodhi"])
   })
 })

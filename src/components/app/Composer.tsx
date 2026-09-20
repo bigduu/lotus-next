@@ -41,23 +41,21 @@ function PromptChip() {
   const setLastSelectedPromptId = useAppStore((s) => s.setLastSelectedPromptId)
   if (systemPrompts.length === 0) return null
   const active = systemPrompts.find((p) => p.id === lastSelectedPromptId)
+    ?? systemPrompts.find((p) => p.isDefault)
+    ?? systemPrompts[0]
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <button
           className="flex max-w-full items-center gap-1.5 rounded-full border bg-card px-2.5 py-1 text-xs text-muted-foreground hover:text-foreground"
-          title={active ? `系统提示词:${active.name}` : "选择系统提示词"}
+          title={`系统提示词:${active.name}`}
         >
           <BookText className="size-3.5 shrink-0" />
-          <span className="truncate">{active ? active.name : "默认提示词"}</span>
+          <span className="truncate">{active.name}</span>
           <ChevronDown className="size-3 shrink-0 opacity-60" />
         </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start">
-        <DropdownMenuItem onClick={() => setLastSelectedPromptId("")}>
-          {!active ? <Check className="size-3.5" /> : <span className="size-3.5" />}
-          默认提示词
-        </DropdownMenuItem>
         {systemPrompts.map((p) => (
           <DropdownMenuItem key={p.id} onClick={() => setLastSelectedPromptId(p.id)}>
             {active?.id === p.id ? <Check className="size-3.5" /> : <span className="size-3.5" />}
