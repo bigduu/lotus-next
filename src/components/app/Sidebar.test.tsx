@@ -262,6 +262,52 @@ describe("Sidebar project grouping", () => {
     expect(button("未分配")).toBeDefined()
   })
 
+  it("groups Projects into collapsible persisted Sections", () => {
+    useAppStore.setState({
+      projects: {
+        p1: {
+          id: "p1", name: "Zenith", section: "Development", status: "active", revision: 1, resource_revision: 1,
+          project_path: "/tmp/zenith", project_path_status: "configured", workspace_count: 1,
+          created_at: "2026-01-01T00:00:00Z", updated_at: "2026-01-01T00:00:00Z",
+          schema_version: 2, workspace_bindings: [],
+        },
+        p2: {
+          id: "p2", name: "Nova", section: "Development", status: "active", revision: 1, resource_revision: 1,
+          project_path: "/tmp/nova", project_path_status: "configured", workspace_count: 1,
+          created_at: "2026-01-01T00:00:00Z", updated_at: "2026-01-01T00:00:00Z",
+          schema_version: 2, workspace_bindings: [],
+        },
+        p3: {
+          id: "p3", name: "Support", section: "Operations", status: "active", revision: 1, resource_revision: 1,
+          project_path: "/tmp/support", project_path_status: "configured", workspace_count: 1,
+          created_at: "2026-01-01T00:00:00Z", updated_at: "2026-01-01T00:00:00Z",
+          schema_version: 2, workspace_bindings: [],
+        },
+      },
+    })
+    render({
+      chats: [
+        chat("zenith-chat", 5, { config: { systemPromptId: "", baseSystemPrompt: "", lastUsedEnhancedPrompt: null, projectId: "p1" } }),
+        chat("nova-chat", 4, { config: { systemPromptId: "", baseSystemPrompt: "", lastUsedEnhancedPrompt: null, projectId: "p2" } }),
+        chat("support-chat", 3, { config: { systemPromptId: "", baseSystemPrompt: "", lastUsedEnhancedPrompt: null, projectId: "p3" } }),
+      ],
+    })
+    act(() => buttonByLabel("切换为项目视图").click())
+
+    const development = container.querySelector('[data-project-section="Development"]')
+    const operations = container.querySelector('[data-project-section="Operations"]')
+    expect(development?.textContent).toContain("Development2 个项目")
+    expect(development?.textContent).toContain("Zenith")
+    expect(development?.textContent).toContain("Nova")
+    expect(operations?.textContent).toContain("Support")
+
+    act(() => buttonByLabel("切换 Development Section").click())
+    expect(row("zenith-chat")).toBeNull()
+    expect(row("nova-chat")).toBeNull()
+    expect(row("support-chat")).not.toBeNull()
+    expect(buttonByLabel("切换 Development Section").getAttribute("aria-expanded")).toBe("false")
+  })
+
   it("preselects the enclosing project for a new chat in project mode", () => {
     render({
       currentSessionId: "solo",
@@ -321,7 +367,7 @@ describe("Sidebar project grouping", () => {
     expect(container.querySelectorAll("[data-session]")).toHaveLength(7)
   })
 
-  it("shows empty Projects and exposes a Codex-style project details affordance", () => {
+  it("shows empty Projects and quick-creates a session inside the Project", () => {
     useAppStore.setState({
       projects: {
         empty: {
@@ -336,9 +382,8 @@ describe("Sidebar project grouping", () => {
     act(() => buttonByLabel("切换为项目视图").click())
 
     expect(button("Empty project").textContent).toContain("0")
-    const details = buttonByLabel("查看 Empty project 项目详情")
-    act(() => details.click())
-    expect(document.body.textContent).toContain("/tmp/empty")
-    expect(document.body.textContent).toContain("0 个会话")
+    act(() => buttonByLabel("在 Empty project 中新建会话").click())
+    expect(props.onNewChat).toHaveBeenCalledWith("empty")
+    expect(props.onClose).toHaveBeenCalledOnce()
   })
 })

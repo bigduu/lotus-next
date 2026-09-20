@@ -19,6 +19,8 @@ export interface ProjectSummary {
   id: string;
   name: string;
   description?: string | null;
+  /** Optional user-defined sidebar grouping, persisted by Bamboo. */
+  section?: string | null;
   status: ProjectStatus;
   revision: number;
   resource_revision: number;
@@ -52,6 +54,8 @@ export interface CreateProjectRequest {
 export interface PatchProjectRequest {
   name?: string;
   description?: string | null;
+  /** `null` removes the Project from its current Section. */
+  section?: string | null;
   /** CAS-updated primary folder; never inferred from workspace binding order. */
   project_path?: string;
 }

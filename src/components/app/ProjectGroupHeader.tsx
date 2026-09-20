@@ -1,26 +1,30 @@
-import { useState } from "react"
 import {
   Archive,
   ArchiveRestore,
+  Check,
   ChevronRight,
   FolderClosed,
   FolderOpen,
+  List,
   MessageSquarePlus,
   MoreHorizontal,
   Pencil,
   Pin,
   PinOff,
+  Plus,
+  SquarePen,
 } from "lucide-react"
 import type { ProjectManifest } from "@services/project"
-import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { cn } from "@/lib/utils"
 
 export function ProjectGroupHeader({
@@ -31,10 +35,14 @@ export function ProjectGroupHeader({
   contentId,
   disabled,
   pinned,
+  sections,
+  sectionBusy,
   onToggleExpanded,
   onNewChat,
   onEdit,
   onTogglePin,
+  onMoveToSection,
+  onCreateSection,
   onReveal,
   onArchive,
 }: {
@@ -45,15 +53,17 @@ export function ProjectGroupHeader({
   contentId: string
   disabled: boolean
   pinned: boolean
+  sections: readonly string[]
+  sectionBusy: boolean
   onToggleExpanded: () => void
   onNewChat: () => void
   onEdit: () => void
   onTogglePin: () => void
+  onMoveToSection: (section: string | null) => void
+  onCreateSection: () => void
   onReveal: () => void
   onArchive: () => void
 }) {
-  const [detailsOpen, setDetailsOpen] = useState(false)
-
   if (!project) {
     return (
       <button
@@ -89,45 +99,15 @@ export function ProjectGroupHeader({
       </button>
 
       <div className="flex shrink-0 items-center">
-        <Popover open={detailsOpen} onOpenChange={setDetailsOpen}>
-          <PopoverTrigger asChild>
-            <button
-              type="button"
-              aria-label={`查看 ${project.name} 项目详情`}
-              className="rounded p-1 text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
-            >
-              <Pencil className="size-3.5" />
-            </button>
-          </PopoverTrigger>
-          <PopoverContent align="start" side="right" className="w-72 space-y-3 p-3">
-            <div className="flex items-start gap-2.5">
-              <FolderClosed className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
-              <div className="min-w-0 flex-1">
-                <div className="truncate text-sm font-semibold">{project.name}</div>
-                <div className="mt-1 text-xs text-muted-foreground">{sessionCount} 个会话</div>
-              </div>
-              {pinned ? <Pin className="size-3.5 text-muted-foreground" /> : null}
-            </div>
-            <div className="border-t pt-2">
-              <div className="mb-1 text-[11px] font-medium text-muted-foreground">源目录</div>
-              <div className="truncate text-xs" title={project.project_path ?? undefined}>
-                {project.project_path || "未配置"}
-              </div>
-            </div>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="w-full justify-start"
-              disabled={project.status === "archived"}
-              onClick={() => {
-                setDetailsOpen(false)
-                onEdit()
-              }}
-            >
-              <Pencil className="size-3.5" /> 编辑项目
-            </Button>
-          </PopoverContent>
-        </Popover>
+        <button
+          type="button"
+          aria-label={`在 ${project.name} 中新建会话`}
+          disabled={project.status === "archived"}
+          className="rounded p-1 text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default"
+          onClick={onNewChat}
+        >
+          <SquarePen className="size-3.5" />
+        </button>
 
         <DropdownMenu>
           <DropdownMenuTrigger
@@ -143,6 +123,32 @@ export function ProjectGroupHeader({
             <DropdownMenuItem onClick={onTogglePin}>
               {pinned ? <PinOff /> : <Pin />} {pinned ? "取消置顶" : "置顶"}
             </DropdownMenuItem>
+            <DropdownMenuSub>
+              <DropdownMenuSubTrigger disabled={project.status === "archived" || sectionBusy}>
+                <List /> Section
+              </DropdownMenuSubTrigger>
+              <DropdownMenuSubContent>
+                {sections.map((section) => (
+                  <DropdownMenuItem
+                    key={section}
+                    disabled={sectionBusy || project.section === section}
+                    onClick={() => onMoveToSection(section)}
+                  >
+                    {project.section === section ? <Check /> : <List />}
+                    {section}
+                  </DropdownMenuItem>
+                ))}
+                {project.section ? (
+                  <DropdownMenuItem disabled={sectionBusy} onClick={() => onMoveToSection(null)}>
+                    <List /> 不使用 Section
+                  </DropdownMenuItem>
+                ) : null}
+                {sections.length > 0 || project.section ? <DropdownMenuSeparator /> : null}
+                <DropdownMenuItem disabled={sectionBusy} onClick={onCreateSection}>
+                  <Plus /> 新建 Section…
+                </DropdownMenuItem>
+              </DropdownMenuSubContent>
+            </DropdownMenuSub>
             <DropdownMenuItem disabled={project.status === "archived"} onClick={onEdit}>
               <Pencil /> 编辑项目
             </DropdownMenuItem>

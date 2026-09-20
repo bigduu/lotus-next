@@ -7,6 +7,7 @@ import { SessionRow } from "@/components/chat/SessionRow"
 import { ProjectArchiveDialog } from "@/components/app/ProjectArchiveDialog"
 import { ProjectEditDialog } from "@/components/app/ProjectEditDialog"
 import { ProjectGroupHeader } from "@/components/app/ProjectGroupHeader"
+import { ProjectSectionDialog } from "@/components/app/ProjectSectionDialog"
 import { groupChats, groupChatsByProject, type ChatGroup } from "@/lib/groupChats"
 import { readPinnedProjectIds, writePinnedProjectIds } from "@/lib/projectSidebarPreferences"
 import { useAppStore } from "@shared/store/appStore"
@@ -71,6 +72,7 @@ export function Sidebar({
   const [groupingMode, setGroupingMode] = useState<SidebarGroupingMode>(readGroupingMode)
   const [pinnedProjectIds, setPinnedProjectIds] = useState(readPinnedProjectIds)
   const [editingProjectId, setEditingProjectId] = useState<string | null>(null)
+  const [sectioningProjectId, setSectioningProjectId] = useState<string | null>(null)
   const [pendingArchiveProjectId, setPendingArchiveProjectId] = useState<string | null>(null)
   const [projectActionBusy, setProjectActionBusy] = useState(false)
   const [projectActionError, setProjectActionError] = useState<string | null>(null)
@@ -89,6 +91,15 @@ export function Sidebar({
   }
 
   const rootChats = useMemo(() => chats.filter((chat) => !chat.parentSessionId), [chats])
+  const projectSections = useMemo(
+    () => [...new Set(
+      Object.values(projects)
+        .filter((project) => project.status === "active")
+        .map((project) => project.section?.trim())
+        .filter((section): section is string => !!section),
+    )].sort((left, right) => left.localeCompare(right)),
+    [projects],
+  )
   const projectSessionCounts = useMemo(() => {
     const counts = new Map<string, number>()
     for (const chat of rootChats) {
@@ -133,12 +144,14 @@ export function Sidebar({
   const dateGroups = isProjectMode ? [] : groups.filter((group) => group.key !== "__pinned")
   const olderGroups = dateGroups.slice(5)
   const activeGroup = groups.find((group) => group.chats.some((c) => c.id === currentSessionId))
+  const activeSection = activeGroup ? projects[activeGroup.key]?.section ?? null : null
   const activeIsOlder = olderGroups.some((group) => group.key === activeGroup?.key)
-  const activePath = JSON.stringify([currentSessionId ?? null, activeGroup?.key, activeIsOlder])
+  const activePath = JSON.stringify([currentSessionId ?? null, activeGroup?.key, activeSection, activeIsOlder])
   const [disclosures, setDisclosures] = useState(() => ({
     activePath,
     olderExpanded: activeIsOlder,
     closedDates: new Set<string>(),
+    closedSections: new Set<string>(),
     // Reveal the active session even when it sits beyond the preview fold.
     expandedProjectGroups: new Set(
       isProjectMode && activeGroup && activeGroup.chats.findIndex((c) => c.id === currentSessionId) >= PROJECT_GROUP_PREVIEW_COUNT
@@ -153,6 +166,8 @@ export function Sidebar({
   if (disclosures.activePath !== activePath) {
     const closedDates = new Set(disclosures.closedDates)
     if (activeGroup) closedDates.delete(activeGroup.key)
+    const closedSections = new Set(disclosures.closedSections)
+    if (activeSection) closedSections.delete(activeSection)
     // A session in a project group beyond the preview fold must be revealed.
     const expandedProjectGroups = new Set(disclosures.expandedProjectGroups)
     if (activeGroup && activeGroup.chats.findIndex((c) => c.id === currentSessionId) >= PROJECT_GROUP_PREVIEW_COUNT) {
@@ -162,6 +177,7 @@ export function Sidebar({
       activePath,
       olderExpanded: disclosures.olderExpanded || activeIsOlder,
       closedDates,
+      closedSections,
       expandedProjectGroups,
     })
   }
@@ -203,6 +219,20 @@ export function Sidebar({
     }
   }
 
+  const moveProjectToSection = async (projectId: string, section: string | null) => {
+    const project = useAppStore.getState().projects[projectId]
+    if (!project || projectActionBusy || (project.section ?? null) === section) return
+    setProjectActionBusy(true)
+    setProjectActionError(null)
+    try {
+      await useAppStore.getState().updateProject(project.id, project.revision, { section })
+    } catch (error) {
+      setProjectActionError(error instanceof Error ? error.message : "移动项目失败")
+    } finally {
+      setProjectActionBusy(false)
+    }
+  }
+
   const renderGroup = (group: ChatGroup) => {
     const pinned = group.key === "__pinned"
     const expanded = pinned || !!query || !disclosures.closedDates.has(group.key)
@@ -235,6 +265,8 @@ export function Sidebar({
             contentId={contentId}
             disabled={!!query}
             pinned={pinnedProjectIds.has(project.id)}
+            sections={projectSections}
+            sectionBusy={projectActionBusy}
             onToggleExpanded={toggleExpanded}
             onNewChat={() => {
               onNewChat(project.id)
@@ -245,6 +277,13 @@ export function Sidebar({
               setEditingProjectId(project.id)
             }}
             onTogglePin={() => toggleProjectPin(project.id)}
+            onMoveToSection={(section) => {
+              void moveProjectToSection(project.id, section)
+            }}
+            onCreateSection={() => {
+              setProjectActionError(null)
+              setSectioningProjectId(project.id)
+            }}
             onReveal={() => {
               setProjectActionError(null)
               void openLocalFolder(project.project_path ?? "").catch((error) => {
@@ -315,6 +354,67 @@ export function Sidebar({
           ) : null}
         </div>
       </div>
+    )
+  }
+
+  const renderVisibleGroups = () => {
+    if (!isProjectMode) return visibleGroups.map(renderGroup)
+
+    const pinnedGroups: ChatGroup[] = []
+    const unsectionedGroups: ChatGroup[] = []
+    const sectionGroups = new Map<string, ChatGroup[]>()
+
+    for (const group of visibleGroups) {
+      if (group.key === "__pinned") {
+        pinnedGroups.push(group)
+        continue
+      }
+      const section = projects[group.key]?.section?.trim()
+      if (!section) {
+        unsectionedGroups.push(group)
+        continue
+      }
+      const entries = sectionGroups.get(section) ?? []
+      entries.push(group)
+      sectionGroups.set(section, entries)
+    }
+
+    return (
+      <>
+        {pinnedGroups.map(renderGroup)}
+        {[...sectionGroups.entries()]
+          .sort(([left], [right]) => left.localeCompare(right))
+          .map(([section, groupedProjects]) => {
+            const expanded = !!query || !disclosures.closedSections.has(section)
+            const contentId = `${disclosureId}-section-${encodeURIComponent(section)}`
+            return (
+              <div key={section} className="mb-1" data-project-section={section}>
+                <button
+                  type="button"
+                  aria-label={`切换 ${section} Section`}
+                  aria-expanded={expanded}
+                  aria-controls={contentId}
+                  disabled={!!query}
+                  className="flex w-full items-center gap-1 rounded-md px-2 pt-3 pb-1 text-left text-xs font-medium text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default"
+                  onClick={() => setDisclosures((previous) => {
+                    const closedSections = new Set(previous.closedSections)
+                    if (closedSections.has(section)) closedSections.delete(section)
+                    else closedSections.add(section)
+                    return { ...previous, closedSections }
+                  })}
+                >
+                  <ChevronRight aria-hidden="true" className={cn("size-3 shrink-0", expanded && "rotate-90")} />
+                  <span className="truncate">{section}</span>
+                  <span className="ml-auto whitespace-nowrap pl-2 font-normal">{groupedProjects.length} 个项目</span>
+                </button>
+                <div id={contentId} hidden={!expanded}>
+                  {expanded ? groupedProjects.map(renderGroup) : null}
+                </div>
+              </div>
+            )
+          })}
+        {unsectionedGroups.map(renderGroup)}
+      </>
     )
   }
 
@@ -425,7 +525,7 @@ export function Sidebar({
               {booted ? "暂无会话" : "加载中…"}
             </p>
           )}
-          {visibleGroups.map(renderGroup)}
+          {renderVisibleGroups()}
           {!query && olderGroups.length > 0 ? (
             <div className="mb-1">
               <button
@@ -463,6 +563,13 @@ export function Sidebar({
       </aside>
 
       <ProjectEditDialog projectId={editingProjectId} onClose={() => setEditingProjectId(null)} />
+
+      <ProjectSectionDialog
+        key={sectioningProjectId ?? "closed"}
+        projectId={sectioningProjectId}
+        existingSections={projectSections}
+        onClose={() => setSectioningProjectId(null)}
+      />
 
       <ProjectArchiveDialog
         projectName={pendingArchiveProject?.name ?? null}
