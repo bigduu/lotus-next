@@ -178,12 +178,17 @@ export type ProviderSnapshotRelationIssue =
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
+const REASONING_EFFORTS = new Set(["low", "medium", "high", "xhigh", "max"]);
+
 const isModelRef = (value: unknown): value is ProviderModelRef =>
   isRecord(value) &&
   typeof value.provider === "string" &&
   value.provider.trim().length > 0 &&
   typeof value.model === "string" &&
-  value.model.trim().length > 0;
+  value.model.trim().length > 0 &&
+  (value.reasoning_effort === undefined ||
+    (typeof value.reasoning_effort === "string" &&
+      REASONING_EFFORTS.has(value.reasoning_effort)));
 
 /** Validate one untrusted provider instance, including create responses. */
 export const parseProviderInstance = (

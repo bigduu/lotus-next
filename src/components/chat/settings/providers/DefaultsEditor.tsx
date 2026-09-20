@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react"
+import type { ReasoningEffort } from "@services/chat/AgentService"
 import { useProviderStore } from "@shared/store/appStore/slices/providerSlice"
 import {
   PROVIDER_DEFAULT_MODEL_REF_KEYS,
@@ -21,6 +22,14 @@ import { cn } from "@/lib/utils"
 import { EditableModelCombobox } from "./EditableModelCombobox"
 
 const UNSET = "__unset__"
+const AUTO_EFFORT = "__auto__"
+const REASONING_EFFORTS: readonly { value: ReasoningEffort; label: string }[] = [
+  { value: "low", label: "低" },
+  { value: "medium", label: "中" },
+  { value: "high", label: "高" },
+  { value: "xhigh", label: "极高" },
+  { value: "max", label: "最大" },
+]
 
 interface ModelRoleDefinition {
   key: ProviderDefaultModelRefKey
@@ -45,7 +54,7 @@ const PRIMARY_ROLES = [
   {
     key: "vision",
     label: "视觉",
-    description: "用于图片理解与视觉回退；未设置时回退到对话模型。",
+    description: "用于图片理解与视觉回退；未设置时依次回退到快速、对话模型。",
     required: false,
   },
   {
@@ -60,19 +69,19 @@ const ADVANCED_ROLES = [
   {
     key: "task_summary",
     label: "任务摘要",
-    description: "用于任务总结与对话压缩；未设置时依次回退到记忆后台、快速、对话模型。",
+    description: "用于任务总结与对话压缩；未设置时依次回退到快速、对话模型。",
     required: false,
   },
   {
     key: "memory_background",
     label: "记忆后台",
-    description: "用于记忆重排、召回后台任务与 Auto Dream；未设置时回退到快速模型。",
+    description: "用于记忆重排、召回后台任务与 Auto Dream；未设置时依次回退到快速、对话模型。",
     required: false,
   },
   {
     key: "planning",
     label: "规划",
-    description: "用于任务拆解、架构与协调；未设置时回退到对话模型。",
+    description: "用于任务拆解、架构与协调；未设置时依次回退到快速、对话模型。",
     required: false,
   },
   {
@@ -84,14 +93,14 @@ const ADVANCED_ROLES = [
   {
     key: "code_review",
     label: "代码审查",
-    description: "用于代码审查与 PR 分析；未设置时回退到对话模型。",
+    description: "用于代码审查与 PR 分析；未设置时依次回退到快速、对话模型。",
     required: false,
   },
 ] as const satisfies readonly ModelRoleDefinition[]
 
 const ROLES: readonly ModelRoleDefinition[] = [...PRIMARY_ROLES, ...ADVANCED_ROLES]
 
-type DraftRef = { provider: string; model: string }
+type DraftRef = { provider: string; model: string; reasoningEffort: ReasoningEffort | "" }
 type DraftRefs = Record<ProviderDefaultModelRefKey, DraftRef>
 
 interface DefaultsDraft {
@@ -99,11 +108,18 @@ interface DefaultsDraft {
   subagentModels: Record<string, DraftRef>
 }
 
-const emptyRef = (): DraftRef => ({ provider: "", model: "" })
+const emptyRef = (): DraftRef => ({ provider: "", model: "", reasoningEffort: "" })
 
 const copyRef = (ref?: ProviderModelRef): DraftRef => ({
   provider: ref?.provider ?? "",
   model: ref?.model ?? "",
+  reasoningEffort: ref?.reasoning_effort ?? "",
+})
+
+const payloadRef = (value: DraftRef): ProviderModelRef => ({
+  provider: value.provider,
+  model: value.model.trim(),
+  ...(value.reasoningEffort ? { reasoning_effort: value.reasoningEffort } : {}),
 })
 
 function draftFromDefaults(defaults: DefaultsConfig | undefined): DefaultsDraft {
@@ -243,13 +259,13 @@ export function DefaultsEditor() {
         const value = draft.roles[role.key]
         const filled = value.provider !== "" && value.model.trim() !== ""
         payload[role.key] = filled
-          ? { provider: value.provider, model: value.model.trim() }
+          ? payloadRef(value)
           : null
       }
       payload.subagent_models = Object.fromEntries(
         Object.entries(draft.subagentModels).map(([subagent, value]) => [
           subagent,
-          { provider: value.provider, model: value.model.trim() },
+          payloadRef(value),
         ]),
       )
 
@@ -324,7 +340,7 @@ export function DefaultsEditor() {
             {role.description}
           </p>
         </div>
-        <div className="grid grid-cols-2 gap-2">
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_9rem]">
           <Select
             value={value.provider || UNSET}
             onValueChange={(provider) => {
@@ -355,6 +371,28 @@ export function DefaultsEditor() {
             disabled={!value.provider}
             onChange={(model) => setRole(role.key, { model })}
           />
+          <Select
+            value={value.reasoningEffort || AUTO_EFFORT}
+            disabled={!value.provider}
+            onValueChange={(effort) =>
+              setRole(role.key, {
+                reasoningEffort:
+                  effort === AUTO_EFFORT ? "" : (effort as ReasoningEffort),
+              })
+            }
+          >
+            <SelectTrigger className="w-full" aria-label={`${role.label}推理强度`}>
+              <SelectValue placeholder="推理强度" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={AUTO_EFFORT}>自动</SelectItem>
+              {REASONING_EFFORTS.map((effort) => (
+                <SelectItem key={effort.value} value={effort.value}>
+                  {effort.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
       </div>
     )
@@ -396,7 +434,8 @@ export function DefaultsEditor() {
     <section className="rounded-lg border p-3">
       <div className="mb-2 text-xs font-medium text-muted-foreground">默认模型偏好</div>
       <p className="mb-2 text-xs text-muted-foreground">
-        四个常用用途优先显示；未设置时按每项说明自动回退。模型 ID 可从发现结果选择，也可手动输入。
+        四个常用用途优先显示；专用模型未设置时统一回退到快速模型，再回退到对话模型。模型 ID 可从发现结果选择，也可手动输入。
+        推理强度未设置时保留该任务的默认策略；发生回退时优先使用回退模型自己配置的推理强度。
       </p>
 
       {hasCompatibilityRouteIssue(repairIssues) || compatibilitySyncRequired ? (
@@ -440,36 +479,65 @@ export function DefaultsEditor() {
               <div
                 key={subagent}
                 className={cn(
-                  "grid grid-cols-[5.5rem_1fr_1fr] items-center gap-2 rounded-md",
+                  "rounded-md",
                   invalid && "border border-amber-500/50 bg-amber-500/5 p-1",
                 )}
               >
-                <span className="truncate text-xs text-muted-foreground" title={subagent}>
+                <span className="mb-1 block truncate text-xs text-muted-foreground" title={subagent}>
                   {subagent}
                 </span>
-                <Select
-                  value={value.provider}
-                  onValueChange={(provider) =>
-                    setSubagent(subagent, {
-                      provider,
-                      model: provider === value.provider ? value.model : "",
-                    })
-                  }
-                >
-                  <SelectTrigger className="w-full" aria-label={`子代理 ${subagent} 提供方`}>
-                    <SelectValue placeholder="提供方" />
-                  </SelectTrigger>
-                  <SelectContent>{providerOptions(value.provider)}</SelectContent>
-                </Select>
-                <EditableModelCombobox
-                  label={`子代理 ${subagent} 模型`}
-                  hideLabel
-                  value={value.model}
-                  models={models}
-                  placeholder="模型 ID"
-                  disabled={!value.provider}
-                  onChange={(model) => setSubagent(subagent, { model })}
-                />
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_9rem]">
+                  <Select
+                    value={value.provider}
+                    onValueChange={(provider) =>
+                      setSubagent(subagent, {
+                        provider,
+                        model: provider === value.provider ? value.model : "",
+                      })
+                    }
+                  >
+                    <SelectTrigger className="w-full" aria-label={`子代理 ${subagent} 提供方`}>
+                      <SelectValue placeholder="提供方" />
+                    </SelectTrigger>
+                    <SelectContent>{providerOptions(value.provider)}</SelectContent>
+                  </Select>
+                  <EditableModelCombobox
+                    label={`子代理 ${subagent} 模型`}
+                    hideLabel
+                    value={value.model}
+                    models={models}
+                    placeholder="模型 ID"
+                    disabled={!value.provider}
+                    onChange={(model) => setSubagent(subagent, { model })}
+                  />
+                  <Select
+                    value={value.reasoningEffort || AUTO_EFFORT}
+                    disabled={!value.provider}
+                    onValueChange={(effort) =>
+                      setSubagent(subagent, {
+                        reasoningEffort:
+                          effort === AUTO_EFFORT
+                            ? ""
+                            : (effort as ReasoningEffort),
+                      })
+                    }
+                  >
+                    <SelectTrigger
+                      className="w-full"
+                      aria-label={`子代理 ${subagent} 推理强度`}
+                    >
+                      <SelectValue placeholder="推理强度" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value={AUTO_EFFORT}>自动</SelectItem>
+                      {REASONING_EFFORTS.map((effort) => (
+                        <SelectItem key={effort.value} value={effort.value}>
+                          {effort.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
               </div>
             )
           })}

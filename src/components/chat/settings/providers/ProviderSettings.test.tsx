@@ -648,6 +648,11 @@ describe("Provider defaults authoritative refresh", () => {
     expect(primary?.textContent).toContain("子代理")
     expect(primary?.textContent).toContain("用于主对话，也是其他未设置用途的最终回退模型。")
     expect(primary?.textContent).toContain("用于标题生成、Mermaid 修复等轻量任务")
+    expect(primary?.textContent).toContain("视觉回退；未设置时依次回退到快速、对话模型")
+    expect(roleByName("combobox", "对话(必填)推理强度", container)).toBeDefined()
+    expect(roleByName("combobox", "快速推理强度", container)).toBeDefined()
+    expect(roleByName("combobox", "视觉推理强度", container)).toBeDefined()
+    expect(roleByName("combobox", "子代理推理强度", container)).toBeDefined()
     expect(primary?.textContent).not.toContain("任务摘要")
     expect(primary?.textContent).not.toContain("记忆后台")
     expect(primary?.textContent).not.toContain("规划")
@@ -656,6 +661,59 @@ describe("Provider defaults authoritative refresh", () => {
     expect(advanced?.open).toBe(false)
     expect(advanced?.querySelector("summary")?.textContent).toContain("高级模型路由")
     expect(advanced?.querySelector("summary")?.textContent).toContain("一般无需配置")
+  })
+
+  it("persists a reasoning effort for each model role", async () => {
+    const current: ProviderInstancesConfig = {
+      ...snapshot(),
+      defaults: {
+        chat: { provider: instance.id, model: "gpt-5.6-sol", reasoning_effort: "high" },
+        fast: { provider: instance.id, model: "gpt-5.6-luna" },
+      },
+    }
+    const saved: ProviderInstancesConfig = {
+      ...current,
+      defaults: {
+        ...current.defaults!,
+        fast: { provider: instance.id, model: "gpt-5.6-luna", reasoning_effort: "low" },
+      },
+    }
+    const loadProviderInstances = vi.fn(async () => {
+      useProviderStore.setState({ providerSnapshot: saved, providerStatus: "ready" })
+      return saved
+    })
+    setStore({ providerSnapshot: current, loadProviderInstances })
+    vi.spyOn(apiClient, "get").mockResolvedValue({})
+    const post = vi.spyOn(apiClient, "post").mockResolvedValue(undefined)
+    const container = await mount(<DefaultsEditor />)
+
+    expect(roleByName("combobox", "对话(必填)推理强度", container).textContent).toBe("高")
+    expect(roleByName("combobox", "快速推理强度", container).textContent).toBe("自动")
+    await chooseSelectOption("快速推理强度", "低")
+    await click(
+      [...container.querySelectorAll("button")].find(
+        (button) => button.textContent === "保存偏好",
+      ) ?? null,
+    )
+    await flush()
+
+    expect(post).toHaveBeenCalledWith(
+      "/bamboo/config",
+      expect.objectContaining({
+        defaults: expect.objectContaining({
+          chat: {
+            provider: instance.id,
+            model: "gpt-5.6-sol",
+            reasoning_effort: "high",
+          },
+          fast: {
+            provider: instance.id,
+            model: "gpt-5.6-luna",
+            reasoning_effort: "low",
+          },
+        }),
+      }),
+    )
   })
 
   it("keeps save feedback through the full Settings loading transition", async () => {

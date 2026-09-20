@@ -1,6 +1,9 @@
+import type { ReasoningEffort } from "@services/chat/AgentService";
+
 export interface ProviderModelRef {
   provider: string;
   model: string;
+  reasoning_effort?: ReasoningEffort;
 }
 
 export interface ModelCapabilities {

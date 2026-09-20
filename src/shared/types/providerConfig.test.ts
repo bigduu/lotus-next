@@ -17,8 +17,8 @@ const validPayload = () => ({
     },
   ],
   defaults: {
-    chat: { provider: "work", model: "gpt-5.6-sol" },
-    fast: { provider: "work", model: "gpt-5.6-luna" },
+    chat: { provider: "work", model: "gpt-5.6-sol", reasoning_effort: "high" },
+    fast: { provider: "work", model: "gpt-5.6-luna", reasoning_effort: "low" },
   },
   features: { provider_model_ref: true },
 });
@@ -43,6 +43,13 @@ describe("parseProviderInstancesConfig", () => {
     { ...validPayload(), default_provider_instance_id: "" },
     { ...validPayload(), defaults: null },
     { ...validPayload(), defaults: { ...validPayload().defaults, fast: null } },
+    {
+      ...validPayload(),
+      defaults: {
+        ...validPayload().defaults,
+        fast: { provider: "work", model: "gpt-5.6-luna", reasoning_effort: "ultra" },
+      },
+    },
     { ...validPayload(), features: null },
     { ...validPayload(), features: { provider_model_ref: "yes" } },
     {
