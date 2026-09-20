@@ -28,8 +28,8 @@ export interface FetchModelsResponse {
 
 export interface EnvVarResponse {
   name: string;
-  /** Masked for secrets; plaintext for non-secrets. */
-  value: string;
+  /** Plaintext for non-secrets; omitted entirely for secrets. */
+  value?: string;
   secret: boolean;
   /** Whether a real value is configured (useful for secrets where value is masked). */
   has_value: boolean;
@@ -37,6 +37,8 @@ export interface EnvVarResponse {
 }
 
 export interface EnvVarsListResponse {
+  /** Env section revision to bind to the next mutation. */
+  revision: number;
   entries: EnvVarResponse[];
 }
 
@@ -343,22 +345,34 @@ export class SettingsService {
   /**
    * Create or update a single environment variable.
    */
-  async upsertEnvVar(entry: UpsertEnvVarRequest): Promise<EnvVarsListResponse> {
-    return apiClient.post<EnvVarsListResponse>("/bamboo/env-vars", entry);
+  async upsertEnvVar(
+    entry: UpsertEnvVarRequest,
+    expectedRevision: number,
+  ): Promise<EnvVarsListResponse> {
+    return apiClient.post<EnvVarsListResponse>("/bamboo/env-vars", {
+      expected_revision: expectedRevision,
+      ...entry,
+    });
   }
 
   /**
    * Delete an environment variable by name.
    */
-  async deleteEnvVar(name: string): Promise<EnvVarsListResponse> {
-    return apiClient.delete<EnvVarsListResponse>(`/bamboo/env-vars/${encodeURIComponent(name)}`);
+  async deleteEnvVar(name: string, expectedRevision: number): Promise<EnvVarsListResponse> {
+    return apiClient.delete<EnvVarsListResponse>(
+      `/bamboo/env-vars/${encodeURIComponent(name)}?expected_revision=${expectedRevision}`,
+    );
   }
 
   /**
    * Replace the entire env vars list (bulk save).
    */
-  async replaceEnvVars(entries: UpsertEnvVarRequest[]): Promise<EnvVarsListResponse> {
+  async replaceEnvVars(
+    entries: UpsertEnvVarRequest[],
+    expectedRevision: number,
+  ): Promise<EnvVarsListResponse> {
     return apiClient.post<EnvVarsListResponse>("/bamboo/env-vars/replace", {
+      expected_revision: expectedRevision,
       entries,
     });
   }

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react"
+import { useCallback, useEffect, useState } from "react"
 import { Trash2, Plus } from "lucide-react"
 import { settingsService, type EnvVarResponse } from "@services/config/SettingsService"
 import { Button } from "@/components/ui/button"
@@ -8,42 +8,78 @@ import { Label } from "@/components/ui/label"
 
 export function SettingsEnv() {
   const [entries, setEntries] = useState<EnvVarResponse[]>([])
+  const [revision, setRevision] = useState<number | null>(null)
   const [loading, setLoading] = useState(true)
   const [name, setName] = useState("")
   const [value, setValue] = useState("")
   const [secret, setSecret] = useState(false)
   const [busy, setBusy] = useState(false)
+  const [deleting, setDeleting] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
 
-  useEffect(() => {
-    settingsService
-      .getEnvVars()
-      .then((r) => setEntries(r.entries))
-      .catch(() => {})
-      .finally(() => setLoading(false))
+  const applySnapshot = useCallback((snapshot: { entries: EnvVarResponse[]; revision: number }) => {
+    setEntries(snapshot.entries)
+    setRevision(snapshot.revision)
   }, [])
 
-  const add = async () => {
-    if (!name.trim() || busy) return
-    setBusy(true)
+  const reload = useCallback(async () => {
     try {
-      const r = await settingsService.upsertEnvVar({ name: name.trim(), value, secret })
-      setEntries(r.entries)
+      const snapshot = await settingsService.getEnvVars()
+      applySnapshot(snapshot)
+      setError(null)
+      return true
+    } catch {
+      setRevision(null)
+      setError("无法确认当前环境变量列表，请刷新设置后重试。错误详情已隐藏。")
+      return false
+    }
+  }, [applySnapshot])
+
+  useEffect(() => {
+    void reload().finally(() => setLoading(false))
+  }, [reload])
+
+  const add = async () => {
+    if (!name.trim() || revision === null || busy) return
+    setBusy(true)
+    setError(null)
+    try {
+      const snapshot = await settingsService.upsertEnvVar(
+        { name: name.trim(), value, secret },
+        revision,
+      )
+      applySnapshot(snapshot)
       setName("")
       setValue("")
       setSecret(false)
     } catch {
-      /* ignore */
+      const refreshed = await reload()
+      setError(
+        refreshed
+          ? "添加结果未确认，已刷新实际列表；请核对后重试。错误详情已隐藏。"
+          : "添加失败，且无法刷新实际列表；请稍后重试。错误详情已隐藏。",
+      )
     } finally {
       setBusy(false)
     }
   }
 
   const remove = async (n: string) => {
+    if (revision === null || deleting !== null) return
+    setDeleting(n)
+    setError(null)
     try {
-      const r = await settingsService.deleteEnvVar(n)
-      setEntries(r.entries)
+      const snapshot = await settingsService.deleteEnvVar(n, revision)
+      applySnapshot(snapshot)
     } catch {
-      /* ignore */
+      const refreshed = await reload()
+      setError(
+        refreshed
+          ? "删除结果未确认，已刷新实际列表；请核对后重试。错误详情已隐藏。"
+          : "删除失败，且无法刷新实际列表；请稍后重试。错误详情已隐藏。",
+      )
+    } finally {
+      setDeleting(null)
     }
   }
 
@@ -67,11 +103,17 @@ export function SettingsEnv() {
             <Switch checked={secret} onCheckedChange={setSecret} />
             密钥(掩码)
           </Label>
-          <Button size="sm" onClick={add} disabled={!name.trim() || busy}>
-            <Plus className="size-4" /> 添加
+          <Button size="sm" onClick={add} disabled={!name.trim() || revision === null || busy}>
+            <Plus className="size-4" /> {busy ? "添加中…" : "添加"}
           </Button>
         </div>
       </section>
+
+      {error ? (
+        <p role="alert" className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+          {error}
+        </p>
+      ) : null}
 
       <section className="rounded-lg border p-3">
         <div className="mb-2 text-xs font-medium text-muted-foreground">已配置 ({entries.length})</div>
@@ -91,12 +133,17 @@ export function SettingsEnv() {
                     ) : null}
                   </div>
                   <div className="truncate font-mono text-[11px] text-muted-foreground">
-                    {e.has_value ? e.value : <span className="italic">未设置</span>}
+                    {e.has_value ? (
+                      e.secret ? "已设置（值已隐藏）" : e.value
+                    ) : (
+                      <span className="italic">未设置</span>
+                    )}
                   </div>
                 </div>
                 <button
                   onClick={() => void remove(e.name)}
-                  aria-label="删除"
+                  disabled={deleting !== null || revision === null}
+                  aria-label={`删除 ${e.name}`}
                   className="shrink-0 rounded p-1 text-muted-foreground hover:text-destructive"
                 >
                   <Trash2 className="size-3.5" />
