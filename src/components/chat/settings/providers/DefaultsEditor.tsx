@@ -22,21 +22,74 @@ import { EditableModelCombobox } from "./EditableModelCombobox"
 
 const UNSET = "__unset__"
 
-const ROLES = [
-  { key: "chat", label: "对话(必填)", required: true },
-  { key: "fast", label: "快速", required: false },
-  { key: "task_summary", label: "任务摘要", required: false },
-  { key: "vision", label: "视觉", required: false },
-  { key: "memory_background", label: "记忆后台", required: false },
-  { key: "planning", label: "规划", required: false },
-  { key: "search", label: "搜索", required: false },
-  { key: "code_review", label: "代码审查", required: false },
-  { key: "sub_agent", label: "子代理", required: false },
-] as const satisfies readonly {
+interface ModelRoleDefinition {
   key: ProviderDefaultModelRefKey
   label: string
+  description: string
   required: boolean
-}[]
+}
+
+const PRIMARY_ROLES = [
+  {
+    key: "chat",
+    label: "对话(必填)",
+    description: "用于主对话，也是其他未设置用途的最终回退模型。",
+    required: true,
+  },
+  {
+    key: "fast",
+    label: "快速",
+    description: "用于标题生成、Mermaid 修复等轻量任务；未设置时回退到对话模型。",
+    required: false,
+  },
+  {
+    key: "vision",
+    label: "视觉",
+    description: "用于图片理解与视觉回退；未设置时回退到对话模型。",
+    required: false,
+  },
+  {
+    key: "sub_agent",
+    label: "子代理",
+    description: "新建子代理时默认使用；未设置时依次回退到快速、对话模型。",
+    required: false,
+  },
+] as const satisfies readonly ModelRoleDefinition[]
+
+const ADVANCED_ROLES = [
+  {
+    key: "task_summary",
+    label: "任务摘要",
+    description: "用于任务总结与对话压缩；未设置时依次回退到记忆后台、快速、对话模型。",
+    required: false,
+  },
+  {
+    key: "memory_background",
+    label: "记忆后台",
+    description: "用于记忆重排、召回后台任务与 Auto Dream；未设置时回退到快速模型。",
+    required: false,
+  },
+  {
+    key: "planning",
+    label: "规划",
+    description: "用于任务拆解、架构与协调；未设置时回退到对话模型。",
+    required: false,
+  },
+  {
+    key: "search",
+    label: "搜索",
+    description: "用于代码搜索、文件导航与符号定位；未设置时依次回退到快速、对话模型。",
+    required: false,
+  },
+  {
+    key: "code_review",
+    label: "代码审查",
+    description: "用于代码审查与 PR 分析；未设置时回退到对话模型。",
+    required: false,
+  },
+] as const satisfies readonly ModelRoleDefinition[]
+
+const ROLES: readonly ModelRoleDefinition[] = [...PRIMARY_ROLES, ...ADVANCED_ROLES]
 
 type DraftRef = { provider: string; model: string }
 type DraftRefs = Record<ProviderDefaultModelRefKey, DraftRef>
@@ -253,6 +306,68 @@ export function DefaultsEditor() {
     )
   }
 
+  const renderRoleEditor = (role: ModelRoleDefinition) => {
+    const value = draft.roles[role.key]
+    const models = value.provider && catalog ? getModelsForProvider(value.provider) : []
+    const invalid = hasRoleIssue(repairIssues, role.key)
+    return (
+      <div
+        key={role.key}
+        className={cn(
+          "rounded-md border p-2.5",
+          invalid && "border-amber-500/50 bg-amber-500/5",
+        )}
+      >
+        <div className="mb-2">
+          <div className="text-xs font-medium text-foreground">{role.label}</div>
+          <p className="mt-0.5 text-[11px] leading-relaxed text-muted-foreground">
+            {role.description}
+          </p>
+        </div>
+        <div className="grid grid-cols-2 gap-2">
+          <Select
+            value={value.provider || UNSET}
+            onValueChange={(provider) => {
+              if (provider === UNSET) {
+                setRole(role.key, emptyRef())
+                return
+              }
+              setRole(role.key, {
+                provider,
+                model: provider === value.provider ? value.model : "",
+              })
+            }}
+          >
+            <SelectTrigger className="w-full" aria-label={`${role.label}提供方`}>
+              <SelectValue placeholder="提供方" />
+            </SelectTrigger>
+            <SelectContent>
+              {!role.required && !invalid ? <SelectItem value={UNSET}>未设置</SelectItem> : null}
+              {providerOptions(value.provider)}
+            </SelectContent>
+          </Select>
+          <EditableModelCombobox
+            label={`${role.label}模型`}
+            hideLabel
+            value={value.model}
+            models={models}
+            placeholder="模型 ID"
+            disabled={!value.provider}
+            onChange={(model) => setRole(role.key, { model })}
+          />
+        </div>
+      </div>
+    )
+  }
+
+  const configuredAdvancedRoleCount = ADVANCED_ROLES.filter(({ key }) => {
+    const value = draft.roles[key]
+    return value.provider !== "" && value.model.trim() !== ""
+  }).length
+  const hasAdvancedRepairIssue = ADVANCED_ROLES.some(({ key }) =>
+    hasRoleIssue(repairIssues, key),
+  )
+
   if (!canManage) {
     const message =
       providerStatus === "incompatible"
@@ -281,7 +396,7 @@ export function DefaultsEditor() {
     <section className="rounded-lg border p-3">
       <div className="mb-2 text-xs font-medium text-muted-foreground">默认模型偏好</div>
       <p className="mb-2 text-xs text-muted-foreground">
-        按用途指定模型；未设置的用途回落到「对话」模型。模型 ID 可从发现结果选择，也可手动输入。
+        四个常用用途优先显示；未设置时按每项说明自动回退。模型 ID 可从发现结果选择，也可手动输入。
       </p>
 
       {hasCompatibilityRouteIssue(repairIssues) || compatibilitySyncRequired ? (
@@ -290,54 +405,30 @@ export function DefaultsEditor() {
         </p>
       ) : null}
 
-      <div className="space-y-2">
-        {ROLES.map((role) => {
-          const value = draft.roles[role.key]
-          const models = value.provider && catalog ? getModelsForProvider(value.provider) : []
-          const invalid = hasRoleIssue(repairIssues, role.key)
-          return (
-            <div
-              key={role.key}
-              className={cn(
-                "grid grid-cols-[5.5rem_1fr_1fr] items-center gap-2 rounded-md",
-                invalid && "border border-amber-500/50 bg-amber-500/5 p-1",
-              )}
-            >
-              <span className="truncate text-xs text-muted-foreground">{role.label}</span>
-              <Select
-                value={value.provider || UNSET}
-                onValueChange={(provider) => {
-                  if (provider === UNSET) {
-                    setRole(role.key, emptyRef())
-                    return
-                  }
-                  setRole(role.key, {
-                    provider,
-                    model: provider === value.provider ? value.model : "",
-                  })
-                }}
-              >
-                <SelectTrigger className="w-full" aria-label={`${role.label}提供方`}>
-                  <SelectValue placeholder="提供方" />
-                </SelectTrigger>
-                <SelectContent>
-                  {!role.required && !invalid ? <SelectItem value={UNSET}>未设置</SelectItem> : null}
-                  {providerOptions(value.provider)}
-                </SelectContent>
-              </Select>
-              <EditableModelCombobox
-                label={`${role.label}模型`}
-                hideLabel
-                value={value.model}
-                models={models}
-                placeholder="模型 ID"
-                disabled={!value.provider}
-                onChange={(model) => setRole(role.key, { model })}
-              />
-            </div>
-          )
-        })}
+      <div role="group" aria-label="常用模型用途" className="space-y-2">
+        {PRIMARY_ROLES.map(renderRoleEditor)}
       </div>
+
+      <details
+        className="mt-3 rounded-md border"
+        open={hasAdvancedRepairIssue || undefined}
+      >
+        <summary className="cursor-pointer px-2.5 py-2 text-xs font-medium text-muted-foreground">
+          高级模型路由
+          <span className="font-normal">
+            {" · 一般无需配置"}
+            {configuredAdvancedRoleCount > 0 ? ` · 已配置 ${configuredAdvancedRoleCount} 项` : ""}
+          </span>
+        </summary>
+        <div className="border-t p-2.5">
+          <p className="mb-2 text-[11px] leading-relaxed text-muted-foreground">
+            仅在对应专用任务中覆盖常用模型；留空即可使用自动回退。
+          </p>
+          <div role="group" aria-label="高级模型用途" className="space-y-2">
+            {ADVANCED_ROLES.map(renderRoleEditor)}
+          </div>
+        </div>
+      </details>
 
       {Object.keys(draft.subagentModels).length > 0 ? (
         <div className="mt-3 space-y-2">

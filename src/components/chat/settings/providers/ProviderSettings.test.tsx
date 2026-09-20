@@ -266,6 +266,7 @@ describe("Provider Settings authority states", () => {
     expect(container.textContent).toContain("deleted-chat(已失效，请替换)")
     expect(container.textContent).toContain("deleted-planning(已失效，请替换)")
     expect(container.textContent).toContain("reviewer")
+    expect(container.querySelector("details")?.open).toBe(true)
     expect(container.querySelector('button[aria-label="设为默认"]')).toBeNull()
   })
 })
@@ -634,6 +635,29 @@ describe("Editable provider model combobox", () => {
 })
 
 describe("Provider defaults authoritative refresh", () => {
+  it("shows the four everyday Bodhi roles with guidance and keeps specialist routes collapsed", async () => {
+    setStore({})
+
+    const container = await mount(<DefaultsEditor />)
+    const primary = container.querySelector('[role="group"][aria-label="常用模型用途"]')
+    const advanced = container.querySelector("details")
+
+    expect(primary?.textContent).toContain("对话(必填)")
+    expect(primary?.textContent).toContain("快速")
+    expect(primary?.textContent).toContain("视觉")
+    expect(primary?.textContent).toContain("子代理")
+    expect(primary?.textContent).toContain("用于主对话，也是其他未设置用途的最终回退模型。")
+    expect(primary?.textContent).toContain("用于标题生成、Mermaid 修复等轻量任务")
+    expect(primary?.textContent).not.toContain("任务摘要")
+    expect(primary?.textContent).not.toContain("记忆后台")
+    expect(primary?.textContent).not.toContain("规划")
+    expect(primary?.textContent).not.toContain("搜索")
+    expect(primary?.textContent).not.toContain("代码审查")
+    expect(advanced?.open).toBe(false)
+    expect(advanced?.querySelector("summary")?.textContent).toContain("高级模型路由")
+    expect(advanced?.querySelector("summary")?.textContent).toContain("一般无需配置")
+  })
+
   it("keeps save feedback through the full Settings loading transition", async () => {
     vi.useFakeTimers()
     let resolveRefresh!: (value: ProviderInstancesConfig) => void
