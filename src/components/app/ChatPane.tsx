@@ -28,7 +28,11 @@ import { useProviderStore } from "@shared/store/appStore/slices/providerSlice"
 import { getReasoningEffortForProvider } from "@shared/utils/reasoningEffort"
 import type { SkillDefinition } from "@shared/types/skill"
 import { ChatHeader } from "@/components/app/ChatHeader"
-import { RightPanelMenu } from "@/components/app/RightPanelLauncher"
+import {
+  EnvironmentCard,
+  EnvironmentLauncher,
+  type EnvironmentSource,
+} from "@/components/app/RightPanelLauncher"
 import { HomeDashboard } from "@/components/app/HomeDashboard"
 import { MessageList } from "@/components/app/MessageList"
 import { useGuidanceQueue } from "@/hooks/useGuidanceQueue"
@@ -51,6 +55,7 @@ import {
 import type { ChatItem } from "@shared/types/chatMessages"
 import type { SessionPermissionMode } from "@services/chat/AgentService"
 import { useNewSessionPermission } from "@shared/store/newSessionPermission"
+import { collectSessionFileChanges } from "@/lib/sessionFileChanges"
 
 /** Secondary (split) pane config — a slim header with its own session picker. */
 type SecondaryConfig = {
@@ -121,6 +126,8 @@ export function ChatPane({
   onOpenWorkspacePicker,
   onOpenInspector,
   onOpenReview,
+  sidePaneOpen,
+  onToggleSidePane,
   splitOpen,
   onToggleSplit,
   onSelectSubAgent,
@@ -137,6 +144,8 @@ export function ChatPane({
   onOpenWorkspacePicker: () => void
   onOpenInspector: () => void
   onOpenReview?: () => void
+  sidePaneOpen?: boolean
+  onToggleSidePane?: () => void
   splitOpen: boolean
   onToggleSplit: () => void
   /** Opens a child without replacing this pane's current session. */
@@ -189,13 +198,13 @@ export function ChatPane({
   // The secondary chat hook remains mounted when its pane closes. Read state
   // follows the rendered pane, including the same breakpoint as its md:flex.
   const splitVisible = useMediaQuery("(min-width: 768px)")
-  const workbenchMenuWide = useMediaQuery("(min-width: 1280px)")
+  const environmentWide = useMediaQuery("(min-width: 1280px)")
   useMarkSessionRead(!secondary || splitVisible ? currentChat : null)
-  const [workbenchMenuOpen, setWorkbenchMenuOpen] = useState(false)
-  const workbenchMenuId = useId()
+  const [environmentOpen, setEnvironmentOpen] = useState(false)
+  const environmentId = useId()
 
   useEffect(() => {
-    setWorkbenchMenuOpen(false)
+    setEnvironmentOpen(false)
   }, [currentSessionId])
 
   // Live in-run token budget (pushed over the agent channel) — beats the
@@ -330,6 +339,55 @@ export function ChatPane({
     pendingProjectId ? state.projects[pendingProjectId]?.project_path : undefined,
   )
   const displayWorkspace = workspacePath ?? selectedProjectPath ?? pickedWorkspace
+  const currentProjectName = useAppStore((state) => {
+    const projectId = currentChat?.config?.projectId
+    return projectId ? state.projects[projectId]?.name : undefined
+  })
+  const sessionFileChanges = useMemo(() => collectSessionFileChanges(messages), [messages])
+  const fileChangeSummary = useMemo(() => {
+    const filePaths = new Set<string>()
+    let addedLines = 0
+    let removedLines = 0
+
+    for (const change of sessionFileChanges) {
+      filePaths.add(change.payload.file_path)
+      addedLines += change.payload.diff.added_lines ?? 0
+      removedLines += change.payload.diff.removed_lines ?? 0
+    }
+
+    return { changedFiles: filePaths.size, addedLines, removedLines }
+  }, [sessionFileChanges])
+  const environmentSources = useMemo<EnvironmentSource[]>(() => {
+    const sources = new Map<string, EnvironmentSource>()
+    const addPath = (path: string) => {
+      const name = path.split(/[\\/]/).filter(Boolean).at(-1) ?? path
+      sources.set(`file:${path}`, { id: `file:${path}`, name, kind: "file" })
+    }
+
+    for (const message of messages) {
+      if ("images" in message) {
+        for (const image of message.images ?? []) {
+          sources.set(`image:${image.id}`, {
+            id: `image:${image.id}`,
+            name: image.name,
+            kind: "image",
+          })
+        }
+      }
+      if ("type" in message && message.type === "file_reference") {
+        for (const path of message.paths) addPath(path)
+      }
+    }
+    for (const attachment of attachments) {
+      sources.set(`draft:${attachment.id}`, {
+        id: `draft:${attachment.id}`,
+        name: attachment.name,
+        kind: "image",
+      })
+    }
+
+    return [...sources.values()]
+  }, [attachments, messages])
   const [workspaceFiles, setWorkspaceFiles] = useState<WorkspaceFileEntry[]>([])
   const filesLoadedForRef = useRef<string | null>(null)
   useEffect(() => {
@@ -521,7 +579,7 @@ export function ChatPane({
   }
 
   const launchWorkbench = (action: () => void) => {
-    setWorkbenchMenuOpen(false)
+    setEnvironmentOpen(false)
     action()
   }
   const selectSubAgentInPane = onSelectSubAgent ?? secondary?.onPickSession ?? select
@@ -546,12 +604,17 @@ export function ChatPane({
       onClick: () => launchWorkbench(onToggleSplit),
     },
   ]
-  const workbenchMenu = !secondary && currentSessionId && workbenchMenuOpen ? (
-    <RightPanelMenu
-      id={workbenchMenuId}
-      onOpenInspector={() => launchWorkbench(onOpenInspector)}
+  const environmentCard = !secondary && currentSessionId && environmentOpen ? (
+    <EnvironmentCard
+      id={environmentId}
+      workspace={displayWorkspace}
+      projectName={currentProjectName}
+      placement={currentChat?.placement}
+      changedFiles={fileChangeSummary.changedFiles}
+      addedLines={fileChangeSummary.addedLines}
+      removedLines={fileChangeSummary.removedLines}
+      sources={environmentSources}
       onOpenReview={() => launchWorkbench(onOpenReview ?? onOpenInspector)}
-      onOpenSession={() => launchWorkbench(onToggleSplit)}
     />
   ) : null
 
@@ -623,21 +686,35 @@ export function ChatPane({
             hasSession={!!currentSessionId}
             overflowItems={overflowItems}
             onOpenSidebar={onOpenSidebar}
-            workbenchMenuOpen={workbenchMenuOpen}
-            workbenchMenuId={workbenchMenuId}
-            onToggleWorkbenchMenu={() => setWorkbenchMenuOpen((open) => !open)}
+            environment={
+              <EnvironmentLauncher
+                open={environmentOpen}
+                controlsId={environmentId}
+                onToggle={() => setEnvironmentOpen((open) => !open)}
+              />
+            }
+            sidePaneOpen={sidePaneOpen ?? false}
+            onToggleSidePane={() => launchWorkbench(onToggleSidePane ?? onOpenInspector)}
             sidebarCollapsed={sidebarCollapsed}
           />
         )}
 
-        <div data-chat-layout className="flex min-h-0 flex-1">
-          <div data-chat-body className="relative flex min-w-0 flex-1 flex-col">
-            {!workbenchMenuWide && workbenchMenu ? (
+        <div data-chat-layout className="relative flex min-h-0 flex-1">
+          <div
+            data-chat-body
+            className="relative flex min-w-0 flex-1 flex-col"
+            style={
+              environmentWide && environmentCard
+                ? { paddingRight: "21.5rem" }
+                : undefined
+            }
+          >
+            {!environmentWide && environmentCard ? (
               <div
-                data-workbench-launcher-inline
+                data-environment-inline
                 className="flex shrink-0 justify-end border-b p-3"
               >
-                {workbenchMenu}
+                {environmentCard}
               </div>
             ) : null}
 
@@ -692,7 +769,7 @@ export function ChatPane({
           pendingUserText={pendingUserText}
           forking={forking}
           onSelectSubAgent={(childId) => {
-            setWorkbenchMenuOpen(false)
+            setEnvironmentOpen(false)
             selectSubAgentInPane(childId)
           }}
           onPreviewImage={setPreview}
@@ -829,14 +906,14 @@ export function ChatPane({
         />
           </div>
 
-          {workbenchMenuWide && workbenchMenu ? (
-            <aside
-              data-workbench-launcher-rail
-              aria-label="工作面板快捷区域"
-              className="shrink-0 p-3"
+          {environmentWide && environmentCard ? (
+            <div
+              data-environment-floating
+              className="absolute z-30"
+              style={{ right: "0.75rem", top: "0.75rem" }}
             >
-              {workbenchMenu}
-            </aside>
+              {environmentCard}
+            </div>
           ) : null}
         </div>
       </div>

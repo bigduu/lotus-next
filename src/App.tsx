@@ -152,6 +152,9 @@ function App() {
     setWorkbenchTab(tab)
     setWorkbenchOpen(true)
   }
+  const toggleWorkbench = () => {
+    setWorkbenchOpen((open) => !open)
+  }
   const toggleSideSession = () => {
     if (workbenchOpen && workbenchTab === "session") {
       setWorkbenchOpen(false)
@@ -206,6 +209,8 @@ function App() {
         onOpenWorkspacePicker={() => setWsPickerOpen(true)}
         onOpenInspector={() => openWorkbench("inspector")}
         onOpenReview={() => openWorkbench("review")}
+        sidePaneOpen={workbenchOpen}
+        onToggleSidePane={toggleWorkbench}
         splitOpen={workbenchOpen && workbenchTab === "session"}
         onToggleSplit={toggleSideSession}
         onSelectSubAgent={openSubagentPreview}

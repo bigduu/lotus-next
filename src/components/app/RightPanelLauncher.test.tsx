@@ -1,7 +1,11 @@
 import { act } from "react"
 import { createRoot, type Root } from "react-dom/client"
 import { afterAll, afterEach, beforeAll, expect, it, vi } from "vitest"
-import { RightPanelLauncher, RightPanelMenu } from "./RightPanelLauncher"
+import {
+  EnvironmentCard,
+  EnvironmentLauncher,
+  RightPanelLauncher,
+} from "./RightPanelLauncher"
 
 const roots: Root[] = []
 const actEnvironment = globalThis as typeof globalThis & {
@@ -21,7 +25,25 @@ afterEach(() => {
   document.body.replaceChildren()
 })
 
-it("exposes the collapsed workbench menu without creating an overlay", async () => {
+it("opens the side pane directly", async () => {
+  const host = document.body.appendChild(document.createElement("div"))
+  const root = createRoot(host)
+  roots.push(root)
+  const toggle = vi.fn()
+
+  await act(async () => {
+    root.render(<RightPanelLauncher open={false} onToggle={toggle} />)
+  })
+  const launcher = host.querySelector<HTMLButtonElement>("button")
+
+  expect(launcher?.getAttribute("aria-label")).toBe("打开侧边面板")
+  expect(launcher?.getAttribute("aria-expanded")).toBe("false")
+  expect(launcher?.getAttribute("aria-controls")).toBe("right-workbench")
+  await act(async () => launcher?.click())
+  expect(toggle).toHaveBeenCalledTimes(1)
+})
+
+it("exposes Environment independently from the side pane", async () => {
   const host = document.body.appendChild(document.createElement("div"))
   const root = createRoot(host)
   roots.push(root)
@@ -29,23 +51,23 @@ it("exposes the collapsed workbench menu without creating an overlay", async () 
 
   await act(async () => {
     root.render(
-      <RightPanelLauncher
+      <EnvironmentLauncher
         open
-        controlsId="workbench-menu"
+        controlsId="environment-card"
         onToggle={toggle}
       />,
     )
   })
   const launcher = host.querySelector<HTMLButtonElement>("button")
 
+  expect(launcher?.getAttribute("aria-label")).toBe("收起 Environment")
   expect(launcher?.getAttribute("aria-expanded")).toBe("true")
-  expect(launcher?.getAttribute("aria-controls")).toBe("workbench-menu")
+  expect(launcher?.getAttribute("aria-controls")).toBe("environment-card")
   await act(async () => launcher?.click())
   expect(toggle).toHaveBeenCalledTimes(1)
-  expect(document.querySelector("[data-radix-popper-content-wrapper]")).toBeNull()
 })
 
-it("renders menu actions as normal in-flow content", async () => {
+it("renders truthful Environment details without a popup portal", async () => {
   const host = document.body.appendChild(document.createElement("div"))
   const root = createRoot(host)
   roots.push(root)
@@ -54,22 +76,35 @@ it("renders menu actions as normal in-flow content", async () => {
   await act(async () => {
     root.render(
       <div data-layout-slot>
-        <RightPanelMenu
-          id="workbench-menu"
-          onOpenInspector={vi.fn()}
+        <EnvironmentCard
+          id="environment-card"
+          workspace="/workspace/zenith"
+          projectName="Zenith"
+          placement={{ kind: "local", host: "Mac" }}
+          changedFiles={2}
+          addedLines={3}
+          removedLines={1}
+          sources={[{ id: "image:1", name: "reference.png", kind: "image" }]}
           onOpenReview={openReview}
-          onOpenSession={vi.fn()}
         />
       </div>,
     )
   })
 
-  const menu = host.querySelector<HTMLElement>("[data-workbench-launcher-menu]")
-  expect(menu?.parentElement?.hasAttribute("data-layout-slot")).toBe(true)
-  const review = Array.from(host.querySelectorAll<HTMLButtonElement>("button")).find(
-    (button) => button.textContent?.includes("查看当前会话产生的文件变更"),
-  )
-  await act(async () => review?.click())
+  const card = host.querySelector<HTMLElement>("[data-environment-card]")
+  expect(card?.parentElement?.hasAttribute("data-layout-slot")).toBe(true)
+  expect(card?.textContent).toContain("Environment")
+  expect(card?.textContent).toContain("Changes")
+  expect(card?.textContent).toContain("Local")
+  expect(card?.textContent).toContain("zenith")
+  expect(card?.textContent).toContain("Zenith")
+  expect(card?.textContent).toContain("reference.png")
+  expect(card?.textContent).not.toContain("Create pull request")
 
+  const changes = Array.from(host.querySelectorAll<HTMLButtonElement>("button")).find(
+    (button) => button.textContent?.includes("Changes"),
+  )
+  await act(async () => changes?.click())
   expect(openReview).toHaveBeenCalledTimes(1)
+  expect(document.querySelector("[data-radix-popper-content-wrapper]")).toBeNull()
 })

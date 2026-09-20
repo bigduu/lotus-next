@@ -72,6 +72,7 @@ export function RightWorkbench({
 
   const panel = (
     <aside
+      id="right-workbench"
       aria-label="工作面板"
       className={cn(
         "flex min-h-0 flex-col bg-card",

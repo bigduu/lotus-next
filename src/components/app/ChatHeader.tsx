@@ -15,18 +15,18 @@ export function ChatHeader({
   hasSession,
   overflowItems,
   onOpenSidebar,
-  workbenchMenuOpen,
-  workbenchMenuId,
-  onToggleWorkbenchMenu,
+  environment,
+  sidePaneOpen,
+  onToggleSidePane,
   sidebarCollapsed,
 }: {
   title: string
   hasSession: boolean
   overflowItems: OverflowItem[]
   onOpenSidebar: () => void
-  workbenchMenuOpen: boolean
-  workbenchMenuId: string
-  onToggleWorkbenchMenu: () => void
+  environment: ReactNode
+  sidePaneOpen: boolean
+  onToggleSidePane: () => void
   /** Desktop: sidebar is collapsed, so show the menu button to bring it back. */
   sidebarCollapsed: boolean
 }) {
@@ -57,11 +57,10 @@ export function ChatHeader({
       ) : null}
       <OverflowMenu items={overflowItems} />
       {hasSession ? (
-        <RightPanelLauncher
-          open={workbenchMenuOpen}
-          controlsId={workbenchMenuId}
-          onToggle={onToggleWorkbenchMenu}
-        />
+        <>
+          {environment}
+          <RightPanelLauncher open={sidePaneOpen} onToggle={onToggleSidePane} />
+        </>
       ) : null}
     </header>
   )
