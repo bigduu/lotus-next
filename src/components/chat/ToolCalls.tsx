@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react"
+import { useState } from "react"
 import { Wrench, ChevronRight, Loader2 } from "lucide-react"
 import type { Message } from "@shared/types/chatMessages"
 import { cn } from "@/lib/utils"
@@ -223,19 +223,15 @@ function EntryRow({ e }: { e: Entry }) {
 
 /**
  * Compact, balanced tool-call display. Collapsed = a single pill showing real
- * tool names. The active (streaming) round auto-expands with a spinner and
- * shows the details of the latest few tools; once finished it auto-collapses.
+ * tool names. Active rounds stay collapsed by default while their spinner
+ * remains visible; users can expand a group without streaming updates
+ * overriding that choice.
  * To avoid a wall of detail, only the latest {VISIBLE_CAP} tools render expanded
  * — earlier ones fold behind a "展开更早的 N 个" toggle.
  */
 export function ToolCalls({ items, active }: { items: Message[]; active?: boolean }) {
-  const [open, setOpen] = useState(Boolean(active))
-  const [touched, setTouched] = useState(false)
+  const [open, setOpen] = useState(false)
   const [showAll, setShowAll] = useState(false)
-
-  useEffect(() => {
-    if (!touched) setOpen(Boolean(active))
-  }, [active, touched])
 
   const entries = buildEntries(items)
   const uniqueNames = Array.from(new Set(entries.map((e) => e.toolName).filter(Boolean)))
@@ -254,10 +250,8 @@ export function ToolCalls({ items, active }: { items: Message[]; active?: boolea
       <div className="w-full max-w-[85%]">
         <button
           type="button"
-          onClick={() => {
-            setTouched(true)
-            setOpen((v) => !v)
-          }}
+          onClick={() => setOpen((v) => !v)}
+          aria-expanded={open}
           className="inline-flex max-w-full items-center gap-1.5 rounded-full bg-muted/60 px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted"
         >
           {active ? (
