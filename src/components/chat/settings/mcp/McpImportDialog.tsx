@@ -6,27 +6,32 @@ import {
 } from "@/components/ui/responsive-dialog"
 import {
   MAX_MCP_IMPORT_BYTES, McpImportFailure, mcpIdsKey, parseMcpImport, previewMcpImport,
+  type McpImportFailureKind,
 } from "@services/mcp/importConfig"
 import type { McpImportMode, McpImportRequest, McpImportResult } from "@services/mcp/types"
 
-export interface McpImportCompletion { result: McpImportResult; refreshed: boolean }
+export interface McpImportCompletion { result: McpImportResult; refreshed: boolean; reconciled?: boolean }
+type ReconcileIntent = { request: McpImportRequest; existingIds: string[] }
+type Activity = "importing" | "reconciling" | "refreshing"
 
-export function McpImportDialog({ existingIds, listConfirmed, listRevision, onClose, onReturnFocus, onImport, onReload }: {
+export function McpImportDialog({ existingIds, listConfirmed, listRevision, onClose, onReturnFocus, onImport, onReconcile, onReload }: {
   existingIds: string[]
   listConfirmed: boolean
   listRevision: number
   onClose: () => void
   onReturnFocus: () => void
-  onImport: (request: McpImportRequest, expectedIdsKey: string) => Promise<McpImportCompletion>
+  onImport: (request: McpImportRequest, expectedIds: string[]) => Promise<McpImportCompletion>
+  onReconcile: (request: McpImportRequest, expectedIds: string[]) => Promise<McpImportCompletion>
   onReload: () => Promise<boolean>
 }) {
   const [draft, setDraft] = useState({ text: "", revision: 0 })
   const [mode, setMode] = useState<McpImportMode>("merge")
   const [acceptedKey, setAcceptedKey] = useState<string | null>(null)
   const [reading, setReading] = useState(false)
-  const [busy, setBusy] = useState(false)
+  const [activity, setActivity] = useState<Activity | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [uncertain, setUncertain] = useState(false)
+  const [failureKind, setFailureKind] = useState<McpImportFailureKind | null>(null)
+  const [reconcileIntent, setReconcileIntent] = useState<ReconcileIntent | null>(null)
   const [completion, setCompletion] = useState<McpImportCompletion | null>(null)
   const alive = useRef(true)
   const busyRef = useRef(false)
@@ -44,6 +49,8 @@ export function McpImportDialog({ existingIds, listConfirmed, listRevision, onCl
   // No JSON or secret-bearing content in the confirmation token.
   const confirmationKey = JSON.stringify([draft.revision, mode, listRevision, existingKey, mcpIdsKey(preview.removed)])
   const confirmed = acceptedKey === confirmationKey && listConfirmed
+  const uncertain = failureKind === "uncertain"
+  const busy = activity !== null
   const canSubmit = parsed.ok && listConfirmed && !busy && !reading && !uncertain && !completion && (mode === "merge" || confirmed)
 
   const edit = (text: string) => {
@@ -51,7 +58,7 @@ export function McpImportDialog({ existingIds, listConfirmed, listRevision, onCl
     fileRead.current += 1
     setReading(false)
     setDraft((previous) => ({ text, revision: previous.revision + 1 }))
-    setAcceptedKey(null); setError(null); setUncertain(false)
+    setAcceptedKey(null); setError(null); setFailureKind(null); setReconcileIntent(null)
   }
   const selectFile = async (file: File | undefined) => {
     if (!file || busyRef.current) return
@@ -69,39 +76,67 @@ export function McpImportDialog({ existingIds, listConfirmed, listRevision, onCl
       if (alive.current && generation === fileRead.current) setReading(false)
     }
   }
+  const finish = (result: McpImportCompletion) => {
+    setCompletion(result)
+    setDraft((previous) => ({ text: "", revision: previous.revision + 1 }))
+    setAcceptedKey(null); setError(null); setFailureKind(null); setReconcileIntent(null)
+  }
+  const fail = (failure: unknown, intent?: ReconcileIntent) => {
+    const safe = failure instanceof McpImportFailure ? failure : new McpImportFailure("uncertain")
+    setError(safe.message); setFailureKind(safe.kind); setAcceptedKey(null)
+    setReconcileIntent(safe.kind === "uncertain" ? intent ?? null : null)
+  }
+  const reconcile = async (intent: ReconcileIntent) => {
+    try {
+      const result = await onReconcile(intent.request, intent.existingIds)
+      if (alive.current) finish(result)
+    } catch (failure) {
+      if (alive.current) fail(failure, intent)
+    }
+  }
   const submit = async () => {
     if (busyRef.current || !canSubmit || !parsed.ok) return
+    const intent = { request: { mcpServers: parsed.value.mcpServers, mode }, existingIds: [...existingIds] }
     busyRef.current = true
-    setBusy(true); setError(null)
+    setActivity("importing"); setError(null); setFailureKind(null); setReconcileIntent(null)
     try {
-      const result = await onImport({ mcpServers: parsed.value.mcpServers, mode }, existingKey)
+      const result = await onImport(intent.request, intent.existingIds)
       if (!alive.current) return
-      setCompletion(result)
-      setDraft((previous) => ({ text: "", revision: previous.revision + 1 }))
-      setAcceptedKey(null)
+      finish(result)
     } catch (failure) {
       if (!alive.current) return
       const safe = failure instanceof McpImportFailure ? failure : new McpImportFailure("uncertain")
-      setError(safe.message); setUncertain(safe.kind === "uncertain")
-      setAcceptedKey(null)
+      if (safe.kind === "uncertain") { setActivity("reconciling"); await reconcile(intent) }
+      else fail(safe)
     } finally {
       busyRef.current = false
-      if (alive.current) setBusy(false)
+      if (alive.current) setActivity(null)
+    }
+  }
+  const retryReconcile = async () => {
+    if (busyRef.current || !reconcileIntent) return
+    busyRef.current = true
+    setActivity("reconciling"); setError(null); setFailureKind(null)
+    try {
+      await reconcile(reconcileIntent)
+    } finally {
+      busyRef.current = false
+      if (alive.current) setActivity(null)
     }
   }
   const refresh = async () => {
     if (busyRef.current) return
-    busyRef.current = true; setBusy(true); setAcceptedKey(null)
+    busyRef.current = true; setActivity("refreshing"); setAcceptedKey(null); setError(null); setFailureKind(null)
     try {
       const refreshed = await onReload()
       if (!alive.current) return
       if (completion) setCompletion({ ...completion, refreshed })
-      if (!refreshed) setError("无法刷新实际列表，请稍后再试；没有发送导入请求。")
+      if (!refreshed) { setError("无法刷新实际列表，请稍后再试；没有发送导入请求。"); setFailureKind("list_unavailable") }
     } catch {
-      if (alive.current) setError("无法刷新实际列表，请稍后再试；没有发送导入请求。")
+      if (alive.current) { setError("无法刷新实际列表，请稍后再试；没有发送导入请求。"); setFailureKind("list_unavailable") }
     } finally {
       busyRef.current = false
-      if (alive.current) setBusy(false)
+      if (alive.current) setActivity(null)
     }
   }
   const close = () => { if (!busyRef.current) { fileRead.current += 1; onClose() } }
@@ -120,10 +155,14 @@ export function McpImportDialog({ existingIds, listConfirmed, listRevision, onCl
         <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4">
           {completion ? (
             <section role="status" aria-label="导入结果" className="space-y-2 rounded-md border p-3 text-sm">
-              <h3 className="font-medium">导入已完成</h3>
+              <h3 className="font-medium">{completion.reconciled ? "导入已确认" : "导入已完成"}</h3>
               <p>新增 {completion.result.added} · 更新 {completion.result.updated} · 删除 {completion.result.removed}</p>
               <p className="break-all text-xs">服务器 ID：{completion.result.server_ids.join("、")}</p>
-              <p className="text-xs text-muted-foreground">{completion.refreshed ? "实际服务器列表与运行状态已刷新。" : "配置已提交，但列表刷新失败。请刷新实际列表核对运行状态。"}</p>
+              <p className="text-xs text-muted-foreground">{completion.reconciled
+                ? "已自动核对实际服务器列表，导入项已显示。"
+                : completion.refreshed
+                  ? "实际服务器列表与运行状态已刷新。"
+                  : "配置已提交，运行状态将在后台自动刷新。"}</p>
             </section>
           ) : (
             <>
@@ -148,7 +187,7 @@ export function McpImportDialog({ existingIds, listConfirmed, listRevision, onCl
                   <label key={value} className="flex items-center gap-2 text-sm">
                     <input type="radio" name="mcp-import-mode" value={value} checked={mode === value} onChange={() => {
                       if (busyRef.current) return
-                      setMode(value); setAcceptedKey(null); setError(null); setUncertain(false)
+                      setMode(value); setAcceptedKey(null); setError(null); setFailureKind(null); setReconcileIntent(null)
                     }} />
                     {value === "merge" ? "Merge（按 ID 合并）" : "Replace（替换全部）"}
                   </label>
@@ -183,13 +222,19 @@ export function McpImportDialog({ existingIds, listConfirmed, listRevision, onCl
               {!listConfirmed ? <p role="alert" className="text-xs text-destructive">当前服务器列表尚未确认，请刷新后再导入。</p> : null}
             </>
           )}
-          {error ? <p role="alert" className="text-xs text-destructive">{error}</p> : null}
-          {uncertain ? <p className="text-xs text-muted-foreground">核对实际列表后，修改配置或重新选择模式才能开始新的导入；不会重放本次写入。</p> : null}
+          {uncertain ? (
+            <section role="status" className="space-y-1 rounded-md border p-3 text-xs">
+              <h3 className="font-medium">暂时无法确认</h3>
+              <p className="text-muted-foreground">{error} 可以再次核对，或关闭窗口稍后在服务器列表查看。</p>
+            </section>
+          ) : error ? <p role="alert" className="text-xs text-destructive">{error}</p> : null}
         </div>
         <div className="flex flex-wrap justify-end gap-2 border-t p-3">
-          {(error || !listConfirmed || (completion && !completion.refreshed)) ? <Button size="sm" variant="ghost" disabled={busy} onClick={() => void refresh()}>刷新当前列表</Button> : null}
-          <Button ref={cancel} size="sm" variant="secondary" disabled={busy} onClick={close}>{completion ? "完成" : "取消"}</Button>
-          {!completion ? <Button size="sm" disabled={!canSubmit} onClick={() => void submit()}>{busy ? "导入中…" : "导入"}</Button> : null}
+          {uncertain && reconcileIntent ? <Button size="sm" variant="ghost" disabled={busy} onClick={() => void retryReconcile()}>再次核对</Button> : null}
+          {!completion && !uncertain && (!listConfirmed || failureKind === "list_unavailable") ? <Button size="sm" variant="ghost" disabled={busy} onClick={() => void refresh()}>刷新当前列表</Button> : null}
+          {completion && !completion.refreshed ? <Button size="sm" variant="ghost" disabled={busy} onClick={() => void refresh()}>刷新运行状态</Button> : null}
+          <Button ref={cancel} size="sm" variant="secondary" disabled={busy} onClick={close}>{completion ? "完成" : uncertain ? "关闭" : "取消"}</Button>
+          {!completion ? <Button size="sm" disabled={!canSubmit} onClick={() => void submit()}>{activity === "importing" ? "导入中…" : activity === "reconciling" ? "核对中…" : "导入"}</Button> : null}
         </div>
       </ResponsiveDialogContent>
     </ResponsiveDialog>

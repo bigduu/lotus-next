@@ -1,9 +1,40 @@
 import { describe, expect, it } from "vitest";
-import { MAX_MCP_IMPORT_BYTES, McpImportFailure, mcpIdsKey, parseMcpImport, previewMcpImport, readMcpImportResult } from "./importConfig";
+import {
+  isMcpImportReflected,
+  MAX_MCP_IMPORT_BYTES,
+  McpImportFailure,
+  mcpIdsKey,
+  parseMcpImport,
+  previewMcpImport,
+  readMcpImportResult,
+} from "./importConfig";
+import { ServerStatus, type McpServer } from "./types";
 
 const json = (mcpServers: unknown) => JSON.stringify({ mcpServers });
 const secret = "IMPORT_SECRET_MUST_NOT_APPEAR";
 const stdio = { command: "fixture-mcp", args: ["--stdio"], env: { TOKEN: secret } };
+const listedServer = (command = "fixture-mcp"): McpServer => ({
+  id: "incoming",
+  name: "incoming",
+  enabled: false,
+  config: {
+    id: "incoming",
+    enabled: false,
+    transport: {
+      type: "stdio",
+      command,
+      args: ["--stdio"],
+      env: { TOKEN: "****...****" },
+      startup_timeout_ms: 20_000,
+    },
+    request_timeout_ms: 60_000,
+    healthcheck_interval_ms: 30_000,
+    reconnect: { enabled: true, initial_backoff_ms: 1000, max_backoff_ms: 30_000, max_attempts: 0 },
+    allowed_tools: [],
+    denied_tools: [],
+  },
+  runtime: { status: ServerStatus.Stopped, tool_count: 0, restart_count: 0 },
+});
 
 describe("MCP JSON import validation and safe preview", () => {
   it("preserves flat/internal stdio, SSE and HTTP entries with their actual enabled semantics", () => {
@@ -80,6 +111,23 @@ describe("MCP JSON import validation and safe preview", () => {
     expect(previewMcpImport(["new", "existing"], ["keep", "existing"], "merge")).toEqual({ added: ["new"], updated: ["existing"], removed: [] });
     expect(previewMcpImport(["new", "existing"], ["keep", "existing"], "replace")).toEqual({ added: ["new"], updated: ["existing"], removed: ["keep"] });
     expect(mcpIdsKey(["b", "a"])).toBe(mcpIdsKey(["a", "b"]));
+  });
+
+  it("reconciles an uncertain response from safe authoritative config without comparing secret values", () => {
+    const request = { mode: "merge" as const, mcpServers: {
+      incoming: { ...stdio, disabled: true },
+    } };
+    expect(isMcpImportReflected(request, [listedServer()])).toBe(true);
+    expect(isMcpImportReflected(request, [listedServer("different")])).toBe(false);
+    expect(JSON.stringify(listedServer())).not.toContain(secret);
+  });
+
+  it("requires Replace reconciliation to match the complete imported ID set", () => {
+    const request = { mode: "replace" as const, mcpServers: {
+      incoming: { ...stdio, disabled: true },
+    } };
+    expect(isMcpImportReflected(request, [listedServer()])).toBe(true);
+    expect(isMcpImportReflected(request, [listedServer(), { ...listedServer(), id: "extra", config: { ...listedServer().config, id: "extra" } }])).toBe(false);
   });
 
   it("returns only validated authoritative counts and IDs, never response messages", () => {

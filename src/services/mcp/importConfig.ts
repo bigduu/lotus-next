@@ -1,4 +1,14 @@
-import { MCP_SERVER_ID_PATTERN, type McpImportRequest, type McpImportResult, type TransportConfig } from "./types";
+import {
+  DEFAULT_HEALTHCHECK_INTERVAL_MS,
+  DEFAULT_REQUEST_TIMEOUT_MS,
+  DEFAULT_SSE_CONNECT_TIMEOUT_MS,
+  DEFAULT_STDIO_STARTUP_TIMEOUT_MS,
+  MCP_SERVER_ID_PATTERN,
+  type McpImportRequest,
+  type McpImportResult,
+  type McpServer,
+  type TransportConfig,
+} from "./types";
 
 export const MAX_MCP_IMPORT_BYTES = 1024 * 1024;
 const MAX_SERVERS = 500;
@@ -130,13 +140,134 @@ export function previewMcpImport(incomingIds: string[], existingIds: string[], m
   };
 }
 
-export type McpImportFailureKind = "busy" | "rejected" | "uncertain" | "list_changed" | "list_unavailable";
+const sortedStrings = (values: Iterable<string>) => [...new Set(values)].sort();
+const stringKeys = (value: unknown): string[] => isMcpRecord(value) ? Object.keys(value) : [];
+const headerNames = (value: unknown): string[] => {
+  if (Array.isArray(value)) {
+    return value.flatMap((header) => isMcpRecord(header) && typeof header.name === "string" ? [header.name] : []);
+  }
+  return stringKeys(value);
+};
+const reconnectShape = (value: unknown) => {
+  const reconnect = isMcpRecord(value) ? value : {};
+  return {
+    enabled: typeof reconnect.enabled === "boolean" ? reconnect.enabled : true,
+    initial_backoff_ms: typeof reconnect.initial_backoff_ms === "number" ? reconnect.initial_backoff_ms : 1000,
+    max_backoff_ms: typeof reconnect.max_backoff_ms === "number" ? reconnect.max_backoff_ms : 30_000,
+    max_attempts: typeof reconnect.max_attempts === "number" ? reconnect.max_attempts : 0,
+  };
+};
+
+function comparableImportedServer(
+  raw: Record<string, unknown>,
+  preview: McpImportPreviewServer,
+) {
+  const internal = isMcpRecord(raw.transport);
+  const transport = internal ? raw.transport as Record<string, unknown> : raw;
+  const common = {
+    name: typeof raw.name === "string" ? raw.name : null,
+    enabled: preview.enabled,
+    request_timeout_ms: typeof raw.request_timeout_ms === "number" ? raw.request_timeout_ms : DEFAULT_REQUEST_TIMEOUT_MS,
+    healthcheck_interval_ms: typeof raw.healthcheck_interval_ms === "number" ? raw.healthcheck_interval_ms : DEFAULT_HEALTHCHECK_INTERVAL_MS,
+    reconnect: reconnectShape(raw.reconnect),
+    allowed_tools: sortedStrings(Array.isArray(raw.allowed_tools) ? raw.allowed_tools.filter(string) : []),
+    denied_tools: sortedStrings(Array.isArray(raw.denied_tools) ? raw.denied_tools.filter(string) : []),
+  };
+  if (preview.transport === "stdio") {
+    return { ...common, transport: {
+      type: "stdio",
+      command: transport.command,
+      args: Array.isArray(transport.args) ? transport.args : [],
+      cwd: typeof transport.cwd === "string" ? transport.cwd : null,
+      env_names: sortedStrings([
+        ...stringKeys(transport.env),
+        ...stringKeys(transport.env_encrypted),
+        // Credential values are intentionally unverifiable, but their names
+        // remain safe metadata when the backend exposes them.
+        ...stringKeys(transport.env_credential_refs),
+      ]),
+      startup_timeout_ms: typeof transport.startup_timeout_ms === "number"
+        ? transport.startup_timeout_ms
+        : DEFAULT_STDIO_STARTUP_TIMEOUT_MS,
+    } };
+  }
+  return { ...common, transport: {
+    type: preview.transport,
+    url: transport.url,
+    header_names: sortedStrings([
+      ...headerNames(transport.headers),
+      ...stringKeys(raw.headers_encrypted),
+      ...stringKeys(raw.header_credential_refs),
+    ]),
+    connect_timeout_ms: typeof transport.connect_timeout_ms === "number"
+      ? transport.connect_timeout_ms
+      : DEFAULT_SSE_CONNECT_TIMEOUT_MS,
+  } };
+}
+
+function comparableActualServer(server: McpServer) {
+  const config = server.config;
+  const common = {
+    name: typeof config.name === "string" ? config.name : null,
+    enabled: config.enabled,
+    request_timeout_ms: config.request_timeout_ms,
+    healthcheck_interval_ms: config.healthcheck_interval_ms,
+    reconnect: reconnectShape(config.reconnect),
+    allowed_tools: sortedStrings(config.allowed_tools),
+    denied_tools: sortedStrings(config.denied_tools),
+  };
+  if (config.transport.type === "stdio") {
+    return { ...common, transport: {
+      type: "stdio",
+      command: config.transport.command,
+      args: config.transport.args,
+      cwd: config.transport.cwd ?? null,
+      env_names: sortedStrings(Object.keys(config.transport.env)),
+      startup_timeout_ms: config.transport.startup_timeout_ms ?? DEFAULT_STDIO_STARTUP_TIMEOUT_MS,
+    } };
+  }
+  return { ...common, transport: {
+    type: config.transport.type,
+    url: config.transport.url,
+    header_names: sortedStrings(config.transport.headers.map((header) => header.name)),
+    connect_timeout_ms: config.transport.connect_timeout_ms ?? DEFAULT_SSE_CONNECT_TIMEOUT_MS,
+  } };
+}
+
+/**
+ * Check whether an uncertain import's desired public configuration is already
+ * reflected by an authoritative list read. Secret values stay redacted; only
+ * their safe key/header names participate in reconciliation.
+ */
+export function isMcpImportReflected(request: McpImportRequest, current: McpServer[]): boolean {
+  let parsed: McpImportValidation;
+  try {
+    parsed = parseMcpImport(JSON.stringify({ mcpServers: request.mcpServers }));
+  } catch {
+    return false;
+  }
+  if (!parsed.ok) return false;
+  const incomingIds = parsed.value.servers.map((server) => server.id);
+  if (request.mode === "replace" && mcpIdsKey(current.map((server) => server.id)) !== mcpIdsKey(incomingIds)) {
+    return false;
+  }
+  const currentById = new Map(current.map((server) => [server.id, server]));
+  return parsed.value.servers.every((preview) => {
+    const raw = request.mcpServers[preview.id];
+    const actual = currentById.get(preview.id);
+    return isMcpRecord(raw) && actual !== undefined &&
+      JSON.stringify(comparableImportedServer(raw, preview)) === JSON.stringify(comparableActualServer(actual));
+  });
+}
+
+export type McpImportFailureKind = "busy" | "rejected" | "uncertain" | "not_applied" | "list_changed" | "list_unavailable";
 export class McpImportFailure extends Error {
   constructor(public readonly kind: McpImportFailureKind) {
     super({
       busy: "已有导入正在进行。请等待完成后刷新列表；没有再次发送导入请求。",
       rejected: "服务器拒绝了导入，未提交配置。请检查配置后重新操作；错误详情已隐藏。",
-      uncertain: "导入结果尚未确认，配置可能已更新。请刷新实际列表核对；没有自动重发请求。",
+      uncertain: "暂时无法确认导入结果。系统已停止后续操作，也不会重复提交。",
+      not_applied: "已自动核对实际列表，本次配置没有生效。可以重新导入。",
       list_changed: "当前服务器列表已变化。请重新查看预览并确认；尚未发送导入请求。",
       list_unavailable: "无法确认当前服务器列表。请刷新后重新预览；尚未发送导入请求。",
     }[kind]);

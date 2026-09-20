@@ -35,7 +35,9 @@ async function mount(overrides: Partial<ComponentProps<typeof McpImportDialog>> 
   const props = {
     existingIds: ["existing", "keep"], listConfirmed: true, listRevision: 1,
     onClose: vi.fn(() => root.render(null)), onReturnFocus: vi.fn(),
-    onImport: vi.fn().mockResolvedValue(result), onReload: vi.fn().mockResolvedValue(true), ...overrides,
+    onImport: vi.fn().mockResolvedValue(result),
+    onReconcile: vi.fn().mockResolvedValue({ ...result, reconciled: true }),
+    onReload: vi.fn().mockResolvedValue(true), ...overrides,
   }
   const render = async (next = props) => act(async () => { root.render(<McpImportDialog {...next} />) })
   await render()
@@ -61,7 +63,7 @@ describe("McpImportDialog", () => {
     expect(preview.textContent).not.toContain("PRIVATE_IMPORT_MARKER")
     expect(document.body.textContent).toContain("不递归合并字段")
     await click("导入")
-    expect(props.onImport).toHaveBeenCalledExactlyOnceWith({ ...JSON.parse(source), mode: "merge" }, expect.any(String))
+    expect(props.onImport).toHaveBeenCalledExactlyOnceWith({ ...JSON.parse(source), mode: "merge" }, ["existing", "keep"])
     // The explicit mode belongs to the API payload, not the pasted root object.
     expect(vi.mocked(props.onImport).mock.calls[0][0].mode).toBe("merge")
     expect(document.querySelector('[aria-label="导入结果"]')?.textContent).toContain("新增 1 · 更新 0 · 删除 0")
@@ -171,16 +173,43 @@ describe("McpImportDialog", () => {
     expect(props.onImport).not.toHaveBeenCalled()
   })
 
-  it("keeps uncertain outcomes distinct from success and permits only read refresh until a new intent", async () => {
+  it("automatically reconciles an uncertain response against the actual list", async () => {
     const onImport = vi.fn().mockRejectedValue(new McpImportFailure("uncertain"))
-    const { props } = await mount({ onImport })
+    const onReconcile = vi.fn().mockResolvedValue({ ...result, reconciled: true })
+    await mount({ onImport, onReconcile })
     await fill(); await click("导入")
-    expect(document.querySelector('[role="alert"]')?.textContent).toContain("配置可能已更新")
+    expect(onReconcile).toHaveBeenCalledExactlyOnceWith({ ...JSON.parse(source), mode: "merge" }, ["existing", "keep"])
+    expect(document.querySelector('[aria-label="导入结果"]')?.textContent).toContain("导入已确认")
+    expect(document.querySelector('[aria-label="导入结果"]')?.textContent).toContain("已自动核对实际服务器列表，导入项已显示")
+    expect(document.querySelector('[role="alert"]')).toBeNull()
+    expect(document.body.textContent).not.toContain("刷新当前列表")
+    expect(onImport).toHaveBeenCalledTimes(1)
+  })
+
+  it("offers another read-only reconciliation when the actual list is temporarily unavailable", async () => {
+    const onImport = vi.fn().mockRejectedValue(new McpImportFailure("uncertain"))
+    const onReconcile = vi.fn()
+      .mockRejectedValueOnce(new McpImportFailure("uncertain"))
+      .mockResolvedValueOnce({ ...result, reconciled: true })
+    await mount({ onImport, onReconcile })
+    await fill(); await click("导入")
+    expect(document.querySelector('[role="status"]')?.textContent).toContain("暂时无法确认")
     expect(button("导入").disabled).toBe(true)
-    expect(document.querySelector('[aria-label="导入结果"]')).toBeNull()
-    await click("刷新当前列表")
-    expect(props.onReload).toHaveBeenCalledTimes(1); expect(onImport).toHaveBeenCalledTimes(1)
-    expect(button("导入").disabled).toBe(true)
+    expect(button("关闭")).toBeDefined()
+    await click("再次核对")
+    expect(onReconcile).toHaveBeenCalledTimes(2)
+    expect(onImport).toHaveBeenCalledTimes(1)
+    expect(document.querySelector('[aria-label="导入结果"]')?.textContent).toContain("导入已确认")
+  })
+
+  it("keeps the draft retryable when the refreshed list confirms nothing changed", async () => {
+    const onImport = vi.fn().mockRejectedValue(new McpImportFailure("uncertain"))
+    const onReconcile = vi.fn().mockRejectedValue(new McpImportFailure("not_applied"))
+    await mount({ onImport, onReconcile })
+    await fill(); await click("导入")
+    expect(document.querySelector('[role="alert"]')?.textContent).toContain("本次配置没有生效")
+    expect(button("导入").disabled).toBe(false)
+    expect(document.body.textContent).not.toContain("刷新当前列表")
   })
 
   it("discards a late completed import after unmount rather than applying it to a new dialog", async () => {

@@ -187,11 +187,24 @@ describe("SettingsMcp JSON import integration", () => {
     await mount(); await click("导入 JSON"); await fill()
     get.mockRejectedValueOnce(new Error("SECRET_LIST_MARKER"))
     await click("导入")
-    expect(document.querySelector('[aria-label="导入结果"]')?.textContent).toContain("配置已提交，但列表刷新失败")
+    expect(document.querySelector('[aria-label="导入结果"]')?.textContent).toContain("运行状态将在后台自动刷新")
     expect(document.body.textContent).not.toContain("SECRET_LIST_MARKER")
     expect(post).toHaveBeenCalledTimes(1)
-    await click("刷新当前列表")
+    await click("刷新运行状态")
     expect(post).toHaveBeenCalledTimes(1)
+  })
+
+  it("automatically confirms an uncertain import from the authoritative server list", async () => {
+    await mount(); await click("导入 JSON"); await fill()
+    post.mockRejectedValueOnce(new Error("response interrupted"))
+    get.mockResolvedValueOnce({ servers: [record("existing"), { ...record("incoming"), name: undefined }] })
+    await click("导入")
+    const completion = document.querySelector('[aria-label="导入结果"]')
+    expect(completion?.textContent).toContain("导入已确认")
+    expect(completion?.textContent).toContain("已自动核对实际服务器列表，导入项已显示")
+    expect(document.body.textContent).not.toContain("暂时无法确认")
+    expect(post).toHaveBeenCalledTimes(1)
+    expect(get).toHaveBeenCalledTimes(2)
   })
 
   it("restores focus to the scoped import trigger after keyboard cancellation and reopens a clean draft", async () => {

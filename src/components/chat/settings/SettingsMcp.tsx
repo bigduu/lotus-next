@@ -7,7 +7,12 @@ import {
   type McpServerConfig,
   type TransportConfig,
 } from "@services/mcp"
-import { McpImportFailure, mcpIdsKey } from "@services/mcp/importConfig"
+import {
+  isMcpImportReflected,
+  McpImportFailure,
+  mcpIdsKey,
+  previewMcpImport,
+} from "@services/mcp/importConfig"
 import type { McpImportRequest } from "@services/mcp/types"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -107,7 +112,16 @@ export function SettingsMcp() {
     return () => window.clearInterval(timer)
   }, [reload])
 
-  const submitImport = async (request: McpImportRequest, expectedIdsKey: string): Promise<McpImportCompletion> => {
+  const markImportedTools = (serverIds: string[]) => {
+    if (!mountedRef.current) return
+    setToolsVersion((previous) => {
+      const next = { ...previous }
+      for (const id of serverIds) next[id] = (next[id] ?? 0) + 1
+      return next
+    })
+  }
+
+  const submitImport = async (request: McpImportRequest, expectedIds: string[]): Promise<McpImportCompletion> => {
     if (importBusy.current) throw new McpImportFailure("busy")
     importBusy.current = true
     // Invalidate polls started before this mutation; they cannot restore old rows.
@@ -116,23 +130,38 @@ export function SettingsMcp() {
       if (request.mode === "replace") {
         const current = await reload(true)
         if (!current) throw new McpImportFailure("list_unavailable")
-        if (mcpIdsKey(current.map((server) => server.id)) !== expectedIdsKey) throw new McpImportFailure("list_changed")
+        if (mcpIdsKey(current.map((server) => server.id)) !== mcpIdsKey(expectedIds)) throw new McpImportFailure("list_changed")
       }
       if (!mountedRef.current) throw new McpImportFailure("list_unavailable")
       const result = await mcpService.importServers(request)
       const list = await reload(true)
-      if (mountedRef.current) setToolsVersion((previous) => {
-        const next = { ...previous }
-        for (const id of result.server_ids) next[id] = (next[id] ?? 0) + 1
-        return next
-      })
+      markImportedTools(result.server_ids)
       return { result, refreshed: list !== null }
     } catch (failure) {
       const safe = failure instanceof McpImportFailure ? failure : new McpImportFailure("uncertain")
-      if (safe.kind !== "list_changed" && safe.kind !== "list_unavailable") await reload(true)
       throw safe
     } finally {
       importBusy.current = false
+    }
+  }
+
+  const reconcileImport = async (request: McpImportRequest, expectedIds: string[]): Promise<McpImportCompletion> => {
+    const current = await reload(true)
+    if (!current) throw new McpImportFailure("uncertain")
+    if (!isMcpImportReflected(request, current)) throw new McpImportFailure("not_applied")
+    const serverIds = Object.keys(request.mcpServers).sort()
+    const preview = previewMcpImport(serverIds, expectedIds, request.mode)
+    markImportedTools(serverIds)
+    return {
+      result: {
+        mode: request.mode,
+        added: preview.added.length,
+        updated: preview.updated.length,
+        removed: preview.removed.length,
+        server_ids: serverIds,
+      },
+      refreshed: true,
+      reconciled: true,
     }
   }
 
@@ -310,7 +339,7 @@ export function SettingsMcp() {
 
       {importOpen ? <McpImportDialog existingIds={servers.map((server) => server.id)} listConfirmed={listConfirmed} listRevision={listRevision}
         onClose={() => setImportOpen(false)} onReturnFocus={() => importTrigger.current?.focus()}
-        onImport={submitImport} onReload={async () => (await reload()) !== null} /> : null}
+        onImport={submitImport} onReconcile={reconcileImport} onReload={async () => (await reload()) !== null} /> : null}
 
       <McpServerFormDialog
         open={form !== null}
