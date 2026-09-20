@@ -241,39 +241,7 @@ export function Sidebar({
         )}
       >
         <div className="flex items-center gap-2 px-3 py-3">
-          <span className="flex-1 text-sm font-semibold">会话</span>
-          <Button
-            size="icon"
-            variant="ghost"
-            className={cn(
-              "size-8 text-muted-foreground",
-              groupingMode === "project" ? "bg-sidebar-accent text-foreground" : "",
-            )}
-            aria-label={groupingMode === "project" ? "按项目分组" : "按日期分组"}
-            title={groupingMode === "project" ? "切换为日期分组" : "切换为项目分组"}
-            onClick={() => switchGroupingMode(groupingMode === "project" ? "date" : "project")}
-          >
-            {groupingMode === "project" ? (
-              <FolderClosed className="size-4" />
-            ) : (
-              <CalendarDays className="size-4" />
-            )}
-          </Button>
-          {isProjectMode ? (
-            <Button
-              size="icon"
-              variant="ghost"
-              className="size-8 text-muted-foreground"
-              aria-label="管理项目"
-              title="管理项目"
-              onClick={() => {
-                onOpenProjectManager()
-                onClose()
-              }}
-            >
-              <Cog className="size-4" />
-            </Button>
-          ) : null}
+          <span className="flex-1 text-sm font-semibold">Bodhi</span>
           <Button
             size="icon"
             variant="ghost"
@@ -283,15 +251,27 @@ export function Sidebar({
           >
             <PanelLeftClose className="size-4" />
           </Button>
+        </div>
+        <div className="px-2 pb-2">
           <Button
-            size="sm"
-            variant="secondary"
+            variant="ghost"
+            className="w-full justify-start gap-2"
             onClick={() => {
               onNewChat(isProjectMode ? activeGroup?.key && activeGroup.key !== "__pinned" && activeGroup.key !== "__no_project__" ? activeGroup.key : null : null)
               onClose()
             }}
           >
-            <Plus /> 新建
+            <Plus className="size-4" /> 新建会话
+          </Button>
+          <Button
+            variant="ghost"
+            className="w-full justify-start gap-2"
+            onClick={() => {
+              onOpenProjectManager()
+              onClose()
+            }}
+          >
+            <FolderClosed className="size-4" /> 管理项目
           </Button>
         </div>
         <div className="px-3 pb-2">
@@ -313,6 +293,25 @@ export function Sidebar({
               </button>
             ) : null}
           </div>
+        </div>
+        <div className="flex items-center gap-2 px-3">
+          <span className="flex-1 text-xs font-medium text-muted-foreground">
+            {isProjectMode ? "项目" : "最近"}
+          </span>
+          <Button
+            size="sm"
+            variant="ghost"
+            className="text-muted-foreground"
+            aria-label={isProjectMode ? "切换为最近视图" : "切换为项目视图"}
+            onClick={() => switchGroupingMode(isProjectMode ? "date" : "project")}
+          >
+            {isProjectMode ? (
+              <CalendarDays className="size-4" />
+            ) : (
+              <FolderClosed className="size-4" />
+            )}
+            {isProjectMode ? "最近" : "项目"}
+          </Button>
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-3">
           {chats.length === 0 && (

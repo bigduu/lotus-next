@@ -41,7 +41,7 @@ function render(changes: Partial<Props> = {}) {
 }
 
 function button(label: string): HTMLButtonElement {
-  const found = [...container.querySelectorAll("button")].find((candidate) => candidate.textContent?.startsWith(label))
+  const found = [...container.querySelectorAll("button")].find((candidate) => candidate.textContent?.trim().startsWith(label))
   expect(found, `button ${label}`).toBeDefined()
   return found!
 }
@@ -196,6 +196,40 @@ function buttonByLabel(label: string): HTMLButtonElement {
   return found!
 }
 
+describe("Sidebar navigation hierarchy", () => {
+  beforeEach(() => {
+    localStorage.removeItem("lotus.sidebar.grouping-mode.v1")
+  })
+
+  it("shows labeled primary actions beneath the Bodhi identity", () => {
+    render()
+    const content = container.textContent ?? ""
+    expect(content.indexOf("Bodhi")).toBeLessThan(content.indexOf("新建会话"))
+    expect(content.indexOf("新建会话")).toBeLessThan(content.indexOf("管理项目"))
+    const projectAction = button("管理项目")
+    const searchInput = container.querySelector('input[placeholder="搜索会话"]')
+    expect(searchInput).not.toBeNull()
+    expect(projectAction.compareDocumentPosition(searchInput!) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0)
+
+    click("新建会话")
+    expect(props.onNewChat).toHaveBeenCalledWith(null)
+    click("管理项目")
+    expect(props.onOpenProjectManager).toHaveBeenCalledOnce()
+    click("系统设置")
+    expect(props.onOpenSettings).toHaveBeenCalledOnce()
+    act(() => buttonByLabel("收起侧栏").click())
+    expect(props.onToggleCollapse).toHaveBeenCalledOnce()
+  })
+
+  it("uses text labels to switch between recent and project views", () => {
+    render()
+    expect(container.textContent).toContain("最近")
+    expect(buttonByLabel("切换为项目视图").textContent).toContain("项目")
+    act(() => buttonByLabel("切换为项目视图").click())
+    expect(buttonByLabel("切换为最近视图").textContent).toContain("最近")
+  })
+})
+
 describe("Sidebar project grouping", () => {
   beforeEach(() => {
     localStorage.removeItem("lotus.sidebar.grouping-mode.v1")
@@ -218,7 +252,7 @@ describe("Sidebar project grouping", () => {
         chat("no-project", 4, { config: { systemPromptId: "", baseSystemPrompt: "", lastUsedEnhancedPrompt: null, projectId: null } }),
       ],
     })
-    act(() => buttonByLabel("按日期分组").click())
+    act(() => buttonByLabel("切换为项目视图").click())
     expect(row("in-project")).not.toBeNull()
     expect(row("no-project")).not.toBeNull()
     // Project label renders as the group header button.
@@ -231,7 +265,7 @@ describe("Sidebar project grouping", () => {
       currentSessionId: "solo",
       chats: [chat("solo", 5, { config: { systemPromptId: "", baseSystemPrompt: "", lastUsedEnhancedPrompt: null, projectId: "p2" } })],
     })
-    act(() => buttonByLabel("按日期分组").click())
+    act(() => buttonByLabel("切换为项目视图").click())
     const newChat = [...container.querySelectorAll("button")].find((b) =>
       b.textContent?.trim().startsWith("新建"),
     )
@@ -245,7 +279,7 @@ describe("Sidebar project grouping", () => {
       chats: Array.from({ length: 10 }, (_, index) =>
         chat(`p-session-${index}`, 5, { config: { systemPromptId: "", baseSystemPrompt: "", lastUsedEnhancedPrompt: null, projectId: "p1" } })),
     })
-    act(() => buttonByLabel("按日期分组").click())
+    act(() => buttonByLabel("切换为项目视图").click())
     // Only the first seven are visible, plus the expand affordance.
     expect(container.querySelectorAll("[data-session]")).toHaveLength(7)
     expect(container.textContent).toContain("展开 3 个")
@@ -261,7 +295,7 @@ describe("Sidebar project grouping", () => {
       chats: Array.from({ length: 9 }, (_, index) =>
         chat(`day-${index}-s`, 5, { title: `s${index}`, config: { systemPromptId: "", baseSystemPrompt: "", lastUsedEnhancedPrompt: null, projectId: "p1" } })),
     })
-    act(() => buttonByLabel("按日期分组").click())
+    act(() => buttonByLabel("切换为项目视图").click())
     expect(container.querySelectorAll("[data-session]")).toHaveLength(7)
     search("s")
     expect(container.querySelectorAll("[data-session]")).toHaveLength(9)
@@ -274,7 +308,7 @@ describe("Sidebar project grouping", () => {
       chats: Array.from({ length: 9 }, (_, index) =>
         chat(`p-session-${index}`, 5, { config: { systemPromptId: "", baseSystemPrompt: "", lastUsedEnhancedPrompt: null, projectId: "p1" } })),
     })
-    act(() => buttonByLabel("按日期分组").click())
+    act(() => buttonByLabel("切换为项目视图").click())
     expect(row("p-session-8")?.getAttribute("data-active")).toBe("true")
     expect(container.querySelectorAll("[data-session]")).toHaveLength(9)
     // Selecting a session inside the preview fold keeps the group expanded…
