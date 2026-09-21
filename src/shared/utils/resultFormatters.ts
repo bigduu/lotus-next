@@ -802,17 +802,23 @@ export const extractDiffStatsFromUnified = (unified: string): DiffStats => {
   return { added, removed };
 };
 
+export const getFileChangePayloadDiffStats = (
+  payload: FileChangeResultPayload,
+): DiffStats => {
+  const fallback = extractDiffStatsFromUnified(payload.diff.unified);
+  return {
+    added: payload.diff.added_lines ?? fallback.added,
+    removed: payload.diff.removed_lines ?? fallback.removed,
+  };
+};
+
 export const getFileChangeDiffStats = (content: string): DiffStats | null => {
   const payload = parseFileChangeResultPayload(content);
   if (!payload) {
     return null;
   }
 
-  const fallback = extractDiffStatsFromUnified(payload.diff.unified);
-  return {
-    added: payload.diff.added_lines ?? fallback.added,
-    removed: payload.diff.removed_lines ?? fallback.removed,
-  };
+  return getFileChangePayloadDiffStats(payload);
 };
 
 /**

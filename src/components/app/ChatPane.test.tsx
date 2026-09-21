@@ -62,7 +62,10 @@ vi.mock("@/components/app/MessageList", () => ({
   },
 }))
 vi.mock("@/components/app/Toasts", () => ({ Toasts: () => null }))
-vi.mock("@/components/app/ImageLightbox", () => ({ ImageLightbox: () => null }))
+vi.mock("@/components/app/ImageLightbox", () => ({
+  ImageLightbox: ({ src }: { src: string | null }) =>
+    src ? <div data-image-lightbox data-src={src} /> : null,
+}))
 vi.mock("@/components/app/ContextUsageRing", () => ({ ContextUsageRing: () => <span data-testid="context-usage" /> }))
 vi.mock("@/components/chat/ReasoningPicker", () => ({ ReasoningPicker: () => <span data-testid="reasoning-picker" /> }))
 vi.mock("@/components/chat/ModelPicker", () => ({ ModelPicker: () => <span data-testid="model-picker" /> }))
@@ -456,6 +459,56 @@ it("shows Environment by default and only suppresses it while the side pane is o
 
   await act(async () => root.render(render(false)))
   expect(container.querySelector("[data-environment-card]")).not.toBeNull()
+})
+
+it("updates Environment from live edits and previews image sources", async () => {
+  const container = document.body.appendChild(document.createElement("div"))
+  const root = createRoot(container); roots.push(root)
+  const previewUrl = "data:image/png;base64,c291cmNl"
+  const chat = createChat(vi.fn<Send>(), "parent")
+  chat.messages = [{
+    id: "user-with-image",
+    role: "user",
+    content: "参考图片",
+    createdAt: "2026-09-21T00:00:00Z",
+    images: [{
+      id: "source-1",
+      name: "source.png",
+      type: "image/png",
+      size: 6,
+      url: previewUrl,
+    }],
+  }]
+  chat.liveSegments = [{
+    kind: "tools",
+    calls: [{
+      toolCallId: "edit-1",
+      toolName: "Edit",
+      output: JSON.stringify({
+        operation: "edit",
+        file_path: "/workspace/src/index.css",
+        diff: {
+          unified: "--- a/src/index.css\n+++ b/src/index.css\n@@ -1,2 +1,3 @@\n-old\n+new\n+more\n same",
+        },
+      }),
+      status: "completed",
+    }],
+  }]
+
+  await act(async () => root.render(<ChatPane chat={chat} pickedWorkspace="/picked"
+    onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()} splitOpen={false}
+    onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false} />))
+
+  const card = container.querySelector<HTMLElement>("[data-environment-card]")
+  expect(card?.textContent).toContain("1 个变更文件")
+  expect(card?.textContent).toContain("+2")
+  expect(card?.textContent).toContain("−1")
+  const sourcePreview = card?.querySelector<HTMLButtonElement>(
+    'button[aria-label="预览 source.png"]',
+  )
+  expect(sourcePreview?.querySelector("img")?.getAttribute("src")).toBe(previewUrl)
+  await act(async () => sourcePreview?.click())
+  expect(container.querySelector("[data-image-lightbox]")?.getAttribute("data-src")).toBe(previewUrl)
 })
 
 it("returns from a child inside the side pane without changing the main session", async () => {

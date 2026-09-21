@@ -241,7 +241,12 @@ function App() {
                 onEditWorkspace={() => setWsPickerOpen(true)}
               />
             }
-            review={<ReviewPane sessionId={currentSessionId} />}
+            review={(
+              <ReviewPane
+                sessionId={currentSessionId}
+                liveSegments={chat.liveSegments}
+              />
+            )}
             session={
               <div className="relative flex min-h-0 flex-1">
                 {secondLoadState === "loading" ? (
