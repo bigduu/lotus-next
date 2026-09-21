@@ -935,6 +935,16 @@ export function useChat(
               }
             })()
           },
+          onMessageAppended: (appendedSessionId) => {
+            if (appendedSessionId !== runSid) return
+            // Queued guidance is checkpointed before this event is published.
+            // Re-read immediately from the session stream so every visible
+            // pane (including a bound split pane) renders the admitted user
+            // message without waiting for the account feed or a reload.
+            void useAppStore.getState().loadChatHistory(runSid, {
+              mode: "monotonic",
+            })
+          },
           onChildApprovalRequested: (childSessionId, requestId, req) =>
             setPendingApproval({
               childSessionId,

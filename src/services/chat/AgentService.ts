@@ -976,6 +976,7 @@ export interface AgentEventHandlers {
     summary?: string,
     error?: string,
   ) => void;
+  onMessageAppended?: (sessionId: string, messageId?: string) => void;
   onSessionHistoryCommitted?: (sessionId: string) => void;
   onComplete?: (usage: AgentEvent["usage"]) => void;
   onCancelled?: (message?: string) => void;
@@ -1800,6 +1801,11 @@ export class AgentClient {
         break;
       case "goal_status_changed":
         handlers.onGoalStatusChanged?.(event);
+        break;
+      case "message_appended":
+        if (event.session_id) {
+          handlers.onMessageAppended?.(event.session_id, event.message_id);
+        }
         break;
       case "session_history_committed":
         if (event.session_id) {

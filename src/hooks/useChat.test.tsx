@@ -123,6 +123,7 @@ type HookProps =
     }
 type SubscriptionHandlers = {
   onToken(content: string): void
+  onMessageAppended(sessionId: string, messageId?: string): void
   onSessionHistoryCommitted(sessionId: string): void
   onComplete(): void
   onError(error?: unknown): void
@@ -553,6 +554,22 @@ describe("useChat two-phase send lifecycle", () => {
       "split-root",
       { force: true },
     )
+  })
+  it("hydrates admitted guidance from the live stream in a bound pane", async () => {
+    const sessionId = "split-guidance"
+    mocks.shouldObserve = true
+    mocks.appState.chats = [{ id: sessionId, messages: [], isRunning: true }]
+    mocks.subscribeToEvents.mockReturnValueOnce(pendingForever())
+
+    await mountUseChat({ mode: "bound", sessionId })
+    await vi.waitFor(() => expect(mocks.subscribeToEvents).toHaveBeenCalledTimes(1))
+    const handlers = mocks.subscribeToEvents.mock.calls[0][1] as SubscriptionHandlers
+
+    act(() => handlers.onMessageAppended(sessionId, "queued-user"))
+
+    expect(mocks.appState.loadChatHistory).toHaveBeenCalledExactlyOnceWith(sessionId, {
+      mode: "monotonic",
+    })
   })
   it("uses the authoritative Chat preference instead of the compatibility provider", async () => {
     mocks.appState.selectedModel = undefined
