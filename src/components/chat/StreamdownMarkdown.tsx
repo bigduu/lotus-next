@@ -28,6 +28,51 @@ const STREAMDOWN_ANIMATION = {
 
 const ANIMATED_TOKEN_SELECTOR = 'span[data-sd-animate="true"]'
 
+const COMPACT_CODE_BLOCK_STYLES = {
+  block: { gap: "0.25rem", marginBlock: "0.5rem", padding: "0.375rem" },
+  body: { fontSize: "0.875rem", lineHeight: "1.55", padding: "0.625rem 0.75rem" },
+  header: { fontSize: "0.75rem", height: "1.25rem", lineHeight: "1rem" },
+  source: {
+    background: "transparent",
+    fontSize: "inherit",
+    lineHeight: "inherit",
+    margin: "0",
+    padding: "0",
+  },
+} as const
+
+function applyCompactCodeBlockStyles(root: HTMLElement): void {
+  for (const block of root.querySelectorAll<HTMLElement>('[data-streamdown="code-block"]')) {
+    Object.assign(block.style, COMPACT_CODE_BLOCK_STYLES.block)
+  }
+  for (const header of root.querySelectorAll<HTMLElement>(
+    '[data-streamdown="code-block-header"]',
+  )) {
+    Object.assign(header.style, COMPACT_CODE_BLOCK_STYLES.header)
+  }
+  for (const body of root.querySelectorAll<HTMLElement>('[data-streamdown="code-block-body"]')) {
+    Object.assign(body.style, COMPACT_CODE_BLOCK_STYLES.body)
+    for (const source of body.querySelectorAll<HTMLElement>("pre, code")) {
+      Object.assign(source.style, COMPACT_CODE_BLOCK_STYLES.source)
+    }
+  }
+}
+
+function useCompactCodeBlocks(
+  hostRef: RefObject<HTMLDivElement | null>,
+  content: string,
+): void {
+  useLayoutEffect(() => {
+    const root = hostRef.current?.querySelector<HTMLElement>(".assistant-streamdown")
+    if (!root) return
+
+    applyCompactCodeBlockStyles(root)
+    const observer = new MutationObserver(() => applyCompactCodeBlockStyles(root))
+    observer.observe(root, { childList: true, subtree: true })
+    return () => observer.disconnect()
+  }, [content, hostRef])
+}
+
 function animationDurationMs(element: HTMLElement): number {
   return Number.parseFloat(element.style.getPropertyValue("--sd-duration")) || 0
 }
@@ -219,6 +264,7 @@ export function StreamdownMarkdown({
   isStreaming: boolean
 }) {
   const hostRef = useRef<HTMLDivElement>(null)
+  useCompactCodeBlocks(hostRef, children)
   useTrackedTypewriterCaret(hostRef, children, isStreaming)
 
   return (

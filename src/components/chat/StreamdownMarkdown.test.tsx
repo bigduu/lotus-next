@@ -342,7 +342,22 @@ describe("StreamdownMarkdown security, layout and theme semantics", () => {
       view.container.querySelector('[data-streamdown="table-wrapper"] > div')?.className,
     ).toContain("overflow-x-auto")
     expect(view.container.querySelector('[data-streamdown="table-header-cell"]')).not.toBeNull()
-    expect(view.container.querySelector('[data-streamdown="code-block-body"]')).not.toBeNull()
+    const codeBlock = view.container.querySelector<HTMLElement>('[data-streamdown="code-block"]')
+    const codeHeader = view.container.querySelector<HTMLElement>(
+      '[data-streamdown="code-block-header"]',
+    )
+    const codeBody = view.container.querySelector<HTMLElement>(
+      '[data-streamdown="code-block-body"]',
+    )
+    const codeSource = codeBody?.querySelector<HTMLElement>("pre")
+    expect(codeBlock?.style.marginBlock).toBe("0.5rem")
+    expect(codeBlock?.style.padding).toBe("0.375rem")
+    expect(codeBlock?.style.gap).toBe("0.25rem")
+    expect(codeHeader?.style.height).toBe("1.25rem")
+    expect(codeBody?.style.fontSize).toBe("0.875rem")
+    expect(codeBody?.style.padding).toBe("0.625rem 0.75rem")
+    expect(codeSource?.style.margin).toBe("0px")
+    expect(codeSource?.style.padding).toBe("0px")
 
     await vi.waitFor(() =>
       expect(highlightCode).toHaveBeenCalledWith({
