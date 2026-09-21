@@ -17,6 +17,7 @@ export type EnvironmentSource = {
   id: string
   name: string
   kind: "file" | "image"
+  previewUrl?: string
 }
 
 function EnvironmentRow({
@@ -25,12 +26,14 @@ function EnvironmentRow({
   detail,
   trailing,
   onClick,
+  ariaLabel,
 }: {
   icon: ReactNode
   label: string
   detail?: string | null
   trailing?: ReactNode
   onClick?: () => void
+  ariaLabel?: string
 }) {
   const content = (
     <>
@@ -50,6 +53,7 @@ function EnvironmentRow({
   return onClick ? (
     <button
       type="button"
+      aria-label={ariaLabel}
       className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       onClick={onClick}
     >
@@ -114,6 +118,7 @@ export function EnvironmentCard({
   removedLines,
   sources,
   onOpenReview,
+  onPreviewImage,
 }: {
   id: string
   workspace?: string | null
@@ -124,6 +129,7 @@ export function EnvironmentCard({
   removedLines: number
   sources: EnvironmentSource[]
   onOpenReview: () => void
+  onPreviewImage: (src: string) => void
 }) {
   const workspaceLabel = workspace
     ? (workspace.split(/[\\/]/).filter(Boolean).at(-1) ?? workspace)
@@ -181,19 +187,33 @@ export function EnvironmentCard({
       </div>
       {sources.length > 0 ? (
         <div className="space-y-0.5">
-          {sources.slice(0, 5).map((source) => (
-            <EnvironmentRow
-              key={source.id}
-              icon={
-                source.kind === "image" ? (
-                  <ImageIcon className="size-4" />
-                ) : (
-                  <File className="size-4" />
-                )
-              }
-              label={source.name}
-            />
-          ))}
+          {sources.slice(0, 5).map((source) => {
+            const previewUrl = source.kind === "image" ? source.previewUrl : undefined
+            return (
+              <EnvironmentRow
+                key={source.id}
+                icon={
+                  previewUrl ? (
+                    <img
+                      src={previewUrl}
+                      alt=""
+                      className="size-8 rounded-md border object-cover"
+                    />
+                  ) : source.kind === "image" ? (
+                    <ImageIcon className="size-4" />
+                  ) : (
+                    <File className="size-4" />
+                  )
+                }
+                label={source.name}
+                trailing={
+                  previewUrl ? <ChevronRight className="size-4 text-muted-foreground" /> : undefined
+                }
+                onClick={previewUrl ? () => onPreviewImage(previewUrl) : undefined}
+                ariaLabel={previewUrl ? `预览 ${source.name}` : undefined}
+              />
+            )
+          })}
         </div>
       ) : (
         <div className="px-3 py-2 text-xs text-muted-foreground">当前会话暂无来源文件</div>

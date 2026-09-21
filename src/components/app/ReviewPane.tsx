@@ -2,16 +2,34 @@ import { useMemo } from "react"
 import { FileDiff } from "lucide-react"
 import { useShallow } from "zustand/react/shallow"
 import { FileChangeView } from "@/components/chat/FileChangeView"
-import { collectSessionFileChanges } from "@/lib/sessionFileChanges"
+import {
+  collectLiveSessionFileChanges,
+  collectSessionFileChanges,
+  mergeSessionFileChanges,
+  type LiveFileChangeSegment,
+} from "@/lib/sessionFileChanges"
 import { selectSessionById, useAppStore } from "@shared/store/appStore"
+import { getFileChangePayloadDiffStats } from "@shared/utils/resultFormatters"
 
-export function ReviewPane({ sessionId }: { sessionId: string | null }) {
+export function ReviewPane({
+  sessionId,
+  liveSegments = [],
+}: {
+  sessionId: string | null
+  liveSegments?: readonly LiveFileChangeSegment[]
+}) {
   const messages = useAppStore(
     useShallow((state) =>
       sessionId ? (selectSessionById(sessionId)(state)?.messages ?? []) : [],
     ),
   )
-  const changes = useMemo(() => collectSessionFileChanges(messages), [messages])
+  const changes = useMemo(
+    () => mergeSessionFileChanges(
+      collectSessionFileChanges(messages),
+      collectLiveSessionFileChanges(liveSegments),
+    ),
+    [liveSegments, messages],
+  )
 
   if (!sessionId) {
     return (
@@ -38,27 +56,26 @@ export function ReviewPane({ sessionId }: { sessionId: string | null }) {
         <span className="text-xs font-normal text-muted-foreground">({changes.length})</span>
       </div>
       <div className="space-y-3">
-        {changes.map(({ id, payload }, index) => (
-          <details key={id} open={index === changes.length - 1} className="rounded-lg border">
-            <summary className="flex cursor-pointer select-none items-center gap-2 px-3 py-2.5 text-sm hover:bg-accent/50 [&::-webkit-details-marker]:hidden">
-              <FileDiff className="size-4 shrink-0 text-muted-foreground" />
-              <span className="min-w-0 flex-1 truncate font-mono" title={payload.file_path}>
-                {payload.file_path}
-              </span>
-              <span className="shrink-0 text-xs">
-                <span className="text-green-600 dark:text-green-400">
-                  +{payload.diff?.added_lines ?? 0}
-                </span>{" "}
-                <span className="text-red-600 dark:text-red-400">
-                  −{payload.diff?.removed_lines ?? 0}
+        {changes.map(({ id, payload }, index) => {
+          const stats = getFileChangePayloadDiffStats(payload)
+          return (
+            <details key={id} open={index === changes.length - 1} className="rounded-lg border">
+              <summary className="flex cursor-pointer select-none items-center gap-2 px-3 py-2.5 text-sm hover:bg-accent/50 [&::-webkit-details-marker]:hidden">
+                <FileDiff className="size-4 shrink-0 text-muted-foreground" />
+                <span className="min-w-0 flex-1 truncate font-mono" title={payload.file_path}>
+                  {payload.file_path}
                 </span>
-              </span>
-            </summary>
-            <div className="border-t p-2">
-              <FileChangeView payload={payload} />
-            </div>
-          </details>
-        ))}
+                <span className="shrink-0 text-xs">
+                  <span className="text-green-600 dark:text-green-400">+{stats.added}</span>{" "}
+                  <span className="text-red-600 dark:text-red-400">−{stats.removed}</span>
+                </span>
+              </summary>
+              <div className="border-t p-2">
+                <FileChangeView payload={payload} />
+              </div>
+            </details>
+          )
+        })}
       </div>
     </div>
   )

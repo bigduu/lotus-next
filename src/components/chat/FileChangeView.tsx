@@ -5,7 +5,7 @@ import { useIsWide } from "@shared/hooks/useMediaQuery"
 import {
   parseUnifiedDiffLines,
   parseUnifiedDiffSideBySideRows,
-  extractDiffStatsFromUnified,
+  getFileChangePayloadDiffStats,
   type FileChangeResultPayload,
   type DiffLineKind,
 } from "@shared/utils/resultFormatters"
@@ -35,12 +35,7 @@ export function FileChangeView({ payload }: { payload: FileChangeResultPayload }
   const [sideBySide, setSideBySide] = useState(false)
   const unified = payload.diff?.unified ?? ""
 
-  const stats = useMemo(() => {
-    const added = payload.diff?.added_lines
-    const removed = payload.diff?.removed_lines
-    if (typeof added === "number" && typeof removed === "number") return { added, removed }
-    return extractDiffStatsFromUnified(unified)
-  }, [payload.diff, unified])
+  const stats = useMemo(() => getFileChangePayloadDiffStats(payload), [payload])
 
   const lines = useMemo(() => parseUnifiedDiffLines(unified), [unified])
   const rows = useMemo(
