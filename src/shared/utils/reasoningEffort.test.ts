@@ -41,6 +41,21 @@ describe("instance-native reasoning effort", () => {
     expect(resolveProviderDefaultReasoningEffort(noDefaults)).toBeUndefined();
   });
 
+  it("keeps an explicit role-level Off override above the provider default", () => {
+    const disabled = {
+      ...snapshot,
+      defaults: {
+        chat: {
+          provider: "work",
+          model: "gpt-5.6-sol",
+          reasoning_effort: "none" as const,
+        },
+      },
+    };
+
+    expect(resolveProviderDefaultReasoningEffort(disabled)).toBe("none");
+  });
+
   it("rejects invalid configured efforts", () => {
     const invalid = {
       ...snapshot,

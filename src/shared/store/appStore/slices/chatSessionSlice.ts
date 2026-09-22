@@ -12,7 +12,6 @@ import { applyExecutionEvent } from "./executionStateSlice";
 import { applyReplayableSessionEventToList, isSessionMetadataEvent } from "./sessionMetadataSlice";
 import i18n from "@shared/i18n";
 import { debugLog } from "@shared/utils/debugFlags";
-import { resolveProviderDefaultReasoningEffort } from "@shared/utils/reasoningEffort";
 import {
   DEFAULT_BASE_SYSTEM_PROMPT,
   mapHistoryMessagesToUi,
@@ -97,17 +96,11 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
       }
     }
 
-    // Resolve the reasoning effort for the new session. An explicit value from
-    // the caller wins; otherwise inherit the provider's configured default
-    // (e.g. "Max") so a new session matches what the input box shows, instead
-    // of letting the backend silently fall back to its own default ("medium").
+    // Send only an explicit caller/Chat-role value. When the Chat role is
+    // Auto, omission is meaningful: Bamboo owns provider/model inheritance.
     const reasoningEffort =
       chatData.config?.reasoningEffort ??
-      resolveProviderDefaultReasoningEffort(
-        providerSnapshot,
-        modelRef ?? null,
-        providerValue ?? null,
-      );
+      defaultChat?.reasoning_effort;
 
     const created = await agentClient.createSession({
       title,
@@ -282,6 +275,30 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
         console.warn(`[ChatSlice] Failed to patch session ${sessionId}:`, e);
       });
     }
+  },
+
+  changeSessionReasoningEffort: async (sessionId, reasoningEffort) => {
+    // Auto is represented by clearing the session override. Concrete values,
+    // including `none`, remain durable and outrank provider/model defaults.
+    await agentClient.patchSession(
+      sessionId,
+      reasoningEffort
+        ? { reasoning_effort: reasoningEffort }
+        : { clear_reasoning_effort: true },
+    );
+    const committedAt = new Date().toISOString();
+    set((state) => ({
+      ...state,
+      chats: state.chats.map((chat) =>
+        chat.id === sessionId
+          ? {
+              ...chat,
+              updatedAt: committedAt,
+              config: { ...chat.config, reasoningEffort },
+            }
+          : chat,
+      ),
+    }));
   },
 
   persistSessionTitle: async (sessionId, title) => {

@@ -1,4 +1,5 @@
 import { ChatItem, Message } from "@shared/types/chat";
+import type { ReasoningEffort } from "@services/chat/AgentService";
 
 export type DeleteMessageFailureReason =
   | "session_not_found"
@@ -40,6 +41,11 @@ export interface ChatSlice {
     updates: Partial<ChatItem>,
     options?: { skipBackendPatch?: boolean },
   ) => void;
+  /** Persist a session reasoning override; null restores inherited/Auto mode. */
+  changeSessionReasoningEffort: (
+    sessionId: string,
+    reasoningEffort: ReasoningEffort | null,
+  ) => Promise<void>;
   persistSessionTitle: (sessionId: string, title: string) => Promise<void>;
   /**
    * Apply an authoritative server title (from a `session_title_updated` SSE event).
