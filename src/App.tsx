@@ -84,6 +84,7 @@ function App() {
 
   const [workbenchOpen, setWorkbenchOpen] = useState(false)
   const [workbenchTab, setWorkbenchTab] = useState<RightWorkbenchTab>("inspector")
+  const [reviewTargetFilePath, setReviewTargetFilePath] = useState<string | null>(null)
   const isWide = useIsWide()
   // Draggable, persisted widths for the resizable side panels (desktop).
   const sidebarResize = useResizableWidth("lotus_next_sidebar_w", 288, {
@@ -152,6 +153,10 @@ function App() {
     setWorkbenchTab(tab)
     setWorkbenchOpen(true)
   }
+  const openReview = (filePath?: string) => {
+    setReviewTargetFilePath(filePath ?? null)
+    openWorkbench("review")
+  }
   const toggleWorkbench = () => {
     setWorkbenchOpen((open) => !open)
   }
@@ -208,7 +213,7 @@ function App() {
         }}
         onOpenWorkspacePicker={() => setWsPickerOpen(true)}
         onOpenInspector={() => openWorkbench("inspector")}
-        onOpenReview={() => openWorkbench("review")}
+        onOpenReview={() => openReview()}
         sidePaneOpen={workbenchOpen}
         onToggleSidePane={toggleWorkbench}
         splitOpen={workbenchOpen && workbenchTab === "session"}
@@ -228,7 +233,10 @@ function App() {
             docked={isWide}
             width={workbenchResize.width}
             activeTab={workbenchTab}
-            onTabChange={setWorkbenchTab}
+            onTabChange={(tab) => {
+              if (tab === "review") setReviewTargetFilePath(null)
+              setWorkbenchTab(tab)
+            }}
             onClose={() => setWorkbenchOpen(false)}
             sessionTitle={secondSession?.title}
             inspector={
@@ -239,12 +247,15 @@ function App() {
                 onClose={() => setWorkbenchOpen(false)}
                 workspace={displayWorkspace}
                 onEditWorkspace={() => setWsPickerOpen(true)}
+                onOpenReview={openReview}
               />
             }
             review={(
               <ReviewPane
                 sessionId={currentSessionId}
                 liveSegments={chat.liveSegments}
+                workspace={displayWorkspace}
+                targetFilePath={reviewTargetFilePath}
               />
             )}
             session={

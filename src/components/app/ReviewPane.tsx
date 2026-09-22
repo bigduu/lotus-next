@@ -1,22 +1,27 @@
 import { useMemo } from "react"
 import { FileDiff } from "lucide-react"
 import { useShallow } from "zustand/react/shallow"
-import { FileChangeView } from "@/components/chat/FileChangeView"
+import { FileChangeList } from "@/components/chat/FileChangeList"
 import {
   collectLiveSessionFileChanges,
   collectSessionFileChanges,
+  groupSessionFileChanges,
   mergeSessionFileChanges,
+  summarizeSessionFileChangeGroups,
   type LiveFileChangeSegment,
 } from "@/lib/sessionFileChanges"
 import { selectSessionById, useAppStore } from "@shared/store/appStore"
-import { getFileChangePayloadDiffStats } from "@shared/utils/resultFormatters"
 
 export function ReviewPane({
   sessionId,
   liveSegments = [],
+  workspace,
+  targetFilePath,
 }: {
   sessionId: string | null
   liveSegments?: readonly LiveFileChangeSegment[]
+  workspace?: string | null
+  targetFilePath?: string | null
 }) {
   const messages = useAppStore(
     useShallow((state) =>
@@ -24,12 +29,18 @@ export function ReviewPane({
     ),
   )
   const changes = useMemo(
-    () => mergeSessionFileChanges(
-      collectSessionFileChanges(messages),
-      collectLiveSessionFileChanges(liveSegments),
-    ),
+    () =>
+      mergeSessionFileChanges(
+        collectSessionFileChanges(messages),
+        collectLiveSessionFileChanges(liveSegments),
+      ),
     [liveSegments, messages],
   )
+  const groups = useMemo(
+    () => groupSessionFileChanges(changes, workspace ?? undefined),
+    [changes, workspace],
+  )
+  const summary = useMemo(() => summarizeSessionFileChangeGroups(groups), [groups])
 
   if (!sessionId) {
     return (
@@ -39,7 +50,7 @@ export function ReviewPane({
     )
   }
 
-  if (changes.length === 0) {
+  if (groups.length === 0) {
     return (
       <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 p-8 text-center text-sm text-muted-foreground">
         <FileDiff className="size-6 opacity-60" />
@@ -53,30 +64,27 @@ export function ReviewPane({
       <div className="mb-3 flex items-center gap-2 text-sm font-medium">
         <FileDiff className="size-4 text-muted-foreground" />
         <span>文件变更</span>
-        <span className="text-xs font-normal text-muted-foreground">({changes.length})</span>
+        <span className="text-xs font-normal text-muted-foreground">
+          {summary.fileCount} 个文件 · {summary.editCount} 次修改
+        </span>
+        <span className="ml-auto shrink-0 text-xs font-normal">
+          <span className="text-green-600 dark:text-green-400">+{summary.addedLines}</span>{" "}
+          <span className="text-red-600 dark:text-red-400">−{summary.removedLines}</span>
+        </span>
       </div>
-      <div className="space-y-3">
-        {changes.map(({ id, payload }, index) => {
-          const stats = getFileChangePayloadDiffStats(payload)
-          return (
-            <details key={id} open={index === changes.length - 1} className="rounded-lg border">
-              <summary className="flex cursor-pointer select-none items-center gap-2 px-3 py-2.5 text-sm hover:bg-accent/50 [&::-webkit-details-marker]:hidden">
-                <FileDiff className="size-4 shrink-0 text-muted-foreground" />
-                <span className="min-w-0 flex-1 truncate font-mono" title={payload.file_path}>
-                  {payload.file_path}
-                </span>
-                <span className="shrink-0 text-xs">
-                  <span className="text-green-600 dark:text-green-400">+{stats.added}</span>{" "}
-                  <span className="text-red-600 dark:text-red-400">−{stats.removed}</span>
-                </span>
-              </summary>
-              <div className="border-t p-2">
-                <FileChangeView payload={payload} />
-              </div>
-            </details>
-          )
-        })}
-      </div>
+      <FileChangeList
+        key={targetFilePath ?? "latest"}
+        groups={groups}
+        workspace={workspace ?? undefined}
+        pathMode="relative"
+        density="comfortable"
+        defaultOpen={(index, total) =>
+          targetFilePath
+            ? groups[index]?.filePath === targetFilePath
+            : index === total - 1
+        }
+        scrollToGroupId={targetFilePath ? `file:${targetFilePath}` : null}
+      />
     </div>
   )
 }

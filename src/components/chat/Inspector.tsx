@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react"
-import { X, FolderGit2, FileDiff } from "lucide-react"
+import { ArrowRight, X, FolderGit2 } from "lucide-react"
 import { useShallow } from "zustand/react/shallow"
 import {
   useAppStore,
@@ -11,15 +11,18 @@ import { useProviderStore } from "@shared/store/appStore/slices/providerSlice"
 import { agentClient, type GoldConfig, type GoalState } from "@services/chat/AgentService"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
-import { collectSessionFileChanges } from "@/lib/sessionFileChanges"
+import {
+  collectSessionFileChanges,
+  groupSessionFileChanges,
+  summarizeSessionFileChangeGroups,
+} from "@/lib/sessionFileChanges"
 import {
   formatTokenCount,
   getPrefixCachePercentage,
   getPrefixCacheTotalInputTokens,
   type TokenUsage,
 } from "@shared/types/tokenBudget"
-import { FileChangeView } from "./FileChangeView"
-import { getFileChangePayloadDiffStats } from "@shared/utils/resultFormatters"
+import { FileChangeList } from "./FileChangeList"
 
 function GoalSection({
   sessionId,
@@ -253,6 +256,7 @@ export function Inspector({
   onClose,
   workspace,
   onEditWorkspace,
+  onOpenReview,
   docked = false,
   width,
   embedded = false,
@@ -262,6 +266,7 @@ export function Inspector({
   onClose: () => void
   workspace?: string | null
   onEditWorkspace?: () => void
+  onOpenReview?: (filePath?: string) => void
   /** Render as an in-flow right column (wide desktop) instead of an overlay sheet. */
   docked?: boolean
   /** Docked column width in px (resizable). */
@@ -278,12 +283,19 @@ export function Inspector({
   const taskList = useAppStore((s) => (sessionId ? s.taskLists[sessionId] : undefined))
   const evaluation = useAppStore((s) => (sessionId ? s.evaluationStates[sessionId] : undefined))
   const loadTaskList = useAppStore((s) => s.loadTaskList)
-  // Session-level file-change aggregation ("Diffs" section): every
-  // file-editing tool result in the loaded transcript, newest last.
+  // Inspector shows a deduplicated index; Review owns the full diff surface.
   const sessionMessages = useAppStore(
     useShallow((s) => (sessionId ? (selectSessionById(sessionId)(s)?.messages ?? []) : [])),
   )
   const fileChanges = useMemo(() => collectSessionFileChanges(sessionMessages), [sessionMessages])
+  const fileChangeGroups = useMemo(
+    () => groupSessionFileChanges(fileChanges, workspace ?? undefined),
+    [fileChanges, workspace],
+  )
+  const fileChangeSummary = useMemo(
+    () => summarizeSessionFileChangeGroups(fileChangeGroups),
+    [fileChangeGroups],
+  )
   const getProviderLabel = useProviderStore((s) => s.getProviderDisplayLabel)
   const children = useAppStore(
     useShallow((s) => (sessionId ? selectChildren(sessionId)(s) : {})),
@@ -380,33 +392,42 @@ export function Inspector({
             )}
           </section>
 
-          {fileChanges.length > 0 ? (
+          {fileChangeGroups.length > 0 ? (
             <section className="rounded-lg border p-3">
-              <div className="mb-2 text-xs font-medium text-muted-foreground">
-                文件变更 ({fileChanges.length})
+              <div className="mb-1.5 flex items-center justify-between gap-2">
+                <span className="text-xs font-medium text-muted-foreground">文件变更</span>
+                {onOpenReview ? (
+                  <button
+                    type="button"
+                    onClick={() => onOpenReview()}
+                    className="flex items-center gap-0.5 text-xs text-primary hover:underline"
+                  >
+                    Review
+                    <ArrowRight className="size-3" />
+                  </button>
+                ) : null}
               </div>
-              <div className="space-y-1.5">
-                {fileChanges.map(({ id, payload }) => {
-                  const stats = getFileChangePayloadDiffStats(payload)
-                  return (
-                    <details key={id}>
-                      <summary className="flex cursor-pointer select-none items-center gap-1.5 rounded px-1 py-0.5 text-xs hover:bg-accent [&::-webkit-details-marker]:hidden">
-                        <FileDiff className="size-3.5 shrink-0 text-muted-foreground" />
-                        <span className="min-w-0 flex-1 truncate font-mono" title={payload.file_path}>
-                          {payload.file_path?.split("/").filter(Boolean).pop() || payload.file_path}
-                        </span>
-                        <span className="shrink-0 text-[11px]">
-                          <span className="text-green-600 dark:text-green-400">+{stats.added}</span>{" "}
-                          <span className="text-red-600 dark:text-red-400">−{stats.removed}</span>
-                        </span>
-                      </summary>
-                      <div className="mt-1">
-                        <FileChangeView payload={payload} />
-                      </div>
-                    </details>
-                  )
-                })}
+              <div className="mb-1.5 flex items-center justify-between gap-2 text-[11px] text-muted-foreground">
+                <span>
+                  {fileChangeSummary.fileCount} 个文件 · {fileChangeSummary.editCount} 次修改
+                </span>
+                <span className="shrink-0">
+                  <span className="text-green-600 dark:text-green-400">
+                    +{fileChangeSummary.addedLines}
+                  </span>{" "}
+                  <span className="text-red-600 dark:text-red-400">
+                    −{fileChangeSummary.removedLines}
+                  </span>
+                </span>
               </div>
+              <FileChangeList
+                groups={fileChangeGroups}
+                workspace={workspace ?? undefined}
+                pathMode="basename"
+                density="compact"
+                variant="summary"
+                onSelect={(group) => onOpenReview?.(group.filePath)}
+              />
             </section>
           ) : null}
 
