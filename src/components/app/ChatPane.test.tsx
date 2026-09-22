@@ -123,11 +123,16 @@ function deferred<T>() {
   let resolve!: (value: T) => void; const promise = new Promise<T>((done) => { resolve = done })
   return { promise, resolve }
 }
-function createChat(send: Send, id: string | null, lastRunStatus: string | null = null) {
+function createChat(
+  send: Send,
+  id: string | null,
+  lastRunStatus: string | null = null,
+  lastRunError: string | null = null,
+) {
   return {
     booted: true, chats: [], currentSessionId: id,
     currentChat: id
-      ? { id, title: "Test", lastRunStatus, config: { workspacePath: "/session" } }
+      ? { id, title: "Test", lastRunStatus, lastRunError, config: { workspacePath: "/session" } }
       : null,
     messages: [], streaming: "", streamPhase: null, streamingReasoning: "", liveSegments: [], streamStatus: null,
     pendingUserText: null, sending: false, submissionPending: false, sendFailure: null,
@@ -361,6 +366,84 @@ describe("ChatPane composer acknowledgement", () => {
     await mount(vi.fn<Send>(), "session-1", true, "")
     expect(composer().sending).toBe(true)
   })
+
+  it("shows a persisted generation error after remount and keeps retry actionable", async () => {
+    const container = document.body.appendChild(document.createElement("div"))
+    const root = createRoot(container); roots.push(root)
+    const retry = vi.fn().mockResolvedValue(undefined)
+    const chat = {
+      ...createChat(
+        vi.fn<Send>(),
+        "failed-session",
+        "error",
+        "Budget error: compression stream closed before response.completed",
+      ),
+      retry,
+    }
+
+    await act(async () => root.render(<ChatPane chat={chat} pickedWorkspace="/picked"
+      onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()} splitOpen={false}
+      onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false} />))
+
+    const alert = container.querySelector<HTMLElement>('[role="alert"]')
+    expect(alert?.textContent).toContain("消息已发送，但生成中断")
+    expect(alert?.textContent).toContain(
+      "Budget error: compression stream closed before response.completed",
+    )
+    const retryButton = Array.from(alert?.querySelectorAll("button") ?? [])
+      .find((button) => button.textContent?.includes("重试生成"))
+    expect(retryButton).toBeDefined()
+    await act(async () => retryButton?.click())
+    expect(retry).toHaveBeenCalledTimes(1)
+    expect(retry).toHaveBeenCalledWith()
+  })
+
+  it("shows the concrete submission error while preserving the draft", async () => {
+    const container = document.body.appendChild(document.createElement("div"))
+    const root = createRoot(container); roots.push(root)
+    const chat = {
+      ...createChat(vi.fn<Send>(), "missing-workspace"),
+      sendFailure: {
+        kind: "submission-unconfirmed" as const,
+        operationId: 1,
+        sessionId: "missing-workspace",
+        message: "Project context error: workspace path does not exist",
+      },
+    }
+
+    await act(async () => root.render(<ChatPane chat={chat} pickedWorkspace="/picked"
+      onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()} splitOpen={false}
+      onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false} />))
+
+    const alert = container.querySelector<HTMLElement>('[role="alert"]')
+    expect(alert?.textContent).toContain("发送状态未确认，内容已保留")
+    expect(alert?.textContent).toContain("Project context error: workspace path does not exist")
+    expect(alert?.textContent).toContain("继续编辑")
+  })
+
+  it.each([
+    ["completed", false],
+    ["error", true],
+  ] as const)(
+    "does not show a stale persisted error for status=%s running=%s",
+    async (lastRunStatus, running) => {
+      const container = document.body.appendChild(document.createElement("div"))
+      const root = createRoot(container); roots.push(root)
+      const chat = createChat(
+        vi.fn<Send>(),
+        "current-session",
+        lastRunStatus,
+        "stale backend error",
+      )
+      if (chat.currentChat) chat.currentChat.isRunning = running
+
+      await act(async () => root.render(<ChatPane chat={chat} pickedWorkspace="/picked"
+        onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()} splitOpen={false}
+        onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false} />))
+
+      expect(container.querySelector('[role="alert"]')).toBeNull()
+    },
+  )
 
   it.each([
     ["completed", false, true],

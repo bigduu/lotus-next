@@ -213,6 +213,18 @@ export function ChatPane({
   // scoped to the session rendered by this pane.  Do not let a run from the
   // session we just left turn a blank/new conversation into a Stop button.
   const currentlyRunning = currentChat?.isRunning === true || (sending && streaming !== null)
+  const visibleSendFailure = sendFailure?.sessionId === currentSessionId ? sendFailure : null
+  const persistedRunError = !visibleSendFailure
+    && !currentlyRunning
+    && currentChat?.lastRunStatus === "error"
+    ? currentChat.lastRunError?.trim() || "生成失败，服务端未提供错误详情。"
+    : null
+  const generationFailed = visibleSendFailure?.kind === "generation-failed"
+    || persistedRunError !== null
+  const runErrorDetail = visibleSendFailure?.message?.trim()
+    || (generationFailed && currentChat?.lastRunStatus === "error"
+      ? currentChat.lastRunError?.trim() || persistedRunError
+      : null)
   const queue = useGuidanceQueue(currentSessionId, currentlyRunning)
   // The secondary chat hook remains mounted when its pane closes. Read state
   // follows the rendered pane, including the same breakpoint as its md:flex.
@@ -865,23 +877,36 @@ export function ChatPane({
           </button>
         )}
 
-        {sendFailure?.sessionId === currentSessionId ? (
+        {visibleSendFailure || persistedRunError ? (
           <div
             role="alert"
             aria-live="assertive"
             className="mx-auto mb-1 flex w-[calc(100%-1.5rem)] max-w-6xl flex-wrap items-center justify-between gap-2 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm"
           >
-            <span className="text-destructive">
-              {sendFailure.kind === "submission-unconfirmed"
-                ? "发送状态未确认，内容已保留"
-                : "消息已发送，但生成中断"}
-            </span>
-            {sendFailure.kind === "generation-failed" ? (
+            <div className="min-w-0 flex-1 text-destructive">
+              <p className="font-medium">
+                {visibleSendFailure?.kind === "submission-unconfirmed"
+                  ? "发送状态未确认，内容已保留"
+                  : "消息已发送，但生成中断"}
+              </p>
+              {runErrorDetail ? (
+                <p className="mt-1 break-words text-xs">
+                  错误详情：{runErrorDetail}
+                </p>
+              ) : null}
+            </div>
+            {generationFailed ? (
               <Button
                 size="sm"
                 variant="secondary"
                 disabled={sending}
-                onClick={() => void retry(sendFailure)}
+                onClick={() => {
+                  if (visibleSendFailure?.kind === "generation-failed") {
+                    void retry(visibleSendFailure)
+                  } else {
+                    void retry()
+                  }
+                }}
               >
                 <RotateCcw className="size-3.5" /> 重试生成
               </Button>

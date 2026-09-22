@@ -131,7 +131,7 @@ type SubscriptionHandlers = {
   onMessageAppended(sessionId: string, messageId?: string): void
   onSessionHistoryCommitted(sessionId: string): void
   onComplete(): void
-  onError(error?: unknown): void
+  onError(message: string): void
   onCancelled(): void
   onNeedClarification(event: { question?: string; options?: string[]; allow_custom?: boolean }): void
 }
@@ -313,10 +313,10 @@ afterEach(() => {
 })
 describe("useChat two-phase send lifecycle", () => {
   it.each([
-    ["new-session POST rejection", null, "reject"],
-    ["empty acknowledgement", null, "empty"],
-    ["existing-session POST rejection", "existing-session", "reject"],
-  ] as const)("keeps %s unconfirmed without rerunning a previous turn", async (_case, sid, mode) => {
+    ["new-session POST rejection", null, "reject", "no ack"],
+    ["empty acknowledgement", null, "empty", "The chat submission response did not acknowledge the expected session."],
+    ["existing-session POST rejection", "existing-session", "reject", "no ack"],
+  ] as const)("keeps %s unconfirmed without rerunning a previous turn", async (_case, sid, mode, message) => {
     if (mode === "reject") mocks.sendMessage.mockRejectedValueOnce(new Error("no ack"))
     else mocks.sendMessage.mockResolvedValueOnce({ session_id: "   " })
     const hook = await mountUseChat({ mode: "bound", sessionId: sid })
@@ -329,6 +329,7 @@ describe("useChat two-phase send lifecycle", () => {
       kind: "submission-unconfirmed",
       operationId: 1,
       sessionId: sid,
+      message,
     })
     expect(mocks.sendMessage).toHaveBeenCalledWith(
       expect.objectContaining({ message: "do not lose this", session_id: sid ?? undefined }),
@@ -811,7 +812,7 @@ describe("useChat two-phase send lifecycle", () => {
       expect(hook.current.pendingUserText).toBe("optimistic terminal payload")
       await act(async () => {
         if (terminalKind === "complete") handlers?.onComplete()
-        else handlers?.onError(new Error("generation failed"))
+        else handlers?.onError("generation failed")
         // AgentService invokes the terminal callback without awaiting it, then
         // resolves subscribeToEvents immediately after transport teardown.
         subscription.resolve()
@@ -834,6 +835,7 @@ describe("useChat two-phase send lifecycle", () => {
           operationId: 1,
           sessionId: "terminal-session",
           pendingOperationId: 1,
+          message: "generation failed",
         })
         expect(mocks.appState.loadChatHistory).toHaveBeenNthCalledWith(2, "terminal-session")
       }
@@ -851,6 +853,7 @@ describe("useChat two-phase send lifecycle", () => {
           operationId: 1,
           sessionId: "terminal-session",
           pendingOperationId: 1,
+          message: "generation failed",
         })
       }
     },
@@ -1084,6 +1087,35 @@ describe("useChat two-phase send lifecycle", () => {
     expect(hook.current.sendFailure).toBeNull()
     expect(hook.current.pendingUserText).toBeNull()
   })
+  it("retries a persisted backend error after transient hook state is lost", async () => {
+    mocks.appState.chats = [{
+      id: "persisted-error",
+      messages: [],
+      lastRunStatus: "error",
+    }]
+    mocks.subscribeToEvents.mockImplementationOnce(
+      (_sessionId: string, handlers: SubscriptionHandlers) => {
+        handlers.onComplete()
+        return Promise.resolve()
+      },
+    )
+    const hook = await mountUseChat({ mode: "bound", sessionId: "persisted-error" })
+
+    expect(hook.current.sendFailure).toBeNull()
+    await act(async () => void (await hook.current.retry()))
+
+    expect(mocks.truncateSessionMessages).toHaveBeenCalledWith("persisted-error", {
+      mode: "error_retry",
+    })
+    expect(mocks.execute).toHaveBeenCalledWith(
+      "persisted-error",
+      "test-model",
+      undefined,
+      undefined,
+      undefined,
+    )
+    expect(mocks.subscribeToEvents).toHaveBeenCalledTimes(1)
+  })
   it("finishes retry for session A without subscribing or contaminating a pane rebound to B", async () => {
     const { hook, truncation, retrying, callCounts } = await startPendingRetry(
       "session-a",
@@ -1161,6 +1193,7 @@ describe("useChat two-phase send lifecycle", () => {
       operationId: 2,
       sessionId: "detached-a",
       pendingOperationId: 1,
+      message: "detached A execute failed",
     })
     const aFailure = hook.current.sendFailure as GenerationFailure
     const postCount = mocks.sendMessage.mock.calls.length
@@ -1677,8 +1710,9 @@ describe("useChat permission wait and ordinary clarification", () => {
   it("keeps a real stream error visible even when a permission is pending", async () => {
     mocks.getPendingQuestion.mockResolvedValue(permissionQuestion())
     const { hook, stream, handlers } = await mountObservedSession()
-    await act(async () => { handlers.onError(new Error("generation failed")); stream.resolve(); await stream.promise })
+    await act(async () => { handlers.onError("generation failed"); stream.resolve(); await stream.promise })
     expect(hook.current.sendFailure?.kind).toBe("generation-failed")
+    expect(hook.current.sendFailure?.message).toBe("generation failed")
     expect(hook.current.pendingQuestion).toEqual(permissionQuestion())
   })
 
