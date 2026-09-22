@@ -90,7 +90,7 @@ for (const scenario of [standaloneScenario, embeddedScenario, secureRemoteScenar
     await surface.getByRole("button", { name: "撤回", exact: true }).click()
     await expect(pending).toHaveCount(0)
     await expect(surface.getByText("未能撤回，消息可能已经开始应用。", { exact: true })).toHaveCount(0)
-    await surface.getByRole("button", { name: "检查器", exact: true }).click()
+    await surface.getByRole("button", { name: "打开侧边面板", exact: true }).click()
     const goal = surface.locator("section").filter({ has: surface.getByText("目标", { exact: true }) })
     await goal.getByRole("button", { name: "编辑", exact: true }).click()
     await goal.getByRole("checkbox", { name: "无输出超时后尝试恢复" }).check()
