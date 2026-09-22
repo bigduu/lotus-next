@@ -406,9 +406,36 @@ function EntryRow({ e }: { e: Entry }) {
  * To avoid a wall of detail, only the latest {VISIBLE_CAP} tools render expanded
  * — earlier ones fold behind a "展开更早的 N 个" toggle.
  */
-export function ToolCalls({ items, active }: { items: Message[]; active?: boolean }) {
-  const [open, setOpen] = useState(false)
-  const [showAll, setShowAll] = useState(false)
+type ToolCallsProps = {
+  items: Message[]
+  active?: boolean
+  /** Optional controlled state, used by virtualized history rows. */
+  open?: boolean
+  onOpenChange?: (open: boolean) => void
+  showAll?: boolean
+  onShowAllChange?: (showAll: boolean) => void
+}
+
+export function ToolCalls({
+  items,
+  active,
+  open: controlledOpen,
+  onOpenChange,
+  showAll: controlledShowAll,
+  onShowAllChange,
+}: ToolCallsProps) {
+  const [internalOpen, setInternalOpen] = useState(false)
+  const [internalShowAll, setInternalShowAll] = useState(false)
+  const open = controlledOpen ?? internalOpen
+  const showAll = controlledShowAll ?? internalShowAll
+  const setOpen = (next: boolean) => {
+    if (controlledOpen === undefined) setInternalOpen(next)
+    onOpenChange?.(next)
+  }
+  const setShowAll = (next: boolean) => {
+    if (controlledShowAll === undefined) setInternalShowAll(next)
+    onShowAllChange?.(next)
+  }
 
   const entries = buildEntries(items)
   const uniqueNames = Array.from(new Set(entries.map((e) => e.toolName).filter(Boolean)))
@@ -423,7 +450,7 @@ export function ToolCalls({ items, active }: { items: Message[]; active?: boolea
       <div className="w-full max-w-[85%]">
         <button
           type="button"
-          onClick={() => setOpen((v) => !v)}
+          onClick={() => setOpen(!open)}
           aria-expanded={open}
           data-tool-call-toggle
           title={uniqueNames.join("、") || undefined}

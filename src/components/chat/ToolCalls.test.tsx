@@ -1,6 +1,7 @@
 import { act } from "react"
 import { createRoot, type Root } from "react-dom/client"
-import { afterAll, afterEach, beforeAll, expect, it } from "vitest"
+import { afterAll, afterEach, beforeAll, expect, it, vi } from "vitest"
+
 import type { Message } from "@shared/types/chatMessages"
 import { ToolCalls } from "./ToolCalls"
 
@@ -117,6 +118,31 @@ it("starts active tool calls collapsed and preserves a manual expansion after co
   act(() => root.render(<ToolCalls items={toolMessages(true)} active={false} />))
   expect(toggle?.getAttribute("aria-expanded")).toBe("true")
   expect(host.textContent).toContain("done")
+})
+
+it("supports controlled expansion for virtualized history rows", () => {
+  const host = document.createElement("div")
+  document.body.append(host)
+  const root = createRoot(host)
+  mountedRoots.push(root)
+  const onOpenChange = vi.fn()
+
+  act(() => root.render(
+    <ToolCalls items={toolMessages(true)} open={false} onOpenChange={onOpenChange} />,
+  ))
+  const toggle = host.querySelector<HTMLButtonElement>("[data-tool-call-toggle]")
+  expect(toggle?.getAttribute("aria-expanded")).toBe("false")
+  expect(host.querySelector("[data-tool-call-panel]")).toBeNull()
+
+  act(() => toggle?.click())
+  expect(onOpenChange).toHaveBeenCalledWith(true)
+  expect(toggle?.getAttribute("aria-expanded")).toBe("false")
+
+  act(() => root.render(
+    <ToolCalls items={toolMessages(true)} open onOpenChange={onOpenChange} />,
+  ))
+  expect(toggle?.getAttribute("aria-expanded")).toBe("true")
+  expect(host.querySelector("[data-tool-call-panel]")).not.toBeNull()
 })
 
 it("summarizes mixed tools as readable actions without exposing noisy arguments", () => {

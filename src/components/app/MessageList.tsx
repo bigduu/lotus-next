@@ -1,6 +1,28 @@
-import { Fragment, useMemo, useState, type Ref } from "react"
-import { Copy, Pencil, RotateCcw, GitFork, Trash2 } from "lucide-react"
+import {
+  Fragment,
+  useCallback,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type Ref,
+} from "react"
+import {
+  measureElement as measureVirtualElement,
+  observeElementRect,
+  useVirtualizer,
+  type Rect,
+  type Virtualizer,
+} from "@tanstack/react-virtual"
+import { Copy, Pencil, RotateCcw, GitFork, MoreHorizontal, Trash2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import { Textarea } from "@/components/ui/textarea"
 import { AssistantMarkdown } from "@/components/chat/AssistantMarkdown"
 import { Reasoning } from "@/components/chat/Reasoning"
@@ -78,10 +100,47 @@ type CompletedProcessLayout = {
   finalReasoningIndexes: Set<number>
 }
 
+type HistoryEntry =
+  | {
+      kind: "item"
+      key: string
+      item: RenderItem
+      itemIndex: number
+      suppressReasoning: boolean
+    }
+  | {
+      kind: "completed-process"
+      key: string
+      group: CompletedProcessGroup
+    }
+
+const HISTORY_ROW_GAP = 8
+const INITIAL_VIRTUAL_RECT = { width: 1024, height: 720 }
+
+type HistoryVirtualizer = Virtualizer<HTMLDivElement, HTMLDivElement>
+
+function observeHistoryRect(instance: HistoryVirtualizer, callback: (rect: Rect) => void) {
+  return observeElementRect(instance, (rect) => callback({
+    width: rect.width || INITIAL_VIRTUAL_RECT.width,
+    height: rect.height || INITIAL_VIRTUAL_RECT.height,
+  }))
+}
+
+function measureHistoryElement(
+  element: HTMLDivElement,
+  entry: ResizeObserverEntry | undefined,
+  instance: HistoryVirtualizer,
+): number {
+  const measured = measureVirtualElement(element, entry, instance)
+  return measured > 0
+    ? measured
+    : instance.options.estimateSize(instance.indexFromElement(element))
+}
+
 const MESSAGE_SURFACE_LAYOUT =
   "max-w-[85%] overflow-hidden rounded-2xl px-3.5 py-2 [overflow-wrap:anywhere]"
 const ASSISTANT_MESSAGE_SURFACE =
-  "bg-transparent text-[15px] font-medium leading-7 text-foreground"
+  "bg-transparent text-base font-normal leading-7 text-foreground"
 
 // Collapse consecutive tool messages into one group so a round's tool calls
 // show as a single compact chip instead of many full-width lines.
@@ -125,6 +184,27 @@ function isFinalAssistantResponse(item: RenderItem): boolean {
   if (item.kind !== "msg" || item.m.role !== "assistant") return false
   const images = (item.m as { images?: unknown[] }).images
   return Boolean(messageText(item.m).trim() || messageReasoning(item.m).trim() || images?.length)
+}
+
+function buildActionableAssistantIndexes(
+  items: RenderItem[],
+  includeTrailingAssistant: boolean,
+): Set<number> {
+  const indexes = new Set<number>()
+  let candidate: number | null = null
+
+  for (let index = 0; index < items.length; index += 1) {
+    const item = items[index]
+    if (item.kind === "msg" && item.m.role === "user") {
+      if (candidate !== null) indexes.add(candidate)
+      candidate = null
+      continue
+    }
+    if (isFinalAssistantResponse(item)) candidate = index
+  }
+
+  if (includeTrailingAssistant && candidate !== null) indexes.add(candidate)
+  return indexes
 }
 
 function toolCallCount(items: RenderItem[]): number {
@@ -217,6 +297,189 @@ function buildCompletedProcessLayout(
   return { byStart, foldedIndexes, finalReasoningIndexes }
 }
 
+function renderItemKey(item: RenderItem, index: number): string {
+  if (item.kind === "msg") return `message-${item.m.id}`
+  return `tools-${item.items[0]?.id ?? index}`
+}
+
+function hasRenderableMessageContent(message: Message, suppressReasoning: boolean): boolean {
+  const images = (message as { images?: unknown[] }).images
+  return Boolean(
+    messageText(message).trim() ||
+    images?.length ||
+    (!suppressReasoning && messageReasoning(message)),
+  )
+}
+
+function buildHistoryEntries(
+  items: RenderItem[],
+  layout: CompletedProcessLayout,
+): HistoryEntry[] {
+  const entries: HistoryEntry[] = []
+  for (let index = 0; index < items.length; index += 1) {
+    const completedProcess = layout.byStart.get(index)
+    if (completedProcess) {
+      entries.push({
+        kind: "completed-process",
+        key: completedProcess.key,
+        group: completedProcess,
+      })
+      index = completedProcess.endIndex
+      continue
+    }
+    if (layout.foldedIndexes.has(index)) continue
+    const item = items[index]
+    const suppressReasoning = layout.finalReasoningIndexes.has(index)
+    if (item.kind === "msg" && !hasRenderableMessageContent(item.m, suppressReasoning)) continue
+    entries.push({
+      kind: "item",
+      key: renderItemKey(item, index),
+      item,
+      itemIndex: index,
+      suppressReasoning,
+    })
+  }
+  return entries
+}
+
+function estimateHistoryEntrySize(
+  entry: HistoryEntry | undefined,
+  processOpen: boolean,
+  toolOpen: boolean,
+): number {
+  if (!entry) return 120
+  if (entry.kind === "completed-process") {
+    const processLength = entry.group.endIndex - entry.group.startIndex + 1
+    return processOpen ? Math.min(720, 96 + processLength * 120) : 28
+  }
+  if (entry.item.kind === "tools") return toolOpen ? 280 : 36
+  return entry.item.m.role === "user" ? 112 : 220
+}
+
+function withSetMembership(current: Set<string>, key: string, present: boolean): Set<string> {
+  if (current.has(key) === present) return current
+  const next = new Set(current)
+  if (present) next.add(key)
+  else next.delete(key)
+  return next
+}
+
+function collectChangedKeys(previous: Set<string>, current: Set<string>, changed: Set<string>) {
+  for (const key of previous) {
+    if (!current.has(key)) changed.add(key)
+  }
+  for (const key of current) {
+    if (!previous.has(key)) changed.add(key)
+  }
+}
+
+function assignRef<T>(ref: Ref<T>, value: T | null): void {
+  if (typeof ref === "function") ref(value)
+  else if (ref) ref.current = value
+}
+
+const MESSAGE_ACTION_BUTTON =
+  "items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50"
+const MESSAGE_ACTION_SIZE = { width: 28, height: 28 }
+
+function MessageActions({
+  messageId,
+  text,
+  isUser,
+  sending,
+  forking,
+  onEdit,
+  onRegenerate,
+  onFork,
+  onDelete,
+}: {
+  messageId: string
+  text: string
+  isUser: boolean
+  sending: boolean
+  forking: boolean
+  onEdit: () => void
+  onRegenerate: () => void
+  onFork: () => void
+  onDelete: () => void
+}) {
+  const copy = () => void navigator.clipboard?.writeText(text)
+
+  return (
+    <div
+      data-message-actions={messageId}
+      className="flex shrink-0 items-center gap-0.5 opacity-100 transition-opacity focus-within:opacity-100 group-hover:opacity-100 md:opacity-0"
+    >
+      <button
+        type="button"
+        onClick={copy}
+        className={`${MESSAGE_ACTION_BUTTON} hidden md:inline-flex`}
+        style={MESSAGE_ACTION_SIZE}
+        aria-label="复制"
+        title="复制"
+      >
+        <Copy className="size-3.5" />
+      </button>
+      <button
+        type="button"
+        onClick={onFork}
+        disabled={forking}
+        className={`${MESSAGE_ACTION_BUTTON} hidden md:inline-flex`}
+        style={MESSAGE_ACTION_SIZE}
+        aria-label="从这里分叉"
+        title="从这里分叉成新会话"
+      >
+        <GitFork className="size-3.5" />
+      </button>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <button
+            type="button"
+            className={`${MESSAGE_ACTION_BUTTON} inline-flex`}
+            style={MESSAGE_ACTION_SIZE}
+            aria-label="更多消息操作"
+            title="更多消息操作"
+          >
+            <MoreHorizontal className="size-3.5" />
+          </button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent
+          side="bottom"
+          align={isUser ? "end" : "start"}
+          className="rounded-xl"
+          style={{ minWidth: "10rem" }}
+        >
+          <DropdownMenuItem className="md:hidden" onClick={copy}>
+            <Copy />
+            复制
+          </DropdownMenuItem>
+          <DropdownMenuItem className="md:hidden" disabled={forking} onClick={onFork}>
+            <GitFork />
+            从这里分叉
+          </DropdownMenuItem>
+          <DropdownMenuSeparator className="md:hidden" />
+          {isUser ? (
+            <DropdownMenuItem onClick={onEdit}>
+              <Pencil />
+              编辑并重发
+            </DropdownMenuItem>
+          ) : (
+            <DropdownMenuItem disabled={sending} onClick={onRegenerate}>
+              <RotateCcw />
+              重新生成
+            </DropdownMenuItem>
+          )}
+          <DropdownMenuSeparator />
+          <DropdownMenuItem variant="destructive" onClick={onDelete}>
+            <Trash2 />
+            删除
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </div>
+  )
+}
+
 export function MessageList({
   scrollRef,
   contentRef,
@@ -231,6 +494,7 @@ export function MessageList({
   liveSegments,
   streamStatus,
   pendingUserText,
+  contentShiftX = 0,
   forking,
   onSelectSubAgent,
   onPreviewImage,
@@ -253,6 +517,8 @@ export function MessageList({
   liveSegments: LiveSegment[]
   streamStatus: string | null
   pendingUserText: string | null
+  /** Horizontal transcript offset used while a floating panel occupies the end side. */
+  contentShiftX?: number
   forking: boolean
   onSelectSubAgent: (id: string) => void
   onPreviewImage: (src: string) => void
@@ -264,10 +530,92 @@ export function MessageList({
   const [editingMsg, setEditingMsg] = useState<{ id: string; text: string } | null>(null)
 
   const renderItems = useMemo(() => buildRenderItems(messages), [messages])
+  const actionableAssistantIndexes = useMemo(
+    () => buildActionableAssistantIndexes(renderItems, !sending),
+    [renderItems, sending],
+  )
   const completedProcessLayout = useMemo(
     () => buildCompletedProcessLayout(renderItems, latestRunFinished),
     [latestRunFinished, renderItems],
   )
+  const historyEntries = useMemo(
+    () => buildHistoryEntries(renderItems, completedProcessLayout),
+    [completedProcessLayout, renderItems],
+  )
+  const [openProcessKeys, setOpenProcessKeys] = useState<Set<string>>(() => new Set())
+  const [openToolKeys, setOpenToolKeys] = useState<Set<string>>(() => new Set())
+  const [showAllToolKeys, setShowAllToolKeys] = useState<Set<string>>(() => new Set())
+  const historyEntriesRef = useRef(historyEntries)
+  const openProcessKeysRef = useRef(openProcessKeys)
+  const openToolKeysRef = useRef(openToolKeys)
+  historyEntriesRef.current = historyEntries
+  openProcessKeysRef.current = openProcessKeys
+  openToolKeysRef.current = openToolKeys
+
+  const scrollElementRef = useRef<HTMLDivElement | null>(null)
+  const setScrollElement = useCallback((node: HTMLDivElement | null) => {
+    scrollElementRef.current = node
+    assignRef(scrollRef, node)
+  }, [scrollRef])
+  const getScrollElement = useCallback(() => scrollElementRef.current, [])
+  const getItemKey = useCallback(
+    (index: number) => historyEntriesRef.current[index]?.key ?? index,
+    [],
+  )
+  const estimateSize = useCallback((index: number) => {
+    const entry = historyEntriesRef.current[index]
+    return estimateHistoryEntrySize(
+      entry,
+      entry?.kind === "completed-process" && openProcessKeysRef.current.has(entry.key),
+      entry?.kind === "item" && entry.item.kind === "tools" && openToolKeysRef.current.has(entry.key),
+    )
+  }, [])
+  const virtualizer = useVirtualizer<HTMLDivElement, HTMLDivElement>({
+    count: historyEntries.length,
+    getScrollElement,
+    getItemKey,
+    estimateSize,
+    gap: HISTORY_ROW_GAP,
+    overscan: 6,
+    initialRect: INITIAL_VIRTUAL_RECT,
+    observeElementRect: observeHistoryRect,
+    measureElement: measureHistoryElement,
+  })
+
+  const previousExpansionStateRef = useRef({
+    openProcessKeys,
+    openToolKeys,
+    showAllToolKeys,
+  })
+  useLayoutEffect(() => {
+    const previous = previousExpansionStateRef.current
+    previousExpansionStateRef.current = { openProcessKeys, openToolKeys, showAllToolKeys }
+    const changedKeys = new Set<string>()
+    collectChangedKeys(previous.openProcessKeys, openProcessKeys, changedKeys)
+    collectChangedKeys(previous.openToolKeys, openToolKeys, changedKeys)
+    collectChangedKeys(previous.showAllToolKeys, showAllToolKeys, changedKeys)
+    if (changedKeys.size === 0) return
+
+    const rows = scrollElementRef.current?.querySelectorAll<HTMLDivElement>(
+      "[data-history-entry-key]",
+    )
+    for (const row of rows ?? []) {
+      if (!row.dataset.historyEntryKey || !changedKeys.has(row.dataset.historyEntryKey)) continue
+      const index = virtualizer.indexFromElement(row)
+      virtualizer.resizeItem(index, row.offsetHeight || estimateSize(index))
+    }
+  }, [estimateSize, openProcessKeys, openToolKeys, showAllToolKeys, virtualizer])
+
+  const setProcessOpen = useCallback((key: string, open: boolean) => {
+    setOpenProcessKeys((current) => withSetMembership(current, key, open))
+  }, [])
+  const setToolOpen = useCallback((key: string, open: boolean) => {
+    setOpenToolKeys((current) => withSetMembership(current, key, open))
+  }, [])
+  const setToolShowAll = useCallback((key: string, showAll: boolean) => {
+    setShowAllToolKeys((current) => withSetMembership(current, key, showAll))
+  }, [])
+
   // Anchor the sub-agent block after the tool-group that spawned them, so it
   // scrolls up with the conversation instead of staying pinned at the bottom.
   const spawnItemIdx = useMemo(() => {
@@ -295,6 +643,7 @@ export function MessageList({
   ) => {
     if (it.kind === "tools") {
       const isLast = idx === renderItems.length - 1
+      const toolStateKey = renderItemKey(it, idx)
       const tools = (
         <ToolCalls
           key={it.items[0]?.id ?? `tools-${idx}`}
@@ -303,6 +652,10 @@ export function MessageList({
           // the persisted tool round is still running. ChatPane passes a
           // session-scoped running value here.
           active={isLast && sending}
+          open={openToolKeys.has(toolStateKey)}
+          onOpenChange={(open) => setToolOpen(toolStateKey, open)}
+          showAll={showAllToolKeys.has(toolStateKey)}
+          onShowAllChange={(showAll) => setToolShowAll(toolStateKey, showAll)}
         />
       )
       if (idx === spawnItemIdx) {
@@ -321,6 +674,7 @@ export function MessageList({
       m as { images?: Array<{ url?: string; base64?: string; type?: string }> }
     ).images
     const isUser = m.role === "user"
+    const showMessageActions = isUser || actionableAssistantIndexes.has(idx)
     const reasoning = isUser || options?.suppressReasoning ? "" : messageReasoning(m)
     // Truly empty (no text, no images, no reasoning) → skip the blank bubble.
     if (!text.trim() && !imgs?.length && !reasoning) return null
@@ -360,17 +714,36 @@ export function MessageList({
         </div>
       )
     }
+    const actions = showMessageActions ? (
+      <MessageActions
+        messageId={m.id}
+        text={text}
+        isUser={isUser}
+        sending={sending}
+        forking={forking}
+        onEdit={() => setEditingMsg({ id: m.id, text })}
+        onRegenerate={onRegenerate}
+        onFork={() => onFork(m.id)}
+        onDelete={() => onDelete(m.id)}
+      />
+    ) : null
+
     return (
       <div
         key={m.id}
-        className={cn("group flex flex-col", isUser ? "items-end" : "items-start")}
+        data-message-row={m.id}
+        className={cn(
+          "group flex w-full items-end gap-1.5",
+          isUser ? "justify-end" : "justify-start",
+        )}
       >
+        {isUser ? actions : null}
         <div
           data-message-role={isUser ? "user" : "assistant"}
           className={cn(
             MESSAGE_SURFACE_LAYOUT,
             isUser
-              ? "whitespace-pre-wrap bg-primary text-sm leading-relaxed text-primary-foreground"
+              ? "whitespace-pre-wrap bg-primary text-base leading-7 text-primary-foreground"
               : ASSISTANT_MESSAGE_SURFACE,
           )}
         >
@@ -397,58 +770,72 @@ export function MessageList({
             <AssistantMarkdown isStreaming={false}>{text}</AssistantMarkdown>
           ) : null}
         </div>
-        <div className="mt-1 flex gap-0.5 opacity-100 transition-opacity md:opacity-0 md:group-hover:opacity-100">
-          <button
-            onClick={() => void navigator.clipboard?.writeText(text)}
-            className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
-            aria-label="复制"
-          >
-            <Copy className="size-3.5" />
-          </button>
-          {isUser ? (
-            <button
-              onClick={() => setEditingMsg({ id: m.id, text })}
-              className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
-              aria-label="编辑"
-              title="编辑并重发"
-            >
-              <Pencil className="size-3.5" />
-            </button>
-          ) : (
-            <button
-              onClick={onRegenerate}
-              disabled={sending}
-              className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-50"
-              aria-label="重新生成"
-              title="重新生成"
-            >
-              <RotateCcw className="size-3.5" />
-            </button>
-          )}
-          <button
-            onClick={() => onFork(m.id)}
-            disabled={forking}
-            className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-50"
-            aria-label="从这里分叉"
-            title="从这里分叉成新会话"
-          >
-            <GitFork className="size-3.5" />
-          </button>
-          <button
-            onClick={() => onDelete(m.id)}
-            className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-destructive"
-            aria-label="删除"
-          >
-            <Trash2 className="size-3.5" />
-          </button>
-        </div>
+        {isUser ? null : actions}
       </div>
     )
   }
 
+  const renderHistoryEntry = (entry: HistoryEntry) => {
+    if (entry.kind === "item") {
+      return renderItem(entry.item, entry.itemIndex, {
+        suppressReasoning: entry.suppressReasoning,
+      })
+    }
+
+    const processOpen = openProcessKeys.has(entry.key)
+    return (
+      <details
+        open={processOpen}
+        data-completed-process
+        className="w-full"
+      >
+        <summary
+          onClick={(event) => {
+            event.preventDefault()
+            setProcessOpen(entry.key, !processOpen)
+          }}
+          className="cursor-pointer select-none text-xs text-muted-foreground hover:text-foreground"
+          title={`${entry.group.toolCallCount} 次工具调用`}
+        >
+          {entry.group.label}
+        </summary>
+        {processOpen ? (
+          <div className="mt-2 flex flex-col gap-2 border-l-2 border-border pl-2.5">
+            {renderItems
+              .slice(entry.group.startIndex, entry.group.endIndex + 1)
+              .map((processItem, processOffset) =>
+                renderItem(processItem, entry.group.startIndex + processOffset),
+              )}
+            {entry.group.finalReasoning ? (
+              <div className="flex justify-start">
+                <div
+                  data-completed-final-reasoning
+                  className={cn(MESSAGE_SURFACE_LAYOUT, ASSISTANT_MESSAGE_SURFACE)}
+                >
+                  <Reasoning text={entry.group.finalReasoning} />
+                </div>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+      </details>
+    )
+  }
+
+  const virtualItems = virtualizer.getVirtualItems()
+
   return (
-    <div ref={scrollRef} onScroll={onScroll} className="min-h-0 flex-1 overflow-y-auto">
-      <div ref={contentRef} className="mx-auto flex w-full max-w-6xl flex-col gap-4 px-3 py-4">
+    <div ref={setScrollElement} onScroll={onScroll} className="min-h-0 flex-1 overflow-y-auto">
+      <div
+        ref={contentRef}
+        data-message-list-content
+        className="relative mx-auto flex w-full max-w-6xl flex-col gap-2 px-3 py-4"
+        style={{
+          left: contentShiftX,
+          transition: "left 200ms ease-out",
+          WebkitFontSmoothing: "auto",
+        }}
+      >
         {messages.length === 0 && !streaming && !pendingUserText && liveSegments.length === 0 && (
           <div className="flex flex-col items-center gap-2 py-20 text-center">
             <div className="size-10 rounded-xl bg-primary" />
@@ -456,50 +843,41 @@ export function MessageList({
           </div>
         )}
 
-        {renderItems.map((it, idx) => {
-          const completedProcess = completedProcessLayout.byStart.get(idx)
-          if (completedProcess) {
-            return (
-              <details
-                key={completedProcess.key}
-                data-completed-process
-                className="w-full"
-              >
-                <summary
-                  className="cursor-pointer select-none text-xs text-muted-foreground hover:text-foreground"
-                  title={`${completedProcess.toolCallCount} 次工具调用`}
+        {historyEntries.length > 0 ? (
+          <div
+            data-virtual-history
+            className="relative w-full"
+            style={{ height: virtualizer.getTotalSize() }}
+          >
+            {virtualItems.map((virtualItem) => {
+              const entry = historyEntries[virtualItem.index]
+              if (!entry) return null
+              return (
+                <div
+                  key={virtualItem.key}
+                  ref={virtualizer.measureElement}
+                  data-history-entry-key={entry.key}
+                  data-index={virtualItem.index}
+                  className={cn(
+                    "absolute left-0 top-0 w-full",
+                    virtualItem.index > 0 &&
+                      entry.kind === "item" &&
+                      entry.item.kind === "msg" &&
+                      entry.item.m.role === "user" &&
+                      "pt-2",
+                  )}
+                  style={{ transform: `translateY(${virtualItem.start}px)` }}
                 >
-                  {completedProcess.label}
-                </summary>
-                <div className="mt-3 flex flex-col gap-4 border-l-2 border-border pl-2.5">
-                  {renderItems
-                    .slice(completedProcess.startIndex, completedProcess.endIndex + 1)
-                    .map((processItem, processOffset) =>
-                      renderItem(processItem, completedProcess.startIndex + processOffset),
-                    )}
-                  {completedProcess.finalReasoning ? (
-                    <div className="flex justify-start">
-                      <div
-                        data-completed-final-reasoning
-                        className={cn(MESSAGE_SURFACE_LAYOUT, ASSISTANT_MESSAGE_SURFACE)}
-                      >
-                        <Reasoning text={completedProcess.finalReasoning} />
-                      </div>
-                    </div>
-                  ) : null}
+                  {renderHistoryEntry(entry)}
                 </div>
-              </details>
-            )
-          }
-          if (completedProcessLayout.foldedIndexes.has(idx)) return null
-          return renderItem(it, idx, {
-            suppressReasoning: completedProcessLayout.finalReasoningIndexes.has(idx),
-          })
-        })}
+              )
+            })}
+          </div>
+        ) : null}
 
         {pendingUserText ? (
-          <div className="flex justify-end">
-            <div className="max-w-[85%] overflow-hidden whitespace-pre-wrap rounded-2xl bg-primary px-3.5 py-2 text-sm leading-relaxed text-primary-foreground [overflow-wrap:anywhere]">
+          <div className="mt-2 flex justify-end">
+            <div className="max-w-[85%] overflow-hidden whitespace-pre-wrap rounded-2xl bg-primary px-3.5 py-2 text-base leading-7 text-primary-foreground [overflow-wrap:anywhere]">
               {pendingUserText}
             </div>
           </div>

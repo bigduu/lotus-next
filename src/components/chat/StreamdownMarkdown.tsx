@@ -272,7 +272,7 @@ export function StreamdownMarkdown({
       <Streamdown
         animated={isStreaming ? STREAMDOWN_ANIMATION : false}
         className={cn(
-          "assistant-streamdown prose prose-sm max-w-none min-w-0 space-y-0 text-[15px]! font-medium dark:prose-invert",
+          "assistant-streamdown prose max-w-none min-w-0 space-y-0 font-normal text-foreground dark:prose-invert",
           "[overflow-wrap:anywhere] prose-p:my-2 prose-headings:mt-3 prose-headings:mb-1.5",
           "prose-a:text-primary prose-li:my-0.5",
           className,
