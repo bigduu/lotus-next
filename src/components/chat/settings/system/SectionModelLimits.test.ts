@@ -9,6 +9,10 @@ import {
 } from "./modelLimits"
 
 describe("model limit table helpers", () => {
+  it("uses a 32K fallback output allowance", () => {
+    expect(FALLBACK_DEFAULT.max_output_tokens).toBe(32_000)
+  })
+
   it("parses and formats compact context-window values", () => {
     expect(parseTokenCount("258K")).toBe(258_000)
     expect(parseTokenCount("1M")).toBe(1_000_000)

@@ -50,6 +50,14 @@ const CONTEXT_WINDOW_PRESETS: ComboOption[] = [
   { value: "2M", label: "2M", description: "2,000,000 tokens" },
 ]
 
+const MAX_OUTPUT_PRESETS: ComboOption[] = [
+  { value: "4K", label: "4K", description: "4,000 tokens" },
+  { value: "8K", label: "8K", description: "8,000 tokens" },
+  { value: "16K", label: "16K", description: "16,000 tokens" },
+  { value: "32K", label: "32K", description: "32,000 tokens" },
+  { value: "64K", label: "64K", description: "64,000 tokens" },
+  { value: "128K", label: "128K", description: "128,000 tokens" },
+]
 
 function parseGlobalDefault(response: {
   model_limits?: Array<Partial<GlobalDefault>>
@@ -426,7 +434,7 @@ export function SectionModelLimits({
       </div>
 
       <p className="text-xs leading-relaxed text-muted-foreground">
-        模型支持下拉选择或直接输入匹配串；上下文窗口可快速选择 128K、258K、1M 等预设，也可输入任意整数或 K/M 简写。
+        模型支持下拉选择或直接输入匹配串；上下文窗口和最大输出均可选择预设，也可输入任意整数或 K/M 简写。最大输出会从总上下文中为每轮请求预留，设置越大，历史压缩越早。
       </p>
 
       <div className="overflow-x-auto rounded-lg border">
@@ -471,13 +479,14 @@ export function SectionModelLimits({
                   />
                 </td>
                 <td>
-                  <Input
-                    className="h-8 text-xs"
-                    aria-label={`${row.model_pattern || "新模型"} 最大输出`}
-                    inputMode="decimal"
+                  <EditableValueCombobox
+                    ariaLabel={`${row.model_pattern || "新模型"} 最大输出`}
                     value={row.max_output_tokens}
+                    onChange={(value) => updateRow(row.id, { max_output_tokens: value })}
+                    options={MAX_OUTPUT_PRESETS}
+                    placeholder="如 16K 或 32K"
                     disabled={!row.customized}
-                    onChange={(event) => updateRow(row.id, { max_output_tokens: event.target.value })}
+                    inputMode="decimal"
                   />
                 </td>
                 <td>
