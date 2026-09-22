@@ -316,13 +316,14 @@ export function ChatPane({
   )
   const reasoningEffort = sessionReasoningEffort ?? chatReasoningEffort ?? "medium"
   const setInputReasoningEffort = useAppStore((s) => s.setInputReasoningEffort)
-  // What the next send will use: explicit pick → configured Chat default →
-  // (last resort) the session's own historical model.
+  // What the next send will use: explicit pick → this session's bound model →
+  // configured Chat default. Existing child panes must not be relabelled with
+  // the root Chat default merely because the global picker is unset.
   const activeModel =
     selectedModel ||
-    defaultChatModel ||
     currentChat?.config?.model_ref?.model ||
     currentChat?.config?.model ||
+    defaultChatModel ||
     ""
 
   // Escape hides the pickers until the draft changes again (typing re-opens).
@@ -774,6 +775,7 @@ export function ChatPane({
           />
         ) : (
         <MessageList
+          key={currentSessionId ?? "new-session"}
           scrollRef={scrollRef}
           contentRef={contentRef}
           onScroll={handleScroll}

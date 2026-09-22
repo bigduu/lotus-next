@@ -206,9 +206,9 @@ export function useChat(
   const currentChat = useAppStore(selectSessionById(sid))
   const messages = useAppStore(useShallow((s) => selectSessionById(sid)(s)?.messages ?? []))
   const selectedModel = useAppStore((s) => s.selectedModel)
-  // Global default model (configured in provider settings). Used when the user
-  // hasn't explicitly picked one, so sends honor the default (e.g. glm-5.2)
-  // rather than falling back to a session's stale historical model.
+  // Global default model (configured in provider settings). It seeds new
+  // sessions; an existing session keeps its own bound model unless the user
+  // explicitly picks another one.
   const defaultChatModel = useProviderStore((s) => s.providerSnapshot?.defaults?.chat?.model)
   // The full provider+model ref for the configured Chat default. Under Bamboo's
   // `features.provider_model_ref` cascade a bare model id (no provider) is
@@ -234,32 +234,47 @@ export function useChat(
     }
     return known
   }))
-  const effectiveModel = selectedModel || defaultChatModel || ""
-  const acknowledgedModel =
-    effectiveModel || currentChat?.config.model_ref?.model || currentChat?.config.model || ""
-  // Full ref to send alongside `model`: the configured default's provider
-  // carrying the effective (user-picked or default) model id. Kept undefined
-  // when either half is missing, or when the picked model belongs to another
-  // provider instance, so the request degrades to the bare model. Memoized:
-  // a fresh object literal per render would rebuild every useCallback below.
-  const effectiveModelRef = useMemo(
-    () =>
-      defaultChatRef?.provider?.trim() &&
-        effectiveModel &&
-        defaultProviderModelIds?.has(effectiveModel)
-        ? { provider: defaultChatRef.provider, model: effectiveModel }
-        : undefined,
-    [defaultChatRef, effectiveModel, defaultProviderModelIds],
-  )
+  const sessionModelRef = currentChat?.config?.model_ref
+  const sessionModel = sessionModelRef?.model || currentChat?.config?.model || ""
+  const effectiveModel = selectedModel || sessionModel || defaultChatModel || ""
+  const acknowledgedModel = effectiveModel
+  // Full ref to send alongside `model`. Explicit picker choices are paired
+  // with the configured Chat provider only when they are known to belong to
+  // it. With no explicit pick, an existing session's own provider+model ref is
+  // authoritative; only a new/unbound session falls back to the Chat default.
+  const effectiveModelRef = useMemo(() => {
+    if (selectedModel) {
+      return defaultChatRef?.provider?.trim() &&
+        defaultProviderModelIds?.has(selectedModel)
+        ? { provider: defaultChatRef.provider, model: selectedModel }
+        : undefined
+    }
+    if (sessionModelRef?.provider?.trim() && sessionModelRef.model?.trim()) {
+      return { provider: sessionModelRef.provider, model: sessionModelRef.model }
+    }
+    if (!sessionModel && defaultChatRef?.provider?.trim() && defaultChatModel) {
+      return { provider: defaultChatRef.provider, model: defaultChatModel }
+    }
+    return undefined
+  }, [
+    defaultChatModel,
+    defaultChatRef,
+    defaultProviderModelIds,
+    selectedModel,
+    sessionModel,
+    sessionModelRef,
+  ])
   const chatReasoningEffort = useProviderStore((s) => {
     const id = s.providerSnapshot?.defaults?.chat.provider
     return getReasoningEffortForProvider(s.providerSnapshot, id)
   })
-  // Provider type of the Chat model preference drives provider-specific prompt
+  const effectiveProviderId = selectedModel
+    ? effectiveModelRef?.provider
+    : sessionModelRef?.provider || effectiveModelRef?.provider
+  // Provider type of the effective model drives provider-specific prompt
   // enhancement segments (e.g. the Copilot conclusion-with-options contract).
   const providerType = useProviderStore((s) => {
-    const id = s.providerSnapshot?.defaults?.chat.provider
-    return id ? s.getProviderType(id) : undefined
+    return effectiveProviderId ? s.getProviderType(effectiveProviderId) : undefined
   })
   const reasoningEffort =
     useAppStore((s) => s.inputStates[sid ?? ""]?.reasoningEffort) ?? chatReasoningEffort
