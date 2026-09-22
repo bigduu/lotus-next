@@ -2106,12 +2106,12 @@ test("MCP JSON import merges, replaces, rolls back and survives a real restart",
     await expect(dialog.getByRole("button", { name: "导入", exact: true })).toBeDisabled();
     await confirmation.check();
     // This pinned Bamboo maps failed pre-commit runtime staging to HTTP 500.
-    // The UI must conservatively show an uncertain outcome, then permit only
-    // read verification until the user provides a new import intent.
+    // The UI reconciles the authoritative list, proves the replacement did not
+    // take effect, and permits a new import intent without replaying the write.
     const rejection = await submit(page, rejected, "replace", 500);
     expect(asRecord(rejection.error)?.message).toContain("MCP runtime initialization failed before commit; retaining last-known-good generation");
     await expect(dialog.getByRole("alert")).toBeVisible();
-    await expect(dialog.getByRole("alert")).toContainText("导入结果尚未确认");
+    await expect(dialog.getByRole("alert")).toContainText("本次配置没有生效");
     await expect(dialog.getByRole("alert")).not.toContainText(secret);
     await expect(dialog.getByRole("button", { name: "导入", exact: true })).toBeDisabled();
     expect((await readServers(contract.baseUrl.origin)).map((server) => server.config)).toEqual(afterMerge.map((server) => server.config));
