@@ -21,8 +21,24 @@ vi.mock("@/components/chat/Reasoning", () => ({
 vi.mock("@/components/chat/StreamingReasoning", () => ({ StreamingReasoning: () => null }))
 vi.mock("@/components/chat/SubAgents", () => ({ SubAgents: () => null }))
 vi.mock("@/components/chat/ToolCalls", () => ({
-  ToolCalls: ({ active, items }: { active?: boolean; items: Message[] }) => (
-    <div data-tool-active={String(active)} data-tool-items={items.length} />
+  ToolCalls: ({
+    active,
+    items,
+    open = false,
+    onOpenChange,
+  }: {
+    active?: boolean
+    items: Message[]
+    open?: boolean
+    onOpenChange?: (open: boolean) => void
+  }) => (
+    <button
+      type="button"
+      aria-expanded={open}
+      data-tool-active={String(active)}
+      data-tool-items={items.length}
+      onClick={() => onOpenChange?.(!open)}
+    />
   ),
 }))
 
@@ -47,7 +63,11 @@ afterEach(() => {
   document.body.replaceChildren()
 })
 
-function renderMessageList(messages: Message[], latestRunFinished: boolean) {
+function renderMessageList(
+  messages: Message[],
+  latestRunFinished: boolean,
+  contentShiftX = 0,
+) {
   const container = document.createElement("div")
   document.body.appendChild(container)
   const root = createRoot(container)
@@ -68,6 +88,7 @@ function renderMessageList(messages: Message[], latestRunFinished: boolean) {
         liveSegments={[]}
         streamStatus={null}
         pendingUserText={null}
+        contentShiftX={contentShiftX}
         forking={false}
         onSelectSubAgent={vi.fn()}
         onPreviewImage={vi.fn()}
@@ -80,6 +101,17 @@ function renderMessageList(messages: Message[], latestRunFinished: boolean) {
   })
   return container
 }
+
+it("animates only the transcript content when a floating panel opens", () => {
+  const container = renderMessageList([], false, -166)
+  const scrollViewport = container.firstElementChild as HTMLElement | null
+  const content = container.querySelector<HTMLElement>("[data-message-list-content]")
+
+  expect(scrollViewport?.style.transform).toBe("")
+  expect(content?.style.transform).toBe("")
+  expect(content?.style.left).toBe("-166px")
+  expect(content?.style.transition).toContain("left 200ms ease-out")
+})
 
 describe("MessageList assistant streaming ownership", () => {
   it("renders persisted and frozen text statically, and only the active tail as streaming", () => {
@@ -191,8 +223,8 @@ describe("MessageList assistant streaming ownership", () => {
     for (const surface of assistantSurfaces) {
       expect(surface.classList.contains("bg-transparent")).toBe(true)
       expect(surface.classList.contains("bg-muted")).toBe(false)
-      expect(surface.classList.contains("text-[15px]")).toBe(true)
-      expect(surface.classList.contains("font-medium")).toBe(true)
+      expect(surface.classList.contains("text-base")).toBe(true)
+      expect(surface.classList.contains("font-normal")).toBe(true)
     }
   })
 
@@ -240,6 +272,70 @@ describe("MessageList assistant streaming ownership", () => {
       .toBe("false")
     expect(container.querySelector("[data-assistant-content='retained final text']")
       ?.getAttribute("data-streaming")).toBe("false")
+  })
+})
+
+describe("MessageList compact message actions", () => {
+  it("keeps controls beside messages and only shows them for the final assistant response", () => {
+    const messages: Message[] = [
+      {
+        id: "user-1",
+        role: "user",
+        content: "first request",
+        createdAt: "2026-09-20T00:00:00Z",
+      },
+      {
+        id: "assistant-process",
+        role: "assistant",
+        type: "text",
+        content: "working on it",
+        createdAt: "2026-09-20T00:00:01Z",
+      },
+      {
+        id: "assistant-final-1",
+        role: "assistant",
+        type: "text",
+        content: "first answer",
+        createdAt: "2026-09-20T00:00:02Z",
+      },
+      {
+        id: "user-2",
+        role: "user",
+        content: "second request",
+        createdAt: "2026-09-20T00:01:00Z",
+      },
+      {
+        id: "assistant-final-2",
+        role: "assistant",
+        type: "text",
+        content: "second answer",
+        createdAt: "2026-09-20T00:01:01Z",
+      },
+    ]
+    const container = renderMessageList(messages, false)
+
+    const actionIds = [...container.querySelectorAll<HTMLElement>("[data-message-actions]")]
+      .map((node) => node.dataset.messageActions)
+    expect(actionIds).toEqual(["user-1", "assistant-final-1", "user-2", "assistant-final-2"])
+    expect(container.querySelector('[data-message-actions="assistant-process"]')).toBeNull()
+
+    const userRow = container.querySelector<HTMLElement>('[data-message-row="user-1"]')
+    const userActions = userRow?.querySelector<HTMLElement>('[data-message-actions="user-1"]')
+    expect(userRow?.classList.contains("flex-col")).toBe(false)
+    expect(userActions?.nextElementSibling?.getAttribute("data-message-role")).toBe("user")
+
+    const assistantRow = container.querySelector<HTMLElement>(
+      '[data-message-row="assistant-final-1"]',
+    )
+    const assistantActions = assistantRow?.querySelector<HTMLElement>(
+      '[data-message-actions="assistant-final-1"]',
+    )
+    expect(assistantActions?.previousElementSibling?.getAttribute("data-message-role"))
+      .toBe("assistant")
+    expect(assistantActions?.classList.contains("mt-1")).toBe(false)
+    expect(assistantActions?.querySelector('[aria-label="复制"]')?.classList.contains("hidden"))
+      .toBe(true)
+    expect(assistantActions?.querySelector('[aria-label="更多消息操作"]')).not.toBeNull()
   })
 })
 
@@ -298,15 +394,59 @@ describe("MessageList completed process disclosure", () => {
     expect(process?.open).toBe(false)
     expect(process?.querySelector("summary")?.textContent).toBe("处理了 1分5秒")
     expect(process?.querySelector("summary")?.getAttribute("title")).toBe("1 次工具调用")
-    expect(process?.querySelector('[data-assistant-content="latest process"]')).not.toBeNull()
-    expect(process?.querySelector('[data-reasoning="latest final reasoning"]')).not.toBeNull()
+    expect(process?.querySelector('[data-assistant-content="latest process"]')).toBeNull()
+    expect(process?.querySelector('[data-reasoning="latest final reasoning"]')).toBeNull()
     const final = container.querySelector('[data-assistant-content="latest final"]')
     expect(final).not.toBeNull()
     expect(process?.contains(final)).toBe(false)
-    expect(container.querySelectorAll('[data-reasoning="latest final reasoning"]')).toHaveLength(1)
+    expect(container.querySelectorAll('[data-reasoning="latest final reasoning"]')).toHaveLength(0)
+    const collapsedHeight = Number.parseFloat(
+      container.querySelector<HTMLElement>("[data-virtual-history]")?.style.height || "0",
+    )
 
     act(() => process?.querySelector("summary")?.click())
     expect(process?.open).toBe(true)
+    expect(process?.querySelector('[data-assistant-content="latest process"]')).not.toBeNull()
+    expect(process?.querySelector('[data-reasoning="latest final reasoning"]')).not.toBeNull()
+    expect(container.querySelectorAll('[data-reasoning="latest final reasoning"]')).toHaveLength(1)
+    const expandedHeight = Number.parseFloat(
+      container.querySelector<HTMLElement>("[data-virtual-history]")?.style.height || "0",
+    )
+    expect(expandedHeight).toBeGreaterThan(collapsedHeight)
+  })
+
+  it("keeps sibling measurements when one tool group expands", () => {
+    const heightSpy = vi.spyOn(HTMLElement.prototype, "offsetHeight", "get")
+      .mockImplementation(function (this: HTMLElement) {
+        const key = this.dataset.historyEntryKey
+        if (key === "message-latest-user") return 52
+        if (key === "message-latest-process") return 44
+        if (key === "tools-latest-call") {
+          return this.querySelector('[aria-expanded="true"]') ? 293 : 25
+        }
+        if (key === "message-latest-final") return 640
+        return 0
+      })
+
+    try {
+      const container = renderMessageList(
+        toolTurn("latest", "2026-09-20T00:00:00Z", "2026-09-20T00:01:05Z"),
+        false,
+      )
+      const finalRow = container.querySelector<HTMLElement>(
+        '[data-history-entry-key="message-latest-final"]',
+      )!
+      const toolToggle = container.querySelector<HTMLButtonElement>('[data-tool-items="2"]')!
+      const initialTop = Number.parseFloat(finalRow.style.transform.match(/[\d.]+/)?.[0] ?? "0")
+
+      act(() => toolToggle.click())
+
+      const expandedTop = Number.parseFloat(finalRow.style.transform.match(/[\d.]+/)?.[0] ?? "0")
+      expect(toolToggle.getAttribute("aria-expanded")).toBe("true")
+      expect(expandedTop - initialTop).toBe(268)
+    } finally {
+      heightSpy.mockRestore()
+    }
   })
 
   it("does not fold the latest process before the run finishes normally", () => {
@@ -346,8 +486,121 @@ describe("MessageList completed process disclosure", () => {
 
     const disclosures = container.querySelectorAll("details[data-completed-process]")
     expect(disclosures).toHaveLength(1)
-    expect(disclosures[0]?.querySelector('[data-assistant-content="earlier process"]')).not.toBeNull()
+    expect(disclosures[0]?.querySelector('[data-assistant-content="earlier process"]')).toBeNull()
     expect(disclosures[0]?.contains(container.querySelector('[data-assistant-content="earlier final"]'))).toBe(false)
     expect(container.querySelector('[data-assistant-content="new response"]')).not.toBeNull()
+
+    act(() => disclosures[0]?.querySelector("summary")?.click())
+    expect(disclosures[0]?.querySelector('[data-assistant-content="earlier process"]')).not.toBeNull()
+  })
+})
+
+function plainHistory(count: number): Message[] {
+  return Array.from({ length: count }, (_, index) =>
+    index % 2 === 0
+      ? {
+          id: `user-${index}`,
+          role: "user" as const,
+          content: `request ${index}`,
+          createdAt: new Date(1_700_000_000_000 + index * 1_000).toISOString(),
+        }
+      : {
+          id: `assistant-${index}`,
+          role: "assistant" as const,
+          type: "text" as const,
+          content: `response ${index}`,
+          createdAt: new Date(1_700_000_000_000 + index * 1_000).toISOString(),
+        },
+  )
+}
+
+function scrollVirtualList(container: HTMLElement, top: number) {
+  const scrollElement = container.firstElementChild as HTMLDivElement
+  act(() => {
+    scrollElement.scrollTop = top
+    scrollElement.dispatchEvent(new Event("scroll"))
+  })
+}
+
+describe("MessageList history virtualization", () => {
+  it("mounts only a window of long history while keeping the live tail outside it", () => {
+    const messages = plainHistory(200)
+    const container = document.createElement("div")
+    document.body.appendChild(container)
+    const root = createRoot(container)
+    mountedRoots.push(root)
+
+    act(() => {
+      root.render(
+        <MessageList
+          scrollRef={createRef<HTMLDivElement>()}
+          contentRef={createRef<HTMLDivElement>()}
+          onScroll={vi.fn()}
+          messages={messages}
+          mergedSubAgents={{}}
+          sending
+          latestRunFinished={false}
+          streaming="active tail"
+          streamingActive
+          streamingReasoning={null}
+          liveSegments={[]}
+          streamStatus={null}
+          pendingUserText={null}
+          forking={false}
+          onSelectSubAgent={vi.fn()}
+          onPreviewImage={vi.fn()}
+          onRegenerate={vi.fn()}
+          onFork={vi.fn()}
+          onDelete={vi.fn()}
+          onEditMessage={vi.fn()}
+        />,
+      )
+    })
+
+    const virtualHistory = container.querySelector<HTMLElement>("[data-virtual-history]")
+    expect(virtualHistory).not.toBeNull()
+    const initialRows = virtualHistory!.querySelectorAll("[data-history-entry-key]")
+    expect(initialRows.length).toBeGreaterThan(0)
+    expect(initialRows.length).toBeLessThan(40)
+    expect(virtualHistory?.querySelector('[data-history-entry-key="message-user-0"]')).not.toBeNull()
+    const liveTail = container.querySelector('[data-assistant-content="active tail"]')
+    expect(liveTail).not.toBeNull()
+    expect(virtualHistory?.contains(liveTail)).toBe(false)
+
+    const totalHeight = Number.parseFloat(virtualHistory!.style.height)
+    scrollVirtualList(container, totalHeight - 720)
+
+    expect(virtualHistory?.querySelector('[data-history-entry-key="message-user-0"]')).toBeNull()
+    expect(
+      virtualHistory?.querySelector('[data-history-entry-key="message-assistant-199"]'),
+    ).not.toBeNull()
+    expect(container.querySelector('[data-assistant-content="active tail"]')).not.toBeNull()
+  })
+
+  it("preserves an expanded process after its virtual row unmounts and remounts", () => {
+    const messages = [
+      ...toolTurn("virtual", "2026-09-20T00:00:00Z", "2026-09-20T00:01:05Z"),
+      ...plainHistory(160).map((message, index) => ({
+        ...message,
+        id: `later-${index}`,
+        createdAt: new Date(1_800_000_000_000 + index * 1_000).toISOString(),
+      })),
+    ] as Message[]
+    const container = renderMessageList(messages, false)
+    const virtualHistory = container.querySelector<HTMLElement>("[data-virtual-history]")!
+    let process = container.querySelector<HTMLDetailsElement>("details[data-completed-process]")
+    expect(process).not.toBeNull()
+
+    act(() => process?.querySelector("summary")?.click())
+    expect(process?.open).toBe(true)
+    expect(process?.querySelector('[data-assistant-content="virtual process"]')).not.toBeNull()
+
+    scrollVirtualList(container, Number.parseFloat(virtualHistory.style.height) - 720)
+    expect(container.querySelector("details[data-completed-process]")).toBeNull()
+
+    scrollVirtualList(container, 0)
+    process = container.querySelector<HTMLDetailsElement>("details[data-completed-process]")
+    expect(process?.open).toBe(true)
+    expect(process?.querySelector('[data-assistant-content="virtual process"]')).not.toBeNull()
   })
 })
