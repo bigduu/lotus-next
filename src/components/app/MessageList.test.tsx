@@ -47,7 +47,11 @@ afterEach(() => {
   document.body.replaceChildren()
 })
 
-function renderMessageList(messages: Message[], latestRunFinished: boolean) {
+function renderMessageList(
+  messages: Message[],
+  latestRunFinished: boolean,
+  contentShiftX = 0,
+) {
   const container = document.createElement("div")
   document.body.appendChild(container)
   const root = createRoot(container)
@@ -68,6 +72,7 @@ function renderMessageList(messages: Message[], latestRunFinished: boolean) {
         liveSegments={[]}
         streamStatus={null}
         pendingUserText={null}
+        contentShiftX={contentShiftX}
         forking={false}
         onSelectSubAgent={vi.fn()}
         onPreviewImage={vi.fn()}
@@ -80,6 +85,16 @@ function renderMessageList(messages: Message[], latestRunFinished: boolean) {
   })
   return container
 }
+
+it("animates only the transcript content when a floating panel opens", () => {
+  const container = renderMessageList([], false, -166)
+  const scrollViewport = container.firstElementChild as HTMLElement | null
+  const content = container.querySelector<HTMLElement>("[data-message-list-content]")
+
+  expect(scrollViewport?.style.transform).toBe("")
+  expect(content?.style.transform).toBe("translateX(-166px)")
+  expect(content?.style.transition).toContain("transform 200ms ease-out")
+})
 
 describe("MessageList assistant streaming ownership", () => {
   it("renders persisted and frozen text statically, and only the active tail as streaming", () => {

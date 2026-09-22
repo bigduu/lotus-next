@@ -19,6 +19,7 @@ import { QuestionDialog, ApprovalDialog } from "@/components/chat/Dialogs"
 import { downloadMarkdown } from "@/lib/exportMarkdown"
 import { downloadPdf } from "@/lib/exportPdf"
 import type { useChat } from "@/hooks/useChat"
+import { useContainerWidth } from "@/hooks/useContainerWidth"
 import { useStickyScroll } from "@/hooks/useStickyScroll"
 import { useAppStore, selectChildren } from "@shared/store/appStore"
 import { agentClient } from "@services/chat/AgentService"
@@ -73,6 +74,17 @@ type SecondaryConfig = {
 
 type Attachment = { id: string; base64: string; name: string; type: string; size: number; url: string }
 type SelectedWorkflow = { name: string; content: string }
+type EnvironmentPreference = "auto" | "open" | "closed"
+
+const MESSAGE_COLUMN_MAX_WIDTH = 1152
+const ENVIRONMENT_OCCUPIED_WIDTH = 332
+const ENVIRONMENT_CONTENT_SHIFT = ENVIRONMENT_OCCUPIED_WIDTH / 2
+
+// Once the card fits beside the full 72rem message column, reveal it and
+// recenter that column within the remaining space. The card still floats, but
+// the transcript slides left by half of its 20rem width plus 0.75rem edge.
+const ENVIRONMENT_AUTO_SHOW_MIN_WIDTH =
+  MESSAGE_COLUMN_MAX_WIDTH + ENVIRONMENT_OCCUPIED_WIDTH
 
 type ComposerSubmissionSnapshot = Readonly<{
   draftKey: string
@@ -203,16 +215,26 @@ export function ChatPane({
   // The secondary chat hook remains mounted when its pane closes. Read state
   // follows the rendered pane, including the same breakpoint as its md:flex.
   const splitVisible = useMediaQuery("(min-width: 768px)")
-  const environmentWide = useMediaQuery("(min-width: 1280px)")
+  const [chatLayoutRef, chatLayoutWidth] = useContainerWidth<HTMLDivElement>()
+  const environmentHasRoom = chatLayoutWidth >= ENVIRONMENT_AUTO_SHOW_MIN_WIDTH
   useMarkSessionRead(!secondary || splitVisible ? currentChat : null)
-  const [environmentOpen, setEnvironmentOpen] = useState(true)
+  const [environmentPreference, setEnvironmentPreference] =
+    useState<EnvironmentPreference>("auto")
   const environmentId = useId()
 
   useEffect(() => {
-    setEnvironmentOpen(true)
+    setEnvironmentPreference("auto")
   }, [currentSessionId])
 
-  const environmentVisible = environmentOpen && !(sidePaneOpen ?? false)
+  const environmentOpen = environmentPreference === "open"
+    || (environmentPreference === "auto" && environmentHasRoom)
+  const environmentVisible = !secondary && environmentOpen && !(sidePaneOpen ?? false)
+  const messageContentShift = environmentVisible
+    ? -Math.min(
+        ENVIRONMENT_CONTENT_SHIFT,
+        Math.max(0, (chatLayoutWidth - MESSAGE_COLUMN_MAX_WIDTH) / 2),
+      )
+    : 0
 
   // Live in-run token budget (pushed over the agent channel) — beats the
   // persisted config snapshot, which only refreshes on history reload.
@@ -628,7 +650,7 @@ export function ChatPane({
       onClick: () => launchWorkbench(onToggleSplit),
     },
   ]
-  const environmentCard = !secondary && currentSessionId && environmentVisible ? (
+  const environmentCard = !secondary && currentSessionId ? (
     <EnvironmentCard
       id={environmentId}
       workspace={displayWorkspace}
@@ -715,7 +737,7 @@ export function ChatPane({
               <EnvironmentLauncher
                 open={environmentVisible}
                 controlsId={environmentId}
-                onToggle={() => setEnvironmentOpen((open) => !open)}
+                onToggle={() => setEnvironmentPreference(environmentOpen ? "closed" : "open")}
               />
             }
             sidePaneOpen={sidePaneOpen ?? false}
@@ -724,25 +746,11 @@ export function ChatPane({
           />
         )}
 
-        <div data-chat-layout className="relative flex min-h-0 flex-1">
+        <div ref={chatLayoutRef} data-chat-layout className="relative flex min-h-0 flex-1">
           <div
             data-chat-body
             className="relative flex min-w-0 flex-1 flex-col"
-            style={
-              environmentWide && environmentCard
-                ? { paddingRight: "21.5rem" }
-                : undefined
-            }
           >
-            {!environmentWide && environmentCard ? (
-              <div
-                data-environment-inline
-                className="flex shrink-0 justify-end border-b p-3"
-              >
-                {environmentCard}
-              </div>
-            ) : null}
-
         {currentChat?.planMode ? (
           <div className="border-b bg-primary/10 px-3 py-1.5 text-center text-xs font-medium text-primary">
             计划模式
@@ -793,6 +801,7 @@ export function ChatPane({
           liveSegments={liveSegments}
           streamStatus={streamStatus}
           pendingUserText={pendingUserText}
+          contentShiftX={messageContentShift}
           forking={forking}
           onSelectSubAgent={(childId) => {
             selectSubAgentInPane(childId)
@@ -931,11 +940,22 @@ export function ChatPane({
         />
           </div>
 
-          {environmentWide && environmentCard ? (
+          {environmentCard ? (
             <div
               data-environment-floating
-              className="absolute z-30"
-              style={{ right: "0.75rem", top: "0.75rem" }}
+              data-state={environmentVisible ? "open" : "closed"}
+              aria-hidden={!environmentVisible}
+              className="absolute right-3 top-3 z-30 max-h-[calc(100%-1.5rem)] max-w-[calc(100%-1.5rem)] overflow-y-auto rounded-2xl"
+              style={{
+                opacity: environmentVisible ? 1 : 0,
+                transform: environmentVisible
+                  ? "translateX(0) scale(1)"
+                  : "translateX(0.75rem) scale(0.98)",
+                transformOrigin: "top right",
+                visibility: environmentVisible ? "visible" : "hidden",
+                pointerEvents: environmentVisible ? "auto" : "none",
+                transition: "opacity 200ms ease-out, transform 200ms ease-out, visibility 200ms ease-out",
+              }}
             >
               {environmentCard}
             </div>

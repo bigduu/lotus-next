@@ -231,6 +231,7 @@ export function MessageList({
   liveSegments,
   streamStatus,
   pendingUserText,
+  contentShiftX = 0,
   forking,
   onSelectSubAgent,
   onPreviewImage,
@@ -253,6 +254,8 @@ export function MessageList({
   liveSegments: LiveSegment[]
   streamStatus: string | null
   pendingUserText: string | null
+  /** Horizontal transcript offset used while a floating panel occupies the end side. */
+  contentShiftX?: number
   forking: boolean
   onSelectSubAgent: (id: string) => void
   onPreviewImage: (src: string) => void
@@ -448,7 +451,15 @@ export function MessageList({
 
   return (
     <div ref={scrollRef} onScroll={onScroll} className="min-h-0 flex-1 overflow-y-auto">
-      <div ref={contentRef} className="mx-auto flex w-full max-w-6xl flex-col gap-4 px-3 py-4">
+      <div
+        ref={contentRef}
+        data-message-list-content
+        className="mx-auto flex w-full max-w-6xl flex-col gap-4 px-3 py-4"
+        style={{
+          transform: `translateX(${contentShiftX}px)`,
+          transition: "transform 200ms ease-out",
+        }}
+      >
         {messages.length === 0 && !streaming && !pendingUserText && liveSegments.length === 0 && (
           <div className="flex flex-col items-center gap-2 py-20 text-center">
             <div className="size-10 rounded-xl bg-primary" />
