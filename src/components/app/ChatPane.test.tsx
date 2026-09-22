@@ -3,14 +3,16 @@ import { createRoot, type Root } from "react-dom/client"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import type { CommandItem } from "@services/command"
 import type { SkillDefinition } from "@shared/types/skill"
+import type { ProviderInstancesConfig } from "@shared/types/providerConfig"
 
 type ComposerProps = ComponentProps<(typeof import("./Composer"))["Composer"]>
 type MessageListProps = ComponentProps<(typeof import("./MessageList"))["MessageList"]>
+type ModelPickerProps = ComponentProps<(typeof import("@/components/chat/ModelPicker"))["ModelPicker"]>
 type ChatPaneProps = ComponentProps<(typeof import("./ChatPane"))["ChatPane"]>
 type Send = ChatPaneProps["chat"]["send"]
 type State = {
   tokenUsages: Record<string, unknown>; inputStates: Record<string, { content: string; contentRevision: number; reasoningEffort: "medium" }>
-  skills: SkillDefinition[]; childProgress: Record<string, unknown>; models: string[]; selectedModel: string
+  skills: SkillDefinition[]; childProgress: Record<string, unknown>; models: string[]; selectedModel: string | undefined
   setInputContent(id: string, content: string): void
   setInputContentIfRevision(id: string, revision: number, content: string): boolean
   moveInputContentIfRevision(source: string, revision: number, target: string): boolean
@@ -18,7 +20,8 @@ type State = {
 }
 const runtime = vi.hoisted(() => ({
   state: {} as State, listeners: new Set<() => void>(), composer: null as ComposerProps | null,
-  messageList: null as MessageListProps | null,
+  messageList: null as MessageListProps | null, modelPicker: null as ModelPickerProps | null,
+  providerState: { providerSnapshot: null as ProviderInstancesConfig | null },
   queueSend: vi.fn(), revision: 0, getWorkflow: vi.fn(), listCommands: vi.fn(), peekTemplate: vi.fn(),
 }))
 vi.mock("zustand/react/shallow", () => ({ useShallow: <T,>(selector: T) => selector }))
@@ -35,8 +38,8 @@ vi.mock("@shared/store/appStore", async () => {
   )
   return { useAppStore, selectChildren: () => (state: State) => state.childProgress }
 })
-type ProviderState = { providerSnapshot: null }
-vi.mock("@shared/store/appStore/slices/providerSlice", () => ({ useProviderStore: <T,>(selector: (state: ProviderState) => T) => selector({ providerSnapshot: null }) }))
+type ProviderState = typeof runtime.providerState
+vi.mock("@shared/store/appStore/slices/providerSlice", () => ({ useProviderStore: <T,>(selector: (state: ProviderState) => T) => selector(runtime.providerState) }))
 vi.mock("@/hooks/useGuidanceQueue", () => ({ useGuidanceQueue: () => ({ mode: "after_round", setMode: vi.fn(), send: runtime.queueSend, cancel: vi.fn(), pending: [], error: null, busy: false, hasUnconfirmed: false }) }))
 vi.mock("@/hooks/useStickyScroll", () => ({
   useStickyScroll: () => ({ scrollRef: { current: null }, contentRef: { current: null }, atBottom: true,
@@ -68,7 +71,12 @@ vi.mock("@/components/app/ImageLightbox", () => ({
 }))
 vi.mock("@/components/app/ContextUsageRing", () => ({ ContextUsageRing: () => <span data-testid="context-usage" /> }))
 vi.mock("@/components/chat/ReasoningPicker", () => ({ ReasoningPicker: () => <span data-testid="reasoning-picker" /> }))
-vi.mock("@/components/chat/ModelPicker", () => ({ ModelPicker: () => <span data-testid="model-picker" /> }))
+vi.mock("@/components/chat/ModelPicker", () => ({
+  ModelPicker: (props: ModelPickerProps) => {
+    runtime.modelPicker = props
+    return <span data-testid="model-picker" />
+  },
+}))
 vi.mock("@/components/chat/PermissionModeControl", () => ({
   PermissionModeControl: () => <span data-testid="session-permission" />,
   NewSessionPermissionControl: () => <span data-testid="new-session-permission" />,
@@ -179,7 +187,9 @@ beforeEach(() => {
     addEventListener: (_name: string, listener: (event: MediaQueryListEvent) => void) => mediaListeners.add(listener),
     removeEventListener: (_name: string, listener: (event: MediaQueryListEvent) => void) => mediaListeners.delete(listener),
   })))
-  runtime.composer = null; runtime.messageList = null; runtime.listeners.clear(); runtime.revision = 0
+  runtime.composer = null; runtime.messageList = null; runtime.modelPicker = null
+  runtime.providerState.providerSnapshot = null
+  runtime.listeners.clear(); runtime.revision = 0
   runtime.state = {
     tokenUsages: {}, inputStates: {}, skills: [skillA, skillB], childProgress: {}, models: [],
     selectedModel: "test-model", setInputReasoningEffort: vi.fn(),
@@ -218,6 +228,37 @@ describe("ChatPane composer acknowledgement", () => {
     expect(composerShell?.querySelector('[data-testid="reasoning-picker"]')).not.toBeNull()
     expect(composerShell?.querySelector('[data-testid="model-picker"]')).not.toBeNull()
     expect(document.querySelector('[data-testid="new-session-permission"]')).toBeNull()
+  })
+
+  it("shows an existing child session's model instead of the root Chat default", async () => {
+    runtime.state.models = ["gpt-5.6-sol", "gpt-5.6-luna"]
+    runtime.state.selectedModel = undefined
+    runtime.providerState.providerSnapshot = {
+      default_provider_instance_id: "easycli",
+      instances: [{
+        id: "easycli",
+        type: "openai",
+        label: "Easycli",
+        enabled: true,
+        config: {},
+      }],
+      defaults: {
+        chat: { provider: "easycli", model: "gpt-5.6-sol" },
+      },
+      features: { provider_model_ref: true },
+    }
+    const chat = createChat(vi.fn<Send>(), "child-session")
+    if (!chat.currentChat) throw new Error("child chat was not created")
+    chat.currentChat.config.model = "gpt-5.6-luna"
+    chat.currentChat.config.model_ref = { provider: "easycli", model: "gpt-5.6-luna" }
+    const container = document.body.appendChild(document.createElement("div"))
+    const root = createRoot(container); roots.push(root)
+
+    await act(async () => root.render(<ChatPane chat={chat} pickedWorkspace="/picked"
+      onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()} splitOpen={false}
+      onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false} />))
+
+    expect(runtime.modelPicker?.value).toBe("gpt-5.6-luna")
   })
 
   it("puts the next-session permission selector in a blank composer", async () => {
