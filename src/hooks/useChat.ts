@@ -17,7 +17,7 @@ import {
   type SessionPermissionMode,
 } from "@services/chat/AgentService"
 import { apiClient } from "@services/api"
-import { isApiError } from "@services/api/errors"
+import { getErrorMessage, isApiError } from "@services/api/errors"
 import { notify } from "@/lib/notify"
 import { mapTokenBudgetUsage } from "@shared/types/tokenBudget"
 import { getSystemPromptEnhancementText } from "@shared/utils/systemPromptEnhancement"
@@ -59,6 +59,7 @@ export type SubmissionUnconfirmedFailure = {
   kind: "submission-unconfirmed"
   operationId: number
   sessionId: string | null
+  message?: string
 }
 
 export type GenerationFailure = {
@@ -66,9 +67,16 @@ export type GenerationFailure = {
   operationId: number
   sessionId: string
   pendingOperationId?: number
+  message?: string
 }
 
 export type SendFailure = SubmissionUnconfirmedFailure | GenerationFailure
+
+const toFailureMessage = (error: unknown): string | undefined => {
+  if (error == null) return undefined
+  if (typeof error === "string") return error.trim() || undefined
+  return getErrorMessage(error).trim() || undefined
+}
 
 export type SendSubmissionResult =
   | { kind: "accepted"; operationId: number; sessionId: string; navigated: boolean }
@@ -678,7 +686,7 @@ export function useChat(
       // On resume (after answering a question/permission) the backend already
       // continues the suspended run — only subscribe, don't kick a fresh execute.
       if (!opts?.resume) {
-        void agentClient.execute(runSid, effectiveModel || undefined, reasoningEffort, undefined, effectiveModelRef).catch(() => {
+        void agentClient.execute(runSid, effectiveModel || undefined, reasoningEffort, undefined, effectiveModelRef).catch((err) => {
           if (!ownsStream()) return
           // The run never started, so no terminal will ever arrive — settle
           // the subscription instead of leaving it (and the UI) hanging.
@@ -687,6 +695,7 @@ export function useChat(
             operationId,
             sessionId: runSid,
             pendingOperationId: opts?.pendingOperationId,
+            message: toFailureMessage(err),
           })
           stopStream(null, operationId)
           ac.abort()
@@ -747,13 +756,14 @@ export function useChat(
         })()
       }
 
-      const settleFailed = (historyReady = false): void => {
+      const settleFailed = (historyReady = false, error?: unknown): void => {
         if (!ownsStream() || terminal.settlement) return
         publishSendFailure({
           kind: "generation-failed",
           operationId,
           sessionId: runSid,
           pendingOperationId: opts?.pendingOperationId,
+          message: toFailureMessage(error),
         })
         terminal.settlement = (async () => {
           let historyLoaded = historyReady
@@ -965,8 +975,8 @@ export function useChat(
           onComplete: () => {
             settleCompleted()
           },
-          onError: () => {
-            settleFailed()
+          onError: (message) => {
+            settleFailed(false, message)
           },
           onCancelled: () => {
             settleCancelled()
@@ -1263,6 +1273,7 @@ export function useChat(
               operationId: operation.id,
               sessionId: runSid,
               pendingOperationId: operation.pendingOperationId,
+              message: toFailureMessage(err),
             })
             return false
           }
@@ -1293,6 +1304,7 @@ export function useChat(
             operationId: operation.id,
             sessionId: runSid,
             pendingOperationId: operation.pendingOperationId,
+            message: toFailureMessage(err),
           })
         }
         stopStream(null, operation.id)
@@ -1333,16 +1345,29 @@ export function useChat(
     async (failure?: GenerationFailure) => {
       const currentFailure = getSendFailure(sid ?? null)
       const target = failure ?? (currentFailure?.kind === "generation-failed" ? currentFailure : undefined)
-      if (!target || getSendFailure(target.sessionId)?.operationId !== target.operationId) return
-      await rerun(target.sessionId, {
-        expectedFailureOperationId: target.operationId,
-        pendingOperationId: target.pendingOperationId,
+      if (target) {
+        if (getSendFailure(target.sessionId)?.operationId !== target.operationId) return
+        await rerun(target.sessionId, {
+          expectedFailureOperationId: target.operationId,
+          pendingOperationId: target.pendingOperationId,
+          preserveFailureOnPrepareError: true,
+          prepare: () =>
+            agentClient.truncateSessionMessages(target.sessionId, { mode: "error_retry" }),
+        })
+        return
+      }
+
+      // `sendFailure` is intentionally local to the mounted hook. After a
+      // reload, pane remount, or session switch the durable session summary is
+      // the only remaining failure authority. Let that persisted error use the
+      // same safe resume path instead of rendering a retry button that no-ops.
+      if (!sid || currentChat?.lastRunStatus !== "error") return
+      await rerun(sid, {
         preserveFailureOnPrepareError: true,
-        prepare: () =>
-          agentClient.truncateSessionMessages(target.sessionId, { mode: "error_retry" }),
+        prepare: () => agentClient.truncateSessionMessages(sid, { mode: "error_retry" }),
       })
     },
-    [getSendFailure, rerun, sid],
+    [currentChat?.lastRunStatus, getSendFailure, rerun, sid],
   )
 
   // Edit a user message in place, drop everything after it, and re-run.
@@ -1453,6 +1478,7 @@ export function useChat(
             kind: "submission-unconfirmed",
             operationId: operation.id,
             sessionId: startSid,
+            message: toFailureMessage(err),
           })
         }
         return { kind: "unconfirmed", operationId: operation.id }
@@ -1486,6 +1512,7 @@ export function useChat(
               kind: "generation-failed",
               operationId: operation.id,
               sessionId: acknowledgedSessionId,
+              message: toFailureMessage(err),
             })
           })
         if (acknowledgedSessionId !== startSid) {
@@ -1530,6 +1557,7 @@ export function useChat(
               operationId: operation.id,
               sessionId: acknowledgedSessionId,
               pendingOperationId: operation.pendingOperationId,
+              message: toFailureMessage(err),
             })
             stopStream(null, operation.id)
           })
