@@ -64,7 +64,7 @@ runtime observations when a case fails.
 
 The source-built real-runtime gate is intentionally separate from that
 deterministic matrix. It builds a clean checkout of Bamboo revision
-`a8b5385dc4318ab02ba35c0692bdf48914275f6c` into an isolated Docker image,
+`f1f1057bdbde33358d769b6a62ff93f2287e3f9f` into an isolated Docker image,
 serves the production Lotus Next artifact from that Bamboo process, and drives
 one complete chat turn through the visible desktop UI and a local deterministic
 OpenAI-compatible provider. It requires the `auth.ws_hello_ack.v1` bootstrap

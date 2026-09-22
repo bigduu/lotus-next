@@ -30,7 +30,7 @@ test("home-to-chat follows streaming and late layout, pauses for reading, and re
   const input = page.getByRole("textbox", { name: "消息", exact: true })
   await expect(input).toBeVisible()
   await page.getByText("Live reading", { exact: true }).first().waitFor()
-  await page.getByRole("button", { name: "新建", exact: true }).click()
+  await page.getByRole("button", { name: "新建会话", exact: true }).click()
   await expect(page.getByRole("heading", { name: "开始新任务", exact: true })).toBeVisible()
   // Home has no message elements; submission mounts them later.
   await expect(page.getByText("开始一段新对话", { exact: true })).toHaveCount(0)
@@ -93,7 +93,7 @@ test("home-to-chat follows streaming and late layout, pauses for reading, and re
   const savedReasoning = page.getByRole("button", { name: "思考过程", exact: true })
   await expect(savedReasoning).toHaveAttribute("aria-expanded", "false")
   await testInfo.attach("live-reading-following", { body: await page.screenshot(), contentType: "image/png" })
-  await page.getByRole("button", { name: "新建", exact: true }).click()
+  await page.getByRole("button", { name: "新建会话", exact: true }).click()
   await expect(reasoning).toHaveCount(0)
   await page.getByText("Live reading", { exact: true }).first().click()
   await expect(input).toBeVisible()

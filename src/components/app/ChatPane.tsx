@@ -19,6 +19,7 @@ import { QuestionDialog, ApprovalDialog } from "@/components/chat/Dialogs"
 import { downloadMarkdown } from "@/lib/exportMarkdown"
 import { downloadPdf } from "@/lib/exportPdf"
 import type { useChat } from "@/hooks/useChat"
+import { useContainerWidth } from "@/hooks/useContainerWidth"
 import { useStickyScroll } from "@/hooks/useStickyScroll"
 import { useAppStore, selectChildren } from "@shared/store/appStore"
 import { agentClient } from "@services/chat/AgentService"
@@ -73,6 +74,17 @@ type SecondaryConfig = {
 
 type Attachment = { id: string; base64: string; name: string; type: string; size: number; url: string }
 type SelectedWorkflow = { name: string; content: string }
+type EnvironmentPreference = "auto" | "open" | "closed"
+
+const MESSAGE_COLUMN_MAX_WIDTH = 1152
+const ENVIRONMENT_OCCUPIED_WIDTH = 332
+const ENVIRONMENT_CONTENT_SHIFT = ENVIRONMENT_OCCUPIED_WIDTH / 2
+
+// Once the card fits beside the full 72rem message column, reveal it and
+// recenter that column within the remaining space. The card still floats, but
+// the transcript slides left by half of its 20rem width plus 0.75rem edge.
+const ENVIRONMENT_AUTO_SHOW_MIN_WIDTH =
+  MESSAGE_COLUMN_MAX_WIDTH + ENVIRONMENT_OCCUPIED_WIDTH
 
 type ComposerSubmissionSnapshot = Readonly<{
   draftKey: string
@@ -201,20 +213,42 @@ export function ChatPane({
   // scoped to the session rendered by this pane.  Do not let a run from the
   // session we just left turn a blank/new conversation into a Stop button.
   const currentlyRunning = currentChat?.isRunning === true || (sending && streaming !== null)
+  const visibleSendFailure = sendFailure?.sessionId === currentSessionId ? sendFailure : null
+  const persistedRunError = !visibleSendFailure
+    && !currentlyRunning
+    && currentChat?.lastRunStatus === "error"
+    ? currentChat.lastRunError?.trim() || "生成失败，服务端未提供错误详情。"
+    : null
+  const generationFailed = visibleSendFailure?.kind === "generation-failed"
+    || persistedRunError !== null
+  const runErrorDetail = visibleSendFailure?.message?.trim()
+    || (generationFailed && currentChat?.lastRunStatus === "error"
+      ? currentChat.lastRunError?.trim() || persistedRunError
+      : null)
   const queue = useGuidanceQueue(currentSessionId, currentlyRunning)
   // The secondary chat hook remains mounted when its pane closes. Read state
   // follows the rendered pane, including the same breakpoint as its md:flex.
   const splitVisible = useMediaQuery("(min-width: 768px)")
-  const environmentWide = useMediaQuery("(min-width: 1280px)")
+  const [chatLayoutRef, chatLayoutWidth] = useContainerWidth<HTMLDivElement>()
+  const environmentHasRoom = chatLayoutWidth >= ENVIRONMENT_AUTO_SHOW_MIN_WIDTH
   useMarkSessionRead(!secondary || splitVisible ? currentChat : null)
-  const [environmentOpen, setEnvironmentOpen] = useState(true)
+  const [environmentPreference, setEnvironmentPreference] =
+    useState<EnvironmentPreference>("auto")
   const environmentId = useId()
 
   useEffect(() => {
-    setEnvironmentOpen(true)
+    setEnvironmentPreference("auto")
   }, [currentSessionId])
 
-  const environmentVisible = environmentOpen && !(sidePaneOpen ?? false)
+  const environmentOpen = environmentPreference === "open"
+    || (environmentPreference === "auto" && environmentHasRoom)
+  const environmentVisible = !secondary && environmentOpen && !(sidePaneOpen ?? false)
+  const messageContentShift = environmentVisible
+    ? -Math.min(
+        ENVIRONMENT_CONTENT_SHIFT,
+        Math.max(0, (chatLayoutWidth - MESSAGE_COLUMN_MAX_WIDTH) / 2),
+      )
+    : 0
 
   // Live in-run token budget (pushed over the agent channel) — beats the
   // persisted config snapshot, which only refreshes on history reload.
@@ -668,7 +702,7 @@ export function ChatPane({
       onClick: () => launchWorkbench(onToggleSplit),
     },
   ]
-  const environmentCard = !secondary && currentSessionId && environmentVisible ? (
+  const environmentCard = !secondary && currentSessionId ? (
     <EnvironmentCard
       id={environmentId}
       workspace={displayWorkspace}
@@ -755,7 +789,7 @@ export function ChatPane({
               <EnvironmentLauncher
                 open={environmentVisible}
                 controlsId={environmentId}
-                onToggle={() => setEnvironmentOpen((open) => !open)}
+                onToggle={() => setEnvironmentPreference(environmentOpen ? "closed" : "open")}
               />
             }
             sidePaneOpen={sidePaneOpen ?? false}
@@ -764,25 +798,11 @@ export function ChatPane({
           />
         )}
 
-        <div data-chat-layout className="relative flex min-h-0 flex-1">
+        <div ref={chatLayoutRef} data-chat-layout className="relative flex min-h-0 flex-1">
           <div
             data-chat-body
             className="relative flex min-w-0 flex-1 flex-col"
-            style={
-              environmentWide && environmentCard
-                ? { paddingRight: "21.5rem" }
-                : undefined
-            }
           >
-            {!environmentWide && environmentCard ? (
-              <div
-                data-environment-inline
-                className="flex shrink-0 justify-end border-b p-3"
-              >
-                {environmentCard}
-              </div>
-            ) : null}
-
         {currentChat?.planMode ? (
           <div className="border-b bg-primary/10 px-3 py-1.5 text-center text-xs font-medium text-primary">
             计划模式
@@ -833,6 +853,7 @@ export function ChatPane({
           liveSegments={liveSegments}
           streamStatus={streamStatus}
           pendingUserText={pendingUserText}
+          contentShiftX={messageContentShift}
           forking={forking}
           onSelectSubAgent={(childId) => {
             selectSubAgentInPane(childId)
@@ -856,23 +877,36 @@ export function ChatPane({
           </button>
         )}
 
-        {sendFailure?.sessionId === currentSessionId ? (
+        {visibleSendFailure || persistedRunError ? (
           <div
             role="alert"
             aria-live="assertive"
             className="mx-auto mb-1 flex w-[calc(100%-1.5rem)] max-w-6xl flex-wrap items-center justify-between gap-2 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm"
           >
-            <span className="text-destructive">
-              {sendFailure.kind === "submission-unconfirmed"
-                ? "发送状态未确认，内容已保留"
-                : "消息已发送，但生成中断"}
-            </span>
-            {sendFailure.kind === "generation-failed" ? (
+            <div className="min-w-0 flex-1 text-destructive">
+              <p className="font-medium">
+                {visibleSendFailure?.kind === "submission-unconfirmed"
+                  ? "发送状态未确认，内容已保留"
+                  : "消息已发送，但生成中断"}
+              </p>
+              {runErrorDetail ? (
+                <p className="mt-1 break-words text-xs">
+                  错误详情：{runErrorDetail}
+                </p>
+              ) : null}
+            </div>
+            {generationFailed ? (
               <Button
                 size="sm"
                 variant="secondary"
                 disabled={sending}
-                onClick={() => void retry(sendFailure)}
+                onClick={() => {
+                  if (visibleSendFailure?.kind === "generation-failed") {
+                    void retry(visibleSendFailure)
+                  } else {
+                    void retry()
+                  }
+                }}
               >
                 <RotateCcw className="size-3.5" /> 重试生成
               </Button>
@@ -972,11 +1006,22 @@ export function ChatPane({
         />
           </div>
 
-          {environmentWide && environmentCard ? (
+          {environmentCard ? (
             <div
               data-environment-floating
-              className="absolute z-30"
-              style={{ right: "0.75rem", top: "0.75rem" }}
+              data-state={environmentVisible ? "open" : "closed"}
+              aria-hidden={!environmentVisible}
+              className="absolute right-3 top-3 z-30 max-h-[calc(100%-1.5rem)] max-w-[calc(100%-1.5rem)] overflow-y-auto rounded-2xl"
+              style={{
+                opacity: environmentVisible ? 1 : 0,
+                transform: environmentVisible
+                  ? "translateX(0) scale(1)"
+                  : "translateX(0.75rem) scale(0.98)",
+                transformOrigin: "top right",
+                visibility: environmentVisible ? "visible" : "hidden",
+                pointerEvents: environmentVisible ? "auto" : "none",
+                transition: "opacity 200ms ease-out, transform 200ms ease-out, visibility 200ms ease-out",
+              }}
             >
               {environmentCard}
             </div>

@@ -1,4 +1,4 @@
-import { act, type ComponentProps } from "react"
+import { act, type ComponentProps, type ReactNode } from "react"
 import { createRoot, type Root } from "react-dom/client"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import type { CommandItem } from "@services/command"
@@ -69,7 +69,9 @@ vi.mock("@/lib/taskTemplates", () => ({ peekPendingTemplatePrompt: runtime.peekT
 vi.mock("@/lib/exportMarkdown", () => ({ downloadMarkdown: vi.fn() }))
 vi.mock("@/lib/exportPdf", () => ({ downloadPdf: vi.fn() }))
 vi.mock("@/components/chat/Dialogs", () => ({ QuestionDialog: () => null, ApprovalDialog: () => null }))
-vi.mock("@/components/app/ChatHeader", () => ({ ChatHeader: () => null }))
+vi.mock("@/components/app/ChatHeader", () => ({
+  ChatHeader: ({ environment }: { environment?: ReactNode }) => <div>{environment}</div>,
+}))
 vi.mock("@/components/app/HomeDashboard", () => ({ HomeDashboard: () => null }))
 vi.mock("@/components/app/MessageList", () => ({
   MessageList: (props: MessageListProps) => {
@@ -121,11 +123,16 @@ function deferred<T>() {
   let resolve!: (value: T) => void; const promise = new Promise<T>((done) => { resolve = done })
   return { promise, resolve }
 }
-function createChat(send: Send, id: string | null, lastRunStatus: string | null = null) {
+function createChat(
+  send: Send,
+  id: string | null,
+  lastRunStatus: string | null = null,
+  lastRunError: string | null = null,
+) {
   return {
     booted: true, chats: [], currentSessionId: id,
     currentChat: id
-      ? { id, title: "Test", lastRunStatus, config: { workspacePath: "/session" } }
+      ? { id, title: "Test", lastRunStatus, lastRunError, config: { workspacePath: "/session" } }
       : null,
     messages: [], streaming: "", streamPhase: null, streamingReasoning: "", liveSegments: [], streamStatus: null,
     pendingUserText: null, sending: false, submissionPending: false, sendFailure: null,
@@ -360,6 +367,84 @@ describe("ChatPane composer acknowledgement", () => {
     expect(composer().sending).toBe(true)
   })
 
+  it("shows a persisted generation error after remount and keeps retry actionable", async () => {
+    const container = document.body.appendChild(document.createElement("div"))
+    const root = createRoot(container); roots.push(root)
+    const retry = vi.fn().mockResolvedValue(undefined)
+    const chat = {
+      ...createChat(
+        vi.fn<Send>(),
+        "failed-session",
+        "error",
+        "Budget error: compression stream closed before response.completed",
+      ),
+      retry,
+    }
+
+    await act(async () => root.render(<ChatPane chat={chat} pickedWorkspace="/picked"
+      onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()} splitOpen={false}
+      onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false} />))
+
+    const alert = container.querySelector<HTMLElement>('[role="alert"]')
+    expect(alert?.textContent).toContain("消息已发送，但生成中断")
+    expect(alert?.textContent).toContain(
+      "Budget error: compression stream closed before response.completed",
+    )
+    const retryButton = Array.from(alert?.querySelectorAll("button") ?? [])
+      .find((button) => button.textContent?.includes("重试生成"))
+    expect(retryButton).toBeDefined()
+    await act(async () => retryButton?.click())
+    expect(retry).toHaveBeenCalledTimes(1)
+    expect(retry).toHaveBeenCalledWith()
+  })
+
+  it("shows the concrete submission error while preserving the draft", async () => {
+    const container = document.body.appendChild(document.createElement("div"))
+    const root = createRoot(container); roots.push(root)
+    const chat = {
+      ...createChat(vi.fn<Send>(), "missing-workspace"),
+      sendFailure: {
+        kind: "submission-unconfirmed" as const,
+        operationId: 1,
+        sessionId: "missing-workspace",
+        message: "Project context error: workspace path does not exist",
+      },
+    }
+
+    await act(async () => root.render(<ChatPane chat={chat} pickedWorkspace="/picked"
+      onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()} splitOpen={false}
+      onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false} />))
+
+    const alert = container.querySelector<HTMLElement>('[role="alert"]')
+    expect(alert?.textContent).toContain("发送状态未确认，内容已保留")
+    expect(alert?.textContent).toContain("Project context error: workspace path does not exist")
+    expect(alert?.textContent).toContain("继续编辑")
+  })
+
+  it.each([
+    ["completed", false],
+    ["error", true],
+  ] as const)(
+    "does not show a stale persisted error for status=%s running=%s",
+    async (lastRunStatus, running) => {
+      const container = document.body.appendChild(document.createElement("div"))
+      const root = createRoot(container); roots.push(root)
+      const chat = createChat(
+        vi.fn<Send>(),
+        "current-session",
+        lastRunStatus,
+        "stale backend error",
+      )
+      if (chat.currentChat) chat.currentChat.isRunning = running
+
+      await act(async () => root.render(<ChatPane chat={chat} pickedWorkspace="/picked"
+        onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()} splitOpen={false}
+        onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false} />))
+
+      expect(container.querySelector('[role="alert"]')).toBeNull()
+    },
+  )
+
   it.each([
     ["completed", false, true],
     ["completed", true, false],
@@ -568,6 +653,13 @@ it("routes a sub-agent card to the side-preview callback without replacing the m
 })
 
 it("shows Environment by default and only suppresses it while the side pane is open", async () => {
+  vi.stubGlobal("ResizeObserver", undefined)
+  const rectSpy = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect")
+    .mockImplementation(() => ({
+      x: 0, y: 0, width: 1900, height: 720,
+      top: 0, right: 1900, bottom: 720, left: 0,
+      toJSON: () => ({}),
+    }) as DOMRect)
   const container = document.body.appendChild(document.createElement("div"))
   const root = createRoot(container); roots.push(root)
   const chat = createChat(vi.fn<Send>(), "parent")
@@ -579,13 +671,74 @@ it("shows Environment by default and only suppresses it while the side pane is o
   )
 
   await act(async () => root.render(render(false)))
-  expect(container.querySelector("[data-environment-card]")).not.toBeNull()
+  expect(container.querySelector("[data-environment-floating]")?.getAttribute("data-state"))
+    .toBe("open")
+  expect(runtime.messageList?.contentShiftX).toBe(-166)
 
   await act(async () => root.render(render(true)))
-  expect(container.querySelector("[data-environment-card]")).toBeNull()
+  expect(container.querySelector("[data-environment-floating]")?.getAttribute("data-state"))
+    .toBe("closed")
+  expect(runtime.messageList?.contentShiftX).toBe(0)
 
   await act(async () => root.render(render(false)))
-  expect(container.querySelector("[data-environment-card]")).not.toBeNull()
+  expect(container.querySelector("[data-environment-floating]")?.getAttribute("data-state"))
+    .toBe("open")
+  expect(runtime.messageList?.contentShiftX).toBe(-166)
+  rectSpy.mockRestore()
+})
+
+it("auto-shows Environment once the chat surface clears it and animates state changes", async () => {
+  mediaMatches = true
+  let containerWidth = 1400
+  vi.stubGlobal("ResizeObserver", undefined)
+  const rectSpy = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect")
+    .mockImplementation(() => ({
+      x: 0, y: 0, width: containerWidth, height: 720,
+      top: 0, right: containerWidth, bottom: 720, left: 0,
+      toJSON: () => ({}),
+    }) as DOMRect)
+  const container = document.body.appendChild(document.createElement("div"))
+  const root = createRoot(container); roots.push(root)
+  const chat = createChat(vi.fn<Send>(), "parent")
+
+  await act(async () => root.render(<ChatPane chat={chat} pickedWorkspace="/picked"
+    onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()} splitOpen={false}
+    onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false} />))
+
+  const launcher = container.querySelector<HTMLButtonElement>(
+    'button[aria-label="打开 Environment"]',
+  )
+  const floating = () => container.querySelector<HTMLElement>("[data-environment-floating]")
+  expect(launcher?.getAttribute("aria-expanded")).toBe("false")
+  expect(floating()?.getAttribute("data-state")).toBe("closed")
+  expect(floating()?.getAttribute("aria-hidden")).toBe("true")
+  expect(floating()?.style.transition).toContain("transform 200ms ease-out")
+  expect(floating()?.style.transform).toContain("translateX(0.75rem)")
+  expect(runtime.messageList?.contentShiftX).toBe(0)
+  expect(container.querySelector("[data-environment-inline]")).toBeNull()
+  expect(container.querySelector<HTMLElement>("[data-chat-body]")?.style.paddingRight).toBe("")
+
+  containerWidth = 1484
+  await act(async () => window.dispatchEvent(new Event("resize")))
+  expect(floating()?.getAttribute("data-state")).toBe("open")
+  expect(floating()?.style.transform).toContain("translateX(0)")
+  expect(runtime.messageList?.contentShiftX).toBe(-166)
+
+  containerWidth = 1400
+  await act(async () => window.dispatchEvent(new Event("resize")))
+  expect(floating()?.getAttribute("data-state")).toBe("closed")
+  expect(runtime.messageList?.contentShiftX).toBe(0)
+
+  const compactLauncher = container.querySelector<HTMLButtonElement>(
+    'button[aria-label="打开 Environment"]',
+  )
+  await act(async () => compactLauncher?.click())
+
+  expect(floating()?.getAttribute("data-state")).toBe("open")
+  expect(floating()?.getAttribute("aria-hidden")).toBe("false")
+  expect(runtime.messageList?.contentShiftX).toBe(-124)
+  expect(container.querySelector("[data-environment-inline]")).toBeNull()
+  rectSpy.mockRestore()
 })
 
 it("updates Environment from live edits and previews image sources", async () => {
