@@ -212,6 +212,51 @@ test("standalone page-origin artifact reaches a usable canonical shell", async (
   expect(observation.staticUrls.some((url) => pathname(url).startsWith("/assets/"))).toBe(true)
 })
 
+test("system settings can disable generated summaries in favor of retrieval windows", async ({
+  page,
+  startRuntime,
+}) => {
+  const configPatches: unknown[] = []
+  page.on("request", (request) => {
+    if (
+      request.method() === "POST" &&
+      new URL(request.url()).pathname === "/api/v1/bamboo/config"
+    ) {
+      configPatches.push(request.postDataJSON())
+    }
+  })
+
+  const { surface } = await startRuntime(standaloneScenario)
+  const settingsButton = surface.getByRole("button", { name: "系统设置", exact: true })
+  if ((page.viewportSize()?.width ?? 0) < 768) {
+    await surface.getByRole("button", { name: "菜单" }).click()
+  }
+  await settingsButton.click()
+  await surface.getByRole("button", { name: "系统", exact: true }).click()
+
+  const section = surface.locator("section").filter({ hasText: "上下文管理" })
+  const summarySwitch = section.getByRole("switch", { name: "自动生成上下文摘要" })
+  await expect(summarySwitch).toBeChecked()
+  await expect(section.getByText(/从下一次执行开始生效/)).toBeVisible()
+
+  await summarySwitch.click()
+  await expect(summarySwitch).not.toBeChecked()
+  await expect(section.getByText(/保存后请新建会话/)).toBeVisible()
+  await section.getByRole("button", { name: "保存", exact: true }).click()
+
+  await expect.poll(() => configPatches).toHaveLength(1)
+  expect(configPatches[0]).toMatchObject({
+    context_management: {
+      strategy: "retrieval_window",
+      retrieval_window: {
+        history_tool_required: true,
+        fallback_strategy: "none",
+      },
+    },
+  })
+  await expect(section.getByText("已保存", { exact: true })).toBeVisible()
+})
+
 test("malformed provider snapshot is visibly incompatible without legacy fallback", async ({
   page,
   startRuntime,

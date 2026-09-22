@@ -198,6 +198,27 @@ const apiResponse = (method: string, pathnameWithSearch: string): unknown => {
       return { status: "ok" }
     case "GET /api/v1/bamboo/config":
       return { proxy_auth_mode: "auto" }
+    case "GET /api/v1/bamboo/tools":
+      return { tools: [] }
+    case "GET /api/v1/bamboo/access/status":
+      return {
+        password_enabled: false,
+        local_bypass: true,
+        requires_password: false,
+      }
+    case "POST /api/v1/bamboo/config/validate":
+      return { valid: true, errors: {} }
+    case "POST /api/v1/bamboo/config":
+      return {
+        proxy_auth_mode: "auto",
+        context_management: {
+          strategy: "retrieval_window",
+          retrieval_window: {
+            history_tool_required: true,
+            fallback_strategy: "none",
+          },
+        },
+      }
     case "GET /api/v1/metrics/summary":
       return {
         total_sessions: 1,

@@ -3,6 +3,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { useExperienceModeStore } from "@shared/store/experienceModeStore"
 import { useSystemConfig } from "./system/useSystemConfig"
 import { SectionProxy } from "./system/SectionProxy"
+import { SectionContextManagement } from "./system/SectionContextManagement"
 import { SectionMemory } from "./system/SectionMemory"
 import { SectionSubagents } from "./system/SectionSubagents"
 import { SectionTools } from "./system/SectionTools"
@@ -43,6 +44,7 @@ export function SettingsSystem() {
           {isAdvanced ? (
             <>
               <SectionProxy config={config} saveSection={saveSection} />
+              <SectionContextManagement config={config} saveSection={saveSection} />
               <SectionMemory config={config} saveSection={saveSection} />
               <SectionSubagents config={config} saveSection={saveSection} />
               <SectionTools config={config} saveSection={saveSection} />

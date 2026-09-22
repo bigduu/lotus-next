@@ -14,6 +14,21 @@ export interface ModelLimitOverride {
   safety_margin?: number | null
 }
 
+export type ContextManagementStrategy = "summary" | "retrieval_window"
+
+export interface RetrievalWindowConfig {
+  min_recent_user_turns?: number
+  trigger_usage_ratio?: number
+  target_usage_ratio?: number
+  history_tool_required?: boolean
+  fallback_strategy?: "none" | "summary"
+}
+
+export interface ContextManagementConfig {
+  strategy?: ContextManagementStrategy
+  retrieval_window?: RetrievalWindowConfig
+}
+
 /**
  * BambooConfig with the extra sections this panel edits typed out
  * (the base interface only carries an index signature for them).
@@ -23,6 +38,7 @@ export interface SystemBambooConfig extends BambooConfig {
   hooks?: { image_fallback?: { enabled?: boolean; mode?: string } }
   model_limits?: ModelLimitOverride[]
   access_control?: { password_enabled?: boolean }
+  context_management?: ContextManagementConfig
 }
 
 export interface SystemConfigApi {
