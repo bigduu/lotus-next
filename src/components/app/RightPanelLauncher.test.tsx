@@ -72,6 +72,8 @@ it("renders truthful Environment details without a popup portal", async () => {
   const root = createRoot(host)
   roots.push(root)
   const openReview = vi.fn()
+  const previewImage = vi.fn()
+  const previewUrl = "data:image/png;base64,cHJldmlldw=="
 
   await act(async () => {
     root.render(
@@ -84,8 +86,16 @@ it("renders truthful Environment details without a popup portal", async () => {
           changedFiles={2}
           addedLines={3}
           removedLines={1}
-          sources={[{ id: "image:1", name: "reference.png", kind: "image" }]}
+          sources={[
+            {
+              id: "image:1",
+              name: "reference.png",
+              kind: "image",
+              previewUrl,
+            },
+          ]}
           onOpenReview={openReview}
+          onPreviewImage={previewImage}
         />
       </div>,
     )
@@ -106,5 +116,12 @@ it("renders truthful Environment details without a popup portal", async () => {
   )
   await act(async () => changes?.click())
   expect(openReview).toHaveBeenCalledTimes(1)
+
+  const sourcePreview = host.querySelector<HTMLButtonElement>(
+    'button[aria-label="预览 reference.png"]',
+  )
+  expect(sourcePreview?.querySelector("img")?.getAttribute("src")).toBe(previewUrl)
+  await act(async () => sourcePreview?.click())
+  expect(previewImage).toHaveBeenCalledExactlyOnceWith(previewUrl)
   expect(document.querySelector("[data-radix-popper-content-wrapper]")).toBeNull()
 })

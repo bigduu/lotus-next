@@ -19,6 +19,7 @@ import {
   type TokenUsage,
 } from "@shared/types/tokenBudget"
 import { FileChangeView } from "./FileChangeView"
+import { getFileChangePayloadDiffStats } from "@shared/utils/resultFormatters"
 
 function GoalSection({
   sessionId,
@@ -385,27 +386,26 @@ export function Inspector({
                 文件变更 ({fileChanges.length})
               </div>
               <div className="space-y-1.5">
-                {fileChanges.map(({ id, payload }) => (
-                  <details key={id}>
-                    <summary className="flex cursor-pointer select-none items-center gap-1.5 rounded px-1 py-0.5 text-xs hover:bg-accent [&::-webkit-details-marker]:hidden">
-                      <FileDiff className="size-3.5 shrink-0 text-muted-foreground" />
-                      <span className="min-w-0 flex-1 truncate font-mono" title={payload.file_path}>
-                        {payload.file_path?.split("/").filter(Boolean).pop() || payload.file_path}
-                      </span>
-                      <span className="shrink-0 text-[11px]">
-                        <span className="text-green-600 dark:text-green-400">
-                          +{payload.diff?.added_lines ?? 0}
-                        </span>{" "}
-                        <span className="text-red-600 dark:text-red-400">
-                          −{payload.diff?.removed_lines ?? 0}
+                {fileChanges.map(({ id, payload }) => {
+                  const stats = getFileChangePayloadDiffStats(payload)
+                  return (
+                    <details key={id}>
+                      <summary className="flex cursor-pointer select-none items-center gap-1.5 rounded px-1 py-0.5 text-xs hover:bg-accent [&::-webkit-details-marker]:hidden">
+                        <FileDiff className="size-3.5 shrink-0 text-muted-foreground" />
+                        <span className="min-w-0 flex-1 truncate font-mono" title={payload.file_path}>
+                          {payload.file_path?.split("/").filter(Boolean).pop() || payload.file_path}
                         </span>
-                      </span>
-                    </summary>
-                    <div className="mt-1">
-                      <FileChangeView payload={payload} />
-                    </div>
-                  </details>
-                ))}
+                        <span className="shrink-0 text-[11px]">
+                          <span className="text-green-600 dark:text-green-400">+{stats.added}</span>{" "}
+                          <span className="text-red-600 dark:text-red-400">−{stats.removed}</span>
+                        </span>
+                      </summary>
+                      <div className="mt-1">
+                        <FileChangeView payload={payload} />
+                      </div>
+                    </details>
+                  )
+                })}
               </div>
             </section>
           ) : null}

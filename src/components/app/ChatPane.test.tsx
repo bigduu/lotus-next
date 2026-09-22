@@ -3,14 +3,16 @@ import { createRoot, type Root } from "react-dom/client"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import type { CommandItem } from "@services/command"
 import type { SkillDefinition } from "@shared/types/skill"
+import type { ProviderInstancesConfig } from "@shared/types/providerConfig"
 
 type ComposerProps = ComponentProps<(typeof import("./Composer"))["Composer"]>
 type MessageListProps = ComponentProps<(typeof import("./MessageList"))["MessageList"]>
+type ModelPickerProps = ComponentProps<(typeof import("@/components/chat/ModelPicker"))["ModelPicker"]>
 type ChatPaneProps = ComponentProps<(typeof import("./ChatPane"))["ChatPane"]>
 type Send = ChatPaneProps["chat"]["send"]
 type State = {
   tokenUsages: Record<string, unknown>; inputStates: Record<string, { content: string; contentRevision: number; reasoningEffort: "medium" }>
-  skills: SkillDefinition[]; childProgress: Record<string, unknown>; models: string[]; selectedModel: string
+  skills: SkillDefinition[]; childProgress: Record<string, unknown>; models: string[]; selectedModel: string | undefined
   setInputContent(id: string, content: string): void
   setInputContentIfRevision(id: string, revision: number, content: string): boolean
   moveInputContentIfRevision(source: string, revision: number, target: string): boolean
@@ -18,7 +20,8 @@ type State = {
 }
 const runtime = vi.hoisted(() => ({
   state: {} as State, listeners: new Set<() => void>(), composer: null as ComposerProps | null,
-  messageList: null as MessageListProps | null,
+  messageList: null as MessageListProps | null, modelPicker: null as ModelPickerProps | null,
+  providerState: { providerSnapshot: null as ProviderInstancesConfig | null },
   queueSend: vi.fn(), revision: 0, getWorkflow: vi.fn(), listCommands: vi.fn(), peekTemplate: vi.fn(),
 }))
 vi.mock("zustand/react/shallow", () => ({ useShallow: <T,>(selector: T) => selector }))
@@ -35,8 +38,8 @@ vi.mock("@shared/store/appStore", async () => {
   )
   return { useAppStore, selectChildren: () => (state: State) => state.childProgress }
 })
-type ProviderState = { providerSnapshot: null }
-vi.mock("@shared/store/appStore/slices/providerSlice", () => ({ useProviderStore: <T,>(selector: (state: ProviderState) => T) => selector({ providerSnapshot: null }) }))
+type ProviderState = typeof runtime.providerState
+vi.mock("@shared/store/appStore/slices/providerSlice", () => ({ useProviderStore: <T,>(selector: (state: ProviderState) => T) => selector(runtime.providerState) }))
 vi.mock("@/hooks/useGuidanceQueue", () => ({ useGuidanceQueue: () => ({ mode: "after_round", setMode: vi.fn(), send: runtime.queueSend, cancel: vi.fn(), pending: [], error: null, busy: false, hasUnconfirmed: false }) }))
 vi.mock("@/hooks/useStickyScroll", () => ({
   useStickyScroll: () => ({ scrollRef: { current: null }, contentRef: { current: null }, atBottom: true,
@@ -62,10 +65,18 @@ vi.mock("@/components/app/MessageList", () => ({
   },
 }))
 vi.mock("@/components/app/Toasts", () => ({ Toasts: () => null }))
-vi.mock("@/components/app/ImageLightbox", () => ({ ImageLightbox: () => null }))
+vi.mock("@/components/app/ImageLightbox", () => ({
+  ImageLightbox: ({ src }: { src: string | null }) =>
+    src ? <div data-image-lightbox data-src={src} /> : null,
+}))
 vi.mock("@/components/app/ContextUsageRing", () => ({ ContextUsageRing: () => <span data-testid="context-usage" /> }))
 vi.mock("@/components/chat/ReasoningPicker", () => ({ ReasoningPicker: () => <span data-testid="reasoning-picker" /> }))
-vi.mock("@/components/chat/ModelPicker", () => ({ ModelPicker: () => <span data-testid="model-picker" /> }))
+vi.mock("@/components/chat/ModelPicker", () => ({
+  ModelPicker: (props: ModelPickerProps) => {
+    runtime.modelPicker = props
+    return <span data-testid="model-picker" />
+  },
+}))
 vi.mock("@/components/chat/PermissionModeControl", () => ({
   PermissionModeControl: () => <span data-testid="session-permission" />,
   NewSessionPermissionControl: () => <span data-testid="new-session-permission" />,
@@ -171,7 +182,9 @@ beforeEach(() => {
     addEventListener: (_name: string, listener: (event: MediaQueryListEvent) => void) => mediaListeners.add(listener),
     removeEventListener: (_name: string, listener: (event: MediaQueryListEvent) => void) => mediaListeners.delete(listener),
   })))
-  runtime.composer = null; runtime.messageList = null; runtime.listeners.clear(); runtime.revision = 0
+  runtime.composer = null; runtime.messageList = null; runtime.modelPicker = null
+  runtime.providerState.providerSnapshot = null
+  runtime.listeners.clear(); runtime.revision = 0
   runtime.state = {
     tokenUsages: {}, inputStates: {}, skills: [skillA, skillB], childProgress: {}, models: [],
     selectedModel: "test-model", setInputReasoningEffort: vi.fn(),
@@ -210,6 +223,37 @@ describe("ChatPane composer acknowledgement", () => {
     expect(composerShell?.querySelector('[data-testid="reasoning-picker"]')).not.toBeNull()
     expect(composerShell?.querySelector('[data-testid="model-picker"]')).not.toBeNull()
     expect(document.querySelector('[data-testid="new-session-permission"]')).toBeNull()
+  })
+
+  it("shows an existing child session's model instead of the root Chat default", async () => {
+    runtime.state.models = ["gpt-5.6-sol", "gpt-5.6-luna"]
+    runtime.state.selectedModel = undefined
+    runtime.providerState.providerSnapshot = {
+      default_provider_instance_id: "easycli",
+      instances: [{
+        id: "easycli",
+        type: "openai",
+        label: "Easycli",
+        enabled: true,
+        config: {},
+      }],
+      defaults: {
+        chat: { provider: "easycli", model: "gpt-5.6-sol" },
+      },
+      features: { provider_model_ref: true },
+    }
+    const chat = createChat(vi.fn<Send>(), "child-session")
+    if (!chat.currentChat) throw new Error("child chat was not created")
+    chat.currentChat.config.model = "gpt-5.6-luna"
+    chat.currentChat.config.model_ref = { provider: "easycli", model: "gpt-5.6-luna" }
+    const container = document.body.appendChild(document.createElement("div"))
+    const root = createRoot(container); roots.push(root)
+
+    await act(async () => root.render(<ChatPane chat={chat} pickedWorkspace="/picked"
+      onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()} splitOpen={false}
+      onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false} />))
+
+    expect(runtime.modelPicker?.value).toBe("gpt-5.6-luna")
   })
 
   it("puts the next-session permission selector in a blank composer", async () => {
@@ -456,6 +500,56 @@ it("shows Environment by default and only suppresses it while the side pane is o
 
   await act(async () => root.render(render(false)))
   expect(container.querySelector("[data-environment-card]")).not.toBeNull()
+})
+
+it("updates Environment from live edits and previews image sources", async () => {
+  const container = document.body.appendChild(document.createElement("div"))
+  const root = createRoot(container); roots.push(root)
+  const previewUrl = "data:image/png;base64,c291cmNl"
+  const chat = createChat(vi.fn<Send>(), "parent")
+  chat.messages = [{
+    id: "user-with-image",
+    role: "user",
+    content: "参考图片",
+    createdAt: "2026-09-21T00:00:00Z",
+    images: [{
+      id: "source-1",
+      name: "source.png",
+      type: "image/png",
+      size: 6,
+      url: previewUrl,
+    }],
+  }]
+  chat.liveSegments = [{
+    kind: "tools",
+    calls: [{
+      toolCallId: "edit-1",
+      toolName: "Edit",
+      output: JSON.stringify({
+        operation: "edit",
+        file_path: "/workspace/src/index.css",
+        diff: {
+          unified: "--- a/src/index.css\n+++ b/src/index.css\n@@ -1,2 +1,3 @@\n-old\n+new\n+more\n same",
+        },
+      }),
+      status: "completed",
+    }],
+  }]
+
+  await act(async () => root.render(<ChatPane chat={chat} pickedWorkspace="/picked"
+    onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()} splitOpen={false}
+    onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false} />))
+
+  const card = container.querySelector<HTMLElement>("[data-environment-card]")
+  expect(card?.textContent).toContain("1 个变更文件")
+  expect(card?.textContent).toContain("+2")
+  expect(card?.textContent).toContain("−1")
+  const sourcePreview = card?.querySelector<HTMLButtonElement>(
+    'button[aria-label="预览 source.png"]',
+  )
+  expect(sourcePreview?.querySelector("img")?.getAttribute("src")).toBe(previewUrl)
+  await act(async () => sourcePreview?.click())
+  expect(container.querySelector("[data-image-lightbox]")?.getAttribute("data-src")).toBe(previewUrl)
 })
 
 it("returns from a child inside the side pane without changing the main session", async () => {

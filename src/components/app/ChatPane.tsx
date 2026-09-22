@@ -55,7 +55,12 @@ import {
 import type { ChatItem } from "@shared/types/chatMessages"
 import type { SessionPermissionMode } from "@services/chat/AgentService"
 import { useNewSessionPermission } from "@shared/store/newSessionPermission"
-import { collectSessionFileChanges } from "@/lib/sessionFileChanges"
+import {
+  collectLiveSessionFileChanges,
+  collectSessionFileChanges,
+  mergeSessionFileChanges,
+} from "@/lib/sessionFileChanges"
+import { getFileChangePayloadDiffStats } from "@shared/utils/resultFormatters"
 
 /** Secondary (split) pane config — a slim header with its own session picker. */
 type SecondaryConfig = {
@@ -311,13 +316,14 @@ export function ChatPane({
   )
   const reasoningEffort = sessionReasoningEffort ?? chatReasoningEffort ?? "medium"
   const setInputReasoningEffort = useAppStore((s) => s.setInputReasoningEffort)
-  // What the next send will use: explicit pick → configured Chat default →
-  // (last resort) the session's own historical model.
+  // What the next send will use: explicit pick → this session's bound model →
+  // configured Chat default. Existing child panes must not be relabelled with
+  // the root Chat default merely because the global picker is unset.
   const activeModel =
     selectedModel ||
-    defaultChatModel ||
     currentChat?.config?.model_ref?.model ||
     currentChat?.config?.model ||
+    defaultChatModel ||
     ""
 
   // Escape hides the pickers until the draft changes again (typing re-opens).
@@ -345,7 +351,15 @@ export function ChatPane({
     const projectId = currentChat?.config?.projectId
     return projectId ? state.projects[projectId]?.name : undefined
   })
-  const sessionFileChanges = useMemo(() => collectSessionFileChanges(messages), [messages])
+  const persistedFileChanges = useMemo(() => collectSessionFileChanges(messages), [messages])
+  const liveFileChanges = useMemo(
+    () => collectLiveSessionFileChanges(liveSegments),
+    [liveSegments],
+  )
+  const sessionFileChanges = useMemo(
+    () => mergeSessionFileChanges(persistedFileChanges, liveFileChanges),
+    [persistedFileChanges, liveFileChanges],
+  )
   const fileChangeSummary = useMemo(() => {
     const filePaths = new Set<string>()
     let addedLines = 0
@@ -353,8 +367,9 @@ export function ChatPane({
 
     for (const change of sessionFileChanges) {
       filePaths.add(change.payload.file_path)
-      addedLines += change.payload.diff.added_lines ?? 0
-      removedLines += change.payload.diff.removed_lines ?? 0
+      const stats = getFileChangePayloadDiffStats(change.payload)
+      addedLines += stats.added
+      removedLines += stats.removed
     }
 
     return { changedFiles: filePaths.size, addedLines, removedLines }
@@ -369,10 +384,17 @@ export function ChatPane({
     for (const message of messages) {
       if ("images" in message) {
         for (const image of message.images ?? []) {
+          const previewUrl = image.url
+            ?? (image.base64
+              ? image.base64.startsWith("data:")
+                ? image.base64
+                : `data:${image.type || "image/png"};base64,${image.base64}`
+              : undefined)
           sources.set(`image:${image.id}`, {
             id: `image:${image.id}`,
             name: image.name,
             kind: "image",
+            previewUrl,
           })
         }
       }
@@ -385,6 +407,7 @@ export function ChatPane({
         id: `draft:${attachment.id}`,
         name: attachment.name,
         kind: "image",
+        previewUrl: attachment.url,
       })
     }
 
@@ -616,6 +639,7 @@ export function ChatPane({
       removedLines={fileChangeSummary.removedLines}
       sources={environmentSources}
       onOpenReview={() => launchWorkbench(onOpenReview ?? onOpenInspector)}
+      onPreviewImage={setPreview}
     />
   ) : null
 
@@ -751,6 +775,7 @@ export function ChatPane({
           />
         ) : (
         <MessageList
+          key={currentSessionId ?? "new-session"}
           scrollRef={scrollRef}
           contentRef={contentRef}
           onScroll={handleScroll}
