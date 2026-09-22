@@ -20,6 +20,10 @@ const mocks = vi.hoisted(() => {
       messages?: unknown[]
       isRunning?: boolean
       lastRunStatus?: string | null
+      config?: {
+        model?: string
+        model_ref?: { provider: string; model: string } | null
+      }
     }>,
     currentSessionId: null as string | null,
     sessionIndexRevision: 0,
@@ -621,6 +625,56 @@ describe("useChat two-phase send lifecycle", () => {
       { provider: "instance-openai", model: "gpt-authoritative" },
     )
     expect(mocks.providerState.getProviderType).toHaveBeenCalledWith("instance-openai")
+  })
+  it("keeps an existing child session bound to its own provider and model", async () => {
+    const sessionId = "child-session"
+    mocks.appState.selectedModel = undefined
+    mocks.appState.chats = [{
+      id: sessionId,
+      messages: [],
+      config: {
+        model: "gpt-5.6-luna",
+        model_ref: { provider: "easycli", model: "gpt-5.6-luna" },
+      },
+    }]
+    mocks.providerState.providerSnapshot = {
+      default_provider_instance_id: "easycli",
+      instances: [{
+        id: "easycli",
+        type: "openai",
+        label: "Easycli",
+        enabled: true,
+        config: { reasoning_effort: "max" },
+      }],
+      defaults: {
+        chat: { provider: "easycli", model: "gpt-5.6-sol" },
+      },
+      features: { provider_model_ref: true },
+    }
+    mocks.providerState.getProviderType.mockReturnValue("openai")
+    mocks.sendMessage.mockResolvedValueOnce({ session_id: sessionId })
+    mocks.subscribeToEvents.mockReturnValueOnce(pendingForever())
+
+    const hook = await mountUseChat({ mode: "bound", sessionId })
+    await act(async () => {
+      await hook.current.send("continue child task")
+    })
+
+    expect(mocks.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        session_id: sessionId,
+        model: "gpt-5.6-luna",
+        model_ref: { provider: "easycli", model: "gpt-5.6-luna" },
+      }),
+    )
+    expect(mocks.execute).toHaveBeenCalledWith(
+      sessionId,
+      "gpt-5.6-luna",
+      "max",
+      undefined,
+      { provider: "easycli", model: "gpt-5.6-luna" },
+    )
+    expect(mocks.providerState.getProviderType).toHaveBeenCalledWith("easycli")
   })
   it.each(["complete", "error"] as const)(
     "waits for %s terminal settlement after the transport closes",
