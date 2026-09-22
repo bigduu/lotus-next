@@ -13,6 +13,13 @@ import type {
 const configuredStrategy = (config: SystemBambooConfig): ContextManagementStrategy =>
   config.context_management?.strategy === "retrieval_window" ? "retrieval_window" : "summary"
 
+const explicitlyPersistedStrategy = (
+  config: SystemBambooConfig
+): ContextManagementStrategy | null => {
+  const strategy = config.context_management?.strategy
+  return strategy === "summary" || strategy === "retrieval_window" ? strategy : null
+}
+
 /** 上下文管理 — 在滚动摘要与精确历史检索窗口之间切换。 */
 export function SectionContextManagement({
   config,
@@ -38,7 +45,8 @@ export function SectionContextManagement({
     setBusy(true)
     setMsg(null)
     try {
-      const patch: SystemBambooConfig = summariesEnabled
+      const requestedStrategy = selectedStrategy
+      const patch: SystemBambooConfig = requestedStrategy === "summary"
         ? { context_management: { strategy: "summary" } }
         : {
             context_management: {
@@ -51,7 +59,15 @@ export function SectionContextManagement({
             },
           }
       const saved = await saveSection(patch)
-      const persistedStrategy = configuredStrategy(saved)
+      const explicitStrategy = explicitlyPersistedStrategy(saved)
+      const persistedStrategy = explicitStrategy ?? "summary"
+      if (persistedStrategy !== requestedStrategy) {
+        throw new Error(
+          requestedStrategy === "retrieval_window"
+            ? "后端未确认检索窗口策略，配置尚未在当前运行中生效"
+            : "后端未确认摘要策略，配置尚未在当前运行中生效"
+        )
+      }
       setSummariesEnabled(persistedStrategy === "summary")
       setSavedStrategy(persistedStrategy)
       setMsg({ kind: "ok", text: "已保存" })
