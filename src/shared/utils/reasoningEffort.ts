@@ -10,6 +10,9 @@ import type { ProviderModelRef } from "@shared/types/providerModelRef";
  */
 export const DEFAULT_REASONING_EFFORT: ReasoningEffort = "medium";
 
+/** Picker state. `auto` means no override at this layer; it is never sent. */
+export type ReasoningEffortSelection = ReasoningEffort | "auto";
+
 /**
  * Resolve the *effective* reasoning effort a session will use right now, from
  * the layered sources, most specific first:
@@ -34,13 +37,25 @@ export const resolveEffectiveReasoningEffort = (sources: {
   sources.providerDefault ??
   DEFAULT_REASONING_EFFORT;
 
-const REASONING_EFFORTS: ReadonlySet<string> = new Set(["low", "medium", "high", "xhigh", "max"]);
+const REASONING_EFFORTS: ReadonlySet<string> = new Set([
+  "none",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+]);
+
+export const isReasoningEffort = (value: unknown): value is ReasoningEffort =>
+  typeof value === "string" && REASONING_EFFORTS.has(value);
+
+export const isReasoningEffortSelection = (
+  value: unknown,
+): value is ReasoningEffortSelection => value === "auto" || isReasoningEffort(value);
 
 const readEffort = (cfg: Record<string, unknown> | undefined): ReasoningEffort | undefined => {
   const effort = cfg?.reasoning_effort;
-  return typeof effort === "string" && REASONING_EFFORTS.has(effort)
-    ? (effort as ReasoningEffort)
-    : undefined;
+  return isReasoningEffort(effort) ? effort : undefined;
 };
 
 /**
@@ -69,8 +84,11 @@ export const resolveProviderDefaultReasoningEffort = (
   modelRef?: ProviderModelRef | null,
   fallbackInstanceId?: string | null,
 ): ReasoningEffort | undefined => {
+  const effectiveRef = modelRef ?? providerSnapshot?.defaults?.chat;
+  if (effectiveRef?.reasoning_effort) return effectiveRef.reasoning_effort;
+
   const instanceId =
-    modelRef?.provider?.trim() ||
+    effectiveRef?.provider?.trim() ||
     providerSnapshot?.defaults?.chat.provider.trim() ||
     fallbackInstanceId?.trim();
 

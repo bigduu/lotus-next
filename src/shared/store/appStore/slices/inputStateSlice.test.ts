@@ -85,4 +85,34 @@ describe("input draft revision ownership", () => {
     expect(store.getState().setInputContentIfRevision("session", oldRevision, "")).toBe(false)
     expect(store.getState().inputStates.session.content).toBe("new draft")
   })
+
+  it("does not let legacy new-chat or last-used reasoning shadow Provider Settings", () => {
+    localStorage.setItem(
+      "chat_input_reasoning_by_session_v1",
+      JSON.stringify({ "": "max", __new_chat_pane2__: "max" }),
+    )
+    localStorage.setItem("chat_input_reasoning_last_used_v1", "max")
+    const store = createHarness()
+
+    store.getState().setInputContent("", "main draft")
+    store.getState().setInputContent("__new_chat_pane2__", "split draft")
+
+    expect(store.getState().inputStates[""].reasoningEffort).toBeUndefined()
+    expect(
+      store.getState().inputStates.__new_chat_pane2__.reasoningEffort,
+    ).toBeUndefined()
+  })
+
+  it("keeps Auto and Off as distinct explicit picker states", () => {
+    const store = createHarness()
+
+    store.getState().setInputReasoningEffort("session", "auto")
+    expect(store.getState().inputStates.session.reasoningEffort).toBe("auto")
+
+    store.getState().setInputReasoningEffort("session", "none")
+    expect(store.getState().inputStates.session.reasoningEffort).toBe("none")
+
+    store.getState().clearInputReasoningEffort("session")
+    expect(store.getState().inputStates.session.reasoningEffort).toBeUndefined()
+  })
 })

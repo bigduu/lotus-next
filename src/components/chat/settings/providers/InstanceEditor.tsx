@@ -21,7 +21,14 @@ import { CopilotAuth } from "./CopilotAuth"
 import { EditableModelCombobox } from "./EditableModelCombobox"
 
 const PROVIDER_TYPES: ProviderKind[] = ["anthropic", "openai", "gemini", "copilot", "bodhi"]
-const REASONING_EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const
+const REASONING_EFFORTS = [
+  { value: "none", label: "关闭" },
+  { value: "low", label: "低" },
+  { value: "medium", label: "中" },
+  { value: "high", label: "高" },
+  { value: "xhigh", label: "极高" },
+  { value: "max", label: "最大" },
+] as const
 const UNSET = "__unset__"
 
 const API_KEY_PLACEHOLDER: Record<ProviderKind, string> = {
@@ -396,9 +403,9 @@ export function InstanceEditor({
             </SelectTrigger>
             <SelectContent>
               <SelectItem value={UNSET}>默认(不指定)</SelectItem>
-              {REASONING_EFFORTS.map((r) => (
-                <SelectItem key={r} value={r}>
-                  {r}
+              {REASONING_EFFORTS.map((effort) => (
+                <SelectItem key={effort.value} value={effort.value}>
+                  {effort.label}
                 </SelectItem>
               ))}
             </SelectContent>

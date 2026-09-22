@@ -8,12 +8,12 @@ import {
   selectShouldObserve,
 } from "@shared/store/appStore"
 import { useProviderStore } from "@shared/store/appStore/slices/providerSlice"
-import { getReasoningEffortForProvider } from "@shared/utils/reasoningEffort"
 import { recordUsedModel } from "@shared/utils/usedModels"
 import {
   agentClient,
   type PendingQuestionResponse,
   type PermissionDecisionRequest,
+  type ReasoningEffort,
   type SessionPermissionMode,
 } from "@services/chat/AgentService"
 import { apiClient } from "@services/api"
@@ -27,6 +27,10 @@ import {
   type PendingTemplatePromptSnapshot,
 } from "@/lib/taskTemplates"
 import type { Message } from "@shared/types/chat"
+import {
+  getReasoningEffortForProvider,
+  type ReasoningEffortSelection,
+} from "@shared/utils/reasoningEffort"
 
 export type PendingQuestion = Extract<PendingQuestionResponse, { has_pending_question: true }>
 type QuestionScope = { sessionId: string | null | undefined; epoch: number }
@@ -264,20 +268,33 @@ export function useChat(
     sessionModel,
     sessionModelRef,
   ])
-  const chatReasoningEffort = useProviderStore((s) => {
-    const id = s.providerSnapshot?.defaults?.chat.provider
-    return getReasoningEffortForProvider(s.providerSnapshot, id)
-  })
+  const chatReasoningEffort = useProviderStore(
+    (s) => s.providerSnapshot?.defaults?.chat?.reasoning_effort,
+  )
   const effectiveProviderId = selectedModel
     ? effectiveModelRef?.provider
     : sessionModelRef?.provider || effectiveModelRef?.provider
+  const effectiveProviderReasoningEffort = useProviderStore((s) =>
+    getReasoningEffortForProvider(s.providerSnapshot, effectiveProviderId),
+  )
   // Provider type of the effective model drives provider-specific prompt
   // enhancement segments (e.g. the Copilot conclusion-with-options contract).
   const providerType = useProviderStore((s) => {
     return effectiveProviderId ? s.getProviderType(effectiveProviderId) : undefined
   })
-  const reasoningEffort =
-    useAppStore((s) => s.inputStates[sid ?? ""]?.reasoningEffort) ?? chatReasoningEffort
+  const inputReasoningSelection = useAppStore(
+    (s) => s.inputStates[sid ?? ""]?.reasoningEffort,
+  )
+  // `auto` is a UI-only inheritance marker and must never cross the wire.
+  // New sessions use an explicit Chat-role value when configured; existing
+  // sessions otherwise defer to their durable session execution profile.
+  const reasoningEffort = sid
+    ? currentChat?.config?.reasoningEffort ??
+      sessionModelRef?.reasoning_effort ??
+      effectiveProviderReasoningEffort
+    : inputReasoningSelection === "auto"
+      ? undefined
+      : inputReasoningSelection ?? chatReasoningEffort
 
   const [booted, setBooted] = useState(false)
   const [streamingText, setStreamingText] = useState<string | null>(null)
@@ -654,7 +671,13 @@ export function useChat(
   const runStream = useCallback(
     async (
       runSid: string,
-      opts?: { resume?: boolean; operationId?: number; pendingOperationId?: number },
+      opts?: {
+        resume?: boolean
+        operationId?: number
+        pendingOperationId?: number
+        /** `null` explicitly omits an execute-time override (Auto). */
+        reasoningEffort?: ReasoningEffort | null
+      },
     ) => {
       const operationId = opts?.operationId ?? operationSequenceRef.current + 1
       operationSequenceRef.current = Math.max(operationSequenceRef.current, operationId)
@@ -693,7 +716,13 @@ export function useChat(
       // On resume (after answering a question/permission) the backend already
       // continues the suspended run — only subscribe, don't kick a fresh execute.
       if (!opts?.resume) {
-        void agentClient.execute(runSid, effectiveModel || undefined, reasoningEffort, undefined, effectiveModelRef).catch(() => {
+        const executeReasoningEffort = Object.prototype.hasOwnProperty.call(
+          opts ?? {},
+          "reasoningEffort",
+        )
+          ? opts?.reasoningEffort ?? undefined
+          : reasoningEffort
+        void agentClient.execute(runSid, effectiveModel || undefined, executeReasoningEffort, undefined, effectiveModelRef).catch(() => {
           if (!ownsStream()) return
           // The run never started, so no terminal will ever arrive — settle
           // the subscription instead of leaving it (and the UI) hanging.
@@ -1388,6 +1417,8 @@ export function useChat(
         templatePrompt?: PendingTemplatePromptSnapshot | null
         /** Initial permission mode when this send creates a NEW session. */
         permissionMode?: SessionPermissionMode
+        /** Frozen picker value for this new-session submission. */
+        reasoningSelection?: ReasoningEffortSelection
       },
     ): Promise<SendSubmissionResult> => {
       const body = text.trim()
@@ -1395,6 +1426,11 @@ export function useChat(
       if (activeSendRef.current) return { kind: "busy" }
 
       const startSid = sid
+      const submittedReasoningEffort = startSid
+        ? reasoningEffort
+        : opts?.reasoningSelection === "auto"
+          ? undefined
+          : opts?.reasoningSelection ?? reasoningEffort
       const operation: ActiveSendOperation = {
         id: operationSequenceRef.current + 1,
         phase: "submitting",
@@ -1436,6 +1472,7 @@ export function useChat(
           // Complete provider+model ref: a bare `model` alone is outranked by
           // the server's `defaults.chat` under `features.provider_model_ref`.
           model_ref: effectiveModelRef,
+          reasoning_effort: !startSid ? submittedReasoningEffort : undefined,
           enhance_prompt: enhancePrompt || undefined,
           copilot_conclusion_with_options_enhancement_enabled:
             providerType === "copilot" && isCopilotConclusionWithOptionsEnhancementEnabled(),
@@ -1494,7 +1531,7 @@ export function useChat(
         }
         if (activeSendRef.current?.id === operation.id) activeSendRef.current = null
         void agentClient
-          .execute(acknowledgedSessionId, effectiveModel || undefined, reasoningEffort, undefined, effectiveModelRef)
+          .execute(acknowledgedSessionId, effectiveModel || undefined, submittedReasoningEffort, undefined, effectiveModelRef)
           .catch((err) => {
             console.warn("[useChat] detached generation start failed", err)
             publishSendFailure({
@@ -1537,6 +1574,7 @@ export function useChat(
         void runStream(acknowledgedSessionId, {
           operationId: operation.id,
           pendingOperationId: operation.pendingOperationId,
+          reasoningEffort: submittedReasoningEffort ?? null,
         })
           .catch((err) => {
             console.error("[useChat] acknowledged generation failed", err)

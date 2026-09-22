@@ -1,6 +1,9 @@
 import { StateCreator } from "zustand";
 import type { AppState } from "../";
-import type { ReasoningEffort } from "@services/chat/AgentService";
+import {
+  isReasoningEffortSelection,
+  type ReasoningEffortSelection,
+} from "@shared/utils/reasoningEffort";
 import { StorageManager } from "@services/storage/StorageManager";
 
 // Attachment type (same as in InputContainer)
@@ -19,7 +22,8 @@ export interface InputState {
   contentRevision: number;
   referenceText: string | null;
   attachments: Attachment[];
-  reasoningEffort: ReasoningEffort;
+  /** Explicit picker state. Missing means follow the configured/session value. */
+  reasoningEffort?: ReasoningEffortSelection;
 }
 
 export interface InputStateSliceState {
@@ -47,7 +51,12 @@ export interface InputStateSliceActions {
   // Set attachments for a chat
   setAttachments: (sessionId: string, attachments: Attachment[]) => void;
   // Set reasoning effort for a chat
-  setInputReasoningEffort: (sessionId: string, reasoningEffort: ReasoningEffort) => void;
+  setInputReasoningEffort: (
+    sessionId: string,
+    reasoningEffort: ReasoningEffortSelection,
+  ) => void;
+  // Remove a draft/session-local picker override.
+  clearInputReasoningEffort: (sessionId: string) => void;
   // Clear all input state for a chat
   clearInputState: (sessionId: string) => void;
   // Get input state for a chat (returns default if not found)
@@ -57,14 +66,12 @@ export interface InputStateSliceActions {
 export type InputStateSlice = InputStateSliceState & InputStateSliceActions;
 
 const INPUT_REASONING_BY_SESSION_LS_KEY = "chat_input_reasoning_by_session_v1";
-const INPUT_REASONING_LAST_USED_LS_KEY = "chat_input_reasoning_last_used_v1";
 
 const DEFAULT_INPUT_STATE: InputState = {
   content: "",
   contentRevision: 0,
   referenceText: null,
   attachments: [],
-  reasoningEffort: "medium",
 };
 
 // A module-lifetime sequence avoids same-value ABA across panes and component
@@ -77,10 +84,7 @@ const nextInputContentRevision = (): number => {
   return inputContentRevisionSequence;
 };
 
-const isReasoningEffort = (value: unknown): value is ReasoningEffort =>
-  value === "low" || value === "medium" || value === "high" || value === "xhigh" || value === "max";
-
-const readReasoningBySession = (): Record<string, ReasoningEffort> => {
+const readReasoningBySession = (): Record<string, ReasoningEffortSelection> => {
   if (typeof window === "undefined") {
     return {};
   }
@@ -88,9 +92,9 @@ const readReasoningBySession = (): Record<string, ReasoningEffort> => {
     const raw = localStorage.getItem(INPUT_REASONING_BY_SESSION_LS_KEY);
     if (!raw) return {};
     const parsed = JSON.parse(raw) as Record<string, unknown>;
-    const next: Record<string, ReasoningEffort> = {};
+    const next: Record<string, ReasoningEffortSelection> = {};
     for (const [sessionId, value] of Object.entries(parsed || {})) {
-      if (isReasoningEffort(value)) {
+      if (isReasoningEffortSelection(value)) {
         next[sessionId] = value;
       }
     }
@@ -100,7 +104,7 @@ const readReasoningBySession = (): Record<string, ReasoningEffort> => {
   }
 };
 
-const writeReasoningBySession = (value: Record<string, ReasoningEffort>) => {
+const writeReasoningBySession = (value: Record<string, ReasoningEffortSelection>) => {
   if (typeof window === "undefined") {
     return;
   }
@@ -111,44 +115,26 @@ const writeReasoningBySession = (value: Record<string, ReasoningEffort>) => {
   }
 };
 
-const readLastUsedReasoningEffort = (): ReasoningEffort | undefined => {
-  if (typeof window === "undefined") {
-    return undefined;
-  }
-  try {
-    const raw = localStorage.getItem(INPUT_REASONING_LAST_USED_LS_KEY);
-    return isReasoningEffort(raw) ? raw : undefined;
-  } catch {
-    return undefined;
-  }
-};
-
-const writeLastUsedReasoningEffort = (value: ReasoningEffort) => {
-  if (typeof window === "undefined") {
-    return;
-  }
-  try {
-    localStorage.setItem(INPUT_REASONING_LAST_USED_LS_KEY, value);
-  } catch {
-    // ignore localStorage quota/security errors
-  }
-};
-
 export const readPersistedInputReasoningEffort = (
   sessionId: string,
-): ReasoningEffort | undefined => {
+): ReasoningEffortSelection | undefined => {
+  // New-session sentinels are ephemeral. Their initial value must come from
+  // Provider Settings, never a stale previous draft or legacy "last used" key.
+  if (sessionId === "" || sessionId === "__new_chat_pane2__") return undefined;
   const bySession = readReasoningBySession();
-  if (isReasoningEffort(bySession[sessionId])) {
+  if (isReasoningEffortSelection(bySession[sessionId])) {
     return bySession[sessionId];
   }
-  return readLastUsedReasoningEffort();
+  return undefined;
 };
 
-const defaultInputStateForSession = (sessionId: string): InputState => ({
-  ...DEFAULT_INPUT_STATE,
-  reasoningEffort:
-    readPersistedInputReasoningEffort(sessionId) ?? DEFAULT_INPUT_STATE.reasoningEffort,
-});
+const defaultInputStateForSession = (sessionId: string): InputState => {
+  const reasoningEffort = readPersistedInputReasoningEffort(sessionId);
+  return {
+    ...DEFAULT_INPUT_STATE,
+    ...(reasoningEffort ? { reasoningEffort } : {}),
+  };
+};
 
 export const createInputStateSlice: StateCreator<AppState, [], [], InputStateSlice> = (
   set,
@@ -254,15 +240,37 @@ export const createInputStateSlice: StateCreator<AppState, [], [], InputStateSli
       },
     }));
 
-    const bySession = readReasoningBySession();
-    bySession[sessionId] = reasoningEffort;
-    writeReasoningBySession(bySession);
-    writeLastUsedReasoningEffort(reasoningEffort);
+    // New-session picks are one-shot and stay in memory. Once the server
+    // acknowledges the new session, ChatPane clears the sentinel selection.
+    if (sessionId !== "" && sessionId !== "__new_chat_pane2__") {
+      const bySession = readReasoningBySession();
+      bySession[sessionId] = reasoningEffort;
+      writeReasoningBySession(bySession);
 
-    // Also persist to IndexedDB for cross-session durability
-    const manager = StorageManager.getInstance();
-    manager.saveInputReasoning(sessionId, reasoningEffort).catch(() => {});
-    manager.saveLastUsedReasoningEffort(reasoningEffort).catch(() => {});
+      // Also persist session-local picker state to IndexedDB.
+      const manager = StorageManager.getInstance();
+      manager.saveInputReasoning(sessionId, reasoningEffort).catch(() => {});
+    }
+  },
+
+  clearInputReasoningEffort: (sessionId) => {
+    set((state) => {
+      const current = state.inputStates[sessionId];
+      if (!current || current.reasoningEffort === undefined) return state;
+      const { reasoningEffort: _reasoningEffort, ...rest } = current;
+      return {
+        inputStates: {
+          ...state.inputStates,
+          [sessionId]: rest,
+        },
+      };
+    });
+
+    const bySession = readReasoningBySession();
+    if (Object.prototype.hasOwnProperty.call(bySession, sessionId)) {
+      delete bySession[sessionId];
+      writeReasoningBySession(bySession);
+    }
   },
 
   // Clear all input state for a chat

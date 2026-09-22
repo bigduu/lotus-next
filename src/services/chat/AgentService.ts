@@ -55,7 +55,7 @@ export type AgentEventType =
   | "cancelled"
   | "error";
 
-export type ReasoningEffort = "low" | "medium" | "high" | "xhigh" | "max";
+export type ReasoningEffort = "none" | "low" | "medium" | "high" | "xhigh" | "max";
 
 export type SessionPermissionMode = "default" | "bypass" | "auto";
 
@@ -366,6 +366,8 @@ export interface ChatRequest {
   model: string; // Required for chat/create compatibility; backend persists to session
   model_ref?: { provider: string; model: string };
   provider?: string;
+  /** Initial reasoning override for a NEW session; omitted means inherit. */
+  reasoning_effort?: ReasoningEffort;
   /** Initial permission mode for a NEW session; existing sessions ignore it. */
   permission_mode?: SessionPermissionMode;
 }
