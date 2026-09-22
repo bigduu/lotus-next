@@ -1,6 +1,6 @@
 import { Check, Gauge } from "lucide-react"
 import { cn } from "@/lib/utils"
-import type { ReasoningEffort } from "@services/chat/AgentService"
+import type { ReasoningEffortSelection } from "@shared/utils/reasoningEffort"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -8,7 +8,9 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 
-const EFFORTS: { value: ReasoningEffort; label: string }[] = [
+const EFFORTS: { value: ReasoningEffortSelection; label: string }[] = [
+  { value: "auto", label: "自动" },
+  { value: "none", label: "关闭" },
   { value: "low", label: "低" },
   { value: "medium", label: "中" },
   { value: "high", label: "高" },
@@ -20,21 +22,24 @@ const EFFORTS: { value: ReasoningEffort; label: string }[] = [
 export function ReasoningPicker({
   value,
   onChange,
+  disabled = false,
   menuPlacement = "down",
   menuAlign = "right",
 }: {
-  value: ReasoningEffort
-  onChange: (effort: ReasoningEffort) => void
+  value: ReasoningEffortSelection
+  onChange: (effort: ReasoningEffortSelection) => void
+  disabled?: boolean
   menuPlacement?: "up" | "down"
   menuAlign?: "left" | "right"
 }) {
-  const current = EFFORTS.find((e) => e.value === value)?.label ?? "中"
+  const current = EFFORTS.find((e) => e.value === value)?.label ?? "自动"
 
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
         aria-label="推理强度"
-        className="inline-flex items-center gap-1 rounded-full border bg-card px-2.5 py-1 text-xs font-medium text-foreground outline-none transition-colors hover:bg-accent focus-visible:ring-[3px] focus-visible:ring-ring/50"
+        disabled={disabled}
+        className="inline-flex items-center gap-1 rounded-full border bg-card px-2.5 py-1 text-xs font-medium text-foreground outline-none transition-colors hover:bg-accent focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50"
       >
         <Gauge className="size-3.5 shrink-0 opacity-70" />
         <span>{current}</span>

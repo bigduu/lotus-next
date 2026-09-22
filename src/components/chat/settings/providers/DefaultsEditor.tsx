@@ -24,6 +24,7 @@ import { EditableModelCombobox } from "./EditableModelCombobox"
 const UNSET = "__unset__"
 const AUTO_EFFORT = "__auto__"
 const REASONING_EFFORTS: readonly { value: ReasoningEffort; label: string }[] = [
+  { value: "none", label: "关闭" },
   { value: "low", label: "低" },
   { value: "medium", label: "中" },
   { value: "high", label: "高" },

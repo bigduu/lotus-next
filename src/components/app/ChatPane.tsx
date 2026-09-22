@@ -25,7 +25,7 @@ import { agentClient } from "@services/chat/AgentService"
 import { commandService, type CommandItem } from "@services/command"
 import type { ChildProgress } from "@shared/store/appStore/slices/executionStateSlice/types"
 import { useProviderStore } from "@shared/store/appStore/slices/providerSlice"
-import { getReasoningEffortForProvider } from "@shared/utils/reasoningEffort"
+import type { ReasoningEffortSelection } from "@shared/utils/reasoningEffort"
 import type { SkillDefinition } from "@shared/types/skill"
 import { ChatHeader } from "@/components/app/ChatHeader"
 import {
@@ -89,6 +89,8 @@ type ComposerSubmissionSnapshot = Readonly<{
   templatePrompt: ReturnType<typeof peekPendingTemplatePrompt>
   /** Permission mode to stamp when this submission creates a NEW session. */
   permissionMode: SessionPermissionMode | null
+  /** One-shot new-session picker override captured with the submission. */
+  reasoningSelection: ReasoningEffortSelection | undefined
 }>
 
 function fileToAttachment(file: File): Promise<Attachment> {
@@ -319,15 +321,43 @@ export function ChatPane({
   const selectedModel = useAppStore((s) => s.selectedModel)
   const setSelectedModel = useAppStore((s) => s.setSelectedModel)
   const defaultChatModel = useProviderStore((s) => s.providerSnapshot?.defaults?.chat?.model)
-  const chatReasoningEffort = useProviderStore((s) => {
-    const id = s.providerSnapshot?.defaults?.chat.provider
-    return getReasoningEffortForProvider(s.providerSnapshot, id)
-  })
-  const sessionReasoningEffort = useAppStore(
+  const chatReasoningEffort = useProviderStore(
+    (s) => s.providerSnapshot?.defaults?.chat?.reasoning_effort,
+  )
+  const inputReasoningSelection = useAppStore(
     (s) => s.inputStates[draftKey]?.reasoningEffort,
   )
-  const reasoningEffort = sessionReasoningEffort ?? chatReasoningEffort ?? "medium"
+  // A new composer mirrors the Chat-role setting exactly. Provider-instance
+  // defaults are intentionally not resolved into the selection: that is what
+  // Auto delegates to Bamboo. Existing sessions show their durable override.
+  const reasoningSelection: ReasoningEffortSelection = currentSessionId
+    ? currentChat?.config?.reasoningEffort ??
+      currentChat?.config?.model_ref?.reasoning_effort ??
+      "auto"
+    : inputReasoningSelection ?? chatReasoningEffort ?? "auto"
   const setInputReasoningEffort = useAppStore((s) => s.setInputReasoningEffort)
+  const clearInputReasoningEffort = useAppStore((s) => s.clearInputReasoningEffort)
+  const changeSessionReasoningEffort = useAppStore((s) => s.changeSessionReasoningEffort)
+  const [reasoningSaving, setReasoningSaving] = useState(false)
+  const handleReasoningChange = async (selection: ReasoningEffortSelection) => {
+    if (reasoningSaving || selection === reasoningSelection) return
+    if (!currentSessionId) {
+      setInputReasoningEffort(draftKey, selection)
+      return
+    }
+
+    setReasoningSaving(true)
+    try {
+      await changeSessionReasoningEffort(
+        currentSessionId,
+        selection === "auto" ? null : selection,
+      )
+    } catch {
+      showToast("推理强度保存失败，请重试")
+    } finally {
+      setReasoningSaving(false)
+    }
+  }
   // What the next send will use: explicit pick → this session's bound model →
   // configured Chat default. Existing child panes must not be relabelled with
   // the root Chat default merely because the global picker is unset.
@@ -527,6 +557,7 @@ export function ChatPane({
       // The home picker's selection only applies when this send creates a new
       // session; an existing session keeps its stored permission mode.
       permissionMode: !currentSessionId ? useNewSessionPermission.getState().mode : null,
+      reasoningSelection: !currentSessionId ? inputReasoningSelection : undefined,
     })
     // Workflow expansion: the workflow's markdown is the message body; any
     // typed text is appended as extra input (lotus token semantics).
@@ -543,6 +574,7 @@ export function ChatPane({
           projectId: snapshot.projectId,
           templatePrompt: snapshot.templatePrompt,
           permissionMode: snapshot.permissionMode ?? undefined,
+          reasoningSelection: snapshot.reasoningSelection,
         })
     void submission
       .then((result) => {
@@ -572,6 +604,14 @@ export function ChatPane({
             latestRevision,
             result.sessionId,
           )
+        }
+        if (result.navigated && snapshot.draftKey !== result.sessionId) {
+          const latestSelection = useAppStore.getState().inputStates[
+            snapshot.draftKey
+          ]?.reasoningEffort
+          if (latestSelection === snapshot.reasoningSelection) {
+            clearInputReasoningEffort(snapshot.draftKey)
+          }
         }
         if (attachmentRevisionRef.current === snapshot.attachmentRevision) setAttachments([])
         if (skillRevisionRef.current === snapshot.skillRevision) setSelectedSkill(null)
@@ -906,8 +946,9 @@ export function ChatPane({
                 />
               ) : null}
               <ReasoningPicker
-                value={reasoningEffort}
-                onChange={(effort) => setInputReasoningEffort(draftKey, effort)}
+                value={reasoningSelection}
+                onChange={(selection) => void handleReasoningChange(selection)}
+                disabled={reasoningSaving}
                 menuPlacement="up"
                 menuAlign="right"
               />

@@ -28,6 +28,14 @@ describe("parseProviderInstancesConfig", () => {
     expect(parseProviderInstancesConfig(validPayload())).toEqual(validPayload());
   });
 
+  it("accepts none as an explicit reasoning override", () => {
+    const payload = validPayload();
+    payload.instances[0].config.reasoning_effort = "none";
+    payload.defaults.chat.reasoning_effort = "none";
+
+    expect(parseProviderInstancesConfig(payload)).toEqual(payload);
+  });
+
   it("normalizes an omitted default id to null", () => {
     const payload = validPayload();
     const { default_provider_instance_id: _defaultId, ...withoutDefault } = payload;

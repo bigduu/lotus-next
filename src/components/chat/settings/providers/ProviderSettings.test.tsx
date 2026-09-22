@@ -689,6 +689,8 @@ describe("Provider defaults authoritative refresh", () => {
 
     expect(roleByName("combobox", "对话(必填)推理强度", container).textContent).toBe("高")
     expect(roleByName("combobox", "快速推理强度", container).textContent).toBe("自动")
+    await chooseSelectOption("快速推理强度", "关闭")
+    expect(roleByName("combobox", "快速推理强度", container).textContent).toBe("关闭")
     await chooseSelectOption("快速推理强度", "低")
     await click(
       [...container.querySelectorAll("button")].find(

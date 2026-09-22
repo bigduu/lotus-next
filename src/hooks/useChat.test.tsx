@@ -1,7 +1,7 @@
 import { act } from "react"
 import { createRoot, type Root } from "react-dom/client"
 import type { ProviderInstancesConfig, ProviderKind } from "@shared/types/providerConfig"
-import type { PermissionDecisionResult } from "@services/chat/AgentService"
+import type { PermissionDecisionResult, ReasoningEffort } from "@services/chat/AgentService"
 import { ApiError, NetworkRequestError } from "@services/api/errors"
 import {
   afterAll,
@@ -23,6 +23,7 @@ const mocks = vi.hoisted(() => {
       config?: {
         model?: string
         model_ref?: { provider: string; model: string } | null
+        reasoningEffort?: ReasoningEffort | null
       }
     }>,
     currentSessionId: null as string | null,
@@ -576,6 +577,105 @@ describe("useChat two-phase send lifecycle", () => {
       mode: "monotonic",
     })
   })
+  it.each([
+    [undefined, undefined],
+    ["max", "max"],
+    ["none", "none"],
+  ] as const)(
+    "maps a new-session Chat reasoning preference %s without resolving provider defaults",
+    async (configuredEffort, expectedWireEffort) => {
+      mocks.appState.selectedModel = undefined
+      mocks.providerState.providerSnapshot = {
+        default_provider_instance_id: "instance-openai",
+        instances: [{
+          id: "instance-openai",
+          type: "openai",
+          label: "Easycli",
+          enabled: true,
+          // Deliberately differs from Auto: the new composer must not turn
+          // this inherited provider value into an explicit picker override.
+          config: { reasoning_effort: "high" },
+        }],
+        defaults: {
+          chat: {
+            provider: "instance-openai",
+            model: "gpt-5.6-sol",
+            ...(configuredEffort ? { reasoning_effort: configuredEffort } : {}),
+          },
+        },
+        features: { provider_model_ref: true },
+      }
+      mocks.sendMessage.mockResolvedValueOnce({ session_id: "new-reasoning-session" })
+      mocks.subscribeToEvents.mockReturnValueOnce(pendingForever())
+
+      const hook = await mountUseChat({ mode: "bound", sessionId: null })
+      await act(async () => {
+        await hook.current.send("start with configured reasoning")
+      })
+
+      const request = mocks.sendMessage.mock.calls[0][0]
+      expect(request.reasoning_effort).toBe(expectedWireEffort)
+      const serialized = JSON.parse(JSON.stringify(request)) as Record<string, unknown>
+      if (expectedWireEffort === undefined) {
+        expect(serialized).not.toHaveProperty("reasoning_effort")
+      } else {
+        expect(serialized.reasoning_effort).toBe(expectedWireEffort)
+      }
+      expect(mocks.execute).toHaveBeenCalledWith(
+        "new-reasoning-session",
+        "gpt-5.6-sol",
+        expectedWireEffort,
+        undefined,
+        { provider: "instance-openai", model: "gpt-5.6-sol" },
+      )
+    },
+  )
+  it.each([
+    ["auto", undefined],
+    ["max", "max"],
+    ["none", "none"],
+  ] as const)(
+    "uses a bound blank pane's frozen picker value %s for chat and execute",
+    async (selection, expectedWireEffort) => {
+      mocks.appState.selectedModel = undefined
+      mocks.providerState.providerSnapshot = {
+        default_provider_instance_id: "instance-openai",
+        instances: [{
+          id: "instance-openai",
+          type: "openai",
+          label: "Easycli",
+          enabled: true,
+          config: {},
+        }],
+        defaults: {
+          chat: {
+            provider: "instance-openai",
+            model: "gpt-5.6-sol",
+            reasoning_effort: "medium",
+          },
+        },
+        features: { provider_model_ref: true },
+      }
+      mocks.sendMessage.mockResolvedValueOnce({ session_id: "new-split-session" })
+      mocks.subscribeToEvents.mockReturnValueOnce(pendingForever())
+
+      const hook = await mountUseChat({ mode: "bound", sessionId: null })
+      await act(async () => {
+        await hook.current.send("start from split pane", {
+          reasoningSelection: selection,
+        })
+      })
+
+      expect(mocks.sendMessage.mock.calls[0][0].reasoning_effort).toBe(expectedWireEffort)
+      expect(mocks.execute).toHaveBeenCalledWith(
+        "new-split-session",
+        "gpt-5.6-sol",
+        expectedWireEffort,
+        undefined,
+        { provider: "instance-openai", model: "gpt-5.6-sol" },
+      )
+    },
+  )
   it("uses the authoritative Chat preference instead of the compatibility provider", async () => {
     mocks.appState.selectedModel = undefined
     mocks.providerState.providerSnapshot = {
@@ -597,11 +697,20 @@ describe("useChat two-phase send lifecycle", () => {
         },
       ],
       defaults: {
-        chat: { provider: "instance-openai", model: "gpt-authoritative" },
+        chat: {
+          provider: "instance-openai",
+          model: "gpt-authoritative",
+          reasoning_effort: "max",
+        },
       },
       features: { provider_model_ref: true },
     }
     mocks.providerState.getProviderType.mockReturnValue("openai")
+    mocks.appState.chats = [{
+      id: "provider-session",
+      messages: [],
+      config: { reasoningEffort: "max" },
+    }]
     mocks.sendMessage.mockResolvedValueOnce({ session_id: "provider-session" })
     mocks.subscribeToEvents.mockReturnValueOnce(pendingForever())
 

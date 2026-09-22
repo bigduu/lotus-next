@@ -178,7 +178,7 @@ export type ProviderSnapshotRelationIssue =
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
-const REASONING_EFFORTS = new Set(["low", "medium", "high", "xhigh", "max"]);
+const REASONING_EFFORTS = new Set(["none", "low", "medium", "high", "xhigh", "max"]);
 
 const isModelRef = (value: unknown): value is ProviderModelRef =>
   isRecord(value) &&

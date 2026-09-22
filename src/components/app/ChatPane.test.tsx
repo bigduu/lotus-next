@@ -4,23 +4,36 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import type { CommandItem } from "@services/command"
 import type { SkillDefinition } from "@shared/types/skill"
 import type { ProviderInstancesConfig } from "@shared/types/providerConfig"
+import type { ReasoningEffort } from "@services/chat/AgentService"
+import type { ReasoningEffortSelection } from "@shared/utils/reasoningEffort"
 
 type ComposerProps = ComponentProps<(typeof import("./Composer"))["Composer"]>
 type MessageListProps = ComponentProps<(typeof import("./MessageList"))["MessageList"]>
-type ModelPickerProps = ComponentProps<(typeof import("@/components/chat/ModelPicker"))["ModelPicker"]>
+type ModelPickerProps = ComponentProps<
+  (typeof import("@/components/chat/ModelPicker"))["ModelPicker"]
+>
+type ReasoningPickerProps = ComponentProps<
+  (typeof import("@/components/chat/ReasoningPicker"))["ReasoningPicker"]
+>
 type ChatPaneProps = ComponentProps<(typeof import("./ChatPane"))["ChatPane"]>
 type Send = ChatPaneProps["chat"]["send"]
 type State = {
-  tokenUsages: Record<string, unknown>; inputStates: Record<string, { content: string; contentRevision: number; reasoningEffort: "medium" }>
+  tokenUsages: Record<string, unknown>; inputStates: Record<string, { content: string; contentRevision: number; reasoningEffort?: ReasoningEffortSelection }>
   skills: SkillDefinition[]; childProgress: Record<string, unknown>; models: string[]; selectedModel: string | undefined
   setInputContent(id: string, content: string): void
   setInputContentIfRevision(id: string, revision: number, content: string): boolean
   moveInputContentIfRevision(source: string, revision: number, target: string): boolean
-  setSelectedModel(model: string): void; setInputReasoningEffort(id: string, effort: string): void; refreshChatsNow(): Promise<void>
+  setSelectedModel(model: string): void
+  setInputReasoningEffort(id: string, effort: ReasoningEffortSelection): void
+  clearInputReasoningEffort(id: string): void
+  changeSessionReasoningEffort(id: string, effort: ReasoningEffort | null): Promise<void>
+  refreshChatsNow(): Promise<void>
 }
 const runtime = vi.hoisted(() => ({
   state: {} as State, listeners: new Set<() => void>(), composer: null as ComposerProps | null,
-  messageList: null as MessageListProps | null, modelPicker: null as ModelPickerProps | null,
+  messageList: null as MessageListProps | null,
+  modelPicker: null as ModelPickerProps | null,
+  reasoningPicker: null as ReasoningPickerProps | null,
   providerState: { providerSnapshot: null as ProviderInstancesConfig | null },
   queueSend: vi.fn(), revision: 0, getWorkflow: vi.fn(), listCommands: vi.fn(), peekTemplate: vi.fn(),
 }))
@@ -70,7 +83,7 @@ vi.mock("@/components/app/ImageLightbox", () => ({
     src ? <div data-image-lightbox data-src={src} /> : null,
 }))
 vi.mock("@/components/app/ContextUsageRing", () => ({ ContextUsageRing: () => <span data-testid="context-usage" /> }))
-vi.mock("@/components/chat/ReasoningPicker", () => ({ ReasoningPicker: () => <span data-testid="reasoning-picker" /> }))
+vi.mock("@/components/chat/ReasoningPicker", () => ({ ReasoningPicker: (props: ReasoningPickerProps) => (runtime.reasoningPicker = props, <span data-testid="reasoning-picker" />) }))
 vi.mock("@/components/chat/ModelPicker", () => ({
   ModelPicker: (props: ModelPickerProps) => {
     runtime.modelPicker = props
@@ -187,16 +200,32 @@ beforeEach(() => {
     addEventListener: (_name: string, listener: (event: MediaQueryListEvent) => void) => mediaListeners.add(listener),
     removeEventListener: (_name: string, listener: (event: MediaQueryListEvent) => void) => mediaListeners.delete(listener),
   })))
-  runtime.composer = null; runtime.messageList = null; runtime.modelPicker = null
+  runtime.composer = null; runtime.messageList = null; runtime.modelPicker = null; runtime.reasoningPicker = null
   runtime.providerState.providerSnapshot = null
   runtime.listeners.clear(); runtime.revision = 0
   runtime.state = {
     tokenUsages: {}, inputStates: {}, skills: [skillA, skillB], childProgress: {}, models: [],
-    selectedModel: "test-model", setInputReasoningEffort: vi.fn(),
+    selectedModel: "test-model",
     refreshChatsNow: vi.fn().mockResolvedValue(undefined),
+    changeSessionReasoningEffort: vi.fn().mockResolvedValue(undefined),
     setSelectedModel: (model) => { runtime.state.selectedModel = model; notify() },
+    setInputReasoningEffort: (id, reasoningEffort) => {
+      const previous = runtime.state.inputStates[id] ?? { content: "", contentRevision: 0 }
+      runtime.state.inputStates = {
+        ...runtime.state.inputStates,
+        [id]: { ...previous, reasoningEffort },
+      }
+      notify()
+    },
+    clearInputReasoningEffort: (id) => {
+      const current = runtime.state.inputStates[id]
+      if (!current) return
+      const { reasoningEffort: _reasoningEffort, ...rest } = current
+      runtime.state.inputStates = { ...runtime.state.inputStates, [id]: rest }
+      notify()
+    },
     setInputContent: (id, content) => {
-      const previous = runtime.state.inputStates[id] ?? { content: "", contentRevision: 0, reasoningEffort: "medium" }
+      const previous = runtime.state.inputStates[id] ?? { content: "", contentRevision: 0 }
       runtime.state.inputStates = { ...runtime.state.inputStates, [id]: {
         ...previous, content, contentRevision: ++runtime.revision,
       } }
@@ -267,6 +296,63 @@ describe("ChatPane composer acknowledgement", () => {
 
     expect(composerShell?.querySelector('[data-testid="new-session-permission"]')).not.toBeNull()
     expect(document.querySelector('[data-testid="session-permission"]')).toBeNull()
+  })
+
+  it.each([
+    [undefined, "auto"],
+    ["max", "max"],
+    ["none", "none"],
+  ] as const)(
+    "keeps a new composer aligned with the Chat setting %s",
+    async (configuredEffort, expectedSelection) => {
+      runtime.providerState.providerSnapshot = {
+        default_provider_instance_id: "easycli",
+        instances: [
+          {
+            id: "easycli",
+            type: "openai",
+            label: "Easycli",
+            enabled: true,
+            config: {},
+          },
+        ],
+        defaults: {
+          chat: {
+            provider: "easycli",
+            model: "gpt-5.6-sol",
+            ...(configuredEffort ? { reasoning_effort: configuredEffort } : {}),
+          },
+        },
+      }
+
+      const textarea = await mount(vi.fn<Send>(), null)
+      expect(runtime.reasoningPicker?.value).toBe(expectedSelection)
+
+      // Initializing a text draft must not manufacture the old hard-coded
+      // medium override and shadow Provider Settings.
+      change(textarea, "new session draft")
+      expect(runtime.reasoningPicker?.value).toBe(expectedSelection)
+    },
+  )
+
+  it("freezes the blank composer's picker value into the submission", async () => {
+    const send = vi.fn<Send>().mockResolvedValue({
+      kind: "accepted",
+      operationId: 1,
+      sessionId: "new-session",
+      navigated: false,
+    })
+    const textarea = await mount(send, null)
+
+    act(() => runtime.reasoningPicker?.onChange("none"))
+    change(textarea, "new session with reasoning disabled")
+    act(() => composer().onSubmit())
+    await flush()
+
+    expect(send).toHaveBeenCalledWith(
+      "new session with reasoning disabled",
+      expect.objectContaining({ reasoningSelection: "none" }),
+    )
   })
 
   it("does not inherit a previous session's sending flag in a blank new chat", async () => {
