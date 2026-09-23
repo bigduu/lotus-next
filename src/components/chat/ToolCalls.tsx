@@ -26,6 +26,7 @@ type Entry = {
   focusedBrowserInput: boolean
   browserSelectOption: boolean
   browserFileInput?: boolean
+  browserDownload?: boolean
   browserTool: boolean
   browserEvalTool: boolean
   /** Set when the result marks a background/async shell (see parseBackgroundBash). */
@@ -77,6 +78,7 @@ function parseBackgroundBash(
 
 const VISIBLE_CAP = 3
 const BROWSER_PREVIEW_MAX_LENGTH = 16 * 1024
+const BROWSER_DOWNLOAD_RESULT_MAX_LENGTH = 512 * 1024
 const APPROVAL_STATUS = "等待用户批准"
 
 // Noisy keys that bloat the display (huge PATH / env dumps) — never shown.
@@ -138,6 +140,7 @@ function displayParams(toolName: string, value: unknown): {
   focusedBrowserInput: boolean
   browserSelectOption: boolean
   browserFileInput?: boolean
+  browserDownload?: boolean
   browserTool: boolean
   browserEvalTool: boolean
 } {
@@ -159,6 +162,11 @@ function displayParams(toolName: string, value: unknown): {
       // A valid inline file can exceed the preview limit. Keep its fixed action
       // and status while omitting all bytes and metadata from the display.
       return { browserTool, browserEvalTool, focusedBrowserInput: false, browserSelectOption: false, browserFileInput: true }
+    }
+    if (action === "download") {
+      // The result contains base64 bytes; even its filename, target selector,
+      // and approval resource stay in the model/session record only.
+      return { browserTool, browserEvalTool, focusedBrowserInput: false, browserSelectOption: false, browserDownload: true }
     }
     if (action === "select_option") {
       // A valid bounded selection can expand beyond the generic JSON preview
@@ -184,10 +192,30 @@ function displayParams(toolName: string, value: unknown): {
   return { params: value, browserTool, browserEvalTool, focusedBrowserInput: false, browserSelectOption: false }
 }
 
+function downloadResultStatus(value: unknown, isError: boolean): string {
+  if (isRecord(value) &&
+    (value.status === "awaiting_permission_approval" || "permission_request" in value)) {
+    return APPROVAL_STATUS
+  }
+  if (isError) return "网页下载失败"
+  return isRecord(value) && typeof value.data_base64 === "string" &&
+    typeof value.filename === "string" && typeof value.sha256 === "string" &&
+    Number.isSafeInteger(value.byte_count)
+    ? "网页下载已完成" : ""
+}
+
 function displayResult(entry: Entry, text: string): string {
-  if (!text) return ""
+  if (!text) return entry.browserDownload && entry.result?.isError ? "网页下载失败" : ""
   const possiblyApproval = text.includes("awaiting_permission_approval") || text.includes("permission_request")
   if ((entry.browserTool || entry.browserEvalTool || possiblyApproval) && text.length > BROWSER_PREVIEW_MAX_LENGTH) {
+    if (entry.browserDownload) {
+      if (text.length > BROWSER_DOWNLOAD_RESULT_MAX_LENGTH) return entry.result?.isError ? "网页下载失败" : ""
+      try {
+        return downloadResultStatus(JSON.parse(text), Boolean(entry.result?.isError))
+      } catch {
+        return entry.result?.isError ? "网页下载失败" : ""
+      }
+    }
     if (entry.browserSelectOption && text.length <= BROWSER_PREVIEW_MAX_LENGTH * 4) {
       // Native selection results can exceed the display preview after JSON
       // escaping. Parse only the bounded result envelope, never render it.
@@ -208,6 +236,7 @@ function displayResult(entry: Entry, text: string): string {
   try {
     parsed = JSON.parse(text)
   } catch {
+    if (entry.browserDownload && entry.result?.isError) return "网页下载失败"
     return entry.browserTool || entry.browserEvalTool || possiblyApproval ? "" : text
   }
   if (isRecord(parsed) &&
@@ -218,6 +247,7 @@ function displayResult(entry: Entry, text: string): string {
   if (entry.focusedBrowserInput) return entry.result?.isError ? "浏览器输入失败" : "浏览器输入已完成"
   if (entry.browserSelectOption) return entry.result?.isError ? "网页选项选择失败" : "网页选项已选择"
   if (entry.browserFileInput) return entry.result?.isError ? "网页文件设置失败" : "网页文件已设置"
+  if (entry.browserDownload) return downloadResultStatus(parsed, Boolean(entry.result?.isError))
   return entry.browserTool && !isRecord(parsed) ? "" : text
 }
 
@@ -233,6 +263,7 @@ function presentTool(entry: Entry): ToolPresentation {
   if (entry.browserEvalTool) return { label: "执行网页脚本", icon: Globe }
   if (entry.browserSelectOption) return { label: "选择网页选项", icon: Globe }
   if (entry.browserFileInput) return { label: "设置网页文件", icon: Globe }
+  if (entry.browserDownload) return { label: "下载网页文件", icon: Globe }
   const normalized = entry.toolName.toLowerCase().replace(/[^a-z0-9]+/g, "")
   const path = firstString(entry.params, ["file_path", "path"])
   const command = firstString(entry.params, ["command", "cmd"])
@@ -394,7 +425,7 @@ function prettyResult(text: string): string {
 }
 
 function buildEntries(items: Message[]): Entry[] {
-  const calls: { id: string; toolName: string; params?: Record<string, unknown>; focusedBrowserInput: boolean; browserSelectOption: boolean; browserFileInput?: boolean; browserTool: boolean; browserEvalTool: boolean }[] = []
+  const calls: { id: string; toolName: string; params?: Record<string, unknown>; focusedBrowserInput: boolean; browserSelectOption: boolean; browserFileInput?: boolean; browserDownload?: boolean; browserTool: boolean; browserEvalTool: boolean }[] = []
   const results = new Map<string, { text: string; isError: boolean }>()
   for (const m of items) {
     const t = (m as { type?: string }).type
@@ -430,6 +461,7 @@ function buildEntries(items: Message[]): Entry[] {
       focusedBrowserInput: c.focusedBrowserInput,
       browserSelectOption: c.browserSelectOption,
       browserFileInput: c.browserFileInput,
+      browserDownload: c.browserDownload,
       browserTool: c.browserTool,
       browserEvalTool: c.browserEvalTool,
       result,

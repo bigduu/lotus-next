@@ -119,6 +119,24 @@ const fileInputParameters = {
   data_base64: privateFileBytes,
   expected_epoch: 17,
 }
+const privateDownloadBytes = "cHJpdmF0ZS1kb3dubG9hZC0xNTY="
+const privateDownloadName = "private-download-156.bin"
+const privateDownloadSelector = "a[data-secret='private-selector-156']"
+const privateDownloadResource = "browser:17:download:private-fingerprint-156"
+const downloadParameters = {
+  action: "download",
+  selector: privateDownloadSelector,
+  expected_epoch: 17,
+}
+const downloadResult = {
+  page_epoch: 17,
+  active_tab_id: "private-tab-156",
+  url: "https://example.test/private-download-156",
+  filename: privateDownloadName,
+  byte_count: 20,
+  sha256: "a".repeat(64),
+  data_base64: privateDownloadBytes,
+}
 const approvalResult = JSON.stringify({
   status: "awaiting_permission_approval",
   question: "Approve focused browser input?",
@@ -613,6 +631,84 @@ it("shows a safe set_file_input failure and omits malformed or oversized file pr
   expect(oversized.textContent).not.toContain(privateFileBytes)
   expect(oversized.textContent).not.toContain(privateFileName)
   expect(oversized.querySelector("[data-tool-call-entry] pre")).toBeNull()
+})
+
+it.each(["browser", "default::browser"])("hides %s download arguments and result bytes in live ToolCalls", (toolName) => {
+  const messages = browserMessages(downloadParameters, JSON.stringify(downloadResult), false, toolName)
+  const unchanged = JSON.stringify(messages)
+  const host = renderOpenTools(messages)
+
+  expect(host.querySelector("[data-tool-call-toggle]")?.textContent).toContain("下载网页文件")
+  expect(host.querySelector("[data-tool-call-entry] pre")?.textContent).toBe("网页下载已完成")
+  for (const privateValue of ["download", privateDownloadSelector, privateDownloadName, privateDownloadBytes, downloadResult.url, downloadResult.sha256, "data_base64"]) {
+    expect(host.textContent).not.toContain(privateValue)
+  }
+  expect(JSON.stringify(messages)).toBe(unchanged)
+})
+
+it("keeps a bounded large download status and approval fixed after history mapping", () => {
+  const largeBytes = "QUJD".repeat(85_000)
+  const largeName = "private-permission_request-156.bin"
+  const largeResult = { ...downloadResult, filename: largeName, byte_count: 255_000, data_base64: largeBytes }
+  expect(JSON.stringify(largeResult).length).toBeGreaterThan(16 * 1024)
+  const rawArguments = JSON.stringify(downloadParameters)
+  const messages = mapHistoryMessagesToUi("session-156", [
+    {
+      id: "assistant-download-156", role: "assistant", content: "",
+      tool_calls: [
+        { id: "download-156-result", type: "function", function: { name: "browser", arguments: rawArguments } },
+        { id: "download-156-approval", type: "function", function: { name: "default::browser", arguments: rawArguments } },
+      ], created_at: "2026-09-24T00:00:00Z",
+    },
+    { id: "tool-download-156", role: "tool", tool_call_id: "download-156-result", content: JSON.stringify(largeResult), created_at: "2026-09-24T00:00:01Z" },
+    {
+      id: "tool-approval-156", role: "tool", tool_call_id: "download-156-approval",
+      content: JSON.stringify({ status: "awaiting_permission_approval", permission_request: { resource: privateDownloadResource, suggested_matchers: [{ value: privateDownloadName }] } }),
+      created_at: "2026-09-24T00:00:02Z",
+    },
+  ])
+  const unchanged = JSON.stringify(messages)
+  const host = renderOpenTools(messages)
+  const entries = host.querySelectorAll("[data-tool-call-entry]")
+  expect(entries).toHaveLength(2)
+  for (const details of host.querySelectorAll<HTMLDetailsElement>("[data-tool-call-entry] details")) act(() => { details.open = true })
+  expect(Array.from(host.querySelectorAll("[data-tool-call-entry] pre"), (node) => node.textContent))
+    .toEqual(["网页下载已完成", "等待用户批准"])
+  for (const privateValue of ["download", privateDownloadSelector, largeName, privateDownloadResource, largeBytes.slice(0, 32), downloadResult.url, downloadResult.sha256, "permission_request", "data_base64"]) {
+    expect(host.textContent).not.toContain(privateValue)
+  }
+  expect(JSON.stringify(messages)).toBe(unchanged)
+})
+
+it("shows fixed download failure and hides malformed or oversized result payloads", () => {
+  const quotedError = browserMessages(downloadParameters,
+    JSON.stringify({ error: `failed for ${privateDownloadName}: ${privateDownloadBytes}`, data_base64: privateDownloadBytes }), true)
+  const failed = renderOpenTools(quotedError)
+  expect(failed.querySelector("[data-tool-call-entry] pre")?.textContent).toBe("网页下载失败")
+  expect(failed.textContent).not.toContain(privateDownloadName)
+  expect(failed.textContent).not.toContain(privateDownloadBytes)
+
+  const rawFailed = renderOpenTools(browserMessages(downloadParameters,
+    `browser download failed: ${privateDownloadName} ${privateDownloadBytes}`, true))
+  expect(rawFailed.querySelector("[data-tool-call-entry] pre")?.textContent).toBe("网页下载失败")
+  expect(rawFailed.textContent).not.toContain(privateDownloadName)
+  expect(rawFailed.textContent).not.toContain(privateDownloadBytes)
+
+  const malformed = renderOpenTools(browserMessages(
+    { raw: `{"action":"download","selector":"${privateDownloadSelector}"` },
+    `{"data_base64":"${privateDownloadBytes}"`,
+  ))
+  expect(malformed.querySelector("[data-tool-call-entry] pre")).toBeNull()
+  expect(malformed.textContent).not.toContain(privateDownloadSelector)
+  expect(malformed.textContent).not.toContain(privateDownloadBytes)
+
+  const tooLargeBytes = "QUJD".repeat(140_000)
+  const oversized = renderOpenTools(browserMessages(downloadParameters,
+    JSON.stringify({ ...downloadResult, data_base64: tooLargeBytes }),
+  ))
+  expect(oversized.querySelector("[data-tool-call-entry] pre")).toBeNull()
+  expect(oversized.textContent).not.toContain(tooLargeBytes.slice(0, 32))
+  expect(oversized.textContent).not.toContain(privateDownloadName)
 })
 
 it("hides browser_eval code, target URL, and page result in live ToolCalls", () => {
