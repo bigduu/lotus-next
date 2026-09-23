@@ -24,6 +24,7 @@ type Entry = {
   params?: Record<string, unknown>
   result?: { text: string; isError: boolean }
   focusedBrowserInput: boolean
+  browserSelectOption: boolean
   browserTool: boolean
   browserEvalTool: boolean
   /** Set when the result marks a background/async shell (see parseBackgroundBash). */
@@ -134,6 +135,7 @@ const hasSemanticTarget = (value: unknown) => {
 function displayParams(toolName: string, value: unknown): {
   params?: Record<string, unknown>
   focusedBrowserInput: boolean
+  browserSelectOption: boolean
   browserTool: boolean
   browserEvalTool: boolean
 } {
@@ -141,31 +143,35 @@ function displayParams(toolName: string, value: unknown): {
   const browserEvalTool = isBrowserEvalTool(toolName)
   // Page scripts, target URLs, and page-realm results can contain private data.
   // Only project a safe status; the underlying message remains unchanged.
-  if (browserEvalTool) return { browserTool, browserEvalTool, focusedBrowserInput: false }
-  if (!isRecord(value)) return { browserTool, browserEvalTool, focusedBrowserInput: browserTool }
-  if (!browserTool) return { params: value, browserTool, browserEvalTool, focusedBrowserInput: false }
+  if (browserEvalTool) return { browserTool, browserEvalTool, focusedBrowserInput: false, browserSelectOption: false }
+  if (!isRecord(value)) return { browserTool, browserEvalTool, focusedBrowserInput: browserTool, browserSelectOption: false }
+  if (!browserTool) return { params: value, browserTool, browserEvalTool, focusedBrowserInput: false, browserSelectOption: false }
 
   // Persisted malformed arguments arrive as { raw: originalString }. Treat
   // unknown browser arguments as private so a result cannot echo their input.
   try {
     if ("raw" in value || JSON.stringify(value).length > BROWSER_PREVIEW_MAX_LENGTH) {
-      return { browserTool, browserEvalTool, focusedBrowserInput: true }
+      return { browserTool, browserEvalTool, focusedBrowserInput: true, browserSelectOption: false }
     }
   } catch {
-    return { browserTool, browserEvalTool, focusedBrowserInput: true }
+    return { browserTool, browserEvalTool, focusedBrowserInput: true, browserSelectOption: false }
   }
 
-  const action = typeof value.action === "string" ? value.action.toLowerCase() : ""
+  const action = typeof value.action === "string" ? value.action.trim().toLowerCase() : ""
+  if (action === "select_option") {
+    // Native option values and CSS selectors can carry private page data.
+    return { browserTool, browserEvalTool, focusedBrowserInput: false, browserSelectOption: true }
+  }
   const selector = typeof value.selector === "string" && value.selector.trim().length > 0
   const focusedBrowserInput = action === "type" || action === "key" ||
     (action === "press" && !selector && !hasSemanticTarget(value.target))
   if (focusedBrowserInput) {
     // A whitelist keeps text/key and unexpected nested argument fields out of
     // both the collapsed summary and the expanded details.
-    return { params: { action }, browserTool, browserEvalTool, focusedBrowserInput }
+    return { params: { action }, browserTool, browserEvalTool, focusedBrowserInput, browserSelectOption: false }
   }
-  if (!action) return { browserTool, browserEvalTool, focusedBrowserInput: true }
-  return { params: value, browserTool, browserEvalTool, focusedBrowserInput: false }
+  if (!action) return { browserTool, browserEvalTool, focusedBrowserInput: true, browserSelectOption: false }
+  return { params: value, browserTool, browserEvalTool, focusedBrowserInput: false, browserSelectOption: false }
 }
 
 function displayResult(entry: Entry, text: string): string {
@@ -185,6 +191,7 @@ function displayResult(entry: Entry, text: string): string {
   }
   if (entry.browserEvalTool) return entry.result?.isError ? "网页脚本执行失败" : "网页脚本已执行"
   if (entry.focusedBrowserInput) return entry.result?.isError ? "浏览器输入失败" : "浏览器输入已完成"
+  if (entry.browserSelectOption) return entry.result?.isError ? "网页选项选择失败" : "网页选项已选择"
   return entry.browserTool && !isRecord(parsed) ? "" : text
 }
 
@@ -198,6 +205,7 @@ const readableToolName = (toolName: string) =>
 
 function presentTool(entry: Entry): ToolPresentation {
   if (entry.browserEvalTool) return { label: "执行网页脚本", icon: Globe }
+  if (entry.browserSelectOption) return { label: "选择网页选项", icon: Globe }
   const normalized = entry.toolName.toLowerCase().replace(/[^a-z0-9]+/g, "")
   const path = firstString(entry.params, ["file_path", "path"])
   const command = firstString(entry.params, ["command", "cmd"])
@@ -359,7 +367,7 @@ function prettyResult(text: string): string {
 }
 
 function buildEntries(items: Message[]): Entry[] {
-  const calls: { id: string; toolName: string; params?: Record<string, unknown>; focusedBrowserInput: boolean; browserTool: boolean; browserEvalTool: boolean }[] = []
+  const calls: { id: string; toolName: string; params?: Record<string, unknown>; focusedBrowserInput: boolean; browserSelectOption: boolean; browserTool: boolean; browserEvalTool: boolean }[] = []
   const results = new Map<string, { text: string; isError: boolean }>()
   for (const m of items) {
     const t = (m as { type?: string }).type
@@ -393,6 +401,7 @@ function buildEntries(items: Message[]): Entry[] {
       toolName: c.toolName,
       params: c.params,
       focusedBrowserInput: c.focusedBrowserInput,
+      browserSelectOption: c.browserSelectOption,
       browserTool: c.browserTool,
       browserEvalTool: c.browserEvalTool,
       result,
