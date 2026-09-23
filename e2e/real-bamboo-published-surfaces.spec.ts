@@ -45,6 +45,8 @@ const surfaces: readonly SurfaceDefinition[] = [
   },
 ];
 
+const browserFixtureUrl = "http://127.0.0.1:18080/browser-tabs-fixture?tab=alpha";
+
 const requiredEnvironment = (name: string): string => {
   const value = process.env[name]?.trim();
   if (!value) throw new Error(`Missing required environment variable: ${name}`);
@@ -216,6 +218,10 @@ const exerciseSurface = async ({
   readonly sessionId: string;
   readonly testInfo: TestInfo;
 }): Promise<void> => {
+  const artifactIdentity = JSON.parse(
+    requiredEnvironment("LOTUS_REAL_ARTIFACT_IDENTITY"),
+  ) as unknown;
+  const currentSourceArtifact = asRecord(artifactIdentity)?.registry === "local-pack";
   if (entryUrl.protocol === "https:") {
     // Chromium can report one browser-global network-change transition when
     // the secure fixture first comes online. Consume only that transition in
@@ -280,7 +286,35 @@ const exerciseSurface = async ({
     await composer.focus();
     await expect(composer).toBeFocused();
 
+    if (currentSourceArtifact && definition.mobile) {
+      await expect(page.getByRole("tab", { name: "浏览器" })).toHaveCount(0);
+      await expect(
+        page.getByRole("region", { name: "内置浏览器" }),
+      ).toHaveCount(0);
+    } else if (currentSourceArtifact) {
+      await page.getByRole("button", { name: "打开侧边面板" }).click();
+      const panel = page.getByRole("complementary", { name: "工作面板" });
+      await panel.getByRole("tab", { name: "浏览器" }).click();
+      const pane = panel.getByRole("region", { name: "内置浏览器" });
+      const address = pane.getByRole("textbox", { name: "网页地址" });
+      await address.fill(browserFixtureUrl);
+      await pane.getByRole("button", { name: "访问网页" }).click();
+      await expect(address).toHaveValue(browserFixtureUrl);
+      await expect(pane.getByAltText("网页画面")).toBeVisible();
+      await pane.getByRole("button", { name: "查看 DOM" }).click();
+      await expect(pane.getByLabel("DOM 快照", { exact: true })).toContainText(
+        "Alpha fixture",
+      );
+    }
+
     await assertCanonicalPage(observation, entryUrl.origin);
+    if (currentSourceArtifact && definition.mobile) {
+      expect(
+        observation.requests.filter((request) =>
+          new URL(request.url).pathname.startsWith("/api/v1/browser/"),
+        ),
+      ).toEqual([]);
+    }
     const screenshotPath = testInfo.outputPath(
       `${entryUrl.protocol.slice(0, -1)}-${definition.label}.png`,
     );
@@ -293,9 +327,7 @@ const exerciseSurface = async ({
       body: Buffer.from(
         `${JSON.stringify(
           {
-            artifact: JSON.parse(
-              requiredEnvironment("LOTUS_REAL_ARTIFACT_IDENTITY"),
-            ) as unknown,
+            artifact: artifactIdentity,
             bambooRevision: requiredEnvironment("LOTUS_REAL_BAMBOO_REVISION"),
             pageOrigin: entryUrl.origin,
             viewport: definition.viewport,
@@ -320,23 +352,27 @@ const exerciseSurface = async ({
   }
 };
 
-test("published artifact browser surfaces: standalone local real Bamboo", async ({
+test("verified artifact browser surfaces: standalone local real Bamboo", async ({
   browser,
 }, testInfo) => {
   test.skip(process.env.LOTUS_REAL_ACCEPTANCE_MODE !== "local");
   const entryUrl = new URL(requiredEnvironment("LOTUS_REAL_BAMBOO_BASE_URL"));
   expect(entryUrl.protocol).toBe("http:");
   expect(entryUrl.hostname).toBe("127.0.0.1");
-  await exerciseSurface({
-    browser,
-    definition: surfaces[0],
-    entryUrl,
-    sessionId: requiredEnvironment("LOTUS_REAL_BAMBOO_SESSION_ID"),
-    testInfo,
-  });
+  const identity = JSON.parse(requiredEnvironment("LOTUS_REAL_ARTIFACT_IDENTITY")) as unknown;
+  const definitions = asRecord(identity)?.registry === "local-pack" ? surfaces : [surfaces[0]];
+  for (const definition of definitions) {
+    await exerciseSurface({
+      browser,
+      definition,
+      entryUrl,
+      sessionId: requiredEnvironment("LOTUS_REAL_BAMBOO_SESSION_ID"),
+      testInfo,
+    });
+  }
 });
 
-test("published artifact browser surfaces: HTTPS/WSS desktop tablet and phone", async ({
+test("verified artifact browser surfaces: HTTPS/WSS desktop tablet and phone", async ({
   browser,
 }, testInfo) => {
   test.skip(process.env.LOTUS_REAL_ACCEPTANCE_MODE !== "remote");
@@ -355,7 +391,7 @@ test("published artifact browser surfaces: HTTPS/WSS desktop tablet and phone", 
   }
 });
 
-test("published artifact browser surfaces: manual agent-browser host", async () => {
+test("verified artifact browser surfaces: manual agent-browser host", async () => {
   const contractPath = process.env.LOTUS_REAL_MANUAL_CONTRACT_PATH?.trim();
   const releasePath = process.env.LOTUS_REAL_MANUAL_RELEASE_PATH?.trim();
   test.skip(!contractPath && !releasePath);
