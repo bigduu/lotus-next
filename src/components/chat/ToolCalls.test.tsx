@@ -110,6 +110,31 @@ const privateFileName = "private-file-155.txt"
 const privateFileMimeType = "application/x-private-155"
 const privateFileSelector = "input[data-account='private-selector-155']"
 const privateFileResource = "browser:17:set_file_input:private-fingerprint-155"
+const privateDialogMessage = "private-prompt-message-157 awaiting_permission_approval"
+const privateDialogReply = "private-prompt-reply-157"
+const privateDialogUrl = "https://example.test/account?token=private-dialog-157"
+const privateDialogId = "0123456789abcdef01234567"
+const privateDialogResource = `browser:17:dialog_respond:${privateDialogId}:accept:${"a".repeat(64)}`
+const dialogParameters = {
+  action: "dialog_respond",
+  dialog_id: privateDialogId,
+  expected_epoch: 17,
+  accept: true,
+  text: privateDialogReply,
+}
+const pendingDialog = {
+  dialog_id: privateDialogId,
+  tab_id: "private-tab-157",
+  page_epoch: 17,
+  url: privateDialogUrl,
+  type: "prompt",
+  message: privateDialogMessage,
+  message_truncated: false,
+  default_value: privateDialogReply,
+  default_value_truncated: false,
+  expires_at_ms: 1_800_000_000_000,
+  status: "pending",
+}
 const largeFileBytes = "QUJD".repeat(5_000)
 const fileInputParameters = {
   action: "set_file_input",
@@ -613,6 +638,115 @@ it("shows a safe set_file_input failure and omits malformed or oversized file pr
   expect(oversized.textContent).not.toContain(privateFileBytes)
   expect(oversized.textContent).not.toContain(privateFileName)
   expect(oversized.querySelector("[data-tool-call-entry] pre")).toBeNull()
+})
+
+it.each(["browser", "default::browser"])("hides %s dialog response arguments and result in live ToolCalls", (toolName) => {
+  const messages = browserMessages(
+    dialogParameters,
+    JSON.stringify({ ok: true, url: privateDialogUrl, pending_dialog: null, value: privateDialogReply }),
+    false,
+    toolName,
+  )
+  const unchanged = JSON.stringify(messages)
+  const host = renderOpenTools(messages)
+
+  expect(host.querySelector("[data-tool-call-toggle]")?.textContent).toContain("回应网页弹窗")
+  expect(host.querySelector("[data-tool-call-entry] pre")?.textContent).toBe("网页弹窗已回应")
+  for (const value of ["dialog_respond", privateDialogId, privateDialogReply, privateDialogUrl, "pending_dialog"]) {
+    expect(host.textContent).not.toContain(value)
+  }
+  expect(JSON.stringify(messages)).toBe(unchanged)
+})
+
+it("shows a fixed pending dialog status without treating private message text as approval", () => {
+  const result = JSON.stringify({
+    ok: true,
+    url: privateDialogUrl,
+    title: "x".repeat(20_000),
+    pending_dialog: pendingDialog,
+  })
+  expect(result.length).toBeGreaterThan(16 * 1024)
+  const pending = renderOpenTools(browserMessages({ action: "tabs" }, result))
+  expect(pending.querySelector("[data-tool-call-toggle]")?.textContent).toContain("查看网页弹窗")
+  expect(pending.querySelector("[data-tool-call-entry] pre")?.textContent).toBe("网页弹窗待处理")
+  for (const value of [privateDialogMessage, privateDialogId, privateDialogUrl, privateDialogReply, "pending_dialog"]) {
+    expect(pending.textContent).not.toContain(value)
+  }
+
+  const expired = renderOpenTools(browserMessages(
+    { action: "tabs" },
+    JSON.stringify({ pending_dialog: { ...pendingDialog, status: "expired" } }),
+  ))
+  expect(expired.querySelector("[data-tool-call-entry] pre")?.textContent).toBe("网页弹窗已过期")
+})
+
+it("conceals browser action arguments when a dialog state is too large or malformed to inspect", () => {
+  const parameters = { action: "navigate", url: privateDialogUrl, expected_epoch: 17 }
+  const oversizedState = JSON.stringify({ title: "x".repeat(70_000), pending_dialog: pendingDialog })
+  const oversized = renderOpenTools(browserMessages(parameters, oversizedState))
+  expect(oversized.textContent).not.toContain(privateDialogUrl)
+  expect(oversized.textContent).not.toContain(privateDialogMessage)
+  expect(oversized.textContent).not.toContain(privateDialogId)
+  expect(oversized.querySelector("[data-tool-call-entry] pre")).toBeNull()
+
+  const malformed = renderOpenTools(browserMessages(parameters, oversizedState.slice(0, -1)))
+  expect(malformed.textContent).not.toContain(privateDialogUrl)
+  expect(malformed.textContent).not.toContain(privateDialogMessage)
+  expect(malformed.querySelector("[data-tool-call-entry] pre")).toBeNull()
+})
+
+it("keeps dialog text, reply, URL, identity and approval resource private after history mapping", () => {
+  const approval = JSON.stringify({
+    status: "awaiting_permission_approval",
+    permission_request: { resource: privateDialogResource, suggested_matchers: [{ value: privateDialogReply }] },
+  })
+  const messages = mapHistoryMessagesToUi("session-157", [
+    {
+      id: "assistant-dialog", role: "assistant", content: "",
+      tool_calls: [
+        { id: "observe-dialog", type: "function", function: { name: "browser", arguments: JSON.stringify({ action: "tabs" }) } },
+        { id: "respond-dialog", type: "function", function: { name: "default::browser", arguments: JSON.stringify(dialogParameters) } },
+        { id: "approve-dialog", type: "function", function: { name: "browser", arguments: JSON.stringify(dialogParameters) } },
+      ],
+      created_at: "2026-09-24T00:00:00Z",
+    },
+    { id: "observed-dialog", role: "tool", tool_call_id: "observe-dialog", content: JSON.stringify({ pending_dialog: pendingDialog, url: privateDialogUrl }), created_at: "2026-09-24T00:00:01Z" },
+    { id: "responded-dialog", role: "tool", tool_call_id: "respond-dialog", content: JSON.stringify({ ok: true, value: privateDialogReply }), created_at: "2026-09-24T00:00:02Z" },
+    { id: "approval-dialog", role: "tool", tool_call_id: "approve-dialog", content: approval, created_at: "2026-09-24T00:00:03Z" },
+  ])
+  const unchanged = JSON.stringify(messages)
+  const host = renderOpenTools(messages)
+
+  expect(Array.from(host.querySelectorAll("[data-tool-call-entry] pre"), (node) => node.textContent))
+    .toEqual(["网页弹窗待处理", "网页弹窗已回应", "等待用户批准"])
+  for (const value of [privateDialogMessage, privateDialogReply, privateDialogUrl, privateDialogId, privateDialogResource, "dialog_respond"]) {
+    expect(host.textContent).not.toContain(value)
+  }
+  expect(JSON.stringify(messages)).toBe(unchanged)
+  expect(unchanged).toContain(privateDialogReply)
+})
+
+it("hides quoted dialog errors and malformed or oversized results", () => {
+  const failed = renderOpenTools(browserMessages(dialogParameters, JSON.stringify({ error: privateDialogMessage }), true))
+  expect(failed.querySelector("[data-tool-call-entry] pre")?.textContent).toBe("网页弹窗操作失败")
+  expect(failed.textContent).not.toContain(privateDialogMessage)
+
+  const malformed = renderOpenTools(browserMessages(
+    { raw: `{"action":"dialog_respond","text":"${privateDialogReply}"` },
+    `{"error":"${privateDialogMessage}"`,
+    true,
+  ))
+  expect(malformed.textContent).not.toContain(privateDialogReply)
+  expect(malformed.textContent).not.toContain(privateDialogMessage)
+
+  const oversized = renderOpenTools(browserMessages(
+    { ...dialogParameters, text: privateDialogReply.repeat(2_000) },
+    JSON.stringify({ message: privateDialogMessage.repeat(5_000) }),
+  ))
+  expect(oversized.querySelector("[data-tool-call-toggle]")?.textContent).toContain("回应网页弹窗")
+  expect(oversized.querySelector("[data-tool-call-entry] pre")?.textContent).toBe("网页弹窗状态待确认")
+  expect(oversized.textContent).not.toContain(privateDialogReply)
+  expect(oversized.textContent).not.toContain(privateDialogMessage)
 })
 
 it("hides browser_eval code, target URL, and page result in live ToolCalls", () => {
