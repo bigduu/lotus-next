@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState } from "react"
-import { MoreHorizontal, Pencil, Pin, PinOff, Sparkles, Trash2 } from "lucide-react"
+import { Copy, MoreHorizontal, Pencil, Pin, PinOff, Sparkles, Trash2 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { agentClient } from "@services/chat/AgentService"
 import {
@@ -11,7 +11,7 @@ import {
 
 type Chat = { id: string; title?: string | null; isRunning?: boolean; pinned?: boolean }
 
-/** A sidebar session row: select, plus a ⋯ menu for pin / inline rename / delete. */
+/** A sidebar session row: select, plus a ⋯ menu for session actions. */
 export function SessionRow({
   chat,
   active,
@@ -20,6 +20,7 @@ export function SessionRow({
   onRename,
   onDelete,
   onTogglePin,
+  onCopySessionId,
 }: {
   chat: Chat
   active: boolean
@@ -28,6 +29,7 @@ export function SessionRow({
   onRename: (title: string) => void
   onDelete: () => void
   onTogglePin: () => void
+  onCopySessionId: () => void
 }) {
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(chat.title ?? "")
@@ -134,6 +136,12 @@ export function SessionRow({
             className="gap-2 rounded-lg px-2.5 py-1.5"
           >
             <Sparkles className="size-3.5" /> AI 生成标题
+          </DropdownMenuItem>
+          <DropdownMenuItem
+            onClick={onCopySessionId}
+            className="gap-2 rounded-lg px-2.5 py-1.5"
+          >
+            <Copy className="size-3.5" /> 复制会话 ID
           </DropdownMenuItem>
           <DropdownMenuItem
             variant="destructive"
