@@ -77,3 +77,27 @@ it("surfaces a native save failure but treats dialog cancellation as cancellatio
   await act(async () => host.querySelector<HTMLButtonElement>('button[aria-label="保存网页截图"]')?.click())
   expect(host.querySelector('[role="alert"]')).toBeNull()
 })
+
+it("clears save errors on chat switch and ignores a previous chat's delayed failure", async () => {
+  vi.mocked(FileOperationsService.saveBinaryFile).mockResolvedValueOnce({
+    filename: "",
+    success: false,
+    error: "permission denied",
+  })
+  await act(async () => host.querySelector<HTMLButtonElement>('button[aria-label="保存网页截图"]')?.click())
+  expect(host.querySelector('[role="alert"]')?.textContent).toContain("保存截图失败")
+
+  await act(async () => root.render(<BrowserPane sessionId="second-chat" active />))
+  expect(host.querySelector('[role="alert"]')).toBeNull()
+
+  let finishSave!: (result: { filename: string; success: boolean; error: string }) => void
+  vi.mocked(FileOperationsService.saveBinaryFile).mockImplementationOnce(() => new Promise((resolve) => {
+    finishSave = resolve
+  }))
+  await act(async () => host.querySelector<HTMLButtonElement>('button[aria-label="保存网页截图"]')?.click())
+  expect(FileOperationsService.saveBinaryFile).toHaveBeenCalledTimes(2)
+
+  await act(async () => root.render(<BrowserPane sessionId="third-chat" active />))
+  await act(async () => finishSave({ filename: "", success: false, error: "permission denied" }))
+  expect(host.querySelector('[role="alert"]')).toBeNull()
+})

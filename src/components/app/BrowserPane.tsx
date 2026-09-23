@@ -26,6 +26,7 @@ export function BrowserPane({
   const [address, setAddress] = useState("")
   const [addressError, setAddressError] = useState<string | null>(null)
   const [saveError, setSaveError] = useState<string | null>(null)
+  const saveGenerationRef = useRef(0)
   const viewportRef = useRef<HTMLDivElement>(null)
   const imageRef = useRef<HTMLImageElement>(null)
   const keyboardRef = useRef<HTMLTextAreaElement>(null)
@@ -39,6 +40,11 @@ export function BrowserPane({
   useEffect(() => {
     setAddress(browser.state?.url ?? "")
   }, [browser.state?.url, sessionId])
+
+  useEffect(() => {
+    saveGenerationRef.current += 1
+    setSaveError(null)
+  }, [sessionId])
 
   useEffect(() => {
     if (!sessionId || !active || viewportWidth === undefined || viewportHeight === undefined) return
@@ -138,9 +144,10 @@ export function BrowserPane({
   }
 
   const saveScreenshot = async () => {
+    const generation = saveGenerationRef.current
     setSaveError(null)
     const screenshot = await browser.captureScreenshot()
-    if (!screenshot) return
+    if (!screenshot || generation !== saveGenerationRef.current) return
     try {
       const bytes = new Uint8Array(await screenshot.arrayBuffer())
       const result = await FileOperationsService.saveBinaryFile(
@@ -148,11 +155,11 @@ export function BrowserPane({
         [{ name: "JPEG 图像", extensions: ["jpg"] }],
         `browser-screenshot-${Date.now()}.jpg`,
       )
-      if (!result.success && result.error !== "User cancelled save operation") {
+      if (generation === saveGenerationRef.current && !result.success && result.error !== "User cancelled save operation") {
         setSaveError("保存截图失败，请重试。")
       }
     } catch {
-      setSaveError("保存截图失败，请重试。")
+      if (generation === saveGenerationRef.current) setSaveError("保存截图失败，请重试。")
     }
   }
 
