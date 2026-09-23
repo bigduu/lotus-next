@@ -28,6 +28,7 @@ import {
   stopAgent,
   subscribeAgent,
   subscribeFeed,
+  subscribeMessages,
   type AgentEventDispatch,
 } from "./v2Stream"
 
@@ -1463,5 +1464,149 @@ describe("v2Stream shared WebSocket client", () => {
       expect(onChange).not.toHaveBeenCalled()
       expect(warn).toHaveBeenCalledTimes(1)
     })
+  })
+
+  it("admits only the exact safe message schema", () => {
+    const onEvent = vi.fn()
+    const onControl = vi.fn()
+    subscribeMessages("child-1", { onEvent, onControl })
+    const socket = lastSocket()
+    socket.open()
+
+    expect(socket.parsedSent()).toEqual([
+      { type: "hello" },
+      { type: "subscribe", ch: "message.child-1" },
+    ])
+
+    const snapshot = {
+      type: "snapshot",
+      version: 2,
+      messages: [{ id: "m1", content: "before", created_at: "2026-09-22T00:00:00Z" }],
+      history_committed: false,
+    }
+    const delta = {
+      type: "delta",
+      version: 3,
+      message_id: "m1",
+      offset: 6,
+      content: " after",
+      created_at: "2026-09-22T00:00:00Z",
+    }
+    socket.emit({ ch: "message.child-1", seq: 1, event: snapshot })
+    socket.emit({ ch: "message.child-1", seq: 2, event: delta })
+    socket.emit({ ch: "message.child-1", seq: 3, control: { type: "gap", skipped: 4 } })
+    socket.emit({
+      ch: "message.child-1",
+      seq: 4,
+      control: { type: "terminal", reason: "complete" },
+    })
+    socket.emit({
+      ch: "message.child-1",
+      seq: 5,
+      control: { type: "history_committed", version: 4 },
+    })
+
+    expect(onEvent.mock.calls.map(([event]) => event)).toEqual([snapshot, delta])
+    expect(onControl.mock.calls.map(([control]) => control)).toEqual([
+      { type: "gap", skipped: 4 },
+      { type: "terminal", reason: "complete" },
+      { type: "history_committed", version: 4 },
+    ])
+
+    for (const event of [
+      { ...snapshot, reasoning: "private" },
+      { ...delta, tool_calls: [{ name: "private" }] },
+      {
+        ...snapshot,
+        messages: [{ ...snapshot.messages[0], metadata: { private: true } }],
+      },
+    ]) {
+      socket.emit({ ch: "message.child-1", seq: 6, event })
+    }
+    socket.emit({ ch: "message.child-1", seq: 7, event: delta, metadata: "private" })
+    socket.emit({
+      ch: "message.child-1",
+      seq: 8,
+      control: { type: "terminal", reason: "complete", error: "private" },
+    })
+    expect(onEvent).toHaveBeenCalledTimes(2)
+    expect(onControl).toHaveBeenCalledTimes(3)
+  })
+
+  it("shares one message wire subscription across local subscribers", () => {
+    const firstEvent = vi.fn()
+    const secondEvent = vi.fn()
+    const first = subscribeMessages("child-1", { onEvent: firstEvent, onControl: vi.fn() })
+    const second = subscribeMessages("child-1", { onEvent: secondEvent, onControl: vi.fn() })
+    const socket = lastSocket()
+    socket.open()
+
+    expect(socket.parsedSent().filter((frame) => frame.ch === "message.child-1")).toEqual([
+      { type: "subscribe", ch: "message.child-1" },
+    ])
+    socket.emit({
+      ch: "message.child-1",
+      seq: 1,
+      event: {
+        type: "started",
+        version: 1,
+        message_id: "m1",
+        created_at: "2026-09-22T00:00:00Z",
+      },
+    })
+    expect(firstEvent).toHaveBeenCalledTimes(1)
+    expect(secondEvent).toHaveBeenCalledTimes(1)
+
+    first.close()
+    expect(socket.parsedSent()).not.toContainEqual({ type: "unsubscribe", ch: "message.child-1" })
+    second.close()
+    expect(socket.parsedSent()).toContainEqual({ type: "unsubscribe", ch: "message.child-1" })
+  })
+
+  it("re-subscribes message channels and validates MessagePack with the same schema", () => {
+    vi.useFakeTimers()
+    msgpackEnabled = true
+    const onEvent = vi.fn()
+    const onControl = vi.fn()
+    subscribeMessages("child-1", { onEvent, onControl })
+    const first = lastSocket()
+    first.open("bamboo.v2.msgpack")
+    first.emitBinary({
+      ch: "message.child-1",
+      seq: 1,
+      event: {
+        type: "snapshot",
+        version: 0,
+        messages: [],
+        history_committed: true,
+      },
+    })
+    first.emitBinary({
+      ch: "message.child-1",
+      seq: 2,
+      event: {
+        type: "snapshot",
+        version: 1,
+        messages: [],
+        history_committed: true,
+        reasoning: "private",
+      },
+    })
+    first.emitBinary({
+      ch: "message.child-1",
+      seq: 3,
+      control: { type: "terminal", reason: "complete" },
+    })
+    expect(onEvent).toHaveBeenCalledTimes(1)
+    expect(onControl).toHaveBeenCalledWith({ type: "terminal", reason: "complete" })
+
+    first.drop()
+    vi.advanceTimersByTime(500)
+    const second = lastSocket()
+    second.open("bamboo.v2.msgpack")
+    expect(second.msgpackSent()).toEqual([
+      { type: "hello" },
+      { type: "subscribe", ch: "message.child-1" },
+    ])
   })
 })

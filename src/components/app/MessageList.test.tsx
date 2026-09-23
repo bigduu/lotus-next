@@ -67,6 +67,7 @@ function renderMessageList(
   messages: Message[],
   latestRunFinished: boolean,
   contentShiftX = 0,
+  readOnly = false,
 ) {
   const container = document.createElement("div")
   document.body.appendChild(container)
@@ -89,6 +90,7 @@ function renderMessageList(
         streamStatus={null}
         pendingUserText={null}
         contentShiftX={contentShiftX}
+        readOnly={readOnly}
         forking={false}
         onSelectSubAgent={vi.fn()}
         onPreviewImage={vi.fn()}
@@ -111,6 +113,28 @@ it("animates only the transcript content when a floating panel opens", () => {
   expect(content?.style.transform).toBe("")
   expect(content?.style.left).toBe("-166px")
   expect(content?.style.transition).toContain("left 200ms ease-out")
+})
+
+it("renders message-only previews without transcript actions", () => {
+  const container = renderMessageList([
+    {
+      id: "user-1",
+      role: "user",
+      content: "question",
+      createdAt: "2026-09-22T00:00:00Z",
+    },
+    {
+      id: "assistant-1",
+      role: "assistant",
+      type: "text",
+      content: "answer",
+      createdAt: "2026-09-22T00:00:01Z",
+    },
+  ], true, 0, true)
+
+  expect(container.textContent).toContain("question")
+  expect(container.textContent).toContain("answer")
+  expect(container.querySelector("[data-message-actions]")).toBeNull()
 })
 
 describe("MessageList assistant streaming ownership", () => {

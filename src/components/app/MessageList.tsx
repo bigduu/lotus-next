@@ -495,6 +495,7 @@ export function MessageList({
   streamStatus,
   pendingUserText,
   contentShiftX = 0,
+  readOnly = false,
   forking,
   onSelectSubAgent,
   onPreviewImage,
@@ -519,6 +520,8 @@ export function MessageList({
   pendingUserText: string | null
   /** Horizontal transcript offset used while a floating panel occupies the end side. */
   contentShiftX?: number
+  /** Suppress transcript actions for message-only child previews. */
+  readOnly?: boolean
   forking: boolean
   onSelectSubAgent: (id: string) => void
   onPreviewImage: (src: string) => void
@@ -674,7 +677,7 @@ export function MessageList({
       m as { images?: Array<{ url?: string; base64?: string; type?: string }> }
     ).images
     const isUser = m.role === "user"
-    const showMessageActions = isUser || actionableAssistantIndexes.has(idx)
+    const showMessageActions = !readOnly && (isUser || actionableAssistantIndexes.has(idx))
     const reasoning = isUser || options?.suppressReasoning ? "" : messageReasoning(m)
     // Truly empty (no text, no images, no reasoning) → skip the blank bubble.
     if (!text.trim() && !imgs?.length && !reasoning) return null

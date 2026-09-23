@@ -504,6 +504,75 @@ function parsePendingQuestion(sessionId: string, value: unknown): PendingQuestio
   return data as PendingQuestionResponse;
 }
 
+export interface MessageHistoryItem {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  created_at: string;
+}
+
+export interface MessageHistoryResponse {
+  session_id: string;
+  projection: "messages";
+  messages: MessageHistoryItem[];
+  is_delta: boolean;
+  truncated: boolean;
+  total_message_count: number;
+}
+
+export class MessageHistoryContractError extends Error {
+  constructor() {
+    super("The backend returned an invalid message-only history response.");
+    this.name = "MessageHistoryContractError";
+  }
+}
+
+const hasExactMessageHistoryKeys = (
+  value: Record<string, unknown>,
+  expectedKeys: readonly string[],
+): boolean => {
+  const actual = Object.keys(value).sort();
+  const expected = [...expectedKeys].sort();
+  return actual.length === expected.length && actual.every((key, index) => key === expected[index]);
+};
+
+const parseMessageHistory = (sessionId: string, value: unknown): MessageHistoryResponse => {
+  const response = interactionRecord(value);
+  if (
+    !response ||
+    !hasExactMessageHistoryKeys(response, [
+      "session_id",
+      "projection",
+      "messages",
+      "is_delta",
+      "truncated",
+      "total_message_count",
+    ]) ||
+    response.session_id !== sessionId ||
+    response.projection !== "messages" ||
+    !Array.isArray(response.messages) ||
+    typeof response.is_delta !== "boolean" ||
+    typeof response.truncated !== "boolean" ||
+    !safePolicyRevision(response.total_message_count)
+  ) {
+    throw new MessageHistoryContractError();
+  }
+  for (const value of response.messages) {
+    const message = interactionRecord(value);
+    if (
+      !message ||
+      !hasExactMessageHistoryKeys(message, ["id", "role", "content", "created_at"]) ||
+      typeof message.id !== "string" ||
+      (message.role !== "user" && message.role !== "assistant") ||
+      typeof message.content !== "string" ||
+      typeof message.created_at !== "string"
+    ) {
+      throw new MessageHistoryContractError();
+    }
+  }
+  return response as unknown as MessageHistoryResponse;
+};
+
 export interface HistoryResponse {
   session_id: string;
   compression_events?: Array<{
@@ -1866,6 +1935,18 @@ export class AgentClient {
     const response = await apiClient.get<HistoryResponse>(path);
     debugLog("[AgentClient]", "history.response", summarizeHistoryResponse(response));
     return response;
+  }
+
+  /** Get the strictly projected user/assistant text history for a child preview. */
+  async getMessageHistory(
+    sessionId: string,
+    sinceMessageId?: string,
+  ): Promise<MessageHistoryResponse> {
+    const params = new URLSearchParams({ projection: "messages" });
+    if (sinceMessageId) params.set("since_message_id", sinceMessageId);
+    const path = `sessions/${encodeURIComponent(sessionId)}/history?${params.toString()}`;
+    const response = await apiClient.get<unknown>(path, { cache: "no-store" });
+    return parseMessageHistory(sessionId, response);
   }
 
   /**

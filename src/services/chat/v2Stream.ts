@@ -47,9 +47,46 @@ import { getRuntimeConfig } from "@/runtime/runtimeConfig";
 import { debugLog, isApiV2MsgpackEnabled } from "@shared/utils/debugFlags";
 import { decode as msgpackDecode, encode as msgpackEncode } from "@msgpack/msgpack";
 
-/** Subscription handle returned by {@link subscribeFeed}. */
+/** Subscription handle returned by a shared v2 channel. */
 export interface FeedSubscription {
   close(): void;
+}
+
+export type MessageTerminalReason = "complete" | "cancelled" | "error";
+
+export interface VisibleMessageItem {
+  id: string;
+  content: string;
+  created_at: string;
+}
+
+export type MessageChannelEvent =
+  | {
+      type: "snapshot";
+      version: number;
+      messages: VisibleMessageItem[];
+      history_committed: boolean;
+      terminal?: MessageTerminalReason;
+    }
+  | { type: "started"; version: number; message_id: string; created_at: string }
+  | {
+      type: "delta";
+      version: number;
+      message_id: string;
+      offset: number;
+      content: string;
+      created_at: string;
+    }
+  | { type: "discarded"; version: number; message_id: string };
+
+export type MessageChannelControl =
+  | { type: "gap"; skipped: number }
+  | { type: "terminal"; reason: MessageTerminalReason }
+  | { type: "history_committed"; version: number };
+
+export interface MessageChannelHandlers {
+  onEvent: (event: MessageChannelEvent) => void;
+  onControl: (control: MessageChannelControl) => void;
 }
 
 /**
@@ -101,6 +138,10 @@ interface AgentChannel {
   resolve: () => void;
 }
 
+interface MessageChannel {
+  handlers: MessageChannelHandlers;
+}
+
 type ServerFrame = {
   type?: string;
   ch?: string;
@@ -111,6 +152,128 @@ type ServerFrame = {
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
+
+const hasExactKeys = (value: Record<string, unknown>, keys: readonly string[]): boolean => {
+  const actual = Object.keys(value).sort();
+  const expected = [...keys].sort();
+  return actual.length === expected.length && actual.every((key, index) => key === expected[index]);
+};
+
+const isSafeNonNegativeInteger = (value: unknown): value is number =>
+  typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+
+const isTerminalReason = (value: unknown): value is MessageTerminalReason =>
+  value === "complete" || value === "cancelled" || value === "error";
+
+const visibleMessageItem = (value: unknown): VisibleMessageItem | null => {
+  if (!isRecord(value) || !hasExactKeys(value, ["id", "content", "created_at"])) return null;
+  if (
+    typeof value.id !== "string" ||
+    typeof value.content !== "string" ||
+    typeof value.created_at !== "string"
+  ) {
+    return null;
+  }
+  return value as unknown as VisibleMessageItem;
+};
+
+const messageEventFromFrame = (frame: ServerFrame): MessageChannelEvent | null => {
+  if (
+    frame.control !== undefined ||
+    !isFeedCursor(frame.seq) ||
+    !isRecord(frame.event) ||
+    !hasExactKeys(frame as Record<string, unknown>, ["ch", "seq", "event"])
+  ) {
+    return null;
+  }
+  const event = frame.event;
+  if (event.type === "snapshot") {
+    const keys = event.terminal === undefined
+      ? ["type", "version", "messages", "history_committed"]
+      : ["type", "version", "messages", "history_committed", "terminal"];
+    if (
+      !hasExactKeys(event, keys) ||
+      !isSafeNonNegativeInteger(event.version) ||
+      !Array.isArray(event.messages) ||
+      typeof event.history_committed !== "boolean" ||
+      (event.terminal !== undefined && !isTerminalReason(event.terminal))
+    ) {
+      return null;
+    }
+    const messages = event.messages.map(visibleMessageItem);
+    if (messages.some((message) => message === null)) return null;
+    return { ...event, messages } as MessageChannelEvent;
+  }
+  if (event.type === "started") {
+    if (
+      !hasExactKeys(event, ["type", "version", "message_id", "created_at"]) ||
+      !isSafeNonNegativeInteger(event.version) ||
+      typeof event.message_id !== "string" ||
+      typeof event.created_at !== "string"
+    ) {
+      return null;
+    }
+    return event as unknown as MessageChannelEvent;
+  }
+  if (event.type === "delta") {
+    if (
+      !hasExactKeys(event, ["type", "version", "message_id", "offset", "content", "created_at"]) ||
+      !isSafeNonNegativeInteger(event.version) ||
+      !isSafeNonNegativeInteger(event.offset) ||
+      typeof event.message_id !== "string" ||
+      typeof event.content !== "string" ||
+      typeof event.created_at !== "string"
+    ) {
+      return null;
+    }
+    return event as unknown as MessageChannelEvent;
+  }
+  if (event.type === "discarded") {
+    if (
+      !hasExactKeys(event, ["type", "version", "message_id"]) ||
+      !isSafeNonNegativeInteger(event.version) ||
+      typeof event.message_id !== "string"
+    ) {
+      return null;
+    }
+    return event as unknown as MessageChannelEvent;
+  }
+  return null;
+};
+
+const messageControlFromFrame = (frame: ServerFrame): MessageChannelControl | null => {
+  if (
+    frame.event !== undefined ||
+    !isFeedCursor(frame.seq) ||
+    !isRecord(frame.control) ||
+    !hasExactKeys(frame as Record<string, unknown>, ["ch", "seq", "control"])
+  ) {
+    return null;
+  }
+  const control = frame.control;
+  if (
+    control.type === "gap" &&
+    hasExactKeys(control, ["type", "skipped"]) &&
+    isSafeNonNegativeInteger(control.skipped)
+  ) {
+    return control as MessageChannelControl;
+  }
+  if (
+    control.type === "terminal" &&
+    hasExactKeys(control, ["type", "reason"]) &&
+    isTerminalReason(control.reason)
+  ) {
+    return control as MessageChannelControl;
+  }
+  if (
+    control.type === "history_committed" &&
+    hasExactKeys(control, ["type", "version"]) &&
+    isSafeNonNegativeInteger(control.version)
+  ) {
+    return control as MessageChannelControl;
+  }
+  return null;
+};
 
 /**
  * Feed cursors cross a JSON/MessagePack boundary before becoming JavaScript
@@ -233,15 +396,18 @@ export const isFeedOpen = (): boolean =>
   feedChannel !== null &&
   !feedChannel.deliveryFailed &&
   feedChannel.subscribedSince !== null;
-// Multiple local subscribers may watch the SAME session (e.g. the main pane
-// and a bound split pane), so each channel holds a SET of subscribers. One
-// subscribe/unsubscribe frame per channel; events fan out to every subscriber.
+// Multiple local subscribers may watch the SAME session, so each channel holds
+// a SET of subscribers. One subscribe/unsubscribe frame per wire channel.
 const agentChannels = new Map<string, Set<AgentChannel>>();
+const messageChannels = new Map<string, Set<MessageChannel>>();
 
 const agentCh = (sessionId: string): string => `agent.${sessionId}`;
+const messageCh = (sessionId: string): string => `message.${sessionId}`;
 
 const hasSubscriptions = (): boolean =>
-  (feedChannel !== null && !feedChannel.deliveryFailed) || agentChannels.size > 0;
+  (feedChannel !== null && !feedChannel.deliveryFailed) ||
+  agentChannels.size > 0 ||
+  messageChannels.size > 0;
 
 /**
  * Whether the LIVE socket negotiated the MessagePack subprotocol. Decided from
@@ -325,6 +491,9 @@ const subscribeAll = (ws: WebSocket): boolean => {
     if (!sendFeedSubscribe(feedChannel, ws)) return false;
   }
   for (const ch of agentChannels.keys()) {
+    if (!sendOnSocket(ws, { type: "subscribe", ch })) return false;
+  }
+  for (const ch of messageChannels.keys()) {
     if (!sendOnSocket(ws, { type: "subscribe", ch })) return false;
   }
   return true;
@@ -747,6 +916,27 @@ const handleFrame = (
     return;
   }
 
+  if (ch.startsWith("message.")) {
+    const subscribers = messageChannels.get(ch);
+    if (!subscribers || subscribers.size === 0) return;
+    if (control !== undefined) {
+      const parsed = messageControlFromFrame(frame);
+      if (!parsed) {
+        debugLog("[v2Stream]", "message.frame.invalid_control", { ch });
+        return;
+      }
+      for (const channel of [...subscribers]) channel.handlers.onControl(parsed);
+      return;
+    }
+    const parsed = messageEventFromFrame(frame);
+    if (!parsed) {
+      debugLog("[v2Stream]", "message.frame.invalid_event", { ch });
+      return;
+    }
+    for (const channel of [...subscribers]) channel.handlers.onEvent(parsed);
+    return;
+  }
+
   if (ch.startsWith("agent.")) {
     const subscribers = agentChannels.get(ch);
     if (!subscribers || subscribers.size === 0) return;
@@ -986,6 +1176,43 @@ export const subscribeAgent = (
   return { promise, close: () => resolveFn() };
 };
 
+/** Subscribe to the strictly message-only `message.{sessionId}` channel. */
+export const subscribeMessages = (
+  sessionId: string,
+  handlers: MessageChannelHandlers,
+): FeedSubscription => {
+  const ch = messageCh(sessionId);
+  const subscriber: MessageChannel = { handlers };
+  const existing = messageChannels.get(ch);
+  const isFirstSubscriber = !existing || existing.size === 0;
+  if (existing) existing.add(subscriber);
+  else messageChannels.set(ch, new Set([subscriber]));
+
+  if (socket && isSocketReady(socket)) {
+    if (isFirstSubscriber && !sendOnSocket(socket, { type: "subscribe", ch })) {
+      const liveness = socketLiveness;
+      if (liveness) failSocketEpoch(liveness, "message-subscribe-send-failed");
+    }
+  } else {
+    connect();
+  }
+
+  let closed = false;
+  return {
+    close() {
+      if (closed) return;
+      closed = true;
+      const subscribers = messageChannels.get(ch);
+      subscribers?.delete(subscriber);
+      if (!subscribers || subscribers.size === 0) {
+        messageChannels.delete(ch);
+        if (isSocketReady()) send({ type: "unsubscribe", ch });
+        closeIfIdle();
+      }
+    },
+  };
+};
+
 /** Test-only: reset the singleton state between cases. */
 export const __resetV2StreamForTests = (): void => {
   clearReconnectTimer();
@@ -998,4 +1225,5 @@ export const __resetV2StreamForTests = (): void => {
   reconnectedListeners.clear();
   feedChannel = null;
   agentChannels.clear();
+  messageChannels.clear();
 };

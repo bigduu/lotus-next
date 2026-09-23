@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useState } from "react"
 import { Inspector } from "@/components/chat/Inspector"
 import { CommandPalette } from "@/components/chat/CommandPalette"
 import { LazySettings } from "@/components/chat/LazySettings"
@@ -15,6 +15,7 @@ import { Sidebar } from "@/components/app/Sidebar"
 import { ProjectManagerModal } from "@/components/app/ProjectManagerModal"
 import { DeleteSessionDialog } from "@/components/app/DeleteSessionDialog"
 import { ChatPane } from "@/components/app/ChatPane"
+import { SubagentTranscriptPane } from "@/components/app/SubagentTranscriptPane"
 import { AvailabilityBanner } from "@/components/app/AvailabilityBanner"
 import { ReviewPane } from "@/components/app/ReviewPane"
 import {
@@ -23,48 +24,25 @@ import {
 } from "@/components/app/RightWorkbench"
 
 function App() {
-  // The main pane follows the global current session. The same `chat` bundle
-  // feeds the Sidebar / CommandPalette / Inspector (which track the current
-  // session) and the main ChatPane. A second pane (later) gets its own
-  // useChat(sid) instance.
+  // The main pane remains the existing full-fidelity interactive chat.
   const chat = useChat()
   const { booted, chats, currentSessionId, currentChat, select, newChat } = chat
 
-  // A second, independent interactive pane bound to a different session — each
-  // useChat instance streams its own session concurrently. Bound to null while
-  // no session is picked (cheap; bootstrap is skipped for bound instances).
+  // The side pane is a read-only message projection. It intentionally does not
+  // create a second `useChat` instance, so the browser never subscribes to the
+  // child's full-fidelity `agent.*` channel or requests generic history.
   const [secondSid, setSecondSid] = useState<string | null>(null)
-  const [secondLoadState, setSecondLoadState] = useState<"idle" | "loading" | "error">("idle")
-  const secondLoadRequest = useRef(0)
-  // onSessionCreated: when a send/fork in the 2nd pane spawns a new session,
-  // re-bind THIS pane to it (no global-current change → main pane untouched).
-  const secondChat = useChat(secondSid, (newSid) => setSecondSid(newSid))
   const pickSecond = (id: string | null) => {
-    const request = ++secondLoadRequest.current
     setSecondSid(id)
-    if (!id) {
-      setSecondLoadState("idle")
-      return
-    }
+    if (!id) return
 
-    // Hydrate the picked session WITHOUT touching the global current session.
-    // A newly-started child can exist in live progress before it reaches the
-    // lazy session index, so restore it by id first when necessary.
-    setSecondLoadState("loading")
+    // A newly-started child may precede its lazy tree index entry. This endpoint
+    // restores summary metadata only; transcript bodies still load exclusively
+    // through the projected history endpoint inside SubagentTranscriptPane.
     const store = useAppStore.getState()
-    void (async () => {
-      const exists = store.chats.some((chat) => chat.id === id)
-      if (!exists && !(await store.restoreSession(id))) {
-        throw new Error("session unavailable")
-      }
-      await useAppStore.getState().loadChatHistory(id)
-    })()
-      .then(() => {
-        if (secondLoadRequest.current === request) setSecondLoadState("idle")
-      })
-      .catch(() => {
-        if (secondLoadRequest.current === request) setSecondLoadState("error")
-      })
+    if (!store.chats.some((chat) => chat.id === id)) {
+      void store.restoreSession(id).catch(() => false)
+    }
   }
 
   const [sidebarOpen, setSidebarOpen] = useState(false)
@@ -258,40 +236,13 @@ function App() {
                 targetFilePath={reviewTargetFilePath}
               />
             )}
-            session={
-              <div className="relative flex min-h-0 flex-1">
-                {secondLoadState === "loading" ? (
-                  <div
-                    className="absolute inset-x-0 top-0 z-30 h-0.5 animate-pulse bg-primary"
-                    aria-label="正在加载并排会话"
-                  />
-                ) : null}
-                {secondLoadState === "error" ? (
-                  <div role="alert" className="absolute inset-x-0 top-2 z-30 rounded-lg border border-destructive/40 bg-card px-3 py-2 text-xs text-destructive shadow">
-                    子代理会话暂时无法加载，请稍后重试。
-                  </div>
-                ) : null}
-                <ChatPane
-                  chat={secondChat}
-                  secondary={{
-                    sessionId: secondSid,
-                    chats,
-                    onPickSession: pickSecond,
-                    onClose: () => setWorkbenchOpen(false),
-                    hideClose: true,
-                  }}
-                  pickedWorkspace={null}
-                  onOpenWorkspacePicker={() => {}}
-                  onOpenInspector={() => setWorkbenchTab("inspector")}
-                  onOpenReview={() => setWorkbenchTab("review")}
-                  splitOpen={workbenchOpen && workbenchTab === "session"}
-                  onToggleSplit={() => setWorkbenchOpen(false)}
-                  onSelectSubAgent={pickSecond}
-                  onOpenSidebar={() => {}}
-                  sidebarCollapsed={false}
-                />
-              </div>
-            }
+            session={(
+              <SubagentTranscriptPane
+                sessionId={secondSid}
+                chats={chats}
+                onPickSession={pickSecond}
+              />
+            )}
           />
         </>
       ) : null}
