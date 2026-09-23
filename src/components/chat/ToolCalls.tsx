@@ -151,22 +151,25 @@ function displayParams(toolName: string, value: unknown): {
 
   // Persisted malformed arguments arrive as { raw: originalString }. Treat
   // unknown browser arguments as private so a result cannot echo their input.
+  let action = ""
   try {
-    if ("raw" in value || JSON.stringify(value).length > BROWSER_PREVIEW_MAX_LENGTH) {
+    if ("raw" in value) return { browserTool, browserEvalTool, focusedBrowserInput: true, browserSelectOption: false }
+    action = typeof value.action === "string" ? value.action.trim().toLowerCase() : ""
+    if (action === "set_file_input") {
+      // A valid inline file can exceed the preview limit. Keep its fixed action
+      // and status while omitting all bytes and metadata from the display.
+      return { browserTool, browserEvalTool, focusedBrowserInput: false, browserSelectOption: false, browserFileInput: true }
+    }
+    if (JSON.stringify(value).length > BROWSER_PREVIEW_MAX_LENGTH) {
       return { browserTool, browserEvalTool, focusedBrowserInput: true, browserSelectOption: false }
     }
   } catch {
     return { browserTool, browserEvalTool, focusedBrowserInput: true, browserSelectOption: false }
   }
 
-  const action = typeof value.action === "string" ? value.action.trim().toLowerCase() : ""
   if (action === "select_option") {
     // Native option values and CSS selectors can carry private page data.
     return { browserTool, browserEvalTool, focusedBrowserInput: false, browserSelectOption: true }
-  }
-  if (action === "set_file_input") {
-    // Inline file bytes and metadata belong only in the model/session payload.
-    return { browserTool, browserEvalTool, focusedBrowserInput: false, browserSelectOption: false, browserFileInput: true }
   }
   const selector = typeof value.selector === "string" && value.selector.trim().length > 0
   const focusedBrowserInput = action === "type" || action === "key" ||
