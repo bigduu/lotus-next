@@ -302,6 +302,13 @@ it("keeps selector-bound press and ordinary tool details visible", () => {
   ))
   expect(semantic.textContent).toContain(privateKey)
 
+  const label = renderOpenTools(browserMessages(
+    { action: "press", target: { kind: "label", value: "Email" }, key: privateKey },
+    JSON.stringify({ ok: true }),
+  ))
+  expect(label.textContent).toContain(privateKey)
+  expect(label.textContent).toContain("Email")
+
   const ordinary = renderOpenTools(toolMessages(true))
   expect(ordinary.textContent).toContain("/tmp/example.ts")
   expect(ordinary.textContent).toContain("done")

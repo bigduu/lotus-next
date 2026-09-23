@@ -121,7 +121,9 @@ const isBrowserTool = (toolName: string) =>
 const hasSemanticTarget = (value: unknown) => {
   if (!isRecord(value)) return false
   if (value.kind === "role") return typeof value.role === "string" && value.role.trim().length > 0
-  if (value.kind === "text") return typeof value.value === "string" && value.value.trim().length > 0
+  if (value.kind === "label" || value.kind === "text") {
+    return typeof value.value === "string" && value.value.trim().length > 0
+  }
   return false
 }
 
