@@ -5,7 +5,7 @@ const sessionId = "browser-select-display-session"
 const privateValue = "private-option-value-153"
 const privateSelector = "select[data-account='private-selector-153']"
 const privateResource = "browser:17:select_option:private-fingerprint-153"
-const selectedValues = [privateValue, ...Array.from({ length: 15 }, () => "\u0001".repeat(512))]
+const selectedValues = [`${privateValue}-permission_request`, ...Array.from({ length: 15 }, () => "\u0001".repeat(512))]
 const parameters = JSON.stringify({
   action: "select_option",
   selector: privateSelector,

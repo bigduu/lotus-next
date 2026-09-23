@@ -188,9 +188,18 @@ function displayResult(entry: Entry, text: string): string {
   if (!text) return ""
   const possiblyApproval = text.includes("awaiting_permission_approval") || text.includes("permission_request")
   if ((entry.browserTool || entry.browserEvalTool || possiblyApproval) && text.length > BROWSER_PREVIEW_MAX_LENGTH) {
-    if (entry.browserSelectOption) {
-      if (possiblyApproval) return APPROVAL_STATUS
-      return entry.result?.isError ? "网页选项选择失败" : "网页选项已选择"
+    if (entry.browserSelectOption && text.length <= BROWSER_PREVIEW_MAX_LENGTH * 4) {
+      // Native selection results can exceed the display preview after JSON
+      // escaping. Parse only the bounded result envelope, never render it.
+      try {
+        const parsed = JSON.parse(text)
+        if (isRecord(parsed)) {
+          if (parsed.status === "awaiting_permission_approval" || "permission_request" in parsed) return APPROVAL_STATUS
+          return entry.result?.isError ? "网页选项选择失败" : "网页选项已选择"
+        }
+      } catch {
+        // Malformed results stay hidden rather than gaining a success label.
+      }
     }
     return ""
   }

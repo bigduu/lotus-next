@@ -435,7 +435,7 @@ it("hides selected values and approval fingerprints after history mapping", () =
 
 it("keeps fixed selection status for bounded values that exceed the JSON preview limit", () => {
   const escapedValue = "\u0001".repeat(512)
-  const values = Array.from({ length: 16 }, () => escapedValue)
+  const values = ["awaiting_permission_approval", ...Array.from({ length: 15 }, () => escapedValue)]
   const parameters = { action: "select_option", selector: privateSelectSelector, values, expected_epoch: 17 }
   const result = JSON.stringify({ selected_values: values, selector: privateSelectSelector })
   expect(JSON.stringify(parameters).length).toBeGreaterThan(16 * 1024)
@@ -448,7 +448,11 @@ it("keeps fixed selection status for bounded values that exceed the JSON preview
   expect(live.querySelector("[data-tool-call-entry] pre")?.textContent).toBe("网页选项已选择")
   expect(live.textContent).not.toContain(privateSelectSelector)
   expect(live.textContent).not.toContain("selected_values")
+  expect(live.textContent).not.toContain("awaiting_permission_approval")
   expect(JSON.stringify(liveMessages)).toBe(unchanged)
+
+  const failed = renderOpenTools(browserMessages(parameters, result, true))
+  expect(failed.querySelector("[data-tool-call-entry] pre")?.textContent).toBe("网页选项选择失败")
 
   const history = mapHistoryMessagesToUi("session-159", [
     {
@@ -471,6 +475,10 @@ it("keeps fixed selection status for bounded values that exceed the JSON preview
   })))
   expect(approval.querySelector("[data-tool-call-entry] pre")?.textContent).toBe("等待用户批准")
   expect(approval.textContent).not.toContain(privateSelectResource)
+
+  const malformedResult = renderOpenTools(browserMessages(parameters, result.slice(0, -1)))
+  expect(malformedResult.querySelector("[data-tool-call-entry] pre")).toBeNull()
+  expect(malformedResult.textContent).not.toContain(privateSelectSelector)
 })
 
 it("shows a safe failure status and omits malformed select_option previews", () => {
