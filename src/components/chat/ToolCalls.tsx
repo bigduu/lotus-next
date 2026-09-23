@@ -25,6 +25,7 @@ type Entry = {
   result?: { text: string; isError: boolean }
   focusedBrowserInput: boolean
   browserSelectOption: boolean
+  browserFileInput?: boolean
   browserTool: boolean
   browserEvalTool: boolean
   /** Set when the result marks a background/async shell (see parseBackgroundBash). */
@@ -136,6 +137,7 @@ function displayParams(toolName: string, value: unknown): {
   params?: Record<string, unknown>
   focusedBrowserInput: boolean
   browserSelectOption: boolean
+  browserFileInput?: boolean
   browserTool: boolean
   browserEvalTool: boolean
 } {
@@ -149,15 +151,22 @@ function displayParams(toolName: string, value: unknown): {
 
   // Persisted malformed arguments arrive as { raw: originalString }. Treat
   // unknown browser arguments as private so a result cannot echo their input.
+  let action = ""
   try {
-    if ("raw" in value || JSON.stringify(value).length > BROWSER_PREVIEW_MAX_LENGTH) {
+    if ("raw" in value) return { browserTool, browserEvalTool, focusedBrowserInput: true, browserSelectOption: false }
+    action = typeof value.action === "string" ? value.action.trim().toLowerCase() : ""
+    if (action === "set_file_input") {
+      // A valid inline file can exceed the preview limit. Keep its fixed action
+      // and status while omitting all bytes and metadata from the display.
+      return { browserTool, browserEvalTool, focusedBrowserInput: false, browserSelectOption: false, browserFileInput: true }
+    }
+    if (JSON.stringify(value).length > BROWSER_PREVIEW_MAX_LENGTH) {
       return { browserTool, browserEvalTool, focusedBrowserInput: true, browserSelectOption: false }
     }
   } catch {
     return { browserTool, browserEvalTool, focusedBrowserInput: true, browserSelectOption: false }
   }
 
-  const action = typeof value.action === "string" ? value.action.trim().toLowerCase() : ""
   if (action === "select_option") {
     // Native option values and CSS selectors can carry private page data.
     return { browserTool, browserEvalTool, focusedBrowserInput: false, browserSelectOption: true }
@@ -192,6 +201,7 @@ function displayResult(entry: Entry, text: string): string {
   if (entry.browserEvalTool) return entry.result?.isError ? "网页脚本执行失败" : "网页脚本已执行"
   if (entry.focusedBrowserInput) return entry.result?.isError ? "浏览器输入失败" : "浏览器输入已完成"
   if (entry.browserSelectOption) return entry.result?.isError ? "网页选项选择失败" : "网页选项已选择"
+  if (entry.browserFileInput) return entry.result?.isError ? "网页文件设置失败" : "网页文件已设置"
   return entry.browserTool && !isRecord(parsed) ? "" : text
 }
 
@@ -206,6 +216,7 @@ const readableToolName = (toolName: string) =>
 function presentTool(entry: Entry): ToolPresentation {
   if (entry.browserEvalTool) return { label: "执行网页脚本", icon: Globe }
   if (entry.browserSelectOption) return { label: "选择网页选项", icon: Globe }
+  if (entry.browserFileInput) return { label: "设置网页文件", icon: Globe }
   const normalized = entry.toolName.toLowerCase().replace(/[^a-z0-9]+/g, "")
   const path = firstString(entry.params, ["file_path", "path"])
   const command = firstString(entry.params, ["command", "cmd"])
@@ -367,7 +378,7 @@ function prettyResult(text: string): string {
 }
 
 function buildEntries(items: Message[]): Entry[] {
-  const calls: { id: string; toolName: string; params?: Record<string, unknown>; focusedBrowserInput: boolean; browserSelectOption: boolean; browserTool: boolean; browserEvalTool: boolean }[] = []
+  const calls: { id: string; toolName: string; params?: Record<string, unknown>; focusedBrowserInput: boolean; browserSelectOption: boolean; browserFileInput?: boolean; browserTool: boolean; browserEvalTool: boolean }[] = []
   const results = new Map<string, { text: string; isError: boolean }>()
   for (const m of items) {
     const t = (m as { type?: string }).type
@@ -402,6 +413,7 @@ function buildEntries(items: Message[]): Entry[] {
       params: c.params,
       focusedBrowserInput: c.focusedBrowserInput,
       browserSelectOption: c.browserSelectOption,
+      browserFileInput: c.browserFileInput,
       browserTool: c.browserTool,
       browserEvalTool: c.browserEvalTool,
       result,

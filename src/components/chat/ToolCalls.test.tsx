@@ -105,6 +105,20 @@ const privateEvalResource = "browser_eval:17:private-fingerprint-151"
 const privateSelectValue = "private-option-value-153"
 const privateSelectSelector = "select[data-account='private-selector-153']"
 const privateSelectResource = "browser:17:select_option:private-fingerprint-153"
+const privateFileBytes = "cHJpdmF0ZS1maWxlLWJ5dGVzLTE1NQ=="
+const privateFileName = "private-file-155.txt"
+const privateFileMimeType = "application/x-private-155"
+const privateFileSelector = "input[data-account='private-selector-155']"
+const privateFileResource = "browser:17:set_file_input:private-fingerprint-155"
+const largeFileBytes = "QUJD".repeat(5_000)
+const fileInputParameters = {
+  action: "set_file_input",
+  selector: privateFileSelector,
+  filename: privateFileName,
+  mime_type: privateFileMimeType,
+  data_base64: privateFileBytes,
+  expected_epoch: 17,
+}
 const approvalResult = JSON.stringify({
   status: "awaiting_permission_approval",
   question: "Approve focused browser input?",
@@ -441,6 +455,114 @@ it("shows a safe failure status and omits malformed select_option previews", () 
     JSON.stringify({ selected_values: [privateSelectValue.repeat(1000)] }),
   ))
   expect(oversized.textContent).not.toContain(privateSelectValue)
+  expect(oversized.querySelector("[data-tool-call-entry] pre")).toBeNull()
+})
+
+it.each(["browser", "default::browser"])("hides small %s set_file_input payloads and results in live ToolCalls", (toolName) => {
+  expect(JSON.stringify(fileInputParameters).length).toBeLessThan(16 * 1024)
+  const messages = browserMessages(
+    fileInputParameters,
+    JSON.stringify({ ok: true, filename: privateFileName, mime_type: privateFileMimeType, data_base64: privateFileBytes }),
+    false,
+    toolName,
+  )
+  const unchanged = JSON.stringify(messages)
+  const host = renderOpenTools(messages)
+
+  expect(host.querySelector("[data-tool-call-toggle]")?.textContent).toContain("设置网页文件")
+  expect(host.querySelector("[data-tool-call-entry] pre")?.textContent).toBe("网页文件已设置")
+  for (const value of ["set_file_input", privateFileBytes, privateFileName, privateFileMimeType, privateFileSelector, "data_base64"]) {
+    expect(host.textContent).not.toContain(value)
+  }
+  expect(JSON.stringify(messages)).toBe(unchanged)
+})
+
+it.each([
+  { toolName: "browser", isError: false, expected: "网页文件已设置" },
+  { toolName: "default::browser", isError: true, expected: "网页文件设置失败" },
+])("keeps the fixed file action and $expected status above the preview limit", ({ toolName, isError, expected }) => {
+  const parameters = { ...fileInputParameters, data_base64: largeFileBytes }
+  expect(atob(largeFileBytes).length).toBe(15_000)
+  expect(JSON.stringify(parameters).length).toBeGreaterThan(16 * 1024)
+  const messages = browserMessages(
+    parameters,
+    JSON.stringify(isError ? { error: privateFileName } : { ok: true, filename: privateFileName }),
+    isError,
+    toolName,
+  )
+  const unchanged = JSON.stringify(messages)
+  const host = renderOpenTools(messages)
+
+  expect(unchanged).toContain(largeFileBytes)
+  expect(host.querySelector("[data-tool-call-toggle]")?.textContent).toContain("设置网页文件")
+  expect(host.querySelector("[data-tool-call-entry] pre")?.textContent).toBe(expected)
+  for (const value of ["set_file_input", largeFileBytes.slice(0, 32), privateFileName, privateFileMimeType, privateFileSelector, "data_base64"]) {
+    expect(host.textContent).not.toContain(value)
+  }
+  expect(JSON.stringify(messages)).toBe(unchanged)
+})
+
+it("hides file bytes, metadata, and approval fingerprint after history mapping", () => {
+  const rawArguments = JSON.stringify(fileInputParameters)
+  const approval = JSON.stringify({
+    status: "awaiting_permission_approval",
+    permission_request: { resource: privateFileResource, suggested_matchers: [{ value: privateFileName }] },
+  })
+  const selected = JSON.stringify({ ok: true, filename: privateFileName, data_base64: privateFileBytes })
+  const messages = mapHistoryMessagesToUi("session-155", [
+    {
+      id: "assistant-call",
+      role: "assistant",
+      content: "",
+      tool_calls: [
+        { id: "file-result", type: "function", function: { name: "browser", arguments: rawArguments } },
+        { id: "file-approval", type: "function", function: { name: "default::browser", arguments: rawArguments } },
+      ],
+      created_at: "2026-09-24T00:00:00Z",
+    },
+    { id: "tool-result", role: "tool", tool_call_id: "file-result", content: selected, created_at: "2026-09-24T00:00:01Z" },
+    { id: "tool-approval", role: "tool", tool_call_id: "file-approval", content: approval, created_at: "2026-09-24T00:00:02Z" },
+  ])
+  const unchanged = JSON.stringify(messages)
+  const host = renderOpenTools(messages)
+
+  expect(unchanged).toContain(privateFileBytes)
+  expect(unchanged).toContain(privateFileResource)
+  expect(host.querySelectorAll("[data-tool-call-entry]")).toHaveLength(2)
+  expect(Array.from(host.querySelectorAll("[data-tool-call-entry] pre"), (node) => node.textContent))
+    .toEqual(["网页文件已设置", "等待用户批准"])
+  for (const value of ["set_file_input", privateFileBytes, privateFileName, privateFileMimeType, privateFileSelector, privateFileResource, "permission_request"]) {
+    expect(host.textContent).not.toContain(value)
+  }
+  expect(JSON.stringify(messages)).toBe(unchanged)
+})
+
+it("shows a safe set_file_input failure and omits malformed or oversized file previews", () => {
+  const failed = renderOpenTools(browserMessages(
+    fileInputParameters,
+    JSON.stringify({ error: privateFileBytes, filename: privateFileName }),
+    true,
+  ))
+  expect(failed.querySelector("[data-tool-call-entry] pre")?.textContent).toBe("网页文件设置失败")
+  for (const value of [privateFileBytes, privateFileName, privateFileMimeType, privateFileSelector]) {
+    expect(failed.textContent).not.toContain(value)
+  }
+
+  const malformed = renderOpenTools(browserMessages(
+    { raw: `{"action":"set_file_input","data_base64":"${privateFileBytes}"` },
+    `{"filename":"${privateFileName}"`,
+  ))
+  expect(malformed.textContent).not.toContain(privateFileBytes)
+  expect(malformed.textContent).not.toContain(privateFileName)
+  expect(malformed.querySelector("[data-tool-call-entry] pre")).toBeNull()
+
+  const oversized = renderOpenTools(browserMessages(
+    { ...fileInputParameters, data_base64: privateFileBytes.repeat(1000) },
+    JSON.stringify({ data_base64: privateFileBytes.repeat(1000) }),
+  ))
+  expect(oversized.querySelector("[data-tool-call-toggle]")?.textContent).toContain("设置网页文件")
+  expect(oversized.textContent).not.toContain(privateFileBytes)
+  expect(oversized.textContent).not.toContain(privateFileName)
   expect(oversized.querySelector("[data-tool-call-entry] pre")).toBeNull()
 })
 
