@@ -160,6 +160,11 @@ function displayParams(toolName: string, value: unknown): {
       // and status while omitting all bytes and metadata from the display.
       return { browserTool, browserEvalTool, focusedBrowserInput: false, browserSelectOption: false, browserFileInput: true }
     }
+    if (action === "select_option") {
+      // A valid bounded selection can expand beyond the generic JSON preview
+      // limit when its option values need escaping. Keep only its fixed status.
+      return { browserTool, browserEvalTool, focusedBrowserInput: false, browserSelectOption: true }
+    }
     if (JSON.stringify(value).length > BROWSER_PREVIEW_MAX_LENGTH) {
       return { browserTool, browserEvalTool, focusedBrowserInput: true, browserSelectOption: false }
     }
@@ -167,10 +172,6 @@ function displayParams(toolName: string, value: unknown): {
     return { browserTool, browserEvalTool, focusedBrowserInput: true, browserSelectOption: false }
   }
 
-  if (action === "select_option") {
-    // Native option values and CSS selectors can carry private page data.
-    return { browserTool, browserEvalTool, focusedBrowserInput: false, browserSelectOption: true }
-  }
   const selector = typeof value.selector === "string" && value.selector.trim().length > 0
   const focusedBrowserInput = action === "type" || action === "key" ||
     (action === "press" && !selector && !hasSemanticTarget(value.target))
@@ -186,7 +187,13 @@ function displayParams(toolName: string, value: unknown): {
 function displayResult(entry: Entry, text: string): string {
   if (!text) return ""
   const possiblyApproval = text.includes("awaiting_permission_approval") || text.includes("permission_request")
-  if ((entry.browserTool || entry.browserEvalTool || possiblyApproval) && text.length > BROWSER_PREVIEW_MAX_LENGTH) return ""
+  if ((entry.browserTool || entry.browserEvalTool || possiblyApproval) && text.length > BROWSER_PREVIEW_MAX_LENGTH) {
+    if (entry.browserSelectOption) {
+      if (possiblyApproval) return APPROVAL_STATUS
+      return entry.result?.isError ? "网页选项选择失败" : "网页选项已选择"
+    }
+    return ""
+  }
 
   let parsed: unknown
   try {

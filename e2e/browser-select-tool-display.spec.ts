@@ -5,14 +5,15 @@ const sessionId = "browser-select-display-session"
 const privateValue = "private-option-value-153"
 const privateSelector = "select[data-account='private-selector-153']"
 const privateResource = "browser:17:select_option:private-fingerprint-153"
+const selectedValues = [privateValue, ...Array.from({ length: 15 }, () => "\u0001".repeat(512))]
 const parameters = JSON.stringify({
   action: "select_option",
   selector: privateSelector,
-  values: [privateValue],
+  values: selectedValues,
   expected_epoch: 17,
 })
 
-test("desktop history shows browser selection status without option data", async ({ page }, testInfo) => {
+test("desktop history keeps status for bounded large values without option data", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "desktop-chromium", "desktop tool display screenshot")
   await page.addInitScript(() => localStorage.setItem("bodhi_onboarded_v1", "1"))
   const observation = await installArtifactRuntime(page, standaloneScenario)
@@ -43,7 +44,7 @@ test("desktop history shows browser selection status without option data", async
       id: "result-153",
       role: "tool",
       tool_call_id: "select-153-result",
-      content: JSON.stringify({ ok: true, selected_values: [privateValue], selector: privateSelector }),
+      content: JSON.stringify({ ok: true, selected_values: selectedValues, selector: privateSelector }),
       created_at: "2026-09-24T00:00:02Z",
     },
     {
