@@ -4,15 +4,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import type { ChatItem } from "@shared/types/chatMessages"
 
 vi.mock("@/components/chat/SessionRow", () => ({
-  SessionRow: ({ chat, active, onSelect, onRename, onDelete, onTogglePin }: {
+  SessionRow: ({ chat, active, onSelect, onRename, onDelete, onTogglePin, onCopySessionId }: {
     chat: ChatItem; active: boolean; onSelect(): void; onRename(title: string): void
-    onDelete(): void; onTogglePin(): void
+    onDelete(): void; onTogglePin(): void; onCopySessionId(): void
   }) => (
     <div data-session={chat.id} data-active={active}>
       <button onClick={onSelect}>{chat.title}</button>
       <button onClick={() => onRename("Renamed")}>Rename {chat.id}</button>
       <button onClick={onDelete}>Delete {chat.id}</button>
       <button onClick={onTogglePin}>Pin {chat.id}</button>
+      <button onClick={onCopySessionId}>Copy {chat.id}</button>
     </div>
   ),
 }))
@@ -73,7 +74,7 @@ beforeEach(() => {
     open: false, onClose: vi.fn(), collapsed: false, onToggleCollapse: vi.fn(), width: 288,
     chats: Array.from({ length: 7 }, (_, index) => chat(`day-${index}`, 5 - index)),
     booted: true, currentSessionId: "day-0", onNewChat: vi.fn(), onSelect: vi.fn(),
-    onRename: vi.fn(), onDelete: vi.fn(), onTogglePin: vi.fn(), onOpenSettings: vi.fn(),
+    onRename: vi.fn(), onDelete: vi.fn(), onTogglePin: vi.fn(), onCopySessionId: vi.fn(), onOpenSettings: vi.fn(),
     onOpenProjectManager: vi.fn(),
   }
 })
@@ -127,11 +128,13 @@ describe("Sidebar date disclosures", () => {
     click("Rename day-0")
     click("Delete day-0")
     click("Pin day-0")
+    click("Copy day-0")
     expect(props.onSelect).toHaveBeenCalledWith("day-0")
     expect(props.onClose).toHaveBeenCalledOnce()
     expect(props.onRename).toHaveBeenCalledWith("day-0", "Renamed")
     expect(props.onDelete).toHaveBeenCalledWith(props.chats[0])
     expect(props.onTogglePin).toHaveBeenCalledWith(props.chats[0])
+    expect(props.onCopySessionId).toHaveBeenCalledWith("day-0")
   })
 
   it("reveals matching old and folded dates during search then restores their choices", () => {
