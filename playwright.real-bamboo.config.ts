@@ -3,6 +3,11 @@ import { defineConfig, devices } from "@playwright/test";
 const acceptanceMode = process.env.LOTUS_REAL_ACCEPTANCE_MODE?.trim();
 const outputSuffix = acceptanceMode ? `-${acceptanceMode}` : "";
 const secureRemote = acceptanceMode === "remote";
+const desktopUse = {
+  ...devices["Desktop Chrome"],
+  browserName: "chromium" as const,
+  viewport: { width: 1_440, height: 900 },
+};
 
 export default defineConfig({
   testDir: "./e2e",
@@ -43,11 +48,14 @@ export default defineConfig({
   projects: [
     {
       name: "real-bamboo-desktop-chromium",
-      use: {
-        ...devices["Desktop Chrome"],
-        browserName: "chromium",
-        viewport: { width: 1_440, height: 900 },
-      },
+      testIgnore: "**/real-bamboo-browser-tabs.spec.ts",
+      use: desktopUse,
+    },
+    {
+      name: "real-bamboo-browser-tabs-chromium",
+      testMatch: "**/real-bamboo-browser-tabs.spec.ts",
+      dependencies: ["real-bamboo-desktop-chromium"],
+      use: desktopUse,
     },
   ],
 });
