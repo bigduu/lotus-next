@@ -21,6 +21,8 @@ type Scope = {
   controller: AbortController
 }
 
+type Invalidation = boolean | ((state: BrowserState) => boolean)
+
 const userMessage = (error: unknown): string => {
   if (isApiError(error)) {
     if (error.status === 404) return "当前 Bamboo 尚未提供内置浏览器。"
@@ -202,8 +204,8 @@ export function useBrowserSession(sessionId: string | null, active: boolean) {
   const perform = useCallback(
     (
       action: (scope: Scope, expectedEpoch: number) => Promise<BrowserState>,
-      invalidateDom = true,
-      invalidateFrame = false,
+      invalidateDom: Invalidation = true,
+      invalidateFrame: Invalidation = false,
       markBusy = true,
     ): Promise<void> => {
       const scope = scopeRef.current
@@ -211,13 +213,16 @@ export function useBrowserSession(sessionId: string | null, active: boolean) {
 
       const task = actionQueueRef.current.catch(() => undefined).then(async () => {
         if (scopeRef.current !== scope || scope.controller.signal.aborted) return
-        const expectedEpoch = stateRef.current?.page_epoch
-        if (expectedEpoch === undefined) return
-        if (invalidateDom) {
+        const currentState = stateRef.current
+        if (!currentState) return
+        const expectedEpoch = currentState.page_epoch
+        const shouldInvalidateDom = typeof invalidateDom === "function" ? invalidateDom(currentState) : invalidateDom
+        const shouldInvalidateFrame = typeof invalidateFrame === "function" ? invalidateFrame(currentState) : invalidateFrame
+        if (shouldInvalidateDom) {
           mutationVersionRef.current += 1
           setDom(null)
         }
-        if (invalidateFrame) {
+        if (shouldInvalidateFrame) {
           frameSuspendedRef.current = true
           framePollResetRef.current += 1
           setFrame(null)
@@ -242,7 +247,7 @@ export function useBrowserSession(sessionId: string | null, active: boolean) {
           }
           setError(userMessage(cause))
         } finally {
-          if (invalidateFrame && scopeRef.current === scope) {
+          if (shouldInvalidateFrame && scopeRef.current === scope) {
             frameSuspendedRef.current = false
             framePollResetRef.current += 1
           }
@@ -284,7 +289,7 @@ export function useBrowserSession(sessionId: string | null, active: boolean) {
   )
   const closeTab = useCallback(
     (tabId: string) => {
-      const closesActiveTab = stateRef.current?.active_tab_id === tabId
+      const closesActiveTab = (state: BrowserState) => state.active_tab_id === tabId
       return perform(
         (scope, epoch) => browserService.closeTab(scope.sessionId, tabId, epoch),
         closesActiveTab,

@@ -339,3 +339,45 @@ it("does not let an older state request overwrite a completed tab switch", async
   expect(browser.state?.active_tab_id).toBe("tab-b")
   expect(browser.dom).toBeNull()
 })
+
+it("fences frames when a queued close becomes an active-tab close", async () => {
+  let releaseOldFrame!: (value: Awaited<ReturnType<typeof browserService.frame>>) => void
+  let releaseActivation!: (value: BrowserState) => void
+  let releaseClose!: (value: BrowserState) => void
+  const oldFrame = new Promise<Awaited<ReturnType<typeof browserService.frame>>>((resolve) => { releaseOldFrame = resolve })
+  const activation = new Promise<BrowserState>((resolve) => { releaseActivation = resolve })
+  const close = new Promise<BrowserState>((resolve) => { releaseClose = resolve })
+  vi.mocked(browserService.open).mockResolvedValue(tabbedState(1, "tab-a"))
+  vi.mocked(browserService.frame)
+    .mockResolvedValueOnce({
+      blob: new Blob(["first frame"], { type: "image/jpeg" }),
+      frame_seq: 1, page_epoch: 1, active_tab_id: "tab-a",
+      viewport: { width: 640, height: 480 },
+    })
+    .mockImplementationOnce(() => oldFrame)
+    .mockImplementation(() => new Promise(() => {}))
+  vi.mocked(browserService.activateTab).mockImplementation(() => activation)
+  vi.mocked(browserService.closeTab).mockImplementation(() => close)
+
+  await act(async () => root.render(<Harness />))
+  let switching!: Promise<void>
+  let closing!: Promise<void>
+  await act(async () => {
+    switching = browser.activateTab("tab-b")
+    closing = browser.closeTab("tab-b")
+  })
+  await act(async () => { releaseActivation(tabbedState(2, "tab-b")); await switching })
+  expect(browser.state?.active_tab_id).toBe("tab-b")
+  expect(browserService.closeTab).toHaveBeenCalledWith("sid", "tab-b", 2)
+  await act(async () => releaseOldFrame({
+    blob: new Blob(["late frame"], { type: "image/jpeg" }),
+    frame_seq: 2, page_epoch: 1, active_tab_id: "tab-a",
+    viewport: { width: 640, height: 480 },
+  }))
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 60)) })
+  expect(browser.frame).toBeNull()
+  expect(browserService.frame).toHaveBeenCalledTimes(2)
+
+  await act(async () => { releaseClose(tabbedState(3, "tab-a")); await closing })
+  expect(browser.state?.active_tab_id).toBe("tab-a")
+})
