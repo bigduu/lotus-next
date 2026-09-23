@@ -2,6 +2,7 @@ import { act } from "react"
 import { createRoot, type Root } from "react-dom/client"
 import { afterEach, beforeEach, expect, it, vi } from "vitest"
 import { browserService } from "@services/browser/BrowserService"
+import { ApiError } from "@services/api"
 import { FileOperationsService } from "@/shared/services/FileOperationsService"
 import { BrowserPane } from "./BrowserPane"
 
@@ -166,6 +167,44 @@ it("focuses a pending prompt while letting app controls keep focus and keyboard 
   await act(async () => root.render(<BrowserPane sessionId="another-chat" active />))
   expect(document.activeElement).toBe(outside)
   outside.remove()
+})
+
+it("clears the dialog overlay after a transient state failure when the model answers it", async () => {
+  const current = {
+    page_epoch: 8, frame_seq: 1, active_tab_id: "tab-a",
+    url: "https://example.test/", title: "Example",
+    viewport: { width: 640, height: 480 }, can_go_back: false, can_go_forward: false,
+  }
+  const pending = {
+    ...current,
+    pending_dialog: {
+      dialog_id: "a".repeat(24), tab_id: "tab-a", page_epoch: 8,
+      url: current.url, type: "alert" as const,
+      message: "Page question", message_truncated: false,
+      default_value: "", default_value_truncated: false,
+      expires_at_ms: Date.now() + 30_000, status: "pending" as const,
+    },
+  }
+  let resolveModel!: (next: typeof current) => void
+  const modelResponse = new Promise<typeof current>((resolve) => { resolveModel = resolve })
+  vi.mocked(browserService.open).mockResolvedValue(pending)
+  vi.mocked(browserService.get)
+    .mockRejectedValueOnce(new ApiError("temporarily unavailable", 503, "Unavailable"))
+    .mockImplementation(() => modelResponse)
+
+  await act(async () => root.render(<BrowserPane sessionId="recovering-dialog" active />))
+  expect(host.querySelector("[data-browser-dialog]")).not.toBeNull()
+
+  await act(async () => {
+    await vi.waitFor(() => expect(browserService.get).toHaveBeenCalledTimes(2), { timeout: 3000 })
+  })
+  expect(host.querySelector("[data-browser-dialog]")).not.toBeNull()
+  expect(host.querySelector('[role="alert"]')).toBeNull()
+
+  await act(async () => resolveModel(current))
+  expect(host.querySelector("[data-browser-dialog]")).toBeNull()
+  expect(host.querySelector('[role="alert"]')).toBeNull()
+  expect(browserService.get).toHaveBeenCalledTimes(2)
 })
 
 it("shows accessible tab controls and sends create, switch, and close to Bamboo", async () => {

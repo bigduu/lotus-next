@@ -490,6 +490,41 @@ it("keeps a cached JPEG and stops incompatible reads while a dialog is pending",
   expect(browser.frame?.frame_seq).toBe(4)
 })
 
+it("keeps the cached frame and resumes when one pending state read fails before the model resolves the dialog", async () => {
+  const current = tabbedState(17, "tab-a")
+  let resolveModel!: (next: BrowserState) => void
+  const modelResponse = new Promise<BrowserState>((resolve) => { resolveModel = resolve })
+  vi.mocked(browserService.open).mockResolvedValue(current)
+  vi.mocked(browserService.frame)
+    .mockResolvedValueOnce({
+      blob: new Blob(["cached"], { type: "image/jpeg" }), frame_seq: 4,
+      page_epoch: 17, active_tab_id: "tab-a", viewport: { width: 640, height: 480 },
+    })
+    .mockRejectedValueOnce(new ApiError("dialog pending", 409, "Conflict"))
+    .mockImplementation(() => new Promise(() => {}))
+  vi.mocked(browserService.get)
+    .mockResolvedValueOnce(pendingState())
+    .mockRejectedValueOnce(new ApiError("temporarily unavailable", 503, "Unavailable"))
+    .mockImplementation(() => modelResponse)
+
+  await act(async () => root.render(<Harness />))
+  expect(browser.state?.pending_dialog?.dialog_id).toBe("a".repeat(24))
+  expect(browser.frame?.frame_seq).toBe(4)
+
+  await act(async () => {
+    await vi.waitFor(() => expect(browserService.get).toHaveBeenCalledTimes(3), { timeout: 3000 })
+  })
+  expect(browser.state?.pending_dialog?.dialog_id).toBe("a".repeat(24))
+  expect(browser.frame?.frame_seq).toBe(4)
+  expect(browser.error).toBeNull()
+
+  await act(async () => resolveModel(current))
+  expect(browserService.get).toHaveBeenCalledTimes(3)
+  expect(browser.state?.pending_dialog).toBeUndefined()
+  expect(browser.frame?.frame_seq).toBe(4)
+  expect(browser.error).toBeNull()
+})
+
 it("answers an exact dialog without prompt text when untouched and refreshes a stale 409", async () => {
   vi.mocked(browserService.open).mockResolvedValue(pendingState())
   vi.mocked(browserService.frame).mockImplementation(() => new Promise(() => {}))

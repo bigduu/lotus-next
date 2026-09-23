@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react"
-import { isApiError, RequestCancelledError } from "@services/api"
+import { isApiError, NetworkRequestError, RequestCancelledError, RequestTimeoutError } from "@services/api"
 import { browserService } from "@services/browser/BrowserService"
 import { matchesActiveBrowserPage } from "@/lib/browserFrame"
 import type {
@@ -22,6 +22,12 @@ type Scope = {
 }
 
 type Invalidation = boolean | ((state: BrowserState) => boolean)
+
+const MAX_PENDING_STATE_READ_FAILURES = 3
+
+const isTransientStateReadError = (error: unknown): boolean =>
+  (isApiError(error) && error.status >= 500 && error.status < 600) ||
+  error instanceof NetworkRequestError || error instanceof RequestTimeoutError
 
 const conflictCode = (error: unknown): string | null => {
   if (!isApiError(error) || error.status !== 409 || !error.body) return null
@@ -126,6 +132,7 @@ export function useBrowserSession(sessionId: string | null, active: boolean) {
       let observedTabId = initial.active_tab_id
       let observedReset = framePollResetRef.current
       let lastStateRefresh = Date.now()
+      let pendingStateReadFailures = 0
       while (isCurrent()) {
         if (stateRef.current?.pending_dialog) {
           // Bamboo only permits state reads while a page dialog blocks CDP.
@@ -133,12 +140,21 @@ export function useBrowserSession(sessionId: string | null, active: boolean) {
           await new Promise((resolve) => setTimeout(resolve, 400))
           if (!isCurrent()) return
           const version = stateVersionRef.current
-          const refreshed = await browserService.get(sessionId, controller.signal)
+          let refreshed: BrowserState
+          try {
+            refreshed = await browserService.get(sessionId, controller.signal)
+          } catch (cause) {
+            if (!isCurrent()) return
+            if (isTransientStateReadError(cause) && ++pendingStateReadFailures < MAX_PENDING_STATE_READ_FAILURES) continue
+            throw cause
+          }
           if (!isCurrent()) return
+          pendingStateReadFailures = 0
           if (version === stateVersionRef.current) publishState(refreshed)
           lastStateRefresh = Date.now()
           continue
         }
+        pendingStateReadFailures = 0
         if (frameSuspendedRef.current) {
           await new Promise((resolve) => setTimeout(resolve, 50))
           continue
