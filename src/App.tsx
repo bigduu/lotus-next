@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react"
+import { copyText } from "@shared/utils/clipboard"
 import { Inspector } from "@/components/chat/Inspector"
 import { CommandPalette } from "@/components/chat/CommandPalette"
 import { LazySettings } from "@/components/chat/LazySettings"
@@ -109,6 +110,22 @@ function App() {
   // Project selected for the NEXT new chat (project-grouped sidebar "新建").
   const [pendingProjectId, setPendingProjectId] = useState<string | null>(null)
   const [projectManagerOpen, setProjectManagerOpen] = useState(false)
+  const [copyFeedback, setCopyFeedback] = useState<{ message: string; failed: boolean } | null>(null)
+
+  useEffect(() => {
+    if (!copyFeedback) return
+    const timer = setTimeout(() => setCopyFeedback(null), 2500)
+    return () => clearTimeout(timer)
+  }, [copyFeedback])
+
+  const copySessionId = async (sessionId: string) => {
+    try {
+      await copyText(sessionId)
+      setCopyFeedback({ message: "会话 ID 已复制", failed: false })
+    } catch {
+      setCopyFeedback({ message: "复制会话 ID 失败", failed: true })
+    }
+  }
 
   // Project store bootstrap: needed for project grouping labels + the manager.
   useEffect(() => {
@@ -200,6 +217,7 @@ function App() {
         onRename={(id, title) => void persistSessionTitle(id, title)}
         onDelete={(c) => setPendingDelete({ id: c.id, title: c.title || "新会话" })}
         onTogglePin={(c) => (c.pinned ? unpinSession(c.id) : pinSession(c.id))}
+        onCopySessionId={copySessionId}
         onOpenSettings={() => setSettingsOpen(true)}
         onOpenProjectManager={() => setProjectManagerOpen(true)}
       />
@@ -252,6 +270,7 @@ function App() {
                 workspace={displayWorkspace}
                 onEditWorkspace={() => setWsPickerOpen(true)}
                 onOpenReview={openReview}
+                onCopySessionId={copySessionId}
               />
             }
             review={(
@@ -344,6 +363,16 @@ function App() {
           setPendingDelete(null)
         }}
       />
+      {copyFeedback ? (
+        <div
+          role={copyFeedback.failed ? "alert" : "status"}
+          className="pointer-events-none fixed inset-x-0 bottom-28 z-[110] flex justify-center px-4"
+        >
+          <span className="rounded-full border bg-card px-4 py-2 text-sm font-medium text-foreground shadow-xl">
+            {copyFeedback.message}
+          </span>
+        </div>
+      ) : null}
     </div>
   )
 }

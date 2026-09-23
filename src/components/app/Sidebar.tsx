@@ -47,6 +47,7 @@ export function Sidebar({
   onRename,
   onDelete,
   onTogglePin,
+  onCopySessionId,
   onOpenSettings,
   onOpenProjectManager,
 }: {
@@ -65,6 +66,7 @@ export function Sidebar({
   onRename: (id: string, title: string) => void
   onDelete: (chat: ChatItem) => void
   onTogglePin: (chat: ChatItem) => void
+  onCopySessionId: (sessionId: string) => void
   onOpenSettings: () => void
   onOpenProjectManager: () => void
 }) {
@@ -326,6 +328,7 @@ export function Sidebar({
               onRename={(title) => onRename(c.id, title)}
               onDelete={() => onDelete(c)}
               onTogglePin={() => onTogglePin(c)}
+              onCopySessionId={() => onCopySessionId(c.id)}
             />
           )) : null}
           {projectFold ? (

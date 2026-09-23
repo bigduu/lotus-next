@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react"
-import { ArrowRight, X, FolderGit2 } from "lucide-react"
+import { ArrowRight, Copy, X, FolderGit2 } from "lucide-react"
 import { useShallow } from "zustand/react/shallow"
 import {
   useAppStore,
@@ -257,6 +257,7 @@ export function Inspector({
   workspace,
   onEditWorkspace,
   onOpenReview,
+  onCopySessionId,
   docked = false,
   width,
   embedded = false,
@@ -267,6 +268,7 @@ export function Inspector({
   workspace?: string | null
   onEditWorkspace?: () => void
   onOpenReview?: (filePath?: string) => void
+  onCopySessionId: (sessionId: string) => void
   /** Render as an in-flow right column (wide desktop) instead of an overlay sheet. */
   docked?: boolean
   /** Docked column width in px (resizable). */
@@ -467,6 +469,25 @@ export function Inspector({
             <div className="mt-3 space-y-3">
               <div>
                 <div className="mb-1 text-xs text-muted-foreground">配置</div>
+                {sessionId ? (
+                  <div className="flex items-start justify-between gap-3 py-0.5 text-sm">
+                    <span className="shrink-0 text-muted-foreground">会话 ID</span>
+                    <div className="flex min-w-0 items-start gap-1">
+                      <code className="break-all text-right font-mono text-xs" title={sessionId}>
+                        {sessionId}
+                      </code>
+                      <button
+                        type="button"
+                        aria-label="复制会话 ID"
+                        title="复制会话 ID"
+                        onClick={() => onCopySessionId(sessionId)}
+                        className="shrink-0 rounded p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      >
+                        <Copy className="size-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
                 <Row label="模型" value={model} />
                 {provider ? <Row label="提供方" value={provider} /> : null}
                 {cfg?.reasoningEffort ? (
