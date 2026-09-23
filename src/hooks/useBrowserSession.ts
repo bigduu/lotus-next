@@ -365,13 +365,15 @@ export function useBrowserSession(sessionId: string | null, active: boolean) {
     const scope = scopeRef.current
     const current = stateRef.current
     const dialog = current?.pending_dialog
-    if (!scope || !current || !dialog || dialog.status !== "pending" ||
-      dialog.page_epoch !== current.page_epoch || dialog.tab_id !== current.active_tab_id) return Promise.resolve()
+    if (!scope || !current || !dialog || dialog.status !== "pending") return Promise.resolve()
     const matchesDialog = () => {
       const latest = stateRef.current
       return scopeRef.current === scope && !scope.controller.signal.aborted &&
         latest?.page_epoch === current.page_epoch && latest.active_tab_id === current.active_tab_id &&
-        latest.pending_dialog?.dialog_id === dialog.dialog_id && latest.pending_dialog.status === "pending"
+        latest.pending_dialog?.dialog_id === dialog.dialog_id &&
+        latest.pending_dialog.page_epoch === dialog.page_epoch &&
+        latest.pending_dialog.tab_id === dialog.tab_id &&
+        latest.pending_dialog.status === "pending"
     }
     const task = actionQueueRef.current.catch(() => undefined).then(async () => {
       if (!matchesDialog()) return

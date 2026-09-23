@@ -123,7 +123,7 @@ it("focuses a pending prompt and traps keyboard focus inside the dialog", async 
     viewport: { width: 640, height: 480 }, can_go_back: false, can_go_forward: false,
     pending_dialog: {
       dialog_id: "a".repeat(24), tab_id: "tab-a", page_epoch: 8,
-      url: "https://example.test/", type: "prompt" as const,
+      url: "javascript:untrusted()", type: "prompt" as const,
       message: "Enter a value", message_truncated: false,
       default_value: "shown prefix", default_value_truncated: true,
       expires_at_ms: Date.now() + 30_000, status: "pending" as const,
@@ -134,6 +134,7 @@ it("focuses a pending prompt and traps keyboard focus inside the dialog", async 
   await act(async () => root.render(<BrowserPane sessionId="prompt-chat" active />))
 
   const modal = host.querySelector<HTMLDivElement>('[role="dialog"]')!
+  expect(modal.textContent).toContain("来自 未知网页")
   const prompt = host.querySelector<HTMLTextAreaElement>('textarea[aria-label="弹窗输入"]')!
   const accept = Array.from(modal.querySelectorAll("button")).find((button) => button.textContent === "确定")!
   const cancel = Array.from(modal.querySelectorAll("button")).find((button) => button.textContent === "取消")!

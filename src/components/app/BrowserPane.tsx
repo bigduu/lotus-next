@@ -22,6 +22,15 @@ const limitPromptText = (value: string): string => {
   return /[\uD800-\uDBFF]$/.test(bounded) ? bounded.slice(0, -1) : bounded
 }
 
+const dialogSourceOrigin = (rawUrl: string): string => {
+  try {
+    const url = new URL(rawUrl)
+    return url.protocol === "http:" || url.protocol === "https:" ? url.origin : "未知网页"
+  } catch {
+    return "未知网页"
+  }
+}
+
 export function BrowserPane({
   sessionId,
   active,
@@ -395,6 +404,7 @@ export function BrowserPane({
               <div className="text-sm font-semibold">
                 {pendingDialog.type === "alert" ? "网页提示" : pendingDialog.type === "confirm" ? "网页确认" : "网页输入"}
               </div>
+              <p className="break-words text-xs text-muted-foreground">来自 {dialogSourceOrigin(pendingDialog.url)}</p>
               <p className="whitespace-pre-wrap break-words text-sm">{pendingDialog.message}</p>
               {pendingDialog.message_truncated ? <p className="text-xs text-muted-foreground">网页提示内容已截断。</p> : null}
               {pendingDialog.type === "prompt" ? (

@@ -508,6 +508,47 @@ it("answers an exact dialog without prompt text when untouched and refreshes a s
   expect(browser.error).toBeNull()
 })
 
+it("answers a background tab dialog using that dialog's identity while another tab stays active", async () => {
+  const pending = pendingState("confirm")
+  pending.pending_dialog!.tab_id = "tab-b"
+  pending.pending_dialog!.url = "https://background.test/question"
+  vi.mocked(browserService.open).mockResolvedValue(pending)
+  vi.mocked(browserService.frame).mockImplementation(() => new Promise(() => {}))
+  vi.mocked(browserService.respondDialog).mockResolvedValue(tabbedState(17, "tab-a"))
+
+  await act(async () => root.render(<Harness />))
+  await act(async () => browser.respondDialog(false))
+  expect(browserService.respondDialog).toHaveBeenCalledWith("sid", {
+    dialog_id: "a".repeat(24), expected_epoch: 17, accept: false,
+  })
+  expect(browser.state?.active_tab_id).toBe("tab-a")
+  expect(browser.state?.pending_dialog).toBeUndefined()
+})
+
+it("discards a late background tab response after the active tab changes", async () => {
+  const pending = pendingState("confirm")
+  pending.pending_dialog!.tab_id = "tab-b"
+  pending.pending_dialog!.url = "https://background.test/question"
+  let releaseResponse!: (value: BrowserState) => void
+  const response = new Promise<BrowserState>((resolve) => { releaseResponse = resolve })
+  vi.mocked(browserService.open).mockResolvedValue(pending)
+  vi.mocked(browserService.frame).mockImplementation(() => new Promise(() => {}))
+  vi.mocked(browserService.respondDialog).mockImplementation(() => response)
+  vi.mocked(browserService.get).mockResolvedValue({
+    ...tabbedState(18, "tab-b"), pending_dialog: pending.pending_dialog,
+  })
+
+  await act(async () => root.render(<Harness />))
+  let answering!: Promise<void>
+  await act(async () => { answering = browser.respondDialog(true) })
+  expect(browserService.respondDialog).toHaveBeenCalledTimes(1)
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 450)) })
+  expect(browser.state?.active_tab_id).toBe("tab-b")
+  await act(async () => { releaseResponse(pending); await answering })
+  expect(browser.state?.active_tab_id).toBe("tab-b")
+  expect(browser.state?.page_epoch).toBe(18)
+})
+
 it("sends an explicitly empty prompt and discards a late result after model tab change", async () => {
   let releaseResponse!: (value: BrowserState) => void
   const response = new Promise<BrowserState>((resolve) => { releaseResponse = resolve })

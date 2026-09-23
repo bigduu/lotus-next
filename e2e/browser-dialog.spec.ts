@@ -36,7 +36,10 @@ test("desktop and tablet keep the shared browser frame while a person answers Ja
   let staleNextResponse = false
   const state = () => ({
     page_epoch: epoch, frame_seq: frameSeq, active_tab_id: "tab-a",
-    tabs: [{ tab_id: "tab-a", url: "https://example.test/", title: "Example", active: true }],
+    tabs: [
+      { tab_id: "tab-a", url: "https://example.test/", title: "Example", active: true },
+      { tab_id: "tab-b", url: "https://background.test/question", title: "Background", active: false },
+    ],
     url: "https://example.test/", title: "Example", viewport,
     can_go_back: false, can_go_forward: false, pending_dialog: dialog,
   })
@@ -136,7 +139,14 @@ test("desktop and tablet keep the shared browser frame while a person answers Ja
   expect(responses.at(-1)).toEqual({ dialog_id: "1".padStart(24, "0"), expected_epoch: epoch, accept: true })
 
   showDialog("confirm")
+  dialog!.tab_id = "tab-b"
+  dialog!.url = "https://background.test/question"
   await expect(modal).toContainText("confirm from page")
+  await expect(modal).toContainText("来自 https://background.test")
+  await expect(browser.getByRole("textbox", { name: "网页地址" })).toHaveValue("https://example.test/")
+  const backgroundScreenshotPath = testInfo.outputPath(`browser-background-${testInfo.project.name}.png`)
+  await page.screenshot({ path: backgroundScreenshotPath })
+  await testInfo.attach(`browser-background-${testInfo.project.name}`, { path: backgroundScreenshotPath, contentType: "image/png" })
   await modal.getByRole("button", { name: "取消" }).click()
   await expect(modal).toHaveCount(0)
   expect(responses.at(-1)).toEqual({ dialog_id: "2".padStart(24, "0"), expected_epoch: epoch, accept: false })
