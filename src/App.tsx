@@ -247,7 +247,7 @@ function App() {
               <Inspector
                 embedded
                 sessionId={currentSessionId}
-                open={workbenchTab === "inspector"}
+                open={selectedWorkbenchTab === "inspector"}
                 onClose={() => setWorkbenchOpen(false)}
                 workspace={displayWorkspace}
                 onEditWorkspace={() => setWsPickerOpen(true)}
