@@ -23,6 +23,8 @@ type Entry = {
   toolName: string
   params?: Record<string, unknown>
   result?: { text: string; isError: boolean }
+  focusedBrowserInput: boolean
+  browserTool: boolean
   /** Set when the result marks a background/async shell (see parseBackgroundBash). */
   background?: { bashId: string; command: string }
 }
@@ -71,6 +73,8 @@ function parseBackgroundBash(
 }
 
 const VISIBLE_CAP = 3
+const BROWSER_PREVIEW_MAX_LENGTH = 16 * 1024
+const APPROVAL_STATUS = "等待用户批准"
 
 // Noisy keys that bloat the display (huge PATH / env dumps) — never shown.
 const NOISE_KEYS = new Set(["environment", "env", "cwd", "import_shell", "path_env"])
@@ -106,6 +110,72 @@ const firstString = (params: Record<string, unknown> | undefined, keys: string[]
     if (typeof value === "string" && value.trim()) return value
   }
   return undefined
+}
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  value !== null && typeof value === "object" && !Array.isArray(value)
+
+const isBrowserTool = (toolName: string) =>
+  toolName.trim().toLowerCase().split(/__|\./).at(-1) === "browser"
+
+const hasSemanticTarget = (value: unknown) => {
+  if (!isRecord(value)) return false
+  if (value.kind === "role") return typeof value.role === "string" && value.role.trim().length > 0
+  if (value.kind === "label" || value.kind === "text") {
+    return typeof value.value === "string" && value.value.trim().length > 0
+  }
+  return false
+}
+
+function displayParams(toolName: string, value: unknown): {
+  params?: Record<string, unknown>
+  focusedBrowserInput: boolean
+  browserTool: boolean
+} {
+  const browserTool = isBrowserTool(toolName)
+  if (!isRecord(value)) return { browserTool, focusedBrowserInput: browserTool }
+  if (!browserTool) return { params: value, browserTool, focusedBrowserInput: false }
+
+  // Persisted malformed arguments arrive as { raw: originalString }. Treat
+  // unknown browser arguments as private so a result cannot echo their input.
+  try {
+    if ("raw" in value || JSON.stringify(value).length > BROWSER_PREVIEW_MAX_LENGTH) {
+      return { browserTool, focusedBrowserInput: true }
+    }
+  } catch {
+    return { browserTool, focusedBrowserInput: true }
+  }
+
+  const action = typeof value.action === "string" ? value.action.toLowerCase() : ""
+  const selector = typeof value.selector === "string" && value.selector.trim().length > 0
+  const focusedBrowserInput = action === "type" || action === "key" ||
+    (action === "press" && !selector && !hasSemanticTarget(value.target))
+  if (focusedBrowserInput) {
+    // A whitelist keeps text/key and unexpected nested argument fields out of
+    // both the collapsed summary and the expanded details.
+    return { params: { action }, browserTool, focusedBrowserInput }
+  }
+  if (!action) return { browserTool, focusedBrowserInput: true }
+  return { params: value, browserTool, focusedBrowserInput: false }
+}
+
+function displayResult(entry: Entry, text: string): string {
+  if (!text) return ""
+  const possiblyApproval = text.includes("awaiting_permission_approval") || text.includes("permission_request")
+  if ((entry.browserTool || possiblyApproval) && text.length > BROWSER_PREVIEW_MAX_LENGTH) return ""
+
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(text)
+  } catch {
+    return entry.browserTool || possiblyApproval ? "" : text
+  }
+  if (isRecord(parsed) &&
+    (parsed.status === "awaiting_permission_approval" || "permission_request" in parsed)) {
+    return APPROVAL_STATUS
+  }
+  if (entry.focusedBrowserInput) return entry.result?.isError ? "浏览器输入失败" : "浏览器输入已完成"
+  return entry.browserTool && !isRecord(parsed) ? "" : text
 }
 
 const readableToolName = (toolName: string) =>
@@ -278,16 +348,16 @@ function prettyResult(text: string): string {
 }
 
 function buildEntries(items: Message[]): Entry[] {
-  const calls: { id: string; toolName: string; params?: Record<string, unknown> }[] = []
+  const calls: { id: string; toolName: string; params?: Record<string, unknown>; focusedBrowserInput: boolean; browserTool: boolean }[] = []
   const results = new Map<string, { text: string; isError: boolean }>()
   for (const m of items) {
     const t = (m as { type?: string }).type
     if (t === "tool_call") {
       const tcs =
-        (m as { toolCalls?: { toolCallId: string; toolName: string; parameters?: Record<string, unknown> }[] })
+        (m as { toolCalls?: { toolCallId: string; toolName: string; parameters?: unknown }[] })
           .toolCalls ?? []
       for (const tc of tcs)
-        calls.push({ id: tc.toolCallId, toolName: tc.toolName, params: tc.parameters })
+        calls.push({ id: tc.toolCallId, toolName: tc.toolName, ...displayParams(tc.toolName, tc.parameters) })
     } else if (t === "tool_result") {
       const r = m as {
         toolCallId?: string
@@ -302,11 +372,17 @@ function buildEntries(items: Message[]): Entry[] {
     }
   }
   return calls.map((c) => {
-    const result = results.get(c.id)
+    const rawResult = results.get(c.id)
+    const result = rawResult && {
+      isError: rawResult.isError,
+      text: displayResult({ ...c, result: rawResult }, rawResult.text),
+    }
     const background = result ? parseBackgroundBash(result.text) : null
     return {
       toolName: c.toolName,
       params: c.params,
+      focusedBrowserInput: c.focusedBrowserInput,
+      browserTool: c.browserTool,
       result,
       background: background ?? undefined,
     }
