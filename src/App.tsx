@@ -8,7 +8,7 @@ import { useThemeStore } from "@shared/store/themeStore"
 import { useChat } from "@/hooks/useChat"
 import { useResizableWidth } from "@/hooks/useResizableWidth"
 import { ResizeHandle } from "@/components/ui/resize-handle"
-import { useIsWide } from "@shared/hooks/useMediaQuery"
+import { useIsMobile, useIsWide } from "@shared/hooks/useMediaQuery"
 import { useAppStore } from "@shared/store/appStore"
 import { isVdiSafeModeEnabled, onVdiSafeModeChange } from "@shared/utils/vdiSafeMode"
 import { Sidebar } from "@/components/app/Sidebar"
@@ -86,7 +86,9 @@ function App() {
   const [workbenchOpen, setWorkbenchOpen] = useState(false)
   const [workbenchTab, setWorkbenchTab] = useState<RightWorkbenchTab>("inspector")
   const [reviewTargetFilePath, setReviewTargetFilePath] = useState<string | null>(null)
+  const isMobile = useIsMobile()
   const isWide = useIsWide()
+  const selectedWorkbenchTab = isMobile && workbenchTab === "browser" ? "inspector" : workbenchTab
   // Draggable, persisted widths for the resizable side panels (desktop).
   const sidebarResize = useResizableWidth("lotus_next_sidebar_w", 288, {
     min: 220,
@@ -233,7 +235,8 @@ function App() {
           <RightWorkbench
             docked={isWide}
             width={workbenchResize.width}
-            activeTab={workbenchTab}
+            activeTab={selectedWorkbenchTab}
+            browserEnabled={!isMobile}
             onTabChange={(tab) => {
               if (tab === "review") setReviewTargetFilePath(null)
               setWorkbenchTab(tab)
@@ -244,7 +247,7 @@ function App() {
               <Inspector
                 embedded
                 sessionId={currentSessionId}
-                open={workbenchTab === "inspector"}
+                open={selectedWorkbenchTab === "inspector"}
                 onClose={() => setWorkbenchOpen(false)}
                 workspace={displayWorkspace}
                 onEditWorkspace={() => setWsPickerOpen(true)}
@@ -259,13 +262,13 @@ function App() {
                 targetFilePath={reviewTargetFilePath}
               />
             )}
-            browser={
+            browser={!isMobile ? (
               <BrowserPane
                 key={currentSessionId ?? "no-session"}
                 sessionId={currentSessionId}
                 active={workbenchTab === "browser"}
               />
-            }
+            ) : null}
             session={
               <div className="relative flex min-h-0 flex-1">
                 {secondLoadState === "loading" ? (

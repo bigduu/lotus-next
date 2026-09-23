@@ -35,6 +35,9 @@ it("binds every browser action to one encoded Bamboo session and epoch", async (
   await service.history("session/a", "back", 7)
   await service.viewport("session/a", { width: 640, height: 480 }, 7)
   await service.input("session/a", { kind: "click", x: 12, y: 24 }, 7)
+  await service.createTab("session/a", 7)
+  await service.activateTab("session/a", "tab/b", 7)
+  await service.closeTab("session/a", "tab/b", 7)
 
   expect(apiClient.put).toHaveBeenCalledWith("browser/sessions/session%2Fa", {}, { signal })
   expect(apiClient.post).toHaveBeenNthCalledWith(
@@ -57,6 +60,21 @@ it("binds every browser action to one encoded Bamboo session and epoch", async (
     "browser/sessions/session%2Fa/input",
     { kind: "click", x: 12, y: 24, expected_epoch: 7 },
   )
+  expect(apiClient.post).toHaveBeenNthCalledWith(
+    5,
+    "browser/sessions/session%2Fa/tabs",
+    { expected_epoch: 7 },
+  )
+  expect(apiClient.post).toHaveBeenNthCalledWith(
+    6,
+    "browser/sessions/session%2Fa/tabs/activate",
+    { tab_id: "tab/b", expected_epoch: 7 },
+  )
+  expect(apiClient.post).toHaveBeenNthCalledWith(
+    7,
+    "browser/sessions/session%2Fa/tabs/close",
+    { tab_id: "tab/b", expected_epoch: 7 },
+  )
 })
 
 it("reads JPEG frame metadata, treats 204 as unchanged, and captures a fresh screenshot", async () => {
@@ -67,18 +85,19 @@ it("reads JPEG frame metadata, treats 204 as unchanged, and captures a fresh scr
         "content-type": "image/jpeg",
         "X-Frame-Seq": "9",
         "X-Page-Epoch": "42",
+        "X-Tab-Id": "tab-a",
         "X-Viewport-Width": "800",
         "X-Viewport-Height": "600",
       },
     }))
     .mockResolvedValueOnce(new Response(null, { status: 204 }))
     .mockResolvedValueOnce(new Response(bytes, {
-      headers: { "content-type": "image/jpeg" },
+      headers: { "content-type": "image/jpeg", "X-Page-Epoch": "42", "X-Tab-Id": "tab-a" },
     }))
 
   const signal = new AbortController().signal
   const frame = await service.frame("sid", 8, 1500, signal)
-  expect(frame).toMatchObject({ frame_seq: 9, page_epoch: 42, viewport: { width: 800, height: 600 } })
+  expect(frame).toMatchObject({ frame_seq: 9, page_epoch: 42, active_tab_id: "tab-a", viewport: { width: 800, height: 600 } })
   expect(frame?.blob.size).toBe(bytes.byteLength)
   expect(frame?.blob.type).toBe("image/jpeg")
   expect(apiClient.fetchRaw).toHaveBeenNthCalledWith(
@@ -87,7 +106,11 @@ it("reads JPEG frame metadata, treats 204 as unchanged, and captures a fresh scr
     { cache: "no-store", signal },
   )
   await expect(service.frame("sid", 9, 1500, signal)).resolves.toBeNull()
-  expect((await service.screenshot("sid", signal)).size).toBe(bytes.byteLength)
+  expect(await service.screenshot("sid", signal)).toMatchObject({
+    page_epoch: 42,
+    active_tab_id: "tab-a",
+    blob: expect.objectContaining({ size: bytes.byteLength }),
+  })
   expect(apiClient.fetchRaw).toHaveBeenNthCalledWith(
     3,
     "browser/sessions/sid/screenshot",

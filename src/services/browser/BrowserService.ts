@@ -4,6 +4,7 @@ import type {
   BrowserFrame,
   BrowserHistoryDirection,
   BrowserInput,
+  BrowserScreenshot,
   BrowserState,
   BrowserViewport,
 } from "./types"
@@ -18,6 +19,13 @@ const nonNegativeIntegerHeader = (response: Response, name: string): number => {
     throw new Error(`Invalid browser frame ${name} header`)
   }
   return value
+}
+
+const tabIdHeader = (response: Response): string | undefined => {
+  const id = response.headers.get("X-Tab-Id")
+  if (id === null) return undefined
+  if (!id.trim()) throw new Error("Invalid browser X-Tab-Id header")
+  return id
 }
 
 export class BrowserService {
@@ -69,6 +77,26 @@ export class BrowserService {
     })
   }
 
+  createTab(sessionId: string, expectedEpoch: number): Promise<BrowserState> {
+    return apiClient.post<BrowserState>(`${sessionPath(sessionId)}/tabs`, {
+      expected_epoch: expectedEpoch,
+    })
+  }
+
+  activateTab(sessionId: string, tabId: string, expectedEpoch: number): Promise<BrowserState> {
+    return apiClient.post<BrowserState>(`${sessionPath(sessionId)}/tabs/activate`, {
+      tab_id: tabId,
+      expected_epoch: expectedEpoch,
+    })
+  }
+
+  closeTab(sessionId: string, tabId: string, expectedEpoch: number): Promise<BrowserState> {
+    return apiClient.post<BrowserState>(`${sessionPath(sessionId)}/tabs/close`, {
+      tab_id: tabId,
+      expected_epoch: expectedEpoch,
+    })
+  }
+
   dom(sessionId: string, signal?: AbortSignal): Promise<BrowserDomSnapshot> {
     return apiClient.get<BrowserDomSnapshot>(`${sessionPath(sessionId)}/dom`, { signal })
   }
@@ -91,6 +119,7 @@ export class BrowserService {
       }
       const frame_seq = nonNegativeIntegerHeader(response, "X-Frame-Seq")
       const page_epoch = nonNegativeIntegerHeader(response, "X-Page-Epoch")
+      const active_tab_id = tabIdHeader(response)
       const width = nonNegativeIntegerHeader(response, "X-Viewport-Width")
       const height = nonNegativeIntegerHeader(response, "X-Viewport-Height")
       if (width === 0 || height === 0) {
@@ -100,6 +129,7 @@ export class BrowserService {
         blob: await response.blob(),
         frame_seq,
         page_epoch,
+        active_tab_id,
         viewport: { width, height },
       }
     } catch (error) {
@@ -108,7 +138,7 @@ export class BrowserService {
     }
   }
 
-  async screenshot(sessionId: string, signal?: AbortSignal): Promise<Blob> {
+  async screenshot(sessionId: string, signal?: AbortSignal): Promise<BrowserScreenshot> {
     const response = await apiClient.fetchRaw(`${sessionPath(sessionId)}/screenshot`, {
       cache: "no-store",
       signal,
@@ -117,7 +147,9 @@ export class BrowserService {
       if (!response.headers.get("content-type")?.toLowerCase().startsWith("image/jpeg")) {
         throw new Error("Browser screenshot is not a JPEG image")
       }
-      return await response.blob()
+      const page_epoch = nonNegativeIntegerHeader(response, "X-Page-Epoch")
+      const active_tab_id = tabIdHeader(response)
+      return { blob: await response.blob(), page_epoch, active_tab_id }
     } catch (error) {
       await response.body?.cancel().catch(() => undefined)
       throw error

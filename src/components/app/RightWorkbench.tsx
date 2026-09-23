@@ -16,6 +16,7 @@ export function RightWorkbench({
   session,
   sessionTitle,
   docked = false,
+  browserEnabled = true,
   width,
 }: {
   activeTab: RightWorkbenchTab
@@ -27,6 +28,7 @@ export function RightWorkbench({
   session: ReactNode
   sessionTitle?: string | null
   docked?: boolean
+  browserEnabled?: boolean
   width?: number
 }) {
   const body = (
@@ -45,10 +47,12 @@ export function RightWorkbench({
             <FileDiff />
             Review
           </TabsTrigger>
-          <TabsTrigger value="browser" className="flex-none px-3">
-            <Globe2 />
-            浏览器
-          </TabsTrigger>
+          {browserEnabled ? (
+            <TabsTrigger value="browser" className="flex-none px-3">
+              <Globe2 />
+              浏览器
+            </TabsTrigger>
+          ) : null}
           <TabsTrigger
             value="session"
             className="min-w-0 flex-none px-3"
@@ -70,9 +74,11 @@ export function RightWorkbench({
       <TabsContent value="review" className="flex min-h-0 overflow-hidden">
         {review}
       </TabsContent>
-      <TabsContent value="browser" className="flex min-h-0 min-w-0 overflow-hidden">
-        {browser}
-      </TabsContent>
+      {browserEnabled ? (
+        <TabsContent value="browser" className="flex min-h-0 min-w-0 overflow-hidden">
+          {browser}
+        </TabsContent>
+      ) : null}
       <TabsContent value="session" className="flex min-h-0 overflow-hidden">
         {session}
       </TabsContent>

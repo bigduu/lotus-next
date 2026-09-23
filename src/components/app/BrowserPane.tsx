@@ -6,12 +6,13 @@ import {
   Code2,
   ExternalLink,
   LoaderCircle,
+  Plus,
   RefreshCw,
   X,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { useBrowserSession } from "@/hooks/useBrowserSession"
-import { pointInBrowserFrame } from "@/lib/browserFrame"
+import { matchesActiveBrowserPage, pointInBrowserFrame } from "@/lib/browserFrame"
 import { normalizeBrowserAddress, playwrightKey } from "@/lib/browserInput"
 import { FileOperationsService } from "@/shared/services/FileOperationsService"
 
@@ -36,6 +37,12 @@ export function BrowserPane({
   const sendViewport = browser.viewport
   const sendInput = browser.input
   const currentFrame = browser.frame
+  const visibleFrame = currentFrame && matchesActiveBrowserPage(currentFrame, browser.state)
+    ? currentFrame
+    : null
+  const tabs = browser.state?.active_tab_id && browser.state.tabs
+    ? browser.state.tabs
+    : null
 
   useEffect(() => {
     setAddress(browser.state?.url ?? "")
@@ -44,7 +51,7 @@ export function BrowserPane({
   useEffect(() => {
     saveGenerationRef.current += 1
     setSaveError(null)
-  }, [sessionId])
+  }, [sessionId, browser.state?.active_tab_id, browser.state?.page_epoch])
 
   useEffect(() => {
     if (!sessionId || !active || viewportWidth === undefined || viewportHeight === undefined) return
@@ -82,24 +89,23 @@ export function BrowserPane({
     const currentState = browser.state
     if (
       browser.busy ||
-      !currentFrame ||
+      !visibleFrame ||
       !currentState ||
       !imageRef.current ||
-      currentFrame.page_epoch !== currentState.page_epoch ||
-      currentFrame.viewport.width !== currentState.viewport.width ||
-      currentFrame.viewport.height !== currentState.viewport.height
+      visibleFrame.viewport.width !== currentState.viewport.width ||
+      visibleFrame.viewport.height !== currentState.viewport.height
     ) return null
     return pointInBrowserFrame(
       clientX,
       clientY,
       imageRef.current.getBoundingClientRect(),
-      currentFrame,
+      visibleFrame,
     )
-  }, [browser.busy, browser.state, currentFrame])
+  }, [browser.busy, browser.state, visibleFrame])
 
   useEffect(() => {
     const element = viewportRef.current
-    if (!element || !currentFrame) return
+    if (!element || !visibleFrame) return
     const wheel = (event: WheelEvent) => {
       if (!imageRef.current?.contains(event.target as Node)) return
       const location = point(event.clientX, event.clientY)
@@ -114,7 +120,7 @@ export function BrowserPane({
     }
     element.addEventListener("wheel", wheel, { passive: false })
     return () => element.removeEventListener("wheel", wheel)
-  }, [currentFrame, point, sendInput])
+  }, [visibleFrame, point, sendInput])
 
   const navigate = (event: FormEvent) => {
     event.preventDefault()
@@ -147,9 +153,10 @@ export function BrowserPane({
     const generation = saveGenerationRef.current
     setSaveError(null)
     const screenshot = await browser.captureScreenshot()
-    if (!screenshot || generation !== saveGenerationRef.current) return
+    if (!screenshot || generation !== saveGenerationRef.current || !browser.isCurrentPage(screenshot)) return
     try {
-      const bytes = new Uint8Array(await screenshot.arrayBuffer())
+      const bytes = new Uint8Array(await screenshot.blob.arrayBuffer())
+      if (generation !== saveGenerationRef.current || !browser.isCurrentPage(screenshot)) return
       const result = await FileOperationsService.saveBinaryFile(
         bytes,
         [{ name: "JPEG 图像", extensions: ["jpg"] }],
@@ -173,6 +180,48 @@ export function BrowserPane({
 
   return (
     <section className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden" aria-label="内置浏览器" data-browser-pane>
+      {tabs ? (
+        <div className="flex min-w-0 shrink-0 items-center border-b bg-muted" aria-label="浏览器标签页">
+          <nav className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto px-2 py-1" aria-label="浏览器标签列表">
+            {tabs.map((tab, index) => {
+              const label = tab.title || tab.url || "新标签页"
+              const isActive = tab.tab_id === browser.state?.active_tab_id
+              return (
+                <div
+                  key={tab.tab_id}
+                  style={{ maxWidth: 176 }}
+                  className={`flex h-8 shrink-0 items-center rounded-md border text-xs ${isActive ? "border-border bg-background text-foreground shadow-sm" : "border-transparent text-muted-foreground hover:bg-muted"}`}
+                >
+                  <button
+                    type="button"
+                    aria-label={`切换到标签页 ${index + 1}：${label}`}
+                    aria-current={isActive ? "page" : undefined}
+                    title={label}
+                    disabled={browser.busy || isActive}
+                    className="h-full min-w-0 flex-1 truncate px-2 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default"
+                    onClick={() => void browser.activateTab(tab.tab_id)}
+                  >
+                    {label}
+                  </button>
+                  <button
+                    type="button"
+                    aria-label={`关闭标签页 ${index + 1}：${label}`}
+                    title={`关闭 ${label}`}
+                    disabled={browser.busy}
+                    className="mr-1 flex size-6 shrink-0 items-center justify-center rounded-sm outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
+                    onClick={() => void browser.closeTab(tab.tab_id)}
+                  >
+                    <X className="size-3.5" aria-hidden="true" />
+                  </button>
+                </div>
+              )
+            })}
+          </nav>
+          <Button size="icon" variant="ghost" className="size-8 shrink-0" aria-label="新建标签页" disabled={browser.busy} onClick={() => void browser.createTab()}>
+            <Plus className="size-4" />
+          </Button>
+        </div>
+      ) : null}
       <div className="flex shrink-0 items-center gap-1 border-b p-2">
         <Button size="icon" variant="ghost" aria-label="后退" disabled={!browser.state?.can_go_back || browser.busy} onClick={() => void browser.history("back")}>
           <ArrowLeft />
@@ -225,11 +274,11 @@ export function BrowserPane({
       ) : null}
 
       <div ref={viewportRef} className="relative min-h-0 min-w-0 flex-1 overflow-hidden bg-muted" data-browser-viewport>
-        {browser.frame ? (
+        {visibleFrame ? (
           <div className="absolute inset-0" onMouseDown={clickFrame} onContextMenu={(event) => event.preventDefault()}>
             <img
               ref={imageRef}
-              src={browser.frame.objectUrl}
+              src={visibleFrame.objectUrl}
               alt="网页画面"
               draggable={false}
               className="h-full w-full select-none object-contain"

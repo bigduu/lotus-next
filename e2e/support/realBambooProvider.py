@@ -12,6 +12,7 @@ import hmac
 import http.client
 import json
 import os
+import re
 import stat
 import sys
 import threading
@@ -21,7 +22,7 @@ from io import StringIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any, Iterator, TextIO
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 
 MODEL = "gpt-4o-mini"
@@ -32,6 +33,9 @@ SELF_TEST_SUCCESS_MESSAGE = "deterministic provider self-test passed"
 PERMISSION_TOOL_MARKER = "LOTUS_PERMISSION_TOOL_EXECUTED"
 PERMISSION_TOOL_COMMAND = f"printf '{PERMISSION_TOOL_MARKER}'"
 PERMISSION_TOOL_CALL_ID = "call_lotus_permission_e2e"
+BROWSER_DISCOVERY_CALL_ID = "call_lotus_browser_discovery_e2e"
+BROWSER_SNAPSHOT_CALL_ID = "call_lotus_browser_snapshot_e2e"
+BROWSER_CLICK_CALL_ID = "call_lotus_browser_click_e2e"
 
 
 def mcp_fixture_response(request: Any) -> dict[str, Any] | None:
@@ -104,6 +108,21 @@ def validate_mcp_fixture() -> None:
             or responses[3]["result"]["content"][0]["text"] != "LOTUS_MCP_IMPORT_TOOL_OK"
             or responses[4]["result"] != {}):
         raise RuntimeError("MCP fixture protocol or redaction self-test failed")
+
+
+def validate_browser_fixture(port: int) -> None:
+    for tab, title in (("alpha", "Alpha fixture"), ("beta", "Beta fixture"),
+                       ("popup", "Popup fixture")):
+        connection = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+        try:
+            connection.request("GET", f"/browser-tabs-fixture?tab={tab}")
+            response = connection.getresponse()
+            body = response.read().decode("utf-8")
+            if (response.status != 200 or title not in body
+                    or 'id="popup"' not in body or 'target="_blank"' not in body):
+                raise RuntimeError("browser tab fixture returned an invalid page")
+        finally:
+            connection.close()
 
 
 def required_environment(name: str) -> str:
@@ -230,6 +249,22 @@ class ProviderHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _send_browser_fixture(self, tab: str) -> None:
+        title = {"alpha": "Alpha fixture", "beta": "Beta fixture", "popup": "Popup fixture"}[tab]
+        color = {"alpha": "#e8f4ff", "beta": "#effbea", "popup": "#fff0e8"}[tab]
+        body = (f"<!doctype html><html><head><title>{title}</title>"
+                f"<style>body{{font:24px sans-serif;background:{color};padding:36px}}"
+                "a{display:inline-block;margin-top:24px}</style></head>"
+                f"<body><h1>{title}</h1>"
+                '<a id="popup" href="?tab=popup" target="_blank" rel="noopener">Open popup</a>'
+                "</body></html>").encode("utf-8")
+        self.send_response(200)
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
     def _authorized(self) -> bool:
         actual = self.headers.get("Authorization", "")
         expected = f"Bearer {self.api_key}"
@@ -242,9 +277,17 @@ class ProviderHandler(BaseHTTPRequestHandler):
         return False
 
     def do_GET(self) -> None:
+        parsed = urlsplit(self.path)
+        if parsed.path == "/browser-tabs-fixture":
+            tab = parse_qs(parsed.query).get("tab", [""])[0]
+            if tab in {"alpha", "beta", "popup"}:
+                self._send_browser_fixture(tab)
+            else:
+                self._send_json(404, {"error": {"message": "unknown browser fixture"}})
+            return
         if not self._require_authorization():
             return
-        request_path = urlsplit(self.path).path
+        request_path = parsed.path
         if request_path != "/v1/models":
             self._send_json(
                 404, {"error": {"message": "unsupported test provider path"}}
@@ -335,6 +378,9 @@ class ProviderHandler(BaseHTTPRequestHandler):
         permission_scenario = contains_marker(
             last_user.get("content"), f"{self.user_marker}:permission"
         )
+        browser_scenario = contains_marker(
+            last_user.get("content"), f"{self.user_marker}:browser-popup"
+        )
         delta: dict[str, Any] = {
             "role": "assistant", "content": self.assistant_marker
         }
@@ -379,6 +425,57 @@ class ProviderHandler(BaseHTTPRequestHandler):
                                 "description": "Print the isolated permission acceptance marker",
                             }),
                         },
+                    }],
+                }
+                finish_reason = "tool_calls"
+        elif browser_scenario:
+            tools = body.get("tools", [])
+            offered = {
+                tool["function"]["name"]
+                for tool in tools if isinstance(tool, dict)
+                and isinstance(tool.get("function"), dict)
+                and isinstance(tool["function"].get("name"), str)
+            } if isinstance(tools, list) else set()
+            results = {
+                message.get("tool_call_id"): message
+                for message in messages if isinstance(message, dict)
+                and message.get("role") == "tool"
+            }
+            if BROWSER_CLICK_CALL_ID in results:
+                delta["content"] = f"{self.assistant_marker}:browser-popup"
+            else:
+                if BROWSER_DISCOVERY_CALL_ID not in results:
+                    name = "discover_capabilities"
+                    call_id = BROWSER_DISCOVERY_CALL_ID
+                    arguments = {"query": "browser", "kinds": ["tool"], "limit": 1}
+                elif BROWSER_SNAPSHOT_CALL_ID not in results:
+                    name = "browser"
+                    call_id = BROWSER_SNAPSHOT_CALL_ID
+                    arguments = {"action": "snapshot"}
+                else:
+                    content = results[BROWSER_SNAPSHOT_CALL_ID].get("content")
+                    match = re.search(r"page_epoch:\s*(\d+)", content) if isinstance(content, str) else None
+                    if match is None:
+                        self._send_json(422, {"error": {"message": (
+                            "browser fixture requires a successful model-visible snapshot"
+                        )}})
+                        return
+                    name = "browser"
+                    call_id = BROWSER_CLICK_CALL_ID
+                    arguments = {"action": "click", "selector": "#popup",
+                                 "expected_epoch": int(match.group(1))}
+                if name not in offered:
+                    self._send_json(422, {"error": {"message": (
+                        "browser fixture requires the offered discovery or browser tool"
+                    )}})
+                    return
+                delta = {
+                    "role": "assistant",
+                    "tool_calls": [{
+                        "index": 0,
+                        "id": call_id,
+                        "type": "function",
+                        "function": {"name": name, "arguments": json.dumps(arguments)},
                     }],
                 }
                 finish_reason = "tool_calls"
@@ -739,6 +836,64 @@ def validate_permission_scenario(*, port: int, api_key: str, user_marker: str,
         raise RuntimeError("permission fixture invented a tool not offered by Bamboo")
 
 
+def validate_browser_popup_scenario(*, port: int, api_key: str,
+                                    user_marker: str, assistant_marker: str) -> None:
+    messages: list[dict[str, Any]] = [{
+        "role": "user", "content": f"{user_marker}:browser-popup"
+    }]
+    document = {"model": MODEL, "stream": True, "messages": messages,
+                "tools": [{"type": "function", "function": {
+                    "name": "discover_capabilities", "parameters": {"type": "object"}
+                }}]}
+
+    def response_delta() -> dict[str, Any]:
+        status, content_type, body = request_completion(
+            api_key=api_key, port=port, request_document=document
+        )
+        if status != 200 or not content_type.startswith("text/event-stream"):
+            raise RuntimeError("browser fixture did not produce an SSE response")
+        frames = [json.loads(line.removeprefix("data:").strip())
+                  for line in body.decode("utf-8").splitlines()
+                  if line.startswith("data:") and line.strip() != "data: [DONE]"]
+        return frames[0]["choices"][0]["delta"]
+
+    discovery = response_delta()["tool_calls"][0]
+    if (discovery["id"] != BROWSER_DISCOVERY_CALL_ID
+            or discovery["function"]["name"] != "discover_capabilities"
+            or json.loads(discovery["function"]["arguments"])
+            != {"query": "browser", "kinds": ["tool"], "limit": 1}):
+        raise RuntimeError("browser fixture skipped capability discovery")
+    messages.append({"role": "tool", "tool_call_id": BROWSER_DISCOVERY_CALL_ID,
+                     "content": "<loaded_tools>browser</loaded_tools>"})
+    document["tools"] = [{"type": "function", "function": {
+        "name": "browser", "parameters": {"type": "object"}
+    }}]
+    snapshot = response_delta()["tool_calls"][0]
+    if (snapshot["id"] != BROWSER_SNAPSHOT_CALL_ID
+            or snapshot["function"]["name"] != "browser"
+            or json.loads(snapshot["function"]["arguments"])
+            != {"action": "snapshot"}):
+        raise RuntimeError("browser fixture skipped model-visible snapshot")
+    messages.append({"role": "tool", "tool_call_id": BROWSER_SNAPSHOT_CALL_ID,
+                     "content": "page_epoch: 123\nactive_tab_id: tab-a"})
+    click = response_delta()["tool_calls"][0]
+    if (click["id"] != BROWSER_CLICK_CALL_ID
+            or click["function"]["name"] != "browser"
+            or json.loads(click["function"]["arguments"])
+            != {"action": "click", "selector": "#popup", "expected_epoch": 123}):
+        raise RuntimeError("browser fixture did not click from snapshot epoch")
+    messages.append({"role": "tool", "tool_call_id": BROWSER_CLICK_CALL_ID,
+                     "content": "popup opened"})
+    if response_delta().get("content") != f"{assistant_marker}:browser-popup":
+        raise RuntimeError("browser fixture did not complete after click")
+    document["tools"] = []
+    document["messages"] = messages[:1]
+    status, _, _ = request_completion(api_key=api_key, port=port,
+                                      request_document=document)
+    if status != 422:
+        raise RuntimeError("browser fixture invented discovery without an offered tool")
+
+
 def create_provider_server(bind_port: int) -> ProviderServer:
     if bind_port < 0 or bind_port > 65535:
         raise RuntimeError("provider bind port is outside the TCP port range")
@@ -827,8 +982,15 @@ def run_self_test() -> None:
                     port=server.server_port,
                     api_key=environment["LOTUS_REAL_PROVIDER_API_KEY"],
                 )
+                validate_browser_fixture(server.server_port)
                 validate_smoke()
                 validate_permission_scenario(
+                    port=server.server_port,
+                    api_key=environment["LOTUS_REAL_PROVIDER_API_KEY"],
+                    user_marker=environment["LOTUS_REAL_PROVIDER_USER_MARKER"],
+                    assistant_marker=environment["LOTUS_REAL_PROVIDER_ASSISTANT_MARKER"],
+                )
+                validate_browser_popup_scenario(
                     port=server.server_port,
                     api_key=environment["LOTUS_REAL_PROVIDER_API_KEY"],
                     user_marker=environment["LOTUS_REAL_PROVIDER_USER_MARKER"],

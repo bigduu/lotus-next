@@ -1,5 +1,28 @@
 # syntax=docker/dockerfile:1
 
+FROM node:24.21.0-bookworm-slim AS browser-runtime
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates libssl3 python3 \
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd --system --uid 10001 --home-dir /data --shell /usr/sbin/nologin bamboo \
+    && mkdir -p /data \
+    && chown bamboo:bamboo /data
+
+WORKDIR /usr/local/libexec/bamboo-browser
+COPY browser-runtime/package.json browser-runtime/package-lock.json ./
+ENV PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright
+RUN npm ci --omit=dev --ignore-scripts \
+    && ./node_modules/.bin/playwright-core install --with-deps --only-shell chromium \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY browser-runtime/host.cjs /usr/local/libexec/bamboo-browser/host.cjs
+ENV HOME=/data
+ENV BAMBOO_BROWSER_NODE=/usr/local/bin/node
+ENV BAMBOO_BROWSER_HOST_SCRIPT=/usr/local/libexec/bamboo-browser/host.cjs
+
+USER bamboo
+
 FROM rust:1-bookworm AS builder
 
 WORKDIR /app
@@ -14,29 +37,19 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     BAMBOO_FRONTEND_BUILD_MODE=api-only cargo build --release --locked --bin bamboo \
     && cp /app/target/release/bamboo /tmp/bamboo
 
-FROM debian:bookworm-slim AS runtime
+FROM browser-runtime AS runtime
 
 ARG BAMBOO_REVISION
 LABEL org.opencontainers.image.revision="${BAMBOO_REVISION}"
 
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates libssl3 python3 \
-    && rm -rf /var/lib/apt/lists/* \
-    && useradd --system --uid 10001 --home-dir /data --shell /usr/sbin/nologin bamboo \
-    && mkdir -p /data \
-    && chown bamboo:bamboo /data
-
 COPY --from=builder /tmp/bamboo /usr/local/bin/bamboo
 COPY .lotus-real-bamboo-provider.py /usr/local/libexec/lotus-real-bamboo-provider.py
 
-ENV HOME=/data
 ENV BAMBOO_DATA_DIR=/data/bamboo
 ENV BAMBOO_PORT=9562
 ENV BAMBOO_BIND=0.0.0.0
 
 EXPOSE 9562
-
-USER bamboo
 
 ENTRYPOINT ["bamboo"]
 CMD ["serve", "--port", "9562", "--bind", "0.0.0.0", "--workers", "1", "--data-dir", "/data/bamboo", "--static-dir", "/frontend"]
