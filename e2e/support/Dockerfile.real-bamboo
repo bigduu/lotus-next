@@ -14,7 +14,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     BAMBOO_FRONTEND_BUILD_MODE=api-only cargo build --release --locked --bin bamboo \
     && cp /app/target/release/bamboo /tmp/bamboo
 
-FROM debian:bookworm-slim AS runtime
+FROM node:24.21.0-bookworm-slim AS runtime
 
 ARG BAMBOO_REVISION
 LABEL org.opencontainers.image.revision="${BAMBOO_REVISION}"
@@ -26,13 +26,23 @@ RUN apt-get update \
     && mkdir -p /data \
     && chown bamboo:bamboo /data
 
+WORKDIR /usr/local/libexec/bamboo-browser
+COPY browser-runtime/package.json browser-runtime/package-lock.json ./
+ENV PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright
+RUN npm ci --omit=dev --ignore-scripts \
+    && ./node_modules/.bin/playwright-core install --with-deps --only-shell chromium \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY --from=builder /tmp/bamboo /usr/local/bin/bamboo
+COPY browser-runtime/host.cjs /usr/local/libexec/bamboo-browser/host.cjs
 COPY .lotus-real-bamboo-provider.py /usr/local/libexec/lotus-real-bamboo-provider.py
 
 ENV HOME=/data
 ENV BAMBOO_DATA_DIR=/data/bamboo
 ENV BAMBOO_PORT=9562
 ENV BAMBOO_BIND=0.0.0.0
+ENV BAMBOO_BROWSER_NODE=/usr/local/bin/node
+ENV BAMBOO_BROWSER_HOST_SCRIPT=/usr/local/libexec/bamboo-browser/host.cjs
 
 EXPOSE 9562
 

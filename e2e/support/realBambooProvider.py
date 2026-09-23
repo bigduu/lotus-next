@@ -21,7 +21,7 @@ from io import StringIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any, Iterator, TextIO
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 
 MODEL = "gpt-4o-mini"
@@ -104,6 +104,21 @@ def validate_mcp_fixture() -> None:
             or responses[3]["result"]["content"][0]["text"] != "LOTUS_MCP_IMPORT_TOOL_OK"
             or responses[4]["result"] != {}):
         raise RuntimeError("MCP fixture protocol or redaction self-test failed")
+
+
+def validate_browser_fixture(port: int) -> None:
+    for tab, title in (("alpha", "Alpha fixture"), ("beta", "Beta fixture"),
+                       ("popup", "Popup fixture")):
+        connection = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+        try:
+            connection.request("GET", f"/browser-tabs-fixture?tab={tab}")
+            response = connection.getresponse()
+            body = response.read().decode("utf-8")
+            if (response.status != 200 or title not in body
+                    or 'id="popup"' not in body or 'target="_blank"' not in body):
+                raise RuntimeError("browser tab fixture returned an invalid page")
+        finally:
+            connection.close()
 
 
 def required_environment(name: str) -> str:
@@ -230,6 +245,22 @@ class ProviderHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _send_browser_fixture(self, tab: str) -> None:
+        title = {"alpha": "Alpha fixture", "beta": "Beta fixture", "popup": "Popup fixture"}[tab]
+        color = {"alpha": "#e8f4ff", "beta": "#effbea", "popup": "#fff0e8"}[tab]
+        body = (f"<!doctype html><html><head><title>{title}</title>"
+                f"<style>body{{font:24px sans-serif;background:{color};padding:36px}}"
+                "a{display:inline-block;margin-top:24px}</style></head>"
+                f"<body><h1>{title}</h1>"
+                '<a id="popup" href="?tab=popup" target="_blank" rel="noopener">Open popup</a>'
+                "</body></html>").encode("utf-8")
+        self.send_response(200)
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
     def _authorized(self) -> bool:
         actual = self.headers.get("Authorization", "")
         expected = f"Bearer {self.api_key}"
@@ -242,9 +273,17 @@ class ProviderHandler(BaseHTTPRequestHandler):
         return False
 
     def do_GET(self) -> None:
+        parsed = urlsplit(self.path)
+        if parsed.path == "/browser-tabs-fixture":
+            tab = parse_qs(parsed.query).get("tab", [""])[0]
+            if tab in {"alpha", "beta", "popup"}:
+                self._send_browser_fixture(tab)
+            else:
+                self._send_json(404, {"error": {"message": "unknown browser fixture"}})
+            return
         if not self._require_authorization():
             return
-        request_path = urlsplit(self.path).path
+        request_path = parsed.path
         if request_path != "/v1/models":
             self._send_json(
                 404, {"error": {"message": "unsupported test provider path"}}
@@ -827,6 +866,7 @@ def run_self_test() -> None:
                     port=server.server_port,
                     api_key=environment["LOTUS_REAL_PROVIDER_API_KEY"],
                 )
+                validate_browser_fixture(server.server_port)
                 validate_smoke()
                 validate_permission_scenario(
                     port=server.server_port,
