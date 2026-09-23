@@ -33,6 +33,8 @@ test("desktop and tablet keep the shared browser frame while a person answers Ja
   } = null
   const responses: Array<Record<string, unknown>> = []
   const blockedCalls: string[] = []
+  const chatMessages: string[] = []
+  const executeCalls: string[] = []
   let staleNextResponse = false
   const state = () => ({
     page_epoch: epoch, frame_seq: frameSeq, active_tab_id: "tab-a",
@@ -110,6 +112,16 @@ test("desktop and tablet keep the shared browser frame while a person answers Ja
     if (dialog) blockedCalls.push(path.slice(browserPath.length))
     return route.fulfill({ status: dialog ? 409 : 404, json: { error: { code: dialog ? "dialog_pending" : "not_found" } } })
   })
+  await page.route("**/api/v1/chat", (route) => {
+    if (route.request().method() !== "POST") return route.fallback()
+    const body = route.request().postDataJSON() as { message?: string }
+    chatMessages.push(body.message ?? "")
+    return route.fulfill({ json: { session_id: "all-surface-session", status: "success" } })
+  })
+  await page.route("**/api/v1/execute/all-surface-session", (route) => {
+    executeCalls.push(route.request().method())
+    return route.fulfill({ json: { status: "started", session_id: "all-surface-session" } })
+  })
 
   await page.goto(standaloneScenario.entryUrl, { waitUntil: "domcontentloaded" })
   await page.getByRole("button", { name: "打开侧边面板" }).click()
@@ -123,11 +135,36 @@ test("desktop and tablet keep the shared browser frame while a person answers Ja
   showDialog("alert")
   const modal = browser.getByRole("dialog", { name: "网页弹窗" })
   await expect(modal).toContainText("alert from page")
+  await expect(modal).toHaveAttribute("aria-modal", "false")
+  await expect(modal.getByRole("button", { name: "确定" })).toBeFocused()
   await expect(image).toHaveAttribute("src", cachedFrame!)
   await expect(browser.getByRole("button", { name: "查看 DOM" })).toBeDisabled()
   await expect(browser.getByRole("button", { name: "保存网页截图" })).toBeDisabled()
   await expect(browser.getByRole("button", { name: "新建标签页" })).toBeDisabled()
   await expect(browser.getByRole("textbox", { name: "网页地址" })).toBeDisabled()
+  await expect(browser.locator('textarea[aria-label="网页键盘输入"]')).toBeDisabled()
+
+  await page.keyboard.press("Tab")
+  await expect(page.locator('[data-browser-dialog] [role="dialog"]:focus-within')).toHaveCount(0)
+  const workbenchTab = panel.getByRole("tab", { name: "浏览器" })
+  await workbenchTab.focus()
+  await expect(workbenchTab).toBeFocused()
+  const closeWorkbench = panel.getByRole("button", { name: "收起工作面板" })
+  await closeWorkbench.focus()
+  await expect(closeWorkbench).toBeFocused()
+  if (testInfo.project.name === "desktop-chromium") {
+    const composer = page.getByRole("textbox", { name: "消息", exact: true })
+    await composer.fill("请模型处理当前网页弹窗")
+    await expect(composer).toBeFocused()
+    await expect(composer).toHaveValue("请模型处理当前网页弹窗")
+    await composer.press("Enter")
+    await expect.poll(() => chatMessages).toEqual(["请模型处理当前网页弹窗"])
+    await expect.poll(() => executeCalls).toEqual(["POST"])
+    await expect(modal).toBeVisible()
+    await expect(page.getByText("消息已发送，但生成中断")).toHaveCount(0)
+  }
+  await browser.locator('textarea[aria-label="网页键盘输入"]').dispatchEvent("keydown", { key: "Enter", bubbles: true })
+  await image.dispatchEvent("mousedown", { clientX: 100, clientY: 100, button: 0, bubbles: true })
   const screenshotPath = testInfo.outputPath(`browser-alert-${testInfo.project.name}.png`)
   await page.screenshot({ path: screenshotPath })
   await testInfo.attach(`browser-alert-${testInfo.project.name}`, { path: screenshotPath, contentType: "image/png" })

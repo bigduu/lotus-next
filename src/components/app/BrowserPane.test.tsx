@@ -15,6 +15,7 @@ vi.mock("@services/browser/BrowserService", () => ({
     activateTab: vi.fn(),
     closeTab: vi.fn(),
     respondDialog: vi.fn(),
+    input: vi.fn(),
   },
 }))
 
@@ -116,7 +117,7 @@ it("clears save errors on chat switch and ignores a previous chat's delayed fail
   expect(host.querySelector('[role="alert"]')).toBeNull()
 })
 
-it("focuses a pending prompt and traps keyboard focus inside the dialog", async () => {
+it("focuses a pending prompt while letting app controls keep focus and keyboard input", async () => {
   const pending = {
     page_epoch: 8, frame_seq: 1, active_tab_id: "tab-a",
     url: "https://example.test/", title: "Example",
@@ -137,25 +138,33 @@ it("focuses a pending prompt and traps keyboard focus inside the dialog", async 
   expect(modal.textContent).toContain("来自 未知网页")
   const prompt = host.querySelector<HTMLTextAreaElement>('textarea[aria-label="弹窗输入"]')!
   const accept = Array.from(modal.querySelectorAll("button")).find((button) => button.textContent === "确定")!
-  const cancel = Array.from(modal.querySelectorAll("button")).find((button) => button.textContent === "取消")!
   expect(document.activeElement).toBe(prompt)
+  expect(modal.getAttribute("aria-modal")).toBe("false")
   expect(host.querySelector<HTMLButtonElement>('button[aria-label="查看 DOM"]')?.disabled).toBe(true)
   expect(host.querySelector<HTMLButtonElement>('button[aria-label="保存网页截图"]')?.disabled).toBe(true)
   expect(host.querySelector<HTMLInputElement>('input[aria-label="网页地址"]')?.disabled).toBe(true)
+  const browserInput = host.querySelector<HTMLTextAreaElement>('textarea[aria-label="网页键盘输入"]')!
+  expect(browserInput.disabled).toBe(true)
 
-  await act(async () => {
-    prompt.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true }))
-  })
-  expect(document.activeElement).toBe(cancel)
+  const tab = new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true })
   await act(async () => {
     accept.focus()
-    accept.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true }))
+    accept.dispatchEvent(tab)
   })
-  expect(document.activeElement).toBe(prompt)
+  expect(tab.defaultPrevented).toBe(false)
 
-  const outside = document.body.appendChild(document.createElement("button"))
+  const outside = document.body.appendChild(document.createElement("textarea"))
+  outside.setAttribute("aria-label", "消息")
   await act(async () => outside.focus())
-  expect(document.activeElement).toBe(prompt)
+  const typed = new KeyboardEvent("keydown", { key: "a", bubbles: true, cancelable: true })
+  outside.dispatchEvent(typed)
+  expect(document.activeElement).toBe(outside)
+  expect(typed.defaultPrevented).toBe(false)
+  await act(async () => browserInput.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })))
+  expect(browserService.input).not.toHaveBeenCalled()
+
+  await act(async () => root.render(<BrowserPane sessionId="another-chat" active />))
+  expect(document.activeElement).toBe(outside)
   outside.remove()
 })
 

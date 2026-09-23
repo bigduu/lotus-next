@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type FormEvent, type KeyboardEvent, type MouseEvent } from "react"
+import { useCallback, useEffect, useRef, useState, type FormEvent, type MouseEvent } from "react"
 import {
   ArrowLeft,
   ArrowRight,
@@ -55,6 +55,7 @@ export function BrowserPane({
   const sendInput = browser.input
   const currentFrame = browser.frame
   const pendingDialog = browser.state?.pending_dialog
+  const pendingDialogId = pendingDialog?.dialog_id
   const dialogBlocked = Boolean(pendingDialog)
   const controlsBlocked = browser.busy || dialogBlocked
   const visibleFrame = currentFrame && (matchesActiveBrowserPage(currentFrame, browser.state) ||
@@ -76,48 +77,18 @@ export function BrowserPane({
   }, [sessionId, pendingDialog?.dialog_id, pendingDialog?.type, pendingDialog?.default_value])
 
   useEffect(() => {
-    const modal = dialogRef.current
-    if (!dialogBlocked || !modal) return
+    const dialog = dialogRef.current
+    if (!pendingDialogId || !dialog) return
     const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null
-    const focusFirst = () => {
-      const first = modal.querySelector<HTMLElement>('textarea:not([disabled]),button:not([disabled])')
-      ;(first ?? modal).focus()
-    }
-    focusFirst()
-    const containFocus = (event: FocusEvent) => {
-      if (!modal.contains(event.target as Node)) focusFirst()
-    }
-    const blockOutsideKeys = (event: globalThis.KeyboardEvent) => {
-      if (modal.contains(event.target as Node)) return
-      event.preventDefault()
-      event.stopImmediatePropagation()
-      focusFirst()
-    }
-    document.addEventListener("focusin", containFocus)
-    document.addEventListener("keydown", blockOutsideKeys, true)
+    const first = dialog.querySelector<HTMLElement>('textarea:not([disabled]),button:not([disabled])')
+    ;(first ?? dialog).focus()
     return () => {
-      document.removeEventListener("focusin", containFocus)
-      document.removeEventListener("keydown", blockOutsideKeys, true)
-      if (previousFocus?.isConnected) previousFocus.focus()
+      // Keep focus in the composer or workbench if the person moved there.
+      if (dialog.contains(document.activeElement) && previousFocus?.isConnected && !previousFocus.matches(":disabled")) {
+        previousFocus.focus()
+      }
     }
-  }, [sessionId, dialogBlocked, pendingDialog?.dialog_id, pendingDialog?.status, pendingDialog?.type])
-
-  const trapDialogTab = (event: KeyboardEvent<HTMLDivElement>) => {
-    event.stopPropagation()
-    if (event.key !== "Tab") return
-    const focusable = Array.from(dialogRef.current?.querySelectorAll<HTMLElement>('textarea:not([disabled]),button:not([disabled])') ?? [])
-    if (!focusable.length) {
-      event.preventDefault()
-      dialogRef.current?.focus()
-      return
-    }
-    const current = focusable.indexOf(document.activeElement as HTMLElement)
-    const next = event.shiftKey
-      ? (current <= 0 ? focusable.length - 1 : current - 1)
-      : (current < 0 || current === focusable.length - 1 ? 0 : current + 1)
-    event.preventDefault()
-    focusable[next]?.focus()
-  }
+  }, [pendingDialogId])
 
   useEffect(() => {
     saveGenerationRef.current += 1
@@ -381,6 +352,7 @@ export function BrowserPane({
             typeText(event.currentTarget)
           }}
           onKeyDown={(event) => {
+            if (dialogBlocked) return
             if (event.nativeEvent.isComposing || composingRef.current) return
             if (event.key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey) return
             event.preventDefault()
@@ -400,7 +372,7 @@ export function BrowserPane({
 
         {pendingDialog ? (
           <div className="absolute inset-0 z-20 flex items-center justify-center bg-background/70 p-3" data-browser-dialog>
-            <div ref={dialogRef} role="dialog" aria-modal="true" aria-label="网页弹窗" tabIndex={-1} onKeyDown={trapDialogTab} className="flex max-h-full w-full max-w-md flex-col gap-3 overflow-auto rounded-lg border bg-card p-4 shadow-lg">
+            <div ref={dialogRef} role="dialog" aria-modal="false" aria-label="网页弹窗" tabIndex={-1} className="flex max-h-full w-full max-w-md flex-col gap-3 overflow-auto rounded-lg border bg-card p-4 shadow-lg">
               <div className="text-sm font-semibold">
                 {pendingDialog.type === "alert" ? "网页提示" : pendingDialog.type === "confirm" ? "网页确认" : "网页输入"}
               </div>
