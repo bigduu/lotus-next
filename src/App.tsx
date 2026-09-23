@@ -17,6 +17,7 @@ import { DeleteSessionDialog } from "@/components/app/DeleteSessionDialog"
 import { ChatPane } from "@/components/app/ChatPane"
 import { AvailabilityBanner } from "@/components/app/AvailabilityBanner"
 import { ReviewPane } from "@/components/app/ReviewPane"
+import { BrowserPane } from "@/components/app/BrowserPane"
 import {
   RightWorkbench,
   type RightWorkbenchTab,
@@ -258,6 +259,13 @@ function App() {
                 targetFilePath={reviewTargetFilePath}
               />
             )}
+            browser={
+              <BrowserPane
+                key={currentSessionId ?? "no-session"}
+                sessionId={currentSessionId}
+                active={workbenchTab === "browser"}
+              />
+            }
             session={
               <div className="relative flex min-h-0 flex-1">
                 {secondLoadState === "loading" ? (

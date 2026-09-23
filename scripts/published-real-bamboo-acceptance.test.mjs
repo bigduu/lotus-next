@@ -11,7 +11,7 @@ import {
 } from "./published-real-bamboo-acceptance.mjs"
 
 const expectedBambooRevision =
-  "f1f1057bdbde33358d769b6a62ff93f2287e3f9f"
+  "2387b796c89af0d720db2efbb893fca41cc668e3"
 const readRepositoryFile = (relativePath) =>
   readFileSync(resolve(process.cwd(), relativePath), "utf8")
 

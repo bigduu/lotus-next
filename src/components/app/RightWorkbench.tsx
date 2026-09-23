@@ -1,10 +1,10 @@
 import type { ReactNode } from "react"
-import { Bot, FileDiff, SlidersHorizontal, X } from "lucide-react"
+import { Bot, FileDiff, Globe2, SlidersHorizontal, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { cn } from "@/lib/utils"
 
-export type RightWorkbenchTab = "inspector" | "review" | "session"
+export type RightWorkbenchTab = "inspector" | "review" | "browser" | "session"
 
 export function RightWorkbench({
   activeTab,
@@ -12,6 +12,7 @@ export function RightWorkbench({
   onClose,
   inspector,
   review,
+  browser,
   session,
   sessionTitle,
   docked = false,
@@ -22,6 +23,7 @@ export function RightWorkbench({
   onClose: () => void
   inspector: ReactNode
   review: ReactNode
+  browser: ReactNode
   session: ReactNode
   sessionTitle?: string | null
   docked?: boolean
@@ -34,7 +36,7 @@ export function RightWorkbench({
       className="min-h-0 flex-1 gap-0"
     >
       <div className="flex shrink-0 items-center gap-2 border-b px-2 py-2">
-        <TabsList className="min-w-0 flex-1 justify-start overflow-hidden bg-transparent p-0">
+        <TabsList aria-label="工作面板工具" className="min-w-0 flex-1 justify-start overflow-x-auto bg-transparent p-0">
           <TabsTrigger value="inspector" className="flex-none px-3">
             <SlidersHorizontal />
             检查器
@@ -42,6 +44,10 @@ export function RightWorkbench({
           <TabsTrigger value="review" className="flex-none px-3">
             <FileDiff />
             Review
+          </TabsTrigger>
+          <TabsTrigger value="browser" className="flex-none px-3">
+            <Globe2 />
+            浏览器
           </TabsTrigger>
           <TabsTrigger
             value="session"
@@ -63,6 +69,9 @@ export function RightWorkbench({
       </TabsContent>
       <TabsContent value="review" className="flex min-h-0 overflow-hidden">
         {review}
+      </TabsContent>
+      <TabsContent value="browser" className="flex min-h-0 min-w-0 overflow-hidden">
+        {browser}
       </TabsContent>
       <TabsContent value="session" className="flex min-h-0 overflow-hidden">
         {session}

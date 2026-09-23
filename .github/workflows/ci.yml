@@ -70,7 +70,7 @@ jobs:
     timeout-minutes: 60
 
     env:
-      BAMBOO_E2E_REVISION: f1f1057bdbde33358d769b6a62ff93f2287e3f9f
+      BAMBOO_E2E_REVISION: 2387b796c89af0d720db2efbb893fca41cc668e3
 
     steps:
       - name: Check out Lotus Next

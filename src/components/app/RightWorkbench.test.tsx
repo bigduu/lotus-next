@@ -37,6 +37,7 @@ it("switches tools in one docked panel and closes without navigation", () => {
         onClose={onClose}
         inspector={<div>inspector content</div>}
         review={<div>review content</div>}
+        browser={<div>browser content</div>}
         session={<div>child transcript</div>}
         sessionTitle="Fix transport"
       />,
@@ -54,6 +55,16 @@ it("switches tools in one docked panel and closes without navigation", () => {
     reviewTab?.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 })),
   )
   expect(onTabChange).toHaveBeenCalledWith("review")
+
+  const browserTab = Array.from(host.querySelectorAll<HTMLButtonElement>('[role="tab"]')).find(
+    (button) => button.textContent?.includes("浏览器"),
+  )
+  expect(browserTab).toBeDefined()
+  act(() =>
+    browserTab?.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 })),
+  )
+  expect(onTabChange).toHaveBeenCalledWith("browser")
+  expect(host.querySelector('[role="tablist"]')?.className).toContain("overflow-x-auto")
 
   act(() => host.querySelector<HTMLButtonElement>('button[aria-label="收起工作面板"]')?.click())
   expect(onClose).toHaveBeenCalledTimes(1)

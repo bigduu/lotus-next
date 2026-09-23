@@ -231,9 +231,20 @@ export class ApiClient {
   async fetchRaw(path: string, options?: RequestInit): Promise<Response> {
     const url = this.resolveUrl(path);
     logApiRequest(options?.method?.toUpperCase() ?? "GET", url);
+    const headers = this.mergeHeaders(options?.headers);
+    // A bodyless raw read does not need the JSON write header. Omitting it keeps
+    // frame polling a simple CORS request instead of preflighting every frame.
+    const method = (options?.method ?? "GET").toUpperCase();
+    if (
+      (method === "GET" || method === "HEAD") &&
+      !options?.body &&
+      !new Headers(options?.headers).has("Content-Type")
+    ) {
+      headers.delete("Content-Type");
+    }
     const response = await this.transport.requestOnce(url, {
       ...options,
-      headers: this.mergeHeaders(options?.headers),
+      headers,
       credentials: this.requestCredentials,
     });
 
