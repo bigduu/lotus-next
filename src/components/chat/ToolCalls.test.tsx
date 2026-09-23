@@ -680,6 +680,33 @@ it("shows a fixed pending dialog status without treating private message text as
   expect(expired.querySelector("[data-tool-call-entry] pre")?.textContent).toBe("网页弹窗已过期")
 })
 
+it.each([
+  ["string", privateDialogMessage, "网页弹窗状态待确认"],
+  ["array", [privateDialogMessage], "网页弹窗状态待确认"],
+  ["number", 157, "网页弹窗状态待确认"],
+  ["boolean", true, "网页弹窗状态待确认"],
+  ["invalid object", { status: "other", message: privateDialogMessage }, "网页弹窗待处理"],
+])("hides %s pending-dialog results in live and restored ToolCalls", (_, pending, status) => {
+  const parameters = { action: "tabs", url: privateDialogUrl, dialog_id: privateDialogId }
+  const result = JSON.stringify({ pending_dialog: pending, url: privateDialogUrl, value: privateDialogReply })
+  const history = mapHistoryMessagesToUi("session-157", [
+    {
+      id: "assistant-dialog", role: "assistant", content: "",
+      tool_calls: [{ id: "observe-dialog", type: "function", function: { name: "default::browser", arguments: JSON.stringify(parameters) } }],
+      created_at: "2026-09-24T00:00:00Z",
+    },
+    { id: "observed-dialog", role: "tool", tool_call_id: "observe-dialog", content: result, created_at: "2026-09-24T00:00:01Z" },
+  ])
+  for (const messages of [browserMessages(parameters, result), history]) {
+    const host = renderOpenTools(messages)
+    expect(host.querySelector("[data-tool-call-toggle]")?.textContent).toContain("查看网页弹窗")
+    expect(host.querySelector("[data-tool-call-entry] pre")?.textContent).toBe(status)
+    for (const value of [privateDialogMessage, privateDialogReply, privateDialogUrl, privateDialogId, "pending_dialog"]) {
+      expect(host.textContent).not.toContain(value)
+    }
+  }
+})
+
 it("conceals browser action arguments when a dialog state is too large or malformed to inspect", () => {
   const parameters = { action: "navigate", url: privateDialogUrl, expected_epoch: 17 }
   const oversizedState = JSON.stringify({ title: "x".repeat(70_000), pending_dialog: pendingDialog })

@@ -27,7 +27,7 @@ type Entry = {
   browserSelectOption: boolean
   browserFileInput?: boolean
   browserDialogResponse?: boolean
-  browserDialogStatus?: "pending" | "expired"
+  browserDialogStatus?: "pending" | "expired" | "unknown"
   browserTool: boolean
   browserEvalTool: boolean
   /** Set when the result marks a background/async shell (see parseBackgroundBash). */
@@ -192,7 +192,7 @@ function displayParams(toolName: string, value: unknown): {
 }
 
 function browserResultDisplayMetadata(text: string): {
-  dialogStatus?: "pending" | "expired"
+  dialogStatus?: "pending" | "expired" | "unknown"
   parsedRecord: boolean
 } {
   // Browser state can include a large DOM. Bound display parsing and never
@@ -201,7 +201,8 @@ function browserResultDisplayMetadata(text: string): {
   try {
     const result: unknown = JSON.parse(text)
     if (!isRecord(result)) return { parsedRecord: false }
-    if (!isRecord(result.pending_dialog)) return { parsedRecord: true }
+    if (result.pending_dialog == null) return { parsedRecord: true }
+    if (!isRecord(result.pending_dialog)) return { parsedRecord: false, dialogStatus: "unknown" }
     return {
       parsedRecord: true,
       dialogStatus: result.pending_dialog.status === "expired" ? "expired" : "pending",
@@ -229,6 +230,7 @@ function displayResult(entry: Entry, text: string): string {
     }
     if (entry.result?.isError) return "网页弹窗操作失败"
     if (!isRecord(parsed)) return "网页弹窗状态待确认"
+    if (entry.browserDialogStatus === "unknown") return "网页弹窗状态待确认"
     if (entry.browserDialogStatus === "expired") return "网页弹窗已过期"
     if (entry.browserDialogStatus === "pending") return "网页弹窗待处理"
     return "网页弹窗已回应"
