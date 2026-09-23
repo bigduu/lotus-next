@@ -433,6 +433,54 @@ it("hides selected values and approval fingerprints after history mapping", () =
   }
 })
 
+it("keeps fixed selection status for bounded values that exceed the JSON preview limit", () => {
+  const escapedValue = "\u0001".repeat(512)
+  const values = ["awaiting_permission_approval", ...Array.from({ length: 15 }, () => escapedValue)]
+  const parameters = { action: "select_option", selector: privateSelectSelector, values, expected_epoch: 17 }
+  const result = JSON.stringify({ selected_values: values, selector: privateSelectSelector })
+  expect(JSON.stringify(parameters).length).toBeGreaterThan(16 * 1024)
+  expect(result.length).toBeGreaterThan(16 * 1024)
+
+  const liveMessages = browserMessages(parameters, result)
+  const unchanged = JSON.stringify(liveMessages)
+  const live = renderOpenTools(liveMessages)
+  expect(live.querySelector("[data-tool-call-toggle]")?.textContent).toContain("选择网页选项")
+  expect(live.querySelector("[data-tool-call-entry] pre")?.textContent).toBe("网页选项已选择")
+  expect(live.textContent).not.toContain(privateSelectSelector)
+  expect(live.textContent).not.toContain("selected_values")
+  expect(live.textContent).not.toContain("awaiting_permission_approval")
+  expect(JSON.stringify(liveMessages)).toBe(unchanged)
+
+  const failed = renderOpenTools(browserMessages(parameters, result, true))
+  expect(failed.querySelector("[data-tool-call-entry] pre")?.textContent).toBe("网页选项选择失败")
+
+  const history = mapHistoryMessagesToUi("session-159", [
+    {
+      id: "assistant-large-select", role: "assistant", content: "",
+      tool_calls: [{ id: "select-large", type: "function", function: { name: "default::browser", arguments: JSON.stringify(parameters) } }],
+      created_at: "2026-09-24T00:00:00Z",
+    },
+    { id: "result-large-select", role: "tool", tool_call_id: "select-large", content: result, created_at: "2026-09-24T00:00:01Z" },
+  ])
+  const restored = renderOpenTools(history)
+  expect(restored.querySelector("[data-tool-call-toggle]")?.textContent).toContain("选择网页选项")
+  expect(restored.querySelector("[data-tool-call-entry] pre")?.textContent).toBe("网页选项已选择")
+  expect(restored.textContent).not.toContain(privateSelectSelector)
+  expect(restored.textContent).not.toContain("selected_values")
+  expect(JSON.stringify(history)).toContain(privateSelectSelector)
+
+  const approval = renderOpenTools(browserMessages(parameters, JSON.stringify({
+    status: "awaiting_permission_approval",
+    permission_request: { resource: privateSelectResource, padding: escapedValue.repeat(6) },
+  })))
+  expect(approval.querySelector("[data-tool-call-entry] pre")?.textContent).toBe("等待用户批准")
+  expect(approval.textContent).not.toContain(privateSelectResource)
+
+  const malformedResult = renderOpenTools(browserMessages(parameters, result.slice(0, -1)))
+  expect(malformedResult.querySelector("[data-tool-call-entry] pre")).toBeNull()
+  expect(malformedResult.textContent).not.toContain(privateSelectSelector)
+})
+
 it("shows a safe failure status and omits malformed select_option previews", () => {
   const failed = renderOpenTools(browserMessages(
     { action: "select_option", selector: privateSelectSelector, values: [privateSelectValue] },
@@ -453,9 +501,10 @@ it("shows a safe failure status and omits malformed select_option previews", () 
   const oversized = renderOpenTools(browserMessages(
     { action: "select_option", values: [privateSelectValue.repeat(1000)] },
     JSON.stringify({ selected_values: [privateSelectValue.repeat(1000)] }),
+    true,
   ))
   expect(oversized.textContent).not.toContain(privateSelectValue)
-  expect(oversized.querySelector("[data-tool-call-entry] pre")).toBeNull()
+  expect(oversized.querySelector("[data-tool-call-entry] pre")?.textContent).toBe("网页选项选择失败")
 })
 
 it.each(["browser", "default::browser"])("hides small %s set_file_input payloads and results in live ToolCalls", (toolName) => {
