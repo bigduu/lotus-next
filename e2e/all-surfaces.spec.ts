@@ -255,6 +255,7 @@ test("system settings can disable generated summaries in favor of retrieval wind
     },
   })
   await expect(section.getByText("已保存", { exact: true })).toBeVisible()
+  await expect(summarySwitch).not.toBeChecked()
 })
 
 test("malformed provider snapshot is visibly incompatible without legacy fallback", async ({

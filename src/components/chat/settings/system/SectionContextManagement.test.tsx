@@ -96,4 +96,21 @@ describe("SectionContextManagement", () => {
       expect(saveButton().disabled).toBe(true)
     })
   })
+
+  it("does not report success when the backend drops the retrieval-window strategy", async () => {
+    const save = vi.fn(async () => ({}))
+    await mount({}, save)
+
+    await click(summarySwitch())
+    await click(saveButton())
+
+    await vi.waitFor(() => {
+      expect(summarySwitch().getAttribute("aria-checked")).toBe("false")
+      expect(saveButton().disabled).toBe(false)
+      expect(document.body.textContent).toContain(
+        "后端未确认检索窗口策略，配置尚未在当前运行中生效"
+      )
+      expect(document.body.textContent).not.toContain("已保存")
+    })
+  })
 })
