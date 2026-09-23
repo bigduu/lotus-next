@@ -162,6 +162,9 @@ test("browser workbench shares one session across human input, DOM, screenshot, 
     body: await page.screenshot(),
     contentType: "image/png",
   })
+  await page.setViewportSize({ width: 390, height: 844 })
+  await expect(panel.getByRole("tab", { name: "浏览器" })).toHaveCount(0)
+  await expect(panel.getByRole("region", { name: "内置浏览器" })).toHaveCount(0)
 })
 
 test("browser tab strip follows human commands and an agent-opened popup on desktop and tablet", async ({ page }, testInfo) => {
