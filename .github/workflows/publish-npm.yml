@@ -209,7 +209,16 @@ jobs:
       - name: Verify the release artifact on local and secure browser surfaces
         env:
           BAMBOO_E2E_SOURCE_DIR: ${{ github.workspace }}/.e2e-bamboo
-        run: node scripts/published-real-bamboo-acceptance.mjs --current-source
+          ACCEPTED_IDENTITY_PATH: ${{ runner.temp }}/accepted-identity.json
+        run: node scripts/published-real-bamboo-acceptance.mjs --current-source --accepted-identity "${ACCEPTED_IDENTITY_PATH}"
+
+      - name: Upload the accepted browser artifact identity
+        uses: actions/upload-artifact@v7
+        with:
+          name: real-bamboo-accepted-identity
+          path: ${{ runner.temp }}/accepted-identity.json
+          if-no-files-found: error
+          retention-days: 30
 
       - name: Upload real Bamboo evidence
         if: ${{ always() }}
@@ -321,6 +330,20 @@ jobs:
             --expected-version "${LOTUS_NEXT_RELEASE_VERSION}" \
             --expected-revision "${GITHUB_SHA}" \
             --expected-dirty false
+
+      - name: Download the accepted browser artifact identity
+        uses: actions/download-artifact@v8
+        with:
+          name: real-bamboo-accepted-identity
+          path: ${{ runner.temp }}/accepted-real-bamboo
+
+      - name: Require the final tarball to match both real browser surfaces
+        run: |
+          node scripts/release-acceptance-identity.mjs verify \
+            --accepted "${RUNNER_TEMP}/accepted-real-bamboo/accepted-identity.json" \
+            --dist "${RUNNER_TEMP}/local-roundtrip/package/dist" \
+            --expected-version "${LOTUS_NEXT_RELEASE_VERSION}" \
+            --expected-revision "${GITHUB_SHA}"
 
       - name: Require npm publication credentials
         env:
