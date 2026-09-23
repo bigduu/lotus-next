@@ -123,6 +123,8 @@ export function useBrowserSession(sessionId: string | null, active: boolean) {
           setFrame(null)
         }
         const requestReset = framePollResetRef.current
+        const requestEpoch = observedEpoch
+        const requestTabId = observedTabId
         const next = await browserService.frame(sessionId, after, 1500, controller.signal)
         if (!isCurrent()) return
         if (requestReset !== framePollResetRef.current || frameSuspendedRef.current) {
@@ -130,9 +132,12 @@ export function useBrowserSession(sessionId: string | null, active: boolean) {
           setFrame(null)
           continue
         }
-        if (stateRef.current && (
+        const pageChangedDuringPoll = Boolean(stateRef.current && (
           stateRef.current.page_epoch !== observedEpoch ||
-          stateRef.current.active_tab_id !== observedTabId ||
+          stateRef.current.active_tab_id !== observedTabId
+        ))
+        if (stateRef.current && (
+          pageChangedDuringPoll ||
           framePollResetRef.current !== observedReset
         )) {
           observedEpoch = stateRef.current.page_epoch
@@ -152,17 +157,19 @@ export function useBrowserSession(sessionId: string | null, active: boolean) {
             pageChanged = previous?.page_epoch !== refreshed.page_epoch ||
               previous?.active_tab_id !== refreshed.active_tab_id
           }
+          const pageChangedSinceRequest = stateRef.current?.page_epoch !== requestEpoch ||
+            stateRef.current?.active_tab_id !== requestTabId
           observedEpoch = stateRef.current?.page_epoch ?? observedEpoch
           observedTabId = stateRef.current?.active_tab_id
           observedReset = framePollResetRef.current
           setFrame(null)
           // A recovered host may start with a lower epoch and reset its frame
           // sequence. Resume from zero when the active page identity changes.
-          if (pageChanged) after = 0
+          if (pageChangedSinceRequest || pageChanged) after = 0
           if (!matchesActiveBrowserPage(next, stateRef.current)) {
             // Frame sequence is session-monotonic. Wait past this stale JPEG
             // on the same host instead of fetching it in a hot loop.
-            if (!pageChanged) after = Math.max(after, next.frame_seq)
+            if (!pageChangedSinceRequest && !pageChanged) after = Math.max(after, next.frame_seq)
             continue
           }
         }

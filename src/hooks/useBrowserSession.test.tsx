@@ -316,6 +316,71 @@ it("adopts a lower epoch and reset frame sequence after browser host recovery", 
   expect(vi.mocked(browserService.frame).mock.calls[2]?.[1]).toBe(1)
 })
 
+it("restarts at zero when a state read sees a recovered host before an old frame returns", async () => {
+  let releaseOldFrame!: (value: Awaited<ReturnType<typeof browserService.frame>>) => void
+  const oldFrame = new Promise<Awaited<ReturnType<typeof browserService.frame>>>((resolve) => {
+    releaseOldFrame = resolve
+  })
+  vi.mocked(browserService.open).mockResolvedValue(tabbedState(90, "tab-a"))
+  vi.mocked(browserService.get).mockResolvedValue(tabbedState(4, "tab-b"))
+  vi.mocked(browserService.dom).mockResolvedValue({
+    page_epoch: 4, active_tab_id: "tab-b", url: "https://example.test/tab-b",
+    title: "tab-b", snapshot: "new host DOM",
+  })
+  vi.mocked(browserService.frame)
+    .mockResolvedValueOnce({
+      blob: new Blob(["old host"], { type: "image/jpeg" }),
+      frame_seq: 20, page_epoch: 90, active_tab_id: "tab-a",
+      viewport: { width: 640, height: 480 },
+    })
+    .mockImplementationOnce(() => oldFrame)
+    .mockResolvedValueOnce({
+      blob: new Blob(["new host"], { type: "image/jpeg" }),
+      frame_seq: 1, page_epoch: 4, active_tab_id: "tab-b",
+      viewport: { width: 640, height: 480 },
+    })
+    .mockImplementation(() => new Promise(() => {}))
+
+  await act(async () => root.render(<Harness />))
+  expect(browser.frame?.frame_seq).toBe(20)
+  expect(vi.mocked(browserService.frame).mock.calls[1]?.[1]).toBe(20)
+  await act(async () => browser.inspectDom())
+  expect(browser.state?.page_epoch).toBe(4)
+  expect(browser.state?.active_tab_id).toBe("tab-b")
+  expect(browser.frame).toBeNull()
+
+  await act(async () => releaseOldFrame({
+    blob: new Blob(["late old host"], { type: "image/jpeg" }),
+    frame_seq: 21, page_epoch: 90, active_tab_id: "tab-a",
+    viewport: { width: 640, height: 480 },
+  }))
+  expect(vi.mocked(browserService.frame).mock.calls[2]?.[1]).toBe(0)
+  expect(browser.frame?.frame_seq).toBe(1)
+  expect(browser.frame?.page_epoch).toBe(4)
+  expect(browser.frame?.active_tab_id).toBe("tab-b")
+})
+
+it("advances past a stale frame on the same page without a hot poll loop", async () => {
+  vi.mocked(browserService.open).mockResolvedValue(tabbedState(90, "tab-a"))
+  vi.mocked(browserService.get).mockResolvedValue(tabbedState(90, "tab-a"))
+  vi.mocked(browserService.frame)
+    .mockResolvedValueOnce({
+      blob: new Blob(["current"], { type: "image/jpeg" }),
+      frame_seq: 20, page_epoch: 90, active_tab_id: "tab-a",
+      viewport: { width: 640, height: 480 },
+    })
+    .mockResolvedValueOnce({
+      blob: new Blob(["stale"], { type: "image/jpeg" }),
+      frame_seq: 21, page_epoch: 89, active_tab_id: "tab-a",
+      viewport: { width: 640, height: 480 },
+    })
+    .mockImplementation(() => new Promise(() => {}))
+
+  await act(async () => root.render(<Harness />))
+  expect(vi.mocked(browserService.frame).mock.calls[2]?.[1]).toBe(21)
+  expect(browser.frame).toBeNull()
+})
+
 it("does not let an older state request overwrite a completed tab switch", async () => {
   let releaseGet!: (value: BrowserState) => void
   const staleGet = new Promise<BrowserState>((resolve) => { releaseGet = resolve })

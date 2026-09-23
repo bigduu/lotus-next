@@ -22,6 +22,34 @@ const requiredEnv = (name: string): string => {
 
 const browserPath = (sessionId: string) => `/api/v1/browser/sessions/${encodeURIComponent(sessionId)}`
 
+const setTestSessionAutoPermission = async (baseUrl: string, sessionId: string) => {
+  const url = new URL(`/api/v1/sessions/${encodeURIComponent(sessionId)}`, baseUrl)
+  const before = await fetch(url, { cache: "no-store", signal: AbortSignal.timeout(5_000) })
+  expect(before.status).toBe(200)
+  const prior = await before.json() as { session: { id: string; permission_mode: string } }
+  expect(prior.session).toMatchObject({ id: sessionId, permission_mode: "default" })
+  const etag = before.headers.get("etag")
+  expect(etag).toMatch(/^"\d+"$/)
+
+  // These two isolated acceptance sessions have no interactive approval UI for
+  // the direct root-tool request below. Keep the product's default untouched.
+  const changed = await fetch(url, {
+    method: "PATCH",
+    headers: { "content-type": "application/json", "if-match": etag! },
+    body: JSON.stringify({ permission_mode: "auto" }),
+    cache: "no-store",
+    signal: AbortSignal.timeout(5_000),
+  })
+  expect(changed.status).toBe(200)
+  const written = await changed.json() as { session: { id: string; permission_mode: string } }
+  expect(written.session).toMatchObject({ id: sessionId, permission_mode: "auto" })
+
+  const readBack = await fetch(url, { cache: "no-store", signal: AbortSignal.timeout(5_000) })
+  expect(readBack.status).toBe(200)
+  const persisted = await readBack.json() as { session: { id: string; permission_mode: string } }
+  expect(persisted.session).toMatchObject({ id: sessionId, permission_mode: "auto" })
+}
+
 const readState = async (baseUrl: string, sessionId: string): Promise<BrowserState> => {
   const response = await fetch(new URL(browserPath(sessionId), baseUrl), { signal: AbortSignal.timeout(5_000) })
   expect(response.status).toBe(200)
@@ -121,6 +149,7 @@ const exerciseSurface = async (
   sessionId: string,
 ) => {
   const baseUrl = requiredEnv("LOTUS_REAL_BAMBOO_BASE_URL")
+  await setTestSessionAutoPermission(baseUrl, sessionId)
   const context = await browser.newContext({
     viewport: label === "desktop" ? { width: 1440, height: 900 } : { width: 390, height: 844 },
     isMobile: label === "phone",
