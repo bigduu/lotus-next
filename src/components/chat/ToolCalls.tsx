@@ -26,6 +26,8 @@ type Entry = {
   focusedBrowserInput: boolean
   browserSelectOption: boolean
   browserFileInput?: boolean
+  browserDialogResponse?: boolean
+  browserDialogStatus?: "pending" | "expired" | "unknown"
   browserTool: boolean
   browserEvalTool: boolean
   /** Set when the result marks a background/async shell (see parseBackgroundBash). */
@@ -138,6 +140,7 @@ function displayParams(toolName: string, value: unknown): {
   focusedBrowserInput: boolean
   browserSelectOption: boolean
   browserFileInput?: boolean
+  browserDialogResponse?: boolean
   browserTool: boolean
   browserEvalTool: boolean
 } {
@@ -159,6 +162,10 @@ function displayParams(toolName: string, value: unknown): {
       // A valid inline file can exceed the preview limit. Keep its fixed action
       // and status while omitting all bytes and metadata from the display.
       return { browserTool, browserEvalTool, focusedBrowserInput: false, browserSelectOption: false, browserFileInput: true }
+    }
+    if (action === "dialog_respond") {
+      // Dialog text, URL and identity stay in the model's original call only.
+      return { browserTool, browserEvalTool, focusedBrowserInput: false, browserSelectOption: false, browserDialogResponse: true }
     }
     if (action === "select_option") {
       // A valid bounded selection can expand beyond the generic JSON preview
@@ -184,8 +191,50 @@ function displayParams(toolName: string, value: unknown): {
   return { params: value, browserTool, browserEvalTool, focusedBrowserInput: false, browserSelectOption: false }
 }
 
+function browserResultDisplayMetadata(text: string): {
+  dialogStatus?: "pending" | "expired" | "unknown"
+  parsedRecord: boolean
+} {
+  // Browser state can include a large DOM. Bound display parsing and never
+  // expose action arguments when a result is too large to inspect safely.
+  if (text.length > BROWSER_PREVIEW_MAX_LENGTH * 4) return { parsedRecord: false }
+  try {
+    const result: unknown = JSON.parse(text)
+    if (!isRecord(result)) return { parsedRecord: false }
+    if (result.pending_dialog == null) return { parsedRecord: true }
+    if (!isRecord(result.pending_dialog)) return { parsedRecord: false, dialogStatus: "unknown" }
+    return {
+      parsedRecord: true,
+      dialogStatus: result.pending_dialog.status === "expired" ? "expired" : "pending",
+    }
+  } catch {
+    return { parsedRecord: false }
+  }
+}
+
 function displayResult(entry: Entry, text: string): string {
   if (!text) return ""
+  if (entry.browserDialogResponse || entry.browserDialogStatus) {
+    if (text.length > BROWSER_PREVIEW_MAX_LENGTH * 4) {
+      return entry.result?.isError ? "网页弹窗操作失败" : "网页弹窗状态待确认"
+    }
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(text)
+    } catch {
+      return entry.result?.isError ? "网页弹窗操作失败" : "网页弹窗状态待确认"
+    }
+    if (isRecord(parsed) &&
+      (parsed.status === "awaiting_permission_approval" || "permission_request" in parsed)) {
+      return APPROVAL_STATUS
+    }
+    if (entry.result?.isError) return "网页弹窗操作失败"
+    if (!isRecord(parsed)) return "网页弹窗状态待确认"
+    if (entry.browserDialogStatus === "unknown") return "网页弹窗状态待确认"
+    if (entry.browserDialogStatus === "expired") return "网页弹窗已过期"
+    if (entry.browserDialogStatus === "pending") return "网页弹窗待处理"
+    return "网页弹窗已回应"
+  }
   const possiblyApproval = text.includes("awaiting_permission_approval") || text.includes("permission_request")
   if ((entry.browserTool || entry.browserEvalTool || possiblyApproval) && text.length > BROWSER_PREVIEW_MAX_LENGTH) {
     if (entry.browserSelectOption && text.length <= BROWSER_PREVIEW_MAX_LENGTH * 4) {
@@ -231,6 +280,8 @@ const readableToolName = (toolName: string) =>
 
 function presentTool(entry: Entry): ToolPresentation {
   if (entry.browserEvalTool) return { label: "执行网页脚本", icon: Globe }
+  if (entry.browserDialogResponse) return { label: "回应网页弹窗", icon: Globe }
+  if (entry.browserDialogStatus) return { label: "查看网页弹窗", icon: Globe }
   if (entry.browserSelectOption) return { label: "选择网页选项", icon: Globe }
   if (entry.browserFileInput) return { label: "设置网页文件", icon: Globe }
   const normalized = entry.toolName.toLowerCase().replace(/[^a-z0-9]+/g, "")
@@ -394,7 +445,7 @@ function prettyResult(text: string): string {
 }
 
 function buildEntries(items: Message[]): Entry[] {
-  const calls: { id: string; toolName: string; params?: Record<string, unknown>; focusedBrowserInput: boolean; browserSelectOption: boolean; browserFileInput?: boolean; browserTool: boolean; browserEvalTool: boolean }[] = []
+  const calls: { id: string; toolName: string; params?: Record<string, unknown>; focusedBrowserInput: boolean; browserSelectOption: boolean; browserFileInput?: boolean; browserDialogResponse?: boolean; browserTool: boolean; browserEvalTool: boolean }[] = []
   const results = new Map<string, { text: string; isError: boolean }>()
   for (const m of items) {
     const t = (m as { type?: string }).type
@@ -419,17 +470,23 @@ function buildEntries(items: Message[]): Entry[] {
   }
   return calls.map((c) => {
     const rawResult = results.get(c.id)
+    const browserMetadata = c.browserTool && rawResult ? browserResultDisplayMetadata(rawResult.text) : undefined
+    const dialogStatus = browserMetadata?.dialogStatus
+    const hideBrowserParams = c.browserTool && rawResult && !browserMetadata?.parsedRecord
+    const displayEntry = { ...c, browserDialogStatus: dialogStatus, result: rawResult }
     const result = rawResult && {
       isError: rawResult.isError,
-      text: displayResult({ ...c, result: rawResult }, rawResult.text),
+      text: displayResult(displayEntry, rawResult.text),
     }
     const background = result ? parseBackgroundBash(result.text) : null
     return {
       toolName: c.toolName,
-      params: c.params,
+      params: dialogStatus || hideBrowserParams ? undefined : c.params,
       focusedBrowserInput: c.focusedBrowserInput,
       browserSelectOption: c.browserSelectOption,
       browserFileInput: c.browserFileInput,
+      browserDialogResponse: c.browserDialogResponse,
+      browserDialogStatus: dialogStatus,
       browserTool: c.browserTool,
       browserEvalTool: c.browserEvalTool,
       result,
