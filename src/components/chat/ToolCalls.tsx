@@ -25,6 +25,7 @@ type Entry = {
   result?: { text: string; isError: boolean }
   focusedBrowserInput: boolean
   browserTool: boolean
+  browserEvalTool: boolean
   /** Set when the result marks a background/async shell (see parseBackgroundBash). */
   background?: { bashId: string; command: string }
 }
@@ -115,8 +116,11 @@ const firstString = (params: Record<string, unknown> | undefined, keys: string[]
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === "object" && !Array.isArray(value)
 
-const isBrowserTool = (toolName: string) =>
-  toolName.trim().toLowerCase().split(/__|\./).at(-1) === "browser"
+const browserToolName = (toolName: string) =>
+  toolName.trim().toLowerCase().split(/__|::|\./).at(-1)
+
+const isBrowserTool = (toolName: string) => browserToolName(toolName) === "browser"
+const isBrowserEvalTool = (toolName: string) => browserToolName(toolName) === "browser_eval"
 
 const hasSemanticTarget = (value: unknown) => {
   if (!isRecord(value)) return false
@@ -131,19 +135,24 @@ function displayParams(toolName: string, value: unknown): {
   params?: Record<string, unknown>
   focusedBrowserInput: boolean
   browserTool: boolean
+  browserEvalTool: boolean
 } {
   const browserTool = isBrowserTool(toolName)
-  if (!isRecord(value)) return { browserTool, focusedBrowserInput: browserTool }
-  if (!browserTool) return { params: value, browserTool, focusedBrowserInput: false }
+  const browserEvalTool = isBrowserEvalTool(toolName)
+  // Page scripts, target URLs, and page-realm results can contain private data.
+  // Only project a safe status; the underlying message remains unchanged.
+  if (browserEvalTool) return { browserTool, browserEvalTool, focusedBrowserInput: false }
+  if (!isRecord(value)) return { browserTool, browserEvalTool, focusedBrowserInput: browserTool }
+  if (!browserTool) return { params: value, browserTool, browserEvalTool, focusedBrowserInput: false }
 
   // Persisted malformed arguments arrive as { raw: originalString }. Treat
   // unknown browser arguments as private so a result cannot echo their input.
   try {
     if ("raw" in value || JSON.stringify(value).length > BROWSER_PREVIEW_MAX_LENGTH) {
-      return { browserTool, focusedBrowserInput: true }
+      return { browserTool, browserEvalTool, focusedBrowserInput: true }
     }
   } catch {
-    return { browserTool, focusedBrowserInput: true }
+    return { browserTool, browserEvalTool, focusedBrowserInput: true }
   }
 
   const action = typeof value.action === "string" ? value.action.toLowerCase() : ""
@@ -153,27 +162,28 @@ function displayParams(toolName: string, value: unknown): {
   if (focusedBrowserInput) {
     // A whitelist keeps text/key and unexpected nested argument fields out of
     // both the collapsed summary and the expanded details.
-    return { params: { action }, browserTool, focusedBrowserInput }
+    return { params: { action }, browserTool, browserEvalTool, focusedBrowserInput }
   }
-  if (!action) return { browserTool, focusedBrowserInput: true }
-  return { params: value, browserTool, focusedBrowserInput: false }
+  if (!action) return { browserTool, browserEvalTool, focusedBrowserInput: true }
+  return { params: value, browserTool, browserEvalTool, focusedBrowserInput: false }
 }
 
 function displayResult(entry: Entry, text: string): string {
   if (!text) return ""
   const possiblyApproval = text.includes("awaiting_permission_approval") || text.includes("permission_request")
-  if ((entry.browserTool || possiblyApproval) && text.length > BROWSER_PREVIEW_MAX_LENGTH) return ""
+  if ((entry.browserTool || entry.browserEvalTool || possiblyApproval) && text.length > BROWSER_PREVIEW_MAX_LENGTH) return ""
 
   let parsed: unknown
   try {
     parsed = JSON.parse(text)
   } catch {
-    return entry.browserTool || possiblyApproval ? "" : text
+    return entry.browserTool || entry.browserEvalTool || possiblyApproval ? "" : text
   }
   if (isRecord(parsed) &&
     (parsed.status === "awaiting_permission_approval" || "permission_request" in parsed)) {
     return APPROVAL_STATUS
   }
+  if (entry.browserEvalTool) return entry.result?.isError ? "网页脚本执行失败" : "网页脚本已执行"
   if (entry.focusedBrowserInput) return entry.result?.isError ? "浏览器输入失败" : "浏览器输入已完成"
   return entry.browserTool && !isRecord(parsed) ? "" : text
 }
@@ -187,6 +197,7 @@ const readableToolName = (toolName: string) =>
     .trim() || "工具调用"
 
 function presentTool(entry: Entry): ToolPresentation {
+  if (entry.browserEvalTool) return { label: "执行网页脚本", icon: Globe }
   const normalized = entry.toolName.toLowerCase().replace(/[^a-z0-9]+/g, "")
   const path = firstString(entry.params, ["file_path", "path"])
   const command = firstString(entry.params, ["command", "cmd"])
@@ -348,7 +359,7 @@ function prettyResult(text: string): string {
 }
 
 function buildEntries(items: Message[]): Entry[] {
-  const calls: { id: string; toolName: string; params?: Record<string, unknown>; focusedBrowserInput: boolean; browserTool: boolean }[] = []
+  const calls: { id: string; toolName: string; params?: Record<string, unknown>; focusedBrowserInput: boolean; browserTool: boolean; browserEvalTool: boolean }[] = []
   const results = new Map<string, { text: string; isError: boolean }>()
   for (const m of items) {
     const t = (m as { type?: string }).type
@@ -383,6 +394,7 @@ function buildEntries(items: Message[]): Entry[] {
       params: c.params,
       focusedBrowserInput: c.focusedBrowserInput,
       browserTool: c.browserTool,
+      browserEvalTool: c.browserEvalTool,
       result,
       background: background ?? undefined,
     }
