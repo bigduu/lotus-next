@@ -98,6 +98,10 @@ function singleToolMessage(toolName: string): Message[] {
 const privateText = "private typed text 149"
 const privateKey = "private-key-149"
 const privateResource = "browser:17:type:private-fingerprint-149"
+const privateEvalCode = "document.querySelector('#token').textContent"
+const privateEvalUrl = "https://example.test/account?token=private-query-151"
+const privateEvalResult = "private-page-value-151"
+const privateEvalResource = "browser_eval:17:private-fingerprint-151"
 const approvalResult = JSON.stringify({
   status: "awaiting_permission_approval",
   question: "Approve focused browser input?",
@@ -123,6 +127,32 @@ function browserMessages(parameters: unknown, result = approvalResult): Message[
       toolCallId: "browser-call",
       result: { result },
       isError: false,
+      createdAt: "2026-09-20T00:00:01Z",
+    },
+  ] as unknown as Message[]
+}
+
+function browserEvalMessages(
+  parameters: unknown,
+  result: string,
+  isError = false,
+  toolName = "browser_eval",
+): Message[] {
+  return [
+    {
+      id: "browser-eval-call-message",
+      role: "assistant",
+      type: "tool_call",
+      toolCalls: [{ toolCallId: "browser-eval-call", toolName, parameters }],
+      createdAt: "2026-09-20T00:00:00Z",
+    },
+    {
+      id: "browser-eval-result-message",
+      role: "tool",
+      type: "tool_result",
+      toolCallId: "browser-eval-call",
+      result: { result },
+      isError,
       createdAt: "2026-09-20T00:00:01Z",
     },
   ] as unknown as Message[]
@@ -330,4 +360,106 @@ it("omits malformed and oversized browser previews without exposing raw fallback
   expect(oversized.textContent).not.toContain(privateText)
   expect(oversized.textContent).not.toContain(privateResource)
   expect(oversized.querySelector("[data-tool-call-entry] pre")).toBeNull()
+})
+
+it("hides browser_eval code, target URL, and page result in live ToolCalls", () => {
+  const messages = browserEvalMessages(
+    { code: privateEvalCode, expected_url: privateEvalUrl, expected_epoch: 17 },
+    JSON.stringify({ ok: true, value: privateEvalResult, url: privateEvalUrl }),
+  )
+  const unchanged = JSON.stringify(messages)
+  const host = renderOpenTools(messages)
+
+  expect(host.textContent).toContain("执行网页脚本")
+  expect(host.textContent).toContain("网页脚本已执行")
+  for (const privateValue of [privateEvalCode, privateEvalUrl, privateEvalResult]) {
+    expect(host.textContent).not.toContain(privateValue)
+  }
+  expect(JSON.stringify(messages)).toBe(unchanged)
+})
+
+it.each([
+  [
+    "failed execution",
+    JSON.stringify({ error: privateEvalResult, url: privateEvalUrl }),
+    true,
+    "网页脚本执行失败",
+  ],
+  [
+    "parked approval",
+    JSON.stringify({
+      status: "awaiting_permission_approval",
+      permission_request: { resource: privateEvalResource, suggested_matchers: [{ value: privateEvalCode }] },
+    }),
+    false,
+    "等待用户批准",
+  ],
+])("hides %s for a namespaced browser_eval call", (_case, result, isError, expectedStatus) => {
+  const host = renderOpenTools(browserEvalMessages(
+    { code: privateEvalCode, expected_url: privateEvalUrl, expected_epoch: 17 },
+    result,
+    isError,
+    "default::browser_eval",
+  ))
+
+  expect(host.textContent).toContain(expectedStatus)
+  for (const privateValue of [privateEvalCode, privateEvalUrl, privateEvalResult, privateEvalResource]) {
+    expect(host.textContent).not.toContain(privateValue)
+  }
+})
+
+it("keeps browser_eval source and result private after history mapping", () => {
+  const rawArguments = JSON.stringify({
+    code: privateEvalCode,
+    expected_url: privateEvalUrl,
+    expected_epoch: 17,
+  })
+  const rawResult = JSON.stringify({ ok: true, value: privateEvalResult, url: privateEvalUrl })
+  const messages = mapHistoryMessagesToUi("session-151", [
+    {
+      id: "assistant-call",
+      role: "assistant",
+      content: "",
+      tool_calls: [{ id: "browser-eval-call", type: "function", function: { name: "browser_eval", arguments: rawArguments } }],
+      created_at: "2026-09-20T00:00:00Z",
+    },
+    {
+      id: "tool-result",
+      role: "tool",
+      tool_call_id: "browser-eval-call",
+      content: rawResult,
+      created_at: "2026-09-20T00:00:01Z",
+    },
+  ])
+  const host = renderOpenTools(messages)
+
+  expect(JSON.stringify(messages)).toContain(privateEvalCode)
+  expect(JSON.stringify(messages)).toContain(privateEvalResult)
+  expect(host.textContent).toContain("网页脚本已执行")
+  for (const privateValue of [privateEvalCode, privateEvalUrl, privateEvalResult]) {
+    expect(host.textContent).not.toContain(privateValue)
+  }
+})
+
+it("omits malformed and oversized browser_eval previews while ordinary tools still render", () => {
+  const malformed = renderOpenTools(browserEvalMessages(
+    { raw: `{"code":"${privateEvalCode}"` },
+    `{"error":"${privateEvalResult}"`,
+    true,
+  ))
+  expect(malformed.textContent).not.toContain(privateEvalCode)
+  expect(malformed.textContent).not.toContain(privateEvalResult)
+  expect(malformed.querySelector("[data-tool-call-entry] pre")).toBeNull()
+
+  const oversized = renderOpenTools(browserEvalMessages(
+    { code: privateEvalCode.repeat(1000), expected_url: privateEvalUrl },
+    JSON.stringify({ value: privateEvalResult.repeat(1000) }),
+  ))
+  expect(oversized.textContent).not.toContain(privateEvalCode)
+  expect(oversized.textContent).not.toContain(privateEvalResult)
+  expect(oversized.querySelector("[data-tool-call-entry] pre")).toBeNull()
+
+  const ordinary = renderOpenTools(toolMessages(true))
+  expect(ordinary.textContent).toContain("/tmp/example.ts")
+  expect(ordinary.textContent).toContain("done")
 })
