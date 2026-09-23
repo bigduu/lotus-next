@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test"
+import { readFile } from "node:fs/promises"
 import { installArtifactRuntime, standaloneScenario } from "./support/artifactRuntime.js"
 
 test("browser workbench shares one session across human input, DOM, screenshot, and reopen", async ({ page }, testInfo) => {
@@ -75,7 +76,7 @@ test("browser workbench shares one session across human input, DOM, screenshot, 
       return
     }
     if (path === `${browserPath}/screenshot` && method === "GET") {
-      await route.fulfill({ body: jpeg, contentType: "image/jpeg" })
+      await route.fulfill({ body: jpeg, contentType: "image/jpeg", headers: { "X-Page-Epoch": String(pageEpoch) } })
       return
     }
     if (path === `${browserPath}/dom` && method === "GET") {
@@ -160,4 +161,136 @@ test("browser workbench shares one session across human input, DOM, screenshot, 
     body: await page.screenshot(),
     contentType: "image/png",
   })
+})
+
+test("browser tab strip follows human commands and an agent-opened popup on desktop and phone", async ({ page }, testInfo) => {
+  const picturePage = await page.context().newPage()
+  await picturePage.setViewportSize({ width: 640, height: 480 })
+  const pictures: Record<string, Buffer> = {}
+  for (const tabId of ["tab-a", "tab-b", "tab-c"]) {
+    await picturePage.setContent(`<body style="margin:0;background:#e7f0ff;color:#123"><main style="font:48px sans-serif;padding:60px">${tabId}</main></body>`)
+    pictures[tabId] = await picturePage.screenshot({ type: "jpeg", quality: 70 })
+  }
+  await picturePage.close()
+
+  await page.addInitScript(() => {
+    localStorage.setItem("bodhi_onboarded_v1", "1")
+    localStorage.setItem("lotus_next_last_session", "all-surface-session")
+  })
+  const observation = await installArtifactRuntime(page, standaloneScenario)
+  await page.route("**/api/v1/task/all-surface-session", (route) =>
+    route.fulfill({ json: { session_id: "all-surface-session", title: null, items: [] } }),
+  )
+
+  const browserPath = "/api/v1/browser/sessions/all-surface-session"
+  const tabs = [{ tab_id: "tab-a", url: "https://a.test/", title: "Alpha", active: true }]
+  let activeTabId = "tab-a"
+  let pageEpoch = 1
+  let frameSeq = 1
+  const viewport = { width: 640, height: 480 }
+  const state = () => {
+    const active = tabs.find((tab) => tab.tab_id === activeTabId)!
+    return {
+      page_epoch: pageEpoch,
+      frame_seq: frameSeq,
+      active_tab_id: activeTabId,
+      tabs: tabs.map((tab) => ({ ...tab, active: tab.tab_id === activeTabId })),
+      url: active.url,
+      title: active.title,
+      viewport,
+      can_go_back: false,
+      can_go_forward: false,
+    }
+  }
+  const switchTo = (tabId: string) => {
+    activeTabId = tabId
+    pageEpoch += 1
+    frameSeq += 1
+  }
+  await page.route("**/api/v1/browser/sessions/all-surface-session**", async (route) => {
+    const request = route.request()
+    const address = new URL(request.url())
+    const path = address.pathname
+    const method = request.method()
+    if (path === browserPath && method === "PUT") return route.fulfill({ json: state() })
+    if (path === browserPath && method === "GET") return route.fulfill({ json: state() })
+    if (path === `${browserPath}/frame` && method === "GET") {
+      if (Number(address.searchParams.get("after")) >= frameSeq) {
+        await new Promise((resolve) => setTimeout(resolve, 80))
+        if (Number(address.searchParams.get("after")) >= frameSeq) return route.fulfill({ status: 204 })
+      }
+      return route.fulfill({
+        body: pictures[activeTabId], contentType: "image/jpeg",
+        headers: {
+          "X-Frame-Seq": String(frameSeq), "X-Page-Epoch": String(pageEpoch),
+          "X-Tab-Id": activeTabId, "X-Viewport-Width": String(viewport.width),
+          "X-Viewport-Height": String(viewport.height),
+        },
+      })
+    }
+    if (path === `${browserPath}/dom` && method === "GET") {
+      return route.fulfill({ json: { page_epoch: pageEpoch, active_tab_id: activeTabId, url: state().url, title: state().title, snapshot: `- heading: ${activeTabId}` } })
+    }
+    if (path === `${browserPath}/screenshot` && method === "GET") {
+      return route.fulfill({ body: pictures[activeTabId], contentType: "image/jpeg", headers: { "X-Page-Epoch": String(pageEpoch), "X-Tab-Id": activeTabId } })
+    }
+    if (method === "POST") {
+      const body = request.postDataJSON() as Record<string, unknown>
+      if (body.expected_epoch !== pageEpoch) {
+        return route.fulfill({ status: 409, json: { error: "browser page changed" } })
+      }
+      if (path === `${browserPath}/tabs`) {
+        tabs.push({ tab_id: "tab-b", url: "https://b.test/", title: "Beta", active: false })
+        switchTo("tab-b")
+      } else if (path === `${browserPath}/tabs/activate`) {
+        switchTo(String(body.tab_id))
+      } else if (path === `${browserPath}/tabs/close`) {
+        const index = tabs.findIndex((tab) => tab.tab_id === body.tab_id)
+        expect(index).toBeGreaterThanOrEqual(0)
+        const wasActive = activeTabId === body.tab_id
+        tabs.splice(index, 1)
+        if (wasActive) switchTo(tabs.at(-1)!.tab_id)
+      } else if (path === `${browserPath}/viewport`) {
+        viewport.width = Number(body.width)
+        viewport.height = Number(body.height)
+        pageEpoch += 1
+        frameSeq += 1
+      }
+      return route.fulfill({ json: state() })
+    }
+    return route.fulfill({ status: 404 })
+  })
+
+  await page.goto(standaloneScenario.entryUrl, { waitUntil: "domcontentloaded" })
+  await page.getByRole("button", { name: "打开侧边面板" }).click()
+  const panel = page.getByRole("complementary", { name: "工作面板" })
+  await panel.getByRole("tab", { name: "浏览器" }).click()
+  const browser = panel.getByRole("region", { name: "内置浏览器" })
+  const image = browser.getByAltText("网页画面")
+  await expect(image).toBeVisible()
+  const firstImage = await image.getAttribute("src")
+  await browser.getByRole("button", { name: "新建标签页" }).click()
+  await expect(browser.getByRole("button", { name: "切换到标签页 2：Beta" })).toHaveAttribute("aria-current", "page")
+  await expect(browser.getByRole("textbox", { name: "网页地址" })).toHaveValue("https://b.test/")
+  await expect.poll(() => image.getAttribute("src")).not.toBe(firstImage)
+  await browser.getByRole("button", { name: "切换到标签页 1：Alpha" }).click()
+  await expect(browser.getByRole("textbox", { name: "网页地址" })).toHaveValue("https://a.test/")
+
+  // A model-opened popup changes Bamboo authority without a Lotus command.
+  tabs.push({ tab_id: "tab-c", url: "https://c.test/", title: "Popup", active: false })
+  switchTo("tab-c")
+  await expect(browser.getByRole("button", { name: "切换到标签页 3：Popup" })).toHaveAttribute("aria-current", "page")
+  await expect(browser.getByRole("textbox", { name: "网页地址" })).toHaveValue("https://c.test/")
+  await browser.getByRole("button", { name: "查看 DOM" }).click()
+  await expect(browser.getByLabel("DOM 快照", { exact: true })).toContainText("tab-c")
+  await browser.getByRole("button", { name: "关闭 DOM 快照" }).click()
+  const downloadPromise = page.waitForEvent("download")
+  await browser.getByRole("button", { name: "保存网页截图" }).click()
+  const download = await downloadPromise
+  expect(await readFile(await download.path())).toEqual(pictures["tab-c"])
+  await browser.getByRole("button", { name: "关闭标签页 3：Popup" }).click()
+  await expect(browser.getByRole("button", { name: "切换到标签页 2：Beta" })).toHaveAttribute("aria-current", "page")
+  await expect(image).toBeVisible()
+  expect(observation.pageErrors).toEqual([])
+  await testInfo.attach(`browser-tabs-${testInfo.project.name}`, { body: await page.screenshot(), contentType: "image/png" })
 })

@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import { isApiError, RequestCancelledError } from "@services/api"
 import { browserService } from "@services/browser/BrowserService"
+import { matchesActiveBrowserPage } from "@/lib/browserFrame"
 import type {
   BrowserDomSnapshot,
   BrowserFrame,
   BrowserHistoryDirection,
   BrowserInput,
+  BrowserScreenshot,
   BrowserState,
   BrowserViewport,
 } from "@services/browser/types"
@@ -42,11 +44,18 @@ export function useBrowserSession(sessionId: string | null, active: boolean) {
   const stateRef = useRef<BrowserState | null>(null)
   const stateVersionRef = useRef(0)
   const mutationVersionRef = useRef(0)
+  const framePollResetRef = useRef(0)
+  const frameSuspendedRef = useRef(false)
   const actionQueueRef = useRef<Promise<unknown>>(Promise.resolve())
 
   const publishState = useCallback((next: BrowserState) => {
     const previous = stateRef.current
-    if (previous && (previous.page_epoch !== next.page_epoch || previous.url !== next.url)) {
+    if (previous && next.page_epoch < previous.page_epoch) return
+    if (previous && (
+      previous.page_epoch !== next.page_epoch ||
+      previous.active_tab_id !== next.active_tab_id ||
+      previous.url !== next.url
+    )) {
       mutationVersionRef.current += 1
       setDom(null)
       setFrame(null)
@@ -67,6 +76,8 @@ export function useBrowserSession(sessionId: string | null, active: boolean) {
     scopeRef.current = null
     stateRef.current = null
     mutationVersionRef.current += 1
+    framePollResetRef.current += 1
+    frameSuspendedRef.current = false
     actionQueueRef.current = Promise.resolve()
     setState(null)
     setFrame(null)
@@ -91,21 +102,45 @@ export function useBrowserSession(sessionId: string | null, active: boolean) {
 
       let after = 0
       let observedEpoch = initial.page_epoch
+      let observedTabId = initial.active_tab_id
+      let observedReset = framePollResetRef.current
       let lastStateRefresh = Date.now()
       while (isCurrent()) {
-        if (stateRef.current && stateRef.current.page_epoch !== observedEpoch) {
+        if (frameSuspendedRef.current) {
+          await new Promise((resolve) => setTimeout(resolve, 50))
+          continue
+        }
+        if (stateRef.current && (
+          stateRef.current.page_epoch !== observedEpoch ||
+          stateRef.current.active_tab_id !== observedTabId ||
+          framePollResetRef.current !== observedReset
+        )) {
           observedEpoch = stateRef.current.page_epoch
+          observedTabId = stateRef.current.active_tab_id
+          observedReset = framePollResetRef.current
           after = 0
           setFrame(null)
         }
+        const requestReset = framePollResetRef.current
         const next = await browserService.frame(sessionId, after, 1500, controller.signal)
         if (!isCurrent()) return
-        if (stateRef.current && stateRef.current.page_epoch !== observedEpoch) {
+        if (requestReset !== framePollResetRef.current || frameSuspendedRef.current) {
+          after = 0
+          setFrame(null)
+          continue
+        }
+        if (stateRef.current && (
+          stateRef.current.page_epoch !== observedEpoch ||
+          stateRef.current.active_tab_id !== observedTabId ||
+          framePollResetRef.current !== observedReset
+        )) {
           observedEpoch = stateRef.current.page_epoch
+          observedTabId = stateRef.current.active_tab_id
+          observedReset = framePollResetRef.current
           after = 0
           setFrame(null)
         }
-        if (next && next.page_epoch !== stateRef.current?.page_epoch) {
+        if (next && !matchesActiveBrowserPage(next, stateRef.current)) {
           const version = stateVersionRef.current
           const refreshed = await browserService.get(sessionId, controller.signal)
           if (!isCurrent()) return
@@ -113,11 +148,17 @@ export function useBrowserSession(sessionId: string | null, active: boolean) {
             publishState(refreshed)
           }
           observedEpoch = stateRef.current?.page_epoch ?? observedEpoch
-          after = 0
+          observedTabId = stateRef.current?.active_tab_id
+          observedReset = framePollResetRef.current
           setFrame(null)
-          if (next.page_epoch !== observedEpoch) continue
+          if (!matchesActiveBrowserPage(next, stateRef.current)) {
+            // Frame sequence is session-monotonic. Wait past this stale JPEG
+            // instead of immediately fetching the same frame in a hot loop.
+            after = Math.max(after, next.frame_seq)
+            continue
+          }
         }
-        if (next && next.frame_seq > after) {
+        if (next && matchesActiveBrowserPage(next, stateRef.current) && next.frame_seq > after) {
           after = next.frame_seq
           const objectUrl = URL.createObjectURL(next.blob)
           if (!isCurrent()) {
@@ -156,6 +197,8 @@ export function useBrowserSession(sessionId: string | null, active: boolean) {
     (
       action: (scope: Scope, expectedEpoch: number) => Promise<BrowserState>,
       invalidateDom = true,
+      invalidateFrame = false,
+      markBusy = true,
     ): Promise<void> => {
       const scope = scopeRef.current
       if (!scope || !stateRef.current) return Promise.resolve()
@@ -168,7 +211,12 @@ export function useBrowserSession(sessionId: string | null, active: boolean) {
           mutationVersionRef.current += 1
           setDom(null)
         }
-        setBusy(true)
+        if (invalidateFrame) {
+          frameSuspendedRef.current = true
+          framePollResetRef.current += 1
+          setFrame(null)
+        }
+        if (markBusy) setBusy(true)
         try {
           const next = await action(scope, expectedEpoch)
           if (scopeRef.current !== scope || scope.controller.signal.aborted) return
@@ -188,7 +236,11 @@ export function useBrowserSession(sessionId: string | null, active: boolean) {
           }
           setError(userMessage(cause))
         } finally {
-          if (scopeRef.current === scope) setBusy(false)
+          if (invalidateFrame && scopeRef.current === scope) {
+            frameSuspendedRef.current = false
+            framePollResetRef.current += 1
+          }
+          if (markBusy && scopeRef.current === scope) setBusy(false)
         }
       })
       actionQueueRef.current = task
@@ -208,12 +260,31 @@ export function useBrowserSession(sessionId: string | null, active: boolean) {
   )
   const viewport = useCallback(
     (size: BrowserViewport) =>
-      perform((scope, epoch) => browserService.viewport(scope.sessionId, size, epoch), false),
+      perform((scope, epoch) => browserService.viewport(scope.sessionId, size, epoch), false, false, false),
     [perform],
   )
   const input = useCallback(
     (event: BrowserInput) =>
       perform((scope, epoch) => browserService.input(scope.sessionId, event, epoch)),
+    [perform],
+  )
+  const createTab = useCallback(
+    () => perform((scope, epoch) => browserService.createTab(scope.sessionId, epoch), true, true),
+    [perform],
+  )
+  const activateTab = useCallback(
+    (tabId: string) => perform((scope, epoch) => browserService.activateTab(scope.sessionId, tabId, epoch), true, true),
+    [perform],
+  )
+  const closeTab = useCallback(
+    (tabId: string) => {
+      const closesActiveTab = stateRef.current?.active_tab_id === tabId
+      return perform(
+        (scope, epoch) => browserService.closeTab(scope.sessionId, tabId, epoch),
+        closesActiveTab,
+        closesActiveTab,
+      )
+    },
     [perform],
   )
 
@@ -225,10 +296,14 @@ export function useBrowserSession(sessionId: string | null, active: boolean) {
     try {
       const snapshot = await browserService.dom(scope.sessionId, scope.controller.signal)
       if (scopeRef.current !== scope || scope.controller.signal.aborted) return
+      const stateVersion = stateVersionRef.current
+      const refreshed = await browserService.get(scope.sessionId, scope.controller.signal)
+      if (scopeRef.current !== scope || scope.controller.signal.aborted) return
+      if (stateVersion === stateVersionRef.current) publishState(refreshed)
       if (
         version !== mutationVersionRef.current ||
-        snapshot.page_epoch !== stateRef.current?.page_epoch ||
-        snapshot.url !== stateRef.current.url
+        !matchesActiveBrowserPage(snapshot, stateRef.current) ||
+        snapshot.url !== stateRef.current?.url
       ) return
       setDom(snapshot)
       setError(null)
@@ -239,15 +314,21 @@ export function useBrowserSession(sessionId: string | null, active: boolean) {
     } finally {
       if (scopeRef.current === scope) setDomLoading(false)
     }
-  }, [])
+  }, [publishState])
 
-  const captureScreenshot = useCallback(async (): Promise<Blob | null> => {
+  const captureScreenshot = useCallback(async (): Promise<BrowserScreenshot | null> => {
     const scope = scopeRef.current
-    if (!scope) return null
+    if (!scope || !stateRef.current) return null
+    const version = mutationVersionRef.current
     setScreenshotLoading(true)
     try {
       const screenshot = await browserService.screenshot(scope.sessionId, scope.controller.signal)
       if (scopeRef.current !== scope || scope.controller.signal.aborted) return null
+      const stateVersion = stateVersionRef.current
+      const refreshed = await browserService.get(scope.sessionId, scope.controller.signal)
+      if (scopeRef.current !== scope || scope.controller.signal.aborted) return null
+      if (stateVersion === stateVersionRef.current) publishState(refreshed)
+      if (version !== mutationVersionRef.current || !matchesActiveBrowserPage(screenshot, stateRef.current)) return null
       setError(null)
       return screenshot
     } catch (cause) {
@@ -258,7 +339,13 @@ export function useBrowserSession(sessionId: string | null, active: boolean) {
     } finally {
       if (scopeRef.current === scope) setScreenshotLoading(false)
     }
-  }, [])
+  }, [publishState])
+
+  const isCurrentPage = useCallback(
+    (candidate: { page_epoch: number; active_tab_id?: string }) =>
+      matchesActiveBrowserPage(candidate, stateRef.current),
+    [],
+  )
 
   const retry = useCallback(() => setRetryVersion((version) => version + 1), [])
 
@@ -275,8 +362,12 @@ export function useBrowserSession(sessionId: string | null, active: boolean) {
     history,
     viewport,
     input,
+    createTab,
+    activateTab,
+    closeTab,
     inspectDom,
     captureScreenshot,
+    isCurrentPage,
     clearDom: () => setDom(null),
     retry,
   }

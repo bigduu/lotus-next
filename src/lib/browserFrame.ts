@@ -1,4 +1,13 @@
-import type { BrowserFrame } from "@services/browser/types"
+import type { BrowserFrame, BrowserState } from "@services/browser/types"
+
+/** Old single-page Bamboo responses omit both tab IDs. New responses must agree. */
+export const matchesActiveBrowserPage = (
+  candidate: { page_epoch: number; active_tab_id?: string },
+  state: BrowserState | null,
+): boolean => Boolean(
+  state && candidate.page_epoch === state.page_epoch &&
+  candidate.active_tab_id === state.active_tab_id,
+)
 
 /** Coordinates inside an object-contained frame, in the browser's CSS pixels. */
 export const pointInBrowserFrame = (
