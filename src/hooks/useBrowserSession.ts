@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react"
-import { isApiError, RequestCancelledError } from "@services/api"
+import { isApiError, NetworkRequestError, RequestCancelledError, RequestTimeoutError } from "@services/api"
 import { browserService } from "@services/browser/BrowserService"
 import { matchesActiveBrowserPage } from "@/lib/browserFrame"
 import type {
@@ -23,10 +23,30 @@ type Scope = {
 
 type Invalidation = boolean | ((state: BrowserState) => boolean)
 
+const MAX_PENDING_STATE_READ_FAILURES = 3
+
+const isTransientStateReadError = (error: unknown): boolean =>
+  (isApiError(error) && error.status >= 500 && error.status < 600) ||
+  error instanceof NetworkRequestError || error instanceof RequestTimeoutError
+
+const conflictCode = (error: unknown): string | null => {
+  if (!isApiError(error) || error.status !== 409 || !error.body) return null
+  try {
+    const body = JSON.parse(error.body) as { error?: { code?: unknown } }
+    return typeof body.error?.code === "string" ? body.error.code : null
+  } catch {
+    return null
+  }
+}
+
 const userMessage = (error: unknown): string => {
   if (isApiError(error)) {
     if (error.status === 404) return "当前 Bamboo 尚未提供内置浏览器。"
-    if (error.status === 409) return "网页已重新启动，状态已刷新；请重试操作。"
+    if (error.status === 409) {
+      if (conflictCode(error) === "dialog_pending") return "请先处理网页弹窗。"
+      if (conflictCode(error) === "stale_dialog") return "网页弹窗已变化，状态已刷新。"
+      return "网页状态已变化，状态已刷新；请重试操作。"
+    }
     if (error.status === 503) return "浏览器运行时暂不可用，请稍后重试。"
   }
   return "浏览器暂时无法使用，请重试。"
@@ -52,13 +72,19 @@ export function useBrowserSession(sessionId: string | null, active: boolean) {
 
   const publishState = useCallback((next: BrowserState) => {
     const previous = stateRef.current
-    if (previous && (
+    const pageChanged = Boolean(previous && (
       previous.page_epoch !== next.page_epoch ||
       previous.active_tab_id !== next.active_tab_id ||
       previous.url !== next.url
-    )) {
+    ))
+    const dialogChanged = previous?.pending_dialog?.dialog_id !== next.pending_dialog?.dialog_id ||
+      previous?.pending_dialog?.status !== next.pending_dialog?.status
+    if (pageChanged || dialogChanged) {
       mutationVersionRef.current += 1
       setDom(null)
+    }
+    if (dialogChanged) framePollResetRef.current += 1
+    if (pageChanged && (!next.pending_dialog || previous?.active_tab_id !== next.active_tab_id || previous?.url !== next.url)) {
       setFrame(null)
     }
     stateRef.current = next
@@ -106,30 +132,65 @@ export function useBrowserSession(sessionId: string | null, active: boolean) {
       let observedTabId = initial.active_tab_id
       let observedReset = framePollResetRef.current
       let lastStateRefresh = Date.now()
+      let pendingStateReadFailures = 0
       while (isCurrent()) {
+        if (stateRef.current?.pending_dialog) {
+          // Bamboo only permits state reads while a page dialog blocks CDP.
+          // Keep the last JPEG visible and observe model responses or expiry.
+          await new Promise((resolve) => setTimeout(resolve, 400))
+          if (!isCurrent()) return
+          const version = stateVersionRef.current
+          let refreshed: BrowserState
+          try {
+            refreshed = await browserService.get(sessionId, controller.signal)
+          } catch (cause) {
+            if (!isCurrent()) return
+            if (isTransientStateReadError(cause) && ++pendingStateReadFailures < MAX_PENDING_STATE_READ_FAILURES) continue
+            throw cause
+          }
+          if (!isCurrent()) return
+          pendingStateReadFailures = 0
+          if (version === stateVersionRef.current) publishState(refreshed)
+          lastStateRefresh = Date.now()
+          continue
+        }
+        pendingStateReadFailures = 0
         if (frameSuspendedRef.current) {
           await new Promise((resolve) => setTimeout(resolve, 50))
           continue
         }
-        if (stateRef.current && (
+        const pageChangedBeforePoll = Boolean(stateRef.current && (
           stateRef.current.page_epoch !== observedEpoch ||
-          stateRef.current.active_tab_id !== observedTabId ||
-          framePollResetRef.current !== observedReset
-        )) {
+          stateRef.current.active_tab_id !== observedTabId
+        ))
+        if (stateRef.current && (pageChangedBeforePoll || framePollResetRef.current !== observedReset)) {
           observedEpoch = stateRef.current.page_epoch
           observedTabId = stateRef.current.active_tab_id
           observedReset = framePollResetRef.current
           after = 0
-          setFrame(null)
+          if (pageChangedBeforePoll) setFrame(null)
         }
         const requestReset = framePollResetRef.current
         const requestEpoch = observedEpoch
         const requestTabId = observedTabId
-        const next = await browserService.frame(sessionId, after, 1500, controller.signal)
+        let next: BrowserFrame | null
+        try {
+          next = await browserService.frame(sessionId, after, 1500, controller.signal)
+        } catch (cause) {
+          if (!isCurrent()) return
+          if (isApiError(cause) && cause.status === 409) {
+            const version = stateVersionRef.current
+            const refreshed = await browserService.get(sessionId, controller.signal)
+            if (!isCurrent()) return
+            if (version === stateVersionRef.current) publishState(refreshed)
+            continue
+          }
+          throw cause
+        }
         if (!isCurrent()) return
         if (requestReset !== framePollResetRef.current || frameSuspendedRef.current) {
           after = 0
-          setFrame(null)
+          if (!stateRef.current?.pending_dialog) setFrame(null)
           continue
         }
         const pageChangedDuringPoll = Boolean(stateRef.current && (
@@ -144,7 +205,7 @@ export function useBrowserSession(sessionId: string | null, active: boolean) {
           observedTabId = stateRef.current.active_tab_id
           observedReset = framePollResetRef.current
           after = 0
-          setFrame(null)
+          if (!stateRef.current?.pending_dialog) setFrame(null)
         }
         if (next && !matchesActiveBrowserPage(next, stateRef.current)) {
           const version = stateVersionRef.current
@@ -208,6 +269,20 @@ export function useBrowserSession(sessionId: string | null, active: boolean) {
     }
   }, [sessionId, active, retryVersion, publishState])
 
+  const refreshOnConflict = useCallback(async (scope: Scope, cause: unknown): Promise<boolean> => {
+    if (!isApiError(cause) || cause.status !== 409) return false
+    const version = stateVersionRef.current
+    try {
+      const refreshed = await browserService.get(scope.sessionId, scope.controller.signal)
+      if (scopeRef.current === scope && !scope.controller.signal.aborted && version === stateVersionRef.current) {
+        publishState(refreshed)
+      }
+    } catch {
+      // Keep the original conflict as the actionable failure.
+    }
+    return true
+  }, [publishState])
+
   const perform = useCallback(
     (
       action: (scope: Scope, expectedEpoch: number) => Promise<BrowserState>,
@@ -221,7 +296,7 @@ export function useBrowserSession(sessionId: string | null, active: boolean) {
       const task = actionQueueRef.current.catch(() => undefined).then(async () => {
         if (scopeRef.current !== scope || scope.controller.signal.aborted) return
         const currentState = stateRef.current
-        if (!currentState) return
+        if (!currentState || currentState.pending_dialog) return
         const expectedEpoch = currentState.page_epoch
         const shouldInvalidateDom = typeof invalidateDom === "function" ? invalidateDom(currentState) : invalidateDom
         const shouldInvalidateFrame = typeof invalidateFrame === "function" ? invalidateFrame(currentState) : invalidateFrame
@@ -242,15 +317,11 @@ export function useBrowserSession(sessionId: string | null, active: boolean) {
           setError(null)
         } catch (cause) {
           if (scopeRef.current !== scope || scope.controller.signal.aborted) return
-          if (isApiError(cause) && cause.status === 409) {
-            try {
-              const refreshed = await browserService.get(scope.sessionId, scope.controller.signal)
-              if (scopeRef.current === scope) {
-                publishState(refreshed)
-              }
-            } catch {
-              // The original conflict remains the actionable failure.
-            }
+          await refreshOnConflict(scope, cause)
+          if (scopeRef.current !== scope || scope.controller.signal.aborted) return
+          if (conflictCode(cause) === "dialog_pending" || stateRef.current?.pending_dialog) {
+            setError(null)
+            return
           }
           setError(userMessage(cause))
         } finally {
@@ -264,7 +335,7 @@ export function useBrowserSession(sessionId: string | null, active: boolean) {
       actionQueueRef.current = task
       return task
     },
-    [publishState],
+    [publishState, refreshOnConflict],
   )
 
   const navigate = useCallback(
@@ -306,9 +377,52 @@ export function useBrowserSession(sessionId: string | null, active: boolean) {
     [perform],
   )
 
+  const respondDialog = useCallback((accept: boolean, text?: string): Promise<void> => {
+    const scope = scopeRef.current
+    const current = stateRef.current
+    const dialog = current?.pending_dialog
+    if (!scope || !current || !dialog || dialog.status !== "pending") return Promise.resolve()
+    const matchesDialog = () => {
+      const latest = stateRef.current
+      return scopeRef.current === scope && !scope.controller.signal.aborted &&
+        latest?.page_epoch === current.page_epoch && latest.active_tab_id === current.active_tab_id &&
+        latest.pending_dialog?.dialog_id === dialog.dialog_id &&
+        latest.pending_dialog.page_epoch === dialog.page_epoch &&
+        latest.pending_dialog.tab_id === dialog.tab_id &&
+        latest.pending_dialog.status === "pending"
+    }
+    const task = actionQueueRef.current.catch(() => undefined).then(async () => {
+      if (!matchesDialog()) return
+      setBusy(true)
+      try {
+        const next = await browserService.respondDialog(scope.sessionId, {
+          dialog_id: dialog.dialog_id,
+          expected_epoch: dialog.page_epoch,
+          accept,
+          ...(text !== undefined ? { text } : {}),
+        })
+        if (!matchesDialog()) return
+        publishState(next)
+        setError(null)
+      } catch (cause) {
+        if (!matchesDialog()) return
+        await refreshOnConflict(scope, cause)
+        if (!matchesDialog()) {
+          setError(null)
+          return
+        }
+        setError(userMessage(cause))
+      } finally {
+        if (scopeRef.current === scope) setBusy(false)
+      }
+    })
+    actionQueueRef.current = task
+    return task
+  }, [publishState, refreshOnConflict])
+
   const inspectDom = useCallback(async () => {
     const scope = scopeRef.current
-    if (!scope) return
+    if (!scope || stateRef.current?.pending_dialog) return
     const version = mutationVersionRef.current
     setDomLoading(true)
     try {
@@ -327,16 +441,17 @@ export function useBrowserSession(sessionId: string | null, active: boolean) {
       setError(null)
     } catch (cause) {
       if (scopeRef.current === scope && !scope.controller.signal.aborted) {
-        setError(userMessage(cause))
+        await refreshOnConflict(scope, cause)
+        if (scopeRef.current === scope) setError(stateRef.current?.pending_dialog ? null : userMessage(cause))
       }
     } finally {
       if (scopeRef.current === scope) setDomLoading(false)
     }
-  }, [publishState])
+  }, [publishState, refreshOnConflict])
 
   const captureScreenshot = useCallback(async (): Promise<BrowserScreenshot | null> => {
     const scope = scopeRef.current
-    if (!scope || !stateRef.current) return null
+    if (!scope || !stateRef.current || stateRef.current.pending_dialog) return null
     const version = mutationVersionRef.current
     setScreenshotLoading(true)
     try {
@@ -351,13 +466,14 @@ export function useBrowserSession(sessionId: string | null, active: boolean) {
       return screenshot
     } catch (cause) {
       if (scopeRef.current === scope && !scope.controller.signal.aborted) {
-        setError(userMessage(cause))
+        await refreshOnConflict(scope, cause)
+        if (scopeRef.current === scope) setError(stateRef.current?.pending_dialog ? null : userMessage(cause))
       }
       return null
     } finally {
       if (scopeRef.current === scope) setScreenshotLoading(false)
     }
-  }, [publishState])
+  }, [publishState, refreshOnConflict])
 
   const isCurrentPage = useCallback(
     (candidate: { page_epoch: number; active_tab_id?: string }) =>
@@ -383,6 +499,7 @@ export function useBrowserSession(sessionId: string | null, active: boolean) {
     createTab,
     activateTab,
     closeTab,
+    respondDialog,
     inspectDom,
     captureScreenshot,
     isCurrentPage,

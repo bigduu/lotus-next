@@ -2,6 +2,7 @@ import { act } from "react"
 import { createRoot, type Root } from "react-dom/client"
 import { afterEach, beforeEach, expect, it, vi } from "vitest"
 import { browserService } from "@services/browser/BrowserService"
+import { ApiError } from "@services/api"
 import { useBrowserSession } from "./useBrowserSession"
 import type { BrowserState } from "@services/browser/types"
 
@@ -17,6 +18,7 @@ vi.mock("@services/browser/BrowserService", () => ({
     createTab: vi.fn(),
     activateTab: vi.fn(),
     closeTab: vi.fn(),
+    respondDialog: vi.fn(),
     dom: vi.fn(),
     screenshot: vi.fn(),
   },
@@ -43,6 +45,17 @@ const tabbedState = (epoch: number, activeTabId: string): BrowserState => ({
     title: tabId,
     active: tabId === activeTabId,
   })),
+})
+
+const pendingState = (type: "alert" | "confirm" | "prompt" = "prompt"): BrowserState => ({
+  ...tabbedState(17, "tab-a"),
+  pending_dialog: {
+    dialog_id: "a".repeat(24), tab_id: "tab-a", page_epoch: 17,
+    url: "https://example.test/tab-a", type,
+    message: "Page question", message_truncated: false,
+    default_value: "default answer", default_value_truncated: false,
+    expires_at_ms: Date.now() + 30_000, status: "pending",
+  },
 })
 
 let root: Root
@@ -445,4 +458,149 @@ it("fences frames when a queued close becomes an active-tab close", async () => 
 
   await act(async () => { releaseClose(tabbedState(3, "tab-a")); await closing })
   expect(browser.state?.active_tab_id).toBe("tab-a")
+})
+
+it("keeps a cached JPEG and stops incompatible reads while a dialog is pending", async () => {
+  const current = tabbedState(17, "tab-a")
+  vi.mocked(browserService.open).mockResolvedValue(current)
+  vi.mocked(browserService.frame)
+    .mockResolvedValueOnce({
+      blob: new Blob(["cached"], { type: "image/jpeg" }), frame_seq: 4,
+      page_epoch: 17, active_tab_id: "tab-a", viewport: { width: 640, height: 480 },
+    })
+    .mockRejectedValueOnce(new ApiError("dialog pending", 409, "Conflict"))
+    .mockImplementation(() => new Promise(() => {}))
+  vi.mocked(browserService.get).mockResolvedValue(pendingState())
+
+  await act(async () => root.render(<Harness />))
+  expect(browser.state?.pending_dialog?.dialog_id).toBe("a".repeat(24))
+  expect(browser.frame?.frame_seq).toBe(4)
+  expect(browser.error).toBeNull()
+  expect(browserService.frame).toHaveBeenCalledTimes(2)
+  await act(async () => {
+    await browser.navigate("https://another.test/")
+    await browser.viewport({ width: 800, height: 600 })
+    await browser.inspectDom()
+    await browser.captureScreenshot()
+  })
+  expect(browserService.navigate).not.toHaveBeenCalled()
+  expect(browserService.viewport).not.toHaveBeenCalled()
+  expect(browserService.dom).not.toHaveBeenCalled()
+  expect(browserService.screenshot).not.toHaveBeenCalled()
+  expect(browser.frame?.frame_seq).toBe(4)
+})
+
+it("keeps the cached frame and resumes when one pending state read fails before the model resolves the dialog", async () => {
+  const current = tabbedState(17, "tab-a")
+  let resolveModel!: (next: BrowserState) => void
+  const modelResponse = new Promise<BrowserState>((resolve) => { resolveModel = resolve })
+  vi.mocked(browserService.open).mockResolvedValue(current)
+  vi.mocked(browserService.frame)
+    .mockResolvedValueOnce({
+      blob: new Blob(["cached"], { type: "image/jpeg" }), frame_seq: 4,
+      page_epoch: 17, active_tab_id: "tab-a", viewport: { width: 640, height: 480 },
+    })
+    .mockRejectedValueOnce(new ApiError("dialog pending", 409, "Conflict"))
+    .mockImplementation(() => new Promise(() => {}))
+  vi.mocked(browserService.get)
+    .mockResolvedValueOnce(pendingState())
+    .mockRejectedValueOnce(new ApiError("temporarily unavailable", 503, "Unavailable"))
+    .mockImplementation(() => modelResponse)
+
+  await act(async () => root.render(<Harness />))
+  expect(browser.state?.pending_dialog?.dialog_id).toBe("a".repeat(24))
+  expect(browser.frame?.frame_seq).toBe(4)
+
+  await act(async () => {
+    await vi.waitFor(() => expect(browserService.get).toHaveBeenCalledTimes(3), { timeout: 3000 })
+  })
+  expect(browser.state?.pending_dialog?.dialog_id).toBe("a".repeat(24))
+  expect(browser.frame?.frame_seq).toBe(4)
+  expect(browser.error).toBeNull()
+
+  await act(async () => resolveModel(current))
+  expect(browserService.get).toHaveBeenCalledTimes(3)
+  expect(browser.state?.pending_dialog).toBeUndefined()
+  expect(browser.frame?.frame_seq).toBe(4)
+  expect(browser.error).toBeNull()
+})
+
+it("answers an exact dialog without prompt text when untouched and refreshes a stale 409", async () => {
+  vi.mocked(browserService.open).mockResolvedValue(pendingState())
+  vi.mocked(browserService.frame).mockImplementation(() => new Promise(() => {}))
+  vi.mocked(browserService.respondDialog).mockRejectedValue(new ApiError(
+    "stale dialog", 409, "Conflict", JSON.stringify({ error: { code: "stale_dialog" } }),
+  ))
+  vi.mocked(browserService.get).mockResolvedValue(tabbedState(18, "tab-b"))
+
+  await act(async () => root.render(<Harness />))
+  await act(async () => browser.respondDialog(true))
+  expect(browserService.respondDialog).toHaveBeenCalledWith("sid", {
+    dialog_id: "a".repeat(24), expected_epoch: 17, accept: true,
+  })
+  expect(browser.state?.active_tab_id).toBe("tab-b")
+  expect(browser.state?.page_epoch).toBe(18)
+  expect(browser.error).toBeNull()
+})
+
+it("answers a background tab dialog using that dialog's identity while another tab stays active", async () => {
+  const pending = pendingState("confirm")
+  pending.pending_dialog!.tab_id = "tab-b"
+  pending.pending_dialog!.url = "https://background.test/question"
+  vi.mocked(browserService.open).mockResolvedValue(pending)
+  vi.mocked(browserService.frame).mockImplementation(() => new Promise(() => {}))
+  vi.mocked(browserService.respondDialog).mockResolvedValue(tabbedState(17, "tab-a"))
+
+  await act(async () => root.render(<Harness />))
+  await act(async () => browser.respondDialog(false))
+  expect(browserService.respondDialog).toHaveBeenCalledWith("sid", {
+    dialog_id: "a".repeat(24), expected_epoch: 17, accept: false,
+  })
+  expect(browser.state?.active_tab_id).toBe("tab-a")
+  expect(browser.state?.pending_dialog).toBeUndefined()
+})
+
+it("discards a late background tab response after the active tab changes", async () => {
+  const pending = pendingState("confirm")
+  pending.pending_dialog!.tab_id = "tab-b"
+  pending.pending_dialog!.url = "https://background.test/question"
+  let releaseResponse!: (value: BrowserState) => void
+  const response = new Promise<BrowserState>((resolve) => { releaseResponse = resolve })
+  vi.mocked(browserService.open).mockResolvedValue(pending)
+  vi.mocked(browserService.frame).mockImplementation(() => new Promise(() => {}))
+  vi.mocked(browserService.respondDialog).mockImplementation(() => response)
+  vi.mocked(browserService.get).mockResolvedValue({
+    ...tabbedState(18, "tab-b"), pending_dialog: pending.pending_dialog,
+  })
+
+  await act(async () => root.render(<Harness />))
+  let answering!: Promise<void>
+  await act(async () => { answering = browser.respondDialog(true) })
+  expect(browserService.respondDialog).toHaveBeenCalledTimes(1)
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 450)) })
+  expect(browser.state?.active_tab_id).toBe("tab-b")
+  await act(async () => { releaseResponse(pending); await answering })
+  expect(browser.state?.active_tab_id).toBe("tab-b")
+  expect(browser.state?.page_epoch).toBe(18)
+})
+
+it("sends an explicitly empty prompt and discards a late result after model tab change", async () => {
+  let releaseResponse!: (value: BrowserState) => void
+  const response = new Promise<BrowserState>((resolve) => { releaseResponse = resolve })
+  vi.mocked(browserService.open).mockResolvedValue(pendingState())
+  vi.mocked(browserService.frame).mockImplementation(() => new Promise(() => {}))
+  vi.mocked(browserService.respondDialog).mockImplementation(() => response)
+  vi.mocked(browserService.get).mockResolvedValue(tabbedState(18, "tab-b"))
+
+  await act(async () => root.render(<Harness />))
+  let answering!: Promise<void>
+  await act(async () => { answering = browser.respondDialog(true, "") })
+  expect(browserService.respondDialog).toHaveBeenCalledWith("sid", {
+    dialog_id: "a".repeat(24), expected_epoch: 17, accept: true, text: "",
+  })
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 450)) })
+  expect(browser.state?.active_tab_id).toBe("tab-b")
+  await act(async () => { releaseResponse(pendingState()); await answering })
+  expect(browser.state?.page_epoch).toBe(18)
+  expect(browser.state?.active_tab_id).toBe("tab-b")
 })

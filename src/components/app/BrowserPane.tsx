@@ -16,6 +16,21 @@ import { matchesActiveBrowserPage, pointInBrowserFrame } from "@/lib/browserFram
 import { normalizeBrowserAddress, playwrightKey } from "@/lib/browserInput"
 import { FileOperationsService } from "@/shared/services/FileOperationsService"
 
+const limitPromptText = (value: string): string => {
+  if (value.length <= 4096) return value
+  const bounded = value.slice(0, 4096)
+  return /[\uD800-\uDBFF]$/.test(bounded) ? bounded.slice(0, -1) : bounded
+}
+
+const dialogSourceOrigin = (rawUrl: string): string => {
+  try {
+    const url = new URL(rawUrl)
+    return url.protocol === "http:" || url.protocol === "https:" ? url.origin : "未知网页"
+  } catch {
+    return "未知网页"
+  }
+}
+
 export function BrowserPane({
   sessionId,
   active,
@@ -27,17 +42,24 @@ export function BrowserPane({
   const [address, setAddress] = useState("")
   const [addressError, setAddressError] = useState<string | null>(null)
   const [saveError, setSaveError] = useState<string | null>(null)
+  const [promptInput, setPromptInput] = useState<{ dialogId: string; value: string; edited: boolean } | null>(null)
   const saveGenerationRef = useRef(0)
   const viewportRef = useRef<HTMLDivElement>(null)
   const imageRef = useRef<HTMLImageElement>(null)
   const keyboardRef = useRef<HTMLTextAreaElement>(null)
+  const dialogRef = useRef<HTMLDivElement>(null)
   const composingRef = useRef(false)
   const viewportWidth = browser.state?.viewport.width
   const viewportHeight = browser.state?.viewport.height
   const sendViewport = browser.viewport
   const sendInput = browser.input
   const currentFrame = browser.frame
-  const visibleFrame = currentFrame && matchesActiveBrowserPage(currentFrame, browser.state)
+  const pendingDialog = browser.state?.pending_dialog
+  const pendingDialogId = pendingDialog?.dialog_id
+  const dialogBlocked = Boolean(pendingDialog)
+  const controlsBlocked = browser.busy || dialogBlocked
+  const visibleFrame = currentFrame && (matchesActiveBrowserPage(currentFrame, browser.state) ||
+    (pendingDialog && currentFrame.active_tab_id === pendingDialog.tab_id))
     ? currentFrame
     : null
   const tabs = browser.state?.active_tab_id && browser.state.tabs
@@ -49,12 +71,32 @@ export function BrowserPane({
   }, [browser.state?.url, sessionId])
 
   useEffect(() => {
+    setPromptInput(pendingDialog?.type === "prompt"
+      ? { dialogId: pendingDialog.dialog_id, value: pendingDialog.default_value, edited: false }
+      : null)
+  }, [sessionId, pendingDialog?.dialog_id, pendingDialog?.type, pendingDialog?.default_value])
+
+  useEffect(() => {
+    const dialog = dialogRef.current
+    if (!pendingDialogId || !dialog) return
+    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    const first = dialog.querySelector<HTMLElement>('textarea:not([disabled]),button:not([disabled])')
+    ;(first ?? dialog).focus()
+    return () => {
+      // Keep focus in the composer or workbench if the person moved there.
+      if (dialog.contains(document.activeElement) && previousFocus?.isConnected && !previousFocus.matches(":disabled")) {
+        previousFocus.focus()
+      }
+    }
+  }, [pendingDialogId])
+
+  useEffect(() => {
     saveGenerationRef.current += 1
     setSaveError(null)
   }, [sessionId, browser.state?.active_tab_id, browser.state?.page_epoch])
 
   useEffect(() => {
-    if (!sessionId || !active || viewportWidth === undefined || viewportHeight === undefined) return
+    if (!sessionId || !active || dialogBlocked || viewportWidth === undefined || viewportHeight === undefined) return
     const element = viewportRef.current
     if (!element) return
     let timer: ReturnType<typeof setTimeout> | null = null
@@ -83,12 +125,12 @@ export function BrowserPane({
       window.removeEventListener("resize", measure)
       if (timer) clearTimeout(timer)
     }
-  }, [sessionId, active, viewportWidth, viewportHeight, sendViewport])
+  }, [sessionId, active, dialogBlocked, viewportWidth, viewportHeight, sendViewport])
 
   const point = useCallback((clientX: number, clientY: number) => {
     const currentState = browser.state
     if (
-      browser.busy ||
+      controlsBlocked ||
       !visibleFrame ||
       !currentState ||
       !imageRef.current ||
@@ -101,7 +143,7 @@ export function BrowserPane({
       imageRef.current.getBoundingClientRect(),
       visibleFrame,
     )
-  }, [browser.busy, browser.state, visibleFrame])
+  }, [controlsBlocked, browser.state, visibleFrame])
 
   useEffect(() => {
     const element = viewportRef.current
@@ -124,6 +166,7 @@ export function BrowserPane({
 
   const navigate = (event: FormEvent) => {
     event.preventDefault()
+    if (dialogBlocked) return
     const url = normalizeBrowserAddress(address)
     if (!url) {
       setAddressError("请输入有效的 http 或 https 地址。")
@@ -143,13 +186,14 @@ export function BrowserPane({
   }
 
   const typeText = (input: HTMLTextAreaElement) => {
-    if (composingRef.current || !input.value) return
+    if (dialogBlocked || composingRef.current || !input.value) return
     const text = input.value
     input.value = ""
     void browser.input({ kind: "type", text })
   }
 
   const saveScreenshot = async () => {
+    if (dialogBlocked) return
     const generation = saveGenerationRef.current
     setSaveError(null)
     const screenshot = await browser.captureScreenshot()
@@ -197,7 +241,7 @@ export function BrowserPane({
                     aria-label={`切换到标签页 ${index + 1}：${label}`}
                     aria-current={isActive ? "page" : undefined}
                     title={label}
-                    disabled={browser.busy || isActive}
+                    disabled={controlsBlocked || isActive}
                     className="h-full min-w-0 flex-1 truncate px-2 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default"
                     onClick={() => void browser.activateTab(tab.tab_id)}
                   >
@@ -207,7 +251,7 @@ export function BrowserPane({
                     type="button"
                     aria-label={`关闭标签页 ${index + 1}：${label}`}
                     title={`关闭 ${label}`}
-                    disabled={browser.busy}
+                    disabled={controlsBlocked}
                     className="mr-1 flex size-6 shrink-0 items-center justify-center rounded-sm outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
                     onClick={() => void browser.closeTab(tab.tab_id)}
                   >
@@ -217,19 +261,19 @@ export function BrowserPane({
               )
             })}
           </nav>
-          <Button size="icon" variant="ghost" className="size-8 shrink-0" aria-label="新建标签页" disabled={browser.busy} onClick={() => void browser.createTab()}>
+          <Button size="icon" variant="ghost" className="size-8 shrink-0" aria-label="新建标签页" disabled={controlsBlocked} onClick={() => void browser.createTab()}>
             <Plus className="size-4" />
           </Button>
         </div>
       ) : null}
       <div className="flex shrink-0 items-center gap-1 border-b p-2">
-        <Button size="icon" variant="ghost" aria-label="后退" disabled={!browser.state?.can_go_back || browser.busy} onClick={() => void browser.history("back")}>
+        <Button size="icon" variant="ghost" aria-label="后退" disabled={!browser.state?.can_go_back || controlsBlocked} onClick={() => void browser.history("back")}>
           <ArrowLeft />
         </Button>
-        <Button size="icon" variant="ghost" aria-label="前进" disabled={!browser.state?.can_go_forward || browser.busy} onClick={() => void browser.history("forward")}>
+        <Button size="icon" variant="ghost" aria-label="前进" disabled={!browser.state?.can_go_forward || controlsBlocked} onClick={() => void browser.history("forward")}>
           <ArrowRight />
         </Button>
-        <Button size="icon" variant="ghost" aria-label="刷新网页" disabled={!browser.state || browser.busy} onClick={() => void browser.history("reload")}>
+        <Button size="icon" variant="ghost" aria-label="刷新网页" disabled={!browser.state || controlsBlocked} onClick={() => void browser.history("reload")}>
           <RefreshCw className={browser.busy ? "animate-spin" : undefined} />
         </Button>
         <form className="flex min-w-0 flex-1 gap-1" onSubmit={navigate}>
@@ -237,6 +281,7 @@ export function BrowserPane({
             type="text"
             aria-label="网页地址"
             value={address}
+            disabled={dialogBlocked}
             onChange={(event) => {
               setAddress(event.target.value)
               setAddressError(null)
@@ -246,7 +291,7 @@ export function BrowserPane({
             spellCheck={false}
             className="h-9 min-w-0 flex-1 rounded-md border bg-background px-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
           />
-          <Button size="icon" variant="ghost" aria-label="访问网页" disabled={!browser.state || browser.busy} type="submit">
+          <Button size="icon" variant="ghost" aria-label="访问网页" disabled={!browser.state || controlsBlocked} type="submit">
             <ExternalLink />
           </Button>
         </form>
@@ -256,10 +301,10 @@ export function BrowserPane({
         <span className="min-w-0 flex-1 truncate" title={browser.state?.title || browser.state?.url || undefined}>
           {browser.state?.title || browser.state?.url || "浏览器"}
         </span>
-        <Button size="sm" variant="ghost" disabled={!browser.state || browser.busy || browser.domLoading} onClick={() => void browser.inspectDom()} aria-label="查看 DOM">
+        <Button size="sm" variant="ghost" disabled={!browser.state || controlsBlocked || browser.domLoading} onClick={() => void browser.inspectDom()} aria-label="查看 DOM">
           <Code2 /> DOM
         </Button>
-        <Button size="sm" variant="ghost" disabled={!browser.state || browser.screenshotLoading} aria-label="保存网页截图" onClick={() => void saveScreenshot()}>
+        <Button size="sm" variant="ghost" disabled={!browser.state || dialogBlocked || browser.screenshotLoading} aria-label="保存网页截图" onClick={() => void saveScreenshot()}>
           <Camera /> 截图
         </Button>
       </div>
@@ -295,6 +340,7 @@ export function BrowserPane({
         <textarea
           ref={keyboardRef}
           aria-label="网页键盘输入"
+          disabled={dialogBlocked}
           className="absolute left-0 top-0 size-1 opacity-0"
           autoCapitalize="off"
           autoComplete="off"
@@ -306,6 +352,7 @@ export function BrowserPane({
             typeText(event.currentTarget)
           }}
           onKeyDown={(event) => {
+            if (dialogBlocked) return
             if (event.nativeEvent.isComposing || composingRef.current) return
             if (event.key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey) return
             event.preventDefault()
@@ -313,13 +360,63 @@ export function BrowserPane({
           }}
         />
 
-        {browser.dom ? (
+        {browser.dom && !dialogBlocked ? (
           <div className="absolute inset-0 z-10 flex min-h-0 flex-col rounded-lg border bg-card shadow-lg" aria-label="DOM 快照">
             <div className="flex shrink-0 items-center gap-2 border-b px-3 py-2 text-xs">
               <span className="min-w-0 flex-1 truncate" title={browser.dom.url}>DOM · {browser.dom.title || browser.dom.url}</span>
               <Button size="icon" variant="ghost" aria-label="关闭 DOM 快照" onClick={browser.clearDom}><X /></Button>
             </div>
             <pre className="min-h-0 flex-1 overflow-auto whitespace-pre-wrap break-words p-3 text-xs">{browser.dom.snapshot}</pre>
+          </div>
+        ) : null}
+
+        {pendingDialog ? (
+          <div className="absolute inset-0 z-20 flex items-center justify-center bg-background/70 p-3" data-browser-dialog>
+            <div ref={dialogRef} role="dialog" aria-modal="false" aria-label="网页弹窗" tabIndex={-1} className="flex max-h-full w-full max-w-md flex-col gap-3 overflow-auto rounded-lg border bg-card p-4 shadow-lg">
+              <div className="text-sm font-semibold">
+                {pendingDialog.type === "alert" ? "网页提示" : pendingDialog.type === "confirm" ? "网页确认" : "网页输入"}
+              </div>
+              <p className="break-words text-xs text-muted-foreground">来自 {dialogSourceOrigin(pendingDialog.url)}</p>
+              <p className="whitespace-pre-wrap break-words text-sm">{pendingDialog.message}</p>
+              {pendingDialog.message_truncated ? <p className="text-xs text-muted-foreground">网页提示内容已截断。</p> : null}
+              {pendingDialog.type === "prompt" ? (
+                <div className="flex flex-col gap-1">
+                  <label htmlFor="browser-dialog-prompt" className="text-xs text-muted-foreground">输入内容</label>
+                  <textarea
+                    id="browser-dialog-prompt"
+                    aria-label="弹窗输入"
+                    rows={3}
+                    maxLength={4096}
+                    disabled={browser.busy || pendingDialog.status !== "pending"}
+                    value={promptInput?.dialogId === pendingDialog.dialog_id ? promptInput.value : pendingDialog.default_value}
+                    onChange={(event) => setPromptInput({
+                      dialogId: pendingDialog.dialog_id,
+                      value: limitPromptText(event.target.value),
+                      edited: true,
+                    })}
+                    className="w-full resize-none rounded-md border bg-background px-2 py-1 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  />
+                  {pendingDialog.default_value_truncated ? <p className="text-xs text-muted-foreground">默认内容仅显示前 4096 字；保持不改将使用网页的完整默认值。</p> : null}
+                </div>
+              ) : null}
+              {pendingDialog.status === "expired" ? (
+                <p role="status" className="text-xs text-muted-foreground">弹窗已过期，正在刷新网页状态…</p>
+              ) : (
+                <div className="flex justify-end gap-2">
+                  {pendingDialog.type !== "alert" ? (
+                    <Button size="sm" variant="outline" disabled={browser.busy} onClick={() => void browser.respondDialog(false)}>取消</Button>
+                  ) : null}
+                  <Button
+                    size="sm"
+                    disabled={browser.busy}
+                    onClick={() => void browser.respondDialog(true,
+                      pendingDialog.type === "prompt" && promptInput?.dialogId === pendingDialog.dialog_id && promptInput.edited
+                        ? promptInput.value
+                        : undefined)}
+                  >确定</Button>
+                </div>
+              )}
+            </div>
           </div>
         ) : null}
       </div>
