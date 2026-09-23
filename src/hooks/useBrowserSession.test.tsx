@@ -288,3 +288,54 @@ it("keeps the old frame hidden when its poll returns before tab activation compl
   await act(async () => { await new Promise((resolve) => setTimeout(resolve, 60)) })
   expect(browser.frame?.active_tab_id).toBe("tab-b")
 })
+
+it("adopts a lower epoch and reset frame sequence after browser host recovery", async () => {
+  vi.mocked(browserService.open).mockResolvedValue(tabbedState(90, "tab-a"))
+  vi.mocked(browserService.get).mockResolvedValue(tabbedState(4, "tab-b"))
+  vi.mocked(browserService.frame)
+    .mockResolvedValueOnce({
+      blob: new Blob(["old host"], { type: "image/jpeg" }),
+      frame_seq: 20, page_epoch: 90, active_tab_id: "tab-a",
+      viewport: { width: 640, height: 480 },
+    })
+    .mockResolvedValueOnce({
+      blob: new Blob(["new host"], { type: "image/jpeg" }),
+      frame_seq: 1, page_epoch: 4, active_tab_id: "tab-b",
+      viewport: { width: 640, height: 480 },
+    })
+    .mockImplementation(() => new Promise(() => {}))
+
+  await act(async () => root.render(<Harness />))
+
+  expect(browser.state?.page_epoch).toBe(4)
+  expect(browser.state?.active_tab_id).toBe("tab-b")
+  expect(browser.frame?.page_epoch).toBe(4)
+  expect(browser.frame?.active_tab_id).toBe("tab-b")
+  expect(browser.frame?.frame_seq).toBe(1)
+  expect(vi.mocked(browserService.frame).mock.calls[1]?.[1]).toBe(20)
+  expect(vi.mocked(browserService.frame).mock.calls[2]?.[1]).toBe(1)
+})
+
+it("does not let an older state request overwrite a completed tab switch", async () => {
+  let releaseGet!: (value: BrowserState) => void
+  const staleGet = new Promise<BrowserState>((resolve) => { releaseGet = resolve })
+  vi.mocked(browserService.open).mockResolvedValue(tabbedState(90, "tab-a"))
+  vi.mocked(browserService.frame).mockImplementation(() => new Promise(() => {}))
+  vi.mocked(browserService.dom).mockResolvedValue({
+    page_epoch: 90, active_tab_id: "tab-a", url: "https://example.test/tab-a",
+    title: "tab-a", snapshot: "old DOM",
+  })
+  vi.mocked(browserService.get).mockImplementation(() => staleGet)
+  vi.mocked(browserService.activateTab).mockResolvedValue(tabbedState(91, "tab-b"))
+
+  await act(async () => root.render(<Harness />))
+  let inspect!: Promise<void>
+  await act(async () => { inspect = browser.inspectDom() })
+  await act(async () => browser.activateTab("tab-b"))
+  await act(async () => releaseGet(tabbedState(90, "tab-a")))
+  await act(async () => inspect)
+
+  expect(browser.state?.page_epoch).toBe(91)
+  expect(browser.state?.active_tab_id).toBe("tab-b")
+  expect(browser.dom).toBeNull()
+})

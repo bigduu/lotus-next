@@ -50,7 +50,6 @@ export function useBrowserSession(sessionId: string | null, active: boolean) {
 
   const publishState = useCallback((next: BrowserState) => {
     const previous = stateRef.current
-    if (previous && next.page_epoch < previous.page_epoch) return
     if (previous && (
       previous.page_epoch !== next.page_epoch ||
       previous.active_tab_id !== next.active_tab_id ||
@@ -144,17 +143,24 @@ export function useBrowserSession(sessionId: string | null, active: boolean) {
           const version = stateVersionRef.current
           const refreshed = await browserService.get(sessionId, controller.signal)
           if (!isCurrent()) return
+          let pageChanged = false
           if (version === stateVersionRef.current) {
+            const previous = stateRef.current
             publishState(refreshed)
+            pageChanged = previous?.page_epoch !== refreshed.page_epoch ||
+              previous?.active_tab_id !== refreshed.active_tab_id
           }
           observedEpoch = stateRef.current?.page_epoch ?? observedEpoch
           observedTabId = stateRef.current?.active_tab_id
           observedReset = framePollResetRef.current
           setFrame(null)
+          // A recovered host may start with a lower epoch and reset its frame
+          // sequence. Resume from zero when the active page identity changes.
+          if (pageChanged) after = 0
           if (!matchesActiveBrowserPage(next, stateRef.current)) {
             // Frame sequence is session-monotonic. Wait past this stale JPEG
-            // instead of immediately fetching the same frame in a hot loop.
-            after = Math.max(after, next.frame_seq)
+            // on the same host instead of fetching it in a hot loop.
+            if (!pageChanged) after = Math.max(after, next.frame_seq)
             continue
           }
         }
