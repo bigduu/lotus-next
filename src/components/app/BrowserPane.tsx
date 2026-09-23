@@ -13,6 +13,7 @@ import { Button } from "@/components/ui/button"
 import { useBrowserSession } from "@/hooks/useBrowserSession"
 import { pointInBrowserFrame } from "@/lib/browserFrame"
 import { normalizeBrowserAddress, playwrightKey } from "@/lib/browserInput"
+import { FileOperationsService } from "@/shared/services/FileOperationsService"
 
 export function BrowserPane({
   sessionId,
@@ -24,6 +25,7 @@ export function BrowserPane({
   const browser = useBrowserSession(sessionId, active)
   const [address, setAddress] = useState("")
   const [addressError, setAddressError] = useState<string | null>(null)
+  const [saveError, setSaveError] = useState<string | null>(null)
   const viewportRef = useRef<HTMLDivElement>(null)
   const imageRef = useRef<HTMLImageElement>(null)
   const keyboardRef = useRef<HTMLTextAreaElement>(null)
@@ -136,16 +138,22 @@ export function BrowserPane({
   }
 
   const saveScreenshot = async () => {
+    setSaveError(null)
     const screenshot = await browser.captureScreenshot()
     if (!screenshot) return
-    const url = URL.createObjectURL(screenshot)
-    const link = document.createElement("a")
-    link.href = url
-    link.download = `browser-screenshot-${Date.now()}.jpg`
-    document.body.appendChild(link)
-    link.click()
-    link.remove()
-    window.setTimeout(() => URL.revokeObjectURL(url), 1000)
+    try {
+      const bytes = new Uint8Array(await screenshot.arrayBuffer())
+      const result = await FileOperationsService.saveBinaryFile(
+        bytes,
+        [{ name: "JPEG 图像", extensions: ["jpg"] }],
+        `browser-screenshot-${Date.now()}.jpg`,
+      )
+      if (!result.success && result.error !== "User cancelled save operation") {
+        setSaveError("保存截图失败，请重试。")
+      }
+    } catch {
+      setSaveError("保存截图失败，请重试。")
+    }
   }
 
   if (!sessionId) {
@@ -201,6 +209,7 @@ export function BrowserPane({
       </div>
 
       {addressError ? <p role="alert" className="shrink-0 px-3 py-1 text-xs text-destructive">{addressError}</p> : null}
+      {saveError ? <p role="alert" className="shrink-0 px-3 py-1 text-xs text-destructive">{saveError}</p> : null}
       {browser.error ? (
         <div role="alert" className="flex shrink-0 items-center gap-2 border-b border-destructive px-3 py-2 text-xs text-destructive">
           <span className="min-w-0 flex-1">{browser.error}</span>
