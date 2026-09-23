@@ -102,6 +102,9 @@ const privateEvalCode = "document.querySelector('#token').textContent"
 const privateEvalUrl = "https://example.test/account?token=private-query-151"
 const privateEvalResult = "private-page-value-151"
 const privateEvalResource = "browser_eval:17:private-fingerprint-151"
+const privateSelectValue = "private-option-value-153"
+const privateSelectSelector = "select[data-account='private-selector-153']"
+const privateSelectResource = "browser:17:select_option:private-fingerprint-153"
 const approvalResult = JSON.stringify({
   status: "awaiting_permission_approval",
   question: "Approve focused browser input?",
@@ -111,13 +114,13 @@ const approvalResult = JSON.stringify({
   },
 })
 
-function browserMessages(parameters: unknown, result = approvalResult): Message[] {
+function browserMessages(parameters: unknown, result = approvalResult, isError = false, toolName = "browser"): Message[] {
   return [
     {
       id: "browser-call-message",
       role: "assistant",
       type: "tool_call",
-      toolCalls: [{ toolCallId: "browser-call", toolName: "browser", parameters }],
+      toolCalls: [{ toolCallId: "browser-call", toolName, parameters }],
       createdAt: "2026-09-20T00:00:00Z",
     },
     {
@@ -126,7 +129,7 @@ function browserMessages(parameters: unknown, result = approvalResult): Message[
       type: "tool_result",
       toolCallId: "browser-call",
       result: { result },
-      isError: false,
+      isError,
       createdAt: "2026-09-20T00:00:01Z",
     },
   ] as unknown as Message[]
@@ -359,6 +362,85 @@ it("omits malformed and oversized browser previews without exposing raw fallback
   ))
   expect(oversized.textContent).not.toContain(privateText)
   expect(oversized.textContent).not.toContain(privateResource)
+  expect(oversized.querySelector("[data-tool-call-entry] pre")).toBeNull()
+})
+
+it.each(["browser", "default::browser"])("hides %s select_option input and result in live ToolCalls", (toolName) => {
+  const messages = browserMessages(
+    { action: "select_option", selector: privateSelectSelector, values: [privateSelectValue], expected_epoch: 17 },
+    JSON.stringify({ ok: true, action: "select_option", selected_values: [privateSelectValue], selector: privateSelectSelector }),
+    false,
+    toolName,
+  )
+  const unchanged = JSON.stringify(messages)
+  const host = renderOpenTools(messages)
+
+  expect(host.querySelector("[data-tool-call-toggle]")?.textContent).toContain("选择网页选项")
+  expect(host.textContent).not.toContain("select_option")
+  expect(host.querySelector("[data-tool-call-entry] pre")?.textContent).toBe("网页选项已选择")
+  for (const value of [privateSelectValue, privateSelectSelector, "selected_values"]) {
+    expect(host.textContent).not.toContain(value)
+  }
+  expect(JSON.stringify(messages)).toBe(unchanged)
+})
+
+it("hides selected values and approval fingerprints after history mapping", () => {
+  const rawArguments = JSON.stringify({
+    action: "select_option", selector: privateSelectSelector, values: [privateSelectValue], expected_epoch: 17,
+  })
+  const approval = JSON.stringify({
+    status: "awaiting_permission_approval",
+    permission_request: { resource: privateSelectResource, suggested_matchers: [{ value: privateSelectValue }] },
+  })
+  const selected = JSON.stringify({ selected_values: [privateSelectValue], page_title: privateSelectValue })
+  const messages = mapHistoryMessagesToUi("session-153", [
+    {
+      id: "assistant-call",
+      role: "assistant",
+      content: "",
+      tool_calls: [
+        { id: "select-result", type: "function", function: { name: "browser", arguments: rawArguments } },
+        { id: "select-approval", type: "function", function: { name: "default::browser", arguments: rawArguments } },
+      ],
+      created_at: "2026-09-24T00:00:00Z",
+    },
+    { id: "tool-result", role: "tool", tool_call_id: "select-result", content: selected, created_at: "2026-09-24T00:00:01Z" },
+    { id: "tool-approval", role: "tool", tool_call_id: "select-approval", content: approval, created_at: "2026-09-24T00:00:02Z" },
+  ])
+  const host = renderOpenTools(messages)
+
+  expect(JSON.stringify(messages)).toContain(privateSelectValue)
+  expect(JSON.stringify(messages)).toContain(privateSelectResource)
+  expect(host.querySelectorAll("[data-tool-call-entry]")).toHaveLength(2)
+  expect(Array.from(host.querySelectorAll("[data-tool-call-entry] pre"), (node) => node.textContent))
+    .toEqual(["网页选项已选择", "等待用户批准"])
+  for (const value of [privateSelectValue, privateSelectSelector, privateSelectResource, "selected_values"]) {
+    expect(host.textContent).not.toContain(value)
+  }
+})
+
+it("shows a safe failure status and omits malformed select_option previews", () => {
+  const failed = renderOpenTools(browserMessages(
+    { action: "select_option", selector: privateSelectSelector, values: [privateSelectValue] },
+    JSON.stringify({ error: privateSelectValue, selected_values: [privateSelectValue] }),
+    true,
+  ))
+  expect(failed.querySelector("[data-tool-call-entry] pre")?.textContent).toBe("网页选项选择失败")
+  expect(failed.textContent).not.toContain(privateSelectValue)
+  expect(failed.textContent).not.toContain(privateSelectSelector)
+
+  const malformed = renderOpenTools(browserMessages(
+    { raw: `{"action":"select_option","values":["${privateSelectValue}"]` },
+    `{"selected_values":["${privateSelectValue}"`,
+  ))
+  expect(malformed.textContent).not.toContain(privateSelectValue)
+  expect(malformed.querySelector("[data-tool-call-entry] pre")).toBeNull()
+
+  const oversized = renderOpenTools(browserMessages(
+    { action: "select_option", values: [privateSelectValue.repeat(1000)] },
+    JSON.stringify({ selected_values: [privateSelectValue.repeat(1000)] }),
+  ))
+  expect(oversized.textContent).not.toContain(privateSelectValue)
   expect(oversized.querySelector("[data-tool-call-entry] pre")).toBeNull()
 })
 
