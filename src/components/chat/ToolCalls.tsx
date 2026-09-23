@@ -292,6 +292,12 @@ function displayResult(entry: Entry, text: string): string {
     (parsed.status === "awaiting_permission_approval" || "permission_request" in parsed)) {
     return APPROVAL_STATUS
   }
+  // A restored call can have malformed or missing action arguments while its
+  // result still contains a download envelope. Keep that payload private too.
+  if (entry.browserTool && !entry.browserFileInput && isRecord(parsed) &&
+    ["data_base64", "filename", "byte_count", "sha256"].some((key) => key in parsed)) {
+    return downloadResultStatus(parsed, Boolean(entry.result?.isError))
+  }
   if (entry.browserEvalTool) return entry.result?.isError ? "网页脚本执行失败" : "网页脚本已执行"
   if (entry.focusedBrowserInput) return entry.result?.isError ? "浏览器输入失败" : "浏览器输入已完成"
   if (entry.browserSelectOption) return entry.result?.isError ? "网页选项选择失败" : "网页选项已选择"

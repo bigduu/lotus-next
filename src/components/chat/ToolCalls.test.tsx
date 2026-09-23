@@ -863,6 +863,16 @@ it("shows fixed download failure and hides malformed or oversized result payload
   expect(malformed.textContent).not.toContain(privateDownloadSelector)
   expect(malformed.textContent).not.toContain(privateDownloadBytes)
 
+  const restoredWithMalformedArguments = renderOpenTools(browserMessages(
+    { raw: `{"action":"download","selector":"${privateDownloadSelector}"` },
+    JSON.stringify(downloadResult),
+  ))
+  expect(restoredWithMalformedArguments.querySelector("[data-tool-call-entry] pre")?.textContent)
+    .toBe("网页下载已完成")
+  for (const privateValue of [privateDownloadName, privateDownloadBytes, downloadResult.url, downloadResult.sha256]) {
+    expect(restoredWithMalformedArguments.textContent).not.toContain(privateValue)
+  }
+
   const tooLargeBytes = "QUJD".repeat(140_000)
   const oversized = renderOpenTools(browserMessages(downloadParameters,
     JSON.stringify({ ...downloadResult, data_base64: tooLargeBytes }),
