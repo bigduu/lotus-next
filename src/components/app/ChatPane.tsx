@@ -866,17 +866,6 @@ export function ChatPane({
         />
         )}
 
-        {/* Jump-to-bottom button — shows when scrolled up to read history. */}
-        {!atBottom && (
-          <button
-            onClick={scrollToBottom}
-            aria-label="滚动到底部"
-            className="absolute bottom-24 left-1/2 z-20 -translate-x-1/2 rounded-full border bg-card p-2 text-muted-foreground shadow-lg transition-colors hover:bg-accent hover:text-foreground"
-          >
-            <ChevronDown className="size-5" />
-          </button>
-        )}
-
         {visibleSendFailure || persistedRunError ? (
           <div
             role="alert"
@@ -886,11 +875,11 @@ export function ChatPane({
             <div className="min-w-0 flex-1 text-destructive">
               <p className="font-medium">
                 {visibleSendFailure?.kind === "submission-unconfirmed"
-                  ? "发送状态未确认，内容已保留"
-                  : "消息已发送，但生成中断"}
+                ? "发送状态未确认，内容已保留"
+                : "消息已发送，但生成中断"}
               </p>
               {runErrorDetail ? (
-                <p className="mt-1 break-words text-xs">
+                <p className="mt-1 break-words text-xs text-destructive">
                   错误详情：{runErrorDetail}
                 </p>
               ) : null}
@@ -924,7 +913,23 @@ export function ChatPane({
             约 {outputRate.toFixed(1)} token/秒
           </div>
         )}
-        <Composer
+        <div data-composer-region className="relative shrink-0">
+          {/* Keep the jump control centered on the same max-width column as the composer. */}
+          {!atBottom && (
+            <div
+              data-scroll-to-bottom-anchor
+              className="pointer-events-none absolute inset-x-0 top-0 z-20 mx-auto flex max-w-6xl -translate-y-1/2 justify-center px-3"
+            >
+              <button
+                onClick={scrollToBottom}
+                aria-label="滚动到底部"
+                className="pointer-events-auto rounded-full border bg-card p-2 text-muted-foreground shadow-lg transition-colors hover:bg-accent hover:text-foreground"
+              >
+                <ChevronDown className="size-5" />
+              </button>
+            </div>
+          )}
+          <Composer
           draft={draft}
           onDraftChange={setDraft}
           onSubmit={submit}
@@ -1004,6 +1009,7 @@ export function ChatPane({
           onSelectProject={(projectId) => onSelectProject?.(projectId)}
           onDismissMenus={() => setMenusDismissed(true)}
         />
+        </div>
           </div>
 
           {environmentCard ? (

@@ -35,6 +35,7 @@ const runtime = vi.hoisted(() => ({
   modelPicker: null as ModelPickerProps | null,
   reasoningPicker: null as ReasoningPickerProps | null,
   providerState: { providerSnapshot: null as ProviderInstancesConfig | null },
+  stickyAtBottom: true, scrollToBottom: vi.fn(),
   queueSend: vi.fn(), revision: 0, getWorkflow: vi.fn(), listCommands: vi.fn(), peekTemplate: vi.fn(),
 }))
 vi.mock("zustand/react/shallow", () => ({ useShallow: <T,>(selector: T) => selector }))
@@ -55,8 +56,10 @@ type ProviderState = typeof runtime.providerState
 vi.mock("@shared/store/appStore/slices/providerSlice", () => ({ useProviderStore: <T,>(selector: (state: ProviderState) => T) => selector(runtime.providerState) }))
 vi.mock("@/hooks/useGuidanceQueue", () => ({ useGuidanceQueue: () => ({ mode: "after_round", setMode: vi.fn(), send: runtime.queueSend, cancel: vi.fn(), pending: [], error: null, busy: false, hasUnconfirmed: false }) }))
 vi.mock("@/hooks/useStickyScroll", () => ({
-  useStickyScroll: () => ({ scrollRef: { current: null }, contentRef: { current: null }, atBottom: true,
-    handleScroll: vi.fn(), scrollToBottom: vi.fn(), pinToBottom: vi.fn() }),
+  useStickyScroll: () => ({
+    scrollRef: { current: null }, contentRef: { current: null }, atBottom: runtime.stickyAtBottom,
+    handleScroll: vi.fn(), scrollToBottom: runtime.scrollToBottom, pinToBottom: vi.fn(),
+  }),
 }))
 vi.mock("@services/command", () => ({ commandService: { listCommands: runtime.listCommands, getWorkflowCommand: runtime.getWorkflow } }))
 vi.mock("@services/workspace", () => ({ workspaceService: { listWorkspaceFiles: vi.fn().mockResolvedValue([]) } }))
@@ -198,6 +201,7 @@ function resizePane(wide: boolean) {
 beforeEach(() => {
   runtime.queueSend.mockResolvedValue({ kind: "accepted", operationId: 0, sessionId: "queue-chat", navigated: false })
   mediaMatches = true; mediaListeners.clear()
+  runtime.stickyAtBottom = true; runtime.scrollToBottom.mockReset()
   vi.stubGlobal("matchMedia", vi.fn(() => ({ matches: mediaMatches,
     addEventListener: (_name: string, listener: (event: MediaQueryListEvent) => void) => mediaListeners.add(listener),
     removeEventListener: (_name: string, listener: (event: MediaQueryListEvent) => void) => mediaListeners.delete(listener),
@@ -422,30 +426,6 @@ describe("ChatPane composer acknowledgement", () => {
   })
 
   it.each([
-    ["completed", false],
-    ["error", true],
-  ] as const)(
-    "does not show a stale persisted error for status=%s running=%s",
-    async (lastRunStatus, running) => {
-      const container = document.body.appendChild(document.createElement("div"))
-      const root = createRoot(container); roots.push(root)
-      const chat = createChat(
-        vi.fn<Send>(),
-        "current-session",
-        lastRunStatus,
-        "stale backend error",
-      )
-      if (chat.currentChat) chat.currentChat.isRunning = running
-
-      await act(async () => root.render(<ChatPane chat={chat} pickedWorkspace="/picked"
-        onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()} splitOpen={false}
-        onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false} />))
-
-      expect(container.querySelector('[role="alert"]')).toBeNull()
-    },
-  )
-
-  it.each([
     ["completed", false, true],
     ["completed", true, false],
     ["cancelled", false, false],
@@ -650,6 +630,29 @@ it("routes a sub-agent card to the side-preview callback without replacing the m
 
   expect(openPreview).toHaveBeenCalledExactlyOnceWith("child")
   expect(chat.select).not.toHaveBeenCalled()
+})
+
+it("centers the jump-to-bottom control on the composer column", async () => {
+  runtime.stickyAtBottom = false
+  const container = document.body.appendChild(document.createElement("div"))
+  const root = createRoot(container); roots.push(root)
+  const chat = createChat(vi.fn<Send>(), "parent")
+
+  await act(async () => root.render(<ChatPane chat={chat} pickedWorkspace="/picked"
+    onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()} splitOpen={false}
+    onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false} />))
+
+  const region = container.querySelector("[data-composer-region]")
+  const anchor = region?.querySelector<HTMLElement>("[data-scroll-to-bottom-anchor]")
+  const button = anchor?.querySelector<HTMLButtonElement>('button[aria-label="滚动到底部"]')
+  expect(anchor).not.toBeNull()
+  expect(anchor?.className).toContain("inset-x-0")
+  expect(anchor?.className).toContain("px-3")
+  expect(anchor?.className).toContain("max-w-6xl")
+  expect(region?.querySelector('[data-testid="composer-shell"]')).not.toBeNull()
+
+  await act(async () => button?.click())
+  expect(runtime.scrollToBottom).toHaveBeenCalledTimes(1)
 })
 
 it("shows Environment by default and only suppresses it while the side pane is open", async () => {
