@@ -38,6 +38,12 @@ it("binds every browser action to one encoded Bamboo session and epoch", async (
   await service.createTab("session/a", 7)
   await service.activateTab("session/a", "tab/b", 7)
   await service.closeTab("session/a", "tab/b", 7)
+  await service.respondDialog("session/a", {
+    dialog_id: "a".repeat(24), expected_epoch: 7, accept: true,
+  })
+  await service.respondDialog("session/a", {
+    dialog_id: "a".repeat(24), expected_epoch: 7, accept: true, text: "",
+  })
 
   expect(apiClient.put).toHaveBeenCalledWith("browser/sessions/session%2Fa", {}, { signal })
   expect(apiClient.post).toHaveBeenNthCalledWith(
@@ -74,6 +80,16 @@ it("binds every browser action to one encoded Bamboo session and epoch", async (
     7,
     "browser/sessions/session%2Fa/tabs/close",
     { tab_id: "tab/b", expected_epoch: 7 },
+  )
+  expect(apiClient.post).toHaveBeenNthCalledWith(
+    8,
+    "browser/sessions/session%2Fa/dialog",
+    { dialog_id: "a".repeat(24), expected_epoch: 7, accept: true },
+  )
+  expect(apiClient.post).toHaveBeenNthCalledWith(
+    9,
+    "browser/sessions/session%2Fa/dialog",
+    { dialog_id: "a".repeat(24), expected_epoch: 7, accept: true, text: "" },
   )
 })
 

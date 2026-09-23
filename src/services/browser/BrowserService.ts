@@ -1,5 +1,6 @@
 import { apiClient } from "@services/api"
 import type {
+  BrowserDialogResponse,
   BrowserDomSnapshot,
   BrowserFrame,
   BrowserHistoryDirection,
@@ -94,6 +95,15 @@ export class BrowserService {
     return apiClient.post<BrowserState>(`${sessionPath(sessionId)}/tabs/close`, {
       tab_id: tabId,
       expected_epoch: expectedEpoch,
+    })
+  }
+
+  respondDialog(sessionId: string, response: BrowserDialogResponse): Promise<BrowserState> {
+    return apiClient.post<BrowserState>(`${sessionPath(sessionId)}/dialog`, {
+      dialog_id: response.dialog_id,
+      expected_epoch: response.expected_epoch,
+      accept: response.accept,
+      ...(response.text !== undefined ? { text: response.text } : {}),
     })
   }
 

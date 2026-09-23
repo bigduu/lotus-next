@@ -326,5 +326,7 @@ test("phone workbench has no browser entry or browser session requests", async (
   await expect(panel.getByRole("region", { name: "内置浏览器" })).toHaveCount(0)
   expect(browserRequests).toBe(0)
   expect(observation.pageErrors).toEqual([])
-  await testInfo.attach("phone-workbench-no-browser", { body: await page.screenshot(), contentType: "image/png" })
+  const screenshotPath = testInfo.outputPath("phone-workbench-no-browser.png")
+  await page.screenshot({ path: screenshotPath })
+  await testInfo.attach("phone-workbench-no-browser", { path: screenshotPath, contentType: "image/png" })
 })

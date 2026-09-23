@@ -14,6 +14,7 @@ vi.mock("@services/browser/BrowserService", () => ({
     createTab: vi.fn(),
     activateTab: vi.fn(),
     closeTab: vi.fn(),
+    respondDialog: vi.fn(),
   },
 }))
 
@@ -113,6 +114,48 @@ it("clears save errors on chat switch and ignores a previous chat's delayed fail
   await act(async () => root.render(<BrowserPane sessionId="third-chat" active />))
   await act(async () => finishSave({ filename: "", success: false, error: "permission denied" }))
   expect(host.querySelector('[role="alert"]')).toBeNull()
+})
+
+it("focuses a pending prompt and traps keyboard focus inside the dialog", async () => {
+  const pending = {
+    page_epoch: 8, frame_seq: 1, active_tab_id: "tab-a",
+    url: "https://example.test/", title: "Example",
+    viewport: { width: 640, height: 480 }, can_go_back: false, can_go_forward: false,
+    pending_dialog: {
+      dialog_id: "a".repeat(24), tab_id: "tab-a", page_epoch: 8,
+      url: "https://example.test/", type: "prompt" as const,
+      message: "Enter a value", message_truncated: false,
+      default_value: "shown prefix", default_value_truncated: true,
+      expires_at_ms: Date.now() + 30_000, status: "pending" as const,
+    },
+  }
+  vi.mocked(browserService.open).mockResolvedValueOnce(pending)
+  vi.mocked(browserService.get).mockResolvedValue(pending)
+  await act(async () => root.render(<BrowserPane sessionId="prompt-chat" active />))
+
+  const modal = host.querySelector<HTMLDivElement>('[role="dialog"]')!
+  const prompt = host.querySelector<HTMLTextAreaElement>('textarea[aria-label="弹窗输入"]')!
+  const accept = Array.from(modal.querySelectorAll("button")).find((button) => button.textContent === "确定")!
+  const cancel = Array.from(modal.querySelectorAll("button")).find((button) => button.textContent === "取消")!
+  expect(document.activeElement).toBe(prompt)
+  expect(host.querySelector<HTMLButtonElement>('button[aria-label="查看 DOM"]')?.disabled).toBe(true)
+  expect(host.querySelector<HTMLButtonElement>('button[aria-label="保存网页截图"]')?.disabled).toBe(true)
+  expect(host.querySelector<HTMLInputElement>('input[aria-label="网页地址"]')?.disabled).toBe(true)
+
+  await act(async () => {
+    prompt.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true }))
+  })
+  expect(document.activeElement).toBe(cancel)
+  await act(async () => {
+    accept.focus()
+    accept.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true }))
+  })
+  expect(document.activeElement).toBe(prompt)
+
+  const outside = document.body.appendChild(document.createElement("button"))
+  await act(async () => outside.focus())
+  expect(document.activeElement).toBe(prompt)
+  outside.remove()
 })
 
 it("shows accessible tab controls and sends create, switch, and close to Bamboo", async () => {
