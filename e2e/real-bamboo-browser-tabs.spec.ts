@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process"
+import { createHash } from "node:crypto"
 import { promisify } from "node:util"
 import { readFile } from "node:fs/promises"
 import { expect, test, type Browser, type BrowserContext, type Page, type TestInfo } from "@playwright/test"
@@ -31,8 +32,8 @@ const setTestSessionAutoPermission = async (baseUrl: string, sessionId: string) 
   const etag = before.headers.get("etag")
   expect(etag).toMatch(/^"\d+"$/)
 
-  // These two isolated acceptance sessions have no interactive approval UI for
-  // the direct root-tool request below. Keep the product's default untouched.
+  // This isolated acceptance session has no interactive approval UI for the
+  // model's browser click below. Keep the product's default untouched.
   const changed = await fetch(url, {
     method: "PATCH",
     headers: { "content-type": "application/json", "if-match": etag! },
@@ -100,22 +101,44 @@ const assertActiveReads = async (baseUrl: string, sessionId: string, expected: B
   return screenshot
 }
 
-const executeBrowser = async (baseUrl: string, sessionId: string, args: Record<string, unknown>) => {
-  const response = await fetch(new URL("/api/v1/tools/execute", baseUrl), {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      tool_name: "browser",
-      session_id: sessionId,
-      parameters: Object.entries(args).map(([name, value]) => ({ name, value: JSON.stringify(value) })),
-    }),
-    signal: AbortSignal.timeout(20_000),
+const requestPopupThroughAgent = async (page: Page, baseUrl: string, sessionId: string, epoch: number) => {
+  await page.getByRole("textbox", { name: "消息", exact: true })
+    .fill(`${requiredEnv("LOTUS_REAL_USER_MARKER")}:browser-popup`)
+  await page.getByRole("button", { name: "发送消息", exact: true }).click()
+
+  await expect.poll(async () => {
+    const response = await fetch(new URL(`/api/v1/sessions/${encodeURIComponent(sessionId)}/history`, baseUrl), {
+      signal: AbortSignal.timeout(5_000),
+    })
+    expect(response.status).toBe(200)
+    const history = await response.json() as { messages?: Array<{
+      role?: string
+      content?: string
+      tool_call_id?: string
+      tool_success?: boolean
+      tool_calls?: Array<{ id: string; function: { name: string; arguments: string } }>
+    }> }
+    const messages = history.messages ?? []
+    const calls = messages.flatMap((message) => message.role === "assistant" ? message.tool_calls ?? [] : [])
+    const click = calls.find((call) => call.id === "call_lotus_browser_click_e2e")
+    return {
+      discovered: calls.some((call) => call.id === "call_lotus_browser_discovery_e2e" && call.function.name === "discover_capabilities"),
+      snapped: calls.some((call) => call.id === "call_lotus_browser_snapshot_e2e" && call.function.name === "browser"),
+      clickName: click?.function.name,
+      clickArgs: click ? JSON.parse(click.function.arguments) as Record<string, unknown> : null,
+      clickSucceeded: messages.some((message) => message.role === "tool" &&
+        message.tool_call_id === "call_lotus_browser_click_e2e" && message.tool_success === true),
+      completed: messages.some((message) => message.role === "assistant" &&
+        message.content === `${requiredEnv("LOTUS_REAL_ASSISTANT_MARKER")}:browser-popup`),
+    }
+  }).toEqual({
+    discovered: true,
+    snapped: true,
+    clickName: "browser",
+    clickArgs: { action: "click", selector: "#popup", expected_epoch: epoch },
+    clickSucceeded: true,
+    completed: true,
   })
-  expect(response.status).toBe(200)
-  const outer = await response.json() as { result: string }
-  const result = JSON.parse(outer.result) as { success: boolean; result: string }
-  expect(result.success).toBe(true)
-  return result
 }
 
 const installSessionEntry = async (context: BrowserContext, baseUrl: string, sessionId: string) => {
@@ -145,15 +168,12 @@ const assertBundledBrowserRuntime = async (testInfo: TestInfo) => {
 const exerciseSurface = async (
   browser: Browser,
   testInfo: TestInfo,
-  label: "desktop" | "phone",
   sessionId: string,
 ) => {
   const baseUrl = requiredEnv("LOTUS_REAL_BAMBOO_BASE_URL")
   await setTestSessionAutoPermission(baseUrl, sessionId)
   const context = await browser.newContext({
-    viewport: label === "desktop" ? { width: 1440, height: 900 } : { width: 390, height: 844 },
-    isMobile: label === "phone",
-    hasTouch: label === "phone",
+    viewport: { width: 1440, height: 900 },
     colorScheme: "dark",
     locale: "zh-CN",
     acceptDownloads: true,
@@ -203,7 +223,7 @@ const exerciseSurface = async (
 
     await pane.getByRole("button", { name: "查看 DOM" }).click()
     await expect(pane.getByLabel("DOM 快照", { exact: true })).toContainText("Alpha fixture")
-    await executeBrowser(baseUrl, sessionId, { action: "click", selector: "#popup", expected_epoch: switched.page_epoch })
+    await requestPopupThroughAgent(page, baseUrl, sessionId, switched.page_epoch)
     await expect(pane.getByLabel("DOM 快照", { exact: true })).toHaveCount(0)
     await expect(pane.getByRole("button", { name: "切换到标签页 3：Popup fixture" })).toHaveAttribute("aria-current", "page")
     await expect(address).toHaveValue(fixtureUrl("popup"))
@@ -216,9 +236,20 @@ const exerciseSurface = async (
     const downloadPromise = page.waitForEvent("download")
     await pane.getByRole("button", { name: "保存网页截图" }).click()
     const download = await downloadPromise
-    expect(await readFile(await download.path())).toEqual(popupScreenshot)
+    const savedJpeg = await readFile(await download.path())
+    expect(savedJpeg).toEqual(popupScreenshot)
+    const sha256 = (bytes: Buffer) => createHash("sha256").update(bytes).digest("hex")
+    await testInfo.attach("saved-jpeg-byte-equality", {
+      body: JSON.stringify({
+        expected_bytes: popupScreenshot.length,
+        saved_bytes: savedJpeg.length,
+        expected_sha256: sha256(popupScreenshot),
+        saved_sha256: sha256(savedJpeg),
+      }, null, 2),
+      contentType: "application/json",
+    })
     await expect(picture).toBeVisible()
-    await testInfo.attach(`real-bamboo-tabs-${label}`, { body: await page.screenshot(), contentType: "image/png" })
+    await testInfo.attach("real-bamboo-tabs-desktop", { body: await page.screenshot(), contentType: "image/png" })
 
     await pane.getByRole("button", { name: "关闭标签页 3：Popup fixture" }).click()
     await expect(pane.getByRole("button", { name: "切换到标签页 2：Beta fixture" })).toHaveAttribute("aria-current", "page")
@@ -232,8 +263,7 @@ const exerciseSurface = async (
   }
 }
 
-test("real Bamboo shared browser tabs stay aligned across human and model control on desktop and phone", async ({ browser }, testInfo) => {
+test("real Bamboo shared browser tabs stay aligned across human and model control on desktop", async ({ browser }, testInfo) => {
   await assertBundledBrowserRuntime(testInfo)
-  await exerciseSurface(browser, testInfo, "desktop", requiredEnv("LOTUS_REAL_BAMBOO_UI_SESSION_ID"))
-  await exerciseSurface(browser, testInfo, "phone", requiredEnv("LOTUS_REAL_BAMBOO_OTHER_PROJECT_SESSION_ID"))
+  await exerciseSurface(browser, testInfo, requiredEnv("LOTUS_REAL_BAMBOO_UI_SESSION_ID"))
 })

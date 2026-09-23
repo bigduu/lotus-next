@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises"
 import { installArtifactRuntime, standaloneScenario } from "./support/artifactRuntime.js"
 
 test("browser workbench shares one session across human input, DOM, screenshot, and reopen", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name === "phone-chromium", "The phone workbench does not expose the browser")
   const picturePage = await page.context().newPage()
   await picturePage.setViewportSize({ width: 640, height: 480 })
   await picturePage.setContent("<main style='font:32px sans-serif;padding:40px'><h1>Browser fixture</h1><button>Change status</button></main>")
@@ -133,9 +134,9 @@ test("browser workbench shares one session across human input, DOM, screenshot, 
   const image = browser.getByAltText("网页画面")
   const oldFrameUrl = await image.getAttribute("src")
   const previousViewport = viewport.width
-  await page.setViewportSize(testInfo.project.name === "phone-chromium"
-    ? { width: 430, height: 780 }
-    : { width: 680, height: 800 })
+  await page.setViewportSize(testInfo.project.name === "tablet-chromium"
+    ? { width: 1280, height: 800 }
+    : { width: 1000, height: 800 })
   await expect.poll(() => viewport.width).not.toBe(previousViewport)
   await expect.poll(async () => {
     const source = await image.getAttribute("src").catch(() => null)
@@ -163,7 +164,8 @@ test("browser workbench shares one session across human input, DOM, screenshot, 
   })
 })
 
-test("browser tab strip follows human commands and an agent-opened popup on desktop and phone", async ({ page }, testInfo) => {
+test("browser tab strip follows human commands and an agent-opened popup on desktop and tablet", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name === "phone-chromium", "The phone workbench does not expose the browser")
   const picturePage = await page.context().newPage()
   await picturePage.setViewportSize({ width: 640, height: 480 })
   const pictures: Record<string, Buffer> = {}
@@ -293,4 +295,31 @@ test("browser tab strip follows human commands and an agent-opened popup on desk
   await expect(image).toBeVisible()
   expect(observation.pageErrors).toEqual([])
   await testInfo.attach(`browser-tabs-${testInfo.project.name}`, { body: await page.screenshot(), contentType: "image/png" })
+})
+
+test("phone workbench has no browser entry or browser session requests", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "phone-chromium", "Phone-only browser visibility check")
+
+  await page.addInitScript(() => {
+    localStorage.setItem("bodhi_onboarded_v1", "1")
+    localStorage.setItem("lotus_next_last_session", "all-surface-session")
+  })
+  const observation = await installArtifactRuntime(page, standaloneScenario)
+  await page.route("**/api/v1/task/all-surface-session", (route) =>
+    route.fulfill({ json: { session_id: "all-surface-session", title: null, items: [] } }),
+  )
+  let browserRequests = 0
+  await page.route("**/api/v1/browser/sessions/**", (route) => {
+    browserRequests += 1
+    return route.abort()
+  })
+
+  await page.goto(standaloneScenario.entryUrl, { waitUntil: "domcontentloaded" })
+  await page.getByRole("button", { name: "打开侧边面板" }).click()
+  const panel = page.getByRole("complementary", { name: "工作面板" })
+  await expect(panel.getByRole("tab", { name: "浏览器" })).toHaveCount(0)
+  await expect(panel.getByRole("region", { name: "内置浏览器" })).toHaveCount(0)
+  expect(browserRequests).toBe(0)
+  expect(observation.pageErrors).toEqual([])
+  await testInfo.attach("phone-workbench-no-browser", { body: await page.screenshot(), contentType: "image/png" })
 })

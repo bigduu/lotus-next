@@ -69,3 +69,28 @@ it("switches tools in one docked panel and closes without navigation", () => {
   act(() => host.querySelector<HTMLButtonElement>('button[aria-label="收起工作面板"]')?.click())
   expect(onClose).toHaveBeenCalledTimes(1)
 })
+
+it("omits the browser tab and content when the phone layout disables it", () => {
+  const host = document.body.appendChild(document.createElement("div"))
+  const root = createRoot(host)
+  roots.push(root)
+
+  act(() => {
+    root.render(
+      <RightWorkbench
+        activeTab="inspector"
+        onTabChange={vi.fn()}
+        onClose={vi.fn()}
+        inspector={<div>inspector content</div>}
+        review={<div>review content</div>}
+        browser={<div>browser content</div>}
+        browserEnabled={false}
+        session={<div>child transcript</div>}
+      />,
+    )
+  })
+
+  expect(host.querySelector('[role="tab"][data-state="active"]')?.textContent).toContain("检查器")
+  expect(Array.from(host.querySelectorAll('[role="tab"]')).some((tab) => tab.textContent?.includes("浏览器"))).toBe(false)
+  expect(host.textContent).not.toContain("browser content")
+})

@@ -12,6 +12,7 @@ import hmac
 import http.client
 import json
 import os
+import re
 import stat
 import sys
 import threading
@@ -32,6 +33,9 @@ SELF_TEST_SUCCESS_MESSAGE = "deterministic provider self-test passed"
 PERMISSION_TOOL_MARKER = "LOTUS_PERMISSION_TOOL_EXECUTED"
 PERMISSION_TOOL_COMMAND = f"printf '{PERMISSION_TOOL_MARKER}'"
 PERMISSION_TOOL_CALL_ID = "call_lotus_permission_e2e"
+BROWSER_DISCOVERY_CALL_ID = "call_lotus_browser_discovery_e2e"
+BROWSER_SNAPSHOT_CALL_ID = "call_lotus_browser_snapshot_e2e"
+BROWSER_CLICK_CALL_ID = "call_lotus_browser_click_e2e"
 
 
 def mcp_fixture_response(request: Any) -> dict[str, Any] | None:
@@ -374,6 +378,9 @@ class ProviderHandler(BaseHTTPRequestHandler):
         permission_scenario = contains_marker(
             last_user.get("content"), f"{self.user_marker}:permission"
         )
+        browser_scenario = contains_marker(
+            last_user.get("content"), f"{self.user_marker}:browser-popup"
+        )
         delta: dict[str, Any] = {
             "role": "assistant", "content": self.assistant_marker
         }
@@ -418,6 +425,57 @@ class ProviderHandler(BaseHTTPRequestHandler):
                                 "description": "Print the isolated permission acceptance marker",
                             }),
                         },
+                    }],
+                }
+                finish_reason = "tool_calls"
+        elif browser_scenario:
+            tools = body.get("tools", [])
+            offered = {
+                tool["function"]["name"]
+                for tool in tools if isinstance(tool, dict)
+                and isinstance(tool.get("function"), dict)
+                and isinstance(tool["function"].get("name"), str)
+            } if isinstance(tools, list) else set()
+            results = {
+                message.get("tool_call_id"): message
+                for message in messages if isinstance(message, dict)
+                and message.get("role") == "tool"
+            }
+            if BROWSER_CLICK_CALL_ID in results:
+                delta["content"] = f"{self.assistant_marker}:browser-popup"
+            else:
+                if BROWSER_DISCOVERY_CALL_ID not in results:
+                    name = "discover_capabilities"
+                    call_id = BROWSER_DISCOVERY_CALL_ID
+                    arguments = {"query": "browser", "kinds": ["tool"], "limit": 1}
+                elif BROWSER_SNAPSHOT_CALL_ID not in results:
+                    name = "browser"
+                    call_id = BROWSER_SNAPSHOT_CALL_ID
+                    arguments = {"action": "snapshot"}
+                else:
+                    content = results[BROWSER_SNAPSHOT_CALL_ID].get("content")
+                    match = re.search(r"page_epoch:\s*(\d+)", content) if isinstance(content, str) else None
+                    if match is None:
+                        self._send_json(422, {"error": {"message": (
+                            "browser fixture requires a successful model-visible snapshot"
+                        )}})
+                        return
+                    name = "browser"
+                    call_id = BROWSER_CLICK_CALL_ID
+                    arguments = {"action": "click", "selector": "#popup",
+                                 "expected_epoch": int(match.group(1))}
+                if name not in offered:
+                    self._send_json(422, {"error": {"message": (
+                        "browser fixture requires the offered discovery or browser tool"
+                    )}})
+                    return
+                delta = {
+                    "role": "assistant",
+                    "tool_calls": [{
+                        "index": 0,
+                        "id": call_id,
+                        "type": "function",
+                        "function": {"name": name, "arguments": json.dumps(arguments)},
                     }],
                 }
                 finish_reason = "tool_calls"
@@ -778,6 +836,64 @@ def validate_permission_scenario(*, port: int, api_key: str, user_marker: str,
         raise RuntimeError("permission fixture invented a tool not offered by Bamboo")
 
 
+def validate_browser_popup_scenario(*, port: int, api_key: str,
+                                    user_marker: str, assistant_marker: str) -> None:
+    messages: list[dict[str, Any]] = [{
+        "role": "user", "content": f"{user_marker}:browser-popup"
+    }]
+    document = {"model": MODEL, "stream": True, "messages": messages,
+                "tools": [{"type": "function", "function": {
+                    "name": "discover_capabilities", "parameters": {"type": "object"}
+                }}]}
+
+    def response_delta() -> dict[str, Any]:
+        status, content_type, body = request_completion(
+            api_key=api_key, port=port, request_document=document
+        )
+        if status != 200 or not content_type.startswith("text/event-stream"):
+            raise RuntimeError("browser fixture did not produce an SSE response")
+        frames = [json.loads(line.removeprefix("data:").strip())
+                  for line in body.decode("utf-8").splitlines()
+                  if line.startswith("data:") and line.strip() != "data: [DONE]"]
+        return frames[0]["choices"][0]["delta"]
+
+    discovery = response_delta()["tool_calls"][0]
+    if (discovery["id"] != BROWSER_DISCOVERY_CALL_ID
+            or discovery["function"]["name"] != "discover_capabilities"
+            or json.loads(discovery["function"]["arguments"])
+            != {"query": "browser", "kinds": ["tool"], "limit": 1}):
+        raise RuntimeError("browser fixture skipped capability discovery")
+    messages.append({"role": "tool", "tool_call_id": BROWSER_DISCOVERY_CALL_ID,
+                     "content": "<loaded_tools>browser</loaded_tools>"})
+    document["tools"] = [{"type": "function", "function": {
+        "name": "browser", "parameters": {"type": "object"}
+    }}]
+    snapshot = response_delta()["tool_calls"][0]
+    if (snapshot["id"] != BROWSER_SNAPSHOT_CALL_ID
+            or snapshot["function"]["name"] != "browser"
+            or json.loads(snapshot["function"]["arguments"])
+            != {"action": "snapshot"}):
+        raise RuntimeError("browser fixture skipped model-visible snapshot")
+    messages.append({"role": "tool", "tool_call_id": BROWSER_SNAPSHOT_CALL_ID,
+                     "content": "page_epoch: 123\nactive_tab_id: tab-a"})
+    click = response_delta()["tool_calls"][0]
+    if (click["id"] != BROWSER_CLICK_CALL_ID
+            or click["function"]["name"] != "browser"
+            or json.loads(click["function"]["arguments"])
+            != {"action": "click", "selector": "#popup", "expected_epoch": 123}):
+        raise RuntimeError("browser fixture did not click from snapshot epoch")
+    messages.append({"role": "tool", "tool_call_id": BROWSER_CLICK_CALL_ID,
+                     "content": "popup opened"})
+    if response_delta().get("content") != f"{assistant_marker}:browser-popup":
+        raise RuntimeError("browser fixture did not complete after click")
+    document["tools"] = []
+    document["messages"] = messages[:1]
+    status, _, _ = request_completion(api_key=api_key, port=port,
+                                      request_document=document)
+    if status != 422:
+        raise RuntimeError("browser fixture invented discovery without an offered tool")
+
+
 def create_provider_server(bind_port: int) -> ProviderServer:
     if bind_port < 0 or bind_port > 65535:
         raise RuntimeError("provider bind port is outside the TCP port range")
@@ -869,6 +985,12 @@ def run_self_test() -> None:
                 validate_browser_fixture(server.server_port)
                 validate_smoke()
                 validate_permission_scenario(
+                    port=server.server_port,
+                    api_key=environment["LOTUS_REAL_PROVIDER_API_KEY"],
+                    user_marker=environment["LOTUS_REAL_PROVIDER_USER_MARKER"],
+                    assistant_marker=environment["LOTUS_REAL_PROVIDER_ASSISTANT_MARKER"],
+                )
+                validate_browser_popup_scenario(
                     port=server.server_port,
                     api_key=environment["LOTUS_REAL_PROVIDER_API_KEY"],
                     user_marker=environment["LOTUS_REAL_PROVIDER_USER_MARKER"],
