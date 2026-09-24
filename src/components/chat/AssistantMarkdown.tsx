@@ -39,9 +39,11 @@ function findPendingProviderBlock(text: string): { index: number; name?: string 
 export function AssistantMarkdown({
   children,
   isStreaming = false,
+  onPreviewImage,
 }: {
   children: string
   isStreaming?: boolean
+  onPreviewImage?: (src: string) => void
 }) {
   const text = children
   const m = text.match(BUILTIN_TOOL_RE)
@@ -55,7 +57,7 @@ export function AssistantMarkdown({
       const statusLabel = pending.name ? `内置工具 ${pending.name} 正在运行` : "内置工具正在启动"
       return (
         <>
-          {beforePending ? <Markdown isStreaming={false}>{beforePending}</Markdown> : null}
+          {beforePending ? <Markdown isStreaming={false} onPreviewImage={onPreviewImage}>{beforePending}</Markdown> : null}
           <div
             aria-label={statusLabel}
             className="my-1.5 inline-flex max-w-full items-center rounded-full bg-muted/60 px-2.5 py-1 text-xs text-muted-foreground"
@@ -69,16 +71,16 @@ export function AssistantMarkdown({
         </>
       )
     }
-    return <Markdown isStreaming={isStreaming}>{text}</Markdown>
+    return <Markdown isStreaming={isStreaming} onPreviewImage={onPreviewImage}>{text}</Markdown>
   }
 
   const before = text.slice(0, m.index).trimEnd()
   const after = text.slice(m.index + m[0].length).replace(/^\n+/, "")
   return (
     <>
-      {before ? <Markdown isStreaming={false}>{before}</Markdown> : null}
+      {before ? <Markdown isStreaming={false} onPreviewImage={onPreviewImage}>{before}</Markdown> : null}
       <BuiltinToolBlock name={m[1]} body={m[0].trim()} />
-      {after ? <AssistantMarkdown isStreaming={isStreaming}>{after}</AssistantMarkdown> : null}
+      {after ? <AssistantMarkdown isStreaming={isStreaming} onPreviewImage={onPreviewImage}>{after}</AssistantMarkdown> : null}
     </>
   )
 }
