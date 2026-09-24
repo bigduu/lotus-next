@@ -362,6 +362,23 @@ const exerciseSurface = async ({
       await address.fill(browserFixtureUrl);
       await navigateButton.click();
       await expect(address).toHaveValue(browserFixtureUrl);
+      // ResizeObserver can advance the shared page epoch after navigation.
+      // Inspect only when Bamboo's viewport matches the rendered pane.
+      await expect.poll(async () => {
+        const rect = await pane.locator("[data-browser-viewport]").boundingBox();
+        if (!rect) return false;
+        const response = await context.request.get(
+          new URL(`/api/v1/browser/sessions/${encodeURIComponent(sessionId)}`, entryUrl).href,
+        );
+        if (!response.ok()) return false;
+        const state = asRecord(await response.json());
+        const viewport = asRecord(state?.viewport);
+        return (
+          state?.url === browserFixtureUrl &&
+          viewport?.width === Math.min(1_200, Math.max(320, Math.round(rect.width))) &&
+          viewport?.height === Math.min(1_000, Math.max(240, Math.round(rect.height)))
+        );
+      }, { timeout: 15_000 }).toBe(true);
       await expect(pane.getByAltText("网页画面")).toBeVisible();
       await pane.getByRole("button", { name: "查看 DOM" }).click();
       await expect(pane.getByLabel("DOM 快照", { exact: true })).toContainText(
