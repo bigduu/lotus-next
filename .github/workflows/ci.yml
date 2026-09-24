@@ -70,7 +70,7 @@ jobs:
     timeout-minutes: 60
 
     env:
-      BAMBOO_E2E_REVISION: f959c05566bfea3bd3566626851cda543f2b71d2
+      BAMBOO_E2E_REVISION: 3ee8c458f7f3672ef40afc9c35c236e6da0f9b0d
 
     steps:
       - name: Check out Lotus Next
@@ -105,10 +105,10 @@ jobs:
           BAMBOO_E2E_SOURCE_DIR: ${{ github.workspace }}/.e2e-bamboo
         run: npm run test:e2e:real-bamboo:built
 
-      - name: Verify the locked public artifact on local and secure browser surfaces
+      - name: Verify the current source artifact on local and secure browser surfaces
         env:
           BAMBOO_E2E_SOURCE_DIR: ${{ github.workspace }}/.e2e-bamboo
-        run: npm run test:e2e:published-bamboo
+        run: node scripts/published-real-bamboo-acceptance.mjs --current-source
 
       - name: Upload real Bamboo browser evidence
         if: ${{ always() }}

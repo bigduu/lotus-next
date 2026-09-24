@@ -1,4 +1,5 @@
 import {
+  devices,
   expect,
   test,
   type Browser,
@@ -18,10 +19,11 @@ import { navigateWithNetworkChangeRecovery } from "./support/transientNavigation
 type JsonRecord = Record<string, unknown>;
 
 interface SurfaceDefinition {
-  readonly label: "desktop" | "tablet" | "phone";
+  readonly label: "desktop" | "tablet" | "phone" | "phone-landscape";
   readonly viewport: { readonly width: number; readonly height: number };
   readonly mobile: boolean;
   readonly touch: boolean;
+  readonly userAgent?: string;
 }
 
 const surfaces: readonly SurfaceDefinition[] = [
@@ -43,7 +45,16 @@ const surfaces: readonly SurfaceDefinition[] = [
     mobile: true,
     touch: true,
   },
+  {
+    label: "phone-landscape",
+    viewport: { width: 915, height: 412 },
+    mobile: true,
+    touch: true,
+    userAgent: devices["Pixel 7"].userAgent,
+  },
 ];
+
+const browserFixtureUrl = "http://127.0.0.1:18080/browser-tabs-fixture?tab=alpha";
 
 const requiredEnvironment = (name: string): string => {
   const value = process.env[name]?.trim();
@@ -113,9 +124,13 @@ const preflightSecureSurface = async (
 ): Promise<void> => {
   const context = await browser.newContext({ ignoreHTTPSErrors: true });
   try {
-    const page = await context.newPage();
-    const response = await navigateWithNetworkChangeRecovery(() =>
-      page.goto(entryUrl.href, { waitUntil: "domcontentloaded" }),
+    let page = await context.newPage();
+    const response = await navigateWithNetworkChangeRecovery(
+      () => page.goto(entryUrl.href, { waitUntil: "domcontentloaded" }),
+      async () => {
+        await page.close();
+        page = await context.newPage();
+      },
     );
     assertSuccessfulDocumentNavigation(response, entryUrl, "preflight");
   } finally {
@@ -126,6 +141,7 @@ const preflightSecureSurface = async (
 const assertCanonicalPage = async (
   observation: PageObservation,
   pageOrigin: string,
+  browserSessionId: string | null,
 ): Promise<void> => {
   await observation.drain();
   const httpRequests = observation.requests.filter((request) =>
@@ -191,7 +207,12 @@ const assertCanonicalPage = async (
     `${observation.label}: alternate realtime fallback`,
   ).toEqual([]);
   expect(errorResponses, `${observation.label}: HTTP errors`).toEqual([]);
-  expect(observation.failedRequests, `${observation.label}: failed requests`).toEqual([]);
+  expect(
+    observation.failedRequests.filter(
+      (failure) => !expectedBrowserReadCancellation(failure, pageOrigin, browserSessionId),
+    ),
+    `${observation.label}: failed requests`,
+  ).toEqual([]);
   expect(observation.consoleErrors, `${observation.label}: console errors`).toEqual([]);
   expect(observation.pageErrors, `${observation.label}: page errors`).toEqual([]);
   expect(socket.errors, `${observation.label}: WebSocket errors`).toEqual([]);
@@ -202,6 +223,46 @@ const assertCanonicalPage = async (
     `${observation.label}: malformed or binary frames`,
   ).toEqual([]);
 };
+
+// Scope changes can abort a stale frame long poll or DOM inspection. The
+// rendered frame and final DOM snapshot are checked before failed requests.
+const expectedBrowserReadCancellation = (
+  failure: string,
+  pageOrigin: string,
+  browserSessionId: string | null,
+): boolean =>
+  browserSessionId !== null &&
+  ["frame", "dom"].some(
+    (read) =>
+      failure ===
+      `GET ${pageOrigin}/api/v1/browser/sessions/${browserSessionId}/${read} net::ERR_ABORTED`,
+  );
+
+test("browser read cancellation accepts only the selected session and aborted GET", () => {
+  const origin = "http://127.0.0.1:18080";
+  const path = `${origin}/api/v1/browser/sessions/selected`;
+  expect(
+    expectedBrowserReadCancellation(`GET ${path}/frame net::ERR_ABORTED`, origin, "selected"),
+  ).toBe(true);
+  expect(
+    expectedBrowserReadCancellation(`GET ${path}/dom net::ERR_ABORTED`, origin, "selected"),
+  ).toBe(true);
+  expect(
+    expectedBrowserReadCancellation(`GET ${path}/dom net::ERR_ABORTED`, origin, "other"),
+  ).toBe(false);
+  expect(
+    expectedBrowserReadCancellation(`POST ${path}/dom net::ERR_ABORTED`, origin, "selected"),
+  ).toBe(false);
+  expect(
+    expectedBrowserReadCancellation(`GET ${path}/screenshot net::ERR_ABORTED`, origin, "selected"),
+  ).toBe(false);
+  expect(
+    expectedBrowserReadCancellation(`GET ${path}/dom net::ERR_CONNECTION_RESET`, origin, "selected"),
+  ).toBe(false);
+  expect(
+    expectedBrowserReadCancellation(`GET ${path}/dom net::ERR_ABORTED`, origin, null),
+  ).toBe(false);
+});
 
 const exerciseSurface = async ({
   browser,
@@ -216,6 +277,10 @@ const exerciseSurface = async ({
   readonly sessionId: string;
   readonly testInfo: TestInfo;
 }): Promise<void> => {
+  const artifactIdentity = JSON.parse(
+    requiredEnvironment("LOTUS_REAL_ARTIFACT_IDENTITY"),
+  ) as unknown;
+  const currentSourceArtifact = asRecord(artifactIdentity)?.registry === "local-pack";
   if (entryUrl.protocol === "https:") {
     // Chromium can report one browser-global network-change transition when
     // the secure fixture first comes online. Consume only that transition in
@@ -227,6 +292,7 @@ const exerciseSurface = async ({
     viewport: definition.viewport,
     isMobile: definition.mobile,
     hasTouch: definition.touch,
+    userAgent: definition.userAgent,
     colorScheme: "dark",
     locale: "zh-CN",
     ignoreHTTPSErrors: entryUrl.protocol === "https:",
@@ -261,7 +327,7 @@ const exerciseSurface = async ({
     );
     expect(horizontalOverflow).toBeLessThanOrEqual(1);
 
-    if (definition.mobile) {
+    if (definition.viewport.width <= 768) {
       await page.getByRole("button", { name: "菜单", exact: true }).click();
     }
     const settingsButton = page.getByRole("button", {
@@ -280,7 +346,57 @@ const exerciseSurface = async ({
     await composer.focus();
     await expect(composer).toBeFocused();
 
-    await assertCanonicalPage(observation, entryUrl.origin);
+    if (currentSourceArtifact && definition.mobile) {
+      await expect(page.getByRole("tab", { name: "浏览器" })).toHaveCount(0);
+      await expect(
+        page.getByRole("region", { name: "内置浏览器" }),
+      ).toHaveCount(0);
+    } else if (currentSourceArtifact) {
+      await page.getByRole("button", { name: "打开侧边面板" }).click();
+      const panel = page.getByRole("complementary", { name: "工作面板" });
+      await panel.getByRole("tab", { name: "浏览器" }).click();
+      const pane = panel.getByRole("region", { name: "内置浏览器" });
+      const address = pane.getByRole("textbox", { name: "网页地址" });
+      const navigateButton = pane.getByRole("button", { name: "访问网页" });
+      await expect(navigateButton).toBeEnabled();
+      await address.fill(browserFixtureUrl);
+      await navigateButton.click();
+      await expect(address).toHaveValue(browserFixtureUrl);
+      // ResizeObserver can advance the shared page epoch after navigation.
+      // Inspect only when Bamboo's viewport matches the rendered pane.
+      await expect.poll(async () => {
+        const rect = await pane.locator("[data-browser-viewport]").boundingBox();
+        if (!rect) return false;
+        const state = asRecord(await page.evaluate(async (sessionPath) => {
+          const response = await fetch(sessionPath, { cache: "no-store" });
+          return response.ok ? await response.json() : null;
+        }, `/api/v1/browser/sessions/${encodeURIComponent(sessionId)}`));
+        const viewport = asRecord(state?.viewport);
+        return (
+          state?.url === browserFixtureUrl &&
+          viewport?.width === Math.min(1_200, Math.max(320, Math.round(rect.width))) &&
+          viewport?.height === Math.min(1_000, Math.max(240, Math.round(rect.height)))
+        );
+      }, { timeout: 15_000 }).toBe(true);
+      await expect(pane.getByAltText("网页画面")).toBeVisible();
+      await pane.getByRole("button", { name: "查看 DOM" }).click();
+      await expect(pane.getByLabel("DOM 快照", { exact: true })).toContainText(
+        "Alpha fixture",
+      );
+    }
+
+    await assertCanonicalPage(
+      observation,
+      entryUrl.origin,
+      currentSourceArtifact && !definition.mobile ? sessionId : null,
+    );
+    if (currentSourceArtifact && definition.mobile) {
+      expect(
+        observation.requests.filter((request) =>
+          new URL(request.url).pathname.startsWith("/api/v1/browser/"),
+        ),
+      ).toEqual([]);
+    }
     const screenshotPath = testInfo.outputPath(
       `${entryUrl.protocol.slice(0, -1)}-${definition.label}.png`,
     );
@@ -293,9 +409,7 @@ const exerciseSurface = async ({
       body: Buffer.from(
         `${JSON.stringify(
           {
-            artifact: JSON.parse(
-              requiredEnvironment("LOTUS_REAL_ARTIFACT_IDENTITY"),
-            ) as unknown,
+            artifact: artifactIdentity,
             bambooRevision: requiredEnvironment("LOTUS_REAL_BAMBOO_REVISION"),
             pageOrigin: entryUrl.origin,
             viewport: definition.viewport,
@@ -320,23 +434,27 @@ const exerciseSurface = async ({
   }
 };
 
-test("published artifact browser surfaces: standalone local real Bamboo", async ({
+test("verified artifact browser surfaces: standalone local real Bamboo", async ({
   browser,
 }, testInfo) => {
   test.skip(process.env.LOTUS_REAL_ACCEPTANCE_MODE !== "local");
   const entryUrl = new URL(requiredEnvironment("LOTUS_REAL_BAMBOO_BASE_URL"));
   expect(entryUrl.protocol).toBe("http:");
   expect(entryUrl.hostname).toBe("127.0.0.1");
-  await exerciseSurface({
-    browser,
-    definition: surfaces[0],
-    entryUrl,
-    sessionId: requiredEnvironment("LOTUS_REAL_BAMBOO_SESSION_ID"),
-    testInfo,
-  });
+  const identity = JSON.parse(requiredEnvironment("LOTUS_REAL_ARTIFACT_IDENTITY")) as unknown;
+  const definitions = asRecord(identity)?.registry === "local-pack" ? surfaces : [surfaces[0]];
+  for (const definition of definitions) {
+    await exerciseSurface({
+      browser,
+      definition,
+      entryUrl,
+      sessionId: requiredEnvironment("LOTUS_REAL_BAMBOO_SESSION_ID"),
+      testInfo,
+    });
+  }
 });
 
-test("published artifact browser surfaces: HTTPS/WSS desktop tablet and phone", async ({
+test("verified artifact browser surfaces: HTTPS/WSS desktop tablet and phone orientations", async ({
   browser,
 }, testInfo) => {
   test.skip(process.env.LOTUS_REAL_ACCEPTANCE_MODE !== "remote");
@@ -355,7 +473,7 @@ test("published artifact browser surfaces: HTTPS/WSS desktop tablet and phone", 
   }
 });
 
-test("published artifact browser surfaces: manual agent-browser host", async () => {
+test("verified artifact browser surfaces: manual agent-browser host", async () => {
   const contractPath = process.env.LOTUS_REAL_MANUAL_CONTRACT_PATH?.trim();
   const releasePath = process.env.LOTUS_REAL_MANUAL_RELEASE_PATH?.trim();
   test.skip(!contractPath && !releasePath);
