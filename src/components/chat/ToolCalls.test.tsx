@@ -226,8 +226,9 @@ function renderOpenTools(messages: Message[]) {
   act(() => root.render(<ToolCalls items={messages} />))
   const toggle = host.querySelector<HTMLButtonElement>("[data-tool-call-toggle]")
   act(() => toggle?.click())
-  const resultToggle = host.querySelector<HTMLElement>("[data-tool-call-entry] details summary")
-  act(() => resultToggle?.click())
+  for (const entryToggle of host.querySelectorAll<HTMLElement>("[data-tool-call-entry-toggle]")) {
+    act(() => entryToggle.click())
+  }
   return host
 }
 
@@ -248,6 +249,11 @@ it("starts active tool calls collapsed and preserves a manual expansion after co
 
   act(() => toggle?.click())
   expect(toggle?.getAttribute("aria-expanded")).toBe("true")
+  expect(host.querySelector("[data-tool-call-entry-detail]")).toBeNull()
+  const entryToggle = host.querySelector<HTMLElement>("[data-tool-call-entry-toggle]")
+  expect(entryToggle?.getAttribute("aria-expanded")).toBe("false")
+  act(() => entryToggle?.click())
+  expect(entryToggle?.getAttribute("aria-expanded")).toBe("true")
   expect(host.textContent).toContain("/tmp/example.ts")
   expect(host.querySelector<HTMLElement>("[data-tool-call-panel]")?.className).not.toContain("bg-")
   expect(host.querySelector<HTMLElement>("[data-tool-call-entry]")?.className).not.toContain("bg-")
@@ -255,6 +261,64 @@ it("starts active tool calls collapsed and preserves a manual expansion after co
   act(() => root.render(<ToolCalls items={toolMessages(true)} active={false} />))
   expect(toggle?.getAttribute("aria-expanded")).toBe("true")
   expect(host.textContent).toContain("done")
+})
+
+it("lists every call as a compact row and keeps an expanded row open as calls arrive", () => {
+  const host = document.createElement("div")
+  document.body.append(host)
+  const root = createRoot(host)
+  mountedRoots.push(root)
+  const messages = (count: number) => [{
+    id: "tool-round",
+    role: "assistant",
+    type: "tool_call",
+    toolCalls: Array.from({ length: count }, (_, index) => ({
+      toolCallId: `read-${index}`,
+      toolName: "Read",
+      parameters: { file_path: `/tmp/file-${index}.ts` },
+    })),
+    createdAt: "2026-09-20T00:00:00Z",
+  }] as unknown as Message[]
+
+  act(() => root.render(<ToolCalls items={messages(5)} active />))
+  expect(host.querySelector("[data-tool-call-panel]")).toBeNull()
+  act(() => host.querySelector<HTMLButtonElement>("[data-tool-call-toggle]")?.click())
+
+  const rows = host.querySelectorAll<HTMLElement>("[data-tool-call-entry-toggle]")
+  expect(rows).toHaveLength(5)
+  expect(Array.from(rows, (row) => row.textContent)).toEqual(
+    Array.from({ length: 5 }, (_, index) => expect.stringContaining(`file-${index}.ts`)),
+  )
+  expect(host.textContent).not.toContain("展开更早")
+  expect(host.querySelectorAll("[data-tool-call-entry-detail]")).toHaveLength(0)
+
+  act(() => rows[0].click())
+  expect(host.querySelectorAll("[data-tool-call-entry-detail]")).toHaveLength(1)
+  expect(host.textContent).toContain("/tmp/file-0.ts")
+
+  act(() => root.render(<ToolCalls items={messages(6)} active />))
+  expect(host.querySelectorAll("[data-tool-call-entry-toggle]")).toHaveLength(6)
+  expect(host.querySelector<HTMLElement>("[data-tool-call-entry-toggle]")?.getAttribute("aria-expanded")).toBe("true")
+  expect(host.querySelectorAll("[data-tool-call-entry-detail]")).toHaveLength(1)
+})
+
+it("keeps a call marked running while its partial output is visible", () => {
+  const host = document.createElement("div")
+  document.body.append(host)
+  const root = createRoot(host)
+  mountedRoots.push(root)
+  const messages = toolMessages(true)
+
+  act(() => root.render(
+    <ToolCalls items={messages} active runningCallIds={new Set(["call-1"])} />,
+  ))
+  act(() => host.querySelector<HTMLButtonElement>("[data-tool-call-toggle]")?.click())
+  expect(host.querySelector("[data-tool-call-entry-toggle]")?.textContent).toContain("运行中…")
+
+  act(() => root.render(
+    <ToolCalls items={messages} active={false} runningCallIds={new Set()} />,
+  ))
+  expect(host.querySelector("[data-tool-call-entry-toggle]")?.textContent).not.toContain("运行中…")
 })
 
 it("supports controlled expansion for virtualized history rows", () => {

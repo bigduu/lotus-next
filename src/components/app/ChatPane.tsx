@@ -62,6 +62,7 @@ import {
   mergeSessionFileChanges,
 } from "@/lib/sessionFileChanges"
 import { getFileChangePayloadDiffStats } from "@shared/utils/resultFormatters"
+import { describeRunFailure } from "@/lib/runFailureGuidance"
 
 /** Secondary (split) pane config — a slim header with its own session picker. */
 type SecondaryConfig = {
@@ -225,6 +226,7 @@ export function ChatPane({
     || (generationFailed && currentChat?.lastRunStatus === "error"
       ? currentChat.lastRunError?.trim() || persistedRunError
       : null)
+  const runFailureGuidance = generationFailed ? describeRunFailure(runErrorDetail) : null
   const queue = useGuidanceQueue(currentSessionId, currentlyRunning)
   // The secondary chat hook remains mounted when its pane closes. Read state
   // follows the rendered pane, including the same breakpoint as its md:flex.
@@ -875,13 +877,17 @@ export function ChatPane({
             <div className="min-w-0 flex-1 text-destructive">
               <p className="font-medium">
                 {visibleSendFailure?.kind === "submission-unconfirmed"
-                ? "发送状态未确认，内容已保留"
-                : "消息已发送，但生成中断"}
+                  ? "发送状态未确认，内容已保留"
+                  : runFailureGuidance?.title ?? "消息已发送，但生成中断"}
               </p>
+              {runFailureGuidance ? (
+                <p className="mt-1 text-xs">{runFailureGuidance.action}</p>
+              ) : null}
               {runErrorDetail ? (
-                <p className="mt-1 break-words text-xs text-destructive">
-                  错误详情：{runErrorDetail}
-                </p>
+                <details className="mt-1 text-xs">
+                  <summary>技术详情</summary>
+                  <p className="mt-1 break-words">{runErrorDetail}</p>
+                </details>
               ) : null}
             </div>
             {generationFailed ? (

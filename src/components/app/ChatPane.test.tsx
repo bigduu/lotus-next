@@ -402,6 +402,58 @@ describe("ChatPane composer acknowledgement", () => {
     expect(retry).toHaveBeenCalledWith()
   })
 
+  it.each([
+    [
+      "Stream timed out: phase=bootstrap, deadline_ms=120000, last_http_status=429, retry_delay_ms=60000",
+      "模型服务正在限流",
+      "提供商或代理返回了 429",
+    ],
+    [
+      "Stream timed out: phase=bootstrap, deadline_ms=120000, last_semantic_ms_ago=never",
+      "模型服务连接超时",
+      "请检查提供商、代理和网络状态",
+    ],
+  ])("explains a persisted bootstrap failure while keeping diagnostics available", async (detail, title, action) => {
+    const container = document.body.appendChild(document.createElement("div"))
+    const root = createRoot(container); roots.push(root)
+    const chat = createChat(vi.fn<Send>(), "failed-session", "error", detail)
+
+    await act(async () => root.render(<ChatPane chat={chat} pickedWorkspace="/picked"
+      onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()} splitOpen={false}
+      onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false} />))
+
+    const alert = container.querySelector<HTMLElement>('[role="alert"]')
+    expect(alert?.textContent).toContain(title)
+    expect(alert?.textContent).toContain(action)
+    expect(alert?.querySelector("details")?.open).toBe(false)
+    expect(alert?.querySelector("details")?.textContent).toContain(detail)
+    expect(alert?.querySelector("summary")?.textContent).toBe("技术详情")
+    expect(alert?.textContent).toContain("重试生成")
+  })
+
+  it("explains a live HTTP 429 generation failure", async () => {
+    const container = document.body.appendChild(document.createElement("div"))
+    const root = createRoot(container); roots.push(root)
+    const chat = {
+      ...createChat(vi.fn<Send>(), "failed-session"),
+      sendFailure: {
+        kind: "generation-failed" as const,
+        operationId: 4,
+        sessionId: "failed-session",
+        message: "LLM error: HTTP 429: model_cooldown",
+      },
+    }
+
+    await act(async () => root.render(<ChatPane chat={chat} pickedWorkspace="/picked"
+      onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()} splitOpen={false}
+      onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false} />))
+
+    const alert = container.querySelector<HTMLElement>('[role="alert"]')
+    expect(alert?.textContent).toContain("模型服务正在限流")
+    expect(alert?.textContent).toContain("请等待限流解除")
+    expect(alert?.querySelector("details")?.textContent).toContain("HTTP 429")
+  })
+
   it("shows the concrete submission error while preserving the draft", async () => {
     const container = document.body.appendChild(document.createElement("div"))
     const root = createRoot(container); roots.push(root)
