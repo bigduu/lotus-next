@@ -30,7 +30,10 @@ test("copies the chosen sidebar session ID and shows the active ID in advanced i
   await expect(page.locator("header").getByText("All-surface acceptance", { exact: true })).toBeVisible()
 
   const otherRow = page.getByRole("button", { name: "Copy target", exact: true }).locator("..")
-  await otherRow.getByRole("button", { name: "会话操作" }).click()
+  const otherMenu = otherRow.getByRole("button", { name: "会话操作" })
+  await otherMenu.focus()
+  await expect(otherMenu).toHaveCSS("opacity", "1")
+  await otherMenu.click()
   await page.getByRole("menuitem", { name: "复制会话 ID" }).click()
   await expect.poll(() => page.evaluate("navigator.clipboard.readText()")).toBe(otherSessionId)
   await expect(page.getByRole("status").filter({ hasText: "会话 ID 已复制" })).toBeVisible()

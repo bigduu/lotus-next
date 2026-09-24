@@ -473,7 +473,7 @@ export function Inspector({
                   <div className="flex items-start justify-between gap-3 py-0.5 text-sm">
                     <span className="shrink-0 text-muted-foreground">会话 ID</span>
                     <div className="flex min-w-0 items-start gap-1">
-                      <code className="break-all text-right font-mono text-xs leading-5 select-text" title={sessionId}>
+                      <code className="break-all text-right font-mono text-xs select-text" title={sessionId}>
                         {sessionId}
                       </code>
                       <button

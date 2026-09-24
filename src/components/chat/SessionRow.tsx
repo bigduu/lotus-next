@@ -101,7 +101,7 @@ export function SessionRow({
           aria-label="会话操作"
           className={cn(
             "mr-1 shrink-0 rounded p-1 text-muted-foreground outline-none transition-opacity hover:bg-accent hover:text-foreground",
-            "opacity-100 data-[state=open]:opacity-100 md:opacity-0 md:group-hover/row:opacity-100",
+            "opacity-100 data-[state=open]:opacity-100 focus-within:opacity-100 md:opacity-0 md:group-hover/row:opacity-100",
           )}
         >
           <MoreHorizontal className="size-4" />

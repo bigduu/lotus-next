@@ -23,6 +23,14 @@ type Entry = {
   toolName: string
   params?: Record<string, unknown>
   result?: { text: string; isError: boolean }
+  focusedBrowserInput: boolean
+  browserSelectOption: boolean
+  browserFileInput?: boolean
+  browserDialogResponse?: boolean
+  browserDialogStatus?: "pending" | "expired" | "unknown"
+  browserDownload?: boolean
+  browserTool: boolean
+  browserEvalTool: boolean
   /** Set when the result marks a background/async shell (see parseBackgroundBash). */
   background?: { bashId: string; command: string }
 }
@@ -71,6 +79,9 @@ function parseBackgroundBash(
 }
 
 const VISIBLE_CAP = 3
+const BROWSER_PREVIEW_MAX_LENGTH = 16 * 1024
+const BROWSER_DOWNLOAD_RESULT_MAX_LENGTH = 512 * 1024
+const APPROVAL_STATUS = "等待用户批准"
 
 // Noisy keys that bloat the display (huge PATH / env dumps) — never shown.
 const NOISE_KEYS = new Set(["environment", "env", "cwd", "import_shell", "path_env"])
@@ -108,6 +119,193 @@ const firstString = (params: Record<string, unknown> | undefined, keys: string[]
   return undefined
 }
 
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  value !== null && typeof value === "object" && !Array.isArray(value)
+
+const browserToolName = (toolName: string) =>
+  toolName.trim().toLowerCase().split(/__|::|\./).at(-1)
+
+const isBrowserTool = (toolName: string) => browserToolName(toolName) === "browser"
+const isBrowserEvalTool = (toolName: string) => browserToolName(toolName) === "browser_eval"
+
+const hasSemanticTarget = (value: unknown) => {
+  if (!isRecord(value)) return false
+  if (value.kind === "role") return typeof value.role === "string" && value.role.trim().length > 0
+  if (value.kind === "label" || value.kind === "text") {
+    return typeof value.value === "string" && value.value.trim().length > 0
+  }
+  return false
+}
+
+function displayParams(toolName: string, value: unknown): {
+  params?: Record<string, unknown>
+  focusedBrowserInput: boolean
+  browserSelectOption: boolean
+  browserFileInput?: boolean
+  browserDialogResponse?: boolean
+  browserDownload?: boolean
+  browserTool: boolean
+  browserEvalTool: boolean
+} {
+  const browserTool = isBrowserTool(toolName)
+  const browserEvalTool = isBrowserEvalTool(toolName)
+  // Page scripts, target URLs, and page-realm results can contain private data.
+  // Only project a safe status; the underlying message remains unchanged.
+  if (browserEvalTool) return { browserTool, browserEvalTool, focusedBrowserInput: false, browserSelectOption: false }
+  if (!isRecord(value)) return { browserTool, browserEvalTool, focusedBrowserInput: browserTool, browserSelectOption: false }
+  if (!browserTool) return { params: value, browserTool, browserEvalTool, focusedBrowserInput: false, browserSelectOption: false }
+
+  // Persisted malformed arguments arrive as { raw: originalString }. Treat
+  // unknown browser arguments as private so a result cannot echo their input.
+  let action = ""
+  try {
+    if ("raw" in value) return { browserTool, browserEvalTool, focusedBrowserInput: true, browserSelectOption: false }
+    action = typeof value.action === "string" ? value.action.trim().toLowerCase() : ""
+    if (action === "set_file_input") {
+      // A valid inline file can exceed the preview limit. Keep its fixed action
+      // and status while omitting all bytes and metadata from the display.
+      return { browserTool, browserEvalTool, focusedBrowserInput: false, browserSelectOption: false, browserFileInput: true }
+    }
+    if (action === "dialog_respond") {
+      // Dialog text, URL and identity stay in the model's original call only.
+      return { browserTool, browserEvalTool, focusedBrowserInput: false, browserSelectOption: false, browserDialogResponse: true }
+    }
+    if (action === "download") {
+      // The result contains base64 bytes. Its filename, selector, and approval
+      // resource remain in the model/session record only.
+      return { browserTool, browserEvalTool, focusedBrowserInput: false, browserSelectOption: false, browserDownload: true }
+    }
+    if (action === "select_option") {
+      // A valid bounded selection can expand beyond the generic JSON preview
+      // limit when its option values need escaping. Keep only its fixed status.
+      return { browserTool, browserEvalTool, focusedBrowserInput: false, browserSelectOption: true }
+    }
+    if (JSON.stringify(value).length > BROWSER_PREVIEW_MAX_LENGTH) {
+      return { browserTool, browserEvalTool, focusedBrowserInput: true, browserSelectOption: false }
+    }
+  } catch {
+    return { browserTool, browserEvalTool, focusedBrowserInput: true, browserSelectOption: false }
+  }
+
+  const selector = typeof value.selector === "string" && value.selector.trim().length > 0
+  const focusedBrowserInput = action === "type" || action === "key" ||
+    (action === "press" && !selector && !hasSemanticTarget(value.target))
+  if (focusedBrowserInput) {
+    // A whitelist keeps text/key and unexpected nested argument fields out of
+    // both the collapsed summary and the expanded details.
+    return { params: { action }, browserTool, browserEvalTool, focusedBrowserInput, browserSelectOption: false }
+  }
+  if (!action) return { browserTool, browserEvalTool, focusedBrowserInput: true, browserSelectOption: false }
+  return { params: value, browserTool, browserEvalTool, focusedBrowserInput: false, browserSelectOption: false }
+}
+
+function browserResultDisplayMetadata(text: string): {
+  dialogStatus?: "pending" | "expired" | "unknown"
+  parsedRecord: boolean
+} {
+  // Browser state can include a large DOM. Bound display parsing and never
+  // expose action arguments when a result is too large to inspect safely.
+  if (text.length > BROWSER_PREVIEW_MAX_LENGTH * 4) return { parsedRecord: false }
+  try {
+    const result: unknown = JSON.parse(text)
+    if (!isRecord(result)) return { parsedRecord: false }
+    if (result.pending_dialog == null) return { parsedRecord: true }
+    if (!isRecord(result.pending_dialog)) return { parsedRecord: false, dialogStatus: "unknown" }
+    return {
+      parsedRecord: true,
+      dialogStatus: result.pending_dialog.status === "expired" ? "expired" : "pending",
+    }
+  } catch {
+    return { parsedRecord: false }
+  }
+}
+
+function downloadResultStatus(value: unknown, isError: boolean): string {
+  if (isRecord(value) &&
+    (value.status === "awaiting_permission_approval" || "permission_request" in value)) {
+    return APPROVAL_STATUS
+  }
+  if (isError) return "网页下载失败"
+  return isRecord(value) && typeof value.data_base64 === "string" &&
+    typeof value.filename === "string" && typeof value.sha256 === "string" &&
+    Number.isSafeInteger(value.byte_count)
+    ? "网页下载已完成" : ""
+}
+
+function displayResult(entry: Entry, text: string): string {
+  if (!text) return entry.browserDownload && entry.result?.isError ? "网页下载失败" : ""
+  if (entry.browserDialogResponse || entry.browserDialogStatus) {
+    if (text.length > BROWSER_PREVIEW_MAX_LENGTH * 4) {
+      return entry.result?.isError ? "网页弹窗操作失败" : "网页弹窗状态待确认"
+    }
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(text)
+    } catch {
+      return entry.result?.isError ? "网页弹窗操作失败" : "网页弹窗状态待确认"
+    }
+    if (isRecord(parsed) &&
+      (parsed.status === "awaiting_permission_approval" || "permission_request" in parsed)) {
+      return APPROVAL_STATUS
+    }
+    if (entry.result?.isError) return "网页弹窗操作失败"
+    if (!isRecord(parsed)) return "网页弹窗状态待确认"
+    if (entry.browserDialogStatus === "unknown") return "网页弹窗状态待确认"
+    if (entry.browserDialogStatus === "expired") return "网页弹窗已过期"
+    if (entry.browserDialogStatus === "pending") return "网页弹窗待处理"
+    return "网页弹窗已回应"
+  }
+  const possiblyApproval = text.includes("awaiting_permission_approval") || text.includes("permission_request")
+  if ((entry.browserTool || entry.browserEvalTool || possiblyApproval) && text.length > BROWSER_PREVIEW_MAX_LENGTH) {
+    if (entry.browserDownload) {
+      if (text.length > BROWSER_DOWNLOAD_RESULT_MAX_LENGTH) return entry.result?.isError ? "网页下载失败" : ""
+      try {
+        return downloadResultStatus(JSON.parse(text), Boolean(entry.result?.isError))
+      } catch {
+        return entry.result?.isError ? "网页下载失败" : ""
+      }
+    }
+    if (entry.browserSelectOption && text.length <= BROWSER_PREVIEW_MAX_LENGTH * 4) {
+      // Native selection results can exceed the display preview after JSON
+      // escaping. Parse only the bounded result envelope, never render it.
+      try {
+        const parsed = JSON.parse(text)
+        if (isRecord(parsed)) {
+          if (parsed.status === "awaiting_permission_approval" || "permission_request" in parsed) return APPROVAL_STATUS
+          return entry.result?.isError ? "网页选项选择失败" : "网页选项已选择"
+        }
+      } catch {
+        // Malformed results stay hidden rather than gaining a success label.
+      }
+    }
+    return ""
+  }
+
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(text)
+  } catch {
+    if (entry.browserDownload && entry.result?.isError) return "网页下载失败"
+    return entry.browserTool || entry.browserEvalTool || possiblyApproval ? "" : text
+  }
+  if (isRecord(parsed) &&
+    (parsed.status === "awaiting_permission_approval" || "permission_request" in parsed)) {
+    return APPROVAL_STATUS
+  }
+  // A restored call can have malformed or missing action arguments while its
+  // result still contains a download envelope. Keep that payload private too.
+  if (entry.browserTool && !entry.browserFileInput && isRecord(parsed) &&
+    ["data_base64", "filename", "byte_count", "sha256"].some((key) => key in parsed)) {
+    return downloadResultStatus(parsed, Boolean(entry.result?.isError))
+  }
+  if (entry.browserEvalTool) return entry.result?.isError ? "网页脚本执行失败" : "网页脚本已执行"
+  if (entry.focusedBrowserInput) return entry.result?.isError ? "浏览器输入失败" : "浏览器输入已完成"
+  if (entry.browserSelectOption) return entry.result?.isError ? "网页选项选择失败" : "网页选项已选择"
+  if (entry.browserFileInput) return entry.result?.isError ? "网页文件设置失败" : "网页文件已设置"
+  if (entry.browserDownload) return downloadResultStatus(parsed, Boolean(entry.result?.isError))
+  return entry.browserTool && !isRecord(parsed) ? "" : text
+}
+
 const readableToolName = (toolName: string) =>
   toolName
     .replace(/^.*__/, "")
@@ -117,6 +315,12 @@ const readableToolName = (toolName: string) =>
     .trim() || "工具调用"
 
 function presentTool(entry: Entry): ToolPresentation {
+  if (entry.browserEvalTool) return { label: "执行网页脚本", icon: Globe }
+  if (entry.browserDialogResponse) return { label: "回应网页弹窗", icon: Globe }
+  if (entry.browserDialogStatus) return { label: "查看网页弹窗", icon: Globe }
+  if (entry.browserSelectOption) return { label: "选择网页选项", icon: Globe }
+  if (entry.browserFileInput) return { label: "设置网页文件", icon: Globe }
+  if (entry.browserDownload) return { label: "下载网页文件", icon: Globe }
   const normalized = entry.toolName.toLowerCase().replace(/[^a-z0-9]+/g, "")
   const path = firstString(entry.params, ["file_path", "path"])
   const command = firstString(entry.params, ["command", "cmd"])
@@ -278,16 +482,16 @@ function prettyResult(text: string): string {
 }
 
 function buildEntries(items: Message[]): Entry[] {
-  const calls: { id: string; toolName: string; params?: Record<string, unknown> }[] = []
+  const calls: { id: string; toolName: string; params?: Record<string, unknown>; focusedBrowserInput: boolean; browserSelectOption: boolean; browserFileInput?: boolean; browserDialogResponse?: boolean; browserDownload?: boolean; browserTool: boolean; browserEvalTool: boolean }[] = []
   const results = new Map<string, { text: string; isError: boolean }>()
   for (const m of items) {
     const t = (m as { type?: string }).type
     if (t === "tool_call") {
       const tcs =
-        (m as { toolCalls?: { toolCallId: string; toolName: string; parameters?: Record<string, unknown> }[] })
+        (m as { toolCalls?: { toolCallId: string; toolName: string; parameters?: unknown }[] })
           .toolCalls ?? []
       for (const tc of tcs)
-        calls.push({ id: tc.toolCallId, toolName: tc.toolName, params: tc.parameters })
+        calls.push({ id: tc.toolCallId, toolName: tc.toolName, ...displayParams(tc.toolName, tc.parameters) })
     } else if (t === "tool_result") {
       const r = m as {
         toolCallId?: string
@@ -302,11 +506,27 @@ function buildEntries(items: Message[]): Entry[] {
     }
   }
   return calls.map((c) => {
-    const result = results.get(c.id)
+    const rawResult = results.get(c.id)
+    const browserMetadata = c.browserTool && rawResult ? browserResultDisplayMetadata(rawResult.text) : undefined
+    const dialogStatus = browserMetadata?.dialogStatus
+    const hideBrowserParams = c.browserTool && rawResult && !browserMetadata?.parsedRecord
+    const displayEntry = { ...c, browserDialogStatus: dialogStatus, result: rawResult }
+    const result = rawResult && {
+      isError: rawResult.isError,
+      text: displayResult(displayEntry, rawResult.text),
+    }
     const background = result ? parseBackgroundBash(result.text) : null
     return {
       toolName: c.toolName,
-      params: c.params,
+      params: dialogStatus || hideBrowserParams ? undefined : c.params,
+      focusedBrowserInput: c.focusedBrowserInput,
+      browserSelectOption: c.browserSelectOption,
+      browserFileInput: c.browserFileInput,
+      browserDialogResponse: c.browserDialogResponse,
+      browserDialogStatus: dialogStatus,
+      browserDownload: c.browserDownload,
+      browserTool: c.browserTool,
+      browserEvalTool: c.browserEvalTool,
       result,
       background: background ?? undefined,
     }

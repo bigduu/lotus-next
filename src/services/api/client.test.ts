@@ -372,6 +372,7 @@ describe("ApiClient raw response compatibility", () => {
     expect(init?.method).toBe("HEAD");
     expect(init?.credentials).toBe("include");
     expect(new Headers(init?.headers).get("x-stream")).toBe("1");
+    expect(new Headers(init?.headers).has("content-type")).toBe(false);
   });
 
   it("honors pre-aborted caller cancellation with zero raw fetches", async () => {

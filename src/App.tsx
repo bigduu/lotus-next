@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { copyText } from "@shared/utils/clipboard"
 import { Inspector } from "@/components/chat/Inspector"
 import { CommandPalette } from "@/components/chat/CommandPalette"
@@ -9,7 +9,7 @@ import { useThemeStore } from "@shared/store/themeStore"
 import { useChat } from "@/hooks/useChat"
 import { useResizableWidth } from "@/hooks/useResizableWidth"
 import { ResizeHandle } from "@/components/ui/resize-handle"
-import { useIsWide } from "@shared/hooks/useMediaQuery"
+import { useIsMobile, useIsWide } from "@shared/hooks/useMediaQuery"
 import { useAppStore } from "@shared/store/appStore"
 import { isVdiSafeModeEnabled, onVdiSafeModeChange } from "@shared/utils/vdiSafeMode"
 import { Sidebar } from "@/components/app/Sidebar"
@@ -19,31 +19,71 @@ import { ChatPane } from "@/components/app/ChatPane"
 import { SubagentTranscriptPane } from "@/components/app/SubagentTranscriptPane"
 import { AvailabilityBanner } from "@/components/app/AvailabilityBanner"
 import { ReviewPane } from "@/components/app/ReviewPane"
+import { BrowserPane } from "@/components/app/BrowserPane"
+import { isPhoneDevice } from "@/lib/browserAvailability"
 import {
   RightWorkbench,
   type RightWorkbenchTab,
 } from "@/components/app/RightWorkbench"
 
 function App() {
-  // The main pane remains the existing full-fidelity interactive chat.
+  // The main pane follows the global current session.
   const chat = useChat()
   const { booted, chats, currentSessionId, currentChat, select, newChat } = chat
 
-  // The side pane is a read-only message projection. It intentionally does not
-  // create a second `useChat` instance, so the browser never subscribes to the
-  // child's full-fidelity `agent.*` channel or requests generic history.
+  // Root sessions can be interactive in the side pane. Child previews use the
+  // read-only message projection without subscribing to their agent channel.
   const [secondSid, setSecondSid] = useState<string | null>(null)
-  const pickSecond = (id: string | null) => {
+  const [projectedChildSid, setProjectedChildSid] = useState<string | null>(null)
+  const isProjectedChild = secondSid !== null && (
+    projectedChildSid === secondSid
+    || chats.some((item) => item.id === secondSid && Boolean(item.parentSessionId))
+  )
+  const [secondLoadState, setSecondLoadState] = useState<"idle" | "loading" | "error">("idle")
+  const secondLoadRequest = useRef(0)
+  const secondChat = useChat(isProjectedChild ? null : secondSid, (newSid) => {
+    setProjectedChildSid(null)
+    setSecondSid(newSid)
+  })
+  const pickSecond = (id: string | null, forceProjection = false) => {
+    const request = ++secondLoadRequest.current
+    const projected = Boolean(id && (
+      forceProjection
+      || projectedChildSid === id
+      || chats.some((item) => item.id === id && Boolean(item.parentSessionId))
+    ))
     setSecondSid(id)
-    if (!id) return
-
-    // A newly-started child may precede its lazy tree index entry. This endpoint
-    // restores summary metadata only; transcript bodies still load exclusively
-    // through the projected history endpoint inside SubagentTranscriptPane.
-    const store = useAppStore.getState()
-    if (!store.chats.some((chat) => chat.id === id)) {
-      void store.restoreSession(id).catch(() => false)
+    setProjectedChildSid(projected ? id : null)
+    if (!id) {
+      setSecondLoadState("idle")
+      return
     }
+
+    const store = useAppStore.getState()
+    if (projected) {
+      // Newly started children can precede the lazy index. Restore metadata,
+      // then let SubagentTranscriptPane load projected message history.
+      setSecondLoadState("idle")
+      if (!store.chats.some((item) => item.id === id)) {
+        void store.restoreSession(id).catch(() => false)
+      }
+      return
+    }
+
+    setSecondLoadState("loading")
+    void (async () => {
+      const exists = store.chats.some((item) => item.id === id)
+      if (!exists && !(await store.restoreSession(id))) {
+        throw new Error("session unavailable")
+      }
+      await useAppStore.getState().loadChatHistory(id)
+    })()
+      .then(() => {
+        if (secondLoadRequest.current === request) setSecondLoadState("idle")
+      })
+      .catch(() => {
+        if (secondLoadRequest.current === request) setSecondLoadState("error")
+      })
   }
 
   const [sidebarOpen, setSidebarOpen] = useState(false)
@@ -64,7 +104,10 @@ function App() {
   const [workbenchOpen, setWorkbenchOpen] = useState(false)
   const [workbenchTab, setWorkbenchTab] = useState<RightWorkbenchTab>("inspector")
   const [reviewTargetFilePath, setReviewTargetFilePath] = useState<string | null>(null)
+  const isMobile = useIsMobile()
   const isWide = useIsWide()
+  const browserEnabled = !isMobile && !isPhoneDevice()
+  const selectedWorkbenchTab = !browserEnabled && workbenchTab === "browser" ? "inspector" : workbenchTab
   // Draggable, persisted widths for the resizable side panels (desktop).
   const sidebarResize = useResizableWidth("lotus_next_sidebar_w", 288, {
     min: 220,
@@ -163,7 +206,7 @@ function App() {
     openWorkbench("session")
   }
   const openSubagentPreview = (childId: string) => {
-    pickSecond(childId)
+    pickSecond(childId, true)
     openWorkbench("session")
   }
 
@@ -228,7 +271,8 @@ function App() {
           <RightWorkbench
             docked={isWide}
             width={workbenchResize.width}
-            activeTab={workbenchTab}
+            activeTab={selectedWorkbenchTab}
+            browserEnabled={browserEnabled}
             onTabChange={(tab) => {
               if (tab === "review") setReviewTargetFilePath(null)
               setWorkbenchTab(tab)
@@ -239,7 +283,7 @@ function App() {
               <Inspector
                 embedded
                 sessionId={currentSessionId}
-                open={workbenchTab === "inspector"}
+                open={selectedWorkbenchTab === "inspector"}
                 onClose={() => setWorkbenchOpen(false)}
                 workspace={displayWorkspace}
                 onEditWorkspace={() => setWsPickerOpen(true)}
@@ -255,12 +299,52 @@ function App() {
                 targetFilePath={reviewTargetFilePath}
               />
             )}
-            session={(
+            browser={browserEnabled ? (
+              <BrowserPane
+                key={currentSessionId ?? "no-session"}
+                sessionId={currentSessionId}
+                active={workbenchTab === "browser"}
+              />
+            ) : null}
+            session={isProjectedChild ? (
               <SubagentTranscriptPane
                 sessionId={secondSid}
                 chats={chats}
                 onPickSession={pickSecond}
               />
+            ) : (
+              <div className="relative flex min-h-0 flex-1">
+                {secondLoadState === "loading" ? (
+                  <div
+                    className="absolute inset-x-0 top-0 z-30 h-0.5 animate-pulse bg-primary"
+                    aria-label="正在加载并排会话"
+                  />
+                ) : null}
+                {secondLoadState === "error" ? (
+                  <div role="alert" className="absolute inset-x-0 top-2 z-30 rounded-lg border border-destructive/40 bg-card px-3 py-2 text-xs text-destructive shadow">
+                    子代理会话暂时无法加载，请稍后重试。
+                  </div>
+                ) : null}
+                <ChatPane
+                  chat={secondChat}
+                  secondary={{
+                    sessionId: secondSid,
+                    chats,
+                    onPickSession: pickSecond,
+                    onClose: () => setWorkbenchOpen(false),
+                    hideClose: true,
+                  }}
+                  pickedWorkspace={null}
+                  onOpenWorkspacePicker={() => {}}
+                  onOpenInspector={() => setWorkbenchTab("inspector")}
+                  onOpenReview={() => setWorkbenchTab("review")}
+                  splitOpen={workbenchOpen && workbenchTab === "session"}
+                  onToggleSplit={() => setWorkbenchOpen(false)}
+                  onSelectSubAgent={(childId) => pickSecond(childId, true)}
+                  onOpenSidebar={() => {}}
+                  sidebarCollapsed={false}
+                />
+              </div>
             )}
           />
         </>
