@@ -203,13 +203,10 @@ const assertCanonicalPage = async (
     `${observation.label}: alternate realtime fallback`,
   ).toEqual([]);
   expect(errorResponses, `${observation.label}: HTTP errors`).toEqual([]);
-  // The visible browser cancels an in-flight frame long poll when its active
-  // page changes. The final frame and DOM are asserted before this check.
-  const cancelledFrameRequest = browserSessionId
-    ? `GET ${pageOrigin}/api/v1/browser/sessions/${browserSessionId}/frame net::ERR_ABORTED`
-    : null;
   expect(
-    observation.failedRequests.filter((failure) => failure !== cancelledFrameRequest),
+    observation.failedRequests.filter(
+      (failure) => !expectedBrowserReadCancellation(failure, pageOrigin, browserSessionId),
+    ),
     `${observation.label}: failed requests`,
   ).toEqual([]);
   expect(observation.consoleErrors, `${observation.label}: console errors`).toEqual([]);
@@ -222,6 +219,46 @@ const assertCanonicalPage = async (
     `${observation.label}: malformed or binary frames`,
   ).toEqual([]);
 };
+
+// Scope changes can abort a stale frame long poll or DOM inspection. The
+// rendered frame and final DOM snapshot are checked before failed requests.
+const expectedBrowserReadCancellation = (
+  failure: string,
+  pageOrigin: string,
+  browserSessionId: string | null,
+): boolean =>
+  browserSessionId !== null &&
+  ["frame", "dom"].some(
+    (read) =>
+      failure ===
+      `GET ${pageOrigin}/api/v1/browser/sessions/${browserSessionId}/${read} net::ERR_ABORTED`,
+  );
+
+test("browser read cancellation accepts only the selected session and aborted GET", () => {
+  const origin = "http://127.0.0.1:18080";
+  const path = `${origin}/api/v1/browser/sessions/selected`;
+  expect(
+    expectedBrowserReadCancellation(`GET ${path}/frame net::ERR_ABORTED`, origin, "selected"),
+  ).toBe(true);
+  expect(
+    expectedBrowserReadCancellation(`GET ${path}/dom net::ERR_ABORTED`, origin, "selected"),
+  ).toBe(true);
+  expect(
+    expectedBrowserReadCancellation(`GET ${path}/dom net::ERR_ABORTED`, origin, "other"),
+  ).toBe(false);
+  expect(
+    expectedBrowserReadCancellation(`POST ${path}/dom net::ERR_ABORTED`, origin, "selected"),
+  ).toBe(false);
+  expect(
+    expectedBrowserReadCancellation(`GET ${path}/screenshot net::ERR_ABORTED`, origin, "selected"),
+  ).toBe(false);
+  expect(
+    expectedBrowserReadCancellation(`GET ${path}/dom net::ERR_CONNECTION_RESET`, origin, "selected"),
+  ).toBe(false);
+  expect(
+    expectedBrowserReadCancellation(`GET ${path}/dom net::ERR_ABORTED`, origin, null),
+  ).toBe(false);
+});
 
 const exerciseSurface = async ({
   browser,
