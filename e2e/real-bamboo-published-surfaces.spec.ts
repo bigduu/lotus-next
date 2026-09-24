@@ -124,9 +124,13 @@ const preflightSecureSurface = async (
 ): Promise<void> => {
   const context = await browser.newContext({ ignoreHTTPSErrors: true });
   try {
-    const page = await context.newPage();
-    const response = await navigateWithNetworkChangeRecovery(() =>
-      page.goto(entryUrl.href, { waitUntil: "domcontentloaded" }),
+    let page = await context.newPage();
+    const response = await navigateWithNetworkChangeRecovery(
+      () => page.goto(entryUrl.href, { waitUntil: "domcontentloaded" }),
+      async () => {
+        await page.close();
+        page = await context.newPage();
+      },
     );
     assertSuccessfulDocumentNavigation(response, entryUrl, "preflight");
   } finally {
