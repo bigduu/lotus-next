@@ -461,6 +461,9 @@ const runAcceptanceMode = ({ mode, tls }, artifact) => {
       playwrightCli,
       "test",
       "--config=playwright.real-bamboo.config.ts",
+      // The full-suite tab test is a dependency of the desktop project, but
+      // artifact acceptance deliberately selects only the surface tests.
+      "--no-deps",
       "--grep",
       "verified artifact browser surfaces",
     ],

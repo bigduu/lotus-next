@@ -47,14 +47,16 @@ export default defineConfig({
   },
   projects: [
     {
-      name: "real-bamboo-desktop-chromium",
-      testIgnore: "**/real-bamboo-browser-tabs.spec.ts",
+      name: "real-bamboo-browser-tabs-chromium",
+      testMatch: "**/real-bamboo-browser-tabs.spec.ts",
       use: desktopUse,
     },
     {
-      name: "real-bamboo-browser-tabs-chromium",
-      testMatch: "**/real-bamboo-browser-tabs.spec.ts",
-      dependencies: ["real-bamboo-desktop-chromium"],
+      // The desktop suite ends with an MCP import that restarts Bamboo and may
+      // change its host port. Run tabs first while the setup URL is current.
+      name: "real-bamboo-desktop-chromium",
+      testIgnore: "**/real-bamboo-browser-tabs.spec.ts",
+      dependencies: ["real-bamboo-browser-tabs-chromium"],
       use: desktopUse,
     },
   ],
