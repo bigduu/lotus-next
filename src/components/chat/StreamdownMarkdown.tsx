@@ -3,6 +3,7 @@ import { cjk } from "@streamdown/cjk"
 import rehypeSanitize from "rehype-sanitize"
 import {
   defaultRehypePlugins,
+  defaultRemarkPlugins,
   Streamdown,
   type CustomRendererProps,
   type PluginConfig,
@@ -13,6 +14,7 @@ import { cn } from "@/lib/utils"
 import { InlineImage } from "./InlineImage"
 import {
   lazyCodePlugin,
+  remarkLocalRasterImages,
   safeAssistantUrlTransform,
   STREAMDOWN_THEMES,
 } from "./streamdownConfig"
@@ -296,6 +298,7 @@ export function StreamdownMarkdown({
         parseIncompleteMarkdown={isStreaming}
         plugins={STREAMDOWN_PLUGINS}
         rehypePlugins={SAFE_REHYPE_PLUGINS}
+        remarkPlugins={[...Object.values(defaultRemarkPlugins), remarkLocalRasterImages]}
         remend={REMEND_OPTIONS}
         shikiTheme={STREAMDOWN_THEMES}
         tableMaxHeight={Number.POSITIVE_INFINITY}

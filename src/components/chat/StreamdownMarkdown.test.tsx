@@ -316,6 +316,12 @@ describe("StreamdownMarkdown security, layout and theme semantics", () => {
     const view = await mountMarkdown("![diagram](/Users/example/diagram.png)", false)
     expect(view.container.querySelector('img[src="/Users/example/diagram.png"]')).toBeNull()
     expect(view.container.querySelector('[role="status"]')?.textContent).toContain("本地图片无法在此处预览")
+    await view.render("![file image](file:///Users/example/diagram.png)", false)
+    expect(view.container.querySelector('[role="status"]')?.textContent).toContain("file image")
+    await view.render("![Windows image](file:///C:/Users/example/diagram.png)", false)
+    expect(view.container.querySelector('[role="status"]')?.textContent).toContain("Windows image")
+    await view.render("![Windows drive](C:\\Users\\example\\diagram.png)", false)
+    expect(view.container.querySelector('[role="status"]')?.textContent).toContain("Windows drive")
   })
 
   it("exposes responsive contracts and follows the existing dark theme class", async () => {

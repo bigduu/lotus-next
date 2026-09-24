@@ -43,3 +43,14 @@ it("reports native failures without navigating to a local file URL", async () =>
   expect(host.querySelector("img")).toBeNull()
   act(() => root.unmount())
 })
+
+it("passes a Windows drive path decoded from an image-only URL to Bodhi", async () => {
+  invoke.mockResolvedValue("data:image/png;base64,aGVsbG8=")
+  const host = document.createElement("div")
+  document.body.append(host)
+  const root = createRoot(host)
+  await act(async () => root.render(<InlineImage src="/__bodhi_local_image__/C%3A%2FUsers%2Fexample%2Fpicture.png" alt="Windows" />))
+  await vi.waitFor(() => expect(host.querySelector("img")).not.toBeNull())
+  expect(invoke).toHaveBeenCalledExactlyOnceWith("read_local_image", { path: "C:/Users/example/picture.png" })
+  act(() => root.unmount())
+})

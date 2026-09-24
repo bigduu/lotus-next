@@ -94,6 +94,15 @@ test("assistant local image fallback and ViewImage preview remain usable at narr
   await page.screenshot({ path: nativeScreenshot, animations: "disabled" })
   await testInfo.attach("Bodhi inline image", { path: nativeScreenshot, contentType: "image/png" })
 
+  history[1].content = "Windows example: ![diagram](file:///C:/Users/example/diagram.png)"
+  await page.reload()
+  await page.getByRole("button", { name: "Image previews", exact: true }).click()
+  await expect(page.locator('[data-message-role="assistant"] img[data-streamdown="image"]')).toHaveAttribute("src", dataUrl)
+  const windowsCalls = await page.evaluate(() => (globalThis as typeof globalThis & {
+    __imageReadCalls?: Array<{ command: string; path: unknown }>
+  }).__imageReadCalls)
+  expect(windowsCalls).toEqual([{ command: "read_local_image", path: "C:/Users/example/diagram.png" }])
+
   expect(observation.pageErrors).toEqual([])
   expect(observation.consoleErrors).toEqual([])
   expect(observation.errorResponses).toEqual([])
