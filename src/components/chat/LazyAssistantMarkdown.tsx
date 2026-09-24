@@ -8,9 +8,11 @@ const StreamdownMarkdown = lazy(() =>
 export function LazyAssistantMarkdown({
   children,
   isStreaming,
+  onPreviewImage,
 }: {
   children: string
   isStreaming: boolean
+  onPreviewImage?: (src: string) => void
 }) {
   return (
     <Suspense
@@ -24,7 +26,7 @@ export function LazyAssistantMarkdown({
         </div>
       }
     >
-      <StreamdownMarkdown isStreaming={isStreaming}>{children}</StreamdownMarkdown>
+      <StreamdownMarkdown isStreaming={isStreaming} onPreviewImage={onPreviewImage}>{children}</StreamdownMarkdown>
     </Suspense>
   )
 }

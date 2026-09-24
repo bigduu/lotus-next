@@ -1,10 +1,25 @@
 import { describe, expect, it } from "vitest"
 
-import { safeAssistantUrlTransform } from "./streamdownConfig"
+import { localImagePath, nativeImageUrl, safeAssistantUrlTransform } from "./streamdownConfig"
 
 const transform = (url: string, key: string) => safeAssistantUrlTransform(url, key, {} as never)
 
 describe("assistant Markdown URL policy", () => {
+  it("recognizes local raster paths without intercepting app assets", () => {
+    expect(localImagePath("/Users/example/picture.png")).toBe("/Users/example/picture.png")
+    expect(localImagePath("/assets/logo.png")).toBeNull()
+    expect(transform("file:///Users/example/secret.svg", "src")).toBeNull()
+    expect(transform("file:///Users/example/picture.png", "src")).toBeNull()
+    const mac = nativeImageUrl("file:///Users/example/picture%20one.png")
+    expect(localImagePath(mac!)).toBe("/Users/example/picture one.png")
+    const winFile = nativeImageUrl("file:///C:/Users/example/picture.png")
+    expect(localImagePath(winFile!)).toBe("C:/Users/example/picture.png")
+    const winDrive = nativeImageUrl("C:\\Users\\example\\picture.png")
+    expect(localImagePath(winDrive!)).toBe("C:/Users/example/picture.png")
+    expect(nativeImageUrl("file://remote/share/picture.png")).toBeNull()
+    expect(nativeImageUrl("file:///Users/example/script.svg")).toBeNull()
+    expect(nativeImageUrl("C:\\Users\\example\\script.svg")).toBeNull()
+  })
   it.each([
     ["https://example.com/path", "href"],
     ["http://example.com/image.png", "src"],

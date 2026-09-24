@@ -4,6 +4,7 @@ import { afterAll, afterEach, beforeAll, expect, it, vi } from "vitest"
 
 import type { Message } from "@shared/types/chatMessages"
 import { mapHistoryMessagesToUi } from "@shared/store/appStore/slices/chatSessionSlice/messageMapping"
+import { apiClient } from "@services/api"
 import { ToolCalls } from "./ToolCalls"
 
 const mountedRoots: Root[] = []
@@ -231,6 +232,72 @@ function renderOpenTools(messages: Message[]) {
   }
   return host
 }
+
+it("shows persisted ViewImage image data only after both disclosure levels open", () => {
+  const dataUrl = "data:image/png;base64,aGVsbG8="
+  const messages = mapHistoryMessagesToUi("session-image", [
+    {
+      id: "assistant-image-call",
+      role: "assistant",
+      content: "",
+      tool_calls: [{ id: "image-call", type: "function", function: { name: "view_image", arguments: '{"path":"/tmp/image.png"}' } }],
+      created_at: "2026-09-24T00:00:00Z",
+    },
+    {
+      id: "image-result",
+      role: "tool",
+      tool_call_id: "image-call",
+      content: "image ready",
+      content_parts: [
+        { type: "image_url", image_url: { url: dataUrl } },
+        { type: "image_url", image_url: { url: "bamboo-attachment://session-image/asset-1" } },
+      ],
+      created_at: "2026-09-24T00:00:01Z",
+    },
+  ])
+  const host = document.createElement("div")
+  document.body.append(host)
+  const root = createRoot(host)
+  mountedRoots.push(root)
+  const preview = vi.fn()
+  act(() => root.render(<ToolCalls items={messages} onPreviewImage={preview} />))
+  expect(host.querySelector("img")).toBeNull()
+  act(() => host.querySelector<HTMLButtonElement>("[data-tool-call-toggle]")?.click())
+  expect(host.querySelector("img")).toBeNull()
+  act(() => host.querySelector<HTMLElement>("[data-tool-call-entry-toggle]")?.click())
+  expect(host.querySelector("img")?.getAttribute("src")).toBe(dataUrl)
+  expect(host.querySelectorAll("img")[1]?.getAttribute("src")).toBe(apiClient.resolveUrl("sessions/session-image/attachments/asset-1"))
+  act(() => host.querySelector<HTMLButtonElement>("[aria-label='预览工具图片 1']")?.click())
+  expect(preview).toHaveBeenCalledWith(dataUrl)
+})
+
+it("shows live ViewImage images but rejects unsafe result schemes and unrelated browser images", () => {
+  const dataUrl = "data:image/png;base64,aGVsbG8="
+  const messages = [
+    ...singleToolMessage("ViewImage"),
+    {
+      id: "live-image-result", role: "tool", type: "tool_result", toolCallId: "ViewImage-call",
+      result: { result: "ready" }, isError: false,
+      images: [
+        { id: "valid", url: dataUrl, name: "image", type: "image/png", size: 0 },
+        { id: "unsafe", url: "data:image/svg+xml;base64,aGVsbG8=", name: "unsafe", type: "image/svg+xml", size: 0 },
+        { id: "remote", url: "https://example.com/track.png", name: "remote", type: "image/png", size: 0 },
+      ],
+      createdAt: "",
+    } as unknown as Message,
+  ]
+  const host = renderOpenTools(messages)
+  expect(host.querySelectorAll("img")).toHaveLength(1)
+  expect(host.querySelector("img")?.getAttribute("src")).toBe(dataUrl)
+
+  const browser = renderOpenTools([
+    ...singleToolMessage("browser"),
+    { id: "browser-result", role: "tool", type: "tool_result", toolCallId: "browser-call",
+      result: { result: "done" }, images: messages[1] && (messages[1] as { images?: unknown[] }).images,
+      createdAt: "" } as unknown as Message,
+  ])
+  expect(browser.querySelector("img")).toBeNull()
+})
 
 it("starts active tool calls collapsed and preserves a manual expansion after completion", () => {
   const host = document.createElement("div")
