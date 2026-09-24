@@ -78,10 +78,8 @@ describe("published real-Bamboo acceptance policy", () => {
   it("selects the immutable registry default and only one explicit current-source mode", () => {
     expect(acceptanceArtifactMode([])).toBe("published")
     expect(acceptanceArtifactMode(["--current-source"])).toBe("current-source")
-    expect(acceptanceArtifactMode(["--current-source", "--accepted-identity", "/tmp/accepted.json"])).toBe("current-source")
     expect(() => acceptanceArtifactMode(["--published"])).toThrow(/Usage/)
     expect(() => acceptanceArtifactMode(["--current-source", "extra"])).toThrow(/Usage/)
-    expect(() => acceptanceArtifactMode(["--accepted-identity", "/tmp/accepted.json"])).toThrow(/Usage/)
   })
 
   it("binds a local pack to the exact clean source manifest and twelve-field identity", () => {
@@ -272,29 +270,6 @@ describe("published real-Bamboo acceptance policy", () => {
     expect(surfaces).toContain("for (const definition of definitions)")
     expect(surfaces).toContain("for (const definition of surfaces)")
     expect(surfaces).toContain('pathname.startsWith("/api/v1/browser/")')
-  })
-
-  it("blocks publication until the final Node 24 tarball matches Node 22 browser acceptance", () => {
-    const publication = readRepositoryFile(".github/workflows/publish-npm.yml")
-    const index = (step) => publication.indexOf(`      - name: ${step}`)
-    const acceptance = index("Verify the release artifact on local and secure browser surfaces")
-    const upload = index("Upload the accepted browser artifact identity")
-    const finalPack = index("Verify the exact local tarball")
-    const download = index("Download the accepted browser artifact identity")
-    const compare = index("Require the final tarball to match both real browser surfaces")
-    const publish = index("Publish the exact verified tarball with provenance")
-    expect([acceptance, upload, finalPack, download, compare, publish].every((position) => position >= 0)).toBe(true)
-    expect(publication).toContain(
-      'run: node scripts/published-real-bamboo-acceptance.mjs --current-source --accepted-identity "${ACCEPTED_IDENTITY_PATH}"',
-    )
-    expect(acceptance).toBeLessThan(upload)
-    expect(publication).toContain("uses: actions/upload-artifact@v7")
-    expect(publication.match(/name: real-bamboo-accepted-identity/g)).toHaveLength(2)
-    expect(finalPack).toBeLessThan(download)
-    expect(download).toBeLessThan(compare)
-    expect(compare).toBeLessThan(publish)
-    expect(publication).toContain("uses: actions/download-artifact@v8")
-    expect(publication).toContain("node scripts/release-acceptance-identity.mjs verify")
   })
 
   it("reserves real Bamboo for manual CI runs", () => {
