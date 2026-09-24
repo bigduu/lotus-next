@@ -106,6 +106,7 @@ export type LiveToolCall = {
   output: string
   status: "running" | "completed" | "error"
   error?: string
+  images?: Array<{ mime_type: string; data: string }>
 }
 
 /**
@@ -879,9 +880,10 @@ export function useChat(
           onToolComplete: (toolCallId, result) => {
             const call = toolCallsByIdRef.current.get(toolCallId)
             if (!call) return
-            call.status = "completed"
+            call.status = result?.success === false ? "error" : "completed"
             const r = result as { result?: unknown } | undefined
             if (typeof r?.result === "string" && r.result) call.output = r.result
+            call.images = result?.images
             setStreamStatus(null)
             flushSegments()
           },

@@ -48,7 +48,7 @@ function liveToolMessages(seg: Extract<LiveSegment, { kind: "tools" }>): Message
       toolCalls: [{ toolCallId: c.toolCallId, toolName: c.toolName, parameters: c.args ?? {} }],
       createdAt: "",
     } as unknown as Message)
-    if (c.output || c.status !== "running") {
+    if (c.output || c.images?.length || c.status !== "running") {
       out.push({
         id: `live-res-${c.toolCallId}`,
         role: "tool",
@@ -56,6 +56,13 @@ function liveToolMessages(seg: Extract<LiveSegment, { kind: "tools" }>): Message
         toolCallId: c.toolCallId,
         isError: c.status === "error",
         result: { result: c.status === "error" ? c.error || c.output : c.output },
+        images: c.images?.map((image, index) => ({
+          id: `${c.toolCallId}-image-${index}`,
+          base64: image.data,
+          type: image.mime_type,
+          name: `工具图片 ${index + 1}`,
+          size: 0,
+        })),
         createdAt: "",
       } as unknown as Message)
     }
@@ -651,6 +658,7 @@ export function MessageList({
           active={isLast && sending}
           open={openToolKeys.has(toolStateKey)}
           onOpenChange={(open) => setToolOpen(toolStateKey, open)}
+          onPreviewImage={onPreviewImage}
         />
       )
       if (idx === spawnItemIdx) {
@@ -762,7 +770,7 @@ export function MessageList({
           {isUser ? (
             text
           ) : text.trim() ? (
-            <AssistantMarkdown isStreaming={false}>{text}</AssistantMarkdown>
+            <AssistantMarkdown isStreaming={false} onPreviewImage={onPreviewImage}>{text}</AssistantMarkdown>
           ) : null}
         </div>
         {isUser ? null : actions}
@@ -890,6 +898,7 @@ export function MessageList({
               items={liveToolMessages(seg)}
               active={seg.calls.some((c) => c.status === "running")}
               runningCallIds={new Set(seg.calls.filter((c) => c.status === "running").map((c) => c.toolCallId))}
+              onPreviewImage={onPreviewImage}
             />
           ) : (
             <div key={`live-text-${i}`} className="flex justify-start">
@@ -902,7 +911,7 @@ export function MessageList({
               >
                 {seg.reasoning ? <Reasoning text={seg.reasoning} /> : null}
                 {seg.text.trim() ? (
-                  <AssistantMarkdown isStreaming={false}>{seg.text}</AssistantMarkdown>
+                  <AssistantMarkdown isStreaming={false} onPreviewImage={onPreviewImage}>{seg.text}</AssistantMarkdown>
                 ) : null}
               </div>
             </div>
@@ -928,7 +937,7 @@ export function MessageList({
                 // Live markdown while streaming (RAF-throttled to once/frame),
                 // with provider built-in-tool blocks folded the same as the
                 // final message — so no raw **/``` flash mid-stream.
-                <AssistantMarkdown isStreaming={streamingActive}>{streaming}</AssistantMarkdown>
+                <AssistantMarkdown isStreaming={streamingActive} onPreviewImage={onPreviewImage}>{streaming}</AssistantMarkdown>
               ) : streamingReasoning ? null : streamStatus ? (
                 // "what is the agent doing" one-liner (tool running / compacting)
                 // instead of anonymous dots while no text streams.

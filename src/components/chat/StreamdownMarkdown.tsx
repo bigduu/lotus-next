@@ -1,8 +1,9 @@
-import { lazy, Suspense, useLayoutEffect, useRef, type RefObject } from "react"
+import { lazy, Suspense, useLayoutEffect, useMemo, useRef, type RefObject } from "react"
 import { cjk } from "@streamdown/cjk"
 import rehypeSanitize from "rehype-sanitize"
 import {
   defaultRehypePlugins,
+  defaultRemarkPlugins,
   Streamdown,
   type CustomRendererProps,
   type PluginConfig,
@@ -10,8 +11,10 @@ import {
 import "streamdown/styles.css"
 
 import { cn } from "@/lib/utils"
+import { InlineImage } from "./InlineImage"
 import {
   lazyCodePlugin,
+  remarkLocalRasterImages,
   safeAssistantUrlTransform,
   STREAMDOWN_THEMES,
 } from "./streamdownConfig"
@@ -251,6 +254,7 @@ const STREAMDOWN_PLUGINS: PluginConfig = {
 // Raw HTML deliberately stays out of the pipeline. The sanitizer and hardener
 // remain for generated HAST, while the fail-closed transform owns every URL.
 const SAFE_REHYPE_PLUGINS = [rehypeSanitize, defaultRehypePlugins.harden]
+const SAFE_REMARK_PLUGINS = [...Object.values(defaultRemarkPlugins), remarkLocalRasterImages]
 const LINK_SAFETY = { enabled: true } as const
 const REMEND_OPTIONS = { katex: false, linkMode: "text-only" as const }
 
@@ -258,12 +262,19 @@ export function StreamdownMarkdown({
   children,
   className,
   isStreaming,
+  onPreviewImage,
 }: {
   children: string
   className?: string
   isStreaming: boolean
+  onPreviewImage?: (src: string) => void
 }) {
   const hostRef = useRef<HTMLDivElement>(null)
+  const components = useMemo(() => ({
+    img: ({ node: _node, ...props }: React.ComponentProps<"img"> & { node?: unknown }) => (
+      <InlineImage {...props} onPreviewImage={onPreviewImage} />
+    ),
+  }), [onPreviewImage])
   useCompactCodeBlocks(hostRef, children)
   useTrackedTypewriterCaret(hostRef, children, isStreaming)
 
@@ -279,6 +290,7 @@ export function StreamdownMarkdown({
         )}
         codeBlockMaxHeight={Number.POSITIVE_INFINITY}
         controls={false}
+        components={components}
         dir="auto"
         isAnimating={isStreaming}
         lineNumbers={false}
@@ -287,6 +299,7 @@ export function StreamdownMarkdown({
         parseIncompleteMarkdown={isStreaming}
         plugins={STREAMDOWN_PLUGINS}
         rehypePlugins={SAFE_REHYPE_PLUGINS}
+        remarkPlugins={SAFE_REMARK_PLUGINS}
         remend={REMEND_OPTIONS}
         shikiTheme={STREAMDOWN_THEMES}
         tableMaxHeight={Number.POSITIVE_INFINITY}

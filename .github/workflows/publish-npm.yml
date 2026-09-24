@@ -44,9 +44,8 @@ jobs:
           scope: "@bigduu"
           package-manager-cache: false
 
-      - name: Validate version, source, credentials, and registry vacancy
+      - name: Validate version, source, and registry vacancy
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
           node --input-type=module - <<'NODE'
@@ -57,10 +56,6 @@ jobs:
           test "${GITHUB_REF}" = "refs/heads/${DEFAULT_BRANCH}"
           test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
           test -z "$(git status --porcelain --untracked-files=all)"
-          if [ -z "${NODE_AUTH_TOKEN}" ]; then
-            echo "::error::The first @bigduu/lotus-next publication requires the repository NPM_TOKEN secret."
-            exit 1
-          fi
           if npm view "@bigduu/lotus-next@${LOTUS_NEXT_RELEASE_VERSION}" version \
             > "${RUNNER_TEMP}/npm-view.out" 2> "${RUNNER_TEMP}/npm-view.err"; then
             echo "::error::@bigduu/lotus-next@${LOTUS_NEXT_RELEASE_VERSION} is already published."
@@ -209,7 +204,16 @@ jobs:
       - name: Verify the release artifact on local and secure browser surfaces
         env:
           BAMBOO_E2E_SOURCE_DIR: ${{ github.workspace }}/.e2e-bamboo
-        run: node scripts/published-real-bamboo-acceptance.mjs --current-source
+          ACCEPTED_IDENTITY_PATH: ${{ runner.temp }}/accepted-identity.json
+        run: node scripts/published-real-bamboo-acceptance.mjs --current-source --accepted-identity "${ACCEPTED_IDENTITY_PATH}"
+
+      - name: Upload the accepted browser artifact identity
+        uses: actions/upload-artifact@v7
+        with:
+          name: real-bamboo-accepted-identity
+          path: ${{ runner.temp }}/accepted-identity.json
+          if-no-files-found: error
+          retention-days: 30
 
       - name: Upload real Bamboo evidence
         if: ${{ always() }}
@@ -260,8 +264,6 @@ jobs:
         run: npm ci
 
       - name: Apply and verify a new release identity
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           test -z "$(git status --porcelain --untracked-files=all)"
           node --input-type=module - <<'NODE'
@@ -321,6 +323,20 @@ jobs:
             --expected-version "${LOTUS_NEXT_RELEASE_VERSION}" \
             --expected-revision "${GITHUB_SHA}" \
             --expected-dirty false
+
+      - name: Download the accepted browser artifact identity
+        uses: actions/download-artifact@v8
+        with:
+          name: real-bamboo-accepted-identity
+          path: ${{ runner.temp }}/accepted-real-bamboo
+
+      - name: Require the final tarball to match both real browser surfaces
+        run: |
+          node scripts/release-acceptance-identity.mjs verify \
+            --accepted "${RUNNER_TEMP}/accepted-real-bamboo/accepted-identity.json" \
+            --dist "${RUNNER_TEMP}/local-roundtrip/package/dist" \
+            --expected-version "${LOTUS_NEXT_RELEASE_VERSION}" \
+            --expected-revision "${GITHUB_SHA}"
 
       - name: Require npm publication credentials
         env:

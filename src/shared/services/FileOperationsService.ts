@@ -27,6 +27,13 @@ interface PlatformFileOperations {
 
 const loadTauriDialog = () => import("@tauri-apps/plugin-dialog");
 
+/** Bodhi validates the calling webview and returns only bounded raster image data. */
+export async function readLocalImage(path: string): Promise<string> {
+  if (!isTauriEnvironment()) throw new Error("Local image preview requires Bodhi");
+  const { invoke } = await import("@tauri-apps/api/core");
+  return invoke<string>("read_local_image", { path });
+}
+
 class TauriFileOperations implements PlatformFileOperations {
   async saveFile(options: SaveFileOptions): Promise<SaveFileResult> {
     const { content, filters, defaultPath } = options;
