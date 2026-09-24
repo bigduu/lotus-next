@@ -146,7 +146,7 @@ const expectedInventory = {
   "tauri-runtime": {
     "src/runtime/browserRuntime.ts": 4,
     "src/services/notification/desktopNotification.ts": 2,
-    "src/shared/services/FileOperationsService.ts": 2,
+    "src/shared/services/FileOperationsService.ts": 3,
     "src/shared/utils/openExternalLink.ts": 1,
     "src/shared/utils/osInfoUtils.ts": 1,
   },

@@ -11,19 +11,21 @@ import {
   Wrench,
   type LucideIcon,
 } from "lucide-react"
-import type { Message } from "@shared/types/chatMessages"
+import type { Message, MessageImage } from "@shared/types/chatMessages"
 import { cn } from "@/lib/utils"
 import { Badge } from "@/components/ui/badge"
 import { useBackgroundBash } from "@shared/store/appStore"
 import i18n from "@shared/i18n"
 import { parseFileChangeResultPayload } from "@shared/utils/resultFormatters"
 import { FileChangeView } from "./FileChangeView"
+import { isViewImageTool, safeViewImageSource } from "./viewImageSources"
 
 type Entry = {
   id: string
   toolName: string
   params?: Record<string, unknown>
   result?: { text: string; isError: boolean }
+  images?: MessageImage[]
   focusedBrowserInput: boolean
   browserSelectOption: boolean
   browserFileInput?: boolean
@@ -483,7 +485,7 @@ function prettyResult(text: string): string {
 
 function buildEntries(items: Message[]): Entry[] {
   const calls: { id: string; toolName: string; params?: Record<string, unknown>; focusedBrowserInput: boolean; browserSelectOption: boolean; browserFileInput?: boolean; browserDialogResponse?: boolean; browserDownload?: boolean; browserTool: boolean; browserEvalTool: boolean }[] = []
-  const results = new Map<string, { text: string; isError: boolean }>()
+  const results = new Map<string, { text: string; isError: boolean; images?: MessageImage[] }>()
   for (const m of items) {
     const t = (m as { type?: string }).type
     if (t === "tool_call") {
@@ -497,11 +499,13 @@ function buildEntries(items: Message[]): Entry[] {
         toolCallId?: string
         isError?: boolean
         result?: { result?: string }
+        images?: MessageImage[]
       }
       if (r.toolCallId)
         results.set(r.toolCallId, {
           text: typeof r.result?.result === "string" ? r.result.result : "",
           isError: Boolean(r.isError),
+          images: r.images,
         })
     }
   }
@@ -529,6 +533,7 @@ function buildEntries(items: Message[]): Entry[] {
       browserTool: c.browserTool,
       browserEvalTool: c.browserEvalTool,
       result,
+      images: isViewImageTool(c.toolName) ? rawResult?.images : undefined,
       background: background ?? undefined,
     }
   })
@@ -571,7 +576,7 @@ function BackgroundBadge({ bashId }: { bashId: string }) {
   )
 }
 
-function EntryRow({ e, running }: { e: Entry; running: boolean }) {
+function EntryRow({ e, running, onPreviewImage }: { e: Entry; running: boolean; onPreviewImage?: (src: string) => void }) {
   const [open, setOpen] = useState(false)
   const { primary, rest } = cleanParams(e.params)
   const presentation = presentTool(e)
@@ -579,6 +584,7 @@ function EntryRow({ e, running }: { e: Entry; running: boolean }) {
   // File-editing tool results render as a real diff instead of raw JSON.
   const fileChange = open && e.result?.text ? parseFileChangeResultPayload(e.result.text) : null
   const result = open && e.result?.text ? prettyResult(e.result.text) : ""
+  const images = open ? e.images?.map(safeViewImageSource).filter((src): src is string => Boolean(src)) : undefined
   return (
     <div data-tool-call-entry className="min-w-0">
       <details open={open}>
@@ -607,6 +613,15 @@ function EntryRow({ e, running }: { e: Entry; running: boolean }) {
           <div data-tool-call-entry-detail className="mt-1 border-l border-border pl-4 text-[11px]">
             {presentation.label !== e.toolName ? (
               <div className="text-muted-foreground opacity-70">{e.toolName}</div>
+            ) : null}
+            {images?.length ? (
+              <div className="mt-1.5 flex flex-wrap gap-1.5">
+                {images.map((src, index) => (
+                  <button key={index} type="button" aria-label={`预览工具图片 ${index + 1}`} className="cursor-zoom-in" onClick={() => onPreviewImage?.(src)}>
+                    <img src={src} alt={`工具图片 ${index + 1}`} className="max-h-48 max-w-full rounded-xl object-contain" />
+                  </button>
+                ))}
+              </div>
             ) : null}
             {primary ? (
               <div className="mt-1 line-clamp-3 break-all font-mono text-foreground [overflow-wrap:anywhere]">
@@ -650,6 +665,7 @@ type ToolCallsProps = {
   /** Optional controlled state, used by virtualized history rows. */
   open?: boolean
   onOpenChange?: (open: boolean) => void
+  onPreviewImage?: (src: string) => void
 }
 
 export function ToolCalls({
@@ -658,6 +674,7 @@ export function ToolCalls({
   runningCallIds,
   open: controlledOpen,
   onOpenChange,
+  onPreviewImage,
 }: ToolCallsProps) {
   const [internalOpen, setInternalOpen] = useState(false)
   const open = controlledOpen ?? internalOpen
@@ -699,6 +716,7 @@ export function ToolCalls({
                 key={e.id}
                 e={e}
                 running={runningCallIds ? runningCallIds.has(e.id) : Boolean(active && !e.result)}
+                onPreviewImage={onPreviewImage}
               />
             ))}
           </div>

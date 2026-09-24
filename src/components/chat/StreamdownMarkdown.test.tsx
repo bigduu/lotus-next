@@ -312,6 +312,12 @@ describe("StreamdownMarkdown security, layout and theme semantics", () => {
     )
   })
 
+  it("explains local image paths in a browser without requesting them", async () => {
+    const view = await mountMarkdown("![diagram](/Users/example/diagram.png)", false)
+    expect(view.container.querySelector('img[src="/Users/example/diagram.png"]')).toBeNull()
+    expect(view.container.querySelector('[role="status"]')?.textContent).toContain("本地图片无法在此处预览")
+  })
+
   it("exposes responsive contracts and follows the existing dark theme class", async () => {
     Object.defineProperty(window, "innerWidth", { configurable: true, value: 320 })
     highlightCode.mockClear()

@@ -1,4 +1,4 @@
-import { lazy, Suspense, useLayoutEffect, useRef, type RefObject } from "react"
+import { lazy, Suspense, useLayoutEffect, useMemo, useRef, type RefObject } from "react"
 import { cjk } from "@streamdown/cjk"
 import rehypeSanitize from "rehype-sanitize"
 import {
@@ -10,6 +10,7 @@ import {
 import "streamdown/styles.css"
 
 import { cn } from "@/lib/utils"
+import { InlineImage } from "./InlineImage"
 import {
   lazyCodePlugin,
   safeAssistantUrlTransform,
@@ -258,12 +259,19 @@ export function StreamdownMarkdown({
   children,
   className,
   isStreaming,
+  onPreviewImage,
 }: {
   children: string
   className?: string
   isStreaming: boolean
+  onPreviewImage?: (src: string) => void
 }) {
   const hostRef = useRef<HTMLDivElement>(null)
+  const components = useMemo(() => ({
+    img: ({ node: _node, ...props }: React.ComponentProps<"img"> & { node?: unknown }) => (
+      <InlineImage {...props} onPreviewImage={onPreviewImage} />
+    ),
+  }), [onPreviewImage])
   useCompactCodeBlocks(hostRef, children)
   useTrackedTypewriterCaret(hostRef, children, isStreaming)
 
@@ -279,6 +287,7 @@ export function StreamdownMarkdown({
         )}
         codeBlockMaxHeight={Number.POSITIVE_INFINITY}
         controls={false}
+        components={components}
         dir="auto"
         isAnimating={isStreaming}
         lineNumbers={false}

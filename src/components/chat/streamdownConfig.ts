@@ -28,6 +28,15 @@ export const lazyCodePlugin: CodeHighlighterPlugin = {
 const SCHEME = /^[A-Za-z][A-Za-z\d+.-]*:/
 const SAFE_LINK_PROTOCOLS = new Set(["http:", "https:", "mailto:"])
 const SAFE_IMAGE_PROTOCOLS = new Set(["http:", "https:"])
+const RASTER_EXTENSION = /\.(?:png|jpe?g|gif|webp)$/i
+
+/** Absolute raster paths are handled by Bodhi, never by the browser's URL loader. */
+export function localImagePath(url: string): string | null {
+  if (!url.startsWith("/") || url.startsWith("//") || !RASTER_EXTENSION.test(url)) return null
+  // Keep ordinary frontend asset URLs working as normal web images.
+  if (/^\/(?:assets|images|icons|api)\//.test(url)) return null
+  try { return decodeURIComponent(url) } catch { return null }
+}
 
 function hasControlCharacter(value: string): boolean {
   return Array.from(value).some((character) => {

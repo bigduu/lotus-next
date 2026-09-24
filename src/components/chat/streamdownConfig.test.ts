@@ -1,10 +1,16 @@
 import { describe, expect, it } from "vitest"
 
-import { safeAssistantUrlTransform } from "./streamdownConfig"
+import { localImagePath, safeAssistantUrlTransform } from "./streamdownConfig"
 
 const transform = (url: string, key: string) => safeAssistantUrlTransform(url, key, {} as never)
 
 describe("assistant Markdown URL policy", () => {
+  it("recognizes local raster paths without intercepting app assets", () => {
+    expect(localImagePath("/Users/example/picture.png")).toBe("/Users/example/picture.png")
+    expect(localImagePath("/assets/logo.png")).toBeNull()
+    expect(transform("file:///Users/example/secret.svg", "src")).toBeNull()
+    expect(transform("file:///Users/example/picture.png", "src")).toBeNull()
+  })
   it.each([
     ["https://example.com/path", "href"],
     ["http://example.com/image.png", "src"],
