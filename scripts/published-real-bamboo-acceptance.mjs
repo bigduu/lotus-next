@@ -17,6 +17,7 @@ import {
   assertSourceRevision,
   verifyArtifactManifest,
 } from "./artifact-manifest.mjs"
+import { writeAcceptedIdentity } from "./release-acceptance-identity.mjs"
 
 export const PUBLISHED_ARTIFACT_IDENTITY = Object.freeze({
   schemaVersion: 1,
@@ -187,7 +188,15 @@ export const acceptanceArtifactMode = (arguments_) => {
   if (arguments_.length === 1 && arguments_[0] === "--current-source") {
     return "current-source"
   }
-  throw new Error("Usage: published-real-bamboo-acceptance.mjs [--current-source]")
+  if (
+    arguments_.length === 3 &&
+    arguments_[0] === "--current-source" &&
+    arguments_[1] === "--accepted-identity" &&
+    arguments_[2]?.trim()
+  ) {
+    return "current-source"
+  }
+  throw new Error("Usage: published-real-bamboo-acceptance.mjs [--current-source [--accepted-identity FILE]]")
 }
 
 export const verifyExtractedPublishedArtifact = ({ tarballPath, packageRoot }) => {
@@ -469,7 +478,8 @@ const runAcceptanceMode = ({ mode, tls }, artifact) => {
 }
 
 const main = () => {
-  const artifactMode = acceptanceArtifactMode(process.argv.slice(2))
+  const arguments_ = process.argv.slice(2)
+  const artifactMode = acceptanceArtifactMode(arguments_)
   if (!process.env.BAMBOO_E2E_SOURCE_DIR?.trim()) {
     throw new Error(
       "Set BAMBOO_E2E_SOURCE_DIR to the clean exact Bamboo checkout required by the real-runtime harness.",
@@ -489,6 +499,10 @@ const main = () => {
     const tls = generateTlsIdentity(temporaryRoot)
     for (const mode of acceptanceRunPlan(tls)) {
       runAcceptanceMode(mode, artifact)
+    }
+    if (arguments_.length === 3) {
+      const accepted = writeAcceptedIdentity(arguments_[2], artifact.identity)
+      process.stdout.write(`Recorded successful local and secure browser acceptance: ${JSON.stringify(accepted)}.\n`)
     }
   } finally {
     rmSync(temporaryRoot, { recursive: true, force: true })
