@@ -1,4 +1,5 @@
 import {
+  devices,
   expect,
   test,
   type Browser,
@@ -18,10 +19,11 @@ import { navigateWithNetworkChangeRecovery } from "./support/transientNavigation
 type JsonRecord = Record<string, unknown>;
 
 interface SurfaceDefinition {
-  readonly label: "desktop" | "tablet" | "phone";
+  readonly label: "desktop" | "tablet" | "phone" | "phone-landscape";
   readonly viewport: { readonly width: number; readonly height: number };
   readonly mobile: boolean;
   readonly touch: boolean;
+  readonly userAgent?: string;
 }
 
 const surfaces: readonly SurfaceDefinition[] = [
@@ -42,6 +44,13 @@ const surfaces: readonly SurfaceDefinition[] = [
     viewport: { width: 390, height: 844 },
     mobile: true,
     touch: true,
+  },
+  {
+    label: "phone-landscape",
+    viewport: { width: 915, height: 412 },
+    mobile: true,
+    touch: true,
+    userAgent: devices["Pixel 7"].userAgent,
   },
 ];
 
@@ -233,6 +242,7 @@ const exerciseSurface = async ({
     viewport: definition.viewport,
     isMobile: definition.mobile,
     hasTouch: definition.touch,
+    userAgent: definition.userAgent,
     colorScheme: "dark",
     locale: "zh-CN",
     ignoreHTTPSErrors: entryUrl.protocol === "https:",
@@ -267,7 +277,7 @@ const exerciseSurface = async ({
     );
     expect(horizontalOverflow).toBeLessThanOrEqual(1);
 
-    if (definition.mobile) {
+    if (definition.viewport.width <= 768) {
       await page.getByRole("button", { name: "菜单", exact: true }).click();
     }
     const settingsButton = page.getByRole("button", {
@@ -372,7 +382,7 @@ test("verified artifact browser surfaces: standalone local real Bamboo", async (
   }
 });
 
-test("verified artifact browser surfaces: HTTPS/WSS desktop tablet and phone", async ({
+test("verified artifact browser surfaces: HTTPS/WSS desktop tablet and phone orientations", async ({
   browser,
 }, testInfo) => {
   test.skip(process.env.LOTUS_REAL_ACCEPTANCE_MODE !== "remote");

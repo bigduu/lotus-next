@@ -262,6 +262,18 @@ describe("published real-Bamboo acceptance policy", () => {
     }
   })
 
+  it("checks landscape phone identity and zero browser API requests in both real-Bamboo modes", () => {
+    const surfaces = readRepositoryFile("e2e/real-bamboo-published-surfaces.spec.ts")
+    expect(surfaces).toContain('label: "phone-landscape"')
+    expect(surfaces).toContain("viewport: { width: 915, height: 412 }")
+    expect(surfaces).toContain('userAgent: devices["Pixel 7"].userAgent')
+    expect(surfaces).toContain("userAgent: definition.userAgent")
+    expect(surfaces).toContain("if (definition.viewport.width <= 768)")
+    expect(surfaces).toContain("for (const definition of definitions)")
+    expect(surfaces).toContain("for (const definition of surfaces)")
+    expect(surfaces).toContain('pathname.startsWith("/api/v1/browser/")')
+  })
+
   it("blocks publication until the final Node 24 tarball matches Node 22 browser acceptance", () => {
     const publication = readRepositoryFile(".github/workflows/publish-npm.yml")
     const index = (step) => publication.indexOf(`      - name: ${step}`)
