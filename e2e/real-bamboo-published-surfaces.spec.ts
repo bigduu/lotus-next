@@ -137,6 +137,7 @@ const preflightSecureSurface = async (
 const assertCanonicalPage = async (
   observation: PageObservation,
   pageOrigin: string,
+  browserSessionId: string | null,
 ): Promise<void> => {
   await observation.drain();
   const httpRequests = observation.requests.filter((request) =>
@@ -202,7 +203,15 @@ const assertCanonicalPage = async (
     `${observation.label}: alternate realtime fallback`,
   ).toEqual([]);
   expect(errorResponses, `${observation.label}: HTTP errors`).toEqual([]);
-  expect(observation.failedRequests, `${observation.label}: failed requests`).toEqual([]);
+  // The visible browser cancels an in-flight frame long poll when its active
+  // page changes. The final frame and DOM are asserted before this check.
+  const cancelledFrameRequest = browserSessionId
+    ? `GET ${pageOrigin}/api/v1/browser/sessions/${browserSessionId}/frame net::ERR_ABORTED`
+    : null;
+  expect(
+    observation.failedRequests.filter((failure) => failure !== cancelledFrameRequest),
+    `${observation.label}: failed requests`,
+  ).toEqual([]);
   expect(observation.consoleErrors, `${observation.label}: console errors`).toEqual([]);
   expect(observation.pageErrors, `${observation.label}: page errors`).toEqual([]);
   expect(socket.errors, `${observation.label}: WebSocket errors`).toEqual([]);
@@ -319,7 +328,11 @@ const exerciseSurface = async ({
       );
     }
 
-    await assertCanonicalPage(observation, entryUrl.origin);
+    await assertCanonicalPage(
+      observation,
+      entryUrl.origin,
+      currentSourceArtifact && !definition.mobile ? sessionId : null,
+    );
     if (currentSourceArtifact && definition.mobile) {
       expect(
         observation.requests.filter((request) =>
