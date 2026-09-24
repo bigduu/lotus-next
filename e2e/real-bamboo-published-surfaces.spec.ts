@@ -124,9 +124,13 @@ const preflightSecureSurface = async (
 ): Promise<void> => {
   const context = await browser.newContext({ ignoreHTTPSErrors: true });
   try {
-    const page = await context.newPage();
-    const response = await navigateWithNetworkChangeRecovery(() =>
-      page.goto(entryUrl.href, { waitUntil: "domcontentloaded" }),
+    let page = await context.newPage();
+    const response = await navigateWithNetworkChangeRecovery(
+      () => page.goto(entryUrl.href, { waitUntil: "domcontentloaded" }),
+      async () => {
+        await page.close();
+        page = await context.newPage();
+      },
     );
     assertSuccessfulDocumentNavigation(response, entryUrl, "preflight");
   } finally {
@@ -203,13 +207,10 @@ const assertCanonicalPage = async (
     `${observation.label}: alternate realtime fallback`,
   ).toEqual([]);
   expect(errorResponses, `${observation.label}: HTTP errors`).toEqual([]);
-  // The visible browser cancels an in-flight frame long poll when its active
-  // page changes. The final frame and DOM are asserted before this check.
-  const cancelledFrameRequest = browserSessionId
-    ? `GET ${pageOrigin}/api/v1/browser/sessions/${browserSessionId}/frame net::ERR_ABORTED`
-    : null;
   expect(
-    observation.failedRequests.filter((failure) => failure !== cancelledFrameRequest),
+    observation.failedRequests.filter(
+      (failure) => !expectedBrowserReadCancellation(failure, pageOrigin, browserSessionId),
+    ),
     `${observation.label}: failed requests`,
   ).toEqual([]);
   expect(observation.consoleErrors, `${observation.label}: console errors`).toEqual([]);
@@ -222,6 +223,46 @@ const assertCanonicalPage = async (
     `${observation.label}: malformed or binary frames`,
   ).toEqual([]);
 };
+
+// Scope changes can abort a stale frame long poll or DOM inspection. The
+// rendered frame and final DOM snapshot are checked before failed requests.
+const expectedBrowserReadCancellation = (
+  failure: string,
+  pageOrigin: string,
+  browserSessionId: string | null,
+): boolean =>
+  browserSessionId !== null &&
+  ["frame", "dom"].some(
+    (read) =>
+      failure ===
+      `GET ${pageOrigin}/api/v1/browser/sessions/${browserSessionId}/${read} net::ERR_ABORTED`,
+  );
+
+test("browser read cancellation accepts only the selected session and aborted GET", () => {
+  const origin = "http://127.0.0.1:18080";
+  const path = `${origin}/api/v1/browser/sessions/selected`;
+  expect(
+    expectedBrowserReadCancellation(`GET ${path}/frame net::ERR_ABORTED`, origin, "selected"),
+  ).toBe(true);
+  expect(
+    expectedBrowserReadCancellation(`GET ${path}/dom net::ERR_ABORTED`, origin, "selected"),
+  ).toBe(true);
+  expect(
+    expectedBrowserReadCancellation(`GET ${path}/dom net::ERR_ABORTED`, origin, "other"),
+  ).toBe(false);
+  expect(
+    expectedBrowserReadCancellation(`POST ${path}/dom net::ERR_ABORTED`, origin, "selected"),
+  ).toBe(false);
+  expect(
+    expectedBrowserReadCancellation(`GET ${path}/screenshot net::ERR_ABORTED`, origin, "selected"),
+  ).toBe(false);
+  expect(
+    expectedBrowserReadCancellation(`GET ${path}/dom net::ERR_CONNECTION_RESET`, origin, "selected"),
+  ).toBe(false);
+  expect(
+    expectedBrowserReadCancellation(`GET ${path}/dom net::ERR_ABORTED`, origin, null),
+  ).toBe(false);
+});
 
 const exerciseSurface = async ({
   browser,
@@ -321,6 +362,22 @@ const exerciseSurface = async ({
       await address.fill(browserFixtureUrl);
       await navigateButton.click();
       await expect(address).toHaveValue(browserFixtureUrl);
+      // ResizeObserver can advance the shared page epoch after navigation.
+      // Inspect only when Bamboo's viewport matches the rendered pane.
+      await expect.poll(async () => {
+        const rect = await pane.locator("[data-browser-viewport]").boundingBox();
+        if (!rect) return false;
+        const state = asRecord(await page.evaluate(async (sessionPath) => {
+          const response = await fetch(sessionPath, { cache: "no-store" });
+          return response.ok ? await response.json() : null;
+        }, `/api/v1/browser/sessions/${encodeURIComponent(sessionId)}`));
+        const viewport = asRecord(state?.viewport);
+        return (
+          state?.url === browserFixtureUrl &&
+          viewport?.width === Math.min(1_200, Math.max(320, Math.round(rect.width))) &&
+          viewport?.height === Math.min(1_000, Math.max(240, Math.round(rect.height)))
+        );
+      }, { timeout: 15_000 }).toBe(true);
       await expect(pane.getByAltText("网页画面")).toBeVisible();
       await pane.getByRole("button", { name: "查看 DOM" }).click();
       await expect(pane.getByLabel("DOM 快照", { exact: true })).toContainText(

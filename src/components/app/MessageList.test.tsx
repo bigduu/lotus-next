@@ -24,11 +24,13 @@ vi.mock("@/components/chat/ToolCalls", () => ({
   ToolCalls: ({
     active,
     items,
+    runningCallIds,
     open = false,
     onOpenChange,
   }: {
     active?: boolean
     items: Message[]
+    runningCallIds?: ReadonlySet<string>
     open?: boolean
     onOpenChange?: (open: boolean) => void
   }) => (
@@ -37,6 +39,7 @@ vi.mock("@/components/chat/ToolCalls", () => ({
       aria-expanded={open}
       data-tool-active={String(active)}
       data-tool-items={items.length}
+      data-running-calls={[...(runningCallIds ?? [])].join(",")}
       onClick={() => onOpenChange?.(!open)}
     />
   ),
@@ -44,6 +47,7 @@ vi.mock("@/components/chat/ToolCalls", () => ({
 
 import { MessageList } from "./MessageList"
 import type { Message } from "@shared/types/chatMessages"
+import type { LiveSegment } from "@/hooks/useChat"
 
 const mountedRoots: Root[] = []
 const reactActEnvironment = globalThis as typeof globalThis & {
@@ -67,6 +71,7 @@ function renderMessageList(
   messages: Message[],
   latestRunFinished: boolean,
   contentShiftX = 0,
+  liveSegments: LiveSegment[] = [],
 ) {
   const container = document.createElement("div")
   document.body.appendChild(container)
@@ -80,12 +85,12 @@ function renderMessageList(
         onScroll={vi.fn()}
         messages={messages}
         mergedSubAgents={{}}
-        sending={false}
+        sending={liveSegments.length > 0}
         latestRunFinished={latestRunFinished}
         streaming={null}
         streamingActive={false}
         streamingReasoning={null}
-        liveSegments={[]}
+        liveSegments={liveSegments}
         streamStatus={null}
         pendingUserText={null}
         contentShiftX={contentShiftX}
@@ -101,6 +106,21 @@ function renderMessageList(
   })
   return container
 }
+
+it("passes exact running call IDs even when a live call has partial output", () => {
+  const container = renderMessageList([], false, 0, [{
+    kind: "tools",
+    calls: [
+      { toolCallId: "still-running", toolName: "Read", output: "partial output", status: "running" },
+      { toolCallId: "already-done", toolName: "Read", output: "final output", status: "completed" },
+    ],
+  }])
+
+  const group = container.querySelector<HTMLElement>("[data-tool-active]")
+  expect(group?.dataset.toolActive).toBe("true")
+  expect(group?.dataset.toolItems).toBe("4")
+  expect(group?.dataset.runningCalls).toBe("still-running")
+})
 
 it("animates only the transcript content when a floating panel opens", () => {
   const container = renderMessageList([], false, -166)

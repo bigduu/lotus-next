@@ -20,6 +20,7 @@ import { parseFileChangeResultPayload } from "@shared/utils/resultFormatters"
 import { FileChangeView } from "./FileChangeView"
 
 type Entry = {
+  id: string
   toolName: string
   params?: Record<string, unknown>
   result?: { text: string; isError: boolean }
@@ -78,7 +79,6 @@ function parseBackgroundBash(
   return null
 }
 
-const VISIBLE_CAP = 3
 const BROWSER_PREVIEW_MAX_LENGTH = 16 * 1024
 const BROWSER_DOWNLOAD_RESULT_MAX_LENGTH = 512 * 1024
 const APPROVAL_STATUS = "等待用户批准"
@@ -442,7 +442,7 @@ function summarizeEntries(entries: Entry[]): ToolPresentation {
   return {
     label: uniqueLabels.length <= 3
       ? uniqueLabels.join("、")
-      : `${uniqueLabels.slice(0, 2).join("、")}等 ${uniqueLabels.length} 项操作`,
+      : `${uniqueLabels.slice(0, 2).join("、")}等 ${entries.length} 项操作`,
     icon: presentations[0].icon,
   }
 }
@@ -517,6 +517,7 @@ function buildEntries(items: Message[]): Entry[] {
     }
     const background = result ? parseBackgroundBash(result.text) : null
     return {
+      id: c.id,
       toolName: c.toolName,
       params: dialogStatus || hideBrowserParams ? undefined : c.params,
       focusedBrowserInput: c.focusedBrowserInput,
@@ -570,100 +571,105 @@ function BackgroundBadge({ bashId }: { bashId: string }) {
   )
 }
 
-function EntryRow({ e }: { e: Entry }) {
+function EntryRow({ e, running }: { e: Entry; running: boolean }) {
+  const [open, setOpen] = useState(false)
   const { primary, rest } = cleanParams(e.params)
   const presentation = presentTool(e)
+  const SummaryIcon = presentation.icon
   // File-editing tool results render as a real diff instead of raw JSON.
-  const fileChange = e.result?.text ? parseFileChangeResultPayload(e.result.text) : null
-  const result = e.result?.text ? prettyResult(e.result.text) : ""
+  const fileChange = open && e.result?.text ? parseFileChangeResultPayload(e.result.text) : null
+  const result = open && e.result?.text ? prettyResult(e.result.text) : ""
   return (
-    <div data-tool-call-entry className="py-1">
-      <div className="flex items-center gap-1.5">
-        <span className="text-xs font-medium text-foreground">{presentation.label}</span>
-        {presentation.label !== e.toolName ? (
-          <span className="text-[10px] text-muted-foreground opacity-70">{e.toolName}</span>
-        ) : null}
-        {e.result?.isError ? <span className="text-[10px] text-destructive">出错</span> : null}
-        {e.background ? <BackgroundBadge bashId={e.background.bashId} /> : null}
-      </div>
-      {primary ? (
-        <div className="mt-1 line-clamp-3 break-all font-mono text-[11px] text-foreground [overflow-wrap:anywhere]">
-          {primary}
-        </div>
-      ) : null}
-      {rest.length > 0 ? (
-        <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] text-muted-foreground">
-          {rest.map(([k, v]) => (
-            <span key={k}>
-              <span className="opacity-60">{k}:</span> {v}
+    <div data-tool-call-entry className="min-w-0">
+      <details open={open}>
+        <summary
+          data-tool-call-entry-toggle
+          aria-expanded={open}
+          onClick={(event) => {
+            event.preventDefault()
+            setOpen(!open)
+          }}
+          className="flex min-w-0 cursor-pointer list-none items-center gap-1.5 rounded-sm py-1 text-sm text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [&::-webkit-details-marker]:hidden"
+        >
+          <SummaryIcon className="size-3.5 shrink-0" />
+          <span className="shrink-0">{presentation.label}</span>
+          {presentation.detail ? (
+            <span className="min-w-0 truncate font-mono text-xs opacity-70">
+              {presentation.detail}
             </span>
-          ))}
-        </div>
-      ) : null}
-      {fileChange ? (
-        <div className="mt-1.5">
-          <FileChangeView payload={fileChange} />
-        </div>
-      ) : result ? (
-        <details className="mt-1.5">
-          <summary className="cursor-pointer select-none text-[11px] text-muted-foreground hover:text-foreground">
-            结果
-          </summary>
-          <pre className="mt-1 max-h-44 overflow-auto whitespace-pre-wrap break-all border-l border-border pl-2 text-[11px] text-muted-foreground">
-            {result.length > 1000 ? result.slice(0, 1000) + "…" : result}
-          </pre>
-        </details>
-      ) : null}
+          ) : null}
+          {e.result?.isError ? <span className="shrink-0 text-destructive">出错</span> : null}
+          {e.background ? <BackgroundBadge bashId={e.background.bashId} /> : null}
+          {running ? <span className="shrink-0">运行中…</span> : null}
+          <ChevronRight className={cn("size-3 shrink-0 transition-transform", open && "rotate-90")} />
+        </summary>
+        {open ? (
+          <div data-tool-call-entry-detail className="mt-1 border-l border-border pl-4 text-[11px]">
+            {presentation.label !== e.toolName ? (
+              <div className="text-muted-foreground opacity-70">{e.toolName}</div>
+            ) : null}
+            {primary ? (
+              <div className="mt-1 line-clamp-3 break-all font-mono text-foreground [overflow-wrap:anywhere]">
+                {primary}
+              </div>
+            ) : null}
+            {rest.length > 0 ? (
+              <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-muted-foreground">
+                {rest.map(([k, v]) => (
+                  <span key={k}>
+                    <span className="opacity-60">{k}:</span> {v}
+                  </span>
+                ))}
+              </div>
+            ) : null}
+            {fileChange ? (
+              <div className="mt-1.5">
+                <FileChangeView payload={fileChange} />
+              </div>
+            ) : result ? (
+              <pre className="mt-1.5 max-h-44 overflow-auto whitespace-pre-wrap break-all text-muted-foreground">
+                {result.length > 1000 ? result.slice(0, 1000) + "…" : result}
+              </pre>
+            ) : null}
+          </div>
+        ) : null}
+      </details>
     </div>
   )
 }
 
 /**
- * Compact, balanced tool-call display. Collapsed = a transparent action row
- * with a readable summary and one small identifying detail. Active rounds stay
- * collapsed by default while their spinner remains visible; users can expand a group without streaming updates
- * overriding that choice.
- * To avoid a wall of detail, only the latest {VISIBLE_CAP} tools render expanded
- * — earlier ones fold behind a "展开更早的 N 个" toggle.
+ * Keep the group collapsed by default. Opening it reveals every call as one
+ * compact action row; each row can then reveal its sanitized details.
  */
 type ToolCallsProps = {
   items: Message[]
   active?: boolean
+  /** Exact running calls in a live segment, even after partial output arrives. */
+  runningCallIds?: ReadonlySet<string>
   /** Optional controlled state, used by virtualized history rows. */
   open?: boolean
   onOpenChange?: (open: boolean) => void
-  showAll?: boolean
-  onShowAllChange?: (showAll: boolean) => void
 }
 
 export function ToolCalls({
   items,
   active,
+  runningCallIds,
   open: controlledOpen,
   onOpenChange,
-  showAll: controlledShowAll,
-  onShowAllChange,
 }: ToolCallsProps) {
   const [internalOpen, setInternalOpen] = useState(false)
-  const [internalShowAll, setInternalShowAll] = useState(false)
   const open = controlledOpen ?? internalOpen
-  const showAll = controlledShowAll ?? internalShowAll
   const setOpen = (next: boolean) => {
     if (controlledOpen === undefined) setInternalOpen(next)
     onOpenChange?.(next)
-  }
-  const setShowAll = (next: boolean) => {
-    if (controlledShowAll === undefined) setInternalShowAll(next)
-    onShowAllChange?.(next)
   }
 
   const entries = buildEntries(items)
   const uniqueNames = Array.from(new Set(entries.map((e) => e.toolName).filter(Boolean)))
   const summary = summarizeEntries(entries)
   const SummaryIcon = active ? Loader2 : summary.icon
-
-  const visible = showAll ? entries : entries.slice(-VISIBLE_CAP)
-  const hidden = entries.length - visible.length
 
   return (
     <div className="flex justify-start">
@@ -687,18 +693,13 @@ export function ToolCalls({
         </button>
 
         {open ? (
-          <div data-tool-call-panel className="mt-1.5 space-y-2 border-l border-border pl-4 text-xs">
-            {hidden > 0 ? (
-              <button
-                type="button"
-                onClick={() => setShowAll(true)}
-                className="text-[11px] text-muted-foreground underline-offset-2 hover:underline"
-              >
-                ▸ 展开更早的 {hidden} 个调用
-              </button>
-            ) : null}
-            {visible.map((e, i) => (
-              <EntryRow key={i} e={e} />
+          <div data-tool-call-panel className="mt-1.5 space-y-1 border-l border-border pl-4 text-xs">
+            {entries.map((e) => (
+              <EntryRow
+                key={e.id}
+                e={e}
+                running={runningCallIds ? runningCallIds.has(e.id) : Boolean(active && !e.result)}
+              />
             ))}
           </div>
         ) : null}

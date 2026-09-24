@@ -544,7 +544,6 @@ export function MessageList({
   )
   const [openProcessKeys, setOpenProcessKeys] = useState<Set<string>>(() => new Set())
   const [openToolKeys, setOpenToolKeys] = useState<Set<string>>(() => new Set())
-  const [showAllToolKeys, setShowAllToolKeys] = useState<Set<string>>(() => new Set())
   const historyEntriesRef = useRef(historyEntries)
   const openProcessKeysRef = useRef(openProcessKeys)
   const openToolKeysRef = useRef(openToolKeys)
@@ -585,15 +584,13 @@ export function MessageList({
   const previousExpansionStateRef = useRef({
     openProcessKeys,
     openToolKeys,
-    showAllToolKeys,
   })
   useLayoutEffect(() => {
     const previous = previousExpansionStateRef.current
-    previousExpansionStateRef.current = { openProcessKeys, openToolKeys, showAllToolKeys }
+    previousExpansionStateRef.current = { openProcessKeys, openToolKeys }
     const changedKeys = new Set<string>()
     collectChangedKeys(previous.openProcessKeys, openProcessKeys, changedKeys)
     collectChangedKeys(previous.openToolKeys, openToolKeys, changedKeys)
-    collectChangedKeys(previous.showAllToolKeys, showAllToolKeys, changedKeys)
     if (changedKeys.size === 0) return
 
     const rows = scrollElementRef.current?.querySelectorAll<HTMLDivElement>(
@@ -604,16 +601,13 @@ export function MessageList({
       const index = virtualizer.indexFromElement(row)
       virtualizer.resizeItem(index, row.offsetHeight || estimateSize(index))
     }
-  }, [estimateSize, openProcessKeys, openToolKeys, showAllToolKeys, virtualizer])
+  }, [estimateSize, openProcessKeys, openToolKeys, virtualizer])
 
   const setProcessOpen = useCallback((key: string, open: boolean) => {
     setOpenProcessKeys((current) => withSetMembership(current, key, open))
   }, [])
   const setToolOpen = useCallback((key: string, open: boolean) => {
     setOpenToolKeys((current) => withSetMembership(current, key, open))
-  }, [])
-  const setToolShowAll = useCallback((key: string, showAll: boolean) => {
-    setShowAllToolKeys((current) => withSetMembership(current, key, showAll))
   }, [])
 
   // Anchor the sub-agent block after the tool-group that spawned them, so it
@@ -654,8 +648,6 @@ export function MessageList({
           active={isLast && sending}
           open={openToolKeys.has(toolStateKey)}
           onOpenChange={(open) => setToolOpen(toolStateKey, open)}
-          showAll={showAllToolKeys.has(toolStateKey)}
-          onShowAllChange={(showAll) => setToolShowAll(toolStateKey, showAll)}
         />
       )
       if (idx === spawnItemIdx) {
@@ -894,6 +886,7 @@ export function MessageList({
               key={`live-tools-${i}`}
               items={liveToolMessages(seg)}
               active={seg.calls.some((c) => c.status === "running")}
+              runningCallIds={new Set(seg.calls.filter((c) => c.status === "running").map((c) => c.toolCallId))}
             />
           ) : (
             <div key={`live-text-${i}`} className="flex justify-start">
