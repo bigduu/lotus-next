@@ -367,11 +367,10 @@ const exerciseSurface = async ({
       await expect.poll(async () => {
         const rect = await pane.locator("[data-browser-viewport]").boundingBox();
         if (!rect) return false;
-        const response = await context.request.get(
-          new URL(`/api/v1/browser/sessions/${encodeURIComponent(sessionId)}`, entryUrl).href,
-        );
-        if (!response.ok()) return false;
-        const state = asRecord(await response.json());
+        const state = asRecord(await page.evaluate(async (sessionPath) => {
+          const response = await fetch(sessionPath, { cache: "no-store" });
+          return response.ok ? await response.json() : null;
+        }, `/api/v1/browser/sessions/${encodeURIComponent(sessionId)}`));
         const viewport = asRecord(state?.viewport);
         return (
           state?.url === browserFixtureUrl &&
