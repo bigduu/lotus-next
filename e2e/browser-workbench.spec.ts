@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test"
+import { devices, expect, test } from "@playwright/test"
 import { readFile } from "node:fs/promises"
 import { installArtifactRuntime, standaloneScenario } from "./support/artifactRuntime.js"
 
@@ -112,6 +112,12 @@ test("browser workbench shares one session across human input, DOM, screenshot, 
   await panel.getByRole("tab", { name: "浏览器" }).click()
   const browser = panel.getByRole("region", { name: "内置浏览器" })
   await expect(browser.getByAltText("网页画面")).toBeVisible()
+  if (testInfo.project.name === "tablet-chromium") {
+    await testInfo.attach("820px-tablet-browser", {
+      body: await page.screenshot(),
+      contentType: "image/png",
+    })
+  }
   await expect.poll(() => viewport.width).not.toBe(640)
   await expect(browser.getByRole("button", { name: "查看 DOM" })).toBeEnabled()
   const address = browser.getByRole("textbox", { name: "网页地址" })
@@ -314,7 +320,7 @@ test("phone workbench has no browser entry or browser session requests", async (
     route.fulfill({ json: { session_id: "all-surface-session", title: null, items: [] } }),
   )
   let browserRequests = 0
-  await page.route("**/api/v1/browser/sessions/**", (route) => {
+  await page.route("**/api/v1/browser/**", (route) => {
     browserRequests += 1
     return route.abort()
   })
@@ -325,8 +331,67 @@ test("phone workbench has no browser entry or browser session requests", async (
   await expect(panel.getByRole("tab", { name: "浏览器" })).toHaveCount(0)
   await expect(panel.getByRole("region", { name: "内置浏览器" })).toHaveCount(0)
   expect(browserRequests).toBe(0)
+  await page.setViewportSize({ width: 915, height: 412 })
+  await expect(panel.getByRole("tab", { name: "浏览器" })).toHaveCount(0)
+  await expect(panel.getByRole("region", { name: "内置浏览器" })).toHaveCount(0)
+  await page.waitForTimeout(200)
+  expect(browserRequests).toBe(0)
+  const landscapeScreenshot = testInfo.outputPath("pixel-landscape-workbench-no-browser.png")
+  await page.screenshot({ path: landscapeScreenshot })
+  await testInfo.attach("pixel-landscape-workbench-no-browser", {
+    path: landscapeScreenshot,
+    contentType: "image/png",
+  })
+  await page.setViewportSize({ width: 412, height: 915 })
+  await expect(panel.getByRole("tab", { name: "浏览器" })).toHaveCount(0)
+  expect(browserRequests).toBe(0)
   expect(observation.pageErrors).toEqual([])
   const screenshotPath = testInfo.outputPath("phone-workbench-no-browser.png")
   await page.screenshot({ path: screenshotPath })
   await testInfo.attach("phone-workbench-no-browser", { path: screenshotPath, contentType: "image/png" })
+})
+
+test("iPhone landscape workbench has no browser entry or browser session requests", async ({ browser }, testInfo) => {
+  test.skip(testInfo.project.name !== "phone-chromium", "Phone-only browser visibility check")
+  const device = devices["iPhone 15 Pro Max"]
+  const context = await browser.newContext({
+    userAgent: device.userAgent,
+    viewport: { width: 932, height: 430 },
+    deviceScaleFactor: device.deviceScaleFactor,
+    isMobile: true,
+    hasTouch: true,
+  })
+  try {
+    const page = await context.newPage()
+    await page.addInitScript(() => {
+      localStorage.setItem("bodhi_onboarded_v1", "1")
+      localStorage.setItem("lotus_next_last_session", "all-surface-session")
+    })
+    const observation = await installArtifactRuntime(page, standaloneScenario)
+    await page.route("**/api/v1/task/all-surface-session", (route) =>
+      route.fulfill({ json: { session_id: "all-surface-session", title: null, items: [] } }),
+    )
+    let browserRequests = 0
+    await page.route("**/api/v1/browser/**", (route) => {
+      browserRequests += 1
+      return route.abort()
+    })
+
+    await page.goto(standaloneScenario.entryUrl, { waitUntil: "domcontentloaded" })
+    await page.getByRole("button", { name: "打开侧边面板" }).click()
+    const panel = page.getByRole("complementary", { name: "工作面板" })
+    await expect(panel.getByRole("tab", { name: "浏览器" })).toHaveCount(0)
+    await expect(panel.getByRole("region", { name: "内置浏览器" })).toHaveCount(0)
+    await page.waitForTimeout(200)
+    expect(browserRequests).toBe(0)
+    expect(observation.pageErrors).toEqual([])
+    const screenshotPath = testInfo.outputPath("iphone-landscape-workbench-no-browser.png")
+    await page.screenshot({ path: screenshotPath })
+    await testInfo.attach("iphone-landscape-workbench-no-browser", {
+      path: screenshotPath,
+      contentType: "image/png",
+    })
+  } finally {
+    await context.close()
+  }
 })
