@@ -254,6 +254,7 @@ const STREAMDOWN_PLUGINS: PluginConfig = {
 // Raw HTML deliberately stays out of the pipeline. The sanitizer and hardener
 // remain for generated HAST, while the fail-closed transform owns every URL.
 const SAFE_REHYPE_PLUGINS = [rehypeSanitize, defaultRehypePlugins.harden]
+const SAFE_REMARK_PLUGINS = [...Object.values(defaultRemarkPlugins), remarkLocalRasterImages]
 const LINK_SAFETY = { enabled: true } as const
 const REMEND_OPTIONS = { katex: false, linkMode: "text-only" as const }
 
@@ -298,7 +299,7 @@ export function StreamdownMarkdown({
         parseIncompleteMarkdown={isStreaming}
         plugins={STREAMDOWN_PLUGINS}
         rehypePlugins={SAFE_REHYPE_PLUGINS}
-        remarkPlugins={[...Object.values(defaultRemarkPlugins), remarkLocalRasterImages]}
+        remarkPlugins={SAFE_REMARK_PLUGINS}
         remend={REMEND_OPTIONS}
         shikiTheme={STREAMDOWN_THEMES}
         tableMaxHeight={Number.POSITIVE_INFINITY}
