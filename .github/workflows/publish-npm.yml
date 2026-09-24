@@ -151,7 +151,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     env:
-      BAMBOO_E2E_REVISION: f959c05566bfea3bd3566626851cda543f2b71d2
+      BAMBOO_E2E_REVISION: 3ee8c458f7f3672ef40afc9c35c236e6da0f9b0d
 
     steps:
       - name: Check out exact Lotus Next source
@@ -206,6 +206,11 @@ jobs:
           BAMBOO_E2E_SOURCE_DIR: ${{ github.workspace }}/.e2e-bamboo
         run: npm run test:e2e:real-bamboo:built
 
+      - name: Verify the release artifact on local and secure browser surfaces
+        env:
+          BAMBOO_E2E_SOURCE_DIR: ${{ github.workspace }}/.e2e-bamboo
+        run: node scripts/published-real-bamboo-acceptance.mjs --current-source
+
       - name: Upload real Bamboo evidence
         if: ${{ always() }}
         uses: actions/upload-artifact@v7
@@ -213,7 +218,11 @@ jobs:
           name: publish-real-bamboo-node-22
           path: |
             playwright-report-real-bamboo/
+            playwright-report-real-bamboo-local/
+            playwright-report-real-bamboo-remote/
             test-results-real-bamboo/
+            test-results-real-bamboo-local/
+            test-results-real-bamboo-remote/
           if-no-files-found: error
           retention-days: 30
 

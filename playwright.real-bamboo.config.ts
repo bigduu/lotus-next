@@ -3,6 +3,11 @@ import { defineConfig, devices } from "@playwright/test";
 const acceptanceMode = process.env.LOTUS_REAL_ACCEPTANCE_MODE?.trim();
 const outputSuffix = acceptanceMode ? `-${acceptanceMode}` : "";
 const secureRemote = acceptanceMode === "remote";
+const desktopUse = {
+  ...devices["Desktop Chrome"],
+  browserName: "chromium" as const,
+  viewport: { width: 1_440, height: 900 },
+};
 
 export default defineConfig({
   testDir: "./e2e",
@@ -42,12 +47,17 @@ export default defineConfig({
   },
   projects: [
     {
+      name: "real-bamboo-browser-tabs-chromium",
+      testMatch: "**/real-bamboo-browser-tabs.spec.ts",
+      use: desktopUse,
+    },
+    {
+      // The desktop suite ends with an MCP import that restarts Bamboo and may
+      // change its host port. Run tabs first while the setup URL is current.
       name: "real-bamboo-desktop-chromium",
-      use: {
-        ...devices["Desktop Chrome"],
-        browserName: "chromium",
-        viewport: { width: 1_440, height: 900 },
-      },
+      testIgnore: "**/real-bamboo-browser-tabs.spec.ts",
+      dependencies: ["real-bamboo-browser-tabs-chromium"],
+      use: desktopUse,
     },
   ],
 });

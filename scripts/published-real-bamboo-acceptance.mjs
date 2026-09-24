@@ -12,7 +12,11 @@ import { tmpdir } from "node:os"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 
-import { verifyArtifactManifest } from "./artifact-manifest.mjs"
+import {
+  assertPackageVersion,
+  assertSourceRevision,
+  verifyArtifactManifest,
+} from "./artifact-manifest.mjs"
 
 export const PUBLISHED_ARTIFACT_IDENTITY = Object.freeze({
   schemaVersion: 1,
@@ -45,6 +49,7 @@ const playwrightCli = path.join(
 )
 const commandBufferBytes = 32 * 1024 * 1024
 const remoteHostname = "remote.lotus.test"
+const localPackOrigin = "local-pack"
 
 const isRecord = (value) =>
   typeof value === "object" && value !== null && !Array.isArray(value)
@@ -149,7 +154,7 @@ export const assertSafeTarMembers = (listing) => {
   return members
 }
 
-const parsePackResult = (stdout) => {
+const parsePackRecord = (stdout) => {
   let parsed
   try {
     parsed = JSON.parse(stdout)
@@ -161,7 +166,11 @@ const parsePackResult = (stdout) => {
   if (!Array.isArray(parsed) || parsed.length !== 1 || !isRecord(parsed[0])) {
     throw new Error("npm pack must return exactly one package record.")
   }
-  const [record] = parsed
+  return parsed[0]
+}
+
+const parsePackResult = (stdout) => {
+  const record = parsePackRecord(stdout)
   const expectedFilename = "bigduu-lotus-next-2026.9.14.tgz"
   if (
     record.filename !== expectedFilename ||
@@ -171,6 +180,14 @@ const parsePackResult = (stdout) => {
     throw new Error("npm pack metadata does not match the committed artifact identity.")
   }
   return expectedFilename
+}
+
+export const acceptanceArtifactMode = (arguments_) => {
+  if (arguments_.length === 0) return "published"
+  if (arguments_.length === 1 && arguments_[0] === "--current-source") {
+    return "current-source"
+  }
+  throw new Error("Usage: published-real-bamboo-acceptance.mjs [--current-source]")
 }
 
 export const verifyExtractedPublishedArtifact = ({ tarballPath, packageRoot }) => {
@@ -213,6 +230,100 @@ export const verifyExtractedPublishedArtifact = ({ tarballPath, packageRoot }) =
   return { distRoot, identity }
 }
 
+export const verifyExtractedCurrentArtifact = ({
+  tarballPath,
+  packageRoot,
+  sourceDistRoot,
+  expectedRevision,
+  expectedVersion,
+  packRecord,
+}) => {
+  assertSourceRevision(expectedRevision)
+  assertPackageVersion(expectedVersion)
+  const expectedFilename = `bigduu-lotus-next-${expectedVersion}.tgz`
+  const tarballStat = lstatSync(tarballPath)
+  const packageRootStat = lstatSync(packageRoot)
+  if (tarballStat.isSymbolicLink() || !tarballStat.isFile()) {
+    throw new Error("Current-source tarball must be a regular file.")
+  }
+  if (packageRootStat.isSymbolicLink() || !packageRootStat.isDirectory()) {
+    throw new Error("Extracted current-source package root must be a real directory.")
+  }
+
+  const npmShasum = fileDigest("sha1", tarballPath)
+  const npmIntegrity = `sha512-${fileDigest("sha512", tarballPath)}`
+  if (
+    !isRecord(packRecord) ||
+    packRecord.name !== PUBLISHED_ARTIFACT_IDENTITY.packageName ||
+    packRecord.version !== expectedVersion ||
+    packRecord.filename !== expectedFilename ||
+    packRecord.shasum !== npmShasum ||
+    packRecord.integrity !== npmIntegrity
+  ) {
+    throw new Error("Current-source npm pack metadata does not match the exact local tarball.")
+  }
+
+  const packagePath = path.join(packageRoot, "package.json")
+  const packageStat = lstatSync(packagePath)
+  if (packageStat.isSymbolicLink() || !packageStat.isFile()) {
+    throw new Error("Current-source package.json must be a regular file.")
+  }
+  const packageDocument = JSON.parse(readFileSync(packagePath, "utf8"))
+  if (
+    packageDocument.name !== PUBLISHED_ARTIFACT_IDENTITY.packageName ||
+    packageDocument.version !== expectedVersion
+  ) {
+    throw new Error("Extracted current-source package identity does not match the source build.")
+  }
+
+  const expectedArtifact = {
+    expectedPackageName: PUBLISHED_ARTIFACT_IDENTITY.packageName,
+    expectedPackageVersion: expectedVersion,
+    expectedSourceRevision: expectedRevision,
+    expectedSourceDirty: false,
+  }
+  const sourceManifest = verifyArtifactManifest({
+    distDirectory: sourceDistRoot,
+    ...expectedArtifact,
+  })
+  const distRoot = path.join(packageRoot, "dist")
+  const manifest = verifyArtifactManifest({
+    distDirectory: distRoot,
+    ...expectedArtifact,
+  })
+  const sourceManifestPath = path.join(sourceDistRoot, "lotus-next-manifest.json")
+  const manifestPath = path.join(distRoot, "lotus-next-manifest.json")
+  const manifestSha256 = fileDigest("sha256", manifestPath)
+  if (
+    fileDigest("sha256", sourceManifestPath) !== manifestSha256 ||
+    sourceManifest.resourcesSha256 !== manifest.resourcesSha256
+  ) {
+    throw new Error("Packed current-source resources do not match the verified build.")
+  }
+
+  const identity = {
+    schemaVersion: 1,
+    registry: localPackOrigin,
+    packageName: packageDocument.name,
+    packageVersion: packageDocument.version,
+    sourceRevision: manifest.sourceRevision,
+    sourceDirty: manifest.sourceDirty,
+    entrypoint: manifest.entrypoint,
+    npmShasum,
+    npmIntegrity,
+    manifestSha256,
+    resourcesSha256: manifest.resourcesSha256,
+    resourceCount: manifest.resources.length,
+  }
+  if (
+    Object.keys(identity).join(",") !==
+    Object.keys(PUBLISHED_ARTIFACT_IDENTITY).join(",")
+  ) {
+    throw new Error("Current-source identity fields differ from the runtime contract.")
+  }
+  return { distRoot, identity }
+}
+
 export const acceptanceRunPlan = ({ certificatePath, keyPath }) => [
   { mode: "local", tls: null },
   {
@@ -245,6 +356,51 @@ const downloadAndVerifyArtifact = (temporaryRoot) => {
   return verifyExtractedPublishedArtifact({
     tarballPath,
     packageRoot: path.join(extractRoot, "package"),
+  })
+}
+
+export const packAndVerifyCurrentArtifact = (temporaryRoot) => {
+  const expectedRevision = runCaptured("git", ["rev-parse", "HEAD^{commit}"]).stdout.trim()
+  if (process.env.GITHUB_SHA && expectedRevision !== process.env.GITHUB_SHA) {
+    throw new Error("Current-source checkout does not match the workflow head SHA.")
+  }
+  const packageDocument = JSON.parse(
+    readFileSync(path.join(repositoryRoot, "package.json"), "utf8"),
+  )
+  const expectedVersion = assertPackageVersion(packageDocument.version)
+  const sourceDistRoot = path.join(repositoryRoot, "dist")
+  verifyArtifactManifest({
+    distDirectory: sourceDistRoot,
+    expectedPackageName: PUBLISHED_ARTIFACT_IDENTITY.packageName,
+    expectedPackageVersion: expectedVersion,
+    expectedSourceRevision: expectedRevision,
+    expectedSourceDirty: false,
+  })
+
+  const { stdout } = npmInvocation([
+    "pack",
+    "--json",
+    "--ignore-scripts",
+    `--pack-destination=${temporaryRoot}`,
+  ])
+  const packRecord = parsePackRecord(stdout)
+  const expectedFilename = `bigduu-lotus-next-${expectedVersion}.tgz`
+  if (packRecord.filename !== expectedFilename) {
+    throw new Error("Current-source npm pack returned a different tarball filename.")
+  }
+  const tarballPath = path.join(temporaryRoot, expectedFilename)
+  const { stdout: listing } = runCaptured("tar", ["-tzf", tarballPath])
+  assertSafeTarMembers(listing)
+  const extractRoot = path.join(temporaryRoot, "current-source")
+  mkdirSync(extractRoot, { mode: 0o700 })
+  runCaptured("tar", ["-xzf", tarballPath, "-C", extractRoot])
+  return verifyExtractedCurrentArtifact({
+    tarballPath,
+    packageRoot: path.join(extractRoot, "package"),
+    sourceDistRoot,
+    expectedRevision,
+    expectedVersion,
+    packRecord,
   })
 }
 
@@ -305,27 +461,33 @@ const runAcceptanceMode = ({ mode, tls }, artifact) => {
       playwrightCli,
       "test",
       "--config=playwright.real-bamboo.config.ts",
+      // The full-suite tab test is a dependency of the desktop project, but
+      // artifact acceptance deliberately selects only the surface tests.
+      "--no-deps",
       "--grep",
-      "published artifact browser surfaces",
+      "verified artifact browser surfaces",
     ],
     { env: environment },
   )
 }
 
 const main = () => {
+  const artifactMode = acceptanceArtifactMode(process.argv.slice(2))
   if (!process.env.BAMBOO_E2E_SOURCE_DIR?.trim()) {
     throw new Error(
       "Set BAMBOO_E2E_SOURCE_DIR to the clean exact Bamboo checkout required by the real-runtime harness.",
     )
   }
   const temporaryRoot = mkdtempSync(
-    path.join(tmpdir(), "lotus-next-published-acceptance-"),
+    path.join(tmpdir(), `lotus-next-${artifactMode}-acceptance-`),
   )
   chmodSync(temporaryRoot, 0o700)
   try {
-    const artifact = downloadAndVerifyArtifact(temporaryRoot)
+    const artifact = artifactMode === "current-source"
+      ? packAndVerifyCurrentArtifact(temporaryRoot)
+      : downloadAndVerifyArtifact(temporaryRoot)
     process.stdout.write(
-      `Verified registry artifact ${JSON.stringify(artifact.identity)}.\n`,
+      `Verified ${artifactMode} artifact ${JSON.stringify(artifact.identity)}.\n`,
     )
     const tls = generateTlsIdentity(temporaryRoot)
     for (const mode of acceptanceRunPlan(tls)) {
