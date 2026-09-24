@@ -307,8 +307,10 @@ const exerciseSurface = async ({
       await panel.getByRole("tab", { name: "浏览器" }).click();
       const pane = panel.getByRole("region", { name: "内置浏览器" });
       const address = pane.getByRole("textbox", { name: "网页地址" });
+      const navigateButton = pane.getByRole("button", { name: "访问网页" });
+      await expect(navigateButton).toBeEnabled();
       await address.fill(browserFixtureUrl);
-      await pane.getByRole("button", { name: "访问网页" }).click();
+      await navigateButton.click();
       await expect(address).toHaveValue(browserFixtureUrl);
       await expect(pane.getByAltText("网页画面")).toBeVisible();
       await pane.getByRole("button", { name: "查看 DOM" }).click();
