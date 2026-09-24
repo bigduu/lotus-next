@@ -19,6 +19,7 @@ import { ChatPane } from "@/components/app/ChatPane"
 import { AvailabilityBanner } from "@/components/app/AvailabilityBanner"
 import { ReviewPane } from "@/components/app/ReviewPane"
 import { BrowserPane } from "@/components/app/BrowserPane"
+import { isPhoneDevice } from "@/lib/browserAvailability"
 import {
   RightWorkbench,
   type RightWorkbenchTab,
@@ -89,7 +90,8 @@ function App() {
   const [reviewTargetFilePath, setReviewTargetFilePath] = useState<string | null>(null)
   const isMobile = useIsMobile()
   const isWide = useIsWide()
-  const selectedWorkbenchTab = isMobile && workbenchTab === "browser" ? "inspector" : workbenchTab
+  const browserEnabled = !isMobile && !isPhoneDevice()
+  const selectedWorkbenchTab = !browserEnabled && workbenchTab === "browser" ? "inspector" : workbenchTab
   // Draggable, persisted widths for the resizable side panels (desktop).
   const sidebarResize = useResizableWidth("lotus_next_sidebar_w", 288, {
     min: 220,
@@ -254,7 +256,7 @@ function App() {
             docked={isWide}
             width={workbenchResize.width}
             activeTab={selectedWorkbenchTab}
-            browserEnabled={!isMobile}
+            browserEnabled={browserEnabled}
             onTabChange={(tab) => {
               if (tab === "review") setReviewTargetFilePath(null)
               setWorkbenchTab(tab)
@@ -281,7 +283,7 @@ function App() {
                 targetFilePath={reviewTargetFilePath}
               />
             )}
-            browser={!isMobile ? (
+            browser={browserEnabled ? (
               <BrowserPane
                 key={currentSessionId ?? "no-session"}
                 sessionId={currentSessionId}
