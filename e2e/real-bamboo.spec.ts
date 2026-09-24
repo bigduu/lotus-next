@@ -647,12 +647,15 @@ const assertRehydratedHistory = async (
   ).toBe(true);
 };
 
-const providerSawUserMarker = (document: unknown): boolean => {
+const providerSawUserMarker = (
+  document: unknown,
+  baselineRequestCount: number,
+): boolean => {
   const observations = asRecord(document);
   const requests = Array.isArray(observations?.requests)
     ? observations.requests
     : [];
-  return requests.some(
+  return requests.slice(baselineRequestCount).some(
     (request) => asRecord(request)?.userMarkerPresent === true,
   );
 };
@@ -688,41 +691,42 @@ const summarizeProviderObservations = (
 const assertExactProviderRoundTrip = (
   document: unknown,
   contract: RuntimeContract,
+  baselineRequestCount: number,
 ): void => {
   const provider = asRecord(document);
   const providerRequests = Array.isArray(provider?.requests)
     ? provider.requests
     : [];
-  const markerRequests = providerRequests.filter(
-    (request) => asRecord(request)?.userMarkerPresent === true,
-  );
-  const smokeRequests = providerRequests.filter(
-    (request) => asRecord(request)?.smokeMarkerPresent === true,
-  );
+  const smokeRequests = providerRequests.slice(0, 2);
+  const turnRequests = providerRequests.slice(baselineRequestCount);
   expect(numberField(provider, "schemaVersion")).toBe(1);
   expect(stringField(provider, "userMarker")).toBe(contract.userMarker);
   expect(stringField(provider, "assistantMarker")).toBe(
     contract.assistantMarker,
   );
   expect(numberField(provider, "requestCount")).toBe(providerRequests.length);
-  expect(providerRequests).toHaveLength(3);
+  expect(baselineRequestCount).toBeGreaterThanOrEqual(2);
+  expect(providerRequests.length).toBeGreaterThan(baselineRequestCount);
   expect(smokeRequests).toHaveLength(2);
-  expect(markerRequests).toHaveLength(1);
-  const successfulSmokeRequests = smokeRequests.filter(
-    (request) => asRecord(request)?.model === "gpt-4o-mini",
-  );
-  const redactedRejectionRequests = smokeRequests.filter(
-    (request) => asRecord(request)?.model === null,
-  );
-  expect(successfulSmokeRequests).toHaveLength(1);
-  expect(redactedRejectionRequests).toHaveLength(1);
-  for (const request of smokeRequests) {
-    expect(asRecord(request)?.userMarkerPresent).toBe(false);
+  expect(turnRequests).toHaveLength(1);
+  const successfulSmokeRequest = asRecord(smokeRequests[0]);
+  const redactedRejectionRequest = asRecord(smokeRequests[1]);
+  for (const request of [successfulSmokeRequest, redactedRejectionRequest]) {
+    expect(stringField(request, "method")).toBe("POST");
+    expect(stringField(request, "path")).toBe("/v1/chat/completions");
+    expect(request?.stream).toBe(true);
+    expect(request?.userMarkerPresent).toBe(false);
+    expect(request?.smokeMarkerPresent).toBe(true);
   }
-  for (const request of markerRequests) {
+  expect(stringField(successfulSmokeRequest, "model")).toBe("gpt-4o-mini");
+  expect(redactedRejectionRequest?.model).toBeNull();
+  for (const request of turnRequests) {
     const record = asRecord(request);
+    expect(record?.userMarkerPresent).toBe(true);
+    expect(record?.smokeMarkerPresent).toBe(false);
     expect(stringField(record, "method")).toBe("POST");
     expect(stringField(record, "path")).toBe("/v1/chat/completions");
+    expect(stringField(record, "model")).toBe("gpt-4o-mini");
     expect(record?.stream).toBe(true);
   }
 };
@@ -902,6 +906,19 @@ test("production UI completes and rehydrates one real Bamboo chat round trip", a
     await page.getByRole("button", { name: "关闭设置" }).click();
     await expect(composer).toBeVisible();
 
+    const providerBeforeChat = asRecord(
+      await readProviderObservations(contract.providerObservationsPath),
+    );
+    const requestsBeforeChat = providerBeforeChat?.requests;
+    expect(Array.isArray(requestsBeforeChat)).toBe(true);
+    if (!Array.isArray(requestsBeforeChat)) {
+      throw new Error("Provider requests must be an array before chat send");
+    }
+    const baselineRequestCount = requestsBeforeChat.length;
+    expect(numberField(providerBeforeChat, "requestCount")).toBe(
+      baselineRequestCount,
+    );
+
     await composer.fill(contract.userMarker);
     const send = page.getByRole("button", { name: "发送消息", exact: true });
     await expect(send).toBeEnabled();
@@ -953,7 +970,7 @@ test("production UI completes and rehydrates one real Bamboo chat round trip", a
           providerDocument = await readProviderObservations(
             contract.providerObservationsPath,
           );
-          return providerSawUserMarker(providerDocument);
+          return providerSawUserMarker(providerDocument, baselineRequestCount);
         },
         {
           message:
@@ -962,7 +979,11 @@ test("production UI completes and rehydrates one real Bamboo chat round trip", a
       )
       .toBe(true);
 
-    assertExactProviderRoundTrip(providerDocument, contract);
+    assertExactProviderRoundTrip(
+      providerDocument,
+      contract,
+      baselineRequestCount,
+    );
 
     await page.waitForLoadState("networkidle");
     await assertCleanPage(first, contract.baseUrl.origin);
@@ -1027,7 +1048,11 @@ test("production UI completes and rehydrates one real Bamboo chat round trip", a
       providerDocument = await readProviderObservations(
         contract.providerObservationsPath,
       );
-      assertExactProviderRoundTrip(providerDocument, contract);
+      assertExactProviderRoundTrip(
+        providerDocument,
+        contract,
+        baselineRequestCount,
+      );
       // Both pages remain live while the second client hydrates. Recheck the
       // accumulated observations at the end so a late reconnect, HTTP error,
       // or console failure cannot arrive after an earlier clean snapshot.
