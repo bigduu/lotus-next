@@ -320,7 +320,7 @@ test("phone workbench has no browser entry or browser session requests", async (
     route.fulfill({ json: { session_id: "all-surface-session", title: null, items: [] } }),
   )
   let browserRequests = 0
-  await page.route("**/api/v1/browser/sessions/**", (route) => {
+  await page.route("**/api/v1/browser/**", (route) => {
     browserRequests += 1
     return route.abort()
   })
@@ -372,7 +372,7 @@ test("iPhone landscape workbench has no browser entry or browser session request
       route.fulfill({ json: { session_id: "all-surface-session", title: null, items: [] } }),
     )
     let browserRequests = 0
-    await page.route("**/api/v1/browser/sessions/**", (route) => {
+    await page.route("**/api/v1/browser/**", (route) => {
       browserRequests += 1
       return route.abort()
     })
