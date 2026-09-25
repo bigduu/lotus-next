@@ -410,9 +410,15 @@ test("workbench tabs follow human commands and an agent-opened popup on desktop 
   await panel.getByRole("tab", { name: "浏览器标签页 1：Alpha" }).click()
   await expect(browser.getByRole("textbox", { name: "网页地址" })).toHaveValue("https://a.test/")
 
+  await panel.getByRole("button", { name: "打开工作面板标签页" }).click()
+  await page.getByRole("menuitem", { name: "浏览器" }).click()
+  await browser.getByRole("textbox", { name: "网页地址" }).fill("https://draft.test/")
   // A model-opened popup changes Bamboo authority without a Lotus command.
   tabs.push({ tab_id: "tab-c", url: "https://c.test/", title: "Popup", active: false })
   switchTo("tab-c")
+  await expect(panel.getByRole("tab", { name: "浏览器标签页 3：Popup" })).toBeVisible()
+  await expect(browser.getByRole("textbox", { name: "网页地址" })).toHaveValue("https://draft.test/")
+  await panel.getByRole("tab", { name: "浏览器标签页 3：Popup" }).click()
   await expect(panel.getByRole("tab", { name: "浏览器标签页 3：Popup" })).toHaveAttribute("aria-selected", "true")
   await expect(browser.getByRole("textbox", { name: "网页地址" })).toHaveValue("https://c.test/")
   await browser.getByRole("button", { name: "查看 DOM" }).click()

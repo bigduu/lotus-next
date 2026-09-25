@@ -108,7 +108,7 @@ function App() {
   const [workbenchTab, setWorkbenchTab] = useState<RightWorkbenchTab | null>(null)
   const [openToolTabs, setOpenToolTabs] = useState<WorkbenchToolTab[]>([])
   const [browserEntryOpen, setBrowserEntryOpen] = useState(false)
-  const browserEntryOriginRef = useRef<{ sessionId: string | null; tabId: string | null | undefined } | null>(null)
+  const browserEntrySessionRef = useRef<string | null>(null)
   const [browserStartedSessionId, setBrowserStartedSessionId] = useState<string | null>(null)
   const [pendingBrowserNavigation, setPendingBrowserNavigation] = useState<{ sessionId: string; url: string } | null>(null)
   const [reviewTargetFilePath, setReviewTargetFilePath] = useState<string | null>(null)
@@ -125,7 +125,7 @@ function App() {
   const selectedWorkbenchTab = !browserEnabled && workbenchTab === "browser" ? null : workbenchTab
 
   useEffect(() => {
-    if (browserEntryOriginRef.current?.sessionId !== currentSessionId) setBrowserEntryOpen(false)
+    if (browserEntrySessionRef.current !== currentSessionId) setBrowserEntryOpen(false)
   }, [currentSessionId])
 
   useEffect(() => {
@@ -143,6 +143,10 @@ function App() {
       return
     }
     if (browserReadySessionId !== currentSessionId || !browserState) return
+    if (browserState.pending_dialog) {
+      setBrowserEntryOpen(false)
+      return
+    }
     setPendingBrowserNavigation(null)
     void openUrlInNewTab(pendingBrowserNavigation.url).then((opened) => {
       if (opened) setBrowserEntryOpen(false)
@@ -151,20 +155,11 @@ function App() {
   useEffect(() => {
     if (browserReadySessionId !== currentSessionId || !browserState?.tabs) return
     if (browserState.tabs.length > 0) {
-      if (browserEntryOpen) {
-        const origin = browserEntryOriginRef.current
-        if (origin?.sessionId === currentSessionId) {
-          if (origin.tabId === undefined) origin.tabId = browserState.active_tab_id ?? null
-          else if (browserState.active_tab_id && browserState.active_tab_id !== origin.tabId) setBrowserEntryOpen(false)
-        }
-      }
       if (workbenchOpen && workbenchTab === null && openToolTabs.length === 0) setWorkbenchTab("browser")
-    } else if (browserEntryOpen && browserEntryOriginRef.current && browserEntryOriginRef.current.tabId === undefined) {
-      browserEntryOriginRef.current.tabId = null
     } else if (workbenchTab === "browser" && !browserEntryOpen && !pendingBrowserNavigation) {
       setWorkbenchTab(openToolTabs.at(-1) ?? null)
     }
-  }, [browserReadySessionId, currentSessionId, browserState?.tabs, browserState?.active_tab_id, workbenchOpen, workbenchTab, openToolTabs, browserEntryOpen, pendingBrowserNavigation])
+  }, [browserReadySessionId, currentSessionId, browserState?.tabs, workbenchOpen, workbenchTab, openToolTabs, browserEntryOpen, pendingBrowserNavigation])
   // Draggable, persisted widths for the resizable side panels (desktop).
   const sidebarResize = useResizableWidth("lotus_next_sidebar_w", 288, {
     min: 220,
@@ -254,7 +249,7 @@ function App() {
       if (resumeLegacyPage) {
         setBrowserEntryOpen(false)
       } else {
-        browserEntryOriginRef.current = { sessionId: currentSessionId, tabId: browserState?.active_tab_id }
+        browserEntrySessionRef.current = currentSessionId
         setBrowserEntryOpen(true)
       }
     } else {
@@ -274,7 +269,13 @@ function App() {
   const openLinkInApp = (url: string) => {
     if (!currentSessionId || !browserEnabled) return
     setPendingBrowserNavigation({ sessionId: currentSessionId, url })
-    openWorkbench("browser")
+    if (browserReadySessionId === currentSessionId && browserState?.pending_dialog) {
+      setBrowserEntryOpen(false)
+      setWorkbenchTab("browser")
+      setWorkbenchOpen(true)
+    } else {
+      openWorkbench("browser")
+    }
   }
   const openReview = (filePath?: string) => {
     setReviewTargetFilePath(filePath ?? null)
