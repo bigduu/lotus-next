@@ -62,6 +62,11 @@ export function SubagentTranscriptPane({
           </Button>
         </div>
       ) : null}
+      {transcript.truncated ? (
+        <div role="status" className="mx-4 mt-2 rounded-lg border px-3 py-2 text-xs text-muted-foreground">
+          较早的子代理消息已省略；这里只显示最近的消息。
+        </div>
+      ) : null}
       <MessageList
         scrollRef={scrollRef}
         contentRef={contentRef}

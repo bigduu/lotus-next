@@ -104,6 +104,21 @@ afterEach(() => {
 })
 
 describe("useSubagentTranscript", () => {
+  it("scopes the truncation notice to the selected child", async () => {
+    mocks.getMessageHistory
+      .mockResolvedValueOnce({ ...history("child-1", []), truncated: true })
+      .mockResolvedValueOnce(history("child-2", []))
+
+    renderSession("child-1")
+    await flushMicrotasks()
+    expect(current?.truncated).toBe(true)
+
+    renderSession("child-2")
+    expect(current?.truncated).toBe(false)
+    await flushMicrotasks()
+    expect(current?.truncated).toBe(false)
+  })
+
   it("subscribes to the safe live channel before requesting projected history", async () => {
     mocks.getMessageHistory.mockResolvedValue(history("child-1", []))
 

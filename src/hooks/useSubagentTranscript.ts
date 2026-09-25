@@ -22,12 +22,14 @@ interface ScopedTranscript {
   transcript: MessageTranscriptState
   loading: boolean
   error: string | null
+  truncated: boolean
 }
 
 export interface SubagentTranscript {
   messages: ReturnType<typeof messageTranscriptToUi>
   loading: boolean
   error: string | null
+  truncated: boolean
   streaming: boolean
   retry: () => void
 }
@@ -37,6 +39,7 @@ const initialScope = (sessionId: string | null): ScopedTranscript => ({
   transcript: emptyMessageTranscript(),
   loading: sessionId !== null,
   error: null,
+  truncated: false,
 })
 
 export function useSubagentTranscript(sessionId: string | null): SubagentTranscript {
@@ -85,7 +88,7 @@ export function useSubagentTranscript(sessionId: string | null): SubagentTranscr
         const history = await agentClient.getMessageHistory(sessionId)
         if (!active || request !== requestSequence) return
         const transcript = applyMessageHistory(current.transcript, history, revision)
-        publish({ ...current, transcript, loading: false, error: null })
+        publish({ ...current, transcript, loading: false, error: null, truncated: history.truncated })
       } catch {
         if (!active || request !== requestSequence) return
         publish({
@@ -159,6 +162,7 @@ export function useSubagentTranscript(sessionId: string | null): SubagentTranscr
     messages,
     loading: visible.loading,
     error: visible.error,
+    truncated: visible.truncated,
     streaming,
     retry,
   }
