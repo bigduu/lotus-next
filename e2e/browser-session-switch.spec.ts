@@ -106,7 +106,8 @@ test("selected browser follows a chat switch and remains live under other workbe
   await page.goto(standaloneScenario.entryUrl, { waitUntil: "domcontentloaded" })
   await page.getByRole("button", { name: "打开侧边面板" }).click()
   const panel = page.getByRole("complementary", { name: "工作面板" })
-  await panel.getByRole("tab", { name: "浏览器" }).click()
+  await panel.getByRole("button", { name: /浏览器.*输入网址后打开/ }).click()
+  await panel.getByRole("tab", { name: "浏览器标签页 1：Page A" }).click()
   const browser = panel.getByRole("region", { name: "内置浏览器" })
   const address = browser.getByRole("textbox", { name: "网页地址" })
   await expect(address).toHaveValue("https://a.test/")
@@ -116,6 +117,7 @@ test("selected browser follows a chat switch and remains live under other workbe
   await expect(address).toHaveValue("https://b.test/")
   await expect(panel.getByRole("tab", { name: "浏览器标签页 1：Page B" })).toHaveAttribute("aria-selected", "true")
   expect(opened).toEqual([sessionA, sessionB])
+  await expect.poll(() => pages[sessionB]?.viewport.width).not.toBe(640)
 
   await browser.getByRole("button", { name: "查看 DOM" }).click()
   await expect(browser.getByLabel("DOM 快照", { exact: true })).toContainText(sessionB)
@@ -125,7 +127,8 @@ test("selected browser follows a chat switch and remains live under other workbe
   await expect(address).toHaveValue("https://b.test/next")
   expect(navigated).toEqual([sessionB])
 
-  await panel.getByRole("tab", { name: "检查器" }).click()
+  await panel.getByRole("button", { name: "打开工作面板标签页" }).click()
+  await page.getByRole("menuitem", { name: "检查器" }).click()
   await panel.getByRole("tab", { name: "浏览器标签页 1：Page B" }).click()
   await expect(address).toHaveValue("https://b.test/next")
   expect(opened).toEqual([sessionA, sessionB])

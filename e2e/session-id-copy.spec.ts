@@ -41,6 +41,7 @@ test("copies the chosen sidebar session ID and shows the active ID in advanced i
 
   await page.getByRole("button", { name: "打开侧边面板" }).click()
   const inspector = page.locator("#right-workbench")
+  await inspector.getByRole("button", { name: /检查器.*查看当前会话/ }).click()
   await inspector.getByText("高级信息", { exact: true }).click()
   const advanced = inspector.locator("details")
   await expect(advanced.getByText(activeSessionId, { exact: true })).toBeVisible()

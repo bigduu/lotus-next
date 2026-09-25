@@ -348,13 +348,11 @@ export function useBrowserSession(sessionId: string | null, active: boolean) {
   const openUrlInNewTab = useCallback(
     (url: string) => perform(async (scope, epoch) => {
       if (stateRef.current?.tabs) {
-        const created = await browserService.createTab(scope.sessionId, epoch)
-        publishState(created)
-        return browserService.navigate(scope.sessionId, url, created.page_epoch)
+        return browserService.createTab(scope.sessionId, epoch, url)
       }
       return browserService.navigate(scope.sessionId, url, epoch)
     }, true, true),
-    [perform, publishState],
+    [perform],
   )
   const history = useCallback(
     (direction: BrowserHistoryDirection) =>

@@ -47,6 +47,14 @@ const tabbedState = (epoch: number, activeTabId: string): BrowserState => ({
   })),
 })
 
+const emptyState = (epoch: number): BrowserState => ({
+  ...state(epoch),
+  active_tab_id: null,
+  url: "",
+  title: "",
+  tabs: [],
+})
+
 const pendingState = (type: "alert" | "confirm" | "prompt" = "prompt"): BrowserState => ({
   ...tabbedState(17, "tab-a"),
   pending_dialog: {
@@ -110,6 +118,24 @@ it("stops polling and frees the frame when the tab hides without deleting the Ba
   expect(browser.frame).toBeNull()
   expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:frame-1")
   expect(browserService.open).toHaveBeenCalledTimes(1)
+})
+
+it("opens the first URL in one tab request without leaving a blank page", async () => {
+  vi.mocked(browserService.open).mockResolvedValue(emptyState(7))
+  vi.mocked(browserService.frame).mockImplementation(() => new Promise(() => {}))
+  vi.mocked(browserService.createTab).mockResolvedValue({
+    ...tabbedState(8, "tab-a"),
+    tabs: [{ tab_id: "tab-a", url: "https://example.test/first", title: "First", active: true }],
+    url: "https://example.test/first",
+  })
+
+  await act(async () => root.render(<Harness />))
+  expect(browser.state?.tabs).toHaveLength(0)
+  await act(async () => browser.openUrlInNewTab("https://example.test/first"))
+
+  expect(browserService.createTab).toHaveBeenCalledExactlyOnceWith("sid", 7, "https://example.test/first")
+  expect(browserService.navigate).not.toHaveBeenCalled()
+  expect(browser.state?.tabs).toHaveLength(1)
 })
 
 it("restarts frame polling from zero after navigation changes the page epoch", async () => {

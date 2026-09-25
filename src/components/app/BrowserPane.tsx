@@ -5,6 +5,7 @@ import {
   Camera,
   Code2,
   ExternalLink,
+  Globe2,
   LoaderCircle,
   RefreshCw,
   X,
@@ -44,10 +45,12 @@ export function BrowserPane({
 export function BrowserPaneView({
   sessionId,
   active,
+  newTabEntry = false,
   browser,
 }: {
   sessionId: string | null
   active: boolean
+  newTabEntry?: boolean
   browser: ReturnType<typeof useBrowserSession>
 }) {
   const [address, setAddress] = useState("")
@@ -75,8 +78,8 @@ export function BrowserPaneView({
     : null
 
   useEffect(() => {
-    setAddress(browser.state?.url ?? "")
-  }, [browser.state?.url, sessionId])
+    setAddress(newTabEntry ? "" : browser.state?.url ?? "")
+  }, [browser.state?.url, sessionId, newTabEntry])
 
   useEffect(() => {
     setPromptInput(pendingDialog?.type === "prompt"
@@ -104,7 +107,7 @@ export function BrowserPaneView({
   }, [sessionId, browser.state?.active_tab_id, browser.state?.page_epoch])
 
   useEffect(() => {
-    if (!sessionId || !active || dialogBlocked || viewportWidth === undefined || viewportHeight === undefined) return
+    if (!sessionId || !active || newTabEntry || !browser.state?.active_tab_id || dialogBlocked || viewportWidth === undefined || viewportHeight === undefined) return
     const element = viewportRef.current
     if (!element) return
     let timer: ReturnType<typeof setTimeout> | null = null
@@ -133,7 +136,7 @@ export function BrowserPaneView({
       window.removeEventListener("resize", measure)
       if (timer) clearTimeout(timer)
     }
-  }, [sessionId, active, dialogBlocked, viewportWidth, viewportHeight, sendViewport])
+  }, [sessionId, active, newTabEntry, browser.state?.active_tab_id, dialogBlocked, viewportWidth, viewportHeight, sendViewport])
 
   const point = useCallback((clientX: number, clientY: number) => {
     const currentState = browser.state
@@ -181,7 +184,7 @@ export function BrowserPaneView({
       return
     }
     setAddressError(null)
-    void browser.navigate(url)
+    void (newTabEntry || browser.state?.tabs?.length === 0 ? browser.openUrlInNewTab(url) : browser.navigate(url))
   }
 
   const clickFrame = (event: MouseEvent<HTMLDivElement>) => {
@@ -227,6 +230,47 @@ export function BrowserPaneView({
       <div className="flex min-h-0 min-w-0 flex-1 items-center justify-center p-6 text-center text-sm text-muted-foreground">
         打开一个会话后即可使用内置浏览器。
       </div>
+    )
+  }
+
+  if (!browser.state) {
+    return (
+      <section className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 p-6 text-center text-sm text-muted-foreground" aria-label="内置浏览器">
+        {browser.loading ? <LoaderCircle className="size-5 animate-spin" aria-hidden="true" /> : <Globe2 className="size-5" aria-hidden="true" />}
+        <p role="status">{browser.loading ? "正在启动浏览器…" : browser.error || "正在连接浏览器…"}</p>
+        {!browser.loading && browser.error ? <Button size="sm" variant="outline" onClick={browser.retry}>重试</Button> : null}
+      </section>
+    )
+  }
+
+  if (newTabEntry || browser.state.tabs?.length === 0) {
+    return (
+      <section className="flex min-h-0 min-w-0 flex-1 flex-col items-center justify-center gap-4 p-6" aria-label="内置浏览器" data-browser-empty>
+        <div className="flex size-10 items-center justify-center rounded-xl bg-muted text-muted-foreground"><Globe2 aria-hidden="true" /></div>
+        <div className="text-center">
+          <h2 className="text-base font-medium">{browser.state.tabs?.length ? "打开新网页" : "还没有打开网页"}</h2>
+          <p className="mt-1 text-sm text-muted-foreground">输入网址后创建{browser.state.tabs?.length ? "新" : "第一个"}标签页</p>
+        </div>
+        <form className="flex w-full max-w-md gap-2" onSubmit={navigate}>
+          <input
+            type="text"
+            aria-label="网页地址"
+            value={address}
+            onChange={(event) => {
+              setAddress(event.target.value)
+              setAddressError(null)
+            }}
+            placeholder="https://example.com"
+            autoComplete="url"
+            spellCheck={false}
+            className="h-9 min-w-0 flex-1 rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            autoFocus={active}
+          />
+          <Button type="submit" disabled={browser.busy}>打开</Button>
+        </form>
+        {addressError ? <p role="alert" className="text-sm text-destructive">{addressError}</p> : null}
+        {browser.error ? <p role="alert" className="text-sm text-destructive">{browser.error}</p> : null}
+      </section>
     )
   }
 

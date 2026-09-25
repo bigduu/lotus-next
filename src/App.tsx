@@ -26,6 +26,7 @@ import { isPhoneDevice } from "@/lib/browserAvailability"
 import {
   RightWorkbench,
   type RightWorkbenchTab,
+  type WorkbenchToolTab,
 } from "@/components/app/RightWorkbench"
 
 function App() {
@@ -104,7 +105,10 @@ function App() {
   }, [])
 
   const [workbenchOpen, setWorkbenchOpen] = useState(false)
-  const [workbenchTab, setWorkbenchTab] = useState<RightWorkbenchTab>("inspector")
+  const [workbenchTab, setWorkbenchTab] = useState<RightWorkbenchTab | null>(null)
+  const [openToolTabs, setOpenToolTabs] = useState<WorkbenchToolTab[]>([])
+  const [browserEntryOpen, setBrowserEntryOpen] = useState(false)
+  const browserEntryOriginRef = useRef<{ sessionId: string | null; tabId: string | null | undefined } | null>(null)
   const [browserStartedSessionId, setBrowserStartedSessionId] = useState<string | null>(null)
   const [pendingBrowserNavigation, setPendingBrowserNavigation] = useState<{ sessionId: string; url: string } | null>(null)
   const [reviewTargetFilePath, setReviewTargetFilePath] = useState<string | null>(null)
@@ -118,7 +122,7 @@ function App() {
     ),
   )
   const { readySessionId: browserReadySessionId, state: browserState, openUrlInNewTab } = browser
-  const selectedWorkbenchTab = !browserEnabled && workbenchTab === "browser" ? "inspector" : workbenchTab
+  const selectedWorkbenchTab = !browserEnabled && workbenchTab === "browser" ? null : workbenchTab
 
   useEffect(() => {
     // A selected browser tab follows the newly selected chat. Remember that
@@ -138,6 +142,23 @@ function App() {
     setPendingBrowserNavigation(null)
     void openUrlInNewTab(pendingBrowserNavigation.url)
   }, [pendingBrowserNavigation, currentSessionId, browserReadySessionId, browserState, openUrlInNewTab])
+  useEffect(() => {
+    if (browserReadySessionId !== currentSessionId || !browserState?.tabs) return
+    if (browserState.tabs.length > 0) {
+      if (browserEntryOpen) {
+        const origin = browserEntryOriginRef.current
+        if (origin?.sessionId === currentSessionId) {
+          if (origin.tabId === undefined) origin.tabId = browserState.active_tab_id ?? null
+          else if (browserState.active_tab_id && browserState.active_tab_id !== origin.tabId) setBrowserEntryOpen(false)
+        }
+      }
+      if (workbenchOpen && workbenchTab === null && openToolTabs.length === 0) setWorkbenchTab("browser")
+    } else if (browserEntryOpen && browserEntryOriginRef.current && browserEntryOriginRef.current.tabId === undefined) {
+      browserEntryOriginRef.current.tabId = null
+    } else if (workbenchTab === "browser" && !browserEntryOpen && !pendingBrowserNavigation) {
+      setWorkbenchTab(openToolTabs.at(-1) ?? null)
+    }
+  }, [browserReadySessionId, currentSessionId, browserState?.tabs, browserState?.active_tab_id, workbenchOpen, workbenchTab, openToolTabs, browserEntryOpen, pendingBrowserNavigation])
   // Draggable, persisted widths for the resizable side panels (desktop).
   const sidebarResize = useResizableWidth("lotus_next_sidebar_w", 288, {
     min: 220,
@@ -218,9 +239,23 @@ function App() {
   const displayWorkspace = workspacePath ?? pickedWorkspace
   const secondSession = chats.find((item) => item.id === secondSid)
   const openWorkbench = (tab: RightWorkbenchTab) => {
-    if (tab === "browser") setBrowserStartedSessionId(currentSessionId)
+    if (tab === "browser") {
+      setBrowserStartedSessionId(currentSessionId)
+      browserEntryOriginRef.current = { sessionId: currentSessionId, tabId: browserState?.active_tab_id }
+      setBrowserEntryOpen(true)
+    } else {
+      setOpenToolTabs((current) => current.includes(tab) ? current : [...current, tab])
+    }
     setWorkbenchTab(tab)
     setWorkbenchOpen(true)
+  }
+  const closeToolTab = (tab: WorkbenchToolTab) => {
+    const index = openToolTabs.indexOf(tab)
+    const remaining = openToolTabs.filter((item) => item !== tab)
+    setOpenToolTabs(remaining)
+    if (workbenchTab === tab) {
+      setWorkbenchTab(remaining[index] ?? remaining[index - 1] ?? (browserState?.tabs?.length ? "browser" : null))
+    }
   }
   const openLinkInApp = (url: string) => {
     if (!currentSessionId || !browserEnabled) return
@@ -309,20 +344,28 @@ function App() {
             docked={isWide}
             width={workbenchResize.width}
             activeTab={selectedWorkbenchTab}
+            openToolTabs={openToolTabs}
+            onToolClose={closeToolTab}
             browserEnabled={browserEnabled}
+            browserSessionAvailable={Boolean(currentSessionId)}
+            browserEntryOpen={browserEntryOpen}
             browserTabs={browser.readySessionId === currentSessionId ? browser.state?.tabs : null}
             activeBrowserTabId={browser.readySessionId === currentSessionId ? browser.state?.active_tab_id : null}
             browserBusy={browser.busy || Boolean(browser.state?.pending_dialog)}
-            onBrowserCreate={() => {
-              openWorkbench("browser")
-              if (browser.readySessionId === currentSessionId && browser.state?.tabs) void browser.createTab()
+            onBrowserActivate={(tabId) => {
+              setWorkbenchTab("browser")
+              setBrowserEntryOpen(false)
+              if (tabId !== browser.state?.active_tab_id) void browser.activateTab(tabId)
             }}
-            onBrowserActivate={(tabId) => void browser.activateTab(tabId)}
             onBrowserClose={(tabId) => void browser.closeTab(tabId)}
             onTabChange={(tab) => {
+              if (tab === null) {
+                setWorkbenchTab(null)
+                setBrowserEntryOpen(false)
+                return
+              }
               if (tab === "review") setReviewTargetFilePath(null)
-              if (tab === "browser") setBrowserStartedSessionId(currentSessionId)
-              setWorkbenchTab(tab)
+              openWorkbench(tab)
             }}
             onClose={() => setWorkbenchOpen(false)}
             sessionTitle={secondSession?.title}
@@ -351,6 +394,7 @@ function App() {
                 key={currentSessionId ?? "no-session"}
                 sessionId={currentSessionId}
                 active={workbenchTab === "browser"}
+                newTabEntry={browserEntryOpen}
                 browser={browser}
               />
             ) : null}
@@ -384,8 +428,8 @@ function App() {
                   }}
                   pickedWorkspace={null}
                   onOpenWorkspacePicker={() => {}}
-                  onOpenInspector={() => setWorkbenchTab("inspector")}
-                  onOpenReview={() => setWorkbenchTab("review")}
+                  onOpenInspector={() => openWorkbench("inspector")}
+                  onOpenReview={() => openWorkbench("review")}
                   splitOpen={workbenchOpen && workbenchTab === "session"}
                   onToggleSplit={() => setWorkbenchOpen(false)}
                   onSelectSubAgent={(childId) => pickSecond(childId, true)}

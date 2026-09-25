@@ -21,20 +21,20 @@ test("assistant link can be copied or opened as a new top-level browser tab", as
     created_at: "2026-09-25T00:00:00Z",
   }])
 
-  const tabs = [{ tab_id: "tab-a", url: "about:blank", title: "New Tab", active: true }]
-  let activeTabId = "tab-a"
+  const tabs: Array<{ tab_id: string; url: string; title: string; active: boolean }> = []
+  let activeTabId: string | null = null
   let pageEpoch = 1
   let frameSeq = 1
   const calls: Array<{ method: string; path: string; body?: Record<string, unknown> }> = []
   const state = () => {
-    const active = tabs.find((tab) => tab.tab_id === activeTabId)!
+    const active = tabs.find((tab) => tab.tab_id === activeTabId)
     return {
       page_epoch: pageEpoch,
       frame_seq: frameSeq,
       active_tab_id: activeTabId,
       tabs: tabs.map((tab) => ({ ...tab, active: tab.tab_id === activeTabId })),
-      url: active.url,
-      title: active.title,
+      url: active?.url ?? "",
+      title: active?.title ?? "",
       viewport: { width: 640, height: 480 },
       can_go_back: false,
       can_go_forward: false,
@@ -57,12 +57,9 @@ test("assistant link can be copied or opened as a new top-level browser tab", as
     if (method === "POST") {
       expect(body?.expected_epoch).toBe(pageEpoch)
       if (path === `${browserPath}/tabs`) {
-        tabs.push({ tab_id: "tab-b", url: "about:blank", title: "New Tab", active: false })
-        activeTabId = "tab-b"
-      } else if (path === `${browserPath}/navigate`) {
-        const active = tabs.find((tab) => tab.tab_id === activeTabId)!
-        active.url = String(body?.url)
-        active.title = "Linked issue"
+        expect(body?.url).toBe(linkedUrl)
+        tabs.push({ tab_id: "tab-a", url: linkedUrl, title: "Linked issue", active: true })
+        activeTabId = "tab-a"
       } else if (path !== `${browserPath}/viewport`) {
         return route.fulfill({ status: 404 })
       }
@@ -100,14 +97,14 @@ test("assistant link can be copied or opened as a new top-level browser tab", as
 
   const panel = page.getByRole("complementary", { name: "工作面板" })
   await expect(panel).toBeVisible()
-  await expect(panel.getByRole("tab", { name: "浏览器标签页 2：Linked issue" })).toHaveAttribute("aria-selected", "true")
-  await expect(panel.getByRole("tab", { name: /浏览器标签页/ })).toHaveCount(2)
+  await expect(panel.getByRole("tab", { name: "浏览器标签页 1：Linked issue" })).toHaveAttribute("aria-selected", "true")
+  await expect(panel.getByRole("tab", { name: /浏览器标签页/ })).toHaveCount(1)
   await expect(panel.getByRole("region", { name: "内置浏览器" }).getByRole("textbox", { name: "网页地址" })).toHaveValue(linkedUrl)
   await expect(panel.getByRole("region", { name: "内置浏览器" }).getByRole("navigation", { name: "浏览器标签列表" })).toHaveCount(0)
 
   const mutations = calls.filter((call) => call.method === "POST" && (call.path === `${browserPath}/tabs` || call.path === `${browserPath}/navigate`))
-  expect(mutations.map((call) => call.path)).toEqual([`${browserPath}/tabs`, `${browserPath}/navigate`])
-  expect(mutations[1]?.body?.url).toBe(linkedUrl)
+  expect(mutations.map((call) => call.path)).toEqual([`${browserPath}/tabs`])
+  expect(mutations[0]?.body?.url).toBe(linkedUrl)
   expect(observation.pageErrors).toEqual([])
   expect(observation.consoleErrors).toEqual([])
   const browserScreenshot = testInfo.outputPath("assistant-link-in-app-browser.png")

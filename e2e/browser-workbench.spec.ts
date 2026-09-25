@@ -21,8 +21,9 @@ test("browser workbench shares one session across human input, DOM, screenshot, 
 
   let pageEpoch = 1
   let frameSeq = 1
-  let url = "about:blank"
-  let title = "Browser fixture"
+  let url = ""
+  let title = ""
+  let hasTab = false
   let viewport = { width: 640, height: 480 }
   let status = "Ready"
   let openCount = 0
@@ -32,6 +33,8 @@ test("browser workbench shares one session across human input, DOM, screenshot, 
   const currentState = () => ({
     page_epoch: pageEpoch,
     frame_seq: frameSeq,
+    active_tab_id: hasTab ? "tab-a" : null,
+    tabs: hasTab ? [{ tab_id: "tab-a", url, title, active: true }] : [],
     url,
     title,
     viewport,
@@ -59,6 +62,7 @@ test("browser workbench shares one session across human input, DOM, screenshot, 
       return
     }
     if (path === `${browserPath}/frame` && method === "GET") {
+      if (!hasTab) return route.fulfill({ status: 204 })
       if (Number(address.searchParams.get("after")) >= frameSeq) {
         await new Promise((resolve) => setTimeout(resolve, 100))
         await route.fulfill({ status: 204 })
@@ -69,6 +73,7 @@ test("browser workbench shares one session across human input, DOM, screenshot, 
           headers: {
             "X-Frame-Seq": String(frameSeq),
             "X-Page-Epoch": String(pageEpoch),
+            "X-Tab-Id": "tab-a",
             "X-Viewport-Width": String(viewport.width),
             "X-Viewport-Height": String(viewport.height),
           },
@@ -77,17 +82,24 @@ test("browser workbench shares one session across human input, DOM, screenshot, 
       return
     }
     if (path === `${browserPath}/screenshot` && method === "GET") {
-      await route.fulfill({ body: jpeg, contentType: "image/jpeg", headers: { "X-Page-Epoch": String(pageEpoch) } })
+      await route.fulfill({ body: jpeg, contentType: "image/jpeg", headers: { "X-Page-Epoch": String(pageEpoch), "X-Tab-Id": "tab-a" } })
       return
     }
     if (path === `${browserPath}/dom` && method === "GET") {
-      await route.fulfill({ json: { page_epoch: pageEpoch, url, title, snapshot: `- button "Change status"\n- status: ${status}` } })
+      await route.fulfill({ json: { page_epoch: pageEpoch, active_tab_id: "tab-a", url, title, snapshot: `- button "Change status"\n- status: ${status}` } })
       return
     }
     if (method === "POST") {
       const body = request.postDataJSON() as Record<string, unknown>
       expect(body.expected_epoch).toBe(pageEpoch)
-      if (path.endsWith("/navigate")) {
+      if (path.endsWith("/tabs")) {
+        expect(hasTab).toBe(false)
+        hasTab = true
+        url = String(body.url)
+        title = "Browser fixture"
+        pageEpoch += 1
+        frameSeq += 1
+      } else if (path.endsWith("/navigate")) {
         url = String(body.url)
         pageEpoch += 1
         frameSeq += 1
@@ -109,20 +121,35 @@ test("browser workbench shares one session across human input, DOM, screenshot, 
   await page.goto(standaloneScenario.entryUrl, { waitUntil: "domcontentloaded" })
   await page.getByRole("button", { name: "打开侧边面板" }).click()
   const panel = page.getByRole("complementary", { name: "工作面板" })
-  await panel.getByRole("tab", { name: "浏览器" }).click()
+  await expect(panel.getByText("还没有打开内容")).toBeVisible()
+  await expect(panel.getByRole("tab")).toHaveCount(0)
+  const emptyScreenshot = testInfo.outputPath(`empty-workbench-${testInfo.project.name}.png`)
+  await page.screenshot({ path: emptyScreenshot })
+  await testInfo.attach(`empty-workbench-${testInfo.project.name}`, {
+    path: emptyScreenshot,
+    contentType: "image/png",
+  })
+  await panel.getByRole("button", { name: /浏览器.*输入网址后打开/ }).click()
   const browser = panel.getByRole("region", { name: "内置浏览器" })
-  await expect(browser.getByAltText("网页画面")).toBeVisible()
+  await expect(browser.getByText("还没有打开网页")).toBeVisible()
+  await expect(panel.getByRole("tab", { name: /浏览器标签页/ })).toHaveCount(0)
+  const entryScreenshot = testInfo.outputPath(`browser-entry-${testInfo.project.name}.png`)
+  await page.screenshot({ path: entryScreenshot })
+  await testInfo.attach(`browser-entry-${testInfo.project.name}`, {
+    path: entryScreenshot,
+    contentType: "image/png",
+  })
   if (testInfo.project.name === "tablet-chromium") {
     await testInfo.attach("820px-tablet-browser", {
       body: await page.screenshot(),
       contentType: "image/png",
     })
   }
-  await expect.poll(() => viewport.width).not.toBe(640)
-  await expect(browser.getByRole("button", { name: "查看 DOM" })).toBeEnabled()
   const address = browser.getByRole("textbox", { name: "网页地址" })
   await address.fill("example.test/fixture")
-  await browser.getByRole("button", { name: "访问网页" }).click()
+  await browser.getByRole("button", { name: "打开", exact: true }).click()
+  await expect(panel.getByRole("tab", { name: "浏览器标签页 1：Browser fixture" })).toHaveAttribute("aria-selected", "true")
+  await expect.poll(() => viewport.width).not.toBe(640)
   await expect(address).toHaveValue("https://example.test/fixture")
   await expect(browser.getByRole("button", { name: "查看 DOM" })).toBeEnabled()
   await expect(browser.getByAltText("网页画面")).toBeVisible()
@@ -157,7 +184,7 @@ test("browser workbench shares one session across human input, DOM, screenshot, 
 
   await panel.getByRole("button", { name: "收起工作面板" }).click()
   await page.getByRole("button", { name: "打开侧边面板" }).click()
-  await panel.getByRole("tab", { name: "浏览器" }).click()
+  await panel.getByRole("tab", { name: "浏览器标签页 1：Browser fixture" }).click()
   await expect(browser.getByRole("textbox", { name: "网页地址" })).toHaveValue("https://example.test/fixture")
   expect(openCount).toBeGreaterThanOrEqual(2)
   expect(closeCount).toBe(0)
@@ -169,10 +196,9 @@ test("browser workbench shares one session across human input, DOM, screenshot, 
     contentType: "image/png",
   })
   await page.setViewportSize({ width: 390, height: 844 })
-  await expect(panel.getByRole("tab", { name: "浏览器" })).toHaveCount(0)
+  await expect(panel.getByRole("tab", { name: /浏览器标签页/ })).toHaveCount(0)
   await expect(panel.getByRole("region", { name: "内置浏览器" })).toHaveCount(0)
-  await expect(panel.getByRole("tab", { name: "检查器" })).toHaveAttribute("data-state", "active")
-  await expect(panel.getByText("工作目录")).toBeVisible()
+  await expect(panel.getByText("还没有打开内容")).toBeVisible()
 })
 
 test("workbench tabs follow human commands and an agent-opened popup on desktop and tablet", async ({ page }, testInfo) => {
@@ -253,6 +279,7 @@ test("workbench tabs follow human commands and an agent-opened popup on desktop 
         return route.fulfill({ status: 409, json: { error: "browser page changed" } })
       }
       if (path === `${browserPath}/tabs`) {
+        expect(body.url).toBe("https://b.test/")
         tabs.push({ tab_id: "tab-b", url: "https://b.test/", title: "Beta", active: false })
         switchTo("tab-b")
       } else if (path === `${browserPath}/tabs/activate`) {
@@ -277,13 +304,18 @@ test("workbench tabs follow human commands and an agent-opened popup on desktop 
   await page.goto(standaloneScenario.entryUrl, { waitUntil: "domcontentloaded" })
   await page.getByRole("button", { name: "打开侧边面板" }).click()
   const panel = page.getByRole("complementary", { name: "工作面板" })
-  await panel.getByRole("tab", { name: "浏览器" }).click()
+  await panel.getByRole("button", { name: /浏览器.*输入网址后打开/ }).click()
+  await panel.getByRole("tab", { name: "浏览器标签页 1：Alpha" }).click()
   const browser = panel.getByRole("region", { name: "内置浏览器" })
   const image = browser.getByAltText("网页画面")
   await expect(browser.getByRole("navigation", { name: "浏览器标签列表" })).toHaveCount(0)
   await expect(image).toBeVisible()
   const firstImage = await image.getAttribute("src")
-  await panel.getByRole("button", { name: "新建浏览器标签页" }).click()
+  await panel.getByRole("button", { name: "打开工作面板标签页" }).click()
+  await page.getByRole("menuitem", { name: "浏览器" }).click()
+  await expect(browser.getByText("打开新网页")).toBeVisible()
+  await browser.getByRole("textbox", { name: "网页地址" }).fill("https://b.test/")
+  await browser.getByRole("button", { name: "打开", exact: true }).click()
   await expect(panel.getByRole("tab", { name: "浏览器标签页 2：Beta" })).toHaveAttribute("aria-selected", "true")
   await expect(browser.getByRole("textbox", { name: "网页地址" })).toHaveValue("https://b.test/")
   await expect.poll(() => image.getAttribute("src")).not.toBe(firstImage)

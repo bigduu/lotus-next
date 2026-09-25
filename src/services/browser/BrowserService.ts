@@ -78,9 +78,10 @@ export class BrowserService {
     })
   }
 
-  createTab(sessionId: string, expectedEpoch: number): Promise<BrowserState> {
+  createTab(sessionId: string, expectedEpoch: number, url?: string): Promise<BrowserState> {
     return apiClient.post<BrowserState>(`${sessionPath(sessionId)}/tabs`, {
       expected_epoch: expectedEpoch,
+      ...(url ? { url } : {}),
     })
   }
 
