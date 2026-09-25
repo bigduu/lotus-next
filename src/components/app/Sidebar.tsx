@@ -433,9 +433,16 @@ export function Sidebar({
       )}
 
       <aside
-        style={{ ["--sidebar-w" as string]: `${width}px` }}
+        style={{
+          ["--sidebar-w" as string]: `${width}px`,
+          ["--text-xs" as string]: "13px",
+          ["--text-sm" as string]: "15px",
+          fontFamily: '-apple-system, "PingFang SC", sans-serif',
+          WebkitFontSmoothing: "auto",
+          color: "var(--sidebar-foreground)",
+        }}
         className={cn(
-          "sidebar-typography fixed inset-y-0 left-0 z-50 flex w-[84%] max-w-xs flex-col border-r bg-sidebar text-sidebar-foreground transition-transform md:static md:w-[var(--sidebar-w)] md:max-w-none md:translate-x-0",
+          "fixed inset-y-0 left-0 z-50 flex w-[84%] max-w-xs flex-col border-r bg-sidebar transition-transform md:static md:w-[var(--sidebar-w)] md:max-w-none md:translate-x-0",
           open ? "translate-x-0" : "-translate-x-full",
           collapsed && "md:hidden",
         )}
