@@ -10,6 +10,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { visibleWorkbenchTabIds } from "@/lib/workbenchTabs"
 import { cn } from "@/lib/utils"
 import type { BrowserTabSummary } from "@services/browser/types"
 
@@ -125,10 +126,8 @@ export function RightWorkbench({
     ...(browserEnabled ? browserTabs ?? [] : []).map((tab): VisibleTab => ({ key: `browser:${tab.tab_id}`, kind: "browser", tab })),
   ]
   const tabByKey = new Map(availableTabs.map((tab) => [tab.key, tab]))
-  const orderedTabs = [
-    ...tabOrder.filter((key, index) => tabOrder.indexOf(key) === index).map((key) => tabByKey.get(key)).filter((tab): tab is VisibleTab => Boolean(tab)),
-    ...availableTabs.filter((tab) => !tabOrder.includes(tab.key)),
-  ]
+  const orderedTabs = visibleWorkbenchTabIds(openToolTabs, browserEnabled ? browserTabs : null, tabOrder)
+    .map((key) => tabByKey.get(key)!)
   const visibleTabIds = orderedTabs.map((tab) => tab.key)
   const tabListRef = useRef<HTMLDivElement>(null)
   const visibleOrderKey = visibleTabIds.join("|")

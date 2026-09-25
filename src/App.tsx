@@ -23,6 +23,7 @@ import { ReviewPane } from "@/components/app/ReviewPane"
 import { BrowserPaneView } from "@/components/app/BrowserPane"
 import { useBrowserSession } from "@/hooks/useBrowserSession"
 import { isPhoneDevice } from "@/lib/browserAvailability"
+import { visibleWorkbenchTabIds } from "@/lib/workbenchTabs"
 import {
   RightWorkbench,
   type RightWorkbenchTab,
@@ -242,6 +243,36 @@ function App() {
   const workspacePath = currentChat?.config?.workspacePath
   const displayWorkspace = workspacePath ?? pickedWorkspace
   const secondSession = chats.find((item) => item.id === secondSid)
+  const visibleTabIds = visibleWorkbenchTabIds(
+    openToolTabs,
+    browserReadySessionId === currentSessionId ? browserState?.tabs : null,
+    workbenchOrderBySession[workbenchOrderScope],
+  )
+  const closeSuccessor = (key: string) => {
+    const index = visibleTabIds.indexOf(key)
+    const remaining = visibleTabIds.filter((item) => item !== key)
+    return remaining[index] ?? remaining[index - 1] ?? null
+  }
+  const pruneSavedTab = (key: string) => {
+    setWorkbenchOrderBySession((current) => {
+      const saved = current[workbenchOrderScope]
+      return saved?.includes(key)
+        ? { ...current, [workbenchOrderScope]: saved.filter((item) => item !== key) }
+        : current
+    })
+  }
+  const selectCloseSuccessor = (key: string | null, activeBrowserTabId = browserState?.active_tab_id) => {
+    if (key?.startsWith("tool:")) {
+      setWorkbenchTab(key.slice("tool:".length) as WorkbenchToolTab)
+    } else if (key?.startsWith("browser:")) {
+      const tabId = key.slice("browser:".length)
+      setWorkbenchTab("browser")
+      setBrowserEntryOpen(false)
+      if (tabId !== activeBrowserTabId) void browser.activateTab(tabId)
+    } else {
+      setWorkbenchTab(null)
+    }
+  }
   const openWorkbench = (tab: RightWorkbenchTab) => {
     if (tab === "browser") {
       setBrowserStartedSessionId(currentSessionId)
@@ -262,12 +293,21 @@ function App() {
     setWorkbenchOpen(true)
   }
   const closeToolTab = (tab: WorkbenchToolTab) => {
-    const index = openToolTabs.indexOf(tab)
-    const remaining = openToolTabs.filter((item) => item !== tab)
-    setOpenToolTabs(remaining)
-    if (workbenchTab === tab) {
-      setWorkbenchTab(remaining[index] ?? remaining[index - 1] ?? (browserState?.tabs?.length ? "browser" : null))
-    }
+    const key = `tool:${tab}`
+    const successor = closeSuccessor(key)
+    setOpenToolTabs((current) => current.filter((item) => item !== tab))
+    pruneSavedTab(key)
+    if (workbenchTab === tab) selectCloseSuccessor(successor)
+  }
+  const closeBrowserTab = (tabId: string) => {
+    const key = `browser:${tabId}`
+    const successor = closeSuccessor(key)
+    const wasSelected = workbenchTab === "browser" && browserState?.active_tab_id === tabId && !browserEntryOpen
+    void browser.closeTab(tabId).then((closed) => {
+      if (!closed) return
+      pruneSavedTab(key)
+      if (wasSelected) selectCloseSuccessor(successor, closed.active_tab_id)
+    })
   }
   const openLinkInApp = (url: string) => {
     if (!currentSessionId || !browserEnabled) return
@@ -371,7 +411,7 @@ function App() {
               setBrowserEntryOpen(false)
               if (tabId !== browser.state?.active_tab_id) void browser.activateTab(tabId)
             }}
-            onBrowserClose={(tabId) => void browser.closeTab(tabId)}
+            onBrowserClose={closeBrowserTab}
             onTabChange={(tab) => {
               if (tab === null) {
                 setWorkbenchTab(null)
