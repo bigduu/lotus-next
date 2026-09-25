@@ -5,6 +5,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest"
 const mocks = vi.hoisted(() => ({
   messageListProps: null as Record<string, unknown> | null,
   retry: vi.fn(),
+  truncated: false,
   useChat: vi.fn(() => {
     throw new Error("SubagentTranscriptPane must not use the full-fidelity chat hook")
   }),
@@ -30,6 +31,7 @@ vi.mock("@/hooks/useSubagentTranscript", () => ({
     ],
     loading: false,
     error: null,
+    truncated: mocks.truncated,
     streaming: true,
     retry: mocks.retry,
   }),
@@ -66,6 +68,7 @@ beforeEach(() => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
   mocks.messageListProps = null
   mocks.retry.mockReset()
+  mocks.truncated = false
   mocks.useChat.mockClear()
   container = document.createElement("div")
   document.body.appendChild(container)
@@ -129,4 +132,14 @@ it("renders only the safe message projection without generic chat state", () => 
     },
   ])
   expect(container?.querySelector("[data-safe-message-list]")).not.toBeNull()
+})
+
+it("explains when older child messages were omitted", () => {
+  mocks.truncated = true
+  act(() => {
+    root?.render(
+      <SubagentTranscriptPane sessionId="child-1" chats={[]} onPickSession={vi.fn()} />,
+    )
+  })
+  expect(container?.querySelector('[role="status"]')?.textContent).toContain("较早的子代理消息已省略")
 })
