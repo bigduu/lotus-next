@@ -295,6 +295,7 @@ function App() {
     setWorkbenchOpen(true)
   }
   const closeToolTab = (tab: WorkbenchToolTab) => {
+    workbenchSelectionVersionRef.current += 1
     const key = `tool:${tab}`
     const successor = closeSuccessor(key)
     setOpenToolTabs((current) => current.filter((item) => item !== tab))
@@ -302,6 +303,7 @@ function App() {
     if (workbenchTab === tab) selectCloseSuccessor(successor)
   }
   const closeBrowserTab = (tabId: string) => {
+    workbenchSelectionVersionRef.current += 1
     const key = `browser:${tabId}`
     const successor = closeSuccessor(key)
     const wasSelected = workbenchTab === "browser" && browserState?.active_tab_id === tabId && !browserEntryOpen
@@ -409,7 +411,10 @@ function App() {
             activeTab={selectedWorkbenchTab}
             openToolTabs={openToolTabs}
             tabOrder={workbenchOrderBySession[workbenchOrderScope]}
-            onTabReorder={(order) => setWorkbenchOrderBySession((current) => ({ ...current, [workbenchOrderScope]: order }))}
+            onTabReorder={(order) => {
+              workbenchSelectionVersionRef.current += 1
+              setWorkbenchOrderBySession((current) => ({ ...current, [workbenchOrderScope]: order }))
+            }}
             onToolClose={closeToolTab}
             browserEnabled={browserEnabled}
             browserSessionAvailable={Boolean(currentSessionId)}
