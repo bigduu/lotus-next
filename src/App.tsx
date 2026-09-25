@@ -140,7 +140,9 @@ function App() {
     }
     if (browserReadySessionId !== currentSessionId || !browserState) return
     setPendingBrowserNavigation(null)
-    void openUrlInNewTab(pendingBrowserNavigation.url)
+    void openUrlInNewTab(pendingBrowserNavigation.url).then((opened) => {
+      if (opened) setBrowserEntryOpen(false)
+    })
   }, [pendingBrowserNavigation, currentSessionId, browserReadySessionId, browserState, openUrlInNewTab])
   useEffect(() => {
     if (browserReadySessionId !== currentSessionId || !browserState?.tabs) return
@@ -395,6 +397,7 @@ function App() {
                 sessionId={currentSessionId}
                 active={workbenchTab === "browser"}
                 newTabEntry={browserEntryOpen}
+                onNewTabOpened={() => setBrowserEntryOpen(false)}
                 browser={browser}
               />
             ) : null}

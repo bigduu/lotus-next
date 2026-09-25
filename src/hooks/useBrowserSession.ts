@@ -292,14 +292,14 @@ export function useBrowserSession(sessionId: string | null, active: boolean) {
       invalidateDom: Invalidation = true,
       invalidateFrame: Invalidation = false,
       markBusy = true,
-    ): Promise<void> => {
+    ): Promise<BrowserState | null> => {
       const scope = scopeRef.current
-      if (!scope || !stateRef.current) return Promise.resolve()
+      if (!scope || !stateRef.current) return Promise.resolve(null)
 
       const task = actionQueueRef.current.catch(() => undefined).then(async () => {
-        if (scopeRef.current !== scope || scope.controller.signal.aborted) return
+        if (scopeRef.current !== scope || scope.controller.signal.aborted) return null
         const currentState = stateRef.current
-        if (!currentState || currentState.pending_dialog) return
+        if (!currentState || currentState.pending_dialog) return null
         const expectedEpoch = currentState.page_epoch
         const shouldInvalidateDom = typeof invalidateDom === "function" ? invalidateDom(currentState) : invalidateDom
         const shouldInvalidateFrame = typeof invalidateFrame === "function" ? invalidateFrame(currentState) : invalidateFrame
@@ -315,18 +315,20 @@ export function useBrowserSession(sessionId: string | null, active: boolean) {
         if (markBusy) setBusy(true)
         try {
           const next = await action(scope, expectedEpoch)
-          if (scopeRef.current !== scope || scope.controller.signal.aborted) return
+          if (scopeRef.current !== scope || scope.controller.signal.aborted) return null
           publishState(next)
           setError(null)
+          return next
         } catch (cause) {
-          if (scopeRef.current !== scope || scope.controller.signal.aborted) return
+          if (scopeRef.current !== scope || scope.controller.signal.aborted) return null
           await refreshOnConflict(scope, cause)
-          if (scopeRef.current !== scope || scope.controller.signal.aborted) return
+          if (scopeRef.current !== scope || scope.controller.signal.aborted) return null
           if (conflictCode(cause) === "dialog_pending" || stateRef.current?.pending_dialog) {
             setError(null)
-            return
+            return null
           }
           setError(userMessage(cause))
+          return null
         } finally {
           if (shouldInvalidateFrame && scopeRef.current === scope) {
             frameSuspendedRef.current = false

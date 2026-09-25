@@ -312,7 +312,7 @@ it("keeps the old frame hidden when its poll returns before tab activation compl
 
   await act(async () => root.render(<Harness />))
   expect(browser.frame?.active_tab_id).toBe("tab-a")
-  let switching!: Promise<void>
+  let switching!: Promise<BrowserState | null>
   await act(async () => { switching = browser.activateTab("tab-b") })
   expect(browser.frame).toBeNull()
   await act(async () => releaseOldFrame({
@@ -464,8 +464,8 @@ it("fences frames when a queued close becomes an active-tab close", async () => 
   vi.mocked(browserService.closeTab).mockImplementation(() => close)
 
   await act(async () => root.render(<Harness />))
-  let switching!: Promise<void>
-  let closing!: Promise<void>
+  let switching!: Promise<BrowserState | null>
+  let closing!: Promise<BrowserState | null>
   await act(async () => {
     switching = browser.activateTab("tab-b")
     closing = browser.closeTab("tab-b")

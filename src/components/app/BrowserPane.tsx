@@ -46,11 +46,13 @@ export function BrowserPaneView({
   sessionId,
   active,
   newTabEntry = false,
+  onNewTabOpened,
   browser,
 }: {
   sessionId: string | null
   active: boolean
   newTabEntry?: boolean
+  onNewTabOpened?: () => void
   browser: ReturnType<typeof useBrowserSession>
 }) {
   const [address, setAddress] = useState("")
@@ -78,8 +80,13 @@ export function BrowserPaneView({
     : null
 
   useEffect(() => {
-    setAddress(newTabEntry ? "" : browser.state?.url ?? "")
+    if (newTabEntry) return
+    setAddress(browser.state?.url ?? "")
   }, [browser.state?.url, sessionId, newTabEntry])
+
+  useEffect(() => {
+    if (newTabEntry) setAddress("")
+  }, [sessionId, newTabEntry])
 
   useEffect(() => {
     setPromptInput(pendingDialog?.type === "prompt"
@@ -184,7 +191,13 @@ export function BrowserPaneView({
       return
     }
     setAddressError(null)
-    void (newTabEntry || browser.state?.tabs?.length === 0 ? browser.openUrlInNewTab(url) : browser.navigate(url))
+    if (newTabEntry || browser.state?.tabs?.length === 0) {
+      void browser.openUrlInNewTab(url).then((opened) => {
+        if (opened) onNewTabOpened?.()
+      })
+    } else {
+      void browser.navigate(url)
+    }
   }
 
   const clickFrame = (event: MouseEvent<HTMLDivElement>) => {

@@ -201,6 +201,69 @@ test("browser workbench shares one session across human input, DOM, screenshot, 
   await expect(panel.getByText("还没有打开内容")).toBeVisible()
 })
 
+test("legacy tabless browser opens its page and keeps a URL draft during model navigation", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop-chromium", "Legacy browser compatibility")
+  await page.addInitScript(() => {
+    localStorage.setItem("bodhi_onboarded_v1", "1")
+    localStorage.setItem("lotus_next_last_session", "all-surface-session")
+  })
+  const observation = await installArtifactRuntime(page, standaloneScenario)
+  const browserPath = "/api/v1/browser/sessions/all-surface-session"
+  let url = "about:blank"
+  let epoch = 1
+  let sawAgentUrl = false
+  const navigations: string[] = []
+  const state = () => ({
+    page_epoch: epoch, frame_seq: epoch, url, title: url,
+    viewport: { width: 640, height: 480 }, can_go_back: false, can_go_forward: false,
+  })
+  await page.route("**/api/v1/browser/sessions/all-surface-session**", async (route) => {
+    const request = route.request()
+    const path = new URL(request.url()).pathname
+    if (path === browserPath && request.method() === "GET") {
+      if (url === "https://agent.test/") sawAgentUrl = true
+      return route.fulfill({ json: state() })
+    }
+    if (path === browserPath && request.method() === "PUT") return route.fulfill({ json: state() })
+    if (path === `${browserPath}/frame`) {
+      await new Promise((resolve) => setTimeout(resolve, 80))
+      return route.fulfill({ status: 204 })
+    }
+    if (request.method() === "POST") {
+      const body = request.postDataJSON() as Record<string, unknown>
+      expect(body.expected_epoch).toBe(epoch)
+      if (path === `${browserPath}/navigate`) {
+        url = String(body.url)
+        navigations.push(url)
+      } else if (path !== `${browserPath}/viewport`) {
+        return route.fulfill({ status: 404 })
+      }
+      epoch += 1
+      return route.fulfill({ json: state() })
+    }
+    return route.fulfill({ status: 404 })
+  })
+
+  await page.goto(standaloneScenario.entryUrl, { waitUntil: "domcontentloaded" })
+  await page.getByRole("button", { name: "打开侧边面板" }).click()
+  const panel = page.getByRole("complementary", { name: "工作面板" })
+  await panel.getByRole("button", { name: /浏览器.*输入网址后打开/ }).click()
+  const browser = panel.getByRole("region", { name: "内置浏览器" })
+  const address = browser.getByRole("textbox", { name: "网页地址" })
+  await expect(browser.getByText("还没有打开网页")).toBeVisible()
+  await address.fill("draft.test/new")
+  url = "https://agent.test/"
+  epoch += 1
+  await expect.poll(() => sawAgentUrl).toBe(true)
+  await expect(address).toHaveValue("draft.test/new")
+  await browser.getByRole("button", { name: "打开", exact: true }).click()
+  await expect(browser.getByRole("button", { name: "刷新网页" })).toBeVisible()
+  await expect(address).toHaveValue("https://draft.test/new")
+  await expect(panel.getByRole("tab", { name: /浏览器标签页/ })).toHaveCount(0)
+  expect(navigations).toEqual(["https://draft.test/new"])
+  expect(observation.pageErrors).toEqual([])
+})
+
 test("workbench tabs follow human commands and an agent-opened popup on desktop and tablet", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name === "phone-chromium", "The phone workbench does not expose the browser")
   const picturePage = await page.context().newPage()
