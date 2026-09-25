@@ -1,4 +1,4 @@
-import { act } from "react"
+import { act, useEffect, useState } from "react"
 import { createRoot, type Root } from "react-dom/client"
 import { afterAll, afterEach, beforeAll, expect, it, vi } from "vitest"
 import { RightWorkbench } from "./RightWorkbench"
@@ -83,6 +83,46 @@ it("switches tools in one docked panel and closes without navigation", () => {
 
   act(() => host.querySelector<HTMLButtonElement>('button[aria-label="收起工作面板"]')?.click())
   expect(onClose).toHaveBeenCalledTimes(1)
+})
+
+it("keeps an open root session mounted while another workbench tab is selected", () => {
+  const host = document.body.appendChild(document.createElement("div"))
+  const root = createRoot(host)
+  roots.push(root)
+  const onMount = vi.fn()
+  const onUnmount = vi.fn()
+
+  function RunningSession() {
+    const [status] = useState("sending")
+    useEffect(() => {
+      onMount()
+      return () => onUnmount()
+    }, [])
+    return <div data-testid="running-session">{status}</div>
+  }
+
+  const renderWorkbench = (activeTab: "session" | "inspector") => (
+    <RightWorkbench
+      docked
+      activeTab={activeTab}
+      openToolTabs={["inspector", "session"]}
+      onTabChange={vi.fn()}
+      onToolClose={vi.fn()}
+      onClose={vi.fn()}
+      inspector={<div>inspector content</div>}
+      review={null}
+      browser={null}
+      session={<RunningSession />}
+    />
+  )
+
+  act(() => root.render(renderWorkbench("session")))
+  expect(host.querySelector('[data-testid="running-session"]')?.textContent).toBe("sending")
+  act(() => root.render(renderWorkbench("inspector")))
+  expect(onUnmount).not.toHaveBeenCalled()
+  act(() => root.render(renderWorkbench("session")))
+  expect(host.querySelector('[data-testid="running-session"]')?.textContent).toBe("sending")
+  expect(onMount).toHaveBeenCalledTimes(1)
 })
 
 it("omits the browser tab and content when the phone layout disables it", () => {
