@@ -5,6 +5,7 @@ import {
   Camera,
   Code2,
   ExternalLink,
+  Globe2,
   LoaderCircle,
   RefreshCw,
   X,
@@ -44,13 +45,22 @@ export function BrowserPane({
 export function BrowserPaneView({
   sessionId,
   active,
+  newTabEntry = false,
+  entryDraft,
+  onEntryDraftChange,
+  onNewTabOpened,
   browser,
 }: {
   sessionId: string | null
   active: boolean
+  newTabEntry?: boolean
+  entryDraft?: string
+  onEntryDraftChange?: (draft: string) => void
+  onNewTabOpened?: () => void
   browser: ReturnType<typeof useBrowserSession>
 }) {
   const [address, setAddress] = useState("")
+  const enteredAddress = newTabEntry ? entryDraft ?? address : address
   const [addressError, setAddressError] = useState<string | null>(null)
   const [saveError, setSaveError] = useState<string | null>(null)
   const [promptInput, setPromptInput] = useState<{ dialogId: string; value: string; edited: boolean } | null>(null)
@@ -75,8 +85,13 @@ export function BrowserPaneView({
     : null
 
   useEffect(() => {
+    if (newTabEntry) return
     setAddress(browser.state?.url ?? "")
-  }, [browser.state?.url, sessionId])
+  }, [browser.state?.url, sessionId, newTabEntry])
+
+  useEffect(() => {
+    if (newTabEntry) setAddress("")
+  }, [sessionId, newTabEntry])
 
   useEffect(() => {
     setPromptInput(pendingDialog?.type === "prompt"
@@ -104,7 +119,7 @@ export function BrowserPaneView({
   }, [sessionId, browser.state?.active_tab_id, browser.state?.page_epoch])
 
   useEffect(() => {
-    if (!sessionId || !active || dialogBlocked || viewportWidth === undefined || viewportHeight === undefined) return
+    if (!sessionId || !active || newTabEntry || browser.state?.tabs?.length === 0 || dialogBlocked || viewportWidth === undefined || viewportHeight === undefined) return
     const element = viewportRef.current
     if (!element) return
     let timer: ReturnType<typeof setTimeout> | null = null
@@ -133,7 +148,7 @@ export function BrowserPaneView({
       window.removeEventListener("resize", measure)
       if (timer) clearTimeout(timer)
     }
-  }, [sessionId, active, dialogBlocked, viewportWidth, viewportHeight, sendViewport])
+  }, [sessionId, active, newTabEntry, browser.state?.active_tab_id, browser.state?.tabs?.length, dialogBlocked, viewportWidth, viewportHeight, sendViewport])
 
   const point = useCallback((clientX: number, clientY: number) => {
     const currentState = browser.state
@@ -175,13 +190,19 @@ export function BrowserPaneView({
   const navigate = (event: FormEvent) => {
     event.preventDefault()
     if (dialogBlocked) return
-    const url = normalizeBrowserAddress(address)
+    const url = normalizeBrowserAddress(enteredAddress)
     if (!url) {
       setAddressError("请输入有效的 http 或 https 地址。")
       return
     }
     setAddressError(null)
-    void browser.navigate(url)
+    if (newTabEntry || browser.state?.tabs?.length === 0) {
+      void browser.openUrlInNewTab(url).then((opened) => {
+        if (opened) onNewTabOpened?.()
+      })
+    } else {
+      void browser.navigate(url)
+    }
   }
 
   const clickFrame = (event: MouseEvent<HTMLDivElement>) => {
@@ -222,11 +243,109 @@ export function BrowserPaneView({
     }
   }
 
+  const dialogOverlay = pendingDialog ? (
+    <div className="absolute inset-0 z-20 flex items-center justify-center bg-background/70 p-3" data-browser-dialog>
+      <div ref={dialogRef} role="dialog" aria-modal="false" aria-label="网页弹窗" tabIndex={-1} className="flex max-h-full w-full max-w-md flex-col gap-3 overflow-auto rounded-lg border bg-card p-4 shadow-lg">
+        <div className="text-sm font-semibold">
+          {pendingDialog.type === "alert" ? "网页提示" : pendingDialog.type === "confirm" ? "网页确认" : "网页输入"}
+        </div>
+        <p className="break-words text-xs text-muted-foreground">来自 {dialogSourceOrigin(pendingDialog.url)}</p>
+        <p className="whitespace-pre-wrap break-words text-sm">{pendingDialog.message}</p>
+        {pendingDialog.message_truncated ? <p className="text-xs text-muted-foreground">网页提示内容已截断。</p> : null}
+        {pendingDialog.type === "prompt" ? (
+          <div className="flex flex-col gap-1">
+            <label htmlFor="browser-dialog-prompt" className="text-xs text-muted-foreground">输入内容</label>
+            <textarea
+              id="browser-dialog-prompt"
+              aria-label="弹窗输入"
+              rows={3}
+              maxLength={4096}
+              disabled={browser.busy || pendingDialog.status !== "pending"}
+              value={promptInput?.dialogId === pendingDialog.dialog_id ? promptInput.value : pendingDialog.default_value}
+              onChange={(event) => setPromptInput({
+                dialogId: pendingDialog.dialog_id,
+                value: limitPromptText(event.target.value),
+                edited: true,
+              })}
+              className="w-full resize-none rounded-md border bg-background px-2 py-1 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            />
+            {pendingDialog.default_value_truncated ? <p className="text-xs text-muted-foreground">默认内容仅显示前 4096 字；保持不改将使用网页的完整默认值。</p> : null}
+          </div>
+        ) : null}
+        {pendingDialog.status === "expired" ? (
+          <p role="status" className="text-xs text-muted-foreground">弹窗已过期，正在刷新网页状态…</p>
+        ) : (
+          <div className="flex justify-end gap-2">
+            {pendingDialog.type !== "alert" ? (
+              <Button size="sm" variant="outline" disabled={browser.busy} onClick={() => void browser.respondDialog(false)}>取消</Button>
+            ) : null}
+            <Button
+              size="sm"
+              disabled={browser.busy}
+              onClick={() => void browser.respondDialog(true,
+                pendingDialog.type === "prompt" && promptInput?.dialogId === pendingDialog.dialog_id && promptInput.edited
+                  ? promptInput.value
+                  : undefined)}
+            >确定</Button>
+          </div>
+        )}
+      </div>
+    </div>
+  ) : null
+
   if (!sessionId) {
     return (
       <div className="flex min-h-0 min-w-0 flex-1 items-center justify-center p-6 text-center text-sm text-muted-foreground">
         打开一个会话后即可使用内置浏览器。
       </div>
+    )
+  }
+
+  if (!browser.state) {
+    return (
+      <section className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 p-6 text-center text-sm text-muted-foreground" aria-label="内置浏览器">
+        {browser.loading ? <LoaderCircle className="size-5 animate-spin" aria-hidden="true" /> : <Globe2 className="size-5" aria-hidden="true" />}
+        <p role="status">{browser.loading ? "正在启动浏览器…" : browser.error || "正在连接浏览器…"}</p>
+        {!browser.loading && browser.error ? <Button size="sm" variant="outline" onClick={browser.retry}>重试</Button> : null}
+      </section>
+    )
+  }
+
+  if (newTabEntry || browser.state.tabs?.length === 0) {
+    return (
+      <section className="relative flex min-h-0 min-w-0 flex-1 flex-col items-center justify-center gap-4 p-6" aria-label="内置浏览器" data-browser-empty>
+        <div className="flex size-10 items-center justify-center rounded-xl bg-muted text-muted-foreground"><Globe2 aria-hidden="true" /></div>
+        <div className="text-center">
+          <h2 className="text-base font-medium">{browser.state.tabs?.length ? "打开新网页" : "还没有打开网页"}</h2>
+          <p className="mt-1 text-sm text-muted-foreground">输入网址后创建{browser.state.tabs?.length ? "新" : "第一个"}标签页</p>
+        </div>
+        <form className="flex w-full max-w-md gap-2" onSubmit={navigate}>
+          <input
+            type="text"
+            aria-label="网页地址"
+            value={enteredAddress}
+            onChange={(event) => {
+              if (newTabEntry && onEntryDraftChange) onEntryDraftChange(event.target.value)
+              else setAddress(event.target.value)
+              setAddressError(null)
+            }}
+            placeholder="https://example.com"
+            autoComplete="url"
+            spellCheck={false}
+            className="h-9 min-w-0 flex-1 rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            autoFocus={active}
+          />
+          <Button type="submit" disabled={browser.busy}>打开</Button>
+        </form>
+        {addressError ? <p role="alert" className="text-sm text-destructive">{addressError}</p> : null}
+        {browser.error ? (
+          <div role="alert" className="flex items-center gap-2 text-sm text-destructive">
+            <span>{browser.error}</span>
+            <Button size="sm" variant="outline" onClick={browser.retry}>重试</Button>
+          </div>
+        ) : null}
+        {dialogOverlay}
+      </section>
     )
   }
 
@@ -336,55 +455,7 @@ export function BrowserPaneView({
           </div>
         ) : null}
 
-        {pendingDialog ? (
-          <div className="absolute inset-0 z-20 flex items-center justify-center bg-background/70 p-3" data-browser-dialog>
-            <div ref={dialogRef} role="dialog" aria-modal="false" aria-label="网页弹窗" tabIndex={-1} className="flex max-h-full w-full max-w-md flex-col gap-3 overflow-auto rounded-lg border bg-card p-4 shadow-lg">
-              <div className="text-sm font-semibold">
-                {pendingDialog.type === "alert" ? "网页提示" : pendingDialog.type === "confirm" ? "网页确认" : "网页输入"}
-              </div>
-              <p className="break-words text-xs text-muted-foreground">来自 {dialogSourceOrigin(pendingDialog.url)}</p>
-              <p className="whitespace-pre-wrap break-words text-sm">{pendingDialog.message}</p>
-              {pendingDialog.message_truncated ? <p className="text-xs text-muted-foreground">网页提示内容已截断。</p> : null}
-              {pendingDialog.type === "prompt" ? (
-                <div className="flex flex-col gap-1">
-                  <label htmlFor="browser-dialog-prompt" className="text-xs text-muted-foreground">输入内容</label>
-                  <textarea
-                    id="browser-dialog-prompt"
-                    aria-label="弹窗输入"
-                    rows={3}
-                    maxLength={4096}
-                    disabled={browser.busy || pendingDialog.status !== "pending"}
-                    value={promptInput?.dialogId === pendingDialog.dialog_id ? promptInput.value : pendingDialog.default_value}
-                    onChange={(event) => setPromptInput({
-                      dialogId: pendingDialog.dialog_id,
-                      value: limitPromptText(event.target.value),
-                      edited: true,
-                    })}
-                    className="w-full resize-none rounded-md border bg-background px-2 py-1 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                  />
-                  {pendingDialog.default_value_truncated ? <p className="text-xs text-muted-foreground">默认内容仅显示前 4096 字；保持不改将使用网页的完整默认值。</p> : null}
-                </div>
-              ) : null}
-              {pendingDialog.status === "expired" ? (
-                <p role="status" className="text-xs text-muted-foreground">弹窗已过期，正在刷新网页状态…</p>
-              ) : (
-                <div className="flex justify-end gap-2">
-                  {pendingDialog.type !== "alert" ? (
-                    <Button size="sm" variant="outline" disabled={browser.busy} onClick={() => void browser.respondDialog(false)}>取消</Button>
-                  ) : null}
-                  <Button
-                    size="sm"
-                    disabled={browser.busy}
-                    onClick={() => void browser.respondDialog(true,
-                      pendingDialog.type === "prompt" && promptInput?.dialogId === pendingDialog.dialog_id && promptInput.edited
-                        ? promptInput.value
-                        : undefined)}
-                  >确定</Button>
-                </div>
-              )}
-            </div>
-          </div>
-        ) : null}
+        {dialogOverlay}
       </div>
     </section>
   )

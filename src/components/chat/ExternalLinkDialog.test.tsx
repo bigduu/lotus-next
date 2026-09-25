@@ -46,14 +46,14 @@ const openMenu = async () => {
   })
 }
 
-async function mount(onOpenInApp?: (url: string) => Promise<void>) {
+async function mount(onOpenInApp?: (url: string) => Promise<void>, url = URL) {
   const container = document.body.appendChild(document.createElement("div"))
   const root = createRoot(container)
   roots.push(root)
   await act(async () => {
     root.render(
       <ExternalLinkProvider onOpenInApp={onOpenInApp}>
-        <StreamdownMarkdown isStreaming={false}>{`[Read this](${URL})`}</StreamdownMarkdown>
+        <StreamdownMarkdown isStreaming={false}>{`[Read this](${url})`}</StreamdownMarkdown>
       </ExternalLinkProvider>,
     )
   })
@@ -116,6 +116,21 @@ describe("assistant Markdown external links", () => {
 
     expect(document.querySelector('[role="menuitem"]')?.textContent).toContain("使用默认浏览器打开")
     expect([...document.querySelectorAll('[role="menuitem"]')]).toHaveLength(1)
+  })
+
+  it("routes mailto links only to the user's default handler", async () => {
+    const address = "mailto:user@example.com"
+    const openInApp = vi.fn<(url: string) => Promise<void>>().mockResolvedValue(undefined)
+    await mount(openInApp, address)
+
+    await openMenu()
+    expect([...document.querySelectorAll('[role="menuitem"]')].map((item) => item.textContent?.trim()))
+      .toEqual(["使用默认浏览器打开"])
+    await click(menuItem("使用默认浏览器打开"))
+
+    expect(openExternalLink).toHaveBeenCalledExactlyOnceWith(address)
+    expect(openInApp).not.toHaveBeenCalled()
+    expect(document.querySelector('[data-streamdown="link-safety-modal"]')).toBeNull()
   })
 
   it("keeps the dialog open and reports a failed default-browser open", async () => {
