@@ -23,7 +23,7 @@ type Scope = {
 
 type Invalidation = boolean | ((state: BrowserState) => boolean)
 
-const MAX_PENDING_STATE_READ_FAILURES = 3
+const TRANSIENT_STATE_READ_NOTICE_THRESHOLD = 3
 
 const isTransientStateReadError = (error: unknown): boolean =>
   (isApiError(error) && error.status >= 500 && error.status < 600) ||
@@ -54,6 +54,7 @@ const userMessage = (error: unknown): string => {
 
 export function useBrowserSession(sessionId: string | null, active: boolean) {
   const [state, setState] = useState<BrowserState | null>(null)
+  const [readySessionId, setReadySessionId] = useState<string | null>(null)
   const [frame, setFrame] = useState<DisplayedBrowserFrame | null>(null)
   const [dom, setDom] = useState<BrowserDomSnapshot | null>(null)
   const [loading, setLoading] = useState(false)
@@ -107,6 +108,7 @@ export function useBrowserSession(sessionId: string | null, active: boolean) {
     frameSuspendedRef.current = false
     actionQueueRef.current = Promise.resolve()
     setState(null)
+    setReadySessionId(null)
     setFrame(null)
     setDom(null)
     setError(null)
@@ -125,6 +127,7 @@ export function useBrowserSession(sessionId: string | null, active: boolean) {
       const initial = await browserService.open(sessionId, controller.signal)
       if (!isCurrent()) return
       publishState(initial)
+      setReadySessionId(sessionId)
       setLoading(false)
 
       let after = 0
@@ -133,7 +136,35 @@ export function useBrowserSession(sessionId: string | null, active: boolean) {
       let observedReset = framePollResetRef.current
       let lastStateRefresh = Date.now()
       let pendingStateReadFailures = 0
+      let emptyStateReadFailures = 0
       while (isCurrent()) {
+        if (stateRef.current?.tabs?.length === 0) {
+          // There is no page to render. An empty /frame response may return
+          // immediately, so watch for agent-created tabs through bounded
+          // state reads instead of spinning on frame requests.
+          await new Promise((resolve) => setTimeout(resolve, Math.min(2000, 500 * (emptyStateReadFailures + 1))))
+          if (!isCurrent()) return
+          if (stateRef.current?.tabs?.length !== 0) continue
+          const version = stateVersionRef.current
+          let refreshed: BrowserState
+          try {
+            refreshed = await browserService.get(sessionId, controller.signal)
+          } catch (cause) {
+            if (!isCurrent()) return
+            if (isTransientStateReadError(cause)) {
+              emptyStateReadFailures += 1
+              if (emptyStateReadFailures >= TRANSIENT_STATE_READ_NOTICE_THRESHOLD) setError(userMessage(cause))
+              continue
+            }
+            throw cause
+          }
+          if (!isCurrent()) return
+          if (emptyStateReadFailures > 0) setError(null)
+          emptyStateReadFailures = 0
+          if (version === stateVersionRef.current) publishState(refreshed)
+          lastStateRefresh = Date.now()
+          continue
+        }
         if (stateRef.current?.pending_dialog) {
           // Bamboo only permits state reads while a page dialog blocks CDP.
           // Keep the last JPEG visible and observe model responses or expiry.
@@ -145,7 +176,7 @@ export function useBrowserSession(sessionId: string | null, active: boolean) {
             refreshed = await browserService.get(sessionId, controller.signal)
           } catch (cause) {
             if (!isCurrent()) return
-            if (isTransientStateReadError(cause) && ++pendingStateReadFailures < MAX_PENDING_STATE_READ_FAILURES) continue
+            if (isTransientStateReadError(cause) && ++pendingStateReadFailures < TRANSIENT_STATE_READ_NOTICE_THRESHOLD) continue
             throw cause
           }
           if (!isCurrent()) return
@@ -289,14 +320,14 @@ export function useBrowserSession(sessionId: string | null, active: boolean) {
       invalidateDom: Invalidation = true,
       invalidateFrame: Invalidation = false,
       markBusy = true,
-    ): Promise<void> => {
+    ): Promise<BrowserState | null> => {
       const scope = scopeRef.current
-      if (!scope || !stateRef.current) return Promise.resolve()
+      if (!scope || !stateRef.current) return Promise.resolve(null)
 
       const task = actionQueueRef.current.catch(() => undefined).then(async () => {
-        if (scopeRef.current !== scope || scope.controller.signal.aborted) return
+        if (scopeRef.current !== scope || scope.controller.signal.aborted) return null
         const currentState = stateRef.current
-        if (!currentState || currentState.pending_dialog) return
+        if (!currentState || currentState.pending_dialog) return null
         const expectedEpoch = currentState.page_epoch
         const shouldInvalidateDom = typeof invalidateDom === "function" ? invalidateDom(currentState) : invalidateDom
         const shouldInvalidateFrame = typeof invalidateFrame === "function" ? invalidateFrame(currentState) : invalidateFrame
@@ -312,18 +343,20 @@ export function useBrowserSession(sessionId: string | null, active: boolean) {
         if (markBusy) setBusy(true)
         try {
           const next = await action(scope, expectedEpoch)
-          if (scopeRef.current !== scope || scope.controller.signal.aborted) return
+          if (scopeRef.current !== scope || scope.controller.signal.aborted) return null
           publishState(next)
           setError(null)
+          return next
         } catch (cause) {
-          if (scopeRef.current !== scope || scope.controller.signal.aborted) return
+          if (scopeRef.current !== scope || scope.controller.signal.aborted) return null
           await refreshOnConflict(scope, cause)
-          if (scopeRef.current !== scope || scope.controller.signal.aborted) return
+          if (scopeRef.current !== scope || scope.controller.signal.aborted) return null
           if (conflictCode(cause) === "dialog_pending" || stateRef.current?.pending_dialog) {
             setError(null)
-            return
+            return null
           }
           setError(userMessage(cause))
+          return null
         } finally {
           if (shouldInvalidateFrame && scopeRef.current === scope) {
             frameSuspendedRef.current = false
@@ -340,6 +373,15 @@ export function useBrowserSession(sessionId: string | null, active: boolean) {
 
   const navigate = useCallback(
     (url: string) => perform((scope, epoch) => browserService.navigate(scope.sessionId, url, epoch)),
+    [perform],
+  )
+  const openUrlInNewTab = useCallback(
+    (url: string) => perform(async (scope, epoch) => {
+      if (stateRef.current?.tabs) {
+        return browserService.createTab(scope.sessionId, epoch, url)
+      }
+      return browserService.navigate(scope.sessionId, url, epoch)
+    }, true, true),
     [perform],
   )
   const history = useCallback(
@@ -482,9 +524,11 @@ export function useBrowserSession(sessionId: string | null, active: boolean) {
   )
 
   const retry = useCallback(() => setRetryVersion((version) => version + 1), [])
+  const hasPendingDialog = useCallback(() => Boolean(stateRef.current?.pending_dialog), [])
 
   return {
     state,
+    readySessionId,
     frame,
     dom,
     loading,
@@ -493,6 +537,7 @@ export function useBrowserSession(sessionId: string | null, active: boolean) {
     screenshotLoading,
     error,
     navigate,
+    openUrlInNewTab,
     history,
     viewport,
     input,
@@ -505,5 +550,6 @@ export function useBrowserSession(sessionId: string | null, active: boolean) {
     isCurrentPage,
     clearDom: () => setDom(null),
     retry,
+    hasPendingDialog,
   }
 }

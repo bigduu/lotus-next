@@ -267,6 +267,30 @@ describe("ChatPane composer acknowledgement", () => {
     expect(document.querySelector('[data-testid="new-session-permission"]')).toBeNull()
   })
 
+  it("passes the transient output rate to the composer without adding a row above it", async () => {
+    const chat = createChat(vi.fn<Send>(), "session-1")
+    const container = document.body.appendChild(document.createElement("div"))
+    const root = createRoot(container); roots.push(root)
+    const render = async (outputRate: number | null) => {
+      await act(async () => root.render(<ChatPane chat={{ ...chat, outputRate }} pickedWorkspace="/picked"
+        onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()} splitOpen={false}
+        onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false} />))
+    }
+
+    await render(null)
+    const region = container.querySelector("[data-composer-region]")
+    const precedingNode = region?.previousElementSibling
+    expect(composer().outputRate).toBeNull()
+    await render(18.3)
+    expect(composer().outputRate).toBe(18.3)
+    expect(container.querySelector("[data-composer-region]")).toBe(region)
+    expect(region?.previousElementSibling).toBe(precedingNode)
+    await render(null)
+    expect(composer().outputRate).toBeNull()
+    expect(container.querySelector("[data-composer-region]")).toBe(region)
+    expect(region?.previousElementSibling).toBe(precedingNode)
+  })
+
   it("shows an existing child session's model instead of the root Chat default", async () => {
     runtime.state.models = ["gpt-5.6-sol", "gpt-5.6-luna"]
     runtime.state.selectedModel = undefined

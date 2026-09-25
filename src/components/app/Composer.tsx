@@ -118,6 +118,7 @@ type AttachmentView = { id: string; url: string; name: string }
 
 export function Composer({
   draft,
+  outputRate,
   onDraftChange,
   onSubmit,
   onStop,
@@ -154,6 +155,8 @@ export function Composer({
   onDismissMenus,
 }: {
   draft: string
+  /** Estimated streaming output speed; absent when the current run has no rate. */
+  outputRate?: number | null
   onDraftChange: (v: string) => void
   onSubmit: () => void
   onStop: () => void
@@ -278,34 +281,47 @@ export function Composer({
           data-composer-surface
           className="rounded-2xl border bg-card p-1.5 shadow-sm focus-within:ring-2 focus-within:ring-ring/40"
         >
-          <Textarea
-            ref={inputRef}
-            value={draft}
-            aria-label="消息"
-            aria-busy={submissionPending}
-            onChange={(e) => onDraftChange(e.target.value)}
-            onPaste={(e) => {
-              const files = Array.from(e.clipboardData.files)
-              if (files.length) {
-                // Stop the browser from also pasting the file path as text
-                // (e.g. CleanShot dumps the screenshot path into the box).
-                e.preventDefault()
-                onAddFiles(files)
-              }
-            }}
-            onKeyDown={(e) => {
-              const nativeEvent = e.nativeEvent
-              if (e.defaultPrevented || nativeEvent.isComposing || nativeEvent.keyCode === 229) return
-              if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault()
-                if (!submissionPending && hasContent && (!sending || canQueue)) onSubmit()
-              }
-            }}
-            title="Enter 发送，Shift+Enter 换行"
-            placeholder={canQueue ? "输入消息，发送后加入队列…" : "发送消息…"}
-            rows={1}
-            className="max-h-40 min-h-11 resize-none border-0 bg-transparent px-2 py-2 shadow-none focus-visible:ring-0 dark:bg-transparent"
-          />
+          <div className="relative">
+            <Textarea
+              ref={inputRef}
+              value={draft}
+              aria-label="消息"
+              aria-busy={submissionPending}
+              onChange={(e) => onDraftChange(e.target.value)}
+              onPaste={(e) => {
+                const files = Array.from(e.clipboardData.files)
+                if (files.length) {
+                  // Stop the browser from also pasting the file path as text
+                  // (e.g. CleanShot dumps the screenshot path into the box).
+                  e.preventDefault()
+                  onAddFiles(files)
+                }
+              }}
+              onKeyDown={(e) => {
+                const nativeEvent = e.nativeEvent
+                if (e.defaultPrevented || nativeEvent.isComposing || nativeEvent.keyCode === 229) return
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault()
+                  if (!submissionPending && hasContent && (!sending || canQueue)) onSubmit()
+                }
+              }}
+              title="Enter 发送，Shift+Enter 换行"
+              placeholder={canQueue ? "输入消息，发送后加入队列…" : "发送消息…"}
+              rows={1}
+              style={{ paddingRight: 128 }}
+              className="max-h-40 min-h-11 resize-none border-0 bg-transparent px-2 py-2 shadow-none focus-visible:ring-0 dark:bg-transparent"
+            />
+            {typeof outputRate === "number" && (
+              <span
+                data-output-rate
+                className="absolute right-2 top-2 text-xs tabular-nums text-muted-foreground"
+                style={{ maxWidth: 112, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+                title="根据流式文本估算，不用于计费"
+              >
+                约 {outputRate.toFixed(1)} token/秒
+              </span>
+            )}
+          </div>
           <div className="flex flex-wrap items-end gap-1.5">
             <div className="flex min-w-0 basis-full flex-wrap items-center gap-1 sm:basis-auto sm:flex-1">
               <Button

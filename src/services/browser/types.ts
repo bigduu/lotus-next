@@ -35,7 +35,7 @@ export interface BrowserState {
   can_go_forward: boolean
   loading?: boolean
   /** Absent when connected to a Bamboo version without tab support. */
-  active_tab_id?: string
+  active_tab_id?: string | null
   tabs?: BrowserTabSummary[]
   /** Present on Bamboo versions with JavaScript dialog support. */
   pending_dialog?: BrowserPendingDialog | null

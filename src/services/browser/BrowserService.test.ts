@@ -93,6 +93,17 @@ it("binds every browser action to one encoded Bamboo session and epoch", async (
   )
 })
 
+it("creates and navigates a browser tab in one request", async () => {
+  vi.mocked(apiClient.post).mockResolvedValue({})
+
+  await service.createTab("sid", 9, "https://example.test/page")
+
+  expect(apiClient.post).toHaveBeenCalledExactlyOnceWith(
+    "browser/sessions/sid/tabs",
+    { expected_epoch: 9, url: "https://example.test/page" },
+  )
+})
+
 it("reads JPEG frame metadata, treats 204 as unchanged, and captures a fresh screenshot", async () => {
   const bytes = new Uint8Array([0xff, 0xd8, 0xff, 0xd9])
   vi.mocked(apiClient.fetchRaw)

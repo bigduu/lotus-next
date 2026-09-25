@@ -47,6 +47,14 @@ const tabbedState = (epoch: number, activeTabId: string): BrowserState => ({
   })),
 })
 
+const emptyState = (epoch: number): BrowserState => ({
+  ...state(epoch),
+  active_tab_id: null,
+  url: "",
+  title: "",
+  tabs: [],
+})
+
 const pendingState = (type: "alert" | "confirm" | "prompt" = "prompt"): BrowserState => ({
   ...tabbedState(17, "tab-a"),
   pending_dialog: {
@@ -110,6 +118,24 @@ it("stops polling and frees the frame when the tab hides without deleting the Ba
   expect(browser.frame).toBeNull()
   expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:frame-1")
   expect(browserService.open).toHaveBeenCalledTimes(1)
+})
+
+it("opens the first URL in one tab request without leaving a blank page", async () => {
+  vi.mocked(browserService.open).mockResolvedValue(emptyState(7))
+  vi.mocked(browserService.frame).mockImplementation(() => new Promise(() => {}))
+  vi.mocked(browserService.createTab).mockResolvedValue({
+    ...tabbedState(8, "tab-a"),
+    tabs: [{ tab_id: "tab-a", url: "https://example.test/first", title: "First", active: true }],
+    url: "https://example.test/first",
+  })
+
+  await act(async () => root.render(<Harness />))
+  expect(browser.state?.tabs).toHaveLength(0)
+  await act(async () => browser.openUrlInNewTab("https://example.test/first"))
+
+  expect(browserService.createTab).toHaveBeenCalledExactlyOnceWith("sid", 7, "https://example.test/first")
+  expect(browserService.navigate).not.toHaveBeenCalled()
+  expect(browser.state?.tabs).toHaveLength(1)
 })
 
 it("restarts frame polling from zero after navigation changes the page epoch", async () => {
@@ -286,7 +312,7 @@ it("keeps the old frame hidden when its poll returns before tab activation compl
 
   await act(async () => root.render(<Harness />))
   expect(browser.frame?.active_tab_id).toBe("tab-a")
-  let switching!: Promise<void>
+  let switching!: Promise<BrowserState | null>
   await act(async () => { switching = browser.activateTab("tab-b") })
   expect(browser.frame).toBeNull()
   await act(async () => releaseOldFrame({
@@ -438,8 +464,8 @@ it("fences frames when a queued close becomes an active-tab close", async () => 
   vi.mocked(browserService.closeTab).mockImplementation(() => close)
 
   await act(async () => root.render(<Harness />))
-  let switching!: Promise<void>
-  let closing!: Promise<void>
+  let switching!: Promise<BrowserState | null>
+  let closing!: Promise<BrowserState | null>
   await act(async () => {
     switching = browser.activateTab("tab-b")
     closing = browser.closeTab("tab-b")

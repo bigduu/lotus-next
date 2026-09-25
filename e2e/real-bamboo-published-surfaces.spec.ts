@@ -354,10 +354,10 @@ const exerciseSurface = async ({
     } else if (currentSourceArtifact) {
       await page.getByRole("button", { name: "打开侧边面板" }).click();
       const panel = page.getByRole("complementary", { name: "工作面板" });
-      await panel.getByRole("tab", { name: "浏览器" }).click();
+      await panel.getByRole("button", { name: /浏览器.*输入网址后打开/ }).click();
       const pane = panel.getByRole("region", { name: "内置浏览器" });
       const address = pane.getByRole("textbox", { name: "网页地址" });
-      const navigateButton = pane.getByRole("button", { name: "访问网页" });
+      const navigateButton = pane.getByRole("button", { name: "打开", exact: true });
       await expect(navigateButton).toBeEnabled();
       await address.fill(browserFixtureUrl);
       await navigateButton.click();

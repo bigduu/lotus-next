@@ -41,6 +41,16 @@ const bindStorage = (name: "localStorage" | "sessionStorage", storage: Storage) 
 
 bindStorage("localStorage", localStorageForTests)
 bindStorage("sessionStorage", sessionStorageForTests)
+if (typeof ResizeObserver === "undefined") {
+  Object.defineProperty(globalThis, "ResizeObserver", {
+    configurable: true,
+    value: class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    },
+  })
+}
 installRuntimeConfig(resolveDefaultBrowserRuntimeConfig())
 
 beforeEach(() => {
