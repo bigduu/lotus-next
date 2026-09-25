@@ -26,6 +26,11 @@ import {
   acknowledgePendingTemplatePrompt,
   type PendingTemplatePromptSnapshot,
 } from "@/lib/taskTemplates"
+import {
+  beginRootModeTransition,
+  finishRootModeTransition,
+  getRootModeFenceState,
+} from "@/lib/rootModeTransitionFence"
 import type { Message } from "@shared/types/chat"
 import {
   getReasoningEffortForProvider,
@@ -64,6 +69,22 @@ export type SubmissionUnconfirmedFailure = {
   operationId: number
   sessionId: string | null
   message?: string
+  rejectionCode?: RootModeRejectionCode
+  rootModeSelectionSubmitted?: boolean
+}
+
+type RootModeRejectionCode = "root_orchestration_incompatible_mode" | "root_orchestration_requires_root"
+
+const rootModeRejectionCode = (error: unknown): RootModeRejectionCode | null => {
+  if (!isApiError(error) || (error.status !== 400 && error.status !== 409) || !error.body) return null
+  try {
+    const parsed = JSON.parse(error.body) as { error?: { code?: unknown } }
+    const code = parsed.error?.code
+    return code === "root_orchestration_incompatible_mode" || code === "root_orchestration_requires_root"
+      ? code : null
+  } catch {
+    return null
+  }
 }
 
 export type GenerationFailure = {
@@ -84,7 +105,8 @@ const toFailureMessage = (error: unknown): string | undefined => {
 
 export type SendSubmissionResult =
   | { kind: "accepted"; operationId: number; sessionId: string; navigated: boolean }
-  | { kind: "unconfirmed"; operationId: number }
+  | { kind: "unconfirmed"; operationId: number; rejectionCode?: RootModeRejectionCode }
+  | { kind: "blocked" }
   | { kind: "busy" }
   | { kind: "ignored" }
 
@@ -734,6 +756,9 @@ export function useChat(
         )
           ? opts?.reasoningEffort ?? undefined
           : reasoningEffort
+        if (getRootModeFenceState(runSid) !== "clear") {
+          throw new Error("Root 权限切换结果未知；消息已保存，但尚未启动执行。请新建会话。")
+        }
         void agentClient.execute(runSid, effectiveModel || undefined, executeReasoningEffort, undefined, effectiveModelRef).catch((err) => {
           if (!ownsStream()) return
           // The run never started, so no terminal will ever arrive — settle
@@ -1245,6 +1270,7 @@ export function useChat(
       },
     ): Promise<boolean> => {
       if (activeSendRef.current) return false
+      if (getRootModeFenceState(runSid) !== "clear") return false
       if (
         opts?.expectedFailureOperationId !== undefined &&
         getSendFailure(runSid)?.operationId !== opts.expectedFailureOperationId
@@ -1280,6 +1306,7 @@ export function useChat(
       try {
         await opts?.prepare?.()
         if (activeSendRef.current?.id !== operation.id) return false
+        if (getRootModeFenceState(runSid) !== "clear") return false
         if (
           opts?.expectedFailureOperationId !== undefined &&
           getSendFailure(runSid)?.operationId !== opts.expectedFailureOperationId
@@ -1441,6 +1468,8 @@ export function useChat(
       text: string,
       opts?: {
         skillIds?: string[]
+        /** Explicit Root-only selection; undefined preserves the durable value. */
+        rootOrchestrationOnly?: boolean
         images?: Array<{ base64: string; name?: string; size?: number; type?: string }>
         workspacePath?: string | null
         projectId?: string | null
@@ -1456,6 +1485,13 @@ export function useChat(
       if (activeSendRef.current) return { kind: "busy" }
 
       const startSid = sid
+      if (startSid && getRootModeFenceState(startSid) !== "clear") return { kind: "blocked" }
+      const transitionToken = startSid && typeof opts?.rootOrchestrationOnly === "boolean"
+        ? beginRootModeTransition(startSid, opts.rootOrchestrationOnly)
+        : null
+      if (startSid && typeof opts?.rootOrchestrationOnly === "boolean" && !transitionToken) {
+        return { kind: "blocked" }
+      }
       const submittedReasoningEffort = startSid
         ? reasoningEffort
         : opts?.reasoningSelection === "auto"
@@ -1508,6 +1544,7 @@ export function useChat(
             providerType === "copilot" && isCopilotConclusionWithOptionsEnhancementEnabled(),
           system_prompt: systemPrompt,
           selected_skill_ids: opts?.skillIds?.length ? opts.skillIds : undefined,
+          root_orchestration_only: opts?.rootOrchestrationOnly,
           images: opts?.images?.length ? opts.images : undefined,
           // Only meaningful when creating a NEW session; an existing session keeps
           // the cwd it was created with.
@@ -1524,9 +1561,12 @@ export function useChat(
         if (!acknowledgedSessionId || (startSid && acknowledgedSessionId !== startSid)) {
           throw new Error("The chat submission response did not acknowledge the expected session.")
         }
+        if (startSid && transitionToken) finishRootModeTransition(startSid, transitionToken)
         recordUsedModel(acknowledgedModel)
       } catch (err) {
         console.error("[useChat] message submission was not acknowledged", err)
+        const rejectionCode = rootModeRejectionCode(err)
+        if (startSid && transitionToken && rejectionCode) finishRootModeTransition(startSid, transitionToken)
         if (activeSendRef.current?.id === operation.id) activeSendRef.current = null
         if (mountedRef.current) {
           setSubmissionPending(false)
@@ -1536,9 +1576,13 @@ export function useChat(
             operationId: operation.id,
             sessionId: startSid,
             message: toFailureMessage(err),
+            ...(rejectionCode ? {
+              rejectionCode,
+              rootModeSelectionSubmitted: typeof opts?.rootOrchestrationOnly === "boolean",
+            } : {}),
           })
         }
-        return { kind: "unconfirmed", operationId: operation.id }
+        return { kind: "unconfirmed", operationId: operation.id, ...(rejectionCode ? { rejectionCode } : {}) }
       }
 
       operation.phase = "generating"
@@ -1561,17 +1605,26 @@ export function useChat(
           setSending(false)
         }
         if (activeSendRef.current?.id === operation.id) activeSendRef.current = null
-        void agentClient
-          .execute(acknowledgedSessionId, effectiveModel || undefined, submittedReasoningEffort, undefined, effectiveModelRef)
-          .catch((err) => {
-            console.warn("[useChat] detached generation start failed", err)
-            publishSendFailure({
-              kind: "generation-failed",
-              operationId: operation.id,
-              sessionId: acknowledgedSessionId,
-              message: toFailureMessage(err),
-            })
+        if (getRootModeFenceState(acknowledgedSessionId) !== "clear") {
+          publishSendFailure({
+            kind: "generation-failed",
+            operationId: operation.id,
+            sessionId: acknowledgedSessionId,
+            message: "Root 权限切换结果未知；消息已保存，但尚未启动执行。请新建会话。",
           })
+        } else {
+          void agentClient
+            .execute(acknowledgedSessionId, effectiveModel || undefined, submittedReasoningEffort, undefined, effectiveModelRef)
+            .catch((err) => {
+              console.warn("[useChat] detached generation start failed", err)
+              publishSendFailure({
+                kind: "generation-failed",
+                operationId: operation.id,
+                sessionId: acknowledgedSessionId,
+                message: toFailureMessage(err),
+              })
+            })
+        }
         if (acknowledgedSessionId !== startSid) {
           void useAppStore
             .getState()
@@ -1724,6 +1777,7 @@ export function useChat(
   const fork = useCallback(
     async (messageId: string): Promise<string | undefined> => {
       if (!sid) return undefined
+      if (getRootModeFenceState(sid) !== "clear") return undefined
       try {
         const res = await apiClient.post<{ session?: { id?: string; session_id?: string } }>(
           `sessions/${encodeURIComponent(sid)}/fork`,

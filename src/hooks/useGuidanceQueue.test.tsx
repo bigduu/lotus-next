@@ -3,12 +3,14 @@ import { createRoot, type Root } from "react-dom/client"
 import { afterEach, beforeEach, expect, it, vi } from "vitest"
 import { useGuidanceQueue } from "./useGuidanceQueue"
 import { guidanceService } from "@services/chat/guidance"
+import { beginRootModeTransition } from "@/lib/rootModeTransitionFence"
 vi.mock("@services/chat/guidance", () => ({ guidanceService: { list: vi.fn(), send: vi.fn(), cancel: vi.fn() } }))
 let root: Root
 let container: HTMLDivElement
 let queue: ReturnType<typeof useGuidanceQueue>
 function Harness({ session = "s/1" }: { session?: string }) { queue = useGuidanceQueue(session, true); return null }
 beforeEach(() => {
+  localStorage.clear()
   sessionStorage.clear()
   const randomUUID = crypto.randomUUID.bind(crypto)
   vi.stubGlobal("crypto", { randomUUID, subtle: { digest: async (_algorithm: string, bytes: Uint8Array) => Uint8Array.from(bytes).buffer } })
@@ -19,6 +21,26 @@ beforeEach(() => {
 })
 afterEach(() => { act(() => root.unmount()); container.remove(); vi.resetAllMocks(); vi.unstubAllGlobals() })
 const mount = async () => { await act(async () => root.render(<Harness />)) }
+it("blocks a queued message after another composer fences the same Session", async () => {
+  await mount()
+  expect(beginRootModeTransition("s/1", false)).not.toBeNull()
+  await act(async () => { expect(await queue.send("queued without mode field")).toEqual({ kind: "blocked" }) })
+  expect(guidanceService.send).not.toHaveBeenCalled()
+})
+it("rechecks the fence after hashing before sending queued guidance", async () => {
+  let completeDigest!: (value: ArrayBuffer) => void
+  const digest = new Promise<ArrayBuffer>((resolve) => { completeDigest = resolve })
+  vi.spyOn(crypto.subtle, "digest").mockReturnValueOnce(digest)
+  await mount()
+  let submission!: ReturnType<typeof queue.send>
+  act(() => { submission = queue.send("queued while another tab switches mode") })
+  expect(guidanceService.send).not.toHaveBeenCalled()
+  expect(beginRootModeTransition("s/1", false)).not.toBeNull()
+  completeDigest(new Uint8Array([1]).buffer)
+  await act(async () => { expect(await submission).toEqual({ kind: "blocked" }) })
+  expect(guidanceService.send).not.toHaveBeenCalled()
+  expect(sessionStorage.getItem("lotus-next.guidance-submission.s/1")).toBeNull()
+})
 it("retries uncertain text and image admission with the same identity after remount", async () => {
   vi.mocked(guidanceService.send).mockRejectedValueOnce(new Error("connection lost"))
   await mount()

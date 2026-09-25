@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react"
 import { guidanceService, type GuidanceImage, type GuidanceMode, type PendingGuidance } from "@services/chat/guidance"
 import type { SendSubmissionResult } from "./useChat"
+import { getRootModeFenceState } from "@/lib/rootModeTransitionFence"
 
 const receiptKey = (id: string) => `lotus-next.guidance-submission.${id}`
 const modeKey = (id: string) => `lotus-next.guidance-mode.${id}`
@@ -54,6 +55,7 @@ export function useGuidanceQueue(sessionId: string | null, running: boolean) {
 
   const send = async (text: string, images: GuidanceImage[] = []): Promise<SendSubmissionResult> => {
     if (!sessionId || (!text.trim() && !images.length)) return { kind: "ignored" }
+    if (getRootModeFenceState(sessionId) !== "clear") return { kind: "blocked" }
     if (active.current) return { kind: "busy" }
     active.current = true
     const target = sessionId
@@ -65,6 +67,17 @@ export function useGuidanceQueue(sessionId: string | null, running: boolean) {
       const receipt = previous?.fingerprint === fingerprint ? previous : { id: crypto.randomUUID(), fingerprint }
       receipts.current.set(target, receipt)
       try { sessionStorage.setItem(receiptKey(target), JSON.stringify(receipt)) } catch { /* No image bytes are stored in browser receipts. */ }
+      if (getRootModeFenceState(target) !== "clear") {
+        if (receipt !== previous) {
+          if (previous) receipts.current.set(target, previous)
+          else receipts.current.delete(target)
+          try {
+            if (previous) sessionStorage.setItem(receiptKey(target), JSON.stringify(previous))
+            else sessionStorage.removeItem(receiptKey(target))
+          } catch { /* The fence still blocks submission. */ }
+        }
+        return { kind: "blocked" }
+      }
       const result = await guidanceService.send(target, receipt.id, text, mode, images)
       if (result.id !== receipt.id) throw new Error("Queue acknowledgement identity mismatch")
       receipts.current.delete(target)

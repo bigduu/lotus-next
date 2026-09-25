@@ -357,6 +357,8 @@ export interface ChatRequest {
   copilot_conclusion_with_options_enhancement_enabled?: boolean;
   workspace_path?: string;
   selected_skill_ids?: string[];
+  /** Durable Root tool boundary. Omit on follow-up to keep the saved choice. */
+  root_orchestration_only?: boolean;
   images?: Array<{
     base64: string;
     name?: string;
@@ -660,6 +662,8 @@ export interface SessionSummary {
   last_run_error?: string;
   /** Active plan mode runtime state mirrored from backend session summary. */
   plan_mode?: SessionPlanModeState | null;
+  /** Authoritative only on GET /sessions/{id}; list rows omit this field. */
+  root_orchestration_only?: boolean | null;
   /**
    * SubAgent profile id for child sessions (e.g. "general-purpose", "plan").
    * Mirrored from the child session's metadata into the global SessionIndexEntry,
