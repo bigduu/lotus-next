@@ -11,7 +11,7 @@ const getTauriInvoke = (): TauriInternals["invoke"] => {
   return tauriInternals?.invoke;
 };
 
-const openInBrowser = (url: string, options?: { allowLocationFallback?: boolean }): void => {
+const openInBrowser = (url: string): void => {
   if (typeof window === "undefined") {
     return;
   }
@@ -22,10 +22,8 @@ const openInBrowser = (url: string, options?: { allowLocationFallback?: boolean 
     return;
   }
 
-  if (options?.allowLocationFallback ?? true) {
-    // Browser fallback for environments that block popups.
-    window.location.assign(url);
-  }
+  // Browser fallback for environments that block popups.
+  window.location.assign(url);
 };
 
 export const openExternalLink = async (url: string): Promise<void> => {
@@ -37,20 +35,10 @@ export const openExternalLink = async (url: string): Promise<void> => {
   const isDesktop = isTauriEnvironment();
   if (isDesktop) {
     const invoke = getTauriInvoke();
-    if (typeof invoke === "function") {
-      try {
-        await invoke("plugin:shell|open", { path: normalizedUrl });
-        return;
-      } catch (error) {
-        console.warn(
-          "[openExternalLink] Failed to open via Tauri shell plugin, falling back to browser open.",
-          error,
-        );
-      }
+    if (typeof invoke !== "function") {
+      throw new Error("Desktop shell is unavailable");
     }
-
-    // In desktop mode, never navigate the current webview as fallback.
-    openInBrowser(normalizedUrl, { allowLocationFallback: false });
+    await invoke("plugin:shell|open", { path: normalizedUrl });
     return;
   }
 

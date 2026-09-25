@@ -27,6 +27,9 @@ it("switches tools in one docked panel and closes without navigation", () => {
   roots.push(root)
   const onTabChange = vi.fn()
   const onClose = vi.fn()
+  const onBrowserActivate = vi.fn()
+  const onBrowserClose = vi.fn()
+  const onBrowserCreate = vi.fn()
 
   act(() => {
     root.render(
@@ -38,6 +41,14 @@ it("switches tools in one docked panel and closes without navigation", () => {
         inspector={<div>inspector content</div>}
         review={<div>review content</div>}
         browser={<div>browser content</div>}
+        browserTabs={[
+          { tab_id: "tab-a", url: "https://a.test", title: "Alpha", active: true },
+          { tab_id: "tab-b", url: "https://b.test", title: "Beta", active: false },
+        ]}
+        activeBrowserTabId="tab-a"
+        onBrowserActivate={onBrowserActivate}
+        onBrowserClose={onBrowserClose}
+        onBrowserCreate={onBrowserCreate}
         session={<div>child transcript</div>}
         sessionTitle="Fix transport"
       />,
@@ -56,14 +67,17 @@ it("switches tools in one docked panel and closes without navigation", () => {
   )
   expect(onTabChange).toHaveBeenCalledWith("review")
 
-  const browserTab = Array.from(host.querySelectorAll<HTMLButtonElement>('[role="tab"]')).find(
-    (button) => button.textContent?.includes("浏览器"),
-  )
-  expect(browserTab).toBeDefined()
+  const browserTab = host.querySelector<HTMLButtonElement>('[role="tab"][aria-label="浏览器标签页 2：Beta"]')
+  expect(host.querySelectorAll('[role="tab"][aria-label^="浏览器标签页"]')).toHaveLength(2)
   act(() =>
     browserTab?.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 })),
   )
   expect(onTabChange).toHaveBeenCalledWith("browser")
+  expect(onBrowserActivate).toHaveBeenCalledWith("tab-b")
+  act(() => host.querySelector<HTMLButtonElement>('button[aria-label="关闭浏览器标签页 1：Alpha"]')?.click())
+  expect(onBrowserClose).toHaveBeenCalledWith("tab-a")
+  act(() => host.querySelector<HTMLButtonElement>('button[aria-label="新建浏览器标签页"]')?.click())
+  expect(onBrowserCreate).toHaveBeenCalledTimes(1)
   expect(host.querySelector('[role="tablist"]')?.className).toContain("overflow-x-auto")
 
   act(() => host.querySelector<HTMLButtonElement>('button[aria-label="收起工作面板"]')?.click())
