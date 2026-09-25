@@ -445,6 +445,11 @@ test("workbench tabs follow human commands and an agent-opened popup on desktop 
   await page.getByRole("menuitem", { name: "检查器" }).click()
   const tablist = panel.getByRole("tablist", { name: "工作面板标签页" })
   const order = () => tablist.locator('[role="tab"]').allTextContents()
+  await expect.poll(order).toEqual(["Alpha", "Beta", "检查器"])
+  const inspectorHandle = panel.getByRole("button", { name: "调整检查器标签页顺序" })
+  await inspectorHandle.focus()
+  await inspectorHandle.press("Alt+ArrowLeft")
+  await inspectorHandle.press("Alt+ArrowLeft")
   await expect.poll(order).toEqual(["检查器", "Alpha", "Beta"])
   const betaHandle = panel.getByRole("button", { name: "调整Beta标签页顺序" })
   await betaHandle.focus()
@@ -529,7 +534,6 @@ test("workbench tabs follow human commands and an agent-opened popup on desktop 
     const candidateHandle = panel.getByRole("button", { name: "调整Extra 6标签页顺序" })
     await candidateHandle.focus()
     for (let move = 0; move < 5; move++) await candidateHandle.press("Alt+ArrowLeft")
-    const inspectorHandle = panel.getByRole("button", { name: "调整检查器标签页顺序" })
     await inspectorHandle.focus()
     for (let move = 0; move < 5; move++) await inspectorHandle.press("Alt+ArrowLeft")
     await expect.poll(async () => (await order()).slice(0, 2)).toEqual(["Extra 6", "检查器"])
@@ -545,6 +549,13 @@ test("workbench tabs follow human commands and an agent-opened popup on desktop 
     await expect(panel.getByRole("tab", { name: "检查器" })).toHaveCount(0)
     await expect(panel.getByRole("tab", { name: /Extra 5/ })).toHaveAttribute("aria-selected", "true")
   }
+  tabs.push({ tab_id: "tab-d", url: "https://late.test/", title: "Late popup", active: false })
+  pictures["tab-d"] = pictures["tab-b"]
+  switchTo("tab-d")
+  await expect.poll(async () => (await order()).slice(-1)).toEqual(["Late popup"])
+  await panel.getByRole("button", { name: "打开工作面板标签页" }).click()
+  await page.getByRole("menuitem", { name: "Review" }).click()
+  await expect.poll(async () => (await order()).slice(-2)).toEqual(["Late popup", "Review"])
 })
 
 test("phone workbench has no browser entry or browser session requests", async ({ page }, testInfo) => {

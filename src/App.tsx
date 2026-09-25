@@ -126,7 +126,18 @@ function App() {
     ),
   )
   const { readySessionId: browserReadySessionId, state: browserState, openUrlInNewTab } = browser
+  const browserTabsForWorkbench = browserReadySessionId === currentSessionId ? browserState?.tabs : null
   const selectedWorkbenchTab = !browserEnabled && workbenchTab === "browser" ? null : workbenchTab
+
+  useEffect(() => {
+    setWorkbenchOrderBySession((current) => {
+      const saved = current[workbenchOrderScope] ?? []
+      const next = visibleWorkbenchTabIds(openToolTabs, browserTabsForWorkbench, saved)
+      return next.length === saved.length && next.every((key, index) => key === saved[index])
+        ? current
+        : { ...current, [workbenchOrderScope]: next }
+    })
+  }, [workbenchOrderScope, openToolTabs, browserTabsForWorkbench])
 
   useEffect(() => {
     if (browserEntrySessionRef.current !== currentSessionId) setBrowserEntryOpen(false)
@@ -245,7 +256,7 @@ function App() {
   const secondSession = chats.find((item) => item.id === secondSid)
   const visibleTabIds = visibleWorkbenchTabIds(
     openToolTabs,
-    browserReadySessionId === currentSessionId ? browserState?.tabs : null,
+    browserTabsForWorkbench,
     workbenchOrderBySession[workbenchOrderScope],
   )
   const closeSuccessor = (key: string) => {
@@ -419,7 +430,7 @@ function App() {
             browserEnabled={browserEnabled}
             browserSessionAvailable={Boolean(currentSessionId)}
             browserEntryOpen={browserEntryOpen}
-            browserTabs={browser.readySessionId === currentSessionId ? browser.state?.tabs : null}
+            browserTabs={browserTabsForWorkbench}
             activeBrowserTabId={browser.readySessionId === currentSessionId ? browser.state?.active_tab_id : null}
             browserBusy={browser.busy || Boolean(browser.state?.pending_dialog)}
             onBrowserActivate={(tabId) => {
