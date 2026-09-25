@@ -938,11 +938,6 @@ export function ChatPane({
         ) : null}
 
         {queue.error && <div role="alert" className="mx-auto mb-1 w-[calc(100%-1.5rem)] max-w-6xl rounded-lg border border-destructive/40 px-3 py-2 text-xs text-destructive">{queue.error}</div>}
-        {typeof outputRate === "number" && (
-          <div className="mx-auto w-full max-w-6xl px-3 text-right text-xs tabular-nums text-muted-foreground" title="根据流式文本估算，不用于计费">
-            约 {outputRate.toFixed(1)} token/秒
-          </div>
-        )}
         <div data-composer-region className="relative shrink-0">
           {/* Keep the jump control centered on the same max-width column as the composer. */}
           {!atBottom && (
@@ -961,6 +956,7 @@ export function ChatPane({
           )}
           <Composer
           draft={draft}
+          outputRate={outputRate}
           onDraftChange={setDraft}
           onSubmit={submit}
           onStop={stop}

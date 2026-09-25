@@ -108,6 +108,32 @@ describe("Composer submission controls", () => {
     expect(surface?.contains(send)).toBe(true)
   })
 
+  it("keeps the optional output rate inside the input without changing its layout", () => {
+    const view = mountComposer({ outputRate: null })
+    const surface = view.container.querySelector("[data-composer-surface]")
+    const inputRow = view.textarea.parentElement
+    const inputClass = view.textarea.className
+
+    expect(surface?.contains(inputRow)).toBe(true)
+    expect(inputRow?.className).toContain("relative")
+    expect(inputClass).toContain("pr-32")
+    expect(inputRow?.querySelector("[data-output-rate]")).toBeNull()
+
+    act(() => mountedRoots.at(-1)?.render(<Composer {...view.props} outputRate={18.3} />))
+    const rate = inputRow?.querySelector<HTMLElement>("[data-output-rate]")
+    expect(rate?.textContent?.trim()).toBe("约 18.3 token/秒")
+    expect(rate?.title).toBe("根据流式文本估算，不用于计费")
+    expect(rate?.className).toContain("absolute")
+    expect(rate?.className).not.toContain("pointer-events-none")
+    expect(view.textarea.parentElement).toBe(inputRow)
+    expect(view.textarea.className).toBe(inputClass)
+
+    act(() => mountedRoots.at(-1)?.render(<Composer {...view.props} outputRate={null} />))
+    expect(inputRow?.querySelector("[data-output-rate]")).toBeNull()
+    expect(view.textarea.parentElement).toBe(inputRow)
+    expect(view.textarea.className).toBe(inputClass)
+  })
+
   it.each([
     ["native composition", { isComposing: true }],
     ["legacy IME key code", { keyCode: 229 }],
