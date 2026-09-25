@@ -26,6 +26,8 @@ test("assistant link can be copied or opened as a new top-level browser tab", as
   let pageEpoch = 1
   let frameSeq = 1
   let pendingDialog = false
+  let holdNavigation = false
+  let releaseNavigation: (() => void) | null = null
   const dialogId = "1".padStart(24, "0")
   const calls: Array<{ method: string; path: string; body?: Record<string, unknown> }> = []
   const state = () => {
@@ -71,9 +73,17 @@ test("assistant link can be copied or opened as a new top-level browser tab", as
         frameSeq += 1
         return route.fulfill({ json: state() })
       }
+      if (path === `${browserPath}/navigate` && holdNavigation) {
+        await new Promise<void>((resolve) => { releaseNavigation = resolve })
+        holdNavigation = false
+        pendingDialog = true
+        pageEpoch += 1
+        frameSeq += 1
+        return route.fulfill({ json: state() })
+      }
       if (path === `${browserPath}/tabs`) {
         expect(body?.url).toBe(linkedUrl)
-        activeTabId = tabs.length === 0 ? "tab-a" : "tab-b"
+        activeTabId = `tab-${String.fromCharCode(97 + tabs.length)}`
         tabs.push({ tab_id: activeTabId, url: linkedUrl, title: "Linked issue", active: true })
       } else if (path !== `${browserPath}/viewport`) {
         return route.fulfill({ status: 404 })
@@ -138,5 +148,22 @@ test("assistant link can be copied or opened as a new top-level browser tab", as
   await pageDialog.getByRole("button", { name: "确定" }).click()
   await expect(panel.getByRole("tab", { name: "浏览器标签页 2：Linked issue" })).toHaveAttribute("aria-selected", "true")
   expect(calls.filter((call) => call.method === "POST" && call.path === `${browserPath}/tabs`)).toHaveLength(2)
+
+  // A link request queued behind another browser action survives if that
+  // action raises a dialog before the link's tab creation can run.
+  holdNavigation = true
+  await browser.getByRole("textbox", { name: "网页地址" }).fill("https://race.test/")
+  await browser.getByRole("button", { name: "访问网页" }).click()
+  await expect.poll(() => Boolean(releaseNavigation)).toBe(true)
+  await link.click()
+  await dialog.getByRole("button", { name: "打开链接" }).click()
+  await inAppOption.click()
+  const resumeNavigation = releaseNavigation as (() => void) | null
+  resumeNavigation?.()
+  await expect(pageDialog).toBeVisible()
+  expect(calls.filter((call) => call.method === "POST" && call.path === `${browserPath}/tabs`)).toHaveLength(2)
+  await pageDialog.getByRole("button", { name: "确定" }).click()
+  await expect(panel.getByRole("tab", { name: "浏览器标签页 3：Linked issue" })).toHaveAttribute("aria-selected", "true")
+  expect(calls.filter((call) => call.method === "POST" && call.path === `${browserPath}/tabs`)).toHaveLength(3)
   expect(observation.pageErrors).toEqual([])
 })

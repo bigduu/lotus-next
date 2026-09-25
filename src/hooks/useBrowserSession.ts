@@ -524,6 +524,7 @@ export function useBrowserSession(sessionId: string | null, active: boolean) {
   )
 
   const retry = useCallback(() => setRetryVersion((version) => version + 1), [])
+  const hasPendingDialog = useCallback(() => Boolean(stateRef.current?.pending_dialog), [])
 
   return {
     state,
@@ -549,5 +550,6 @@ export function useBrowserSession(sessionId: string | null, active: boolean) {
     isCurrentPage,
     clearDom: () => setDom(null),
     retry,
+    hasPendingDialog,
   }
 }

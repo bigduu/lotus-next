@@ -155,6 +155,9 @@ test("browser workbench shares one session across human input, DOM, screenshot, 
   }
   const address = browser.getByRole("textbox", { name: "网页地址" })
   await address.fill("example.test/fixture")
+  await panel.getByRole("button", { name: "收起工作面板" }).click()
+  await page.getByRole("button", { name: "打开侧边面板" }).click()
+  await expect(address).toHaveValue("example.test/fixture")
   await browser.getByRole("button", { name: "打开", exact: true }).click()
   await expect(panel.getByRole("tab", { name: "浏览器标签页 1：Browser fixture" })).toHaveAttribute("aria-selected", "true")
   await expect.poll(() => viewport.width).not.toBe(640)
@@ -207,6 +210,43 @@ test("browser workbench shares one session across human input, DOM, screenshot, 
   await expect(panel.getByRole("tab", { name: /浏览器标签页/ })).toHaveCount(0)
   await expect(panel.getByRole("region", { name: "内置浏览器" })).toHaveCount(0)
   await expect(panel.getByText("还没有打开内容")).toBeVisible()
+})
+
+test("legacy browser resumes an existing page on its first workbench open", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop-chromium", "Legacy browser compatibility")
+  await page.addInitScript(() => {
+    localStorage.setItem("bodhi_onboarded_v1", "1")
+    localStorage.setItem("lotus_next_last_session", "all-surface-session")
+  })
+  const observation = await installArtifactRuntime(page, standaloneScenario)
+  await page.route("**/api/v1/task/all-surface-session", (route) =>
+    route.fulfill({ json: { session_id: "all-surface-session", title: null, items: [] } }),
+  )
+  const browserPath = "/api/v1/browser/sessions/all-surface-session"
+  const url = "https://existing.test/"
+  const state = () => ({
+    page_epoch: 1, frame_seq: 1, url, title: "Existing page",
+    viewport: { width: 640, height: 480 }, can_go_back: false, can_go_forward: false,
+  })
+  await page.route("**/api/v1/browser/sessions/all-surface-session**", (route) => {
+    const request = route.request()
+    const path = new URL(request.url()).pathname
+    if (path === browserPath && (request.method() === "GET" || request.method() === "PUT")) {
+      return route.fulfill({ json: state() })
+    }
+    if (path === `${browserPath}/frame`) return route.fulfill({ status: 204 })
+    return route.fulfill({ status: 404 })
+  })
+
+  await page.goto(standaloneScenario.entryUrl, { waitUntil: "domcontentloaded" })
+  await page.getByRole("button", { name: "打开侧边面板" }).click()
+  const panel = page.getByRole("complementary", { name: "工作面板" })
+  await panel.getByRole("button", { name: /浏览器.*输入网址后打开/ }).click()
+  const browser = panel.getByRole("region", { name: "内置浏览器" })
+  await expect(browser.getByRole("button", { name: "刷新网页" })).toBeVisible()
+  await expect(browser.getByRole("textbox", { name: "网页地址" })).toHaveValue(url)
+  await expect(browser.getByText("打开新网页")).toHaveCount(0)
+  expect(observation.pageErrors).toEqual([])
 })
 
 test("legacy tabless browser opens its page and keeps a URL draft during model navigation", async ({ page }, testInfo) => {
