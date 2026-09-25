@@ -113,10 +113,11 @@ describe("Composer submission controls", () => {
     const surface = view.container.querySelector("[data-composer-surface]")
     const inputRow = view.textarea.parentElement
     const inputClass = view.textarea.className
+    const inputPadding = view.textarea.style.paddingRight
 
     expect(surface?.contains(inputRow)).toBe(true)
     expect(inputRow?.className).toContain("relative")
-    expect(inputClass).toContain("pr-32")
+    expect(inputPadding).toBe("128px")
     expect(inputRow?.querySelector("[data-output-rate]")).toBeNull()
 
     act(() => mountedRoots.at(-1)?.render(<Composer {...view.props} outputRate={18.3} />))
@@ -127,11 +128,13 @@ describe("Composer submission controls", () => {
     expect(rate?.className).not.toContain("pointer-events-none")
     expect(view.textarea.parentElement).toBe(inputRow)
     expect(view.textarea.className).toBe(inputClass)
+    expect(view.textarea.style.paddingRight).toBe(inputPadding)
 
     act(() => mountedRoots.at(-1)?.render(<Composer {...view.props} outputRate={null} />))
     expect(inputRow?.querySelector("[data-output-rate]")).toBeNull()
     expect(view.textarea.parentElement).toBe(inputRow)
     expect(view.textarea.className).toBe(inputClass)
+    expect(view.textarea.style.paddingRight).toBe(inputPadding)
   })
 
   it.each([

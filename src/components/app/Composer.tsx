@@ -308,12 +308,14 @@ export function Composer({
               title="Enter 发送，Shift+Enter 换行"
               placeholder={canQueue ? "输入消息，发送后加入队列…" : "发送消息…"}
               rows={1}
-              className="max-h-40 min-h-11 resize-none border-0 bg-transparent pl-2 pr-32 py-2 shadow-none focus-visible:ring-0 dark:bg-transparent"
+              style={{ paddingRight: 128 }}
+              className="max-h-40 min-h-11 resize-none border-0 bg-transparent px-2 py-2 shadow-none focus-visible:ring-0 dark:bg-transparent"
             />
             {typeof outputRate === "number" && (
               <span
                 data-output-rate
-                className="absolute right-2 top-2 max-w-28 truncate text-right text-xs tabular-nums text-muted-foreground"
+                className="absolute right-2 top-2 text-xs tabular-nums text-muted-foreground"
+                style={{ maxWidth: 112, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
                 title="根据流式文本估算，不用于计费"
               >
                 约 {outputRate.toFixed(1)} token/秒
