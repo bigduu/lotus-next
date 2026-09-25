@@ -14,3 +14,13 @@ export function visibleWorkbenchTabIds(
   const saved = [...new Set(tabOrder)].filter((key) => availableSet.has(key))
   return [...saved, ...available.filter((key) => !saved.includes(key))]
 }
+
+export function reorderVisibleWorkbenchTabIds(savedOrder: string[], visibleOrder: string[]): string[] {
+  const reordered = [...new Set(visibleOrder)]
+  const visibleSet = new Set(reordered)
+  let nextVisible = 0
+  const merged = [...new Set(savedOrder)].map((key) =>
+    visibleSet.has(key) ? reordered[nextVisible++]! : key,
+  )
+  return [...merged, ...reordered.slice(nextVisible)]
+}

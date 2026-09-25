@@ -23,7 +23,7 @@ import { ReviewPane } from "@/components/app/ReviewPane"
 import { BrowserPaneView } from "@/components/app/BrowserPane"
 import { useBrowserSession } from "@/hooks/useBrowserSession"
 import { isPhoneDevice } from "@/lib/browserAvailability"
-import { visibleWorkbenchTabIds } from "@/lib/workbenchTabs"
+import { reorderVisibleWorkbenchTabIds, visibleWorkbenchTabIds } from "@/lib/workbenchTabs"
 import {
   RightWorkbench,
   type RightWorkbenchTab,
@@ -291,12 +291,16 @@ function App() {
     const remaining = visibleTabIds.filter((item) => item !== key)
     return remaining[index] ?? remaining[index - 1] ?? null
   }
-  const pruneSavedTab = (key: string) => {
+  const pruneSavedTab = (key: string, everySession = false) => {
     setWorkbenchOrderBySession((current) => {
-      const saved = current[workbenchOrderScope]
-      return saved?.includes(key)
-        ? { ...current, [workbenchOrderScope]: saved.filter((item) => item !== key) }
-        : current
+      let next = current
+      for (const scope of everySession ? Object.keys(current) : [workbenchOrderScope]) {
+        const saved = current[scope]
+        if (!saved?.includes(key)) continue
+        if (next === current) next = { ...current }
+        next[scope] = saved.filter((item) => item !== key)
+      }
+      return next
     })
   }
   const selectCloseSuccessor = (key: string | null, activeBrowserTabId = browserState?.active_tab_id) => {
@@ -342,7 +346,7 @@ function App() {
     const key = `tool:${tab}`
     const successor = closeSuccessor(key)
     setOpenToolTabs((current) => current.filter((item) => item !== tab))
-    pruneSavedTab(key)
+    pruneSavedTab(key, true)
     if (workbenchTab === tab) selectCloseSuccessor(successor)
   }
   const closeBrowserTab = (tabId: string) => {
@@ -456,7 +460,10 @@ function App() {
             tabOrder={workbenchOrderBySession[workbenchOrderScope]}
             onTabReorder={(order) => {
               workbenchSelectionVersionRef.current += 1
-              setWorkbenchOrderBySession((current) => ({ ...current, [workbenchOrderScope]: order }))
+              setWorkbenchOrderBySession((current) => ({
+                ...current,
+                [workbenchOrderScope]: reorderVisibleWorkbenchTabIds(current[workbenchOrderScope] ?? [], order),
+              }))
             }}
             onToolClose={closeToolTab}
             browserEnabled={browserEnabled}
