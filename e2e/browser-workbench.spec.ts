@@ -313,6 +313,9 @@ test("workbench tabs follow human commands and an agent-opened popup on desktop 
   let activeTabId = "tab-a"
   let pageEpoch = 1
   let frameSeq = 1
+  let delayedCloseId: string | null = null
+  let closeHeld = false
+  let releaseClose: () => void = () => {}
   const viewport = { width: 640, height: 480 }
   const state = () => {
     const active = tabs.find((tab) => tab.tab_id === activeTabId)!
@@ -372,6 +375,12 @@ test("workbench tabs follow human commands and an agent-opened popup on desktop 
       } else if (path === `${browserPath}/tabs/activate`) {
         switchTo(String(body.tab_id))
       } else if (path === `${browserPath}/tabs/close`) {
+        if (body.tab_id === delayedCloseId) {
+          await new Promise<void>((resolve) => {
+            releaseClose = resolve
+            closeHeld = true
+          })
+        }
         const index = tabs.findIndex((tab) => tab.tab_id === body.tab_id)
         expect(index).toBeGreaterThanOrEqual(0)
         const wasActive = activeTabId === body.tab_id
@@ -492,8 +501,24 @@ test("workbench tabs follow human commands and an agent-opened popup on desktop 
     await lastHandle.focus()
     for (let move = 0; move < 7; move++) await lastHandle.press("Alt+ArrowLeft")
     await expect.poll(async () => (await order())[0]).toBe("Extra 8")
+    await panel.getByRole("button", { name: "打开工作面板标签页" }).click()
+    await page.getByRole("menuitem", { name: "检查器" }).click()
+    await panel.getByRole("tab", { name: "浏览器标签页 1：Extra 8" }).click()
+    delayedCloseId = "extra-8"
     await panel.getByRole("button", { name: "关闭浏览器标签页 1：Extra 8" }).click()
+    await expect.poll(() => closeHeld).toBe(true)
+    await panel.getByRole("tab", { name: "检查器" }).click()
+    releaseClose()
+    await expect(panel.getByRole("tab", { name: /Extra 8/ })).toHaveCount(0)
+    await expect(panel.getByRole("tab", { name: "检查器" })).toHaveAttribute("aria-selected", "true")
+    await panel.getByRole("tab", { name: "浏览器标签页 7：Extra 7" }).click()
+    const nextHandle = panel.getByRole("button", { name: "调整Extra 7标签页顺序" })
+    await nextHandle.focus()
+    for (let move = 0; move < 6; move++) await nextHandle.press("Alt+ArrowLeft")
+    await expect.poll(async () => (await order())[0]).toBe("Extra 7")
+    await panel.getByRole("button", { name: "关闭浏览器标签页 1：Extra 7" }).click()
     await expect(panel.getByRole("tab", { name: "浏览器标签页 1：Alpha" })).toHaveAttribute("aria-selected", "true")
+    await expect(browser.getByRole("textbox", { name: "网页地址" })).toHaveValue("https://a.test/")
   }
 })
 

@@ -107,6 +107,7 @@ function App() {
 
   const [workbenchOpen, setWorkbenchOpen] = useState(false)
   const [workbenchTab, setWorkbenchTab] = useState<RightWorkbenchTab | null>(null)
+  const workbenchSelectionVersionRef = useRef(0)
   const [openToolTabs, setOpenToolTabs] = useState<WorkbenchToolTab[]>([])
   const [workbenchOrderBySession, setWorkbenchOrderBySession] = useState<Record<string, string[]>>({})
   const [browserEntryOpen, setBrowserEntryOpen] = useState(false)
@@ -266,6 +267,7 @@ function App() {
     })
   }
   const selectCloseSuccessor = (key: string | null, activeBrowserTabId = browserState?.active_tab_id) => {
+    workbenchSelectionVersionRef.current += 1
     if (key?.startsWith("tool:")) {
       setWorkbenchTab(key.slice("tool:".length) as WorkbenchToolTab)
     } else if (key?.startsWith("browser:")) {
@@ -278,6 +280,7 @@ function App() {
     }
   }
   const openWorkbench = (tab: RightWorkbenchTab) => {
+    workbenchSelectionVersionRef.current += 1
     if (tab === "browser") {
       setBrowserStartedSessionId(currentSessionId)
       const resumeLegacyPage = browserReadySessionId === currentSessionId
@@ -307,10 +310,13 @@ function App() {
     const key = `browser:${tabId}`
     const successor = closeSuccessor(key)
     const wasSelected = workbenchTab === "browser" && browserState?.active_tab_id === tabId && !browserEntryOpen
+    const selectionVersion = workbenchSelectionVersionRef.current
     void browser.closeTab(tabId).then((closed) => {
       if (!closed) return
       pruneSavedTab(key)
-      if (wasSelected) selectCloseSuccessor(successor, closed.active_tab_id)
+      if (wasSelected && workbenchSelectionVersionRef.current === selectionVersion) {
+        selectCloseSuccessor(successor, closed.active_tab_id)
+      }
     })
   }
   const openLinkInApp = (url: string) => {
@@ -411,6 +417,7 @@ function App() {
             activeBrowserTabId={browser.readySessionId === currentSessionId ? browser.state?.active_tab_id : null}
             browserBusy={browser.busy || Boolean(browser.state?.pending_dialog)}
             onBrowserActivate={(tabId) => {
+              workbenchSelectionVersionRef.current += 1
               setWorkbenchTab("browser")
               setBrowserEntryOpen(false)
               if (tabId !== browser.state?.active_tab_id) void browser.activateTab(tabId)
@@ -418,6 +425,7 @@ function App() {
             onBrowserClose={closeBrowserTab}
             onTabChange={(tab) => {
               if (tab === null) {
+                workbenchSelectionVersionRef.current += 1
                 setWorkbenchTab(null)
                 setBrowserEntryOpen(false)
                 return
