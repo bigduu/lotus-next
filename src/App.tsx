@@ -133,6 +133,7 @@ function App() {
   const selectedWorkbenchTab = !browserEnabled && workbenchTab === "browser" ? null : workbenchTab
 
   useEffect(() => {
+    if (browserReadySessionId !== currentSessionId) return
     setWorkbenchOrderBySession((current) => {
       const saved = current[workbenchOrderScope] ?? []
       const next = visibleWorkbenchTabIds(openToolTabs, browserTabsForWorkbench, saved)
@@ -140,7 +141,7 @@ function App() {
         ? current
         : { ...current, [workbenchOrderScope]: next }
     })
-  }, [workbenchOrderScope, openToolTabs, browserTabsForWorkbench])
+  }, [workbenchOrderScope, openToolTabs, browserTabsForWorkbench, browserReadySessionId, currentSessionId])
 
   useEffect(() => {
     if (browserEntrySessionRef.current?.sessionId !== currentSessionId) {
