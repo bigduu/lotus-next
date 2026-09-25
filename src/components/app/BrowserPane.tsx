@@ -46,16 +46,21 @@ export function BrowserPaneView({
   sessionId,
   active,
   newTabEntry = false,
+  entryDraft,
+  onEntryDraftChange,
   onNewTabOpened,
   browser,
 }: {
   sessionId: string | null
   active: boolean
   newTabEntry?: boolean
+  entryDraft?: string
+  onEntryDraftChange?: (draft: string) => void
   onNewTabOpened?: () => void
   browser: ReturnType<typeof useBrowserSession>
 }) {
   const [address, setAddress] = useState("")
+  const enteredAddress = newTabEntry ? entryDraft ?? address : address
   const [addressError, setAddressError] = useState<string | null>(null)
   const [saveError, setSaveError] = useState<string | null>(null)
   const [promptInput, setPromptInput] = useState<{ dialogId: string; value: string; edited: boolean } | null>(null)
@@ -185,7 +190,7 @@ export function BrowserPaneView({
   const navigate = (event: FormEvent) => {
     event.preventDefault()
     if (dialogBlocked) return
-    const url = normalizeBrowserAddress(address)
+    const url = normalizeBrowserAddress(enteredAddress)
     if (!url) {
       setAddressError("请输入有效的 http 或 https 地址。")
       return
@@ -318,9 +323,10 @@ export function BrowserPaneView({
           <input
             type="text"
             aria-label="网页地址"
-            value={address}
+            value={enteredAddress}
             onChange={(event) => {
-              setAddress(event.target.value)
+              if (newTabEntry && onEntryDraftChange) onEntryDraftChange(event.target.value)
+              else setAddress(event.target.value)
               setAddressError(null)
             }}
             placeholder="https://example.com"

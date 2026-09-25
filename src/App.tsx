@@ -111,9 +111,12 @@ function App() {
   const [openToolTabs, setOpenToolTabs] = useState<WorkbenchToolTab[]>([])
   const [workbenchOrderBySession, setWorkbenchOrderBySession] = useState<Record<string, string[]>>({})
   const [browserEntryOpen, setBrowserEntryOpen] = useState(false)
-  const browserEntrySessionRef = useRef<string | null>(null)
+  const [browserEntryDraft, setBrowserEntryDraft] = useState("")
+  const [browserEntryTouched, setBrowserEntryTouched] = useState(false)
+  const browserEntrySessionRef = useRef<{ sessionId: string | null; initialStateMissing: boolean } | null>(null)
   const [browserStartedSessionId, setBrowserStartedSessionId] = useState<string | null>(null)
   const [pendingBrowserNavigation, setPendingBrowserNavigation] = useState<{ sessionId: string; url: string } | null>(null)
+  const pendingBrowserNavigationAttemptRef = useRef<typeof pendingBrowserNavigation>(null)
   const [reviewTargetFilePath, setReviewTargetFilePath] = useState<string | null>(null)
   const isMobile = useIsMobile()
   const isWide = useIsWide()
@@ -125,7 +128,7 @@ function App() {
       workbenchTab === "browser" || browserStartedSessionId === currentSessionId
     ),
   )
-  const { readySessionId: browserReadySessionId, state: browserState, openUrlInNewTab } = browser
+  const { readySessionId: browserReadySessionId, state: browserState, openUrlInNewTab, hasPendingDialog } = browser
   const browserTabsForWorkbench = browserReadySessionId === currentSessionId ? browserState?.tabs : null
   const selectedWorkbenchTab = !browserEnabled && workbenchTab === "browser" ? null : workbenchTab
 
@@ -140,7 +143,11 @@ function App() {
   }, [workbenchOrderScope, openToolTabs, browserTabsForWorkbench])
 
   useEffect(() => {
-    if (browserEntrySessionRef.current !== currentSessionId) setBrowserEntryOpen(false)
+    if (browserEntrySessionRef.current?.sessionId !== currentSessionId) {
+      setBrowserEntryOpen(false)
+      setBrowserEntryDraft("")
+      setBrowserEntryTouched(false)
+    }
   }, [currentSessionId])
 
   useEffect(() => {
@@ -155,6 +162,7 @@ function App() {
     if (!pendingBrowserNavigation) return
     if (pendingBrowserNavigation.sessionId !== currentSessionId) {
       setPendingBrowserNavigation(null)
+      pendingBrowserNavigationAttemptRef.current = null
       return
     }
     if (browserReadySessionId !== currentSessionId || !browserState) return
@@ -162,11 +170,29 @@ function App() {
       setBrowserEntryOpen(false)
       return
     }
-    setPendingBrowserNavigation(null)
+    if (pendingBrowserNavigationAttemptRef.current === pendingBrowserNavigation) return
+    pendingBrowserNavigationAttemptRef.current = pendingBrowserNavigation
     void openUrlInNewTab(pendingBrowserNavigation.url).then((opened) => {
-      if (opened) setBrowserEntryOpen(false)
+      if (pendingBrowserNavigationAttemptRef.current !== pendingBrowserNavigation) return
+      pendingBrowserNavigationAttemptRef.current = null
+      if (opened) {
+        setPendingBrowserNavigation((current) => current === pendingBrowserNavigation ? null : current)
+        setBrowserEntryOpen(false)
+      } else if (!hasPendingDialog()) {
+        setPendingBrowserNavigation((current) => current === pendingBrowserNavigation ? null : current)
+      }
     })
-  }, [pendingBrowserNavigation, currentSessionId, browserReadySessionId, browserState, openUrlInNewTab])
+  }, [pendingBrowserNavigation, currentSessionId, browserReadySessionId, browserState, openUrlInNewTab, hasPendingDialog])
+  useEffect(() => {
+    if (!browserEntryOpen || browserReadySessionId !== currentSessionId || !browserState) return
+    const origin = browserEntrySessionRef.current
+    if (origin?.sessionId !== currentSessionId || !origin.initialStateMissing) return
+    origin.initialStateMissing = false
+    const hasPage = browserState.tabs
+      ? browserState.tabs.length > 0
+      : Boolean(browserState.url && browserState.url !== "about:blank")
+    if (hasPage && !browserEntryTouched && !pendingBrowserNavigation) setBrowserEntryOpen(false)
+  }, [browserEntryOpen, browserReadySessionId, currentSessionId, browserState, browserEntryTouched, pendingBrowserNavigation])
   useEffect(() => {
     if (browserReadySessionId !== currentSessionId || !browserState?.tabs) return
     if (browserState.tabs.length > 0) {
@@ -296,7 +322,12 @@ function App() {
       if (resumeLegacyPage) {
         setBrowserEntryOpen(false)
       } else {
-        browserEntrySessionRef.current = currentSessionId
+        browserEntrySessionRef.current = {
+          sessionId: currentSessionId,
+          initialStateMissing: browserReadySessionId !== currentSessionId || !browserState,
+        }
+        setBrowserEntryDraft("")
+        setBrowserEntryTouched(false)
         setBrowserEntryOpen(true)
       }
     } else {
@@ -478,7 +509,15 @@ function App() {
                 sessionId={currentSessionId}
                 active={workbenchTab === "browser"}
                 newTabEntry={browserEntryOpen}
-                onNewTabOpened={() => setBrowserEntryOpen(false)}
+                entryDraft={browserEntryDraft}
+                onEntryDraftChange={(draft) => {
+                  setBrowserEntryDraft(draft)
+                  setBrowserEntryTouched(true)
+                }}
+                onNewTabOpened={() => {
+                  setBrowserEntryOpen(false)
+                  setBrowserEntryDraft("")
+                }}
                 browser={browser}
               />
             ) : null}
