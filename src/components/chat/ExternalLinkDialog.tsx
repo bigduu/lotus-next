@@ -22,6 +22,15 @@ type OpenInApp = (url: string) => void | Promise<void>
 
 const OpenInAppContext = createContext<OpenInApp | null>(null)
 
+const isWebUrl = (url: string): boolean => {
+  try {
+    const parsed = new URL(url)
+    return (parsed.protocol === "http:" || parsed.protocol === "https:") && Boolean(parsed.hostname)
+  } catch {
+    return false
+  }
+}
+
 export function ExternalLinkProvider({
   children,
   onOpenInApp,
@@ -88,7 +97,7 @@ export function ExternalLinkDialog({ url, isOpen, onClose }: LinkSafetyModalProp
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="min-w-48" style={{ zIndex: 60 }}>
-              {openInApp ? (
+              {openInApp && isWebUrl(url) ? (
                 <DropdownMenuItem
                   onSelect={() => void perform(() => openInApp(url), "无法在应用内打开链接，请重试。")}
                 >

@@ -113,10 +113,20 @@ function App() {
   const browserEnabled = !isMobile && !isPhoneDevice()
   const browser = useBrowserSession(
     currentSessionId,
-    browserEnabled && workbenchOpen && browserStartedSessionId === currentSessionId,
+    browserEnabled && workbenchOpen && (
+      workbenchTab === "browser" || browserStartedSessionId === currentSessionId
+    ),
   )
   const { readySessionId: browserReadySessionId, state: browserState, openUrlInNewTab } = browser
   const selectedWorkbenchTab = !browserEnabled && workbenchTab === "browser" ? "inspector" : workbenchTab
+
+  useEffect(() => {
+    // A selected browser tab follows the newly selected chat. Remember that
+    // chat so switching to another workbench tab keeps its browser session live.
+    if (browserEnabled && workbenchOpen && workbenchTab === "browser") {
+      setBrowserStartedSessionId(currentSessionId)
+    }
+  }, [browserEnabled, currentSessionId, workbenchOpen, workbenchTab])
 
   useEffect(() => {
     if (!pendingBrowserNavigation) return
