@@ -400,10 +400,56 @@ test("workbench tabs follow human commands and an agent-opened popup on desktop 
   await panel.getByRole("button", { name: "关闭浏览器标签页 3：Popup" }).click()
   await expect(panel.getByRole("tab", { name: "浏览器标签页 2：Beta" })).toHaveAttribute("aria-selected", "true")
   await expect(image).toBeVisible()
+
+  await panel.getByRole("button", { name: "打开工作面板标签页" }).click()
+  await page.getByRole("menuitem", { name: "检查器" }).click()
+  const tablist = panel.getByRole("tablist", { name: "工作面板标签页" })
+  const order = () => tablist.locator('[role="tab"]').allTextContents()
+  await expect.poll(order).toEqual(["检查器", "Alpha", "Beta"])
+  const betaHandle = panel.getByRole("button", { name: "调整Beta标签页顺序" })
+  await betaHandle.focus()
+  await betaHandle.press("Alt+ArrowLeft")
+  await betaHandle.press("Alt+ArrowLeft")
+  await expect.poll(order).toEqual(["Beta", "检查器", "Alpha"])
+  await expect(panel.getByRole("tab", { name: "检查器" })).toHaveAttribute("aria-selected", "true")
+  await panel.getByRole("button", { name: "调整Alpha标签页顺序" }).dragTo(betaHandle)
+  await expect.poll(order).toEqual(["Alpha", "Beta", "检查器"])
+  const reorderedScreenshot = testInfo.outputPath(`reordered-workbench-${testInfo.project.name}.png`)
+  await page.screenshot({ path: reorderedScreenshot })
+  await testInfo.attach(`reordered-workbench-${testInfo.project.name}`, { path: reorderedScreenshot, contentType: "image/png" })
+  await panel.getByRole("tab", { name: "浏览器标签页 2：Beta" }).click()
+  await expect(browser.getByRole("textbox", { name: "网页地址" })).toHaveValue("https://b.test/")
+  await panel.getByRole("button", { name: "关闭检查器标签页" }).click()
+  await expect.poll(order).toEqual(["Alpha", "Beta"])
+  await expect(panel.getByRole("tab", { name: "浏览器标签页 2：Beta" })).toHaveAttribute("aria-selected", "true")
+  await betaHandle.focus()
+  await betaHandle.press("Space")
+  await betaHandle.press("Escape")
+  await expect.poll(order).toEqual(["Alpha", "Beta"])
+  await panel.getByRole("button", { name: "收起工作面板" }).click()
+  await page.getByRole("button", { name: "打开侧边面板" }).click()
+  await expect.poll(order).toEqual(["Alpha", "Beta"])
   expect(observation.pageErrors).toEqual([])
   const tabsScreenshot = testInfo.outputPath(`browser-top-tabs-${testInfo.project.name}.png`)
   await page.screenshot({ path: tabsScreenshot })
   await testInfo.attach(`browser-tabs-${testInfo.project.name}`, { path: tabsScreenshot, contentType: "image/png" })
+  if (testInfo.project.name === "tablet-chromium") {
+    for (let index = 3; index <= 8; index++) {
+      const tabId = `extra-${index}`
+      tabs.push({ tab_id: tabId, url: `https://${index}.test/`, title: `Extra ${index}`, active: false })
+      pictures[tabId] = pictures["tab-b"]
+    }
+    switchTo("extra-8")
+    const lastTab = panel.getByRole("tab", { name: "浏览器标签页 8：Extra 8" })
+    await expect(lastTab).toHaveAttribute("aria-selected", "true")
+    await expect.poll(async () => {
+      const list = await tablist.boundingBox()
+      const active = await lastTab.boundingBox()
+      return Boolean(list && active && active.x >= list.x && active.x + active.width <= list.x + list.width + 1)
+    }).toBe(true)
+    const overflow = await page.locator("html").evaluate((element) => element.scrollWidth - element.clientWidth)
+    expect(overflow).toBeLessThanOrEqual(1)
+  }
 })
 
 test("phone workbench has no browser entry or browser session requests", async ({ page }, testInfo) => {

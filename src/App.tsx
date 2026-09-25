@@ -107,6 +107,7 @@ function App() {
   const [workbenchOpen, setWorkbenchOpen] = useState(false)
   const [workbenchTab, setWorkbenchTab] = useState<RightWorkbenchTab | null>(null)
   const [openToolTabs, setOpenToolTabs] = useState<WorkbenchToolTab[]>([])
+  const [workbenchOrderBySession, setWorkbenchOrderBySession] = useState<Record<string, string[]>>({})
   const [browserEntryOpen, setBrowserEntryOpen] = useState(false)
   const browserEntryOriginRef = useRef<{ sessionId: string | null; tabId: string | null | undefined } | null>(null)
   const [browserStartedSessionId, setBrowserStartedSessionId] = useState<string | null>(null)
@@ -115,6 +116,7 @@ function App() {
   const isMobile = useIsMobile()
   const isWide = useIsWide()
   const browserEnabled = !isMobile && !isPhoneDevice()
+  const workbenchOrderScope = currentSessionId ?? "__no_session__"
   const browser = useBrowserSession(
     currentSessionId,
     browserEnabled && workbenchOpen && (
@@ -347,6 +349,8 @@ function App() {
             width={workbenchResize.width}
             activeTab={selectedWorkbenchTab}
             openToolTabs={openToolTabs}
+            tabOrder={workbenchOrderBySession[workbenchOrderScope]}
+            onTabReorder={(order) => setWorkbenchOrderBySession((current) => ({ ...current, [workbenchOrderScope]: order }))}
             onToolClose={closeToolTab}
             browserEnabled={browserEnabled}
             browserSessionAvailable={Boolean(currentSessionId)}

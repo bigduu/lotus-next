@@ -1,5 +1,7 @@
-import type { ReactNode } from "react"
-import { ArrowLeft, Bot, FileDiff, Globe2, Plus, SlidersHorizontal, X } from "lucide-react"
+import { useEffect, useRef, type ReactNode } from "react"
+import { DragDropProvider } from "@dnd-kit/react"
+import { isSortable, useSortable } from "@dnd-kit/react/sortable"
+import { ArrowLeft, Bot, FileDiff, Globe2, GripVertical, Plus, SlidersHorizontal, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
@@ -21,11 +23,59 @@ const toolEntries = [
   { id: "session", label: "并排会话", description: "打开另一个会话", icon: Bot },
 ] as const
 
+type VisibleTab =
+  | { key: string; kind: "tool"; tool: WorkbenchToolTab }
+  | { key: string; kind: "browser"; tab: BrowserTabSummary }
+
+function SortableWorkbenchTab({
+  id,
+  index,
+  title,
+  selected,
+  onMove,
+  children,
+}: {
+  id: string
+  index: number
+  title: string
+  selected: boolean
+  onMove: (id: string, direction: -1 | 1) => void
+  children: ReactNode
+}) {
+  const { ref, handleRef, isDragging } = useSortable({ id, index })
+  return (
+    <div
+      ref={ref}
+      className={cn("flex h-9 min-w-0 flex-none items-center rounded-md border text-muted-foreground", selected ? "border-border bg-card text-foreground" : "border-transparent bg-transparent")}
+      style={{ maxWidth: 208, opacity: isDragging ? 0.6 : 1 }}
+    >
+      <button
+        ref={handleRef}
+        type="button"
+        aria-label={`调整${title}标签页顺序`}
+        aria-keyshortcuts="Alt+ArrowLeft Alt+ArrowRight"
+        title="拖动排序；按 Alt + 左右方向键移动"
+        className="flex size-5 shrink-0 items-center justify-center rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        style={{ marginLeft: 4, touchAction: "none", cursor: "grab" }}
+        onKeyDown={(event) => {
+          if (!event.altKey || (event.key !== "ArrowLeft" && event.key !== "ArrowRight")) return
+          event.preventDefault()
+          event.stopPropagation()
+          onMove(id, event.key === "ArrowLeft" ? -1 : 1)
+        }}
+      ><GripVertical className="size-3.5" aria-hidden="true" /></button>
+      {children}
+    </div>
+  )
+}
+
 export function RightWorkbench({
   activeTab,
   openToolTabs,
   onTabChange,
   onToolClose,
+  tabOrder = [],
+  onTabReorder,
   onClose,
   inspector,
   review,
@@ -47,6 +97,8 @@ export function RightWorkbench({
   openToolTabs: WorkbenchToolTab[]
   onTabChange: (tab: RightWorkbenchTab | null) => void
   onToolClose: (tab: WorkbenchToolTab) => void
+  tabOrder?: string[]
+  onTabReorder?: (order: string[]) => void
   onClose: () => void
   inspector: ReactNode
   review: ReactNode
@@ -68,7 +120,32 @@ export function RightWorkbench({
     ? `browser:${activeBrowserTabId}`
     : "browser-entry"
   const selectedValue = activeTab === "browser" ? browserValue : activeTab ?? "launcher"
-  const hasTabs = openToolTabs.length > 0 || Boolean(browserTabs?.length)
+  const availableTabs: VisibleTab[] = [
+    ...openToolTabs.map((tool): VisibleTab => ({ key: `tool:${tool}`, kind: "tool", tool })),
+    ...(browserEnabled ? browserTabs ?? [] : []).map((tab): VisibleTab => ({ key: `browser:${tab.tab_id}`, kind: "browser", tab })),
+  ]
+  const tabByKey = new Map(availableTabs.map((tab) => [tab.key, tab]))
+  const orderedTabs = [
+    ...tabOrder.filter((key, index) => tabOrder.indexOf(key) === index).map((key) => tabByKey.get(key)).filter((tab): tab is VisibleTab => Boolean(tab)),
+    ...availableTabs.filter((tab) => !tabOrder.includes(tab.key)),
+  ]
+  const visibleTabIds = orderedTabs.map((tab) => tab.key)
+  const tabListRef = useRef<HTMLDivElement>(null)
+  const visibleOrderKey = visibleTabIds.join("|")
+  useEffect(() => {
+    tabListRef.current?.querySelector<HTMLElement>('[role="tab"][data-state="active"]')
+      ?.scrollIntoView?.({ block: "nearest", inline: "nearest" })
+  }, [selectedValue, visibleOrderKey])
+  const hasTabs = orderedTabs.length > 0
+  const moveTab = (id: string, direction: -1 | 1) => {
+    const from = visibleTabIds.indexOf(id)
+    const to = from + direction
+    if (from < 0 || to < 0 || to >= visibleTabIds.length) return
+    const next = [...visibleTabIds]
+    const [moved] = next.splice(from, 1)
+    next.splice(to, 0, moved)
+    onTabReorder?.(next)
+  }
   const openEntry = (entry: RightWorkbenchTab) => {
     if (entry === "browser" && (!browserEnabled || !browserSessionAvailable || browserBusy)) return
     onTabChange(entry)
@@ -88,53 +165,64 @@ export function RightWorkbench({
     >
       <div className="flex shrink-0 items-center gap-1 border-b bg-muted/50 px-2 pt-1">
         {hasTabs ? (
-          <TabsList aria-label="工作面板标签页" className="min-w-0 flex-1 justify-start overflow-x-auto rounded-none bg-transparent p-0">
-            {openToolTabs.map((tool) => {
-              const entry = toolEntries.find((item) => item.id === tool)!
-              const Icon = entry.icon
-              const title = tool === "session" ? sessionTitle || entry.label : entry.label
-              return (
-                <div key={tool} className={cn("flex h-9 min-w-0 flex-none items-center rounded-md border", activeTab === tool ? "border-border bg-card" : "border-transparent")}>
-                  <TabsTrigger value={tool} title={title} style={{ maxWidth: 176 }} className="h-full min-w-0 justify-start bg-transparent px-2">
-                    <Icon className="size-4" />
-                    <span className="truncate">{title}</span>
-                  </TabsTrigger>
-                  <button
-                    type="button"
-                    aria-label={`关闭${entry.label}标签页`}
-                    title={`关闭${entry.label}`}
-                    className="mr-1 flex size-6 shrink-0 items-center justify-center rounded-sm outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring"
-                    onClick={() => onToolClose(tool)}
-                  ><X className="size-3.5" aria-hidden="true" /></button>
-                </div>
-              )
-            })}
-            {browserEnabled ? browserTabs?.map((tab, index) => {
-              const title = tab.title || tab.url || "新标签页"
-              const isActive = activeTab === "browser" && !browserEntryOpen && tab.tab_id === activeBrowserTabId
-              return (
-                <div key={tab.tab_id} style={{ maxWidth: 208 }} className={cn("flex h-9 min-w-0 flex-none items-center rounded-md border text-muted-foreground", isActive ? "border-border bg-card text-foreground" : "border-transparent bg-transparent")}>
-                  <TabsTrigger
-                    value={`browser:${tab.tab_id}`}
-                    aria-label={`浏览器标签页 ${index + 1}：${title}`}
-                    title={title}
-                    className="h-full min-w-0 flex-1 justify-start bg-transparent px-2 text-xs"
-                  >
-                    <Globe2 className="size-3.5" />
-                    <span className="truncate">{title}</span>
-                  </TabsTrigger>
-                  <button
-                    type="button"
-                    aria-label={`关闭浏览器标签页 ${index + 1}：${title}`}
-                    title={`关闭 ${title}`}
-                    disabled={browserBusy}
-                    className="mr-1 flex size-6 shrink-0 items-center justify-center rounded-sm outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
-                    onClick={() => onBrowserClose?.(tab.tab_id)}
-                  ><X className="size-3.5" aria-hidden="true" /></button>
-                </div>
-              )
-            }) : null}
-          </TabsList>
+          <DragDropProvider onDragEnd={(event) => {
+            if (event.canceled || !isSortable(event.operation.source)) return
+            const { initialIndex, index } = event.operation.source
+            if (initialIndex === index || initialIndex < 0 || index < 0 || index >= visibleTabIds.length) return
+            const next = [...visibleTabIds]
+            const [moved] = next.splice(initialIndex, 1)
+            next.splice(index, 0, moved)
+            onTabReorder?.(next)
+          }}>
+            <TabsList ref={tabListRef} aria-label="工作面板标签页" className="min-w-0 flex-1 justify-start overflow-x-auto rounded-none bg-transparent p-0">
+              {orderedTabs.map((item, index) => {
+                if (item.kind === "tool") {
+                  const entry = toolEntries.find((candidate) => candidate.id === item.tool)!
+                  const Icon = entry.icon
+                  const title = item.tool === "session" ? sessionTitle || entry.label : entry.label
+                  return (
+                    <SortableWorkbenchTab key={item.key} id={item.key} index={index} title={title} selected={activeTab === item.tool} onMove={moveTab}>
+                      <TabsTrigger value={item.tool} title={title} style={{ maxWidth: 176 }} className="h-full min-w-0 justify-start bg-transparent px-2">
+                        <Icon className="size-4" />
+                        <span className="truncate">{title}</span>
+                      </TabsTrigger>
+                      <button
+                        type="button"
+                        aria-label={`关闭${entry.label}标签页`}
+                        title={`关闭${entry.label}`}
+                        className="mr-1 flex size-6 shrink-0 items-center justify-center rounded-sm outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring"
+                        onClick={() => onToolClose(item.tool)}
+                      ><X className="size-3.5" aria-hidden="true" /></button>
+                    </SortableWorkbenchTab>
+                  )
+                }
+                const title = item.tab.title || item.tab.url || "新标签页"
+                const browserIndex = orderedTabs.slice(0, index).filter((candidate) => candidate.kind === "browser").length + 1
+                const isActive = activeTab === "browser" && !browserEntryOpen && item.tab.tab_id === activeBrowserTabId
+                return (
+                  <SortableWorkbenchTab key={item.key} id={item.key} index={index} title={title} selected={isActive} onMove={moveTab}>
+                    <TabsTrigger
+                      value={item.key}
+                      aria-label={`浏览器标签页 ${browserIndex}：${title}`}
+                      title={title}
+                      className="h-full min-w-0 flex-1 justify-start bg-transparent px-2 text-xs"
+                    >
+                      <Globe2 className="size-3.5" />
+                      <span className="truncate">{title}</span>
+                    </TabsTrigger>
+                    <button
+                      type="button"
+                      aria-label={`关闭浏览器标签页 ${browserIndex}：${title}`}
+                      title={`关闭 ${title}`}
+                      disabled={browserBusy}
+                      className="mr-1 flex size-6 shrink-0 items-center justify-center rounded-sm outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
+                      onClick={() => onBrowserClose?.(item.tab.tab_id)}
+                    ><X className="size-3.5" aria-hidden="true" /></button>
+                  </SortableWorkbenchTab>
+                )
+              })}
+            </TabsList>
+          </DragDropProvider>
         ) : activeTab === "browser" ? (
           <Button size="sm" variant="ghost" className="min-w-0 flex-1 justify-start" onClick={() => onTabChange(null)}>
             <ArrowLeft className="size-4" /> 工作面板
