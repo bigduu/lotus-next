@@ -214,11 +214,13 @@ test("legacy tabless browser opens its page and keeps a URL draft during model n
   const browserPath = "/api/v1/browser/sessions/all-surface-session"
   let url = "about:blank"
   let epoch = 1
+  let viewport = { width: 320, height: 240 }
+  let viewportCalls = 0
   let sawAgentUrl = false
   const navigations: string[] = []
   const state = () => ({
     page_epoch: epoch, frame_seq: epoch, url, title: url,
-    viewport: { width: 640, height: 480 }, can_go_back: false, can_go_forward: false,
+    viewport, can_go_back: false, can_go_forward: false,
   })
   await page.route("**/api/v1/browser/sessions/all-surface-session**", async (route) => {
     const request = route.request()
@@ -238,7 +240,10 @@ test("legacy tabless browser opens its page and keeps a URL draft during model n
       if (path === `${browserPath}/navigate`) {
         url = String(body.url)
         navigations.push(url)
-      } else if (path !== `${browserPath}/viewport`) {
+      } else if (path === `${browserPath}/viewport`) {
+        viewport = { width: Number(body.width), height: Number(body.height) }
+        viewportCalls += 1
+      } else {
         return route.fulfill({ status: 404 })
       }
       epoch += 1
@@ -262,6 +267,7 @@ test("legacy tabless browser opens its page and keeps a URL draft during model n
   await browser.getByRole("button", { name: "打开", exact: true }).click()
   await expect(browser.getByRole("button", { name: "刷新网页" })).toBeVisible()
   await expect(address).toHaveValue("https://draft.test/new")
+  await expect.poll(() => viewportCalls).toBeGreaterThan(0)
   await expect(panel.getByRole("tab", { name: /浏览器标签页/ })).toHaveCount(0)
   expect(navigations).toEqual(["https://draft.test/new"])
   await panel.getByRole("button", { name: "打开工作面板标签页" }).click()

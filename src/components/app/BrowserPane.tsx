@@ -114,7 +114,7 @@ export function BrowserPaneView({
   }, [sessionId, browser.state?.active_tab_id, browser.state?.page_epoch])
 
   useEffect(() => {
-    if (!sessionId || !active || newTabEntry || !browser.state?.active_tab_id || dialogBlocked || viewportWidth === undefined || viewportHeight === undefined) return
+    if (!sessionId || !active || newTabEntry || browser.state?.tabs?.length === 0 || dialogBlocked || viewportWidth === undefined || viewportHeight === undefined) return
     const element = viewportRef.current
     if (!element) return
     let timer: ReturnType<typeof setTimeout> | null = null
@@ -143,7 +143,7 @@ export function BrowserPaneView({
       window.removeEventListener("resize", measure)
       if (timer) clearTimeout(timer)
     }
-  }, [sessionId, active, newTabEntry, browser.state?.active_tab_id, dialogBlocked, viewportWidth, viewportHeight, sendViewport])
+  }, [sessionId, active, newTabEntry, browser.state?.active_tab_id, browser.state?.tabs?.length, dialogBlocked, viewportWidth, viewportHeight, sendViewport])
 
   const point = useCallback((clientX: number, clientY: number) => {
     const currentState = browser.state
