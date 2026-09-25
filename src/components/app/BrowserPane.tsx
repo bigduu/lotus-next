@@ -238,6 +238,56 @@ export function BrowserPaneView({
     }
   }
 
+  const dialogOverlay = pendingDialog ? (
+    <div className="absolute inset-0 z-20 flex items-center justify-center bg-background/70 p-3" data-browser-dialog>
+      <div ref={dialogRef} role="dialog" aria-modal="false" aria-label="网页弹窗" tabIndex={-1} className="flex max-h-full w-full max-w-md flex-col gap-3 overflow-auto rounded-lg border bg-card p-4 shadow-lg">
+        <div className="text-sm font-semibold">
+          {pendingDialog.type === "alert" ? "网页提示" : pendingDialog.type === "confirm" ? "网页确认" : "网页输入"}
+        </div>
+        <p className="break-words text-xs text-muted-foreground">来自 {dialogSourceOrigin(pendingDialog.url)}</p>
+        <p className="whitespace-pre-wrap break-words text-sm">{pendingDialog.message}</p>
+        {pendingDialog.message_truncated ? <p className="text-xs text-muted-foreground">网页提示内容已截断。</p> : null}
+        {pendingDialog.type === "prompt" ? (
+          <div className="flex flex-col gap-1">
+            <label htmlFor="browser-dialog-prompt" className="text-xs text-muted-foreground">输入内容</label>
+            <textarea
+              id="browser-dialog-prompt"
+              aria-label="弹窗输入"
+              rows={3}
+              maxLength={4096}
+              disabled={browser.busy || pendingDialog.status !== "pending"}
+              value={promptInput?.dialogId === pendingDialog.dialog_id ? promptInput.value : pendingDialog.default_value}
+              onChange={(event) => setPromptInput({
+                dialogId: pendingDialog.dialog_id,
+                value: limitPromptText(event.target.value),
+                edited: true,
+              })}
+              className="w-full resize-none rounded-md border bg-background px-2 py-1 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            />
+            {pendingDialog.default_value_truncated ? <p className="text-xs text-muted-foreground">默认内容仅显示前 4096 字；保持不改将使用网页的完整默认值。</p> : null}
+          </div>
+        ) : null}
+        {pendingDialog.status === "expired" ? (
+          <p role="status" className="text-xs text-muted-foreground">弹窗已过期，正在刷新网页状态…</p>
+        ) : (
+          <div className="flex justify-end gap-2">
+            {pendingDialog.type !== "alert" ? (
+              <Button size="sm" variant="outline" disabled={browser.busy} onClick={() => void browser.respondDialog(false)}>取消</Button>
+            ) : null}
+            <Button
+              size="sm"
+              disabled={browser.busy}
+              onClick={() => void browser.respondDialog(true,
+                pendingDialog.type === "prompt" && promptInput?.dialogId === pendingDialog.dialog_id && promptInput.edited
+                  ? promptInput.value
+                  : undefined)}
+            >确定</Button>
+          </div>
+        )}
+      </div>
+    </div>
+  ) : null
+
   if (!sessionId) {
     return (
       <div className="flex min-h-0 min-w-0 flex-1 items-center justify-center p-6 text-center text-sm text-muted-foreground">
@@ -258,7 +308,7 @@ export function BrowserPaneView({
 
   if (newTabEntry || browser.state.tabs?.length === 0) {
     return (
-      <section className="flex min-h-0 min-w-0 flex-1 flex-col items-center justify-center gap-4 p-6" aria-label="内置浏览器" data-browser-empty>
+      <section className="relative flex min-h-0 min-w-0 flex-1 flex-col items-center justify-center gap-4 p-6" aria-label="内置浏览器" data-browser-empty>
         <div className="flex size-10 items-center justify-center rounded-xl bg-muted text-muted-foreground"><Globe2 aria-hidden="true" /></div>
         <div className="text-center">
           <h2 className="text-base font-medium">{browser.state.tabs?.length ? "打开新网页" : "还没有打开网页"}</h2>
@@ -288,6 +338,7 @@ export function BrowserPaneView({
             <Button size="sm" variant="outline" onClick={browser.retry}>重试</Button>
           </div>
         ) : null}
+        {dialogOverlay}
       </section>
     )
   }
@@ -398,55 +449,7 @@ export function BrowserPaneView({
           </div>
         ) : null}
 
-        {pendingDialog ? (
-          <div className="absolute inset-0 z-20 flex items-center justify-center bg-background/70 p-3" data-browser-dialog>
-            <div ref={dialogRef} role="dialog" aria-modal="false" aria-label="网页弹窗" tabIndex={-1} className="flex max-h-full w-full max-w-md flex-col gap-3 overflow-auto rounded-lg border bg-card p-4 shadow-lg">
-              <div className="text-sm font-semibold">
-                {pendingDialog.type === "alert" ? "网页提示" : pendingDialog.type === "confirm" ? "网页确认" : "网页输入"}
-              </div>
-              <p className="break-words text-xs text-muted-foreground">来自 {dialogSourceOrigin(pendingDialog.url)}</p>
-              <p className="whitespace-pre-wrap break-words text-sm">{pendingDialog.message}</p>
-              {pendingDialog.message_truncated ? <p className="text-xs text-muted-foreground">网页提示内容已截断。</p> : null}
-              {pendingDialog.type === "prompt" ? (
-                <div className="flex flex-col gap-1">
-                  <label htmlFor="browser-dialog-prompt" className="text-xs text-muted-foreground">输入内容</label>
-                  <textarea
-                    id="browser-dialog-prompt"
-                    aria-label="弹窗输入"
-                    rows={3}
-                    maxLength={4096}
-                    disabled={browser.busy || pendingDialog.status !== "pending"}
-                    value={promptInput?.dialogId === pendingDialog.dialog_id ? promptInput.value : pendingDialog.default_value}
-                    onChange={(event) => setPromptInput({
-                      dialogId: pendingDialog.dialog_id,
-                      value: limitPromptText(event.target.value),
-                      edited: true,
-                    })}
-                    className="w-full resize-none rounded-md border bg-background px-2 py-1 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                  />
-                  {pendingDialog.default_value_truncated ? <p className="text-xs text-muted-foreground">默认内容仅显示前 4096 字；保持不改将使用网页的完整默认值。</p> : null}
-                </div>
-              ) : null}
-              {pendingDialog.status === "expired" ? (
-                <p role="status" className="text-xs text-muted-foreground">弹窗已过期，正在刷新网页状态…</p>
-              ) : (
-                <div className="flex justify-end gap-2">
-                  {pendingDialog.type !== "alert" ? (
-                    <Button size="sm" variant="outline" disabled={browser.busy} onClick={() => void browser.respondDialog(false)}>取消</Button>
-                  ) : null}
-                  <Button
-                    size="sm"
-                    disabled={browser.busy}
-                    onClick={() => void browser.respondDialog(true,
-                      pendingDialog.type === "prompt" && promptInput?.dialogId === pendingDialog.dialog_id && promptInput.edited
-                        ? promptInput.value
-                        : undefined)}
-                  >确定</Button>
-                </div>
-              )}
-            </div>
-          </div>
-        ) : null}
+        {dialogOverlay}
       </div>
     </section>
   )
