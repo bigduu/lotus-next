@@ -61,6 +61,7 @@ test("browser workbench shares one session across human input, DOM, screenshot, 
     }
     if (path === browserPath && method === "GET") {
       stateReads += 1
+      if (!hasTab && stateReads === 1) return route.fulfill({ status: 503 })
       await route.fulfill({ json: currentState() })
       return
     }
@@ -137,7 +138,7 @@ test("browser workbench shares one session across human input, DOM, screenshot, 
   const browser = panel.getByRole("region", { name: "内置浏览器" })
   await expect(browser.getByText("还没有打开网页")).toBeVisible()
   await expect(panel.getByRole("tab", { name: /浏览器标签页/ })).toHaveCount(0)
-  await expect.poll(() => stateReads).toBeGreaterThan(0)
+  await expect.poll(() => stateReads).toBeGreaterThan(1)
   await page.waitForTimeout(650)
   expect(frameRequests).toBe(0)
   const entryScreenshot = testInfo.outputPath(`browser-entry-${testInfo.project.name}.png`)

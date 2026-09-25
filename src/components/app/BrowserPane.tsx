@@ -282,7 +282,12 @@ export function BrowserPaneView({
           <Button type="submit" disabled={browser.busy}>打开</Button>
         </form>
         {addressError ? <p role="alert" className="text-sm text-destructive">{addressError}</p> : null}
-        {browser.error ? <p role="alert" className="text-sm text-destructive">{browser.error}</p> : null}
+        {browser.error ? (
+          <div role="alert" className="flex items-center gap-2 text-sm text-destructive">
+            <span>{browser.error}</span>
+            <Button size="sm" variant="outline" onClick={browser.retry}>重试</Button>
+          </div>
+        ) : null}
       </section>
     )
   }
