@@ -12,6 +12,7 @@ import "streamdown/styles.css"
 
 import { cn } from "@/lib/utils"
 import { InlineImage } from "./InlineImage"
+import { ExternalLinkDialog } from "./ExternalLinkDialog"
 import {
   lazyCodePlugin,
   remarkLocalRasterImages,
@@ -255,7 +256,10 @@ const STREAMDOWN_PLUGINS: PluginConfig = {
 // remain for generated HAST, while the fail-closed transform owns every URL.
 const SAFE_REHYPE_PLUGINS = [rehypeSanitize, defaultRehypePlugins.harden]
 const SAFE_REMARK_PLUGINS = [...Object.values(defaultRemarkPlugins), remarkLocalRasterImages]
-const LINK_SAFETY = { enabled: true } as const
+const LINK_SAFETY = {
+  enabled: true,
+  renderModal: (props: Parameters<typeof ExternalLinkDialog>[0]) => <ExternalLinkDialog {...props} />,
+} as const
 const REMEND_OPTIONS = { katex: false, linkMode: "text-only" as const }
 
 export function StreamdownMarkdown({

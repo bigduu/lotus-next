@@ -6,7 +6,6 @@ import {
   Code2,
   ExternalLink,
   LoaderCircle,
-  Plus,
   RefreshCw,
   X,
 } from "lucide-react"
@@ -39,6 +38,18 @@ export function BrowserPane({
   active: boolean
 }) {
   const browser = useBrowserSession(sessionId, active)
+  return <BrowserPaneView sessionId={sessionId} active={active} browser={browser} />
+}
+
+export function BrowserPaneView({
+  sessionId,
+  active,
+  browser,
+}: {
+  sessionId: string | null
+  active: boolean
+  browser: ReturnType<typeof useBrowserSession>
+}) {
   const [address, setAddress] = useState("")
   const [addressError, setAddressError] = useState<string | null>(null)
   const [saveError, setSaveError] = useState<string | null>(null)
@@ -61,9 +72,6 @@ export function BrowserPane({
   const visibleFrame = currentFrame && (matchesActiveBrowserPage(currentFrame, browser.state) ||
     (pendingDialog && currentFrame.active_tab_id === pendingDialog.tab_id))
     ? currentFrame
-    : null
-  const tabs = browser.state?.active_tab_id && browser.state.tabs
-    ? browser.state.tabs
     : null
 
   useEffect(() => {
@@ -224,48 +232,6 @@ export function BrowserPane({
 
   return (
     <section className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden" aria-label="内置浏览器" data-browser-pane>
-      {tabs ? (
-        <div className="flex min-w-0 shrink-0 items-center border-b bg-muted" aria-label="浏览器标签页">
-          <nav className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto px-2 py-1" aria-label="浏览器标签列表">
-            {tabs.map((tab, index) => {
-              const label = tab.title || tab.url || "新标签页"
-              const isActive = tab.tab_id === browser.state?.active_tab_id
-              return (
-                <div
-                  key={tab.tab_id}
-                  style={{ maxWidth: 176 }}
-                  className={`flex h-8 shrink-0 items-center rounded-md border text-xs ${isActive ? "border-border bg-background text-foreground shadow-sm" : "border-transparent text-muted-foreground hover:bg-muted"}`}
-                >
-                  <button
-                    type="button"
-                    aria-label={`切换到标签页 ${index + 1}：${label}`}
-                    aria-current={isActive ? "page" : undefined}
-                    title={label}
-                    disabled={controlsBlocked || isActive}
-                    className="h-full min-w-0 flex-1 truncate px-2 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default"
-                    onClick={() => void browser.activateTab(tab.tab_id)}
-                  >
-                    {label}
-                  </button>
-                  <button
-                    type="button"
-                    aria-label={`关闭标签页 ${index + 1}：${label}`}
-                    title={`关闭 ${label}`}
-                    disabled={controlsBlocked}
-                    className="mr-1 flex size-6 shrink-0 items-center justify-center rounded-sm outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
-                    onClick={() => void browser.closeTab(tab.tab_id)}
-                  >
-                    <X className="size-3.5" aria-hidden="true" />
-                  </button>
-                </div>
-              )
-            })}
-          </nav>
-          <Button size="icon" variant="ghost" className="size-8 shrink-0" aria-label="新建标签页" disabled={controlsBlocked} onClick={() => void browser.createTab()}>
-            <Plus className="size-4" />
-          </Button>
-        </div>
-      ) : null}
       <div className="flex shrink-0 items-center gap-1 border-b p-2">
         <Button size="icon" variant="ghost" aria-label="后退" disabled={!browser.state?.can_go_back || controlsBlocked} onClick={() => void browser.history("back")}>
           <ArrowLeft />
