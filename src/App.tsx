@@ -245,8 +245,16 @@ function App() {
   const openWorkbench = (tab: RightWorkbenchTab) => {
     if (tab === "browser") {
       setBrowserStartedSessionId(currentSessionId)
-      browserEntryOriginRef.current = { sessionId: currentSessionId, tabId: browserState?.active_tab_id }
-      setBrowserEntryOpen(true)
+      const resumeLegacyPage = browserReadySessionId === currentSessionId
+        && browserState !== null
+        && browserState.tabs === undefined
+        && Boolean(browserState.url && browserState.url !== "about:blank")
+      if (resumeLegacyPage) {
+        setBrowserEntryOpen(false)
+      } else {
+        browserEntryOriginRef.current = { sessionId: currentSessionId, tabId: browserState?.active_tab_id }
+        setBrowserEntryOpen(true)
+      }
     } else {
       setOpenToolTabs((current) => current.includes(tab) ? current : [...current, tab])
     }

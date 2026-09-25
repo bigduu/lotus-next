@@ -208,6 +208,9 @@ test("legacy tabless browser opens its page and keeps a URL draft during model n
     localStorage.setItem("lotus_next_last_session", "all-surface-session")
   })
   const observation = await installArtifactRuntime(page, standaloneScenario)
+  await page.route("**/api/v1/task/all-surface-session", (route) =>
+    route.fulfill({ json: { session_id: "all-surface-session", title: null, items: [] } }),
+  )
   const browserPath = "/api/v1/browser/sessions/all-surface-session"
   let url = "about:blank"
   let epoch = 1
@@ -260,6 +263,14 @@ test("legacy tabless browser opens its page and keeps a URL draft during model n
   await expect(browser.getByRole("button", { name: "刷新网页" })).toBeVisible()
   await expect(address).toHaveValue("https://draft.test/new")
   await expect(panel.getByRole("tab", { name: /浏览器标签页/ })).toHaveCount(0)
+  expect(navigations).toEqual(["https://draft.test/new"])
+  await panel.getByRole("button", { name: "打开工作面板标签页" }).click()
+  await page.getByRole("menuitem", { name: "检查器" }).click()
+  await panel.getByRole("button", { name: "关闭检查器标签页" }).click()
+  await expect(panel.getByText("还没有打开内容")).toBeVisible()
+  await panel.getByRole("button", { name: /浏览器.*输入网址后打开/ }).click()
+  await expect(browser.getByRole("button", { name: "刷新网页" })).toBeVisible()
+  await expect(address).toHaveValue("https://draft.test/new")
   expect(navigations).toEqual(["https://draft.test/new"])
   expect(observation.pageErrors).toEqual([])
 })
