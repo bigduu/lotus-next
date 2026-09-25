@@ -25,6 +25,8 @@ test("assistant link can be copied or opened as a new top-level browser tab", as
   let activeTabId: string | null = null
   let pageEpoch = 1
   let frameSeq = 1
+  let pendingDialog = false
+  const dialogId = "1".padStart(24, "0")
   const calls: Array<{ method: string; path: string; body?: Record<string, unknown> }> = []
   const state = () => {
     const active = tabs.find((tab) => tab.tab_id === activeTabId)
@@ -38,6 +40,12 @@ test("assistant link can be copied or opened as a new top-level browser tab", as
       viewport: { width: 640, height: 480 },
       can_go_back: false,
       can_go_forward: false,
+      pending_dialog: pendingDialog ? {
+        dialog_id: dialogId, tab_id: activeTabId, page_epoch: pageEpoch,
+        url: linkedUrl, type: "alert", message: "Confirm navigation",
+        message_truncated: false, default_value: "", default_value_truncated: false,
+        expires_at_ms: Date.now() + 30_000, status: "pending",
+      } : null,
     }
   }
   await page.route("**/api/v1/browser/sessions/all-surface-session**", async (route) => {
@@ -51,15 +59,22 @@ test("assistant link can be copied or opened as a new top-level browser tab", as
       return route.fulfill({ json: state() })
     }
     if (path === `${browserPath}/frame` && method === "GET") {
+      if (pendingDialog) return route.fulfill({ status: 409, json: { error: { code: "dialog_pending" } } })
       await new Promise((resolve) => setTimeout(resolve, 80))
       return route.fulfill({ status: 204 })
     }
     if (method === "POST") {
       expect(body?.expected_epoch).toBe(pageEpoch)
+      if (path === `${browserPath}/dialog`) {
+        expect(body?.dialog_id).toBe(dialogId)
+        pendingDialog = false
+        frameSeq += 1
+        return route.fulfill({ json: state() })
+      }
       if (path === `${browserPath}/tabs`) {
         expect(body?.url).toBe(linkedUrl)
-        tabs.push({ tab_id: "tab-a", url: linkedUrl, title: "Linked issue", active: true })
-        activeTabId = "tab-a"
+        activeTabId = tabs.length === 0 ? "tab-a" : "tab-b"
+        tabs.push({ tab_id: activeTabId, url: linkedUrl, title: "Linked issue", active: true })
       } else if (path !== `${browserPath}/viewport`) {
         return route.fulfill({ status: 404 })
       }
@@ -110,4 +125,18 @@ test("assistant link can be copied or opened as a new top-level browser tab", as
   const browserScreenshot = testInfo.outputPath("assistant-link-in-app-browser.png")
   await page.screenshot({ path: browserScreenshot })
   await testInfo.attach("assistant-link-in-app-browser", { path: browserScreenshot, contentType: "image/png" })
+
+  pendingDialog = true
+  const browser = panel.getByRole("region", { name: "内置浏览器" })
+  const pageDialog = browser.getByRole("dialog", { name: "网页弹窗" })
+  await expect(pageDialog).toContainText("Confirm navigation")
+  await link.click()
+  await dialog.getByRole("button", { name: "打开链接" }).click()
+  await inAppOption.click()
+  await expect(pageDialog).toBeVisible()
+  expect(calls.filter((call) => call.method === "POST" && call.path === `${browserPath}/tabs`)).toHaveLength(1)
+  await pageDialog.getByRole("button", { name: "确定" }).click()
+  await expect(panel.getByRole("tab", { name: "浏览器标签页 2：Linked issue" })).toHaveAttribute("aria-selected", "true")
+  expect(calls.filter((call) => call.method === "POST" && call.path === `${browserPath}/tabs`)).toHaveLength(2)
+  expect(observation.pageErrors).toEqual([])
 })
