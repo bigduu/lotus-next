@@ -435,7 +435,7 @@ export function Sidebar({
       <aside
         style={{ ["--sidebar-w" as string]: `${width}px` }}
         className={cn(
-          "fixed inset-y-0 left-0 z-50 flex w-[84%] max-w-xs flex-col border-r bg-sidebar text-sidebar-foreground transition-transform md:static md:w-[var(--sidebar-w)] md:max-w-none md:translate-x-0",
+          "sidebar-typography fixed inset-y-0 left-0 z-50 flex w-[84%] max-w-xs flex-col border-r bg-sidebar text-sidebar-foreground transition-transform md:static md:w-[var(--sidebar-w)] md:max-w-none md:translate-x-0",
           open ? "translate-x-0" : "-translate-x-full",
           collapsed && "md:hidden",
         )}
