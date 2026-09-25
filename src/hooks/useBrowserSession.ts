@@ -54,6 +54,7 @@ const userMessage = (error: unknown): string => {
 
 export function useBrowserSession(sessionId: string | null, active: boolean) {
   const [state, setState] = useState<BrowserState | null>(null)
+  const [readySessionId, setReadySessionId] = useState<string | null>(null)
   const [frame, setFrame] = useState<DisplayedBrowserFrame | null>(null)
   const [dom, setDom] = useState<BrowserDomSnapshot | null>(null)
   const [loading, setLoading] = useState(false)
@@ -107,6 +108,7 @@ export function useBrowserSession(sessionId: string | null, active: boolean) {
     frameSuspendedRef.current = false
     actionQueueRef.current = Promise.resolve()
     setState(null)
+    setReadySessionId(null)
     setFrame(null)
     setDom(null)
     setError(null)
@@ -125,6 +127,7 @@ export function useBrowserSession(sessionId: string | null, active: boolean) {
       const initial = await browserService.open(sessionId, controller.signal)
       if (!isCurrent()) return
       publishState(initial)
+      setReadySessionId(sessionId)
       setLoading(false)
 
       let after = 0
@@ -342,6 +345,17 @@ export function useBrowserSession(sessionId: string | null, active: boolean) {
     (url: string) => perform((scope, epoch) => browserService.navigate(scope.sessionId, url, epoch)),
     [perform],
   )
+  const openUrlInNewTab = useCallback(
+    (url: string) => perform(async (scope, epoch) => {
+      if (stateRef.current?.tabs) {
+        const created = await browserService.createTab(scope.sessionId, epoch)
+        publishState(created)
+        return browserService.navigate(scope.sessionId, url, created.page_epoch)
+      }
+      return browserService.navigate(scope.sessionId, url, epoch)
+    }, true, true),
+    [perform, publishState],
+  )
   const history = useCallback(
     (direction: BrowserHistoryDirection) =>
       perform((scope, epoch) => browserService.history(scope.sessionId, direction, epoch)),
@@ -485,6 +499,7 @@ export function useBrowserSession(sessionId: string | null, active: boolean) {
 
   return {
     state,
+    readySessionId,
     frame,
     dom,
     loading,
@@ -493,6 +508,7 @@ export function useBrowserSession(sessionId: string | null, active: boolean) {
     screenshotLoading,
     error,
     navigate,
+    openUrlInNewTab,
     history,
     viewport,
     input,

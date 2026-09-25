@@ -175,7 +175,7 @@ test("browser workbench shares one session across human input, DOM, screenshot, 
   await expect(panel.getByText("工作目录")).toBeVisible()
 })
 
-test("browser tab strip follows human commands and an agent-opened popup on desktop and tablet", async ({ page }, testInfo) => {
+test("workbench tabs follow human commands and an agent-opened popup on desktop and tablet", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name === "phone-chromium", "The phone workbench does not expose the browser")
   const picturePage = await page.context().newPage()
   await picturePage.setViewportSize({ width: 640, height: 480 })
@@ -280,19 +280,20 @@ test("browser tab strip follows human commands and an agent-opened popup on desk
   await panel.getByRole("tab", { name: "浏览器" }).click()
   const browser = panel.getByRole("region", { name: "内置浏览器" })
   const image = browser.getByAltText("网页画面")
+  await expect(browser.getByRole("navigation", { name: "浏览器标签列表" })).toHaveCount(0)
   await expect(image).toBeVisible()
   const firstImage = await image.getAttribute("src")
-  await browser.getByRole("button", { name: "新建标签页" }).click()
-  await expect(browser.getByRole("button", { name: "切换到标签页 2：Beta" })).toHaveAttribute("aria-current", "page")
+  await panel.getByRole("button", { name: "新建浏览器标签页" }).click()
+  await expect(panel.getByRole("tab", { name: "浏览器标签页 2：Beta" })).toHaveAttribute("aria-selected", "true")
   await expect(browser.getByRole("textbox", { name: "网页地址" })).toHaveValue("https://b.test/")
   await expect.poll(() => image.getAttribute("src")).not.toBe(firstImage)
-  await browser.getByRole("button", { name: "切换到标签页 1：Alpha" }).click()
+  await panel.getByRole("tab", { name: "浏览器标签页 1：Alpha" }).click()
   await expect(browser.getByRole("textbox", { name: "网页地址" })).toHaveValue("https://a.test/")
 
   // A model-opened popup changes Bamboo authority without a Lotus command.
   tabs.push({ tab_id: "tab-c", url: "https://c.test/", title: "Popup", active: false })
   switchTo("tab-c")
-  await expect(browser.getByRole("button", { name: "切换到标签页 3：Popup" })).toHaveAttribute("aria-current", "page")
+  await expect(panel.getByRole("tab", { name: "浏览器标签页 3：Popup" })).toHaveAttribute("aria-selected", "true")
   await expect(browser.getByRole("textbox", { name: "网页地址" })).toHaveValue("https://c.test/")
   await browser.getByRole("button", { name: "查看 DOM" }).click()
   await expect(browser.getByLabel("DOM 快照", { exact: true })).toContainText("tab-c")
@@ -301,11 +302,13 @@ test("browser tab strip follows human commands and an agent-opened popup on desk
   await browser.getByRole("button", { name: "保存网页截图" }).click()
   const download = await downloadPromise
   expect(await readFile(await download.path())).toEqual(pictures["tab-c"])
-  await browser.getByRole("button", { name: "关闭标签页 3：Popup" }).click()
-  await expect(browser.getByRole("button", { name: "切换到标签页 2：Beta" })).toHaveAttribute("aria-current", "page")
+  await panel.getByRole("button", { name: "关闭浏览器标签页 3：Popup" }).click()
+  await expect(panel.getByRole("tab", { name: "浏览器标签页 2：Beta" })).toHaveAttribute("aria-selected", "true")
   await expect(image).toBeVisible()
   expect(observation.pageErrors).toEqual([])
-  await testInfo.attach(`browser-tabs-${testInfo.project.name}`, { body: await page.screenshot(), contentType: "image/png" })
+  const tabsScreenshot = testInfo.outputPath(`browser-top-tabs-${testInfo.project.name}.png`)
+  await page.screenshot({ path: tabsScreenshot })
+  await testInfo.attach(`browser-tabs-${testInfo.project.name}`, { path: tabsScreenshot, contentType: "image/png" })
 })
 
 test("phone workbench has no browser entry or browser session requests", async ({ page }, testInfo) => {

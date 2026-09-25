@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react"
 import { copyText } from "@shared/utils/clipboard"
 import { Inspector } from "@/components/chat/Inspector"
 import { CommandPalette } from "@/components/chat/CommandPalette"
+import { ExternalLinkProvider } from "@/components/chat/ExternalLinkDialog"
 import { LazySettings } from "@/components/chat/LazySettings"
 import { Onboarding } from "@/components/chat/Onboarding"
 import { WorkspacePicker } from "@/components/chat/WorkspacePicker"
@@ -19,7 +20,8 @@ import { ChatPane } from "@/components/app/ChatPane"
 import { SubagentTranscriptPane } from "@/components/app/SubagentTranscriptPane"
 import { AvailabilityBanner } from "@/components/app/AvailabilityBanner"
 import { ReviewPane } from "@/components/app/ReviewPane"
-import { BrowserPane } from "@/components/app/BrowserPane"
+import { BrowserPaneView } from "@/components/app/BrowserPane"
+import { useBrowserSession } from "@/hooks/useBrowserSession"
 import { isPhoneDevice } from "@/lib/browserAvailability"
 import {
   RightWorkbench,
@@ -103,11 +105,29 @@ function App() {
 
   const [workbenchOpen, setWorkbenchOpen] = useState(false)
   const [workbenchTab, setWorkbenchTab] = useState<RightWorkbenchTab>("inspector")
+  const [browserStartedSessionId, setBrowserStartedSessionId] = useState<string | null>(null)
+  const [pendingBrowserNavigation, setPendingBrowserNavigation] = useState<{ sessionId: string; url: string } | null>(null)
   const [reviewTargetFilePath, setReviewTargetFilePath] = useState<string | null>(null)
   const isMobile = useIsMobile()
   const isWide = useIsWide()
   const browserEnabled = !isMobile && !isPhoneDevice()
+  const browser = useBrowserSession(
+    currentSessionId,
+    browserEnabled && workbenchOpen && browserStartedSessionId === currentSessionId,
+  )
+  const { readySessionId: browserReadySessionId, state: browserState, openUrlInNewTab } = browser
   const selectedWorkbenchTab = !browserEnabled && workbenchTab === "browser" ? "inspector" : workbenchTab
+
+  useEffect(() => {
+    if (!pendingBrowserNavigation) return
+    if (pendingBrowserNavigation.sessionId !== currentSessionId) {
+      setPendingBrowserNavigation(null)
+      return
+    }
+    if (browserReadySessionId !== currentSessionId || !browserState) return
+    setPendingBrowserNavigation(null)
+    void openUrlInNewTab(pendingBrowserNavigation.url)
+  }, [pendingBrowserNavigation, currentSessionId, browserReadySessionId, browserState, openUrlInNewTab])
   // Draggable, persisted widths for the resizable side panels (desktop).
   const sidebarResize = useResizableWidth("lotus_next_sidebar_w", 288, {
     min: 220,
@@ -188,8 +208,14 @@ function App() {
   const displayWorkspace = workspacePath ?? pickedWorkspace
   const secondSession = chats.find((item) => item.id === secondSid)
   const openWorkbench = (tab: RightWorkbenchTab) => {
+    if (tab === "browser") setBrowserStartedSessionId(currentSessionId)
     setWorkbenchTab(tab)
     setWorkbenchOpen(true)
+  }
+  const openLinkInApp = (url: string) => {
+    if (!currentSessionId || !browserEnabled) return
+    setPendingBrowserNavigation({ sessionId: currentSessionId, url })
+    openWorkbench("browser")
   }
   const openReview = (filePath?: string) => {
     setReviewTargetFilePath(filePath ?? null)
@@ -211,6 +237,7 @@ function App() {
   }
 
   return (
+    <ExternalLinkProvider onOpenInApp={browserEnabled && currentSessionId ? openLinkInApp : undefined}>
     <div className="relative flex h-full overflow-hidden bg-background text-foreground">
       {/* WSS-only transport: surface a dead /v2/stream connection instead of
           silently freezing. Renders nothing while the connection is healthy. */}
@@ -273,8 +300,18 @@ function App() {
             width={workbenchResize.width}
             activeTab={selectedWorkbenchTab}
             browserEnabled={browserEnabled}
+            browserTabs={browser.readySessionId === currentSessionId ? browser.state?.tabs : null}
+            activeBrowserTabId={browser.readySessionId === currentSessionId ? browser.state?.active_tab_id : null}
+            browserBusy={browser.busy || Boolean(browser.state?.pending_dialog)}
+            onBrowserCreate={() => {
+              openWorkbench("browser")
+              if (browser.readySessionId === currentSessionId && browser.state?.tabs) void browser.createTab()
+            }}
+            onBrowserActivate={(tabId) => void browser.activateTab(tabId)}
+            onBrowserClose={(tabId) => void browser.closeTab(tabId)}
             onTabChange={(tab) => {
               if (tab === "review") setReviewTargetFilePath(null)
+              if (tab === "browser") setBrowserStartedSessionId(currentSessionId)
               setWorkbenchTab(tab)
             }}
             onClose={() => setWorkbenchOpen(false)}
@@ -300,10 +337,11 @@ function App() {
               />
             )}
             browser={browserEnabled ? (
-              <BrowserPane
+              <BrowserPaneView
                 key={currentSessionId ?? "no-session"}
                 sessionId={currentSessionId}
                 active={workbenchTab === "browser"}
+                browser={browser}
               />
             ) : null}
             session={isProjectedChild ? (
@@ -398,6 +436,7 @@ function App() {
         </div>
       ) : null}
     </div>
+    </ExternalLinkProvider>
   )
 }
 
