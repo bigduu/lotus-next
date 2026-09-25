@@ -248,7 +248,13 @@ export function RightWorkbench({
       {openToolTabs.includes("inspector") ? <TabsContent value="inspector" className="flex min-h-0 overflow-hidden">{inspector}</TabsContent> : null}
       {openToolTabs.includes("review") ? <TabsContent value="review" className="flex min-h-0 overflow-hidden">{review}</TabsContent> : null}
       {browserEnabled ? <TabsContent value={browserValue} className="flex min-h-0 min-w-0 overflow-hidden">{browser}</TabsContent> : null}
-      {openToolTabs.includes("session") ? <TabsContent value="session" className="flex min-h-0 overflow-hidden">{session}</TabsContent> : null}
+      {/* Keep an open root session mounted across tab changes so its draft and
+          in-flight send survive; App gates child projection by active tab. */}
+      {openToolTabs.includes("session") ? (
+        <TabsContent value="session" forceMount className={cn("min-h-0 overflow-hidden", activeTab === "session" ? "flex" : "hidden")}>
+          {session}
+        </TabsContent>
+      ) : null}
       <TabsContent value="launcher" className="flex min-h-0 flex-col items-center justify-center overflow-auto p-6">
         <div className="w-full max-w-md">
           <h2 className="text-base font-medium">还没有打开内容</h2>
