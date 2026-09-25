@@ -137,6 +137,19 @@ export function useBrowserSession(sessionId: string | null, active: boolean) {
       let lastStateRefresh = Date.now()
       let pendingStateReadFailures = 0
       while (isCurrent()) {
+        if (stateRef.current?.tabs?.length === 0) {
+          // There is no page to render. An empty /frame response may return
+          // immediately, so watch for agent-created tabs through bounded
+          // state reads instead of spinning on frame requests.
+          await new Promise((resolve) => setTimeout(resolve, 500))
+          if (!isCurrent()) return
+          const version = stateVersionRef.current
+          const refreshed = await browserService.get(sessionId, controller.signal)
+          if (!isCurrent()) return
+          if (version === stateVersionRef.current) publishState(refreshed)
+          lastStateRefresh = Date.now()
+          continue
+        }
         if (stateRef.current?.pending_dialog) {
           // Bamboo only permits state reads while a page dialog blocks CDP.
           // Keep the last JPEG visible and observe model responses or expiry.

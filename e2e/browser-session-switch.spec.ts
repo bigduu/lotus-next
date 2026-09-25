@@ -113,8 +113,13 @@ test("selected browser follows a chat switch and remains live under other workbe
   await expect(address).toHaveValue("https://a.test/")
   expect(opened).toEqual([sessionA])
 
+  await panel.getByRole("button", { name: "打开工作面板标签页" }).click()
+  await page.getByRole("menuitem", { name: "浏览器" }).click()
+  await address.fill("https://a.test/draft")
+
   await page.getByRole("button", { name: "Session B", exact: true }).click()
   await expect(address).toHaveValue("https://b.test/")
+  await expect(browser.getByRole("button", { name: "刷新网页" })).toBeVisible()
   await expect(panel.getByRole("tab", { name: "浏览器标签页 1：Page B" })).toHaveAttribute("aria-selected", "true")
   expect(opened).toEqual([sessionA, sessionB])
   await expect.poll(() => pages[sessionB]?.viewport.width).not.toBe(640)

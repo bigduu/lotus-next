@@ -28,6 +28,8 @@ test("browser workbench shares one session across human input, DOM, screenshot, 
   let status = "Ready"
   let openCount = 0
   let closeCount = 0
+  let frameRequests = 0
+  let stateReads = 0
   const inputs: Array<Record<string, unknown>> = []
   const browserPath = "/api/v1/browser/sessions/all-surface-session"
   const currentState = () => ({
@@ -58,10 +60,12 @@ test("browser workbench shares one session across human input, DOM, screenshot, 
       return
     }
     if (path === browserPath && method === "GET") {
+      stateReads += 1
       await route.fulfill({ json: currentState() })
       return
     }
     if (path === `${browserPath}/frame` && method === "GET") {
+      frameRequests += 1
       if (!hasTab) return route.fulfill({ status: 204 })
       if (Number(address.searchParams.get("after")) >= frameSeq) {
         await new Promise((resolve) => setTimeout(resolve, 100))
@@ -133,6 +137,9 @@ test("browser workbench shares one session across human input, DOM, screenshot, 
   const browser = panel.getByRole("region", { name: "内置浏览器" })
   await expect(browser.getByText("还没有打开网页")).toBeVisible()
   await expect(panel.getByRole("tab", { name: /浏览器标签页/ })).toHaveCount(0)
+  await expect.poll(() => stateReads).toBeGreaterThan(0)
+  await page.waitForTimeout(650)
+  expect(frameRequests).toBe(0)
   const entryScreenshot = testInfo.outputPath(`browser-entry-${testInfo.project.name}.png`)
   await page.screenshot({ path: entryScreenshot })
   await testInfo.attach(`browser-entry-${testInfo.project.name}`, {
