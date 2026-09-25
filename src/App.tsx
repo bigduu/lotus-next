@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useState } from "react"
 import { copyText } from "@shared/utils/clipboard"
 import { Inspector } from "@/components/chat/Inspector"
 import { CommandPalette } from "@/components/chat/CommandPalette"
@@ -16,7 +16,7 @@ import { Sidebar } from "@/components/app/Sidebar"
 import { ProjectManagerModal } from "@/components/app/ProjectManagerModal"
 import { DeleteSessionDialog } from "@/components/app/DeleteSessionDialog"
 import { ChatPane } from "@/components/app/ChatPane"
-import { SubagentTranscriptPane } from "@/components/app/SubagentTranscriptPane"
+import { SecondarySessionPane } from "@/components/app/SecondarySessionPane"
 import { AvailabilityBanner } from "@/components/app/AvailabilityBanner"
 import { ReviewPane } from "@/components/app/ReviewPane"
 import { BrowserPane } from "@/components/app/BrowserPane"
@@ -31,59 +31,19 @@ function App() {
   const chat = useChat()
   const { booted, chats, currentSessionId, currentChat, select, newChat } = chat
 
-  // Root sessions can be interactive in the side pane. Child previews use the
-  // read-only message projection without subscribing to their agent channel.
+  // Only a confirmed root mounts the interactive side chat; unknown and child
+  // sessions use the message-only projection until summary metadata resolves.
   const [secondSid, setSecondSid] = useState<string | null>(null)
-  const [projectedChildSid, setProjectedChildSid] = useState<string | null>(null)
-  const isProjectedChild = secondSid !== null && (
-    projectedChildSid === secondSid
-    || chats.some((item) => item.id === secondSid && Boolean(item.parentSessionId))
-  )
-  const [secondLoadState, setSecondLoadState] = useState<"idle" | "loading" | "error">("idle")
-  const secondLoadRequest = useRef(0)
-  const secondChat = useChat(isProjectedChild ? null : secondSid, (newSid) => {
-    setProjectedChildSid(null)
-    setSecondSid(newSid)
-  })
-  const pickSecond = (id: string | null, forceProjection = false) => {
-    const request = ++secondLoadRequest.current
-    const projected = Boolean(id && (
-      forceProjection
-      || projectedChildSid === id
-      || chats.some((item) => item.id === id && Boolean(item.parentSessionId))
-    ))
+  const pickSecond = (id: string | null) => {
     setSecondSid(id)
-    setProjectedChildSid(projected ? id : null)
-    if (!id) {
-      setSecondLoadState("idle")
-      return
-    }
+    if (!id) return
 
+    // Restore summary metadata only. Transcript bodies are loaded by the
+    // selected pane after classification, never via generic child history.
     const store = useAppStore.getState()
-    if (projected) {
-      // Newly started children can precede the lazy index. Restore metadata,
-      // then let SubagentTranscriptPane load projected message history.
-      setSecondLoadState("idle")
-      if (!store.chats.some((item) => item.id === id)) {
-        void store.restoreSession(id).catch(() => false)
-      }
-      return
+    if (!store.chats.some((item) => item.id === id)) {
+      void store.restoreSession(id).catch(() => false)
     }
-
-    setSecondLoadState("loading")
-    void (async () => {
-      const exists = store.chats.some((item) => item.id === id)
-      if (!exists && !(await store.restoreSession(id))) {
-        throw new Error("session unavailable")
-      }
-      await useAppStore.getState().loadChatHistory(id)
-    })()
-      .then(() => {
-        if (secondLoadRequest.current === request) setSecondLoadState("idle")
-      })
-      .catch(() => {
-        if (secondLoadRequest.current === request) setSecondLoadState("error")
-      })
   }
 
   const [sidebarOpen, setSidebarOpen] = useState(false)
@@ -206,7 +166,7 @@ function App() {
     openWorkbench("session")
   }
   const openSubagentPreview = (childId: string) => {
-    pickSecond(childId, true)
+    pickSecond(childId)
     openWorkbench("session")
   }
 
@@ -306,45 +266,16 @@ function App() {
                 active={workbenchTab === "browser"}
               />
             ) : null}
-            session={isProjectedChild ? (
-              <SubagentTranscriptPane
+            session={(
+              <SecondarySessionPane
                 sessionId={secondSid}
+                active={selectedWorkbenchTab === "session"}
                 chats={chats}
                 onPickSession={pickSecond}
+                onClose={() => setWorkbenchOpen(false)}
+                onOpenInspector={() => setWorkbenchTab("inspector")}
+                onOpenReview={() => setWorkbenchTab("review")}
               />
-            ) : (
-              <div className="relative flex min-h-0 flex-1">
-                {secondLoadState === "loading" ? (
-                  <div
-                    className="absolute inset-x-0 top-0 z-30 h-0.5 animate-pulse bg-primary"
-                    aria-label="正在加载并排会话"
-                  />
-                ) : null}
-                {secondLoadState === "error" ? (
-                  <div role="alert" className="absolute inset-x-0 top-2 z-30 rounded-lg border border-destructive/40 bg-card px-3 py-2 text-xs text-destructive shadow">
-                    子代理会话暂时无法加载，请稍后重试。
-                  </div>
-                ) : null}
-                <ChatPane
-                  chat={secondChat}
-                  secondary={{
-                    sessionId: secondSid,
-                    chats,
-                    onPickSession: pickSecond,
-                    onClose: () => setWorkbenchOpen(false),
-                    hideClose: true,
-                  }}
-                  pickedWorkspace={null}
-                  onOpenWorkspacePicker={() => {}}
-                  onOpenInspector={() => setWorkbenchTab("inspector")}
-                  onOpenReview={() => setWorkbenchTab("review")}
-                  splitOpen={workbenchOpen && workbenchTab === "session"}
-                  onToggleSplit={() => setWorkbenchOpen(false)}
-                  onSelectSubAgent={(childId) => pickSecond(childId, true)}
-                  onOpenSidebar={() => {}}
-                  sidebarCollapsed={false}
-                />
-              </div>
             )}
           />
         </>

@@ -79,7 +79,13 @@ export function RightWorkbench({
           {browser}
         </TabsContent>
       ) : null}
-      <TabsContent value="session" className="flex min-h-0 overflow-hidden">
+      {/* Keep the pane shell mounted across tabs so an interactive root chat
+          retains its in-flight send; child projection itself is gated by App. */}
+      <TabsContent
+        value="session"
+        forceMount
+        className={cn("min-h-0 overflow-hidden", activeTab === "session" ? "flex" : "hidden")}
+      >
         {session}
       </TabsContent>
     </Tabs>
