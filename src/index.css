@@ -157,6 +157,26 @@
   }
 }
 
+/* Keep navigation text crisp in the macOS WebView without changing chat text. */
+.sidebar-typography {
+  font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  -webkit-font-smoothing: auto;
+}
+
+.sidebar-typography .text-xs {
+  font-size: 13px;
+}
+
+.sidebar-typography .text-sm {
+  font-size: 15px;
+}
+
+@media (min-width: 48rem) {
+  .sidebar-typography input {
+    font-size: 15px;
+  }
+}
+
 /* VDI / graphics compatibility mode — toggled in 设置 → 系统 → 应用 and
    reflected as a data attribute by App.tsx. Strips GPU-composited blur/glass
    effects that break dropdowns and hover overlays in some virtual-desktop,

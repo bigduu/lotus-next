@@ -107,6 +107,9 @@ for (const scenario of [standaloneScenario, embeddedScenario, secureRemoteScenar
     await expect(surface.getByRole("textbox", { name: "消息", exact: true })).toBeVisible()
     const phone = testInfo.project.name === "phone-chromium"
     const sidebar = await openSidebar(surface, phone)
+    await expect(sidebar).toHaveCSS("-webkit-font-smoothing", "auto")
+    await expect(sidebar.getByText("最近", { exact: true })).toHaveCSS("font-size", "13px")
+    await expect(sidebar.getByRole("button", { name: "最近任务 1", exact: true })).toHaveCSS("font-size", "15px")
     const older = sidebar.getByRole("button", { name: /^更早\s*\d+\s*天/ })
     await expect(older).toHaveAttribute("aria-expanded", "false")
     await expect(sidebar.getByRole("button", { name: "长期置顶", exact: true })).toBeVisible()
