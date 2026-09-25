@@ -344,6 +344,7 @@ export function ChatPane({
   const models = useAppStore(useShallow((s) => s.models))
   const selectedModel = useAppStore((s) => s.selectedModel)
   const setSelectedModel = useAppStore((s) => s.setSelectedModel)
+  const changeSessionModel = useAppStore((s) => s.changeSessionModel)
   const defaultChatModel = useProviderStore((s) => s.providerSnapshot?.defaults?.chat?.model)
   const chatReasoningEffort = useProviderStore(
     (s) => s.providerSnapshot?.defaults?.chat?.reasoning_effort,
@@ -382,15 +383,32 @@ export function ChatPane({
       setReasoningSaving(false)
     }
   }
-  // What the next send will use: explicit pick → this session's bound model →
-  // configured Chat default. Existing child panes must not be relabelled with
-  // the root Chat default merely because the global picker is unset.
-  const activeModel =
-    selectedModel ||
-    currentChat?.config?.model_ref?.model ||
-    currentChat?.config?.model ||
-    defaultChatModel ||
-    ""
+  // Existing sessions display their durable model. The global selection is
+  // only a draft for a new session and cannot relabel a running session.
+  const activeModel = currentSessionId
+    ? currentChat?.config?.model_ref?.model || currentChat?.config?.model || defaultChatModel || ""
+    : selectedModel || defaultChatModel || ""
+  const [modelSaving, setModelSaving] = useState(false)
+  const modelControlDisabled = modelSaving || currentlyRunning || submissionPending
+    || queue.busy || queue.hasUnconfirmed
+  const handleModelChange = async (model: string) => {
+    if (modelControlDisabled || model === activeModel) return
+    if (!currentSessionId) {
+      setSelectedModel(model)
+      return
+    }
+
+    setModelSaving(true)
+    try {
+      await changeSessionModel(currentSessionId, model)
+    } catch {
+      if (currentDraftKeyRef.current === currentSessionId) {
+        showToast("模型保存失败，请重试")
+      }
+    } finally {
+      setModelSaving(false)
+    }
+  }
 
   // Escape hides the pickers until the draft changes again (typing re-opens).
   const [menusDismissed, setMenusDismissed] = useState(false)
@@ -520,7 +538,7 @@ export function ChatPane({
 
   const submit = () => {
     // Keep an in-flight admission from capturing or clearing a second draft.
-    if (submissionPending || queue.busy || goalRequestActive.current) return
+    if (submissionPending || modelSaving || queue.busy || goalRequestActive.current) return
     const storeAtSubmit = useAppStore.getState()
     const draftAtSubmit = storeAtSubmit.inputStates[draftKey]
     const text = draftAtSubmit?.content ?? ""
@@ -861,10 +879,16 @@ export function ChatPane({
             selectSubAgentInPane(childId)
           }}
           onPreviewImage={setPreview}
-          onRegenerate={() => void regenerate()}
+          onRegenerate={() => {
+            if (modelSaving) { showToast("模型正在保存，请稍后继续"); return }
+            void regenerate()
+          }}
           onFork={handleFork}
           onDelete={(id) => void deleteMessage(id)}
-          onEditMessage={(id, text) => void editMessage(id, text)}
+          onEditMessage={(id, text) => {
+            if (modelSaving) { showToast("模型正在保存，请稍后继续"); return }
+            void editMessage(id, text)
+          }}
         />
         )}
 
@@ -894,7 +918,7 @@ export function ChatPane({
               <Button
                 size="sm"
                 variant="secondary"
-                disabled={sending}
+                disabled={sending || modelSaving}
                 onClick={() => {
                   if (visibleSendFailure?.kind === "generation-failed") {
                     void retry(visibleSendFailure)
@@ -980,14 +1004,15 @@ export function ChatPane({
                       : models
                   }
                   value={activeModel}
-                  onChange={setSelectedModel}
+                  onChange={(model) => void handleModelChange(model)}
+                  disabled={modelControlDisabled}
                   menuPlacement="up"
                   menuAlign="right"
                 />
               ) : null}
             </>
           )}
-          submissionPending={submissionPending || goalSaving || queue.busy}
+          submissionPending={submissionPending || goalSaving || queue.busy || modelSaving}
           inputRef={composerInputRef}
           attachments={attachments}
           onAddFiles={(files) => void addFiles(files)}

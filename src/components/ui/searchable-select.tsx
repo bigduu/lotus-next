@@ -43,6 +43,8 @@ export interface SearchableSelectProps<T, V> {
   optionDataAttr?: `data-${string}`
   /** Optional container className applied to the trigger. */
   className?: string
+  disabled?: boolean
+  title?: string
 }
 
 /**
@@ -69,6 +71,8 @@ export function SearchableSelect<T, V>({
   optionListAriaLabel = "选项列表",
   optionDataAttr = "data-searchable-option",
   className,
+  disabled = false,
+  title,
 }: SearchableSelectProps<T, V>) {
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState("")
@@ -94,6 +98,7 @@ export function SearchableSelect<T, V>({
   const selectedLabel = selectedItem ? getLabel(selectedItem) : placeholder
 
   const changeOpen = (nextOpen: boolean) => {
+    if (disabled && nextOpen) return
     setOpen(nextOpen)
     if (!nextOpen) setQuery("")
   }
@@ -104,12 +109,14 @@ export function SearchableSelect<T, V>({
   }
 
   return (
-    <Popover open={open} onOpenChange={changeOpen}>
+    <Popover open={open && !disabled} onOpenChange={changeOpen}>
       <PopoverTrigger asChild>
         <button
           type="button"
+          disabled={disabled}
+          title={title}
           className={cn(
-            "inline-flex max-w-[70vw] items-center gap-1 rounded-full border bg-card px-3 py-1 text-xs font-medium text-foreground outline-none transition-colors hover:bg-accent focus-visible:ring-[3px] focus-visible:ring-ring/50 md:max-w-xs",
+            "inline-flex max-w-[70vw] items-center gap-1 rounded-full border bg-card px-3 py-1 text-xs font-medium text-foreground outline-none transition-colors hover:bg-accent focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50 md:max-w-xs",
             className,
           )}
         >

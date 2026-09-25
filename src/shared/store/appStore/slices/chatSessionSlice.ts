@@ -277,6 +277,44 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
     }
   },
 
+  changeSessionModel: async (sessionId, model) => {
+    const nextModel = model.trim();
+    const chat = get().chats.find((item) => item.id === sessionId);
+    if (!nextModel || !chat || chat.isRunning) {
+      throw new Error("Cannot change this session's model");
+    }
+
+    const providerState = useProviderStore.getState();
+    // Keep the session's provider. A global Chat default can belong to a
+    // different instance, especially for child or older sessions.
+    const provider = chat.config.model_ref?.provider?.trim();
+    const nextRef = provider &&
+      (chat.config.model_ref || providerState.isProviderModelRefEnabled())
+      ? { provider, model: nextModel }
+      : null;
+
+    // /execute prefers the saved session model over its request payload. Wait
+    // for this write before updating the picker or admitting the next send.
+    await agentClient.patchSession(sessionId, {
+      model: nextModel,
+      ...(provider ? { provider } : {}),
+      ...(nextRef ? { model_ref: nextRef } : {}),
+    });
+    const committedAt = new Date().toISOString();
+    set((state) => ({
+      ...state,
+      chats: state.chats.map((item) =>
+        item.id === sessionId
+          ? {
+              ...item,
+              updatedAt: committedAt,
+              config: { ...item.config, model: nextModel, model_ref: nextRef },
+            }
+          : item,
+      ),
+    }));
+  },
+
   changeSessionReasoningEffort: async (sessionId, reasoningEffort) => {
     // Auto is represented by clearing the session override. Concrete values,
     // including `none`, remain durable and outrank provider/model defaults.

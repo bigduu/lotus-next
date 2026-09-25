@@ -249,17 +249,20 @@ export function useChat(
   }))
   const sessionModelRef = currentChat?.config?.model_ref
   const sessionModel = sessionModelRef?.model || currentChat?.config?.model || ""
-  const effectiveModel = selectedModel || sessionModel || defaultChatModel || ""
+  // Picker choices on an existing session are persisted before execution.
+  // The global draft choice must never outrank that session's saved model.
+  const newSessionModel = sid ? undefined : selectedModel
+  const effectiveModel = newSessionModel || sessionModel || defaultChatModel || ""
   const acknowledgedModel = effectiveModel
   // Full ref to send alongside `model`. Explicit picker choices are paired
   // with the configured Chat provider only when they are known to belong to
   // it. With no explicit pick, an existing session's own provider+model ref is
   // authoritative; only a new/unbound session falls back to the Chat default.
   const effectiveModelRef = useMemo(() => {
-    if (selectedModel) {
+    if (newSessionModel) {
       return defaultChatRef?.provider?.trim() &&
-        defaultProviderModelIds?.has(selectedModel)
-        ? { provider: defaultChatRef.provider, model: selectedModel }
+        defaultProviderModelIds?.has(newSessionModel)
+        ? { provider: defaultChatRef.provider, model: newSessionModel }
         : undefined
     }
     if (sessionModelRef?.provider?.trim() && sessionModelRef.model?.trim()) {
@@ -273,14 +276,14 @@ export function useChat(
     defaultChatModel,
     defaultChatRef,
     defaultProviderModelIds,
-    selectedModel,
+    newSessionModel,
     sessionModel,
     sessionModelRef,
   ])
   const chatReasoningEffort = useProviderStore(
     (s) => s.providerSnapshot?.defaults?.chat?.reasoning_effort,
   )
-  const effectiveProviderId = selectedModel
+  const effectiveProviderId = newSessionModel
     ? effectiveModelRef?.provider
     : sessionModelRef?.provider || effectiveModelRef?.provider
   const effectiveProviderReasoningEffort = useProviderStore((s) =>

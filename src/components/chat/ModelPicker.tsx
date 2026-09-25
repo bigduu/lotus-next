@@ -8,12 +8,14 @@ export function ModelPicker({
   models,
   value,
   onChange,
+  disabled = false,
   menuPlacement = "up",
   menuAlign = "left",
 }: {
   models: string[]
   value: string
   onChange: (model: string) => void
+  disabled?: boolean
   menuPlacement?: "up" | "down"
   menuAlign?: "left" | "right"
 }) {
@@ -24,6 +26,8 @@ export function ModelPicker({
       items={models}
       value={value}
       onChange={onChange}
+      disabled={disabled}
+      title={disabled ? "当前会话忙碌，稍后可切换模型" : undefined}
       getKey={(model) => model}
       getValue={(model) => model}
       getLabel={(model) => model}

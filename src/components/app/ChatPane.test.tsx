@@ -24,6 +24,7 @@ type State = {
   setInputContentIfRevision(id: string, revision: number, content: string): boolean
   moveInputContentIfRevision(source: string, revision: number, target: string): boolean
   setSelectedModel(model: string): void
+  changeSessionModel(id: string, model: string): Promise<void>
   setInputReasoningEffort(id: string, effort: ReasoningEffortSelection): void
   clearInputReasoningEffort(id: string): void
   changeSessionReasoningEffort(id: string, effort: ReasoningEffort | null): Promise<void>
@@ -214,6 +215,7 @@ beforeEach(() => {
     selectedModel: "test-model",
     refreshChatsNow: vi.fn().mockResolvedValue(undefined),
     changeSessionReasoningEffort: vi.fn().mockResolvedValue(undefined),
+    changeSessionModel: vi.fn().mockResolvedValue(undefined),
     setSelectedModel: (model) => { runtime.state.selectedModel = model; notify() },
     setInputReasoningEffort: (id, reasoningEffort) => {
       const previous = runtime.state.inputStates[id] ?? { content: "", contentRevision: 0 }
@@ -294,6 +296,40 @@ describe("ChatPane composer acknowledgement", () => {
       onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false} />))
 
     expect(runtime.modelPicker?.value).toBe("gpt-5.6-luna")
+  })
+
+  it("saves an idle session's model before showing the new selection", async () => {
+    const pending = deferred<void>()
+    runtime.state.changeSessionModel = vi.fn().mockReturnValue(pending.promise)
+    runtime.state.models = ["gpt-6-sol", "grok-4.7"]
+    runtime.providerState.providerSnapshot = {
+      default_provider_instance_id: "easycli",
+      instances: [{ id: "easycli", type: "openai", label: "Easycli", enabled: true, config: {} }],
+      defaults: { chat: { provider: "easycli", model: "gpt-6-sol" } },
+      features: { provider_model_ref: true },
+    }
+    await mount(vi.fn<Send>(), "session-1")
+    expect(runtime.modelPicker?.value).toBe("gpt-6-sol")
+
+    act(() => runtime.modelPicker?.onChange("grok-4.7"))
+    expect(runtime.state.changeSessionModel).toHaveBeenCalledExactlyOnceWith("session-1", "grok-4.7")
+    expect(runtime.modelPicker?.value).toBe("gpt-6-sol")
+    expect(runtime.modelPicker?.disabled).toBe(true)
+    expect(composer().submissionPending).toBe(true)
+    expect(runtime.state.selectedModel).toBe("test-model")
+
+    await act(async () => { pending.resolve(); await pending.promise })
+    expect(runtime.modelPicker?.disabled).toBe(false)
+    expect(composer().submissionPending).toBe(false)
+  })
+
+  it("does not accept a model change during a live run", async () => {
+    runtime.state.models = ["gpt-6-sol", "grok-4.7"]
+    await mount(vi.fn<Send>(), "session-1", true)
+    expect(runtime.modelPicker?.disabled).toBe(true)
+    act(() => runtime.modelPicker?.onChange("grok-4.7"))
+    expect(runtime.state.changeSessionModel).not.toHaveBeenCalled()
+    expect(runtime.state.selectedModel).toBe("test-model")
   })
 
   it("puts the next-session permission selector in a blank composer", async () => {

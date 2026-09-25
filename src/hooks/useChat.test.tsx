@@ -211,6 +211,7 @@ async function mountUseChat(initialProps: HookProps) {
   }
 }
 async function mountAcknowledgedFailure(sessionId: string, payload: string) {
+  mocks.appState.chats = [{ id: sessionId, messages: [], config: { model: "test-model" } }]
   mocks.sendMessage.mockResolvedValueOnce({ session_id: sessionId })
   mocks.execute.mockRejectedValueOnce(new Error("initial generation failed"))
   mocks.subscribeToEvents.mockResolvedValueOnce(undefined)
@@ -348,7 +349,7 @@ describe("useChat two-phase send lifecycle", () => {
   })
   it("records the selected model only after the submission is acknowledged", async () => {
     mocks.sendMessage.mockResolvedValueOnce({ session_id: "used-model-session" })
-    const hook = await mountUseChat({ mode: "bound", sessionId: "used-model-session" })
+    const hook = await mountUseChat({ mode: "bound", sessionId: null })
 
     await act(async () => {
       await hook.current.send("remember this model")
@@ -737,7 +738,8 @@ describe("useChat two-phase send lifecycle", () => {
   })
   it("keeps an existing child session bound to its own provider and model", async () => {
     const sessionId = "child-session"
-    mocks.appState.selectedModel = undefined
+    // A draft selected in another pane must not override this bound session.
+    mocks.appState.selectedModel = "grok-4.7"
     mocks.appState.chats = [{
       id: sessionId,
       messages: [],
@@ -1028,6 +1030,7 @@ describe("useChat two-phase send lifecycle", () => {
     },
   )
   it("fences duplicate retry clicks before truncation and reruns only the owned session", async () => {
+    mocks.appState.chats = [{ id: "exact-session", messages: [], config: { model: "test-model" } }]
     mocks.sendMessage.mockResolvedValueOnce({ session_id: "exact-session" })
     let executeAttempt = 0
     mocks.execute.mockImplementation(() => {
@@ -1092,6 +1095,7 @@ describe("useChat two-phase send lifecycle", () => {
       id: "persisted-error",
       messages: [],
       lastRunStatus: "error",
+      config: { model: "test-model" },
     }]
     mocks.subscribeToEvents.mockImplementationOnce(
       (_sessionId: string, handlers: SubscriptionHandlers) => {
@@ -1115,6 +1119,35 @@ describe("useChat two-phase send lifecycle", () => {
       undefined,
     )
     expect(mocks.subscribeToEvents).toHaveBeenCalledTimes(1)
+  })
+  it("continues with the session's saved model instead of another pane's draft choice", async () => {
+    mocks.appState.selectedModel = "gpt-6-sol"
+    mocks.appState.chats = [{
+      id: "resumed-session",
+      messages: [],
+      lastRunStatus: "error",
+      config: {
+        model: "grok-4.7",
+        model_ref: { provider: "easycli", model: "grok-4.7" },
+      },
+    }]
+    mocks.subscribeToEvents.mockImplementationOnce(
+      (_sessionId: string, handlers: SubscriptionHandlers) => {
+        handlers.onComplete()
+        return Promise.resolve()
+      },
+    )
+
+    const hook = await mountUseChat({ mode: "bound", sessionId: "resumed-session" })
+    await act(async () => void (await hook.current.retry()))
+
+    expect(mocks.execute).toHaveBeenCalledWith(
+      "resumed-session",
+      "grok-4.7",
+      undefined,
+      undefined,
+      { provider: "easycli", model: "grok-4.7" },
+    )
   })
   it("finishes retry for session A without subscribing or contaminating a pane rebound to B", async () => {
     const { hook, truncation, retrying, callCounts } = await startPendingRetry(

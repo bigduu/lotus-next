@@ -37,6 +37,20 @@ function visibleModels() {
 }
 
 describe("ModelPicker search", () => {
+  it("keeps the model menu closed while switching is disabled", () => {
+    const container = document.body.appendChild(document.createElement("div"))
+    const root = createRoot(container)
+    roots.push(root)
+    act(() => root.render(
+      <ModelPicker models={["gpt-6-sol", "grok-4.7"]} value="gpt-6-sol" onChange={vi.fn()} disabled />,
+    ))
+
+    const trigger = container.querySelector<HTMLButtonElement>("button")
+    expect(trigger?.disabled).toBe(true)
+    act(() => trigger?.click())
+    expect(document.querySelector('input[aria-label="搜索模型"]')).toBeNull()
+  })
+
   it("focuses search, filters case-insensitively, selects, and resets on reopen", async () => {
     const container = document.body.appendChild(document.createElement("div"))
     const root = createRoot(container)

@@ -41,6 +41,8 @@ export interface ChatSlice {
     updates: Partial<ChatItem>,
     options?: { skipBackendPatch?: boolean },
   ) => void;
+  /** Persist a model choice before showing it as the session's active model. */
+  changeSessionModel: (sessionId: string, model: string) => Promise<void>;
   /** Persist a session reasoning override; null restores inherited/Auto mode. */
   changeSessionReasoningEffort: (
     sessionId: string,
