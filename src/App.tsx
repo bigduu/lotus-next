@@ -26,6 +26,7 @@ import { isPhoneDevice } from "@/lib/browserAvailability"
 import {
   RightWorkbench,
   type RightWorkbenchTab,
+  type WorkbenchToolTab,
 } from "@/components/app/RightWorkbench"
 
 function App() {
@@ -104,9 +105,15 @@ function App() {
   }, [])
 
   const [workbenchOpen, setWorkbenchOpen] = useState(false)
-  const [workbenchTab, setWorkbenchTab] = useState<RightWorkbenchTab>("inspector")
+  const [workbenchTab, setWorkbenchTab] = useState<RightWorkbenchTab | null>(null)
+  const [openToolTabs, setOpenToolTabs] = useState<WorkbenchToolTab[]>([])
+  const [browserEntryOpen, setBrowserEntryOpen] = useState(false)
+  const [browserEntryDraft, setBrowserEntryDraft] = useState("")
+  const [browserEntryTouched, setBrowserEntryTouched] = useState(false)
+  const browserEntrySessionRef = useRef<{ sessionId: string | null; initialStateMissing: boolean } | null>(null)
   const [browserStartedSessionId, setBrowserStartedSessionId] = useState<string | null>(null)
   const [pendingBrowserNavigation, setPendingBrowserNavigation] = useState<{ sessionId: string; url: string } | null>(null)
+  const pendingBrowserNavigationAttemptRef = useRef<typeof pendingBrowserNavigation>(null)
   const [reviewTargetFilePath, setReviewTargetFilePath] = useState<string | null>(null)
   const isMobile = useIsMobile()
   const isWide = useIsWide()
@@ -117,8 +124,16 @@ function App() {
       workbenchTab === "browser" || browserStartedSessionId === currentSessionId
     ),
   )
-  const { readySessionId: browserReadySessionId, state: browserState, openUrlInNewTab } = browser
-  const selectedWorkbenchTab = !browserEnabled && workbenchTab === "browser" ? "inspector" : workbenchTab
+  const { readySessionId: browserReadySessionId, state: browserState, openUrlInNewTab, hasPendingDialog } = browser
+  const selectedWorkbenchTab = !browserEnabled && workbenchTab === "browser" ? null : workbenchTab
+
+  useEffect(() => {
+    if (browserEntrySessionRef.current?.sessionId !== currentSessionId) {
+      setBrowserEntryOpen(false)
+      setBrowserEntryDraft("")
+      setBrowserEntryTouched(false)
+    }
+  }, [currentSessionId])
 
   useEffect(() => {
     // A selected browser tab follows the newly selected chat. Remember that
@@ -132,12 +147,45 @@ function App() {
     if (!pendingBrowserNavigation) return
     if (pendingBrowserNavigation.sessionId !== currentSessionId) {
       setPendingBrowserNavigation(null)
+      pendingBrowserNavigationAttemptRef.current = null
       return
     }
     if (browserReadySessionId !== currentSessionId || !browserState) return
-    setPendingBrowserNavigation(null)
-    void openUrlInNewTab(pendingBrowserNavigation.url)
-  }, [pendingBrowserNavigation, currentSessionId, browserReadySessionId, browserState, openUrlInNewTab])
+    if (browserState.pending_dialog) {
+      setBrowserEntryOpen(false)
+      return
+    }
+    if (pendingBrowserNavigationAttemptRef.current === pendingBrowserNavigation) return
+    pendingBrowserNavigationAttemptRef.current = pendingBrowserNavigation
+    void openUrlInNewTab(pendingBrowserNavigation.url).then((opened) => {
+      if (pendingBrowserNavigationAttemptRef.current !== pendingBrowserNavigation) return
+      pendingBrowserNavigationAttemptRef.current = null
+      if (opened) {
+        setPendingBrowserNavigation((current) => current === pendingBrowserNavigation ? null : current)
+        setBrowserEntryOpen(false)
+      } else if (!hasPendingDialog()) {
+        setPendingBrowserNavigation((current) => current === pendingBrowserNavigation ? null : current)
+      }
+    })
+  }, [pendingBrowserNavigation, currentSessionId, browserReadySessionId, browserState, openUrlInNewTab, hasPendingDialog])
+  useEffect(() => {
+    if (!browserEntryOpen || browserReadySessionId !== currentSessionId || !browserState) return
+    const origin = browserEntrySessionRef.current
+    if (origin?.sessionId !== currentSessionId || !origin.initialStateMissing) return
+    origin.initialStateMissing = false
+    const hasPage = browserState.tabs
+      ? browserState.tabs.length > 0
+      : Boolean(browserState.url && browserState.url !== "about:blank")
+    if (hasPage && !browserEntryTouched && !pendingBrowserNavigation) setBrowserEntryOpen(false)
+  }, [browserEntryOpen, browserReadySessionId, currentSessionId, browserState, browserEntryTouched, pendingBrowserNavigation])
+  useEffect(() => {
+    if (browserReadySessionId !== currentSessionId || !browserState?.tabs) return
+    if (browserState.tabs.length > 0) {
+      if (workbenchOpen && workbenchTab === null && openToolTabs.length === 0) setWorkbenchTab("browser")
+    } else if (workbenchTab === "browser" && !browserEntryOpen && !pendingBrowserNavigation) {
+      setWorkbenchTab(openToolTabs.at(-1) ?? null)
+    }
+  }, [browserReadySessionId, currentSessionId, browserState?.tabs, workbenchOpen, workbenchTab, openToolTabs, browserEntryOpen, pendingBrowserNavigation])
   // Draggable, persisted widths for the resizable side panels (desktop).
   const sidebarResize = useResizableWidth("lotus_next_sidebar_w", 288, {
     min: 220,
@@ -218,14 +266,47 @@ function App() {
   const displayWorkspace = workspacePath ?? pickedWorkspace
   const secondSession = chats.find((item) => item.id === secondSid)
   const openWorkbench = (tab: RightWorkbenchTab) => {
-    if (tab === "browser") setBrowserStartedSessionId(currentSessionId)
+    if (tab === "browser") {
+      setBrowserStartedSessionId(currentSessionId)
+      const resumeLegacyPage = browserReadySessionId === currentSessionId
+        && browserState !== null
+        && browserState.tabs === undefined
+        && Boolean(browserState.url && browserState.url !== "about:blank")
+      if (resumeLegacyPage) {
+        setBrowserEntryOpen(false)
+      } else {
+        browserEntrySessionRef.current = {
+          sessionId: currentSessionId,
+          initialStateMissing: browserReadySessionId !== currentSessionId || !browserState,
+        }
+        setBrowserEntryDraft("")
+        setBrowserEntryTouched(false)
+        setBrowserEntryOpen(true)
+      }
+    } else {
+      setOpenToolTabs((current) => current.includes(tab) ? current : [...current, tab])
+    }
     setWorkbenchTab(tab)
     setWorkbenchOpen(true)
+  }
+  const closeToolTab = (tab: WorkbenchToolTab) => {
+    const index = openToolTabs.indexOf(tab)
+    const remaining = openToolTabs.filter((item) => item !== tab)
+    setOpenToolTabs(remaining)
+    if (workbenchTab === tab) {
+      setWorkbenchTab(remaining[index] ?? remaining[index - 1] ?? (browserState?.tabs?.length ? "browser" : null))
+    }
   }
   const openLinkInApp = (url: string) => {
     if (!currentSessionId || !browserEnabled) return
     setPendingBrowserNavigation({ sessionId: currentSessionId, url })
-    openWorkbench("browser")
+    if (browserReadySessionId === currentSessionId && browserState?.pending_dialog) {
+      setBrowserEntryOpen(false)
+      setWorkbenchTab("browser")
+      setWorkbenchOpen(true)
+    } else {
+      openWorkbench("browser")
+    }
   }
   const openReview = (filePath?: string) => {
     setReviewTargetFilePath(filePath ?? null)
@@ -309,20 +390,28 @@ function App() {
             docked={isWide}
             width={workbenchResize.width}
             activeTab={selectedWorkbenchTab}
+            openToolTabs={openToolTabs}
+            onToolClose={closeToolTab}
             browserEnabled={browserEnabled}
+            browserSessionAvailable={Boolean(currentSessionId)}
+            browserEntryOpen={browserEntryOpen}
             browserTabs={browser.readySessionId === currentSessionId ? browser.state?.tabs : null}
             activeBrowserTabId={browser.readySessionId === currentSessionId ? browser.state?.active_tab_id : null}
             browserBusy={browser.busy || Boolean(browser.state?.pending_dialog)}
-            onBrowserCreate={() => {
-              openWorkbench("browser")
-              if (browser.readySessionId === currentSessionId && browser.state?.tabs) void browser.createTab()
+            onBrowserActivate={(tabId) => {
+              setWorkbenchTab("browser")
+              setBrowserEntryOpen(false)
+              if (tabId !== browser.state?.active_tab_id) void browser.activateTab(tabId)
             }}
-            onBrowserActivate={(tabId) => void browser.activateTab(tabId)}
             onBrowserClose={(tabId) => void browser.closeTab(tabId)}
             onTabChange={(tab) => {
+              if (tab === null) {
+                setWorkbenchTab(null)
+                setBrowserEntryOpen(false)
+                return
+              }
               if (tab === "review") setReviewTargetFilePath(null)
-              if (tab === "browser") setBrowserStartedSessionId(currentSessionId)
-              setWorkbenchTab(tab)
+              openWorkbench(tab)
             }}
             onClose={() => setWorkbenchOpen(false)}
             sessionTitle={secondSession?.title}
@@ -351,6 +440,16 @@ function App() {
                 key={currentSessionId ?? "no-session"}
                 sessionId={currentSessionId}
                 active={workbenchTab === "browser"}
+                newTabEntry={browserEntryOpen}
+                entryDraft={browserEntryDraft}
+                onEntryDraftChange={(draft) => {
+                  setBrowserEntryDraft(draft)
+                  setBrowserEntryTouched(true)
+                }}
+                onNewTabOpened={() => {
+                  setBrowserEntryOpen(false)
+                  setBrowserEntryDraft("")
+                }}
                 browser={browser}
               />
             ) : null}
@@ -384,8 +483,8 @@ function App() {
                   }}
                   pickedWorkspace={null}
                   onOpenWorkspacePicker={() => {}}
-                  onOpenInspector={() => setWorkbenchTab("inspector")}
-                  onOpenReview={() => setWorkbenchTab("review")}
+                  onOpenInspector={() => openWorkbench("inspector")}
+                  onOpenReview={() => openWorkbench("review")}
                   splitOpen={workbenchOpen && workbenchTab === "session"}
                   onToggleSplit={() => setWorkbenchOpen(false)}
                   onSelectSubAgent={(childId) => pickSecond(childId, true)}

@@ -212,3 +212,17 @@ it("keeps browser controls in one toolbar without a nested tab strip", () => {
   expect(host.querySelector('button[aria-label="新建标签页"]')).toBeNull()
   expect(host.querySelector('input[aria-label="网页地址"]')).not.toBeNull()
 })
+
+it("shows a focused address entry instead of browser chrome when no page exists", async () => {
+  vi.mocked(browserService.open).mockResolvedValueOnce({
+    page_epoch: 3, frame_seq: 0, active_tab_id: null, tabs: [],
+    url: "", title: "", viewport: { width: 640, height: 480 },
+    can_go_back: false, can_go_forward: false,
+  })
+  await act(async () => root.render(<BrowserPane sessionId="empty-chat" active />))
+
+  expect(host.querySelector("[data-browser-empty]")?.textContent).toContain("还没有打开网页")
+  expect(host.querySelector<HTMLInputElement>('input[aria-label="网页地址"]')).toBe(document.activeElement)
+  expect(host.querySelector('button[aria-label="后退"]')).toBeNull()
+  expect(host.querySelector("[data-browser-viewport]")).toBeNull()
+})
