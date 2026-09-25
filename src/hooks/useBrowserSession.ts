@@ -23,7 +23,7 @@ type Scope = {
 
 type Invalidation = boolean | ((state: BrowserState) => boolean)
 
-const MAX_PENDING_STATE_READ_FAILURES = 3
+const TRANSIENT_STATE_READ_NOTICE_THRESHOLD = 3
 
 const isTransientStateReadError = (error: unknown): boolean =>
   (isApiError(error) && error.status >= 500 && error.status < 600) ||
@@ -136,16 +136,31 @@ export function useBrowserSession(sessionId: string | null, active: boolean) {
       let observedReset = framePollResetRef.current
       let lastStateRefresh = Date.now()
       let pendingStateReadFailures = 0
+      let emptyStateReadFailures = 0
       while (isCurrent()) {
         if (stateRef.current?.tabs?.length === 0) {
           // There is no page to render. An empty /frame response may return
           // immediately, so watch for agent-created tabs through bounded
           // state reads instead of spinning on frame requests.
-          await new Promise((resolve) => setTimeout(resolve, 500))
+          await new Promise((resolve) => setTimeout(resolve, Math.min(2000, 500 * (emptyStateReadFailures + 1))))
           if (!isCurrent()) return
+          if (stateRef.current?.tabs?.length !== 0) continue
           const version = stateVersionRef.current
-          const refreshed = await browserService.get(sessionId, controller.signal)
+          let refreshed: BrowserState
+          try {
+            refreshed = await browserService.get(sessionId, controller.signal)
+          } catch (cause) {
+            if (!isCurrent()) return
+            if (isTransientStateReadError(cause)) {
+              emptyStateReadFailures += 1
+              if (emptyStateReadFailures >= TRANSIENT_STATE_READ_NOTICE_THRESHOLD) setError(userMessage(cause))
+              continue
+            }
+            throw cause
+          }
           if (!isCurrent()) return
+          if (emptyStateReadFailures > 0) setError(null)
+          emptyStateReadFailures = 0
           if (version === stateVersionRef.current) publishState(refreshed)
           lastStateRefresh = Date.now()
           continue
@@ -161,7 +176,7 @@ export function useBrowserSession(sessionId: string | null, active: boolean) {
             refreshed = await browserService.get(sessionId, controller.signal)
           } catch (cause) {
             if (!isCurrent()) return
-            if (isTransientStateReadError(cause) && ++pendingStateReadFailures < MAX_PENDING_STATE_READ_FAILURES) continue
+            if (isTransientStateReadError(cause) && ++pendingStateReadFailures < TRANSIENT_STATE_READ_NOTICE_THRESHOLD) continue
             throw cause
           }
           if (!isCurrent()) return
