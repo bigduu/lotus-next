@@ -10,6 +10,8 @@ type Props = {
   loading: boolean
   disabled: boolean
   pending: boolean
+  recovering: boolean
+  recoverable: boolean
   error: string | null
   conflict: string | null
   onChange: (enabled: boolean) => void
@@ -17,12 +19,13 @@ type Props = {
 }
 
 export function RootOrchestrationControl({
-  sessionId, child, unsafe, selected, confirmed, loading, disabled, pending, error, conflict, onChange, onRetry,
+  sessionId, child, unsafe, selected, confirmed, loading, disabled, pending, recovering, recoverable,
+  error, conflict, onChange, onRetry,
 }: Props) {
   const changed = sessionId && typeof selected === "boolean" && typeof confirmed === "boolean"
     && selected !== confirmed
   const status = unsafe
-    ? "权限结果未知"
+    ? recovering ? "正在恢复权限结果…" : "权限结果未知"
     : child
     ? "仅 Root 可设置"
     : loading
@@ -38,7 +41,7 @@ export function RootOrchestrationControl({
               : confirmed ? "服务器已启用" : "服务器已关闭"
 
   return (
-    <div className="flex min-w-0 max-w-full flex-wrap items-center gap-1.5 text-xs" aria-busy={loading || pending}>
+    <div className="flex min-w-0 max-w-full flex-wrap items-center gap-1.5 text-xs" aria-busy={loading || pending || recovering}>
       <label className="inline-flex min-h-8 shrink-0 items-center gap-1.5 rounded-md px-1 hover:bg-accent">
         <input
           type="checkbox"
@@ -59,13 +62,15 @@ export function RootOrchestrationControl({
         </PopoverTrigger>
         <PopoverContent side="top" align="start" className="text-xs leading-relaxed">
           <p>Root 负责任务编排、子代理进度和纠偏。Root 仅可使用 SubAgent、Plan、Task、session_history_current、Read、Grep、Glob、GetFileInfo 和 ViewImage，不能直接运行命令或编辑文件。</p>
-          <p className="mt-2">子代理按各自任务授权执行。此模式与 Skill、Workflow 和旧 PlanMode 不兼容；发送消息后由 Bamboo 确认并保存选择。</p>
+          <p className="mt-2">子代理按各自任务授权执行。此模式与 Skill、Workflow 和旧 PlanMode 不兼容。已有 Root 的切换由 Bamboo 单独确认并保存；新会话在首次发送时保存选择。</p>
         </PopoverContent>
       </Popover>
       {error || conflict ? (
         <span role="alert" className="basis-full text-destructive">
           {conflict || error}
-          {error && selected === null && !child && !unsafe ? (
+          {recoverable && !child ? (
+            <button type="button" className="ml-1 underline" disabled={recovering} onClick={onRetry}>恢复切换</button>
+          ) : error && selected === null && !child && !unsafe ? (
             <button type="button" className="ml-1 underline" onClick={onRetry}>重新读取</button>
           ) : null}
         </span>

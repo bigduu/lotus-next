@@ -3,7 +3,8 @@ import { createRoot, type Root } from "react-dom/client"
 import { afterEach, beforeEach, expect, it, vi } from "vitest"
 import { useGuidanceQueue } from "./useGuidanceQueue"
 import { guidanceService } from "@services/chat/guidance"
-import { beginRootModeTransition } from "@/lib/rootModeTransitionFence"
+import { beginRootModeOperation } from "@/lib/rootModeTransitionFence"
+const beginRootModeTransition = (id: string, enabled: boolean) => beginRootModeOperation(id, 0, "a".repeat(64), enabled)
 vi.mock("@services/chat/guidance", () => ({ guidanceService: { list: vi.fn(), send: vi.fn(), cancel: vi.fn() } }))
 let root: Root
 let container: HTMLDivElement

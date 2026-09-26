@@ -553,7 +553,7 @@ export function ChatPane({
     // Keep an in-flight admission from capturing or clearing a second draft.
     if (submissionPending || modelSaving || queue.busy || goalRequestActive.current) return
     if (rootSessionUnsafe()) {
-      setRootModeConflict("Root 权限切换结果未知，此会话已停止发送和执行。请新建会话。")
+      setRootModeConflict("Root 权限切换结果未知，此会话已停止发送和执行。请先处理模式切换。")
       return
     }
     const storeAtSubmit = useAppStore.getState()
@@ -570,13 +570,9 @@ export function ChatPane({
         storeAtSubmit.setInputContentIfRevision(draftKey, revision, "")
         return
       }
-      if (rootMode.requestValue !== undefined) {
-        setRootModeConflict("Root 模式切换尚未确认。请先发送普通消息完成切换，再使用 /goal。")
-        return
-      }
       const sessionId = currentSessionId
       if (getRootModeFenceState(sessionId) !== "clear") {
-        setRootModeConflict("Root 权限切换结果未知，此会话已停止发送和执行。请新建会话。")
+        setRootModeConflict("Root 权限切换结果未知，此会话已停止发送和执行。请先处理模式切换。")
         return
       }
       goalRequestActive.current = true; setGoalSaving(true)
@@ -594,7 +590,7 @@ export function ChatPane({
         // The run may finish while the Goal command is being acknowledged.
         if (response.goal_command.should_execute) {
           if (getRootModeFenceState(sessionId) !== "clear") {
-            if (currentDraftKeyRef.current === draftKey) showToast("Root 权限结果未知，目标已保存但不会执行；请新建会话")
+            if (currentDraftKeyRef.current === draftKey) showToast("Root 权限结果未知，目标已保存但不会执行；请先处理模式切换")
             return
           }
           try { await agentClient.execute(sessionId, currentChat?.config?.model) }
@@ -613,10 +609,6 @@ export function ChatPane({
     setRootModeConflict(null)
     if ((currentlyRunning || queue.hasUnconfirmed) && selectedSkill) {
       showToast("请先移除已选技能，再把消息加入队列。")
-      return
-    }
-    if (currentSessionId && (currentlyRunning || queue.hasUnconfirmed) && rootMode.requestValue !== undefined) {
-      setRootModeConflict("Root 模式切换需要通过聊天请求确认。请等待当前运行结束后发送。")
       return
     }
     const snapshot: ComposerSubmissionSnapshot = Object.freeze({
@@ -660,12 +652,9 @@ export function ChatPane({
         })
     void submission
       .then((result) => {
-        if (currentSessionId && !rootMode.child && !currentlyRunning && !queue.hasUnconfirmed && result.kind !== "busy" && result.kind !== "ignored" && result.kind !== "blocked") {
-          void rootMode.refresh(currentSessionId, result.kind === "unconfirmed"
-            ? result.rejectionCode
-              ? snapshot.rootOrchestrationOnly !== undefined ? "rejected" : "accepted"
-              : "unconfirmed"
-            : "accepted")
+        if (currentSessionId && !rootMode.child && !currentlyRunning && !queue.hasUnconfirmed
+          && result.kind !== "busy" && result.kind !== "ignored" && result.kind !== "blocked") {
+          void rootMode.refresh(currentSessionId)
         }
         if (result.kind === "unconfirmed") {
           if (currentDraftKeyRef.current === snapshot.draftKey) composerInputRef.current?.focus()
@@ -736,7 +725,7 @@ export function ChatPane({
   }
 
   const handleFork = (id: string) => {
-    if (rootSessionUnsafe()) { setRootModeConflict("Root 权限切换结果未知，此会话暂不能分叉。请新建会话。"); return }
+    if (rootSessionUnsafe()) { setRootModeConflict("Root 权限切换结果未知，此会话暂不能分叉。请先处理模式切换。"); return }
     setForking(true)
     void fork(id).then((nid) => {
       setForking(false)
@@ -928,14 +917,14 @@ export function ChatPane({
           }}
           onPreviewImage={setPreview}
           onRegenerate={() => {
-            if (rootSessionUnsafe()) { setRootModeConflict("Root 权限切换结果未知，此会话已停止重新生成。请新建会话。"); return }
+            if (rootSessionUnsafe()) { setRootModeConflict("Root 权限切换结果未知，此会话已停止重新生成。请先处理模式切换。"); return }
             if (modelSaving) { showToast("模型正在保存，请稍后继续"); return }
             void regenerate()
           }}
           onFork={handleFork}
           onDelete={(id) => void deleteMessage(id)}
           onEditMessage={(id, text) => {
-            if (rootSessionUnsafe()) { setRootModeConflict("Root 权限切换结果未知，此会话已停止编辑重跑。请新建会话。"); return }
+            if (rootSessionUnsafe()) { setRootModeConflict("Root 权限切换结果未知，此会话已停止编辑重跑。请先处理模式切换。"); return }
             if (modelSaving) { showToast("模型正在保存，请稍后继续"); return }
             void editMessage(id, text)
           }}
@@ -961,7 +950,7 @@ export function ChatPane({
                     : runFailureGuidance?.title ?? "消息已发送，但生成中断"}
               </p>
               {rootMode.unsafe && generationFailed ? (
-                <p className="mt-1 text-xs">Root 权限切换结果未知。消息保留在会话中；请新建会话继续。</p>
+                <p className="mt-1 text-xs">Root 权限切换结果未知。消息保留在会话中；请先处理模式切换后继续。</p>
               ) : runFailureGuidance ? (
                 <p className="mt-1 text-xs">{runFailureGuidance.action}</p>
               ) : null}
@@ -980,7 +969,7 @@ export function ChatPane({
                 variant="secondary"
                 disabled={sending || modelSaving}
                 onClick={() => {
-                  if (rootSessionUnsafe()) { setRootModeConflict("Root 权限切换结果未知，此会话已停止重试生成。请新建会话。"); return }
+                  if (rootSessionUnsafe()) { setRootModeConflict("Root 权限切换结果未知，此会话已停止重试生成。请先处理模式切换。"); return }
                   if (visibleSendFailure?.kind === "generation-failed") {
                     void retry(visibleSendFailure)
                   } else {
@@ -1043,9 +1032,11 @@ export function ChatPane({
                 loading={rootMode.loading}
                 disabled={submissionPending || currentlyRunning || queue.hasUnconfirmed}
                 pending={submissionPending}
+                recovering={rootMode.recovering}
+                recoverable={rootMode.recoverable}
                 error={rootMode.error}
                 conflict={rootModeConflict ?? skillModeConflict}
-                onChange={(enabled) => { setRootModeConflict(null); rootMode.change(enabled) }}
+                onChange={(enabled) => { setRootModeConflict(null); void rootMode.change(enabled) }}
                 onRetry={() => { void rootMode.retry() }}
               />
             </>

@@ -68,6 +68,8 @@ vi.mock("@services/workspace", () => ({ workspaceService: { listWorkspaceFiles: 
 vi.mock("@services/chat/AgentService", () => ({ agentClient: {
   patchSession: vi.fn().mockResolvedValue(undefined),
   getSession: vi.fn(),
+  selectRootMode: vi.fn(),
+  recoverRootMode: vi.fn(),
   sendMessage: vi.fn().mockImplementation(async (request) => ({ session_id: request.session_id, goal_command: { action: "set_prompt", should_execute: true } })),
   execute: vi.fn().mockResolvedValue(undefined),
 } }))
@@ -111,7 +113,8 @@ vi.mock("@/components/app/Composer", () => ({
     </div>),
 }))
 import { agentClient } from "@services/chat/AgentService"
-import { beginRootModeTransition, getRootModeFenceState } from "@/lib/rootModeTransitionFence"
+import { beginRootModeOperation, getRootModeFenceState } from "@/lib/rootModeTransitionFence"
+import { ApiError, RequestTimeoutError } from "@services/api/errors"
 import { ChatPane } from "./ChatPane"
 import { isSessionUnread, useSessionReadState } from "@/lib/sessionReadState"
 const skill = (id: string): SkillDefinition => ({ id, name: id, description: id, prompt: id, tool_refs: [`tool-${id}`] })
@@ -121,6 +124,8 @@ const skillB = skill("skill-b")
 const workflowA = workflow("workflow-a")
 const workflowB = workflow("workflow-b")
 const roots: Root[] = []
+const rootFields = { root_mode_transition_epoch: 0, root_mode_birth_token: "a".repeat(64) }
+const beginRootModeTransition = (id: string, enabled: boolean) => beginRootModeOperation(id, 0, rootFields.root_mode_birth_token, enabled)
 const actEnvironment = globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
 actEnvironment.IS_REACT_ACT_ENVIRONMENT = true
 function notify() { for (const listener of runtime.listeners) listener() }
@@ -210,8 +215,13 @@ function resizePane(wide: boolean) {
 beforeEach(() => {
   localStorage.clear()
   vi.mocked(agentClient.getSession).mockReset().mockImplementation(async (sessionId) => ({
-    session: { id: sessionId, kind: "root", root_orchestration_only: false },
+    session: { ...rootFields, id: sessionId, kind: "root", root_orchestration_only: false },
   }) as Awaited<ReturnType<typeof agentClient.getSession>>)
+  vi.mocked(agentClient.selectRootMode).mockReset().mockImplementation(async (_id, operation) => ({
+    status: "committed", operation_id: operation.operationId, expected_epoch: operation.expectedEpoch,
+    resulting_epoch: operation.expectedEpoch + 1, enabled_at_completion: operation.enabled, root_tool_authority_revision: 1,
+  }))
+  vi.mocked(agentClient.recoverRootMode).mockReset().mockRejectedValue(new Error("recovery unavailable"))
   vi.mocked(agentClient.sendMessage).mockReset().mockImplementation(async (request) => ({
     session_id: request.session_id, goal_command: { action: "set_prompt", should_execute: true },
   }) as Awaited<ReturnType<typeof agentClient.sendMessage>>)
@@ -641,7 +651,7 @@ describe("Root orchestration-only control", () => {
 
   it("reads the saved Root choice and omits it on an unchanged follow-up", async () => {
     vi.mocked(agentClient.getSession).mockImplementation(async (sessionId) => ({
-      session: { id: sessionId, kind: "root", root_orchestration_only: true },
+      session: { ...rootFields, id: sessionId, kind: "root", root_orchestration_only: true },
     }) as Awaited<ReturnType<typeof agentClient.getSession>>)
     const send = vi.fn<Send>().mockResolvedValue({
       kind: "accepted", operationId: 1, sessionId: "root-session", navigated: false,
@@ -659,56 +669,58 @@ describe("Root orchestration-only control", () => {
     expect(agentClient.getSession).toHaveBeenCalledTimes(2)
   })
 
-  it("submits explicit false and shows the server value only after readback", async () => {
+  it("switches an existing Root without chat and omits mode on the next message", async () => {
     let durable = true
     vi.mocked(agentClient.getSession).mockImplementation(async (sessionId) => ({
-      session: { id: sessionId, kind: "root", root_orchestration_only: durable },
+      session: { ...rootFields, root_mode_transition_epoch: durable ? 0 : 1, id: sessionId, kind: "root", root_orchestration_only: durable },
     }) as Awaited<ReturnType<typeof agentClient.getSession>>)
-    const send = vi.fn<Send>().mockImplementation(async () => {
+    vi.mocked(agentClient.selectRootMode).mockImplementationOnce(async (_id, operation) => {
       durable = false
-      return { kind: "accepted", operationId: 1, sessionId: "root-session", navigated: false }
+      return { status: "committed", operation_id: operation.operationId, expected_epoch: 0,
+        resulting_epoch: 1, enabled_at_completion: false, root_tool_authority_revision: 2 }
     })
+    const send = vi.fn<Send>().mockResolvedValue({ kind: "accepted", operationId: 1, sessionId: "root-session", navigated: false })
     const textarea = await mount(send, "root-session")
-    act(() => rootModeToggle().click())
+    await act(async () => { rootModeToggle().click(); await Promise.resolve(); await Promise.resolve() })
     expect(rootModeToggle().checked).toBe(false)
-    expect(document.querySelector('[role="status"]')?.textContent).toContain("待关闭 · 当前已启用")
+    expect(document.querySelector('[role="status"]')?.textContent).toContain("服务器已关闭")
+    expect(send).not.toHaveBeenCalled()
+    expect(agentClient.sendMessage).not.toHaveBeenCalled()
+    expect(agentClient.execute).not.toHaveBeenCalled()
 
     change(textarea, "continue directly")
     act(() => composer().onSubmit())
     await flush()
     expect(send).toHaveBeenCalledWith("continue directly", expect.objectContaining({
-      rootOrchestrationOnly: false,
+      rootOrchestrationOnly: undefined,
     }))
     expect(document.querySelector('[role="status"]')?.textContent).toContain("服务器已关闭")
   })
 
-  it("keeps an uncertain switch fenced across an old-value GET, a late POST, and reload", async () => {
+  it("keeps a timed-out mode-only operation fenced after a late commit and reload", async () => {
     let durable = true
     vi.mocked(agentClient.getSession).mockImplementation(async (sessionId) => ({
-      session: { id: sessionId, kind: "root", root_orchestration_only: durable },
+      session: { ...rootFields, id: sessionId, kind: "root", root_orchestration_only: durable },
     }) as Awaited<ReturnType<typeof agentClient.getSession>>)
-    const send = vi.fn<Send>().mockImplementation(async (_text, options) => {
-      expect(options?.rootOrchestrationOnly).toBe(false)
-      expect(beginRootModeTransition("root-session", false)).not.toBeNull()
-      return { kind: "unconfirmed", operationId: 1 }
-    })
+    vi.mocked(agentClient.selectRootMode).mockRejectedValueOnce(new RequestTimeoutError())
+    const send = vi.fn<Send>()
     const textarea = await mount(send, "root-session")
-    act(() => rootModeToggle().click())
+    await act(async () => { rootModeToggle().click(); await Promise.resolve(); await Promise.resolve() })
     change(textarea, "disable mode")
     act(() => composer().onSubmit())
     await flush()
-    expect(agentClient.getSession).toHaveBeenCalledTimes(2)
+    expect(agentClient.getSession).toHaveBeenCalledTimes(1)
     expect(getRootModeFenceState("root-session")).toBe("uncertain")
     expect(document.querySelector('[role="status"]')?.textContent).toContain("权限结果未知")
     expect(document.body.textContent).not.toContain("服务器已启用")
-    expect(document.body.textContent).not.toContain("重新读取")
+    expect(document.body.textContent).toContain("恢复切换")
     expect(rootModeToggle().disabled).toBe(true)
 
     act(() => roots.pop()?.unmount())
     document.body.replaceChildren()
     await mount(send, "root-session") // a reload can still read the old value
     expect(document.querySelector('[role="status"]')?.textContent).toContain("权限结果未知")
-    expect(document.body.textContent).not.toContain("重新读取")
+    expect(document.body.textContent).toContain("恢复切换")
     durable = false // the previously timed-out POST commits after that GET
     act(() => roots.pop()?.unmount())
     document.body.replaceChildren()
@@ -716,9 +728,9 @@ describe("Root orchestration-only control", () => {
     expect(document.querySelector('[role="status"]')?.textContent).toContain("权限结果未知")
     change(restored, "send with omitted mode")
     act(() => composer().onSubmit())
-    expect(send).toHaveBeenCalledTimes(1)
+    expect(send).not.toHaveBeenCalled()
     expect(restored.value).toBe("send with omitted mode")
-    expect(document.querySelector('[role="alert"]')?.textContent).toContain("请新建会话")
+    expect(document.querySelector('[role="alert"]')?.textContent).toContain("处理模式切换")
   })
 
   it("blocks Goal and queued guidance on a fenced Session", async () => {
@@ -751,20 +763,22 @@ describe("Root orchestration-only control", () => {
 
   it("restores the durable choice after a Bamboo rejection and shows its cause", async () => {
     vi.mocked(agentClient.getSession).mockImplementation(async (sessionId) => ({
-      session: { id: sessionId, kind: "root", root_orchestration_only: true },
+      session: { ...rootFields, id: sessionId, kind: "root", root_orchestration_only: true },
     }) as Awaited<ReturnType<typeof agentClient.getSession>>)
-    const send = vi.fn<Send>().mockResolvedValue({
-      kind: "unconfirmed", operationId: 1, rejectionCode: "root_orchestration_incompatible_mode",
-    })
-    const textarea = await mount(send, "root-session")
-    act(() => rootModeToggle().click())
-    change(textarea, "switch mode")
-    act(() => composer().onSubmit())
-    await flush()
+    vi.mocked(agentClient.selectRootMode).mockRejectedValueOnce(new ApiError("incompatible", 409, "Conflict",
+      JSON.stringify({ error: { code: "root_orchestration_incompatible_mode" } })))
+    vi.mocked(agentClient.recoverRootMode).mockImplementationOnce(async (_id, operation) => ({
+      status: "rejected_incompatible", operation_id: operation.operationId, expected_epoch: operation.expectedEpoch,
+      resulting_epoch: operation.expectedEpoch + 1, enabled_at_completion: true, root_tool_authority_revision: 1,
+    }))
+    const send = vi.fn<Send>()
+    await mount(send, "root-session")
+    await act(async () => { rootModeToggle().click(); await Promise.resolve(); await Promise.resolve() })
 
     expect(rootModeToggle().checked).toBe(true)
     expect(document.querySelector('[role="status"]')?.textContent).toContain("服务器已启用")
     expect(document.querySelector('[role="alert"]')?.textContent).toContain("Bamboo 已拒绝")
+    expect(send).not.toHaveBeenCalled()
   })
 
   it("does not call a Skill conflict an attempted Root mode switch", async () => {
@@ -823,7 +837,7 @@ describe("Root orchestration-only control", () => {
 
   it("warns that a selected Skill conflicts while keeping Bamboo as the admission authority", async () => {
     vi.mocked(agentClient.getSession).mockImplementation(async (sessionId) => ({
-      session: { id: sessionId, kind: "root", root_orchestration_only: true },
+      session: { ...rootFields, id: sessionId, kind: "root", root_orchestration_only: true },
     }) as Awaited<ReturnType<typeof agentClient.getSession>>)
     const send = vi.fn<Send>().mockResolvedValue({ kind: "unconfirmed", operationId: 1 })
     const textarea = await mount(send, "root-session")
@@ -839,7 +853,7 @@ describe("Root orchestration-only control", () => {
 
   it("does not describe an unchanged-mode Skill rejection as a mode switch", async () => {
     vi.mocked(agentClient.getSession).mockImplementation(async (sessionId) => ({
-      session: { id: sessionId, kind: "root", root_orchestration_only: true },
+      session: { ...rootFields, id: sessionId, kind: "root", root_orchestration_only: true },
     }) as Awaited<ReturnType<typeof agentClient.getSession>>)
     const send = vi.fn<Send>().mockResolvedValue({
       kind: "unconfirmed", operationId: 1, rejectionCode: "root_orchestration_incompatible_mode",
@@ -856,7 +870,7 @@ describe("Root orchestration-only control", () => {
 
   it("blocks a text-expanded Workflow while Root mode is selected", async () => {
     vi.mocked(agentClient.getSession).mockImplementation(async (sessionId) => ({
-      session: { id: sessionId, kind: "root", root_orchestration_only: true },
+      session: { ...rootFields, id: sessionId, kind: "root", root_orchestration_only: true },
     }) as Awaited<ReturnType<typeof agentClient.getSession>>)
     const send = vi.fn<Send>()
     const textarea = await mount(send, "root-session")
@@ -872,7 +886,7 @@ describe("Root orchestration-only control", () => {
 
   it("keeps the confirmed server label while a Root run is active", async () => {
     vi.mocked(agentClient.getSession).mockImplementation(async (sessionId) => ({
-      session: { id: sessionId, kind: "root", root_orchestration_only: true },
+      session: { ...rootFields, id: sessionId, kind: "root", root_orchestration_only: true },
     }) as Awaited<ReturnType<typeof agentClient.getSession>>)
     await mount(vi.fn<Send>(), "root-session", true)
     expect(rootModeToggle().checked).toBe(true)
@@ -880,11 +894,13 @@ describe("Root orchestration-only control", () => {
     expect(document.querySelector('[role="status"]')?.textContent).toContain("服务器已启用")
   })
 
-  it("holds a Goal command until a changed Root choice is confirmed", async () => {
+  it("holds a Goal command while a mode-only operation is pending", async () => {
     vi.mocked(agentClient.getSession).mockImplementation(async (sessionId) => ({
-      session: { id: sessionId, kind: "root", root_orchestration_only: true },
+      session: { ...rootFields, id: sessionId, kind: "root", root_orchestration_only: true },
     }) as Awaited<ReturnType<typeof agentClient.getSession>>)
     const send = vi.fn<Send>()
+    const terminal = deferred<Awaited<ReturnType<typeof agentClient.selectRootMode>>>()
+    vi.mocked(agentClient.selectRootMode).mockReturnValueOnce(terminal.promise)
     const textarea = await mount(send, "root-session")
     act(() => rootModeToggle().click())
     change(textarea, "/goal complete the task")
@@ -893,16 +909,20 @@ describe("Root orchestration-only control", () => {
     expect(agentClient.sendMessage).not.toHaveBeenCalled()
     expect(send).not.toHaveBeenCalled()
     expect(textarea.value).toBe("/goal complete the task")
-    expect(document.querySelector('[role="alert"]')?.textContent).toContain("请先发送普通消息完成切换")
-    act(() => rootModeToggle().click())
-    expect(document.querySelector('[role="alert"]')?.textContent ?? "").not.toContain("请先发送普通消息完成切换")
+    expect(document.querySelector('[role="alert"]')?.textContent).toContain("处理模式切换")
+    const operation = vi.mocked(agentClient.selectRootMode).mock.calls[0][1]
+    await act(async () => {
+      terminal.resolve({ status: "committed", operation_id: operation.operationId, expected_epoch: operation.expectedEpoch,
+        resulting_epoch: operation.expectedEpoch + 1, enabled_at_completion: false, root_tool_authority_revision: 2 })
+      await Promise.resolve()
+    })
   })
 
   it("fails closed when detail is unavailable and recovers by reading the server", async () => {
     vi.mocked(agentClient.getSession)
       .mockRejectedValueOnce(new Error("authority unavailable"))
       .mockImplementation(async (sessionId) => ({
-        session: { id: sessionId, kind: "root", root_orchestration_only: true },
+        session: { ...rootFields, id: sessionId, kind: "root", root_orchestration_only: true },
       }) as Awaited<ReturnType<typeof agentClient.getSession>>)
     await mount(vi.fn<Send>(), "root-session")
     expect(rootModeToggle().disabled).toBe(true)

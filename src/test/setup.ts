@@ -5,7 +5,7 @@ import { installRuntimeConfig } from "../runtime/runtimeConfig"
 const createMemoryStorage = (): Storage => {
   const values = new Map<string, string>()
 
-  return {
+  const storage: Storage = {
     get length() {
       return values.size
     },
@@ -25,6 +25,23 @@ const createMemoryStorage = (): Storage => {
       values.set(key, value)
     },
   }
+  // Web Storage exposes stored names as enumerable own keys. Keep the mock
+  // faithful so one-shot key snapshots have the same semantics as browsers.
+  return new Proxy(storage, {
+    ownKeys(target) {
+      return [...new Set([...Reflect.ownKeys(target), ...values.keys()])]
+    },
+    getOwnPropertyDescriptor(target, key) {
+      if (typeof key === "string" && values.has(key) && !Reflect.has(target, key)) {
+        return { configurable: true, enumerable: true, writable: true, value: values.get(key) }
+      }
+      return Reflect.getOwnPropertyDescriptor(target, key)
+    },
+    get(target, key, receiver) {
+      if (typeof key === "string" && values.has(key) && !Reflect.has(target, key)) return values.get(key)
+      return Reflect.get(target, key, receiver)
+    },
+  })
 }
 
 const localStorageForTests = createMemoryStorage()
