@@ -57,6 +57,11 @@ export type AgentEventType =
 
 export type ReasoningEffort = "none" | "low" | "medium" | "high" | "xhigh" | "max";
 
+/** Root product mode, independent of per-call provider reasoning effort. */
+export type ThinkingMode = "standard" | "ultra";
+export const isThinkingMode = (value: unknown): value is ThinkingMode =>
+  value === "standard" || value === "ultra";
+
 export type SessionPermissionMode = "default" | "bypass" | "auto";
 
 export const parseSessionPermissionMode = (value: unknown): SessionPermissionMode | null =>
@@ -360,6 +365,8 @@ export interface ChatRequest {
   workflow_selection?: import("../command/workflowCatalog").WorkflowSelection;
   /** Durable Root tool boundary. Omit on follow-up to keep the saved choice. */
   root_orchestration_only?: boolean;
+  /** Initial Root product mode. Existing Roots use a separate mode operation. */
+  thinking_mode?: ThinkingMode;
   images?: Array<{
     base64: string;
     name?: string;
@@ -403,6 +410,8 @@ export type RootModeOperationResponse =
     expected_epoch: number;
     resulting_epoch: number;
     enabled_at_completion: boolean;
+    /** Historical receipt value; current authority requires session detail. */
+    thinking_mode_at_completion: ThinkingMode;
     root_tool_authority_revision: number;
   }
   | {
@@ -411,6 +420,7 @@ export type RootModeOperationResponse =
     expected_epoch: number;
     current_epoch: number;
     current_enabled: boolean;
+    current_thinking_mode: ThinkingMode;
     root_tool_authority_revision: number;
   };
 
@@ -690,6 +700,8 @@ export interface SessionSummary {
   plan_mode?: SessionPlanModeState | null;
   /** Authoritative only on GET /sessions/{id}; list rows omit this field. */
   root_orchestration_only?: boolean | null;
+  /** Authoritative only on session detail, paired with the durable Root bool. */
+  thinking_mode?: ThinkingMode | null;
   /** Root mode operation CAS fields; authoritative only on session detail. */
   root_mode_transition_epoch?: number | null;
   root_mode_birth_token?: string | null;
@@ -1345,7 +1357,8 @@ export class AgentClient {
   async selectRootMode(sessionId: string, input: RootModeOperationInput): Promise<RootModeOperationResponse> {
     return apiClient.post<RootModeOperationResponse>(
       `sessions/${encodeURIComponent(sessionId)}/root-mode-operations/${encodeURIComponent(input.operationId)}`,
-      { birth_token: input.birthToken, expected_epoch: input.expectedEpoch, enabled: input.enabled },
+      { birth_token: input.birthToken, expected_epoch: input.expectedEpoch, enabled: input.enabled,
+        thinking_mode: input.enabled ? "ultra" : "standard" },
     );
   }
 
@@ -1353,7 +1366,8 @@ export class AgentClient {
   async recoverRootMode(sessionId: string, input: RootModeOperationInput): Promise<RootModeOperationResponse> {
     return apiClient.post<RootModeOperationResponse>(
       `sessions/${encodeURIComponent(sessionId)}/root-mode-operations/${encodeURIComponent(input.operationId)}/recover`,
-      { birth_token: input.birthToken, expected_epoch: input.expectedEpoch, enabled: input.enabled },
+      { birth_token: input.birthToken, expected_epoch: input.expectedEpoch, enabled: input.enabled,
+        thinking_mode: input.enabled ? "ultra" : "standard" },
     );
   }
 

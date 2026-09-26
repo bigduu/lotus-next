@@ -1,5 +1,8 @@
 import { storageDb } from "./StorageDb";
+import { isThinkingMode, type ThinkingMode } from "@services/chat/AgentService";
 import type { ScrollAnchorV1 } from "../../pages/ChatPage/components/ChatView/scrollAnchorStorage";
+
+export const INPUT_THINKING_MODE_BY_DRAFT_STORAGE_KEY = "chat_input_thinking_mode_by_draft_v1";
 
 export interface ModelOption {
   value: string;
@@ -178,22 +181,25 @@ export class StorageManager {
   }
 
   // ========== Input State (Reasoning) ==========
-  async saveInputReasoning(sessionId: string, reasoningEffort: string): Promise<void> {
+  async saveInputReasoning(sessionId: string, reasoningEffort: string | null): Promise<void> {
     try {
-      const existing = await this.db.inputStates.get(sessionId);
-      await this.db.inputStates.put({
-        sessionId,
-        reasoningEffort,
-        content: existing?.content,
-        referenceText: existing?.referenceText,
-        updatedAt: Date.now(),
+      await this.db.transaction("rw", this.db.inputStates, async () => {
+        const existing = await this.db.inputStates.get(sessionId);
+        const { reasoningEffort: _previous, ...rest } = existing ?? {};
+        await this.db.inputStates.put({
+          ...rest,
+          sessionId,
+          ...(reasoningEffort === null ? {} : { reasoningEffort }),
+          updatedAt: Date.now(),
+        });
       });
     } catch (err) {
       console.warn("[StorageManager] saveInputReasoning failed", err);
       try {
         const raw = localStorage.getItem("chat_input_reasoning_by_session_v1");
         const bySession = raw ? JSON.parse(raw) : {};
-        bySession[sessionId] = reasoningEffort;
+        if (reasoningEffort === null) delete bySession[sessionId];
+        else bySession[sessionId] = reasoningEffort;
         localStorage.setItem("chat_input_reasoning_by_session_v1", JSON.stringify(bySession));
       } catch {
         // ignore
@@ -215,6 +221,25 @@ export class StorageManager {
         return null;
       }
     }
+  }
+
+  /** Update just this field in the existing input row, including an explicit clear. */
+  async saveInputThinkingMode(draftKey: string, mode: ThinkingMode | null): Promise<void> {
+    if (mode !== null && !isThinkingMode(mode)) throw new TypeError("Invalid draft thinking mode");
+    await this.db.transaction("rw", this.db.inputStates, async () => {
+      const existing = await this.db.inputStates.get(draftKey);
+      const { thinkingMode: _previous, ...rest } = existing ?? {};
+      await this.db.inputStates.put({
+        ...rest, sessionId: draftKey,
+        ...(mode === null ? {} : { thinkingMode: mode }),
+        updatedAt: Date.now(),
+      });
+    });
+  }
+
+  async loadInputThinkingMode(draftKey: string): Promise<ThinkingMode | null> {
+    const record = await this.db.inputStates.get(draftKey);
+    return isThinkingMode(record?.thinkingMode) ? record.thinkingMode : null;
   }
 
   async saveLastUsedReasoningEffort(reasoningEffort: string): Promise<void> {

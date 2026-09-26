@@ -19,7 +19,7 @@ type ChatPaneProps = ComponentProps<(typeof import("./ChatPane"))["ChatPane"]>
 type Send = ChatPaneProps["chat"]["send"]
 type WorkflowControlProps = ComponentProps<(typeof import("@/components/chat/WorkflowSelectionControl"))["WorkflowSelectionControl"]>
 type State = {
-  tokenUsages: Record<string, unknown>; inputStates: Record<string, { content: string; contentRevision: number; reasoningEffort?: ReasoningEffortSelection }>
+  tokenUsages: Record<string, unknown>; inputStates: Record<string, { content: string; contentRevision: number; reasoningEffort?: ReasoningEffortSelection; thinkingMode?: "standard" | "ultra"; thinkingModeRevision?: number }>
   skills: SkillDefinition[]; childProgress: Record<string, unknown>; models: string[]; selectedModel: string | undefined
   setInputContent(id: string, content: string): void
   setInputContentIfRevision(id: string, revision: number, content: string): boolean
@@ -28,6 +28,7 @@ type State = {
   changeSessionModel(id: string, model: string): Promise<void>
   setInputReasoningEffort(id: string, effort: ReasoningEffortSelection): void
   clearInputReasoningEffort(id: string): void
+  clearInputThinkingModeIfRevision(id: string, revision: number): boolean
   changeSessionReasoningEffort(id: string, effort: ReasoningEffort | null): Promise<void>
   refreshChatsNow(): Promise<void>
   loadChatHistory(id: string): Promise<void>
@@ -225,7 +226,8 @@ beforeEach(() => {
   }) as Awaited<ReturnType<typeof agentClient.getSession>>)
   vi.mocked(agentClient.selectRootMode).mockReset().mockImplementation(async (_id, operation) => ({
     status: "committed", operation_id: operation.operationId, expected_epoch: operation.expectedEpoch,
-    resulting_epoch: operation.expectedEpoch + 1, enabled_at_completion: operation.enabled, root_tool_authority_revision: 1,
+    resulting_epoch: operation.expectedEpoch + 1, enabled_at_completion: operation.enabled,
+    thinking_mode_at_completion: operation.enabled ? "ultra" : "standard", root_tool_authority_revision: 1,
   }))
   vi.mocked(agentClient.recoverRootMode).mockReset().mockRejectedValue(new Error("recovery unavailable"))
   vi.mocked(agentClient.sendMessage).mockReset().mockImplementation(async (request) => ({
@@ -266,6 +268,13 @@ beforeEach(() => {
       runtime.state.inputStates = { ...runtime.state.inputStates, [id]: rest }
       notify()
     },
+    clearInputThinkingModeIfRevision: (id, revision) => {
+      const current = runtime.state.inputStates[id]
+      if (!current || current.thinkingModeRevision !== revision || current.thinkingMode === undefined) return false
+      const { thinkingMode: _mode, ...rest } = current
+      runtime.state.inputStates = { ...runtime.state.inputStates, [id]: rest }
+      notify(); return true
+    },
     setInputContent: (id, content) => {
       const previous = runtime.state.inputStates[id] ?? { content: "", contentRevision: 0 }
       runtime.state.inputStates = { ...runtime.state.inputStates, [id]: {
@@ -290,6 +299,46 @@ beforeEach(() => {
 })
 afterEach(() => { for (const root of roots.splice(0)) act(() => root.unmount()); document.body.replaceChildren(); vi.unstubAllGlobals() })
 describe("ChatPane composer acknowledgement", () => {
+  it("does not submit a draft mode as existing-Root authority", async () => {
+    runtime.state.inputStates["root-session"] = { content: "", contentRevision: 0, thinkingMode: "ultra", thinkingModeRevision: 9 }
+    const send = vi.fn<Send>().mockResolvedValue({ kind: "accepted", operationId: 1, sessionId: "root-session", navigated: false })
+    const textarea = await mount(send, "root-session")
+    change(textarea, "existing Root")
+    act(() => composer().onSubmit())
+    await flush()
+    expect(send).toHaveBeenCalledWith("existing Root", expect.objectContaining({ thinkingMode: undefined, rootOrchestrationOnly: undefined }))
+  })
+
+  it.each(["standard", "ultra"] as const)("captures draft mode %s and clears only its exact revision", async (thinkingMode) => {
+    const ack = deferred<Awaited<ReturnType<Send>>>()
+    const send = vi.fn<Send>().mockReturnValueOnce(ack.promise)
+    runtime.state.inputStates[""] = { content: "", contentRevision: 0, thinkingMode, thinkingModeRevision: 11, reasoningEffort: "max" }
+    runtime.state.inputStates.__new_chat_pane2__ = { content: "keep split", contentRevision: 1, thinkingMode: "ultra", thinkingModeRevision: 12 }
+    const textarea = await mount(send, null)
+    change(textarea, "new root")
+    act(() => composer().onSubmit())
+    expect(send).toHaveBeenCalledWith("new root", expect.objectContaining({ thinkingMode, rootOrchestrationOnly: thinkingMode === "ultra", reasoningSelection: "max" }))
+    await act(async () => { ack.resolve({ kind: "accepted", operationId: 1, sessionId: "new-root", navigated: true }); await Promise.resolve() })
+    expect(runtime.state.inputStates[""].thinkingMode).toBeUndefined()
+    expect(runtime.state.inputStates.__new_chat_pane2__.thinkingMode).toBe("ultra")
+    expect(runtime.state.inputStates["new-root"]).toBeUndefined()
+  })
+
+  it.each(["standard", "ultra"] as const)("preserves a newer %s choice across a late mode ACK", async (newMode) => {
+    const ack = deferred<Awaited<ReturnType<Send>>>()
+    const send = vi.fn<Send>().mockReturnValueOnce(ack.promise)
+    runtime.state.inputStates[""] = { content: "", contentRevision: 0, thinkingMode: "ultra", thinkingModeRevision: 21 }
+    const textarea = await mount(send, null)
+    change(textarea, "submitted")
+    act(() => composer().onSubmit())
+    runtime.state.inputStates[""] = { ...runtime.state.inputStates[""], thinkingMode: newMode, thinkingModeRevision: 22 }
+    change(textarea, "newer draft")
+    await act(async () => { ack.resolve({ kind: "accepted", operationId: 1, sessionId: "new-root", navigated: true }); await Promise.resolve() })
+    expect(runtime.state.inputStates[""].thinkingMode).toBe(newMode)
+    expect(runtime.state.inputStates[""].thinkingModeRevision).toBe(22)
+    expect(runtime.state.inputStates["new-root"]?.thinkingMode).toBeUndefined()
+  })
+
   it("routes session controls through the composer instead of the header", async () => {
     runtime.state.models = ["test-model"]
     await mount(vi.fn<Send>(), "session-1")
@@ -683,7 +732,7 @@ describe("Root orchestration-only control", () => {
     vi.mocked(agentClient.selectRootMode).mockImplementationOnce(async (_id, operation) => {
       durable = false
       return { status: "committed", operation_id: operation.operationId, expected_epoch: 0,
-        resulting_epoch: 1, enabled_at_completion: false, root_tool_authority_revision: 2 }
+        resulting_epoch: 1, enabled_at_completion: false, thinking_mode_at_completion: "standard", root_tool_authority_revision: 2 }
     })
     const send = vi.fn<Send>().mockResolvedValue({ kind: "accepted", operationId: 1, sessionId: "root-session", navigated: false })
     const textarea = await mount(send, "root-session")
@@ -775,7 +824,7 @@ describe("Root orchestration-only control", () => {
       JSON.stringify({ error: { code: "root_orchestration_incompatible_mode" } })))
     vi.mocked(agentClient.recoverRootMode).mockImplementationOnce(async (_id, operation) => ({
       status: "rejected_incompatible", operation_id: operation.operationId, expected_epoch: operation.expectedEpoch,
-      resulting_epoch: operation.expectedEpoch + 1, enabled_at_completion: true, root_tool_authority_revision: 1,
+      resulting_epoch: operation.expectedEpoch + 1, enabled_at_completion: true, thinking_mode_at_completion: "ultra", root_tool_authority_revision: 1,
     }))
     const send = vi.fn<Send>()
     await mount(send, "root-session")
@@ -1004,7 +1053,7 @@ describe("Root orchestration-only control", () => {
     const operation = vi.mocked(agentClient.selectRootMode).mock.calls[0][1]
     await act(async () => {
       terminal.resolve({ status: "committed", operation_id: operation.operationId, expected_epoch: operation.expectedEpoch,
-        resulting_epoch: operation.expectedEpoch + 1, enabled_at_completion: false, root_tool_authority_revision: 2 })
+        resulting_epoch: operation.expectedEpoch + 1, enabled_at_completion: false, thinking_mode_at_completion: "standard", root_tool_authority_revision: 2 })
       await Promise.resolve()
     })
   })

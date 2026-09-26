@@ -1,4 +1,5 @@
 import Dexie, { type Table } from "dexie";
+import type { ThinkingMode } from "@services/chat/AgentService";
 
 export interface ScrollAnchorRecord {
   sessionId: string;
@@ -27,7 +28,8 @@ export interface DiffCollapseRecord {
 
 export interface InputStateRecord {
   sessionId: string;
-  reasoningEffort: string;
+  reasoningEffort?: string;
+  thinkingMode?: ThinkingMode;
   content?: string;
   referenceText?: string | null;
   updatedAt: number;

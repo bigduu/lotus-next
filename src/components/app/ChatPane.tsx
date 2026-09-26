@@ -111,6 +111,8 @@ type ComposerSubmissionSnapshot = Readonly<{
   permissionMode: SessionPermissionMode | null
   /** Explicit only for new chats or a changed Root choice. */
   rootOrchestrationOnly: boolean | undefined
+  thinkingMode: import("@services/chat/AgentService").ThinkingMode | undefined
+  thinkingModeRevision: number | undefined
   /** One-shot new-session picker override captured with the submission. */
   reasoningSelection: ReasoningEffortSelection | undefined
 }>
@@ -658,7 +660,10 @@ export function ChatPane({
       // The home picker's selection only applies when this send creates a new
       // session; an existing session keeps its stored permission mode.
       permissionMode: !currentSessionId ? useNewSessionPermission.getState().mode : null,
-      rootOrchestrationOnly: rootMode.requestValue,
+      rootOrchestrationOnly: !currentSessionId && draftAtSubmit?.thinkingMode !== undefined
+        ? draftAtSubmit.thinkingMode === "ultra" : rootMode.requestValue,
+      thinkingMode: !currentSessionId ? draftAtSubmit?.thinkingMode : undefined,
+      thinkingModeRevision: !currentSessionId ? draftAtSubmit?.thinkingModeRevision : undefined,
       reasoningSelection: !currentSessionId ? inputReasoningSelection : undefined,
     })
     // Workflow expansion: the workflow's markdown is the message body; any
@@ -678,6 +683,7 @@ export function ChatPane({
           templatePrompt: snapshot.templatePrompt,
           permissionMode: snapshot.permissionMode ?? undefined,
           rootOrchestrationOnly: snapshot.rootOrchestrationOnly,
+          thinkingMode: snapshot.thinkingMode,
           reasoningSelection: snapshot.reasoningSelection,
         })
     void submission
@@ -728,6 +734,9 @@ export function ChatPane({
           )
         }
         if (result.navigated && snapshot.draftKey !== result.sessionId) {
+          if (snapshot.thinkingModeRevision !== undefined) {
+            store.clearInputThinkingModeIfRevision(snapshot.draftKey, snapshot.thinkingModeRevision)
+          }
           const latestSelection = useAppStore.getState().inputStates[
             snapshot.draftKey
           ]?.reasoningEffort
