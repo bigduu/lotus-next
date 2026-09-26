@@ -4,12 +4,15 @@ import { ChevronDown, ChevronRight, RefreshCw } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
-import type { ActorLifecycle, ActorTopologyNode, ActorTopologyState } from "@/services/chat/actorTopology"
+import type { ActorHealth } from "@/services/chat/actorTopology"
+import type { ActorTreeData, ActorTreeNode } from "@/services/chat/actorTreeView"
 
 const ROW_HEIGHT = 64
 const INITIAL_RECT = { width: 320, height: 320 }
 
-const LIFECYCLE_LABEL: Record<ActorLifecycle, string> = {
+const LIFECYCLE_LABEL: Record<ActorTreeNode["lifecycle"], string> = {
+  active: "活动记录",
+  unknown: "生命周期未知",
   cold: "未启动",
   queued: "排队中",
   running: "运行中",
@@ -21,7 +24,10 @@ const LIFECYCLE_LABEL: Record<ActorLifecycle, string> = {
   lost: "已失联",
 }
 
-const PLACEMENT_LABEL: Record<ActorTopologyNode["placement"], string> = {
+const PLACEMENT_LABEL: Record<ActorTreeNode["placement"], string> = {
+  docker: "容器",
+  ssh: "SSH",
+  schedulable: "待调度",
   local: "本机",
   remote: "远端",
   container: "容器",
@@ -29,7 +35,7 @@ const PLACEMENT_LABEL: Record<ActorTopologyNode["placement"], string> = {
   unknown: "位置未知",
 }
 
-const HEALTH_LABEL: Record<ActorTopologyNode["health"], string> = {
+const HEALTH_LABEL: Record<ActorHealth, string> = {
   healthy: "正常",
   waiting: "等待中",
   stalled: "停滞",
@@ -41,7 +47,7 @@ const HEALTH_LABEL: Record<ActorTopologyNode["health"], string> = {
 }
 
 interface VisibleActorRow {
-  node: ActorTopologyNode
+  node: ActorTreeNode
   parentActorId: string | null
   position: number
   siblingCount: number
@@ -50,7 +56,7 @@ interface VisibleActorRow {
 
 /** Flatten only authorized, expanded nodes. The virtualizer mounts a bounded subset. */
 function visibleActorRows(
-  topology: ActorTopologyState,
+  topology: ActorTreeData,
   expandedActorIds: ReadonlySet<string>,
 ): VisibleActorRow[] {
   const root = topology.byId[topology.rootActorId]
@@ -98,7 +104,7 @@ function observeTreeRect(instance: TreeVirtualizer, callback: (rect: Rect) => vo
 }
 
 export interface ActorTreeProps {
-  topology: ActorTopologyState
+  topology: ActorTreeData
   selectedActorId: string | null
   onSelectActor: (actorId: string) => void
   unreadActorIds?: ReadonlySet<string>
@@ -127,7 +133,7 @@ export function ActorTree({
   )
   const selectedActorIdRef = useRef(selectedActorId)
   selectedActorIdRef.current = selectedActorId
-  const previousSelectedActorId = useRef(selectedActorId)
+  const previousSelectedActorId = useRef<string | null>(null)
   const rows = useMemo(
     () => visibleActorRows(topology, expandedActorIds),
     [topology, expandedActorIds],
@@ -237,7 +243,7 @@ export function ActorTree({
       ) : null}
       {rows.length === 0 ? (
         <p className="px-3 py-4 text-sm text-muted-foreground">
-          {topology.needsSnapshot ? "正在载入代理结构…" : "没有可显示的代理。"}
+          {topology.needsSnapshot ? "正在载入代理结构…" : error ? "代理结构尚未确认。" : "没有可显示的代理。"}
         </p>
       ) : (
         <div
@@ -259,10 +265,11 @@ export function ActorTree({
               const selected = selectedActorId === node.actorId
               const unread = unreadActorIds?.has(node.actorId) ?? false
               const counts = [
-                node.queuedCount > 0 ? `排队 ${node.queuedCount}` : null,
-                node.waitingForCount > 0 ? `等待 ${node.waitingForCount}` : null,
-                node.pendingRequestCount > 0 ? `请求 ${node.pendingRequestCount}` : null,
+                node.queuedCount !== null && node.queuedCount > 0 ? `排队 ${node.queuedCount}` : null,
+                node.waitingForCount !== null && node.waitingForCount > 0 ? `等待 ${node.waitingForCount}` : null,
+                node.pendingRequestCount !== null && node.pendingRequestCount > 0 ? `请求 ${node.pendingRequestCount}` : null,
               ].filter((count): count is string => count !== null)
+              const health = node.health === null ? "健康状态未知" : HEALTH_LABEL[node.health]
               return (
                 <div
                   key={virtualRow.key}
@@ -274,7 +281,7 @@ export function ActorTree({
                   aria-setsize={row.siblingCount}
                   aria-expanded={row.hasChildren ? expanded : undefined}
                   aria-selected={selected}
-                  aria-label={`${node.title || "未命名代理"}，${node.role || "代理"}，${LIFECYCLE_LABEL[node.lifecycle]}，${PLACEMENT_LABEL[node.placement]}，${HEALTH_LABEL[node.health]}${counts.length ? `，${counts.join("，")}` : ""}${unread ? "，有未读消息" : ""}`}
+                  aria-label={`${node.title || "未命名代理"}，${node.role || "代理"}，${LIFECYCLE_LABEL[node.lifecycle]}，${PLACEMENT_LABEL[node.placement]}，${health}${counts.length ? `，${counts.join("，")}` : ""}${unread ? "，有未读消息" : ""}`}
                   data-actor-id={node.actorId}
                   className={cn(
                     "absolute left-0 top-0 flex h-16 w-full cursor-pointer items-center gap-2 overflow-hidden border-b px-2 text-left text-sm hover:bg-accent/50",
@@ -298,7 +305,7 @@ export function ActorTree({
                       {unread ? <span className="size-1.5 shrink-0 rounded-full bg-primary" aria-hidden="true" /> : null}
                     </span>
                     <span className="block truncate text-xs text-muted-foreground">
-                      {node.role || "代理"} · {LIFECYCLE_LABEL[node.lifecycle]} · {PLACEMENT_LABEL[node.placement]} · {HEALTH_LABEL[node.health]}
+                      {node.role || "代理"} · {LIFECYCLE_LABEL[node.lifecycle]} · {PLACEMENT_LABEL[node.placement]} · {health}
                       {counts.length ? ` · ${counts.join(" · ")}` : ""}
                     </span>
                   </span>

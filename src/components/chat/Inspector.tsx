@@ -4,7 +4,6 @@ import { useShallow } from "zustand/react/shallow"
 import {
   useAppStore,
   selectCurrentChat,
-  selectChildren,
   selectSessionById,
 } from "@shared/store/appStore"
 import { useProviderStore } from "@shared/store/appStore/slices/providerSlice"
@@ -23,6 +22,7 @@ import {
   type TokenUsage,
 } from "@shared/types/tokenBudget"
 import { FileChangeList } from "./FileChangeList"
+import { ActorSnapshotPanel } from "./ActorSnapshotPanel"
 
 function GoalSection({
   sessionId,
@@ -258,6 +258,8 @@ export function Inspector({
   onEditWorkspace,
   onOpenReview,
   onCopySessionId,
+  onSelectActor = () => {},
+  selectedActorId,
   docked = false,
   width,
   embedded = false,
@@ -269,6 +271,8 @@ export function Inspector({
   onEditWorkspace?: () => void
   onOpenReview?: (filePath?: string) => void
   onCopySessionId: (sessionId: string) => void
+  onSelectActor?: (actorId: string) => void
+  selectedActorId?: string | null
   /** Render as an in-flow right column (wide desktop) instead of an overlay sheet. */
   docked?: boolean
   /** Docked column width in px (resizable). */
@@ -299,9 +303,6 @@ export function Inspector({
     [fileChangeGroups],
   )
   const getProviderLabel = useProviderStore((s) => s.getProviderDisplayLabel)
-  const children = useAppStore(
-    useShallow((s) => (sessionId ? selectChildren(sessionId)(s) : {})),
-  )
 
   useEffect(() => {
     if (open && sessionId) void loadTaskList(sessionId)
@@ -315,7 +316,7 @@ export function Inspector({
   const provider = providerId ? getProviderLabel(providerId) : null
   const goal = cfg?.goalState
   const usage = liveTokenUsage ?? cfg?.tokenUsage
-  const childList = Object.entries(children ?? {})
+  const rootId = chat?.kind === "root" ? chat.id : chat?.rootSessionId ?? null
 
   const body = (
     <>
@@ -327,6 +328,8 @@ export function Inspector({
         </div> : null}
 
         <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4">
+          <ActorSnapshotPanel rootId={rootId} active={open} selectedActorId={selectedActorId ?? sessionId}
+            onSelectActor={onSelectActor} />
           <section className="rounded-lg border p-3">
             <div className="mb-2 flex items-center justify-between">
               <span className="text-xs font-medium text-muted-foreground">工作目录</span>
@@ -433,33 +436,6 @@ export function Inspector({
             </section>
           ) : null}
 
-          {childList.length > 0 ? (
-            <section className="rounded-lg border p-3">
-              <div className="mb-2 text-xs font-medium text-muted-foreground">
-                子代理 ({childList.length})
-              </div>
-              <ul className="space-y-2">
-                {childList.map(([id, c]) => (
-                  <li key={id} className="rounded-md bg-muted/50 px-2.5 py-2">
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="truncate text-sm font-medium">
-                        {c.title || id.slice(0, 8)}
-                      </span>
-                      <span className="shrink-0 text-xs text-muted-foreground">
-                        {c.status ?? "—"}
-                        {typeof c.roundCount === "number" ? ` · ${c.roundCount}轮` : ""}
-                      </span>
-                    </div>
-                    {c.outputPreview ? (
-                      <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">
-                        {c.outputPreview}
-                      </p>
-                    ) : null}
-                  </li>
-                ))}
-              </ul>
-            </section>
-          ) : null}
 
           {/* Developer telemetry — folded away by default for a clean surface. */}
           <details className="rounded-lg border p-3">
