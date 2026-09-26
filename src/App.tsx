@@ -461,6 +461,15 @@ function App() {
                 onEditWorkspace={() => setWsPickerOpen(true)}
                 onOpenReview={openReview}
                 onCopySessionId={copySessionId}
+                selectedActorId={secondSid ?? currentSessionId ?? null}
+                onSelectActor={(actorId) => {
+                  const rootId = currentChat?.kind === "root" ? currentSessionId : currentChat?.rootSessionId
+                  if (actorId === rootId) {
+                    pickSecond(null)
+                    select(actorId)
+                    openWorkbench("inspector")
+                  } else openSubagentPreview(actorId)
+                }}
               />
             }
             review={(
