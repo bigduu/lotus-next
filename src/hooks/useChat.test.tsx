@@ -323,7 +323,7 @@ describe("useChat two-phase send lifecycle", () => {
     const workflowSelection = { id: "exact/id", source: "project" as const, revision: 17, args: { target: "src" } }
     let result: SendSubmissionResult | undefined
     await act(async () => { result = await hook.current.send("bounded task", { workflowSelection }) })
-    expect(mocks.sendMessage).toHaveBeenCalledWith(expect.objectContaining({ workflow_selection: workflowSelection, root_orchestration_only: undefined }))
+    expect(mocks.sendMessage).toHaveBeenCalledWith(expect.objectContaining({ workflow_selection: workflowSelection, root_orchestration_only: undefined, thinking_mode: undefined }))
     expect(result).toMatchObject({ kind: "unconfirmed", workflowError: { code, message: "selection rejected" } })
     expect(getRootModeFenceState("root-session")).toBe("clear")
     expect(mocks.execute).not.toHaveBeenCalled()
@@ -345,7 +345,50 @@ describe("useChat two-phase send lifecycle", () => {
     expect(mocks.sendMessage).toHaveBeenCalledWith(expect.objectContaining({
       session_id: undefined,
       root_orchestration_only: selection,
+      thinking_mode: selection === undefined ? undefined : selection ? "ultra" : "standard",
     }))
+  })
+
+  it.each(["ultra", "standard"] as const)("submits product mode %s independently of ordinary Max", async (thinkingMode) => {
+    mocks.sendMessage.mockRejectedValueOnce(new Error("admission failed"))
+    const hook = await mountUseChat({ mode: "bound", sessionId: null })
+    await act(async () => { await hook.current.send("coordinate", { thinkingMode, reasoningSelection: "max" }) })
+    expect(mocks.sendMessage).toHaveBeenCalledWith(expect.objectContaining({
+      thinking_mode: thinkingMode, root_orchestration_only: thinkingMode === "ultra", reasoning_effort: "max",
+    }))
+  })
+
+  it("keeps Auto inherited for Ultra and leaves unspecified admission unchanged", async () => {
+    mocks.sendMessage.mockRejectedValue(new Error("admission failed"))
+    const hook = await mountUseChat({ mode: "bound", sessionId: null })
+    await act(async () => { await hook.current.send("coordinate", { thinkingMode: "ultra", reasoningSelection: "auto" }) })
+    expect(mocks.sendMessage.mock.calls[0][0]).toMatchObject({ thinking_mode: "ultra", root_orchestration_only: true })
+    expect(mocks.sendMessage.mock.calls[0][0].reasoning_effort).toBeUndefined()
+    await act(async () => { await hook.current.send("default admission") })
+    const request = JSON.parse(JSON.stringify(mocks.sendMessage.mock.calls[1][0]))
+    expect(request).not.toHaveProperty("thinking_mode")
+    expect(request).not.toHaveProperty("root_orchestration_only")
+  })
+
+  it.each([
+    { thinkingMode: "ultra", rootOrchestrationOnly: false },
+    { thinkingMode: "standard", rootOrchestrationOnly: true },
+    { thinkingMode: "max" }, { thinkingMode: null },
+  ])("blocks invalid/contradictory first-chat selection %j", async (opts) => {
+    const hook = await mountUseChat({ mode: "bound", sessionId: null })
+    let outcome: SendSubmissionResult | undefined
+    await act(async () => { outcome = await hook.current.send("coordinate", opts as never) })
+    expect(outcome).toEqual({ kind: "blocked" })
+    expect(mocks.sendMessage).not.toHaveBeenCalled()
+  })
+
+  it.each(["standard", "ultra"] as const)("blocks existing-Root selector %s", async (thinkingMode) => {
+    mocks.appState.chats = [{ id: "root-session", messages: [], config: { model: "test-model" } }]
+    const hook = await mountUseChat({ mode: "bound", sessionId: "root-session" })
+    let outcome: SendSubmissionResult | undefined
+    await act(async () => { outcome = await hook.current.send("coordinate", { thinkingMode }) })
+    expect(outcome).toEqual({ kind: "blocked" })
+    expect(mocks.sendMessage).not.toHaveBeenCalled()
   })
 
   it("classifies a typed new-Root creation rejection without a mode-operation fence", async () => {

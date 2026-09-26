@@ -4,7 +4,8 @@ import {
   isReasoningEffortSelection,
   type ReasoningEffortSelection,
 } from "@shared/utils/reasoningEffort";
-import { StorageManager } from "@services/storage/StorageManager";
+import { StorageManager, INPUT_THINKING_MODE_BY_DRAFT_STORAGE_KEY } from "@services/storage/StorageManager";
+import { isThinkingMode, type ThinkingMode } from "@services/chat/AgentService";
 
 // Attachment type (same as in InputContainer)
 export interface Attachment {
@@ -24,6 +25,9 @@ export interface InputState {
   attachments: Attachment[];
   /** Explicit picker state. Missing means follow the configured/session value. */
   reasoningEffort?: ReasoningEffortSelection;
+  /** Unsubmitted Root choice; existing-session mode authority comes from Bamboo. */
+  thinkingMode?: ThinkingMode;
+  thinkingModeRevision?: number;
 }
 
 export interface InputStateSliceState {
@@ -57,6 +61,8 @@ export interface InputStateSliceActions {
   ) => void;
   // Remove a draft/session-local picker override.
   clearInputReasoningEffort: (sessionId: string) => void;
+  setInputThinkingMode: (draftKey: string, mode: ThinkingMode) => boolean;
+  clearInputThinkingModeIfRevision: (draftKey: string, revision: number) => boolean;
   // Clear all input state for a chat
   clearInputState: (sessionId: string) => void;
   // Get input state for a chat (returns default if not found)
@@ -130,10 +136,32 @@ export const readPersistedInputReasoningEffort = (
 
 const defaultInputStateForSession = (sessionId: string): InputState => {
   const reasoningEffort = readPersistedInputReasoningEffort(sessionId);
+  const thinkingMode = readThinkingModes()[sessionId];
   return {
     ...DEFAULT_INPUT_STATE,
     ...(reasoningEffort ? { reasoningEffort } : {}),
+    ...(thinkingMode ? { thinkingMode, thinkingModeRevision: nextInputContentRevision() } : {}),
   };
+};
+
+const readThinkingModes = (): Record<string, ThinkingMode> => {
+  const modes: Record<string, ThinkingMode> = Object.create(null);
+  try {
+    const parsed: unknown = JSON.parse(localStorage.getItem(INPUT_THINKING_MODE_BY_DRAFT_STORAGE_KEY) ?? "{}");
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return modes;
+    for (const [key, value] of Object.entries(parsed)) {
+      if (isThinkingMode(value)) modes[key] = value;
+    }
+  } catch { /* No persisted choice is safer than accepting malformed data. */ }
+  return modes;
+};
+
+const writeThinkingModes = (modes: Record<string, ThinkingMode>): boolean => {
+  try {
+    const raw = JSON.stringify(modes);
+    localStorage.setItem(INPUT_THINKING_MODE_BY_DRAFT_STORAGE_KEY, raw);
+    return localStorage.getItem(INPUT_THINKING_MODE_BY_DRAFT_STORAGE_KEY) === raw;
+  } catch { return false; }
 };
 
 export const createInputStateSlice: StateCreator<AppState, [], [], InputStateSlice> = (
@@ -271,6 +299,42 @@ export const createInputStateSlice: StateCreator<AppState, [], [], InputStateSli
       delete bySession[sessionId];
       writeReasoningBySession(bySession);
     }
+    StorageManager.getInstance().saveInputReasoning(sessionId, null).catch(() => {});
+  },
+
+  setInputThinkingMode: (draftKey, mode) => {
+    if (!isThinkingMode(mode)) return false;
+    const modes = readThinkingModes();
+    modes[draftKey] = mode;
+    if (!writeThinkingModes(modes)) return false;
+    set((state) => ({
+      inputStates: {
+        ...state.inputStates,
+        [draftKey]: {
+          ...(state.inputStates[draftKey] || defaultInputStateForSession(draftKey)),
+          thinkingMode: mode,
+          thinkingModeRevision: nextInputContentRevision(),
+        },
+      },
+    }));
+    StorageManager.getInstance().saveInputThinkingMode(draftKey, mode).catch(() => {});
+    return true;
+  },
+
+  clearInputThinkingModeIfRevision: (draftKey, revision) => {
+    const current = get().inputStates[draftKey];
+    if (!current || current.thinkingMode === undefined || current.thinkingModeRevision !== revision) return false;
+    const modes = readThinkingModes();
+    // Another tab's differing choice must not be cleared by this ACK either.
+    if (modes[draftKey] !== current.thinkingMode) return false;
+    delete modes[draftKey];
+    if (!writeThinkingModes(modes)) return false;
+    const { thinkingMode: _mode, ...rest } = current;
+    set((state) => ({ inputStates: {
+      ...state.inputStates, [draftKey]: { ...rest, thinkingModeRevision: nextInputContentRevision() },
+    } }));
+    StorageManager.getInstance().saveInputThinkingMode(draftKey, null).catch(() => {});
+    return true;
   },
 
   // Clear all input state for a chat
