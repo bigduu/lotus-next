@@ -18,6 +18,7 @@ import {
 } from "@services/chat/AgentService"
 import { apiClient } from "@services/api"
 import { getErrorMessage, isApiError } from "@services/api/errors"
+import { workflowSubmissionError, type WorkflowSelection } from "@services/command/workflowCatalog"
 import { notify } from "@/lib/notify"
 import { mapTokenBudgetUsage } from "@shared/types/tokenBudget"
 import { getSystemPromptEnhancementText } from "@shared/utils/systemPromptEnhancement"
@@ -103,7 +104,7 @@ const toFailureMessage = (error: unknown): string | undefined => {
 
 export type SendSubmissionResult =
   | { kind: "accepted"; operationId: number; sessionId: string; navigated: boolean }
-  | { kind: "unconfirmed"; operationId: number; rejectionCode?: RootModeRejectionCode }
+  | { kind: "unconfirmed"; operationId: number; rejectionCode?: RootModeRejectionCode; workflowError?: { code: string; message: string } }
   | { kind: "blocked" }
   | { kind: "busy" }
   | { kind: "ignored" }
@@ -1466,6 +1467,7 @@ export function useChat(
       text: string,
       opts?: {
         skillIds?: string[]
+        workflowSelection?: WorkflowSelection
         /** Explicit Root-only selection; undefined preserves the durable value. */
         rootOrchestrationOnly?: boolean
         images?: Array<{ base64: string; name?: string; size?: number; type?: string }>
@@ -1538,6 +1540,7 @@ export function useChat(
             providerType === "copilot" && isCopilotConclusionWithOptionsEnhancementEnabled(),
           system_prompt: systemPrompt,
           selected_skill_ids: opts?.skillIds?.length ? opts.skillIds : undefined,
+          ...(opts?.workflowSelection ? { workflow_selection: opts.workflowSelection } : {}),
           root_orchestration_only: !startSid ? opts?.rootOrchestrationOnly : undefined,
           images: opts?.images?.length ? opts.images : undefined,
           // Only meaningful when creating a NEW session; an existing session keeps
@@ -1574,7 +1577,8 @@ export function useChat(
             } : {}),
           })
         }
-        return { kind: "unconfirmed", operationId: operation.id, ...(rejectionCode ? { rejectionCode } : {}) }
+        const workflowError = opts?.workflowSelection ? workflowSubmissionError(err) : null
+        return { kind: "unconfirmed", operationId: operation.id, ...(rejectionCode ? { rejectionCode } : {}), ...(workflowError ? { workflowError } : {}) }
       }
 
       operation.phase = "generating"

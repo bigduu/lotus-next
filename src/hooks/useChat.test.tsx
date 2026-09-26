@@ -316,6 +316,19 @@ afterEach(() => {
 describe("useChat two-phase send lifecycle", () => {
   const fenceRoot = (enabled = false) => beginRootModeOperation("root-session", 0, "a".repeat(64), enabled)
 
+  it.each(["workflow_revision_missing", "workflow_revision_mismatch", "workflow_source_mismatch", "root_orchestration_incompatible_mode"])("forwards exact typed selection without inline Root choice and returns %s", async (code) => {
+    mocks.appState.chats = [{ id: "root-session", messages: [], config: { model: "test-model" } }]
+    mocks.sendMessage.mockRejectedValueOnce(new ApiError("selection rejected", 409, "Conflict", JSON.stringify({ error: { code, message: "selection rejected" } })))
+    const hook = await mountUseChat({ mode: "bound", sessionId: "root-session" })
+    const workflowSelection = { id: "exact/id", source: "project" as const, revision: 17, args: { target: "src" } }
+    let result: SendSubmissionResult | undefined
+    await act(async () => { result = await hook.current.send("bounded task", { workflowSelection }) })
+    expect(mocks.sendMessage).toHaveBeenCalledWith(expect.objectContaining({ workflow_selection: workflowSelection, root_orchestration_only: undefined }))
+    expect(result).toMatchObject({ kind: "unconfirmed", workflowError: { code, message: "selection rejected" } })
+    expect(getRootModeFenceState("root-session")).toBe("clear")
+    expect(mocks.execute).not.toHaveBeenCalled()
+  })
+
   it.each([true, false])("blocks inline mode selection %s on an existing Root", async (selection) => {
     mocks.appState.chats = [{ id: "root-session", messages: [], config: { model: "test-model" } }]
     const hook = await mountUseChat({ mode: "bound", sessionId: "root-session" })

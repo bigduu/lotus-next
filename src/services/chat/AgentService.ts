@@ -357,6 +357,7 @@ export interface ChatRequest {
   copilot_conclusion_with_options_enhancement_enabled?: boolean;
   workspace_path?: string;
   selected_skill_ids?: string[];
+  workflow_selection?: import("../command/workflowCatalog").WorkflowSelection;
   /** Durable Root tool boundary. Omit on follow-up to keep the saved choice. */
   root_orchestration_only?: boolean;
   images?: Array<{
