@@ -388,6 +388,31 @@ export interface ChatResponse {
   goal_command?: GoalCommandResponse | null;
 }
 
+export interface RootModeOperationInput {
+  operationId: string;
+  birthToken: string;
+  expectedEpoch: number;
+  enabled: boolean;
+}
+
+export type RootModeOperationResponse =
+  | {
+    status: "committed" | "fenced" | "rejected_incompatible";
+    operation_id: string;
+    expected_epoch: number;
+    resulting_epoch: number;
+    enabled_at_completion: boolean;
+    root_tool_authority_revision: number;
+  }
+  | {
+    status: "fenced_by_successor";
+    operation_id: string;
+    expected_epoch: number;
+    current_epoch: number;
+    current_enabled: boolean;
+    root_tool_authority_revision: number;
+  };
+
 export type ExecuteSyncReason =
   | "message_count_mismatch"
   | "last_message_id_mismatch"
@@ -664,6 +689,9 @@ export interface SessionSummary {
   plan_mode?: SessionPlanModeState | null;
   /** Authoritative only on GET /sessions/{id}; list rows omit this field. */
   root_orchestration_only?: boolean | null;
+  /** Root mode operation CAS fields; authoritative only on session detail. */
+  root_mode_transition_epoch?: number | null;
+  root_mode_birth_token?: string | null;
   /**
    * SubAgent profile id for child sessions (e.g. "general-purpose", "plan").
    * Mirrored from the child session's metadata into the global SessionIndexEntry,
@@ -1310,6 +1338,22 @@ export class AgentClient {
   /** Get one session summary, including its root tree size. */
   async getSession(sessionId: string): Promise<GetSessionResponse> {
     return apiClient.get<GetSessionResponse>(`sessions/${encodeURIComponent(sessionId)}`);
+  }
+
+  /** Change an existing Root's mode without appending a chat message. */
+  async selectRootMode(sessionId: string, input: RootModeOperationInput): Promise<RootModeOperationResponse> {
+    return apiClient.post<RootModeOperationResponse>(
+      `sessions/${encodeURIComponent(sessionId)}/root-mode-operations/${encodeURIComponent(input.operationId)}`,
+      { birth_token: input.birthToken, expected_epoch: input.expectedEpoch, enabled: input.enabled },
+    );
+  }
+
+  /** Resolve or durably fence the exact operation after an uncertain response. */
+  async recoverRootMode(sessionId: string, input: RootModeOperationInput): Promise<RootModeOperationResponse> {
+    return apiClient.post<RootModeOperationResponse>(
+      `sessions/${encodeURIComponent(sessionId)}/root-mode-operations/${encodeURIComponent(input.operationId)}/recover`,
+      { birth_token: input.birthToken, expected_epoch: input.expectedEpoch, enabled: input.enabled },
+    );
   }
 
   /**

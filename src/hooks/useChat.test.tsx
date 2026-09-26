@@ -2,7 +2,7 @@ import { act } from "react"
 import { createRoot, type Root } from "react-dom/client"
 import type { ProviderInstancesConfig, ProviderKind } from "@shared/types/providerConfig"
 import type { PermissionDecisionResult, ReasoningEffort } from "@services/chat/AgentService"
-import { ApiError, NetworkRequestError, RequestTimeoutError } from "@services/api/errors"
+import { ApiError, NetworkRequestError } from "@services/api/errors"
 import {
   afterAll,
   afterEach,
@@ -117,7 +117,7 @@ vi.mock("@shared/utils/copilotConclusionWithOptionsEnhancementUtils", () => ({
   isCopilotConclusionWithOptionsEnhancementEnabled: () => false,
 }))
 import { useChat, type GenerationFailure, type SendSubmissionResult } from "./useChat"
-import { beginRootModeTransition, getRootModeFenceState } from "@/lib/rootModeTransitionFence"
+import { beginRootModeOperation, getRootModeFenceState } from "@/lib/rootModeTransitionFence"
 import { getUsedModels } from "@shared/utils/usedModels"
 type HookValue = ReturnType<typeof useChat>
 type HookProps =
@@ -314,30 +314,35 @@ afterEach(() => {
   consoleWarnSpy.mockRestore()
 })
 describe("useChat two-phase send lifecycle", () => {
-  it.each([true, false, undefined])("forwards an explicit Root selection %s without rewriting omission", async (selection) => {
+  const fenceRoot = (enabled = false) => beginRootModeOperation("root-session", 0, "a".repeat(64), enabled)
+
+  it.each([true, false])("blocks inline mode selection %s on an existing Root", async (selection) => {
     mocks.appState.chats = [{ id: "root-session", messages: [], config: { model: "test-model" } }]
-    mocks.sendMessage.mockRejectedValueOnce(new Error("admission failed"))
     const hook = await mountUseChat({ mode: "bound", sessionId: "root-session" })
+    let outcome: SendSubmissionResult | undefined
+    await act(async () => { outcome = await hook.current.send("coordinate children", { rootOrchestrationOnly: selection }) })
+    expect(outcome).toEqual({ kind: "blocked" })
+    expect(mocks.sendMessage).not.toHaveBeenCalled()
+  })
 
-    await act(async () => {
-      await hook.current.send("coordinate children", { rootOrchestrationOnly: selection })
-    })
-
+  it.each([true, false, undefined])("forwards a new Root creation choice %s", async (selection) => {
+    mocks.sendMessage.mockRejectedValueOnce(new Error("admission failed"))
+    const hook = await mountUseChat({ mode: "bound", sessionId: null })
+    await act(async () => { await hook.current.send("coordinate children", { rootOrchestrationOnly: selection }) })
     expect(mocks.sendMessage).toHaveBeenCalledWith(expect.objectContaining({
-      session_id: "root-session",
+      session_id: undefined,
       root_orchestration_only: selection,
     }))
   })
 
-  it("classifies Bamboo's typed Root mode rejection separately from an uncertain transport failure", async () => {
-    mocks.appState.chats = [{ id: "root-session", messages: [], config: { model: "test-model" } }]
+  it("classifies a typed new-Root creation rejection without a mode-operation fence", async () => {
     mocks.sendMessage.mockRejectedValueOnce(new ApiError(
       "Root orchestration-only mode conflicts with an active PlanMode",
       409,
       "Conflict",
       JSON.stringify({ error: { code: "root_orchestration_incompatible_mode" } }),
     ))
-    const hook = await mountUseChat({ mode: "bound", sessionId: "root-session" })
+    const hook = await mountUseChat({ mode: "bound", sessionId: null })
     let result: Awaited<ReturnType<typeof hook.current.send>> | undefined
     await act(async () => { result = await hook.current.send("switch mode", { rootOrchestrationOnly: true }) })
 
@@ -347,7 +352,7 @@ describe("useChat two-phase send lifecycle", () => {
       rejectionCode: "root_orchestration_incompatible_mode",
       message: "Root orchestration-only mode conflicts with an active PlanMode",
     })
-    expect(getRootModeFenceState("root-session")).toBe("clear")
+    expect(localStorage.length).toBe(0)
   })
 
   it("labels a typed Skill conflict without claiming the request changed Root mode", async () => {
@@ -366,42 +371,22 @@ describe("useChat two-phase send lifecycle", () => {
     expect(getRootModeFenceState("root-session")).toBe("clear")
   })
 
-  it("persists a timed-out mode switch before POST and blocks later omitted sends after remount", async () => {
+  it("blocks omitted sends after a mode-only operation is fenced across remount", async () => {
     mocks.appState.chats = [{ id: "root-session", messages: [], config: { model: "test-model" } }]
-    mocks.sendMessage.mockImplementationOnce(async () => {
-      expect(getRootModeFenceState("root-session")).toBe("uncertain")
-      throw new RequestTimeoutError()
-    })
+    expect(fenceRoot(false)).not.toBeNull()
     const hook = await mountUseChat({ mode: "bound", sessionId: "root-session" })
     let outcome: SendSubmissionResult | undefined
-    await act(async () => { outcome = await hook.current.send("disable mode", { rootOrchestrationOnly: false }) })
-
-    expect(outcome).toMatchObject({ kind: "unconfirmed" })
-    expect(getRootModeFenceState("root-session")).toBe("uncertain")
     await act(async () => { outcome = await hook.current.send("continue without boolean") })
     expect(outcome).toEqual({ kind: "blocked" })
-    expect(mocks.sendMessage).toHaveBeenCalledTimes(1)
+    expect(getRootModeFenceState("root-session")).toBe("uncertain")
+    expect(mocks.sendMessage).not.toHaveBeenCalled()
     expect(mocks.execute).not.toHaveBeenCalled()
 
     hook.unmount()
     const restored = await mountUseChat({ mode: "bound", sessionId: "root-session" })
     await act(async () => { outcome = await restored.current.send("retry after reload", { rootOrchestrationOnly: true }) })
     expect(outcome).toEqual({ kind: "blocked" })
-    expect(mocks.sendMessage).toHaveBeenCalledTimes(1)
-  })
-
-  it("refuses a mode switch when its durable safety marker cannot be written", async () => {
-    mocks.appState.chats = [{ id: "root-session", messages: [], config: { model: "test-model" } }]
-    const write = vi.spyOn(localStorage, "setItem").mockImplementation(() => { throw new Error("quota denied") })
-    try {
-      const hook = await mountUseChat({ mode: "bound", sessionId: "root-session" })
-      let outcome: SendSubmissionResult | undefined
-      await act(async () => { outcome = await hook.current.send("switch mode", { rootOrchestrationOnly: true }) })
-      expect(outcome).toEqual({ kind: "blocked" })
-      expect(mocks.sendMessage).not.toHaveBeenCalled()
-    } finally {
-      write.mockRestore()
-    }
+    expect(mocks.sendMessage).not.toHaveBeenCalled()
   })
 
   it("does not execute a rerun when a mode fence appears during preparation", async () => {
@@ -412,7 +397,7 @@ describe("useChat two-phase send lifecycle", () => {
     let rerun!: Promise<void>
     act(() => { rerun = hook.current.regenerate() })
     expect(mocks.truncateSessionMessages).toHaveBeenCalledTimes(1)
-    expect(beginRootModeTransition("root-session", false)).not.toBeNull()
+    expect(fenceRoot(false)).not.toBeNull()
     preparation.resolve()
     await act(async () => { await rerun })
     expect(mocks.execute).not.toHaveBeenCalled()
@@ -426,7 +411,7 @@ describe("useChat two-phase send lifecycle", () => {
     let sending!: Promise<SendSubmissionResult>
     act(() => { sending = hook.current.send("accepted ordinary message") })
     expect(mocks.sendMessage).toHaveBeenCalledTimes(1)
-    expect(beginRootModeTransition("root-session", false)).not.toBeNull()
+    expect(fenceRoot(false)).not.toBeNull()
     acknowledgement.resolve({ session_id: "root-session" })
     let outcome: SendSubmissionResult | undefined
     await act(async () => { outcome = await sending; await Promise.resolve() })
@@ -446,7 +431,7 @@ describe("useChat two-phase send lifecycle", () => {
     let sending!: Promise<SendSubmissionResult>
     act(() => { sending = hook.current.send("accepted while leaving") })
     await hook.rerender({ mode: "bound", sessionId: "other-session" })
-    expect(beginRootModeTransition("root-session", false)).not.toBeNull()
+    expect(fenceRoot(false)).not.toBeNull()
     acknowledgement.resolve({ session_id: "root-session" })
     await act(async () => { expect((await sending).kind).toBe("accepted") })
     expect(mocks.execute).not.toHaveBeenCalled()

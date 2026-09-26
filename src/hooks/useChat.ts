@@ -27,8 +27,6 @@ import {
   type PendingTemplatePromptSnapshot,
 } from "@/lib/taskTemplates"
 import {
-  beginRootModeTransition,
-  finishRootModeTransition,
   getRootModeFenceState,
 } from "@/lib/rootModeTransitionFence"
 import type { Message } from "@shared/types/chat"
@@ -757,7 +755,7 @@ export function useChat(
           ? opts?.reasoningEffort ?? undefined
           : reasoningEffort
         if (getRootModeFenceState(runSid) !== "clear") {
-          throw new Error("Root 权限切换结果未知；消息已保存，但尚未启动执行。请新建会话。")
+          throw new Error("Root 权限切换结果未知；消息已保存，但尚未启动执行。请先处理模式切换。")
         }
         void agentClient.execute(runSid, effectiveModel || undefined, executeReasoningEffort, undefined, effectiveModelRef).catch((err) => {
           if (!ownsStream()) return
@@ -1486,12 +1484,8 @@ export function useChat(
 
       const startSid = sid
       if (startSid && getRootModeFenceState(startSid) !== "clear") return { kind: "blocked" }
-      const transitionToken = startSid && typeof opts?.rootOrchestrationOnly === "boolean"
-        ? beginRootModeTransition(startSid, opts.rootOrchestrationOnly)
-        : null
-      if (startSid && typeof opts?.rootOrchestrationOnly === "boolean" && !transitionToken) {
-        return { kind: "blocked" }
-      }
+      // Existing Root mode changes use a separate, recoverable operation.
+      if (startSid && typeof opts?.rootOrchestrationOnly === "boolean") return { kind: "blocked" }
       const submittedReasoningEffort = startSid
         ? reasoningEffort
         : opts?.reasoningSelection === "auto"
@@ -1544,7 +1538,7 @@ export function useChat(
             providerType === "copilot" && isCopilotConclusionWithOptionsEnhancementEnabled(),
           system_prompt: systemPrompt,
           selected_skill_ids: opts?.skillIds?.length ? opts.skillIds : undefined,
-          root_orchestration_only: opts?.rootOrchestrationOnly,
+          root_orchestration_only: !startSid ? opts?.rootOrchestrationOnly : undefined,
           images: opts?.images?.length ? opts.images : undefined,
           // Only meaningful when creating a NEW session; an existing session keeps
           // the cwd it was created with.
@@ -1561,12 +1555,10 @@ export function useChat(
         if (!acknowledgedSessionId || (startSid && acknowledgedSessionId !== startSid)) {
           throw new Error("The chat submission response did not acknowledge the expected session.")
         }
-        if (startSid && transitionToken) finishRootModeTransition(startSid, transitionToken)
         recordUsedModel(acknowledgedModel)
       } catch (err) {
         console.error("[useChat] message submission was not acknowledged", err)
         const rejectionCode = rootModeRejectionCode(err)
-        if (startSid && transitionToken && rejectionCode) finishRootModeTransition(startSid, transitionToken)
         if (activeSendRef.current?.id === operation.id) activeSendRef.current = null
         if (mountedRef.current) {
           setSubmissionPending(false)
@@ -1610,7 +1602,7 @@ export function useChat(
             kind: "generation-failed",
             operationId: operation.id,
             sessionId: acknowledgedSessionId,
-            message: "Root 权限切换结果未知；消息已保存，但尚未启动执行。请新建会话。",
+            message: "Root 权限切换结果未知；消息已保存，但尚未启动执行。请先处理模式切换。",
           })
         } else {
           void agentClient
