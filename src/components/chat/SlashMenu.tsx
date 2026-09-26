@@ -104,7 +104,7 @@ export function SlashMenu({
                     : "bg-muted text-muted-foreground",
                 )}
               >
-                {e.kind === "goal" ? "指令" : e.kind === "workflow" ? "工作流" : "技能"}
+                {e.kind === "goal" ? "指令" : e.kind === "workflow" ? "文本展开" : "技能"}
               </span>
             </span>
             {e.description ? (
