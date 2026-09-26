@@ -17,11 +17,15 @@ test("exact Workflow survives Root conflict then succeeds after explicit mode di
   test.skip(testInfo.project.name === "tablet-chromium", "desktop and phone acceptance")
   await page.addInitScript((id) => { localStorage.setItem("bodhi_onboarded_v1", "1"); localStorage.setItem("lotus_next_last_session", id) }, sessionId)
   const observation = await installArtifactRuntime(page, standaloneScenario)
-  let enabled = true; let epoch = 0; let catalogReads = 0; let detailReads = 0
+  let ordinary: string | undefined; let enabled = true; let epoch = 0; let catalogReads = 0; let detailReads = 0
   const chats: Array<Record<string, unknown>> = []; const modes: Array<Record<string, unknown>> = []
   await page.route(`**/api/v1/sessions/${sessionId}`, (route) => {
+    if (route.request().method() === "PATCH") {
+      const body = route.request().postDataJSON(); expect(body).toEqual({ clear_reasoning_effort: true }); ordinary = undefined
+      return route.fulfill({ json: {} })
+    }
     detailReads += 1
-    return route.fulfill({ json: { session: { ...session, root_orchestration_only: enabled, root_mode_transition_epoch: epoch, root_mode_birth_token: birth } } })
+    return route.fulfill({ json: { session: { ...session, reasoning_effort: ordinary, thinking_mode: enabled ? "ultra" : "standard", root_orchestration_only: enabled, root_mode_transition_epoch: epoch, root_mode_birth_token: birth } } })
   })
   await page.route("**/api/v1/bamboo/workflow-catalog?*", (route) => {
     expect(new URL(route.request().url()).searchParams.get("session_id")).toBe(sessionId); catalogReads += 1
@@ -37,17 +41,17 @@ test("exact Workflow survives Root conflict then succeeds after explicit mode di
   })
   await page.route(`**/api/v1/sessions/${sessionId}/root-mode-operations/*`, (route) => {
     const input = route.request().postDataJSON() as Record<string, unknown>; modes.push(input)
-    expect(input).toEqual({ birth_token: birth, expected_epoch: epoch, enabled: false })
+    expect(input).toEqual({ birth_token: birth, expected_epoch: epoch, enabled: false, thinking_mode: "standard" })
     const operationId = decodeURIComponent(new URL(route.request().url()).pathname.split("/").at(-1)!)
     const expected = epoch; epoch += 1; enabled = false
     return route.fulfill({ json: { status: "committed", operation_id: operationId, expected_epoch: expected,
-      resulting_epoch: epoch, enabled_at_completion: false, root_tool_authority_revision: epoch } })
+      resulting_epoch: epoch, enabled_at_completion: false, thinking_mode_at_completion: "standard", root_tool_authority_revision: epoch } })
   })
   await page.route(`**/api/v1/execute/${sessionId}`, (route) => route.fulfill({ json: { status: "started", session_id: sessionId } }))
   await page.goto(standaloneScenario.entryUrl)
-  const mode = page.getByRole("checkbox", { name: "Root 仅编排模式" })
+  const mode = page.getByRole("button", { name: "推理强度" })
   const message = page.getByRole("textbox", { name: "消息", exact: true })
-  await expect(mode).toBeChecked(); expect(catalogReads).toBe(0)
+  await expect(mode).toContainText("Ultra"); expect(catalogReads).toBe(0)
   await page.getByRole("button", { name: "选择目录工作流", exact: true }).click()
   const picker = page.getByRole("combobox", { name: "目录中的 Workflow" })
   await expect(picker).toBeVisible()
@@ -66,17 +70,17 @@ test("exact Workflow survives Root conflict then succeeds after explicit mode di
   await page.getByRole("button", { name: "发送消息", exact: true }).click()
   await expect(page.locator("[data-workflow-selection]").getByRole("alert")).toContainText("root_orchestration_incompatible_mode")
   await expect.poll(() => detailReads).toBeGreaterThan(before)
-  await expect(mode).toBeChecked(); expect(modes).toHaveLength(0)
+  await expect(mode).toContainText("Ultra"); expect(modes).toHaveLength(0)
   await expect(message).toHaveValue("Review this exact file only"); await expect(args).toHaveValue('{"target":"src/scope.ts"}')
   const conflict = testInfo.outputPath("typed-workflow-root-conflict.png")
   await page.screenshot({ path: conflict }); await testInfo.attach("typed-workflow-root-conflict", { path: conflict, contentType: "image/png" })
-  await mode.click(); await expect(mode).not.toBeChecked()
-  await expect(page.getByRole("status").filter({ hasText: "服务器已关闭" })).toBeVisible()
+  await mode.click(); await page.getByRole("menuitem", { name: "自动", exact: true }).click(); await expect(mode).not.toContainText("Ultra")
+  await expect(page.getByRole("status").filter({ hasText: "服务器已确认普通模式" })).toBeVisible()
   await page.getByRole("button", { name: "发送消息", exact: true }).click()
   await expect.poll(() => chats.length).toBe(2)
   await expect(message).toHaveValue(""); expect(modes).toHaveLength(1)
-  await page.reload(); await expect(mode).not.toBeChecked()
-  await expect(page.getByRole("status").filter({ hasText: "服务器已关闭" })).toBeVisible()
+  await page.reload(); await expect(mode).not.toContainText("Ultra")
+  await expect(page.getByRole("status").filter({ hasText: "服务器已确认普通模式" })).toBeVisible()
   await expect(page.getByRole("button", { name: "选择目录工作流", exact: true })).toBeVisible()
   await expect(args).toHaveCount(0)
   expect(await page.locator("html").evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1)
@@ -93,7 +97,7 @@ test("stale catalog retains old exact selection until reselected and text expans
   const chats: Array<Record<string, unknown>> = []
   await page.route(`**/api/v1/sessions/${sessionId}`, (route) => {
     detailReads += 1
-    return route.fulfill({ json: { session: { ...session, root_orchestration_only: false, root_mode_transition_epoch: 0, root_mode_birth_token: birth } } })
+    return route.fulfill({ json: { session: { ...session, root_orchestration_only: false, thinking_mode: "standard", root_mode_transition_epoch: 0, root_mode_birth_token: birth } } })
   })
   await page.route("**/api/v1/bamboo/workflow-catalog?*", (route) => route.fulfill({ json: { revision: 100, entries: [{ ...entry, revision }] } }))
   await page.route("**/api/v1/commands", (route) => route.fulfill({ json: { total: 1, commands: [{ id: "workflow-legacy", name: "legacy", display_name: "legacy", description: "Expand legacy text", type: "workflow", metadata: null }] } }))
@@ -127,7 +131,7 @@ test("stale catalog retains old exact selection until reselected and text expans
   await expect.poll(() => chats.length).toBe(2)
   expect(chats[1].workflow_selection).toEqual({ id: entry.id, source: "workspace", revision: 8, args: { target: "src" } })
   await page.reload(); await expect(args).toHaveCount(0)
-  await expect(page.getByRole("status").filter({ hasText: "服务器已关闭" })).toBeVisible()
+  await expect(page.getByRole("status").filter({ hasText: "服务器已确认普通模式" })).toBeVisible()
   await message.fill("/legacy")
   await page.getByRole("button", { name: /\/legacy.*文本展开/ }).click()
   await expect(page.getByText("文本展开 /legacy", { exact: true })).toBeVisible()

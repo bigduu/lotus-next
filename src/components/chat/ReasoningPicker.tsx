@@ -1,6 +1,8 @@
 import { Check, Gauge } from "lucide-react"
 import { cn } from "@/lib/utils"
 import type { ReasoningEffortSelection } from "@shared/utils/reasoningEffort"
+import type { ThinkingMode } from "@services/chat/AgentService"
+import type { ThinkingPickerSelection } from "@/hooks/useRootThinkingMode"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -18,6 +20,8 @@ const EFFORTS: { value: ReasoningEffortSelection; label: string }[] = [
   { value: "max", label: "最大" },
 ]
 
+const reasoningEffortLabel = (value: ReasoningEffortSelection) => EFFORTS.find((e) => e.value === value)?.label ?? "自动"
+
 /** Reasoning-effort switcher — mirrors ModelPicker's pill + checkmark menu. */
 export function ReasoningPicker({
   value,
@@ -25,14 +29,20 @@ export function ReasoningPicker({
   disabled = false,
   menuPlacement = "down",
   menuAlign = "right",
+  allowUltra = false,
+  thinkingMode,
 }: {
   value: ReasoningEffortSelection
-  onChange: (effort: ReasoningEffortSelection) => void
+  onChange: (effort: ThinkingPickerSelection) => void
   disabled?: boolean
   menuPlacement?: "up" | "down"
   menuAlign?: "left" | "right"
+  allowUltra?: boolean
+  thinkingMode?: ThinkingMode | null
 }) {
-  const current = EFFORTS.find((e) => e.value === value)?.label ?? "自动"
+  const current = allowUltra && thinkingMode === null ? "未确认"
+    : allowUltra && thinkingMode === "ultra" ? "Ultra · 编排" : reasoningEffortLabel(value)
+  const standard = !allowUltra || thinkingMode !== "ultra"
 
   return (
     <DropdownMenu>
@@ -49,6 +59,12 @@ export function ReasoningPicker({
         align={menuAlign === "right" ? "end" : "start"}
         className="max-h-72 w-36 overflow-y-auto rounded-2xl"
       >
+        {allowUltra ? (
+          <DropdownMenuItem onClick={() => onChange("ultra")} className="gap-2 rounded-xl px-3 py-2">
+            <Check className={cn("size-4 shrink-0 text-primary", thinkingMode === "ultra" ? "opacity-100" : "opacity-0")} />
+            <span className={cn("truncate", thinkingMode === "ultra" && "font-medium")}>Ultra · 编排</span>
+          </DropdownMenuItem>
+        ) : null}
         {EFFORTS.map((e) => (
           <DropdownMenuItem
             key={e.value}
@@ -58,10 +74,10 @@ export function ReasoningPicker({
             <Check
               className={cn(
                 "size-4 shrink-0 text-primary",
-                e.value === value ? "opacity-100" : "opacity-0",
+                standard && e.value === value ? "opacity-100" : "opacity-0",
               )}
             />
-            <span className={cn("truncate", e.value === value && "font-medium")}>
+            <span className={cn("truncate", standard && e.value === value && "font-medium")}>
               {e.label}
             </span>
           </DropdownMenuItem>

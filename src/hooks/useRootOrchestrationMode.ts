@@ -1,19 +1,32 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import {
-  agentClient, type RootModeOperationResponse, type SessionKind,
+  agentClient, isThinkingMode, type ThinkingMode, type ReasoningEffort,
+  type RootModeOperationResponse, type SessionKind,
 } from "@services/chat/AgentService"
+import { isReasoningEffort } from "@shared/utils/reasoningEffort"
 import { getErrorMessage, isApiError } from "@services/api/errors"
+import { useAppStore } from "@shared/store/appStore"
 import {
   beginRootModeOperation, finishRootModeOperation, readRootModeFence,
   rootModeStorageKeyMatches, useRootModeFenceState, type RootModeOperation,
 } from "@/lib/rootModeTransitionFence"
 
+export type RootModeAuthority = {
+  sessionId: string
+  enabled: boolean
+  thinkingMode: ThinkingMode
+  ordinaryEffort: ReasoningEffort | null
+  epoch: number
+  birthToken: string
+  isRunning: boolean
+}
+type Outcome = RootModeOperationResponse["status"] | "birth_mismatch"
+export type RootModeChangeResult = { status: Outcome | "unchanged" | "unconfirmed"; authority: RootModeAuthority | null }
+type RecoveryResult = { outcomes: Map<string, Outcome>; authority: RootModeAuthority | null }
 type SavedSelection = {
   sessionId: string
   kind: SessionKind | null
-  confirmed: boolean | null
-  epoch: number | null
-  birthToken: string | null
+  authority: RootModeAuthority | null
   loading: boolean
   error: string | null
 }
@@ -30,12 +43,16 @@ function verifiedOutcome(response: RootModeOperationResponse, operation: RootMod
   if (response.status === "fenced_by_successor") {
     return validEpoch(response.current_epoch) && response.current_epoch > operation.expectedEpoch
       && typeof response.current_enabled === "boolean"
+      && isThinkingMode(response.current_thinking_mode)
+      && (response.current_thinking_mode === "ultra") === response.current_enabled
   }
   return ["committed", "fenced", "rejected_incompatible"].includes(response.status)
     && response.operation_id === operation.operationId
     && response.expected_epoch === operation.expectedEpoch
     && response.resulting_epoch === operation.expectedEpoch + 1
     && typeof response.enabled_at_completion === "boolean"
+    && isThinkingMode(response.thinking_mode_at_completion)
+    && (response.thinking_mode_at_completion === "ultra") === response.enabled_at_completion
     && (response.status !== "committed" || response.enabled_at_completion === operation.enabled)
 }
 
@@ -66,72 +83,95 @@ export function useRootOrchestrationMode(sessionId: string | null, kind?: Sessio
   const [recoveryFailure, setRecoveryFailure] = useState<{ sessionId: string; message: string } | null>(null)
   const [recoveringId, setRecoveringId] = useState<string | null>(null)
   const readGeneration = useRef(0)
-  const recoveryActive = useRef(new Map<string, Promise<void>>())
+  const recoveryActive = useRef(new Map<string, Promise<RecoveryResult>>())
   const currentSessionId = useRef(sessionId)
   currentSessionId.current = sessionId
 
-  const refresh = useCallback(async (id: string, notice: string | null = null) => {
+  const refresh = useCallback(async (id: string, notice: string | null = null, minimumEpoch = 0) => {
     const generation = ++readGeneration.current
     setSaved((previous) => ({
       sessionId: id,
       kind: previous?.sessionId === id ? previous.kind : null,
-      confirmed: previous?.sessionId === id ? previous.confirmed : null,
-      epoch: previous?.sessionId === id ? previous.epoch : null,
-      birthToken: previous?.sessionId === id ? previous.birthToken : null,
+      authority: previous?.sessionId === id ? previous.authority : null,
       loading: true,
       error: null,
     }))
     try {
       const response = await agentClient.getSession(id)
-      if (readGeneration.current !== generation || currentSessionId.current !== id) return
+      if (readGeneration.current !== generation || currentSessionId.current !== id) return null
       const session = response.session
       if (session.kind === "child") {
-        setSaved({ sessionId: id, kind: "child", confirmed: null, epoch: null, birthToken: null, loading: false, error: null })
-        return
+        setSaved({ sessionId: id, kind: "child", authority: null, loading: false, error: null })
+        return null
       }
-      if (session.kind !== "root" || typeof session.root_orchestration_only !== "boolean"
+      if (session.id !== id || session.kind !== "root" || typeof session.root_orchestration_only !== "boolean"
+        || !isThinkingMode(session.thinking_mode)
+        || (session.thinking_mode === "ultra") !== session.root_orchestration_only
+        || session.reasoning_effort != null && !isReasoningEffort(session.reasoning_effort)
         || !validEpoch(session.root_mode_transition_epoch)
         || typeof session.root_mode_birth_token !== "string"
         || !/^[0-9a-f]{64}$/i.test(session.root_mode_birth_token)) {
         setSaved({
-          sessionId: id, kind: session.kind ?? null, confirmed: null, epoch: null,
-          birthToken: null, loading: false,
-          error: "无法确认 Root 模式：当前 Bamboo 未返回可恢复的会话权限信息。",
+          sessionId: id, kind: session.kind ?? null, authority: null, loading: false,
+          error: "无法确认思考模式：Bamboo 未返回一致的独立 Ultra 模式和 Root 权限信息。请更新 Bamboo 后重新读取。",
         })
-        return
+        return null
+      }
+      const authority: RootModeAuthority = {
+        sessionId: id, enabled: session.root_orchestration_only, thinkingMode: session.thinking_mode,
+        ordinaryEffort: session.reasoning_effort ?? null,
+        epoch: session.root_mode_transition_epoch, birthToken: session.root_mode_birth_token,
+        isRunning: session.is_running === true,
+      }
+      if (authority.epoch < minimumEpoch) {
+        setSaved({ sessionId: id, kind: "root", authority: null, loading: false,
+          error: "当前状态仍早于已确认的模式切换；请重新读取服务器状态后继续。" })
+        return null
       }
       setSaved({
-        sessionId: id, kind: "root", confirmed: session.root_orchestration_only,
-        epoch: session.root_mode_transition_epoch, birthToken: session.root_mode_birth_token,
+        sessionId: id, kind: "root", authority,
         loading: false, error: notice,
       })
+      useAppStore.setState((state) => ({
+        chats: state.chats.map((chat) => chat.id === id
+          ? { ...chat, config: { ...chat.config, reasoningEffort: authority.ordinaryEffort } }
+          : chat),
+      }))
+      return authority
     } catch (error) {
-      if (readGeneration.current !== generation || currentSessionId.current !== id) return
+      if (readGeneration.current !== generation || currentSessionId.current !== id) return null
       setSaved({
-        sessionId: id, kind: null, confirmed: null, epoch: null, birthToken: null,
+        sessionId: id, kind: null, authority: null,
         loading: false, error: `无法读取 Root 模式：${getErrorMessage(error)}`,
       })
+      return null
     }
   }, [])
 
-  const recoverPending = useCallback((id: string): Promise<void> => {
+  const recoverPending = useCallback((id: string): Promise<RecoveryResult> => {
     const ongoing = recoveryActive.current.get(id)
     if (ongoing) return ongoing
     const pending = (async () => {
       const initial = readRootModeFence(id)
-      if (initial.kind !== "pending") return
+      const outcomes = new Map<string, Outcome>()
+      if (initial.kind !== "pending") return { outcomes, authority: null }
       setRecoveringId(id)
       setRecoveryFailure(null)
       let notice: string | null = null
       let failure: string | null = null
+      let minimumEpoch = 0
       for (const operation of initial.operations) {
         try {
           const response = await agentClient.recoverRootMode(id, operation)
           if (!verifiedOutcome(response, operation)) throw new Error("Bamboo 未返回与此请求匹配的终态证明")
           if (!finishRootModeOperation(id, operation)) throw new Error("本地安全标记无法清除")
+          outcomes.set(operation.operationId, response.status)
+          minimumEpoch = Math.max(minimumEpoch, response.status === "fenced_by_successor"
+            ? response.current_epoch : response.resulting_epoch)
           notice = outcomeNotice(response.status)
         } catch (error) {
           if (birthMismatch(error) && finishRootModeOperation(id, operation)) {
+            outcomes.set(operation.operationId, "birth_mismatch")
             notice = "会话身份已改变；已重新读取当前 Root 模式。"
           } else {
             failure = `无法确认 Root 模式切换：${getErrorMessage(error)}。请重试恢复。`
@@ -142,7 +182,9 @@ export function useRootOrchestrationMode(sessionId: string | null, kind?: Sessio
         setRecoveringId(null)
         setRecoveryFailure(failure ? { sessionId: id, message: failure } : null)
       }
-      if (readRootModeFence(id).kind === "clear" && currentSessionId.current === id) await refresh(id, notice)
+      const authority = readRootModeFence(id).kind === "clear" && currentSessionId.current === id
+        ? await refresh(id, notice, minimumEpoch) : null
+      return { outcomes, authority }
     })().finally(() => { recoveryActive.current.delete(id) })
     recoveryActive.current.set(id, pending)
     return pending
@@ -176,19 +218,21 @@ export function useRootOrchestrationMode(sessionId: string | null, kind?: Sessio
 
   const detail = saved?.sessionId === sessionId ? saved : null
   const child = Boolean(sessionId && (kind === "child" || detail?.kind === "child"))
-  const confirmed = unsafe ? null : detail?.confirmed ?? null
+  const authority = detail?.authority ?? null
+  const confirmed = unsafe || detail?.loading ? null : authority?.enabled ?? null
   const selected = sessionId ? confirmed : newSelection
   const loading = Boolean(sessionId && !child && (!detail || detail.loading))
 
-  const change = async (next: boolean) => {
-    if (!sessionId) { setNewSelection(next); return }
-    if (child || unsafe || loading || typeof detail?.confirmed !== "boolean"
-      || !validEpoch(detail.epoch) || !detail.birthToken || recoveringId === sessionId) return
+  const change = async (next: boolean): Promise<RootModeChangeResult> => {
+    if (!sessionId) { setNewSelection(next); return { status: "unchanged", authority: null } }
+    if (child || unsafe || loading || !authority || recoveringId === sessionId
+      || readRootModeFence(sessionId).kind !== "clear")
+      return { status: "unconfirmed", authority: null }
     const id = sessionId
-    const operation = beginRootModeOperation(id, detail.epoch, detail.birthToken, next)
+    const operation = beginRootModeOperation(id, authority.epoch, authority.birthToken, next)
     if (!operation) {
       setRecoveryFailure({ sessionId: id, message: "无法保存 Root 模式安全标记；切换未发送。" })
-      return
+      return { status: "unconfirmed", authority: null }
     }
     ++readGeneration.current
     setRecoveryFailure(null)
@@ -197,20 +241,25 @@ export function useRootOrchestrationMode(sessionId: string | null, kind?: Sessio
       if (!verifiedOutcome(response, operation)) throw new Error("Bamboo 未返回与此请求匹配的终态证明")
       if (!finishRootModeOperation(id, operation)) throw new Error("本地安全标记无法清除")
       if (currentSessionId.current === id && readRootModeFence(id).kind === "clear") {
-        await refresh(id, outcomeNotice(response.status))
+        const minimumEpoch = response.status === "fenced_by_successor" ? response.current_epoch : response.resulting_epoch
+        return { status: response.status, authority: await refresh(id, outcomeNotice(response.status), minimumEpoch) }
       }
     } catch (error) {
       if (birthMismatch(error) && finishRootModeOperation(id, operation)) {
-        if (currentSessionId.current === id) await refresh(id, "会话身份已改变；已重新读取当前 Root 模式。")
+        return { status: "birth_mismatch", authority: currentSessionId.current === id
+          ? await refresh(id, "会话身份已改变；已重新读取当前 Root 模式。") : null }
       } else {
-        await recoverPending(id)
+        const recovered = await recoverPending(id)
+        return { status: recovered.outcomes.get(operation.operationId) ?? "unconfirmed", authority: recovered.authority }
       }
     }
+    return { status: "unconfirmed", authority: null }
   }
 
   const retry = () => {
     if (!sessionId || child) return Promise.resolve()
-    return readRootModeFence(sessionId).kind === "pending" ? recoverPending(sessionId) : refresh(sessionId)
+    return readRootModeFence(sessionId).kind === "pending"
+      ? recoverPending(sessionId).then((result) => result.authority) : refresh(sessionId)
   }
 
   const pendingError = fence.kind === "legacy"
@@ -226,7 +275,8 @@ export function useRootOrchestrationMode(sessionId: string | null, kind?: Sessio
             : "Root 模式切换结果尚未确认；此会话暂时停止发送。请恢复该请求。"
 
   return {
-    child, unsafe, selected, confirmed, loading,
+    child, unsafe, selected, confirmed, loading, authority,
+    isRoot: !sessionId || !child && (kind === "root" || detail?.kind === "root"),
     recovering: recoveringId === sessionId,
     recoverable: fence.kind === "pending",
     error: unsafe ? pendingError : recoveryFailure?.sessionId === sessionId

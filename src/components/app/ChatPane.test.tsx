@@ -19,6 +19,9 @@ type ChatPaneProps = ComponentProps<(typeof import("./ChatPane"))["ChatPane"]>
 type Send = ChatPaneProps["chat"]["send"]
 type WorkflowControlProps = ComponentProps<(typeof import("@/components/chat/WorkflowSelectionControl"))["WorkflowSelectionControl"]>
 type State = {
+  chats: { id: string; config: { reasoningEffort?: ReasoningEffort | null } }[]
+  getInputState(id: string): State["inputStates"][string]
+  setInputThinkingMode(id: string, mode: "standard" | "ultra"): boolean
   tokenUsages: Record<string, unknown>; inputStates: Record<string, { content: string; contentRevision: number; reasoningEffort?: ReasoningEffortSelection; thinkingMode?: "standard" | "ultra"; thinkingModeRevision?: number }>
   skills: SkillDefinition[]; childProgress: Record<string, unknown>; models: string[]; selectedModel: string | undefined
   setInputContent(id: string, content: string): void
@@ -52,7 +55,7 @@ vi.mock("@shared/store/appStore", async () => {
         () => selector(runtime.state),
         () => selector(runtime.state),
       ),
-    { getState: () => runtime.state },
+    { getState: () => runtime.state, setState: (update: (state: State) => Partial<State>) => { Object.assign(runtime.state, update(runtime.state)); notify() } },
   )
   return { useAppStore, selectChildren: () => (state: State) => state.childProgress }
 })
@@ -67,7 +70,7 @@ vi.mock("@/hooks/useStickyScroll", () => ({
 }))
 vi.mock("@services/command", () => ({ commandService: { listCommands: runtime.listCommands, getWorkflowCommand: runtime.getWorkflow } }))
 vi.mock("@services/workspace", () => ({ workspaceService: { listWorkspaceFiles: vi.fn().mockResolvedValue([]) } }))
-vi.mock("@services/chat/AgentService", () => ({ agentClient: {
+vi.mock("@services/chat/AgentService", () => ({ isThinkingMode: (v: unknown) => v === "standard" || v === "ultra", agentClient: {
   patchSession: vi.fn().mockResolvedValue(undefined),
   getSession: vi.fn(),
   selectRootMode: vi.fn(),
@@ -95,7 +98,7 @@ vi.mock("@/components/app/ImageLightbox", () => ({
     src ? <div data-image-lightbox data-src={src} /> : null,
 }))
 vi.mock("@/components/app/ContextUsageRing", () => ({ ContextUsageRing: () => <span data-testid="context-usage" /> }))
-vi.mock("@/components/chat/ReasoningPicker", () => ({ ReasoningPicker: (props: ReasoningPickerProps) => (runtime.reasoningPicker = props, <span data-testid="reasoning-picker" />) }))
+vi.mock("@/components/chat/ReasoningPicker", () => ({ reasoningEffortLabel: (value: string) => value, ReasoningPicker: (props: ReasoningPickerProps) => (runtime.reasoningPicker = props, <span data-testid="reasoning-picker" />) }))
 vi.mock("@/components/chat/ModelPicker", () => ({
   ModelPicker: (props: ModelPickerProps) => {
     runtime.modelPicker = props
@@ -138,10 +141,13 @@ const typedEntry: import("@services/command/workflowCatalog").WorkflowCatalogEnt
   id: "review-exact", name: "Review", description: "Review", kind: "instruction", source: "workspace", revision: 9,
   winner: true, status: "valid", invocation_policy: { explicit: true }, argument_schema: { type: "object", required: ["target"], properties: { target: { type: "string" } } },
 }
-function rootModeToggle() {
-  const input = document.querySelector<HTMLInputElement>('input[aria-label="Root 仅编排模式"]')
-  if (!input) throw new Error("Root mode control did not render")
-  return input
+function thinkingPicker() {
+  if (!runtime.reasoningPicker) throw new Error("Thinking picker did not render")
+  return {
+    checked: runtime.reasoningPicker.thinkingMode === "ultra",
+    disabled: runtime.reasoningPicker.disabled,
+    click: () => runtime.reasoningPicker?.onChange(runtime.reasoningPicker.thinkingMode === "ultra" ? "auto" : "ultra"),
+  }
 }
 function deferred<T>() {
   let resolve!: (value: T) => void; const promise = new Promise<T>((done) => { resolve = done })
@@ -221,8 +227,9 @@ function resizePane(wide: boolean) {
 }
 beforeEach(() => {
   localStorage.clear()
+  rootFields.root_mode_transition_epoch = 0
   vi.mocked(agentClient.getSession).mockReset().mockImplementation(async (sessionId) => ({
-    session: { ...rootFields, id: sessionId, kind: "root", root_orchestration_only: false },
+    session: { ...rootFields, id: sessionId, kind: "root", root_orchestration_only: false, thinking_mode: "standard" },
   }) as Awaited<ReturnType<typeof agentClient.getSession>>)
   vi.mocked(agentClient.selectRootMode).mockReset().mockImplementation(async (_id, operation) => ({
     status: "committed", operation_id: operation.operationId, expected_epoch: operation.expectedEpoch,
@@ -246,6 +253,8 @@ beforeEach(() => {
   runtime.providerState.providerSnapshot = null
   runtime.listeners.clear(); runtime.revision = 0
   runtime.state = {
+    chats: [], getInputState: (id) => runtime.state.inputStates[id] ?? { content: "", contentRevision: 0 },
+    setInputThinkingMode: (id, thinkingMode) => { runtime.state.inputStates = { ...runtime.state.inputStates, [id]: { ...runtime.state.getInputState(id), thinkingMode, thinkingModeRevision: ++runtime.revision } }; notify(); return true },
     tokenUsages: {}, inputStates: {}, skills: [skillA, skillB], childProgress: {}, models: [],
     selectedModel: "test-model",
     refreshChatsNow: vi.fn().mockResolvedValue(undefined),
@@ -690,11 +699,11 @@ describe("Root orchestration-only control", () => {
   it("sends an explicit creation choice from the new Root composer", async () => {
     const send = vi.fn<Send>().mockResolvedValue({ kind: "unconfirmed", operationId: 1 })
     const textarea = await mount(send, null)
-    expect(rootModeToggle().checked).toBe(false)
+    expect(thinkingPicker().checked).toBe(false)
 
-    act(() => rootModeToggle().click())
-    expect(rootModeToggle().checked).toBe(true)
-    expect(document.querySelector('[role="status"]')?.textContent).toContain("下次创建时启用")
+    act(() => thinkingPicker().click())
+    expect(thinkingPicker().checked).toBe(true)
+    expect(document.querySelector('[role="status"]')?.textContent).toContain("下次创建时使用 Ultra 编排")
     change(textarea, "delegate this work")
     act(() => composer().onSubmit())
     await flush()
@@ -706,14 +715,14 @@ describe("Root orchestration-only control", () => {
 
   it("reads the saved Root choice and omits it on an unchanged follow-up", async () => {
     vi.mocked(agentClient.getSession).mockImplementation(async (sessionId) => ({
-      session: { ...rootFields, id: sessionId, kind: "root", root_orchestration_only: true },
+      session: { ...rootFields, id: sessionId, kind: "root", root_orchestration_only: true, thinking_mode: "ultra" },
     }) as Awaited<ReturnType<typeof agentClient.getSession>>)
     const send = vi.fn<Send>().mockResolvedValue({
       kind: "accepted", operationId: 1, sessionId: "root-session", navigated: false,
     })
     const textarea = await mount(send, "root-session")
-    expect(rootModeToggle().checked).toBe(true)
-    expect(document.querySelector('[role="status"]')?.textContent).toContain("服务器已启用")
+    expect(thinkingPicker().checked).toBe(true)
+    expect(document.querySelector('[role="status"]')?.textContent).toContain("服务器已确认 Ultra 编排")
 
     change(textarea, "check progress")
     act(() => composer().onSubmit())
@@ -727,7 +736,7 @@ describe("Root orchestration-only control", () => {
   it("switches an existing Root without chat and omits mode on the next message", async () => {
     let durable = true
     vi.mocked(agentClient.getSession).mockImplementation(async (sessionId) => ({
-      session: { ...rootFields, root_mode_transition_epoch: durable ? 0 : 1, id: sessionId, kind: "root", root_orchestration_only: durable },
+      session: { ...rootFields, root_mode_transition_epoch: durable ? 0 : 1, id: sessionId, kind: "root", root_orchestration_only: durable, thinking_mode: durable ? "ultra" : "standard" },
     }) as Awaited<ReturnType<typeof agentClient.getSession>>)
     vi.mocked(agentClient.selectRootMode).mockImplementationOnce(async (_id, operation) => {
       durable = false
@@ -736,9 +745,9 @@ describe("Root orchestration-only control", () => {
     })
     const send = vi.fn<Send>().mockResolvedValue({ kind: "accepted", operationId: 1, sessionId: "root-session", navigated: false })
     const textarea = await mount(send, "root-session")
-    await act(async () => { rootModeToggle().click(); await Promise.resolve(); await Promise.resolve() })
-    expect(rootModeToggle().checked).toBe(false)
-    expect(document.querySelector('[role="status"]')?.textContent).toContain("服务器已关闭")
+    await act(async () => { thinkingPicker().click(); await Promise.resolve(); await Promise.resolve() })
+    expect(thinkingPicker().checked).toBe(false)
+    expect(document.querySelector('[role="status"]')?.textContent).toContain("服务器已确认普通模式")
     expect(send).not.toHaveBeenCalled()
     expect(agentClient.sendMessage).not.toHaveBeenCalled()
     expect(agentClient.execute).not.toHaveBeenCalled()
@@ -749,27 +758,27 @@ describe("Root orchestration-only control", () => {
     expect(send).toHaveBeenCalledWith("continue directly", expect.objectContaining({
       rootOrchestrationOnly: undefined,
     }))
-    expect(document.querySelector('[role="status"]')?.textContent).toContain("服务器已关闭")
+    expect(document.querySelector('[role="status"]')?.textContent).toContain("服务器已确认普通模式")
   })
 
   it("keeps a timed-out mode-only operation fenced after a late commit and reload", async () => {
     let durable = true
     vi.mocked(agentClient.getSession).mockImplementation(async (sessionId) => ({
-      session: { ...rootFields, id: sessionId, kind: "root", root_orchestration_only: durable },
+      session: { ...rootFields, id: sessionId, kind: "root", root_orchestration_only: durable, thinking_mode: durable ? "ultra" : "standard" },
     }) as Awaited<ReturnType<typeof agentClient.getSession>>)
     vi.mocked(agentClient.selectRootMode).mockRejectedValueOnce(new RequestTimeoutError())
     const send = vi.fn<Send>()
     const textarea = await mount(send, "root-session")
-    await act(async () => { rootModeToggle().click(); await Promise.resolve(); await Promise.resolve() })
+    await act(async () => { thinkingPicker().click(); await Promise.resolve(); await Promise.resolve() })
     change(textarea, "disable mode")
     act(() => composer().onSubmit())
     await flush()
     expect(agentClient.getSession).toHaveBeenCalledTimes(1)
     expect(getRootModeFenceState("root-session")).toBe("uncertain")
     expect(document.querySelector('[role="status"]')?.textContent).toContain("权限结果未知")
-    expect(document.body.textContent).not.toContain("服务器已启用")
+    expect(document.body.textContent).not.toContain("服务器已确认 Ultra 编排")
     expect(document.body.textContent).toContain("恢复切换")
-    expect(rootModeToggle().disabled).toBe(true)
+    expect(thinkingPicker().disabled).toBe(true)
 
     act(() => roots.pop()?.unmount())
     document.body.replaceChildren()
@@ -818,21 +827,22 @@ describe("Root orchestration-only control", () => {
 
   it("restores the durable choice after a Bamboo rejection and shows its cause", async () => {
     vi.mocked(agentClient.getSession).mockImplementation(async (sessionId) => ({
-      session: { ...rootFields, id: sessionId, kind: "root", root_orchestration_only: true },
+      session: { ...rootFields, id: sessionId, kind: "root", root_orchestration_only: true, thinking_mode: "ultra" },
     }) as Awaited<ReturnType<typeof agentClient.getSession>>)
     vi.mocked(agentClient.selectRootMode).mockRejectedValueOnce(new ApiError("incompatible", 409, "Conflict",
       JSON.stringify({ error: { code: "root_orchestration_incompatible_mode" } })))
-    vi.mocked(agentClient.recoverRootMode).mockImplementationOnce(async (_id, operation) => ({
-      status: "rejected_incompatible", operation_id: operation.operationId, expected_epoch: operation.expectedEpoch,
-      resulting_epoch: operation.expectedEpoch + 1, enabled_at_completion: true, thinking_mode_at_completion: "ultra", root_tool_authority_revision: 1,
-    }))
+    vi.mocked(agentClient.recoverRootMode).mockImplementationOnce(async (_id, operation) => {
+      rootFields.root_mode_transition_epoch = operation.expectedEpoch + 1
+      return { status: "rejected_incompatible", operation_id: operation.operationId, expected_epoch: operation.expectedEpoch,
+        resulting_epoch: operation.expectedEpoch + 1, enabled_at_completion: true, thinking_mode_at_completion: "ultra", root_tool_authority_revision: 1 }
+    })
     const send = vi.fn<Send>()
     await mount(send, "root-session")
-    await act(async () => { rootModeToggle().click(); await Promise.resolve(); await Promise.resolve() })
+    await act(async () => { thinkingPicker().click(); await Promise.resolve(); await Promise.resolve() })
 
-    expect(rootModeToggle().checked).toBe(true)
-    expect(document.querySelector('[role="status"]')?.textContent).toContain("服务器已启用")
-    expect(document.querySelector('[role="alert"]')?.textContent).toContain("Bamboo 已拒绝")
+    expect(thinkingPicker().checked).toBe(true)
+    expect(document.querySelector('[role="status"]')?.textContent).toContain("服务器已确认 Ultra 编排")
+    expect(document.querySelector('[role="alert"]')?.textContent).toContain("不兼容")
     expect(send).not.toHaveBeenCalled()
   })
 
@@ -867,8 +877,8 @@ describe("Root orchestration-only control", () => {
       onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()} splitOpen={false}
       onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false} />))
 
-    expect(rootModeToggle().disabled).toBe(true)
-    expect(document.querySelector('[role="status"]')?.textContent).toContain("仅 Root 可设置")
+    expect(runtime.reasoningPicker?.allowUltra).toBe(false)
+    expect(document.body.textContent).not.toContain("Ultra 编排")
     expect(agentClient.getSession).not.toHaveBeenCalled()
     const textarea = container.querySelector<HTMLTextAreaElement>("textarea")
     if (!textarea) throw new Error("child composer did not render")
@@ -885,19 +895,35 @@ describe("Root orchestration-only control", () => {
       session: { id: sessionId, kind: "child", root_orchestration_only: null },
     }) as Awaited<ReturnType<typeof agentClient.getSession>>)
     await mount(vi.fn<Send>(), "child-session")
-    expect(rootModeToggle().disabled).toBe(true)
-    expect(document.querySelector('[role="status"]')?.textContent).toContain("仅 Root 可设置")
+    expect(runtime.reasoningPicker?.allowUltra).toBe(false)
+    expect(document.body.textContent).not.toContain("Ultra 编排")
     expect(document.querySelector('[role="alert"]')?.textContent ?? "").not.toContain("无法确认 Root")
+  })
+
+  it("shows Child ordinary save failure without exposing a Root Ultra control", async () => {
+    const child = createChat(vi.fn<Send>(), "child-session")
+    child.currentChat!.kind = "child"
+    const container = document.body.appendChild(document.createElement("div"))
+    const root = createRoot(container); roots.push(root)
+    runtime.state.changeSessionReasoningEffort = vi.fn().mockRejectedValueOnce(new Error("Child save offline"))
+    await act(async () => root.render(<ChatPane chat={child} pickedWorkspace="/picked"
+      onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()} splitOpen={false}
+      onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false} />))
+    await act(async () => { runtime.reasoningPicker?.onChange("low"); await Promise.resolve() })
+    expect(document.querySelector('[role="alert"]')?.textContent).toContain("Child save offline")
+    expect(runtime.reasoningPicker?.allowUltra).toBe(false)
+    expect(document.body.textContent).not.toContain("Ultra 编排")
+    expect(agentClient.selectRootMode).not.toHaveBeenCalled()
   })
 
   it("warns that a selected Skill conflicts while keeping Bamboo as the admission authority", async () => {
     vi.mocked(agentClient.getSession).mockImplementation(async (sessionId) => ({
-      session: { ...rootFields, id: sessionId, kind: "root", root_orchestration_only: true },
+      session: { ...rootFields, id: sessionId, kind: "root", root_orchestration_only: true, thinking_mode: "ultra" },
     }) as Awaited<ReturnType<typeof agentClient.getSession>>)
     const send = vi.fn<Send>().mockResolvedValue({ kind: "unconfirmed", operationId: 1 })
     const textarea = await mount(send, "root-session")
     act(() => composer().onPickSkill(skillA))
-    expect(document.querySelector('[role="alert"]')?.textContent).toContain("已选 Skill 与 Root 仅编排模式不兼容")
+    expect(document.querySelector('[role="alert"]')?.textContent).toContain("已选 Skill 与 Ultra 编排不兼容")
     change(textarea, "use this skill")
     act(() => composer().onSubmit())
     await flush()
@@ -908,7 +934,7 @@ describe("Root orchestration-only control", () => {
 
   it("does not describe an unchanged-mode Skill rejection as a mode switch", async () => {
     vi.mocked(agentClient.getSession).mockImplementation(async (sessionId) => ({
-      session: { ...rootFields, id: sessionId, kind: "root", root_orchestration_only: true },
+      session: { ...rootFields, id: sessionId, kind: "root", root_orchestration_only: true, thinking_mode: "ultra" },
     }) as Awaited<ReturnType<typeof agentClient.getSession>>)
     const send = vi.fn<Send>().mockResolvedValue({
       kind: "unconfirmed", operationId: 1, rejectionCode: "root_orchestration_incompatible_mode",
@@ -920,12 +946,12 @@ describe("Root orchestration-only control", () => {
     await flush()
     expect(send).toHaveBeenCalledWith("apply skill", expect.objectContaining({ rootOrchestrationOnly: undefined }))
     expect(document.body.textContent).not.toContain("拒绝本次模式切换")
-    expect(document.querySelector('[role="status"]')?.textContent).toContain("服务器已启用")
+    expect(document.querySelector('[role="status"]')?.textContent).toContain("服务器已确认 Ultra 编排")
   })
 
   it("blocks a text-expanded Workflow while Root mode is selected", async () => {
     vi.mocked(agentClient.getSession).mockImplementation(async (sessionId) => ({
-      session: { ...rootFields, id: sessionId, kind: "root", root_orchestration_only: true },
+      session: { ...rootFields, id: sessionId, kind: "root", root_orchestration_only: true, thinking_mode: "ultra" },
     }) as Awaited<ReturnType<typeof agentClient.getSession>>)
     const send = vi.fn<Send>()
     const textarea = await mount(send, "root-session")
@@ -934,14 +960,14 @@ describe("Root orchestration-only control", () => {
     act(() => composer().onSubmit())
 
     expect(send).not.toHaveBeenCalled()
-    expect(document.querySelector('[role="alert"]')?.textContent).toContain("先确认并关闭 Root 模式")
+    expect(document.querySelector('[role="alert"]')?.textContent).toContain("在思考强度中选择普通档位")
     act(() => composer().onClearWorkflow())
-    expect(document.querySelector('[role="alert"]')?.textContent ?? "").not.toContain("先确认并关闭 Root 模式")
+    expect(document.querySelector('[role="alert"]')?.textContent ?? "").not.toContain("在思考强度中选择普通档位")
   })
 
   it.each(["root_orchestration_incompatible_mode", "workflow_revision_mismatch"])("sends typed Workflow to Bamboo and preserves draft, exact choice and durable Root on %s", async (code) => {
     vi.mocked(agentClient.getSession).mockImplementation(async (sessionId) => ({
-      session: { ...rootFields, id: sessionId, kind: "root", root_orchestration_only: true },
+      session: { ...rootFields, id: sessionId, kind: "root", root_orchestration_only: true, thinking_mode: "ultra" },
     }) as Awaited<ReturnType<typeof agentClient.getSession>>)
     const send = vi.fn<Send>().mockResolvedValue({ kind: "unconfirmed", operationId: 1,
       workflowError: { code, message: "Bamboo rejected exact selection" } })
@@ -956,9 +982,9 @@ describe("Root orchestration-only control", () => {
     expect(runtime.state.inputStates["root-session"]?.content).toBe("keep original task")
     expect(workflowControl().selected?.entry.revision).toBe(9)
     expect(workflowControl().error).toContain(code)
-    expect(workflowControl().error).toContain(code === "root_orchestration_incompatible_mode" ? "与所选工作流不兼容" : "版本已变化")
+    expect(workflowControl().error).toContain(code === "root_orchestration_incompatible_mode" ? "所选工作流与 Ultra 编排不兼容" : "版本已变化")
     expect(vi.mocked(agentClient.getSession).mock.calls.length).toBeGreaterThan(reads)
-    expect(rootModeToggle().checked).toBe(true)
+    expect(thinkingPicker().checked).toBe(true)
     expect(agentClient.selectRootMode).not.toHaveBeenCalled()
   })
 
@@ -1026,30 +1052,30 @@ describe("Root orchestration-only control", () => {
 
   it("keeps the confirmed server label while a Root run is active", async () => {
     vi.mocked(agentClient.getSession).mockImplementation(async (sessionId) => ({
-      session: { ...rootFields, id: sessionId, kind: "root", root_orchestration_only: true },
+      session: { ...rootFields, id: sessionId, kind: "root", root_orchestration_only: true, thinking_mode: "ultra" },
     }) as Awaited<ReturnType<typeof agentClient.getSession>>)
     await mount(vi.fn<Send>(), "root-session", true)
-    expect(rootModeToggle().checked).toBe(true)
-    expect(rootModeToggle().disabled).toBe(true)
-    expect(document.querySelector('[role="status"]')?.textContent).toContain("服务器已启用")
+    expect(thinkingPicker().checked).toBe(true)
+    expect(thinkingPicker().disabled).toBe(true)
+    expect(document.querySelector('[role="status"]')?.textContent).toContain("服务器已确认 Ultra 编排")
   })
 
   it("holds a Goal command while a mode-only operation is pending", async () => {
     vi.mocked(agentClient.getSession).mockImplementation(async (sessionId) => ({
-      session: { ...rootFields, id: sessionId, kind: "root", root_orchestration_only: true },
+      session: { ...rootFields, id: sessionId, kind: "root", root_orchestration_only: true, thinking_mode: "ultra" },
     }) as Awaited<ReturnType<typeof agentClient.getSession>>)
     const send = vi.fn<Send>()
     const terminal = deferred<Awaited<ReturnType<typeof agentClient.selectRootMode>>>()
     vi.mocked(agentClient.selectRootMode).mockReturnValueOnce(terminal.promise)
     const textarea = await mount(send, "root-session")
-    act(() => rootModeToggle().click())
+    act(() => thinkingPicker().click())
     change(textarea, "/goal complete the task")
     act(() => composer().onSubmit())
 
     expect(agentClient.sendMessage).not.toHaveBeenCalled()
     expect(send).not.toHaveBeenCalled()
     expect(textarea.value).toBe("/goal complete the task")
-    expect(document.querySelector('[role="alert"]')?.textContent).toContain("处理模式切换")
+    expect(document.querySelector('[role="alert"]')?.textContent).toContain("请恢复该请求")
     const operation = vi.mocked(agentClient.selectRootMode).mock.calls[0][1]
     await act(async () => {
       terminal.resolve({ status: "committed", operation_id: operation.operationId, expected_epoch: operation.expectedEpoch,
@@ -1062,28 +1088,27 @@ describe("Root orchestration-only control", () => {
     vi.mocked(agentClient.getSession)
       .mockRejectedValueOnce(new Error("authority unavailable"))
       .mockImplementation(async (sessionId) => ({
-        session: { ...rootFields, id: sessionId, kind: "root", root_orchestration_only: true },
+        session: { ...rootFields, id: sessionId, kind: "root", root_orchestration_only: true, thinking_mode: "ultra" },
       }) as Awaited<ReturnType<typeof agentClient.getSession>>)
     await mount(vi.fn<Send>(), "root-session")
-    expect(rootModeToggle().disabled).toBe(true)
+    expect(thinkingPicker().disabled).toBe(true)
     expect(document.querySelector('[role="alert"]')?.textContent).toContain("authority unavailable")
 
     const retryButton = Array.from(document.querySelectorAll<HTMLButtonElement>("button"))
       .find((button) => button.textContent === "重新读取")
     expect(retryButton).toBeDefined()
     await act(async () => { retryButton?.click(); await Promise.resolve() })
-    expect(rootModeToggle().checked).toBe(true)
-    expect(rootModeToggle().disabled).toBe(false)
+    expect(thinkingPicker().checked).toBe(true)
+    expect(thinkingPicker().disabled).toBe(false)
   })
 
-  it("keeps the native keyboard checkbox available in a narrow composer", async () => {
+  it("keeps the independent thinking picker in a narrow composer", async () => {
     await mount(vi.fn<Send>(), null)
     resizePane(false)
-    const control = rootModeToggle()
-    control.focus()
-    expect(document.activeElement).toBe(control)
-    expect(control.type).toBe("checkbox")
-    expect(document.querySelector('[data-testid="composer-shell"]')?.contains(control)).toBe(true)
+    expect(runtime.reasoningPicker?.allowUltra).toBe(true)
+    expect(runtime.reasoningPicker?.disabled).toBe(false)
+    expect(document.querySelector('[data-testid="composer-shell"]')?.contains(document.querySelector('[data-testid="reasoning-picker"]'))).toBe(true)
+    expect(document.querySelector('input[type="checkbox"]')).toBeNull()
   })
 })
 

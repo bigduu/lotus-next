@@ -11,6 +11,7 @@ import { useProviderStore } from "./providerSlice";
 import { applyExecutionEvent } from "./executionStateSlice";
 import { applyReplayableSessionEventToList, isSessionMetadataEvent } from "./sessionMetadataSlice";
 import i18n from "@shared/i18n";
+import { isReasoningEffort } from "@shared/utils/reasoningEffort";
 import { debugLog } from "@shared/utils/debugFlags";
 import {
   DEFAULT_BASE_SYSTEM_PROMPT,
@@ -318,12 +319,22 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
   changeSessionReasoningEffort: async (sessionId, reasoningEffort) => {
     // Auto is represented by clearing the session override. Concrete values,
     // including `none`, remain durable and outrank provider/model defaults.
-    await agentClient.patchSession(
-      sessionId,
-      reasoningEffort
-        ? { reasoning_effort: reasoningEffort }
-        : { clear_reasoning_effort: true },
-    );
+    let writeError: unknown;
+    let writeFailed = false;
+    try {
+      await agentClient.patchSession(
+        sessionId,
+        reasoningEffort
+          ? { reasoning_effort: reasoningEffort }
+          : { clear_reasoning_effort: true },
+      );
+    } catch (error) { writeError = error; writeFailed = true; }
+    const { session } = await agentClient.getSession(sessionId);
+    if (session.id !== sessionId || session.reasoning_effort != null && !isReasoningEffort(session.reasoning_effort)) {
+      throw new Error("服务器未返回此会话有效的普通推理强度");
+    }
+    // The canonical producer omits this field when no override is persisted.
+    const actualEffort = session.reasoning_effort ?? null;
     const committedAt = new Date().toISOString();
     set((state) => ({
       ...state,
@@ -332,11 +343,15 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
           ? {
               ...chat,
               updatedAt: committedAt,
-              config: { ...chat.config, reasoningEffort },
+              config: { ...chat.config, reasoningEffort: actualEffort },
             }
           : chat,
       ),
     }));
+    if (actualEffort !== reasoningEffort) {
+      if (writeFailed) throw writeError;
+      throw new Error("服务器实际保存的普通推理强度与选择不一致");
+    }
   },
 
   persistSessionTitle: async (sessionId, title) => {
