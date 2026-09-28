@@ -11,7 +11,7 @@ export function ActorSnapshotPanel({ rootId, active, selectedActorId, onSelectAc
   selectedActorId: string | null
   onSelectActor: (actorId: string) => void
 }) {
-  const state = useActorSnapshot(rootId, active)
+  const state = useActorSnapshot(rootId, active, selectedActorId)
   const tree = useMemo(() => state.snapshot ? actorSnapshotTree(state.snapshot, state.loading) : {
     rootActorId: rootId ?? "", byId: Object.create(null), childrenById: Object.create(null), needsSnapshot: state.loading,
   }, [state.snapshot, state.loading, rootId])
@@ -21,6 +21,9 @@ export function ActorSnapshotPanel({ rootId, active, selectedActorId, onSelectAc
         <span>已保存的代理状态 · 健康与队列信息尚未提供</span>
         {rootId ? <Button size="sm" variant="ghost" disabled={state.loading} onClick={() => { void state.refresh() }} aria-label="刷新代理结构"><RefreshCw /></Button> : null}
       </div>
+      {state.gapReason ? <p role="status" data-actor-gap={state.gapReason} className="px-3 pb-2 text-xs text-muted-foreground">
+        代理事件出现间隙；已重新读取状态，但事件连续性仍无法确认。
+      </p> : null}
       {rootId ? <ActorTree topology={tree} selectedActorId={selectedActorId} onSelectActor={onSelectActor}
         error={state.error} onRetry={() => { void state.refresh() }} />
         : <p className="px-3 py-4 text-sm text-muted-foreground">选择 Root 会话后读取代理结构。</p>}

@@ -46,6 +46,7 @@ import type {
 import { getRuntimeConfig } from "@/runtime/runtimeConfig";
 import { debugLog, isApiV2MsgpackEnabled } from "@shared/utils/debugFlags";
 import { decode as msgpackDecode, encode as msgpackEncode } from "@msgpack/msgpack";
+import { parseActorChannelFrame, validActorId, type ActorChangedEvent, type ActorSnapshotRequired } from "./actorChannel";
 
 /** Subscription handle returned by a shared v2 channel. */
 export interface FeedSubscription {
@@ -87,6 +88,12 @@ export type MessageChannelControl =
 export interface MessageChannelHandlers {
   onEvent: (event: MessageChannelEvent) => void;
   onControl: (control: MessageChannelControl) => void;
+}
+
+export interface ActorChannelHandlers {
+  onEvent: (event: ActorChangedEvent, seq: number) => void;
+  onControl: (control: ActorSnapshotRequired) => void;
+  onGap: () => void;
 }
 
 /**
@@ -140,6 +147,15 @@ interface AgentChannel {
 
 interface MessageChannel {
   handlers: MessageChannelHandlers;
+}
+
+interface ActorChannel {
+  actorId: string;
+  subscribers: Set<ActorChannelHandlers>;
+  /** Public hub cursor, unrelated to agent or message sequence numbers. */
+  cursor: number | null;
+  gapNotified: boolean;
+  lastControl: ActorSnapshotRequired | null;
 }
 
 type ServerFrame = {
@@ -400,14 +416,17 @@ export const isFeedOpen = (): boolean =>
 // a SET of subscribers. One subscribe/unsubscribe frame per wire channel.
 const agentChannels = new Map<string, Set<AgentChannel>>();
 const messageChannels = new Map<string, Set<MessageChannel>>();
+const actorChannels = new Map<string, ActorChannel>();
 
 const agentCh = (sessionId: string): string => `agent.${sessionId}`;
 const messageCh = (sessionId: string): string => `message.${sessionId}`;
+const actorCh = (actorId: string): string => `actor.${actorId}`;
 
 const hasSubscriptions = (): boolean =>
   (feedChannel !== null && !feedChannel.deliveryFailed) ||
   agentChannels.size > 0 ||
-  messageChannels.size > 0;
+  messageChannels.size > 0 ||
+  actorChannels.size > 0;
 
 /**
  * Whether the LIVE socket negotiated the MessagePack subprotocol. Decided from
@@ -495,6 +514,11 @@ const subscribeAll = (ws: WebSocket): boolean => {
   }
   for (const ch of messageChannels.keys()) {
     if (!sendOnSocket(ws, { type: "subscribe", ch })) return false;
+  }
+  for (const [ch, channel] of actorChannels) {
+    if (!sendOnSocket(ws, channel.cursor === null
+      ? { type: "subscribe", ch }
+      : { type: "subscribe", ch, since: channel.cursor })) return false;
   }
   return true;
 };
@@ -937,6 +961,37 @@ const handleFrame = (
     return;
   }
 
+  if (ch.startsWith("actor.")) {
+    const channel = actorChannels.get(ch);
+    if (!channel) return;
+    const parsed = parseActorChannelFrame(frame, channel.actorId);
+    if (!parsed) {
+      if (!channel.gapNotified) {
+        channel.gapNotified = true;
+        for (const handlers of [...channel.subscribers]) handlers.onGap();
+      }
+      return;
+    }
+    if (parsed.type === "control") {
+      channel.cursor = parsed.seq;
+      channel.gapNotified = false;
+      channel.lastControl = parsed.control;
+      for (const handlers of [...channel.subscribers]) handlers.onControl(parsed.control);
+      return;
+    }
+    if (channel.cursor === null || parsed.seq > channel.cursor + 1) {
+      if (!channel.gapNotified) {
+        channel.gapNotified = true;
+        for (const handlers of [...channel.subscribers]) handlers.onGap();
+      }
+    } else if (parsed.seq <= channel.cursor) {
+      return;
+    }
+    channel.cursor = parsed.seq;
+    for (const handlers of [...channel.subscribers]) handlers.onEvent(parsed.event, parsed.seq);
+    return;
+  }
+
   if (ch.startsWith("agent.")) {
     const subscribers = agentChannels.get(ch);
     if (!subscribers || subscribers.size === 0) return;
@@ -1213,6 +1268,46 @@ export const subscribeMessages = (
   };
 };
 
+/** One logical public Actor channel per ActorId on the existing v2 socket. */
+export const subscribeActor = (
+  actorId: string,
+  handlers: ActorChannelHandlers,
+): FeedSubscription => {
+  if (!validActorId(actorId)) throw new Error("Invalid ActorId");
+  const ch = actorCh(actorId);
+  let channel = actorChannels.get(ch);
+  const first = !channel;
+  if (!channel) {
+    channel = { actorId, subscribers: new Set(), cursor: null, gapNotified: false, lastControl: null };
+    actorChannels.set(ch, channel);
+  }
+  const currentChannel = channel;
+  currentChannel.subscribers.add(handlers);
+  if (socket && isSocketReady(socket)) {
+    if (first && !sendOnSocket(socket, { type: "subscribe", ch })) {
+      const liveness = socketLiveness;
+      if (liveness) failSocketEpoch(liveness, "actor-subscribe-send-failed");
+    }
+  } else {
+    connect();
+  }
+  if (currentChannel.lastControl) handlers.onControl(currentChannel.lastControl);
+
+  let closed = false;
+  return {
+    close() {
+      if (closed) return;
+      closed = true;
+      currentChannel.subscribers.delete(handlers);
+      if (currentChannel.subscribers.size === 0 && actorChannels.get(ch) === currentChannel) {
+        actorChannels.delete(ch);
+        if (isSocketReady()) send({ type: "unsubscribe", ch });
+        closeIfIdle();
+      }
+    },
+  };
+};
+
 /** Test-only: reset the singleton state between cases. */
 export const __resetV2StreamForTests = (): void => {
   clearReconnectTimer();
@@ -1226,4 +1321,5 @@ export const __resetV2StreamForTests = (): void => {
   feedChannel = null;
   agentChannels.clear();
   messageChannels.clear();
+  actorChannels.clear();
 };

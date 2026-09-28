@@ -27,6 +27,7 @@ import {
   onReconnected,
   stopAgent,
   subscribeAgent,
+  subscribeActor,
   subscribeFeed,
   subscribeMessages,
   type AgentEventDispatch,
@@ -1561,6 +1562,50 @@ describe("v2Stream shared WebSocket client", () => {
     expect(socket.parsedSent()).not.toContainEqual({ type: "unsubscribe", ch: "message.child-1" })
     second.close()
     expect(socket.parsedSent()).toContainEqual({ type: "unsubscribe", ch: "message.child-1" })
+  })
+
+  it("shares one canonical Actor channel, fences gaps and reconnects from its own cursor", () => {
+    vi.useFakeTimers()
+    const firstEvent = vi.fn()
+    const secondEvent = vi.fn()
+    const firstControl = vi.fn()
+    const secondControl = vi.fn()
+    const gap = vi.fn()
+    const first = subscribeActor("child", { onEvent: firstEvent, onControl: firstControl, onGap: gap })
+    const second = subscribeActor("child", { onEvent: secondEvent, onControl: secondControl, onGap: gap })
+    const socket = lastSocket()
+    socket.open()
+    expect(socket.parsedSent().filter((frame) => frame.ch === "actor.child")).toEqual([
+      { type: "subscribe", ch: "actor.child" },
+    ])
+    socket.emit({ ch: "actor.child", seq: 5, control: {
+      type: "actor_snapshot_required", reason: "initial", cursor: 5,
+    } })
+    expect(firstControl).toHaveBeenCalledOnce()
+    expect(secondControl).toHaveBeenCalledOnce()
+    const actorEvent = {
+      type: "actor_changed", actor_id: "child", root_actor_id: "root", parent_actor_id: "root",
+      activation_id: "123e4567-e89b-42d3-a456-426614174000", attempt: 1,
+      event_id: `ae1-${"a".repeat(64)}`, class: "semantic",
+    }
+    socket.emit({ ch: "actor.child", seq: 6, event: actorEvent })
+    socket.emit({ ch: "actor.child", seq: 6, event: actorEvent })
+    expect(firstEvent).toHaveBeenCalledTimes(1)
+    expect(secondEvent).toHaveBeenCalledTimes(1)
+    socket.emit({ ch: "actor.child", seq: 8, event: { ...actorEvent, event_id: `ae1-${"b".repeat(64)}` } })
+    expect(gap).toHaveBeenCalledTimes(2)
+    socket.emit({ ch: "actor.child", seq: 9, event: { ...actorEvent, worker_token: "private" } })
+    expect(firstEvent).toHaveBeenCalledTimes(2)
+
+    first.close()
+    expect(socket.parsedSent()).not.toContainEqual({ type: "unsubscribe", ch: "actor.child" })
+    socket.drop()
+    vi.advanceTimersByTime(500)
+    const reconnected = lastSocket()
+    reconnected.open()
+    expect(reconnected.parsedSent()).toContainEqual({ type: "subscribe", ch: "actor.child", since: 8 })
+    second.close()
+    expect(reconnected.parsedSent()).toContainEqual({ type: "unsubscribe", ch: "actor.child" })
   })
 
   it("re-subscribes message channels and validates MessagePack with the same schema", () => {
