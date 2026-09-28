@@ -71,7 +71,7 @@ describe("ActorTree", () => {
     const actors = [row("root", null), row("a", "root"), row("b", "a"), row("c", "b")]
     const first = snapshot(actors)
     const onSelectActor = vi.fn()
-    const { container, rerender } = renderTree({ topology: first, selectedActorId: "c", onSelectActor })
+    const { container, rerender } = renderTree({ topology: first, onSelectActor })
     const tree = container.querySelector<HTMLElement>('[role="tree"]')!
     expect(tree.getAttribute("aria-label")).toBe("代理会话结构")
     expect(treeItem(container, "a")?.getAttribute("aria-level")).toBe("2")
@@ -81,6 +81,7 @@ describe("ActorTree", () => {
     act(() => treeItem(container, "a")?.querySelector<HTMLElement>("[data-actor-toggle]")?.click())
     expect(treeItem(container, "b")?.getAttribute("aria-level")).toBe("3")
     act(() => treeItem(container, "b")?.querySelector<HTMLElement>("[data-actor-toggle]")?.click())
+    rerender({ topology: first, selectedActorId: "c" })
     expect(treeItem(container, "c")?.getAttribute("aria-level")).toBe("4")
     expect(treeItem(container, "c")?.getAttribute("aria-selected")).toBe("true")
     expect(onSelectActor).not.toHaveBeenCalled()

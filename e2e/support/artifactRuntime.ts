@@ -2,6 +2,7 @@ import { readFile, stat } from "node:fs/promises"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 import type { Page } from "@playwright/test"
+import { actorSnapshotFixture } from "../../src/test/fixtures/actorSnapshot.js"
 
 const DIST_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../dist")
 const ASSET_MANIFEST_PATH = path.join(DIST_ROOT, "asset-manifest.json")
@@ -141,6 +142,9 @@ const fixtureModel = {
 }
 
 const apiResponse = (method: string, pathnameWithSearch: string): unknown => {
+  if (method === "GET" && pathnameWithSearch === `/api/v1/actors/${FIXTURE_SESSION_ID}/snapshot?subtree_id=${FIXTURE_SESSION_ID}`) {
+    return actorSnapshotFixture(FIXTURE_SESSION_ID, 0)
+  }
   if (method === "GET" && /^\/api\/v1\/sessions\/[^/]+\/guidance$/.test(pathnameWithSearch)) return { messages: [] }
   if (method === "GET" && /^\/api\/v1\/projects(?:\?.*)?$/.test(pathnameWithSearch)) {
     // The app bootstraps the Project store on every surface (App.tsx
