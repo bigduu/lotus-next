@@ -10,6 +10,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { useStickyScroll } from "@/hooks/useStickyScroll"
+import { useActorSnapshot } from "@/hooks/useActorSnapshot"
 import { useSubagentTranscript } from "@/hooks/useSubagentTranscript"
 import type { ChatItem } from "@shared/types/chat"
 
@@ -25,6 +26,11 @@ export function SubagentTranscriptPane({
   onPickSession: (sessionId: string | null) => void
 }) {
   const transcript = useSubagentTranscript(sessionId)
+  const selectedChild = chats.find((chat) => chat.id === sessionId && chat.kind === "child")
+  // An index entry without its authoritative Root relationship cannot grant an
+  // Actor channel. The legacy projected message transcript remains independent.
+  const rootId = selectedChild?.rootSessionId ?? null
+  const preview = useActorSnapshot(rootId, !!rootId && !!sessionId, sessionId)
   const { scrollRef, contentRef, atBottom, handleScroll, scrollToBottom } =
     useStickyScroll(sessionId)
 
@@ -125,6 +131,9 @@ export function SubagentTranscriptPane({
           </SelectContent>
         </Select>
       </div>
+      {preview.gapReason ? <p role="status" data-actor-gap={preview.gapReason} className="border-b px-3 py-2 text-xs text-muted-foreground">
+        子代理事件出现间隙；已重新读取状态，但事件连续性仍无法确认。
+      </p> : null}
       {body}
     </div>
   )

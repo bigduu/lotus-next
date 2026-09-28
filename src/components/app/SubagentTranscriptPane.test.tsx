@@ -6,12 +6,19 @@ const mocks = vi.hoisted(() => ({
   messageListProps: null as Record<string, unknown> | null,
   retry: vi.fn(),
   truncated: false,
+  actorInterest: vi.fn(),
   useChat: vi.fn(() => {
     throw new Error("SubagentTranscriptPane must not use the full-fidelity chat hook")
   }),
 }))
 
 vi.mock("@/hooks/useChat", () => ({ useChat: mocks.useChat }))
+vi.mock("@/hooks/useActorSnapshot", () => ({
+  useActorSnapshot: (...args: unknown[]) => {
+    mocks.actorInterest(...args)
+    return { gapReason: null }
+  },
+}))
 vi.mock("@/hooks/useSubagentTranscript", () => ({
   useSubagentTranscript: () => ({
     messages: [
@@ -70,6 +77,7 @@ beforeEach(() => {
   mocks.retry.mockReset()
   mocks.truncated = false
   mocks.useChat.mockClear()
+  mocks.actorInterest.mockClear()
   container = document.createElement("div")
   document.body.appendChild(container)
   root = createRoot(container)
@@ -142,4 +150,20 @@ it("explains when older child messages were omitted", () => {
     )
   })
   expect(container?.querySelector('[role="status"]')?.textContent).toContain("较早的子代理消息已省略")
+})
+
+it("previews only a child with an explicit Root binding", () => {
+  const base = {
+    id: "child-1", title: "Child", kind: "child" as const, parentSessionId: "parent-1",
+    createdAt: 0, messages: [],
+    config: { systemPromptId: "", baseSystemPrompt: "", lastUsedEnhancedPrompt: null },
+  }
+  act(() => root?.render(<SubagentTranscriptPane sessionId="child-1" chats={[base]} onPickSession={vi.fn()} />))
+  expect(mocks.actorInterest).toHaveBeenLastCalledWith(null, false, "child-1")
+  act(() => root?.render(<SubagentTranscriptPane sessionId="child-1"
+    chats={[{ ...base, rootSessionId: "root-1" }]} onPickSession={vi.fn()} />))
+  expect(mocks.actorInterest).toHaveBeenLastCalledWith("root-1", true, "child-1")
+  act(() => root?.render(<SubagentTranscriptPane sessionId="child-1"
+    chats={[{ ...base, kind: "root", rootSessionId: "root-1" }]} onPickSession={vi.fn()} />))
+  expect(mocks.actorInterest).toHaveBeenLastCalledWith(null, false, "child-1")
 })

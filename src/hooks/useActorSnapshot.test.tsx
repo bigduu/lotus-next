@@ -3,6 +3,7 @@ import { createRoot, type Root } from "react-dom/client"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { ApiError } from "@services/api/errors"
 import { getActorSnapshot, type ActorSubtreeSnapshot } from "@services/chat/actorSnapshot"
+import { subscribeActor } from "@services/chat/v2Stream"
 import { ActorSnapshotPanel } from "@/components/chat/ActorSnapshotPanel"
 import { actorSnapshotFixture } from "@/test/fixtures/actorSnapshot"
 import { useActorSnapshot } from "./useActorSnapshot"
@@ -10,11 +11,12 @@ import { useActorSnapshot } from "./useActorSnapshot"
 vi.mock("@services/chat/actorSnapshot", async (importOriginal) => ({
   ...await importOriginal<typeof import("@services/chat/actorSnapshot")>(), getActorSnapshot: vi.fn(),
 }))
+vi.mock("@services/chat/v2Stream", () => ({ subscribeActor: vi.fn(() => ({ close: vi.fn() })) }))
 let root: Root
 let host: HTMLDivElement
 let state: ReturnType<typeof useActorSnapshot>
-function Harness({ id, active = true }: { id: string | null; active?: boolean }) {
-  state = useActorSnapshot(id, active)
+function Harness({ id, active = true, actorId = null }: { id: string | null; active?: boolean; actorId?: string | null }) {
+  state = useActorSnapshot(id, active, actorId)
   return null
 }
 function deferred() {
@@ -26,10 +28,84 @@ function deferred() {
 beforeEach(() => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
   vi.mocked(getActorSnapshot).mockReset().mockResolvedValue(actorSnapshotFixture())
+  vi.mocked(subscribeActor).mockClear()
   host = document.createElement("div"); document.body.appendChild(host); root = createRoot(host)
 })
 afterEach(() => { act(() => root.unmount()); host.remove(); vi.restoreAllMocks() })
-const mount = async (id: string | null, active = true) => { await act(async () => root.render(<Harness id={id} active={active} />)) }
+const mount = async (id: string | null, active = true, actorId: string | null = null) => {
+  await act(async () => root.render(<Harness id={id} active={active} actorId={actorId} />))
+}
+
+describe("public Actor interest", () => {
+  it("authorizes a selected child from the exact Root snapshot and coalesces event refreshes", async () => {
+    const pending = deferred()
+    vi.mocked(getActorSnapshot).mockReturnValueOnce(pending.promise)
+    await mount("root", true, "actor-0")
+    expect(subscribeActor).not.toHaveBeenCalled()
+    await act(async () => pending.resolve(actorSnapshotFixture()))
+    expect(subscribeActor).toHaveBeenCalledExactlyOnceWith("actor-0", expect.any(Object))
+    const handlers = vi.mocked(subscribeActor).mock.calls[0][1]
+    const event = { type: "actor_changed" as const, actor_id: "actor-0", root_actor_id: "root",
+      parent_actor_id: "root", activation_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      attempt: 1, event_id: `ae1-${"a".repeat(64)}`, class: "lifecycle" as const }
+    await act(async () => {
+      handlers.onEvent(event, 2)
+      handlers.onEvent(event, 3)
+      handlers.onControl({ type: "actor_snapshot_required", reason: "initial", cursor: 4 })
+      await Promise.resolve()
+    })
+    expect(getActorSnapshot).toHaveBeenCalledTimes(2)
+    expect(state.gapReason).toBeNull()
+  })
+
+  it("retains typed transport and activation gaps after a new snapshot with no replay cursor", async () => {
+    await mount("root", true, "actor-0")
+    const handlers = vi.mocked(subscribeActor).mock.calls[0][1]
+    await act(async () => { handlers.onGap(); await Promise.resolve() })
+    expect(state.gapReason).toBe("transport_gap")
+    expect(state.snapshot?.stream_cursor).toBeNull()
+    const event = { type: "actor_changed" as const, actor_id: "actor-0", root_actor_id: "root",
+      parent_actor_id: "root", activation_id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      attempt: 2, event_id: `ae1-${"b".repeat(64)}`, class: "lifecycle" as const }
+    await act(async () => { handlers.onEvent(event, 5); await Promise.resolve() })
+    expect(state.gapReason).toBe("activation_mismatch")
+    expect(state.snapshot?.stream_cursor).toBeNull()
+  })
+
+  it("closes a departed interest and fences late callbacks across Root switches", async () => {
+    await mount("root", true, "actor-0")
+    const oldHandlers = vi.mocked(subscribeActor).mock.calls[0][1]
+    const oldLease = vi.mocked(subscribeActor).mock.results[0].value
+    vi.mocked(getActorSnapshot).mockResolvedValueOnce(actorSnapshotFixture("other"))
+    await mount("other", true, "actor-0")
+    expect(oldLease.close).toHaveBeenCalledOnce()
+    expect(subscribeActor).toHaveBeenCalledTimes(2)
+    const requests = vi.mocked(getActorSnapshot).mock.calls.length
+    await act(async () => { oldHandlers.onGap(); await Promise.resolve() })
+    expect(vi.mocked(getActorSnapshot).mock.calls).toHaveLength(requests)
+    expect(state.gapReason).toBeNull()
+    await mount("other", false, "actor-0")
+    expect(vi.mocked(subscribeActor).mock.results[1].value.close).toHaveBeenCalledOnce()
+  })
+
+  it("does not subscribe for an Actor absent from the authorized snapshot", async () => {
+    await mount("root", true, "unknown-child")
+    expect(subscribeActor).not.toHaveBeenCalled()
+    expect(state.snapshot?.root_actor_id).toBe("root")
+  })
+
+  it("reauthorizes after the view closes before restoring an Actor interest", async () => {
+    await mount("root", true, "actor-0")
+    await mount("root", false, "actor-0")
+    expect(vi.mocked(subscribeActor).mock.results[0].value.close).toHaveBeenCalledOnce()
+    const pending = deferred()
+    vi.mocked(getActorSnapshot).mockReturnValueOnce(pending.promise)
+    await mount("root", true, "actor-0")
+    expect(subscribeActor).toHaveBeenCalledTimes(1)
+    await act(async () => pending.resolve(actorSnapshotFixture()))
+    expect(subscribeActor).toHaveBeenCalledTimes(2)
+  })
+})
 
 describe("local actor snapshot lifecycle", () => {
   it("waits for an explicit Root scope and active Inspector", async () => {
@@ -113,6 +189,9 @@ describe("snapshot-only ActorTree panel", () => {
     expect(selected).toHaveBeenCalledExactlyOnceWith("actor-0")
     act(() => host.querySelector<HTMLElement>('[data-actor-id="root"]')!.click())
     expect(selected).toHaveBeenLastCalledWith("root")
+    const handlers = vi.mocked(subscribeActor).mock.calls[0][1]
+    await act(async () => { handlers.onGap(); await Promise.resolve() })
+    expect(host.querySelector('[data-actor-gap="transport_gap"]')?.textContent).toContain("连续性仍无法确认")
   })
 
   it("reveals an initially selected depth-three child when the snapshot arrives", async () => {
