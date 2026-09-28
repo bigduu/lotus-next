@@ -21,6 +21,8 @@ import { downloadPdf } from "@/lib/exportPdf"
 import type { useChat } from "@/hooks/useChat"
 import { useContainerWidth } from "@/hooks/useContainerWidth"
 import { useStickyScroll } from "@/hooks/useStickyScroll"
+import { useRootOrchestrationMode } from "@/hooks/useRootOrchestrationMode"
+import { getRootModeFenceState } from "@/lib/rootModeTransitionFence"
 import { useAppStore, selectChildren } from "@shared/store/appStore"
 import { agentClient } from "@services/chat/AgentService"
 import { commandService, type CommandItem } from "@services/command"
@@ -46,6 +48,7 @@ import { ContextUsageRing } from "@/components/app/ContextUsageRing"
 import { ReasoningPicker } from "@/components/chat/ReasoningPicker"
 import { ModelPicker } from "@/components/chat/ModelPicker"
 import { NewSessionPermissionControl, PermissionModeControl } from "@/components/chat/PermissionModeControl"
+import { RootOrchestrationControl } from "@/components/chat/RootOrchestrationControl"
 import {
   Select,
   SelectContent,
@@ -102,6 +105,8 @@ type ComposerSubmissionSnapshot = Readonly<{
   templatePrompt: ReturnType<typeof peekPendingTemplatePrompt>
   /** Permission mode to stamp when this submission creates a NEW session. */
   permissionMode: SessionPermissionMode | null
+  /** Explicit only for new chats or a changed Root choice. */
+  rootOrchestrationOnly: boolean | undefined
   /** One-shot new-session picker override captured with the submission. */
   reasoningSelection: ReasoningEffortSelection | undefined
 }>
@@ -280,6 +285,13 @@ export function ChatPane({
   // message on send (content + user input).
   const [workflowCmds, setWorkflowCmds] = useState<CommandItem[]>([])
   const [selectedWorkflow, setSelectedWorkflow] = useState<SelectedWorkflow | null>(null)
+  const rootMode = useRootOrchestrationMode(currentSessionId, currentChat?.kind)
+  const rootSessionUnsafe = () => Boolean(currentSessionId && getRootModeFenceState(currentSessionId) !== "clear")
+  const [rootModeConflict, setRootModeConflict] = useState<string | null>(null)
+  const skillModeConflict = selectedSkill && rootMode.selected === true && !rootMode.child
+    ? "已选 Skill 与 Root 仅编排模式不兼容；移除 Skill 或关闭此模式。Bamboo 会在发送时校验。"
+    : null
+  useEffect(() => { setRootModeConflict(null) }, [currentSessionId])
   const [attachments, setAttachments] = useState<Attachment[]>([])
   const attachmentRevisionRef = useRef(0)
   const skillRevisionRef = useRef(0)
@@ -294,6 +306,7 @@ export function ChatPane({
   }
   const changeSelectedWorkflow = (value: SelectedWorkflow | null) => {
     workflowRevisionRef.current += 1
+    if (!value) setRootModeConflict(null)
     setSelectedWorkflow(value)
   }
   const [preview, setPreview] = useState<string | null>(null)
@@ -539,6 +552,10 @@ export function ChatPane({
   const submit = () => {
     // Keep an in-flight admission from capturing or clearing a second draft.
     if (submissionPending || modelSaving || queue.busy || goalRequestActive.current) return
+    if (rootSessionUnsafe()) {
+      setRootModeConflict("Root 权限切换结果未知，此会话已停止发送和执行。请先处理模式切换。")
+      return
+    }
     const storeAtSubmit = useAppStore.getState()
     const draftAtSubmit = storeAtSubmit.inputStates[draftKey]
     const text = draftAtSubmit?.content ?? ""
@@ -554,6 +571,10 @@ export function ChatPane({
         return
       }
       const sessionId = currentSessionId
+      if (getRootModeFenceState(sessionId) !== "clear") {
+        setRootModeConflict("Root 权限切换结果未知，此会话已停止发送和执行。请先处理模式切换。")
+        return
+      }
       goalRequestActive.current = true; setGoalSaving(true)
       void agentClient.sendMessage({ message: text.trim(), session_id: sessionId, model: currentChat?.config?.model ?? "" }).then(async (response) => {
         if (response.session_id !== sessionId || !response.goal_command) throw new Error("Goal command was not acknowledged")
@@ -568,6 +589,10 @@ export function ChatPane({
         // Execution admission handles an already-running session atomically.
         // The run may finish while the Goal command is being acknowledged.
         if (response.goal_command.should_execute) {
+          if (getRootModeFenceState(sessionId) !== "clear") {
+            if (currentDraftKeyRef.current === draftKey) showToast("Root 权限结果未知，目标已保存但不会执行；请先处理模式切换")
+            return
+          }
           try { await agentClient.execute(sessionId, currentChat?.config?.model) }
           catch { if (currentDraftKeyRef.current === draftKey) showToast("目标已保存，发送消息即可继续推进") }
         }
@@ -577,6 +602,11 @@ export function ChatPane({
       return
     }
     if (!text.trim() && attachments.length === 0 && !selectedWorkflow) return
+    if (selectedWorkflow && !rootMode.child && (rootMode.selected === true || (currentSessionId && rootMode.selected === null))) {
+      setRootModeConflict("当前无法同时使用 Root 仅编排模式与 Workflow。先确认并关闭 Root 模式，再发送工作流。")
+      return
+    }
+    setRootModeConflict(null)
     if ((currentlyRunning || queue.hasUnconfirmed) && selectedSkill) {
       showToast("请先移除已选技能，再把消息加入队列。")
       return
@@ -599,6 +629,7 @@ export function ChatPane({
       // The home picker's selection only applies when this send creates a new
       // session; an existing session keeps its stored permission mode.
       permissionMode: !currentSessionId ? useNewSessionPermission.getState().mode : null,
+      rootOrchestrationOnly: rootMode.requestValue,
       reasoningSelection: !currentSessionId ? inputReasoningSelection : undefined,
     })
     // Workflow expansion: the workflow's markdown is the message body; any
@@ -616,10 +647,15 @@ export function ChatPane({
           projectId: snapshot.projectId,
           templatePrompt: snapshot.templatePrompt,
           permissionMode: snapshot.permissionMode ?? undefined,
+          rootOrchestrationOnly: snapshot.rootOrchestrationOnly,
           reasoningSelection: snapshot.reasoningSelection,
         })
     void submission
       .then((result) => {
+        if (currentSessionId && !rootMode.child && !currentlyRunning && !queue.hasUnconfirmed
+          && result.kind !== "busy" && result.kind !== "ignored" && result.kind !== "blocked") {
+          void rootMode.refresh(currentSessionId)
+        }
         if (result.kind === "unconfirmed") {
           if (currentDraftKeyRef.current === snapshot.draftKey) composerInputRef.current?.focus()
           return
@@ -689,6 +725,7 @@ export function ChatPane({
   }
 
   const handleFork = (id: string) => {
+    if (rootSessionUnsafe()) { setRootModeConflict("Root 权限切换结果未知，此会话暂不能分叉。请先处理模式切换。"); return }
     setForking(true)
     void fork(id).then((nid) => {
       setForking(false)
@@ -880,12 +917,14 @@ export function ChatPane({
           }}
           onPreviewImage={setPreview}
           onRegenerate={() => {
+            if (rootSessionUnsafe()) { setRootModeConflict("Root 权限切换结果未知，此会话已停止重新生成。请先处理模式切换。"); return }
             if (modelSaving) { showToast("模型正在保存，请稍后继续"); return }
             void regenerate()
           }}
           onFork={handleFork}
           onDelete={(id) => void deleteMessage(id)}
           onEditMessage={(id, text) => {
+            if (rootSessionUnsafe()) { setRootModeConflict("Root 权限切换结果未知，此会话已停止编辑重跑。请先处理模式切换。"); return }
             if (modelSaving) { showToast("模型正在保存，请稍后继续"); return }
             void editMessage(id, text)
           }}
@@ -901,25 +940,36 @@ export function ChatPane({
             <div className="min-w-0 flex-1 text-destructive">
               <p className="font-medium">
                 {visibleSendFailure?.kind === "submission-unconfirmed"
-                  ? "发送状态未确认，内容已保留"
-                  : runFailureGuidance?.title ?? "消息已发送，但生成中断"}
+                  ? visibleSendFailure.rejectionCode
+                    ? visibleSendFailure.rootModeSelectionSubmitted
+                      ? "Bamboo 已拒绝此模式切换，内容已保留"
+                      : "Bamboo 已拒绝此请求，内容已保留"
+                    : "发送状态未确认，内容已保留"
+                  : rootMode.unsafe && generationFailed
+                    ? "消息已保存，但此会话已停止执行"
+                    : runFailureGuidance?.title ?? "消息已发送，但生成中断"}
               </p>
-              {runFailureGuidance ? (
+              {rootMode.unsafe && generationFailed ? (
+                <p className="mt-1 text-xs">Root 权限切换结果未知。消息保留在会话中；请先处理模式切换后继续。</p>
+              ) : runFailureGuidance ? (
                 <p className="mt-1 text-xs">{runFailureGuidance.action}</p>
               ) : null}
-              {runErrorDetail ? (
+              {runErrorDetail && visibleSendFailure?.kind === "submission-unconfirmed" ? (
+                <p className="mt-1 break-words text-xs">{runErrorDetail}</p>
+              ) : runErrorDetail ? (
                 <details className="mt-1 text-xs">
                   <summary>技术详情</summary>
                   <p className="mt-1 break-words">{runErrorDetail}</p>
                 </details>
               ) : null}
             </div>
-            {generationFailed ? (
+            {rootMode.unsafe ? null : generationFailed ? (
               <Button
                 size="sm"
                 variant="secondary"
                 disabled={sending || modelSaving}
                 onClick={() => {
+                  if (rootSessionUnsafe()) { setRootModeConflict("Root 权限切换结果未知，此会话已停止重试生成。请先处理模式切换。"); return }
                   if (visibleSendFailure?.kind === "generation-failed") {
                     void retry(visibleSendFailure)
                   } else {
@@ -964,14 +1014,32 @@ export function ChatPane({
           queueMode={queue.mode}
           onQueueModeChange={currentSessionId && !submissionPending ? queue.setMode : undefined}
           queueControls={currentSessionId ? <SessionGuidance key={currentSessionId} sessionId={currentSessionId} messages={queue.pending} busy={queue.busy} onCancel={(id) => void queue.cancel(id)} onPreview={setPreview} /> : null}
-          permissionControl={currentSessionId ? (
-            <PermissionModeControl
-              sessionId={currentSessionId}
-              title={currentChat?.title || currentSessionId}
-              compact
-            />
-          ) : (
-            <NewSessionPermissionControl />
+          permissionControl={(
+            <>
+              {currentSessionId ? (
+                <PermissionModeControl
+                  sessionId={currentSessionId}
+                  title={currentChat?.title || currentSessionId}
+                  compact
+                />
+              ) : <NewSessionPermissionControl />}
+              <RootOrchestrationControl
+                sessionId={currentSessionId}
+                child={rootMode.child}
+                unsafe={rootMode.unsafe}
+                selected={rootMode.selected}
+                confirmed={rootMode.confirmed}
+                loading={rootMode.loading}
+                disabled={submissionPending || currentlyRunning || queue.hasUnconfirmed}
+                pending={submissionPending}
+                recovering={rootMode.recovering}
+                recoverable={rootMode.recoverable}
+                error={rootMode.error}
+                conflict={rootModeConflict ?? skillModeConflict}
+                onChange={(enabled) => { setRootModeConflict(null); void rootMode.change(enabled) }}
+                onRetry={() => { void rootMode.retry() }}
+              />
+            </>
           )}
           runtimeControls={(
             <>
