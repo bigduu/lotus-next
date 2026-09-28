@@ -8,6 +8,8 @@ for (const scenario of [standaloneScenario, embeddedScenario, secureRemoteScenar
     const session = {
       id: "all-surface-session", title: "All-surface acceptance", title_version: 1,
       kind: "root", root_session_id: "all-surface-session", parent_session_id: null,
+      root_orchestration_only: false, thinking_mode: "standard",
+      root_mode_transition_epoch: 0, root_mode_birth_token: "a".repeat(64),
       model: "fixture-model", model_ref: { provider: "fixture-provider", model: "fixture-model" },
       created_at: "2026-09-07T00:00:00Z", updated_at: "2026-09-07T00:00:00Z", last_activity_at: "2026-09-07T00:00:00Z",
       message_count: 0, is_running: true, last_run_status: "running", has_pending_question: false,

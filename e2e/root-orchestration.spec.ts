@@ -182,13 +182,15 @@ for (const legacy of ["missing", "contradictory", "active-run"] as const) {
     test.skip(testInfo.project.name !== "desktop-chromium", "canonical DTO / active run boundary")
     await page.addInitScript((id) => { localStorage.setItem("bodhi_onboarded_v1", "1"); localStorage.setItem("lotus_next_last_session", id) }, sessionId)
     const observation = await installArtifactRuntime(page, standaloneScenario)
-    let writes = 0
+    let writes = 0; let sends = 0
     await page.route(`**/api/v1/sessions/${sessionId}`, (route) => route.fulfill({ json: { session: {
       ...rootSession, root_orchestration_only: true, reasoning_effort: "high",
       thinking_mode: legacy === "missing" ? undefined : legacy === "contradictory" ? "standard" : "ultra",
       is_running: legacy === "active-run", root_mode_transition_epoch: 0, root_mode_birth_token: birthToken,
     } } }))
     await page.route(`**/api/v1/sessions/${sessionId}/root-mode-operations/**`, (route) => { writes += 1; return route.abort() })
+    await page.route("**/api/v1/chat", (route) => { sends += 1; return route.abort() })
+    await page.route(`**/api/v1/execute/${sessionId}`, (route) => { sends += 1; return route.abort() })
     await page.goto(standaloneScenario.entryUrl)
     const picker = page.getByRole("button", { name: "推理强度" })
     await expect(picker).toBeDisabled()
@@ -198,8 +200,12 @@ for (const legacy of ["missing", "contradictory", "active-run"] as const) {
     } else {
       await expect(picker).toContainText("未确认")
       await expect(page.getByRole("alert").filter({ hasText: "无法确认思考模式" })).toContainText("请更新 Bamboo 后重新读取")
+      const draft = page.getByRole("textbox", { name: "消息", exact: true })
+      await draft.fill("retain draft until Root authority is confirmed")
+      await page.getByRole("button", { name: "发送消息", exact: true }).click()
+      await expect(draft).toHaveValue("retain draft until Root authority is confirmed")
     }
-    expect(writes).toBe(0); expect(observation.pageErrors).toEqual([])
+    expect(writes).toBe(0); expect(sends).toBe(0); expect(observation.pageErrors).toEqual([])
   })
 }
 
