@@ -155,6 +155,67 @@ describe("visible ActorSession subscriptions", () => {
     expect(port.active()).toHaveLength(1)
   })
 
+  it("shares one durable terminal recovery with listeners that join after the channel closes", async () => {
+    const port = new FakePort()
+    const manager = new VisibleActorSubscriptions(topology(1, [
+      row("root", null), row("a", "root"),
+    ]), port)
+    const original = vi.fn()
+    manager.acquire("a", "selected", original)
+    port.latest("a").handlers.onEvent({ kind: "delta", text: "live" }, 7)
+    port.latest("a").handlers.onTerminal()
+    expect(port.active()).toHaveLength(0)
+
+    const preview = vi.fn()
+    const inspector = vi.fn()
+    manager.acquire("a", "previewed", preview)
+    manager.acquire("a", "selected", inspector)
+    expect(port.recoveries).toMatchObject([{ actorId: "a", cursor: 7 }])
+    expect(port.active()).toHaveLength(0)
+    port.recoveries[0].pending.resolve({
+      snapshot: { kind: "snapshot", text: "durable final history" }, cursor: 8, terminal: true,
+    })
+    await flush()
+    expect(preview).toHaveBeenCalledExactlyOnceWith({ kind: "snapshot", text: "durable final history" })
+    expect(inspector).toHaveBeenCalledExactlyOnceWith({ kind: "snapshot", text: "durable final history" })
+    expect(original).toHaveBeenCalledExactlyOnceWith({ kind: "delta", text: "live" })
+
+    const later = vi.fn()
+    manager.acquire("a", "previewed", later)
+    expect(later).toHaveBeenCalledExactlyOnceWith({ kind: "snapshot", text: "durable final history" })
+    expect(port.recoveries).toHaveLength(1)
+    manager.dispose()
+  })
+
+  it("retries failed terminal history and fences it after an activation replacement", async () => {
+    const port = new FakePort()
+    const first = topology(1, [row("root", null), row("a", "root")])
+    const manager = new VisibleActorSubscriptions(first, port)
+    manager.acquire("a", "selected", vi.fn())
+    port.latest("a").handlers.onTerminal()
+    const late = vi.fn()
+    manager.acquire("a", "previewed", late)
+    port.recoveries[0].pending.reject(new Error("temporarily offline"))
+    await flush()
+    expect(late).not.toHaveBeenCalled()
+    manager.retry("a")
+    expect(port.recoveries).toHaveLength(2)
+
+    manager.updateTopology(markActorDirectoryChanged(first, 2))
+    manager.updateTopology(topology(2, [
+      row("root", null), row("a", "root", 1),
+    ], first))
+    port.recoveries[1].pending.resolve({
+      snapshot: { kind: "snapshot", text: "stale final history" }, cursor: 9, terminal: true,
+    })
+    await flush()
+    expect(late).not.toHaveBeenCalled()
+    expect(port.active().map((channel) => channel.actorId)).toEqual(["a"])
+    port.latest("a").handlers.onEvent({ kind: "delta", text: "new activation" }, 1)
+    expect(late).toHaveBeenCalledExactlyOnceWith({ kind: "delta", text: "new activation" })
+    manager.dispose()
+  })
+
   it("recovers a gap from a snapshot before admitting later events", async () => {
     const port = new FakePort()
     const manager = new VisibleActorSubscriptions(topology(1, [

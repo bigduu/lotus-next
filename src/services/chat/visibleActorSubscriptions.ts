@@ -36,6 +36,7 @@ export interface ActorContentPort<Cursor, Event> {
 interface Listener<Event> {
   interest: ActorInterest
   onEvent: (event: Event) => void
+  needsTerminalReplay: boolean
 }
 
 interface ActorEntry<Cursor, Event> {
@@ -45,6 +46,8 @@ interface ActorEntry<Cursor, Event> {
   cursor: Cursor | null
   observedAttempt: number | null
   terminalAttempt: number | null
+  terminalSnapshot: { event: Event } | null
+  terminalRecovery: boolean
   epoch: number
   recovering: boolean
   needsRecovery: boolean
@@ -78,15 +81,23 @@ export class VisibleActorSubscriptions<Cursor, Event> {
         cursor: null,
         observedAttempt: null,
         terminalAttempt: null,
+        terminalSnapshot: null,
+        terminalRecovery: false,
         epoch: 0,
         recovering: false,
         needsRecovery: false,
       }
       this.entries.set(actorId, entry)
     }
-    const listener: Listener<Event> = { interest, onEvent }
+    const listener: Listener<Event> = { interest, onEvent, needsTerminalReplay: false }
     entry.listeners.add(listener)
     this.sync(entry)
+    // A terminal channel is closed once its content is durable. A later pane
+    // needs that durable snapshot even while another pane still holds a lease.
+    if (entry.terminalAttempt !== null && entry.terminalAttempt === this.authorizedAttempt(entry)) {
+      listener.needsTerminalReplay = true
+      this.replayTerminal(entry)
+    }
 
     let closed = false
     return {
@@ -170,6 +181,8 @@ export class VisibleActorSubscriptions<Cursor, Event> {
     if (attempt === null) {
       const wasRecovering = entry.recovering
       this.closeChannel(entry)
+      entry.terminalSnapshot = null
+      entry.terminalRecovery = false
       if (wasRecovering) {
         entry.recovering = false
         entry.needsRecovery = true
@@ -188,11 +201,18 @@ export class VisibleActorSubscriptions<Cursor, Event> {
       this.closeChannel(entry)
       entry.cursor = null
       entry.terminalAttempt = null
+      entry.terminalSnapshot = null
+      entry.terminalRecovery = false
+      for (const listener of entry.listeners) listener.needsTerminalReplay = false
       entry.needsRecovery = false
       entry.recovering = false
     }
     entry.observedAttempt = attempt
-    if (entry.recovering || entry.terminalAttempt === attempt) return
+    if (entry.recovering) return
+    if (entry.terminalAttempt === attempt) {
+      this.replayTerminal(entry)
+      return
+    }
     if (entry.needsRecovery) {
       this.beginRecovery(entry)
       return
@@ -264,6 +284,48 @@ export class VisibleActorSubscriptions<Cursor, Event> {
     })
   }
 
+  private replayTerminal(entry: ActorEntry<Cursor, Event>): void {
+    const attempt = this.authorizedAttempt(entry)
+    if (this.disposed || attempt === null || entry.terminalAttempt !== attempt
+      || ![...entry.listeners].some((listener) => listener.needsTerminalReplay)) return
+    if (entry.terminalSnapshot !== null) {
+      this.deliverTerminalSnapshot(entry, entry.terminalSnapshot.event)
+      return
+    }
+    if (entry.terminalRecovery) return
+    const epoch = entry.epoch
+    let recovery: ReturnType<ActorContentPort<Cursor, Event>["recover"]>
+    entry.terminalRecovery = true
+    try {
+      recovery = this.port.recover(entry.actorId, entry.cursor)
+    } catch {
+      entry.terminalRecovery = false
+      return
+    }
+    void recovery.then(({ snapshot }) => {
+      if (this.disposed || this.entries.get(entry.actorId) !== entry || entry.epoch !== epoch
+        || entry.terminalAttempt !== attempt || this.authorizedAttempt(entry) !== attempt) return
+      entry.terminalSnapshot = { event: snapshot }
+      this.deliverTerminalSnapshot(entry, snapshot)
+    }).catch(() => {
+      // Keep interested listeners pending for an explicit retry.
+    }).finally(() => {
+      if (entry.epoch === epoch) entry.terminalRecovery = false
+    })
+  }
+
+  private deliverTerminalSnapshot(entry: ActorEntry<Cursor, Event>, snapshot: Event): void {
+    for (const listener of [...entry.listeners]) {
+      if (!listener.needsTerminalReplay) continue
+      listener.needsTerminalReplay = false
+      try {
+        listener.onEvent(snapshot)
+      } catch {
+        // One pane must not stop delivery to another interested pane.
+      }
+    }
+  }
+
   private publish(entry: ActorEntry<Cursor, Event>, event: Event): void {
     for (const listener of [...entry.listeners]) {
       try {
@@ -286,5 +348,7 @@ export class VisibleActorSubscriptions<Cursor, Event> {
     entry.listeners.clear()
     entry.recovering = false
     entry.needsRecovery = false
+    entry.terminalSnapshot = null
+    entry.terminalRecovery = false
   }
 }
