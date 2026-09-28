@@ -6,7 +6,8 @@ import { agentClient, type RootModeOperationInput, type RootModeOperationRespons
 import { beginRootModeOperation, finishRootModeOperation, getRootModeFenceState, readRootModeFence } from "@/lib/rootModeTransitionFence"
 import { useRootOrchestrationMode } from "./useRootOrchestrationMode"
 
-vi.mock("@services/chat/AgentService", () => ({ agentClient: {
+vi.mock("@shared/store/appStore", () => ({ useAppStore: { setState: vi.fn() } }))
+vi.mock("@services/chat/AgentService", () => ({ isThinkingMode: (v: unknown) => v === "standard" || v === "ultra", agentClient: {
   getSession: vi.fn(), selectRootMode: vi.fn(), recoverRootMode: vi.fn(),
 } }))
 
@@ -36,6 +37,7 @@ beforeEach(() => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
   vi.mocked(agentClient.getSession).mockReset().mockImplementation(async () => ({ session: {
     id: sessionId, kind: "root", root_orchestration_only: enabled,
+    thinking_mode: enabled ? "ultra" : "standard",
     root_mode_transition_epoch: epoch, root_mode_birth_token: birthToken,
   } }) as Awaited<ReturnType<typeof agentClient.getSession>>)
   vi.mocked(agentClient.selectRootMode).mockReset().mockImplementation(async (_id, operation) => {
@@ -51,6 +53,41 @@ beforeEach(() => {
 afterEach(() => { act(() => root.unmount()); host.remove(); vi.restoreAllMocks() })
 
 describe("recoverable Root mode operations", () => {
+  it.each([undefined, "standard", "max"])("fails closed for missing or contradictory canonical mode %s", async (mode) => {
+    vi.mocked(agentClient.getSession).mockResolvedValueOnce({ session: { id: sessionId, kind: "root", root_orchestration_only: true,
+      thinking_mode: mode, root_mode_birth_token: birthToken, root_mode_transition_epoch: 0 } } as Awaited<ReturnType<typeof agentClient.getSession>>)
+    await mount("root")
+    expect(value.confirmed).toBeNull()
+    expect(value.error).toContain("独立 Ultra")
+    await act(async () => { await value.change(false) })
+    expect(agentClient.selectRootMode).not.toHaveBeenCalled()
+  })
+
+  it("does not accept a terminal receipt without canonical mode proof", async () => {
+    vi.mocked(agentClient.selectRootMode).mockImplementationOnce(async (_id, operation) => {
+      const response = receipt(operation)
+      return { ...response, thinking_mode_at_completion: undefined } as unknown as RootModeOperationResponse
+    })
+    vi.mocked(agentClient.recoverRootMode).mockRejectedValueOnce(new Error("old backend"))
+    await mount("root"); await act(async () => { await value.change(true) })
+    expect(value.selected).toBeNull()
+    expect(getRootModeFenceState(sessionId)).toBe("uncertain")
+  })
+
+  it("requires current GET epoch to reach the verified terminal epoch", async () => {
+    vi.mocked(agentClient.selectRootMode).mockImplementationOnce(async (_id, operation) => {
+      enabled = true // GET still returns epoch 0, older than this receipt.
+      return receipt(operation)
+    })
+    await mount("root")
+    let result!: Awaited<ReturnType<typeof value.change>>
+    await act(async () => { result = await value.change(true) })
+    expect(result.status).toBe("committed"); expect(result.authority).toBeNull()
+    expect(value.confirmed).toBeNull(); expect(value.error).toContain("早于已确认")
+    expect(getRootModeFenceState(sessionId)).toBe("clear") // The operation itself is terminal.
+    epoch = 1; await act(async () => { await value.retry() })
+    expect(value.confirmed).toBe(true)
+  })
   it("persists identity before a mode-only select and reads the committed authority", async () => {
     vi.mocked(agentClient.selectRootMode).mockImplementationOnce(async (_id, operation) => {
       expect(readRootModeFence(sessionId)).toMatchObject({ kind: "pending", operations: [operation] })

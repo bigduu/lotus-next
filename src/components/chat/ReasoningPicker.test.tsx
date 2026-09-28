@@ -42,3 +42,17 @@ it("keeps Auto distinct from the explicit Off level", () => {
   ).toContain("关闭")
   expect(onChange).not.toHaveBeenCalled()
 })
+
+it("shows product Ultra independently of the stored Max ordinary effort", () => {
+  const container = document.body.appendChild(document.createElement("div"))
+  const root = createRoot(container); roots.push(root)
+  const onChange = vi.fn()
+  act(() => root.render(<ReasoningPicker value="max" thinkingMode="ultra" allowUltra onChange={onChange} />))
+  const trigger = container.querySelector<HTMLButtonElement>('button[aria-label="推理强度"]')!
+  expect(trigger.textContent).toContain("Ultra · 编排")
+  act(() => root.render(<ReasoningPicker value="max" thinkingMode="standard" allowUltra onChange={onChange} />))
+  expect(trigger.textContent).toContain("最大")
+  act(() => root.render(<ReasoningPicker value="max" thinkingMode={null} allowUltra disabled onChange={onChange} />))
+  expect(trigger.textContent).toContain("未确认"); expect(trigger.disabled).toBe(true)
+  expect(onChange).not.toHaveBeenCalled()
+})

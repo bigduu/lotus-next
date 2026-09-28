@@ -8,6 +8,8 @@ for (const running of [false, true]) {
     const observation = await installArtifactRuntime(page, standaloneScenario)
     const session = {
       id: "all-surface-session", title: "Keyboard acceptance", kind: "root",
+      root_orchestration_only: false, thinking_mode: "standard",
+      root_mode_transition_epoch: 0, root_mode_birth_token: "a".repeat(64),
       model: "fixture-model", model_ref: { provider: "fixture-provider", model: "fixture-model" },
       created_at: "2026-09-07T00:00:00Z", updated_at: "2026-09-07T00:00:00Z",
       permission_mode: "default", is_running: running, last_run_status: running ? "running" : "completed",

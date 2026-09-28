@@ -105,6 +105,10 @@ const bootstrapDocument = {
 const fixtureSession = {
   id: FIXTURE_SESSION_ID,
   kind: "root",
+  root_orchestration_only: false,
+  thinking_mode: "standard",
+  root_mode_transition_epoch: 0,
+  root_mode_birth_token: "a".repeat(64),
   title: "All-surface acceptance",
   title_version: 1,
   pinned: false,

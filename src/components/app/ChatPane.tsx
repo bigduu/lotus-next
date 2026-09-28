@@ -22,6 +22,7 @@ import type { useChat } from "@/hooks/useChat"
 import { useContainerWidth } from "@/hooks/useContainerWidth"
 import { useStickyScroll } from "@/hooks/useStickyScroll"
 import { useRootOrchestrationMode } from "@/hooks/useRootOrchestrationMode"
+import { useRootThinkingMode } from "@/hooks/useRootThinkingMode"
 import { getRootModeFenceState } from "@/lib/rootModeTransitionFence"
 import { useAppStore, selectChildren } from "@shared/store/appStore"
 import { agentClient } from "@services/chat/AgentService"
@@ -293,12 +294,8 @@ export function ChatPane({
   const [selectedWorkflow, setSelectedWorkflow] = useState<SelectedWorkflow | null>(null)
   const [typedWorkflow, setTypedWorkflow] = useState<TypedWorkflowDraft | null>(null)
   const [workflowError, setWorkflowError] = useState<string | null>(null)
-  const rootMode = useRootOrchestrationMode(currentSessionId, currentChat?.kind)
-  const rootSessionUnsafe = () => Boolean(currentSessionId && getRootModeFenceState(currentSessionId) !== "clear")
+  const rootAuthority = useRootOrchestrationMode(currentSessionId, currentChat?.kind)
   const [rootModeConflict, setRootModeConflict] = useState<string | null>(null)
-  const skillModeConflict = selectedSkill && rootMode.selected === true && !rootMode.child
-    ? "已选 Skill 与 Root 仅编排模式不兼容；移除 Skill 或关闭此模式。Bamboo 会在发送时校验。"
-    : null
   useEffect(() => { setRootModeConflict(null) }, [currentSessionId])
   const [attachments, setAttachments] = useState<Attachment[]>([])
   const attachmentRevisionRef = useRef(0)
@@ -393,29 +390,16 @@ export function ChatPane({
       currentChat?.config?.model_ref?.reasoning_effort ??
       "auto"
     : inputReasoningSelection ?? chatReasoningEffort ?? "auto"
-  const setInputReasoningEffort = useAppStore((s) => s.setInputReasoningEffort)
   const clearInputReasoningEffort = useAppStore((s) => s.clearInputReasoningEffort)
-  const changeSessionReasoningEffort = useAppStore((s) => s.changeSessionReasoningEffort)
-  const [reasoningSaving, setReasoningSaving] = useState(false)
-  const handleReasoningChange = async (selection: ReasoningEffortSelection) => {
-    if (reasoningSaving || selection === reasoningSelection) return
-    if (!currentSessionId) {
-      setInputReasoningEffort(draftKey, selection)
-      return
-    }
-
-    setReasoningSaving(true)
-    try {
-      await changeSessionReasoningEffort(
-        currentSessionId,
-        selection === "auto" ? null : selection,
-      )
-    } catch {
-      showToast("推理强度保存失败，请重试")
-    } finally {
-      setReasoningSaving(false)
-    }
-  }
+  const rootMode = useRootThinkingMode({
+    sessionId: currentSessionId, draftKey, ordinarySelection: reasoningSelection, root: rootAuthority,
+    disabled: submissionPending || currentlyRunning || queue.busy || queue.hasUnconfirmed,
+  })
+  const rootSessionUnsafe = () => rootMode.busy || rootMode.blocked
+    || Boolean(currentSessionId && getRootModeFenceState(currentSessionId) !== "clear")
+  const skillModeConflict = selectedSkill && rootMode.selected === true && !rootMode.child
+    ? "已选 Skill 与 Ultra 编排不兼容；移除 Skill，或在思考强度中选择普通档位。Bamboo 会在发送时校验。"
+    : null
   // Existing sessions display their durable model. The global selection is
   // only a draft for a new session and cannot relabel a running session.
   const activeModel = currentSessionId
@@ -571,7 +555,7 @@ export function ChatPane({
 
   const submit = () => {
     // Keep an in-flight admission from capturing or clearing a second draft.
-    if (submissionPending || modelSaving || queue.busy || goalRequestActive.current) return
+    if (submissionPending || modelSaving || queue.busy || rootMode.busy || goalRequestActive.current) return
     if (rootSessionUnsafe()) {
       setRootModeConflict("Root 权限切换结果未知，此会话已停止发送和执行。请先处理模式切换。")
       return
@@ -632,7 +616,7 @@ export function ChatPane({
       catch (failure) { setWorkflowError(getErrorMessage(failure)); return }
     }
     if (selectedWorkflow && !rootMode.child && (rootMode.selected === true || (currentSessionId && rootMode.selected === null))) {
-      setRootModeConflict("当前无法同时使用 Root 仅编排模式与 Workflow。先确认并关闭 Root 模式，再发送工作流。")
+      setRootModeConflict("所选文本工作流与 Ultra 编排不兼容；请在思考强度中选择普通档位后重试。")
       return
     }
     setRootModeConflict(null)
@@ -695,7 +679,7 @@ export function ChatPane({
         if (result.kind === "unconfirmed") {
           if (result.workflowError && currentDraftKeyRef.current === snapshot.draftKey) {
             const guidance: Record<string, string> = {
-              root_orchestration_incompatible_mode: "Root 仅编排模式与所选工作流不兼容；请明确关闭此模式后重试。",
+              root_orchestration_incompatible_mode: "所选工作流与 Ultra 编排不兼容；请在思考强度中选择普通档位后重试。",
               workflow_revision_missing: "所选工作流已不可用；请刷新目录并重新选择。",
               workflow_revision_mismatch: "所选工作流的版本已变化；请刷新目录并重新选择。",
               workflow_source_mismatch: "所选工作流的来源已变化；请刷新目录并重新选择。",
@@ -1091,15 +1075,17 @@ export function ChatPane({
                 selected={rootMode.selected}
                 confirmed={rootMode.confirmed}
                 loading={rootMode.loading}
-                disabled={submissionPending || currentlyRunning || queue.hasUnconfirmed}
-                pending={submissionPending}
+                pending={submissionPending || rootMode.busy}
                 recovering={rootMode.recovering}
                 recoverable={rootMode.recoverable}
                 error={rootMode.error}
                 conflict={rootModeConflict ?? skillModeConflict}
-                onChange={(enabled) => { setRootModeConflict(null); void rootMode.change(enabled) }}
+                ordinaryValue={rootMode.ordinaryValue}
                 onRetry={() => { void rootMode.retry() }}
               />
+              {rootMode.child && rootMode.error ? (
+                <span role="alert" className="basis-full text-destructive">{rootMode.error}</span>
+              ) : null}
             </>
           )}
           runtimeControls={(
@@ -1115,9 +1101,11 @@ export function ChatPane({
                 />
               ) : null}
               <ReasoningPicker
-                value={reasoningSelection}
-                onChange={(selection) => void handleReasoningChange(selection)}
-                disabled={reasoningSaving}
+                value={rootMode.ordinaryValue}
+                allowUltra={rootMode.isRoot}
+                thinkingMode={rootMode.thinkingMode}
+                onChange={(selection) => { setRootModeConflict(null); void rootMode.choose(selection) }}
+                disabled={rootMode.controlDisabled}
                 menuPlacement="up"
                 menuAlign="right"
               />
@@ -1137,7 +1125,7 @@ export function ChatPane({
               ) : null}
             </>
           )}
-          submissionPending={submissionPending || goalSaving || queue.busy || modelSaving}
+          submissionPending={submissionPending || goalSaving || queue.busy || modelSaving || rootMode.busy}
           inputRef={composerInputRef}
           attachments={attachments}
           onAddFiles={(files) => void addFiles(files)}

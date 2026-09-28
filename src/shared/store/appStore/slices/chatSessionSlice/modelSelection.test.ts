@@ -23,6 +23,42 @@ const summary = (id: string, isRunning = false): SessionSummary => ({
   is_running: isRunning,
 });
 
+describe("ordinary effort authority readback", () => {
+  it("uses matching GET as success when the PATCH response was lost", async () => {
+    vi.spyOn(agentClient, "patchSession").mockRejectedValue(new Error("response lost"));
+    vi.spyOn(agentClient, "getSession").mockResolvedValue({ session: { ...summary("target"), reasoning_effort: "max" } });
+    const store = storeWithSessions(summary("target"), summary("peer"));
+    await expect(store.getState().changeSessionReasoningEffort("target", "max")).resolves.toBeUndefined();
+    expect(store.getState().chats[0].config.reasoningEffort).toBe("max");
+    expect(store.getState().chats[1].config.reasoningEffort).not.toBe("max");
+  });
+  it("confirms Auto through an omitted override", async () => {
+    const patch = vi.spyOn(agentClient, "patchSession").mockResolvedValue(undefined);
+    vi.spyOn(agentClient, "getSession").mockResolvedValue({ session: summary("target") });
+    const store = storeWithSessions({ ...summary("target"), reasoning_effort: "high" });
+    await store.getState().changeSessionReasoningEffort("target", null);
+    expect(patch).toHaveBeenCalledWith("target", { clear_reasoning_effort: true });
+    expect(store.getState().chats[0].config.reasoningEffort).toBeNull();
+  });
+  it.each([false, true])("retains actual GET value on mismatch (lost PATCH=%s)", async (lost) => {
+    vi.spyOn(agentClient, "patchSession").mockImplementation(async () => { if (lost) throw new Error("response lost"); });
+    vi.spyOn(agentClient, "getSession").mockResolvedValue({ session: { ...summary("target"), reasoning_effort: "low" } });
+    const store = storeWithSessions({ ...summary("target"), reasoning_effort: "high" });
+    await expect(store.getState().changeSessionReasoningEffort("target", "max")).rejects.toThrow(lost ? "response lost" : "与选择不一致");
+    expect(store.getState().chats[0].config.reasoningEffort).toBe("low");
+  });
+  it.each(["failure", "wrong-session", "invalid-effort"])("does not claim a requested choice when GET is %s", async (outcome) => {
+    vi.spyOn(agentClient, "patchSession").mockResolvedValue(undefined);
+    vi.spyOn(agentClient, "getSession").mockImplementation(async () => {
+      if (outcome === "failure") throw new Error("GET offline");
+      return { session: { ...summary(outcome === "wrong-session" ? "another" : "target"), reasoning_effort: outcome === "invalid-effort" ? "ultra" : "max" } } as Awaited<ReturnType<typeof agentClient.getSession>>;
+    });
+    const store = storeWithSessions({ ...summary("target"), reasoning_effort: "high" });
+    await expect(store.getState().changeSessionReasoningEffort("target", "max")).rejects.toThrow();
+    expect(store.getState().chats[0].config.reasoningEffort).toBe("high");
+  });
+});
+
 const storeWithSessions = (...sessions: SessionSummary[]) => {
   const store = createStore<AppState>()((set, get, api) => ({
     ...createChatSlice(set, get, api),

@@ -28,7 +28,7 @@ async function prepare(page: Page) {
     }
     const item = sessions.find((session) => url.pathname === `/api/v1/sessions/${session.id}`)
     if (item) return route.fulfill({ json: { session: { ...item, ...(item.kind === "root" ? {
-      root_orchestration_only: false, root_mode_transition_epoch: 0, root_mode_birth_token: "a".repeat(64),
+      root_orchestration_only: false, thinking_mode: "standard", root_mode_transition_epoch: 0, root_mode_birth_token: "a".repeat(64),
     } : {}) } } })
     if (url.pathname === `/api/v1/task/${rootId}`) return route.fulfill({ json: { session_id: rootId, items: [] } })
     if (url.pathname === `/api/v1/sessions/${childId}/history` && url.searchParams.get("projection") === "messages") {
