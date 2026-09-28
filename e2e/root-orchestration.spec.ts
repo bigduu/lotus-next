@@ -142,7 +142,7 @@ test("a timed-out mode operation recovers after reload without chat replay", asy
     const recovering = path.at(-1) === "recover"
     const id = decodeURIComponent(path.at(recovering ? -2 : -1)!)
     const body = route.request().postDataJSON() as Record<string, unknown>
-    expect(body).toEqual({ birth_token: birthToken, expected_epoch: 0, enabled: false })
+    expect(body).toEqual({ birth_token: birthToken, expected_epoch: 0, enabled: false, thinking_mode: "standard" })
     if (recovering) {
       recoveries += 1
       return terminal ? route.fulfill({ json: terminal }) : route.fulfill({ status: 503,
@@ -211,7 +211,7 @@ test("every concurrent pending operation needs its own terminal recovery", async
     const segments = new URL(route.request().url()).pathname.split("/")
     expect(segments.at(-1)).toBe("recover")
     const operationId = decodeURIComponent(segments.at(-2)!)
-    expect(route.request().postDataJSON()).toEqual({ birth_token: birthToken, expected_epoch: 0, enabled: false })
+    expect(route.request().postDataJSON()).toEqual({ birth_token: birthToken, expected_epoch: 0, enabled: false, thinking_mode: "standard" })
     recoveries += 1
     expect(ids).toContain(operationId)
     if (recoveries === 1) {
