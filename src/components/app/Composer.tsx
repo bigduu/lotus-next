@@ -128,6 +128,7 @@ export function Composer({
   queueControls,
   permissionControl,
   runtimeControls,
+  workflowControl,
   submissionPending,
   inputRef,
   attachments,
@@ -168,6 +169,8 @@ export function Composer({
   permissionControl?: ReactNode
   /** Context, reasoning, and model controls shown in the lower-right toolbar. */
   runtimeControls?: ReactNode
+  /** Exact catalog selection; separate from slash-command text expansion. */
+  workflowControl?: ReactNode
   submissionPending: boolean
   inputRef: Ref<HTMLTextAreaElement>
   attachments: AttachmentView[]
@@ -202,6 +205,7 @@ export function Composer({
   return (
     <div className="shrink-0 border-t px-3 py-3">
       {queueControls}
+      {workflowControl}
       {slashQuery !== null && (
         <SlashMenu
           skills={skills}
@@ -233,7 +237,7 @@ export function Composer({
       {selectedWorkflow && (
         <div className="mx-auto mb-2 flex w-full max-w-6xl">
           <span className="inline-flex items-center gap-1 rounded-full bg-primary/15 px-2.5 py-1 text-xs font-medium text-primary">
-            工作流 /{selectedWorkflow.name}
+            文本展开 /{selectedWorkflow.name}
             <button
               onClick={onClearWorkflow}
               aria-label="移除工作流"

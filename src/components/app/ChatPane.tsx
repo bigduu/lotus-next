@@ -26,6 +26,8 @@ import { getRootModeFenceState } from "@/lib/rootModeTransitionFence"
 import { useAppStore, selectChildren } from "@shared/store/appStore"
 import { agentClient } from "@services/chat/AgentService"
 import { commandService, type CommandItem } from "@services/command"
+import { prepareWorkflowSelection, type TypedWorkflowDraft, type WorkflowSelection } from "@services/command/workflowCatalog"
+import { getErrorMessage } from "@services/api/errors"
 import type { ChildProgress } from "@shared/store/appStore/slices/executionStateSlice/types"
 import { useProviderStore } from "@shared/store/appStore/slices/providerSlice"
 import type { ReasoningEffortSelection } from "@shared/utils/reasoningEffort"
@@ -49,6 +51,7 @@ import { ReasoningPicker } from "@/components/chat/ReasoningPicker"
 import { ModelPicker } from "@/components/chat/ModelPicker"
 import { NewSessionPermissionControl, PermissionModeControl } from "@/components/chat/PermissionModeControl"
 import { RootOrchestrationControl } from "@/components/chat/RootOrchestrationControl"
+import { WorkflowSelectionControl } from "@/components/chat/WorkflowSelectionControl"
 import {
   Select,
   SelectContent,
@@ -100,6 +103,7 @@ type ComposerSubmissionSnapshot = Readonly<{
   attachments: readonly Readonly<Attachment>[]
   selectedSkill: Readonly<SkillDefinition> | null
   selectedWorkflow: Readonly<SelectedWorkflow> | null
+  typedWorkflow: Readonly<WorkflowSelection> | null
   workspacePath: string | null
   projectId: string | null
   templatePrompt: ReturnType<typeof peekPendingTemplatePrompt>
@@ -285,6 +289,8 @@ export function ChatPane({
   // message on send (content + user input).
   const [workflowCmds, setWorkflowCmds] = useState<CommandItem[]>([])
   const [selectedWorkflow, setSelectedWorkflow] = useState<SelectedWorkflow | null>(null)
+  const [typedWorkflow, setTypedWorkflow] = useState<TypedWorkflowDraft | null>(null)
+  const [workflowError, setWorkflowError] = useState<string | null>(null)
   const rootMode = useRootOrchestrationMode(currentSessionId, currentChat?.kind)
   const rootSessionUnsafe = () => Boolean(currentSessionId && getRootModeFenceState(currentSessionId) !== "clear")
   const [rootModeConflict, setRootModeConflict] = useState<string | null>(null)
@@ -308,7 +314,19 @@ export function ChatPane({
     workflowRevisionRef.current += 1
     if (!value) setRootModeConflict(null)
     setSelectedWorkflow(value)
+    if (value) { setTypedWorkflow(null); setWorkflowError(null) }
   }
+  const changeTypedWorkflow = (value: TypedWorkflowDraft | null) => {
+    workflowRevisionRef.current += 1
+    setTypedWorkflow(value); setWorkflowError(null)
+    if (value) { setSelectedWorkflow(null); changeSelectedSkill(null) }
+  }
+  // Catalog selections are local to this composer/session. Do not move a
+  // version from one Session authority into another, or migrate legacy drafts.
+  useEffect(() => {
+    workflowRevisionRef.current += 1
+    setTypedWorkflow(null); setWorkflowError(null)
+  }, [currentSessionId])
   const [preview, setPreview] = useState<string | null>(null)
   const [toast, setToast] = useState<string | null>(null)
   const [forking, setForking] = useState(false)
@@ -559,7 +577,7 @@ export function ChatPane({
     const storeAtSubmit = useAppStore.getState()
     const draftAtSubmit = storeAtSubmit.inputStates[draftKey]
     const text = draftAtSubmit?.content ?? ""
-    const goalCommand = !selectedWorkflow && !selectedSkill && attachments.length === 0
+    const goalCommand = !selectedWorkflow && !typedWorkflow && !selectedSkill && attachments.length === 0
       ? /^\/goal(?:\s+([\s\S]*))?$/i.exec(text.trim()) : null
     if (goalCommand && (currentSessionId || !goalCommand[1]?.trim())) {
       if (!currentSessionId) { showToast("请先打开一个会话，再设置目标。"); return }
@@ -602,11 +620,21 @@ export function ChatPane({
       return
     }
     if (!text.trim() && attachments.length === 0 && !selectedWorkflow) return
+    let workflowSelection: WorkflowSelection | null = null
+    if (typedWorkflow) {
+      if (currentlyRunning || queue.hasUnconfirmed) {
+        setWorkflowError("请等待当前运行结束，再发送所选工作流；消息队列只接收文本。")
+        return
+      }
+      try { workflowSelection = prepareWorkflowSelection(typedWorkflow) }
+      catch (failure) { setWorkflowError(getErrorMessage(failure)); return }
+    }
     if (selectedWorkflow && !rootMode.child && (rootMode.selected === true || (currentSessionId && rootMode.selected === null))) {
       setRootModeConflict("当前无法同时使用 Root 仅编排模式与 Workflow。先确认并关闭 Root 模式，再发送工作流。")
       return
     }
     setRootModeConflict(null)
+    setWorkflowError(null)
     if ((currentlyRunning || queue.hasUnconfirmed) && selectedSkill) {
       showToast("请先移除已选技能，再把消息加入队列。")
       return
@@ -623,6 +651,7 @@ export function ChatPane({
         ? Object.freeze({ ...selectedSkill, tool_refs: [...selectedSkill.tool_refs] })
         : null,
       selectedWorkflow: selectedWorkflow ? Object.freeze({ ...selectedWorkflow }) : null,
+      typedWorkflow: workflowSelection ? Object.freeze(workflowSelection) : null,
       workspacePath: selectedProjectPath ?? pickedWorkspace,
       projectId: pendingProjectId ?? null,
       templatePrompt: !currentSessionId && !secondary ? peekPendingTemplatePrompt() : null,
@@ -642,6 +671,7 @@ export function ChatPane({
       ? queue.send(finalText, images)
       : send(finalText, {
           skillIds: snapshot.selectedSkill ? [snapshot.selectedSkill.id] : undefined,
+          ...(snapshot.typedWorkflow ? { workflowSelection: snapshot.typedWorkflow } : {}),
           images: images.length ? images : undefined,
           workspacePath: snapshot.workspacePath,
           projectId: snapshot.projectId,
@@ -657,6 +687,20 @@ export function ChatPane({
           void rootMode.refresh(currentSessionId)
         }
         if (result.kind === "unconfirmed") {
+          if (result.workflowError && currentDraftKeyRef.current === snapshot.draftKey) {
+            const guidance: Record<string, string> = {
+              root_orchestration_incompatible_mode: "Root 仅编排模式与所选工作流不兼容；请明确关闭此模式后重试。",
+              workflow_revision_missing: "所选工作流已不可用；请刷新目录并重新选择。",
+              workflow_revision_mismatch: "所选工作流的版本已变化；请刷新目录并重新选择。",
+              workflow_source_mismatch: "所选工作流的来源已变化；请刷新目录并重新选择。",
+              workflow_manual_only: "所选工作流不允许显式选择；请选择其他工作流。",
+              workflow_selection_invalid: "工作流或参数不符合当前定义；请检查参数，必要时刷新目录并重新选择。",
+              workflow_snapshot_unavailable: "Bamboo 暂时无法保留所选工作流定义；请稍后重试。",
+              workflow_snapshot_too_large: "所选工作流定义超出 Bamboo 的快照预算；请调整定义或选择其他工作流。",
+              workflow_context_invalid: "Bamboo 无法准备工作流上下文；请检查参数和定义后重试。",
+            }
+            setWorkflowError(`${guidance[result.workflowError.code] ?? "Bamboo 未接受所选工作流，请检查诊断后重试。"} 草稿和选择已保留。（${result.workflowError.code}：${result.workflowError.message}）`)
+          }
           if (currentDraftKeyRef.current === snapshot.draftKey) composerInputRef.current?.focus()
           return
         }
@@ -693,7 +737,7 @@ export function ChatPane({
         }
         if (attachmentRevisionRef.current === snapshot.attachmentRevision) setAttachments([])
         if (skillRevisionRef.current === snapshot.skillRevision) setSelectedSkill(null)
-        if (workflowRevisionRef.current === snapshot.workflowRevision) setSelectedWorkflow(null)
+        if (workflowRevisionRef.current === snapshot.workflowRevision) { setSelectedWorkflow(null); setTypedWorkflow(null) }
       })
       .catch((err) => {
         // send() normally resolves a typed outcome. Preserve every composer
@@ -707,20 +751,23 @@ export function ChatPane({
   }
 
   const pickSkill = (skill: SkillDefinition) => {
+    changeTypedWorkflow(null)
     changeSelectedSkill(skill)
     setDraft("")
   }
 
   const pickWorkflow = (command: CommandItem) => {
+    const revision = ++workflowRevisionRef.current
     setDraft("")
     commandService
       .getWorkflowCommand(command.name)
-      .then((detail) =>
+      .then((detail) => {
+        if (workflowRevisionRef.current !== revision) return
         changeSelectedWorkflow({
           name: command.display_name || command.name,
           content: detail.content,
-        }),
-      )
+        })
+      })
       .catch(() => showToast(`加载工作流 ${command.name} 失败`))
   }
 
@@ -1014,6 +1061,11 @@ export function ChatPane({
           queueMode={queue.mode}
           onQueueModeChange={currentSessionId && !submissionPending ? queue.setMode : undefined}
           queueControls={currentSessionId ? <SessionGuidance key={currentSessionId} sessionId={currentSessionId} messages={queue.pending} busy={queue.busy} onCancel={(id) => void queue.cancel(id)} onPreview={setPreview} /> : null}
+          workflowControl={<WorkflowSelectionControl key={currentSessionId ?? "new"} sessionId={currentSessionId}
+            selected={typedWorkflow} onChange={changeTypedWorkflow}
+            onArgsFocus={() => setMenusDismissed(true)}
+            disabled={submissionPending || currentlyRunning || queue.hasUnconfirmed || rootMode.unsafe}
+            error={workflowError} />}
           permissionControl={(
             <>
               {currentSessionId ? (
