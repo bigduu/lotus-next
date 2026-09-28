@@ -1470,6 +1470,7 @@ export function useChat(
         workflowSelection?: WorkflowSelection
         /** Explicit Root-only selection; undefined preserves the durable value. */
         rootOrchestrationOnly?: boolean
+        thinkingMode?: import("@services/chat/AgentService").ThinkingMode
         images?: Array<{ base64: string; name?: string; size?: number; type?: string }>
         workspacePath?: string | null
         projectId?: string | null
@@ -1488,6 +1489,12 @@ export function useChat(
       if (startSid && getRootModeFenceState(startSid) !== "clear") return { kind: "blocked" }
       // Existing Root mode changes use a separate, recoverable operation.
       if (startSid && typeof opts?.rootOrchestrationOnly === "boolean") return { kind: "blocked" }
+      if (startSid && opts?.thinkingMode !== undefined) return { kind: "blocked" }
+      const submittedThinkingMode = !startSid ? opts?.thinkingMode : undefined
+      if (submittedThinkingMode !== undefined
+        && (submittedThinkingMode !== "standard" && submittedThinkingMode !== "ultra"
+          || opts?.rootOrchestrationOnly !== undefined
+            && opts.rootOrchestrationOnly !== (submittedThinkingMode === "ultra"))) return { kind: "blocked" }
       const submittedReasoningEffort = startSid
         ? reasoningEffort
         : opts?.reasoningSelection === "auto"
@@ -1541,7 +1548,13 @@ export function useChat(
           system_prompt: systemPrompt,
           selected_skill_ids: opts?.skillIds?.length ? opts.skillIds : undefined,
           ...(opts?.workflowSelection ? { workflow_selection: opts.workflowSelection } : {}),
-          root_orchestration_only: !startSid ? opts?.rootOrchestrationOnly : undefined,
+          root_orchestration_only: !startSid
+            ? submittedThinkingMode === undefined ? opts?.rootOrchestrationOnly : submittedThinkingMode === "ultra"
+            : undefined,
+          thinking_mode: !startSid
+            ? submittedThinkingMode ?? (opts?.rootOrchestrationOnly === undefined
+              ? undefined : opts.rootOrchestrationOnly ? "ultra" : "standard")
+            : undefined,
           images: opts?.images?.length ? opts.images : undefined,
           // Only meaningful when creating a NEW session; an existing session keeps
           // the cwd it was created with.

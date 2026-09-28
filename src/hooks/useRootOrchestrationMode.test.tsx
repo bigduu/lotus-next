@@ -24,6 +24,7 @@ function Harness({ kind }: { kind?: "root" | "child" }) {
 const receipt = (operation: RootModeOperationInput, status: "committed" | "fenced" | "rejected_incompatible" = "committed"): RootModeOperationResponse => ({
   status, operation_id: operation.operationId, expected_epoch: operation.expectedEpoch,
   resulting_epoch: operation.expectedEpoch + 1, enabled_at_completion: enabled,
+  thinking_mode_at_completion: enabled ? "ultra" : "standard",
   root_tool_authority_revision: 1,
 })
 const apiError = (status: number, code: string) => new ApiError(code, status, "Error", JSON.stringify({ error: { code, message: code } }))
@@ -110,7 +111,7 @@ describe("recoverable Root mode operations", () => {
     vi.mocked(agentClient.selectRootMode).mockRejectedValueOnce(new RequestTimeoutError())
     vi.mocked(agentClient.recoverRootMode).mockImplementationOnce(async (_id, operation) => ({
       status: "fenced_by_successor", operation_id: `${operation.expectedEpoch}:00000000-0000-0000-0000-000000000000`,
-      expected_epoch: operation.expectedEpoch, current_epoch: 2, current_enabled: true, root_tool_authority_revision: 2,
+      expected_epoch: operation.expectedEpoch, current_epoch: 2, current_enabled: true, current_thinking_mode: "ultra", root_tool_authority_revision: 2,
     }))
     await mount("root")
     await act(async () => { await value.change(true) })
@@ -118,7 +119,7 @@ describe("recoverable Root mode operations", () => {
     vi.mocked(agentClient.recoverRootMode).mockImplementationOnce(async (_id, operation) => {
       enabled = true; epoch = 2
       return { status: "fenced_by_successor", operation_id: operation.operationId,
-        expected_epoch: operation.expectedEpoch, current_epoch: 2, current_enabled: true, root_tool_authority_revision: 2 }
+        expected_epoch: operation.expectedEpoch, current_epoch: 2, current_enabled: true, current_thinking_mode: "ultra", root_tool_authority_revision: 2 }
     })
     await act(async () => { await value.retry() })
     expect(getRootModeFenceState(sessionId)).toBe("clear")

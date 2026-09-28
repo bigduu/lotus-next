@@ -37,7 +37,7 @@ test("exact Workflow survives Root conflict then succeeds after explicit mode di
   })
   await page.route(`**/api/v1/sessions/${sessionId}/root-mode-operations/*`, (route) => {
     const input = route.request().postDataJSON() as Record<string, unknown>; modes.push(input)
-    expect(input).toEqual({ birth_token: birth, expected_epoch: epoch, enabled: false })
+    expect(input).toEqual({ birth_token: birth, expected_epoch: epoch, enabled: false, thinking_mode: "standard" })
     const operationId = decodeURIComponent(new URL(route.request().url()).pathname.split("/").at(-1)!)
     const expected = epoch; epoch += 1; enabled = false
     return route.fulfill({ json: { status: "committed", operation_id: operationId, expected_epoch: expected,

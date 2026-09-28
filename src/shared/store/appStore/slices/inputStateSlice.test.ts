@@ -2,9 +2,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest"
 import { createSliceHarness } from "./__tests__/sliceHarness"
 
 vi.mock("@services/storage/StorageManager", () => ({
+  INPUT_THINKING_MODE_BY_DRAFT_STORAGE_KEY: "chat_input_thinking_mode_by_draft_v1",
   StorageManager: {
     getInstance: () => ({
       saveInputReasoning: vi.fn().mockResolvedValue(undefined),
+      saveInputThinkingMode: vi.fn().mockResolvedValue(undefined),
       saveLastUsedReasoningEffort: vi.fn().mockResolvedValue(undefined),
     }),
   },
@@ -23,6 +25,57 @@ const createHarness = () =>
       api: unknown,
     ) => InputStateSlice,
   )
+
+describe("independent thinking-mode drafts", () => {
+  beforeEach(() => { localStorage.clear() })
+
+  it("restores isolated pane modes while ordinary reasoning stays independent", () => {
+    const store = createHarness()
+    expect(store.getState().setInputThinkingMode("", "ultra")).toBe(true)
+    expect(store.getState().setInputThinkingMode("__new_chat_pane2__", "standard")).toBe(true)
+    store.getState().setInputReasoningEffort("", "max")
+    expect(store.getState().inputStates[""].thinkingMode).toBe("ultra")
+    const restored = createHarness()
+    restored.getState().setInputContent("", "new primary draft")
+    restored.getState().setInputContent("__new_chat_pane2__", "secondary draft")
+    expect(restored.getState().inputStates[""].thinkingMode).toBe("ultra")
+    expect(restored.getState().inputStates.__new_chat_pane2__.thinkingMode).toBe("standard")
+    expect(restored.getState().inputStates[""].reasoningEffort).toBeUndefined()
+  })
+
+  it("rejects stale same-value ACKs and clears only the captured field", () => {
+    const store = createHarness()
+    store.getState().setInputThinkingMode("", "ultra")
+    const submitted = store.getState().inputStates[""].thinkingModeRevision!
+    store.getState().setInputThinkingMode("", "ultra")
+    store.getState().setInputReasoningEffort("", "none")
+    store.getState().setInputContent("", "keep this draft")
+    store.getState().setInputThinkingMode("__new_chat_pane2__", "ultra")
+    expect(store.getState().clearInputThinkingModeIfRevision("", submitted)).toBe(false)
+    expect(store.getState().clearInputThinkingModeIfRevision("", store.getState().inputStates[""].thinkingModeRevision!)).toBe(true)
+    expect(store.getState().inputStates[""].thinkingMode).toBeUndefined()
+    expect(store.getState().inputStates[""].reasoningEffort).toBe("none")
+    expect(store.getState().inputStates[""].content).toBe("keep this draft")
+    const restored = createHarness()
+    expect(restored.getState().getInputState("").thinkingMode).toBeUndefined()
+    expect(restored.getState().getInputState("__new_chat_pane2__").thinkingMode).toBe("ultra")
+  })
+
+  it.each(["max", "Ultra", null, true])("rejects malformed stored/input mode %s", (mode) => {
+    localStorage.setItem("chat_input_thinking_mode_by_draft_v1", JSON.stringify({ "": mode }))
+    expect(createHarness().getState().getInputState("").thinkingMode).toBeUndefined()
+    const store = createHarness()
+    expect(store.getState().setInputThinkingMode("", mode as never)).toBe(false)
+    expect(store.getState().inputStates[""]).toBeUndefined()
+  })
+
+  it("does not report a saved mode when storage rejects the write", () => {
+    vi.spyOn(localStorage, "setItem").mockImplementationOnce(() => { throw new Error("quota") })
+    const store = createHarness()
+    expect(store.getState().setInputThinkingMode("", "ultra")).toBe(false)
+    expect(store.getState().inputStates[""]).toBeUndefined()
+  })
+})
 
 describe("input draft revision ownership", () => {
   beforeEach(() => {
