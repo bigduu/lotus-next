@@ -991,6 +991,10 @@ const handleFrame = (
       return;
     }
     if (parsed.type === "control") {
+      // A delayed snapshot directive belongs to an older position in this
+      // socket epoch. Letting it move the cursor backwards would admit a
+      // duplicate actor_changed event that was already delivered.
+      if (channel.cursor !== null && parsed.seq <= channel.cursor) return;
       channel.cursor = parsed.seq;
       channel.gapNotified = false;
       channel.lastControl = parsed.control;
