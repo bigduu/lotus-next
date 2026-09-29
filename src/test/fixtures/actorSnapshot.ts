@@ -1,5 +1,5 @@
 /** Bamboo #1337 schema-v1 public DTO, including deliberately unknown observations. */
-export function actorSnapshotFixture(rootId = "root", count = 128) {
+export function actorSnapshotFixture(rootId = "root", count = 128, streamCursor: string | null = null) {
   const node = (id: string, parent: string | null, depth: number) => ({
     actor_id: id, parent_actor_id: parent, root_actor_id: rootId, depth, title: id,
     role: parent === null ? "root" as const : "child" as const, logical_state: null, placement_class: null,
@@ -15,5 +15,5 @@ export function actorSnapshotFixture(rootId = "root", count = 128) {
     revision: { session_metadata_version: 7, actor_directory_revision: 2 },
     activation: { activation_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", attempt: 1, status: "running" } })
   return { schema_version: 1 as const, root_actor_id: rootId, subtree_actor_id: rootId,
-    snapshot_id: `as1-${"a".repeat(64)}`, stream_cursor: null, nodes }
+    snapshot_id: `as1-${"a".repeat(64)}`, stream_cursor: streamCursor, nodes }
 }

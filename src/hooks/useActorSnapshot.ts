@@ -1,16 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from "react"
-import { isApiError } from "@services/api/errors"
-import { getActorSnapshot, type ActorSubtreeSnapshot } from "@services/chat/actorSnapshot"
-import { subscribeActor } from "@services/chat/v2Stream"
+import { isApiError, NetworkRequestError, RequestTimeoutError } from "@services/api/errors"
+import { actorSnapshotRegresses, actorTreeCursorCovers, getActorSnapshot, type ActorSubtreeSnapshot } from "@services/chat/actorSnapshot"
+import { subscribeActor, subscribeActorTree } from "@services/chat/v2Stream"
 
-export type ActorSnapshotGapReason = "transport_gap" | "scope_mismatch" | "activation_mismatch"
+export type ActorSnapshotGapReason = "transport_gap" | "scope_mismatch" | "activation_mismatch" | "snapshot_regression"
 
 interface SnapshotState {
   rootId: string | null
   snapshot: ActorSubtreeSnapshot | null
   loading: boolean
   error: string | null
-  /** A fresh snapshot has no stream cursor, so a gap cannot be proven repaired. */
+  /** A gap clears only when its own authority domain is proven recovered. */
   gapReason: ActorSnapshotGapReason | null
 }
 
@@ -24,14 +24,25 @@ function failureMessage(error: unknown): string {
   return "代理结构暂时无法确认，请重新读取。"
 }
 
+function retryableSnapshotFailure(error: unknown): boolean {
+  if (isApiError(error)) return error.status === 409 || (error.status >= 500 && error.status !== 501)
+  return error instanceof NetworkRequestError || error instanceof RequestTimeoutError
+}
+
 /** A public snapshot view with one selected or previewed Actor interest. */
-export function useActorSnapshot(rootId: string | null, active: boolean, interestedActorId: string | null = null) {
+export function useActorSnapshot(rootId: string | null, active: boolean, interestedActorId: string | null = null, descendantCountHint: number | null = null) {
   const [state, setState] = useState<SnapshotState>({ rootId: null, snapshot: null, loading: false, error: null, gapReason: null })
   const generation = useRef(0)
   const request = useRef<AbortController | null>(null)
-  const refreshQueued = useRef<{ rootId: string | null; actorId: string | null } | null>(null)
+  const retryTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const retryAttempts = useRef(0)
+  const refreshQueued = useRef<string | null>(null)
   const refreshAfterFlight = useRef(false)
   const snapshotRef = useRef<ActorSubtreeSnapshot | null>(null)
+  const workerGap = useRef<ActorSnapshotGapReason | null>(null)
+  /** undefined means no tree gap; null means the old Root has no proof cursor. */
+  const requiredTreeCursor = useRef<string | null | undefined>(undefined)
+  const lastCountHint = useRef<{ rootId: string | null; count: number | null }>({ rootId: null, count: null })
   const scope = useRef({ rootId, active, interestedActorId })
   scope.current = { rootId, active, interestedActorId }
   const queueRefreshRef = useRef<() => void>(() => {})
@@ -40,6 +51,7 @@ export function useActorSnapshot(rootId: string | null, active: boolean, interes
     if (!current.rootId || !current.active) return
     const id = current.rootId
     const version = ++generation.current
+    if (retryTimer.current !== null) { clearTimeout(retryTimer.current); retryTimer.current = null }
     request.current?.abort()
     const controller = new AbortController()
     request.current = controller
@@ -48,11 +60,38 @@ export function useActorSnapshot(rootId: string | null, active: boolean, interes
     try {
       const snapshot = await getActorSnapshot(id, id, controller.signal)
       if (controller.signal.aborted || generation.current !== version || scope.current.rootId !== id || !scope.current.active) return
+      if (snapshotRef.current && actorSnapshotRegresses(snapshotRef.current, snapshot)) {
+        setState((previous) => previous.rootId === id ? {
+          ...previous, loading: false, error: null, gapReason: "snapshot_regression",
+        } : previous)
+        return
+      }
       snapshotRef.current = snapshot
-      setState((previous) => ({ rootId: id, snapshot, loading: false, error: null,
-        gapReason: previous.rootId === id ? previous.gapReason : null }))
+      retryAttempts.current = 0
+      if (requiredTreeCursor.current !== undefined &&
+        actorTreeCursorCovers(snapshot.stream_cursor, requiredTreeCursor.current)) {
+        requiredTreeCursor.current = undefined
+      }
+      setState(() => ({ rootId: id, snapshot, loading: false, error: null,
+        gapReason: workerGap.current ?? (requiredTreeCursor.current !== undefined ? "transport_gap" : null) }))
     } catch (error) {
       if (controller.signal.aborted || generation.current !== version || scope.current.rootId !== id || !scope.current.active) return
+      if (snapshotRef.current && requiredTreeCursor.current !== undefined && retryableSnapshotFailure(error)) {
+        // A pending Host transaction or interrupted read cannot revoke the
+        // last confirmed tree. Keep its subscription and retry at a bounded
+        // rate until a covering Root snapshot proves the gap repaired.
+        setState((previous) => previous.rootId === id ? {
+          ...previous, loading: false, error: failureMessage(error),
+          gapReason: workerGap.current ?? "transport_gap",
+        } : previous)
+        const delay = Math.min(500 * 2 ** Math.min(retryAttempts.current, 6), 30_000)
+        retryAttempts.current += 1
+        retryTimer.current = setTimeout(() => {
+          retryTimer.current = null
+          if (scope.current.rootId === id && scope.current.active) queueRefreshRef.current()
+        }, delay)
+        return
+      }
       snapshotRef.current = null
       setState((previous) => ({ rootId: id, snapshot: null, loading: false, error: failureMessage(error),
         gapReason: previous.rootId === id ? previous.gapReason : null }))
@@ -67,15 +106,14 @@ export function useActorSnapshot(rootId: string | null, active: boolean, interes
     }
   }, [])
   const queueRefresh = useCallback(() => {
-    const { rootId: queuedRoot, interestedActorId: queuedActor } = scope.current
+    const { rootId: queuedRoot } = scope.current
     const alreadyQueued = refreshQueued.current !== null
-    refreshQueued.current = { rootId: queuedRoot, actorId: queuedActor }
+    refreshQueued.current = queuedRoot
     if (alreadyQueued) return
     queueMicrotask(() => {
       const queued = refreshQueued.current
       refreshQueued.current = null
-      if (!queued?.rootId || scope.current.rootId !== queued.rootId ||
-        scope.current.interestedActorId !== queued.actorId || !scope.current.active) return
+      if (!queued || scope.current.rootId !== queued || !scope.current.active) return
       if (request.current) { refreshAfterFlight.current = true; return }
       void refresh()
     })
@@ -83,15 +121,51 @@ export function useActorSnapshot(rootId: string | null, active: boolean, interes
   queueRefreshRef.current = queueRefresh
   const cancel = useCallback(() => {
     ++generation.current
+    if (retryTimer.current !== null) { clearTimeout(retryTimer.current); retryTimer.current = null }
+    retryAttempts.current = 0
     request.current?.abort()
     request.current = null
     refreshAfterFlight.current = false
     snapshotRef.current = null
+    workerGap.current = null
+    requiredTreeCursor.current = undefined
   }, [])
   useEffect(() => {
     if (active && rootId) void refresh()
     return cancel
   }, [rootId, active, refresh, cancel])
+  useEffect(() => {
+    const previous = lastCountHint.current
+    lastCountHint.current = { rootId, count: descendantCountHint }
+    if (active && rootId && previous.rootId === rootId && previous.count !== null &&
+      descendantCountHint !== null && previous.count !== descendantCountHint) void refresh()
+  }, [rootId, active, descendantCountHint, refresh])
+
+  const treeAuthorized = active && !!rootId && state.rootId === rootId &&
+    state.snapshot?.root_actor_id === rootId &&
+    state.snapshot.subtree_actor_id === rootId
+  const treeCursor = treeAuthorized ? state.snapshot?.stream_cursor ?? null : null
+  useEffect(() => {
+    if (!treeAuthorized || !rootId) return
+    let live = true
+    const markTreeGap = (cursor: string | null) => {
+      if (!live || scope.current.rootId !== rootId || !scope.current.active) return
+      const prior = requiredTreeCursor.current
+      if (prior === undefined) requiredTreeCursor.current = cursor
+      else if (prior === null || cursor === null) requiredTreeCursor.current = null
+      else if (actorTreeCursorCovers(cursor, prior)) requiredTreeCursor.current = cursor
+      else if (!actorTreeCursorCovers(prior, cursor)) requiredTreeCursor.current = null
+      setState((previous) => previous.rootId === rootId ? {
+        ...previous, gapReason: workerGap.current ?? "transport_gap",
+      } : previous)
+      queueRefresh()
+    }
+    const subscription = subscribeActorTree(rootId, treeCursor, {
+      onControl: (control) => markTreeGap(control.cursor),
+      onGap: () => markTreeGap(snapshotRef.current?.stream_cursor ?? null),
+    })
+    return () => { live = false; subscription.close() }
+  }, [treeAuthorized, rootId, treeCursor, queueRefresh])
 
   const authorized = active && !!rootId && !!interestedActorId && state.rootId === rootId &&
     snapshotRef.current === state.snapshot &&
@@ -102,6 +176,7 @@ export function useActorSnapshot(rootId: string | null, active: boolean, interes
     let live = true
     const markGap = (reason: ActorSnapshotGapReason) => {
       if (!live || scope.current.rootId !== rootId || scope.current.interestedActorId !== interestedActorId || !scope.current.active) return
+      workerGap.current = reason
       setState((previous) => previous.rootId === rootId ? { ...previous, gapReason: reason } : previous)
       queueRefresh()
     }

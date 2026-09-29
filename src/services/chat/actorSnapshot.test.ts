@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { actorSnapshotFixture } from "@/test/fixtures/actorSnapshot"
-import { ACTOR_SNAPSHOT_MAX_BYTES, actorSnapshotTree, getActorSnapshot, parseActorSnapshot } from "./actorSnapshot"
+import { ACTOR_SNAPSHOT_MAX_BYTES, actorSnapshotRegresses, actorSnapshotTree, actorTreeCursorCovers, getActorSnapshot, parseActorSnapshot } from "./actorSnapshot"
+
+const treeCursor = (revision: number, scope = "a".repeat(64)) => `at1-${scope}-${revision}`
 
 const api = vi.hoisted(() => ({ fetchRaw: vi.fn() }))
 vi.mock("@services/api", () => ({ apiClient: api }))
@@ -20,6 +22,27 @@ describe("authorized actor snapshot DTO", () => {
     expect(tree.byId["actor-0"]).not.toHaveProperty("sequence")
     expect(tree.byId["actor-0"]).toMatchObject({ lifecycle: "active", placement: "remote", health: null })
   })
+
+  it("accepts a canonical durable tree cursor and orders complete views independently of snapshot_id", () => {
+    const first = parseActorSnapshot(actorSnapshotFixture("root", 1, treeCursor(7)), "root")
+    const second = parseActorSnapshot(actorSnapshotFixture("root", 0, treeCursor(8)), "root")
+    expect(first.stream_cursor).toBe(treeCursor(7))
+    expect(second.snapshot_id).toBe(first.snapshot_id)
+    expect(actorSnapshotRegresses(first, second)).toBe(false)
+    expect(actorSnapshotRegresses(second, first)).toBe(true)
+    expect(actorTreeCursorCovers(treeCursor(8), treeCursor(7))).toBe(true)
+    expect(actorTreeCursorCovers(treeCursor(7), treeCursor(8))).toBe(false)
+    expect(actorTreeCursorCovers(treeCursor(8, "b".repeat(64)), treeCursor(7))).toBe(false)
+    expect(actorTreeCursorCovers(null, treeCursor(7))).toBe(false)
+  })
+
+  it.each(["at1-" + "a".repeat(64) + "-0", "at1-" + "a".repeat(64) + "-01",
+    "at1-" + "A".repeat(64) + "-1", "at1-" + "a".repeat(64) + "-9007199254740992",
+    "at1-" + "a".repeat(63) + "-1", "at2-" + "a".repeat(64) + "-1"])(
+    "rejects a malformed or unsafe tree cursor %s", (cursor) => {
+      expect(() => parseActorSnapshot(actorSnapshotFixture("root", 0, cursor), "root")).toThrow("代理结构响应无效")
+    },
+  )
 
   it("validates a complete non-root subtree without treating selectors as authority", () => {
     const source = actorSnapshotFixture()
@@ -57,7 +80,7 @@ describe("authorized actor snapshot DTO", () => {
     ["schema", (source: any) => { source.schema_version = 2 }],
     ["root binding", (source: any) => { source.root_actor_id = "foreign" }],
     ["subtree binding", (source: any) => { source.subtree_actor_id = "actor-0" }],
-    ["no cursor synthesis", (source: any) => { source.stream_cursor = "cursor" }],
+    ["malformed tree cursor", (source: any) => { source.stream_cursor = "cursor" }],
     ["empty identity", (source: any) => { source.snapshot_id = "" }],
     ["malformed identity", (source: any) => { source.snapshot_id = "as1-not-a-hash" }],
     ["identity suffix", (source: any) => { source.snapshot_id += "\n" }],

@@ -283,6 +283,11 @@ export function Inspector({
   const chat = useAppStore((s) =>
     sessionId ? selectSessionById(sessionId)(s) : selectCurrentChat(s),
   )
+  const rootDescendantCount = useAppStore((s) => {
+    const selected = sessionId ? selectSessionById(sessionId)(s) : selectCurrentChat(s)
+    const selectedRootId = selected?.kind === "root" ? selected.id : selected?.rootSessionId
+    return selectedRootId ? selectSessionById(selectedRootId)(s)?.subagentCount ?? null : null
+  })
   const liveTokenUsage = useAppStore((s) =>
     sessionId ? s.tokenUsages[sessionId] : undefined,
   )
@@ -329,6 +334,7 @@ export function Inspector({
 
         <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4">
           <ActorSnapshotPanel rootId={rootId} active={open} selectedActorId={selectedActorId ?? sessionId}
+            descendantCountHint={rootDescendantCount}
             onSelectActor={onSelectActor} />
           <section className="rounded-lg border p-3">
             <div className="mb-2 flex items-center justify-between">
