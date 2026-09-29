@@ -1608,6 +1608,35 @@ describe("v2Stream shared WebSocket client", () => {
     expect(reconnected.parsedSent()).toContainEqual({ type: "unsubscribe", ch: "actor.child" })
   })
 
+  it("does not let a stale Actor snapshot control rewind the current socket cursor", () => {
+    const onEvent = vi.fn()
+    const onControl = vi.fn()
+    const onGap = vi.fn()
+    const subscription = subscribeActor("child", { onEvent, onControl, onGap })
+    const socket = lastSocket()
+    socket.open()
+    const event = {
+      type: "actor_changed", actor_id: "child", root_actor_id: "root", parent_actor_id: "root",
+      activation_id: "123e4567-e89b-42d3-a456-426614174000", attempt: 1,
+      event_id: `ae1-${"a".repeat(64)}`, class: "semantic",
+    }
+    socket.emit({ ch: "actor.child", seq: 5, control: {
+      type: "actor_snapshot_required", reason: "initial", cursor: 5,
+    } })
+    socket.emit({ ch: "actor.child", seq: 6, event })
+    socket.emit({ ch: "actor.child", seq: 5, control: {
+      type: "actor_snapshot_required", reason: "initial", cursor: 5,
+    } })
+    socket.emit({ ch: "actor.child", seq: 4, control: {
+      type: "actor_snapshot_required", reason: "gap", cursor: 4,
+    } })
+    socket.emit({ ch: "actor.child", seq: 6, event })
+    expect(onControl).toHaveBeenCalledTimes(1)
+    expect(onEvent).toHaveBeenCalledTimes(1)
+    expect(onGap).not.toHaveBeenCalled()
+    subscription.close()
+  })
+
   it("invalidates a reused Actor cursor after reconnect without losing duplicate suppression within the new socket", () => {
     vi.useFakeTimers()
     const onEvent = vi.fn()
