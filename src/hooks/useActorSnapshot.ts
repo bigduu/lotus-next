@@ -29,7 +29,7 @@ export function useActorSnapshot(rootId: string | null, active: boolean, interes
   const [state, setState] = useState<SnapshotState>({ rootId: null, snapshot: null, loading: false, error: null, gapReason: null })
   const generation = useRef(0)
   const request = useRef<AbortController | null>(null)
-  const refreshQueued = useRef(false)
+  const refreshQueued = useRef<{ rootId: string | null; actorId: string | null } | null>(null)
   const refreshAfterFlight = useRef(false)
   const snapshotRef = useRef<ActorSubtreeSnapshot | null>(null)
   const scope = useRef({ rootId, active, interestedActorId })
@@ -67,13 +67,15 @@ export function useActorSnapshot(rootId: string | null, active: boolean, interes
     }
   }, [])
   const queueRefresh = useCallback(() => {
-    if (refreshQueued.current) return
-    refreshQueued.current = true
     const { rootId: queuedRoot, interestedActorId: queuedActor } = scope.current
+    const alreadyQueued = refreshQueued.current !== null
+    refreshQueued.current = { rootId: queuedRoot, actorId: queuedActor }
+    if (alreadyQueued) return
     queueMicrotask(() => {
-      refreshQueued.current = false
-      if (!queuedRoot || scope.current.rootId !== queuedRoot ||
-        scope.current.interestedActorId !== queuedActor || !scope.current.active) return
+      const queued = refreshQueued.current
+      refreshQueued.current = null
+      if (!queued?.rootId || scope.current.rootId !== queued.rootId ||
+        scope.current.interestedActorId !== queued.actorId || !scope.current.active) return
       if (request.current) { refreshAfterFlight.current = true; return }
       void refresh()
     })

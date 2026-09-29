@@ -58,6 +58,84 @@ describe("public Actor interest", () => {
     expect(state.gapReason).toBeNull()
   })
 
+  it("reads state added after the HTTP snapshot on initial, gap and reconnect controls", async () => {
+    await mount("root", true, "actor-0")
+    const handlers = vi.mocked(subscribeActor).mock.calls[0][1]
+    const afterSubscribe = actorSnapshotFixture()
+    afterSubscribe.nodes[1].revision.session_metadata_version = 8
+    vi.mocked(getActorSnapshot).mockResolvedValueOnce(afterSubscribe)
+    await act(async () => {
+      handlers.onControl({ type: "actor_snapshot_required", reason: "initial", cursor: 5 })
+      await Promise.resolve()
+    })
+    expect(state.snapshot?.nodes[1].revision.session_metadata_version).toBe(8)
+    expect(state.gapReason).toBeNull()
+
+    const afterGap = actorSnapshotFixture()
+    afterGap.nodes[1].revision.session_metadata_version = 9
+    vi.mocked(getActorSnapshot).mockResolvedValueOnce(afterGap)
+    await act(async () => {
+      handlers.onControl({ type: "actor_snapshot_required", reason: "gap", cursor: 1 })
+      await Promise.resolve()
+    })
+    expect(getActorSnapshot).toHaveBeenCalledTimes(3)
+    expect(state.snapshot?.nodes[1].revision.session_metadata_version).toBe(9)
+    expect(state.snapshot?.stream_cursor).toBeNull()
+    expect(state.gapReason).toBe("transport_gap")
+
+    const afterReconnect = actorSnapshotFixture()
+    afterReconnect.nodes[1].revision.session_metadata_version = 10
+    vi.mocked(getActorSnapshot).mockResolvedValueOnce(afterReconnect)
+    await act(async () => { handlers.onGap(); await Promise.resolve() })
+    expect(getActorSnapshot).toHaveBeenCalledTimes(4)
+    expect(state.snapshot?.nodes[1].revision.session_metadata_version).toBe(10)
+    expect(state.gapReason).toBe("transport_gap")
+  })
+
+  it("keeps the new Actor's cached initial refresh when the old Actor already queued one", async () => {
+    await mount("root", true, "actor-0")
+    const oldHandlers = vi.mocked(subscribeActor).mock.calls[0][1]
+    vi.mocked(subscribeActor).mockImplementationOnce((actorId, handlers) => {
+      expect(actorId).toBe("actor-1")
+      handlers.onControl({ type: "actor_snapshot_required", reason: "initial", cursor: 9 })
+      return { close: vi.fn() }
+    })
+    const event = { type: "actor_changed" as const, actor_id: "actor-0", root_actor_id: "root",
+      parent_actor_id: "root", activation_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      attempt: 1, event_id: `ae1-${"a".repeat(64)}`, class: "lifecycle" as const }
+    act(() => {
+      oldHandlers.onEvent(event, 2)
+      root.render(<Harness id="root" active actorId="actor-1" />)
+    })
+    expect(subscribeActor).toHaveBeenCalledTimes(2)
+    await act(async () => { await Promise.resolve() })
+    expect(getActorSnapshot).toHaveBeenCalledTimes(2)
+  })
+
+  it("runs a trailing read when an event arrives during an initial-control refresh", async () => {
+    const first = deferred(); const second = deferred(); const third = deferred()
+    vi.mocked(getActorSnapshot).mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise).mockReturnValueOnce(third.promise)
+    await mount("root", true, "actor-0")
+    await act(async () => first.resolve(actorSnapshotFixture()))
+    const handlers = vi.mocked(subscribeActor).mock.calls[0][1]
+    await act(async () => {
+      handlers.onControl({ type: "actor_snapshot_required", reason: "initial", cursor: 1 })
+      await Promise.resolve()
+    })
+    expect(getActorSnapshot).toHaveBeenCalledTimes(2)
+    handlers.onEvent({ type: "actor_changed", actor_id: "actor-0", root_actor_id: "root",
+      parent_actor_id: "root", activation_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      attempt: 1, event_id: `ae1-${"b".repeat(64)}`, class: "lifecycle" }, 2)
+    await act(async () => { await Promise.resolve() })
+    expect(getActorSnapshot).toHaveBeenCalledTimes(2)
+    await act(async () => second.resolve(actorSnapshotFixture()))
+    expect(getActorSnapshot).toHaveBeenCalledTimes(3)
+    const current = actorSnapshotFixture()
+    current.nodes[1].revision.session_metadata_version = 8
+    await act(async () => third.resolve(current))
+    expect(state.snapshot?.nodes[1].revision.session_metadata_version).toBe(8)
+  })
+
   it("retains typed transport and activation gaps after a new snapshot with no replay cursor", async () => {
     await mount("root", true, "actor-0")
     const handlers = vi.mocked(subscribeActor).mock.calls[0][1]
