@@ -206,6 +206,22 @@ const sameTreeNode = (left: ActorTreeNode, right: ActorTreeNode): boolean =>
   left.health === right.health && left.queuedCount === right.queuedCount &&
   left.waitingForCount === right.waitingForCount && left.pendingRequestCount === right.pendingRequestCount
 
+/** Show the last durable activation outcome when the logical actor is idle. */
+const snapshotLifecycle = (node: PublicActorSnapshotNode): ActorTreeNode["lifecycle"] => {
+  if (node.logical_state === "retired" || node.logical_state === "failed" || node.logical_state === null) {
+    return node.logical_state ?? "unknown"
+  }
+  if (node.logical_state === "active") {
+    if (node.activation?.status === "reserved") return "queued"
+    if (node.activation?.status === "running") return "running"
+  }
+  if (node.logical_state === "cold") {
+    if (node.activation?.status === "succeeded") return "completed"
+    if (node.activation?.status === "cancelled") return "cancelled"
+  }
+  return node.logical_state
+}
+
 /** Snapshot-only rendering never fabricates per-Actor event cursors. */
 export function actorSnapshotTree(
   snapshot: ActorSubtreeSnapshot,
@@ -220,7 +236,7 @@ export function actorSnapshotTree(
     const projected: ActorTreeNode = {
       actorId: node.actor_id, parentActorId: node.parent_actor_id, depth: node.depth,
       title: node.title, role: node.role === "root" ? "根代理" : "子代理",
-      lifecycle: node.logical_state ?? "unknown", placement: node.placement_class ?? "unknown",
+      lifecycle: snapshotLifecycle(node), placement: node.placement_class ?? "unknown",
       health: null, queuedCount: null, waitingForCount: null, pendingRequestCount: null,
     }
     const old = prior?.byId[node.actor_id]
