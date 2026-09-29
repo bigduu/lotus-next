@@ -403,7 +403,7 @@ describe("snapshot-only ActorTree panel", () => {
     await act(async () => root.render(<ActorSnapshotPanel rootId="root" active selectedActorId="root" onSelectActor={selected} />))
     expect(host.textContent).toContain("健康与队列信息尚未提供")
     const child = host.querySelector<HTMLElement>('[data-actor-id="actor-0"]')!
-    expect(child.getAttribute("aria-label")).toContain("活动记录，远端，健康状态未知")
+    expect(child.getAttribute("aria-label")).toContain("运行中，远端，健康状态未知")
     act(() => child.querySelector<HTMLElement>("[data-actor-toggle]")!.click())
     expect(selected).not.toHaveBeenCalled(); expect(getActorSnapshot).toHaveBeenCalledOnce()
     expect(host.querySelectorAll('[role="treeitem"]').length).toBeLessThan(30)
