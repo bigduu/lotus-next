@@ -5,13 +5,15 @@ import { useActorSnapshot } from "@/hooks/useActorSnapshot"
 import { actorSnapshotTree } from "@/services/chat/actorSnapshot"
 import { ActorTree } from "./ActorTree"
 
-export function ActorSnapshotPanel({ rootId, active, selectedActorId, onSelectActor }: {
+export function ActorSnapshotPanel({ rootId, active, selectedActorId, descendantCountHint = null, onSelectActor }: {
   rootId: string | null
   active: boolean
   selectedActorId: string | null
+  /** Invalidates the view; the authenticated snapshot remains the authority. */
+  descendantCountHint?: number | null
   onSelectActor: (actorId: string) => void
 }) {
-  const state = useActorSnapshot(rootId, active, selectedActorId)
+  const state = useActorSnapshot(rootId, active, selectedActorId, descendantCountHint)
   const tree = useMemo(() => state.snapshot ? actorSnapshotTree(state.snapshot, state.loading) : {
     rootActorId: rootId ?? "", byId: Object.create(null), childrenById: Object.create(null), needsSnapshot: state.loading,
   }, [state.snapshot, state.loading, rootId])
@@ -22,7 +24,9 @@ export function ActorSnapshotPanel({ rootId, active, selectedActorId, onSelectAc
         {rootId ? <Button size="sm" variant="ghost" disabled={state.loading} onClick={() => { void state.refresh() }} aria-label="刷新代理结构"><RefreshCw /></Button> : null}
       </div>
       {state.gapReason ? <p role="status" data-actor-gap={state.gapReason} className="px-3 pb-2 text-xs text-muted-foreground">
-        代理事件出现间隙；已重新读取状态，但事件连续性仍无法确认。
+        {state.gapReason === "snapshot_regression"
+          ? "代理结构返回了较旧版本；已保留上次确认的状态，请重新读取。"
+          : "代理事件出现间隙；已重新读取状态，但事件连续性仍无法确认。"}
       </p> : null}
       {rootId ? <ActorTree topology={tree} selectedActorId={selectedActorId} onSelectActor={onSelectActor}
         error={state.error} onRetry={() => { void state.refresh() }} />

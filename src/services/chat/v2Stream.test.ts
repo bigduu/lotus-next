@@ -28,6 +28,7 @@ import {
   stopAgent,
   subscribeAgent,
   subscribeActor,
+  subscribeActorTree,
   subscribeFeed,
   subscribeMessages,
   type AgentEventDispatch,
@@ -1606,6 +1607,99 @@ describe("v2Stream shared WebSocket client", () => {
     expect(reconnected.parsedSent()).toContainEqual({ type: "subscribe", ch: "actor.child", since: 8 })
     second.close()
     expect(reconnected.parsedSent()).toContainEqual({ type: "unsubscribe", ch: "actor.child" })
+  })
+
+  it("multiplexes a durable Root tree cursor and admits only exact tree controls", () => {
+    const cursor = `at1-${"a".repeat(64)}-7`
+    const next = `at1-${"a".repeat(64)}-8`
+    const onControl = vi.fn()
+    const onGap = vi.fn()
+    const feed = subscribeFeed({ onChange: vi.fn() }, 0)
+    const tree = subscribeActorTree("root", cursor, { onControl, onGap })
+    const socket = lastSocket()
+    expect(sockets).toHaveLength(1)
+    socket.open()
+    expect(socket.parsedSent()).toContainEqual({ type: "subscribe_tree", ch: "tree.root", cursor })
+    socket.emit({ ch: "tree.root", seq: 8, control: {
+      type: "actor_snapshot_required", reason: "changed", cursor: next,
+    } })
+    expect(onControl).toHaveBeenCalledExactlyOnceWith({ type: "actor_snapshot_required", reason: "changed", cursor: next })
+    socket.emit({ ch: "tree.root", seq: 8, control: {
+      type: "actor_snapshot_required", reason: "changed", cursor: next,
+    } })
+    expect(onControl).toHaveBeenCalledOnce()
+    socket.emit({ ch: "tree.root", seq: 9, control: {
+      type: "actor_snapshot_required", reason: "gap", cursor: next,
+    } })
+    socket.emit({ ch: "tree.root", seq: 9, control: {
+      type: "actor_snapshot_required", reason: "gap", cursor: next, private_token: "secret",
+    } })
+    expect(onControl).toHaveBeenCalledOnce()
+    expect(onGap).toHaveBeenCalledOnce()
+    tree.close()
+    expect(socket.parsedSent()).toContainEqual({ type: "unsubscribe", ch: "tree.root" })
+    feed.close()
+  })
+
+  it("resumes tree observation from the same durable token after reconnect without a second socket", () => {
+    vi.useFakeTimers()
+    const cursor = `at1-${"a".repeat(64)}-7`
+    const onControl = vi.fn()
+    const onGap = vi.fn()
+    const tree = subscribeActorTree("root", cursor, { onControl, onGap })
+    const first = lastSocket()
+    first.open()
+    first.drop()
+    vi.advanceTimersByTime(500)
+    const second = lastSocket()
+    second.open()
+    expect(second.parsedSent()).toContainEqual({ type: "subscribe_tree", ch: "tree.root", cursor })
+    expect(onGap).toHaveBeenCalledOnce()
+    first.emit({ ch: "tree.root", seq: 8, control: {
+      type: "actor_snapshot_required", reason: "changed", cursor: `at1-${"a".repeat(64)}-8`,
+    } })
+    expect(onControl).not.toHaveBeenCalled()
+    tree.close()
+  })
+
+  it("keeps a legacy Root cursor null and requires a fresh snapshot directive", () => {
+    const onControl = vi.fn()
+    const onGap = vi.fn()
+    const tree = subscribeActorTree("root", null, { onControl, onGap })
+    const socket = lastSocket()
+    socket.open()
+    expect(socket.parsedSent()).toContainEqual({ type: "subscribe_tree", ch: "tree.root" })
+    socket.emit({ ch: "tree.root", seq: 0, control: {
+      type: "actor_snapshot_required", reason: "initial", cursor: null,
+    } })
+    expect(onControl).toHaveBeenCalledOnce()
+    socket.emit({ ch: "tree.root", seq: 0, control: {
+      type: "actor_snapshot_required", reason: "changed", cursor: null,
+    } })
+    expect(onGap).toHaveBeenCalledOnce()
+    tree.close()
+  })
+
+  it("updates an existing tree subscription only with a newer snapshot cursor", () => {
+    const firstCursor = `at1-${"a".repeat(64)}-7`
+    const nextCursor = `at1-${"a".repeat(64)}-8`
+    expect(() => subscribeActorTree("root", `at1-${"a".repeat(64)}-08`, {
+      onControl: vi.fn(), onGap: vi.fn(),
+    })).toThrow("Invalid Actor tree subscription")
+    expect(sockets).toHaveLength(0)
+    const first = subscribeActorTree("root", firstCursor, { onControl: vi.fn(), onGap: vi.fn() })
+    const socket = lastSocket()
+    socket.open()
+    const second = subscribeActorTree("root", nextCursor, { onControl: vi.fn(), onGap: vi.fn() })
+    expect(sockets).toHaveLength(1)
+    expect(socket.parsedSent().filter((frame) => frame.type === "subscribe_tree")).toEqual([
+      { type: "subscribe_tree", ch: "tree.root", cursor: firstCursor },
+      { type: "subscribe_tree", ch: "tree.root", cursor: nextCursor },
+    ])
+    first.close()
+    expect(socket.parsedSent()).not.toContainEqual({ type: "unsubscribe", ch: "tree.root" })
+    second.close()
+    expect(socket.parsedSent()).toContainEqual({ type: "unsubscribe", ch: "tree.root" })
   })
 
   it("does not let a stale Actor snapshot control rewind the current socket cursor", () => {

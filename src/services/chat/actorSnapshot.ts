@@ -23,8 +23,53 @@ export interface ActorSubtreeSnapshot {
   subtree_actor_id: string
   /** Equality identity only; never an ordering or replay cursor. */
   snapshot_id: string
-  stream_cursor: null
+  /** Durable Root tree cursor; null on an older Root without revision authority. */
+  stream_cursor: string | null
   nodes: PublicActorSnapshotNode[]
+}
+
+export interface ActorTreeCursor {
+  scope: string
+  revision: number
+}
+
+/** Preserve the producer's canonical scope digest and safe revision exactly. */
+export function parseActorTreeCursor(value: unknown): ActorTreeCursor | null {
+  if (typeof value !== "string") return null
+  const parts = /^at1-([0-9a-f]{64})-([1-9][0-9]*)$/.exec(value)
+  if (!parts) return null
+  const revision = Number(parts[2])
+  return Number.isSafeInteger(revision) && revision > 0 ? { scope: parts[1], revision } : null
+}
+
+/** One REST snapshot covers a tree directive only within the same durable scope. */
+export function actorTreeCursorCovers(snapshot: string | null, required: string | null): boolean {
+  const observed = parseActorTreeCursor(snapshot)
+  const gap = parseActorTreeCursor(required)
+  return observed !== null && gap !== null && observed.scope === gap.scope && observed.revision >= gap.revision
+}
+
+/**
+ * A durable Root cursor orders complete tree snapshots, including removal and
+ * private revisions that leave snapshot_id unchanged. Per-Actor revisions
+ * still reject an individually regressed row when both views contain it.
+ */
+export function actorSnapshotRegresses(previous: ActorSubtreeSnapshot, next: ActorSubtreeSnapshot): boolean {
+  if (previous.root_actor_id !== next.root_actor_id || previous.subtree_actor_id !== next.subtree_actor_id) return false
+  if (previous.stream_cursor !== null && !actorTreeCursorCovers(next.stream_cursor, previous.stream_cursor)) return true
+  const known = new Map(previous.nodes.map((node) => [node.actor_id, node]))
+  for (const node of next.nodes) {
+    const prior = known.get(node.actor_id)
+    if (!prior) continue
+    if (node.revision.session_metadata_version < prior.revision.session_metadata_version) return true
+    const priorDirectory = prior.revision.actor_directory_revision
+    const nextDirectory = node.revision.actor_directory_revision
+    if (priorDirectory !== null && nextDirectory !== null && nextDirectory < priorDirectory) return true
+    if (prior.activation && node.activation && node.activation.attempt < prior.activation.attempt) return true
+    if (priorDirectory !== null && nextDirectory === priorDirectory && prior.activation && node.activation &&
+      node.activation.attempt === prior.activation.attempt && node.activation.activation_id !== prior.activation.activation_id) return true
+  }
+  return false
 }
 
 export class InvalidActorSnapshotError extends Error {
@@ -65,7 +110,7 @@ export function parseActorSnapshot(value: unknown, rootId: string, subtreeId = r
   const response = object(value, ["schema_version", "root_actor_id", "subtree_actor_id", "snapshot_id", "stream_cursor", "nodes"])
   if (response.schema_version !== 1 || response.root_actor_id !== rootId || response.subtree_actor_id !== subtreeId
     || typeof response.snapshot_id !== "string" || response.snapshot_id.length !== 68 || !/^as1-[0-9a-f]{64}$/.test(response.snapshot_id)
-    || response.stream_cursor !== null || !Array.isArray(response.nodes)
+    || (response.stream_cursor !== null && !parseActorTreeCursor(response.stream_cursor)) || !Array.isArray(response.nodes)
     || response.nodes.length === 0 || response.nodes.length > ACTOR_SNAPSHOT_MAX_NODES) return invalid()
 
   const nodes: PublicActorSnapshotNode[] = []
@@ -121,7 +166,7 @@ export function parseActorSnapshot(value: unknown, rootId: string, subtreeId = r
   }
   if (seen.size !== nodes.length) return invalid()
   return { schema_version: 1, root_actor_id: rootId, subtree_actor_id: subtreeId,
-    snapshot_id: response.snapshot_id, stream_cursor: null, nodes }
+    snapshot_id: response.snapshot_id, stream_cursor: response.stream_cursor as string | null, nodes }
 }
 
 /** A bounded body read through the existing authenticated cancellation kernel. */
@@ -154,7 +199,7 @@ export async function getActorSnapshot(rootId: string, subtreeId = rootId, signa
   return parseActorSnapshot(value, rootId, subtreeId)
 }
 
-/** Snapshot-only rendering never fabricates directory revisions or event cursors. */
+/** Snapshot-only rendering never fabricates per-Actor event cursors. */
 export function actorSnapshotTree(snapshot: ActorSubtreeSnapshot, loading = false): ActorTreeData {
   const byId: Record<string, ActorTreeNode> = Object.create(null)
   const childrenById: Record<string, string[]> = Object.create(null)

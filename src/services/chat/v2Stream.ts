@@ -96,6 +96,17 @@ export interface ActorChannelHandlers {
   onGap: () => void;
 }
 
+export interface ActorTreeSnapshotRequired {
+  type: "actor_snapshot_required";
+  reason: "initial" | "gap" | "changed" | "unavailable";
+  cursor: string | null;
+}
+
+export interface ActorTreeChannelHandlers {
+  onControl: (control: ActorTreeSnapshotRequired) => void;
+  onGap: () => void;
+}
+
 /**
  * Dispatch a fully-parsed AgentEvent to the appropriate AgentEventHandlers
  * callback. Injected by AgentService so the WS path reuses its single
@@ -158,6 +169,15 @@ interface ActorChannel {
   lastControl: ActorSnapshotRequired | null;
 }
 
+interface ActorTreeChannel {
+  rootId: string;
+  subscribers: Set<ActorTreeChannelHandlers>;
+  /** Last authoritative REST snapshot cursor, never advanced by WS controls. */
+  cursor: string | null;
+  gapNotified: boolean;
+  lastControl: ActorTreeSnapshotRequired | null;
+}
+
 type ServerFrame = {
   type?: string;
   ch?: string;
@@ -177,6 +197,21 @@ const hasExactKeys = (value: Record<string, unknown>, keys: readonly string[]): 
 
 const isSafeNonNegativeInteger = (value: unknown): value is number =>
   typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+
+// Keep the WebSocket boundary free of the REST client module and its runtime
+// setup. Both boundaries accept the same canonical Bamboo tree token shape.
+const treeCursor = (value: unknown): { scope: string; revision: number } | null => {
+  if (typeof value !== "string") return null;
+  const parts = /^at1-([0-9a-f]{64})-([1-9][0-9]*)$/.exec(value);
+  if (!parts) return null;
+  const revision = Number(parts[2]);
+  return Number.isSafeInteger(revision) && revision > 0 ? { scope: parts[1], revision } : null;
+};
+const treeCursorCovers = (observed: string | null, required: string | null): boolean => {
+  const latest = treeCursor(observed);
+  const gap = treeCursor(required);
+  return latest !== null && gap !== null && latest.scope === gap.scope && latest.revision >= gap.revision;
+};
 
 const isTerminalReason = (value: unknown): value is MessageTerminalReason =>
   value === "complete" || value === "cancelled" || value === "error";
@@ -417,16 +452,35 @@ export const isFeedOpen = (): boolean =>
 const agentChannels = new Map<string, Set<AgentChannel>>();
 const messageChannels = new Map<string, Set<MessageChannel>>();
 const actorChannels = new Map<string, ActorChannel>();
+const actorTreeChannels = new Map<string, ActorTreeChannel>();
 
 const agentCh = (sessionId: string): string => `agent.${sessionId}`;
 const messageCh = (sessionId: string): string => `message.${sessionId}`;
 const actorCh = (actorId: string): string => `actor.${actorId}`;
+const actorTreeCh = (rootId: string): string => `tree.${rootId}`;
 
 const hasSubscriptions = (): boolean =>
   (feedChannel !== null && !feedChannel.deliveryFailed) ||
   agentChannels.size > 0 ||
   messageChannels.size > 0 ||
-  actorChannels.size > 0;
+  actorChannels.size > 0 ||
+  actorTreeChannels.size > 0;
+
+const treeControlFromFrame = (frame: ServerFrame, rootId: string): ActorTreeSnapshotRequired | null => {
+  if (!isRecord(frame) || !hasExactKeys(frame, ["ch", "seq", "control"]) || frame.ch !== actorTreeCh(rootId)
+    || !isRecord(frame.control) || !hasExactKeys(frame.control, ["type", "reason", "cursor"])
+    || frame.control.type !== "actor_snapshot_required") return null;
+  const reason = frame.control.reason;
+  if (reason !== "initial" && reason !== "gap" && reason !== "changed" && reason !== "unavailable") return null;
+  const cursor = frame.control.cursor;
+  if (cursor === null) {
+    if (frame.seq !== 0 || reason === "changed") return null;
+  } else {
+    const parsed = treeCursor(cursor);
+    if (!parsed || frame.seq !== parsed.revision || reason === "unavailable") return null;
+  }
+  return { type: "actor_snapshot_required", reason, cursor: cursor as string | null };
+};
 
 /**
  * Whether the LIVE socket negotiated the MessagePack subprotocol. Decided from
@@ -519,6 +573,11 @@ const subscribeAll = (ws: WebSocket): boolean => {
     if (!sendOnSocket(ws, channel.cursor === null
       ? { type: "subscribe", ch }
       : { type: "subscribe", ch, since: channel.cursor })) return false;
+  }
+  for (const [ch, channel] of actorTreeChannels) {
+    if (!sendOnSocket(ws, channel.cursor === null
+      ? { type: "subscribe_tree", ch }
+      : { type: "subscribe_tree", ch, cursor: channel.cursor })) return false;
   }
   return true;
 };
@@ -842,6 +901,20 @@ const acknowledgeWelcome = (liveness: SocketLiveness): void => {
         }
       }
     }
+    // The tree token remains durable across socket epochs. A new REST read
+    // can cover the interrupted interval, while subscribe_tree resumes from
+    // that same token on this replacement socket.
+    for (const channel of [...actorTreeChannels.values()]) {
+      channel.lastControl = null;
+      channel.gapNotified = true;
+      for (const handlers of [...channel.subscribers]) {
+        try {
+          handlers.onGap();
+        } catch (error) {
+          debugLog("[v2Stream]", "tree.gap_listener_error", { error });
+        }
+      }
+    }
   }
 
   if (feedChannel && !feedChannel.deliveryFailed && feedChannel.subscribedSince !== null) {
@@ -976,6 +1049,25 @@ const handleFrame = (
       return;
     }
     for (const channel of [...subscribers]) channel.handlers.onEvent(parsed);
+    return;
+  }
+
+  if (ch.startsWith("tree.")) {
+    const channel = actorTreeChannels.get(ch);
+    if (!channel) return;
+    const parsed = treeControlFromFrame(frame, channel.rootId);
+    if (!parsed) {
+      if (!channel.gapNotified) {
+        channel.gapNotified = true;
+        for (const handlers of [...channel.subscribers]) handlers.onGap();
+      }
+      return;
+    }
+    if (parsed.cursor !== null && treeCursorCovers(channel.cursor, parsed.cursor)) return;
+    if (channel.lastControl?.reason === parsed.reason && channel.lastControl.cursor === parsed.cursor) return;
+    channel.lastControl = parsed;
+    channel.gapNotified = false;
+    for (const handlers of [...channel.subscribers]) handlers.onControl(parsed);
     return;
   }
 
@@ -1331,6 +1423,69 @@ export const subscribeActor = (
   };
 };
 
+/** Observe one authorized Root tree on the existing authenticated v2 socket. */
+export const subscribeActorTree = (
+  rootId: string,
+  cursor: string | null,
+  handlers: ActorTreeChannelHandlers,
+): FeedSubscription => {
+  if (!validActorId(rootId) || (cursor !== null && !treeCursor(cursor))) {
+    throw new Error("Invalid Actor tree subscription");
+  }
+  const ch = actorTreeCh(rootId);
+  let channel = actorTreeChannels.get(ch);
+  let subscribe = !channel;
+  let staleCaller = false;
+  if (!channel) {
+    channel = { rootId, subscribers: new Set(), cursor, gapNotified: false, lastControl: null };
+    actorTreeChannels.set(ch, channel);
+  } else if (channel.cursor !== cursor) {
+    if (cursor !== null && (channel.cursor === null || treeCursorCovers(cursor, channel.cursor))) {
+      channel.cursor = cursor;
+      channel.lastControl = null;
+      channel.gapNotified = false;
+      subscribe = true;
+    } else if (cursor !== null && treeCursorCovers(channel.cursor, cursor)) {
+      staleCaller = true;
+    } else {
+      // Conflicting scopes or a lost cursor cannot silently inherit another
+      // subscriber's authority. Ask Bamboo for an initial directive again.
+      channel.cursor = null;
+      channel.lastControl = null;
+      channel.gapNotified = true;
+      subscribe = true;
+    }
+  }
+  const currentChannel = channel;
+  currentChannel.subscribers.add(handlers);
+  if (socket && isSocketReady(socket)) {
+    if (subscribe && !sendOnSocket(socket, currentChannel.cursor === null
+      ? { type: "subscribe_tree", ch }
+      : { type: "subscribe_tree", ch, cursor: currentChannel.cursor })) {
+      const liveness = socketLiveness;
+      if (liveness) failSocketEpoch(liveness, "tree-subscribe-send-failed");
+    }
+  } else {
+    connect();
+  }
+  if (currentChannel.gapNotified || staleCaller) handlers.onGap();
+  else if (currentChannel.lastControl) handlers.onControl(currentChannel.lastControl);
+
+  let closed = false;
+  return {
+    close() {
+      if (closed) return;
+      closed = true;
+      currentChannel.subscribers.delete(handlers);
+      if (currentChannel.subscribers.size === 0 && actorTreeChannels.get(ch) === currentChannel) {
+        actorTreeChannels.delete(ch);
+        if (isSocketReady()) send({ type: "unsubscribe", ch });
+        closeIfIdle();
+      }
+    },
+  };
+};
+
 /** Test-only: reset the singleton state between cases. */
 export const __resetV2StreamForTests = (): void => {
   clearReconnectTimer();
@@ -1345,4 +1500,5 @@ export const __resetV2StreamForTests = (): void => {
   agentChannels.clear();
   messageChannels.clear();
   actorChannels.clear();
+  actorTreeChannels.clear();
 };
