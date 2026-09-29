@@ -1,8 +1,9 @@
-import { useMemo } from "react"
+import { useEffect, useMemo, useRef } from "react"
 import { RefreshCw } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { useActorSnapshot } from "@/hooks/useActorSnapshot"
 import { actorSnapshotTree } from "@/services/chat/actorSnapshot"
+import type { ActorTreeData } from "@/services/chat/actorTreeView"
 import { ActorTree } from "./ActorTree"
 
 export function ActorSnapshotPanel({ rootId, active, selectedActorId, descendantCountHint = null, onSelectActor }: {
@@ -14,9 +15,11 @@ export function ActorSnapshotPanel({ rootId, active, selectedActorId, descendant
   onSelectActor: (actorId: string) => void
 }) {
   const state = useActorSnapshot(rootId, active, selectedActorId, descendantCountHint)
-  const tree = useMemo(() => state.snapshot ? actorSnapshotTree(state.snapshot, state.loading) : {
+  const previousTree = useRef<ActorTreeData | undefined>(undefined)
+  const tree = useMemo(() => state.snapshot ? actorSnapshotTree(state.snapshot, state.loading, previousTree.current) : {
     rootActorId: rootId ?? "", byId: Object.create(null), childrenById: Object.create(null), needsSnapshot: state.loading,
   }, [state.snapshot, state.loading, rootId])
+  useEffect(() => { previousTree.current = tree }, [tree])
   return (
     <section className="rounded-lg border" data-actor-snapshot-panel aria-busy={state.loading}>
       <div className="flex items-center justify-between gap-2 px-3 py-2 text-xs text-muted-foreground">

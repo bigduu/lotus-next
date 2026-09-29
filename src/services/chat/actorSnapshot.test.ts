@@ -23,6 +23,23 @@ describe("authorized actor snapshot DTO", () => {
     expect(tree.byId["actor-0"]).toMatchObject({ lifecycle: "active", placement: "remote", health: null })
   })
 
+  it("reconciles a 129-node snapshot by reusing unchanged normalized actors", () => {
+    const first = actorSnapshotTree(parseActorSnapshot(actorSnapshotFixture(), "root"))
+    const unchanged = actorSnapshotTree(parseActorSnapshot(actorSnapshotFixture(), "root"), false, first)
+    expect(unchanged).toBe(first)
+
+    const moved = actorSnapshotFixture()
+    moved.nodes[65].parent_actor_id = "actor-0"
+    moved.nodes[65].depth = 2
+    const next = actorSnapshotTree(parseActorSnapshot(moved, "root"), false, first)
+    expect(next).not.toBe(first)
+    expect(next.byId["actor-64"]).not.toBe(first.byId["actor-64"])
+    expect(next.byId["actor-63"]).toBe(first.byId["actor-63"])
+    expect(next.childrenById["actor-0"]).not.toBe(first.childrenById["actor-0"])
+    expect(next.childrenById["actor-8"]).not.toBe(first.childrenById["actor-8"])
+    expect(next.childrenById["root"]).toBe(first.childrenById["root"])
+  })
+
   it("accepts a canonical durable tree cursor and orders complete views independently of snapshot_id", () => {
     const first = parseActorSnapshot(actorSnapshotFixture("root", 1, treeCursor(7)), "root")
     const second = parseActorSnapshot(actorSnapshotFixture("root", 0, treeCursor(8)), "root")
