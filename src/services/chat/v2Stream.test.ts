@@ -1608,6 +1608,49 @@ describe("v2Stream shared WebSocket client", () => {
     expect(reconnected.parsedSent()).toContainEqual({ type: "unsubscribe", ch: "actor.child" })
   })
 
+  it("invalidates a reused Actor cursor after reconnect without losing duplicate suppression within the new socket", () => {
+    vi.useFakeTimers()
+    const onEvent = vi.fn()
+    const onControl = vi.fn()
+    const onGap = vi.fn()
+    const subscription = subscribeActor("child", { onEvent, onControl, onGap })
+    const first = lastSocket()
+    first.open()
+    first.emit({ ch: "actor.child", seq: 5, control: {
+      type: "actor_snapshot_required", reason: "initial", cursor: 5,
+    } })
+    const event = {
+      type: "actor_changed", actor_id: "child", root_actor_id: "root", parent_actor_id: "root",
+      activation_id: "123e4567-e89b-42d3-a456-426614174000", attempt: 1,
+      event_id: `ae1-${"a".repeat(64)}`, class: "semantic",
+    }
+    first.emit({ ch: "actor.child", seq: 6, event })
+    expect(onEvent).toHaveBeenCalledTimes(1)
+
+    first.drop()
+    vi.advanceTimersByTime(500)
+    const second = lastSocket()
+    second.open()
+    expect(second.parsedSent()).toContainEqual({ type: "subscribe", ch: "actor.child", since: 6 })
+    expect(onGap).toHaveBeenCalledOnce()
+
+    const lateGap = vi.fn()
+    const lateControl = vi.fn()
+    const late = subscribeActor("child", { onEvent: vi.fn(), onControl: lateControl, onGap: lateGap })
+    expect(lateGap).toHaveBeenCalledOnce()
+    expect(lateControl).not.toHaveBeenCalled()
+
+    const reused = { ...event, event_id: `ae1-${"b".repeat(64)}` }
+    first.emit({ ch: "actor.child", seq: 7, event: reused })
+    expect(onEvent).toHaveBeenCalledTimes(1)
+    second.emit({ ch: "actor.child", seq: 6, event: reused })
+    second.emit({ ch: "actor.child", seq: 6, event: reused })
+    expect(onEvent).toHaveBeenCalledTimes(2)
+    expect(onGap).toHaveBeenCalledOnce()
+    late.close()
+    subscription.close()
+  })
+
   it("re-subscribes message channels and validates MessagePack with the same schema", () => {
     vi.useFakeTimers()
     msgpackEnabled = true

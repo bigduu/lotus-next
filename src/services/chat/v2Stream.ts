@@ -826,6 +826,24 @@ const acknowledgeWelcome = (liveness: SocketLiveness): void => {
   startReadyLiveness(liveness);
   debugLog("[v2Stream]", "ready", { afterDrop: wasDropped });
 
+  if (wasDropped) {
+    // `since` was sent above for replay, but a restarted producer can reuse its
+    // numeric cursor. Require a fresh snapshot and accept the new epoch's first
+    // event even when its sequence is equal to the previous one.
+    for (const channel of [...actorChannels.values()]) {
+      channel.cursor = null;
+      channel.lastControl = null;
+      channel.gapNotified = true;
+      for (const handlers of [...channel.subscribers]) {
+        try {
+          handlers.onGap();
+        } catch (error) {
+          debugLog("[v2Stream]", "actor.gap_listener_error", { error });
+        }
+      }
+    }
+  }
+
   if (feedChannel && !feedChannel.deliveryFailed && feedChannel.subscribedSince !== null) {
     try {
       feedChannel.handlers.onOpen?.();
@@ -1291,7 +1309,8 @@ export const subscribeActor = (
   } else {
     connect();
   }
-  if (currentChannel.lastControl) handlers.onControl(currentChannel.lastControl);
+  if (currentChannel.gapNotified) handlers.onGap();
+  else if (currentChannel.lastControl) handlers.onControl(currentChannel.lastControl);
 
   let closed = false;
   return {
