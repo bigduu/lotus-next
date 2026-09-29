@@ -156,6 +156,27 @@ describe("public Actor interest", () => {
     expect(state.snapshot?.stream_cursor).toBeNull()
   })
 
+  it("ignores an old activation frame after a newer authorized snapshot", async () => {
+    const current = actorSnapshotFixture()
+    current.nodes[1].activation = {
+      activation_id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", attempt: 2, status: "running",
+    }
+    vi.mocked(getActorSnapshot).mockResolvedValueOnce(current)
+    await mount("root", true, "actor-0")
+    const handlers = vi.mocked(subscribeActor).mock.calls[0][1]
+    await act(async () => {
+      handlers.onEvent({
+        type: "actor_changed", actor_id: "actor-0", root_actor_id: "root", parent_actor_id: "root",
+        activation_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", attempt: 1,
+        event_id: `ae1-${"a".repeat(64)}`, class: "lifecycle",
+      }, 2)
+      await Promise.resolve()
+    })
+    expect(getActorSnapshot).toHaveBeenCalledOnce()
+    expect(state.snapshot).toBe(current)
+    expect(state.gapReason).toBeNull()
+  })
+
   it("closes a departed interest and fences late callbacks across Root switches", async () => {
     await mount("root", true, "actor-0")
     const oldHandlers = vi.mocked(subscribeActor).mock.calls[0][1]
