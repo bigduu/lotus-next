@@ -20,7 +20,55 @@ describe("authorized actor snapshot DTO", () => {
     expect(tree.byId["actor-1"]).toMatchObject({ lifecycle: "unknown", placement: "unknown", health: null, queuedCount: null, waitingForCount: null, pendingRequestCount: null })
     expect(tree).not.toHaveProperty("revision")
     expect(tree.byId["actor-0"]).not.toHaveProperty("sequence")
-    expect(tree.byId["actor-0"]).toMatchObject({ lifecycle: "active", placement: "remote", health: null })
+    expect(tree.byId["actor-0"]).toMatchObject({ lifecycle: "running", placement: "remote", health: null })
+  })
+
+  it.each([
+    ["active", "reserved", "queued"],
+    ["active", "running", "running"],
+    ["cold", "succeeded", "completed"],
+    ["cold", "cancelled", "cancelled"],
+    ["cold", null, "cold"],
+    ["failed", "failed", "failed"],
+    ["retired", "cancelled", "retired"],
+  ])("shows durable %s/%s as %s without a live content subscription", (state, status, expected) => {
+    const source = actorSnapshotFixture()
+    Object.assign(source.nodes[1], {
+      logical_state: state,
+      placement_class: status === null ? null : "remote",
+      activation: status === null ? null : {
+        activation_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", attempt: 1, status,
+      },
+    })
+    const tree = actorSnapshotTree(parseActorSnapshot(source, "root"))
+    expect(tree.byId["actor-0"].lifecycle).toBe(expected)
+  })
+
+  it("reconciles a 129-node snapshot by reusing unchanged normalized actors", () => {
+    const first = actorSnapshotTree(parseActorSnapshot(actorSnapshotFixture(), "root"))
+    const unchanged = actorSnapshotTree(parseActorSnapshot(actorSnapshotFixture(), "root"), false, first)
+    expect(unchanged).toBe(first)
+
+    const moved = actorSnapshotFixture()
+    moved.nodes[65].parent_actor_id = "actor-0"
+    moved.nodes[65].depth = 2
+    const next = actorSnapshotTree(parseActorSnapshot(moved, "root"), false, first)
+    expect(next).not.toBe(first)
+    expect(next.byId["actor-64"]).not.toBe(first.byId["actor-64"])
+    expect(next.byId["actor-63"]).toBe(first.byId["actor-63"])
+    expect(next.childrenById["actor-0"]).not.toBe(first.childrenById["actor-0"])
+    expect(next.childrenById["actor-8"]).not.toBe(first.childrenById["actor-8"])
+    expect(next.childrenById["root"]).toBe(first.childrenById["root"])
+
+    const resumed = actorSnapshotFixture()
+    Object.assign(resumed.nodes[1], {
+      revision: { session_metadata_version: 7, actor_directory_revision: 3 },
+      activation: { activation_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", attempt: 1, status: "reserved" },
+    })
+    const stateChanged = actorSnapshotTree(parseActorSnapshot(resumed, "root"), false, first)
+    expect(stateChanged.byId["actor-0"].lifecycle).toBe("queued")
+    expect(stateChanged.byId["actor-0"]).not.toBe(first.byId["actor-0"])
+    expect(stateChanged.byId["actor-63"]).toBe(first.byId["actor-63"])
   })
 
   it("accepts a canonical durable tree cursor and orders complete views independently of snapshot_id", () => {

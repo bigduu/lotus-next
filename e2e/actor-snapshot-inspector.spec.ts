@@ -61,7 +61,7 @@ test("129 persistent actors render recursively without expanding the content sub
   const panel = await openInspector(page)
   const tree = panel.getByRole("tree", { name: "代理会话结构" })
   await expect(tree).toBeVisible()
-  await expect(panel.locator('[data-actor-id="actor-0"]')).toHaveAttribute("aria-label", /活动记录，远端，健康状态未知/)
+  await expect(panel.locator('[data-actor-id="actor-0"]')).toHaveAttribute("aria-label", /运行中，远端，健康状态未知/)
   await panel.locator('[data-actor-id="actor-0"] [data-actor-toggle]').click()
   await panel.locator('[data-actor-id="actor-8"] [data-actor-toggle]').click()
   await expect(panel.locator(`[data-actor-id="${childId}"]`)).toHaveAttribute("aria-level", "4")

@@ -191,6 +191,9 @@ export function useActorSnapshot(rootId: string | null, active: boolean, interes
           markGap("scope_mismatch")
           return
         }
+        // A previous activation can still have a frame in the shared socket
+        // queue after the newer authorized snapshot has been installed.
+        if (actor.activation && event.attempt < actor.activation.attempt) return
         if (!actor.activation || actor.activation.activation_id !== event.activation_id ||
           actor.activation.attempt !== event.attempt) {
           markGap("activation_mismatch")

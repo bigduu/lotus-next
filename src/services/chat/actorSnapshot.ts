@@ -199,21 +199,59 @@ export async function getActorSnapshot(rootId: string, subtreeId = rootId, signa
   return parseActorSnapshot(value, rootId, subtreeId)
 }
 
+const sameTreeNode = (left: ActorTreeNode, right: ActorTreeNode): boolean =>
+  left.actorId === right.actorId && left.parentActorId === right.parentActorId &&
+  left.depth === right.depth && left.title === right.title && left.role === right.role &&
+  left.lifecycle === right.lifecycle && left.placement === right.placement &&
+  left.health === right.health && left.queuedCount === right.queuedCount &&
+  left.waitingForCount === right.waitingForCount && left.pendingRequestCount === right.pendingRequestCount
+
+/** Show the last durable activation outcome when the logical actor is idle. */
+const snapshotLifecycle = (node: PublicActorSnapshotNode): ActorTreeNode["lifecycle"] => {
+  if (node.logical_state === "retired" || node.logical_state === "failed" || node.logical_state === null) {
+    return node.logical_state ?? "unknown"
+  }
+  if (node.logical_state === "active") {
+    if (node.activation?.status === "reserved") return "queued"
+    if (node.activation?.status === "running") return "running"
+  }
+  if (node.logical_state === "cold") {
+    if (node.activation?.status === "succeeded") return "completed"
+    if (node.activation?.status === "cancelled") return "cancelled"
+  }
+  return node.logical_state
+}
+
 /** Snapshot-only rendering never fabricates per-Actor event cursors. */
-export function actorSnapshotTree(snapshot: ActorSubtreeSnapshot, loading = false): ActorTreeData {
+export function actorSnapshotTree(
+  snapshot: ActorSubtreeSnapshot,
+  loading = false,
+  previous?: ActorTreeData,
+): ActorTreeData {
+  const prior = previous?.rootActorId === snapshot.subtree_actor_id ? previous : undefined
   const byId: Record<string, ActorTreeNode> = Object.create(null)
-  const childrenById: Record<string, string[]> = Object.create(null)
+  const childrenById: Record<string, readonly string[]> = Object.create(null)
+  const children: Record<string, string[]> = Object.create(null)
   for (const node of snapshot.nodes) {
-    byId[node.actor_id] = {
+    const projected: ActorTreeNode = {
       actorId: node.actor_id, parentActorId: node.parent_actor_id, depth: node.depth,
       title: node.title, role: node.role === "root" ? "根代理" : "子代理",
-      lifecycle: node.logical_state ?? "unknown", placement: node.placement_class ?? "unknown",
+      lifecycle: snapshotLifecycle(node), placement: node.placement_class ?? "unknown",
       health: null, queuedCount: null, waitingForCount: null, pendingRequestCount: null,
     }
-    childrenById[node.actor_id] = []
+    const old = prior?.byId[node.actor_id]
+    byId[node.actor_id] = old && sameTreeNode(old, projected) ? old : projected
+    children[node.actor_id] = []
   }
   for (const node of snapshot.nodes) {
-    if (node.actor_id !== snapshot.subtree_actor_id && node.parent_actor_id !== null) childrenById[node.parent_actor_id].push(node.actor_id)
+    if (node.actor_id !== snapshot.subtree_actor_id && node.parent_actor_id !== null) children[node.parent_actor_id].push(node.actor_id)
   }
+  for (const [actorId, ids] of Object.entries(children)) {
+    const old = prior?.childrenById[actorId]
+    childrenById[actorId] = old && old.length === ids.length && old.every((id, index) => id === ids[index]) ? old : ids
+  }
+  if (prior && prior.needsSnapshot === loading && Object.keys(prior.byId).length === snapshot.nodes.length &&
+    snapshot.nodes.every((node) => prior.byId[node.actor_id] === byId[node.actor_id] &&
+      prior.childrenById[node.actor_id] === childrenById[node.actor_id])) return prior
   return { rootActorId: snapshot.subtree_actor_id, byId, childrenById, needsSnapshot: loading }
 }
