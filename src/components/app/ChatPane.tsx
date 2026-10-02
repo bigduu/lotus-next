@@ -293,6 +293,8 @@ export function ChatPane({
   const [workflowCmds, setWorkflowCmds] = useState<CommandItem[]>([])
   const [selectedWorkflow, setSelectedWorkflow] = useState<SelectedWorkflow | null>(null)
   const [typedWorkflow, setTypedWorkflow] = useState<TypedWorkflowDraft | null>(null)
+  const [showWorkflowCatalog, setShowWorkflowCatalog] = useState(false)
+  const [workflowCatalogOpenRequest, setWorkflowCatalogOpenRequest] = useState(0)
   const [workflowError, setWorkflowError] = useState<string | null>(null)
   const rootAuthority = useRootOrchestrationMode(currentSessionId, currentChat?.kind)
   const [rootModeConflict, setRootModeConflict] = useState<string | null>(null)
@@ -318,13 +320,14 @@ export function ChatPane({
   const changeTypedWorkflow = (value: TypedWorkflowDraft | null) => {
     workflowRevisionRef.current += 1
     setTypedWorkflow(value); setWorkflowError(null)
+    if (!value) setShowWorkflowCatalog(false)
     if (value) { setSelectedWorkflow(null); changeSelectedSkill(null) }
   }
   // Catalog selections are local to this composer/session. Do not move a
   // version from one Session authority into another, or migrate legacy drafts.
   useEffect(() => {
     workflowRevisionRef.current += 1
-    setTypedWorkflow(null); setWorkflowError(null)
+    setTypedWorkflow(null); setWorkflowError(null); setShowWorkflowCatalog(false)
   }, [currentSessionId])
   const [preview, setPreview] = useState<string | null>(null)
   const [toast, setToast] = useState<string | null>(null)
@@ -1054,11 +1057,13 @@ export function ChatPane({
           queueMode={queue.mode}
           onQueueModeChange={currentSessionId && !submissionPending ? queue.setMode : undefined}
           queueControls={currentSessionId ? <SessionGuidance key={currentSessionId} sessionId={currentSessionId} messages={queue.pending} busy={queue.busy} onCancel={(id) => void queue.cancel(id)} onPreview={setPreview} /> : null}
-          workflowControl={<WorkflowSelectionControl key={currentSessionId ?? "new"} sessionId={currentSessionId}
+          workflowControl={showWorkflowCatalog || typedWorkflow || workflowError ? <WorkflowSelectionControl key={currentSessionId ?? "new"} sessionId={currentSessionId}
             selected={typedWorkflow} onChange={changeTypedWorkflow}
+            onClose={() => { setShowWorkflowCatalog(false); if (!typedWorkflow) setWorkflowError(null) }}
+            openRequest={workflowCatalogOpenRequest}
             onArgsFocus={() => setMenusDismissed(true)}
             disabled={submissionPending || currentlyRunning || queue.hasUnconfirmed || rootMode.unsafe}
-            error={workflowError} />}
+            error={workflowError} /> : null}
           permissionControl={(
             <>
               {currentSessionId ? (
@@ -1141,6 +1146,7 @@ export function ChatPane({
           selectedWorkflow={selectedWorkflow}
           onClearWorkflow={() => changeSelectedWorkflow(null)}
           onPickWorkflow={pickWorkflow}
+          onPickCatalog={() => { setShowWorkflowCatalog(true); setWorkflowCatalogOpenRequest((value) => value + 1); setDraft(""); setMenusDismissed(true) }}
           onPickGoal={currentSessionId ? () => { launchWorkbench(onOpenInspector); setDraft(""); setMenusDismissed(true) } : undefined}
           slashQuery={slashQuery}
           atQuery={atQuery}

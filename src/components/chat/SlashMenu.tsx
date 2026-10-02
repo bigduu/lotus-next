@@ -5,6 +5,7 @@ import { cn } from "@/lib/utils"
 import { useMenuKeyboardNav } from "./useMenuKeyboardNav"
 
 type Entry =
+  | { kind: "catalog"; id: string; name: string; description: string }
   | { kind: "goal"; id: string; name: string; description: string }
   | { kind: "skill"; id: string; name: string; description: string; skill: SkillDefinition }
   | { kind: "workflow"; id: string; name: string; description: string; command: CommandItem }
@@ -23,6 +24,7 @@ export function SlashMenu({
   onPick,
   onPickWorkflow,
   onPickGoal,
+  onPickCatalog,
   onDismiss,
 }: {
   skills: SkillDefinition[]
@@ -31,12 +33,17 @@ export function SlashMenu({
   onPick: (skill: SkillDefinition) => void
   onPickWorkflow: (command: CommandItem) => void
   onPickGoal?: () => void
+  onPickCatalog?: () => void
   onDismiss?: () => void
 }) {
   const q = query.trim().toLowerCase()
   const matches = (name: string, description: string) =>
     !q || name.toLowerCase().includes(q) || description.toLowerCase().includes(q)
 
+  const catalogEntry: Entry[] = onPickCatalog &&
+    (!q || matches("目录工作流", "从 Bamboo 目录选择可执行的工作流") || "workflow".includes(q))
+    ? [{ kind: "catalog", id: "builtin-catalog", name: "目录工作流", description: "打开工作流目录，选择可执行的工作流及参数" }]
+    : []
   const entries: Entry[] = [
     ...(onPickGoal && matches("goal", "设置会话目标") ? [{ kind: "goal" as const, id: "builtin-goal", name: "goal", description: "/goal 目标内容 · 单独发送 /goal 打开设置" }] : []),
     ...skills
@@ -57,11 +64,13 @@ export function SlashMenu({
         description: w.description,
         command: w,
       })),
-  ].slice(0, 8)
+  ].slice(0, catalogEntry.length ? 7 : 8)
+  entries.push(...catalogEntry)
 
   const pick = (e: Entry) => {
     if (e.kind === "skill") onPick(e.skill)
     else if (e.kind === "workflow") onPickWorkflow(e.command)
+    else if (e.kind === "catalog") onPickCatalog?.()
     else onPickGoal?.()
   }
 
@@ -104,7 +113,7 @@ export function SlashMenu({
                     : "bg-muted text-muted-foreground",
                 )}
               >
-                {e.kind === "goal" ? "指令" : e.kind === "workflow" ? "文本展开" : "技能"}
+                {e.kind === "goal" ? "指令" : e.kind === "catalog" ? "目录选择" : e.kind === "workflow" ? "文本展开" : "技能"}
               </span>
             </span>
             {e.description ? (

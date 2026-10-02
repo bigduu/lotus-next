@@ -137,6 +137,11 @@ function notify() { for (const listener of runtime.listeners) listener() }
 function write(id: string, content: string) { runtime.state.setInputContent(id, content) }
 function composer() { if (!runtime.composer) throw new Error("Composer did not render"); return runtime.composer }
 function workflowControl() { return (composer().workflowControl as ReactElement<WorkflowControlProps>).props }
+async function openWorkflowCatalog() {
+  expect(composer().workflowControl).toBeNull()
+  await act(async () => composer().onPickCatalog?.())
+  expect(composer().workflowControl).not.toBeNull()
+}
 const typedEntry: import("@services/command/workflowCatalog").WorkflowCatalogEntry = {
   id: "review-exact", name: "Review", description: "Review", kind: "instruction", source: "workspace", revision: 9,
   winner: true, status: "valid", invocation_policy: { explicit: true }, argument_schema: { type: "object", required: ["target"], properties: { target: { type: "string" } } },
@@ -965,6 +970,17 @@ describe("Root orchestration-only control", () => {
     expect(document.querySelector('[role="alert"]')?.textContent ?? "").not.toContain("在思考强度中选择普通档位")
   })
 
+  it("opens the directory only on demand and dismisses it without leaving an empty panel", async () => {
+    const textarea = await mount(vi.fn<Send>(), "root-session")
+    expect(composer().workflowControl).toBeNull()
+    change(textarea, "/目录工作流")
+    act(() => composer().onPickCatalog?.())
+    expect(composer().workflowControl).not.toBeNull()
+    expect(composer().draft).toBe("")
+    act(() => workflowControl().onClose?.())
+    expect(composer().workflowControl).toBeNull()
+  })
+
   it.each(["root_orchestration_incompatible_mode", "workflow_revision_mismatch"])("sends typed Workflow to Bamboo and preserves draft, exact choice and durable Root on %s", async (code) => {
     vi.mocked(agentClient.getSession).mockImplementation(async (sessionId) => ({
       session: { ...rootFields, id: sessionId, kind: "root", root_orchestration_only: true, thinking_mode: "ultra" },
@@ -972,6 +988,7 @@ describe("Root orchestration-only control", () => {
     const send = vi.fn<Send>().mockResolvedValue({ kind: "unconfirmed", operationId: 1,
       workflowError: { code, message: "Bamboo rejected exact selection" } })
     const textarea = await mount(send, "root-session")
+    await openWorkflowCatalog()
     act(() => workflowControl().onChange({ entry: typedEntry, argsText: '{"target":"src"}' }))
     change(textarea, "keep original task")
     const reads = vi.mocked(agentClient.getSession).mock.calls.length
@@ -990,6 +1007,7 @@ describe("Root orchestration-only control", () => {
 
   it("rejects invalid typed arguments before sending and retains the draft", async () => {
     const send = vi.fn<Send>(); const textarea = await mount(send, "root-session")
+    await openWorkflowCatalog()
     act(() => workflowControl().onChange({ entry: typedEntry, argsText: '{}' }))
     change(textarea, "keep request"); act(() => composer().onSubmit())
     expect(send).not.toHaveBeenCalled()
@@ -999,6 +1017,7 @@ describe("Root orchestration-only control", () => {
 
   it("does not turn typed selection into queued text during a run", async () => {
     const send = vi.fn<Send>(); const textarea = await mount(send, "root-session", true)
+    await openWorkflowCatalog()
     act(() => workflowControl().onChange({ entry: typedEntry, argsText: '{"target":"src"}' }))
     change(textarea, "keep request"); act(() => composer().onSubmit())
     expect(send).not.toHaveBeenCalled(); expect(runtime.queueSend).not.toHaveBeenCalled()
@@ -1008,6 +1027,7 @@ describe("Root orchestration-only control", () => {
   it("preserves a newer typed selection across a late ACK", async () => {
     const ack = deferred<Awaited<ReturnType<Send>>>()
     const send = vi.fn<Send>().mockReturnValue(ack.promise); const textarea = await mount(send, "root-session")
+    await openWorkflowCatalog()
     act(() => workflowControl().onChange({ entry: typedEntry, argsText: '{"target":"src"}' }))
     change(textarea, "first request"); act(() => composer().onSubmit())
     act(() => workflowControl().onChange({ entry: { ...typedEntry, revision: 10 }, argsText: '{"target":"tests"}' }))
@@ -1019,6 +1039,7 @@ describe("Root orchestration-only control", () => {
     const pending = deferred<{ name: string; content: string; type: string }>()
     runtime.getWorkflow.mockReturnValueOnce(pending.promise)
     await mount(vi.fn<Send>(), "root-session")
+    await openWorkflowCatalog()
     act(() => composer().onPickWorkflow(workflowA))
     act(() => workflowControl().onChange({ entry: typedEntry, argsText: '{"target":"src"}' }))
     pending.resolve({ name: "legacy", content: "legacy instructions", type: "workflow" }); await flush()
@@ -1028,19 +1049,20 @@ describe("Root orchestration-only control", () => {
 
   it("drops typed catalog authority when switching Sessions without moving draft text", async () => {
     const send = vi.fn<Send>(); const textarea = await mount(send, "root-session")
+    await openWorkflowCatalog()
     act(() => workflowControl().onChange({ entry: typedEntry, argsText: '{"target":"src"}' }))
     change(textarea, "root draft")
     const root = roots.at(-1)!
     await act(async () => root.render(<ChatPane chat={createChat(send, "other-session")} pickedWorkspace="/picked"
       onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()} splitOpen={false}
       onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false} />))
-    expect(workflowControl().selected).toBeNull()
-    expect(workflowControl().sessionId).toBe("other-session")
+    expect(composer().workflowControl).toBeNull()
     expect(runtime.state.inputStates["root-session"]?.content).toBe("root draft")
   })
 
   it("dismisses command menus before JSON editing while preserving a slash-prefixed typed task", async () => {
     const textarea = await mount(vi.fn<Send>(), "root-session")
+    await openWorkflowCatalog()
     act(() => workflowControl().onChange({ entry: typedEntry, argsText: '{"target":"src"}' }))
     change(textarea, "/goal literal task")
     expect(composer().slashQuery).toBe("goal literal task")
