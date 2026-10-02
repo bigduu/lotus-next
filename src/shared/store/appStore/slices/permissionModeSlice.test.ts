@@ -8,7 +8,7 @@ import {
   type SessionPermissionSnapshot,
   type SessionSummary,
 } from "@services/chat/AgentService";
-import { ApiError, NetworkRequestError } from "@services/api";
+import { ApiError, NetworkRequestError, RequestTimeoutError } from "@services/api";
 import type { AppState } from "../";
 import { createChatSlice } from "./chatSessionSlice";
 import { createPermissionModeSlice } from "./permissionModeSlice";
@@ -280,6 +280,54 @@ describe("server-authoritative session permission state", () => {
     read.mockRejectedValueOnce(new SessionPermissionContractError());
     store.getState().reconcileSessionPermissionModes([unsupported]);
     await vi.waitFor(() => expect(store.getState().permissionModeRequests.a.status).toBe("unsupported"));
+    expect(patch).not.toHaveBeenCalled();
+  });
+
+  it("stops retrying a failed detail read for the same index hint but accepts a new mode hint", async () => {
+    const store = harness();
+    read.mockRejectedValueOnce(new RequestTimeoutError());
+    await store.getState().refreshSessionPermissionMode("a");
+    expect(store.getState().permissionModeRequests.a).toMatchObject({ status: "unconfirmed", error: "timeout" });
+    for (let i = 0; i < 5; i++) store.getState().reconcileSessionPermissionModes([summary()]);
+    await Promise.resolve();
+    expect(read).toHaveBeenCalledTimes(1);
+    store.getState().reconcileSessionPermissionModes([summary("a", "auto")]);
+    await vi.waitFor(() => expect(store.getState().permissionModeRequests.a.status).toBe("ready"));
+    expect(read).toHaveBeenCalledTimes(2);
+  });
+
+  it("coalesces duplicate hints during a timed-out read and allows manual retry", async () => {
+    const store = harness();
+    const pending = deferred<SessionPermissionSnapshot>(); read.mockReturnValueOnce(pending.promise).mockRejectedValueOnce(new RequestTimeoutError());
+    const first = store.getState().refreshSessionPermissionMode("a");
+    for (let i = 0; i < 5; i++) store.getState().reconcileSessionPermissionModes([summary("a", "auto")]);
+    pending.reject(new RequestTimeoutError()); await first;
+    expect(read).toHaveBeenCalledTimes(2);
+    expect(store.getState().permissionModeRequests.a).toMatchObject({ status: "unconfirmed", error: "timeout" });
+    store.getState().reconcileSessionPermissionModes([summary("a", "auto")]);
+    expect(read).toHaveBeenCalledTimes(2);
+    read.mockResolvedValueOnce(snapshot("auto", '"8"'));
+    await store.getState().refreshSessionPermissionMode("a");
+    expect(store.getState().permissionModeRequests.a.status).toBe("ready");
+  });
+
+  it("bounds alternating index hints and ends in a visible unconfirmed state", async () => {
+    const store = harness();
+    const reads = Array.from({ length: 3 }, () => deferred<SessionPermissionSnapshot>());
+    reads.forEach((pending) => read.mockReturnValueOnce(pending.promise));
+    const first = store.getState().refreshSessionPermissionMode("a");
+    store.getState().reconcileSessionPermissionModes([summary("a", "auto")]);
+    reads[0].resolve(snapshot("default"));
+    await vi.waitFor(() => expect(read).toHaveBeenCalledTimes(2));
+    store.getState().reconcileSessionPermissionModes([summary("a", "bypass")]);
+    reads[1].resolve(snapshot("auto", '"8"'));
+    await vi.waitFor(() => expect(read).toHaveBeenCalledTimes(3));
+    store.getState().reconcileSessionPermissionModes([summary("a", "default")]);
+    reads[2].resolve(snapshot("bypass", '"9"'));
+    await first;
+    expect(read).toHaveBeenCalledTimes(3);
+    expect(store.getState().permissionModeRequests.a).toMatchObject({ status: "unconfirmed", error: "stale" });
+    await store.getState().changeSessionPermissionMode("a", "auto", '"9"');
     expect(patch).not.toHaveBeenCalled();
   });
 

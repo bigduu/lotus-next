@@ -2,7 +2,7 @@ import { act } from "react"
 import { createRoot, type Root } from "react-dom/client"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { agentClient, SessionPermissionContractError, type SessionPermissionSnapshot, type SessionSummary } from "@services/chat/AgentService"
-import { ApiError, NetworkRequestError } from "@services/api"
+import { ApiError, NetworkRequestError, RequestTimeoutError } from "@services/api"
 import { useAppStore } from "@shared/store/appStore"
 import { sessionSummaryToChatItem } from "@shared/store/appStore/slices/chatSessionSlice/messageMapping"
 import i18n, { changeLocale, i18nReady } from "@shared/i18n"
@@ -24,8 +24,9 @@ const summary = (id: string): SessionSummary => ({
 })
 const deferred = <T,>() => {
   let resolve!: (value: T) => void
-  const promise = new Promise<T>((done) => { resolve = done })
-  return { promise, resolve }
+  let reject!: (error: unknown) => void
+  const promise = new Promise<T>((done, fail) => { resolve = done; reject = fail })
+  return { promise, resolve, reject }
 }
 const selector = () => {
   const select = document.querySelector<HTMLSelectElement>("select")
@@ -88,7 +89,7 @@ describe("PermissionModeControl", () => {
     await changeLocale(locale)
     for (const key of ["section", "label", "loading", "saving", "unavailable", "unconfirmed", "refresh", "readRequired",
       "help.default", "help.bypass", "help.auto", "confirmTitle", "confirmDescription", "confirm", "cancel",
-      "errors.conflict", "errors.rejected", "errors.ambiguous", "errors.unsupported", "errors.unconfirmed", "errors.stale", "errors.changed"]) {
+      "errors.conflict", "errors.rejected", "errors.ambiguous", "errors.unsupported", "errors.unconfirmed", "errors.timeout", "errors.stale", "errors.changed"]) {
       expect(i18n.getResource(locale, "translation", `chat.permissionMode.${key}`)).toEqual(expect.any(String))
     }
   })
@@ -111,6 +112,30 @@ describe("PermissionModeControl", () => {
     expect(selector().selectedOptions[0].text).toBe("Unavailable")
     expect(document.querySelector('[role="alert"]')?.textContent).toContain("never interpreted as Auto")
     expect(patch).not.toHaveBeenCalled()
+  })
+
+  it("shows timeout and retry visibly in the compact composer, then confirms the mode", async () => {
+    const pending = deferred<SessionPermissionSnapshot>(); read.mockReturnValueOnce(pending.promise)
+    await mount("a", true)
+    expect(document.querySelector('[role="status"]')?.textContent).toContain("Checking session permissions")
+    await act(async () => { pending.reject(new RequestTimeoutError()); await Promise.resolve(); await Promise.resolve() })
+    const error = document.querySelector<HTMLElement>('[role="alert"]')!
+    expect(error.textContent).toContain("timed out")
+    expect(error.className).not.toContain("sr-only")
+    expect(selector().disabled).toBe(true)
+    read.mockResolvedValueOnce(snapshot())
+    await click("Refresh mode"); await flush()
+    expect(selector().value).toBe("default")
+    expect(error.isConnected).toBe(false)
+  })
+
+  it("keeps unsupported errors visible in the compact composer", async () => {
+    read.mockRejectedValueOnce(new SessionPermissionContractError())
+    await mount("a", true)
+    const error = document.querySelector<HTMLElement>('[role="alert"]')!
+    expect(error.textContent).toContain("never interpreted as Auto")
+    expect(error.className).not.toContain("sr-only")
+    expect(button("Refresh mode")).toBeTruthy()
   })
 
   it("keeps the confirmed mode selected while saving and retains forced-confirmation Bypass copy", async () => {

@@ -174,7 +174,7 @@ export const enUsTranslation = {
       permissionMode: {
         section: "Session permissions",
         label: "Permission mode",
-        loading: "Checking mode…",
+        loading: "Checking session permissions…",
         saving: "Saving mode…",
         unavailable: "Unavailable",
         unconfirmed: "Unconfirmed",
@@ -195,6 +195,7 @@ export const enUsTranslation = {
           ambiguous: "The save response was not confirmed. The refreshed server mode is shown; no write was retried.",
           unsupported: "This backend did not provide a supported typed mode and ETag. Permission changes are unavailable; legacy Bypass is never interpreted as Auto.",
           unconfirmed: "The current permission mode could not be confirmed. Changes are disabled. Refresh the server state before trying again; no write was retried.",
+          timeout: "Checking session permissions timed out. Changes are disabled; refresh to try again.",
           stale: "An older or inconsistent response was ignored. Refresh the server state before changing permissions.",
           changed: "The session changed while you were choosing. Review the current server mode and choose again.",
         },

@@ -8,10 +8,10 @@ import {
   type SessionPermissionSnapshot,
   type SessionSummary,
 } from "@services/chat/AgentService";
-import { isApiError } from "@services/api";
+import { isApiError, RequestTimeoutError } from "@services/api";
 import type { AppState } from "../";
 
-export type PermissionModeError = "conflict" | "rejected" | "ambiguous" | "unsupported" | "unconfirmed" | "stale" | "changed";
+export type PermissionModeError = "conflict" | "rejected" | "ambiguous" | "unsupported" | "unconfirmed" | "timeout" | "stale" | "changed";
 export interface PermissionModeRequest {
   status: "loading" | "saving" | "ready" | "unsupported" | "unconfirmed";
   operationId: number;
@@ -36,6 +36,8 @@ interface Operation {
 export const createPermissionModeSlice: StateCreator<AppState, [], [], PermissionModeSlice> = (set, get) => {
   // Per-store, per-session fences survive pane navigation, but never page reload.
   const operations = new Map<string, Operation>();
+  // Repeated index rows are the same hint, not permission to retry a failed GET forever.
+  const observedHints = new Map<string, SessionPermissionMode | null>();
   let sequence = 0;
   const chatFor = (id: string) => get().chats.find((chat) => chat.id === id);
   const isCurrent = (id: string, operation: Operation) =>
@@ -92,7 +94,9 @@ export const createPermissionModeSlice: StateCreator<AppState, [], [], Permissio
   const finish = async (id: string, operation: Operation) => {
     // Coalesce hints received during an operation into a read after it. Keep
     // the same fence until that read settles; a hint is never another PATCH.
-    while (isCurrent(id, operation) && operation.reconcileRequested) {
+    let followupReads = 0;
+    while (isCurrent(id, operation) && operation.reconcileRequested && followupReads < 2) {
+      followupReads += 1;
       operation.reconcileRequested = false;
       const reason = get().permissionModeRequests[id]?.error;
       setRequest(id, operation, "loading", reason);
@@ -100,8 +104,12 @@ export const createPermissionModeSlice: StateCreator<AppState, [], [], Permissio
         confirm(id, operation, await agentClient.getSessionPermissionMode(id), reason);
       } catch (error) {
         const unsupported = error instanceof SessionPermissionContractError;
-        setRequest(id, operation, unsupported ? "unsupported" : "unconfirmed", unsupported ? "unsupported" : "unconfirmed");
+        setRequest(id, operation, unsupported ? "unsupported" : "unconfirmed", unsupported ? "unsupported" : error instanceof RequestTimeoutError ? "timeout" : "unconfirmed");
       }
+    }
+    if (isCurrent(id, operation) && operation.reconcileRequested) {
+      operation.reconcileRequested = false;
+      setRequest(id, operation, "unconfirmed", "stale");
     }
     if (operations.get(id) === operation) operations.delete(id);
   };
@@ -113,13 +121,14 @@ export const createPermissionModeSlice: StateCreator<AppState, [], [], Permissio
       const active = operations.get(id);
       if (active) return active.promise ?? Promise.resolve();
       if (!chatFor(id)) return Promise.resolve();
+      if (!observedHints.has(id)) observedHints.set(id, parseSessionPermissionMode(chatFor(id)?.config.permissionMode));
       const operation = begin(id, "loading");
       operation.promise = (async () => {
         try {
           confirm(id, operation, await agentClient.getSessionPermissionMode(id));
         } catch (error) {
           const unsupported = error instanceof SessionPermissionContractError;
-          setRequest(id, operation, unsupported ? "unsupported" : "unconfirmed", unsupported ? "unsupported" : "unconfirmed");
+          setRequest(id, operation, unsupported ? "unsupported" : "unconfirmed", unsupported ? "unsupported" : error instanceof RequestTimeoutError ? "timeout" : "unconfirmed");
         }
       })().finally(() => finish(id, operation));
       return operation.promise;
@@ -184,13 +193,18 @@ export const createPermissionModeSlice: StateCreator<AppState, [], [], Permissio
         if (!request || !chat) continue;
         // An index row has no ETag: a differing row is a hint to GET, never a write
         // authority. This also makes stale index responses harmless after a PATCH.
-        const differs = parseSessionPermissionMode(summary.permission_mode) !== chat.config.permissionMode;
+        const hint = parseSessionPermissionMode(summary.permission_mode);
+        const differs = hint !== chat.config.permissionMode;
+        const newHint = !observedHints.has(summary.id) || observedHints.get(summary.id) !== hint;
+        observedHints.set(summary.id, hint);
         const active = operations.get(summary.id);
         if (active) {
-          if (differs || !chat.config.permissionModeEtag) active.reconcileRequested = true;
+          if (newHint && (differs || !chat.config.permissionModeEtag)) active.reconcileRequested = true;
           continue;
         }
-        if (request.status !== "ready" || !chat.config.permissionModeEtag || differs) {
+        // A failed read or stale list row must not restart on every poll. A
+        // changed index mode is a fresh hint; manual Refresh remains available.
+        if (newHint && (request.status !== "ready" || !chat.config.permissionModeEtag || differs)) {
           void get().refreshSessionPermissionMode(summary.id);
         }
       }
@@ -199,7 +213,7 @@ export const createPermissionModeSlice: StateCreator<AppState, [], [], Permissio
     resetSessionPermissionModes: (ids) => {
       const removed = ids ?? [...new Set([...operations.keys(), ...Object.keys(get().permissionModeRequests)])];
       if (removed.length === 0) return;
-      for (const id of removed) operations.delete(id);
+      for (const id of removed) { operations.delete(id); observedHints.delete(id); }
       set((state) => {
         const requests = { ...state.permissionModeRequests };
         for (const id of removed) delete requests[id];
