@@ -13,8 +13,12 @@ const entry = { id: "review/exact", name: "Bounded review", description: "Review
   source: "workspace", revision: 7, status: "valid", winner: true, invocation_policy: { explicit: true },
   argument_schema: { type: "object", required: ["target"], properties: { target: { type: "string" } }, additionalProperties: false } }
 async function openCatalog(page: import("@playwright/test").Page) {
+  // Wait for the restored session to own the composer draft before typing.
+  // Otherwise the new-chat draft can be replaced by the session draft on hydration.
+  await expect(page.locator('[data-variant="composer"][aria-label="会话权限"]')).toBeVisible()
   const message = page.getByRole("textbox", { name: "消息", exact: true })
   await message.fill("/workflow")
+  await expect(message).toHaveValue("/workflow")
   await page.getByRole("button", { name: /\/目录工作流.*目录选择/ }).click()
   await expect(page.getByRole("combobox", { name: "目录中的 Workflow" })).toBeVisible()
   await expect(message).toHaveValue("")
