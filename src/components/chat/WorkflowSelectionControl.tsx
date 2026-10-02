@@ -8,16 +8,25 @@ import {
   type TypedWorkflowDraft, type WorkflowCatalog,
 } from "@services/command/workflowCatalog"
 
-export function WorkflowSelectionControl({ sessionId, selected, onChange, disabled, error, onArgsFocus }: {
+export function WorkflowSelectionControl({ sessionId, selected, onChange, onClose, openRequest = 0, disabled, error, onArgsFocus }: {
   sessionId: string | null
   selected: TypedWorkflowDraft | null
   onChange: (value: TypedWorkflowDraft | null) => void
+  onClose?: () => void
+  openRequest?: number
   disabled: boolean
   error: string | null
   /** Command menus listen to textarea keys; dismiss them before editing JSON. */
   onArgsFocus?: () => void
 }) {
-  const [open, setOpen] = useState(false)
+  const [open, setOpen] = useState(!selected)
+  const lastOpenRequest = useRef(openRequest)
+  useEffect(() => {
+    if (lastOpenRequest.current !== openRequest) {
+      lastOpenRequest.current = openRequest
+      setOpen(true)
+    }
+  }, [openRequest])
   const [catalog, setCatalog] = useState<WorkflowCatalog | null>(null)
   const [loading, setLoading] = useState(false)
   const [loadError, setLoadError] = useState<string | null>(null)
@@ -41,16 +50,19 @@ export function WorkflowSelectionControl({ sessionId, selected, onChange, disabl
   }
   return (
     <div className="mx-auto mb-2 w-full max-w-6xl">
-      <button type="button" aria-expanded={open} onClick={() => setOpen(!open)}
-        className="flex max-w-full items-center gap-1.5 rounded-full border bg-card px-2.5 py-1 text-xs text-muted-foreground hover:text-foreground">
-        <BookText className="size-3.5 shrink-0" />
-        <span className="truncate">{selected ? `目录工作流 · ${selected.entry.name}` : "选择目录工作流"}</span>
-        <ChevronDown className="size-3 shrink-0 opacity-60" />
-      </button>
-      {(open || selected || error) && (
+      <div className="flex items-center gap-2">
+        <button type="button" aria-expanded={open} onClick={() => { if (open && !selected) onClose?.(); else setOpen(!open) }}
+          className="flex max-w-full items-center gap-1.5 rounded-full border bg-card px-2.5 py-1 text-xs text-muted-foreground hover:text-foreground">
+          <BookText className="size-3.5 shrink-0" />
+          <span className="truncate">{selected ? `工作流 · ${selected.entry.name}` : "选择目录工作流"}</span>
+          <ChevronDown className="size-3 shrink-0 opacity-60" />
+        </button>
+        {!selected && <button type="button" aria-label="关闭工作流目录" onClick={onClose} className="rounded p-1 text-muted-foreground hover:text-foreground"><X className="size-3.5" /></button>}
+      </div>
+      {(open || error) && (
         <div className="mt-2 space-y-2 rounded-lg border bg-card p-3 text-xs" data-workflow-selection>
-          <p className="text-muted-foreground">目录选择会发送来源、版本和参数。旧 /工作流入口只展开文本。</p>
-          {!sessionId && <p className="text-muted-foreground">新会话使用全局目录；Bamboo 会按创建后的项目和工作目录重新校验。</p>}
+          <p className="text-muted-foreground">从工作流目录选择后，发送消息时会按所选工作流和参数执行。/ 菜单中的文本工作流只会把内容加入消息。</p>
+          {!sessionId && <p className="text-muted-foreground">新会话只显示通用工作流；项目专属工作流请进入对应会话后再选择。</p>}
           {open && <>
             <div className="flex flex-wrap items-center gap-2">
               <Button type="button" size="sm" variant="outline" disabled={loading} onClick={() => setRefresh((n) => n + 1)}>刷新 Workflow 目录</Button>
@@ -65,7 +77,7 @@ export function WorkflowSelectionControl({ sessionId, selected, onChange, disabl
                   onChange={(event) => {
                     if (!event.target.value) return
                     const entry = catalog.entries[Number(event.target.value)]
-                    if (entry && !workflowUnavailableReason(entry)) onChange({ entry, argsText: "{}" })
+                    if (entry && !workflowUnavailableReason(entry)) { onChange({ entry, argsText: "{}" }); setOpen(false) }
                   }}>
                   <option value="">选择一个明确版本…</option>
                   {catalog.entries.map((entry, i) => {

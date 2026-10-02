@@ -143,6 +143,7 @@ export function Composer({
   selectedWorkflow,
   onClearWorkflow,
   onPickWorkflow,
+  onPickCatalog,
   onPickGoal,
   slashQuery,
   atQuery,
@@ -185,6 +186,7 @@ export function Composer({
   selectedWorkflow: { name: string; content: string } | null
   onClearWorkflow: () => void
   onPickWorkflow: (command: CommandItem) => void
+  onPickCatalog?: () => void
   onPickGoal?: () => void
   slashQuery: string | null
   atQuery: string | null
@@ -213,6 +215,7 @@ export function Composer({
           query={slashQuery}
           onPick={onPickSkill}
           onPickWorkflow={onPickWorkflow}
+          onPickCatalog={onPickCatalog}
           onPickGoal={onPickGoal}
           onDismiss={onDismissMenus}
         />

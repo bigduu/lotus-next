@@ -58,7 +58,7 @@ function SessionPermissionControl({ sessionId, title, compact = false }: Props) 
 
   return (
     <section
-      className={cn(compact ? "flex min-w-0 items-center gap-1" : "shrink-0 border-b px-3 py-2")}
+      className={cn(compact ? "flex min-w-0 max-w-full flex-wrap items-center gap-1" : "shrink-0 border-b px-3 py-2")}
       aria-label={t("chat.permissionMode.section")}
       data-variant={compact ? "composer" : "bar"}
       title={compact ? [helpText, errorText].filter(Boolean).join(" ") : undefined}
@@ -107,7 +107,7 @@ function SessionPermissionControl({ sessionId, title, compact = false }: Props) 
         {helpText}
       </p>
       {request?.error ? (
-        <p id={`${labelId}-error`} role="alert" className={compact ? "sr-only" : "mt-1 text-xs leading-relaxed text-destructive"}>
+        <p id={`${labelId}-error`} role="alert" className={compact ? "basis-full max-w-sm break-words text-xs leading-relaxed text-destructive" : "mt-1 text-xs leading-relaxed text-destructive"}>
           {errorText}
         </p>
       ) : null}

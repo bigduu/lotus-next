@@ -167,7 +167,7 @@ export const zhCnTranslation = {
       permissionMode: {
         section: "会话权限",
         label: "权限模式",
-        loading: "正在确认模式…",
+        loading: "正在确认会话权限…",
         saving: "正在保存模式…",
         unavailable: "暂不可用",
         unconfirmed: "状态未确认",
@@ -188,6 +188,7 @@ export const zhCnTranslation = {
           ambiguous: "未能确认保存响应。现已显示后端重新读取的模式，未重发写入请求。",
           unsupported: "后端未提供受支持的类型化模式和 ETag，暂不能更改权限；不会把旧版 Bypass 解释为 Auto。",
           unconfirmed: "无法确认当前权限模式，已禁止更改。请先刷新后端状态再重试；未重发写入请求。",
+          timeout: "确认会话权限超时，已禁止更改；请点击刷新权限模式重试。",
           stale: "已忽略过期或不一致的响应。更改权限前，请先刷新后端状态。",
           changed: "选择期间会话状态发生了变化。请检查后端当前模式后重新选择。",
         },
