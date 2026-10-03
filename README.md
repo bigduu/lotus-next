@@ -1,142 +1,83 @@
-# lotus-next
+# Lotus Next
 
-An experimental, ground-up rebuild of the [Lotus](https://github.com/bigduu/Lotus) web frontend for the Bamboo agent runtime. It uses React 19, TypeScript, Vite, Tailwind CSS v4, and hand-written components built on Radix primitives.
+**Follow your agent's work from a browser or the Bodhi desktop app.** Lotus Next is the React interface for [Bamboo](https://github.com/bigduu/Bamboo-agent), the core of the [Zenith](https://github.com/bigduu/Zenith) local AI agent harness suite. It puts conversations, tool activity, permission requests and runtime settings in one place.
 
-Lotus Next is the canonical forward-development target. Production cutover is tracked in [issue #11](https://github.com/bigduu/lotus-next/issues/11); the legacy Ant Design frontend remains only as the current production and rollback baseline while that migration is incomplete.
+Use the browser interface when you already run Bamboo, or install [Bodhi](https://github.com/bigduu/Bodhi-AI/releases/latest) for a desktop shell that manages the engine. Lotus Next supplies the UI; Bamboo runs the agent and connects to your configured model provider and tools.
 
-This repository documents the implementation that exists here today. It does not yet claim feature parity with Lotus or production readiness.
+## What you can do
 
-## Quick start
+- **Follow a task as it happens:** read streaming responses, reasoning and tool activity, and respond to approval or question dialogs.
+- **Keep project conversations organized:** switch sessions, preserve drafts and export a conversation as Markdown or PDF. A desktop split view supports a second interactive chat pane.
+- **Configure the tools behind the conversation:** open settings for providers, MCP servers, plugins, skills and permissions, plus runtime features such as workflows and schedules where supported by the connected Bamboo version.
+- **Work at different screen sizes:** use responsive desktop/mobile layouts, light/dark/system themes and a graphics-safe mode for constrained environments.
 
-Run a Bamboo server on `127.0.0.1:9562`, then start the frontend:
+These describe the source checkout, not a guarantee that every connected backend or older packaged app has the same capabilities. Settings screens do not themselves supply provider credentials, an MCP server or a running scheduler.
+
+## See a project prepared for a task
+
+![Lotus Next creates a demo project through Bamboo and selects its workspace for a new task.](docs/demos/project-workspace.gif)
+
+[Static image](docs/demos/project-workspace.png) · [Recording and reproduction](docs/demos/README.md)
+
+Real browser recording against a real Bamboo backend at the audited source pins.
+It uses an empty temporary workspace; no model is called and no task completion
+is implied. This is source behavior, not acceptance of the published desktop app.
+
+## Try it from source
+
+Requirements: Node.js **22.12+**, npm, and a compatible Bamboo server. Start Bamboo separately using its [setup instructions](https://github.com/bigduu/Bamboo-agent#readme), with the API listening on `127.0.0.1:9562`. Then, in this directory:
 
 ```bash
 npm ci
-npm run dev
+npm run dev -- --host 127.0.0.1
 ```
 
-Vite listens on port `9563` and proxies `/api` and `/v2` to Bamboo on port
-`9562`. Lotus Next sends every Bamboo-native REST request through the single
-canonical `/api/v1` client; the historical `/v1` alias is deliberately not a
-frontend proxy or fallback.
+Open **http://127.0.0.1:9563**. On a fresh backend, finish `bamboo init` first; the initial setup gate directs you to backend/desktop configuration. Open **Settings → Providers** to configure a provider if your Bamboo instance does not already have one. Start with a small task in a sample workspace, then follow the tool activity and any approval prompts.
 
-`VITE_BACKEND_BASE_URL` and newly persisted browser overrides accept a bare
-HTTP(S) origin or exact `/api/v1`. New `/v1` input fails closed. During the
-migration window, `src/runtime/browserRuntime.ts` alone may read the legacy
-`copilot_backend_base_url` key, write and verify
-`lotus_next_backend_endpoint_v1`, and only then delete the legacy value. That
-reader is removed after every default consumer has run an artifact containing
-the migration and its declared rollback window has ended.
+The explicit host option keeps this development server on loopback; the repository's unqualified `npm run dev` listens on the network. Vite proxies `/api` and `/v2` to Bamboo on port `9562`. An unavailable backend cannot execute tasks or provide server-backed settings.
 
-## Implemented surface
-
-- Chat over one shared `/v2/stream` WebSocket, using JSON by default and opt-in MessagePack negotiation.
-- Streaming messages, reasoning, tools, tasks, budgets, sub-agents, Markdown, syntax highlighting, Mermaid, images, and approval or question dialogs.
-- Session navigation, live account reconciliation, drafts, pending-question restoration, Markdown/PDF export, and a desktop split view with a second interactive chat pane.
-- Responsive desktop and mobile layouts, light/dark/system themes, simple/advanced modes, and a graphics-safe mode for constrained environments.
-- Sixteen settings tabs: General, Providers, MCP, Plugins, Skills, Permissions, Environment, Schedules, Notifications, Masking, Prompts, Workflows, Clusters, Metrics, Jiandu memory, and System.
-
-## Internationalization
-
-The i18next runtime currently registers six locales: `en-US`, `zh-CN`, `zh-TW`, `fr-FR`, `ja-JP`, and `hi-IN`. Locale resources load on demand, with `en-US` as the fallback.
-
-Translation coverage is not complete: parts of the newer application shell and settings UI still contain hard-coded Chinese strings. The locale list therefore describes the implemented runtime and resources, not complete localization of every screen.
-
-## Production gates
-
-Run the same checks locally that CI runs for pull requests and `main`:
+For a production artifact:
 
 ```bash
-npm ci
-npx playwright install chromium
+npm run build
+# In a separate shell with Bamboo installed:
+bamboo serve --static-dir /absolute/path/to/lotus-next/dist --port 9562
+```
+
+Open **http://127.0.0.1:9562** when Bamboo is ready. This uses the frontend you just built. The published npm package contains frontend assets, not a standalone agent or CLI.
+
+## Source, npm package and desktop release
+
+Lotus Next is the canonical UI used by current Bamboo/Bodhi source consumers. The old Lotus frontend is retained as an explicit rollback path in those consumers, rather than the default production frontend.
+
+Checked on 2026-10-03:
+
+| Layer | Verified identity |
+|---|---|
+| Zenith pin and observed upstream `main` | `1131c275cb441694a41f996228d9f91473d920f5` |
+| npm `latest` | `@bigduu/lotus-next@2026.9.22`, source `a480e2bb94f5dd08fe4b01b2f8844a2c9ed03245` |
+| Latest public Bodhi installer | `app-v2026.9.20`, locking Lotus Next `2026.9.16` |
+
+The source has changes after the npm artifact, including actor-stream/continuity and workflow-selection work. Those source changes are **not** asserted to be in `2026.9.22` or the desktop installer. Source `package.json` intentionally keeps `0.0.0`; publishing and consumer adoption are separate steps. See the [version audit](docs/readme-audit.md) for evidence.
+
+## Runtime and localization
+
+The UI uses canonical `/api/v1` REST calls and one shared `/v2/stream` WebSocket (JSON by default, opt-in MessagePack). Browser builds and the Tauri runtime adapter choose the backend endpoint; serving static files alone does not replace Bamboo.
+
+`VITE_BACKEND_BASE_URL` and new browser endpoint overrides accept a bare HTTP(S) origin or exact `/api/v1`. Do not use the legacy `/v1` alias. Keep credentials out of public `VITE_*` build variables. Prefer serving the production UI from Bamboo's origin; remote hosting requires the appropriate backend authentication and secure transport setup.
+
+The i18next runtime registers `en-US`, `zh-CN`, `zh-TW`, `fr-FR`, `ja-JP` and `hi-IN`, loaded on demand with `en-US` fallback. Some newer screens still contain hard-coded Chinese text; this is not a claim of complete localization.
+
+## Develop and verify
+
+```bash
+npm run type-check
+npm run test:run
 npm run verify
+npx playwright install chromium
 npm run test:e2e:built
 ```
 
-`npm run verify` produces the production artifact after the type, lint, unit,
-architecture, bundle, and package checks. `npm run test:e2e:built` then exercises
-that exact output in Chromium at desktop, tablet, and phone viewports. Use
-`npm run test:e2e` as the standalone convenience command when you need it to
-build first. The browser suite checks standalone, secure remote, and nested
-embedded hosting while enforcing the canonical `/api/v1` and `/v2/stream`
-runtime contract. CI retains its HTML report, trace, screenshot, video, and
-runtime observations when a case fails.
+`verify` checks types, lint, unit tests, architecture, the build and package contents. The browser suite exercises that output at desktop, tablet and phone viewports. Its deterministic fixtures are separate from the real-Bamboo acceptance lanes; neither is a claim of physical-device or public-network testing.
 
-The source-built real-runtime gate is intentionally separate from that
-deterministic matrix. It builds a clean checkout of Bamboo revision
-`f1f1057bdbde33358d769b6a62ff93f2287e3f9f` into an isolated Docker image,
-serves the production Lotus Next artifact from that Bamboo process, and drives
-one complete chat turn through the visible desktop UI and a local deterministic
-OpenAI-compatible provider. It requires the `auth.ws_hello_ack.v1` bootstrap
-capability and records one ordered, bidirectional WebSocket timeline for both
-the initial page and a fresh browser context, proving that exact `hello` is
-acknowledged by exact `welcome` before any subscription is sent. The provider
-shares Bamboo's test-owned network
-namespace and listens only on that namespace's loopback interface; only Bamboo's
-HTTP or in-process rustls TLS listener is published on a random host-loopback
-port. The provider writes redacted observations atomically to a test-owned bind
-mount instead of exposing its own API to the host.
-Both Bamboo data and its Jiandu home stay inside a separate
-test-owned temporary `/data` mount, so the lane never reads the workstation's
-live Bamboo or Jiandu state. To run it locally, provide the absolute path to a
-clean checkout at that exact revision:
-
-```bash
-BAMBOO_E2E_SOURCE_DIR=/absolute/path/to/bamboo \
-  npm run test:e2e:real-bamboo
-```
-
-Docker and Chromium are required. The runner rejects a different or dirty
-Bamboo checkout and never accepts a live Bamboo URL. Normal completion, setup
-failure, `SIGINT`, and `SIGTERM` share one exact-resource teardown for the two
-containers, private network, temporary image, observation mount, and data root
-it created. CI runs this single desktop lane once on Node 22; it does not repeat
-it across the mock suite's viewport/runtime matrix.
-
-The published-artifact acceptance is a second real-runtime lane. It downloads
-`@bigduu/lotus-next@2026.9.14` from the public npm registry into a fresh cache
-with lifecycle scripts disabled, then requires the committed SHA-1, SHA-512
-integrity, manifest SHA-256, resource-set digest, 34-resource inventory, and
-source revision `ae17b50574ccd86395cbc226b50c9fb2f0f51e0f`. It refuses any
-different artifact before launching Bamboo. The same verified bytes are tested
-first through native loopback HTTP and then through Bamboo's own HTTPS/WSS
-listener using an ephemeral one-day certificate for `remote.lotus.test`.
-Desktop, tablet, and phone viewports must keep the shell, settings, and composer
-usable while every application request remains same-origin on canonical
-`/api/v1` and the single `/v2/stream` WebSocket.
-
-Run the immutable public-artifact lane with the same clean Bamboo checkout:
-
-```bash
-BAMBOO_E2E_SOURCE_DIR=/absolute/path/to/bamboo \
-  npm run test:e2e:published-bamboo
-```
-
-This command additionally requires `openssl`. It creates no public tunnel: the
-named remote topology resolves only to `127.0.0.1`, and the self-signed
-certificate is trusted only by the ephemeral test processes. It proves the
-browser contract and responsive viewports, not a physical-device or
-public-network path. HTML reports and Playwright artifacts are written to the
-`playwright-report-real-bamboo-{local,remote}` and
-`test-results-real-bamboo-{local,remote}` directories; runtime identity and
-redacted observations remain under `test-results-real-bamboo/{local,remote}`.
-CI uploads all three evidence roots even when a lane fails.
-
-`npm run pack:check` rebuilds the app, asks npm for the exact dry-run tarball
-manifest, and rejects anything outside `dist/` plus npm's required package
-metadata. Every build also writes `dist/lotus-next-manifest.json`. That
-versioned universal-web manifest binds the package name/version, exact source
-revision and dirty state, relative `index.html` entrypoint, and every other
-regular `dist/` resource by portable path, byte size, and SHA-256. Its combined
-digest is deterministic for one resource set. Consumers must verify this file
-before serving or staging an artifact; a dirty source manifest is never a
-release artifact.
-
-The committed package version remains the `0.0.0` source placeholder. The
-manual publication workflow accepts one explicit SemVer, verifies the complete
-Node 22/24 and real-Bamboo gates from a clean `main` commit, packs without a
-second build, verifies the tarball, publishes with npm provenance, then
-downloads and verifies the registry copy. Publishing does not switch any
-Bamboo, Bodhi, or Zenith consumer.
-
-The initial bundle-size baseline is recorded in [`docs/bundle-baseline.md`](docs/bundle-baseline.md). It is an observation gate, not a size-budget change.
+See [verification and packaging](docs/verification.md) for isolated real-runtime tests, immutable published-artifact checks and manifest verification, and [bundle baseline](docs/bundle-baseline.md) for measured build context. These are contributor checks, not prerequisites for installing Bodhi.
