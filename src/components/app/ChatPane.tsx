@@ -247,11 +247,15 @@ export function ChatPane({
   const tickets = useTicketWork(currentSessionId)
   const ticketIngress = useTicketIngress()
   const ticketScope = tickets.state?.current.scope
-  const semanticComposer = ticketScope?.capabilities?.semantic_messages_v1 === true
+  const pendingTicketMessage = ticketIngress.hasPending(currentSessionId)
+  const semanticComposer = pendingTicketMessage || ticketScope?.capabilities?.semantic_messages_v1 === true
     && ticketScope.mutation_enabled === true
-    && ticketScope.capabilities.message_references_v1 === true
     && ticketScope.binding.supervisor_session_id === currentSessionId
   const [ticketReference, setTicketReference] = useState<TicketRequest | null>(null)
+  const replayReferences = ticketIngress.references(currentSessionId)
+  const visibleTicketReference = pendingTicketMessage && replayReferences?.in_reply_to
+    ? { work_id: replayReferences.thread_id ?? replayReferences.in_reply_to, id: replayReferences.in_reply_to }
+    : ticketReference
   useEffect(() => { setTicketReference(null) }, [currentSessionId])
   // The secondary chat hook remains mounted when its pane closes. Read state
   // follows the rendered pane, including the same breakpoint as its md:flex.
@@ -572,7 +576,7 @@ export function ChatPane({
   const submit = () => {
     // Keep an in-flight admission from capturing or clearing a second draft.
     if (submissionPending || modelSaving || queue.busy || ticketIngress.busy || rootMode.busy || goalRequestActive.current) return
-    if (semanticComposer && !tickets.canRespond) { showToast("工单连接或写入权限尚未确认，请刷新后重试。"); return }
+    if (semanticComposer && !tickets.canSendIngress) { showToast("工单连接或写入权限尚未确认，请刷新后重试。"); return }
     if (rootSessionUnsafe()) {
       setRootModeConflict("Root 权限切换结果未知，此会话已停止发送和执行。请先处理模式切换。")
       return
@@ -582,7 +586,7 @@ export function ChatPane({
     const text = draftAtSubmit?.content ?? ""
     const goalCommand = !selectedWorkflow && !typedWorkflow && !selectedSkill && attachments.length === 0
       ? /^\/goal(?:\s+([\s\S]*))?$/i.exec(text.trim()) : null
-    if (goalCommand && (currentSessionId || !goalCommand[1]?.trim())) {
+    if (goalCommand && !pendingTicketMessage && (currentSessionId || !goalCommand[1]?.trim())) {
       if (!currentSessionId) { showToast("请先打开一个会话，再设置目标。"); return }
       const revision = draftAtSubmit?.contentRevision ?? 0
       const objective = goalCommand[1]?.trim()
@@ -1057,12 +1061,12 @@ export function ChatPane({
         ) : null}
 
         {queue.error && <div role="alert" className="mx-auto mb-1 w-[calc(100%-1.5rem)] max-w-6xl rounded-lg border border-destructive/40 px-3 py-2 text-xs text-destructive">{queue.error}</div>}
-        <TicketWorkPanel controller={tickets} onReference={semanticComposer ? (request) => { setTicketReference(request); composerInputRef.current?.focus() } : undefined} />
-        {semanticComposer && ticketReference ? <div className="mx-4 mb-2 flex items-center gap-2 text-xs" data-testid="ticket-reference">
-          <span>引用：{tickets.state?.works[ticketReference.work_id]?.ticket.contract.title ?? ticketReference.work_id} 的请求</span>
-          <button type="button" className="underline" onClick={() => setTicketReference(null)}>清除引用</button>
+        <TicketWorkPanel controller={tickets} onReference={tickets.canSendIngress && ticketScope?.capabilities?.message_references_v1 === true && !pendingTicketMessage ? (request) => { setTicketReference(request); composerInputRef.current?.focus() } : undefined} />
+        {semanticComposer && visibleTicketReference ? <div className="mx-4 mb-2 flex items-center gap-2 text-xs" data-testid="ticket-reference">
+          <span>引用：{tickets.state?.works[visibleTicketReference.work_id]?.ticket.contract.title ?? visibleTicketReference.work_id} 的请求</span>
+          <button type="button" className="underline" disabled={pendingTicketMessage} onClick={() => setTicketReference(null)}>清除引用</button>
         </div> : null}
-        {semanticComposer && ticketIngress.error ? <div role="alert" className="mx-4 mb-2 text-xs text-destructive">{ticketIngress.error}
+        {semanticComposer && (ticketIngress.error || pendingTicketMessage) ? <div role="alert" className="mx-4 mb-2 text-xs text-destructive">{ticketIngress.error ?? "上次消息尚未确认，请用原文和原附件重试。"}
           {ticketIngress.executePending === currentSessionId ? <button type="button" className="ml-2 underline" onClick={() => void ticketIngress.retryExecute()}>重试启动</button> : null}
         </div> : null}
         <div data-composer-region className="relative shrink-0">

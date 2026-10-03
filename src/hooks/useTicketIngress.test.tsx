@@ -36,12 +36,36 @@ it("retains an uncertain exact Human identity across remount and refuses a chang
   const receipt = sessionStorage.getItem("lotus-next.ticket-human.ticket-root")!
   expect(receipt).not.toContain("创建报告")
   await act(async () => root.render(null)); await mount()
+  expect(ingress.hasPending("ticket-root")).toBe(true)
   await act(async () => { expect((await ingress.send({ ...request, message: "different" })).kind).toBe("blocked") })
   expect(apiClient.postOnce).toHaveBeenCalledTimes(1)
   await act(async () => { expect((await ingress.send(request)).kind).toBe("accepted") })
   expect(vi.mocked(apiClient.postOnce).mock.calls[1][1]).toEqual(first)
   expect(sessionStorage.getItem("lotus-next.ticket-human.ticket-root")).toBeNull()
   expect(agentClient.execute).toHaveBeenCalledTimes(1)
+})
+
+it("restores exact non-content references after reload even if the request has closed", async () => {
+  await mount()
+  vi.mocked(apiClient.postOnce).mockRejectedValueOnce(new Error("lost acknowledgement"))
+  await act(async () => { expect((await ingress.send(request)).kind).toBe("unconfirmed") })
+  const first = vi.mocked(apiClient.postOnce).mock.calls[0][1]
+  await act(async () => root.render(null)); await mount()
+  expect(ingress.references("ticket-root")).toEqual({ thread_id: "work-A", in_reply_to: "q-A" })
+  await act(async () => { expect((await ingress.send({ ...request, in_reply_to: "q-B" })).kind).toBe("blocked") })
+  expect(apiClient.postOnce).toHaveBeenCalledTimes(1)
+  const { thread_id: _thread, in_reply_to: _reply, ...draft } = request
+  await act(async () => { expect((await ingress.send(draft)).kind).toBe("accepted") })
+  expect(vi.mocked(apiClient.postOnce).mock.calls[1][1]).toEqual(first)
+  expect(ingress.hasPending("ticket-root")).toBe(false)
+})
+
+it("does not send when the recovery receipt cannot be persisted", async () => {
+  await mount()
+  const storage = vi.spyOn(sessionStorage, "setItem").mockImplementation(() => { throw new Error("storage unavailable") })
+  await act(async () => { expect((await ingress.send(request)).kind).toBe("unconfirmed") })
+  expect(apiClient.postOnce).not.toHaveBeenCalled()
+  storage.mockRestore()
 })
 
 it("keeps a confirmed message accepted when execute fails and retries only the idempotent activation", async () => {

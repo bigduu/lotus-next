@@ -11,7 +11,7 @@ const sameSnapshot = (a: ReadEnvelope<unknown>, expected: SnapshotRef) => {
 const completeCoverage = (coverage: string) => coverage === "authoritative_scope" || coverage === "complete"
 
 export const ticketClient = {
-  async load(sessionId: string, signal?: AbortSignal): Promise<TicketSnapshot | null> {
+  async scope(sessionId: string, signal?: AbortSignal): Promise<TicketSnapshot["scope"] | null> {
     let scope: TicketScope
     try { scope = await apiClient.get<TicketScope>("tickets/scope", { signal }) }
     catch (error) { if (isApiError(error) && error.status === 404) return null; throw error }
@@ -19,6 +19,12 @@ export const ticketClient = {
       || scope.binding.supervisor_session_id !== sessionId
       || !scope.capabilities?.ticket_scope_v1 || !scope.capabilities.multi_pending_v1
       || !scope.capabilities.precise_request_response_v1) return null
+    sameSnapshot(scope.overview, scope.overview.snapshot)
+    return { ...scope, binding: scope.binding, overview: scope.overview }
+  },
+  async load(sessionId: string, signal?: AbortSignal): Promise<TicketSnapshot | null> {
+    const scope = await ticketClient.scope(sessionId, signal)
+    if (!scope) return null
     const snapshot = scope.overview.snapshot
     sameSnapshot(scope.overview, snapshot)
     const summaries: { id: string; kind: string }[] = []

@@ -82,3 +82,30 @@ architecture, build and package checks passed. Logs:
 npm cache after the default cache was denied by the filesystem sandbox.
 The changed head still requires a fresh independent review and built browser
 acceptance; the earlier browser evidence belongs to `5895e9d`.
+
+## Second independent review corrections
+
+The explicit read-only review of `54b22c7` completed with four findings.
+An uncertain Human receipt now keeps the composer on semantic ingress while
+scope negotiation reloads, preventing a legacy-send or queue fallback. New
+receipts retain only minimal thread/reply/correlation references and a versioned
+canonical payload hash, so an exact retry can restore a closed request's
+reference. Changed content or references fail closed. A storage failure blocks
+the POST before delivery; malformed saved receipts also remain visible and
+cannot silently select a fresh message ID. Legacy receipt hashes remain readable;
+references absent from that earlier schema cannot be inferred.
+
+Polling renegotiates capabilities and flags even when the Ticket sequence is
+unchanged. A writable partial snapshot allows ordinary semantic input while
+keeping precise card decisions disabled. It never claims that the unseen scope
+is complete or grants approval from reference metadata.
+
+Validation of the seven changed source/test files: focused 92/92 and complete
+Vitest 2058/2058 in 123 files; type-check, lint and architecture pass. Logs and
+exit markers are in `../1481-evidence/1481-lotus-tmp-*`. Documents-based test
+workers failed before executing cases; the detached `/tmp` acceptance worktree
+uses byte-verified source overlays and the exact existing lockfile, with 477
+packages installed offline from the task cache. No dependency versions changed.
+An initial new storage-mock/rerender assertion failure and a fresh browser-type
+check failure are preserved, then corrected and revalidated. Current clean
+build/package and real Host/browser results remain pending at this checkpoint.

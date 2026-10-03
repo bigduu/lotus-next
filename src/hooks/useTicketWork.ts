@@ -38,7 +38,22 @@ export function useTicketWork(sessionId: string | null | undefined) {
           try {
             const changes = await ticketClient.changes(current.current.current.snapshot.seq, controller.signal)
             if (changes.snapshot.seq === current.current.current.snapshot.seq
-              && changes.snapshot.authority_epoch === current.current.current.snapshot.authority_epoch) { setConnected(true); setError(null); return }
+              && changes.snapshot.authority_epoch === current.current.current.snapshot.authority_epoch) {
+              const negotiated = await ticketClient.scope(sessionId, controller.signal)
+              if (controller.signal.aborted) return
+              if (!negotiated) {
+                current.current = null; setState(null); setConnected(true); setError(null); return
+              }
+              const previous = current.current.current
+              if (negotiated.binding.scope_id === previous.scope.binding.scope_id
+                && negotiated.binding.binding_revision === previous.scope.binding.binding_revision
+                && negotiated.overview.snapshot.commit === previous.snapshot.commit
+                && negotiated.overview.snapshot.seq === previous.snapshot.seq
+                && negotiated.overview.snapshot.authority_epoch === previous.snapshot.authority_epoch) {
+                current.current = { ...current.current, current: { ...previous, scope: negotiated } }
+                setState(current.current); setConnected(true); setError(null); return
+              }
+            }
           } catch (failure) { if (!isApiError(failure) || failure.status !== 409) throw failure }
         }
         const result = await ticketClient.load(sessionId, controller.signal)
@@ -118,6 +133,9 @@ export function useTicketWork(sessionId: string | null | undefined) {
   }, [sessionId, connected])
 
   return { state, error: decisionError ?? error, connected, busy, uncertain, respond, refresh: () => refreshRef.current(),
+    canSendIngress: connected && state !== null && state.current.scope.binding.supervisor_session_id === sessionId
+      && state.current.scope.health === "writable" && state.current.scope.mutation_enabled === true
+      && state.current.scope.capabilities?.semantic_messages_v1 === true,
     canRespond: connected && state !== null && state.current.scope.binding.supervisor_session_id === sessionId
       && state.current.complete && state.current.scope.health === "writable" && state.current.scope.mutation_enabled === true }
 }

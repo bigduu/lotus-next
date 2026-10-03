@@ -8,7 +8,7 @@ import { ticketSnapshot } from "@services/tickets/testFixtures"
 import type { ResponseCommand } from "@services/tickets/types"
 import { ApiError } from "@services/api"
 
-vi.mock("@services/tickets/client", () => ({ ticketClient: { load: vi.fn(), changes: vi.fn(), respond: vi.fn(), artifact: vi.fn() } }))
+vi.mock("@services/tickets/client", () => ({ ticketClient: { load: vi.fn(), scope: vi.fn(), changes: vi.fn(), respond: vi.fn(), artifact: vi.fn() } }))
 let root: Root, container: HTMLDivElement, controller: ReturnType<typeof useTicketWork>
 let snapshot = ticketSnapshot()
 let loseAck = false
@@ -21,6 +21,7 @@ beforeEach(() => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
   snapshot = ticketSnapshot(); loseAck = false; receipts.clear(); sessionStorage.clear()
   vi.mocked(ticketClient.load).mockImplementation(async () => structuredClone(snapshot))
+  vi.mocked(ticketClient.scope).mockImplementation(async () => structuredClone(snapshot.scope))
   vi.mocked(ticketClient.changes).mockResolvedValue({ ...snapshot.scope.overview, data: [] })
   vi.mocked(ticketClient.respond).mockImplementation(async (command) => {
     if (!receipts.has(command.operation_id)) {
@@ -43,7 +44,7 @@ beforeEach(() => {
   })
   container = document.createElement("div"); document.body.append(container); root = createRoot(container)
 })
-afterEach(() => { act(() => root.unmount()); container.remove(); vi.resetAllMocks() })
+afterEach(() => { act(() => root.unmount()); container.remove(); vi.resetAllMocks(); vi.useRealTimers() })
 const mount = async (session = "root") => { await act(async () => root.render(<Harness session={session} />)) }
 
 it("rebases one known pre-commit question conflict only while its exact identity remains open", async () => {
@@ -162,8 +163,25 @@ it("blocks mutations on an incomplete snapshot and hides unsupported reference a
   snapshot.complete = false
   await mount()
   expect(controller.canRespond).toBe(false)
+  expect(controller.canSendIngress).toBe(true)
   await act(async () => { expect(await controller.respond(controller.state!.requests["q-A"], { kind: "question", answer: "partial" })).toBe(false) })
   expect(ticketClient.respond).not.toHaveBeenCalled()
   await act(async () => root.render(<TicketWorkPanel controller={controller} />))
   expect(container.textContent).not.toContain("在普通输入中引用此请求")
+})
+
+it("refreshes negotiated write capabilities without a ticket content commit", async () => {
+  vi.useFakeTimers()
+  await mount()
+  expect(controller.canSendIngress).toBe(true)
+  expect(controller.canRespond).toBe(true)
+  snapshot.scope.mutation_enabled = false
+  await act(async () => { await vi.advanceTimersByTimeAsync(2500) })
+  expect(controller.canSendIngress).toBe(false)
+  expect(controller.canRespond).toBe(false)
+  snapshot.scope.mutation_enabled = true
+  await act(async () => { await vi.advanceTimersByTimeAsync(2500) })
+  expect(controller.canSendIngress).toBe(true)
+  expect(controller.canRespond).toBe(true)
+  expect(ticketClient.load).toHaveBeenCalledTimes(1)
 })
