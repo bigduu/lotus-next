@@ -131,6 +131,18 @@ export const sessionSummaryToChatItem = (s: SessionSummary): ChatItem => {
 };
 
 /** @internal Exported for testing only. */
+export function mapMessageReferences(message: { thread_id?: string; in_reply_to?: string; correlation_id?: string; metadata?: Record<string, unknown> }): Partial<UserMessage> {
+  const marker = message.metadata?.session_message
+  const metadata = marker && typeof marker === "object" ? marker as Record<string, unknown> : {}
+  const bounded = (value: unknown) => typeof value === "string" && value.length > 0 && value.length <= 128 ? value : undefined
+  return {
+    threadId: bounded(message.thread_id ?? metadata.thread_id),
+    inReplyTo: bounded(message.in_reply_to ?? metadata.in_reply_to),
+    correlationId: bounded(message.correlation_id ?? metadata.correlation_id),
+  }
+}
+
+/** @internal Exported for testing only. */
 export const mapHistoryMessagesToUi = (
   sessionId: string,
   history: Array<{
@@ -165,6 +177,9 @@ export const mapHistoryMessagesToUi = (
     tool_success?: boolean;
     reasoning?: string;
     metadata?: Record<string, unknown>;
+    thread_id?: string;
+    in_reply_to?: string;
+    correlation_id?: string;
     created_at: string;
   }>,
 ): Message[] => {
@@ -236,6 +251,7 @@ export const mapHistoryMessagesToUi = (
         images: images.length ? images : undefined,
         isCompressed: Boolean(msg.compressed),
         compressedEventId: msg.compressed_by_event_id,
+        ...mapMessageReferences(msg),
       };
       out.push(user);
       continue;

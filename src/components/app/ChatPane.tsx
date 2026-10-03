@@ -42,6 +42,10 @@ import {
 import { HomeDashboard } from "@/components/app/HomeDashboard"
 import { MessageList } from "@/components/app/MessageList"
 import { useGuidanceQueue } from "@/hooks/useGuidanceQueue"
+import { useTicketWork } from "@/hooks/useTicketWork"
+import { useTicketIngress } from "@/hooks/useTicketIngress"
+import { TicketWorkPanel } from "@/components/chat/TicketWorkPanel"
+import type { PendingRequest as TicketRequest } from "@services/tickets/types"
 import { SessionGuidance } from "@/components/app/SessionGuidance"
 import { Composer } from "@/components/app/Composer"
 import { Toasts } from "@/components/app/Toasts"
@@ -240,6 +244,15 @@ export function ChatPane({
       : null)
   const runFailureGuidance = generationFailed ? describeRunFailure(runErrorDetail) : null
   const queue = useGuidanceQueue(currentSessionId, currentlyRunning)
+  const tickets = useTicketWork(currentSessionId)
+  const ticketIngress = useTicketIngress()
+  const ticketScope = tickets.state?.current.scope
+  const semanticComposer = ticketScope?.capabilities?.semantic_messages_v1 === true
+    && ticketScope.mutation_enabled === true
+    && ticketScope.capabilities.message_references_v1 === true
+    && ticketScope.binding.supervisor_session_id === currentSessionId
+  const [ticketReference, setTicketReference] = useState<TicketRequest | null>(null)
+  useEffect(() => { setTicketReference(null) }, [currentSessionId])
   // The secondary chat hook remains mounted when its pane closes. Read state
   // follows the rendered pane, including the same breakpoint as its md:flex.
   const splitVisible = useMediaQuery("(min-width: 768px)")
@@ -558,7 +571,8 @@ export function ChatPane({
 
   const submit = () => {
     // Keep an in-flight admission from capturing or clearing a second draft.
-    if (submissionPending || modelSaving || queue.busy || rootMode.busy || goalRequestActive.current) return
+    if (submissionPending || modelSaving || queue.busy || ticketIngress.busy || rootMode.busy || goalRequestActive.current) return
+    if (semanticComposer && !tickets.canRespond) { showToast("工单连接或写入权限尚未确认，请刷新后重试。"); return }
     if (rootSessionUnsafe()) {
       setRootModeConflict("Root 权限切换结果未知，此会话已停止发送和执行。请先处理模式切换。")
       return
@@ -659,7 +673,18 @@ export function ChatPane({
       ? `${snapshot.selectedWorkflow.content}${text.trim() ? `\n\n${text.trim()}` : ""}`
       : text
     const images = snapshot.attachments.map((a) => ({ base64: a.base64, name: a.name, size: a.size, type: a.type }))
-    const submission = currentSessionId && (currentlyRunning || queue.hasUnconfirmed)
+    if (semanticComposer && (snapshot.selectedSkill || snapshot.selectedWorkflow || snapshot.typedWorkflow)) {
+      showToast("请把工单指令直接写在普通输入框中，并先移除工作流或技能选择。")
+      return
+    }
+    const frozenReference = ticketReference
+    const submission = semanticComposer && currentSessionId
+      ? ticketIngress.send({ session_id: currentSessionId, message: finalText,
+          model: activeModel, model_ref: currentChat?.config.model_ref ?? undefined,
+          images: images.length ? images : undefined,
+          ...(frozenReference ? { thread_id: frozenReference.work_id, in_reply_to: frozenReference.id } : {}),
+        })
+      : currentSessionId && (currentlyRunning || queue.hasUnconfirmed)
       ? queue.send(finalText, images)
       : send(finalText, {
           skillIds: snapshot.selectedSkill ? [snapshot.selectedSkill.id] : undefined,
@@ -698,6 +723,7 @@ export function ChatPane({
           return
         }
         if (result.kind !== "accepted") return
+        if (frozenReference) setTicketReference((current) => current?.id === frozenReference.id ? null : current)
 
         // Commit only fields that still have the exact mutation revision captured
         // by this submission. A late acknowledgement must never erase edits or a
@@ -1031,6 +1057,14 @@ export function ChatPane({
         ) : null}
 
         {queue.error && <div role="alert" className="mx-auto mb-1 w-[calc(100%-1.5rem)] max-w-6xl rounded-lg border border-destructive/40 px-3 py-2 text-xs text-destructive">{queue.error}</div>}
+        <TicketWorkPanel controller={tickets} onReference={(request) => { setTicketReference(request); composerInputRef.current?.focus() }} />
+        {semanticComposer && ticketReference ? <div className="mx-4 mb-2 flex items-center gap-2 text-xs" data-testid="ticket-reference">
+          <span>引用：{tickets.state?.works[ticketReference.work_id]?.ticket.contract.title ?? ticketReference.work_id} 的请求</span>
+          <button type="button" className="underline" onClick={() => setTicketReference(null)}>清除引用</button>
+        </div> : null}
+        {semanticComposer && ticketIngress.error ? <div role="alert" className="mx-4 mb-2 text-xs text-destructive">{ticketIngress.error}
+          {ticketIngress.executePending === currentSessionId ? <button type="button" className="ml-2 underline" onClick={() => void ticketIngress.retryExecute()}>重试启动</button> : null}
+        </div> : null}
         <div data-composer-region className="relative shrink-0">
           {/* Keep the jump control centered on the same max-width column as the composer. */}
           {!atBottom && (
@@ -1055,8 +1089,8 @@ export function ChatPane({
           onStop={stop}
           sending={currentlyRunning}
           queueMode={queue.mode}
-          onQueueModeChange={currentSessionId && !submissionPending ? queue.setMode : undefined}
-          queueControls={currentSessionId ? <SessionGuidance key={currentSessionId} sessionId={currentSessionId} messages={queue.pending} busy={queue.busy} onCancel={(id) => void queue.cancel(id)} onPreview={setPreview} /> : null}
+          onQueueModeChange={currentSessionId && !submissionPending && !semanticComposer ? queue.setMode : undefined}
+          queueControls={currentSessionId && !semanticComposer ? <SessionGuidance key={currentSessionId} sessionId={currentSessionId} messages={queue.pending} busy={queue.busy} onCancel={(id) => void queue.cancel(id)} onPreview={setPreview} /> : null}
           workflowControl={showWorkflowCatalog || typedWorkflow || workflowError ? <WorkflowSelectionControl key={currentSessionId ?? "new"} sessionId={currentSessionId}
             selected={typedWorkflow} onChange={changeTypedWorkflow}
             onClose={() => { setShowWorkflowCatalog(false); if (!typedWorkflow) setWorkflowError(null) }}
@@ -1130,7 +1164,7 @@ export function ChatPane({
               ) : null}
             </>
           )}
-          submissionPending={submissionPending || goalSaving || queue.busy || modelSaving || rootMode.busy}
+          submissionPending={submissionPending || goalSaving || queue.busy || ticketIngress.busy || modelSaving || rootMode.busy}
           inputRef={composerInputRef}
           attachments={attachments}
           onAddFiles={(files) => void addFiles(files)}
