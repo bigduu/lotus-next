@@ -1,0 +1,32 @@
+{
+  "bamboo_source": "025641317c5703226052a4b94a52d1844615c352",
+  "lotus_source": "1131c275cb441694a41f996228d9f91473d920f5",
+  "isolated_bamboo_and_jiandu_roots": true,
+  "setup": "BAMBOO_JIANDU_DATA_DIR=<fresh-demo-root>/jiandu; bamboo serve --data-dir <fresh-demo-root>/bamboo",
+  "trace": "strace -f -e trace=%file from process launch through recording",
+  "default_jiandu_path_references": 0,
+  "default_bamboo_path_references": 0,
+  "other_memory_v1_path_references": 0,
+  "explicit_jiandu_path_references": 17,
+  "explicit_root_log_observed": true,
+  "isolated_memory_file_calls": [
+    "openat(AT_FDCWD, \"<DEMO_ROOT>/jiandu/memory/v1/scopes/global/state/source_generation.json\", O_RDONLY|O_CLOEXEC <unfinished ...>",
+    "statx(AT_FDCWD, \"<DEMO_ROOT>/jiandu/memory/v1/scopes/global/topics\", AT_STATX_SYNC_AS_STAT, STATX_ALL,  <unfinished ...>",
+    "statx(AT_FDCWD, \"<DEMO_ROOT>/jiandu/memory/v1/scopes/global/views/DREAM.md\", AT_STATX_SYNC_AS_STAT, STATX_ALL,  <unfinished ...>",
+    "statx(AT_FDCWD, \"<DEMO_ROOT>/jiandu/memory/v1/scopes/global/topics\", AT_STATX_SYNC_AS_STAT, STATX_ALL,  <unfinished ...>",
+    "statx(AT_FDCWD, \"<DEMO_ROOT>/jiandu/memory/v1/scopes/global/topics\", AT_STATX_SYNC_AS_STAT, STATX_ALL, 0x7f3a17ff7490) = -1 ENOENT (No such file or directory)",
+    "statx(AT_FDCWD, \"<DEMO_ROOT>/jiandu/memory/v1/scopes/global/topics\", AT_STATX_SYNC_AS_STAT, STATX_ALL,  <unfinished ...>",
+    "statx(AT_FDCWD, \"<DEMO_ROOT>/jiandu/memory/v1/scopes/global/topics\", AT_STATX_SYNC_AS_STAT, STATX_ALL,  <unfinished ...>",
+    "mkdir(\"<DEMO_ROOT>/jiandu/memory/v1/scopes/global\", 0777 <unfinished ...>",
+    "mkdir(\"<DEMO_ROOT>/jiandu/memory/v1/scopes\", 0777 <unfinished ...>",
+    "mkdir(\"<DEMO_ROOT>/jiandu/memory/v1\", 0777 <unfinished ...>",
+    "mkdir(\"<DEMO_ROOT>/jiandu/memory\", 0777 <unfinished ...>",
+    "mkdir(\"<DEMO_ROOT>/jiandu/memory/v1\", 0777) = 0",
+    "mkdir(\"<DEMO_ROOT>/jiandu/memory/v1/scopes\", 0777) = 0",
+    "mkdir(\"<DEMO_ROOT>/jiandu/memory/v1/scopes/global\", 0777) = 0",
+    "openat(AT_FDCWD, \"<DEMO_ROOT>/jiandu/memory/v1/scopes/global/.jiandu-write.lock\", O_RDWR|O_CREAT|O_CLOEXEC, 0666) = 22",
+    "statx(AT_FDCWD, \"<DEMO_ROOT>/jiandu/memory/v1/scopes/global/topics\", AT_STATX_SYNC_AS_STAT, STATX_ALL, 0x7f3a17fe89b0) = -1 ENOENT (No such file or directory)",
+    "statx(AT_FDCWD, \"<DEMO_ROOT>/jiandu/memory/v1/scopes/global/topics\", AT_STATX_SYNC_AS_STAT, STATX_ALL, 0x7f3a17ff7490) = -1 ENOENT (No such file or directory)"
+  ],
+  "limitations": "This checks this source process and recorded interval; not a general sandbox security guarantee. Old recording was replaced because independent Jiandu isolation was not established."
+}
