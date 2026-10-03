@@ -61,3 +61,24 @@ The complete final unit/type/lint/architecture/build/package run is recorded in
 bytes; original resource budgets are unchanged. Controlled provider UI tests do
 not substitute for real-model semantic evaluation or arbitrary coding sandbox
 and remote lease-expiry acceptance, which remain separate Bamboo gates.
+
+## Independent review follow-up
+
+The compatible local Codex CLI completed a read-only review of `5895e9d`
+against `1131c275`, finding seven regressions introduced by this feature.
+All seven are addressed: opt-in native fixtures are excluded from ordinary
+Playwright discovery; semantic messages can be sent during a running Supervisor
+without legacy queue controls; initial and retried activation recheck the Root
+fence; authentication rejection of a replay preserves an earlier unknown Human
+receipt; incomplete snapshots disable decisions; exact decision receipts persist
+before delivery and survive navigation/reload/rejected replays; reference actions
+are hidden where semantic ingress is unavailable.
+
+Focused regressions: 38/38. Full Vitest: 2054/2054 in 123 files. Type/lint,
+architecture, build and package checks passed. Logs:
+`/tmp/1481-lotus-review-fixes-tests.log`,
+`/tmp/1481-lotus-reviewed-full-verify.log`,
+`/tmp/1481-lotus-reviewed-package.log`. Package verification used a task-local
+npm cache after the default cache was denied by the filesystem sandbox.
+The changed head still requires a fresh independent review and built browser
+acceptance; the earlier browser evidence belongs to `5895e9d`.

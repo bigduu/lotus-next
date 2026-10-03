@@ -92,6 +92,13 @@ function dispatchSubmitShortcut(
 }
 
 describe("Composer submission controls", () => {
+  it("sends semantic ingress during execution without showing legacy queue controls", () => {
+    const { container, textarea, props } = mountComposer({ sending: true, sendWhileRunning: true })
+    expect(container.querySelector('[aria-label="发送时机"]')).toBeNull()
+    expect(container.querySelector('[aria-label="发送消息"]')).not.toBeNull()
+    dispatchSubmitShortcut(textarea)
+    expect(props.onSubmit).toHaveBeenCalledTimes(1)
+  })
   it("keeps permission, runtime, and submission controls inside the composer surface", () => {
     const { container } = mountComposer({
       permissionControl: <span data-testid="permission-control">Auto</span>,

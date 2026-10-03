@@ -43,7 +43,7 @@ function RequestCard({ controller, state, request }: { controller: Controller; s
   </article>
 }
 
-export function TicketWorkPanel({ controller, onReference }: { controller: Controller; onReference: (request: PendingRequest) => void }) {
+export function TicketWorkPanel({ controller, onReference }: { controller: Controller; onReference?: (request: PendingRequest) => void }) {
   const state = controller.state
   const [artifactError, setArtifactError] = useState<string | null>(null)
   if (!state) return null
@@ -76,7 +76,7 @@ export function TicketWorkPanel({ controller, onReference }: { controller: Contr
     {artifactError ? <p role="alert">{artifactError}</p> : null}
     {open.length ? <div className="mt-3 grid gap-2 sm:grid-cols-2">{open.map((request) => <div key={request.id}>
       <RequestCard controller={controller} state={state} request={request} />
-      <button type="button" className="mt-1 text-xs underline" onClick={() => onReference(request)}>在普通输入中引用此请求</button>
+      {onReference ? <button type="button" className="mt-1 text-xs underline" onClick={() => onReference(request)}>在普通输入中引用此请求</button> : null}
     </div>)}</div> : null}
     {history.length ? <details className="mt-3"><summary className="cursor-pointer text-xs">已处理和失效请求（{history.length}）</summary><div className="mt-2 grid gap-2 sm:grid-cols-2">{history.map((request) => <RequestCard key={request.id} controller={controller} state={state} request={request} />)}</div></details> : null}
   </aside>

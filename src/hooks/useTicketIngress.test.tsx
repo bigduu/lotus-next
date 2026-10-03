@@ -1,7 +1,8 @@
 import { act } from "react"
 import { createRoot, type Root } from "react-dom/client"
 import { afterEach, beforeEach, expect, it, vi } from "vitest"
-import { apiClient } from "@services/api"
+import { ApiError, apiClient } from "@services/api"
+import { beginRootModeOperation, finishRootModeOperation } from "@/lib/rootModeTransitionFence"
 import { agentClient, type ChatRequest, type ChatResponse } from "@services/chat/AgentService"
 import { useTicketIngress } from "./useTicketIngress"
 
@@ -12,7 +13,7 @@ let root: Root, container: HTMLDivElement, ingress: ReturnType<typeof useTicketI
 function Harness() { ingress = useTicketIngress(); return null }
 const request: ChatRequest = { session_id: "ticket-root", model: "fixture", message: "创建报告", thread_id: "work-A", in_reply_to: "q-A" }
 beforeEach(() => {
-  Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true }); sessionStorage.clear()
+  Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true }); sessionStorage.clear(); localStorage.clear()
   const randomUUID = crypto.randomUUID.bind(crypto)
   vi.stubGlobal("crypto", { randomUUID, subtle: { digest: async (_algorithm: string, bytes: Uint8Array) => {
     const result = new Uint8Array(32); for (const [i, byte] of bytes.entries()) result[i % 32] ^= byte; return result.buffer
@@ -50,4 +51,32 @@ it("keeps a confirmed message accepted when execute fails and retries only the i
   await act(async () => { expect(await ingress.retryExecute()).toBe(true) })
   expect(apiClient.postOnce).toHaveBeenCalledTimes(1)
   expect(agentClient.execute).toHaveBeenCalledTimes(2)
+})
+
+it("rechecks the Root fence after chat acknowledgement and before every activation retry", async () => {
+  await mount()
+  const normal = vi.mocked(apiClient.postOnce).getMockImplementation()!
+  let fence!: NonNullable<ReturnType<typeof beginRootModeOperation>>
+  vi.mocked(apiClient.postOnce).mockImplementationOnce(async (...args) => {
+    fence = beginRootModeOperation("ticket-root", 1, "birth", true)!
+    return normal(...args)
+  })
+  await act(async () => { expect((await ingress.send(request)).kind).toBe("accepted") })
+  expect(agentClient.execute).not.toHaveBeenCalled()
+  await act(async () => { expect(await ingress.retryExecute()).toBe(false) })
+  finishRootModeOperation("ticket-root", fence)
+  await act(async () => { expect(await ingress.retryExecute()).toBe(true) })
+  expect(agentClient.execute).toHaveBeenCalledTimes(1)
+})
+
+it("preserves an ambiguous Human ID through an authentication rejection of its replay", async () => {
+  await mount()
+  vi.mocked(apiClient.postOnce).mockRejectedValueOnce(new Error("unknown outcome"))
+  await act(async () => { expect((await ingress.send(request)).kind).toBe("unconfirmed") })
+  const original = vi.mocked(apiClient.postOnce).mock.calls[0][1]
+  vi.mocked(apiClient.postOnce).mockRejectedValueOnce(new ApiError("unauthorized", 401, "Unauthorized"))
+  await act(async () => { expect((await ingress.send(request)).kind).toBe("unconfirmed") })
+  await act(async () => root.render(null)); await mount()
+  await act(async () => { expect((await ingress.send(request)).kind).toBe("accepted") })
+  expect(vi.mocked(apiClient.postOnce).mock.calls.map(([, value]) => value)).toEqual([original, original, original])
 })

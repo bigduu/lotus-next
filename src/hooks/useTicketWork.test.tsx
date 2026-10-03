@@ -19,7 +19,7 @@ function Harness({ session = "root" }: { session?: string }) {
 }
 beforeEach(() => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
-  snapshot = ticketSnapshot(); loseAck = false; receipts.clear()
+  snapshot = ticketSnapshot(); loseAck = false; receipts.clear(); sessionStorage.clear()
   vi.mocked(ticketClient.load).mockImplementation(async () => structuredClone(snapshot))
   vi.mocked(ticketClient.changes).mockResolvedValue({ ...snapshot.scope.overview, data: [] })
   vi.mocked(ticketClient.respond).mockImplementation(async (command) => {
@@ -136,4 +136,34 @@ it("disables decisions while disconnected and ignores an old scope response afte
   expect(controller.canRespond).toBe(false)
   expect(container.textContent).toContain("连接未确认")
   expect([...container.querySelectorAll('button[type="submit"]')].every((button) => (button as HTMLButtonElement).disabled)).toBe(true)
+})
+
+it("keeps an ambiguous approval identity across navigation, reload, and rejected replays", async () => {
+  const q = snapshot.views[0].requests[0]
+  q.kind = { kind: "approval", fingerprint: "a", action: { kind: "payment", target: "A", data_hash: "a", amount: "100", permissions: [], risk: "test" } }
+  await mount()
+  vi.mocked(ticketClient.respond).mockRejectedValueOnce(new Error("unknown outcome"))
+  const decision = { kind: "approval" as const, fingerprint: "a", approve: true }
+  await act(async () => { expect(await controller.respond(q, decision)).toBe(false) })
+  const original = vi.mocked(ticketClient.respond).mock.calls[0][0]
+  await mount("other"); await mount("root")
+  expect(controller.uncertain[q.id]).toEqual(original)
+  await act(async () => { expect(await controller.respond(q, { ...decision, approve: false })).toBe(false) })
+  vi.mocked(ticketClient.respond).mockRejectedValueOnce(new ApiError("unauthorized", 401, "Unauthorized"))
+  await act(async () => { expect(await controller.respond(q, decision)).toBe(false) })
+  await act(async () => root.render(null)); await mount()
+  expect(controller.uncertain[q.id]).toEqual(original)
+  await act(async () => { expect(await controller.respond(q, decision)).toBe(true) })
+  expect(vi.mocked(ticketClient.respond).mock.calls.map(([value]) => value)).toEqual([original, original, original])
+  expect(controller.uncertain[q.id]).toBeUndefined()
+})
+
+it("blocks mutations on an incomplete snapshot and hides unsupported reference actions", async () => {
+  snapshot.complete = false
+  await mount()
+  expect(controller.canRespond).toBe(false)
+  await act(async () => { expect(await controller.respond(controller.state!.requests["q-A"], { kind: "question", answer: "partial" })).toBe(false) })
+  expect(ticketClient.respond).not.toHaveBeenCalled()
+  await act(async () => root.render(<TicketWorkPanel controller={controller} />))
+  expect(container.textContent).not.toContain("在普通输入中引用此请求")
 })

@@ -3,6 +3,7 @@ import { getErrorMessage, isApiError } from "@services/api"
 import { ticketClient } from "@services/tickets/client"
 import { applyTicketSnapshot, responseCommand, type TicketState } from "@services/tickets/state"
 import type { Decision, PendingRequest, ResponseCommand } from "@services/tickets/types"
+import { clearDecisionReceipt, readDecisionReceipts, saveDecisionReceipt } from "@services/tickets/decisionReceipts"
 
 export function useTicketWork(sessionId: string | null | undefined) {
   const [state, setState] = useState<TicketState | null>(null)
@@ -24,6 +25,8 @@ export function useTicketWork(sessionId: string | null | undefined) {
     setDecisionError(null)
     activeRequests.current.clear()
     if (!sessionId) return
+    try { setUncertain(readDecisionReceipts(sessionId)) }
+    catch (failure) { setDecisionError(getErrorMessage(failure)) }
     const controller = new AbortController()
     let timer: ReturnType<typeof setTimeout> | undefined
     let refreshing = false
@@ -41,6 +44,7 @@ export function useTicketWork(sessionId: string | null | undefined) {
         const result = await ticketClient.load(sessionId, controller.signal)
         if (controller.signal.aborted) return
         current.current = result ? applyTicketSnapshot(current.current, result) : null
+        setUncertain(readDecisionReceipts(sessionId))
         setState(current.current); setConnected(true); setError(null)
       } catch (failure) {
         if (!controller.signal.aborted) { setConnected(false); setError(getErrorMessage(failure)) }
@@ -61,14 +65,19 @@ export function useTicketWork(sessionId: string | null | undefined) {
     const captured = sessionId
     const capturedEpoch = epoch.current
     if (!current.current || current.current.current.scope.binding.supervisor_session_id !== captured
-      || !connected || !current.current.current.scope.mutation_enabled || current.current.current.scope.health !== "writable"
+      || !connected || !current.current.current.complete || !current.current.current.scope.mutation_enabled || current.current.current.scope.health !== "writable"
       || activeRequests.current.has(request.id)) return false
-    const retry = uncertain[request.id]
+    let retry: ResponseCommand | undefined
+    try { retry = readDecisionReceipts(captured!)[request.id] }
+    catch (failure) { setDecisionError(getErrorMessage(failure)); return false }
     if (retry && JSON.stringify(retry.decision) !== JSON.stringify(decision)) {
       setDecisionError("上次发送尚未确认，请先确认同一请求的发送结果。"); return false
     }
     let command: ResponseCommand
-    try { command = retry ?? responseCommand(current.current, request, decision, crypto.randomUUID()) }
+    try {
+      command = retry ?? responseCommand(current.current, request, decision, crypto.randomUUID())
+      saveDecisionReceipt(captured!, command)
+    }
     catch (failure) { setDecisionError(getErrorMessage(failure)); return false }
     activeRequests.current.add(request.id)
     setDecisionError(null)
@@ -85,14 +94,18 @@ export function useTicketWork(sessionId: string | null | undefined) {
         if (scope.current !== captured || epoch.current !== capturedEpoch || !current.current
           || current.current.current.snapshot.seq <= command.expected_seq) throw failure
         command = responseCommand(current.current, request, decision, crypto.randomUUID())
+        saveDecisionReceipt(captured!, command)
         await ticketClient.respond(command)
       }
+      clearDecisionReceipt(captured!, command)
       if (scope.current !== captured || epoch.current !== capturedEpoch) return false
       setUncertain((old) => { const next = { ...old }; delete next[request.id]; return next })
       await refreshRef.current(); return true
     } catch (failure) {
+      const unknown = !!retry || !isApiError(failure) || failure.status >= 500
+      if (!unknown) clearDecisionReceipt(captured!, command)
       if (scope.current !== captured || epoch.current !== capturedEpoch) return false
-      if (!isApiError(failure) || failure.status >= 500) {
+      if (unknown) {
         setUncertain((old) => ({ ...old, [request.id]: command }))
         setDecisionError("发送结果尚未确认；重试会使用同一请求和原操作 ID。");
       } else {
@@ -102,9 +115,9 @@ export function useTicketWork(sessionId: string | null | undefined) {
       }
       return false
     } finally { if (scope.current === captured && epoch.current === capturedEpoch) { activeRequests.current.delete(request.id); setBusy((old) => ({ ...old, [request.id]: false })) } }
-  }, [sessionId, connected, uncertain])
+  }, [sessionId, connected])
 
   return { state, error: decisionError ?? error, connected, busy, uncertain, respond, refresh: () => refreshRef.current(),
     canRespond: connected && state !== null && state.current.scope.binding.supervisor_session_id === sessionId
-      && state.current.scope.health === "writable" && state.current.scope.mutation_enabled === true }
+      && state.current.complete && state.current.scope.health === "writable" && state.current.scope.mutation_enabled === true }
 }

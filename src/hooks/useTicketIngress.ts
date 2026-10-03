@@ -25,6 +25,10 @@ export function useTicketIngress() {
   const [error, setError] = useState<string | null>(null)
   const [executePending, setExecutePending] = useState<string | null>(null)
   const execute = async (sessionId: string) => {
+    if (getRootModeFenceState(sessionId) !== "clear") {
+      setExecutePending(sessionId); setError("消息已保存；Root 模式切换尚未确认，启动已暂停。")
+      return false
+    }
     try {
       const result = await agentClient.execute(sessionId)
       if (!["started", "already_running", "completed"].includes(result.status)) throw new Error("消息已保存，运行尚未启动。")
@@ -39,11 +43,13 @@ export function useTicketIngress() {
     if (!sessionId) return { kind: "blocked" }
     if (getRootModeFenceState(sessionId) !== "clear") return { kind: "blocked" }
     const operationId = ++sequence.current
+    let replay = false
     active.current = true; setBusy(true); setError(null)
     try {
       const bytes = new TextEncoder().encode(JSON.stringify(request))
       const fingerprint = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)), (byte) => byte.toString(16).padStart(2, "0")).join("")
       const prior = pending.current.get(sessionId) ?? readReceipt(sessionId)
+      replay = !!prior
       if (prior && prior.fingerprint !== fingerprint) {
         setError("上次消息尚未确认，请先用原文重试，避免重复创建工作。")
         return { kind: "blocked" }
@@ -61,7 +67,7 @@ export function useTicketIngress() {
       await execute(sessionId)
       return { kind: "accepted", operationId, sessionId, navigated: false }
     } catch (failure) {
-      if (isApiError(failure) && failure.status >= 400 && failure.status < 500) {
+      if (!replay && isApiError(failure) && failure.status >= 400 && failure.status < 500) {
         pending.current.delete(sessionId)
         try { sessionStorage.removeItem(receiptKey(sessionId)) } catch { /* No ambiguous write was accepted. */ }
       }

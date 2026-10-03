@@ -1057,7 +1057,7 @@ export function ChatPane({
         ) : null}
 
         {queue.error && <div role="alert" className="mx-auto mb-1 w-[calc(100%-1.5rem)] max-w-6xl rounded-lg border border-destructive/40 px-3 py-2 text-xs text-destructive">{queue.error}</div>}
-        <TicketWorkPanel controller={tickets} onReference={(request) => { setTicketReference(request); composerInputRef.current?.focus() }} />
+        <TicketWorkPanel controller={tickets} onReference={semanticComposer ? (request) => { setTicketReference(request); composerInputRef.current?.focus() } : undefined} />
         {semanticComposer && ticketReference ? <div className="mx-4 mb-2 flex items-center gap-2 text-xs" data-testid="ticket-reference">
           <span>引用：{tickets.state?.works[ticketReference.work_id]?.ticket.contract.title ?? ticketReference.work_id} 的请求</span>
           <button type="button" className="underline" onClick={() => setTicketReference(null)}>清除引用</button>
@@ -1090,6 +1090,7 @@ export function ChatPane({
           sending={currentlyRunning}
           queueMode={queue.mode}
           onQueueModeChange={currentSessionId && !submissionPending && !semanticComposer ? queue.setMode : undefined}
+          sendWhileRunning={semanticComposer}
           queueControls={currentSessionId && !semanticComposer ? <SessionGuidance key={currentSessionId} sessionId={currentSessionId} messages={queue.pending} busy={queue.busy} onCancel={(id) => void queue.cancel(id)} onPreview={setPreview} /> : null}
           workflowControl={showWorkflowCatalog || typedWorkflow || workflowError ? <WorkflowSelectionControl key={currentSessionId ?? "new"} sessionId={currentSessionId}
             selected={typedWorkflow} onChange={changeTypedWorkflow}
@@ -1144,7 +1145,7 @@ export function ChatPane({
                 allowUltra={rootMode.isRoot}
                 thinkingMode={rootMode.thinkingMode}
                 onChange={(selection) => { setRootModeConflict(null); void rootMode.choose(selection) }}
-                disabled={rootMode.controlDisabled}
+                disabled={rootMode.controlDisabled || ticketIngress.busy}
                 menuPlacement="up"
                 menuAlign="right"
               />
