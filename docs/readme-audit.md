@@ -25,3 +25,16 @@ Sources reviewed:
 - Existing packaging and real-runtime acceptance instructions retained in [verification.md](verification.md); the older `2026.9.14` published-artifact acceptance fixture is intentionally not relabeled as npm latest.
 
 Validation: relative Markdown links and package-script references checked; `git diff --check` passed. This audit verifies source and artifact identity, not end-to-end model behavior. Browser/terminal recordings, if added, must disclose their precise runtime and any synthetic data; none is evidence of native macOS/Windows acceptance. No user credentials, production settings or private sessions were read.
+
+## Approved brand illustration
+
+The user-approved nature illustration is saved at `docs/assets/lotus-next-nature-hero.png`.
+The original PNG was visually inspected and decoded, and its SHA-256 matched
+the approved image package. It is a brand illustration, not a software screenshot;
+the README alt text and visible caption say so. Existing source/release and
+recording limits still apply. The older artwork remains in repository history
+and any existing SVG asset is preserved.
+
+- Pixels: 1672 × 941 (RGB PNG)
+- Bytes: 1948241
+- SHA-256: `74c6bcff536c2d1703b626a02691d536102f9625fd69fdd18e9c5c6f25f77f9b`

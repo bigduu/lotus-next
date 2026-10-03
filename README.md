@@ -1,5 +1,9 @@
 # Lotus Next
 
+![Lotus Next brand illustration: a luminous lotus flower by the water, symbolizing clarity and beauty.](docs/assets/lotus-next-nature-hero.png)
+
+*Brand illustration, not a software screenshot. The lotus symbolizes clarity and beauty.*
+
 **Follow your agent's work from a browser or the Bodhi desktop app.** Lotus Next is the React interface for [Bamboo](https://github.com/bigduu/Bamboo-agent), the core of the [Zenith](https://github.com/bigduu/Zenith) local AI agent harness suite. It puts conversations, tool activity, permission requests and runtime settings in one place.
 
 Use the browser interface when you already run Bamboo, or install [Bodhi](https://github.com/bigduu/Bodhi-AI/releases/latest) for a desktop shell that manages the engine. Lotus Next supplies the UI; Bamboo runs the agent and connects to your configured model provider and tools.
