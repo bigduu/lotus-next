@@ -1,4 +1,4 @@
-import { useRef, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { apiClient, getErrorMessage, isApiError } from "@services/api"
 import { agentClient, type ChatRequest, type ChatResponse } from "@services/chat/AgentService"
 import { useAppStore } from "@shared/store/appStore"
@@ -6,8 +6,9 @@ import type { SendSubmissionResult } from "./useChat"
 import { getRootModeFenceState } from "@/lib/rootModeTransitionFence"
 
 type References = Pick<ChatRequest, "thread_id" | "in_reply_to" | "correlation_id">
-type Delivery = { id: string; fingerprint: string; fingerprint_version?: 2; references?: References }
+type Delivery = { id: string; fingerprint: string; fingerprint_version?: 2; references?: References; phase?: "activation" }
 const receiptKey = (id: string) => `lotus-next.ticket-human.${id}`
+const admittedSessions = new Set<string>()
 function readReceipt(id: string): Delivery | undefined {
   const raw = sessionStorage.getItem(receiptKey(id))
   if (raw === null) return
@@ -15,6 +16,7 @@ function readReceipt(id: string): Delivery | undefined {
   if (typeof value?.id !== "string" || value.id.length === 0 || value.id.length > 128
     || typeof value.fingerprint !== "string" || !/^[a-f0-9]{64}$/.test(value.fingerprint)
     || (value.fingerprint_version !== undefined && value.fingerprint_version !== 2)
+    || (value.phase !== undefined && value.phase !== "activation")
     || (value.references !== undefined && (typeof value.references !== "object" || value.references === null
       || Object.entries(value.references).some(([key, reference]) => !["thread_id", "in_reply_to", "correlation_id"].includes(key)
         || typeof reference !== "string" || reference.length === 0 || reference.length > 128)))) {
@@ -32,23 +34,35 @@ function canonicalRequest(value: unknown): unknown {
 
 // One ordinary composer, one canonical Human ingress. An uncertain delivery
 // retains its exact payload/ID; no automatic retry of a changed instruction.
-export function useTicketIngress() {
-  const pending = useRef(new Map<string, Delivery>())
-  const active = useRef(false)
+export function useTicketIngress(sessionId?: string | null) {
   const sequence = useRef(0)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [executePending, setExecutePending] = useState<string | null>(null)
+  useEffect(() => {
+    setExecutePending(null); setError(null)
+    if (!sessionId) return
+    try {
+      if (readReceipt(sessionId)?.phase === "activation") {
+        setExecutePending(sessionId); setError("消息已保存，启动尚未确认；可以重试启动。")
+      }
+    } catch (failure) { setError(getErrorMessage(failure)) }
+  }, [sessionId])
   const hasPending = (sessionId: string | null | undefined) => {
     if (!sessionId) return false
-    if (pending.current.has(sessionId)) return true
     try { return sessionStorage.getItem(receiptKey(sessionId)) !== null } catch { return false }
   }
   const references = (sessionId: string | null | undefined) => {
     if (!sessionId) return undefined
-    try { return (pending.current.get(sessionId) ?? readReceipt(sessionId))?.references } catch { return undefined }
+    try { return readReceipt(sessionId)?.references } catch { return undefined }
   }
-  const execute = async (sessionId: string) => {
+  const clearOwnedReceipt = (sessionId: string, deliveryId: string) => {
+    const stored = readReceipt(sessionId)
+    if (stored && stored.id !== deliveryId) return false
+    if (stored) sessionStorage.removeItem(receiptKey(sessionId))
+    return true
+  }
+  const execute = async (sessionId: string, delivery: Delivery) => {
     if (getRootModeFenceState(sessionId) !== "clear") {
       setExecutePending(sessionId); setError("消息已保存；Root 模式切换尚未确认，启动已暂停。")
       return false
@@ -56,22 +70,28 @@ export function useTicketIngress() {
     try {
       const result = await agentClient.execute(sessionId)
       if (!["started", "already_running", "completed"].includes(result.status)) throw new Error("消息已保存，运行尚未启动。")
+      if (!clearOwnedReceipt(sessionId, delivery.id)) throw new Error("消息回执已变化，请刷新后核对。")
       setExecutePending(null); setError(null)
       void useAppStore.getState().loadChatHistory(sessionId).catch(() => {})
       return true
     } catch { setExecutePending(sessionId); setError("消息已保存，启动尚未确认；可以重试启动。"); return false }
   }
   const send = async (request: ChatRequest): Promise<SendSubmissionResult> => {
-    if (active.current) return { kind: "busy" }
     const sessionId = request.session_id
     if (!sessionId) return { kind: "blocked" }
+    if (admittedSessions.has(sessionId)) return { kind: "busy" }
     if (getRootModeFenceState(sessionId) !== "clear") return { kind: "blocked" }
     const operationId = ++sequence.current
     let replay = false
-    active.current = true; setBusy(true); setError(null)
+    let deliveryId: string | undefined
+    admittedSessions.add(sessionId); setBusy(true); setError(null)
     try {
-      const prior = pending.current.get(sessionId) ?? readReceipt(sessionId)
+      const prior = readReceipt(sessionId)
       replay = !!prior
+      if (prior?.phase === "activation") {
+        setExecutePending(sessionId); setError("消息已保存，请先确认启动，避免重复发送。")
+        return { kind: "blocked" }
+      }
       if (prior?.references && Object.entries(prior.references).some(([key, value]) =>
         request[key as keyof References] !== undefined && request[key as keyof References] !== value)) {
         setError("上次消息尚未确认，请保持原引用后重试。")
@@ -90,24 +110,35 @@ export function useTicketIngress() {
         ...(request.in_reply_to ? { in_reply_to: request.in_reply_to } : {}),
         ...(request.correlation_id ? { correlation_id: request.correlation_id } : {}),
       } }
-      pending.current.set(sessionId, saved)
+      deliveryId = saved.id
       // No text/image/credential bytes in the reload receipt.
       sessionStorage.setItem(receiptKey(sessionId), JSON.stringify(saved))
       const response = await apiClient.postOnce<ChatResponse>("chat", { ...restored, message_id: saved.id, correlation_id: restored.correlation_id ?? saved.id })
       if (response.session_id !== sessionId || response.message_id !== saved.id
         || !Number.isSafeInteger(response.ingress_seq) || (response.ingress_seq ?? 0) < 1) throw new Error("未收到同一条消息的持久化确认。")
-      pending.current.delete(sessionId)
-      try { sessionStorage.removeItem(receiptKey(sessionId)) } catch { /* Memory receipt cleared. */ }
-      await execute(sessionId)
+      if (readReceipt(sessionId)?.id !== saved.id) throw new Error("消息回执已变化，请刷新后核对。")
+      const acknowledged: Delivery = { ...saved, phase: "activation" }
+      sessionStorage.setItem(receiptKey(sessionId), JSON.stringify(acknowledged))
+      await execute(sessionId, acknowledged)
       return { kind: "accepted", operationId, sessionId, navigated: false }
     } catch (failure) {
-      if (!replay && isApiError(failure) && failure.status >= 400 && failure.status < 500) {
-        pending.current.delete(sessionId)
-        try { sessionStorage.removeItem(receiptKey(sessionId)) } catch { /* No ambiguous write was accepted. */ }
+      if (!replay && deliveryId && isApiError(failure) && failure.status >= 400 && failure.status < 500) {
+        try { clearOwnedReceipt(sessionId, deliveryId) } catch { /* Preserve an unreadable recovery receipt. */ }
       }
       setError(getErrorMessage(failure) + " 草稿已保留；重试将使用同一条消息。")
       return { kind: "unconfirmed", operationId }
-    } finally { active.current = false; setBusy(false) }
+    } finally { admittedSessions.delete(sessionId); setBusy(false) }
   }
-  return { send, busy, error, executePending, hasPending, references, retryExecute: () => executePending ? execute(executePending) : Promise.resolve(false) }
+  const retryExecute = async () => {
+    const target = executePending
+    if (!target || admittedSessions.has(target)) return false
+    admittedSessions.add(target); setBusy(true)
+    try {
+      const delivery = readReceipt(target)
+      if (delivery?.phase !== "activation") { setExecutePending(null); return false }
+      return await execute(target, delivery)
+    } catch (failure) { setError(getErrorMessage(failure)); return false }
+    finally { admittedSessions.delete(target); setBusy(false) }
+  }
+  return { send, busy, error, executePending, hasPending, references, retryExecute }
 }

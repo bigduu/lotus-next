@@ -10,6 +10,8 @@ export function useTicketWork(sessionId: string | null | undefined) {
   const [error, setError] = useState<string | null>(null)
   const [decisionError, setDecisionError] = useState<string | null>(null)
   const [connected, setConnected] = useState(false)
+  const connection = useRef(false)
+  const [negotiatedSession, setNegotiatedSession] = useState<string | null>(null)
   const [busy, setBusy] = useState<Record<string, boolean>>({})
   const [uncertain, setUncertain] = useState<Record<string, ResponseCommand>>({})
   const current = useRef<TicketState | null>(null)
@@ -21,7 +23,7 @@ export function useTicketWork(sessionId: string | null | undefined) {
   const refreshRef = useRef<() => Promise<void>>(async () => {})
 
   useEffect(() => {
-    current.current = null; setState(null); setConnected(false); setError(null); setBusy({}); setUncertain({})
+    current.current = null; connection.current = false; setState(null); setConnected(false); setNegotiatedSession(null); setError(null); setBusy({}); setUncertain({})
     setDecisionError(null)
     activeRequests.current.clear()
     if (!sessionId) return
@@ -42,7 +44,7 @@ export function useTicketWork(sessionId: string | null | undefined) {
               const negotiated = await ticketClient.scope(sessionId, controller.signal)
               if (controller.signal.aborted) return
               if (!negotiated) {
-                current.current = null; setState(null); setConnected(true); setError(null); return
+                current.current = null; connection.current = true; setState(null); setConnected(true); setNegotiatedSession(sessionId); setError(null); return
               }
               const previous = current.current.current
               if (negotiated.binding.scope_id === previous.scope.binding.scope_id
@@ -51,18 +53,18 @@ export function useTicketWork(sessionId: string | null | undefined) {
                 && negotiated.overview.snapshot.seq === previous.snapshot.seq
                 && negotiated.overview.snapshot.authority_epoch === previous.snapshot.authority_epoch) {
                 current.current = { ...current.current, current: { ...previous, scope: negotiated } }
-                setState(current.current); setConnected(true); setError(null); return
+                connection.current = true; setState(current.current); setConnected(true); setNegotiatedSession(sessionId); setError(null); return
               }
             }
-          } catch (failure) { if (!isApiError(failure) || failure.status !== 409) throw failure }
+          } catch (failure) { if (!isApiError(failure) || ![409, 410].includes(failure.status)) throw failure }
         }
         const result = await ticketClient.load(sessionId, controller.signal)
         if (controller.signal.aborted) return
         current.current = result ? applyTicketSnapshot(current.current, result) : null
         setUncertain(readDecisionReceipts(sessionId))
-        setState(current.current); setConnected(true); setError(null)
+        connection.current = true; setState(current.current); setConnected(true); setNegotiatedSession(sessionId); setError(null)
       } catch (failure) {
-        if (!controller.signal.aborted) { setConnected(false); setError(getErrorMessage(failure)) }
+        if (!controller.signal.aborted) { connection.current = false; setConnected(false); setError(getErrorMessage(failure)) }
       } finally { refreshing = false }
     }
     refreshRef.current = () => refresh()
@@ -80,7 +82,7 @@ export function useTicketWork(sessionId: string | null | undefined) {
     const captured = sessionId
     const capturedEpoch = epoch.current
     if (!current.current || current.current.current.scope.binding.supervisor_session_id !== captured
-      || !connected || !current.current.current.complete || !current.current.current.scope.mutation_enabled || current.current.current.scope.health !== "writable"
+      || !connection.current || !current.current.current.complete || !current.current.current.scope.mutation_enabled || current.current.current.scope.health !== "writable"
       || activeRequests.current.has(request.id)) return false
     let retry: ResponseCommand | undefined
     try { retry = readDecisionReceipts(captured!)[request.id] }
@@ -107,6 +109,11 @@ export function useTicketWork(sessionId: string | null | undefined) {
           || failure.message !== "revision_conflict") throw failure
         await refreshRef.current()
         if (scope.current !== captured || epoch.current !== capturedEpoch || !current.current
+          || !connection.current || !current.current.current.complete
+          || !current.current.current.scope.mutation_enabled || current.current.current.scope.health !== "writable"
+          || current.current.current.scope.binding.supervisor_session_id !== captured
+          || current.current.current.scope.binding.scope_id !== command.binding.scope_id
+          || current.current.current.scope.binding.binding_revision !== command.binding.binding_revision
           || current.current.current.snapshot.seq <= command.expected_seq) throw failure
         command = responseCommand(current.current, request, decision, crypto.randomUUID())
         saveDecisionReceipt(captured!, command)
@@ -130,9 +137,10 @@ export function useTicketWork(sessionId: string | null | undefined) {
       }
       return false
     } finally { if (scope.current === captured && epoch.current === capturedEpoch) { activeRequests.current.delete(request.id); setBusy((old) => ({ ...old, [request.id]: false })) } }
-  }, [sessionId, connected])
+  }, [sessionId])
 
-  return { state, error: decisionError ?? error, connected, busy, uncertain, respond, refresh: () => refreshRef.current(),
+  return { state, error: decisionError ?? error, connected, negotiated: !sessionId || negotiatedSession === sessionId,
+    busy, uncertain, respond, refresh: () => refreshRef.current(),
     canSendIngress: connected && state !== null && state.current.scope.binding.supervisor_session_id === sessionId
       && state.current.scope.health === "writable" && state.current.scope.mutation_enabled === true
       && state.current.scope.capabilities?.semantic_messages_v1 === true,

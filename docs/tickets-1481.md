@@ -109,3 +109,27 @@ packages installed offline from the task cache. No dependency versions changed.
 An initial new storage-mock/rerender assertion failure and a fresh browser-type
 check failure are preserved, then corrected and revalidated. Current clean
 build/package and real Host/browser results remain pending at this checkpoint.
+
+## Third independent review corrections (MacBook, six P2 findings)
+
+The completed read-only review of `02ffa593` found six introduced races and
+recovery gaps. Scope negotiation now finishes before the composer may select
+legacy delivery. All panes share a per-session ingress admission lock; cleanup
+checks the exact saved Human ID. An acknowledged message retains a durable
+activation-only phase until execution is confirmed, including reload and Root
+mode fencing. This receipt contains no message or attachment content. Legacy
+receipt versions remain readable.
+
+An ordinary answer's single conflict rebase checks the refreshed connection,
+complete coverage, write authority and original scope binding before a second
+POST. HTTP 410 change gaps reload a fixed snapshot. A single inspector budget
+rejection preserves the negotiated scope and other Work views with explicit
+incomplete coverage; it cannot enable card decisions or hide a different error.
+
+The byte-verified eight-file source overlay passed focused 107/107, fresh
+type-check and architecture checks. A redundant React dependency initially
+failed lint, then its removal passed lint. Logs and earlier outcomes remain in
+`../1481-evidence/1481-macbook-lotus-six-p2-*`. Full regression, clean built
+browser acceptance and fresh review of this changed head are subsequent gates;
+no earlier-head result is represented as their completion. Dependency versions
+and bundle budgets are unchanged. No remote operation is authorized.

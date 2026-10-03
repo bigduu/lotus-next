@@ -245,10 +245,10 @@ export function ChatPane({
   const runFailureGuidance = generationFailed ? describeRunFailure(runErrorDetail) : null
   const queue = useGuidanceQueue(currentSessionId, currentlyRunning)
   const tickets = useTicketWork(currentSessionId)
-  const ticketIngress = useTicketIngress()
+  const ticketIngress = useTicketIngress(currentSessionId)
   const ticketScope = tickets.state?.current.scope
   const pendingTicketMessage = ticketIngress.hasPending(currentSessionId)
-  const semanticComposer = pendingTicketMessage || ticketScope?.capabilities?.semantic_messages_v1 === true
+  const semanticComposer = tickets.negotiated === false || pendingTicketMessage || ticketScope?.capabilities?.semantic_messages_v1 === true
     && ticketScope.mutation_enabled === true
     && ticketScope.binding.supervisor_session_id === currentSessionId
   const [ticketReference, setTicketReference] = useState<TicketRequest | null>(null)

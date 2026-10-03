@@ -44,3 +44,30 @@ it("marks lagging index coverage partial and fails mixed metadata/snapshot ident
   vi.mocked(apiClient.post).mockResolvedValue({ ...value.scope.overview, snapshot: { ...value.snapshot, seq: 11 }, data: [] })
   await expect(ticketClient.load("root")).rejects.toThrow("快照不一致")
 })
+
+it("keeps scope and other Work views when one immutable Work exceeds the inspection budget", async () => {
+  const value = ticketSnapshot()
+  vi.mocked(apiClient.get).mockResolvedValue(value.scope)
+  vi.mocked(apiClient.post).mockImplementation(async (path, body) => {
+    expect((body as { fixed_commit: string }).fixed_commit).toBe(value.snapshot.commit)
+    if (path === "tickets/search") return { ...value.scope.overview, data: [{ id: "A", kind: "work" }, { id: "E", kind: "work" }] }
+    const id = (body as { ids: string[] }).ids[0]
+    if (id === "A") throw new ApiError("context_budget_exceeded", 422, "Unprocessable Entity")
+    return { ...value.scope.overview, data: value.views.filter((v) => v.ticket.id === id) }
+  })
+  const loaded = await ticketClient.load("root")
+  expect(loaded?.scope).toEqual(value.scope)
+  expect(loaded?.views.map((v) => v.ticket.id)).toEqual(["E"])
+  expect(loaded?.complete).toBe(false)
+  expect(loaded?.scope.capabilities?.semantic_messages_v1).toBe(true)
+})
+
+it("does not hide a different inspector rejection as incomplete coverage", async () => {
+  const value = ticketSnapshot()
+  vi.mocked(apiClient.get).mockResolvedValue(value.scope)
+  vi.mocked(apiClient.post).mockImplementation(async (path) => {
+    if (path === "tickets/search") return { ...value.scope.overview, data: [{ id: "A", kind: "work" }] }
+    throw new ApiError("invalid_transition", 422, "Unprocessable Entity")
+  })
+  await expect(ticketClient.load("root")).rejects.toThrow("invalid_transition")
+})

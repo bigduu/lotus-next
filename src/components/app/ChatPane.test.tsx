@@ -65,7 +65,7 @@ type ProviderState = typeof runtime.providerState
 vi.mock("@shared/store/appStore/slices/providerSlice", () => ({ useProviderStore: <T,>(selector: (state: ProviderState) => T) => selector(runtime.providerState) }))
 vi.mock("@/hooks/useGuidanceQueue", () => ({ useGuidanceQueue: () => ({ mode: "after_round", setMode: vi.fn(), send: runtime.queueSend, cancel: vi.fn(), pending: [], error: null, busy: false, hasUnconfirmed: false }) }))
 vi.mock("@/hooks/useTicketWork", () => ({ useTicketWork: () => runtime.ticketWork ?? {
-  state: null, connected: false, error: null, busy: {}, uncertain: {},
+  state: null, connected: false, negotiated: true, error: null, busy: {}, uncertain: {},
   canRespond: false, canSendIngress: false, respond: vi.fn(), refresh: vi.fn(),
 } }))
 vi.mock("@/hooks/useStickyScroll", () => ({
@@ -323,6 +323,17 @@ beforeEach(() => {
 })
 afterEach(() => { for (const root of roots.splice(0)) act(() => root.unmount()); document.body.replaceChildren(); vi.unstubAllGlobals() })
 describe("ChatPane composer acknowledgement", () => {
+  it("holds the draft and does not choose legacy routing while a running Supervisor negotiates tickets", async () => {
+    runtime.ticketWork = { state: null, connected: false, negotiated: false, error: null,
+      busy: {}, uncertain: {}, respond: async () => false, refresh: async () => {}, canRespond: false, canSendIngress: false }
+    const send = vi.fn<Send>()
+    const textarea = await mount(send, "negotiating-root", true)
+    change(textarea, "创建工作")
+    await act(async () => composer().onSubmit())
+    expect(send).not.toHaveBeenCalled()
+    expect(runtime.queueSend).not.toHaveBeenCalled()
+    expect(runtime.state.inputStates["negotiating-root"].content).toBe("创建工作")
+  })
   it("keeps an unknown semantic delivery out of legacy routing during reload and replays through partial scope", async () => {
     const randomUUID = crypto.randomUUID.bind(crypto)
     vi.stubGlobal("crypto", { randomUUID, subtle: { digest: async (_algorithm: string, bytes: Uint8Array) => {
@@ -332,10 +343,11 @@ describe("ChatPane composer acknowledgement", () => {
     const value = ticketSnapshot()
     value.scope.binding.supervisor_session_id = id
     const ready = (): TicketController => ({
-      state: applyTicketSnapshot(null, value), connected: true, error: null,
+      state: applyTicketSnapshot(null, value), connected: true, negotiated: true, error: null,
       busy: {}, uncertain: {}, respond: async () => false, refresh: async () => {},
       canRespond: value.complete, canSendIngress: true,
     })
+    vi.mocked(agentClient.execute).mockResolvedValue({ session_id: id, status: "already_running", events_url: "/events" })
     runtime.ticketWork = ready()
     const post = vi.spyOn(apiClient, "postOnce").mockRejectedValueOnce(new Error("unknown Human acknowledgement"))
     const send = vi.fn<Send>()

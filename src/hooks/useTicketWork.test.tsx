@@ -5,7 +5,7 @@ import { useTicketWork } from "./useTicketWork"
 import { TicketWorkPanel } from "@/components/chat/TicketWorkPanel"
 import { ticketClient } from "@services/tickets/client"
 import { ticketSnapshot } from "@services/tickets/testFixtures"
-import type { ResponseCommand } from "@services/tickets/types"
+import type { ResponseCommand, TicketSnapshot } from "@services/tickets/types"
 import { ApiError } from "@services/api"
 
 vi.mock("@services/tickets/client", () => ({ ticketClient: { load: vi.fn(), scope: vi.fn(), changes: vi.fn(), respond: vi.fn(), artifact: vi.fn() } }))
@@ -58,6 +58,59 @@ it("rebases one known pre-commit question conflict only while its exact identity
   expect(calls[0][0].target).toEqual(calls[1][0].target)
   expect(calls[0][0].operation_id).not.toBe(calls[1][0].operation_id)
   expect(calls[1][0].expected_seq).toBe(11)
+})
+
+it.each<[string, (value: TicketSnapshot) => void]>([
+  ["partial coverage", (value) => { value.complete = false }],
+  ["mutation disabled", (value) => { value.scope.mutation_enabled = false }],
+  ["readonly authority", (value) => { value.scope.health = "readonly" }],
+  ["different scope", (value) => { value.scope.binding.scope_id = "replacement" }],
+  ["different binding", (value) => { value.scope.binding.binding_revision += 1 }],
+  ["different Supervisor", (value) => { value.scope.binding.supervisor_session_id = "other" }],
+])("does not rebase a question after a conflict refresh reports %s", async (_label, change) => {
+  await mount()
+  const q = controller.state!.requests["q-E"]
+  snapshot.snapshot.seq = 11; snapshot.snapshot.commit = "commit-11"
+  change(snapshot)
+  vi.mocked(ticketClient.respond).mockRejectedValueOnce(new ApiError("revision_conflict", 409, "Conflict"))
+  await act(async () => { expect(await controller.respond(q, { kind: "question", answer: "答案 E" })).toBe(false) })
+  expect(ticketClient.respond).toHaveBeenCalledTimes(1)
+})
+
+it("does not rebase from a newer cached snapshot when the conflict refresh loses connection", async () => {
+  await mount()
+  let reject!: (failure: Error) => void
+  vi.mocked(ticketClient.respond).mockReturnValueOnce(new Promise((_resolve, fail) => { reject = fail }))
+  let pending!: Promise<boolean>
+  act(() => { pending = controller.respond(controller.state!.requests["q-E"], { kind: "question", answer: "答案 E" }) })
+  snapshot.snapshot.seq = 11; snapshot.snapshot.commit = "commit-11"
+  await act(async () => controller.refresh())
+  vi.mocked(ticketClient.load).mockRejectedValueOnce(new Error("offline during conflict refresh"))
+  await act(async () => { reject(new ApiError("revision_conflict", 409, "Conflict")); expect(await pending).toBe(false) })
+  expect(ticketClient.respond).toHaveBeenCalledTimes(1)
+})
+
+it("keeps negotiation pending until loading establishes an available or absent scope", async () => {
+  let finish!: (value: TicketSnapshot | null) => void
+  vi.mocked(ticketClient.load).mockReturnValueOnce(new Promise((resolve) => { finish = resolve }))
+  await mount()
+  expect(controller.negotiated).toBe(false)
+  expect(controller.canSendIngress).toBe(false)
+  await act(async () => finish(null))
+  expect(controller.negotiated).toBe(true)
+  expect(controller.state).toBeNull()
+})
+
+it("resynchronizes a fixed snapshot after the server expires its changes watermark", async () => {
+  vi.useFakeTimers(); await mount()
+  snapshot.snapshot.seq = 11; snapshot.snapshot.commit = "commit-11"
+  snapshot.scope.overview.snapshot = snapshot.snapshot; snapshot.scope.overview.index_seq = 11
+  vi.mocked(ticketClient.changes).mockRejectedValueOnce(new ApiError("resync_required", 410, "Gone"))
+  await act(async () => { await vi.advanceTimersByTimeAsync(2500) })
+  expect(ticketClient.load).toHaveBeenCalledTimes(2)
+  expect(controller.state!.current.snapshot.seq).toBe(11)
+  expect(controller.canRespond).toBe(true)
+  expect(controller.error).toBeNull()
 })
 
 it("never rebases an approval conflict or an ordinary answer after its generation changes", async () => {

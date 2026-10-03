@@ -46,10 +46,16 @@ export const ticketClient = {
     const views: WorkView[] = []
     // A complete contract is never silently cut to fit a batch budget.
     for (const row of summaries.filter((row) => row.kind !== "step")) {
-      const result = await apiClient.post<ReadEnvelope<WorkView[]>>("tickets/inspect", {
-        ids: [row.id], sections: ["requests", "submissions"], depth: 0,
-        budget_bytes: 65536, fixed_commit: snapshot.commit,
-      }, { signal })
+      let result: ReadEnvelope<WorkView[]>
+      try {
+        result = await apiClient.post<ReadEnvelope<WorkView[]>>("tickets/inspect", {
+          ids: [row.id], sections: ["requests", "submissions"], depth: 0,
+          budget_bytes: 65536, fixed_commit: snapshot.commit,
+        }, { signal })
+      } catch (failure) {
+        if (!isApiError(failure) || failure.status !== 422 || failure.message !== "context_budget_exceeded") throw failure
+        complete = false; continue
+      }
       sameSnapshot(result, snapshot)
       if (result.truncated || !completeCoverage(result.coverage)) complete = false
       views.push(...result.data)
