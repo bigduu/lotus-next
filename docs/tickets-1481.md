@@ -133,3 +133,7 @@ failed lint, then its removal passed lint. Logs and earlier outcomes remain in
 browser acceptance and fresh review of this changed head are subsequent gates;
 no earlier-head result is represented as their completion. Dependency versions
 and bundle budgets are unchanged. No remote operation is authorized.
+
+### Third-review verification follow-up
+
+All 2,073 tests in 123 files pass; lint and production build pass. The first package check failed because the generated ticket browser reports were being scanned into production CSS. Ignore their configured report/result directories, retaining the artifacts and original bundle budgets. With those outputs excluded, package verification passes: startup JS 1,427,811 raw / 434,181 gzip bytes; CSS 105,971 raw / 17,195 gzip bytes; 42 packaged files / 16,842,598 unpacked bytes. The initial failure remains in the evidence ledger.
