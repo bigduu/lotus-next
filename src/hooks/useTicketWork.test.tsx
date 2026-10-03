@@ -72,6 +72,24 @@ it("never rebases an approval conflict or an ordinary answer after its generatio
   expect(ticketClient.respond).toHaveBeenCalledTimes(2)
 })
 
+it("keeps a known answer conflict visible through polling and allows a fresh explicit retry", async () => {
+  await mount()
+  const q = controller.state!.requests["q-E"]
+  snapshot.snapshot.seq = 11; snapshot.snapshot.commit = "commit-11"
+  vi.mocked(ticketClient.respond)
+    .mockRejectedValueOnce(new ApiError("revision_conflict", 409, "Conflict"))
+    .mockRejectedValueOnce(new ApiError("revision_conflict", 409, "Conflict"))
+  await act(async () => { expect(await controller.respond(q, { kind: "question", answer: "答案 E" })).toBe(false) })
+  expect(controller.uncertain["q-E"]).toBeUndefined()
+  await act(async () => controller.refresh())
+  expect(controller.error).toBe("工作已更新，请核对当前问题后再次提交。")
+  expect(controller.state!.requests["q-E"].status).toBe("open")
+  await act(async () => { expect(await controller.respond(controller.state!.requests["q-E"], { kind: "question", answer: "答案 E" })).toBe(true) })
+  expect(ticketClient.respond).toHaveBeenCalledTimes(3)
+  expect(controller.error).toBeNull()
+  expect(receipts.size).toBe(1)
+})
+
 it("renders five concurrent cards and answers E/B/D/A/C without removing unresolved peers", async () => {
   await mount()
   expect(container.querySelectorAll('input[aria-label^="回答"]')).toHaveLength(5)

@@ -7,6 +7,7 @@ import type { Decision, PendingRequest, ResponseCommand } from "@services/ticket
 export function useTicketWork(sessionId: string | null | undefined) {
   const [state, setState] = useState<TicketState | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [decisionError, setDecisionError] = useState<string | null>(null)
   const [connected, setConnected] = useState(false)
   const [busy, setBusy] = useState<Record<string, boolean>>({})
   const [uncertain, setUncertain] = useState<Record<string, ResponseCommand>>({})
@@ -20,6 +21,7 @@ export function useTicketWork(sessionId: string | null | undefined) {
 
   useEffect(() => {
     current.current = null; setState(null); setConnected(false); setError(null); setBusy({}); setUncertain({})
+    setDecisionError(null)
     activeRequests.current.clear()
     if (!sessionId) return
     const controller = new AbortController()
@@ -63,12 +65,13 @@ export function useTicketWork(sessionId: string | null | undefined) {
       || activeRequests.current.has(request.id)) return false
     const retry = uncertain[request.id]
     if (retry && JSON.stringify(retry.decision) !== JSON.stringify(decision)) {
-      setError("上次发送尚未确认，请先确认同一请求的发送结果。"); return false
+      setDecisionError("上次发送尚未确认，请先确认同一请求的发送结果。"); return false
     }
     let command: ResponseCommand
     try { command = retry ?? responseCommand(current.current, request, decision, crypto.randomUUID()) }
-    catch (failure) { setError(getErrorMessage(failure)); return false }
+    catch (failure) { setDecisionError(getErrorMessage(failure)); return false }
     activeRequests.current.add(request.id)
+    setDecisionError(null)
     setBusy((old) => ({ ...old, [request.id]: true }))
     try {
       try { await ticketClient.respond(command) }
@@ -91,16 +94,17 @@ export function useTicketWork(sessionId: string | null | undefined) {
       if (scope.current !== captured || epoch.current !== capturedEpoch) return false
       if (!isApiError(failure) || failure.status >= 500) {
         setUncertain((old) => ({ ...old, [request.id]: command }))
-        setError("发送结果尚未确认；重试会使用同一请求和原操作 ID。");
+        setDecisionError("发送结果尚未确认；重试会使用同一请求和原操作 ID。");
       } else {
         setUncertain((old) => { const next = { ...old }; delete next[request.id]; return next })
-        setError(getErrorMessage(failure)); await refreshRef.current()
+        setDecisionError(failure.message === "revision_conflict"
+          ? "工作已更新，请核对当前问题后再次提交。" : getErrorMessage(failure)); await refreshRef.current()
       }
       return false
     } finally { if (scope.current === captured && epoch.current === capturedEpoch) { activeRequests.current.delete(request.id); setBusy((old) => ({ ...old, [request.id]: false })) } }
   }, [sessionId, connected, uncertain])
 
-  return { state, error, connected, busy, uncertain, respond, refresh: () => refreshRef.current(),
+  return { state, error: decisionError ?? error, connected, busy, uncertain, respond, refresh: () => refreshRef.current(),
     canRespond: connected && state !== null && state.current.scope.binding.supervisor_session_id === sessionId
       && state.current.scope.health === "writable" && state.current.scope.mutation_enabled === true }
 }

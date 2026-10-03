@@ -46,12 +46,30 @@ test("five real Worker questions E/B/D/A/C, exact approvals, references and brow
     for (const [index, id] of ["E", "B", "D", "A", "C"].entries()) {
       const card = page.getByTestId("ticket-request-" + requests[id].id)
       await card.getByRole("textbox").fill("答案 " + id)
-      await card.getByRole("button", { name: "回答", exact: true }).click()
+      // Ordinary questions may hit a definite pre-commit CAS conflict while
+      // another native result is published. Exercise the actual user's bounded
+      // refresh/resubmit path; no approval or uncertain ACK is retried here.
+      let saved = false
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        await card.getByRole("button", { name: "回答", exact: true }).click()
+        let outcome = "pending"
+        await expect.poll(async () => {
+          const view = await api("/tickets/inspect", { ids: [fixture.works[id]], sections: ["requests"], depth: 0, budget_bytes: 65536 })
+          outcome = view.data[0].requests[0].status === "answered" ? "saved"
+            : (await overview.getByRole("alert").allTextContents()).some((text) => text.includes("工作已更新，请核对当前问题后再次提交。")) ? "known_conflict" : "pending"
+          return outcome
+        }).not.toBe("pending")
+        if (outcome === "saved") { saved = true; break }
+        await expect(card.getByRole("textbox")).toHaveValue("答案 " + id)
+        await overview.getByRole("button", { name: "刷新", exact: true }).click()
+      }
+      expect(saved, `bounded explicit answer retry for ${id}`).toBe(true)
       await expect(overview).toContainText(`${4 - index} 个待答问题`)
       await expect.poll(async () => {
-        const view = await api("/tickets/inspect", { ids: [fixture.works[id]], sections: ["requests", "submissions"], depth: 0, budget_bytes: 65536 })
-        return [view.data[0].ticket.state, view.data[0].ticket.generation, view.data[0].requests[0].answer]
-      }).toEqual(["submitted", 2, "答案 " + id])
+        const view = await api("/tickets/inspect", { ids: [fixture.works[id]], sections: ["requests", "submissions", "assignments"], depth: 0, budget_bytes: 65536 })
+        return [view.data[0].ticket.state, view.data[0].ticket.generation, view.data[0].requests[0].answer,
+          view.data[0].assignments.every((a: { process_stopped: boolean }) => a.process_stopped)]
+      }).toEqual(["submitted", 2, "答案 " + id, true])
       if (index === 1) {
         await page.reload()
         await expect(overview).toContainText("3 个待答问题")
@@ -85,6 +103,7 @@ test("five real Worker questions E/B/D/A/C, exact approvals, references and brow
     expect([409, 422]).toContain(stale.status())
     await page.reload()
     await expect(overview).toContainText("0 个待批准动作")
+    await expect(page.getByText(/^Ticket decision committed at seq /)).toHaveCount(0)
     await page.screenshot({ path: file.replace(/\.json$/, "-approval-superseded.png"), fullPage: true })
     expect(browserErrors).toEqual([])
     writeFileSync(fixture.done, JSON.stringify({ pass: true, answered: ["E", "B", "D", "A", "C"], current_generation: 2, submitted: 5, stale_status: stale.status(), browser_errors: browserErrors }))

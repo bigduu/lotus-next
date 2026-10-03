@@ -17,7 +17,7 @@ auto-rebase or execute offline. Acknowledged chat with uncertain activation
 retries activation only. Session storage retains payload hashes/IDs, no text,
 images or credentials.
 
-Validation: current complete unit suite 2048/2048 (123 files), type-check, lint,
+Validation: current complete unit suite 2049/2049 (123 files), type-check, lint,
 architecture, build and package contents/budget passed. Initial post-attachment
 dependency read failed in picomatch; an isolated offline npm reinstall repaired
 the dependency tree. Package verification initially hit the default npm cache
@@ -38,5 +38,26 @@ Reproduce: build, start the Bamboo fixture with `BAMBOO_TICKET_FIXTURE_STATIC_DI
 and `BAMBOO_TICKET_FIXTURE_INFO`; wait for `TICKET_BROWSER_READY`; run
 `LOTUS_TICKET_FIXTURE_INFO=<same JSON> npm exec --offline -- playwright test
 --config=playwright.tickets.config.ts`. Screenshot/runtime reports are retained
-at `../1481-evidence/p8-ui-fixture4*`. A final browser run will cover the finalized
-bundle together with P9. Feature flags remain opt-in; no publishing is performed.
+at `../1481-evidence/p8-ui-fixture4*`. Feature flags remain opt-in; no publishing
+is performed.
+
+P9 final verification adds a regression for two definite CAS conflicts followed
+by explicit ordinary-question resubmission. Decision errors remain visible
+through successful read refresh, preserving the draft; only a new decision
+attempt clears them. The browser waits for each native Assignment's stopped
+process before answering the next Work, and permits at most three explicit user
+clicks after definite question conflicts. It never retries approval or uncertain
+ACK automatically.
+
+Final Chromium 1/1 passed in 45.5s; actual Bamboo Host cross-check 1/1 passed in
+94.87s including browser wait. The current bundle passes five exact answers,
+generation-2 submissions, A-only approval, stale B rejection and hidden internal
+decision wakes after reload. Browser/Runtime reports and inspected screenshots
+are at `../1481-evidence/p9-ui-final4*`; logs are
+`/tmp/1481-p9-lotus-browser4.log` and `/tmp/1481-p9-browser-fixture4.log`.
+Earlier failures and an exec-server-interrupted attempt are retained separately.
+The complete final unit/type/lint/architecture/build/package run is recorded in
+`/tmp/1481-p9-lotus-final-verify.log`. Startup JS is 1422851 raw / 432706 gzip
+bytes; original resource budgets are unchanged. Controlled provider UI tests do
+not substitute for real-model semantic evaluation or arbitrary coding sandbox
+and remote lease-expiry acceptance, which remain separate Bamboo gates.
