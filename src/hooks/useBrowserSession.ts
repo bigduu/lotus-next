@@ -1,3 +1,4 @@
+import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { useCallback, useEffect, useRef, useState } from "react"
 import { isApiError, NetworkRequestError, RequestCancelledError, RequestTimeoutError } from "@services/api"
 import { browserService } from "@services/browser/BrowserService"
@@ -41,18 +42,19 @@ const conflictCode = (error: unknown): string | null => {
 
 const userMessage = (error: unknown): string => {
   if (isApiError(error)) {
-    if (error.status === 404) return "当前 Bamboo 尚未提供内置浏览器。"
+    if (error.status === 404) return uiText("this_bamboo_version_does_not_provide_a_built_in_browser_625d56e1")
     if (error.status === 409) {
-      if (conflictCode(error) === "dialog_pending") return "请先处理网页弹窗。"
-      if (conflictCode(error) === "stale_dialog") return "网页弹窗已变化，状态已刷新。"
-      return "网页状态已变化，状态已刷新；请重试操作。"
+      if (conflictCode(error) === "dialog_pending") return uiText("handle_the_web_dialog_first_55d896f4")
+      if (conflictCode(error) === "stale_dialog") return uiText("the_web_dialog_changed_state_was_refreshed_b70b58be")
+      return uiText("page_state_changed_and_was_refreshed_retry_the_operatio_27f1b7ca")
     }
-    if (error.status === 503) return "浏览器运行时暂不可用，请稍后重试。"
+    if (error.status === 503) return uiText("browser_runtime_is_temporarily_unavailable_try_again_la_4ef4c6b7")
   }
-  return "浏览器暂时无法使用，请重试。"
+  return uiText("the_browser_is_unavailable_right_now_try_again_93656b3a")
 }
 
 export function useBrowserSession(sessionId: string | null, active: boolean) {
+  useUiLocale()
   const [state, setState] = useState<BrowserState | null>(null)
   const [readySessionId, setReadySessionId] = useState<string | null>(null)
   const [frame, setFrame] = useState<DisplayedBrowserFrame | null>(null)

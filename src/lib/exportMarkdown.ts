@@ -1,9 +1,10 @@
+import { uiText } from "@shared/i18n/ui"
 import type { Message } from "@shared/types/chatMessages"
 
 function roleLabel(role: string): string {
-  if (role === "user") return "用户"
-  if (role === "assistant") return "助手"
-  if (role === "system") return "系统"
+  if (role === "user") return uiText("user_0d0e1a86")
+  if (role === "assistant") return uiText("assistant_e5ce5f6d")
+  if (role === "system") return uiText("system_5b50d7c4")
   return role
 }
 

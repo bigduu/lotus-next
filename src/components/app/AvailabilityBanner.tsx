@@ -1,3 +1,4 @@
+import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { useEffect, useState } from "react"
 import { WifiOff } from "lucide-react"
 import { useAppStore } from "@shared/store/appStore"
@@ -21,6 +22,7 @@ const SHOW_DELAY_MS = 3_000
  * back (`onOpen`/`onChange` flip the flag to true).
  */
 export function AvailabilityBanner() {
+  useUiLocale()
   const available = useAppStore((s) => s.agentAvailability)
   const [visible, setVisible] = useState(false)
 
@@ -50,7 +52,7 @@ export function AvailabilityBanner() {
       {visible ? (
         <div className="flex items-center justify-center gap-2 bg-destructive px-3 py-1.5 pt-[max(0.375rem,env(safe-area-inset-top))] text-xs font-medium text-white">
           <WifiOff className="size-3.5 shrink-0" />
-          <span>连接已断开,正在重连…</span>
+          <span>{uiText("connection_lost_reconnecting_7ea3f97f")}</span>
         </div>
       ) : null}
     </div>

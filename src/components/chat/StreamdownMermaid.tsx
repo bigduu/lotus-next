@@ -1,3 +1,4 @@
+import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { useEffect, useState } from "react"
 import { createMermaidPlugin } from "@streamdown/mermaid"
 
@@ -15,6 +16,7 @@ let sequence = 0
 
 /** Completed-fence-only Mermaid renderer backed by #14's frozen strict policy. */
 export default function StreamdownMermaid({ code }: { code: string }) {
+  useUiLocale()
   const [state, setState] = useState<MermaidState>({ kind: "loading" })
 
   useEffect(() => {
@@ -48,7 +50,7 @@ export default function StreamdownMermaid({ code }: { code: string }) {
   if (state.kind === "loading" || state.source !== code) {
     return (
       <div
-        aria-label="正在渲染 Mermaid 图表"
+        aria-label={uiText("rendering_mermaid_diagram_beb228f6")}
         className="my-4 min-h-24 animate-pulse rounded-xl border bg-sidebar"
         data-mermaid-state="loading"
         role="status"
@@ -59,15 +61,14 @@ export default function StreamdownMermaid({ code }: { code: string }) {
   if (state.kind === "error") {
     return (
       <figure
-        aria-label="Mermaid 图表无法渲染"
+        aria-label={uiText("could_not_render_mermaid_diagram_c26105d4")}
         aria-live="polite"
         className="my-4 min-w-0 rounded-xl border border-destructive/40 bg-destructive/5 p-3"
         data-mermaid-state="error"
         role="alert"
       >
         <figcaption className="mb-2 text-xs font-medium text-destructive">
-          Mermaid 图表无法渲染
-        </figcaption>
+          {uiText("could_not_render_mermaid_diagram_c26105d4")}</figcaption>
         <pre className="overflow-x-auto whitespace-pre-wrap font-mono text-xs text-muted-foreground [overflow-wrap:anywhere]">
           {code}
         </pre>
@@ -78,7 +79,7 @@ export default function StreamdownMermaid({ code }: { code: string }) {
 
   return (
     <div
-      aria-label="Mermaid 图表"
+      aria-label={uiText("mermaid_diagram_2a0d4106")}
       className="my-4 flex min-w-0 justify-center overflow-x-auto rounded-xl border bg-background p-2 [&_svg]:h-auto [&_svg]:max-w-full"
       data-mermaid-state="ready"
       // Mermaid's SVG was produced under #14's securityLevel:"strict",

@@ -1,3 +1,4 @@
+import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { useState } from "react"
 import { Globe, ChevronRight } from "lucide-react"
 import { cn } from "@/lib/utils"
@@ -9,6 +10,7 @@ import { LazyMarkdown as Markdown } from "./LazyMarkdown"
  * text. Keeps the verbose Input/Output (giant signed URLs, JSON) out of the way.
  */
 export function BuiltinToolBlock({ name, body }: { name: string; body: string }) {
+  useUiLocale()
   const [open, setOpen] = useState(false)
   return (
     <div className="my-1.5">
@@ -18,7 +20,7 @@ export function BuiltinToolBlock({ name, body }: { name: string; body: string })
         className="inline-flex max-w-full items-center gap-1.5 rounded-full bg-muted/60 px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted"
       >
         <Globe className="size-3 shrink-0" />
-        <span className="truncate">内置工具 · {name}</span>
+        <span className="truncate">{uiText("built_in_tool_508add77")} {name}</span>
         <ChevronRight className={cn("size-3 shrink-0 transition-transform", open && "rotate-90")} />
       </button>
       {open ? (

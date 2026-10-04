@@ -1,3 +1,4 @@
+import { uiText } from "@shared/i18n/ui"
 import { StateCreator } from "zustand";
 import { ChatItem, Message } from "@shared/types/chat";
 import {
@@ -331,7 +332,7 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
     } catch (error) { writeError = error; writeFailed = true; }
     const { session } = await agentClient.getSession(sessionId);
     if (session.id !== sessionId || session.reasoning_effort != null && !isReasoningEffort(session.reasoning_effort)) {
-      throw new Error("服务器未返回此会话有效的普通推理强度");
+      throw new Error(uiText("the_server_did_not_return_a_valid_standard_reasoning_le_6ca8bf7b"));
     }
     // The canonical producer omits this field when no override is persisted.
     const actualEffort = session.reasoning_effort ?? null;
@@ -350,7 +351,7 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
     }));
     if (actualEffort !== reasoningEffort) {
       if (writeFailed) throw writeError;
-      throw new Error("服务器实际保存的普通推理强度与选择不一致");
+      throw new Error(uiText("the_saved_standard_reasoning_level_differs_from_the_sel_f56da729"));
     }
   },
 

@@ -1,3 +1,4 @@
+import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { useState } from "react"
 import {
   ChevronRight,
@@ -83,7 +84,7 @@ function parseBackgroundBash(
 
 const BROWSER_PREVIEW_MAX_LENGTH = 16 * 1024
 const BROWSER_DOWNLOAD_RESULT_MAX_LENGTH = 512 * 1024
-const APPROVAL_STATUS = "等待用户批准"
+const approvalStatus = () => uiText("waiting_for_your_approval_0dc00a8d")
 
 // Noisy keys that bloat the display (huge PATH / env dumps) — never shown.
 const NOISE_KEYS = new Set(["environment", "env", "cwd", "import_shell", "path_env"])
@@ -225,46 +226,46 @@ function browserResultDisplayMetadata(text: string): {
 function downloadResultStatus(value: unknown, isError: boolean): string {
   if (isRecord(value) &&
     (value.status === "awaiting_permission_approval" || "permission_request" in value)) {
-    return APPROVAL_STATUS
+    return approvalStatus()
   }
-  if (isError) return "网页下载失败"
+  if (isError) return uiText("web_download_failed_37881d0e")
   return isRecord(value) && typeof value.data_base64 === "string" &&
     typeof value.filename === "string" && typeof value.sha256 === "string" &&
     Number.isSafeInteger(value.byte_count)
-    ? "网页下载已完成" : ""
+    ? uiText("web_download_completed_f9dd3004") : ""
 }
 
 function displayResult(entry: Entry, text: string): string {
-  if (!text) return entry.browserDownload && entry.result?.isError ? "网页下载失败" : ""
+  if (!text) return entry.browserDownload && entry.result?.isError ? uiText("web_download_failed_37881d0e") : ""
   if (entry.browserDialogResponse || entry.browserDialogStatus) {
     if (text.length > BROWSER_PREVIEW_MAX_LENGTH * 4) {
-      return entry.result?.isError ? "网页弹窗操作失败" : "网页弹窗状态待确认"
+      return entry.result?.isError ? uiText("web_dialog_action_failed_496f20bd") : uiText("web_dialog_state_unconfirmed_511c7de0")
     }
     let parsed: unknown
     try {
       parsed = JSON.parse(text)
     } catch {
-      return entry.result?.isError ? "网页弹窗操作失败" : "网页弹窗状态待确认"
+      return entry.result?.isError ? uiText("web_dialog_action_failed_496f20bd") : uiText("web_dialog_state_unconfirmed_511c7de0")
     }
     if (isRecord(parsed) &&
       (parsed.status === "awaiting_permission_approval" || "permission_request" in parsed)) {
-      return APPROVAL_STATUS
+      return approvalStatus()
     }
-    if (entry.result?.isError) return "网页弹窗操作失败"
-    if (!isRecord(parsed)) return "网页弹窗状态待确认"
-    if (entry.browserDialogStatus === "unknown") return "网页弹窗状态待确认"
-    if (entry.browserDialogStatus === "expired") return "网页弹窗已过期"
-    if (entry.browserDialogStatus === "pending") return "网页弹窗待处理"
-    return "网页弹窗已回应"
+    if (entry.result?.isError) return uiText("web_dialog_action_failed_496f20bd")
+    if (!isRecord(parsed)) return uiText("web_dialog_state_unconfirmed_511c7de0")
+    if (entry.browserDialogStatus === "unknown") return uiText("web_dialog_state_unconfirmed_511c7de0")
+    if (entry.browserDialogStatus === "expired") return uiText("web_dialog_expired_33cf66ef")
+    if (entry.browserDialogStatus === "pending") return uiText("web_dialog_awaiting_response_9f92f02b")
+    return uiText("web_dialog_answered_2de9a678")
   }
   const possiblyApproval = text.includes("awaiting_permission_approval") || text.includes("permission_request")
   if ((entry.browserTool || entry.browserEvalTool || possiblyApproval) && text.length > BROWSER_PREVIEW_MAX_LENGTH) {
     if (entry.browserDownload) {
-      if (text.length > BROWSER_DOWNLOAD_RESULT_MAX_LENGTH) return entry.result?.isError ? "网页下载失败" : ""
+      if (text.length > BROWSER_DOWNLOAD_RESULT_MAX_LENGTH) return entry.result?.isError ? uiText("web_download_failed_37881d0e") : ""
       try {
         return downloadResultStatus(JSON.parse(text), Boolean(entry.result?.isError))
       } catch {
-        return entry.result?.isError ? "网页下载失败" : ""
+        return entry.result?.isError ? uiText("web_download_failed_37881d0e") : ""
       }
     }
     if (entry.browserSelectOption && text.length <= BROWSER_PREVIEW_MAX_LENGTH * 4) {
@@ -273,8 +274,8 @@ function displayResult(entry: Entry, text: string): string {
       try {
         const parsed = JSON.parse(text)
         if (isRecord(parsed)) {
-          if (parsed.status === "awaiting_permission_approval" || "permission_request" in parsed) return APPROVAL_STATUS
-          return entry.result?.isError ? "网页选项选择失败" : "网页选项已选择"
+          if (parsed.status === "awaiting_permission_approval" || "permission_request" in parsed) return approvalStatus()
+          return entry.result?.isError ? uiText("web_option_selection_failed_54027654") : uiText("web_options_selected_9d95e309")
         }
       } catch {
         // Malformed results stay hidden rather than gaining a success label.
@@ -287,12 +288,12 @@ function displayResult(entry: Entry, text: string): string {
   try {
     parsed = JSON.parse(text)
   } catch {
-    if (entry.browserDownload && entry.result?.isError) return "网页下载失败"
+    if (entry.browserDownload && entry.result?.isError) return uiText("web_download_failed_37881d0e")
     return entry.browserTool || entry.browserEvalTool || possiblyApproval ? "" : text
   }
   if (isRecord(parsed) &&
     (parsed.status === "awaiting_permission_approval" || "permission_request" in parsed)) {
-    return APPROVAL_STATUS
+    return approvalStatus()
   }
   // A restored call can have malformed or missing action arguments while its
   // result still contains a download envelope. Keep that payload private too.
@@ -300,10 +301,10 @@ function displayResult(entry: Entry, text: string): string {
     ["data_base64", "filename", "byte_count", "sha256"].some((key) => key in parsed)) {
     return downloadResultStatus(parsed, Boolean(entry.result?.isError))
   }
-  if (entry.browserEvalTool) return entry.result?.isError ? "网页脚本执行失败" : "网页脚本已执行"
-  if (entry.focusedBrowserInput) return entry.result?.isError ? "浏览器输入失败" : "浏览器输入已完成"
-  if (entry.browserSelectOption) return entry.result?.isError ? "网页选项选择失败" : "网页选项已选择"
-  if (entry.browserFileInput) return entry.result?.isError ? "网页文件设置失败" : "网页文件已设置"
+  if (entry.browserEvalTool) return entry.result?.isError ? uiText("web_script_execution_failed_742c4b84") : uiText("web_script_executed_ede4f7a6")
+  if (entry.focusedBrowserInput) return entry.result?.isError ? uiText("browser_input_failed_0a04106d") : uiText("browser_input_completed_f26de380")
+  if (entry.browserSelectOption) return entry.result?.isError ? uiText("web_option_selection_failed_54027654") : uiText("web_options_selected_9d95e309")
+  if (entry.browserFileInput) return entry.result?.isError ? uiText("web_file_selection_failed_ddd93cab") : uiText("web_files_selected_beb60ad8")
   if (entry.browserDownload) return downloadResultStatus(parsed, Boolean(entry.result?.isError))
   return entry.browserTool && !isRecord(parsed) ? "" : text
 }
@@ -314,47 +315,47 @@ const readableToolName = (toolName: string) =>
     .replace(/^.*\./, "")
     .replace(/[_-]+/g, " ")
     .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
-    .trim() || "工具调用"
+    .trim() || uiText("tool_calls_a8ca3c13")
 
 function presentTool(entry: Entry): ToolPresentation {
-  if (entry.browserEvalTool) return { label: "执行网页脚本", icon: Globe }
-  if (entry.browserDialogResponse) return { label: "回应网页弹窗", icon: Globe }
-  if (entry.browserDialogStatus) return { label: "查看网页弹窗", icon: Globe }
-  if (entry.browserSelectOption) return { label: "选择网页选项", icon: Globe }
-  if (entry.browserFileInput) return { label: "设置网页文件", icon: Globe }
-  if (entry.browserDownload) return { label: "下载网页文件", icon: Globe }
+  if (entry.browserEvalTool) return { label: uiText("execute_web_script_f9a5ccf3"), icon: Globe }
+  if (entry.browserDialogResponse) return { label: uiText("respond_to_web_dialog_e0f2f248"), icon: Globe }
+  if (entry.browserDialogStatus) return { label: uiText("view_web_dialog_b07d2b63"), icon: Globe }
+  if (entry.browserSelectOption) return { label: uiText("select_web_options_4ddab1c1"), icon: Globe }
+  if (entry.browserFileInput) return { label: uiText("set_web_files_a87e70ca"), icon: Globe }
+  if (entry.browserDownload) return { label: uiText("download_web_file_68532ddc"), icon: Globe }
   const normalized = entry.toolName.toLowerCase().replace(/[^a-z0-9]+/g, "")
   const path = firstString(entry.params, ["file_path", "path"])
   const command = firstString(entry.params, ["command", "cmd"])
   const query = firstString(entry.params, ["query", "pattern"])
 
   if (/bashoutput|shelloutput|writestdin/.test(normalized)) {
-    return { label: "读取命令输出", icon: Terminal }
+    return { label: uiText("read_command_output_dd7e06ae"), icon: Terminal }
   }
   if (/bashinput|shellinput/.test(normalized)) {
-    return { label: "向命令发送输入", icon: Terminal }
+    return { label: uiText("send_command_input_8fc6194d"), icon: Terminal }
   }
   if (/killshell|stopcommand|terminateprocess/.test(normalized)) {
-    return { label: "停止命令", icon: Terminal }
+    return { label: uiText("stop_command_b116ef12"), icon: Terminal }
   }
   if (/bash|execcommand|runshell|terminal/.test(normalized)) {
     return {
-      label: "运行命令",
+      label: uiText("run_command_e53f35dc"),
       icon: Terminal,
       detail: command ? compactText(command) : undefined,
-      multipleLabel: (count) => `运行 ${count} 个命令`,
+      multipleLabel: (count) => uiText("run_commands_272cb4c2", { v0: count , count: count }),
     }
   }
   if (/viewimage|openimage|imageview/.test(normalized)) {
     return {
-      label: "查看图片",
+      label: uiText("view_image_a9769c63"),
       icon: Image,
       detail: path ? compactPath(path) : undefined,
-      multipleLabel: (count) => `查看 ${count} 张图片`,
+      multipleLabel: (count) => uiText("view_images_45758edd", { v0: count , count: count }),
     }
   }
   if (/imagegen|generateimage/.test(normalized)) {
-    return { label: "生成图片", icon: Image }
+    return { label: uiText("generate_image_71c9cf3d"), icon: Image }
   }
   if (
     normalized === "edit" ||
@@ -362,71 +363,71 @@ function presentTool(entry: Entry): ToolPresentation {
     /applypatch|editfile|writefile|notebookedit/.test(normalized)
   ) {
     return {
-      label: /notebook/.test(normalized) ? "编辑 Notebook" : "编辑文件",
+      label: /notebook/.test(normalized) ? uiText("edit_notebook_3ee5f852") : uiText("edit_file_60ed2653"),
       icon: Pencil,
       detail: path ? compactPath(path) : undefined,
-      multipleLabel: (count) => `编辑 ${count} 个文件`,
+      multipleLabel: (count) => uiText("edit_files_ff5ac699", { v0: count , count: count }),
     }
   }
   if (/glob|findfiles|listfiles/.test(normalized)) {
     return {
-      label: "查找文件",
+      label: uiText("find_files_51fdfeaa"),
       icon: Search,
       detail: query ? compactText(query) : undefined,
-      multipleLabel: (count) => `执行 ${count} 次文件查找`,
+      multipleLabel: (count) => uiText("run_file_searches_a6744ab4", { v0: count , count: count }),
     }
   }
   if (/grep|codesearch|searchcode|rgsearch/.test(normalized)) {
     return {
-      label: "搜索代码",
+      label: uiText("search_code_562834f5"),
       icon: Search,
       detail: query ? compactText(query) : undefined,
-      multipleLabel: (count) => `执行 ${count} 次代码搜索`,
+      multipleLabel: (count) => uiText("run_code_searches_9cb50811", { v0: count , count: count }),
     }
   }
   if (normalized === "read" || /readfile|openfile/.test(normalized)) {
     return {
-      label: "读取文件",
+      label: uiText("read_file_407dd16f"),
       icon: FileText,
       detail: path ? compactPath(path) : undefined,
-      multipleLabel: (count) => `读取 ${count} 个文件`,
+      multipleLabel: (count) => uiText("read_files_77738f3e", { v0: count , count: count }),
     }
   }
   if (/webfetch|fetchurl|openurl/.test(normalized)) {
     const url = firstString(entry.params, ["url"])
-    return { label: "获取网页", icon: Globe, detail: url ? compactText(url) : undefined }
+    return { label: uiText("fetch_page_943f1f86"), icon: Globe, detail: url ? compactText(url) : undefined }
   }
   if (/websearch|searchweb/.test(normalized)) {
-    return { label: "搜索网页", icon: Globe, detail: query ? compactText(query) : undefined }
+    return { label: uiText("search_web_01aeaf3f"), icon: Globe, detail: query ? compactText(query) : undefined }
   }
   if (/sleep|wait/.test(normalized)) {
-    return { label: "等待", icon: Wrench }
+    return { label: uiText("wait_251bc40e"), icon: Wrench }
   }
   if (normalized === "task" || /subagent|spawnagent|delegatetask/.test(normalized)) {
     const description = firstString(entry.params, ["description", "prompt"])
-    return { label: "委派任务", icon: Wrench, detail: description ? compactText(description) : undefined }
+    return { label: uiText("delegate_task_5161967c"), icon: Wrench, detail: description ? compactText(description) : undefined }
   }
   if (normalized === "plan" || /updateplan/.test(normalized)) {
-    return { label: "更新计划", icon: Wrench }
+    return { label: uiText("update_plan_c9388382"), icon: Wrench }
   }
   if (/getfileinfo|filestat/.test(normalized)) {
-    return { label: "查看文件信息", icon: FileText, detail: path ? compactPath(path) : undefined }
+    return { label: uiText("view_file_information_a5d09268"), icon: FileText, detail: path ? compactPath(path) : undefined }
   }
   if (/skill/.test(normalized)) {
-    return { label: "加载技能", icon: Wrench }
+    return { label: uiText("load_skill_11ff0491"), icon: Wrench }
   }
   if (/memory/.test(normalized)) {
-    return { label: "查询记忆", icon: Wrench }
+    return { label: uiText("query_memory_6c9164f7"), icon: Wrench }
   }
   if (/project/.test(normalized)) {
-    return { label: "管理项目", icon: Wrench }
+    return { label: uiText("manage_projects_302f96cf"), icon: Wrench }
   }
 
   return { label: readableToolName(entry.toolName), icon: Wrench }
 }
 
 function summarizeEntries(entries: Entry[]): ToolPresentation {
-  if (entries.length === 0) return { label: "工具调用", icon: Wrench }
+  if (entries.length === 0) return { label: uiText("tool_calls_a8ca3c13"), icon: Wrench }
   const presentations = entries.map(presentTool)
   const uniqueLabels = Array.from(new Set(presentations.map((item) => item.label)))
 
@@ -444,7 +445,7 @@ function summarizeEntries(entries: Entry[]): ToolPresentation {
   return {
     label: uniqueLabels.length <= 3
       ? uniqueLabels.join("、")
-      : `${uniqueLabels.slice(0, 2).join("、")}等 ${entries.length} 项操作`,
+      : uiText("and_operations_89a77073", { v0: uniqueLabels.slice(0, 2).join("、"), v1: entries.length }),
     icon: presentations[0].icon,
   }
 }
@@ -546,6 +547,7 @@ function buildEntries(items: Message[]): Entry[] {
  * arrives — no history reload required.
  */
 function BackgroundBadge({ bashId }: { bashId: string }) {
+  useUiLocale()
   const done = useBackgroundBash(bashId)
   if (!done) {
     return (
@@ -577,6 +579,7 @@ function BackgroundBadge({ bashId }: { bashId: string }) {
 }
 
 function EntryRow({ e, running, onPreviewImage }: { e: Entry; running: boolean; onPreviewImage?: (src: string) => void }) {
+  useUiLocale()
   const [open, setOpen] = useState(false)
   const { primary, rest } = cleanParams(e.params)
   const presentation = presentTool(e)
@@ -604,9 +607,9 @@ function EntryRow({ e, running, onPreviewImage }: { e: Entry; running: boolean; 
               {presentation.detail}
             </span>
           ) : null}
-          {e.result?.isError ? <span className="shrink-0 text-destructive">出错</span> : null}
+          {e.result?.isError ? <span className="shrink-0 text-destructive">{uiText("errors_01ad2bc5")}</span> : null}
           {e.background ? <BackgroundBadge bashId={e.background.bashId} /> : null}
-          {running ? <span className="shrink-0">运行中…</span> : null}
+          {running ? <span className="shrink-0">{uiText("running_14d9f2d8")}</span> : null}
           <ChevronRight className={cn("size-3 shrink-0 transition-transform", open && "rotate-90")} />
         </summary>
         {open ? (
@@ -617,8 +620,8 @@ function EntryRow({ e, running, onPreviewImage }: { e: Entry; running: boolean; 
             {images?.length ? (
               <div className="mt-1.5 flex flex-wrap gap-1.5">
                 {images.map((src, index) => (
-                  <button key={index} type="button" aria-label={`预览工具图片 ${index + 1}`} className="cursor-zoom-in" onClick={() => onPreviewImage?.(src)}>
-                    <img src={src} alt={`工具图片 ${index + 1}`} className="max-h-48 max-w-full rounded-xl object-contain" />
+                  <button key={index} type="button" aria-label={uiText("preview_tool_image_344014b6", { v0: index + 1 })} className="cursor-zoom-in" onClick={() => onPreviewImage?.(src)}>
+                    <img src={src} alt={uiText("tool_image_7b8fcc11", { v0: index + 1 })} className="max-h-48 max-w-full rounded-xl object-contain" />
                   </button>
                 ))}
               </div>
@@ -676,6 +679,7 @@ export function ToolCalls({
   onOpenChange,
   onPreviewImage,
 }: ToolCallsProps) {
+  useUiLocale()
   const [internalOpen, setInternalOpen] = useState(false)
   const open = controlledOpen ?? internalOpen
   const setOpen = (next: boolean) => {

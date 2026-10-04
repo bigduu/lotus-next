@@ -1,3 +1,4 @@
+import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { useEffect, useState } from "react"
 import { ChatPane } from "@/components/app/ChatPane"
 import { SubagentTranscriptPane } from "@/components/app/SubagentTranscriptPane"
@@ -26,6 +27,7 @@ function InteractiveSecondaryPane({
   onOpenInspector,
   onOpenReview,
 }: InteractiveProps) {
+  useUiLocale()
   const [loadState, setLoadState] = useState<"idle" | "loading" | "error">("idle")
   const chat = useChat(sessionId, onSessionCreated)
 
@@ -44,13 +46,12 @@ function InteractiveSecondaryPane({
       {loadState === "loading" ? (
         <div
           className="absolute inset-x-0 top-0 z-30 h-0.5 animate-pulse bg-primary"
-          aria-label="正在加载并排会话"
+          aria-label={uiText("loading_side_by_side_session_f5d66e68")}
         />
       ) : null}
       {loadState === "error" ? (
         <div role="alert" className="absolute inset-x-0 top-2 z-30 rounded-lg border border-destructive/40 bg-card px-3 py-2 text-xs text-destructive shadow">
-          并排会话暂时无法加载，请稍后重试。
-        </div>
+          {uiText("this_session_cannot_be_loaded_right_now_please_try_agai_502f5a61")}</div>
       ) : null}
       <ChatPane
         chat={chat}
@@ -70,6 +71,7 @@ function InteractiveSecondaryPane({
 }
 
 export function SecondarySessionPane(props: Props) {
+  useUiLocale()
   const [createdRootId, setCreatedRootId] = useState<string | null>(null)
   const selected = props.chats.find((chat) => chat.id === props.sessionId)
   // An arbitrary unknown id may be a newly-created child missing from the lazy

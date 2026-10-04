@@ -1,3 +1,4 @@
+import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { cn } from "@/lib/utils"
 import {
   getPrefixCachePercentage,
@@ -21,6 +22,7 @@ export function ContextUsageRing({
   prefixCache?: PrefixCacheUsage
   onClick: () => void
 }) {
+  useUiLocale()
   if (!maxContextTokens) return null
   const pct = Math.min(100, Math.round((totalTokens / maxContextTokens) * 100))
   const exactCachePct = prefixCache ? getPrefixCachePercentage(prefixCache) : undefined
@@ -39,13 +41,13 @@ export function ContextUsageRing({
   const C = 2 * Math.PI * 7
   const color = pct > 85 ? "text-destructive" : pct > 65 ? "text-amber-500" : "text-primary"
   const contextTitle =
-    `上下文 ${totalTokens.toLocaleString()} / ${maxContextTokens.toLocaleString()} tokens (${pct}%)`
-  const cacheStatus = cacheRetained ? "上一次已完成轮次" : "最新已完成轮次"
+    uiText("context_tokens_34cb163e", { v0: totalTokens.toLocaleString(), v1: maxContextTokens.toLocaleString(), v2: pct })
+  const cacheStatus = cacheRetained ? uiText("previous_completed_round_836ba413") : uiText("latest_completed_round_fe872c8f")
   const prefixCacheTitle =
     typeof roundedCachePct === "number" && prefixCache
       ? `Prefix Cache ${roundedCachePct}%（${prefixCache.cacheReadInputTokens.toLocaleString()} cache-read / ${getPrefixCacheTotalInputTokens(prefixCache).toLocaleString()} provider input，${cacheStatus}）`
       : typeof cacheRead === "number" && cacheRead > 0
-        ? `Prefix Cache 读取 ${cacheRead.toLocaleString()} tokens（${cacheStatus}；当前后端未提供命中率分母）`
+        ? uiText("prefix_cache_read_tokens_the_backend_does_not_provide_a_6d8df76f", { v0: cacheRead.toLocaleString(), v1: cacheStatus })
         : null
   const title = prefixCacheTitle ? `${contextTitle}；${prefixCacheTitle}` : contextTitle
   return (
@@ -53,7 +55,7 @@ export function ContextUsageRing({
       onClick={onClick}
       className="flex items-center gap-1.5"
       title={title}
-      aria-label={cacheLabel === null ? "上下文用量" : `上下文用量，Cache ${cacheLabel}`}
+      aria-label={cacheLabel === null ? uiText("context_usage_06d7b2e3") : uiText("context_usage_cache_0cd3733a", { v0: cacheLabel })}
     >
       <svg width="20" height="20" viewBox="0 0 18 18" className="-rotate-90">
         <circle cx="9" cy="9" r="7" fill="none" strokeWidth="2.5" className="stroke-muted" />

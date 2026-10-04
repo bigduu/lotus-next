@@ -1,3 +1,4 @@
+import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { useId, useRef, type Ref, type ReactNode } from "react"
 import {
   X,
@@ -38,6 +39,7 @@ import type { WorkspaceFileEntry } from "@services/workspace/types"
  * substituted for, this base prompt. Hidden when the user has no presets.
  */
 function PromptChip() {
+  useUiLocale()
   const systemPrompts = useAppStore(useShallow((s) => s.systemPrompts))
   const lastSelectedPromptId = useAppStore((s) => s.lastSelectedPromptId)
   const setLastSelectedPromptId = useAppStore((s) => s.setLastSelectedPromptId)
@@ -50,7 +52,7 @@ function PromptChip() {
       <DropdownMenuTrigger asChild>
         <button
           className="flex max-w-full items-center gap-1.5 rounded-full border bg-card px-2.5 py-1 text-xs text-muted-foreground hover:text-foreground"
-          title={`系统提示词:${active.name}`}
+          title={uiText("system_prompt_b9068145", { v0: active.name })}
         >
           <BookText className="size-3.5 shrink-0" />
           <span className="truncate">{active.name}</span>
@@ -81,6 +83,7 @@ function ProjectChip({
   selectedProjectId: string | null
   onSelect: (projectId: string | null) => void
 }) {
+  useUiLocale()
   const projects = useAppStore(useShallow((s) => s.projects))
   const projectsAvailable = useAppStore((s) => s.projectsAvailable)
   if (projectsAvailable === false) return null
@@ -93,18 +96,17 @@ function ProjectChip({
       <DropdownMenuTrigger asChild>
         <button
           className="flex max-w-full items-center gap-1.5 rounded-full border bg-card px-2.5 py-1 text-xs text-muted-foreground hover:text-foreground"
-          title={selected ? `项目:${selected.name}` : "选择项目"}
+          title={selected ? uiText("project_690aa0ce", { v0: selected.name }) : uiText("select_project_682279bf")}
         >
           <FolderClosed className="size-3.5 shrink-0" />
-          <span className="truncate">{selected ? selected.name : "选择项目"}</span>
+          <span className="truncate">{selected ? selected.name : uiText("select_project_682279bf")}</span>
           <ChevronDown className="size-3 shrink-0 opacity-60" />
         </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start">
         <DropdownMenuItem onClick={() => onSelect(null)}>
           {!selected ? <Check className="size-3.5" /> : <span className="size-3.5" />}
-          不指定项目
-        </DropdownMenuItem>
+          {uiText("no_project_4fdaa950")}</DropdownMenuItem>
         {active.map((p) => (
           <DropdownMenuItem key={p.id} onClick={() => onSelect(p.id)}>
             {selected?.id === p.id ? <Check className="size-3.5" /> : <span className="size-3.5" />}
@@ -212,6 +214,7 @@ export function Composer({
   onSelectProject: (projectId: string | null) => void
   onDismissMenus?: () => void
 }) {
+  useUiLocale()
   const inputId = useId()
   const fileInputRef = useRef<HTMLInputElement>(null)
   const canQueue = sending && !!onQueueModeChange
@@ -245,7 +248,7 @@ export function Composer({
             /{selectedSkill.name}
             <button
               onClick={onClearSkill}
-              aria-label="移除技能"
+              aria-label={uiText("remove_skill_1324d3de")}
               className="opacity-70 hover:opacity-100"
             >
               <X className="size-3" />
@@ -256,10 +259,10 @@ export function Composer({
       {selectedWorkflow && (
         <div className="mx-auto mb-2 flex w-full max-w-6xl">
           <span className="inline-flex items-center gap-1 rounded-full bg-primary/15 px-2.5 py-1 text-xs font-medium text-primary">
-            文本展开 /{selectedWorkflow.name}
+            {uiText("text_expansion_6768e498")}{selectedWorkflow.name}
             <button
               onClick={onClearWorkflow}
-              aria-label="移除工作流"
+              aria-label={uiText("remove_workflow_c1c0133d")}
               className="opacity-70 hover:opacity-100"
             >
               <X className="size-3" />
@@ -280,7 +283,7 @@ export function Composer({
               <button
                 onClick={() => onRemoveAttachment(a.id)}
                 className="absolute right-1 top-1 rounded-full bg-black/60 p-1 text-white transition-colors hover:bg-black/80"
-                aria-label="移除图片"
+                aria-label={uiText("remove_image_86d72aab")}
               >
                 <X className="size-3.5" />
               </button>
@@ -311,7 +314,7 @@ export function Composer({
               id={inputId}
               ref={inputRef}
               value={draft}
-              aria-label="消息"
+              aria-label={uiText("messages_4da199fa")}
               aria-busy={submissionPending}
               onChange={(e) => onDraftChange(e.target.value)}
               onPaste={(e) => {
@@ -331,8 +334,8 @@ export function Composer({
                   if (!submissionPending && hasContent && (!sending || canQueue)) onSubmit()
                 }
               }}
-              title="Enter 发送，Shift+Enter 换行"
-              placeholder={canQueue ? "输入消息，发送后加入队列…" : "发送消息…"}
+              title={uiText("enter_to_send_shift_enter_for_a_new_line_b6153e81")}
+              placeholder={canQueue ? uiText("type_a_message_to_add_to_the_queue_38c6f67b") : uiText("send_a_message_ae2f86f0")}
               rows={1}
               style={{ paddingRight: 128 }}
               className="max-h-40 min-h-11 resize-none border-0 bg-transparent px-2 py-2 shadow-none focus-visible:ring-0 dark:bg-transparent"
@@ -342,10 +345,9 @@ export function Composer({
                 data-output-rate
                 className="absolute right-2 top-2 text-xs tabular-nums text-muted-foreground"
                 style={{ maxWidth: 112, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
-                title="根据流式文本估算，不用于计费"
+                title={uiText("estimated_from_streamed_text_not_used_for_billing_1de5fc8d")}
               >
-                约 {outputRate.toFixed(1)} token/秒
-              </span>
+                {uiText("output_rate", { rate: outputRate.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 }) })}</span>
             )}
           </div>
           <div className="flex flex-wrap items-end gap-1.5">
@@ -354,13 +356,13 @@ export function Composer({
                 size="icon"
                 variant="ghost"
                 className="size-8 shrink-0 text-muted-foreground"
-                aria-label="添加图片"
+                aria-label={uiText("add_images_9f0d4e46")}
                 onClick={() => fileInputRef.current?.click()}
               >
                 <Paperclip className="size-4" />
               </Button>
               {onPickCatalog && <Button size="icon" variant="ghost" className="size-8 shrink-0 text-muted-foreground"
-                aria-label="打开目录工作流" title="目录工作流 · 本条消息" onClick={onOpenCatalog ?? onPickCatalog}><BookText className="size-4" /></Button>}
+                aria-label={uiText("open_workflow_catalog_1bd98d37")} title={uiText("catalog_workflow_this_message_4bad8776")} onClick={onOpenCatalog ?? onPickCatalog}><BookText className="size-4" /></Button>}
               {permissionControl}
               {!hasSession ? (
                 <>
@@ -371,13 +373,13 @@ export function Composer({
                   <button
                     onClick={onOpenWorkspacePicker}
                     className={selectedProjectId ? "hidden" : "flex max-w-full items-center gap-1.5 rounded-full border bg-card px-2.5 py-1 text-xs text-muted-foreground hover:text-foreground"}
-                    title={displayWorkspace || "默认工作目录"}
+                    title={displayWorkspace || uiText("default_working_directory_3d80c40d")}
                   >
                     <FolderGit2 className="size-3.5 shrink-0" />
                     <span className="truncate">
                       {displayWorkspace
                         ? displayWorkspace.split("/").filter(Boolean).pop() || displayWorkspace
-                        : "选择工作目录"}
+                        : uiText("select_working_directory_18240aa3")}
                     </span>
                     <ChevronDown className="size-3 shrink-0 opacity-60" />
                   </button>
@@ -389,26 +391,26 @@ export function Composer({
               {canQueue ? (
                 <div className="relative h-8 w-8 shrink-0 sm:w-24">
                   <Clock3 aria-hidden="true" className="pointer-events-none absolute left-2 top-2 size-4 text-muted-foreground sm:hidden" />
-                  <select aria-label="发送时机" value={queueMode ?? "after_round"} disabled={submissionPending}
+                  <select aria-label={uiText("send_timing_22388dde")} value={queueMode ?? "after_round"} disabled={submissionPending}
                     onChange={(event) => onQueueModeChange?.(event.target.value as GuidanceMode)}
-                    title={queueMode === "after_run" ? "运行结束后发送" : "当前工具调用完成后、下一次模型调用前发送"}
+                    title={queueMode === "after_run" ? uiText("send_when_the_run_finishes_1525b79a") : uiText("send_after_the_current_tool_call_before_the_next_model__ce3a9c75")}
                     className="h-full w-full appearance-none rounded border-0 bg-transparent text-xs text-transparent sm:appearance-auto sm:text-foreground">
-                    <option className="text-foreground" value="after_round">工具调用后</option>
-                    <option className="text-foreground" value="after_run">运行结束后</option>
+                    <option className="text-foreground" value="after_round">{uiText("after_tool_call_252b019e")}</option>
+                    <option className="text-foreground" value="after_run">{uiText("after_run_81638e07")}</option>
                   </select>
                 </div>
               ) : null}
               {runtimeControls}
               {submissionPending ? (
-                <Button size="icon" disabled aria-label="正在发送" className="rounded-full">
+                <Button size="icon" disabled aria-label={uiText("sending_2d88d503")} className="rounded-full">
                   <LoaderCircle className="animate-spin" />
                 </Button>
               ) : (!sending || (canQueue && hasContent)) ? (
                 <Button size="icon" onClick={onSubmit} disabled={!hasContent} className="rounded-full"
-                  aria-label={canQueue ? "加入队列" : "发送消息"} title={canQueue ? "加入队列" : "发送消息"}><ArrowUp /></Button>
+                  aria-label={canQueue ? uiText("add_to_queue_bc3b684c") : uiText("send_message_00881483")} title={canQueue ? uiText("add_to_queue_bc3b684c") : uiText("send_message_00881483")}><ArrowUp /></Button>
               ) : null}
               {sending && (!submissionPending || canQueue) ? (
-                <Button size="icon" onClick={onStop} className="rounded-full" aria-label="停止生成">
+                <Button size="icon" onClick={onStop} className="rounded-full" aria-label={uiText("stop_generation_9ad0aac3")}>
                   <Square fill="white" stroke="white" />
                 </Button>
               ) : null}

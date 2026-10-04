@@ -1,3 +1,4 @@
+import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { useEffect, useRef } from "react"
 import type { SkillDefinition } from "@shared/types/skill"
 import type { CommandItem } from "@services/command"
@@ -47,16 +48,17 @@ export function SlashMenu({
   onPickCatalog?: () => void
   onDismiss?: () => void
 }) {
+  useUiLocale()
   const q = query.trim().toLowerCase()
   const matches = (name: string, description: string) =>
     !q || name.toLowerCase().includes(q) || description.toLowerCase().includes(q)
 
   const catalogEntry: Entry[] = onPickCatalog &&
-    (!q || matches("目录工作流", "从 Bamboo 目录选择可执行的工作流") || "workflow".includes(q))
-    ? [{ kind: "catalog", id: "builtin-catalog", name: "目录工作流", description: "打开工作流目录，选择可执行的工作流及参数" }]
+    (!q || matches(uiText("catalog_workflows_b3caa7b0"), uiText("choose_an_executable_workflow_from_the_bamboo_catalog_b7020d54")) || "workflow".includes(q))
+    ? [{ kind: "catalog", id: "builtin-catalog", name: uiText("catalog_workflows_b3caa7b0"), description: uiText("open_the_workflow_catalog_to_choose_a_workflow_and_argu_4359980e") }]
     : []
   const entries: Entry[] = [
-    ...(onPickGoal && matches("goal", "设置会话目标") ? [{ kind: "goal" as const, id: "builtin-goal", name: "goal", description: "/goal 目标内容 · 单独发送 /goal 打开设置" }] : []),
+    ...(onPickGoal && matches("goal", uiText("set_session_goal_98fa0b0f")) ? [{ kind: "goal" as const, id: "builtin-goal", name: "goal", description: uiText("goal_goal_text_send_goal_alone_to_open_settings_b45f54c8") }] : []),
     ...skills
       .filter((s) => matches(s.name, s.description))
       .map((s) => ({
@@ -81,7 +83,7 @@ export function SlashMenu({
     .map((entry) => ({ kind: "typed", id: `catalog:${entry.source}:${entry.id}:${entry.revision}`, name: entry.name, description: entry.description, entry }))
   entries.push(...typedEntries, ...catalogEntry)
   const disabledReason = (entry: Entry) => entry.kind === "typed"
-    ? workflowUnavailableReason(entry.entry) || (catalogDisabled ? "当前暂不能选择工作流" : null) : null
+    ? workflowUnavailableReason(entry.entry) || (catalogDisabled ? uiText("workflow_selection_is_currently_unavailable_94a186a4") : null) : null
   const selectable = entries.filter((entry) => !disabledReason(entry))
 
   const pick = (e: Entry) => {
@@ -111,12 +113,12 @@ export function SlashMenu({
 
   return (
     <div className="mx-auto mb-2 w-full max-w-6xl overflow-hidden rounded-xl border bg-popover shadow-lg">
-      <div className="border-b px-3 py-1.5 text-xs text-muted-foreground">指令 / 技能 / 工作流</div>
+      <div className="border-b px-3 py-1.5 text-xs text-muted-foreground">{uiText("commands_skills_workflows_1abfc720")}</div>
       <div className="max-h-64 overflow-y-auto p-1">
         {entries.map((e, i) => (
           <div key={e.id}>
           {(i === 0 || entries[i - 1].kind !== e.kind) && <div className="px-3 pb-1 pt-2 text-[10px] text-muted-foreground">
-            {e.kind === "typed" ? "目录工作流 · 本条消息" : e.kind === "workflow" ? "文本展开工作流" : e.kind === "skill" ? "技能" : e.kind === "goal" ? "指令" : "目录管理"}
+            {e.kind === "typed" ? uiText("catalog_workflow_this_message_4bad8776") : e.kind === "workflow" ? uiText("text_expansion_workflow_8362c042") : e.kind === "skill" ? uiText("skills_99aea2f9") : e.kind === "goal" ? uiText("command_6ee4a9a8") : uiText("catalog_management_8dd26df6")}
           </div>}
           <button
             ref={selectable[active]?.id === e.id ? activeItemRef : undefined}
@@ -138,7 +140,7 @@ export function SlashMenu({
                     : "bg-muted text-muted-foreground",
                 )}
               >
-                {e.kind === "typed" ? `${e.entry.source} · r${e.entry.revision}` : e.kind === "goal" ? "指令" : e.kind === "catalog" ? "目录选择" : e.kind === "workflow" ? "文本展开" : "技能"}
+                {e.kind === "typed" ? `${e.entry.source} · r${e.entry.revision}` : e.kind === "goal" ? uiText("command_6ee4a9a8") : e.kind === "catalog" ? uiText("catalog_selection_a07f95c4") : e.kind === "workflow" ? uiText("text_expansion_96adb387") : uiText("skills_99aea2f9")}
               </span>
             </span>
             {(disabledReason(e) || e.description) ? (
@@ -147,9 +149,9 @@ export function SlashMenu({
           </button>
           </div>
         ))}
-        {!entries.length && !catalogState?.loading && !catalogState?.error && <p className="px-3 py-2 text-xs text-muted-foreground">没有匹配的指令或工作流</p>}
-        {catalogState?.loading && <p role="status" className="px-3 py-2 text-xs text-muted-foreground">正在读取工作流目录…</p>}
-        {catalogState?.error && <p role="alert" className="px-3 py-2 text-xs text-destructive">目录读取失败：{catalogState.error}</p>}
+        {!entries.length && !catalogState?.loading && !catalogState?.error && <p className="px-3 py-2 text-xs text-muted-foreground">{uiText("no_matching_commands_or_workflows_bfef441f")}</p>}
+        {catalogState?.loading && <p role="status" className="px-3 py-2 text-xs text-muted-foreground">{uiText("loading_workflow_catalog_59214f82")}</p>}
+        {catalogState?.error && <p role="alert" className="px-3 py-2 text-xs text-destructive">{uiText("could_not_load_catalog_a2342d5f")}{catalogState.error}</p>}
       </div>
     </div>
   )

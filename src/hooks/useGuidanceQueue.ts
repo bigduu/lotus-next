@@ -1,3 +1,4 @@
+import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { useEffect, useRef, useState } from "react"
 import { guidanceService, type GuidanceImage, type GuidanceMode, type PendingGuidance } from "@services/chat/guidance"
 import type { SendSubmissionResult } from "./useChat"
@@ -18,6 +19,7 @@ function readMode(id: string | null): GuidanceMode {
 }
 
 export function useGuidanceQueue(sessionId: string | null, running: boolean) {
+  useUiLocale()
   const [snapshot, setSnapshot] = useState<{ sessionId: string; messages: PendingGuidance[] } | null>(null)
   const [failure, setFailure] = useState<{ sessionId: string; text: string } | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
@@ -90,7 +92,7 @@ export function useGuidanceQueue(sessionId: string | null, running: boolean) {
     } catch {
       if (mounted.current && currentSession.current === target) {
         setUncertain(target)
-        setFailure({ sessionId: target, text: "未能确认发送状态，文字和图片已保留；重试会沿用同一条消息。" })
+        setFailure({ sessionId: target, text: uiText("sending_could_not_be_confirmed_text_and_images_are_pres_65db5d72") })
       }
       return { kind: "unconfirmed", operationId: 0 }
     } finally {
@@ -107,7 +109,7 @@ export function useGuidanceQueue(sessionId: string | null, running: boolean) {
       ++revision.current
       if (mounted.current && currentSession.current === target) setSnapshot((value) => value?.sessionId === target ? { ...value, messages: value.messages.filter((item) => item.id !== id) } : value)
     } catch {
-      if (mounted.current && currentSession.current === target) setFailure({ sessionId: target, text: "未能撤回，消息可能已经开始应用。" })
+      if (mounted.current && currentSession.current === target) setFailure({ sessionId: target, text: uiText("could_not_withdraw_the_message_may_already_be_applying_f01042f1") })
     } finally { active.current = false; if (mounted.current) setBusy(null) }
   }
   return {

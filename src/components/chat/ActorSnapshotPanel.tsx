@@ -1,3 +1,4 @@
+import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { useEffect, useMemo, useRef } from "react"
 import { RefreshCw } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -14,6 +15,7 @@ export function ActorSnapshotPanel({ rootId, active, selectedActorId, descendant
   descendantCountHint?: number | null
   onSelectActor: (actorId: string) => void
 }) {
+  useUiLocale()
   const state = useActorSnapshot(rootId, active, selectedActorId, descendantCountHint)
   const previousTree = useRef<ActorTreeData | undefined>(undefined)
   const tree = useMemo(() => state.snapshot ? actorSnapshotTree(state.snapshot, state.loading, previousTree.current) : {
@@ -23,17 +25,17 @@ export function ActorSnapshotPanel({ rootId, active, selectedActorId, descendant
   return (
     <section className="rounded-lg border" data-actor-snapshot-panel aria-busy={state.loading}>
       <div className="flex items-center justify-between gap-2 px-3 py-2 text-xs text-muted-foreground">
-        <span>已保存的代理状态 · 健康与队列信息尚未提供</span>
-        {rootId ? <Button size="sm" variant="ghost" disabled={state.loading} onClick={() => { void state.refresh() }} aria-label="刷新代理结构"><RefreshCw /></Button> : null}
+        <span>{uiText("saved_agent_state_health_and_queue_information_unavaila_f82ce646")}</span>
+        {rootId ? <Button size="sm" variant="ghost" disabled={state.loading} onClick={() => { void state.refresh() }} aria-label={uiText("refresh_agent_structure_277bb85d")}><RefreshCw /></Button> : null}
       </div>
       {state.gapReason ? <p role="status" data-actor-gap={state.gapReason} className="px-3 pb-2 text-xs text-muted-foreground">
         {state.gapReason === "snapshot_regression"
-          ? "代理结构返回了较旧版本；已保留上次确认的状态，请重新读取。"
-          : "代理事件出现间隙；已重新读取状态，但事件连续性仍无法确认。"}
+          ? uiText("an_older_agent_structure_was_returned_the_last_confirme_15ec0d29")
+          : uiText("there_is_a_gap_in_agent_events_state_was_reloaded_but_e_0c545fcb")}
       </p> : null}
       {rootId ? <ActorTree topology={tree} selectedActorId={selectedActorId} onSelectActor={onSelectActor}
         error={state.error} onRetry={() => { void state.refresh() }} />
-        : <p className="px-3 py-4 text-sm text-muted-foreground">选择 Root 会话后读取代理结构。</p>}
+        : <p className="px-3 py-4 text-sm text-muted-foreground">{uiText("select_a_root_session_to_load_agent_structure_abe1ec98")}</p>}
     </section>
   )
 }

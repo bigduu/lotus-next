@@ -1,3 +1,4 @@
+import { uiLanguage, uiText, useUiLocale } from "@shared/i18n/ui"
 import { useMemo, useState, type ReactNode } from "react"
 import {
   Plus,
@@ -49,13 +50,15 @@ function relativeTime(ts: string | number | undefined): string {
   const ms = typeof ts === "number" ? ts : Date.parse(ts)
   if (!Number.isFinite(ms)) return ""
   const diff = Date.now() - ms
-  if (diff < 60_000) return "刚刚"
-  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)} 分钟前`
-  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)} 小时前`
-  return `${Math.floor(diff / 86_400_000)} 天前`
+  if (diff < 60_000) return uiText("just_now_de6785d9")
+  const formatter = new Intl.RelativeTimeFormat(uiLanguage(), { numeric: "always" })
+  if (diff < 3_600_000) return formatter.format(-Math.floor(diff / 60_000), "minute")
+  if (diff < 86_400_000) return formatter.format(-Math.floor(diff / 3_600_000), "hour")
+  return formatter.format(-Math.floor(diff / 86_400_000), "day")
 }
 
 function SessionMiniRow({ chat, onOpen }: { chat: ChatItem; onOpen: () => void }) {
+  useUiLocale()
   return (
     <button
       onClick={onOpen}
@@ -68,7 +71,7 @@ function SessionMiniRow({ chat, onOpen }: { chat: ChatItem; onOpen: () => void }
       ) : (
         <MessageSquare className="size-3.5 shrink-0 text-muted-foreground" />
       )}
-      <span className="min-w-0 flex-1 truncate">{chat.title || "新会话"}</span>
+      <span className="min-w-0 flex-1 truncate">{chat.title || uiText("new_session_c57c30bc")}</span>
       <span className="shrink-0 text-[11px] text-muted-foreground">
         {relativeTime(chat.lastActivityAt ?? chat.updatedAt)}
       </span>
@@ -92,6 +95,7 @@ export function HomeDashboard({
   /** Receives the template's prefill text for the composer draft. */
   onPickTemplate: (prefill: string) => void
 }) {
+  useUiLocale()
   const [query, setQuery] = useState("")
 
   const running = useMemo(() => chats.filter((c) => c.isRunning).slice(0, 5), [chats])
@@ -125,9 +129,9 @@ export function HomeDashboard({
   }
 
   const sections: Array<{ label: string; items: ChatItem[] }> = [
-    { label: "运行中", items: running },
-    { label: "置顶", items: pinned },
-    { label: "最近", items: recent },
+    { label: uiText("running_1f0eb99b"), items: running },
+    { label: uiText("pin_173f88d2"), items: pinned },
+    { label: uiText("recent_997a5e6e"), items: recent },
   ].filter((s) => s.items.length > 0)
 
   return (
@@ -136,8 +140,8 @@ export function HomeDashboard({
         <div className="mb-5 flex items-center gap-3">
           <div className="size-9 rounded-xl bg-primary" />
           <div>
-            <h1 className="text-base font-semibold">开始新任务</h1>
-            <p className="text-xs text-muted-foreground">选择一个模板,或直接在下方输入。</p>
+            <h1 className="text-base font-semibold">{uiText("start_a_new_task_625aa91a")}</h1>
+            <p className="text-xs text-muted-foreground">{uiText("choose_a_template_or_type_below_6a05a677")}</p>
           </div>
         </div>
 
@@ -158,7 +162,7 @@ export function HomeDashboard({
           <Input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="搜索模板…"
+            placeholder={uiText("search_templates_28062b4d")}
             className="h-9"
           />
         </div>
@@ -191,7 +195,7 @@ export function HomeDashboard({
         ))}
 
         {grouped.length === 0 ? (
-          <p className="py-8 text-center text-xs text-muted-foreground">没有匹配的模板</p>
+          <p className="py-8 text-center text-xs text-muted-foreground">{uiText("no_matching_templates_0f5e1c5f")}</p>
         ) : null}
       </div>
     </div>

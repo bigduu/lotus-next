@@ -1,3 +1,4 @@
+import { uiText } from "@shared/i18n/ui"
 import { apiClient } from "@services/api"
 import type { ActorTreeData, ActorTreeNode } from "./actorTreeView"
 
@@ -73,7 +74,7 @@ export function actorSnapshotRegresses(previous: ActorSubtreeSnapshot, next: Act
 }
 
 export class InvalidActorSnapshotError extends Error {
-  constructor() { super("代理结构响应无效或不受支持，请重新读取。") }
+  constructor() { super(uiText("the_agent_structure_response_is_invalid_or_unsupported__d3bdb4ac")) }
 }
 
 const invalid = (): never => { throw new InvalidActorSnapshotError() }
@@ -235,7 +236,7 @@ export function actorSnapshotTree(
   for (const node of snapshot.nodes) {
     const projected: ActorTreeNode = {
       actorId: node.actor_id, parentActorId: node.parent_actor_id, depth: node.depth,
-      title: node.title, role: node.role === "root" ? "根代理" : "子代理",
+      title: node.title, role: node.role === "root" ? uiText("root_agent_9cfcb9f9") : uiText("sub_agent_acd37b4c"),
       lifecycle: snapshotLifecycle(node), placement: node.placement_class ?? "unknown",
       health: null, queuedCount: null, waitingForCount: null, pendingRequestCount: null,
     }

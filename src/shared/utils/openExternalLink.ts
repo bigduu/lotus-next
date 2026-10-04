@@ -1,3 +1,4 @@
+import { uiText } from "@shared/i18n/ui"
 import { isTauriEnvironment } from "../../utils/environment";
 
 type TauriInternals = {
@@ -48,10 +49,10 @@ export const openExternalLink = async (url: string): Promise<void> => {
 /** Open a local directory in the OS file manager without navigating the webview. */
 export const openLocalFolder = async (path: string): Promise<void> => {
   const normalizedPath = path.trim();
-  if (!normalizedPath) throw new Error("项目尚未配置主目录");
-  if (!isTauriEnvironment()) throw new Error("请在 Bodhi 桌面应用中打开本地目录");
+  if (!normalizedPath) throw new Error(uiText("this_project_has_no_primary_directory_configured_1b81c32a"));
+  if (!isTauriEnvironment()) throw new Error(uiText("open_the_local_directory_in_the_bodhi_desktop_app_74255b08"));
 
   const invoke = getTauriInvoke();
-  if (typeof invoke !== "function") throw new Error("桌面文件管理器暂不可用");
+  if (typeof invoke !== "function") throw new Error(uiText("desktop_file_manager_is_temporarily_unavailable_331d04fe"));
   await invoke("plugin:shell|open", { path: normalizedPath });
 };

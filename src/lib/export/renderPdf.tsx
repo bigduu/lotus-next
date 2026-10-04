@@ -1,3 +1,4 @@
+import { uiText } from "@shared/i18n/ui"
 import { createRoot } from "react-dom/client"
 import { flushSync } from "react-dom"
 import ReactMarkdown, { type Components } from "react-markdown"
@@ -131,7 +132,7 @@ async function renderCanvasWithFallback(container: HTMLElement): Promise<HTMLCan
     foreignObjectRendering: false,
   })
   if (!fallbackCanvas.width || !fallbackCanvas.height) {
-    throw new Error("PDF 渲染失败（画布为空）")
+    throw new Error(uiText("could_not_render_pdf_empty_canvas_bf3b7e39"))
   }
   return fallbackCanvas
 }
@@ -142,7 +143,7 @@ async function renderCanvasWithFallback(container: HTMLElement): Promise<HTMLCan
  * page) and trigger a browser download of `${title}.pdf`.
  */
 export async function renderConversationPdf(markdown: string, title: string): Promise<void> {
-  if (typeof document === "undefined") throw new Error("PDF 导出仅在浏览器中可用")
+  if (typeof document === "undefined") throw new Error(uiText("pdf_export_is_only_available_in_a_browser_2c47a3d5"))
 
   const container = document.createElement("div")
   container.style.position = "fixed"

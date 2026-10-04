@@ -1,3 +1,4 @@
+import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { useEffect, useMemo, useState } from "react"
 import { Archive, ArchiveRestore, Check, FolderPlus, Loader2, Plus, X } from "lucide-react"
 import { useShallow } from "zustand/react/shallow"
@@ -16,8 +17,8 @@ import { workspaceService } from "@services/workspace"
 
 const errorMessage = (error: unknown, fallback: string): string => {
   if (isApiError(error)) {
-    if (error.status === 409) return "冲突：项目刚被修改，请重试"
-    if (error.status === 404) return "项目不存在或已被删除"
+    if (error.status === 409) return uiText("conflict_the_project_was_just_changed_please_try_again_39427e75")
+    if (error.status === 404) return uiText("the_project_does_not_exist_or_has_been_deleted_e99cf9dc")
     return error.message || fallback
   }
   return error instanceof Error ? error.message : fallback
@@ -25,6 +26,7 @@ const errorMessage = (error: unknown, fallback: string): string => {
 
 /** Create-project inline form. The primary path is a real existing folder. */
 function CreateProjectForm({ onCreated }: { onCreated: (project: ProjectManifest) => void }) {
+  useUiLocale()
   const createProject = useAppStore((state) => state.createProject)
   const [name, setName] = useState("")
   const [path, setPath] = useState("")
@@ -40,7 +42,7 @@ function CreateProjectForm({ onCreated }: { onCreated: (project: ProjectManifest
     try {
       const ws = await workspaceService.validatePath(trimmedPath)
       if (!ws.is_valid) {
-        setError(ws.error_message || "路径无效")
+        setError(ws.error_message || uiText("invalid_path_1f83ecf9"))
         return
       }
       const manifest = await createProject({
@@ -51,7 +53,7 @@ function CreateProjectForm({ onCreated }: { onCreated: (project: ProjectManifest
       setName("")
       setPath("")
     } catch (err) {
-      setError(errorMessage(err, "创建失败"))
+      setError(errorMessage(err, uiText("could_not_create_7e6a71ef")))
     } finally {
       setBusy(false)
     }
@@ -59,20 +61,20 @@ function CreateProjectForm({ onCreated }: { onCreated: (project: ProjectManifest
 
   return (
     <div className="space-y-2 rounded-md border p-3">
-      <div className="text-xs font-medium text-muted-foreground">新建项目</div>
+      <div className="text-xs font-medium text-muted-foreground">{uiText("new_project_0e1a7040")}</div>
       <div className="grid gap-2">
         <div className="grid gap-1">
-          <label htmlFor="project-name" className="text-xs">名称</label>
+          <label htmlFor="project-name" className="text-xs">{uiText("name_d44e9b3d")}</label>
           <Input
             id="project-name"
             className="h-8"
-            placeholder="如 Zenith"
+            placeholder={uiText("e_g_zenith_60cf008b")}
             value={name}
             onChange={(e) => setName(e.target.value)}
           />
         </div>
         <div className="grid gap-1">
-          <label htmlFor="project-path" className="text-xs">主目录（绝对路径）</label>
+          <label htmlFor="project-path" className="text-xs">{uiText("primary_directory_absolute_path_35a7dd77")}</label>
           <Input
             id="project-path"
             className="h-8"
@@ -87,8 +89,7 @@ function CreateProjectForm({ onCreated }: { onCreated: (project: ProjectManifest
       </div>
       {error ? <p className="text-xs text-destructive">{error}</p> : null}
       <Button size="sm" className="w-full" onClick={submit} disabled={!name.trim() || !path.trim() || busy}>
-        {busy ? <Loader2 className="size-4 animate-spin" /> : <Plus className="size-4" />} 创建
-      </Button>
+        {busy ? <Loader2 className="size-4 animate-spin" /> : <Plus className="size-4" />} {uiText("create_cde2cd07")}</Button>
     </div>
   )
 }
@@ -100,6 +101,7 @@ export function ProjectManagerModal({
   open: boolean
   onClose: () => void
 }) {
+  useUiLocale()
   const {
     projects,
     projectsLoading,
@@ -154,7 +156,7 @@ export function ProjectManagerModal({
     try {
       await action()
     } catch (err) {
-      setActionError(errorMessage(err, "操作失败"))
+      setActionError(errorMessage(err, uiText("operation_failed_0c3b4cf7")))
     } finally {
       setBusyId(null)
     }
@@ -165,7 +167,7 @@ export function ProjectManagerModal({
     if (!trimmed || busyId) return
     await runAction(project.id, async () => {
       const ws = await workspaceService.validatePath(trimmed)
-      if (!ws.is_valid) throw new Error(ws.error_message || "路径无效")
+      if (!ws.is_valid) throw new Error(ws.error_message || uiText("invalid_path_1f83ecf9"))
       await bindWorkspace(project.id, project.revision, { path: trimmed })
       setBindingFor(null)
       setBindingPath("")
@@ -181,7 +183,7 @@ export function ProjectManagerModal({
     >
       <ResponsiveDialogContent showCloseButton={false} className="p-0 sm:max-w-2xl">
         <div className="flex items-center justify-between border-b px-4 py-3">
-          <ResponsiveDialogTitle>管理项目</ResponsiveDialogTitle>
+          <ResponsiveDialogTitle>{uiText("manage_projects_302f96cf")}</ResponsiveDialogTitle>
           <Button size="icon" variant="ghost" onClick={onClose}>
             <X />
           </Button>
@@ -202,9 +204,9 @@ export function ProjectManagerModal({
           <CreateProjectForm onCreated={() => setActionError(null)} />
 
           {projectsLoading && sorted.length === 0 ? (
-            <p className="text-xs text-muted-foreground">加载中…</p>
+            <p className="text-xs text-muted-foreground">{uiText("loading_4927a53b")}</p>
           ) : sorted.length === 0 ? (
-            <p className="text-xs text-muted-foreground">暂无项目</p>
+            <p className="text-xs text-muted-foreground">{uiText("no_projects_yet_4550442e")}</p>
           ) : (
             <ul className="space-y-2">
               {sorted.map((project) => {
@@ -217,11 +219,11 @@ export function ProjectManagerModal({
                         <div className="flex items-center gap-2">
                           <span className="truncate text-sm font-medium">{project.name}</span>
                           {archived ? (
-                            <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">已归档</span>
+                            <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">{uiText("archived_82395d42")}</span>
                           ) : null}
                         </div>
                         <div className="truncate text-xs text-muted-foreground" title={project.project_path ?? undefined}>
-                          {project.project_path || "未配置主目录"}
+                          {project.project_path || uiText("no_primary_directory_configured_095fa19f")}
                         </div>
                         {project.workspace_bindings.length > 0 ? (
                           <div className="mt-1 space-y-0.5">
@@ -249,7 +251,7 @@ export function ProjectManagerModal({
                           disabled={isActive || !!busyId}
                           onClick={() => setActiveProjectId(project.id)}
                         >
-                          {isActive ? "当前默认" : "设为默认"}
+                          {isActive ? uiText("current_default_f50585ee") : uiText("set_as_default_35721109")}
                         </Button>
                       ) : null}
                       {!archived ? (
@@ -263,8 +265,7 @@ export function ProjectManagerModal({
                             setBindingPath("")
                           }}
                         >
-                          <FolderPlus className="size-3.5" /> 绑定目录
-                        </Button>
+                          <FolderPlus className="size-3.5" />{uiText("attach_directory_66c84cb7")}</Button>
                       ) : null}
                       <Button
                         size="sm"
@@ -281,12 +282,10 @@ export function ProjectManagerModal({
                       >
                         {archived ? (
                           <>
-                            <ArchiveRestore className="size-3.5" /> 恢复
-                          </>
+                            <ArchiveRestore className="size-3.5" />{uiText("restore_e0534b8a")}</>
                         ) : (
                           <>
-                            <Archive className="size-3.5" /> 归档
-                          </>
+                            <Archive className="size-3.5" />{uiText("archive_5292ab1a")}</>
                         )}
                       </Button>
                     </div>
@@ -295,7 +294,7 @@ export function ProjectManagerModal({
                       <div className="mt-2 flex gap-2">
                         <Input
                           className="h-8 flex-1"
-                          placeholder="工作目录绝对路径"
+                          placeholder={uiText("absolute_working_directory_path_b1c49808")}
                           value={bindingPath}
                           autoFocus
                           onChange={(e) => setBindingPath(e.target.value)}
@@ -304,8 +303,7 @@ export function ProjectManagerModal({
                           }}
                         />
                         <Button size="sm" className="h-8" onClick={() => void submitBinding(project)} disabled={!bindingPath.trim() || !!busyId}>
-                          绑定
-                        </Button>
+                          {uiText("attach_3dd97f4d")}</Button>
                       </div>
                     ) : null}
                   </li>

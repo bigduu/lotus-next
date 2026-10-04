@@ -1,3 +1,4 @@
+import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { createContext, useContext, useState, type ReactNode } from "react"
 import { ChevronDown, Copy, ExternalLink, Globe2 } from "lucide-react"
 import type { LinkSafetyModalProps } from "streamdown"
@@ -38,6 +39,7 @@ export function ExternalLinkProvider({
   children: ReactNode
   onOpenInApp?: OpenInApp
 }) {
+  useUiLocale()
   return (
     <OpenInAppContext.Provider value={onOpenInApp ?? null}>
       {children}
@@ -47,6 +49,7 @@ export function ExternalLinkProvider({
 
 /** Streamdown's built-in confirm uses window.open, which cannot open Bodhi's default browser. */
 export function ExternalLinkDialog({ url, isOpen, onClose }: LinkSafetyModalProps) {
+  useUiLocale()
   const openInApp = useContext(OpenInAppContext)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -71,9 +74,8 @@ export function ExternalLinkDialog({ url, isOpen, onClose }: LinkSafetyModalProp
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <ExternalLink className="size-5" />
-            打开外部链接？
-          </DialogTitle>
-          <DialogDescription>即将访问外部网站。</DialogDescription>
+            {uiText("open_external_link_fd407c70")}</DialogTitle>
+          <DialogDescription>{uiText("you_are_about_to_visit_an_external_website_d5fdb530")}</DialogDescription>
         </DialogHeader>
         <div className="max-h-32 overflow-y-auto break-all rounded-md bg-muted p-3 font-mono text-sm">
           {url}
@@ -84,33 +86,29 @@ export function ExternalLinkDialog({ url, isOpen, onClose }: LinkSafetyModalProp
             className="min-w-0 flex-1"
             disabled={busy}
             variant="outline"
-            onClick={() => void perform(() => copyText(url), "复制链接失败，请重试。")}
+            onClick={() => void perform(() => copyText(url), uiText("could_not_copy_link_please_try_again_c54af852"))}
           >
             <Copy />
-            复制链接
-          </Button>
+            {uiText("copy_link_8e86f9b1")}</Button>
           <DropdownMenu modal={false}>
             <DropdownMenuTrigger asChild>
               <Button className="min-w-0 flex-1" disabled={busy}>
-                打开链接
-                <ChevronDown />
+                {uiText("open_link_a2639495")} <ChevronDown />
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="min-w-48" style={{ zIndex: 60 }}>
               {openInApp && isWebUrl(url) ? (
                 <DropdownMenuItem
-                  onSelect={() => void perform(() => openInApp(url), "无法在应用内打开链接，请重试。")}
+                  onSelect={() => void perform(() => openInApp(url), uiText("could_not_open_the_link_in_the_app_please_try_again_769b498f"))}
                 >
                   <Globe2 />
-                  在应用内打开
-                </DropdownMenuItem>
+                  {uiText("open_in_app_af4b79db")}</DropdownMenuItem>
               ) : null}
               <DropdownMenuItem
-                onSelect={() => void perform(() => openExternalLink(url), "无法使用默认浏览器打开链接，请重试。")}
+                onSelect={() => void perform(() => openExternalLink(url), uiText("could_not_open_the_link_in_your_default_browser_please__14278433"))}
               >
                 <ExternalLink />
-                使用默认浏览器打开
-              </DropdownMenuItem>
+                {uiText("open_in_default_browser_a489338a")}</DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
         </div>

@@ -1,3 +1,4 @@
+import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { useEffect, useState } from "react"
 import { X } from "lucide-react"
 import { useShallow } from "zustand/react/shallow"
@@ -27,6 +28,7 @@ function text(m: Message): string {
  * — low value for a mobile-first app.
  */
 export function ReferencePane({ onClose, width }: { onClose: () => void; width?: number }) {
+  useUiLocale()
   const chats = useAppStore(useShallow((s) => s.chats))
   const [sid, setSid] = useState<string | null>(null)
   const chat = useAppStore(useShallow(selectSessionById(sid)))
@@ -44,24 +46,24 @@ export function ReferencePane({ onClose, width }: { onClose: () => void; width?:
       <div className="flex items-center gap-2 border-b px-3 py-2.5">
         <Select value={sid ?? undefined} onValueChange={(v) => setSid(v || null)}>
           <SelectTrigger className="min-w-0 flex-1">
-            <SelectValue placeholder="选择会话对比…" />
+            <SelectValue placeholder={uiText("select_a_session_to_compare_4a072dce")} />
           </SelectTrigger>
           <SelectContent>
             {chats.filter((c) => c.kind !== "child" && !c.parentSessionId).map((c) => (
               <SelectItem key={c.id} value={c.id}>
-                {c.title || "新会话"}
+                {c.title || uiText("new_session_c57c30bc")}
               </SelectItem>
             ))}
           </SelectContent>
         </Select>
-        <Button size="icon" variant="ghost" aria-label="关闭分屏" onClick={onClose}>
+        <Button size="icon" variant="ghost" aria-label={uiText("close_split_view_1e9b6e9d")} onClick={onClose}>
           <X />
         </Button>
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto">
         <div className="flex flex-col gap-3 p-3">
           {messages.length === 0 ? (
-            <p className="py-10 text-center text-sm text-muted-foreground">选择一个会话查看</p>
+            <p className="py-10 text-center text-sm text-muted-foreground">{uiText("select_a_session_to_view_33105165")}</p>
           ) : (
             messages.map((m) => {
               if (m.role === "system") return null

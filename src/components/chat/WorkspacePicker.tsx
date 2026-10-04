@@ -1,3 +1,4 @@
+import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { useEffect, useState } from "react"
 import { Folder, Check, X, Loader2 } from "lucide-react"
 import { workspaceService } from "@services/workspace"
@@ -25,6 +26,7 @@ export function WorkspacePicker({
   onClose: () => void
   onSelect: (path: string | null) => void
 }) {
+  useUiLocale()
   const [list, setList] = useState<Workspace[]>([])
   const [loading, setLoading] = useState(true)
   const [path, setPath] = useState("")
@@ -86,10 +88,10 @@ export function WorkspacePicker({
         await workspaceService.addRecent(p).catch(() => {})
         choose(p)
       } else {
-        setError(ws.error_message || "路径无效")
+        setError(ws.error_message || uiText("invalid_path_1f83ecf9"))
       }
     } catch {
-      setError("校验失败")
+      setError(uiText("validation_failed_a096c117"))
     } finally {
       setValidating(false)
     }
@@ -107,7 +109,7 @@ export function WorkspacePicker({
         className="p-0 sm:max-w-lg"
       >
         <div className="flex items-center justify-between border-b px-4 py-3">
-          <ResponsiveDialogTitle>选择工作目录</ResponsiveDialogTitle>
+          <ResponsiveDialogTitle>{uiText("select_working_directory_18240aa3")}</ResponsiveDialogTitle>
           <Button size="icon" variant="ghost" onClick={onClose}>
             <X />
           </Button>
@@ -116,14 +118,14 @@ export function WorkspacePicker({
         <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-4">
           {locked ? (
             <p className="rounded-md bg-muted/50 px-2.5 py-2 text-xs text-muted-foreground">
-              工作目录在会话创建时设定,当前会话已锁定。下面的选择会用于<strong>新建会话</strong>。
+              {uiText("the_working_directory_was_set_when_this_session_was_cre_8d1bf435")}<strong>{uiText("new_session_58e21b87")}</strong>。
             </p>
           ) : null}
 
           <div className="flex gap-2">
             <Input
               className="flex-1"
-              placeholder="绝对路径,如 /Users/you/project"
+              placeholder={uiText("absolute_path_e_g_home_you_project_52ea40f9")}
               value={path}
               autoFocus
               onChange={(e) => setPath(e.target.value)}
@@ -132,7 +134,7 @@ export function WorkspacePicker({
               }}
             />
             <Button size="sm" onClick={validateAndChoose} disabled={!path.trim() || validating}>
-              {validating ? <Loader2 className="size-4 animate-spin" /> : "使用"}
+              {validating ? <Loader2 className="size-4 animate-spin" /> : uiText("use_cdfd0b34")}
             </Button>
           </div>
           {completions.length > 0 ? (
@@ -158,16 +160,15 @@ export function WorkspacePicker({
               onClick={() => choose(null)}
               className="text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
             >
-              清除 · 用默认目录
-            </button>
+              {uiText("clear_use_default_directory_5619a464")}</button>
           ) : null}
 
           <div className="space-y-1.5">
-            <div className="text-xs font-medium text-muted-foreground">最近 / 建议</div>
+            <div className="text-xs font-medium text-muted-foreground">{uiText("recent_suggested_035f05c6")}</div>
             {loading ? (
-              <p className="text-xs text-muted-foreground">加载中…</p>
+              <p className="text-xs text-muted-foreground">{uiText("loading_4927a53b")}</p>
             ) : list.length === 0 ? (
-              <p className="text-xs text-muted-foreground">暂无</p>
+              <p className="text-xs text-muted-foreground">{uiText("none_yet_b336a174")}</p>
             ) : (
               <ul className="space-y-1">
                 {list.map((ws) => (

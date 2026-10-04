@@ -1,3 +1,4 @@
+import { uiText, uiLanguage } from "@shared/i18n/ui"
 import type { ChatItem } from "@shared/types/chatMessages"
 import { NO_PROJECT_GROUP_KEY } from "@services/project"
 
@@ -15,10 +16,12 @@ const dayKey = (d: Date) =>
 function dayLabel(ts: number, now: Date): string {
   const d = new Date(ts)
   const yesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1)
-  if (dayKey(d) === dayKey(now)) return "今天"
-  if (dayKey(d) === dayKey(yesterday)) return "昨天"
-  if (d.getFullYear() === now.getFullYear()) return `${d.getMonth() + 1}月${d.getDate()}日`
-  return `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日`
+  if (dayKey(d) === dayKey(now)) return uiText("today_d5f5a7a0")
+  if (dayKey(d) === dayKey(yesterday)) return uiText("yesterday_0c184871")
+  return new Intl.DateTimeFormat(uiLanguage(), {
+    ...(d.getFullYear() === now.getFullYear() ? {} : { year: "numeric" as const }),
+    month: "long", day: "numeric",
+  }).format(d)
 }
 
 /**
@@ -41,7 +44,7 @@ export function groupChats(chats: ChatItem[], now: Date): ChatGroup[] {
   }
 
   const groups: ChatGroup[] = []
-  if (pinned.length) groups.push({ key: "__pinned", label: "置顶", chats: pinned })
+  if (pinned.length) groups.push({ key: "__pinned", label: uiText("pin_173f88d2"), chats: pinned })
   groups.push(...byDay.values())
   return groups
 }
@@ -75,7 +78,7 @@ export function groupChatsByProject(
   }
 
   const groups: ChatGroup[] = []
-  if (pinned.length) groups.push({ key: "__pinned", label: "置顶", chats: pinned })
+  if (pinned.length) groups.push({ key: "__pinned", label: uiText("pin_173f88d2"), chats: pinned })
   // Unassigned sessions always render last; keep first-seen order otherwise
   // (already sorted by newest creation time).
   const sortedKeys = [

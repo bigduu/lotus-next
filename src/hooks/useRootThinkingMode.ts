@@ -1,3 +1,4 @@
+import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { useEffect, useRef, useState, useSyncExternalStore } from "react"
 import { useAppStore } from "@shared/store/appStore"
 import type { ReasoningEffortSelection } from "@shared/utils/reasoningEffort"
@@ -24,6 +25,7 @@ export function useRootThinkingMode({
   root: ReturnType<typeof useRootOrchestrationMode>
   disabled: boolean
 }) {
+  useUiLocale()
   const key = sessionId ? `session:${sessionId}` : `draft:${draftKey}`
   const navigation = useRef({ key, epoch: 0 })
   if (navigation.current.key !== key) navigation.current = { key, epoch: navigation.current.epoch + 1 }
@@ -67,7 +69,7 @@ export function useRootThinkingMode({
     if (!sessionId) {
       const store = useAppStore.getState()
       if (!store.setInputThinkingMode(draftKey, selection === "ultra" ? "ultra" : "standard")) {
-        report("无法保存草稿的思考模式；请检查浏览器存储后重试。")
+        report(uiText("could_not_save_the_draft_s_thinking_mode_check_browser__14cd9961"))
         return
       }
       if (selection !== "ultra") store.setInputReasoningEffort(draftKey, selection)
@@ -87,17 +89,17 @@ export function useRootThinkingMode({
           || result.status !== "committed" && result.status !== "unchanged"
           || proof.thinkingMode !== (selection === "ultra" ? "ultra" : "standard")) {
           const notices: Partial<Record<typeof result.status, string>> = {
-            fenced: "本次切换已撤销，请按当前实际模式重新选择。",
-            rejected_incompatible: "所选模式与当前规划、Skill 或工作流不兼容，请移除冲突选择后重试。",
-            fenced_by_successor: "另一个操作已更新思考模式，请按当前实际模式重新选择。",
-            birth_mismatch: "会话身份已改变，请按重新读取的状态选择思考模式。",
+            fenced: uiText("this_change_was_canceled_select_again_using_the_current_40e0d507"),
+            rejected_incompatible: uiText("the_selected_mode_is_incompatible_with_the_current_plan_2c3c36dd"),
+            fenced_by_successor: uiText("another_operation_updated_thinking_mode_select_again_us_6cf74dff"),
+            birth_mismatch: uiText("session_identity_changed_select_a_thinking_mode_using_t_fec23538"),
           }
-          report(notices[result.status] ?? "切换结果尚未确认；请先恢复或重新读取实际模式，再重选所需档位。")
+          report(notices[result.status] ?? uiText("the_change_result_is_unconfirmed_recover_or_reload_the__7f8a5ea7"))
           return
         }
         if (selection === "ultra") return // Keep the independent ordinary override/default.
         exitedUltra = wasUltra
-        if (proof.isRunning) throw new Error("会话已开始运行，请等待结束后重选普通强度")
+        if (proof.isRunning) throw new Error(uiText("the_session_is_running_wait_for_it_to_finish_before_sel_d3b71735"))
       }
       if (selection === "ultra") return
       await useAppStore.getState().changeSessionReasoningEffort(sessionId, selection === "auto" ? null : selection)
@@ -106,12 +108,12 @@ export function useRootThinkingMode({
       if (!current()) return
       if (!proof || proof.birthToken !== birthToken || proof.thinkingMode !== "standard"
         || (proof.ordinaryEffort ?? "auto") !== selection) {
-        report("普通强度尚未确认；已重新读取实际模式，请按显示的结果重选或重新读取。")
+        report(uiText("the_standard_reasoning_level_is_unconfirmed_actual_mode_a1eda4b7"))
       }
     } catch (error) {
       if (!current()) return
       const actual = !root.child ? await root.refresh(sessionId) : null
-      report(`${exitedUltra && actual?.thinkingMode === "standard" ? "已退出 Ultra；所选普通强度未保存或尚未确认" : "所选强度未保存或尚未确认，当前模式请以服务器读回为准"}：${getErrorMessage(error)}。草稿已保留，请重新选择或读取服务器状态。`)
+      report(uiText("your_draft_is_preserved_select_again_or_reload_server_s_f14be63a", { v0: exitedUltra && actual?.thinkingMode === "standard" ? uiText("standard_unconfirmed_after_ultra") : uiText("standard_unconfirmed"), v1: getErrorMessage(error) }))
     } finally {
       active.delete(key)
       const revision = (completions.get(key) ?? 0) + 1

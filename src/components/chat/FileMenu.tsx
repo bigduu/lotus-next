@@ -1,3 +1,4 @@
+import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { useEffect, useRef } from "react"
 import type { WorkspaceFileEntry } from "@services/workspace/types"
 import { cn } from "@/lib/utils"
@@ -21,6 +22,7 @@ export function FileMenu({
   onPick: (entry: WorkspaceFileEntry) => void
   onDismiss?: () => void
 }) {
+  useUiLocale()
   const q = query.trim().toLowerCase()
   const filtered = files
     .filter((f) => !f.is_directory && (!q || f.path.toLowerCase().includes(q)))
@@ -44,7 +46,7 @@ export function FileMenu({
 
   return (
     <div className="mx-auto mb-2 w-full max-w-6xl overflow-hidden rounded-xl border bg-popover shadow-lg">
-      <div className="border-b px-3 py-1.5 text-xs text-muted-foreground">工作区文件</div>
+      <div className="border-b px-3 py-1.5 text-xs text-muted-foreground">{uiText("workspace_files_c0c1e416")}</div>
       <div className="max-h-64 overflow-y-auto p-1">
         {filtered.map((f, i) => (
           <button

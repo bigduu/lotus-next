@@ -1,3 +1,4 @@
+import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { useEffect, useRef, type ReactNode } from "react"
 import { DragDropProvider } from "@dnd-kit/react"
 import { isSortable, useSortable } from "@dnd-kit/react/sortable"
@@ -18,10 +19,10 @@ export type RightWorkbenchTab = "inspector" | "review" | "browser" | "session"
 export type WorkbenchToolTab = Exclude<RightWorkbenchTab, "browser">
 
 const toolEntries = [
-  { id: "inspector", label: "检查器", description: "查看当前会话", icon: SlidersHorizontal },
-  { id: "review", label: "Review", description: "查看文件变更", icon: FileDiff },
-  { id: "browser", label: "浏览器", description: "输入网址后打开", icon: Globe2 },
-  { id: "session", label: "并排会话", description: "打开另一个会话", icon: Bot },
+  { id: "inspector", get label() { return uiText("inspector_fc48a7f2") }, get description() { return uiText("view_current_session_ea4cbea5") }, icon: SlidersHorizontal },
+  { id: "review", label: "Review", get description() { return uiText("view_file_changes_93cce2ed") }, icon: FileDiff },
+  { id: "browser", get label() { return uiText("browser_e19c3b9e") }, get description() { return uiText("enter_a_url_to_open_0d932314") }, icon: Globe2 },
+  { id: "session", get label() { return uiText("side_by_side_session_6eced34d") }, get description() { return uiText("open_another_session_28b8469c") }, icon: Bot },
 ] as const
 
 type VisibleTab =
@@ -43,6 +44,7 @@ function SortableWorkbenchTab({
   onMove: (id: string, direction: -1 | 1) => void
   children: ReactNode
 }) {
+  useUiLocale()
   const { ref, handleRef, isDragging } = useSortable({ id, index })
   return (
     <div
@@ -53,9 +55,9 @@ function SortableWorkbenchTab({
       <button
         ref={handleRef}
         type="button"
-        aria-label={`调整${title}标签页顺序`}
+        aria-label={uiText("reorder_tab_82ab6e1e", { v0: title })}
         aria-keyshortcuts="Alt+ArrowLeft Alt+ArrowRight"
-        title="拖动排序；按 Alt + 左右方向键移动"
+        title={uiText("drag_to_reorder_use_alt_left_right_to_move_bb4c333a")}
         className="flex size-5 shrink-0 items-center justify-center rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
         style={{ marginLeft: 4, touchAction: "none", cursor: "grab" }}
         onKeyDown={(event) => {
@@ -117,6 +119,7 @@ export function RightWorkbench({
   onBrowserClose?: (tabId: string) => void
   width?: number
 }) {
+  useUiLocale()
   const browserValue = !browserEntryOpen && activeBrowserTabId && browserTabs?.some((tab) => tab.tab_id === activeBrowserTabId)
     ? `browser:${activeBrowserTabId}`
     : "browser-entry"
@@ -173,7 +176,7 @@ export function RightWorkbench({
             next.splice(index, 0, moved)
             onTabReorder?.(next)
           }}>
-            <TabsList ref={tabListRef} aria-label="工作面板标签页" className="min-w-0 flex-1 justify-start overflow-x-auto rounded-none bg-transparent p-0">
+            <TabsList ref={tabListRef} aria-label={uiText("workbench_tabs_e5ddf68a")} className="min-w-0 flex-1 justify-start overflow-x-auto rounded-none bg-transparent p-0">
               {orderedTabs.map((item, index) => {
                 if (item.kind === "tool") {
                   const entry = toolEntries.find((candidate) => candidate.id === item.tool)!
@@ -187,22 +190,22 @@ export function RightWorkbench({
                       </TabsTrigger>
                       <button
                         type="button"
-                        aria-label={`关闭${entry.label}标签页`}
-                        title={`关闭${entry.label}`}
+                        aria-label={uiText("close_tab_547d17ad", { v0: entry.label })}
+                        title={uiText("close_a70f6657", { v0: entry.label })}
                         className="mr-1 flex size-6 shrink-0 items-center justify-center rounded-sm outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring"
                         onClick={() => onToolClose(item.tool)}
                       ><X className="size-3.5" aria-hidden="true" /></button>
                     </SortableWorkbenchTab>
                   )
                 }
-                const title = item.tab.title || item.tab.url || "新标签页"
+                const title = item.tab.title || item.tab.url || uiText("new_tab_9c5d3416")
                 const browserIndex = orderedTabs.slice(0, index).filter((candidate) => candidate.kind === "browser").length + 1
                 const isActive = activeTab === "browser" && !browserEntryOpen && item.tab.tab_id === activeBrowserTabId
                 return (
                   <SortableWorkbenchTab key={item.key} id={item.key} index={index} title={title} selected={isActive} onMove={moveTab}>
                     <TabsTrigger
                       value={item.key}
-                      aria-label={`浏览器标签页 ${browserIndex}：${title}`}
+                      aria-label={uiText("browser_tab_bc1120de", { v0: browserIndex, v1: title })}
                       title={title}
                       className="h-full min-w-0 flex-1 justify-start bg-transparent px-2 text-xs"
                     >
@@ -211,8 +214,8 @@ export function RightWorkbench({
                     </TabsTrigger>
                     <button
                       type="button"
-                      aria-label={`关闭浏览器标签页 ${browserIndex}：${title}`}
-                      title={`关闭 ${title}`}
+                      aria-label={uiText("close_browser_tab_df26cd49", { v0: browserIndex, v1: title })}
+                      title={uiText("close_29f8e760", { v0: title })}
                       disabled={browserBusy}
                       className="mr-1 flex size-6 shrink-0 items-center justify-center rounded-sm outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
                       onClick={() => onBrowserClose?.(item.tab.tab_id)}
@@ -224,14 +227,13 @@ export function RightWorkbench({
           </DragDropProvider>
         ) : activeTab === "browser" ? (
           <Button size="sm" variant="ghost" className="min-w-0 flex-1 justify-start" onClick={() => onTabChange(null)}>
-            <ArrowLeft className="size-4" /> 工作面板
-          </Button>
+            <ArrowLeft className="size-4" />{uiText("workbench_c2730bc7")}</Button>
         ) : (
-          <span className="min-w-0 flex-1 px-2 text-sm text-muted-foreground">工作面板</span>
+          <span className="min-w-0 flex-1 px-2 text-sm text-muted-foreground">{uiText("workbench_c2730bc7")}</span>
         )}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button size="icon" variant="ghost" className="size-8 shrink-0" aria-label="打开工作面板标签页">
+            <Button size="icon" variant="ghost" className="size-8 shrink-0" aria-label={uiText("open_workbench_tab_424b2095")}>
               <Plus className="size-4" />
             </Button>
           </DropdownMenuTrigger>
@@ -242,7 +244,7 @@ export function RightWorkbench({
             })}
           </DropdownMenuContent>
         </DropdownMenu>
-        <Button size="icon" variant="ghost" aria-label="收起工作面板" onClick={onClose}><X /></Button>
+        <Button size="icon" variant="ghost" aria-label={uiText("collapse_workbench_739b282d")} onClick={onClose}><X /></Button>
       </div>
 
       {openToolTabs.includes("inspector") ? <TabsContent value="inspector" className="flex min-h-0 overflow-hidden">{inspector}</TabsContent> : null}
@@ -257,8 +259,8 @@ export function RightWorkbench({
       ) : null}
       <TabsContent value="launcher" className="flex min-h-0 flex-col items-center justify-center overflow-auto p-6">
         <div className="w-full max-w-md">
-          <h2 className="text-base font-medium">还没有打开内容</h2>
-          <p className="mt-1 text-sm text-muted-foreground">选择工具，或输入网址打开网页</p>
+          <h2 className="text-base font-medium">{uiText("nothing_open_yet_7202c019")}</h2>
+          <p className="mt-1 text-sm text-muted-foreground">{uiText("choose_a_tool_or_enter_a_url_to_open_a_page_1d14dfed")}</p>
           <div className="mt-5 flex flex-col gap-2">
             {toolEntries.filter((entry) => browserEnabled || entry.id !== "browser").map((entry) => {
               const Icon = entry.icon
@@ -273,7 +275,7 @@ export function RightWorkbench({
                 >
                   <Icon className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
                   <span className="min-w-0 flex-1 text-sm">{entry.label}</span>
-                  <span className="text-xs text-muted-foreground">{disabled ? "先打开会话" : entry.description}</span>
+                  <span className="text-xs text-muted-foreground">{disabled ? uiText("open_a_session_first_fc83ec3a") : entry.description}</span>
                 </button>
               )
             })}
@@ -286,7 +288,7 @@ export function RightWorkbench({
   const panel = (
     <aside
       id="right-workbench"
-      aria-label="工作面板"
+      aria-label={uiText("workbench_c2730bc7")}
       className={cn("flex min-h-0 flex-col bg-card", docked ? "shrink-0 border-l" : "fixed inset-y-0 right-0 z-50 border-l shadow-lg")}
       style={docked ? { width: width ?? 520, maxWidth: "46vw" } : { width: "min(92vw, 42rem)" }}
     >{body}</aside>
@@ -294,7 +296,7 @@ export function RightWorkbench({
 
   if (docked) return panel
   return <>
-    <button className="fixed inset-0 z-40 bg-black/50" aria-label="收起工作面板" onClick={onClose} />
+    <button className="fixed inset-0 z-40 bg-black/50" aria-label={uiText("collapse_workbench_739b282d")} onClick={onClose} />
     {panel}
   </>
 }

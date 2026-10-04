@@ -1,3 +1,4 @@
+import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { useCallback, useEffect, useRef, useState } from "react"
 import { isApiError, NetworkRequestError, RequestTimeoutError } from "@services/api/errors"
 import { actorSnapshotRegresses, actorTreeCursorCovers, getActorSnapshot, type ActorSubtreeSnapshot } from "@services/chat/actorSnapshot"
@@ -16,12 +17,12 @@ interface SnapshotState {
 
 function failureMessage(error: unknown): string {
   if (isApiError(error)) {
-    if (error.status === 401 || error.status === 403) return "当前连接没有读取代理结构的权限；请确认 Bamboo 访问权限后重试。"
-    if (error.status === 404 || error.status === 501) return "当前 Bamboo 暂不提供此代理结构；请确认后端版本后重试。"
-    if (error.status === 409) return "代理结构或权限信息正在变化，暂时无法确认；请重新读取。"
-    if (error.status === 413) return "代理结构超过当前读取上限，无法显示完整结构。"
+    if (error.status === 401 || error.status === 403) return uiText("this_connection_cannot_read_agent_structure_check_bambo_2abedc8d")
+    if (error.status === 404 || error.status === 501) return uiText("this_bamboo_version_does_not_provide_agent_structure_ch_ae23a7fe")
+    if (error.status === 409) return uiText("agent_structure_or_permissions_are_changing_and_cannot__bc1899b0")
+    if (error.status === 413) return uiText("agent_structure_exceeds_the_current_read_limit_and_cann_a53518ef")
   }
-  return "代理结构暂时无法确认，请重新读取。"
+  return uiText("agent_structure_cannot_be_confirmed_right_now_reload_st_2ba610a7")
 }
 
 function retryableSnapshotFailure(error: unknown): boolean {
@@ -31,6 +32,7 @@ function retryableSnapshotFailure(error: unknown): boolean {
 
 /** A public snapshot view with one selected or previewed Actor interest. */
 export function useActorSnapshot(rootId: string | null, active: boolean, interestedActorId: string | null = null, descendantCountHint: number | null = null) {
+  useUiLocale()
   const [state, setState] = useState<SnapshotState>({ rootId: null, snapshot: null, loading: false, error: null, gapReason: null })
   const generation = useRef(0)
   const request = useRef<AbortController | null>(null)

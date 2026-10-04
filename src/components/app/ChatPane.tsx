@@ -1,3 +1,4 @@
+import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { useMarkSessionRead } from "@/lib/sessionReadState"
 import { useMediaQuery } from "@shared/hooks/useMediaQuery"
 import { useEffect, useId, useMemo, useRef, useState } from "react"
@@ -188,6 +189,7 @@ export function ChatPane({
   /** When set, render a slim split-pane header (session picker) instead of the full one. */
   secondary?: SecondaryConfig
 }) {
+  useUiLocale()
   const {
     chats,
     currentSessionId,
@@ -231,7 +233,7 @@ export function ChatPane({
   const persistedRunError = !visibleSendFailure
     && !currentlyRunning
     && currentChat?.lastRunStatus === "error"
-    ? currentChat.lastRunError?.trim() || "生成失败，服务端未提供错误详情。"
+    ? currentChat.lastRunError?.trim() || uiText("generation_failed_the_server_provided_no_error_details_d70c7744")
     : null
   const generationFailed = visibleSendFailure?.kind === "generation-failed"
     || persistedRunError !== null
@@ -404,7 +406,7 @@ export function ChatPane({
   const rootSessionUnsafe = () => rootMode.busy || rootMode.blocked
     || Boolean(currentSessionId && getRootModeFenceState(currentSessionId) !== "clear")
   const skillModeConflict = selectedSkill && rootMode.selected === true && !rootMode.child
-    ? "已选 Skill 与 Ultra 编排不兼容；移除 Skill，或在思考强度中选择普通档位。Bamboo 会在发送时校验。"
+    ? uiText("the_selected_skill_is_incompatible_with_ultra_orchestra_fd2e7fa6")
     : null
   // Existing sessions display their durable model. The global selection is
   // only a draft for a new session and cannot relabel a running session.
@@ -426,7 +428,7 @@ export function ChatPane({
       await changeSessionModel(currentSessionId, model)
     } catch {
       if (currentDraftKeyRef.current === currentSessionId) {
-        showToast("模型保存失败，请重试")
+        showToast(uiText("could_not_save_the_model_please_try_again_631991a6"))
       }
     } finally {
       setModelSaving(false)
@@ -580,7 +582,7 @@ export function ChatPane({
     // Keep an in-flight admission from capturing or clearing a second draft.
     if (submissionPending || modelSaving || queue.busy || rootMode.busy || goalRequestActive.current) return
     if (rootSessionUnsafe()) {
-      setRootModeConflict("Root 权限切换结果未知，此会话已停止发送和执行。请先处理模式切换。")
+      setRootModeConflict(uiText("the_root_permission_change_is_unconfirmed_sending_and_e_a75a6b4f"))
       return
     }
     const storeAtSubmit = useAppStore.getState()
@@ -589,7 +591,7 @@ export function ChatPane({
     const goalCommand = !selectedWorkflow && !typedWorkflow && !selectedSkill && attachments.length === 0
       ? /^\/goal(?:\s+([\s\S]*))?$/i.exec(text.trim()) : null
     if (goalCommand && (currentSessionId || !goalCommand[1]?.trim())) {
-      if (!currentSessionId) { showToast("请先打开一个会话，再设置目标。"); return }
+      if (!currentSessionId) { showToast(uiText("open_a_session_before_setting_a_goal_83867da8")); return }
       const revision = draftAtSubmit?.contentRevision ?? 0
       const objective = goalCommand[1]?.trim()
       if (!objective) {
@@ -599,7 +601,7 @@ export function ChatPane({
       }
       const sessionId = currentSessionId
       if (getRootModeFenceState(sessionId) !== "clear") {
-        setRootModeConflict("Root 权限切换结果未知，此会话已停止发送和执行。请先处理模式切换。")
+        setRootModeConflict(uiText("the_root_permission_change_is_unconfirmed_sending_and_e_a75a6b4f"))
         return
       }
       goalRequestActive.current = true; setGoalSaving(true)
@@ -608,7 +610,7 @@ export function ChatPane({
         useAppStore.getState().setInputContentIfRevision(draftKey, revision, "")
         if (currentDraftKeyRef.current === draftKey) {
           const action = response.goal_command.action
-          showToast(action === "off" ? "目标已暂停" : action === "clear" ? "目标已清除" : action === "on_no_prompt" ? "请先设置目标" : action === "status" ? "已打开目标设置" : "目标已设置")
+          showToast(action === "off" ? uiText("goal_paused_c6289896") : action === "clear" ? uiText("goal_cleared_0cfc707e") : action === "on_no_prompt" ? uiText("set_a_goal_first_cc87f18f") : action === "status" ? uiText("goal_settings_opened_63de7dc7") : uiText("goal_set_724a547c"))
           if (action === "status" || action === "on_no_prompt") onOpenInspector()
         }
         try { await useAppStore.getState().loadChatHistory(sessionId) }
@@ -617,14 +619,14 @@ export function ChatPane({
         // The run may finish while the Goal command is being acknowledged.
         if (response.goal_command.should_execute) {
           if (getRootModeFenceState(sessionId) !== "clear") {
-            if (currentDraftKeyRef.current === draftKey) showToast("Root 权限结果未知，目标已保存但不会执行；请先处理模式切换")
+            if (currentDraftKeyRef.current === draftKey) showToast(uiText("root_permissions_are_unconfirmed_the_goal_was_saved_but_bd40481a"))
             return
           }
           try { await agentClient.execute(sessionId, currentChat?.config?.model) }
-          catch { if (currentDraftKeyRef.current === draftKey) showToast("目标已保存，发送消息即可继续推进") }
+          catch { if (currentDraftKeyRef.current === draftKey) showToast(uiText("goal_saved_send_a_message_to_continue_ba844fbc")) }
         }
       }).catch(() => {
-        if (currentDraftKeyRef.current === draftKey) showToast("目标保存失败，指令已保留，请重试")
+        if (currentDraftKeyRef.current === draftKey) showToast(uiText("could_not_save_the_goal_your_command_is_preserved_pleas_ac375306"))
       }).finally(() => { goalRequestActive.current = false; setGoalSaving(false) })
       return
     }
@@ -632,20 +634,20 @@ export function ChatPane({
     let workflowSelection: WorkflowSelection | null = null
     if (typedWorkflow) {
       if (currentlyRunning || queue.hasUnconfirmed) {
-        setWorkflowError("请等待当前运行结束，再发送所选工作流；消息队列只接收文本。")
+        setWorkflowError(uiText("wait_for_the_current_run_to_finish_before_sending_the_s_8a1c6253"))
         return
       }
       try { workflowSelection = prepareWorkflowSelection(typedWorkflow) }
       catch (failure) { setWorkflowError(getErrorMessage(failure)); return }
     }
     if (selectedWorkflow && !rootMode.child && (rootMode.selected === true || (currentSessionId && rootMode.selected === null))) {
-      setRootModeConflict("所选文本工作流与 Ultra 编排不兼容；请在思考强度中选择普通档位后重试。")
+      setRootModeConflict(uiText("the_selected_text_workflow_is_incompatible_with_ultra_o_b46c71ea"))
       return
     }
     setRootModeConflict(null)
     setWorkflowError(null)
     if ((currentlyRunning || queue.hasUnconfirmed) && selectedSkill) {
-      showToast("请先移除已选技能，再把消息加入队列。")
+      showToast(uiText("remove_the_selected_skill_before_queueing_the_message_e38f6811"))
       return
     }
     const snapshot: ComposerSubmissionSnapshot = Object.freeze({
@@ -702,17 +704,17 @@ export function ChatPane({
         if (result.kind === "unconfirmed") {
           if (result.workflowError && currentDraftKeyRef.current === snapshot.draftKey) {
             const guidance: Record<string, string> = {
-              root_orchestration_incompatible_mode: "所选工作流与 Ultra 编排不兼容；请在思考强度中选择普通档位后重试。",
-              workflow_revision_missing: "所选工作流已不可用；请刷新目录并重新选择。",
-              workflow_revision_mismatch: "所选工作流的版本已变化；请刷新目录并重新选择。",
-              workflow_source_mismatch: "所选工作流的来源已变化；请刷新目录并重新选择。",
-              workflow_manual_only: "所选工作流不允许显式选择；请选择其他工作流。",
-              workflow_selection_invalid: "工作流或参数不符合当前定义；请检查参数，必要时刷新目录并重新选择。",
-              workflow_snapshot_unavailable: "Bamboo 暂时无法保留所选工作流定义；请稍后重试。",
-              workflow_snapshot_too_large: "所选工作流定义超出 Bamboo 的快照预算；请调整定义或选择其他工作流。",
-              workflow_context_invalid: "Bamboo 无法准备工作流上下文；请检查参数和定义后重试。",
+              root_orchestration_incompatible_mode: uiText("the_selected_workflow_is_incompatible_with_ultra_orches_de35fdd7"),
+              workflow_revision_missing: uiText("the_selected_workflow_is_no_longer_available_refresh_th_7bd9ac1f"),
+              workflow_revision_mismatch: uiText("the_selected_workflow_revision_has_changed_refresh_the__bcef1f66"),
+              workflow_source_mismatch: uiText("the_selected_workflow_source_has_changed_refresh_the_ca_8af8563c"),
+              workflow_manual_only: uiText("this_workflow_cannot_be_selected_explicitly_select_anot_78f7dbdc"),
+              workflow_selection_invalid: uiText("the_workflow_or_arguments_do_not_match_the_current_defi_0bb6277d"),
+              workflow_snapshot_unavailable: uiText("bamboo_cannot_preserve_the_selected_workflow_definition_43555a20"),
+              workflow_snapshot_too_large: uiText("the_workflow_definition_exceeds_bamboo_s_snapshot_budge_0dc8f7de"),
+              workflow_context_invalid: uiText("bamboo_cannot_prepare_the_workflow_context_check_the_ar_83c4fc3e"),
             }
-            setWorkflowError(`${guidance[result.workflowError.code] ?? "Bamboo 未接受所选工作流，请检查诊断后重试。"} 草稿和选择已保留。（${result.workflowError.code}：${result.workflowError.message}）`)
+            setWorkflowError(uiText("your_draft_and_selection_are_preserved_a3485200", { v0: guidance[result.workflowError.code] ?? uiText("workflow_not_accepted"), v1: result.workflowError.code, v2: result.workflowError.message }))
           }
           if (currentDraftKeyRef.current === snapshot.draftKey) composerInputRef.current?.focus()
           return
@@ -784,16 +786,16 @@ export function ChatPane({
           content: detail.content,
         })
       })
-      .catch(() => showToast(`加载工作流 ${command.name} 失败`))
+      .catch(() => showToast(uiText("could_not_load_workflow_ed648068", { v0: command.name })))
   }
 
   const handleFork = (id: string) => {
-    if (rootSessionUnsafe()) { setRootModeConflict("Root 权限切换结果未知，此会话暂不能分叉。请先处理模式切换。"); return }
+    if (rootSessionUnsafe()) { setRootModeConflict(uiText("the_root_permission_change_is_unconfirmed_forking_is_un_ca51f044")); return }
     setForking(true)
     void fork(id).then((nid) => {
       setForking(false)
-      if (nid) showToast("已从这里分叉到新会话")
-      else showToast("分叉失败:当前后端暂不支持会话分叉")
+      if (nid) showToast(uiText("forked_into_a_new_session_from_here_b0abc6b8"))
+      else showToast(uiText("could_not_fork_this_backend_does_not_support_session_fo_006caf5c"))
     })
   }
 
@@ -805,19 +807,19 @@ export function ChatPane({
     ...(currentSessionId && messages.length > 0
       ? [
           {
-            label: "导出 Markdown",
+            label: uiText("export_as_markdown_ac8b027c"),
             icon: <Download className="size-4" />,
             onClick: () => downloadMarkdown(messages, currentChat?.title || "chat"),
           },
           {
-            label: "导出 PDF",
+            label: uiText("export_as_pdf_e42c8735"),
             icon: <FileDown className="size-4" />,
             onClick: () => void downloadPdf(messages, currentChat?.title || "chat"),
           },
         ]
       : []),
     {
-      label: splitOpen ? "关闭分屏对比" : "分屏对比",
+      label: splitOpen ? uiText("close_side_by_side_comparison_2b7637f6") : uiText("compare_side_by_side_a17b7763"),
       icon: <Columns2 className="size-4" />,
       onClick: () => launchWorkbench(onToggleSplit),
     },
@@ -869,8 +871,7 @@ export function ChatPane({
       >
         {dragOver ? (
           <div className="pointer-events-none absolute inset-0 z-[60] m-3 flex items-center justify-center rounded-2xl border-2 border-dashed border-primary bg-primary/10 text-sm font-medium text-primary">
-            松开以添加图片
-          </div>
+            {uiText("drop_to_add_images_6ccb05f2")}</div>
         ) : null}
 
         {secondary ? (
@@ -880,14 +881,14 @@ export function ChatPane({
               onValueChange={(v) => secondary.onPickSession(v || null)}
             >
               <SelectTrigger size="sm" className="min-w-0 flex-1">
-                <SelectValue placeholder="选择会话并排…" />
+                <SelectValue placeholder={uiText("select_a_session_to_compare_74d69a72")} />
               </SelectTrigger>
               <SelectContent>
                 {secondary.chats
                   .filter((c) => !c.parentSessionId || c.id === secondary.sessionId)
                   .map((c) => (
                     <SelectItem key={c.id} value={c.id}>
-                      {c.title || "新会话"}
+                      {c.title || uiText("new_session_c57c30bc")}
                     </SelectItem>
                   ))}
               </SelectContent>
@@ -897,7 +898,7 @@ export function ChatPane({
                 <Button
                   size="icon"
                   variant="ghost"
-                  aria-label="检查器"
+                  aria-label={uiText("inspector_fc48a7f2")}
                   onClick={() => launchWorkbench(onOpenInspector)}
                 >
                   <PanelRightOpen />
@@ -905,7 +906,7 @@ export function ChatPane({
               </>
             ) : null}
             {!secondary.hideClose ? (
-              <Button size="icon" variant="ghost" aria-label="关闭分栏" onClick={secondary.onClose}>
+              <Button size="icon" variant="ghost" aria-label={uiText("close_pane_1cd5deec")} onClick={secondary.onClose}>
                 <X />
               </Button>
             ) : null}
@@ -936,8 +937,7 @@ export function ChatPane({
           >
         {currentChat?.planMode ? (
           <div className="border-b bg-primary/10 px-3 py-1.5 text-center text-xs font-medium text-primary">
-            计划模式
-            {(currentChat.planMode as { status?: string }).status
+            {uiText("plan_mode_7cbb85b7")} {(currentChat.planMode as { status?: string }).status
               ? ` · ${(currentChat.planMode as { status?: string }).status}`
               : ""}
           </div>
@@ -952,8 +952,7 @@ export function ChatPane({
             }
             className="flex w-full items-center gap-1.5 border-b bg-muted/40 px-3 py-1.5 text-xs font-medium text-muted-foreground hover:text-foreground"
           >
-            <ChevronLeft className="size-3.5" /> 子代理 · 返回父会话
-          </button>
+            <ChevronLeft className="size-3.5" />{uiText("subagent_back_to_parent_session_5f5fc758")}</button>
         ) : null}
 
         {!currentSessionId && !secondary && !sending && !pendingUserText ? (
@@ -991,15 +990,15 @@ export function ChatPane({
           }}
           onPreviewImage={setPreview}
           onRegenerate={() => {
-            if (rootSessionUnsafe()) { setRootModeConflict("Root 权限切换结果未知，此会话已停止重新生成。请先处理模式切换。"); return }
-            if (modelSaving) { showToast("模型正在保存，请稍后继续"); return }
+            if (rootSessionUnsafe()) { setRootModeConflict(uiText("the_root_permission_change_is_unconfirmed_regeneration__134c0a98")); return }
+            if (modelSaving) { showToast(uiText("saving_model_please_wait_04e35c5e")); return }
             void regenerate()
           }}
           onFork={handleFork}
           onDelete={(id) => void deleteMessage(id)}
           onEditMessage={(id, text) => {
-            if (rootSessionUnsafe()) { setRootModeConflict("Root 权限切换结果未知，此会话已停止编辑重跑。请先处理模式切换。"); return }
-            if (modelSaving) { showToast("模型正在保存，请稍后继续"); return }
+            if (rootSessionUnsafe()) { setRootModeConflict(uiText("the_root_permission_change_is_unconfirmed_editing_and_r_45b99ff9")); return }
+            if (modelSaving) { showToast(uiText("saving_model_please_wait_04e35c5e")); return }
             void editMessage(id, text)
           }}
         />
@@ -1016,15 +1015,15 @@ export function ChatPane({
                 {visibleSendFailure?.kind === "submission-unconfirmed"
                   ? visibleSendFailure.rejectionCode
                     ? visibleSendFailure.rootModeSelectionSubmitted
-                      ? "Bamboo 已拒绝此模式切换，内容已保留"
-                      : "Bamboo 已拒绝此请求，内容已保留"
-                    : "发送状态未确认，内容已保留"
+                      ? uiText("bamboo_rejected_the_mode_change_your_content_is_preserv_3445f2fc")
+                      : uiText("bamboo_rejected_the_request_your_content_is_preserved_74a6cc8c")
+                    : uiText("sending_is_unconfirmed_your_content_is_preserved_4f66238c")
                   : rootMode.unsafe && generationFailed
-                    ? "消息已保存，但此会话已停止执行"
-                    : runFailureGuidance?.title ?? "消息已发送，但生成中断"}
+                    ? uiText("message_saved_but_execution_is_stopped_for_this_session_bacf408a")
+                    : runFailureGuidance?.title ?? uiText("message_sent_but_generation_was_interrupted_62a4d83d")}
               </p>
               {rootMode.unsafe && generationFailed ? (
-                <p className="mt-1 text-xs">Root 权限切换结果未知。消息保留在会话中；请先处理模式切换后继续。</p>
+                <p className="mt-1 text-xs">{uiText("the_root_permission_change_is_unconfirmed_your_message__fd9a5b04")}</p>
               ) : runFailureGuidance ? (
                 <p className="mt-1 text-xs">{runFailureGuidance.action}</p>
               ) : null}
@@ -1032,7 +1031,7 @@ export function ChatPane({
                 <p className="mt-1 break-words text-xs">{runErrorDetail}</p>
               ) : runErrorDetail ? (
                 <details className="mt-1 text-xs">
-                  <summary>技术详情</summary>
+                  <summary>{uiText("technical_details_c26fb419")}</summary>
                   <p className="mt-1 break-words">{runErrorDetail}</p>
                 </details>
               ) : null}
@@ -1043,7 +1042,7 @@ export function ChatPane({
                 variant="secondary"
                 disabled={sending || modelSaving}
                 onClick={() => {
-                  if (rootSessionUnsafe()) { setRootModeConflict("Root 权限切换结果未知，此会话已停止重试生成。请先处理模式切换。"); return }
+                  if (rootSessionUnsafe()) { setRootModeConflict(uiText("the_root_permission_change_is_unconfirmed_generation_re_bdcf3a6c")); return }
                   if (visibleSendFailure?.kind === "generation-failed") {
                     void retry(visibleSendFailure)
                   } else {
@@ -1051,12 +1050,10 @@ export function ChatPane({
                   }
                 }}
               >
-                <RotateCcw className="size-3.5" /> 重试生成
-              </Button>
+                <RotateCcw className="size-3.5" />{uiText("retry_generation_37960b38")}</Button>
             ) : (
               <Button size="sm" variant="secondary" onClick={() => composerInputRef.current?.focus()}>
-                继续编辑
-              </Button>
+                {uiText("continue_editing_fd4b9e3b")}</Button>
             )}
           </div>
         ) : null}
@@ -1071,7 +1068,7 @@ export function ChatPane({
             >
               <button
                 onClick={scrollToBottom}
-                aria-label="滚动到底部"
+                aria-label={uiText("scroll_to_bottom_2b05ff67")}
                 className="pointer-events-auto rounded-full border bg-card p-2 text-muted-foreground shadow-lg transition-colors hover:bg-accent hover:text-foreground"
               >
                 <ChevronDown className="size-5" />
@@ -1103,10 +1100,10 @@ export function ChatPane({
             composerInputRef.current?.focus()
           }}
           workflowUndoControl={removedWorkflow && removedWorkflow.revision === workflowRevisionRef.current ? <div className="px-2 pt-1 text-xs text-muted-foreground">
-            已移除目录工作流 <button type="button" className="text-primary hover:underline" disabled={workflowDisabled}
+            {uiText("catalog_workflow_removed_81a37c5b") + " "}<button type="button" className="text-primary hover:underline" disabled={workflowDisabled}
               onClick={() => {
                 if (!workflowDisabled && removedWorkflow.revision === workflowRevisionRef.current) changeTypedWorkflow(removedWorkflow.draft)
-              }}>撤销移除</button>
+              }}>{uiText("undo_removal_2016190c")}</button>
           </div> : null}
           permissionControl={(
             <>
@@ -1238,7 +1235,7 @@ export function ChatPane({
         <div role="alert" className="mx-4 mb-3 flex items-center gap-3 rounded-lg border p-3 text-sm">
           <span>{questionError}</span>
           <button type="button" className="shrink-0 underline" disabled={questionLoading || questionSubmitting} onClick={() => void refreshQuestion()}>
-            {questionLoading ? "正在刷新…" : "刷新请求"}
+            {questionLoading ? uiText("refreshing_71659de8") : uiText("refresh_request_0ab317cc")}
           </button>
         </div>
       ) : null}

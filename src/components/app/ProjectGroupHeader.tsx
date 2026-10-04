@@ -1,3 +1,4 @@
+import { uiText, useUiLocale } from "@shared/i18n/ui"
 import {
   Archive,
   ArchiveRestore,
@@ -64,6 +65,7 @@ export function ProjectGroupHeader({
   onReveal: () => void
   onArchive: () => void
 }) {
+  useUiLocale()
   if (!project) {
     return (
       <button
@@ -76,7 +78,7 @@ export function ProjectGroupHeader({
       >
         <ChevronRight aria-hidden="true" className={cn("size-3 shrink-0", expanded && "rotate-90")} />
         <span className="truncate">{label}</span>
-        <span className="ml-auto whitespace-nowrap pl-2 font-normal">{sessionCount} 个会话</span>
+        <span className="ml-auto whitespace-nowrap pl-2 font-normal">{uiText("project_sessions", { count: sessionCount })}</span>
       </button>
     )
   }
@@ -94,14 +96,14 @@ export function ProjectGroupHeader({
         <ChevronRight aria-hidden="true" className={cn("size-3 shrink-0", expanded && "rotate-90")} />
         <FolderClosed aria-hidden="true" className="size-3.5 shrink-0" />
         <span className="truncate">{label}</span>
-        {pinned ? <Pin aria-label="已置顶" className="size-3 shrink-0" /> : null}
+        {pinned ? <Pin aria-label={uiText("pinned_fb47db5e")} className="size-3 shrink-0" /> : null}
         <span className="ml-auto whitespace-nowrap font-normal">{sessionCount}</span>
       </button>
 
       <div className="flex shrink-0 items-center">
         <button
           type="button"
-          aria-label={`在 ${project.name} 中新建会话`}
+          aria-label={uiText("new_session_in_1e893198", { v0: project.name })}
           disabled={project.status === "archived"}
           className="rounded p-1 text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default"
           onClick={onNewChat}
@@ -111,17 +113,16 @@ export function ProjectGroupHeader({
 
         <DropdownMenu>
           <DropdownMenuTrigger
-            aria-label={`${project.name} 项目操作`}
+            aria-label={uiText("project_actions_4bc7fa27", { v0: project.name })}
             className="rounded p-1 text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring data-[state=open]:bg-accent"
           >
             <MoreHorizontal className="size-3.5" />
           </DropdownMenuTrigger>
           <DropdownMenuContent align="start" side="right" className="min-w-48 rounded-xl">
             <DropdownMenuItem disabled={project.status === "archived"} onClick={onNewChat}>
-              <MessageSquarePlus /> 新建会话
-            </DropdownMenuItem>
+              <MessageSquarePlus />{uiText("new_session_58e21b87")}</DropdownMenuItem>
             <DropdownMenuItem onClick={onTogglePin}>
-              {pinned ? <PinOff /> : <Pin />} {pinned ? "取消置顶" : "置顶"}
+              {pinned ? <PinOff /> : <Pin />} {pinned ? uiText("unpin_c92179b7") : uiText("pin_173f88d2")}
             </DropdownMenuItem>
             <DropdownMenuSub>
               <DropdownMenuSubTrigger disabled={project.status === "archived" || sectionBusy}>
@@ -140,29 +141,25 @@ export function ProjectGroupHeader({
                 ))}
                 {project.section ? (
                   <DropdownMenuItem disabled={sectionBusy} onClick={() => onMoveToSection(null)}>
-                    <List /> 不使用 Section
-                  </DropdownMenuItem>
+                    <List />{uiText("no_section_e1585232")}</DropdownMenuItem>
                 ) : null}
                 {sections.length > 0 || project.section ? <DropdownMenuSeparator /> : null}
                 <DropdownMenuItem disabled={sectionBusy} onClick={onCreateSection}>
-                  <Plus /> 新建 Section…
-                </DropdownMenuItem>
+                  <Plus />{uiText("new_section_6a6aedcb")}</DropdownMenuItem>
               </DropdownMenuSubContent>
             </DropdownMenuSub>
             <DropdownMenuItem disabled={project.status === "archived"} onClick={onEdit}>
-              <Pencil /> 编辑项目
-            </DropdownMenuItem>
+              <Pencil />{uiText("edit_project_577feeef")}</DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuItem disabled={!project.project_path} onClick={onReveal}>
-              <FolderOpen /> 在 Finder 中显示
-            </DropdownMenuItem>
+              <FolderOpen />{uiText("show_in_file_manager_1280364b")}</DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuItem
               variant={project.status === "archived" ? "default" : "destructive"}
               onClick={onArchive}
             >
               {project.status === "archived" ? <ArchiveRestore /> : <Archive />}
-              {project.status === "archived" ? "恢复项目" : "移除本地项目"}
+              {project.status === "archived" ? uiText("restore_project_52a1d56b") : uiText("remove_local_project_e951cbd0")}
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>

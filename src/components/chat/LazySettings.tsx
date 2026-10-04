@@ -1,3 +1,4 @@
+import { uiText, useUiLocale } from "@shared/i18n/ui"
 import {
   lazy,
   Suspense,
@@ -34,30 +35,29 @@ export interface SettingsContentProps {
 }
 
 function SettingsLoading() {
+  useUiLocale()
   return (
     <div
       role="status"
       aria-live="polite"
       className="flex min-h-0 flex-1 items-center justify-center p-6 text-sm text-muted-foreground"
     >
-      正在加载设置…
-    </div>
+      {uiText("loading_settings_69ede7ee")}</div>
   )
 }
 
 function SettingsLoadFailure({ onClose }: { onClose: () => void }) {
+  useUiLocale()
   return (
     <div
       role="alert"
       className="flex min-h-0 flex-1 flex-col items-center justify-center p-6 text-center"
     >
-      <div className="text-base font-semibold">设置加载失败</div>
+      <div className="text-base font-semibold">{uiText("could_not_load_settings_05a4babd")}</div>
       <p className="mt-2 max-w-sm text-sm leading-relaxed text-muted-foreground">
-        设置代码未能加载，聊天仍可继续使用。请返回聊天并刷新页面后重试。
-      </p>
+        {uiText("settings_code_could_not_be_loaded_chat_is_still_availab_05bc021f")}</p>
       <Button className="mt-4" onClick={onClose}>
-        返回聊天
-      </Button>
+        {uiText("back_to_chat_5b8ac6b1")}</Button>
     </div>
   )
 }
@@ -70,6 +70,7 @@ export function LazySettings({
   onClose,
   loadSettings = defaultLoadSettings,
 }: SettingsProps) {
+  useUiLocale()
   // Both owners are initialized once for this boundary instance. Closing the
   // Radix content preserves the accepted tab while the lazy type stays cached.
   const [tab, setTab] = useState<SettingsTabId>("general")
@@ -104,9 +105,9 @@ export function LazySettings({
         )}
       >
         <div className="flex items-center justify-between border-b px-4 py-3">
-          <ResponsiveDialogTitle>系统设置</ResponsiveDialogTitle>
+          <ResponsiveDialogTitle>{uiText("system_settings_68ea5dd4")}</ResponsiveDialogTitle>
           <Button
-            aria-label="关闭设置"
+            aria-label={uiText("close_settings_77b17fc4")}
             size="icon"
             variant="ghost"
             onClick={onClose}

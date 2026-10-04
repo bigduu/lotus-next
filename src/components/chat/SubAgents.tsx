@@ -1,3 +1,4 @@
+import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { Bot, Loader2, Check, AlertCircle, ChevronRight } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { MachineTag } from "@/components/chat/MachineTag"
@@ -14,9 +15,10 @@ function statusOf(c: ChildProgress): Status {
   return "running"
 }
 
-const LABEL: Record<Status, string> = { running: "运行中", done: "完成", error: "失败" }
+const LABEL: Record<Status, string> = { get running() { return uiText("running_1f0eb99b") }, get done() { return uiText("done_c0b3fbff") }, get error() { return uiText("failed_28384d7a") } }
 
 function SubAgentCard({ child, onOpen }: { child: ChildProgress; onOpen?: () => void }) {
+  useUiLocale()
   const st = statusOf(child)
   const detail = child.error || child.outputPreview
   // Which machine this child runs on. ChildProgress doesn't carry placement
@@ -44,11 +46,11 @@ function SubAgentCard({ child, onOpen }: { child: ChildProgress; onOpen?: () => 
           <Check className="size-3.5 shrink-0 text-emerald-500" />
         )}
         <Bot className="size-3.5 shrink-0 text-muted-foreground" />
-        <span className="min-w-0 flex-1 truncate text-sm font-medium">{child.title || "子代理"}</span>
+        <span className="min-w-0 flex-1 truncate text-sm font-medium">{child.title || uiText("sub_agent_acd37b4c")}</span>
         <MachineTag placement={placement} compact className="max-w-32 shrink-0" />
         <span className="shrink-0 text-xs text-muted-foreground">
           {LABEL[st]}
-          {typeof child.roundCount === "number" ? ` · ${child.roundCount}轮` : ""}
+          {typeof child.roundCount === "number" ? uiText("rounds_6ff24cb5", { v0: child.roundCount , count: child.roundCount }) : ""}
         </span>
         {onOpen ? <ChevronRight className="size-4 shrink-0 text-muted-foreground" /> : null}
       </div>
@@ -74,13 +76,14 @@ export function SubAgents({
   agents: Record<string, ChildProgress>
   onOpen?: (childId: string) => void
 }) {
+  useUiLocale()
   const entries = Object.entries(agents)
   if (entries.length === 0) return null
 
   return (
     <div className="flex justify-start">
       <div className="ml-1 w-full max-w-[85%] space-y-1.5 border-l-2 border-border/60 pl-3">
-        <div className="text-xs font-medium text-muted-foreground">子代理 ({entries.length})</div>
+        <div className="text-xs font-medium text-muted-foreground">{uiText("subagents_76d97a95")}{entries.length})</div>
         {entries.map(([id, c]) => (
           <SubAgentCard key={id} child={c} onOpen={onOpen ? () => onOpen(id) : undefined} />
         ))}

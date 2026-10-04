@@ -1,3 +1,4 @@
+import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { useEffect, useState, type ComponentProps } from "react"
 import { isTauriEnvironment } from "@/utils/environment"
 import { readLocalImage } from "@shared/services/FileOperationsService"
@@ -7,6 +8,7 @@ type ImageProps = ComponentProps<"img"> & { onPreviewImage?: (src: string) => vo
 
 /** Markdown images stay inside the chat surface; local paths use Bodhi's bounded reader. */
 export function InlineImage({ src, alt = "", onPreviewImage }: ImageProps) {
+  useUiLocale()
   const localPath = src ? localImagePath(src) : null
   const [loaded, setLoaded] = useState<{ path: string; dataUrl: string } | null>(null)
   const [failedPath, setFailedPath] = useState<string | null>(null)
@@ -26,16 +28,16 @@ export function InlineImage({ src, alt = "", onPreviewImage }: ImageProps) {
 
   if (!src) return null
   if (localPath && (!isTauriEnvironment() || failedPath === localPath)) {
-    return <span role="status" className="text-xs text-muted-foreground">本地图片无法在此处预览：{alt || localPath}</span>
+    return <span role="status" className="text-xs text-muted-foreground">{uiText("local_images_cannot_be_previewed_here_9378ebfb")}{alt || localPath}</span>
   }
   if (localPath && loaded?.path !== localPath) {
-    return <span role="status" className="text-xs text-muted-foreground">正在加载图片…</span>
+    return <span role="status" className="text-xs text-muted-foreground">{uiText("loading_image_e661c55e")}</span>
   }
 
   const imageSrc = localPath ? loaded!.dataUrl : src
   const image = <img src={imageSrc} alt={alt} data-streamdown="image" className="max-h-48 max-w-full rounded-xl object-contain" />
   return onPreviewImage ? (
-    <button type="button" onClick={() => onPreviewImage(imageSrc)} aria-label={`预览图片${alt ? `：${alt}` : ""}`} className="cursor-zoom-in">
+    <button type="button" onClick={() => onPreviewImage(imageSrc)} aria-label={uiText("preview_image_1689cf75", { v0: alt ? `：${alt}` : "" })} className="cursor-zoom-in">
       {image}
     </button>
   ) : image

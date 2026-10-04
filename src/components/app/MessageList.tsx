@@ -1,3 +1,4 @@
+import { uiText, useUiLocale } from "@shared/i18n/ui"
 import {
   Fragment,
   useCallback,
@@ -60,7 +61,7 @@ function liveToolMessages(seg: Extract<LiveSegment, { kind: "tools" }>): Message
           id: `${c.toolCallId}-image-${index}`,
           base64: image.data,
           type: image.mime_type,
-          name: `工具图片 ${index + 1}`,
+          name: uiText("tool_image_7b8fcc11", { v0: index + 1 }),
           size: 0,
         })),
         createdAt: "",
@@ -182,9 +183,9 @@ function formatElapsedDuration(durationMs: number): string | null {
   const hours = Math.floor(totalSeconds / 3600)
   const minutes = Math.floor((totalSeconds % 3600) / 60)
   const seconds = totalSeconds % 60
-  if (hours > 0) return `${hours}小时${minutes > 0 ? `${minutes}分` : ""}`
-  if (minutes > 0) return `${minutes}分${seconds > 0 ? `${seconds}秒` : ""}`
-  return `${seconds}秒`
+  if (hours > 0) return uiText("h_69c6dc51", { v0: hours, v1: minutes > 0 ? uiText("m_977a465a", { v0: minutes, v1: "" }) : "" })
+  if (minutes > 0) return uiText("m_977a465a", { v0: minutes, v1: seconds > 0 ? uiText("s_6366b823", { v0: seconds }) : "" })
+  return uiText("s_6366b823", { v0: seconds })
 }
 
 function isFinalAssistantResponse(item: RenderItem): boolean {
@@ -291,7 +292,7 @@ function buildCompletedProcessLayout(
       startIndex: processStart,
       endIndex: processEnd,
       key: `completed-process-${key}`,
-      label: elapsed ? `处理了 ${elapsed}` : "已完成的处理过程",
+      label: elapsed ? uiText("processed_db5f0926", { v0: elapsed }) : uiText("completed_processing_74a8d4a9"),
       toolCallCount: calls,
       finalReasoning,
     })
@@ -410,6 +411,7 @@ function MessageActions({
   onFork: () => void
   onDelete: () => void
 }) {
+  useUiLocale()
   const copy = () => void navigator.clipboard?.writeText(text)
 
   return (
@@ -422,8 +424,8 @@ function MessageActions({
         onClick={copy}
         className={`${MESSAGE_ACTION_BUTTON} hidden md:inline-flex`}
         style={MESSAGE_ACTION_SIZE}
-        aria-label="复制"
-        title="复制"
+        aria-label={uiText("copy_63d90d97")}
+        title={uiText("copy_63d90d97")}
       >
         <Copy className="size-3.5" />
       </button>
@@ -433,8 +435,8 @@ function MessageActions({
         disabled={forking}
         className={`${MESSAGE_ACTION_BUTTON} hidden md:inline-flex`}
         style={MESSAGE_ACTION_SIZE}
-        aria-label="从这里分叉"
-        title="从这里分叉成新会话"
+        aria-label={uiText("fork_from_here_28321cb9")}
+        title={uiText("fork_into_a_new_session_from_here_53c2881c")}
       >
         <GitFork className="size-3.5" />
       </button>
@@ -444,8 +446,8 @@ function MessageActions({
             type="button"
             className={`${MESSAGE_ACTION_BUTTON} inline-flex`}
             style={MESSAGE_ACTION_SIZE}
-            aria-label="更多消息操作"
-            title="更多消息操作"
+            aria-label={uiText("more_message_actions_cecaef80")}
+            title={uiText("more_message_actions_cecaef80")}
           >
             <MoreHorizontal className="size-3.5" />
           </button>
@@ -458,29 +460,24 @@ function MessageActions({
         >
           <DropdownMenuItem className="md:hidden" onClick={copy}>
             <Copy />
-            复制
-          </DropdownMenuItem>
+            {uiText("copy_63d90d97")}</DropdownMenuItem>
           <DropdownMenuItem className="md:hidden" disabled={forking} onClick={onFork}>
             <GitFork />
-            从这里分叉
-          </DropdownMenuItem>
+            {uiText("fork_from_here_28321cb9")}</DropdownMenuItem>
           <DropdownMenuSeparator className="md:hidden" />
           {isUser ? (
             <DropdownMenuItem onClick={onEdit}>
               <Pencil />
-              编辑并重发
-            </DropdownMenuItem>
+              {uiText("edit_and_resend_f857c444")}</DropdownMenuItem>
           ) : (
             <DropdownMenuItem disabled={sending} onClick={onRegenerate}>
               <RotateCcw />
-              重新生成
-            </DropdownMenuItem>
+              {uiText("regenerate_3221a042")}</DropdownMenuItem>
           )}
           <DropdownMenuSeparator />
           <DropdownMenuItem variant="destructive" onClick={onDelete}>
             <Trash2 />
-            删除
-          </DropdownMenuItem>
+            {uiText("delete_2f9daa82")}</DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
     </div>
@@ -537,6 +534,7 @@ export function MessageList({
   onDelete: (id: string) => void
   onEditMessage: (id: string, text: string) => void
 }) {
+  useUiLocale()
   const [editingMsg, setEditingMsg] = useState<{ id: string; text: string } | null>(null)
 
   const renderItems = useMemo(() => buildRenderItems(messages), [messages])
@@ -701,8 +699,7 @@ export function MessageList({
             />
             <div className="mt-1.5 flex justify-end gap-2">
               <Button size="sm" variant="secondary" onClick={() => setEditingMsg(null)}>
-                取消
-              </Button>
+                {uiText("cancel_2cd0f3be")}</Button>
               <Button
                 size="sm"
                 onClick={() => {
@@ -710,8 +707,7 @@ export function MessageList({
                   setEditingMsg(null)
                 }}
               >
-                保存并重发
-              </Button>
+                {uiText("save_and_resend_b45cc57a")}</Button>
             </div>
           </div>
         </div>
@@ -798,7 +794,7 @@ export function MessageList({
             setProcessOpen(entry.key, !processOpen)
           }}
           className="cursor-pointer select-none text-xs text-muted-foreground hover:text-foreground"
-          title={`${entry.group.toolCallCount} 次工具调用`}
+          title={uiText("tool_calls_bdfa142a", { v0: entry.group.toolCallCount , count: entry.group.toolCallCount })}
         >
           {entry.group.label}
         </summary>
@@ -842,7 +838,7 @@ export function MessageList({
         {messages.length === 0 && !streaming && !pendingUserText && liveSegments.length === 0 && (
           <div className="flex flex-col items-center gap-2 py-20 text-center">
             <div className="size-10 rounded-xl bg-primary" />
-            <p className="text-sm text-muted-foreground">开始一段新对话</p>
+            <p className="text-sm text-muted-foreground">{uiText("start_a_new_conversation_bab6ab18")}</p>
           </div>
         )}
 

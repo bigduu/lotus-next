@@ -1,3 +1,4 @@
+import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { SearchableSelect } from "@/components/ui/searchable-select"
 
 /**
@@ -19,6 +20,7 @@ export function ModelPicker({
   menuPlacement?: "up" | "down"
   menuAlign?: "left" | "right"
 }) {
+  useUiLocale()
   if (models.length === 0) return null
 
   return (
@@ -27,18 +29,18 @@ export function ModelPicker({
       value={value}
       onChange={onChange}
       disabled={disabled}
-      title={disabled ? "当前会话忙碌，稍后可切换模型" : undefined}
+      title={disabled ? uiText("this_session_is_busy_you_can_change_the_model_later_1a17aa96") : undefined}
       getKey={(model) => model}
       getValue={(model) => model}
       getLabel={(model) => model}
-      placeholder={value || "选择模型"}
-      searchPlaceholder="搜索模型…"
-      clearLabel="清空模型搜索"
-      emptyText="没有匹配的模型"
+      placeholder={value || uiText("select_a_model_1afed6a8")}
+      searchPlaceholder={uiText("search_models_8ec7b052")}
+      clearLabel={uiText("clear_model_search_ff2b5895")}
+      emptyText={uiText("no_matching_models_4b5e0ae1")}
       menuPlacement={menuPlacement}
       menuAlign={menuAlign}
-      searchAriaLabel="搜索模型"
-      optionListAriaLabel="模型列表"
+      searchAriaLabel={uiText("search_models_93a8734c")}
+      optionListAriaLabel={uiText("model_list_ea4bf042")}
       optionDataAttr="data-model-option"
     />
   )

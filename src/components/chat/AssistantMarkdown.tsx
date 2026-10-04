@@ -1,3 +1,4 @@
+import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { LazyAssistantMarkdown as Markdown } from "./LazyAssistantMarkdown"
 import { BuiltinToolBlock } from "./BuiltinToolBlock"
 
@@ -45,6 +46,7 @@ export function AssistantMarkdown({
   isStreaming?: boolean
   onPreviewImage?: (src: string) => void
 }) {
+  useUiLocale()
   const text = children
   const m = text.match(BUILTIN_TOOL_RE)
   if (!m || m.index === undefined) {
@@ -54,7 +56,7 @@ export function AssistantMarkdown({
     const pending = isStreaming ? findPendingProviderBlock(text) : null
     if (pending) {
       const beforePending = text.slice(0, pending.index).trimEnd()
-      const statusLabel = pending.name ? `内置工具 ${pending.name} 正在运行` : "内置工具正在启动"
+      const statusLabel = pending.name ? uiText("built_in_tool_is_running_aa5c6389", { v0: pending.name }) : uiText("starting_built_in_tool_4b6a8d81")
       return (
         <>
           {beforePending ? <Markdown isStreaming={false} onPreviewImage={onPreviewImage}>{beforePending}</Markdown> : null}
@@ -65,7 +67,7 @@ export function AssistantMarkdown({
             role="status"
           >
             <span className="truncate">
-              {pending.name ? `内置工具 · ${pending.name}` : "内置工具 · 正在启动"}
+              {pending.name ? uiText("built_in_tool_b3950b4c", { v0: pending.name }) : uiText("built_in_tool_starting_d9a432a6")}
             </span>
           </div>
         </>
