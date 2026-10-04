@@ -19,9 +19,21 @@ for (const locale of ["en-US", "zh-CN"]) {
     expect(bounds?.width).toBeLessThan(32)
     await testInfo.attach(`compact-${locale}`, { body: await page.screenshot({ animations: "disabled", path: testInfo.outputPath(`compact-${locale}.png`) }), contentType: "image/png" })
     if (testInfo.project.name === "desktop-chromium") await icon.hover()
-    else await icon.focus()
+    else await icon.tap()
     await expect(page.getByRole("tooltip")).toContainText(english ? "Single-call reasoning" : "单次推理")
+    if (testInfo.project.name !== "desktop-chromium") {
+      await icon.tap()
+      await expect(page.getByRole("tooltip")).toHaveCount(0)
+      await icon.tap()
+      await expect(page.getByRole("tooltip")).toBeVisible()
+    }
     await testInfo.attach(`hover-${locale}`, { body: await page.screenshot({ animations: "disabled", path: testInfo.outputPath(`hover-${locale}.png`) }), contentType: "image/png" })
+    await page.keyboard.press("Escape")
+    await expect(page.getByRole("tooltip")).toHaveCount(0)
+    if (testInfo.project.name === "desktop-chromium") {
+      await icon.focus()
+      await expect(page.getByRole("tooltip")).toContainText(english ? "Single-call reasoning" : "单次推理")
+    }
     expect(await page.evaluate(() => {
       const browser = globalThis as unknown as { document: { documentElement: { scrollWidth: number } }; innerWidth: number }
       return browser.document.documentElement.scrollWidth <= browser.innerWidth + 1

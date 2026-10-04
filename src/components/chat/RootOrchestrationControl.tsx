@@ -1,3 +1,4 @@
+import { useRef, useState } from "react"
 import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { Sparkles } from "lucide-react"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
@@ -28,6 +29,8 @@ export function RootOrchestrationControl({
   error, conflict, ordinaryValue, onRetry,
 }: Props) {
   useUiLocale()
+  const [explanationOpen, setExplanationOpen] = useState(false)
+  const openBeforePointerDown = useRef(false)
   if (child) return null
   const changed = sessionId && typeof selected === "boolean" && typeof confirmed === "boolean"
     && selected !== confirmed
@@ -50,9 +53,16 @@ export function RootOrchestrationControl({
   return (
     <div className="flex min-w-0 max-w-full flex-wrap items-center gap-1.5 text-xs" aria-busy={loading || pending || recovering}>
       <span role="status" aria-live="polite" className="sr-only">{status}</span>
-      <Tooltip>
+      <Tooltip open={explanationOpen} onOpenChange={setExplanationOpen}>
         <TooltipTrigger asChild>
-          <button type="button" aria-label={uiText("about_ultra_orchestration_85ab439b")} className={`rounded p-1 hover:text-foreground ${selected ? "text-primary" : "text-muted-foreground"}`}>
+          <button type="button" aria-label={uiText("about_ultra_orchestration_85ab439b")} onPointerDown={() => {
+            // Radix closes an open tooltip on pointer down, before click runs.
+            openBeforePointerDown.current = explanationOpen
+          }} onClick={(event) => {
+            // Preserve hover/focus and allow a touch tap to open the explanation.
+            event.preventDefault()
+            setExplanationOpen((open) => !(event.detail === 0 ? open : openBeforePointerDown.current))
+          }} className={`rounded p-1 hover:text-foreground ${selected ? "text-primary" : "text-muted-foreground"}`}>
             <Sparkles className="size-3.5" aria-hidden="true" />
           </button>
         </TooltipTrigger>
