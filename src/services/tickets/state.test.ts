@@ -64,3 +64,17 @@ it("negotiates new scopes without old tombstones and binds approval A without gr
   const migrated = snapshot(1); migrated.scope.binding.scope_id = "new-scope"; migrated.views = []
   expect(applyTicketSnapshot(state, migrated).requests).toEqual({})
 })
+
+it.each([1, 10])("accepts higher authority epochs at sequence %s without old-epoch record fences", (seq) => {
+  const old = snapshot(10)
+  old.views[0].requests[0].status = "answered"
+  const state = applyTicketSnapshot(null, old)
+  const newer = snapshot(seq); newer.snapshot.authority_epoch = 2
+  newer.views = [newer.views[0]]
+  const next = applyTicketSnapshot(state, newer)
+  expect(next.current.snapshot).toEqual(newer.snapshot)
+  expect(next.requests["q-A"].status).toBe("open")
+  expect(next.requests["q-B"]).toBeUndefined()
+  expect(responseCommand(next, next.requests["q-A"], { kind: "question", answer: "new" }, "new").expected_epoch).toBe(2)
+  expect(applyTicketSnapshot(next, snapshot(100))).toBe(next)
+})

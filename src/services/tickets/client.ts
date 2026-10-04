@@ -30,7 +30,7 @@ export const ticketClient = {
     const summaries: { id: string; kind: string }[] = []
     let cursor: Cursor | null = null
     let complete = completeCoverage(scope.overview.coverage) && !scope.overview.truncated
-      && scope.overview.index_seq >= snapshot.seq
+      && scope.overview.omitted_count === 0 && scope.overview.index_seq >= snapshot.seq
     for (let page = 0; page < 10; page++) {
       const result: ReadEnvelope<{ id: string; kind: string }[]> = await apiClient.post("tickets/search", {
         filter: { query: "", kind: null, state: null, updated_after: null, updated_before: null, include_archived: true },
@@ -39,7 +39,7 @@ export const ticketClient = {
       sameSnapshot(result, snapshot)
       summaries.push(...result.data)
       cursor = result.next_cursor
-      if (result.index_seq < snapshot.seq) complete = false
+      if (result.index_seq < snapshot.seq || result.truncated || result.omitted_count !== 0) complete = false
       if (!cursor) { complete = complete && completeCoverage(result.coverage); break }
       if (page === 9) complete = false
     }
@@ -57,7 +57,7 @@ export const ticketClient = {
         complete = false; continue
       }
       sameSnapshot(result, snapshot)
-      if (result.truncated || !completeCoverage(result.coverage)) complete = false
+      if (result.truncated || result.omitted_count !== 0 || !completeCoverage(result.coverage)) complete = false
       views.push(...result.data)
     }
     return { scope: { ...scope, binding: scope.binding, overview: scope.overview }, snapshot, views, complete }

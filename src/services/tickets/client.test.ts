@@ -71,3 +71,10 @@ it("does not hide a different inspector rejection as incomplete coverage", async
   })
   await expect(ticketClient.load("root")).rejects.toThrow("invalid_transition")
 })
+
+it.each([{ truncated: true, omitted_count: 0 }, { truncated: false, omitted_count: 1 }])("keeps incomplete search envelopes read-only even without a cursor: %j", async (flags) => {
+  const value = ticketSnapshot()
+  vi.mocked(apiClient.get).mockResolvedValue(value.scope)
+  vi.mocked(apiClient.post).mockResolvedValue({ ...value.scope.overview, ...flags, data: [], next_cursor: null })
+  expect((await ticketClient.load("root"))?.complete).toBe(false)
+})

@@ -8,14 +8,15 @@ export function applyTicketSnapshot(previous: TicketState | null, next: TicketSn
   const sameScope = previous?.current.scope.binding.scope_id === next.scope.binding.scope_id
     && previous.current.scope.binding.supervisor_session_id === next.scope.binding.supervisor_session_id
     && previous.current.scope.binding.binding_revision === next.scope.binding.binding_revision
+  const sameAuthority = sameScope && previous?.current.snapshot.authority_epoch === next.snapshot.authority_epoch
   if (sameScope && previous) {
     if (next.snapshot.authority_epoch < previous.current.snapshot.authority_epoch
-      || next.snapshot.seq < previous.current.snapshot.seq) return previous
-    if (next.snapshot.seq === previous.current.snapshot.seq
+      || (sameAuthority && next.snapshot.seq < previous.current.snapshot.seq)) return previous
+    if (sameAuthority && next.snapshot.seq === previous.current.snapshot.seq
       && next.snapshot.commit !== previous.current.snapshot.commit) throw new Error("工单快照需要重新同步。")
   }
-  const requests = sameScope && previous ? { ...previous.requests } : {}
-  const works = sameScope && previous && !next.complete ? { ...previous.works } : {}
+  const requests = sameAuthority && previous ? { ...previous.requests } : {}
+  const works = sameAuthority && previous && !next.complete ? { ...previous.works } : {}
   for (const view of next.views) {
     works[view.ticket.id] = view
     for (const request of view.requests) {

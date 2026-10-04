@@ -5,6 +5,14 @@ import { applyTicketSnapshot, responseCommand, type TicketState } from "@service
 import type { Decision, PendingRequest, ResponseCommand } from "@services/tickets/types"
 import { clearDecisionReceipt, readDecisionReceipts, saveDecisionReceipt } from "@services/tickets/decisionReceipts"
 
+async function sendDecision(command: ResponseCommand) {
+  const acknowledgement = await ticketClient.respond(command)
+  if (!acknowledgement || acknowledgement.operation_id !== command.operation_id
+    || !Number.isSafeInteger(acknowledgement.committed_seq) || acknowledgement.committed_seq <= command.expected_seq) {
+    throw new Error("决策回执未确认，请使用原操作重试。")
+  }
+}
+
 export function useTicketWork(sessionId: string | null | undefined) {
   const [state, setState] = useState<TicketState | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -100,7 +108,7 @@ export function useTicketWork(sessionId: string | null | undefined) {
     setDecisionError(null)
     setBusy((old) => ({ ...old, [request.id]: true }))
     try {
-      try { await ticketClient.respond(command) }
+      try { await sendDecision(command) }
       catch (failure) {
         // A known pre-commit conflict can rebase one ordinary answer after a
         // full snapshot confirms the same exact request. Approval and unknown
@@ -117,7 +125,7 @@ export function useTicketWork(sessionId: string | null | undefined) {
           || current.current.current.snapshot.seq <= command.expected_seq) throw failure
         command = responseCommand(current.current, request, decision, crypto.randomUUID())
         saveDecisionReceipt(captured!, command)
-        await ticketClient.respond(command)
+        await sendDecision(command)
       }
       clearDecisionReceipt(captured!, command)
       if (scope.current !== captured || epoch.current !== capturedEpoch) return false

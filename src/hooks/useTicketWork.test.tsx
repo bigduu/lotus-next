@@ -238,3 +238,24 @@ it("refreshes negotiated write capabilities without a ticket content commit", as
   expect(controller.canRespond).toBe(true)
   expect(ticketClient.load).toHaveBeenCalledTimes(1)
 })
+
+it.each(["operation", "negative", "fractional", "unsafe", "not-advanced"])("preserves approval recovery on malformed %s acknowledgement", async (kind) => {
+  const q = snapshot.views[0].requests[0]
+  q.kind = { kind: "approval", fingerprint: "a", action: { kind: "payment", target: "A", data_hash: "a", amount: "100", permissions: [], risk: "test" } }
+  await mount()
+  vi.mocked(ticketClient.respond).mockImplementationOnce(async (command) => ({
+    operation_id: kind === "operation" ? "different-operation" : command.operation_id,
+    committed_seq: kind === "negative" ? -1 : kind === "fractional" ? 10.5 : kind === "unsafe" ? Number.MAX_SAFE_INTEGER + 1 : kind === "not-advanced" ? command.expected_seq : command.expected_seq + 1,
+  }))
+  const decision = { kind: "approval" as const, fingerprint: "a", approve: true }
+  await act(async () => { expect(await controller.respond(q, decision)).toBe(false) })
+  const original = vi.mocked(ticketClient.respond).mock.calls[0][0]
+  expect(controller.uncertain[q.id]).toEqual(original)
+  await mount("other"); await mount("root")
+  expect(controller.uncertain[q.id]).toEqual(original)
+  await act(async () => { expect(await controller.respond(q, { ...decision, approve: false })).toBe(false) })
+  expect(ticketClient.respond).toHaveBeenCalledTimes(1)
+  await act(async () => { expect(await controller.respond(q, decision)).toBe(true) })
+  expect(vi.mocked(ticketClient.respond).mock.calls[1][0]).toEqual(original)
+  expect(controller.uncertain[q.id]).toBeUndefined()
+})
