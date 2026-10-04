@@ -1,4 +1,4 @@
-import { uiText, useUiLocale } from "@shared/i18n/ui"
+import { uiText, useUiLocale, uiList } from "@shared/i18n/ui"
 import { useState } from "react"
 import {
   ChevronRight,
@@ -444,8 +444,8 @@ function summarizeEntries(entries: Entry[]): ToolPresentation {
 
   return {
     label: uniqueLabels.length <= 3
-      ? uniqueLabels.join("、")
-      : uiText("and_operations_89a77073", { v0: uniqueLabels.slice(0, 2).join("、"), v1: entries.length }),
+      ? uiList(uniqueLabels)
+      : uiText("and_operations_89a77073", { v0: uiList(uniqueLabels.slice(0, 2)), v1: entries.length }),
     icon: presentations[0].icon,
   }
 }
@@ -700,7 +700,7 @@ export function ToolCalls({
           onClick={() => setOpen(!open)}
           aria-expanded={open}
           data-tool-call-toggle
-          title={uniqueNames.join("、") || undefined}
+          title={uiList(uniqueNames) || undefined}
           className="inline-flex max-w-full items-center gap-1.5 rounded-sm py-1 text-xs text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
           <SummaryIcon className={cn("size-3.5 shrink-0", active && "animate-spin")} />

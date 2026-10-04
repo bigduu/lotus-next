@@ -22,3 +22,9 @@ export function useUiText() {
   return useCallback((key: keyof typeof uiEnUs, values?: TOptions): string =>
     String(i18n.t(`ui.${key}`, { ...values, lng: locale })), [locale])
 }
+
+/** Locale punctuation for UI-owned lists; values remain verbatim. */
+export const uiList = (values: string[]): string =>
+  uiLanguage().startsWith("zh")
+    ? values.join("、") // Keep the existing Chinese compact-list presentation.
+    : new Intl.ListFormat(uiLanguage(), { style: "short", type: "unit" }).format(values)

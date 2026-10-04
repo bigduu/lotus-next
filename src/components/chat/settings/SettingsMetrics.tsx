@@ -153,14 +153,14 @@ export function SettingsMetrics() {
       key: m.model,
       label: m.model,
       value: m.tokens.total_tokens,
-      meta: uiText("sessions_4e5cc041", { v0: formatExact(m.sessions) }),
+      meta: uiText("sessions_4e5cc041", { v0: formatExact(m.sessions), count: m.sessions }),
     }))
     if (rest.length > 0) {
       items.push({
         key: "__other__",
         label: uiText("other_models_dfe4953e", { v0: rest.length , count: rest.length }),
         value: rest.reduce((sum, m) => sum + m.tokens.total_tokens, 0),
-        meta: uiText("sessions_4e5cc041", { v0: formatExact(rest.reduce((sum, m) => sum + m.sessions, 0)) }),
+        meta: uiText("sessions_4e5cc041", { v0: formatExact(rest.reduce((sum, m) => sum + m.sessions, 0)), count: rest.reduce((sum, m) => sum + m.sessions, 0) }),
       })
     }
     return items

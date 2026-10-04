@@ -1,4 +1,4 @@
-import { uiText, useUiLocale } from "@shared/i18n/ui"
+import { uiText, useUiLocale, uiLanguage } from "@shared/i18n/ui"
 import { cn } from "@/lib/utils"
 import {
   getPrefixCachePercentage,
@@ -41,15 +41,15 @@ export function ContextUsageRing({
   const C = 2 * Math.PI * 7
   const color = pct > 85 ? "text-destructive" : pct > 65 ? "text-amber-500" : "text-primary"
   const contextTitle =
-    uiText("context_tokens_34cb163e", { v0: totalTokens.toLocaleString(), v1: maxContextTokens.toLocaleString(), v2: pct })
+    uiText("context_tokens_34cb163e", { v0: totalTokens.toLocaleString(uiLanguage()), v1: maxContextTokens.toLocaleString(uiLanguage()), v2: pct })
   const cacheStatus = cacheRetained ? uiText("previous_completed_round_836ba413") : uiText("latest_completed_round_fe872c8f")
   const prefixCacheTitle =
     typeof roundedCachePct === "number" && prefixCache
-      ? `Prefix Cache ${roundedCachePct}%（${prefixCache.cacheReadInputTokens.toLocaleString()} cache-read / ${getPrefixCacheTotalInputTokens(prefixCache).toLocaleString()} provider input，${cacheStatus}）`
+      ? uiText("prefix_cache_detail", { pct: roundedCachePct, read: prefixCache.cacheReadInputTokens.toLocaleString(uiLanguage()), input: getPrefixCacheTotalInputTokens(prefixCache).toLocaleString(uiLanguage()), status: cacheStatus })
       : typeof cacheRead === "number" && cacheRead > 0
-        ? uiText("prefix_cache_read_tokens_the_backend_does_not_provide_a_6d8df76f", { v0: cacheRead.toLocaleString(), v1: cacheStatus })
+        ? uiText("prefix_cache_read_tokens_the_backend_does_not_provide_a_6d8df76f", { v0: cacheRead.toLocaleString(uiLanguage()), v1: cacheStatus })
         : null
-  const title = prefixCacheTitle ? `${contextTitle}；${prefixCacheTitle}` : contextTitle
+  const title = prefixCacheTitle ? uiText("context_cache_detail", { context: contextTitle, cache: prefixCacheTitle }) : contextTitle
   return (
     <button
       onClick={onClick}

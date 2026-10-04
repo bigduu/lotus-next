@@ -1,4 +1,4 @@
-import { uiText, uiLanguage } from "@shared/i18n/ui"
+import { uiText, uiLanguage, uiList } from "@shared/i18n/ui"
 import type {
   MisfirePolicy,
   OverlapPolicy,
@@ -274,9 +274,8 @@ export function triggerSummary(t: ScheduleTrigger): string {
     case "daily":
       return uiText("daily_at_0b14f6d6", { v0: pad2(t.hour), v1: pad2(t.minute) })
     case "weekly": {
-      const labels = t.weekdays
-        .map((d) => WEEKDAY_OPTIONS.find((o) => o.value === d)?.label ?? d)
-        .join("、")
+      const labels = uiList(t.weekdays
+        .map((d) => WEEKDAY_OPTIONS.find((o) => o.value === d)?.label ?? String(d)))
       return uiText("weekly_on_at_73d5220a", { v0: labels, v1: pad2(t.hour), v2: pad2(t.minute) })
     }
     case "monthly":

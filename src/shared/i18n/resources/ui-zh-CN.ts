@@ -1803,5 +1803,10 @@ export const uiZhCn = {
   "ticket_acceptance_count": "{{count}} 项待验收",
   "reasoning_none": "关闭",
   "notifications_off": "关闭",
-  "delete_schedule_confirmation": "删除「{{name}}」?"
+  "delete_schedule_confirmation": "删除「{{name}}」?",
+  "goal_set_action": "设置",
+  "approval_rule_example": "匹配这些规则的工具调用会在执行前弹出审批。规则可以是工具名或模式(如 <code>Bash</code>、<code>write_file</code>)。",
+  "workspace_locked_notice": "工作目录在会话创建时设定,当前会话已锁定。下面的选择会用于<strong>新建会话</strong>。",
+  "prefix_cache_detail": "Prefix Cache {{pct}}%（{{read}} cache-read / {{input}} provider input，{{status}}）",
+  "context_cache_detail": "{{context}}；{{cache}}"
 } as const

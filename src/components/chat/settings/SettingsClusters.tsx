@@ -1,4 +1,4 @@
-import { uiText, useUiLocale } from "@shared/i18n/ui"
+import { uiText, useUiLocale, uiList } from "@shared/i18n/ui"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import {
   AlertCircle,
@@ -753,9 +753,8 @@ export function SettingsClusters() {
         ) : (
           <ul className="space-y-2">
             {clusters.map((c) => {
-              const memberLabels = c.node_ids
-                .map((id) => nodes.find((n) => n.id === id)?.label ?? id)
-                .join("、")
+              const memberLabels = uiList(c.node_ids
+                .map((id) => nodes.find((n) => n.id === id)?.label ?? id))
               return (
                 <li key={c.name} className="flex items-center gap-2 rounded-lg border p-3">
                   <div className="min-w-0 flex-1">

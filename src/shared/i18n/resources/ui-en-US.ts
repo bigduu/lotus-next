@@ -1803,5 +1803,10 @@ export const uiEnUs = {
   "ticket_acceptance_count": "{{count}} awaiting acceptance",
   "reasoning_none": "None",
   "notifications_off": "Off",
-  "delete_schedule_confirmation": "Delete “{{name}}”?"
+  "delete_schedule_confirmation": "Delete “{{name}}”?",
+  "goal_set_action": "Set",
+  "approval_rule_example": "Matching tool calls require approval before execution. Rules can be tool names or patterns (e.g. <code>Bash</code> or <code>write_file</code>).",
+  "workspace_locked_notice": "The working directory was set when this session was created. To change it, start a <strong>New Session</strong>.",
+  "prefix_cache_detail": "Prefix Cache {{pct}}% ({{read}} cache-read / {{input}} provider input, {{status}})",
+  "context_cache_detail": "{{context}}; {{cache}}"
 } as const

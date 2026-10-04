@@ -1,3 +1,4 @@
+import { Trans } from "react-i18next"
 import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { useEffect, useState } from "react"
 import { Folder, Check, X, Loader2 } from "lucide-react"
@@ -118,7 +119,7 @@ export function WorkspacePicker({
         <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-4">
           {locked ? (
             <p className="rounded-md bg-muted/50 px-2.5 py-2 text-xs text-muted-foreground">
-              {uiText("the_working_directory_was_set_when_this_session_was_cre_8d1bf435")}<strong>{uiText("new_session_58e21b87")}</strong>。
+              <Trans i18nKey="ui.workspace_locked_notice" components={{ strong: <strong /> }} />
             </p>
           ) : null}
 

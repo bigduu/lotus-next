@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
 import i18n, { changeLocale, i18nReady } from "./index"
 import { APP_LOCALE_STORAGE_KEY, resolveInitialLocale } from "./types"
-import { uiText } from "./ui"
+import { uiText, uiList } from "./ui"
 import { uiEnUs } from "./resources/ui-en-US"
 import { uiZhCn } from "./resources/ui-zh-CN"
 import { groupChats } from "@/lib/groupChats"
@@ -68,6 +68,11 @@ describe("English UI localization", () => {
 
   it("handles English plurals, interpolates names verbatim and formats calendar groups", async () => {
     await changeLocale("en-US")
+    expect(uiText("goal_set_action")).toBe("Set")
+    expect(uiList(["Bash", "write_file"])).toBe("Bash, write_file")
+    expect(uiText("sessions_4e5cc041", { count: 1, v0: "1" })).toBe("1 session")
+    expect(uiText("sessions_4e5cc041", { count: 2, v0: "2" })).toBe("2 sessions")
+    expect(uiText("approval_rule_example")).not.toMatch(/[、。]/)
     expect(uiText("reasoning_none")).toBe("None")
     expect(uiText("close_3fd47edc")).toBe("Close")
     expect(uiText("apply_63c73c47")).toBe("Application")

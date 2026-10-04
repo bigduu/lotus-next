@@ -1,4 +1,4 @@
-import { uiText, useUiLocale } from "@shared/i18n/ui"
+import { uiText, useUiLocale, uiList } from "@shared/i18n/ui"
 import { useEffect, useMemo, useRef, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
@@ -158,7 +158,7 @@ export function McpImportDialog({ existingIds, listConfirmed, listRevision, onCl
             <section role="status" aria-label={uiText("import_result_e4039a16")} className="space-y-2 rounded-md border p-3 text-sm">
               <h3 className="font-medium">{completion.reconciled ? uiText("import_confirmed_44067475") : uiText("import_completed_72695f79")}</h3>
               <p>{uiText("add_0006d696")} {completion.result.added} {uiText("updated_b1b3836b")} {completion.result.updated} {uiText("deleted_7dad13b3")} {completion.result.removed}</p>
-              <p className="break-all text-xs">{uiText("server_ids_4ab9d03b")}{completion.result.server_ids.join("、")}</p>
+              <p className="break-all text-xs">{uiText("server_ids_4ab9d03b")}{uiList(completion.result.server_ids)}</p>
               <p className="text-xs text-muted-foreground">{completion.reconciled
                 ? uiText("the_actual_server_list_was_checked_automatically_import_c90ee703")
                 : completion.refreshed

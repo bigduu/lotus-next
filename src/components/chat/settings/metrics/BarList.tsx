@@ -1,4 +1,4 @@
-import { uiText, useUiLocale } from "@shared/i18n/ui"
+import { uiText, useUiLocale, uiLanguage } from "@shared/i18n/ui"
 import { formatCompact } from "./format"
 
 export interface BarListItem {
@@ -33,7 +33,7 @@ export function BarList({
   return (
     <ul className="space-y-2">
       {items.map((item) => (
-        <li key={item.key} title={`${item.label}: ${item.value.toLocaleString()}`}>
+        <li key={item.key} title={`${item.label}: ${item.value.toLocaleString(uiLanguage())}`}>
           <div className="flex items-baseline justify-between gap-2">
             <span className="min-w-0 truncate text-xs">
               {item.label}

@@ -1,3 +1,4 @@
+import { Trans } from "react-i18next"
 import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { useEffect, useState } from "react"
 import { Trash2, Plus } from "lucide-react"
@@ -116,7 +117,7 @@ export function SettingsPermissions() {
       <DefaultModeSection />
 
       <p className="text-xs text-muted-foreground">
-        {uiText("matching_tool_calls_require_approval_before_execution_r_3485673a")} <code>Bash</code>、<code>write_file</code>)。
+        <Trans i18nKey="ui.approval_rule_example" components={{ code: <code /> }} />
       </p>
 
       <section className="space-y-2 rounded-lg border p-3">

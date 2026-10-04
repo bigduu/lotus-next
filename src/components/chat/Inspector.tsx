@@ -81,7 +81,7 @@ function GoalSection({
             }}
             className="text-xs text-primary hover:underline"
           >
-            {goal ? uiText("edit_05183656") : uiText("settings_df3d58c7")}
+            {goal ? uiText("edit_05183656") : uiText("goal_set_action")}
           </button>
         ) : null}
       </div>

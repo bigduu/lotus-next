@@ -63,7 +63,8 @@ export function useBrowserSession(sessionId: string | null, active: boolean) {
   const [busy, setBusy] = useState(false)
   const [domLoading, setDomLoading] = useState(false)
   const [screenshotLoading, setScreenshotLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const [errorCause, setErrorCause] = useState<{ cause: unknown } | null>(null)
+  const error = errorCause === null ? null : userMessage(errorCause.cause)
   const [retryVersion, setRetryVersion] = useState(0)
   const scopeRef = useRef<Scope | null>(null)
   const stateRef = useRef<BrowserState | null>(null)
@@ -113,7 +114,7 @@ export function useBrowserSession(sessionId: string | null, active: boolean) {
     setReadySessionId(null)
     setFrame(null)
     setDom(null)
-    setError(null)
+    setErrorCause(null)
     setBusy(false)
     setDomLoading(false)
     setScreenshotLoading(false)
@@ -155,13 +156,13 @@ export function useBrowserSession(sessionId: string | null, active: boolean) {
             if (!isCurrent()) return
             if (isTransientStateReadError(cause)) {
               emptyStateReadFailures += 1
-              if (emptyStateReadFailures >= TRANSIENT_STATE_READ_NOTICE_THRESHOLD) setError(userMessage(cause))
+              if (emptyStateReadFailures >= TRANSIENT_STATE_READ_NOTICE_THRESHOLD) setErrorCause({ cause })
               continue
             }
             throw cause
           }
           if (!isCurrent()) return
-          if (emptyStateReadFailures > 0) setError(null)
+          if (emptyStateReadFailures > 0) setErrorCause(null)
           emptyStateReadFailures = 0
           if (version === stateVersionRef.current) publishState(refreshed)
           lastStateRefresh = Date.now()
@@ -292,7 +293,7 @@ export function useBrowserSession(sessionId: string | null, active: boolean) {
 
     void run().catch((cause: unknown) => {
       if (!isCurrent() || cause instanceof RequestCancelledError) return
-      setError(userMessage(cause))
+      setErrorCause({ cause })
       setLoading(false)
     })
 
@@ -347,17 +348,17 @@ export function useBrowserSession(sessionId: string | null, active: boolean) {
           const next = await action(scope, expectedEpoch)
           if (scopeRef.current !== scope || scope.controller.signal.aborted) return null
           publishState(next)
-          setError(null)
+          setErrorCause(null)
           return next
         } catch (cause) {
           if (scopeRef.current !== scope || scope.controller.signal.aborted) return null
           await refreshOnConflict(scope, cause)
           if (scopeRef.current !== scope || scope.controller.signal.aborted) return null
           if (conflictCode(cause) === "dialog_pending" || stateRef.current?.pending_dialog) {
-            setError(null)
+            setErrorCause(null)
             return null
           }
-          setError(userMessage(cause))
+          setErrorCause({ cause })
           return null
         } finally {
           if (shouldInvalidateFrame && scopeRef.current === scope) {
@@ -447,15 +448,15 @@ export function useBrowserSession(sessionId: string | null, active: boolean) {
         })
         if (!matchesDialog()) return
         publishState(next)
-        setError(null)
+        setErrorCause(null)
       } catch (cause) {
         if (!matchesDialog()) return
         await refreshOnConflict(scope, cause)
         if (!matchesDialog()) {
-          setError(null)
+          setErrorCause(null)
           return
         }
-        setError(userMessage(cause))
+        setErrorCause({ cause })
       } finally {
         if (scopeRef.current === scope) setBusy(false)
       }
@@ -482,11 +483,11 @@ export function useBrowserSession(sessionId: string | null, active: boolean) {
         snapshot.url !== stateRef.current?.url
       ) return
       setDom(snapshot)
-      setError(null)
+      setErrorCause(null)
     } catch (cause) {
       if (scopeRef.current === scope && !scope.controller.signal.aborted) {
         await refreshOnConflict(scope, cause)
-        if (scopeRef.current === scope) setError(stateRef.current?.pending_dialog ? null : userMessage(cause))
+        if (scopeRef.current === scope) setErrorCause(stateRef.current?.pending_dialog ? null : { cause })
       }
     } finally {
       if (scopeRef.current === scope) setDomLoading(false)
@@ -506,12 +507,12 @@ export function useBrowserSession(sessionId: string | null, active: boolean) {
       if (scopeRef.current !== scope || scope.controller.signal.aborted) return null
       if (stateVersion === stateVersionRef.current) publishState(refreshed)
       if (version !== mutationVersionRef.current || !matchesActiveBrowserPage(screenshot, stateRef.current)) return null
-      setError(null)
+      setErrorCause(null)
       return screenshot
     } catch (cause) {
       if (scopeRef.current === scope && !scope.controller.signal.aborted) {
         await refreshOnConflict(scope, cause)
-        if (scopeRef.current === scope) setError(stateRef.current?.pending_dialog ? null : userMessage(cause))
+        if (scopeRef.current === scope) setErrorCause(stateRef.current?.pending_dialog ? null : { cause })
       }
       return null
     } finally {

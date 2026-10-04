@@ -1,3 +1,4 @@
+import { changeLocale } from "@shared/i18n"
 import { act } from "react"
 import { createRoot, type Root } from "react-dom/client"
 import { afterAll, afterEach, beforeAll, expect, it, vi } from "vitest"
@@ -1113,4 +1114,15 @@ it("omits malformed and oversized browser_eval previews while ordinary tools sti
   const ordinary = renderOpenTools(toolMessages(true))
   expect(ordinary.textContent).toContain("/tmp/example.ts")
   expect(ordinary.textContent).toContain("done")
+})
+
+it("uses English list punctuation after changing language without translating raw tool names", async () => {
+  const host = document.createElement("div"); document.body.append(host)
+  const root = createRoot(host); mountedRoots.push(root)
+  await act(async () => root.render(<ToolCalls items={mixedToolMessages()} />))
+  await act(async () => { await changeLocale("en-US") })
+  const toggle = host.querySelector<HTMLButtonElement>("[data-tool-call-toggle]")!
+  expect(toggle.textContent).not.toContain("、")
+  expect(toggle.textContent).toContain("Run command")
+  expect(toggle.title).toBe("Bash, view_image, apply_patch")
 })
