@@ -44,6 +44,10 @@ for (const initial of ["zh-CN", "en-US"]) {
     await openSettings(page, !english)
     await expect(page.locator("#app-language")).toHaveValue(next)
     await page.getByRole("button", { name: english ? "高级" : "Advanced", exact: true }).click()
+    if ((page.viewportSize()?.width ?? 0) >= 768) {
+      const longLabel = page.getByRole("button", { name: english ? "环境变量" : "Environment Variables", exact: true })
+      expect(await longLabel.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true)
+    }
     await page.getByRole("button", { name: english ? "提供方" : "Provider", exact: true }).click()
     await expect(page.getByText(english ? "默认模型偏好" : "Default model preferences", { exact: true })).toBeVisible()
     await page.getByRole("button", { name: english ? "系统" : "System", exact: true }).click()
