@@ -11,6 +11,7 @@ vi.mock("@services/chat/AgentService", () => ({ agentClient: { execute: vi.fn() 
 vi.mock("@shared/store/appStore", () => ({ useAppStore: { getState: () => ({ loadChatHistory: async () => {} }) } }))
 let root: Root, container: HTMLDivElement, ingress: ReturnType<typeof useTicketIngress>
 function Harness() { ingress = useTicketIngress("ticket-root"); return null }
+function NavigationHarness({ sessionId }: { sessionId: string }) { ingress = useTicketIngress(sessionId); return null }
 const request: ChatRequest = { session_id: "ticket-root", model: "fixture", message: "创建报告", thread_id: "work-A", in_reply_to: "q-A" }
 beforeEach(() => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true }); sessionStorage.clear(); localStorage.clear()
@@ -154,4 +155,83 @@ it("preserves an ambiguous Human ID through an authentication rejection of its r
   await act(async () => root.render(null)); await mount()
   await act(async () => { expect((await ingress.send(request)).kind).toBe("accepted") })
   expect(vi.mocked(apiClient.postOnce).mock.calls.map(([, value]) => value)).toEqual([original, original, original])
+})
+
+const activationReceipt = (sessionId: string) => sessionStorage.setItem(`lotus-next.ticket-human.${sessionId}`,
+  JSON.stringify({ id: `${sessionId}-delivery`, fingerprint: "0".repeat(64), fingerprint_version: 2, phase: "activation" }))
+const navigate = async (sessionId: string) => { await act(async () => root.render(<NavigationHarness sessionId={sessionId} />)) }
+
+it("isolates a late A activation from B recovery and its own pending activation", async () => {
+  activationReceipt("B")
+  let releaseA!: (value: Awaited<ReturnType<typeof agentClient.execute>>) => void
+  let releaseB!: (value: Awaited<ReturnType<typeof agentClient.execute>>) => void
+  vi.mocked(agentClient.execute)
+    .mockReturnValueOnce(new Promise((resolve) => { releaseA = resolve }))
+    .mockReturnValueOnce(new Promise((resolve) => { releaseB = resolve }))
+  await navigate("ticket-root")
+  let sending!: ReturnType<typeof ingress.send>
+  await act(async () => { sending = ingress.send(request) })
+  await navigate("B")
+  expect(ingress.executePending).toBe("B")
+  let retrying!: ReturnType<typeof ingress.retryExecute>
+  await act(async () => { retrying = ingress.retryExecute() })
+  expect(ingress.busy).toBe(true)
+  const error = ingress.error
+  await act(async () => {
+    releaseA({ session_id: "ticket-root", status: "already_running", events_url: "/events" })
+    expect((await sending).kind).toBe("accepted")
+  })
+  expect(ingress.executePending).toBe("B")
+  expect(ingress.error).toBe(error)
+  expect(ingress.busy).toBe(true)
+  expect(ingress.hasPending("ticket-root")).toBe(false)
+  expect(JSON.parse(sessionStorage.getItem("lotus-next.ticket-human.B")!).phase).toBe("activation")
+  await act(async () => {
+    releaseB({ session_id: "B", status: "started", events_url: "/events" })
+    expect(await retrying).toBe(true)
+  })
+  expect(ingress.executePending).toBeNull()
+  expect(ingress.busy).toBe(false)
+  expect(ingress.hasPending("B")).toBe(false)
+  expect(apiClient.postOnce).toHaveBeenCalledTimes(1)
+})
+
+it("isolates a late A ingress error from the newly selected B recovery view", async () => {
+  activationReceipt("B")
+  let reject!: (failure: Error) => void
+  vi.mocked(apiClient.postOnce).mockReturnValueOnce(new Promise((_resolve, rejectPromise) => { reject = rejectPromise }))
+  await navigate("ticket-root")
+  let sending!: ReturnType<typeof ingress.send>
+  await act(async () => { sending = ingress.send(request) })
+  await navigate("B")
+  const error = ingress.error
+  await act(async () => { reject(new Error("A acknowledgement unavailable")); expect((await sending).kind).toBe("unconfirmed") })
+  expect(ingress.executePending).toBe("B")
+  expect(ingress.error).toBe(error)
+  expect(ingress.busy).toBe(false)
+  expect(ingress.hasPending("ticket-root")).toBe(true)
+})
+
+it("refreshes the owned receipt and admission after navigating A to B to A", async () => {
+  activationReceipt("B")
+  let release!: (value: Awaited<ReturnType<typeof agentClient.execute>>) => void
+  vi.mocked(agentClient.execute).mockReturnValueOnce(new Promise((resolve) => { release = resolve }))
+  await navigate("ticket-root")
+  let sending!: ReturnType<typeof ingress.send>
+  await act(async () => { sending = ingress.send(request) })
+  await navigate("B"); expect(ingress.executePending).toBe("B")
+  await navigate("ticket-root")
+  expect(ingress.executePending).toBe("ticket-root")
+  expect(ingress.busy).toBe(true)
+  await act(async () => {
+    release({ session_id: "ticket-root", status: "already_running", events_url: "/events" })
+    expect((await sending).kind).toBe("accepted")
+  })
+  expect(ingress.executePending).toBeNull()
+  expect(ingress.error).toBeNull()
+  expect(ingress.busy).toBe(false)
+  expect(ingress.hasPending("ticket-root")).toBe(false)
+  await navigate("B")
+  expect(ingress.executePending).toBe("B")
+  expect(apiClient.postOnce).toHaveBeenCalledTimes(1)
 })
