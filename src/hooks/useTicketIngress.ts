@@ -92,7 +92,7 @@ export function useTicketIngress(sessionId?: string | null) {
     }
     try {
       const result = await agentClient.execute(sessionId)
-      if (!["started", "already_running", "completed"].includes(result.status)) throw new Error("消息已保存，运行尚未启动。")
+      if (result.session_id !== sessionId || !["started", "already_running", "completed"].includes(result.status)) throw new Error("消息已保存，运行尚未启动。")
       if (!clearOwnedReceipt(sessionId, delivery.id)) throw new Error("消息回执已变化，请刷新后核对。")
       void useAppStore.getState().loadChatHistory(sessionId).catch(() => {})
       return true
