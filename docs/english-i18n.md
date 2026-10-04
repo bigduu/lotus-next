@@ -25,7 +25,7 @@ Started from main `a02163700edff8c2fd50977b3e3858be53960998`, after composer #21
 
 ## Executable-copy audit and retained literals
 
-`npm run i18n:check` checks both catalog keys and interpolation placeholders, typed literal `uiText` lookups, and Chinese executable literals across `src`. The current catalogs have **1,804 matching keys**. Existing English was retained or reused rather than treated as missing. The audit excludes locale resources and test data; it is not a claim that arbitrary backend/user text can be translated.
+`npm run i18n:check` checks both catalog keys and interpolation placeholders, typed literal `uiText` lookups, and Chinese executable literals across `src`. The current catalogs have **1,809 matching keys**. Existing English was retained or reused rather than treated as missing. The audit excludes locale resources and test data; it is not a claim that arbitrary backend/user text can be translated.
 
 Intentionally retained locations:
 
@@ -58,6 +58,8 @@ Real screenshot captures below are from the verified application source `fb6fe49
 ## Review corrections
 
 The GitHub review found and this branch fixes: preferred locale chunk failure blocking startup despite available English, ambiguous reasoning “Close” (now “None”, while close buttons stay “Close” and notification disabling is “Off”), the application noun “Apply” (now “Application”), mixed punctuation in schedule deletion (now one interpolated question), and output rates using the browser locale (now the selected UI locale). The focused four-file regression suite passed39/39, including a failing Chinese bundle with English startup and saved-choice recovery, unchanged close controls, raw schedule names, and French/English output-rate formatting. A real browser transport regression blocks the Chinese chunk and checks English mounting followed by Chinese recovery on reload: **1/1 passed**. Type/lint/build/package checks passed at local review-fix source `b7db725b09b27e91628628f3661be4d88d1dcfff`; startup JS1,448,385 raw/438,833 gzip and CSS105,801 raw/17,187 gzip remain within unchanged budgets. Earlier screenshot/test sources retain their provenance; final exact-head CI validates the review corrections.
+
+The subsequent review identified metrics count omission, permission/example and grouped-tool punctuation, a stale mismatch-label memo, the empty-goal action noun, and existing browser errors retaining their earlier language. These are corrected locally at `0136a6b`; focused regression **87/87** passed across six files, including locale changes with the identical breakdown object, raw browser cause and unchanged browser-open count, and tool labels/names. Shared list formatting keeps the original Chinese compact delimiter and uses Intl formatting elsewhere. Numeric context/cache/metric tooltips now use the UI locale; complete resource phrases retain Chinese punctuation only in Chinese. The executable audit also rejects Chinese punctuation in English resources and plural call sites without count. Earlier real screenshot provenance remains unchanged.
 
 ## Reproduce
 

@@ -15,6 +15,7 @@ const placeholders = (value) => [...value.matchAll(/{{\s*([^},]+)[^}]*}}/g)].map
 for (const key of new Set([...Object.keys(english), ...Object.keys(chinese)])) {
   if (typeof english[key] !== "string" || typeof chinese[key] !== "string") problems.push(`Missing locale key: ${key}`)
   else if (placeholders(english[key]) !== placeholders(chinese[key])) problems.push(`Interpolation mismatch: ${key}`)
+  if (typeof english[key] === "string" && /[、。；（）「」]/.test(english[key])) problems.push(`Chinese punctuation in English UI key: ${key}`)
 }
 const permittedNativeNames = new Set(["简体中文", "繁體中文", "日本語"])
 const walk = (directory) => {
@@ -30,7 +31,13 @@ const walk = (directory) => {
     const visit = (node) => {
       if (ts.isCallExpression(node) && node.expression.getText(source) === "uiText") {
         const key = node.arguments[0]
-        if (key && ts.isStringLiteral(key) && !(key.text in english)) report(node, `Unknown UI key ${key.text}`)
+        if (key && ts.isStringLiteral(key)) {
+          if (!(key.text in english)) report(node, `Unknown UI key ${key.text}`)
+          if (`${key.text}_one` in english) {
+            const options = node.arguments[1]
+            if (!options || !ts.isObjectLiteralExpression(options) || !options.properties.some((p) => p.name?.getText(source) === "count")) report(node, `Plural UI key needs numeric count: ${key.text}`)
+          }
+        }
       }
       if ((ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node) || ts.isJsxText(node)) && /\p{Script=Han}/u.test(node.text)) {
         const text = node.text.trim()
