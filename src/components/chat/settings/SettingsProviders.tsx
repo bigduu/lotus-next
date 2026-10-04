@@ -1,3 +1,4 @@
+import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { useEffect, useRef, useState } from "react"
 import { Trash2, Plus, Pencil, RefreshCw } from "lucide-react"
 import { getErrorMessage } from "@services/api"
@@ -18,6 +19,7 @@ import { InstanceEditor, type InstanceSavePayload } from "./providers/InstanceEd
 import { DefaultsEditor } from "./providers/DefaultsEditor"
 
 export function SettingsProviders() {
+  useUiLocale()
   const snapshot = useProviderStore((s) => s.providerSnapshot)
   const repairSnapshot = useProviderStore((s) => s.providerRepairSnapshot)
   const repairIssues = useProviderStore((s) => s.providerRepairIssues)
@@ -76,8 +78,8 @@ export function SettingsProviders() {
       setPendingCreatedId(null)
       setCreateRecoveryNotice(
         result.authorityRefreshed
-          ? "实例已保存且列表已重新加载，但创建响应缺少有效实例 ID。请从列表中选择实例继续，勿重复创建。"
-          : "实例已保存，但创建响应和实例列表均无法安全确认。请重新加载列表后继续，勿重复创建。",
+          ? uiText("the_instance_was_saved_and_the_list_reloaded_but_the_cr_6fe3f38e")
+          : uiText("the_instance_was_saved_but_neither_the_creation_respons_a47ff1ce"),
       )
       return
     }
@@ -91,22 +93,22 @@ export function SettingsProviders() {
       setPendingCreatedId(created.id)
       setCreateRecoveryNotice(
         result.authorityRefreshed
-          ? `「${created.label}」实例已保存，但重新加载的列表尚未确认该实例。模型发现仍会继续；请重新加载后编辑，勿重复创建。`
-          : `「${created.label}」实例已保存，但实例列表重新加载失败。模型发现仍会继续；请重新加载后编辑，勿重复创建。`,
+          ? uiText("was_saved_but_the_reloaded_list_has_not_confirmed_it_mo_ff5cbaca", { v0: created.label })
+          : uiText("was_saved_but_the_instance_list_could_not_be_reloaded_m_673d8238", { v0: created.label }),
       )
     }
 
     setFetchingId(created.id)
     setFetchNotice(
-      result.instanceConfirmed ? { id: created.id, text: "实例已保存，正在获取模型…", tone: "loading" } : null,
+      result.instanceConfirmed ? { id: created.id, text: uiText("instance_saved_discovering_models_83ad3667"), tone: "loading" } : null,
     )
     try {
       await fetchCatalogModels(created.id)
       const count = useProviderStore.getState().getModelsForProvider(created.id).length
       const text =
         count > 0
-          ? `实例已保存，并发现 ${count} 个模型。请选择模型后再次保存。`
-          : "实例已保存，但未发现模型。可手动输入自定义模型 ID 后再次保存。"
+          ? uiText("instance_saved_models_discovered_select_a_model_and_sav_9d490eb2", { v0: count , count: count })
+          : uiText("instance_saved_but_no_models_were_found_enter_a_custom__a6488023")
       if (result.instanceConfirmed) {
         setFetchNotice({
           id: created.id,
@@ -114,14 +116,14 @@ export function SettingsProviders() {
           tone: count > 0 ? "success" : "warning",
         })
       } else {
-        setCreateRecoveryNotice(`${text} 实例列表重新加载失败，请重新加载后继续，勿重复创建。`)
+        setCreateRecoveryNotice(uiText("the_instance_list_could_not_be_reloaded_reload_before_c_b8ee7a2a", { v0: text }))
       }
     } catch {
-      const text = "实例已保存，但模型发现失败。可手动输入自定义模型 ID 后再次保存。"
+      const text = uiText("instance_saved_but_model_discovery_failed_enter_a_custo_e47612cc")
       if (result.instanceConfirmed) {
         setFetchNotice({ id: created.id, text, tone: "warning" })
       } else {
-        setCreateRecoveryNotice(`${text} 实例列表重新加载失败，请重新加载后继续，勿重复创建。`)
+        setCreateRecoveryNotice(uiText("the_instance_list_could_not_be_reloaded_reload_before_c_b8ee7a2a", { v0: text }))
       }
     } finally {
       setFetchingId(null)
@@ -130,10 +132,10 @@ export function SettingsProviders() {
 
   const disabledProviderGuidance = (id: string): string | null => {
     if (id === chatProviderId) {
-      return "请先将「对话」模型偏好切换到其他已启用提供方并保存，再停用此实例。"
+      return uiText("switch_the_chat_model_preference_to_another_enabled_pro_9448959e")
     }
     if (id === compatibilityProviderId) {
-      return "请先在「默认模型偏好」中确认并保存「对话」提供方，再停用此实例。"
+      return uiText("confirm_and_save_the_chat_provider_in_default_model_pre_0f535ee4")
     }
     return null
   }
@@ -165,7 +167,7 @@ export function SettingsProviders() {
     try {
       await updateProviderInstance(inst.id, { enabled: next })
     } catch (e) {
-      setListError(`「${inst.label || inst.type}」${next ? "启用" : "停用"}失败:${getErrorMessage(e)}`)
+      setListError(uiText("failed_72c709b0", { v0: inst.label || inst.type, v1: next ? uiText("enabled_f4f0ead1") : uiText("disable_4e6fd0e2"), v2: getErrorMessage(e) }))
     }
   }
 
@@ -177,13 +179,13 @@ export function SettingsProviders() {
       const count = useProviderStore.getState().getModelsForProvider(inst.id).length
       setFetchNotice({
         id: inst.id,
-        text: count > 0 ? `已刷新 ${count} 个模型` : "未发现模型，可在编辑器中手动输入自定义模型 ID。",
+        text: count > 0 ? uiText("refreshed_models_1563711d", { v0: count , count: count }) : uiText("no_models_found_you_can_enter_a_custom_model_id_in_the__f7b4e163"),
         tone: count > 0 ? "success" : "warning",
       })
     } catch {
       setFetchNotice({
         id: inst.id,
-        text: "模型发现失败，请检查实例配置后重试。",
+        text: uiText("model_discovery_failed_check_the_instance_settings_and__c3f830b9"),
         tone: "error",
       })
     } finally {
@@ -201,14 +203,14 @@ export function SettingsProviders() {
         setPendingCreatedId(null)
         setEditing(createdId)
       } else if (createdId) {
-        setCreateRecoveryNotice("实例已保存，但重新加载的列表仍未确认该实例。请稍后重试并勿重复创建。")
+        setCreateRecoveryNotice(uiText("instance_saved_but_the_reloaded_list_has_not_confirmed__1d5018ee"))
       } else {
         setCreateRecoveryNotice(
-          "列表已重新加载，但创建响应缺少有效实例 ID。请从列表中选择刚保存的实例继续，勿重复创建。",
+          uiText("the_list_was_reloaded_but_the_creation_response_has_no__08755e58"),
         )
       }
     } catch {
-      setListError("实例已保存，但提供方列表仍无法重新加载。请稍后重试，勿重复创建。")
+      setListError(uiText("instance_saved_but_the_provider_list_still_cannot_be_re_6fdc1782"))
     }
   }
 
@@ -232,7 +234,7 @@ export function SettingsProviders() {
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between">
-        <p className="text-xs text-muted-foreground">配置 LLM 提供方、API Key 与可用模型。</p>
+        <p className="text-xs text-muted-foreground">{uiText("configure_llm_providers_api_keys_and_available_models_4caf6573")}</p>
         {!adding && canManage && !createRecoveryNotice ? (
           <Button
             size="sm"
@@ -241,35 +243,32 @@ export function SettingsProviders() {
               setAdding(true)
             }}
           >
-            <Plus className="size-4" /> 新增
-          </Button>
+            <Plus className="size-4" />{uiText("add_0006d696")}</Button>
         ) : null}
       </div>
 
       {providerStatus === "idle" || providerStatus === "loading" ? (
-        <p className="text-xs text-muted-foreground">正在加载提供方设置…</p>
+        <p className="text-xs text-muted-foreground">{uiText("loading_provider_settings_46da40c3")}</p>
       ) : null}
       {providerStatus === "unavailable" ? (
         <div role="alert" className="rounded-lg border border-destructive/40 p-3 text-xs text-destructive">
-          提供方设置当前不可用。{providerError ? ` ${providerError}` : ""}
+          {uiText("provider_settings_are_currently_unavailable_b04506b2")}{providerError ? ` ${providerError}` : ""}
         </div>
       ) : null}
       {providerStatus === "incompatible" ? (
         <div role="alert" className="rounded-lg border border-destructive/40 p-3 text-xs text-destructive">
-          当前 Bamboo 的提供方配置格式与 Lotus Next 不兼容。{providerError ? ` ${providerError}` : ""}
+          {uiText("this_bamboo_provider_configuration_format_is_incompatib_8eefe79f")}{providerError ? ` ${providerError}` : ""}
         </div>
       ) : null}
       {providerStatus === "degraded" ? (
         <div role="alert" className="rounded-lg border border-amber-500/50 bg-amber-500/5 p-3 text-xs text-amber-700 dark:text-amber-300">
-          提供方或模型偏好中有失效引用（{repairIssues.length} 处）。有效实例仍可管理，但聊天与运行时暂不会使用这些偏好；请在下方选择现有实例和模型并保存偏好完成修复。
-        </div>
+          {uiText("provider_or_model_preferences_contain_broken_references_a5de7472")}{repairIssues.length} {uiText("valid_instances_can_still_be_managed_but_chat_and_runti_301d8be4")}</div>
       ) : null}
       {createRecoveryNotice ? (
         <div role="status" className="flex items-start justify-between gap-3 rounded-lg border border-amber-500/50 bg-amber-500/5 p-3 text-xs text-amber-700 dark:text-amber-300">
           <span>{createRecoveryNotice}</span>
           <Button size="sm" variant="secondary" onClick={() => void retryLoad()}>
-            重新加载
-          </Button>
+            {uiText("reload_7bdd5ce1")}</Button>
         </div>
       ) : null}
       {listError ? <p className="text-xs text-destructive">{listError}</p> : null}
@@ -296,8 +295,7 @@ export function SettingsProviders() {
                       <span className="truncate text-sm font-medium">{inst.label || inst.type}</span>
                       {!inst.enabled ? (
                         <Badge variant="secondary" className="shrink-0 px-1.5 text-[10px]">
-                          已停用
-                        </Badge>
+                          {uiText("disabled_a8c3698b")}</Badge>
                       ) : null}
                     </div>
                     <div className="truncate text-xs text-muted-foreground">
@@ -307,13 +305,13 @@ export function SettingsProviders() {
                   <Switch
                     checked={inst.enabled}
                     onCheckedChange={(v) => void toggleEnabled(inst, v)}
-                    aria-label={inst.enabled ? "停用" : "启用"}
+                    aria-label={inst.enabled ? uiText("disable_4e6fd0e2") : uiText("enabled_f4f0ead1")}
                     className="shrink-0"
                   />
                   <button
                     onClick={() => void fetchModels(inst)}
-                    aria-label="拉取模型列表"
-                    title="拉取模型列表"
+                    aria-label={uiText("discover_models_22572a98")}
+                    title={uiText("discover_models_22572a98")}
                     disabled={fetchingId === inst.id}
                     className="shrink-0 rounded p-1 text-muted-foreground hover:text-foreground disabled:opacity-50"
                   >
@@ -326,7 +324,7 @@ export function SettingsProviders() {
                         setCreateRecoveryNotice(null)
                       }
                     }}
-                    aria-label="编辑"
+                    aria-label={uiText("edit_05183656")}
                     className="shrink-0 rounded p-1 text-muted-foreground hover:text-foreground"
                   >
                     <Pencil className="size-3.5" />
@@ -336,7 +334,7 @@ export function SettingsProviders() {
                       setDeleteError(null)
                       setDeleting(inst)
                     }}
-                    aria-label="删除"
+                    aria-label={uiText("delete_2f9daa82")}
                     className="shrink-0 rounded p-1 text-muted-foreground hover:text-destructive"
                   >
                     <Trash2 className="size-3.5" />
@@ -363,7 +361,7 @@ export function SettingsProviders() {
       </ul> : null}
 
       {canManage && instances.length === 0 && !adding ? (
-        <p className="text-xs text-muted-foreground">暂无提供方实例,点击「新增」创建。</p>
+        <p className="text-xs text-muted-foreground">{uiText("no_provider_instances_yet_click_add_to_create_one_9f673789")}</p>
       ) : null}
 
       <div hidden={!canManage}>
@@ -372,17 +370,15 @@ export function SettingsProviders() {
 
       <ResponsiveDialog open={deleting != null} onOpenChange={(open) => (!open ? setDeleting(null) : null)}>
         <ResponsiveDialogContent className="gap-3 p-4">
-          <ResponsiveDialogTitle>删除提供方实例</ResponsiveDialogTitle>
+          <ResponsiveDialogTitle>{uiText("delete_provider_instance_c190bd28")}</ResponsiveDialogTitle>
           <ResponsiveDialogDescription>
-            确定删除「{deleting?.label || deleting?.type}」?引用它的默认模型偏好将失效。
-          </ResponsiveDialogDescription>
-          {deleteError ? <p className="text-xs text-destructive">删除失败:{deleteError}</p> : null}
+            {uiText("delete_72f49a52")}{deleting?.label || deleting?.type}{uiText("default_model_preferences_that_reference_it_will_become_2c834ea2")}</ResponsiveDialogDescription>
+          {deleteError ? <p className="text-xs text-destructive">{uiText("deletion_failed_8b176752")}{deleteError}</p> : null}
           <div className="flex justify-end gap-2">
             <Button size="sm" variant="secondary" onClick={() => setDeleting(null)} disabled={deleteBusy}>
-              取消
-            </Button>
+              {uiText("cancel_2cd0f3be")}</Button>
             <Button size="sm" variant="destructive" onClick={() => void confirmDelete()} disabled={deleteBusy}>
-              {deleteBusy ? "删除中…" : "删除"}
+              {deleteBusy ? uiText("deleting_5e8e7af5") : uiText("delete_2f9daa82")}
             </Button>
           </div>
         </ResponsiveDialogContent>

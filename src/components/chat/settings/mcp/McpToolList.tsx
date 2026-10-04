@@ -1,3 +1,4 @@
+import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { useEffect, useState } from "react"
 import { mcpService, type McpToolInfo } from "@services/mcp"
 import { getErrorMessage } from "@services/api"
@@ -8,6 +9,7 @@ import { getErrorMessage } from "@services/api"
  * (parent increments it after a tools refresh).
  */
 export function McpToolList({ serverId, version }: { serverId: string; version: number }) {
+  useUiLocale()
   const [tools, setTools] = useState<McpToolInfo[] | null>(null)
   const [error, setError] = useState<string | null>(null)
 
@@ -33,15 +35,15 @@ export function McpToolList({ serverId, version }: { serverId: string; version: 
   if (error) {
     return (
       <p className="text-xs break-all text-destructive" role="alert">
-        加载工具失败:{error}
+        {uiText("could_not_load_tools_7cf37d72")}{error}
       </p>
     )
   }
   if (tools === null) {
-    return <p className="text-xs text-muted-foreground">加载工具中…</p>
+    return <p className="text-xs text-muted-foreground">{uiText("loading_tools_3ab9b8bc")}</p>
   }
   if (tools.length === 0) {
-    return <p className="text-xs text-muted-foreground">该服务器未暴露任何工具</p>
+    return <p className="text-xs text-muted-foreground">{uiText("this_server_exposes_no_tools_ca0d2452")}</p>
   }
 
   return (
@@ -57,8 +59,7 @@ export function McpToolList({ serverId, version }: { serverId: string; version: 
           {t.parameters != null ? (
             <details className="mt-1">
               <summary className="cursor-pointer text-[11px] text-muted-foreground select-none">
-                参数 schema
-              </summary>
+                {uiText("argument_schema_50a739a9")}</summary>
               <pre className="mt-1 max-h-48 overflow-auto rounded bg-muted p-2 text-[11px] leading-relaxed">
                 {JSON.stringify(t.parameters, null, 2)}
               </pre>

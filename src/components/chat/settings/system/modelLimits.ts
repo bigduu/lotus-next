@@ -1,3 +1,4 @@
+import { uiText } from "@shared/i18n/ui"
 import type { ModelLimitOverride } from "./useSystemConfig"
 
 export interface GlobalDefault {
@@ -104,29 +105,29 @@ export function validateLimitRows(
   for (const row of rows) {
     if (!row.customized) continue
     const pattern = row.model_pattern.trim()
-    if (!pattern) return { error: "模型匹配串不能为空" }
+    if (!pattern) return { error: uiText("model_pattern_is_required_327363dc") }
     const key = pattern.toLocaleLowerCase()
-    if (seen.has(key)) return { error: `模型「${pattern}」重复` }
+    if (seen.has(key)) return { error: uiText("duplicate_model_8846705b", { v0: pattern }) }
     seen.add(key)
 
     const context = parseTokenCount(row.max_context_tokens)
     if (context === null || context < 1_000) {
-      return { error: `「${pattern}」的上下文窗口需为不小于 1K 的整数` }
+      return { error: uiText("the_context_window_for_must_be_an_integer_of_at_least_1_3efecb54", { v0: pattern }) }
     }
 
     const output = parseTokenCount(row.max_output_tokens)
     if (output === null || output < 1) {
-      return { error: `「${pattern}」的最大输出需为不小于 1 的整数` }
+      return { error: uiText("maximum_output_for_must_be_an_integer_of_at_least_1_f032d4bd", { v0: pattern }) }
     }
-    if (output > context) return { error: `「${pattern}」的最大输出不能超过上下文窗口` }
+    if (output > context) return { error: uiText("maximum_output_for_cannot_exceed_its_context_window_e5cd692f", { v0: pattern }) }
 
     let margin: number | undefined
     if (row.safety_margin.trim()) {
       const parsed = parseTokenCount(row.safety_margin)
       if (parsed === null || parsed < 0) {
-        return { error: `「${pattern}」的安全余量需为非负整数` }
+        return { error: uiText("the_safety_margin_for_must_be_a_nonnegative_integer_e71fc7c5", { v0: pattern }) }
       }
-      if (parsed >= context) return { error: `「${pattern}」的安全余量必须小于上下文窗口` }
+      if (parsed >= context) return { error: uiText("the_safety_margin_for_must_be_smaller_than_its_context__94c4d58b", { v0: pattern }) }
       margin = parsed
     }
 

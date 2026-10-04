@@ -1,3 +1,4 @@
+import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { useCallback, useMemo, useRef, useState } from "react"
 import type { MemoryTimelinePoint } from "@services/metrics"
 import { Button } from "@/components/ui/button"
@@ -9,9 +10,9 @@ const CREATED_COLOR = "var(--mx-fwd)"
 const UPDATED_COLOR = "var(--mx-mem)"
 
 const SERIES = [
-  { key: "total_memories", label: "记忆总量", color: TOTAL_COLOR },
-  { key: "created_memories", label: "新增记忆", color: CREATED_COLOR },
-  { key: "updated_memories", label: "更新记忆", color: UPDATED_COLOR },
+  { key: "total_memories", get label() { return uiText("total_memories_cfd0f732") }, color: TOTAL_COLOR },
+  { key: "created_memories", get label() { return uiText("created_memories_ec5500c1") }, color: CREATED_COLOR },
+  { key: "updated_memories", get label() { return uiText("updated_memories_2f282ad5") }, color: UPDATED_COLOR },
 ] as const
 
 const PLOT_HEIGHT = 140
@@ -19,6 +20,7 @@ const MARGIN = { top: 8, right: 12, bottom: 20, left: 40 }
 const SVG_HEIGHT = MARGIN.top + PLOT_HEIGHT + MARGIN.bottom
 
 function useContainerWidth() {
+  useUiLocale()
   const observerRef = useRef<ResizeObserver | null>(null)
   const [width, setWidth] = useState(0)
   // Callback ref (not effect with [] deps): the chart container unmounts on the
@@ -68,6 +70,7 @@ function areaPath(xs: number[], ys: number[], baseline: number): string {
  * hand-rolled SVG line-chart idiom (see TimelineChart).
  */
 export function MemoryTrendChart({ points }: { points: MemoryTimelinePoint[] }) {
+  useUiLocale()
   const { ref, width } = useContainerWidth()
   const [view, setView] = useState<"chart" | "table">("chart")
   const [hoverIndex, setHoverIndex] = useState<number | null>(null)
@@ -113,7 +116,7 @@ export function MemoryTrendChart({ points }: { points: MemoryTimelinePoint[] }) 
   }
 
   if (n === 0) {
-    return <p className="text-xs text-muted-foreground">暂无记忆趋势数据</p>
+    return <p className="text-xs text-muted-foreground">{uiText("no_memory_trend_available_bae93929")}</p>
   }
 
   const hovered = hoverIndex != null ? points[hoverIndex] : null
@@ -135,8 +138,8 @@ export function MemoryTrendChart({ points }: { points: MemoryTimelinePoint[] }) 
         <div className="flex gap-1">
           {(
             [
-              ["chart", "图表"],
-              ["table", "表格"],
+              ["chart", uiText("chart_8cb443ab")],
+              ["table", uiText("table_22d9e7c5")],
             ] as const
           ).map(([key, label]) => (
             <Button
@@ -157,10 +160,10 @@ export function MemoryTrendChart({ points }: { points: MemoryTimelinePoint[] }) 
           <table className="w-full min-w-[420px] text-xs">
             <thead className="sticky top-0 bg-background text-muted-foreground">
               <tr className="[&>th]:px-2 [&>th]:py-1.5 [&>th]:font-medium">
-                <th className="text-left">日期</th>
-                <th className="text-right">记忆总量</th>
-                <th className="text-right">新增记忆</th>
-                <th className="text-right">更新记忆</th>
+                <th className="text-left">{uiText("date_70d0c1b3")}</th>
+                <th className="text-right">{uiText("total_memories_cfd0f732")}</th>
+                <th className="text-right">{uiText("created_memories_ec5500c1")}</th>
+                <th className="text-right">{uiText("updated_memories_2f282ad5")}</th>
               </tr>
             </thead>
             <tbody>
@@ -183,7 +186,7 @@ export function MemoryTrendChart({ points }: { points: MemoryTimelinePoint[] }) 
                 width={width}
                 height={SVG_HEIGHT}
                 role="img"
-                aria-label="记忆趋势图"
+                aria-label={uiText("memory_trend_chart_f317b7a3")}
                 tabIndex={0}
                 className="block outline-none focus-visible:ring-1 focus-visible:ring-ring"
                 onPointerMove={(e) => moveHover(e.clientX, e.currentTarget.getBoundingClientRect())}

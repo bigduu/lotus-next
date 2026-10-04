@@ -1,3 +1,4 @@
+import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { useState } from "react"
 import { ChevronDown, ChevronRight } from "lucide-react"
 import type { ProviderInstance, ProviderKind } from "@shared/types/providerConfig"
@@ -22,12 +23,12 @@ import { EditableModelCombobox } from "./EditableModelCombobox"
 
 const PROVIDER_TYPES: ProviderKind[] = ["anthropic", "openai", "gemini", "copilot", "bodhi"]
 const REASONING_EFFORTS = [
-  { value: "none", label: "关闭" },
-  { value: "low", label: "低" },
-  { value: "medium", label: "中" },
-  { value: "high", label: "高" },
-  { value: "xhigh", label: "极高" },
-  { value: "max", label: "最大" },
+  { value: "none", get label() { return uiText("close_3fd47edc") } },
+  { value: "low", get label() { return uiText("low_aa9e366f") } },
+  { value: "medium", get label() { return uiText("medium_a567bdaa") } },
+  { value: "high", get label() { return uiText("high_b1c27820") } },
+  { value: "xhigh", get label() { return uiText("extra_high_392d0dce") } },
+  { value: "max", get label() { return uiText("max_9730c15f") } },
 ] as const
 const UNSET = "__unset__"
 
@@ -106,12 +107,12 @@ function buildPayload(
     const apiKey = draft.apiKey.trim()
     if (apiKey && isMaskedSecret(apiKey)) {
       if (!(isEdit && hasStoredApiKey)) {
-        return { error: "API Key 不能使用掩码" }
+        return { error: uiText("a_masked_api_key_cannot_be_used_2b50d591") }
       }
     } else if (apiKey) {
       config.api_key = apiKey
     } else if (!(isEdit && hasStoredApiKey)) {
-      return { error: "API Key 不能为空" }
+      return { error: uiText("api_key_is_required_91482829") }
     }
     // Empty while editing a configured instance: omit api_key = keep stored key.
     setOrClear("base_url", draft.baseUrl.trim(), draft.baseUrl.trim() !== "")
@@ -145,7 +146,7 @@ function buildPayload(
     try {
       config.request_overrides = JSON.parse(overridesRaw)
     } catch (e) {
-      return { error: `request_overrides JSON 解析失败:${(e as Error).message}` }
+      return { error: uiText("could_not_parse_request_overrides_json_d2ce243c", { v0: (e as Error).message }) }
     }
   } else if (isEdit) {
     config.request_overrides = null
@@ -183,6 +184,7 @@ function Field({
   type?: string
   placeholder?: string
 }) {
+  useUiLocale()
   return (
     <label className="block">
       <span className="mb-1 block text-xs text-muted-foreground">{label}</span>
@@ -211,6 +213,7 @@ export function InstanceEditor({
   /** Server-discovered suggestions; custom ids remain valid without them. */
   modelOptions?: readonly ProviderModelDescriptor[]
 }) {
+  useUiLocale()
   const isEdit = instance != null
   const hasStoredApiKey = isMaskedSecret(
     ((instance?.config ?? {}) as Record<string, unknown>).api_key,
@@ -268,14 +271,13 @@ export function InstanceEditor({
     <div className="space-y-2.5 rounded-lg border bg-muted/30 p-3">
       <label className="block">
         <span className="mb-1 block text-xs text-muted-foreground">
-          厂商预设(可选,仅快速填充表单,不会保存)
-        </span>
+          {uiText("vendor_preset_optional_fills_the_form_without_being_sav_b2935f04")}</span>
         <Select value={presetId || UNSET} onValueChange={applyPreset}>
-          <SelectTrigger className="w-full" aria-label="厂商预设">
+          <SelectTrigger className="w-full" aria-label={uiText("vendor_preset_65edf224")}>
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value={UNSET}>不使用预设</SelectItem>
+            <SelectItem value={UNSET}>{uiText("no_preset_64c25942")}</SelectItem>
             {VENDOR_PRESETS.map((p) => (
               <SelectItem
                 key={p.id}
@@ -294,7 +296,7 @@ export function InstanceEditor({
 
       <label className="block">
         <span className="mb-1 block text-xs text-muted-foreground">
-          类型{isEdit ? "(创建后不可修改)" : ""}
+          {uiText("type_ba40014f")}{isEdit ? uiText("cannot_be_changed_after_creation_0f2775dc") : ""}
         </span>
         <Select
           value={type}
@@ -305,7 +307,7 @@ export function InstanceEditor({
           }}
           disabled={isEdit}
         >
-          <SelectTrigger className="w-full" aria-label="提供方类型">
+          <SelectTrigger className="w-full" aria-label={uiText("provider_type_6c9c029c")}>
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -318,10 +320,10 @@ export function InstanceEditor({
         </Select>
       </label>
 
-      <Field label="名称" value={draft.label} onChange={(v) => patch({ label: v })} placeholder={`如 我的 ${PROVIDER_LABELS[type]}`} />
+      <Field label={uiText("name_d44e9b3d")} value={draft.label} onChange={(v) => patch({ label: v })} placeholder={uiText("e_g_my_c85274e7", { v0: PROVIDER_LABELS[type] })} />
 
       <div className="flex items-center justify-between rounded-md border bg-background px-2.5 py-2">
-        <span className="text-sm">启用该实例</span>
+        <span className="text-sm">{uiText("enable_this_instance_271435c3")}</span>
         <Switch checked={draft.enabled} onCheckedChange={(v) => patch({ enabled: v })} />
       </div>
 
@@ -334,10 +336,10 @@ export function InstanceEditor({
             value={draft.apiKey}
             onChange={(v) => patch({ apiKey: v })}
             type="password"
-            placeholder={hasStoredApiKey ? "已配置，留空保持不变" : API_KEY_PLACEHOLDER[type]}
+            placeholder={hasStoredApiKey ? uiText("configured_leave_blank_to_keep_f3805ede") : API_KEY_PLACEHOLDER[type]}
           />
           <Field
-            label="Base URL(可选)"
+            label={uiText("base_url_optional_0ae73047")}
             value={draft.baseUrl}
             onChange={(v) => patch({ baseUrl: v })}
             placeholder={
@@ -355,7 +357,7 @@ export function InstanceEditor({
 
       {type === "bodhi" ? (
         <label className="block">
-          <span className="mb-1 block text-xs text-muted-foreground">目标上游(可选)</span>
+          <span className="mb-1 block text-xs text-muted-foreground">{uiText("upstream_target_optional_df6cf793")}</span>
           <Select
             value={draft.targetProvider || UNSET}
             onValueChange={(v) => patch({ targetProvider: v === UNSET ? "" : v })}
@@ -364,7 +366,7 @@ export function InstanceEditor({
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value={UNSET}>未设置</SelectItem>
+              <SelectItem value={UNSET}>{uiText("not_set_2f5f1d6f")}</SelectItem>
               <SelectItem value="openai">OpenAI</SelectItem>
               <SelectItem value="anthropic">Anthropic</SelectItem>
               <SelectItem value="gemini">Gemini</SelectItem>
@@ -376,15 +378,15 @@ export function InstanceEditor({
       {type === "copilot" ? (
         <div className="flex items-center justify-between rounded-md border bg-background px-2.5 py-2">
           <div>
-            <div className="text-sm">Headless 授权</div>
-            <div className="text-xs text-muted-foreground">在控制台打印登录链接,不自动打开浏览器</div>
+            <div className="text-sm">{uiText("headless_authorization_b4707eb5")}</div>
+            <div className="text-xs text-muted-foreground">{uiText("print_the_sign_in_url_in_the_console_without_opening_a__55e7a61e")}</div>
           </div>
           <Switch checked={draft.headlessAuth} onCheckedChange={(v) => patch({ headlessAuth: v })} />
         </div>
       ) : null}
 
       <EditableModelCombobox
-        label="默认模型(可选)"
+        label={uiText("default_model_optional_d2c2a9cc")}
         value={draft.model}
         onChange={(v) => patch({ model: v })}
         models={modelOptions}
@@ -393,7 +395,7 @@ export function InstanceEditor({
 
       <div>
         <label className="block">
-          <span className="mb-1 block text-xs text-muted-foreground">推理强度(可选)</span>
+          <span className="mb-1 block text-xs text-muted-foreground">{uiText("reasoning_level_optional_2191ceaa")}</span>
           <Select
             value={draft.reasoningEffort || UNSET}
             onValueChange={(v) => patch({ reasoningEffort: v === UNSET ? "" : v })}
@@ -402,7 +404,7 @@ export function InstanceEditor({
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value={UNSET}>默认(不指定)</SelectItem>
+              <SelectItem value={UNSET}>{uiText("default_unspecified_1c38331c")}</SelectItem>
               {REASONING_EFFORTS.map((effort) => (
                 <SelectItem key={effort.value} value={effort.value}>
                   {effort.label}
@@ -419,16 +421,14 @@ export function InstanceEditor({
         className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
       >
         {showAdvanced ? <ChevronDown className="size-3.5" /> : <ChevronRight className="size-3.5" />}
-        高级设置
-      </button>
+        {uiText("advanced_settings_44455611")}</button>
 
       {showAdvanced ? (
         <div className="space-y-2.5">
           {type === "openai" || type === "copilot" ? (
             <label className="block">
               <span className="mb-1 block text-xs text-muted-foreground">
-                Responses-only 模型(可选,空格/逗号/换行分隔,支持尾部通配 gpt-5*)
-              </span>
+                {uiText("responses_only_models_optional_separate_with_spaces_com_ff7e394c")}</span>
               <Textarea
                 className="min-h-14 resize-y font-mono text-xs"
                 value={draft.responsesOnlyModels}
@@ -439,8 +439,7 @@ export function InstanceEditor({
           ) : null}
           <label className="block">
             <span className="mb-1 block text-xs text-muted-foreground">
-              请求覆写 request_overrides(可选,JSON)
-            </span>
+              {uiText("request_overrides_optional_json_6388420b")}</span>
             <Textarea
               className="min-h-20 resize-y font-mono text-xs"
               value={draft.requestOverridesJson}
@@ -455,10 +454,9 @@ export function InstanceEditor({
 
       <div className="flex justify-end gap-2 pt-1">
         <Button size="sm" variant="secondary" onClick={onCancel} disabled={saving}>
-          取消
-        </Button>
+          {uiText("cancel_2cd0f3be")}</Button>
         <Button size="sm" onClick={() => void submit()} disabled={saving}>
-          {saving ? "保存中…" : "保存"}
+          {saving ? uiText("saving_ff509c9b") : uiText("save_a3030bf8")}
         </Button>
       </div>
     </div>

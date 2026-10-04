@@ -1,3 +1,4 @@
+import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { useExperienceModeStore } from "@shared/store/experienceModeStore"
@@ -21,6 +22,7 @@ import { SectionApp } from "./system/SectionApp"
  * sections continue to hide until 高级 mode.
  */
 export function SettingsSystem() {
+  useUiLocale()
   const { config, loading, loadError, reload, saveSection } = useSystemConfig()
   const isAdvanced = useExperienceModeStore((s) => s.isAdvanced)
 
@@ -34,10 +36,9 @@ export function SettingsSystem() {
         </div>
       ) : loadError ? (
         <section className="space-y-2 rounded-lg border p-3">
-          <p className="text-xs text-destructive">配置加载失败:{loadError}</p>
+          <p className="text-xs text-destructive">{uiText("could_not_load_configuration_395e6a71")}{loadError}</p>
           <Button size="sm" variant="secondary" onClick={() => void reload()}>
-            重试
-          </Button>
+            {uiText("retry_b8784c8d")}</Button>
         </section>
       ) : config ? (
         <>

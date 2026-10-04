@@ -1,3 +1,4 @@
+import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { useCallback, useEffect, useState } from "react"
 import { Trash2, Plus } from "lucide-react"
 import { settingsService, type EnvVarResponse } from "@services/config/SettingsService"
@@ -7,6 +8,7 @@ import { Switch } from "@/components/ui/switch"
 import { Label } from "@/components/ui/label"
 
 export function SettingsEnv() {
+  useUiLocale()
   const [entries, setEntries] = useState<EnvVarResponse[]>([])
   const [revision, setRevision] = useState<number | null>(null)
   const [loading, setLoading] = useState(true)
@@ -30,7 +32,7 @@ export function SettingsEnv() {
       return true
     } catch {
       setRevision(null)
-      setError("无法确认当前环境变量列表，请刷新设置后重试。错误详情已隐藏。")
+      setError(uiText("the_environment_variable_list_could_not_be_confirmed_re_4b274f7c"))
       return false
     }
   }, [applySnapshot])
@@ -56,8 +58,8 @@ export function SettingsEnv() {
       const refreshed = await reload()
       setError(
         refreshed
-          ? "添加结果未确认，已刷新实际列表；请核对后重试。错误详情已隐藏。"
-          : "添加失败，且无法刷新实际列表；请稍后重试。错误详情已隐藏。",
+          ? uiText("the_add_result_is_unconfirmed_the_actual_list_was_refre_0e0eb67c")
+          : uiText("adding_failed_and_the_actual_list_could_not_be_refreshe_55bc8eea"),
       )
     } finally {
       setBusy(false)
@@ -75,8 +77,8 @@ export function SettingsEnv() {
       const refreshed = await reload()
       setError(
         refreshed
-          ? "删除结果未确认，已刷新实际列表；请核对后重试。错误详情已隐藏。"
-          : "删除失败，且无法刷新实际列表；请稍后重试。错误详情已隐藏。",
+          ? uiText("the_delete_result_is_unconfirmed_the_actual_list_was_re_3ab20d2d")
+          : uiText("deleting_failed_and_the_actual_list_could_not_be_refres_92130a73"),
       )
     } finally {
       setDeleting(null)
@@ -86,14 +88,13 @@ export function SettingsEnv() {
   return (
     <div className="space-y-4">
       <p className="text-xs text-muted-foreground">
-        传递给后端 / 工具的环境变量。标记为密钥的值会在保存后被掩码显示。
-      </p>
+        {uiText("environment_variables_passed_to_the_backend_and_tools_v_0163420e")}</p>
 
       <section className="space-y-2 rounded-lg border p-3">
-        <div className="text-xs font-medium text-muted-foreground">新增变量</div>
-        <Input placeholder="名称(如 OPENAI_API_KEY)" value={name} onChange={(e) => setName(e.target.value)} />
+        <div className="text-xs font-medium text-muted-foreground">{uiText("add_variable_de177c5f")}</div>
+        <Input placeholder={uiText("name_e_g_openai_api_key_b963e5a6")} value={name} onChange={(e) => setName(e.target.value)} />
         <Input
-          placeholder="值"
+          placeholder={uiText("value_cda1d55c")}
           type={secret ? "password" : "text"}
           value={value}
           onChange={(e) => setValue(e.target.value)}
@@ -101,10 +102,9 @@ export function SettingsEnv() {
         <div className="flex items-center justify-between">
           <Label className="text-muted-foreground font-normal">
             <Switch checked={secret} onCheckedChange={setSecret} />
-            密钥(掩码)
-          </Label>
+            {uiText("secret_masked_bf94b704")}</Label>
           <Button size="sm" onClick={add} disabled={!name.trim() || revision === null || busy}>
-            <Plus className="size-4" /> {busy ? "添加中…" : "添加"}
+            <Plus className="size-4" /> {busy ? uiText("adding_f470193b") : uiText("add_7a8a11ea")}
           </Button>
         </div>
       </section>
@@ -116,11 +116,11 @@ export function SettingsEnv() {
       ) : null}
 
       <section className="rounded-lg border p-3">
-        <div className="mb-2 text-xs font-medium text-muted-foreground">已配置 ({entries.length})</div>
+        <div className="mb-2 text-xs font-medium text-muted-foreground">{uiText("configured_e7284971")}{entries.length})</div>
         {loading ? (
-          <p className="text-xs text-muted-foreground">加载中…</p>
+          <p className="text-xs text-muted-foreground">{uiText("loading_4927a53b")}</p>
         ) : entries.length === 0 ? (
-          <p className="text-xs text-muted-foreground">暂无</p>
+          <p className="text-xs text-muted-foreground">{uiText("none_yet_b336a174")}</p>
         ) : (
           <ul className="space-y-1.5">
             {entries.map((e) => (
@@ -129,21 +129,21 @@ export function SettingsEnv() {
                   <div className="flex items-center gap-1.5">
                     <span className="truncate font-mono text-xs">{e.name}</span>
                     {e.secret ? (
-                      <span className="rounded bg-muted px-1 text-[10px] text-muted-foreground">密钥</span>
+                      <span className="rounded bg-muted px-1 text-[10px] text-muted-foreground">{uiText("secret_f67bca8f")}</span>
                     ) : null}
                   </div>
                   <div className="truncate font-mono text-[11px] text-muted-foreground">
                     {e.has_value ? (
-                      e.secret ? "已设置（值已隐藏）" : e.value
+                      e.secret ? uiText("set_value_hidden_4e58023d") : e.value
                     ) : (
-                      <span className="italic">未设置</span>
+                      <span className="italic">{uiText("not_set_2f5f1d6f")}</span>
                     )}
                   </div>
                 </div>
                 <button
                   onClick={() => void remove(e.name)}
                   disabled={deleting !== null || revision === null}
-                  aria-label={`删除 ${e.name}`}
+                  aria-label={uiText("delete_4124e386", { v0: e.name })}
                   className="shrink-0 rounded p-1 text-muted-foreground hover:text-destructive"
                 >
                   <Trash2 className="size-3.5" />

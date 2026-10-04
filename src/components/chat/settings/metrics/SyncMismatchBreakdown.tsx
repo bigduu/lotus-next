@@ -1,3 +1,4 @@
+import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { useMemo } from "react"
 import { BarList, type BarListItem } from "./BarList"
 
@@ -7,12 +8,12 @@ import { BarList, type BarListItem } from "./BarList"
  * forms are kept as aliases because legacy's REASON_LABEL_FALLBACKS used them.
  */
 const REASON_LABELS: Record<string, string> = {
-  message_count_mismatch: "消息数量",
-  last_message_id_mismatch: "最后消息",
-  pending_question_mismatch: "待回应问题",
-  message_count: "消息数量",
-  last_message_id: "最后消息",
-  pending_question: "待回应问题",
+  get message_count_mismatch() { return uiText("message_count_e78985bc") },
+  get last_message_id_mismatch() { return uiText("last_message_208b7165") },
+  get pending_question_mismatch() { return uiText("questions_awaiting_response_61c1d336") },
+  get message_count() { return uiText("message_count_e78985bc") },
+  get last_message_id() { return uiText("last_message_208b7165") },
+  get pending_question() { return uiText("questions_awaiting_response_61c1d336") },
 }
 
 /** Unknown reasons fall back to Title Case of the snake_case key. */
@@ -34,6 +35,7 @@ export function SyncMismatchBreakdown({
 }: {
   breakdown?: Record<string, number> | null
 }) {
+  useUiLocale()
   const items = useMemo<BarListItem[]>(
     () =>
       Object.entries(breakdown ?? {})
@@ -50,7 +52,7 @@ export function SyncMismatchBreakdown({
     <BarList
       items={items}
       color="var(--destructive)"
-      emptyText="此范围内暂无同步不一致记录"
+      emptyText={uiText("no_sync_mismatch_records_in_this_range_c3dd8efd")}
     />
   )
 }

@@ -1,3 +1,4 @@
+import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { useEffect, useId, useMemo, useRef, useState } from "react"
 import { Check, ChevronDown } from "lucide-react"
 import type { ProviderModelDescriptor } from "@shared/types/providerModelRef"
@@ -29,6 +30,7 @@ export function EditableModelCombobox({
   disabled = false,
   hideLabel = false,
 }: EditableModelComboboxProps) {
+  useUiLocale()
   const inputRef = useRef<HTMLInputElement>(null)
   const listboxId = useId()
   const labelId = useId()
@@ -140,7 +142,7 @@ export function EditableModelCombobox({
         {options.length > 0 ? (
           <button
             type="button"
-            aria-label={`展开${label}选项`}
+            aria-label={uiText("expand_options_fe7f0967", { v0: label })}
             tabIndex={-1}
             disabled={disabled}
             className="absolute inset-y-0 right-0 flex w-9 items-center justify-center text-muted-foreground disabled:opacity-50"

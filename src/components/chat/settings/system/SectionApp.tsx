@@ -1,3 +1,4 @@
+import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { useEffect, useState } from "react"
 import { AlertTriangle } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -23,6 +24,7 @@ type PendingAction = "clear-storage" | "reset-app"
 
 /** 应用 — 版本信息 + 图形兼容模式 + 本地缓存清理 + 完全重置(危险区). */
 export function SectionApp() {
+  useUiLocale()
   const [pending, setPending] = useState<PendingAction | null>(null)
   const [busy, setBusy] = useState(false)
   const [actionError, setActionError] = useState<string | null>(null)
@@ -44,7 +46,7 @@ export function SectionApp() {
   const clearStorage = () => {
     localStorage.clear()
     setPending(null)
-    setMsg({ kind: "ok", text: "本地缓存已清除,即将刷新…" })
+    setMsg({ kind: "ok", text: uiText("local_storage_cleared_reloading_ec1328a5") })
     window.setTimeout(() => window.location.reload(), 600)
   }
 
@@ -61,7 +63,7 @@ export function SectionApp() {
       // 4. Clear frontend local state, then reload.
       localStorage.clear()
       setPending(null)
-      setMsg({ kind: "ok", text: "已重置,即将刷新…" })
+      setMsg({ kind: "ok", text: uiText("reset_complete_reloading_12514457") })
       window.setTimeout(() => window.location.reload(), 1200)
     } catch (e) {
       setActionError(getErrorMessage(e))
@@ -71,10 +73,10 @@ export function SectionApp() {
 
   return (
     <section className="space-y-2 rounded-lg border p-3">
-      <div className="text-xs font-medium text-muted-foreground">应用</div>
+      <div className="text-xs font-medium text-muted-foreground">{uiText("apply_63c73c47")}</div>
 
       <div className="flex items-center justify-between text-sm">
-        <span className="text-muted-foreground">前端版本</span>
+        <span className="text-muted-foreground">{uiText("frontend_version_1986e080")}</span>
         <span className="font-mono text-xs">
           v{artifact.version}
           {publicMetadata.development ? " (dev)" : ""}
@@ -83,31 +85,26 @@ export function SectionApp() {
 
       <div className="flex items-center justify-between gap-3 border-t pt-2">
         <div className="min-w-0 space-y-0.5">
-          <div className="text-sm">图形兼容模式</div>
+          <div className="text-sm">{uiText("graphics_compatibility_mode_49d20649")}</div>
           <p className="text-xs leading-relaxed text-muted-foreground">
-            禁用模糊与玻璃效果,适用于虚拟桌面(VDI)、远程或图形受限环境。
-          </p>
+            {uiText("disable_blur_and_glass_effects_for_virtual_desktops_vdi_26252605")}</p>
         </div>
         <Switch checked={vdiSafeMode} onCheckedChange={toggleVdiSafeMode} />
       </div>
 
       <div className="flex items-center justify-between gap-2 border-t pt-2">
-        <div className="text-xs text-muted-foreground">清除浏览器本地缓存并刷新页面</div>
+        <div className="text-xs text-muted-foreground">{uiText("clear_browser_local_storage_and_reload_the_page_2a696421")}</div>
         <Button size="sm" variant="secondary" onClick={() => setPending("clear-storage")}>
-          清除本地缓存
-        </Button>
+          {uiText("clear_local_storage_4ee71bf2")}</Button>
       </div>
 
       <div className="space-y-1.5 border-t pt-2">
         <div className="flex items-center gap-1.5 text-xs font-medium text-destructive">
-          <AlertTriangle className="size-3.5" /> 危险区
-        </div>
+          <AlertTriangle className="size-3.5" />{uiText("danger_zone_d0baa11d")}</div>
         <p className="text-xs leading-relaxed text-muted-foreground">
-          完全重置:删除全部会话(含置顶)、重置后端配置、清除本地缓存,并重新进入初始化流程。
-        </p>
+          {uiText("full_reset_delete_all_sessions_including_pinned_ones_re_d92ddf8e")}</p>
         <Button size="sm" variant="destructive" onClick={() => setPending("reset-app")}>
-          重置应用
-        </Button>
+          {uiText("reset_application_23f30713")}</Button>
       </div>
 
       <StatusLine msg={msg} />
@@ -117,9 +114,9 @@ export function SectionApp() {
         onOpenChange={(o) => {
           if (!o) setPending(null)
         }}
-        title="清除本地缓存?"
-        description="将清空浏览器 localStorage(界面偏好等本地状态)并刷新页面,后端数据不受影响。"
-        confirmLabel="清除并刷新"
+        title={uiText("clear_local_storage_1b86d7c0")}
+        description={uiText("this_clears_browser_localstorage_local_preferences_and__acf1cd5f")}
+        confirmLabel={uiText("clear_and_reload_f19b6e32")}
         onConfirm={clearStorage}
       />
 
@@ -128,9 +125,9 @@ export function SectionApp() {
         onOpenChange={(o) => {
           if (!o && !busy) setPending(null)
         }}
-        title="重置整个应用?"
-        description="将删除全部会话(包括已置顶)、重置后端 config.json、清除本地缓存,并在刷新后重新进入初始化流程。此操作不可撤销。"
-        confirmLabel="确认重置"
+        title={uiText("reset_the_entire_app_60e36122")}
+        description={uiText("delete_all_sessions_including_pinned_ones_reset_backend_b03a8b2a")}
+        confirmLabel={uiText("confirm_reset_96f2cb4f")}
         busy={busy}
         error={actionError}
         onConfirm={() => void resetApp()}

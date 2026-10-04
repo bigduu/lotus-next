@@ -1,3 +1,4 @@
+import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { formatCompact } from "./format"
 
 export interface BarListItem {
@@ -15,7 +16,7 @@ export interface BarListItem {
 export function BarList({
   items,
   color = "var(--mx-chat)",
-  emptyText = "暂无数据",
+  emptyText = uiText("no_data_yet_497c8569"),
   formatValue = formatCompact,
 }: {
   items: BarListItem[]
@@ -23,6 +24,7 @@ export function BarList({
   emptyText?: string
   formatValue?: (value: number) => string
 }) {
+  useUiLocale()
   if (items.length === 0) {
     return <p className="text-xs text-muted-foreground">{emptyText}</p>
   }

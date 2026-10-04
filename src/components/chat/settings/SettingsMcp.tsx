@@ -1,3 +1,4 @@
+import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { useCallback, useEffect, useRef, useState } from "react"
 import { ChevronRight, Pencil, Plus, RefreshCw, Trash2, Upload } from "lucide-react"
 import {
@@ -38,24 +39,26 @@ function transportSummary(t: TransportConfig): string {
 
 /** Live runtime status — deliberately separate from the config.enabled switch. */
 function StatusBadge({ server }: { server: McpServer }) {
+  useUiLocale()
   const rt = server.runtime
   const status = rt?.status ?? ServerStatus.Stopped
   switch (status) {
     case ServerStatus.Ready:
-      return <Badge variant="success">已连接 · {rt?.tool_count ?? 0} 工具</Badge>
+      return <Badge variant="success">{uiText("connected_13bc0e73")} {uiText("count_tools", { count: rt?.tool_count ?? 0 })}</Badge>
     case ServerStatus.Connecting:
-      return <Badge variant="warning">连接中</Badge>
+      return <Badge variant="warning">{uiText("connecting_a898478b")}</Badge>
     case ServerStatus.Degraded:
-      return <Badge variant="warning">降级 · {rt?.tool_count ?? 0} 工具</Badge>
+      return <Badge variant="warning">{uiText("degraded_ab342d36")} {uiText("count_tools", { count: rt?.tool_count ?? 0 })}</Badge>
     case ServerStatus.Error:
-      return <Badge variant="destructive">错误</Badge>
+      return <Badge variant="destructive">{uiText("error_0bc1fb72")}</Badge>
     case ServerStatus.Stopped:
     default:
-      return <Badge variant="outline">已停止</Badge>
+      return <Badge variant="outline">{uiText("stopped_f006455e")}</Badge>
   }
 }
 
 export function SettingsMcp() {
+  useUiLocale()
   const [inventory, setInventory] = useState<{ servers: McpServer[]; confirmed: boolean; revision: number }>({ servers: [], confirmed: false, revision: 0 })
   const { servers, confirmed: listConfirmed, revision: listRevision } = inventory
   const [loading, setLoading] = useState(true)
@@ -97,7 +100,7 @@ export function SettingsMcp() {
       if (!mountedRef.current || generation !== readGeneration.current) return null
       setInventory((previous) => ({ ...previous, confirmed: false, revision: previous.revision + 1 }))
       // Keep last-known list on silent poll failures; still surface the error.
-      if (!silent) setError("无法确认 MCP 服务器列表，请刷新后重试。错误详情已隐藏。")
+      if (!silent) setError(uiText("the_mcp_server_list_could_not_be_confirmed_refresh_and__b682cec6"))
       return null
     } finally {
       if (readInFlight.current === generation) readInFlight.current = null
@@ -175,7 +178,7 @@ export function SettingsMcp() {
       await (enabled ? mcpService.connectServer(server.id) : mcpService.disconnectServer(server.id))
       setError(null)
     } catch {
-      setError("无法更改服务器启用状态。请核对实际列表；错误详情已隐藏。")
+      setError(uiText("could_not_change_the_server_s_enabled_state_check_the_a_e8ee44ca"))
     } finally {
       setBusy(server.id, false)
       void reload(true)
@@ -189,7 +192,7 @@ export function SettingsMcp() {
       setToolsVersion((prev) => ({ ...prev, [server.id]: (prev[server.id] ?? 0) + 1 }))
       setError(null)
     } catch {
-      setError("无法刷新服务器工具。请核对运行状态；错误详情已隐藏。")
+      setError(uiText("could_not_refresh_server_tools_check_the_server_state_e_9f6d5c48"))
     } finally {
       setBusy(server.id, false)
       void reload(true)
@@ -217,7 +220,7 @@ export function SettingsMcp() {
       setDeleting(null)
       await reload(true)
     } catch {
-      setDeleteError("无法确认删除结果，请刷新实际列表；错误详情已隐藏。")
+      setDeleteError(uiText("the_delete_result_could_not_be_confirmed_refresh_the_ac_3af86680"))
     } finally {
       setDeleteBusy(false)
     }
@@ -226,15 +229,13 @@ export function SettingsMcp() {
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="text-xs text-muted-foreground">连接 MCP 工具服务器(stdio、SSE 或 Streamable HTTP)。</p>
+        <p className="text-xs text-muted-foreground">{uiText("connect_mcp_tool_servers_using_stdio_sse_or_streamable__1a4a9aec")}</p>
         <div className="flex flex-wrap gap-2">
-          <Button size="sm" variant="ghost" aria-label="刷新 MCP 列表" onClick={() => { if (!importBusy.current) void reload() }}><RefreshCw className="size-4" /></Button>
+          <Button size="sm" variant="ghost" aria-label={uiText("refresh_mcp_list_7e60055b")} onClick={() => { if (!importBusy.current) void reload() }}><RefreshCw className="size-4" /></Button>
           <Button ref={importTrigger} size="sm" variant="secondary" disabled={!listConfirmed || loading} onClick={() => setImportOpen(true)}>
-            <Upload className="size-4" /> 导入 JSON
-          </Button>
+            <Upload className="size-4" />{uiText("import_json_8f6e8682")}</Button>
           <Button size="sm" variant="secondary" onClick={() => setForm({ mode: "create", initial: null })}>
-            <Plus className="size-4" /> 新增
-          </Button>
+            <Plus className="size-4" />{uiText("add_0006d696")}</Button>
         </div>
       </div>
 
@@ -248,9 +249,9 @@ export function SettingsMcp() {
       ) : null}
 
       {loading ? (
-        <p className="text-xs text-muted-foreground">加载中…</p>
+        <p className="text-xs text-muted-foreground">{uiText("loading_4927a53b")}</p>
       ) : servers.length === 0 ? (
-        <p className="text-xs text-muted-foreground">{listConfirmed ? "暂无 MCP 服务器" : "服务器列表尚未确认，请刷新。"}</p>
+        <p className="text-xs text-muted-foreground">{listConfirmed ? uiText("no_mcp_servers_yet_48ef8b92") : uiText("server_list_unconfirmed_please_refresh_07249978")}</p>
       ) : (
         <ul className="space-y-2">
           {servers.map((s) => {
@@ -266,7 +267,7 @@ export function SettingsMcp() {
                 <div className="flex items-center gap-2">
                   <button
                     onClick={() => setExpanded((prev) => ({ ...prev, [s.id]: !prev[s.id] }))}
-                    aria-label={isOpen ? "收起工具列表" : "展开工具列表"}
+                    aria-label={isOpen ? uiText("collapse_tool_list_6bba8d4b") : uiText("expand_tool_list_cc4cd445")}
                     aria-expanded={isOpen}
                     className="shrink-0 rounded p-1 text-muted-foreground hover:text-foreground"
                   >
@@ -287,13 +288,13 @@ export function SettingsMcp() {
                     checked={s.enabled}
                     disabled={busy}
                     onCheckedChange={(checked) => void toggleEnabled(s, checked)}
-                    aria-label={s.enabled ? "停用" : "启用"}
+                    aria-label={s.enabled ? uiText("disable_4e6fd0e2") : uiText("enabled_f4f0ead1")}
                   />
                   <button
                     onClick={() => void refreshServer(s)}
                     disabled={busy || !s.enabled}
-                    aria-label="刷新工具"
-                    title={s.enabled ? "刷新工具列表" : "先启用服务器"}
+                    aria-label={uiText("refresh_tools_6fd87b32")}
+                    title={s.enabled ? uiText("reload_tools_551274c1") : uiText("enable_the_server_first_d7458d83")}
                     className="shrink-0 rounded p-1 text-muted-foreground hover:text-foreground disabled:opacity-40"
                   >
                     <RefreshCw className={cn("size-3.5", busy && "animate-spin")} />
@@ -305,7 +306,7 @@ export function SettingsMcp() {
                         initial: { ...s.config, name: s.config.name ?? s.name, enabled: s.enabled },
                       })
                     }
-                    aria-label="编辑"
+                    aria-label={uiText("edit_05183656")}
                     className="shrink-0 rounded p-1 text-muted-foreground hover:text-foreground"
                   >
                     <Pencil className="size-3.5" />
@@ -315,7 +316,7 @@ export function SettingsMcp() {
                       setDeleteError(null)
                       setDeleting(s)
                     }}
-                    aria-label="删除"
+                    aria-label={uiText("delete_2f9daa82")}
                     className="shrink-0 rounded p-1 text-muted-foreground hover:text-destructive"
                   >
                     <Trash2 className="size-3.5" />
@@ -323,7 +324,7 @@ export function SettingsMcp() {
                 </div>
 
                 {showLastError ? (
-                  <p className="mt-1.5 text-xs text-destructive">服务器运行异常。详细错误已隐藏，以保护配置中的凭据。</p>
+                  <p className="mt-1.5 text-xs text-destructive">{uiText("the_server_is_unhealthy_error_details_are_hidden_to_pro_efc23f19")}</p>
                 ) : null}
 
                 {isOpen ? (
@@ -357,10 +358,9 @@ export function SettingsMcp() {
         }}
       >
         <ResponsiveDialogContent showCloseButton={false} className="p-5">
-          <ResponsiveDialogTitle>删除 MCP 服务器</ResponsiveDialogTitle>
+          <ResponsiveDialogTitle>{uiText("delete_mcp_server_16db2934")}</ResponsiveDialogTitle>
           <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
-            确定删除「{deleting?.name || deleting?.id}」?已连接的会话将无法再使用其工具,该操作不可撤销。
-          </p>
+            {uiText("delete_72f49a52")}{deleting?.name || deleting?.id}{uiText("connected_sessions_will_lose_access_to_its_tools_this_c_cab6e03c")}</p>
           {deleteError ? (
             <p className="mt-2 text-xs break-all text-destructive" role="alert">
               {deleteError}
@@ -368,10 +368,9 @@ export function SettingsMcp() {
           ) : null}
           <div className="mt-5 flex justify-end gap-2">
             <Button size="sm" variant="secondary" onClick={() => setDeleting(null)} disabled={deleteBusy}>
-              取消
-            </Button>
+              {uiText("cancel_2cd0f3be")}</Button>
             <Button size="sm" variant="destructive" onClick={() => void confirmDelete()} disabled={deleteBusy}>
-              {deleteBusy ? "删除中…" : "删除"}
+              {deleteBusy ? uiText("deleting_5e8e7af5") : uiText("delete_2f9daa82")}
             </Button>
           </div>
         </ResponsiveDialogContent>

@@ -1,3 +1,4 @@
+import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { useCallback, useEffect, useRef, useState } from "react"
 import { metricsService } from "@services/metrics"
 import type {
@@ -43,15 +44,15 @@ const EMPTY_DATA: MetricsDashboardData = {
 const POLL_INTERVAL_MS = 30_000
 /** Raw forward-request rows are bounded; aggregates take the full range. */
 const FORWARD_REQUEST_LIMIT = 50
-const SECTION_LABELS = [
-  "总览",
-  "趋势",
-  "模型分布",
-  "用量构成",
-  "会话列表",
-  "Forward 端点",
-  "Forward 请求",
-  "记忆趋势",
+const sectionLabels = () => [
+  uiText("overview_a33db573"),
+  uiText("trend_9b59e637"),
+  uiText("model_distribution_39f1a54a"),
+  uiText("usage_breakdown_38f4c70c"),
+  uiText("sessions_c980de33"),
+  uiText("forward_endpoints_3e1263a7"),
+  uiText("forward_requests_549199b5"),
+  uiText("memory_trend_73d9cf2f"),
 ] as const
 
 function errorMessage(reason: unknown): string {
@@ -65,6 +66,7 @@ function errorMessage(reason: unknown): string {
  * while the 指标 tab is open, so mounted ⇒ panel shown).
  */
 export function useMetricsDashboard(filters: MetricsDashboardFilters) {
+  useUiLocale()
   const [data, setData] = useState<MetricsDashboardData>(EMPTY_DATA)
   const [errors, setErrors] = useState<string[]>([])
   const [initialLoading, setInitialLoading] = useState(true)
@@ -135,7 +137,7 @@ export function useMetricsDashboard(filters: MetricsDashboardFilters) {
       setErrors(
         results.flatMap((result, index) =>
           result.status === "rejected"
-            ? [`${SECTION_LABELS[index]}: ${errorMessage(result.reason)}`]
+            ? [`${sectionLabels()[index]}: ${errorMessage(result.reason)}`]
             : [],
         ),
       )

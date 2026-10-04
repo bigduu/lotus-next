@@ -1,3 +1,4 @@
+import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { useEffect, useId, useMemo, useRef, useState } from "react"
 import { Check, ChevronDown, Plus } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
@@ -92,6 +93,7 @@ function EditableValueCombobox({
   disabled?: boolean
   inputMode?: "text" | "numeric" | "decimal"
 }) {
+  useUiLocale()
   const inputRef = useRef<HTMLInputElement>(null)
   const listboxId = useId()
   const [open, setOpen] = useState(false)
@@ -188,7 +190,7 @@ function EditableValueCombobox({
           {options.length > 0 && !disabled ? (
             <button
               type="button"
-              aria-label={`展开${ariaLabel}选项`}
+              aria-label={uiText("expand_options_fe7f0967", { v0: ariaLabel })}
               tabIndex={-1}
               className="absolute inset-y-0 right-0 flex w-8 items-center justify-center text-muted-foreground"
               onMouseDown={(event) => event.preventDefault()}
@@ -258,6 +260,7 @@ export function SectionModelLimits({
   config: SystemBambooConfig
   saveSection: SystemConfigApi["saveSection"]
 }) {
+  useUiLocale()
   const availableModels = useAppStore((state) => state.models)
   const providerSnapshot = useProviderStore(
     (state) => state.providerSnapshot ?? state.providerRepairSnapshot,
@@ -388,7 +391,7 @@ export function SectionModelLimits({
       const latestUsedModels = getUsedModels()
       setUsedModels(latestUsedModels)
       setRows(buildLimitRows(globalDefault, saved.model_limits ?? [], latestUsedModels))
-      setMsg({ kind: "ok", text: "已保存" })
+      setMsg({ kind: "ok", text: uiText("saved_1bd91a7d") })
     } catch (error) {
       setMsg({ kind: "error", text: getErrorMessage(error) })
     } finally {
@@ -405,7 +408,7 @@ export function SectionModelLimits({
       setUsedModels(latestUsedModels)
       setRows(buildLimitRows(globalDefault, saved.model_limits ?? [], latestUsedModels))
       setConfirmReset(false)
-      setMsg({ kind: "ok", text: "已恢复为全局默认" })
+      setMsg({ kind: "ok", text: uiText("restored_global_defaults_4f47beee") })
     } catch (error) {
       setResetError(getErrorMessage(error))
     } finally {
@@ -417,36 +420,33 @@ export function SectionModelLimits({
     <section className="space-y-3">
       <div className="flex items-start justify-between gap-3">
         <div>
-          <h2 className="text-sm font-semibold">模型限额</h2>
+          <h2 className="text-sm font-semibold">{uiText("model_limits_05ff605e")}</h2>
           <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-            已确认发送过的模型会自动出现在列表中；未自定义的行继续跟随全局默认，只保存真正的覆盖。
-          </p>
+            {uiText("models_confirmed_through_sending_appear_automatically_u_1e3a1de2")}</p>
         </div>
         <Button size="sm" variant="secondary" onClick={addRow}>
-          <Plus className="size-4" /> 新增模型
-        </Button>
+          <Plus className="size-4" />{uiText("add_model_e552c2ac")}</Button>
       </div>
 
       <div className="rounded-lg border bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
-        全局默认:上下文 <span className="font-medium text-foreground">{formatTokenCount(globalDefault.max_context_tokens)}</span>
-        {" · "}最大输出 <span className="font-medium text-foreground">{formatTokenCount(globalDefault.max_output_tokens)}</span>
-        {" · "}安全余量 <span className="font-medium text-foreground">{formatTokenCount(globalDefault.safety_margin)}</span>
+        {uiText("global_defaults_context_b7667fd0")} <span className="font-medium text-foreground">{formatTokenCount(globalDefault.max_context_tokens)}</span>
+        {" · "}{uiText("max_output_d6601037")} <span className="font-medium text-foreground">{formatTokenCount(globalDefault.max_output_tokens)}</span>
+        {" · "}{uiText("safety_margin_40253c60")} <span className="font-medium text-foreground">{formatTokenCount(globalDefault.safety_margin)}</span>
       </div>
 
       <p className="text-xs leading-relaxed text-muted-foreground">
-        模型支持下拉选择或直接输入匹配串；上下文窗口和最大输出均可选择预设，也可输入任意整数或 K/M 简写。最大输出会从总上下文中为每轮请求预留，设置越大，历史压缩越早。
-      </p>
+        {uiText("choose_or_type_a_model_pattern_context_and_output_limit_eb2906c4")}</p>
 
       <div className="overflow-x-auto rounded-lg border">
         <table className="w-full min-w-[820px] text-xs">
           <thead className="bg-muted/40 text-muted-foreground">
             <tr className="[&>th]:px-2 [&>th]:py-2 [&>th]:font-medium">
-              <th className="w-[220px] text-left">模型</th>
-              <th className="w-[150px] text-left">上下文窗口</th>
-              <th className="w-[130px] text-left">最大输出</th>
-              <th className="w-[130px] text-left">安全余量</th>
-              <th className="w-[90px] text-left">状态</th>
-              <th className="w-[150px] text-right">操作</th>
+              <th className="w-[220px] text-left">{uiText("model_c98e118e")}</th>
+              <th className="w-[150px] text-left">{uiText("context_window_bb074b86")}</th>
+              <th className="w-[130px] text-left">{uiText("max_output_d6601037")}</th>
+              <th className="w-[130px] text-left">{uiText("safety_margin_40253c60")}</th>
+              <th className="w-[90px] text-left">{uiText("status_6320b4a8")}</th>
+              <th className="w-[150px] text-right">{uiText("action_ed31fbb4")}</th>
             </tr>
           </thead>
           <tbody>
@@ -455,11 +455,11 @@ export function SectionModelLimits({
                 <td>
                   {row.isCustom ? (
                     <EditableValueCombobox
-                      ariaLabel="模型匹配串"
+                      ariaLabel={uiText("model_pattern_e5fe9bd4")}
                       value={row.model_pattern}
                       onChange={(value) => updateRow(row.id, { model_pattern: value })}
                       options={knownModelOptions}
-                      placeholder="如 gpt-5 或 glm-5.3"
+                      placeholder={uiText("e_g_gpt_5_or_glm_5_3_63bebb83")}
                     />
                   ) : (
                     <div className="flex h-8 items-center font-mono font-medium" title={row.model_pattern}>
@@ -469,22 +469,22 @@ export function SectionModelLimits({
                 </td>
                 <td>
                   <EditableValueCombobox
-                    ariaLabel={`${row.model_pattern || "新模型"} 上下文窗口`}
+                    ariaLabel={uiText("context_window_74c09029", { v0: row.model_pattern || uiText("new_model") })}
                     value={row.max_context_tokens}
                     onChange={(value) => updateRow(row.id, { max_context_tokens: value })}
                     options={CONTEXT_WINDOW_PRESETS}
-                    placeholder="如 258K 或 1M"
+                    placeholder={uiText("e_g_258k_or_1m_0a242a0c")}
                     disabled={!row.customized}
                     inputMode="decimal"
                   />
                 </td>
                 <td>
                   <EditableValueCombobox
-                    ariaLabel={`${row.model_pattern || "新模型"} 最大输出`}
+                    ariaLabel={uiText("maximum_output_5e8920ca", { v0: row.model_pattern || uiText("new_model") })}
                     value={row.max_output_tokens}
                     onChange={(value) => updateRow(row.id, { max_output_tokens: value })}
                     options={MAX_OUTPUT_PRESETS}
-                    placeholder="如 16K 或 32K"
+                    placeholder={uiText("e_g_16k_or_32k_95dea87b")}
                     disabled={!row.customized}
                     inputMode="decimal"
                   />
@@ -492,7 +492,7 @@ export function SectionModelLimits({
                 <td>
                   <Input
                     className="h-8 text-xs"
-                    aria-label={`${row.model_pattern || "新模型"} 安全余量`}
+                    aria-label={uiText("safety_margin_b3945952", { v0: row.model_pattern || uiText("new_model") })}
                     inputMode="decimal"
                     placeholder={formatTokenCount(globalDefault.safety_margin)}
                     value={row.safety_margin}
@@ -502,7 +502,7 @@ export function SectionModelLimits({
                 </td>
                 <td className="pt-3!">
                   <Badge variant={row.customized ? "success" : "secondary"}>
-                    {row.customized ? "已覆盖" : "跟随默认"}
+                    {row.customized ? uiText("overridden_4ae1bfcb") : uiText("follow_defaults_a44f9f9f")}
                   </Badge>
                 </td>
                 <td>
@@ -514,8 +514,7 @@ export function SectionModelLimits({
                         className="h-8 px-2"
                         onClick={() => updateRow(row.id, { customized: true })}
                       >
-                        自定义
-                      </Button>
+                        {uiText("customize_4eafa9e9")}</Button>
                     ) : !row.isCustom ? (
                       <Button
                         size="sm"
@@ -523,8 +522,7 @@ export function SectionModelLimits({
                         className="h-8 px-2"
                         onClick={() => revertRow(row.id)}
                       >
-                        恢复默认
-                      </Button>
+                        {uiText("reset_to_default_ba2e93e7")}</Button>
                     ) : null}
                     <Button
                       size="sm"
@@ -532,8 +530,7 @@ export function SectionModelLimits({
                       className="h-8 px-2 text-destructive hover:text-destructive"
                       onClick={() => removeRow(row)}
                     >
-                      移除
-                    </Button>
+                      {uiText("remove_6135d415")}</Button>
                   </div>
                 </td>
               </tr>
@@ -542,8 +539,7 @@ export function SectionModelLimits({
         </table>
         {rows.length === 0 ? (
           <div className="border-t px-3 py-8 text-center text-xs text-muted-foreground">
-            发送消息后，实际使用过的模型会自动出现在这里；也可以现在新增一个模型。
-          </div>
+            {uiText("models_you_have_used_appear_here_after_sending_you_can__d8f967ba")}</div>
         ) : null}
       </div>
 
@@ -559,10 +555,9 @@ export function SectionModelLimits({
               setConfirmReset(true)
             }}
           >
-            全部恢复默认
-          </Button>
+            {uiText("reset_all_to_default_3b6c48ce")}</Button>
           <Button size="sm" onClick={() => void save()} disabled={busy}>
-            {busy ? "保存中…" : "保存"}
+            {busy ? uiText("saving_ff509c9b") : uiText("save_a3030bf8")}
           </Button>
         </div>
       </div>
@@ -570,9 +565,9 @@ export function SectionModelLimits({
       <ConfirmDialog
         open={confirmReset}
         onOpenChange={setConfirmReset}
-        title="清除全部模型限额?"
-        description="将删除所有按模型的覆盖；已使用模型仍保留在列表中，并恢复为全局默认限额。"
-        confirmLabel="清除"
+        title={uiText("clear_all_model_limits_86ec2499")}
+        description={uiText("remove_all_per_model_overrides_used_models_stay_in_the__d570aece")}
+        confirmLabel={uiText("clear_bce23772")}
         busy={busy}
         error={resetError}
         onConfirm={() => void resetAll()}

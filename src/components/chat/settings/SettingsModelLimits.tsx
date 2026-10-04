@@ -1,3 +1,4 @@
+import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { SectionModelLimits } from "./system/SectionModelLimits"
@@ -5,6 +6,7 @@ import { useSystemConfig } from "./system/useSystemConfig"
 
 /** Standalone model-limit settings tab. */
 export function SettingsModelLimits() {
+  useUiLocale()
   const { config, loading, loadError, reload, saveSection } = useSystemConfig()
 
   if (loading) {
@@ -19,10 +21,9 @@ export function SettingsModelLimits() {
   if (loadError) {
     return (
       <section className="space-y-2 rounded-lg border p-3">
-        <p className="text-xs text-destructive">模型限额加载失败:{loadError}</p>
+        <p className="text-xs text-destructive">{uiText("could_not_load_model_limits_f49c4361")}{loadError}</p>
         <Button size="sm" variant="secondary" onClick={() => void reload()}>
-          重试
-        </Button>
+          {uiText("retry_b8784c8d")}</Button>
       </section>
     )
   }

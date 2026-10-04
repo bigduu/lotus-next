@@ -1,3 +1,4 @@
+import { uiText } from "@shared/i18n/ui"
 import { apiClient, getErrorMessage, isApiError, isRequestError } from "../api/index.ts"
 import { isMaskedSecret } from "@/lib/secrets.ts"
 
@@ -740,26 +741,26 @@ export const getSafeNotificationErrorMessage = (
 ): string => {
   void submittedCredentials
   if (error instanceof NotificationConfigContractError) {
-    return "通知渠道配置格式与 Lotus Next 不兼容。"
+    return uiText("notification_channel_configuration_is_incompatible_with_ab158aa6")
   }
   if (error instanceof NotificationConfigAuthorityError) {
-    return "通知渠道配置当前处于不安全的恢复状态，无法安全编辑。"
+    return uiText("notification_channel_configuration_is_in_an_unsafe_reco_7e9e365c")
   }
   if (isApiError(error)) {
     const code = getNotificationConfigErrorCode(error)
     if (code === "config_recovery_pending") {
-      return "通知渠道配置正在等待恢复确认，当前不能保存。"
+      return uiText("notification_channel_configuration_is_awaiting_recovery_0d61f50c")
     }
     if (code === "config_revision_conflict") {
-      return "通知渠道配置已被其他客户端更新。"
+      return uiText("another_client_updated_notification_channel_configurati_2a2b3c35")
     }
-    if (error.status === 401) return "身份验证失败，无法访问通知渠道配置。"
-    if (error.status === 403) return "当前身份无权修改通知渠道配置。"
-    if (error.status === 404) return "当前 Bamboo 不支持通知渠道分区配置。"
-    if (error.status >= 500) return "Bamboo 无法处理通知渠道配置，请稍后重试。"
-    return "Bamboo 拒绝了通知渠道设置，请检查输入后重试。"
+    if (error.status === 401) return uiText("authentication_failed_notification_channel_configuratio_3cacc841")
+    if (error.status === 403) return uiText("this_identity_cannot_modify_notification_channel_config_89535271")
+    if (error.status === 404) return uiText("this_bamboo_version_does_not_support_partitioned_notifi_df8200cd")
+    if (error.status >= 500) return uiText("bamboo_cannot_process_notification_channel_configuratio_f026d98b")
+    return uiText("bamboo_rejected_notification_channel_settings_check_the_f7dcb65f")
   }
 
   if (isRequestError(error)) return getErrorMessage(error)
-  return "无法完成通知渠道配置请求，请重试。"
+  return uiText("could_not_complete_the_notification_channel_request_try_1bfd8d61")
 }

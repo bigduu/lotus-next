@@ -1,3 +1,4 @@
+import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Switch } from "@/components/ui/switch"
@@ -28,6 +29,7 @@ export function SectionContextManagement({
   config: SystemBambooConfig
   saveSection: SystemConfigApi["saveSection"]
 }) {
+  useUiLocale()
   // Seed once at mount. Other sections share and refresh the same config;
   // re-seeding here would overwrite an unsaved local choice.
   const initialStrategy = configuredStrategy(config)
@@ -64,13 +66,13 @@ export function SectionContextManagement({
       if (persistedStrategy !== requestedStrategy) {
         throw new Error(
           requestedStrategy === "retrieval_window"
-            ? "后端未确认检索窗口策略，配置尚未在当前运行中生效"
-            : "后端未确认摘要策略，配置尚未在当前运行中生效"
+            ? uiText("the_backend_has_not_confirmed_the_retrieval_window_poli_f71a7519")
+            : uiText("the_backend_has_not_confirmed_the_summary_policy_it_is__a1931a8d")
         )
       }
       setSummariesEnabled(persistedStrategy === "summary")
       setSavedStrategy(persistedStrategy)
-      setMsg({ kind: "ok", text: "已保存" })
+      setMsg({ kind: "ok", text: uiText("saved_1bd91a7d") })
     } catch (e) {
       setMsg({ kind: "error", text: getErrorMessage(e) })
     } finally {
@@ -80,14 +82,14 @@ export function SectionContextManagement({
 
   return (
     <section className="space-y-2 rounded-lg border p-3">
-      <div className="text-xs font-medium text-muted-foreground">上下文管理</div>
+      <div className="text-xs font-medium text-muted-foreground">{uiText("context_management_29dde6e6")}</div>
       <div className="flex items-center justify-between gap-3">
         <div className="min-w-0 space-y-0.5">
-          <div className="text-sm">自动生成上下文摘要</div>
+          <div className="text-sm">{uiText("generate_context_summaries_automatically_20f4d495")}</div>
           <p className="text-xs leading-relaxed text-muted-foreground">
             {summariesEnabled
-              ? "达到上下文压力阈值时，用后台模型生成滚动摘要。"
-              : "已关闭：改用检索窗口；原始消息仍保存在会话历史中，模型按需检索。"}
+              ? uiText("generate_rolling_summaries_with_a_background_model_when_b05db783")
+              : uiText("off_use_a_retrieval_window_original_messages_remain_in__98aada95")}
           </p>
         </div>
         <Switch
@@ -97,24 +99,22 @@ export function SectionContextManagement({
             setSummariesEnabled(checked)
             setMsg(null)
           }}
-          aria-label="自动生成上下文摘要"
+          aria-label={uiText("generate_context_summaries_automatically_20f4d495")}
         />
       </div>
 
       <p className="text-xs leading-relaxed text-muted-foreground">
-        保存后无需重启，从下一次执行开始生效；正在运行的任务会继续使用启动时的策略。
-      </p>
+        {uiText("no_restart_is_needed_changes_apply_to_the_next_run_acti_24de7c6e")}</p>
 
       {!summariesEnabled ? (
         <p className="rounded-md bg-muted px-2 py-1.5 text-xs leading-relaxed text-muted-foreground">
-          已有摘要的会话不会自动转换。保存后请新建会话使用检索窗口；已有原始历史不会被删除。
-        </p>
+          {uiText("sessions_with_existing_summaries_are_not_converted_auto_d1b0f8c0")}</p>
       ) : null}
 
       <div className="flex items-center justify-between gap-2">
         <StatusLine msg={msg} />
         <Button size="sm" className="ml-auto" onClick={save} disabled={busy || !dirty}>
-          {busy ? "保存中…" : "保存"}
+          {busy ? uiText("saving_ff509c9b") : uiText("save_a3030bf8")}
         </Button>
       </div>
     </section>

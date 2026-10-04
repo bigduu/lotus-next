@@ -1,3 +1,4 @@
+import { uiText, useUiLocale } from "@shared/i18n/ui"
 import type { ForwardEndpointMetrics } from "@services/metrics"
 import { formatCompact, formatDuration, formatExact } from "./format"
 
@@ -18,8 +19,9 @@ function shortEndpoint(endpoint: string): string {
  * next's BarList idiom — every row carries exact values as text.
  */
 export function ForwardEndpointsList({ endpoints }: { endpoints: ForwardEndpointMetrics[] }) {
+  useUiLocale()
   if (endpoints.length === 0) {
-    return <p className="text-xs text-muted-foreground">此范围内暂无 Forward 请求</p>
+    return <p className="text-xs text-muted-foreground">{uiText("no_forward_requests_in_this_range_78b60c7c")}</p>
   }
 
   const sorted = [...endpoints].sort((a, b) => b.requests - a.requests)
@@ -31,12 +33,10 @@ export function ForwardEndpointsList({ endpoints }: { endpoints: ForwardEndpoint
       <div className="flex items-center gap-3 text-xs text-muted-foreground">
         <span className="flex items-center gap-1.5">
           <span className="h-0.5 w-3 rounded-full" style={{ background: SUCCESS_COLOR }} />
-          成功
-        </span>
+          {uiText("successful_053461ce")}</span>
         <span className="flex items-center gap-1.5">
           <span className="h-0.5 w-3 rounded-full" style={{ background: FAILED_COLOR }} />
-          失败
-        </span>
+          {uiText("failed_28384d7a")}</span>
       </div>
 
       <ul className="space-y-2">
@@ -46,15 +46,15 @@ export function ForwardEndpointsList({ endpoints }: { endpoints: ForwardEndpoint
           return (
             <li
               key={item.endpoint}
-              title={`${item.endpoint}: ${formatExact(item.requests)} 次请求(成功 ${formatExact(item.successful)} · 失败 ${formatExact(item.failed)})`}
+              title={uiText("requests_successful_failed_3994db44", { v0: item.endpoint, v1: formatExact(item.requests), v2: formatExact(item.successful), v3: formatExact(item.failed) })}
             >
               <div className="flex items-baseline justify-between gap-2">
                 <span className="min-w-0 truncate text-xs">
                   {shortEndpoint(item.endpoint)}
                   <span className="ml-1.5 text-muted-foreground">
-                    成功 {formatCompact(item.successful)} · 失败 {formatCompact(item.failed)}
+                    {uiText("successful_053461ce")} {formatCompact(item.successful)} {uiText("failed_89661a55")} {formatCompact(item.failed)}
                     {item.avg_duration_ms != null && item.avg_duration_ms > 0
-                      ? ` · 平均 ${formatDuration(item.avg_duration_ms)}`
+                      ? uiText("average_847b8976", { v0: formatDuration(item.avg_duration_ms) })
                       : ""}
                   </span>
                 </span>

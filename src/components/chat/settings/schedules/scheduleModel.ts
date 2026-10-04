@@ -1,3 +1,4 @@
+import { uiText, uiLanguage } from "@shared/i18n/ui"
 import type {
   MisfirePolicy,
   OverlapPolicy,
@@ -12,34 +13,34 @@ export type MisfirePolicyType = MisfirePolicy["type"]
 export type IntervalUnit = "seconds" | "minutes" | "hours"
 
 export const WEEKDAY_OPTIONS: Array<{ value: WeeklyWeekday; label: string }> = [
-  { value: "mon", label: "一" },
-  { value: "tue", label: "二" },
-  { value: "wed", label: "三" },
-  { value: "thu", label: "四" },
-  { value: "fri", label: "五" },
-  { value: "sat", label: "六" },
-  { value: "sun", label: "日" },
+  { value: "mon", get label() { return uiText("mon_51a75f46") } },
+  { value: "tue", get label() { return uiText("tue_084b42f6") } },
+  { value: "wed", get label() { return uiText("wed_a4c3313d") } },
+  { value: "thu", get label() { return uiText("thu_754a9d58") } },
+  { value: "fri", get label() { return uiText("fri_c9b87f51") } },
+  { value: "sat", get label() { return uiText("sat_de07b538") } },
+  { value: "sun", get label() { return uiText("sun_85217f7a") } },
 ]
 
 export const TRIGGER_TYPE_OPTIONS: Array<{ value: TriggerType; label: string }> = [
-  { value: "interval", label: "间隔" },
-  { value: "daily", label: "每天" },
-  { value: "weekly", label: "每周" },
-  { value: "monthly", label: "每月" },
+  { value: "interval", get label() { return uiText("interval_4f5df723") } },
+  { value: "daily", get label() { return uiText("daily_eea1694c") } },
+  { value: "weekly", get label() { return uiText("weekly_92845d3b") } },
+  { value: "monthly", get label() { return uiText("monthly_68b21af9") } },
   { value: "cron", label: "Cron" },
 ]
 
 export const MISFIRE_OPTIONS: Array<{ value: MisfirePolicyType; label: string }> = [
-  { value: "run_once", label: "补跑一次" },
-  { value: "skip", label: "跳过" },
-  { value: "catch_up_all", label: "全部补跑" },
-  { value: "catch_up_window", label: "窗口内补跑" },
+  { value: "run_once", get label() { return uiText("catch_up_once_c2096e4c") } },
+  { value: "skip", get label() { return uiText("skip_fc50a99c") } },
+  { value: "catch_up_all", get label() { return uiText("catch_up_all_06529cda") } },
+  { value: "catch_up_window", get label() { return uiText("catch_up_within_window_28b614d7") } },
 ]
 
 export const OVERLAP_OPTIONS: Array<{ value: OverlapPolicy; label: string }> = [
-  { value: "queue_one", label: "排队一个" },
-  { value: "skip", label: "跳过" },
-  { value: "allow", label: "允许并行" },
+  { value: "queue_one", get label() { return uiText("queue_one_1d2609b4") } },
+  { value: "skip", get label() { return uiText("skip_fc50a99c") } },
+  { value: "allow", get label() { return uiText("allow_parallel_runs_33ce425a") } },
 ]
 
 export interface ScheduleFormValues {
@@ -135,37 +136,37 @@ export function buildTriggerFromValues(values: ScheduleFormValues): {
   switch (values.trigger_type) {
     case "interval": {
       const raw = Number(values.interval_value)
-      if (!Number.isFinite(raw) || raw <= 0) return { error: "请填写大于 0 的间隔" }
+      if (!Number.isFinite(raw) || raw <= 0) return { error: uiText("enter_an_interval_greater_than_0_da8d5def") }
       const seconds = Math.round(raw * UNIT_SECONDS[values.interval_unit])
-      if (seconds <= 0) return { error: "请填写大于 0 的间隔" }
+      if (seconds <= 0) return { error: uiText("enter_an_interval_greater_than_0_da8d5def") }
       return { trigger: { type: "interval", every_seconds: seconds } }
     }
     case "daily": {
       const hm = parseHourMinute(values)
-      if (!hm) return { error: "请填写有效的时间(时 0-23,分 0-59)" }
+      if (!hm) return { error: uiText("enter_a_valid_time_hour_0_23_minute_0_59_f44f4f37") }
       return { trigger: { type: "daily", ...hm, second: 0 } }
     }
     case "weekly": {
-      if (values.weekly_weekdays.length === 0) return { error: "请至少选择一个星期几" }
+      if (values.weekly_weekdays.length === 0) return { error: uiText("select_at_least_one_weekday_1084b61e") }
       const hm = parseHourMinute(values)
-      if (!hm) return { error: "请填写有效的时间(时 0-23,分 0-59)" }
+      if (!hm) return { error: uiText("enter_a_valid_time_hour_0_23_minute_0_59_f44f4f37") }
       return { trigger: { type: "weekly", weekdays: values.weekly_weekdays, ...hm, second: 0 } }
     }
     case "monthly": {
       const { days, invalid } = parseMonthlyDays(values.monthly_days)
-      if (invalid) return { error: "每月日期必须是 1-31 的整数(逗号分隔)" }
-      if (days.length === 0) return { error: "请填写每月执行的日期(如 1, 15)" }
+      if (invalid) return { error: uiText("days_of_month_must_be_integers_from_1_to_31_separated_b_e907e493") }
+      if (days.length === 0) return { error: uiText("enter_days_of_month_e_g_1_15_7a903115") }
       const hm = parseHourMinute(values)
-      if (!hm) return { error: "请填写有效的时间(时 0-23,分 0-59)" }
+      if (!hm) return { error: uiText("enter_a_valid_time_hour_0_23_minute_0_59_f44f4f37") }
       return { trigger: { type: "monthly", days, ...hm, second: 0 } }
     }
     case "cron": {
       const expr = normalizedString(values.cron_expr)
-      if (!expr) return { error: "请填写 cron 表达式" }
+      if (!expr) return { error: uiText("enter_a_cron_expression_443c70c5") }
       return { trigger: { type: "cron", expr } }
     }
     default:
-      return { error: "请选择触发类型" }
+      return { error: uiText("select_a_trigger_type_7b90f017") }
   }
 }
 
@@ -266,20 +267,20 @@ export function triggerSummary(t: ScheduleTrigger): string {
   switch (t.type) {
     case "interval": {
       const s = t.every_seconds ?? 0
-      if (s > 0 && s % 3600 === 0) return `每 ${s / 3600} 小时`
-      if (s > 0 && s % 60 === 0) return `每 ${s / 60} 分钟`
-      return `每 ${s} 秒`
+      if (s > 0 && s % 3600 === 0) return uiText("every_hours_347737e7", { v0: s / 3600 , count: s / 3600 })
+      if (s > 0 && s % 60 === 0) return uiText("every_minutes_895d33b7", { v0: s / 60 , count: s / 60 })
+      return uiText("every_seconds_3b49d477", { v0: s , count: s })
     }
     case "daily":
-      return `每天 ${pad2(t.hour)}:${pad2(t.minute)}`
+      return uiText("daily_at_0b14f6d6", { v0: pad2(t.hour), v1: pad2(t.minute) })
     case "weekly": {
       const labels = t.weekdays
         .map((d) => WEEKDAY_OPTIONS.find((o) => o.value === d)?.label ?? d)
         .join("、")
-      return `每周${labels} ${pad2(t.hour)}:${pad2(t.minute)}`
+      return uiText("weekly_on_at_73d5220a", { v0: labels, v1: pad2(t.hour), v2: pad2(t.minute) })
     }
     case "monthly":
-      return `每月 ${t.days.join(", ")} 日 ${pad2(t.hour)}:${pad2(t.minute)}`
+      return uiText("monthly_on_day_at_42b0e4e2", { v0: t.days.join(", "), v1: pad2(t.hour), v2: pad2(t.minute) })
     case "cron":
       return `cron: ${t.expr}`
     default:
@@ -290,26 +291,26 @@ export function triggerSummary(t: ScheduleTrigger): string {
 export function misfireSummary(policy: MisfirePolicy | undefined): string {
   switch (policy?.type) {
     case "skip":
-      return "错过跳过"
+      return uiText("skip_missed_runs_d8ac050b")
     case "catch_up_all":
-      return "错过全部补跑"
+      return uiText("catch_up_all_missed_runs_1409bcf8")
     case "catch_up_window":
-      return "错过窗口补跑"
+      return uiText("catch_up_missed_runs_within_window_7559803d")
     case "run_once":
     default:
-      return "错过补跑一次"
+      return uiText("catch_up_one_missed_run_c6ba80f9")
   }
 }
 
 export function overlapSummary(policy: OverlapPolicy | undefined): string {
   switch (policy) {
     case "allow":
-      return "允许并行"
+      return uiText("allow_parallel_runs_33ce425a")
     case "skip":
-      return "重叠跳过"
+      return uiText("skip_overlapping_runs_15eb649d")
     case "queue_one":
     default:
-      return "重叠排队一个"
+      return uiText("queue_one_overlapping_run_e88647a4")
   }
 }
 
@@ -317,7 +318,7 @@ export function formatTime(value: string | null | undefined): string {
   if (!value) return "-"
   const d = new Date(value)
   if (Number.isNaN(d.getTime())) return value
-  return d.toLocaleString("zh-CN", { hour12: false })
+  return d.toLocaleString(uiLanguage(), { hour12: false })
 }
 
 export function errorMessage(e: unknown): string {

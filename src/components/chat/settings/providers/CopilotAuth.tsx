@@ -1,3 +1,4 @@
+import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { useCallback, useEffect, useState } from "react"
 import { Check, Copy, RefreshCw } from "lucide-react"
 import { settingsService, type DeviceCodeInfo } from "@services/config/SettingsService"
@@ -21,6 +22,7 @@ function formatRemaining(seconds: number): string {
  * - completeCopilotAuth long-polls the backend while the code is shown
  */
 export function CopilotAuth() {
+  useUiLocale()
   const [status, setStatus] = useState<AuthStatus>("unknown")
   const [checking, setChecking] = useState(false)
   const [device, setDevice] = useState<DeviceCodeInfo | null>(null)
@@ -99,28 +101,27 @@ export function CopilotAuth() {
       setCopied(true)
       setTimeout(() => setCopied(false), 2000)
     } catch {
-      setError("复制失败,请手动选择代码复制")
+      setError(uiText("could_not_copy_select_and_copy_the_code_manually_7c49600d"))
     }
   }
 
   return (
     <div className="space-y-2 rounded-md border bg-muted/30 p-2.5">
       <div className="flex items-center justify-between">
-        <span className="text-xs font-medium text-muted-foreground">Copilot 授权</span>
+        <span className="text-xs font-medium text-muted-foreground">{uiText("copilot_authorization_c3d9d8de")}</span>
         <div className="flex items-center gap-1.5">
           {status === "authenticated" ? (
             <Badge className="bg-emerald-500/15 text-emerald-600 dark:text-emerald-400" variant="secondary">
-              已登录
-            </Badge>
+              {uiText("signed_in_0a01eee1")}</Badge>
           ) : status === "not_authenticated" ? (
-            <Badge variant="secondary">未登录</Badge>
+            <Badge variant="secondary">{uiText("signed_out_c1f65837")}</Badge>
           ) : (
-            <Badge variant="outline">未知</Badge>
+            <Badge variant="outline">{uiText("unknown_4d8c1c5b")}</Badge>
           )}
           <button
             type="button"
             onClick={() => void refreshStatus()}
-            aria-label="刷新状态"
+            aria-label={uiText("refresh_status_802a407c")}
             className="rounded p-1 text-muted-foreground hover:text-foreground"
             disabled={checking}
           >
@@ -132,7 +133,7 @@ export function CopilotAuth() {
       {device ? (
         <div className="space-y-1.5 text-sm">
           <p>
-            打开{" "}
+            {uiText("open_c771248e")}{" "}
             <a
               href={device.verification_uri}
               target="_blank"
@@ -141,30 +142,28 @@ export function CopilotAuth() {
             >
               {device.verification_uri}
             </a>{" "}
-            并输入代码:
-          </p>
+            {uiText("and_enter_the_code_7aa88967")}</p>
           <div className="flex items-center gap-2">
             <span className="font-mono text-base font-semibold tracking-wider">{device.user_code}</span>
             <Button size="sm" variant="secondary" className="h-7 px-2" onClick={() => void copyCode()}>
               {copied ? <Check className="size-3.5 text-emerald-500" /> : <Copy className="size-3.5" />}
-              {copied ? "已复制" : "复制"}
+              {copied ? uiText("copied_8f6f8d97") : uiText("copy_63d90d97")}
             </Button>
           </div>
           <p className="text-xs text-muted-foreground">
-            {remaining > 0 ? `代码有效期剩余 ${formatRemaining(remaining)}` : "代码已过期,请重新登录"}
-            {remaining > 0 ? " · 授权后这里会自动完成…" : ""}
+            {remaining > 0 ? uiText("code_expires_in_e5dcbf33", { v0: formatRemaining(remaining) }) : uiText("code_expired_sign_in_again_bc54f564")}
+            {remaining > 0 ? uiText("this_completes_automatically_after_authorization_ec18f4d2") : ""}
           </p>
         </div>
       ) : status === "authenticated" ? (
         <div className="flex items-center justify-between text-sm">
-          <span className="text-muted-foreground">GitHub Copilot 账号已连接</span>
+          <span className="text-muted-foreground">{uiText("github_copilot_account_connected_b4129fa2")}</span>
           <Button size="sm" variant="secondary" onClick={() => void logout()}>
-            退出
-          </Button>
+            {uiText("sign_out_498e1d59")}</Button>
         </div>
       ) : (
         <Button size="sm" onClick={() => void login()} disabled={busy}>
-          {busy ? "登录中…" : "登录 GitHub Copilot"}
+          {busy ? uiText("signing_in_3f06ed8f") : uiText("sign_in_to_github_copilot_be6015e8")}
         </Button>
       )}
 

@@ -1,3 +1,4 @@
+import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import {
   AlertCircle,
@@ -48,32 +49,32 @@ const SECRET_MASK = "****...****"
 const STATUS_POLL_MS = 30_000
 
 const STATUS_META: Record<NodeStatus, { label: string; cls: string }> = {
-  not_deployed: { label: "未部署", cls: "bg-muted text-muted-foreground" },
+  not_deployed: { get label() { return uiText("not_deployed_d5c4befa") }, cls: "bg-muted text-muted-foreground" },
   deploying: {
-    label: "部署中",
+    get label() { return uiText("deploying_096fbd86") },
     cls: "animate-pulse bg-blue-500/15 text-blue-600 dark:text-blue-400",
   },
-  running: { label: "运行中", cls: "bg-primary/15 text-primary" },
+  running: { get label() { return uiText("running_1f0eb99b") }, cls: "bg-primary/15 text-primary" },
   unreachable: {
-    label: "不可达",
+    get label() { return uiText("unreachable_8d7c0301") },
     cls: "bg-amber-500/15 text-amber-600 dark:text-amber-400",
   },
-  stopped: { label: "已停止", cls: "bg-muted text-muted-foreground" },
-  failed: { label: "失败", cls: "bg-destructive/15 text-destructive" },
+  stopped: { get label() { return uiText("stopped_f006455e") }, cls: "bg-muted text-muted-foreground" },
+  failed: { get label() { return uiText("failed_28384d7a") }, cls: "bg-destructive/15 text-destructive" },
 }
 
 type NodeAction = "test" | "deploy" | "stop"
 
 const ACTION_LABEL: Record<NodeAction, string> = {
-  test: "测试",
-  deploy: "部署",
-  stop: "停止",
+  get test() { return uiText("test_6aa8f49c") },
+  get deploy() { return uiText("deploy_3ca77185") },
+  get stop() { return uiText("stop_ca4d973c") },
 }
 
 const ACTION_OK: Record<NodeAction, string> = {
-  test: "连接成功",
-  deploy: "部署已触发",
-  stop: "停止已触发",
+  get test() { return uiText("connected_successfully_4a19cb8a") },
+  get deploy() { return uiText("deployment_triggered_7e32b41b") },
+  get stop() { return uiText("stop_triggered_72121661") },
 }
 
 /** Coarse "N 前" from an RFC3339 timestamp (recomputed each render / poll). */
@@ -82,12 +83,12 @@ function sinceLabel(iso?: string): string {
   const then = new Date(iso).getTime()
   if (Number.isNaN(then)) return ""
   const secs = Math.max(0, Math.floor((Date.now() - then) / 1000))
-  if (secs < 60) return `${secs}秒前`
+  if (secs < 60) return uiText("seconds_ago_f58a9f01", { v0: secs , count: secs })
   const mins = Math.floor(secs / 60)
-  if (mins < 60) return `${mins}分钟前`
+  if (mins < 60) return uiText("minutes_ago_700ed992", { v0: mins , count: mins })
   const hrs = Math.floor(mins / 60)
-  if (hrs < 24) return `${hrs}小时前`
-  return `${Math.floor(hrs / 24)}天前`
+  if (hrs < 24) return uiText("hours_ago_c8f8001b", { v0: hrs , count: hrs })
+  return uiText("days_ago_f0351b9d", { v0: Math.floor(hrs / 24) , count: Math.floor(hrs / 24) })
 }
 
 function errMsg(e: unknown, fallback: string): string {
@@ -97,7 +98,7 @@ function errMsg(e: unknown, fallback: string): string {
 function placementText(node: FabricNode): string {
   return node.placement.type === "ssh"
     ? `${node.placement.username}@${node.placement.host}:${node.placement.port}`
-    : "本机"
+    : uiText("local_8a94c4a1")
 }
 
 interface NodeForm {
@@ -149,6 +150,7 @@ const EMPTY_FORM: NodeForm = {
  * hands back a mask sentinel that, when re-sent, preserves the stored secret.
  */
 export function SettingsClusters() {
+  useUiLocale()
   const [nodes, setNodes] = useState<FabricNode[]>([])
   const [clusters, setClusters] = useState<FabricCluster[]>([])
   const [loading, setLoading] = useState(true)
@@ -217,7 +219,7 @@ export function SettingsClusters() {
     } catch (e) {
       // A background poll shouldn't spam errors; only surface explicit loads.
       if (seq === fetchSeq.current && !silent) {
-        setLoadError(errMsg(e, "加载集群配置失败"))
+        setLoadError(errMsg(e, uiText("could_not_load_cluster_settings_96bba618")))
       }
     } finally {
       if (!silent) setLoading(false)
@@ -310,23 +312,23 @@ export function SettingsClusters() {
     editingNode?.placement.type === "ssh" ? editingNode.placement.auth : undefined
 
   const validateForm = (f: NodeForm): string | null => {
-    if (!f.label.trim()) return "名称不能为空"
+    if (!f.label.trim()) return uiText("name_is_required_e8365416")
     if (f.placementType === "ssh") {
-      if (!f.host.trim()) return "主机不能为空"
-      if (!f.username.trim()) return "用户名不能为空"
+      if (!f.host.trim()) return uiText("host_is_required_0c6a959b")
+      if (!f.username.trim()) return uiText("username_is_required_390ccdec")
       const port = Number(f.port)
-      if (!Number.isInteger(port) || port < 1 || port > 65535) return "端口必须是 1-65535"
+      if (!Number.isInteger(port) || port < 1 || port > 65535) return uiText("port_must_be_between_1_and_65535_2cc08f2a")
       if (f.authMethod === "password") {
         const hasExisting =
           editingOriginalAuth?.method === "password" && Boolean(editingOriginalAuth.password)
-        if (!f.password && !hasExisting) return "密码不能为空"
+        if (!f.password && !hasExisting) return uiText("password_is_required_3aa7a9e0")
       }
       if (f.authMethod === "private_key") {
         const hasEntered = Boolean(f.privateKey.trim() || f.privateKeyPath.trim())
         const hasExisting =
           editingOriginalAuth?.method === "private_key" &&
           Boolean(editingOriginalAuth.private_key || editingOriginalAuth.private_key_path)
-        if (!hasEntered && !hasExisting) return "需要提供私钥内容或私钥文件路径"
+        if (!hasEntered && !hasExisting) return uiText("provide_private_key_content_or_a_private_key_file_path_e183c9eb")
       }
     }
     return null
@@ -402,11 +404,11 @@ export function SettingsClusters() {
     try {
       if (editingId) await settingsService.updateNode(editingId, req)
       else await settingsService.createNode(req)
-      notify("ok", editingId ? "节点已更新" : "节点已创建")
+      notify("ok", editingId ? uiText("node_updated_726bbf53") : uiText("node_created_a2d136da"))
       closeEditor()
       void fetchAll()
     } catch (e) {
-      setEditorError(errMsg(e, "保存节点失败"))
+      setEditorError(errMsg(e, uiText("could_not_save_node_aab1bd8b")))
     } finally {
       setSaving(false)
     }
@@ -427,7 +429,7 @@ export function SettingsClusters() {
       })
       void fetchAll(true)
     } catch (e) {
-      notify("err", `切换启用状态失败:${errMsg(e, "未知错误")}`)
+      notify("err", uiText("could_not_change_enabled_state_733ce52b", { v0: errMsg(e, uiText("unknown_error")) }))
     } finally {
       setTogglingId(null)
     }
@@ -436,10 +438,10 @@ export function SettingsClusters() {
   const deleteNode = async (id: string) => {
     try {
       await settingsService.deleteNode(id)
-      notify("ok", "节点已删除")
+      notify("ok", uiText("node_deleted_ad977456"))
       void fetchAll(true)
     } catch (e) {
-      notify("err", `删除节点失败:${errMsg(e, "未知错误")}`)
+      notify("err", uiText("could_not_delete_node_182c9128", { v0: errMsg(e, uiText("unknown_error")) }))
     } finally {
       setConfirmDeleteId(null)
     }
@@ -454,10 +456,10 @@ export function SettingsClusters() {
         action === "test" && res && typeof res === "object" && "preflight" in res
           ? String((res as { preflight?: unknown }).preflight ?? "")
           : ""
-      notify("ok", preflight ? `连接成功:${preflight}` : ACTION_OK[action])
+      notify("ok", preflight ? uiText("connected_d82f3f8f", { v0: preflight }) : ACTION_OK[action])
       void fetchAll(true)
     } catch (e) {
-      notify("err", `${ACTION_LABEL[action]}失败:${errMsg(e, "未知错误")}`)
+      notify("err", uiText("failed_aaf317fd", { v0: ACTION_LABEL[action], v1: errMsg(e, uiText("unknown_error")) }))
     } finally {
       setPending(null)
     }
@@ -470,9 +472,9 @@ export function SettingsClusters() {
     setLogsText("")
     try {
       const res = await settingsService.nodeLogs(node.id, 200)
-      setLogsText(res.logs || "(暂无日志输出)")
+      setLogsText(res.logs || uiText("no_log_output_yet_fcfbdb9a"))
     } catch (e) {
-      setLogsText(errMsg(e, "读取日志失败"))
+      setLogsText(errMsg(e, uiText("could_not_read_logs_c9d4f6cd")))
     } finally {
       setLogsLoading(false)
     }
@@ -512,7 +514,7 @@ export function SettingsClusters() {
   const saveCluster = async () => {
     const name = clusterName.trim()
     if (!name) {
-      setClusterError("集群名称不能为空")
+      setClusterError(uiText("cluster_name_is_required_cbb7c731"))
       return
     }
     setClusterSaving(true)
@@ -525,12 +527,12 @@ export function SettingsClusters() {
       }
       if (clusterEditingName) await settingsService.updateCluster(clusterEditingName, req)
       else await settingsService.createCluster(req)
-      notify("ok", "集群已保存")
+      notify("ok", uiText("cluster_saved_84956917"))
       closeClusterEditor()
       void fetchAll()
     } catch (e) {
       // Membership failures surface HERE (in-dialog), distinct from node saves.
-      setClusterError(`保存集群失败(成员关系未生效):${errMsg(e, "未知错误")}`)
+      setClusterError(uiText("could_not_save_cluster_membership_changes_did_not_take__22529f62", { v0: errMsg(e, uiText("unknown_error")) }))
     } finally {
       setClusterSaving(false)
     }
@@ -539,10 +541,10 @@ export function SettingsClusters() {
   const removeCluster = async (name: string) => {
     try {
       await settingsService.deleteCluster(name)
-      notify("ok", "集群已删除(成员节点保留)")
+      notify("ok", uiText("cluster_deleted_member_nodes_kept_58bda9cb"))
       void fetchAll(true)
     } catch (e) {
-      notify("err", `删除集群失败:${errMsg(e, "未知错误")}`)
+      notify("err", uiText("could_not_delete_cluster_f176a20e", { v0: errMsg(e, uiText("unknown_error")) }))
     } finally {
       setConfirmDeleteCluster(null)
     }
@@ -555,8 +557,7 @@ export function SettingsClusters() {
   return (
     <div className="space-y-3">
       <p className="text-xs text-muted-foreground">
-        注册本机或 SSH 远程机器,用于部署 worker 代理。SSH 凭据由后端加密存储,不会明文返回。
-      </p>
+        {uiText("register_local_or_remote_ssh_machines_to_deploy_worker__bf3f5b75")}</p>
 
       {notice ? (
         <div
@@ -570,7 +571,7 @@ export function SettingsClusters() {
           <span className="min-w-0 flex-1 [overflow-wrap:anywhere]">{notice.text}</span>
           <button
             onClick={() => setNotice(null)}
-            aria-label="关闭提示"
+            aria-label={uiText("dismiss_notification_d301bc12")}
             className="shrink-0 opacity-70 hover:opacity-100"
           >
             <X className="size-3.5" />
@@ -583,35 +584,33 @@ export function SettingsClusters() {
           <AlertCircle className="size-3.5 shrink-0" />
           <span className="min-w-0 flex-1">{loadError}</span>
           <Button size="sm" variant="secondary" className="h-7 px-2 text-xs" onClick={() => void fetchAll()}>
-            重试
-          </Button>
+            {uiText("retry_b8784c8d")}</Button>
         </div>
       ) : null}
 
       {/* ── Nodes ─────────────────────────────────────────────────── */}
       <section className="rounded-lg border p-3">
         <div className="mb-2 flex items-center justify-between">
-          <div className="text-xs font-medium text-muted-foreground">节点</div>
+          <div className="text-xs font-medium text-muted-foreground">{uiText("nodes_2410d860")}</div>
           <div className="flex items-center gap-1.5">
             <Button
               size="sm"
               variant="ghost"
               className="h-7 px-2"
-              aria-label="刷新"
+              aria-label={uiText("refresh_aee88743")}
               onClick={() => void fetchAll()}
             >
               <RefreshCw className={cn("size-3.5", loading && "animate-spin")} />
             </Button>
             <Button size="sm" variant="secondary" className="h-7 px-2 text-xs" onClick={openCreate}>
-              <Plus className="size-3.5" /> 新增节点
-            </Button>
+              <Plus className="size-3.5" />{uiText("add_node_09da9abd")}</Button>
           </div>
         </div>
 
         {loading && nodes.length === 0 ? (
-          <p className="text-xs text-muted-foreground">加载中…</p>
+          <p className="text-xs text-muted-foreground">{uiText("loading_4927a53b")}</p>
         ) : nodes.length === 0 ? (
-          <p className="text-xs text-muted-foreground">暂无节点</p>
+          <p className="text-xs text-muted-foreground">{uiText("no_nodes_yet_281309d3")}</p>
         ) : (
           <ul className="space-y-2">
             {nodes.map((node) => {
@@ -647,7 +646,7 @@ export function SettingsClusters() {
                       checked={node.enabled}
                       disabled={togglingId === node.id}
                       onCheckedChange={() => void toggleEnabled(node)}
-                      aria-label={node.enabled ? "停用节点" : "启用节点"}
+                      aria-label={node.enabled ? uiText("disable_node_8a809f1d") : uiText("enable_node_b7e7cd5a")}
                     />
                   </div>
 
@@ -660,11 +659,10 @@ export function SettingsClusters() {
                     ) : null}
                     {node.trust_level === "untrusted" ? (
                       <Badge variant="warning" className="h-4 px-1.5 text-[10px]">
-                        不受信任
-                      </Badge>
+                        {uiText("untrusted_1ddc3b8a")}</Badge>
                     ) : null}
-                    {!node.enabled ? <span>已停用</span> : null}
-                    {lastSeen ? <span>活跃于 {lastSeen}</span> : null}
+                    {!node.enabled ? <span>{uiText("disabled_a8c3698b")}</span> : null}
+                    {lastSeen ? <span>{uiText("last_active_30f38ff1")} {lastSeen}</span> : null}
                   </div>
 
                   {lastError && (status === "unreachable" || status === "failed") ? (
@@ -695,41 +693,38 @@ export function SettingsClusters() {
                       className="h-7 px-2 text-xs"
                       onClick={() => void showLogs(node)}
                     >
-                      日志
-                    </Button>
+                      {uiText("logs_7dbac1c2")}</Button>
                     <div className="ml-auto flex items-center gap-1">
                       {confirmDeleteId === node.id ? (
                         <>
-                          <span className="text-xs text-destructive">确认删除?</span>
+                          <span className="text-xs text-destructive">{uiText("confirm_deletion_2d61cf17")}</span>
                           <Button
                             size="sm"
                             variant="destructive"
                             className="h-7 px-2 text-xs"
                             onClick={() => void deleteNode(node.id)}
                           >
-                            删除
-                          </Button>
+                            {uiText("delete_2f9daa82")}</Button>
                           <Button
                             size="sm"
                             variant="secondary"
                             className="h-7 px-2 text-xs"
                             onClick={() => setConfirmDeleteId(null)}
                           >
-                            取消
-                          </Button>
+                            {uiText("cancel_2cd0f3be")}</Button>
                         </>
                       ) : (
                         <>
                           <button
                             onClick={() => openEdit(node)}
-                            aria-label="编辑节点"
+                            aria-label={uiText("edit_node_eca9fae8")}
                             className="rounded p-1 text-muted-foreground hover:text-foreground"
                           >
                             <Pencil className="size-3.5" />
                           </button>
                           <button
                             onClick={() => setConfirmDeleteId(node.id)}
-                            aria-label="删除节点"
+                            aria-label={uiText("delete_node_685e2d0b")}
                             className="rounded p-1 text-muted-foreground hover:text-destructive"
                           >
                             <Trash2 className="size-3.5" />
@@ -748,14 +743,13 @@ export function SettingsClusters() {
       {/* ── Clusters ──────────────────────────────────────────────── */}
       <section className="rounded-lg border p-3">
         <div className="mb-2 flex items-center justify-between">
-          <div className="text-xs font-medium text-muted-foreground">集群</div>
+          <div className="text-xs font-medium text-muted-foreground">{uiText("clusters_5318ca46")}</div>
           <Button size="sm" variant="secondary" className="h-7 px-2 text-xs" onClick={openClusterCreate}>
-            <Plus className="size-3.5" /> 新增集群
-          </Button>
+            <Plus className="size-3.5" />{uiText("add_cluster_0a87eec0")}</Button>
         </div>
 
         {clusters.length === 0 ? (
-          <p className="text-xs text-muted-foreground">暂无集群</p>
+          <p className="text-xs text-muted-foreground">{uiText("no_clusters_yet_25b2d086")}</p>
         ) : (
           <ul className="space-y-2">
             {clusters.map((c) => {
@@ -767,43 +761,40 @@ export function SettingsClusters() {
                   <div className="min-w-0 flex-1">
                     <div className="truncate text-sm font-medium">{c.name}</div>
                     <div className="truncate text-xs text-muted-foreground">
-                      {c.node_ids.length} 个节点
-                      {memberLabels ? ` · ${memberLabels}` : ""}
+                      {uiText("count_nodes", { count: c.node_ids.length })} {memberLabels ? ` · ${memberLabels}` : ""}
                       {c.description ? ` · ${c.description}` : ""}
                     </div>
                   </div>
                   {confirmDeleteCluster === c.name ? (
                     <>
-                      <span className="shrink-0 text-xs text-destructive">确认删除?</span>
+                      <span className="shrink-0 text-xs text-destructive">{uiText("confirm_deletion_2d61cf17")}</span>
                       <Button
                         size="sm"
                         variant="destructive"
                         className="h-7 shrink-0 px-2 text-xs"
                         onClick={() => void removeCluster(c.name)}
                       >
-                        删除
-                      </Button>
+                        {uiText("delete_2f9daa82")}</Button>
                       <Button
                         size="sm"
                         variant="secondary"
                         className="h-7 shrink-0 px-2 text-xs"
                         onClick={() => setConfirmDeleteCluster(null)}
                       >
-                        取消
-                      </Button>
+                        {uiText("cancel_2cd0f3be")}</Button>
                     </>
                   ) : (
                     <>
                       <button
                         onClick={() => openClusterEdit(c)}
-                        aria-label="编辑集群"
+                        aria-label={uiText("edit_cluster_28890c2b")}
                         className="shrink-0 rounded p-1 text-muted-foreground hover:text-foreground"
                       >
                         <Pencil className="size-3.5" />
                       </button>
                       <button
                         onClick={() => setConfirmDeleteCluster(c.name)}
-                        aria-label="删除集群"
+                        aria-label={uiText("delete_cluster_7ab3ed6c")}
                         className="shrink-0 rounded p-1 text-muted-foreground hover:text-destructive"
                       >
                         <Trash2 className="size-3.5" />
@@ -825,10 +816,10 @@ export function SettingsClusters() {
         }}
       >
         <ResponsiveDialogContent className="p-5 sm:max-w-lg">
-          <ResponsiveDialogTitle>{editingId ? "编辑节点" : "新增节点"}</ResponsiveDialogTitle>
+          <ResponsiveDialogTitle>{editingId ? uiText("edit_node_eca9fae8") : uiText("add_node_09da9abd")}</ResponsiveDialogTitle>
           <div className="mt-3 min-h-0 flex-1 space-y-3 overflow-y-auto pr-1">
             <div className="space-y-1">
-              <Label className="text-xs">名称</Label>
+              <Label className="text-xs">{uiText("name_d44e9b3d")}</Label>
               <Input
                 value={form.label}
                 onChange={(e) => setField("label", e.target.value)}
@@ -838,7 +829,7 @@ export function SettingsClusters() {
 
             <div className="grid grid-cols-2 gap-2">
               <div className="space-y-1">
-                <Label className="text-xs">部署位置</Label>
+                <Label className="text-xs">{uiText("deployment_location_9d554c49")}</Label>
                 <Select
                   value={form.placementType}
                   onValueChange={(v) => setField("placementType", v as NodeForm["placementType"])}
@@ -847,13 +838,13 @@ export function SettingsClusters() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="ssh">SSH(远程)</SelectItem>
-                    <SelectItem value="local">本机</SelectItem>
+                    <SelectItem value="ssh">{uiText("ssh_remote_563675ae")}</SelectItem>
+                    <SelectItem value="local">{uiText("local_8a94c4a1")}</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
               <div className="space-y-1">
-                <Label className="text-xs">信任级别</Label>
+                <Label className="text-xs">{uiText("trust_level_ca9df95a")}</Label>
                 <Select
                   value={form.trustLevel}
                   onValueChange={(v) => setField("trustLevel", v as TrustLevel)}
@@ -862,8 +853,8 @@ export function SettingsClusters() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="trusted">受信任</SelectItem>
-                    <SelectItem value="untrusted">不受信任</SelectItem>
+                    <SelectItem value="trusted">{uiText("trusted_8627bad4")}</SelectItem>
+                    <SelectItem value="untrusted">{uiText("untrusted_1ddc3b8a")}</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -873,7 +864,7 @@ export function SettingsClusters() {
               <>
                 <div className="grid grid-cols-[1fr_6rem] gap-2">
                   <div className="space-y-1">
-                    <Label className="text-xs">主机</Label>
+                    <Label className="text-xs">{uiText("host_e87d9f23")}</Label>
                     <Input
                       value={form.host}
                       onChange={(e) => setField("host", e.target.value)}
@@ -881,7 +872,7 @@ export function SettingsClusters() {
                     />
                   </div>
                   <div className="space-y-1">
-                    <Label className="text-xs">端口</Label>
+                    <Label className="text-xs">{uiText("port_e71ac32b")}</Label>
                     <Input
                       inputMode="numeric"
                       value={form.port}
@@ -892,7 +883,7 @@ export function SettingsClusters() {
                 </div>
 
                 <div className="space-y-1">
-                  <Label className="text-xs">用户名</Label>
+                  <Label className="text-xs">{uiText("username_1a3f0617")}</Label>
                   <Input
                     value={form.username}
                     onChange={(e) => setField("username", e.target.value)}
@@ -901,7 +892,7 @@ export function SettingsClusters() {
                 </div>
 
                 <div className="space-y-1">
-                  <Label className="text-xs">认证方式</Label>
+                  <Label className="text-xs">{uiText("authentication_d1ff8f98")}</Label>
                   <Select
                     value={form.authMethod}
                     onValueChange={(v) => setField("authMethod", v as NodeForm["authMethod"])}
@@ -910,23 +901,23 @@ export function SettingsClusters() {
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="password">密码</SelectItem>
-                      <SelectItem value="private_key">私钥</SelectItem>
-                      <SelectItem value="system_ssh_config">使用本机 SSH 配置</SelectItem>
+                      <SelectItem value="password">{uiText("password_a621ab60")}</SelectItem>
+                      <SelectItem value="private_key">{uiText("private_key_3ffe935f")}</SelectItem>
+                      <SelectItem value="system_ssh_config">{uiText("use_local_ssh_configuration_0acb0e3d")}</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
 
                 {form.authMethod === "password" ? (
                   <div className="space-y-1">
-                    <Label className="text-xs">密码</Label>
+                    <Label className="text-xs">{uiText("password_a621ab60")}</Label>
                     <Input
                       type="password"
                       value={form.password}
                       onChange={(e) => setField("password", e.target.value)}
                       placeholder={
                         editingOriginalAuth?.method === "password"
-                          ? "留空保持原有密码"
+                          ? uiText("leave_blank_to_keep_the_existing_password_66c2200e")
                           : undefined
                       }
                     />
@@ -936,7 +927,7 @@ export function SettingsClusters() {
                 {form.authMethod === "private_key" ? (
                   <>
                     <div className="space-y-1">
-                      <Label className="text-xs">私钥文件路径(本机)</Label>
+                      <Label className="text-xs">{uiText("private_key_file_path_local_4f44a132")}</Label>
                       <Input
                         value={form.privateKeyPath}
                         onChange={(e) => setField("privateKeyPath", e.target.value)}
@@ -944,27 +935,27 @@ export function SettingsClusters() {
                       />
                     </div>
                     <div className="space-y-1">
-                      <Label className="text-xs">…或粘贴私钥(PEM)</Label>
+                      <Label className="text-xs">{uiText("or_paste_a_private_key_pem_5e7cf830")}</Label>
                       <Textarea
                         className="min-h-16 resize-y font-mono text-xs"
                         value={form.privateKey}
                         onChange={(e) => setField("privateKey", e.target.value)}
                         placeholder={
                           editingOriginalAuth?.method === "private_key"
-                            ? "留空保持原有私钥"
+                            ? uiText("leave_blank_to_keep_the_existing_private_key_7f685d0b")
                             : "-----BEGIN OPENSSH PRIVATE KEY-----"
                         }
                       />
                     </div>
                     <div className="space-y-1">
-                      <Label className="text-xs">私钥口令(可选)</Label>
+                      <Label className="text-xs">{uiText("private_key_passphrase_optional_8138fad9")}</Label>
                       <Input
                         type="password"
                         value={form.passphrase}
                         onChange={(e) => setField("passphrase", e.target.value)}
                         placeholder={
                           editingOriginalAuth?.method === "private_key"
-                            ? "留空保持原有口令"
+                            ? uiText("leave_blank_to_keep_the_existing_passphrase_a50f11c8")
                             : undefined
                         }
                       />
@@ -975,9 +966,9 @@ export function SettingsClusters() {
             ) : null}
 
             <div className="space-y-2.5 rounded-lg border bg-muted/30 p-3">
-              <div className="text-xs font-medium text-muted-foreground">部署配置</div>
+              <div className="text-xs font-medium text-muted-foreground">{uiText("deployment_settings_ccbf90f5")}</div>
               <div className="space-y-1">
-                <Label className="text-xs">Artifact 路径(要上传的 bamboo 二进制)</Label>
+                <Label className="text-xs">{uiText("artifact_path_bamboo_binary_to_upload_a8a61a77")}</Label>
                 <Input
                   value={form.artifactPath}
                   onChange={(e) => setField("artifactPath", e.target.value)}
@@ -986,7 +977,7 @@ export function SettingsClusters() {
               </div>
               <div className="grid grid-cols-2 gap-2">
                 <div className="space-y-1">
-                  <Label className="text-xs">远程目录</Label>
+                  <Label className="text-xs">{uiText("remote_directory_1cfa6840")}</Label>
                   <Input
                     value={form.remoteDir}
                     onChange={(e) => setField("remoteDir", e.target.value)}
@@ -994,7 +985,7 @@ export function SettingsClusters() {
                   />
                 </div>
                 <div className="space-y-1">
-                  <Label className="text-xs">默认角色</Label>
+                  <Label className="text-xs">{uiText("default_role_8a2a6551")}</Label>
                   <Input
                     value={form.defaultRole}
                     onChange={(e) => setField("defaultRole", e.target.value)}
@@ -1004,43 +995,42 @@ export function SettingsClusters() {
               </div>
               <div className="grid grid-cols-2 gap-2">
                 <div className="space-y-1">
-                  <Label className="text-xs">模型</Label>
+                  <Label className="text-xs">{uiText("model_c98e118e")}</Label>
                   <Input
                     value={form.model}
                     onChange={(e) => setField("model", e.target.value)}
-                    placeholder="默认"
+                    placeholder={uiText("default_844b8cc8")}
                   />
                 </div>
                 <div className="space-y-1">
-                  <Label className="text-xs">工作目录</Label>
+                  <Label className="text-xs">{uiText("working_directory_3db7b06b")}</Label>
                   <Input
                     value={form.workspace}
                     onChange={(e) => setField("workspace", e.target.value)}
-                    placeholder="默认"
+                    placeholder={uiText("default_844b8cc8")}
                   />
                 </div>
               </div>
               <div className="flex items-center justify-between gap-2">
                 <div>
-                  <div className="text-xs font-medium">自动恢复</div>
+                  <div className="text-xs font-medium">{uiText("automatic_recovery_d4670a4c")}</div>
                   <p className="text-xs text-muted-foreground">
-                    健康检查发现 worker 掉线时自动重新部署。
-                  </p>
+                    {uiText("redeploy_automatically_when_health_checks_detect_a_disc_46daaed1")}</p>
                 </div>
                 <Switch
                   checked={form.autoRecover}
                   onCheckedChange={(v) => setField("autoRecover", v)}
-                  aria-label="自动恢复"
+                  aria-label={uiText("automatic_recovery_d4670a4c")}
                 />
               </div>
             </div>
 
             <div className="flex items-center justify-between gap-2">
-              <div className="text-xs font-medium">启用</div>
+              <div className="text-xs font-medium">{uiText("enabled_f4f0ead1")}</div>
               <Switch
                 checked={form.enabled}
                 onCheckedChange={(v) => setField("enabled", v)}
-                aria-label="启用节点"
+                aria-label={uiText("enable_node_b7e7cd5a")}
               />
             </div>
           </div>
@@ -1049,10 +1039,9 @@ export function SettingsClusters() {
 
           <div className="mt-4 flex justify-end gap-2">
             <Button variant="secondary" onClick={closeEditor}>
-              取消
-            </Button>
+              {uiText("cancel_2cd0f3be")}</Button>
             <Button onClick={() => void saveNode()} disabled={saving}>
-              {saving ? "保存中…" : "保存"}
+              {saving ? uiText("saving_ff509c9b") : uiText("save_a3030bf8")}
             </Button>
           </div>
         </ResponsiveDialogContent>
@@ -1066,10 +1055,10 @@ export function SettingsClusters() {
         }}
       >
         <ResponsiveDialogContent className="p-5 sm:max-w-2xl">
-          <ResponsiveDialogTitle>日志 — {logsNode?.label ?? ""}</ResponsiveDialogTitle>
+          <ResponsiveDialogTitle>{uiText("logs_8a81380a")} {logsNode?.label ?? ""}</ResponsiveDialogTitle>
           <div className="mt-3 max-h-[50vh] min-h-24 flex-1 overflow-auto rounded-md border bg-muted/30 p-2">
             {logsLoading ? (
-              <p className="text-xs text-muted-foreground">加载中…</p>
+              <p className="text-xs text-muted-foreground">{uiText("loading_4927a53b")}</p>
             ) : (
               <pre className="font-mono text-xs leading-relaxed whitespace-pre-wrap [overflow-wrap:anywhere]">
                 {logsText}
@@ -1078,16 +1067,14 @@ export function SettingsClusters() {
           </div>
           <div className="mt-3 flex justify-end gap-2">
             <Button variant="secondary" onClick={() => setLogsOpen(false)}>
-              关闭
-            </Button>
+              {uiText("close_3fd47edc")}</Button>
             <Button
               disabled={logsLoading}
               onClick={() => {
                 if (logsNode) void showLogs(logsNode)
               }}
             >
-              刷新
-            </Button>
+              {uiText("refresh_aee88743")}</Button>
           </div>
         </ResponsiveDialogContent>
       </ResponsiveDialog>
@@ -1101,11 +1088,11 @@ export function SettingsClusters() {
       >
         <ResponsiveDialogContent className="p-5">
           <ResponsiveDialogTitle>
-            {clusterEditingName ? "编辑集群" : "新增集群"}
+            {clusterEditingName ? uiText("edit_cluster_28890c2b") : uiText("add_cluster_0a87eec0")}
           </ResponsiveDialogTitle>
           <div className="mt-3 min-h-0 flex-1 space-y-3 overflow-y-auto pr-1">
             <div className="space-y-1">
-              <Label className="text-xs">名称</Label>
+              <Label className="text-xs">{uiText("name_d44e9b3d")}</Label>
               <Input
                 value={clusterName}
                 disabled={!!clusterEditingName}
@@ -1114,17 +1101,17 @@ export function SettingsClusters() {
               />
             </div>
             <div className="space-y-1">
-              <Label className="text-xs">描述(可选)</Label>
+              <Label className="text-xs">{uiText("description_optional_8b29dbed")}</Label>
               <Input
                 value={clusterDesc}
                 onChange={(e) => setClusterDesc(e.target.value)}
-                placeholder="用途说明"
+                placeholder={uiText("purpose_0bef9631")}
               />
             </div>
             <div className="space-y-1">
-              <Label className="text-xs">成员节点</Label>
+              <Label className="text-xs">{uiText("member_nodes_658ff86e")}</Label>
               {nodes.length === 0 ? (
-                <p className="text-xs text-muted-foreground">暂无节点,请先新增节点</p>
+                <p className="text-xs text-muted-foreground">{uiText("no_nodes_yet_add_a_node_first_d769d2c5")}</p>
               ) : (
                 <div className="space-y-1.5">
                   {nodes.map((n) => {
@@ -1165,10 +1152,9 @@ export function SettingsClusters() {
 
           <div className="mt-4 flex justify-end gap-2">
             <Button variant="secondary" onClick={closeClusterEditor}>
-              取消
-            </Button>
+              {uiText("cancel_2cd0f3be")}</Button>
             <Button onClick={() => void saveCluster()} disabled={clusterSaving}>
-              {clusterSaving ? "保存中…" : "保存"}
+              {clusterSaving ? uiText("saving_ff509c9b") : uiText("save_a3030bf8")}
             </Button>
           </div>
         </ResponsiveDialogContent>

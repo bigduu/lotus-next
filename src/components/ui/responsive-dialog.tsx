@@ -1,3 +1,4 @@
+import { uiText, useUiLocale } from "@shared/i18n/ui"
 import * as React from "react"
 import * as DialogPrimitive from "@radix-ui/react-dialog"
 import { X } from "lucide-react"
@@ -13,12 +14,14 @@ import { cn } from "@/lib/utils"
 function ResponsiveDialog(
   props: React.ComponentProps<typeof DialogPrimitive.Root>
 ) {
+  useUiLocale()
   return <DialogPrimitive.Root data-slot="responsive-dialog" {...props} />
 }
 
 function ResponsiveDialogTrigger(
   props: React.ComponentProps<typeof DialogPrimitive.Trigger>
 ) {
+  useUiLocale()
   return (
     <DialogPrimitive.Trigger data-slot="responsive-dialog-trigger" {...props} />
   )
@@ -27,6 +30,7 @@ function ResponsiveDialogTrigger(
 function ResponsiveDialogClose(
   props: React.ComponentProps<typeof DialogPrimitive.Close>
 ) {
+  useUiLocale()
   return <DialogPrimitive.Close data-slot="responsive-dialog-close" {...props} />
 }
 
@@ -42,6 +46,7 @@ function ResponsiveDialogContent({
   showCloseButton?: boolean
   dismissable?: boolean
 }) {
+  useUiLocale()
   return (
     <DialogPrimitive.Portal>
       <DialogPrimitive.Overlay
@@ -78,7 +83,7 @@ function ResponsiveDialogContent({
         {showCloseButton && dismissable && (
           <DialogPrimitive.Close className="ring-offset-background focus:ring-ring absolute top-3.5 right-3.5 rounded-md p-1 text-muted-foreground opacity-70 transition-opacity hover:opacity-100 focus:ring-2 focus:outline-hidden disabled:pointer-events-none [&_svg]:size-4">
             <X />
-            <span className="sr-only">关闭</span>
+            <span className="sr-only">{uiText("close_3fd47edc")}</span>
           </DialogPrimitive.Close>
         )}
       </DialogPrimitive.Content>
@@ -90,6 +95,7 @@ function ResponsiveDialogTitle({
   className,
   ...props
 }: React.ComponentProps<typeof DialogPrimitive.Title>) {
+  useUiLocale()
   return (
     <DialogPrimitive.Title
       data-slot="responsive-dialog-title"
@@ -103,6 +109,7 @@ function ResponsiveDialogDescription({
   className,
   ...props
 }: React.ComponentProps<typeof DialogPrimitive.Description>) {
+  useUiLocale()
   return (
     <DialogPrimitive.Description
       data-slot="responsive-dialog-description"

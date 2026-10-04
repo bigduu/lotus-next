@@ -1,3 +1,4 @@
+import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { useEffect, useState } from "react"
 import { Plus, X } from "lucide-react"
 import {
@@ -33,6 +34,7 @@ function Field({
   label: string
   children: React.ReactNode
 }) {
+  useUiLocale()
   return (
     <label className="block">
       <span className="mb-1 block text-xs text-muted-foreground">{label}</span>
@@ -56,6 +58,7 @@ function KeyValueEditor({
   entries: KvEntry[]
   onChange: (entries: KvEntry[]) => void
 }) {
+  useUiLocale()
   return (
     <div>
       <div className="mb-1.5 flex items-center justify-between">
@@ -71,7 +74,7 @@ function KeyValueEditor({
         </Button>
       </div>
       {entries.length === 0 ? (
-        <p className="text-xs text-muted-foreground/70">无</p>
+        <p className="text-xs text-muted-foreground/70">{uiText("none_484d5561")}</p>
       ) : (
         <div className="space-y-1.5">
           {entries.map((entry, i) => (
@@ -95,7 +98,7 @@ function KeyValueEditor({
               <button
                 type="button"
                 onClick={() => onChange(entries.filter((_, j) => j !== i))}
-                aria-label="移除"
+                aria-label={uiText("remove_6135d415")}
                 className="shrink-0 rounded p-1 text-muted-foreground hover:text-destructive"
               >
                 <X className="size-3.5" />
@@ -126,6 +129,7 @@ export function McpServerFormDialog({
   /** Should throw on failure — the error is surfaced inline in the dialog. */
   onSubmit: (config: McpServerConfig) => Promise<void>
 }) {
+  useUiLocale()
   const [id, setId] = useState("")
   const [name, setName] = useState("")
   const [enabled, setEnabled] = useState(true)
@@ -163,18 +167,18 @@ export function McpServerFormDialog({
 
   const validate = (): string | null => {
     if (mode === "create") {
-      if (!id.trim()) return "服务器 ID 不能为空"
-      if (!MCP_SERVER_ID_PATTERN.test(id.trim())) return "服务器 ID 只能包含字母、数字、- 和 _"
-      if (existingIds.includes(id.trim())) return "该服务器 ID 已存在"
+      if (!id.trim()) return uiText("server_id_is_required_ce4bc4a2")
+      if (!MCP_SERVER_ID_PATTERN.test(id.trim())) return uiText("server_ids_may_contain_only_letters_digits_and_15c859fe")
+      if (existingIds.includes(id.trim())) return uiText("this_server_id_already_exists_e06921d5")
     }
     if (kind === "stdio") {
-      if (!command.trim()) return "命令不能为空"
+      if (!command.trim()) return uiText("command_is_required_eddb4f63")
     } else {
-      if (!url.trim()) return "URL 不能为空"
+      if (!url.trim()) return uiText("url_is_required_b0a85a80")
       try {
         new URL(url.trim())
       } catch {
-        return "URL 格式无效"
+        return uiText("invalid_url_format_aed7aaa6")
       }
     }
     return null
@@ -250,12 +254,12 @@ export function McpServerFormDialog({
       <ResponsiveDialogContent className="sm:max-w-lg">
         <div className="border-b px-4 py-3.5">
           <ResponsiveDialogTitle>
-            {mode === "edit" ? "编辑 MCP 服务器" : "新增 MCP 服务器"}
+            {mode === "edit" ? uiText("edit_mcp_server_d9bc88f2") : uiText("add_mcp_server_f4b0e747")}
           </ResponsiveDialogTitle>
         </div>
 
         <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-4">
-          <Field label="服务器 ID">
+          <Field label={uiText("server_id_2964b36b")}>
             <Input
               placeholder="filesystem"
               value={id}
@@ -265,7 +269,7 @@ export function McpServerFormDialog({
             />
           </Field>
 
-          <Field label="显示名称(可选)">
+          <Field label={uiText("display_name_optional_1e3a880a")}>
             <Input
               placeholder="Filesystem MCP"
               value={name}
@@ -276,14 +280,14 @@ export function McpServerFormDialog({
 
           <div className="flex items-center justify-between rounded-md border bg-muted/30 px-3 py-2">
             <div>
-              <div className="text-sm">启用</div>
-              <div className="text-xs text-muted-foreground">保存后自动连接该服务器</div>
+              <div className="text-sm">{uiText("enabled_f4f0ead1")}</div>
+              <div className="text-xs text-muted-foreground">{uiText("connect_to_this_server_after_saving_0e2112fa")}</div>
             </div>
             <Switch checked={enabled} onCheckedChange={setEnabled} />
           </div>
 
           <div>
-            <div className="mb-1 text-xs text-muted-foreground">传输方式</div>
+            <div className="mb-1 text-xs text-muted-foreground">{uiText("transport_84dada05")}</div>
             <div className="flex flex-wrap gap-2">
               {(["stdio", "sse", "streamable_http"] as const).map((k) => (
                 <Button
@@ -295,7 +299,7 @@ export function McpServerFormDialog({
                   className="flex-1"
                   onClick={() => setKind(k)}
                 >
-                  {k === "stdio" ? "stdio(本地进程)" : k === "sse" ? "SSE(远程)" : "Streamable HTTP(远程)"}
+                  {k === "stdio" ? uiText("stdio_local_process_e3d7ac94") : k === "sse" ? uiText("sse_remote_038b1ed3") : uiText("streamable_http_remote_7ac7cbb2")}
                 </Button>
               ))}
             </div>
@@ -303,7 +307,7 @@ export function McpServerFormDialog({
 
           {kind === "stdio" ? (
             <>
-              <Field label="命令">
+              <Field label={uiText("command_928f87d4")}>
                 <Input
                   placeholder="npx"
                   value={command}
@@ -311,7 +315,7 @@ export function McpServerFormDialog({
                   onChange={(e) => setCommand(e.target.value)}
                 />
               </Field>
-              <Field label="参数(每行一个)">
+              <Field label={uiText("arguments_one_per_line_243b43f4")}>
                 <Textarea
                   className="min-h-16 resize-y font-mono text-xs"
                   placeholder={"-y\n@modelcontextprotocol/server-filesystem\n/Users/me"}
@@ -319,7 +323,7 @@ export function McpServerFormDialog({
                   onChange={(e) => setArgsText(e.target.value)}
                 />
               </Field>
-              <Field label="工作目录 cwd(可选)">
+              <Field label={uiText("working_directory_cwd_optional_dd5ce4a1")}>
                 <Input
                   placeholder="/Users/me/project"
                   value={cwd}
@@ -328,8 +332,8 @@ export function McpServerFormDialog({
                 />
               </Field>
               <KeyValueEditor
-                title="环境变量"
-                addLabel="添加"
+                title={uiText("environment_variables_ae27b474")}
+                addLabel={uiText("add_7a8a11ea")}
                 keyPlaceholder="MCP_ROOT"
                 valuePlaceholder="/Users/me/workspace"
                 entries={envEntries}
@@ -347,8 +351,8 @@ export function McpServerFormDialog({
                 />
               </Field>
               <KeyValueEditor
-                title="请求头 Headers"
-                addLabel="添加"
+                title={uiText("request_headers_70378530")}
+                addLabel={uiText("add_7a8a11ea")}
                 keyPlaceholder="Authorization"
                 valuePlaceholder="Bearer token"
                 entries={headerEntries}
@@ -366,10 +370,9 @@ export function McpServerFormDialog({
           ) : null}
           <div className="flex justify-end gap-2">
             <Button size="sm" variant="secondary" onClick={onCancel} disabled={busy}>
-              取消
-            </Button>
+              {uiText("cancel_2cd0f3be")}</Button>
             <Button size="sm" onClick={save} disabled={busy}>
-              {busy ? "保存中…" : mode === "edit" ? "保存" : "添加"}
+              {busy ? uiText("saving_ff509c9b") : mode === "edit" ? uiText("save_a3030bf8") : uiText("add_7a8a11ea")}
             </Button>
           </div>
         </div>

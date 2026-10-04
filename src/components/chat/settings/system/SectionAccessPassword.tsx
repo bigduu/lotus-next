@@ -1,3 +1,4 @@
+import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { useCallback, useEffect, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -21,6 +22,7 @@ export function SectionAccessPassword({
   /** Config loaded — required for the disable path (config patch). */
   configReady: boolean
 }) {
+  useUiLocale()
   const [statusLoading, setStatusLoading] = useState(true)
   const [statusError, setStatusError] = useState<string | null>(null)
   const [passwordEnabled, setPasswordEnabled] = useState(false)
@@ -59,15 +61,15 @@ export function SectionAccessPassword({
   const submit = async () => {
     const next = newPassword.trim()
     if (next.length < 4) {
-      setMsg({ kind: "error", text: "新密码至少 4 位" })
+      setMsg({ kind: "error", text: uiText("new_password_must_be_at_least_4_characters_94479073") })
       return
     }
     if (next !== confirmPassword.trim()) {
-      setMsg({ kind: "error", text: "两次输入的密码不一致" })
+      setMsg({ kind: "error", text: uiText("the_passwords_do_not_match_58807745") })
       return
     }
     if (requiresCurrent && !currentPassword.trim()) {
-      setMsg({ kind: "error", text: "请输入当前密码" })
+      setMsg({ kind: "error", text: uiText("please_enter_the_current_password_f1790d33") })
       return
     }
     setBusy(true)
@@ -80,7 +82,7 @@ export function SectionAccessPassword({
       setCurrentPassword("")
       setNewPassword("")
       setConfirmPassword("")
-      setMsg({ kind: "ok", text: passwordEnabled ? "密码已更新" : "密码已启用" })
+      setMsg({ kind: "ok", text: passwordEnabled ? uiText("password_updated_326400c7") : uiText("password_enabled_750d3be9") })
       await loadStatus()
     } catch (e) {
       setMsg({ kind: "error", text: getErrorMessage(e) })
@@ -95,7 +97,7 @@ export function SectionAccessPassword({
     try {
       await saveSection({ access_control: { password_enabled: false } })
       setConfirmDisable(false)
-      setMsg({ kind: "ok", text: "访问密码已关闭" })
+      setMsg({ kind: "ok", text: uiText("access_password_disabled_44121148") })
       await loadStatus()
     } catch (e) {
       setDisableError(getErrorMessage(e))
@@ -106,31 +108,30 @@ export function SectionAccessPassword({
 
   return (
     <section className="space-y-2 rounded-lg border p-3">
-      <div className="text-xs font-medium text-muted-foreground">访问密码</div>
+      <div className="text-xs font-medium text-muted-foreground">{uiText("access_password_f4f712d5")}</div>
 
       {statusLoading ? (
-        <p className="text-xs text-muted-foreground">加载中…</p>
+        <p className="text-xs text-muted-foreground">{uiText("loading_4927a53b")}</p>
       ) : statusError ? (
         <div className="flex items-center justify-between gap-2">
-          <p className="text-xs text-destructive">状态加载失败:{statusError}</p>
+          <p className="text-xs text-destructive">{uiText("could_not_load_status_8e9b5bd3")}{statusError}</p>
           <Button size="sm" variant="secondary" onClick={() => void loadStatus()}>
-            重试
-          </Button>
+            {uiText("retry_b8784c8d")}</Button>
         </div>
       ) : (
         <p className="text-xs text-muted-foreground">
           {passwordEnabled
             ? localBypass
-              ? "已启用。当前为本机/局域网访问,无需输入密码。"
-              : "已启用。远程访问需要输入密码。"
-            : "未启用。远程访问当前不需要密码,建议设置。"}
+              ? uiText("enabled_password_entry_is_not_required_for_local_or_lan_3daa946f")
+              : uiText("enabled_a_password_is_required_for_remote_access_65f39105")
+            : uiText("disabled_remote_access_does_not_require_a_password_sett_1458bac4")}
         </p>
       )}
 
       <div className="space-y-2">
         {requiresCurrent ? (
           <div className="space-y-1">
-            <div className="text-xs text-muted-foreground">当前密码</div>
+            <div className="text-xs text-muted-foreground">{uiText("current_password_a114cfb6")}</div>
             <Input
               type="password"
               autoComplete="current-password"
@@ -141,7 +142,7 @@ export function SectionAccessPassword({
         ) : null}
         <div className="space-y-1">
           <div className="text-xs text-muted-foreground">
-            {passwordEnabled ? "新密码(至少 4 位)" : "设置密码(至少 4 位)"}
+            {passwordEnabled ? uiText("new_password_at_least_4_characters_d91d6a45") : uiText("set_password_at_least_4_characters_51a6ae54")}
           </div>
           <Input
             type="password"
@@ -151,7 +152,7 @@ export function SectionAccessPassword({
           />
         </div>
         <div className="space-y-1">
-          <div className="text-xs text-muted-foreground">确认密码</div>
+          <div className="text-xs text-muted-foreground">{uiText("confirm_password_81b17bc0")}</div>
           <Input
             type="password"
             autoComplete="new-password"
@@ -174,11 +175,10 @@ export function SectionAccessPassword({
                 setConfirmDisable(true)
               }}
             >
-              关闭密码
-            </Button>
+              {uiText("disable_password_a9e26288")}</Button>
           ) : null}
           <Button size="sm" onClick={submit} disabled={busy || !newPassword.trim()}>
-            {busy ? "保存中…" : passwordEnabled ? "更新密码" : "启用密码"}
+            {busy ? uiText("saving_ff509c9b") : passwordEnabled ? uiText("update_password_82817084") : uiText("enable_password_fe979237")}
           </Button>
         </div>
       </div>
@@ -186,9 +186,9 @@ export function SectionAccessPassword({
       <ConfirmDialog
         open={confirmDisable}
         onOpenChange={setConfirmDisable}
-        title="关闭访问密码?"
-        description="关闭后,远程访问将不再需要密码验证,立即生效。已配对设备的令牌不受影响。"
-        confirmLabel="关闭密码"
+        title={uiText("disable_access_password_eaa845c9")}
+        description={uiText("remote_access_will_no_longer_require_password_verificat_036abd84")}
+        confirmLabel={uiText("disable_password_a9e26288")}
         busy={disableBusy}
         error={disableError}
         onConfirm={() => void disablePassword()}
