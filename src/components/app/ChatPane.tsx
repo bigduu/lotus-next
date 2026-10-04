@@ -598,7 +598,7 @@ export function ChatPane({
   const submit = () => {
     // Keep an in-flight admission from capturing or clearing a second draft.
     if (submissionPending || modelSaving || queue.busy || ticketIngress.busy || rootMode.busy || goalRequestActive.current) return
-    if (semanticComposer && !tickets.canSendIngress) { showToast("工单连接或写入权限尚未确认，请刷新后重试。"); return }
+    if (semanticComposer && !tickets.canSendIngress) { showToast(uiText("ticket_the_ticket_connection_or_write_permission_is__c3da124f")); return }
     if (rootSessionUnsafe()) {
       setRootModeConflict(uiText("the_root_permission_change_is_unconfirmed_sending_and_e_a75a6b4f"))
       return
@@ -700,7 +700,7 @@ export function ChatPane({
       : text
     const images = snapshot.attachments.map((a) => ({ base64: a.base64, name: a.name, size: a.size, type: a.type }))
     if (semanticComposer && (snapshot.selectedSkill || snapshot.selectedWorkflow || snapshot.typedWorkflow)) {
-      showToast("请把工单指令直接写在普通输入框中，并先移除工作流或技能选择。")
+      showToast(uiText("ticket_enter_ticket_instructions_directly_in_the_mes_2bddd839"))
       return
     }
     const frozenReference = ticketReference
@@ -1091,11 +1091,11 @@ export function ChatPane({
         {queue.error && <div role="alert" className="mx-auto mb-1 w-[calc(100%-1.5rem)] max-w-6xl rounded-lg border border-destructive/40 px-3 py-2 text-xs text-destructive">{queue.error}</div>}
         <TicketWorkPanel controller={tickets} onReference={tickets.canSendIngress && ticketScope?.capabilities?.message_references_v1 === true && !pendingTicketMessage ? (request) => { setTicketReference(request); composerInputRef.current?.focus() } : undefined} />
         {semanticComposer && visibleTicketReference ? <div className="mx-4 mb-2 flex items-center gap-2 text-xs" data-testid="ticket-reference">
-          <span>引用：{tickets.state?.works[visibleTicketReference.work_id]?.ticket.contract.title ?? visibleTicketReference.work_id} 的请求</span>
-          <button type="button" className="underline" disabled={pendingTicketMessage} onClick={() => setTicketReference(null)}>清除引用</button>
+          <span>{uiText("ticket_reference", { title: tickets.state?.works[visibleTicketReference.work_id]?.ticket.contract.title ?? visibleTicketReference.work_id })}</span>
+          <button type="button" className="underline" disabled={pendingTicketMessage} onClick={() => setTicketReference(null)}>{uiText("ticket_clear_reference_b2e538a2")}</button>
         </div> : null}
-        {semanticComposer && (ticketIngress.error || pendingTicketMessage) ? <div role="alert" className="mx-4 mb-2 text-xs text-destructive">{ticketIngress.error ?? "上次消息尚未确认，请用原文和原附件重试。"}
-          {ticketIngress.executePending === currentSessionId ? <button type="button" className="ml-2 underline" onClick={() => void ticketIngress.retryExecute()}>重试启动</button> : null}
+        {semanticComposer && (ticketIngress.error || pendingTicketMessage) ? <div role="alert" className="mx-4 mb-2 text-xs text-destructive">{ticketIngress.error ?? uiText("ticket_the_previous_message_is_not_confirmed_retry_w_7369504e")}
+          {ticketIngress.executePending === currentSessionId ? <button type="button" className="ml-2 underline" onClick={() => void ticketIngress.retryExecute()}>{uiText("ticket_retry_start_47d5cd3e")}</button> : null}
         </div> : null}
         <div data-composer-region className="relative shrink-0">
           {/* Keep the jump control centered on the same max-width column as the composer. */}

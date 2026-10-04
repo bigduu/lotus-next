@@ -1,3 +1,4 @@
+import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { useCallback, useEffect, useRef, useState } from "react"
 import { getErrorMessage, isApiError } from "@services/api"
 import { ticketClient } from "@services/tickets/client"
@@ -9,11 +10,12 @@ async function sendDecision(command: ResponseCommand) {
   const acknowledgement = await ticketClient.respond(command)
   if (!acknowledgement || acknowledgement.operation_id !== command.operation_id
     || !Number.isSafeInteger(acknowledgement.committed_seq) || acknowledgement.committed_seq <= command.expected_seq) {
-    throw new Error("决策回执未确认，请使用原操作重试。")
+    throw new Error(uiText("ticket_the_decision_receipt_is_not_confirmed_retry_t_42a54511"))
   }
 }
 
 export function useTicketWork(sessionId: string | null | undefined) {
+  useUiLocale()
   const [state, setState] = useState<TicketState | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [decisionError, setDecisionError] = useState<string | null>(null)
@@ -96,7 +98,7 @@ export function useTicketWork(sessionId: string | null | undefined) {
     try { retry = readDecisionReceipts(captured!)[request.id] }
     catch (failure) { setDecisionError(getErrorMessage(failure)); return false }
     if (retry && JSON.stringify(retry.decision) !== JSON.stringify(decision)) {
-      setDecisionError("上次发送尚未确认，请先确认同一请求的发送结果。"); return false
+      setDecisionError(uiText("ticket_the_previous_send_is_not_confirmed_confirm_th_1c3020b9")); return false
     }
     let command: ResponseCommand
     try {
@@ -138,11 +140,11 @@ export function useTicketWork(sessionId: string | null | undefined) {
       if (scope.current !== captured || epoch.current !== capturedEpoch) return false
       if (unknown) {
         setUncertain((old) => ({ ...old, [request.id]: command }))
-        setDecisionError("发送结果尚未确认；重试会使用同一请求和原操作 ID。");
+        setDecisionError(uiText("ticket_the_send_outcome_is_not_confirmed_retrying_wi_25b2c47f"));
       } else {
         setUncertain((old) => { const next = { ...old }; delete next[request.id]; return next })
         setDecisionError(failure.message === "revision_conflict"
-          ? "工作已更新，请核对当前问题后再次提交。" : getErrorMessage(failure)); await refreshRef.current()
+          ? uiText("ticket_work_has_changed_check_the_current_question_a_d216c46f") : getErrorMessage(failure)); await refreshRef.current()
       }
       return false
     } finally { if (scope.current === captured && epoch.current === capturedEpoch) { activeRequests.current.delete(request.id); setBusy((old) => ({ ...old, [request.id]: false })) } }

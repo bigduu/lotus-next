@@ -21,7 +21,7 @@ const walk = (directory) => {
   for (const item of readdirSync(directory, { withFileTypes: true })) {
     const path = `${directory}/${item.name}`
     if (item.isDirectory()) { if (path !== "src/shared/i18n") walk(path); continue }
-    if (!/\.[tj]sx?$/.test(path) || /\.test\.|\/test\//.test(path)) continue
+    if (!/\.[tj]sx?$/.test(path) || /\.test\.|\/test\/|\/testFixtures\.ts$/.test(path)) continue
     const source = ts.createSourceFile(path, readFileSync(path, "utf8"), ts.ScriptTarget.Latest, true)
     const report = (node, message) => {
       const { line } = source.getLineAndCharacterOfPosition(node.getStart(source))
