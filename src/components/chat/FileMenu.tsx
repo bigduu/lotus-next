@@ -13,7 +13,9 @@ export function FileMenu({
   query,
   onPick,
   onDismiss,
+  inputId,
 }: {
+  inputId: string
   files: WorkspaceFileEntry[]
   query: string
   onPick: (entry: WorkspaceFileEntry) => void
@@ -31,6 +33,7 @@ export function FileMenu({
       if (entry) onPick(entry)
     },
     onDismiss,
+    inputId,
   )
   const activeItemRef = useRef<HTMLButtonElement | null>(null)
   useEffect(() => {
