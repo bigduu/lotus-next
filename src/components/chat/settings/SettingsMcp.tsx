@@ -288,7 +288,7 @@ export function SettingsMcp() {
                     checked={s.enabled}
                     disabled={busy}
                     onCheckedChange={(checked) => void toggleEnabled(s, checked)}
-                    aria-label={s.enabled ? uiText("disable_4e6fd0e2") : uiText("enabled_f4f0ead1")}
+                    aria-label={s.enabled ? uiText("disable_4e6fd0e2") : uiText("enable_action")}
                   />
                   <button
                     onClick={() => void refreshServer(s)}

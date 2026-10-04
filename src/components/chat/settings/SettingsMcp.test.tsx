@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { apiClient, ApiError } from "@services/api"
 import { McpService, mcpService } from "@services/mcp"
 import { SettingsMcp } from "./SettingsMcp"
+import { changeLocale } from "@shared/i18n"
 
 const roots: Root[] = []
 const environment = globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
@@ -231,3 +232,12 @@ describe("SettingsMcp JSON import integration", () => {
     } }))
   })
 });
+
+it("announces the Enable action for a disabled MCP switch in English", async () => {
+  await mount()
+  await act(async () => { await changeLocale("en-US") })
+  const toggle = document.querySelector('[role="switch"][aria-label="Enable"]')!
+  expect(toggle).not.toBeNull()
+  expect(toggle.getAttribute("aria-checked")).toBe("false")
+  expect(document.querySelector('[role="switch"][aria-label="Enabled"]')).toBeNull()
+})

@@ -167,7 +167,7 @@ export function SettingsProviders() {
     try {
       await updateProviderInstance(inst.id, { enabled: next })
     } catch (e) {
-      setListError(uiText("failed_72c709b0", { v0: inst.label || inst.type, v1: next ? uiText("enabled_f4f0ead1") : uiText("disable_4e6fd0e2"), v2: getErrorMessage(e) }))
+      setListError(uiText("failed_72c709b0", { v0: inst.label || inst.type, v1: next ? uiText("enable_action") : uiText("disable_4e6fd0e2"), v2: getErrorMessage(e) }))
     }
   }
 
@@ -305,7 +305,7 @@ export function SettingsProviders() {
                   <Switch
                     checked={inst.enabled}
                     onCheckedChange={(v) => void toggleEnabled(inst, v)}
-                    aria-label={inst.enabled ? uiText("disable_4e6fd0e2") : uiText("enabled_f4f0ead1")}
+                    aria-label={inst.enabled ? uiText("disable_4e6fd0e2") : uiText("enable_action")}
                     className="shrink-0"
                   />
                   <button

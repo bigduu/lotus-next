@@ -44,7 +44,7 @@ export function groupChats(chats: ChatItem[], now: Date): ChatGroup[] {
   }
 
   const groups: ChatGroup[] = []
-  if (pinned.length) groups.push({ key: "__pinned", label: uiText("pin_173f88d2"), chats: pinned })
+  if (pinned.length) groups.push({ key: "__pinned", label: uiText("pinned_section"), chats: pinned })
   groups.push(...byDay.values())
   return groups
 }
@@ -78,7 +78,7 @@ export function groupChatsByProject(
   }
 
   const groups: ChatGroup[] = []
-  if (pinned.length) groups.push({ key: "__pinned", label: uiText("pin_173f88d2"), chats: pinned })
+  if (pinned.length) groups.push({ key: "__pinned", label: uiText("pinned_section"), chats: pinned })
   // Unassigned sessions always render last; keep first-seen order otherwise
   // (already sorted by newest creation time).
   const sortedKeys = [

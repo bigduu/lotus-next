@@ -1808,5 +1808,8 @@ export const uiEnUs = {
   "approval_rule_example": "Matching tool calls require approval before execution. Rules can be tool names or patterns (e.g. <code>Bash</code> or <code>write_file</code>).",
   "workspace_locked_notice": "The working directory was set when this session was created. To change it, start a <strong>New Session</strong>.",
   "prefix_cache_detail": "Prefix Cache {{pct}}% ({{read}} cache-read / {{input}} provider input, {{status}})",
-  "context_cache_detail": "{{context}}; {{cache}}"
+  "context_cache_detail": "{{context}}; {{cache}}",
+  "enable_action": "Enable",
+  "pinned_section": "Pinned",
+  "root_session_label": "Root session"
 } as const

@@ -112,7 +112,7 @@ export function SectionSessions() {
             <div className="min-w-0">
               <div className="truncate text-sm">{current.title || current.id}</div>
               <div className="truncate text-xs text-muted-foreground">
-                {current.kind === "child" ? uiText("child_7f54b15e") : uiText("root_sessions_8cd7a0d1")} · {current.id}
+                {current.kind === "child" ? uiText("child_7f54b15e") : uiText("root_session_label")} · {current.id}
               </div>
             </div>
             <Button

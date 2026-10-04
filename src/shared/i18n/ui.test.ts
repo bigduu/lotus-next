@@ -68,6 +68,12 @@ describe("English UI localization", () => {
 
   it("handles English plurals, interpolates names verbatim and formats calendar groups", async () => {
     await changeLocale("en-US")
+    expect(uiText("enable_action")).toBe("Enable")
+    expect(uiText("enabled_f4f0ead1")).toBe("Enabled")
+    expect(uiText("root_session_label")).toBe("Root session")
+    expect(uiText("pinned_section")).toBe("Pinned")
+    expect(uiText("pin_173f88d2")).toBe("Pin")
+    expect(groupChats([{ id: "pinned", pinned: true, createdAt: 1 }] as Parameters<typeof groupChats>[0], new Date())[0].label).toBe("Pinned")
     expect(uiText("goal_set_action")).toBe("Set")
     expect(uiList(["Bash", "write_file"])).toBe("Bash, write_file")
     expect(uiText("sessions_4e5cc041", { count: 1, v0: "1" })).toBe("1 session")

@@ -130,7 +130,7 @@ export function HomeDashboard({
 
   const sections: Array<{ label: string; items: ChatItem[] }> = [
     { label: uiText("running_1f0eb99b"), items: running },
-    { label: uiText("pin_173f88d2"), items: pinned },
+    { label: uiText("pinned_section"), items: pinned },
     { label: uiText("recent_997a5e6e"), items: recent },
   ].filter((s) => s.items.length > 0)
 

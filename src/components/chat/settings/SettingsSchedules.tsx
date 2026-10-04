@@ -209,7 +209,7 @@ export function SettingsSchedules() {
                     <Badge variant={status.variant}>{status.label}</Badge>
                     <Switch
                       checked={s.enabled}
-                      aria-label={s.enabled ? uiText("disable_4e6fd0e2") : uiText("enabled_f4f0ead1")}
+                      aria-label={s.enabled ? uiText("disable_4e6fd0e2") : uiText("enable_action")}
                       onCheckedChange={(checked) =>
                         runAction(async () => {
                           await agentClient.patchSchedule(s.id, { enabled: checked })

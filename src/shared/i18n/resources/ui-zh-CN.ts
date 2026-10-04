@@ -1808,5 +1808,8 @@ export const uiZhCn = {
   "approval_rule_example": "匹配这些规则的工具调用会在执行前弹出审批。规则可以是工具名或模式(如 <code>Bash</code>、<code>write_file</code>)。",
   "workspace_locked_notice": "工作目录在会话创建时设定,当前会话已锁定。下面的选择会用于<strong>新建会话</strong>。",
   "prefix_cache_detail": "Prefix Cache {{pct}}%（{{read}} cache-read / {{input}} provider input，{{status}}）",
-  "context_cache_detail": "{{context}}；{{cache}}"
+  "context_cache_detail": "{{context}}；{{cache}}",
+  "enable_action": "启用",
+  "pinned_section": "置顶",
+  "root_session_label": "根会话"
 } as const

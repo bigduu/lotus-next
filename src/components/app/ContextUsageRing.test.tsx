@@ -2,6 +2,7 @@ import { act } from "react"
 import { createRoot } from "react-dom/client"
 import { afterEach, describe, expect, it, vi } from "vitest"
 import { ContextUsageRing } from "./ContextUsageRing"
+import { changeLocale } from "@shared/i18n"
 
 afterEach(() => {
   document.body.replaceChildren()
@@ -93,4 +94,22 @@ describe("ContextUsageRing", () => {
 
     act(() => root.unmount())
   })
+})
+
+it("localizes the complete prefix-cache tooltip and selected-locale counts", async () => {
+  vi.spyOn(window.navigator, "language", "get").mockReturnValue("fr-FR")
+  const container = document.createElement("div"); document.body.append(container)
+  const root = createRoot(container)
+  try {
+    await act(async () => root.render(<ContextUsageRing totalTokens={10000} maxContextTokens={100000} prefixCache={{ inputTokens: 2000, cacheCreationInputTokens: 500, cacheReadInputTokens: 7500 }} onClick={() => {}} />))
+    await act(async () => { await changeLocale("en-US") })
+    const title = container.querySelector("button")!.title
+    expect(title).toContain("7,500 cache-read / 10,000 provider input")
+    expect(title).not.toMatch(/[（），；]/)
+    await act(async () => { await changeLocale("zh-CN") })
+    expect(container.querySelector("button")!.title).toContain("（")
+  } finally {
+    act(() => root.unmount())
+    vi.restoreAllMocks()
+  }
 })
