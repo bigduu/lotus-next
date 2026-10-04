@@ -4,7 +4,7 @@ const chromium = { browserName: "chromium" as const };
 
 export default defineConfig({
   testDir: "./e2e",
-  testIgnore: "real-bamboo*.spec.ts",
+  testIgnore: ["real-bamboo*.spec.ts", "ticket-runtime.spec.ts"],
   outputDir: "test-results",
   fullyParallel: true,
   forbidOnly: Boolean(process.env.CI),

@@ -17,6 +17,7 @@ type ReasoningPickerProps = ComponentProps<
 >
 type ChatPaneProps = ComponentProps<(typeof import("./ChatPane"))["ChatPane"]>
 type Send = ChatPaneProps["chat"]["send"]
+type TicketController = ReturnType<(typeof import("@/hooks/useTicketWork"))["useTicketWork"]>
 type WorkflowControlProps = ComponentProps<(typeof import("@/components/chat/WorkflowSelectionControl"))["WorkflowSelectionControl"]>
 type State = {
   chats: { id: string; config: { reasoningEffort?: ReasoningEffort | null } }[]
@@ -44,6 +45,7 @@ const runtime = vi.hoisted(() => ({
   providerState: { providerSnapshot: null as ProviderInstancesConfig | null },
   stickyAtBottom: true, scrollToBottom: vi.fn(),
   queueSend: vi.fn(), revision: 0, getWorkflow: vi.fn(), listCommands: vi.fn(), peekTemplate: vi.fn(),
+  ticketWork: null as TicketController | null,
 }))
 vi.mock("zustand/react/shallow", () => ({ useShallow: <T,>(selector: T) => selector }))
 vi.mock("@shared/store/appStore", async () => {
@@ -62,6 +64,10 @@ vi.mock("@shared/store/appStore", async () => {
 type ProviderState = typeof runtime.providerState
 vi.mock("@shared/store/appStore/slices/providerSlice", () => ({ useProviderStore: <T,>(selector: (state: ProviderState) => T) => selector(runtime.providerState) }))
 vi.mock("@/hooks/useGuidanceQueue", () => ({ useGuidanceQueue: () => ({ mode: "after_round", setMode: vi.fn(), send: runtime.queueSend, cancel: vi.fn(), pending: [], error: null, busy: false, hasUnconfirmed: false }) }))
+vi.mock("@/hooks/useTicketWork", () => ({ useTicketWork: () => runtime.ticketWork ?? {
+  state: null, connected: false, negotiated: true, error: null, busy: {}, uncertain: {},
+  canRespond: false, canSendIngress: false, respond: vi.fn(), refresh: vi.fn(),
+} }))
 vi.mock("@/hooks/useStickyScroll", () => ({
   useStickyScroll: () => ({
     scrollRef: { current: null }, contentRef: { current: null }, atBottom: runtime.stickyAtBottom,
@@ -124,6 +130,9 @@ vi.mock("@/components/app/Composer", () => ({
 import { agentClient } from "@services/chat/AgentService"
 import { beginRootModeOperation, getRootModeFenceState } from "@/lib/rootModeTransitionFence"
 import { ApiError, RequestTimeoutError } from "@services/api/errors"
+import { apiClient } from "@services/api"
+import { ticketSnapshot } from "@services/tickets/testFixtures"
+import { applyTicketSnapshot } from "@services/tickets/state"
 import { ChatPane } from "./ChatPane"
 import { isSessionUnread, useSessionReadState } from "@/lib/sessionReadState"
 const skill = (id: string): SkillDefinition => ({ id, name: id, description: id, prompt: id, tool_refs: [`tool-${id}`] })
@@ -236,6 +245,7 @@ function resizePane(wide: boolean) {
 }
 beforeEach(() => {
   localStorage.clear()
+  sessionStorage.clear(); runtime.ticketWork = null
   rootFields.root_mode_transition_epoch = 0
   vi.mocked(agentClient.getSession).mockReset().mockImplementation(async (sessionId) => ({
     session: { ...rootFields, id: sessionId, kind: "root", root_orchestration_only: false, thinking_mode: "standard" },
@@ -317,6 +327,61 @@ beforeEach(() => {
 })
 afterEach(() => { for (const root of roots.splice(0)) act(() => root.unmount()); document.body.replaceChildren(); vi.unstubAllGlobals() })
 describe("ChatPane composer acknowledgement", () => {
+  it("holds the draft and does not choose legacy routing while a running Supervisor negotiates tickets", async () => {
+    runtime.ticketWork = { state: null, connected: false, negotiated: false, error: null,
+      busy: {}, uncertain: {}, respond: async () => false, refresh: async () => {}, canRespond: false, canSendIngress: false }
+    const send = vi.fn<Send>()
+    const textarea = await mount(send, "negotiating-root", true)
+    change(textarea, "创建工作")
+    await act(async () => composer().onSubmit())
+    expect(send).not.toHaveBeenCalled()
+    expect(runtime.queueSend).not.toHaveBeenCalled()
+    expect(runtime.state.inputStates["negotiating-root"].content).toBe("创建工作")
+  })
+  it("keeps an unknown semantic delivery out of legacy routing during reload and replays through partial scope", async () => {
+    const randomUUID = crypto.randomUUID.bind(crypto)
+    vi.stubGlobal("crypto", { randomUUID, subtle: { digest: async (_algorithm: string, bytes: Uint8Array) => {
+      const result = new Uint8Array(32); for (const [i, byte] of bytes.entries()) result[i % 32] ^= byte; return result.buffer
+    } } })
+    const id = "semantic-ui-root"
+    const value = ticketSnapshot()
+    value.scope.binding.supervisor_session_id = id
+    const ready = (): TicketController => ({
+      state: applyTicketSnapshot(null, value), connected: true, negotiated: true, error: null,
+      busy: {}, uncertain: {}, respond: async () => false, refresh: async () => {},
+      canRespond: value.complete, canSendIngress: true,
+    })
+    vi.mocked(agentClient.execute).mockResolvedValue({ session_id: id, status: "already_running", events_url: "/events" })
+    runtime.ticketWork = ready()
+    const post = vi.spyOn(apiClient, "postOnce").mockRejectedValueOnce(new Error("unknown Human acknowledgement"))
+    const send = vi.fn<Send>()
+    const textarea = await mount(send, id)
+    change(textarea, "创建报告")
+    await act(async () => composer().onSubmit())
+    const original = post.mock.calls[0][1] as { session_id: string; message_id: string }
+    expect(sessionStorage.getItem("lotus-next.ticket-human." + id)).not.toBeNull()
+    act(() => roots.pop()!.unmount())
+    runtime.ticketWork = null
+    await mount(send, id, true)
+    await act(async () => composer().onSubmit())
+    expect(send).not.toHaveBeenCalled()
+    expect(runtime.queueSend).not.toHaveBeenCalled()
+    expect(post).toHaveBeenCalledTimes(1)
+    value.complete = false
+    runtime.ticketWork = ready()
+    act(() => roots.pop()!.unmount())
+    await mount(send, id, true)
+    post.mockResolvedValueOnce({ session_id: id, message_id: original.message_id, ingress_seq: 1 })
+    await act(async () => {
+      composer().onSubmit()
+      await vi.waitFor(() => expect(post).toHaveBeenCalledTimes(2))
+    })
+    expect(post).toHaveBeenCalledTimes(2)
+    expect(post.mock.calls[1][1]).toEqual(original)
+    expect(send).not.toHaveBeenCalled()
+    expect(runtime.queueSend).not.toHaveBeenCalled()
+    expect(sessionStorage.getItem("lotus-next.ticket-human." + id)).toBeNull()
+  })
   it("does not submit a draft mode as existing-Root authority", async () => {
     runtime.state.inputStates["root-session"] = { content: "", contentRevision: 0, thinkingMode: "ultra", thinkingModeRevision: 9 }
     const send = vi.fn<Send>().mockResolvedValue({ kind: "accepted", operationId: 1, sessionId: "root-session", navigated: false })

@@ -56,8 +56,8 @@ export function WorkflowSelectionControl({ sessionId, selected, onChange, onRemo
         {!environment && (error || argsError) && <p role="alert" className="basis-full break-words text-xs text-destructive">{error || argsError}</p>}
       </div>
       {open && <PopoverContent side={environment ? "left" : "top"} align="start"
-        aria-labelledby={titleId} className="w-80 space-y-3 overflow-y-auto rounded-xl p-3 text-xs"
-        style={{ maxHeight: "min(32rem, var(--radix-popover-content-available-height))", maxWidth: "calc(100vw - 1.5rem)" }}
+        aria-labelledby={titleId} className="space-y-3 overflow-y-auto rounded-xl p-3 text-xs"
+        style={{ width: "calc(var(--spacing) * 80)", maxHeight: "min(32rem, var(--radix-popover-content-available-height))", maxWidth: "calc(100vw - 1.5rem)" }}
         onOpenAutoFocus={() => { interactedOutside.current = false }}
         onInteractOutside={() => { interactedOutside.current = true }}
         onCloseAutoFocus={(event) => { if (onReturnFocus && !environment && !interactedOutside.current) { event.preventDefault(); onReturnFocus() } }}

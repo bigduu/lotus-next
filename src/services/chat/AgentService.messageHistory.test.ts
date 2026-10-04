@@ -36,6 +36,13 @@ beforeEach(() => {
 })
 
 describe("message-only history transport", () => {
+  it("preserves bounded message references without widening metadata or approval authority", async () => {
+    const value = response(); value.messages[0] = { ...value.messages[0], thread_id: "work-E", in_reply_to: "q-E", correlation_id: "trace-E" }
+    api.get.mockResolvedValueOnce(value)
+    expect((await agentClient.getMessageHistory("child/a ?")).messages[0]).toEqual(value.messages[0])
+    api.get.mockResolvedValueOnce({ ...value, messages: [{ ...value.messages[0], in_reply_to: "x".repeat(129) }] })
+    await expect(agentClient.getMessageHistory("child/a ?")).rejects.toBeInstanceOf(MessageHistoryContractError)
+  })
   it("requests only the projected endpoint and encodes opaque ids and cursors", async () => {
     await expect(agentClient.getMessageHistory("child/a ?", "message/1 ?")).resolves.toEqual(response())
 

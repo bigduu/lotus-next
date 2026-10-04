@@ -127,6 +127,7 @@ export function Composer({
   sending,
   queueMode,
   onQueueModeChange,
+  sendWhileRunning = false,
   queueControls,
   permissionControl,
   runtimeControls,
@@ -172,6 +173,7 @@ export function Composer({
   sending: boolean
   queueMode?: GuidanceMode
   onQueueModeChange?: (mode: GuidanceMode) => void
+  sendWhileRunning?: boolean
   queueControls?: ReactNode
   /** Permission selector shown in the lower-left composer toolbar. */
   permissionControl?: ReactNode
@@ -215,6 +217,7 @@ export function Composer({
   const inputId = useId()
   const fileInputRef = useRef<HTMLInputElement>(null)
   const canQueue = sending && !!onQueueModeChange
+  const canSubmit = !sending || canQueue || sendWhileRunning
   const hasContent = !!draft.trim() || attachments.length > 0 || !!selectedWorkflow
 
   return (
@@ -328,7 +331,7 @@ export function Composer({
                 if (e.defaultPrevented || nativeEvent.isComposing || nativeEvent.keyCode === 229) return
                 if (e.key === "Enter" && !e.shiftKey) {
                   e.preventDefault()
-                  if (!submissionPending && hasContent && (!sending || canQueue)) onSubmit()
+                  if (!submissionPending && hasContent && canSubmit) onSubmit()
                 }
               }}
               title="Enter 发送，Shift+Enter 换行"
@@ -403,7 +406,7 @@ export function Composer({
                 <Button size="icon" disabled aria-label="正在发送" className="rounded-full">
                   <LoaderCircle className="animate-spin" />
                 </Button>
-              ) : (!sending || (canQueue && hasContent)) ? (
+              ) : canSubmit ? (
                 <Button size="icon" onClick={onSubmit} disabled={!hasContent} className="rounded-full"
                   aria-label={canQueue ? "加入队列" : "发送消息"} title={canQueue ? "加入队列" : "发送消息"}><ArrowUp /></Button>
               ) : null}

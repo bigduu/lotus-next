@@ -200,6 +200,14 @@ export class ApiClient {
     return this.send<T>("POST", path, options, { value: data });
   }
 
+  /** Send a user decision once. Ambiguous failures retain its exact receipt key. */
+  async postOnce<T>(path: string, data?: unknown, options?: RequestInit): Promise<T> {
+    const url = this.resolveUrl(path);
+    logApiRequest("POST", url);
+    const response = await this.transport.requestOnce(url, this.createRequestInit("POST", options, { value: data }));
+    return this.handleResponse<T>(response);
+  }
+
   async put<T>(path: string, data?: unknown, options?: RequestInit): Promise<T> {
     return this.send<T>("PUT", path, options, { value: data });
   }
