@@ -1,3 +1,5 @@
+import { i18nReady } from "@shared/i18n"
+import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { useCallback, useEffect, useRef, useState } from "react"
 import { Loader2 } from "lucide-react"
 import App from "./App"
@@ -57,40 +59,40 @@ const diagnosticCopy = (
   switch (outcome.kind) {
     case "missing":
       return {
-        title: "后端缺少启动契约",
+        title: uiText("backend_bootstrap_contract_missing_e730cff1"),
         description:
-          "当前后端没有提供 Lotus Next 所需的 canonical bootstrap。请升级 Bamboo 后端后重试。",
+          uiText("this_backend_does_not_provide_the_canonical_bootstrap_r_978e5022"),
       }
     case "invalid":
       return {
-        title: "后端启动响应无效",
+        title: uiText("invalid_backend_bootstrap_response_a55ab584"),
         description:
-          "后端返回了无法安全解析的启动信息。请检查部署是否完整，并升级为匹配的 Bamboo 版本。",
+          uiText("backend_startup_information_could_not_be_parsed_safely__0be87b82"),
       }
     case "incompatible":
       return {
-        title: "后端协议不兼容",
+        title: uiText("incompatible_backend_protocol_260abc98"),
         description:
-          "当前后端不满足 Lotus Next 所需的 HTTP v1 与 v2 stream 契约。请升级完整后端制品。",
+          uiText("this_backend_does_not_meet_the_http_v1_and_v2_stream_co_7566de39"),
       }
     case "auth-unsupported":
       return {
-        title: "当前认证方式尚不受支持",
+        title: uiText("unsupported_authentication_method_5c205826"),
         description:
-          "此部署仅接受设备凭据，而当前 Lotus Next 切片尚未接入设备配对与实时连接认证。",
+          uiText("this_deployment_accepts_only_device_credentials_this_lo_347b881c"),
       }
     case "repair":
       return {
-        title: "后端访问配置需要修复",
+        title: uiText("backend_access_configuration_needs_repair_47913701"),
         description:
-          "Bamboo 已将访问控制置于安全隔离状态。请先在本机修复或重置访问配置，然后重试。",
+          uiText("bamboo_has_isolated_access_control_for_safety_repair_or_e922553b"),
       }
     case "unavailable":
     case "internal-failure":
       return {
-        title: "暂时无法连接后端",
+        title: uiText("backend_temporarily_unavailable_42868eee"),
         description:
-          "Bamboo 服务暂时不可用。请确认服务正在运行，并在网络或启动过程恢复后重试。",
+          uiText("bamboo_is_temporarily_unavailable_check_that_the_servic_f2489632"),
       }
   }
 }
@@ -104,6 +106,7 @@ const diagnosticCopy = (
  * never publish a stale result.
  */
 export default function Root() {
+  useUiLocale()
   const runtime = getRuntimeConfig()
   const [view, setView] = useState<RootView>({ kind: "loading" })
   const generationRef = useRef(0)
@@ -138,7 +141,7 @@ export default function Root() {
         if (!setup.is_complete) {
           setView({
             kind: "setup",
-            message: setup.message || "应用尚未完成首次设置。",
+            message: setup.message || uiText("initial_app_setup_is_not_complete__38590db7"),
           })
           return
         }
@@ -240,13 +243,13 @@ export default function Root() {
             />
           </div>
           <h1 className="mt-4 text-xl font-semibold">
-            {sidecarStartup ? "正在启动 Bodhi" : "正在连接 Bamboo"}
+            {sidecarStartup ? uiText("starting_bodhi_41498861") : uiText("connecting_to_bamboo_a1d9b183")}
           </h1>
           <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
-            {sidecarStartup ? "正在等待本地 Bamboo 引擎准备就绪…" : "正在确认后端服务状态…"}
+            {sidecarStartup ? uiText("waiting_for_the_local_bamboo_engine__da692f8f") : uiText("checking_backend_service_status__e695ea14")}
           </p>
           <p className="mt-2 text-xs text-muted-foreground">
-            {sidecarStartup ? "首次启动或配置较多时可能需要一些时间，请稍候。" : "请稍候。"}
+            {sidecarStartup ? uiText("first_launch_or_complex_configuration_may_take_a_while__cd1be987") : uiText("please_wait__043bd055")}
           </p>
         </div>
       </div>
@@ -257,14 +260,12 @@ export default function Root() {
     return (
       <div className="flex h-full items-center justify-center bg-background p-6">
         <div className="w-full max-w-sm rounded-2xl border bg-card p-6 text-center shadow-lg">
-          <h1 className="text-xl font-semibold">首次设置</h1>
+          <h1 className="text-xl font-semibold">{uiText("initial_setup_8a18eafe")}</h1>
           <p className="mt-2 text-sm leading-relaxed text-muted-foreground">{view.message}</p>
           <p className="mt-2 text-xs text-muted-foreground">
-            请在后端 / 桌面端配置提供方与密钥；完成后点击继续。
-          </p>
+             {uiText("configure_your_provider_and_api_key_in_the_backend_or_d_93002bfd")}</p>
           <Button className="mt-5 w-full" onClick={completeSetup}>
-            已完成，继续
-          </Button>
+             {uiText("setup_complete_continue_0e3dd041")}</Button>
         </div>
       </div>
     )
@@ -292,9 +293,12 @@ export default function Root() {
           {runtime.artifact.revision ? `@${runtime.artifact.revision}` : ""}
         </p>
         <Button className="mt-5 w-full" onClick={startBootstrap}>
-          重试
-        </Button>
+           {uiText("retry_b8784c8d")}</Button>
       </div>
     </div>
   )
 }
+
+// Bootstrap imports Root only after installing runtime. Await locale resources
+// here so the first React render never flashes keys or the wrong language.
+await i18nReady

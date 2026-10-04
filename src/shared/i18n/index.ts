@@ -4,6 +4,7 @@ import { loadBaseResource, type EnUsTranslation, type ZhCnTranslation } from "./
 import { frAutoOverrides } from "./generated/frAutoOverrides";
 import { hiAutoOverrides } from "./generated/hiAutoOverrides";
 import {
+  APP_LOCALE_STORAGE_KEY,
   DEFAULT_APP_LOCALE,
   type AppLocale,
   resolveInitialLocale,
@@ -4542,6 +4543,9 @@ const loadLocaleResource = (locale: AppLocale): Promise<TranslationResource> => 
   })();
 
   localeResourceCache.set(locale, promise);
+  void promise.catch(() => {
+    if (localeResourceCache.get(locale) === promise) localeResourceCache.delete(locale);
+  });
   return promise;
 };
 
@@ -4560,6 +4564,11 @@ const ensureLocaleResource = async (locale: AppLocale) => {
 // ---------------------------------------------------------------------------
 
 const initialLocale = resolveInitialLocale();
+
+const syncDocumentLanguage = (locale: string) => {
+  if (typeof document !== "undefined") document.documentElement.lang = locale;
+};
+i18n.on("languageChanged", syncDocumentLanguage);
 
 export const i18nReady = (async () => {
   const initialResources: Record<string, TranslationResource> = {};
@@ -4598,10 +4607,20 @@ export const i18nReady = (async () => {
  * Change the active locale, ensuring its translation resources are loaded first.
  * Non-base locales are built lazily on first use and cached in i18n's store.
  */
-export const changeLocale = async (locale: AppLocale) => {
+let localeChangeVersion = 0;
+export const changeLocale = async (locale: AppLocale, options: { persist?: boolean } = {}) => {
+  const version = ++localeChangeVersion;
   await i18nReady;
   await ensureLocaleResource(locale);
-  return i18n.changeLanguage(locale);
+  // A slow lazy import must not overwrite a later choice.
+  if (version !== localeChangeVersion) return;
+  await i18n.changeLanguage(locale);
+  if (version !== localeChangeVersion || !options.persist) return;
+  try {
+    window.localStorage.setItem(APP_LOCALE_STORAGE_KEY, locale);
+  } catch {
+    // Storage can be blocked. Keep the current tab usable.
+  }
 };
 
 export default i18n;

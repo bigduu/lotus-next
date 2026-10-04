@@ -61,11 +61,18 @@ const renderBootstrapFailure = (error: unknown) => {
   section.className = 'w-full max-w-xl rounded-2xl border bg-card p-6 shadow-lg'
   const heading = document.createElement('h1')
   heading.className = 'text-xl font-semibold'
-  heading.textContent = 'Lotus Next 无法启动'
+  let failureLocale = window.navigator.language
+  try {
+    failureLocale = window.localStorage.getItem('lotus_ui_locale_v1') || failureLocale
+  } catch { /* Pre-React failure must work even when storage is blocked. */ }
+  const chinese = failureLocale.toLowerCase().startsWith('zh')
+  heading.textContent = chinese ? 'Lotus Next 无法启动' : 'Lotus Next could not start'
   const explanation = document.createElement('p')
   explanation.className = 'mt-3 text-sm leading-relaxed text-muted-foreground'
   explanation.textContent =
-    '当前宿主提供了不受支持或不安全的运行时配置。请升级匹配的完整前端与宿主制品，或修正公开后端地址后重新加载。'
+    chinese
+      ? '当前宿主提供了不受支持或不安全的运行时配置。请升级匹配的完整前端与宿主制品，或修正公开后端地址后重新加载。'
+      : 'The host supplied unsupported or unsafe runtime configuration. Upgrade the matching frontend and host artifacts, or correct the public backend address and reload.'
   const details = document.createElement('pre')
   details.className = 'mt-4 overflow-auto rounded-lg bg-muted p-3 text-xs'
   details.textContent = message

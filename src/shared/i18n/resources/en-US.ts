@@ -1,5 +1,7 @@
+import { uiEnUs } from "./ui-en-US"
 export const enUsTranslation = {
   translation: {
+    ui: uiEnUs,
     app: {
       loading: "Loading...",
       retry: "Retry",

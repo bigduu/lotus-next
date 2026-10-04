@@ -16,6 +16,9 @@ export const loadBaseResource = <T extends BaseLocale>(locale: T) => {
   if (!promise) {
     promise = baseResourceLoaders[locale]();
     baseResourceCache.set(locale, promise);
+    void promise.catch(() => {
+      if (baseResourceCache.get(locale) === promise) baseResourceCache.delete(locale);
+    });
   }
 
   return promise as Promise<T extends "en-US" ? EnUsTranslation : ZhCnTranslation>;

@@ -1,5 +1,7 @@
+import { uiZhCn } from "./ui-zh-CN"
 export const zhCnTranslation = {
   translation: {
+    ui: uiZhCn,
     app: {
       loading: "加载中...",
       retry: "重试",
