@@ -1,0 +1,35 @@
+{
+  "baseUrl": "http://127.0.0.1:9573",
+  "backend": "real HTTP",
+  "provider": "unavailable localhost upstream; no live-model execution claimed",
+  "screenshots": [
+    "english-desktop.png",
+    "chinese-desktop.png",
+    "english-provider-desktop.png",
+    "english-provider-phone.png",
+    "english-confirm-phone.png",
+    "english-composer-phone.png",
+    "chinese-composer-phone.png",
+    "english-real-error-phone.png"
+  ],
+  "paths": [
+    "English \u2192 Chinese, same textarea identity and IME draft; refresh keeps Chinese",
+    "English provider settings, phone wrapping, cancelable confirmation; Chinese and English phone composer; English refresh persistence",
+    "Real backend generation failure: English wrapper and unmodified technical diagnostic"
+  ],
+  "pageErrors": [],
+  "executed_frontend_source": "fb6fe49d85322cd46549914962cfdfffd21a4742",
+  "executed_frontend_tree": "c80a2938426b76bf5480c065e099b1e67c675271",
+  "bamboo_source": "2f393c92da8ef592fa1bce19106bc82a4ebf194d",
+  "frontend_resources_sha256": "680c1c57d74b42c0df660c5e9da0c217d71e4341ec68cb67ca06615a0d4dca60",
+  "screenshot_sha256": {
+    "english-real-error-phone.png": "91834eff38190884dedb27bc86f2a3d1f7945648b32835d36150928b97f85b12",
+    "english-provider-phone.png": "cb97a5d5ef61cfe5bcb6f0208b9b4ea409b3ce42b614b0b7e5f2a248f7b7f127",
+    "english-composer-phone.png": "71d3385ce45ad8ecba128aa10a3d6e4779ae159649633be72c6cf540561e2573",
+    "chinese-composer-phone.png": "e5171ca4249872ec9233efb5032d43c7452811fcb6250de5013df83f1f3ef492",
+    "english-confirm-phone.png": "0faefe1bede93c297686a74092a63aed1a9ea0bd8ee49ae63e472d5d77305d4e",
+    "english-desktop.png": "70a5c94c9c3f59d1dc4efb0ac6ec788545e14c89eb7871cb770f3121f4a5ac84",
+    "chinese-desktop.png": "0ee8b36368c79198a9ca0b9a517ca72852dfc4558c22823088753cc514c24c21",
+    "english-provider-desktop.png": "0ba2cca9341d39ac0a358a29051df1b8dd3abf84ec84abd5301054567e72fb4e"
+  }
+}
