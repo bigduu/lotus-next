@@ -101,6 +101,7 @@ describe("Composer submission controls", () => {
   })
   it("keeps permission, runtime, and submission controls inside the composer surface", () => {
     const { container } = mountComposer({
+      workflowControl: <span data-testid="workflow-chip">Review · 本条消息</span>,
       permissionControl: <span data-testid="permission-control">Auto</span>,
       runtimeControls: <span data-testid="runtime-controls">Model</span>,
     })
@@ -110,6 +111,7 @@ describe("Composer submission controls", () => {
     const send = container.querySelector('button[aria-label="发送消息"]')
 
     expect(surface).not.toBeNull()
+    expect(surface?.contains(container.querySelector('[data-testid="workflow-chip"]'))).toBe(true)
     expect(surface?.contains(permission)).toBe(true)
     expect(surface?.contains(runtimeControls)).toBe(true)
     expect(surface?.contains(send)).toBe(true)
@@ -210,6 +212,22 @@ describe("Composer submission controls", () => {
     expect(dispatchSubmitShortcut(textarea).defaultPrevented).toBe(true)
     expect(onPick).toHaveBeenCalledOnce()
     expect(props.onSubmit).not.toHaveBeenCalled()
+  })
+
+  it("routes picker keys only to their own pane, leaving parameter textareas and IME alone", () => {
+    const first = mountComposer({ draft: "/goal", slashQuery: "goal", onPickGoal: vi.fn() })
+    const second = mountComposer({ draft: "/goal", slashQuery: "goal", onPickGoal: vi.fn() })
+    const parameters = document.body.appendChild(document.createElement("textarea"))
+    expect(first.textarea.id).not.toBe(second.textarea.id)
+    expect(dispatchSubmitShortcut(parameters).defaultPrevented).toBe(false)
+    expect(dispatchSubmitShortcut(second.textarea, { isComposing: true }).defaultPrevented).toBe(false)
+    expect(dispatchSubmitShortcut(second.textarea, { keyCode: 229 }).defaultPrevented).toBe(false)
+    dispatchSubmitShortcut(second.textarea)
+    expect(first.props.onPickGoal).not.toHaveBeenCalled()
+    expect(second.props.onPickGoal).toHaveBeenCalledOnce()
+    expect(second.props.onSubmit).not.toHaveBeenCalled()
+    dispatchSubmitShortcut(first.textarea)
+    expect(first.props.onPickGoal).toHaveBeenCalledOnce()
   })
 
   it("shows a disabled pending control without exposing the generation stop action", () => {

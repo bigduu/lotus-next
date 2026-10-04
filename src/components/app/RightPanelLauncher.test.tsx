@@ -82,6 +82,7 @@ it("renders truthful Environment details without a popup portal", async () => {
           id="environment-card"
           workspace="/workspace/zenith"
           projectName="Zenith"
+          workflowControl={<button data-workflow-entry>目录工作流 · 本条消息</button>}
           placement={{ kind: "local", host: "Mac" }}
           changedFiles={2}
           addedLines={3}
@@ -104,6 +105,9 @@ it("renders truthful Environment details without a popup portal", async () => {
   const card = host.querySelector<HTMLElement>("[data-environment-card]")
   expect(card?.parentElement?.hasAttribute("data-layout-slot")).toBe(true)
   expect(card?.textContent).toContain("Environment")
+  const text = card?.textContent ?? ""
+  expect(text.indexOf("Project")).toBeLessThan(text.indexOf("目录工作流"))
+  expect(text.indexOf("目录工作流")).toBeLessThan(text.indexOf("Sources"))
   expect(card?.textContent).toContain("Changes")
   expect(card?.textContent).toContain("Local")
   expect(card?.textContent).toContain("zenith")

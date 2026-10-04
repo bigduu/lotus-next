@@ -112,6 +112,7 @@ export function EnvironmentCard({
   id,
   workspace,
   projectName,
+  workflowControl,
   placement,
   changedFiles,
   addedLines,
@@ -123,6 +124,7 @@ export function EnvironmentCard({
   id: string
   workspace?: string | null
   projectName?: string | null
+  workflowControl?: ReactNode
   placement?: SessionPlacement | null
   changedFiles: number
   addedLines: number
@@ -179,6 +181,8 @@ export function EnvironmentCard({
           detail="Project"
         />
       ) : null}
+
+      {workflowControl}
 
       <div className="my-2 border-t" style={{ marginInline: "0.5rem" }} />
       <div className="flex items-center justify-between px-3 pb-1 text-sm text-muted-foreground">

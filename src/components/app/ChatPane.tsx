@@ -27,7 +27,7 @@ import { getRootModeFenceState } from "@/lib/rootModeTransitionFence"
 import { useAppStore, selectChildren } from "@shared/store/appStore"
 import { agentClient } from "@services/chat/AgentService"
 import { commandService, type CommandItem } from "@services/command"
-import { prepareWorkflowSelection, type TypedWorkflowDraft, type WorkflowSelection } from "@services/command/workflowCatalog"
+import { prepareWorkflowSelection, workflowUnavailableReason, type TypedWorkflowDraft, type WorkflowSelection } from "@services/command/workflowCatalog"
 import { getErrorMessage } from "@services/api/errors"
 import type { ChildProgress } from "@shared/store/appStore/slices/executionStateSlice/types"
 import { useProviderStore } from "@shared/store/appStore/slices/providerSlice"
@@ -56,6 +56,7 @@ import { ReasoningPicker } from "@/components/chat/ReasoningPicker"
 import { ModelPicker } from "@/components/chat/ModelPicker"
 import { NewSessionPermissionControl, PermissionModeControl } from "@/components/chat/PermissionModeControl"
 import { RootOrchestrationControl } from "@/components/chat/RootOrchestrationControl"
+import { useWorkflowCatalog } from "@/components/chat/useWorkflowCatalog"
 import { WorkflowSelectionControl } from "@/components/chat/WorkflowSelectionControl"
 import {
   Select,
@@ -310,8 +311,8 @@ export function ChatPane({
   const [workflowCmds, setWorkflowCmds] = useState<CommandItem[]>([])
   const [selectedWorkflow, setSelectedWorkflow] = useState<SelectedWorkflow | null>(null)
   const [typedWorkflow, setTypedWorkflow] = useState<TypedWorkflowDraft | null>(null)
-  const [showWorkflowCatalog, setShowWorkflowCatalog] = useState(false)
-  const [workflowCatalogOpenRequest, setWorkflowCatalogOpenRequest] = useState(0)
+  const [workflowPicker, setWorkflowPicker] = useState<"composer" | "environment" | null>(null)
+  const [removedWorkflow, setRemovedWorkflow] = useState<{ draft: TypedWorkflowDraft; revision: number } | null>(null)
   const [workflowError, setWorkflowError] = useState<string | null>(null)
   const rootAuthority = useRootOrchestrationMode(currentSessionId, currentChat?.kind)
   const [rootModeConflict, setRootModeConflict] = useState<string | null>(null)
@@ -332,19 +333,21 @@ export function ChatPane({
     workflowRevisionRef.current += 1
     if (!value) setRootModeConflict(null)
     setSelectedWorkflow(value)
+    setRemovedWorkflow(null)
     if (value) { setTypedWorkflow(null); setWorkflowError(null) }
   }
   const changeTypedWorkflow = (value: TypedWorkflowDraft | null) => {
     workflowRevisionRef.current += 1
     setTypedWorkflow(value); setWorkflowError(null)
-    if (!value) setShowWorkflowCatalog(false)
+    setRemovedWorkflow(null)
+    if (!value) setWorkflowPicker(null)
     if (value) { setSelectedWorkflow(null); changeSelectedSkill(null) }
   }
   // Catalog selections are local to this composer/session. Do not move a
   // version from one Session authority into another, or migrate legacy drafts.
   useEffect(() => {
     workflowRevisionRef.current += 1
-    setTypedWorkflow(null); setWorkflowError(null); setShowWorkflowCatalog(false)
+    setTypedWorkflow(null); setWorkflowError(null); setWorkflowPicker(null); setRemovedWorkflow(null)
   }, [currentSessionId])
   const [preview, setPreview] = useState<string | null>(null)
   const [toast, setToast] = useState<string | null>(null)
@@ -454,6 +457,23 @@ export function ChatPane({
   }, [draft])
 
   const slashQuery = !menusDismissed && draft.startsWith("/") ? draft.slice(1) : null
+  const catalogState = useWorkflowCatalog(currentSessionId, slashQuery !== null || workflowPicker !== null)
+  const workflowDisabled = submissionPending || currentlyRunning || queue.hasUnconfirmed || rootMode.unsafe
+  // A hidden Environment must not strand its open editor (phone/workbench changes).
+  useEffect(() => {
+    if (workflowPicker === "environment" && !environmentVisible) setWorkflowPicker("composer")
+  }, [workflowPicker, environmentVisible])
+  const openWorkflowPicker = (surface: "composer" | "environment") => {
+    setMenusDismissed(true)
+    setWorkflowPicker(surface)
+  }
+  const removeTypedWorkflow = () => {
+    if (!typedWorkflow || workflowDisabled) return
+    const previous = typedWorkflow
+    changeTypedWorkflow(null)
+    setRemovedWorkflow({ draft: previous, revision: workflowRevisionRef.current })
+    composerInputRef.current?.focus()
+  }
 
   // @file references: detect a trailing "@query" and list workspace files.
   const atQuery = (() => {
@@ -763,7 +783,7 @@ export function ChatPane({
         }
         if (attachmentRevisionRef.current === snapshot.attachmentRevision) setAttachments([])
         if (skillRevisionRef.current === snapshot.skillRevision) setSelectedSkill(null)
-        if (workflowRevisionRef.current === snapshot.workflowRevision) { setSelectedWorkflow(null); setTypedWorkflow(null) }
+        if (workflowRevisionRef.current === snapshot.workflowRevision) { setSelectedWorkflow(null); setTypedWorkflow(null); setRemovedWorkflow(null); setWorkflowPicker(null) }
       })
       .catch((err) => {
         // send() normally resolves a typed outcome. Preserve every composer
@@ -832,11 +852,22 @@ export function ChatPane({
       onClick: () => launchWorkbench(onToggleSplit),
     },
   ]
+  const workflowControl = (surface: "composer" | "environment") => (
+    <WorkflowSelectionControl key={`${currentSessionId ?? "new"}:${surface}`} sessionId={currentSessionId}
+      variant={surface} selected={typedWorkflow} onChange={changeTypedWorkflow} onRemove={removeTypedWorkflow}
+      open={workflowPicker === surface} onOpenChange={(open) => {
+        if (open) openWorkflowPicker(surface)
+        else { setWorkflowPicker(null); setMenusDismissed(true) }
+      }}
+      catalogState={catalogState} onArgsFocus={() => setMenusDismissed(true)}
+      onReturnFocus={() => composerInputRef.current?.focus()} disabled={workflowDisabled} error={workflowError} />
+  )
   const environmentCard = !secondary && currentSessionId ? (
     <EnvironmentCard
       id={environmentId}
       workspace={displayWorkspace}
       projectName={currentProjectName}
+      workflowControl={workflowControl("environment")}
       placement={currentChat?.placement}
       changedFiles={fileChangeSummary.changedFiles}
       addedLines={fileChangeSummary.addedLines}
@@ -1096,13 +1127,26 @@ export function ChatPane({
           onQueueModeChange={currentSessionId && !submissionPending && !semanticComposer ? queue.setMode : undefined}
           sendWhileRunning={semanticComposer}
           queueControls={currentSessionId && !semanticComposer ? <SessionGuidance key={currentSessionId} sessionId={currentSessionId} messages={queue.pending} busy={queue.busy} onCancel={(id) => void queue.cancel(id)} onPreview={setPreview} /> : null}
-          workflowControl={showWorkflowCatalog || typedWorkflow || workflowError ? <WorkflowSelectionControl key={currentSessionId ?? "new"} sessionId={currentSessionId}
-            selected={typedWorkflow} onChange={changeTypedWorkflow}
-            onClose={() => { setShowWorkflowCatalog(false); if (!typedWorkflow) setWorkflowError(null) }}
-            openRequest={workflowCatalogOpenRequest}
-            onArgsFocus={() => setMenusDismissed(true)}
-            disabled={submissionPending || currentlyRunning || queue.hasUnconfirmed || rootMode.unsafe}
-            error={workflowError} /> : null}
+          workflowControl={workflowPicker === "composer" || typedWorkflow || workflowError ? workflowControl("composer") : null}
+          catalogState={catalogState}
+          catalogDisabled={workflowDisabled}
+          onPickCatalogEntry={(entry) => {
+            if (workflowDisabled || workflowUnavailableReason(entry)) return
+            const selection = { entry, argsText: "{}" }
+            let needsArgs = false
+            try { prepareWorkflowSelection(selection) } catch { needsArgs = true }
+            changeTypedWorkflow(selection)
+            setDraft("")
+            setMenusDismissed(true)
+            setWorkflowPicker(needsArgs ? "composer" : null)
+            composerInputRef.current?.focus()
+          }}
+          workflowUndoControl={removedWorkflow && removedWorkflow.revision === workflowRevisionRef.current ? <div className="px-2 pt-1 text-xs text-muted-foreground">
+            已移除目录工作流 <button type="button" className="text-primary hover:underline" disabled={workflowDisabled}
+              onClick={() => {
+                if (!workflowDisabled && removedWorkflow.revision === workflowRevisionRef.current) changeTypedWorkflow(removedWorkflow.draft)
+              }}>撤销移除</button>
+          </div> : null}
           permissionControl={(
             <>
               {currentSessionId ? (
@@ -1185,7 +1229,8 @@ export function ChatPane({
           selectedWorkflow={selectedWorkflow}
           onClearWorkflow={() => changeSelectedWorkflow(null)}
           onPickWorkflow={pickWorkflow}
-          onPickCatalog={() => { setShowWorkflowCatalog(true); setWorkflowCatalogOpenRequest((value) => value + 1); setDraft(""); setMenusDismissed(true) }}
+          onOpenCatalog={() => openWorkflowPicker("composer")}
+          onPickCatalog={() => { openWorkflowPicker("composer"); if (slashQuery !== null) setDraft("") }}
           onPickGoal={currentSessionId ? () => { launchWorkbench(onOpenInspector); setDraft(""); setMenusDismissed(true) } : undefined}
           slashQuery={slashQuery}
           atQuery={atQuery}

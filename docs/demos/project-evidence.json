@@ -1,0 +1,16 @@
+{
+  "projects": [
+    {
+      "created_at": "2026-10-03T16:11:06.153409479Z",
+      "id": "8854f153-46d7-4018-8a40-01db0b4886cd",
+      "name": "Demo project",
+      "project_path": "/tmp/zenith-demo-isolated-5lqt6zrv/workspace",
+      "project_path_status": "configured",
+      "resource_revision": 1,
+      "revision": 1,
+      "schema_version": 2,
+      "status": "active",
+      "updated_at": "2026-10-03T16:11:06.153409479Z"
+    }
+  ]
+}

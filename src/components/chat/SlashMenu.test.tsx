@@ -17,7 +17,7 @@ async function mount(query: string, onPickCatalog: () => void, onPickGoal?: () =
   const root = createRoot(document.body.appendChild(document.createElement("div")))
   roots.push(root)
   const onPickWorkflow = vi.fn()
-  await act(async () => root.render(<SlashMenu skills={[]} workflows={[]} query={query}
+  await act(async () => root.render(<SlashMenu inputId="composer" skills={[]} workflows={[]} query={query}
     onPick={vi.fn()} onPickWorkflow={onPickWorkflow} onPickCatalog={onPickCatalog} onPickGoal={onPickGoal} />))
   return { onPickWorkflow }
 }

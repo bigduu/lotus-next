@@ -1,4 +1,4 @@
-import { useRef, type Ref, type ReactNode } from "react"
+import { useId, useRef, type Ref, type ReactNode } from "react"
 import {
   X,
   Paperclip,
@@ -25,6 +25,8 @@ import { SlashMenu } from "@/components/chat/SlashMenu"
 import { FileMenu } from "@/components/chat/FileMenu"
 import { useAppStore } from "@shared/store/appStore"
 import type { SkillDefinition } from "@shared/types/skill"
+import type { WorkflowCatalogEntry } from "@services/command/workflowCatalog"
+import type { WorkflowCatalogState } from "@/components/chat/useWorkflowCatalog"
 import type { CommandItem } from "@services/command"
 import type { GuidanceMode } from "@services/chat/guidance"
 import type { WorkspaceFileEntry } from "@services/workspace/types"
@@ -130,6 +132,10 @@ export function Composer({
   permissionControl,
   runtimeControls,
   workflowControl,
+  workflowUndoControl,
+  catalogState,
+  onPickCatalogEntry,
+  catalogDisabled,
   submissionPending,
   inputRef,
   attachments,
@@ -145,6 +151,7 @@ export function Composer({
   onClearWorkflow,
   onPickWorkflow,
   onPickCatalog,
+  onOpenCatalog,
   onPickGoal,
   slashQuery,
   atQuery,
@@ -174,6 +181,10 @@ export function Composer({
   runtimeControls?: ReactNode
   /** Exact catalog selection; separate from slash-command text expansion. */
   workflowControl?: ReactNode
+  workflowUndoControl?: ReactNode
+  catalogState?: WorkflowCatalogState
+  onPickCatalogEntry?: (entry: WorkflowCatalogEntry) => void
+  catalogDisabled?: boolean
   submissionPending: boolean
   inputRef: Ref<HTMLTextAreaElement>
   attachments: AttachmentView[]
@@ -189,6 +200,7 @@ export function Composer({
   onClearWorkflow: () => void
   onPickWorkflow: (command: CommandItem) => void
   onPickCatalog?: () => void
+  onOpenCatalog?: () => void
   onPickGoal?: () => void
   slashQuery: string | null
   atQuery: string | null
@@ -202,6 +214,7 @@ export function Composer({
   onSelectProject: (projectId: string | null) => void
   onDismissMenus?: () => void
 }) {
+  const inputId = useId()
   const fileInputRef = useRef<HTMLInputElement>(null)
   const canQueue = sending && !!onQueueModeChange
   const canSubmit = !sending || canQueue || sendWhileRunning
@@ -210,9 +223,12 @@ export function Composer({
   return (
     <div className="shrink-0 border-t px-3 py-3">
       {queueControls}
-      {workflowControl}
       {slashQuery !== null && (
         <SlashMenu
+          inputId={inputId}
+          catalogState={catalogState}
+          onPickCatalogEntry={onPickCatalogEntry}
+          catalogDisabled={catalogDisabled}
           skills={skills}
           workflows={workflows}
           query={slashQuery}
@@ -224,7 +240,7 @@ export function Composer({
         />
       )}
       {slashQuery === null && atQuery !== null && displayWorkspace ? (
-        <FileMenu files={workspaceFiles} query={atQuery} onPick={onPickFile} onDismiss={onDismissMenus} />
+        <FileMenu inputId={inputId} files={workspaceFiles} query={atQuery} onPick={onPickFile} onDismiss={onDismissMenus} />
       ) : null}
       {selectedSkill && (
         <div className="mx-auto mb-2 flex w-full max-w-6xl">
@@ -291,8 +307,11 @@ export function Composer({
           data-composer-surface
           className="rounded-2xl border bg-card p-1.5 shadow-sm focus-within:ring-2 focus-within:ring-ring/40"
         >
+          {workflowControl}
+          {workflowUndoControl}
           <div className="relative">
             <Textarea
+              id={inputId}
               ref={inputRef}
               value={draft}
               aria-label="消息"
@@ -343,6 +362,8 @@ export function Composer({
               >
                 <Paperclip className="size-4" />
               </Button>
+              {onPickCatalog && <Button size="icon" variant="ghost" className="size-8 shrink-0 text-muted-foreground"
+                aria-label="打开目录工作流" title="目录工作流 · 本条消息" onClick={onOpenCatalog ?? onPickCatalog}><BookText className="size-4" /></Button>}
               {permissionControl}
               {!hasSession ? (
                 <>

@@ -3,7 +3,7 @@
   "private": false,
   "version": "0.0.0",
   "description": "Standalone Lotus Next frontend assets for the Bamboo runtime and Bodhi shell.",
-  "license": "UNLICENSED",
+  "license": "MIT",
   "repository": {
     "type": "git",
     "url": "https://github.com/bigduu/lotus-next.git"
