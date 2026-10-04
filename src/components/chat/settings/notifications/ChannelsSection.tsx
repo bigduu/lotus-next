@@ -215,7 +215,7 @@ export function ChannelsSection() {
             <SelectContent>
               <SelectItem value="auto">{uiText("auto_on_when_standalone_off_when_embedded_in_bodhi_abe65183")}</SelectItem>
               <SelectItem value="on">{uiText("on_8da97ddd")}</SelectItem>
-              <SelectItem value="off">{uiText("close_3fd47edc")}</SelectItem>
+              <SelectItem value="off">{uiText("notifications_off")}</SelectItem>
             </SelectContent>
           </Select>
         </div>

@@ -25,7 +25,7 @@ import { EditableModelCombobox } from "./EditableModelCombobox"
 const UNSET = "__unset__"
 const AUTO_EFFORT = "__auto__"
 const REASONING_EFFORTS: readonly { value: ReasoningEffort; label: string }[] = [
-  { value: "none", get label() { return uiText("close_3fd47edc") } },
+  { value: "none", get label() { return uiText("reasoning_none") } },
   { value: "low", get label() { return uiText("low_aa9e366f") } },
   { value: "medium", get label() { return uiText("medium_a567bdaa") } },
   { value: "high", get label() { return uiText("high_b1c27820") } },

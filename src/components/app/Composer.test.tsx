@@ -3,6 +3,7 @@ import { createRoot, type Root } from "react-dom/client"
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest"
 
 import { Composer } from "./Composer"
+import { changeLocale } from "@shared/i18n"
 import { useAppStore } from "@shared/store/appStore"
 
 const mountedRoots: Root[] = []
@@ -337,4 +338,14 @@ describe("Composer new-chat prompt chip", () => {
 
     expect(options).toEqual(["Bodhi"])
   })
+})
+
+it("formats the output rate with the selected UI locale instead of the French browser locale", async () => {
+  vi.spyOn(window.navigator, "language", "get").mockReturnValue("fr-FR")
+  const view = mountComposer({ outputRate: 1234.5 })
+  await act(async () => { await changeLocale("en-US") })
+  expect(view.container.querySelector("[data-output-rate]")?.textContent).toContain("1,234.5")
+  await act(async () => { await changeLocale("fr-FR") })
+  expect(view.container.querySelector("[data-output-rate]")?.textContent).toContain((1234.5).toLocaleString("fr-FR", { minimumFractionDigits: 1, maximumFractionDigits: 1 }))
+  vi.restoreAllMocks()
 })

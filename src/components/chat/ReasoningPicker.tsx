@@ -13,7 +13,7 @@ import {
 
 const EFFORTS: { value: ReasoningEffortSelection; label: string }[] = [
   { value: "auto", get label() { return uiText("auto_7eb336e4") } },
-  { value: "none", get label() { return uiText("close_3fd47edc") } },
+  { value: "none", get label() { return uiText("reasoning_none") } },
   { value: "low", get label() { return uiText("low_aa9e366f") } },
   { value: "medium", get label() { return uiText("medium_a567bdaa") } },
   { value: "high", get label() { return uiText("high_b1c27820") } },

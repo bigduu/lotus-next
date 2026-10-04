@@ -63,3 +63,23 @@ for (const initial of ["zh-CN", "en-US"]) {
     expect(observation.pageErrors).toEqual([])
   })
 }
+
+test("a failed preferred locale chunk mounts English and retries the saved preference after reload", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop-chromium", "Startup resource transport is shared across viewport sizes")
+  await page.addInitScript(() => {
+    localStorage.setItem("bodhi_onboarded_v1", "1")
+    localStorage.setItem("lotus_ui_locale_v1", "zh-CN")
+  })
+  await installArtifactRuntime(page, standaloneScenario)
+  let failedLoads = 0
+  await page.route("**/assets/zh-CN-*.js", async (route) => { failedLoads += 1; await route.abort("failed") })
+  await page.goto(standaloneScenario.entryUrl)
+  await expect(page.getByRole("textbox", { name: "Messages", exact: true })).toBeVisible()
+  await expect(page.locator("html")).toHaveAttribute("lang", "en-US")
+  expect(failedLoads).toBeGreaterThan(0)
+  expect(await page.evaluate(() => localStorage.getItem("lotus_ui_locale_v1"))).toBe("zh-CN")
+  await page.unroute("**/assets/zh-CN-*.js")
+  await page.reload()
+  await expect(page.getByRole("textbox", { name: "消息", exact: true })).toBeVisible()
+  await expect(page.locator("html")).toHaveAttribute("lang", "zh-CN")
+})

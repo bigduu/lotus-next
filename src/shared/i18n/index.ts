@@ -4575,15 +4575,22 @@ export const i18nReady = (async () => {
 
   initialResources[DEFAULT_APP_LOCALE] = await loadLocaleResource(DEFAULT_APP_LOCALE);
 
+  let startupLocale = initialLocale;
   if (initialLocale !== DEFAULT_APP_LOCALE) {
-    initialResources[initialLocale] = await loadLocaleResource(initialLocale);
+    try {
+      initialResources[initialLocale] = await loadLocaleResource(initialLocale);
+    } catch {
+      // English is already available. Keep startup usable without discarding
+      // the saved preference, so the selected resource can be retried later.
+      startupLocale = DEFAULT_APP_LOCALE;
+    }
   }
 
   if (!i18n.isInitialized) {
     i18n.use(initReactI18next);
     await i18n.init({
       resources: initialResources,
-      lng: initialLocale,
+      lng: startupLocale,
       fallbackLng: DEFAULT_APP_LOCALE,
       supportedLngs: SUPPORTED_APP_LOCALES,
       interpolation: {
@@ -4597,9 +4604,9 @@ export const i18nReady = (async () => {
     return;
   }
 
-  await ensureLocaleResource(initialLocale);
-  if (i18n.language !== initialLocale) {
-    await i18n.changeLanguage(initialLocale);
+  await ensureLocaleResource(startupLocale);
+  if (i18n.language !== startupLocale) {
+    await i18n.changeLanguage(startupLocale);
   }
 })();
 

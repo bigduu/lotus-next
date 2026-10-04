@@ -1,4 +1,4 @@
-import { uiText, useUiLocale } from "@shared/i18n/ui"
+import { uiText, useUiLocale, uiLanguage } from "@shared/i18n/ui"
 import { useId, useRef, type Ref, type ReactNode } from "react"
 import {
   X,
@@ -350,7 +350,7 @@ export function Composer({
                 style={{ maxWidth: 112, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
                 title={uiText("estimated_from_streamed_text_not_used_for_billing_1de5fc8d")}
               >
-                {uiText("output_rate", { rate: outputRate.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 }) })}</span>
+                {uiText("output_rate", { rate: outputRate.toLocaleString(uiLanguage(), { minimumFractionDigits: 1, maximumFractionDigits: 1 }) })}</span>
             )}
           </div>
           <div className="flex flex-wrap items-end gap-1.5">

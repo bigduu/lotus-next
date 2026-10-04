@@ -1800,5 +1800,8 @@ export const uiZhCn = {
   "ticket_approval_count": "{{count}} 个待批准动作",
   "ticket_approval_count_one": "{{count}} 个待批准动作",
   "ticket_approval_count_other": "{{count}} 个待批准动作",
-  "ticket_acceptance_count": "{{count}} 项待验收"
+  "ticket_acceptance_count": "{{count}} 项待验收",
+  "reasoning_none": "关闭",
+  "notifications_off": "关闭",
+  "delete_schedule_confirmation": "删除「{{name}}」?"
 } as const

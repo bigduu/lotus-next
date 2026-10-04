@@ -4,7 +4,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import type { ReasoningEffortSelection } from "@shared/utils/reasoningEffort"
 
 const ordinaryLabels: Record<ReasoningEffortSelection, string> = {
-  get auto() { return uiText("auto_7eb336e4") }, get none() { return uiText("close_3fd47edc") }, get low() { return uiText("low_aa9e366f") }, get medium() { return uiText("medium_a567bdaa") }, get high() { return uiText("high_b1c27820") }, get xhigh() { return uiText("extra_high_392d0dce") }, get max() { return uiText("max_9730c15f") },
+  get auto() { return uiText("auto_7eb336e4") }, get none() { return uiText("reasoning_none") }, get low() { return uiText("low_aa9e366f") }, get medium() { return uiText("medium_a567bdaa") }, get high() { return uiText("high_b1c27820") }, get xhigh() { return uiText("extra_high_392d0dce") }, get max() { return uiText("max_9730c15f") },
 }
 
 type Props = {

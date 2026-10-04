@@ -552,7 +552,7 @@ export const uiEnUs = {
   "errors_01ad2bc5": "Errors",
   "tokens_saved_2bc165cb": "Tokens saved",
   "about_52d25a9e": "About",
-  "apply_63c73c47": "Apply",
+  "apply_63c73c47": "Application",
   "general_835b700e": "General",
   "model_limits_05ff605e": "Model limits",
   "plugins_e806fbbe": "Plugins",
@@ -1800,5 +1800,8 @@ export const uiEnUs = {
   "ticket_approval_count": "{{count}} actions awaiting approval",
   "ticket_approval_count_one": "{{count}} action awaiting approval",
   "ticket_approval_count_other": "{{count}} actions awaiting approval",
-  "ticket_acceptance_count": "{{count}} awaiting acceptance"
+  "ticket_acceptance_count": "{{count}} awaiting acceptance",
+  "reasoning_none": "None",
+  "notifications_off": "Off",
+  "delete_schedule_confirmation": "Delete “{{name}}”?"
 } as const

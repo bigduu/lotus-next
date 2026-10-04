@@ -281,7 +281,7 @@ export function SettingsSchedules() {
 
                   {deleteConfirmId === s.id ? (
                     <div className="flex items-center justify-between gap-2 rounded-md border border-destructive/40 bg-destructive/5 px-2 py-1.5">
-                      <span className="text-xs text-destructive">{uiText("delete_72f49a52")}{s.name}」?</span>
+                      <span className="text-xs text-destructive">{uiText("delete_schedule_confirmation", { name: s.name })}</span>
                       <div className="flex shrink-0 gap-1.5">
                         <Button size="sm" variant="secondary" onClick={() => setDeleteConfirmId(null)}>
                           {uiText("cancel_2cd0f3be")}</Button>

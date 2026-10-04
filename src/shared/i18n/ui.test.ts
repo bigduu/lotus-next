@@ -68,6 +68,10 @@ describe("English UI localization", () => {
 
   it("handles English plurals, interpolates names verbatim and formats calendar groups", async () => {
     await changeLocale("en-US")
+    expect(uiText("reasoning_none")).toBe("None")
+    expect(uiText("close_3fd47edc")).toBe("Close")
+    expect(uiText("apply_63c73c47")).toBe("Application")
+    expect(uiText("delete_schedule_confirmation", { name: "Nightly 用户 build" })).toBe("Delete “Nightly 用户 build”?")
     expect(uiText("project_sessions", { count: 1 })).toBe("1 session")
     expect(uiText("project_sessions", { count: 2 })).toBe("2 sessions")
     expect(uiText("tool_calls_bdfa142a", { v0: 1, count: 1 })).toBe("1 tool call")
