@@ -68,6 +68,10 @@ vi.mock("@/hooks/useStickyScroll", () => ({
     handleScroll: vi.fn(), scrollToBottom: runtime.scrollToBottom, pinToBottom: vi.fn(),
   }),
 }))
+vi.mock("@services/command/workflowCatalog", async (original) => ({
+  ...await original<typeof import("@services/command/workflowCatalog")>(),
+  getWorkflowCatalog: vi.fn().mockResolvedValue({ revision: 1, entries: [] }),
+}))
 vi.mock("@services/command", () => ({ commandService: { listCommands: runtime.listCommands, getWorkflowCommand: runtime.getWorkflow } }))
 vi.mock("@services/workspace", () => ({ workspaceService: { listWorkspaceFiles: vi.fn().mockResolvedValue([]) } }))
 vi.mock("@services/chat/AgentService", () => ({ isThinkingMode: (v: unknown) => v === "standard" || v === "ultra", agentClient: {
@@ -977,7 +981,7 @@ describe("Root orchestration-only control", () => {
     act(() => composer().onPickCatalog?.())
     expect(composer().workflowControl).not.toBeNull()
     expect(composer().draft).toBe("")
-    act(() => workflowControl().onClose?.())
+    act(() => workflowControl().onOpenChange(false))
     expect(composer().workflowControl).toBeNull()
   })
 
@@ -1003,6 +1007,40 @@ describe("Root orchestration-only control", () => {
     expect(vi.mocked(agentClient.getSession).mock.calls.length).toBeGreaterThan(reads)
     expect(thinkingPicker().checked).toBe(true)
     expect(agentClient.selectRootMode).not.toHaveBeenCalled()
+  })
+
+  it("selects a catalog slash result without expanding text or changing Root mode", async () => {
+    const send = vi.fn<Send>(); await mount(send, "root-session")
+    act(() => composer().onPickCatalogEntry?.(typedEntry))
+    expect(workflowControl().selected?.entry).toEqual(typedEntry)
+    expect(workflowControl().open).toBe(true)
+    expect(composer().selectedWorkflow).toBeNull()
+    expect(send).not.toHaveBeenCalled()
+    expect(agentClient.selectRootMode).not.toHaveBeenCalled()
+    act(() => workflowControl().onRemove())
+    expect(composer().workflowControl).toBeNull()
+    expect(composer().workflowUndoControl).not.toBeNull()
+    const undo = composer().workflowUndoControl as ReactElement<{ children: ReactNode[] }>
+    act(() => (undo.props.children[1] as ReactElement<{ onClick: () => void }>).props.onClick())
+    expect(workflowControl().selected?.entry).toEqual(typedEntry)
+    act(() => composer().onPickCatalogEntry?.({ ...typedEntry, revision: 10 }))
+    expect(composer().workflowUndoControl).toBeNull()
+    expect(workflowControl().selected?.entry.revision).toBe(10)
+  })
+
+  it("opens the toolbar catalog without consuming a slash-prefixed task", async () => {
+    const textarea = await mount(vi.fn<Send>(), "root-session")
+    change(textarea, "/goal literal task")
+    act(() => composer().onOpenCatalog?.())
+    expect(workflowControl().open).toBe(true)
+    expect(runtime.state.inputStates["root-session"]?.content).toBe("/goal literal task")
+    expect(composer().slashQuery).toBeNull()
+  })
+
+  it("does not admit invalid or disabled catalog rows via the slash callback", async () => {
+    await mount(vi.fn<Send>(), "root-session")
+    act(() => composer().onPickCatalogEntry?.({ ...typedEntry, winner: false }))
+    expect(composer().workflowControl).toBeNull()
   })
 
   it("rejects invalid typed arguments before sending and retains the draft", async () => {

@@ -11,7 +11,8 @@ import { useEffect, useRef, useState } from "react"
 export function useMenuKeyboardNav(
   count: number,
   onPickIndex: (index: number) => void,
-  onDismiss?: () => void,
+  onDismiss: (() => void) | undefined,
+  inputId: string,
 ): number {
   const [active, setActive] = useState(0)
   const countRef = useRef(count)
@@ -35,7 +36,7 @@ export function useMenuKeyboardNav(
       if (e.isComposing || e.keyCode === 229) return
       // The menus are driven by the composer TEXTAREA; keys typed into any
       // other control (sidebar search, dialogs…) are none of our business.
-      if (!(e.target instanceof HTMLTextAreaElement)) return
+      if (!(e.target instanceof HTMLTextAreaElement) || e.target.id !== inputId) return
       if (e.key === "ArrowDown") {
         e.preventDefault()
         e.stopPropagation()
@@ -59,7 +60,7 @@ export function useMenuKeyboardNav(
     }
     window.addEventListener("keydown", onKey, true)
     return () => window.removeEventListener("keydown", onKey, true)
-  }, [])
+  }, [inputId])
 
   return active
 }

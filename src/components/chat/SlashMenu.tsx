@@ -1,10 +1,13 @@
 import { useEffect, useRef } from "react"
 import type { SkillDefinition } from "@shared/types/skill"
 import type { CommandItem } from "@services/command"
+import { workflowUnavailableReason, type WorkflowCatalogEntry } from "@services/command/workflowCatalog"
+import type { WorkflowCatalogState } from "./useWorkflowCatalog"
 import { cn } from "@/lib/utils"
 import { useMenuKeyboardNav } from "./useMenuKeyboardNav"
 
 type Entry =
+  | { kind: "typed"; id: string; name: string; description: string; entry: WorkflowCatalogEntry }
   | { kind: "catalog"; id: string; name: string; description: string }
   | { kind: "goal"; id: string; name: string; description: string }
   | { kind: "skill"; id: string; name: string; description: string; skill: SkillDefinition }
@@ -26,7 +29,15 @@ export function SlashMenu({
   onPickGoal,
   onPickCatalog,
   onDismiss,
+  inputId,
+  catalogState,
+  onPickCatalogEntry,
+  catalogDisabled = false,
 }: {
+  inputId: string
+  catalogState?: WorkflowCatalogState
+  onPickCatalogEntry?: (entry: WorkflowCatalogEntry) => void
+  catalogDisabled?: boolean
   skills: SkillDefinition[]
   workflows: CommandItem[]
   query: string
@@ -65,42 +76,56 @@ export function SlashMenu({
         command: w,
       })),
   ].slice(0, catalogEntry.length ? 7 : 8)
-  entries.push(...catalogEntry)
+  const typedEntries: Entry[] = (catalogState?.catalog?.entries ?? [])
+    .filter((entry) => !q || matches(entry.name, entry.description) || entry.id.toLowerCase().includes(q) || entry.source.includes(q))
+    .map((entry) => ({ kind: "typed", id: `catalog:${entry.source}:${entry.id}:${entry.revision}`, name: entry.name, description: entry.description, entry }))
+  entries.push(...typedEntries, ...catalogEntry)
+  const disabledReason = (entry: Entry) => entry.kind === "typed"
+    ? workflowUnavailableReason(entry.entry) || (catalogDisabled ? "当前暂不能选择工作流" : null) : null
+  const selectable = entries.filter((entry) => !disabledReason(entry))
 
   const pick = (e: Entry) => {
-    if (e.kind === "skill") onPick(e.skill)
+    if (disabledReason(e)) return
+    if (e.kind === "typed") onPickCatalogEntry?.(e.entry)
+    else if (e.kind === "skill") onPick(e.skill)
     else if (e.kind === "workflow") onPickWorkflow(e.command)
     else if (e.kind === "catalog") onPickCatalog?.()
     else onPickGoal?.()
   }
 
   const active = useMenuKeyboardNav(
-    entries.length,
+    selectable.length,
     (i) => {
-      const entry = entries[i]
+      const entry = selectable[i]
       if (entry) pick(entry)
     },
     onDismiss,
+    inputId,
   )
   const activeItemRef = useRef<HTMLButtonElement | null>(null)
   useEffect(() => {
     activeItemRef.current?.scrollIntoView({ block: "nearest" })
   }, [active])
 
-  if (entries.length === 0) return null
+  if (entries.length === 0 && !catalogState) return null
 
   return (
     <div className="mx-auto mb-2 w-full max-w-6xl overflow-hidden rounded-xl border bg-popover shadow-lg">
       <div className="border-b px-3 py-1.5 text-xs text-muted-foreground">指令 / 技能 / 工作流</div>
       <div className="max-h-64 overflow-y-auto p-1">
         {entries.map((e, i) => (
+          <div key={e.id}>
+          {(i === 0 || entries[i - 1].kind !== e.kind) && <div className="px-3 pb-1 pt-2 text-[10px] text-muted-foreground">
+            {e.kind === "typed" ? "目录工作流 · 本条消息" : e.kind === "workflow" ? "文本展开工作流" : e.kind === "skill" ? "技能" : e.kind === "goal" ? "指令" : "目录管理"}
+          </div>}
           <button
-            key={e.id}
-            ref={i === active ? activeItemRef : undefined}
+            ref={selectable[active]?.id === e.id ? activeItemRef : undefined}
+            disabled={!!disabledReason(e)}
             onClick={() => pick(e)}
             className={cn(
               "flex w-full flex-col gap-0.5 rounded-lg px-3 py-2 text-left transition-colors hover:bg-accent",
-              i === active && "bg-accent",
+              selectable[active]?.id === e.id && "bg-accent",
+              "disabled:opacity-50",
             )}
           >
             <span className="flex items-center gap-1.5 text-sm font-medium">
@@ -113,14 +138,18 @@ export function SlashMenu({
                     : "bg-muted text-muted-foreground",
                 )}
               >
-                {e.kind === "goal" ? "指令" : e.kind === "catalog" ? "目录选择" : e.kind === "workflow" ? "文本展开" : "技能"}
+                {e.kind === "typed" ? `${e.entry.source} · r${e.entry.revision}` : e.kind === "goal" ? "指令" : e.kind === "catalog" ? "目录选择" : e.kind === "workflow" ? "文本展开" : "技能"}
               </span>
             </span>
-            {e.description ? (
-              <span className="line-clamp-1 text-xs text-muted-foreground">{e.description}</span>
+            {(disabledReason(e) || e.description) ? (
+              <span className="line-clamp-1 text-xs text-muted-foreground">{disabledReason(e) || e.description}</span>
             ) : null}
           </button>
+          </div>
         ))}
+        {!entries.length && !catalogState?.loading && !catalogState?.error && <p className="px-3 py-2 text-xs text-muted-foreground">没有匹配的指令或工作流</p>}
+        {catalogState?.loading && <p role="status" className="px-3 py-2 text-xs text-muted-foreground">正在读取工作流目录…</p>}
+        {catalogState?.error && <p role="alert" className="px-3 py-2 text-xs text-destructive">目录读取失败：{catalogState.error}</p>}
       </div>
     </div>
   )

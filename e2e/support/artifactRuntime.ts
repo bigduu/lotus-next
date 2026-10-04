@@ -150,6 +150,9 @@ const apiResponse = (method: string, pathnameWithSearch: string): unknown => {
     return actorSnapshotFixture(FIXTURE_SESSION_ID, 0)
   }
   if (method === "GET" && /^\/api\/v1\/sessions\/[^/]+\/guidance$/.test(pathnameWithSearch)) return { messages: [] }
+  if (method === "GET" && /^\/api\/v1\/bamboo\/workflow-catalog(?:\?.*)?$/.test(pathnameWithSearch)) {
+    return { revision: 1, entries: [] }
+  }
   if (method === "GET" && /^\/api\/v1\/projects(?:\?.*)?$/.test(pathnameWithSearch)) {
     // The app bootstraps the Project store on every surface (App.tsx
     // loadProjects). Serve an authoritative empty list so the projects
