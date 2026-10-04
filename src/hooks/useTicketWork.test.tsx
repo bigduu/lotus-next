@@ -259,3 +259,16 @@ it.each(["operation", "negative", "fractional", "unsafe", "not-advanced"])("pres
   expect(vi.mocked(ticketClient.respond).mock.calls[1][0]).toEqual(original)
   expect(controller.uncertain[q.id]).toBeUndefined()
 })
+
+it.each([null, "other-result"])("shows accepted evidence via its pointer while current submission is %s", async (currentSubmission) => {
+  const view = snapshot.views[0]; view.ticket.state = "accepted"
+  view.ticket.accepted_submission = "accepted-result"; view.ticket.current_submission = currentSubmission
+  const result = (id: string, evidence: string) => ({ id, work_id: "A", generation: 1, contract_revision: 1, stale: false, artifacts: [], evidence: [evidence], updated_seq: 10 })
+  view.submissions = [result("accepted-result", "canonical accepted evidence"), result("other-result", "current pending evidence")]
+  await mount()
+  const accepted = [...container.querySelectorAll("p")].find((node) => node.textContent === "已验收成果")!
+  expect(accepted.parentElement!.textContent).toContain("canonical accepted evidence")
+  expect(accepted.parentElement!.textContent).not.toContain("current pending evidence")
+  if (currentSubmission) expect(container.textContent).toContain("已提交成果，等待验收")
+  else expect(container.textContent).not.toContain("current pending evidence")
+})

@@ -62,8 +62,8 @@ export function TicketWorkPanel({ controller, onReference }: { controller: Contr
         <div className="flex justify-between gap-2"><strong>{view.ticket.contract.title}</strong><span>{labels[view.ticket.state]}</span></div>
         <p className="mt-1 break-words text-muted-foreground">{view.ticket.contract.objective}</p>
         {view.ticket.blocked ? <p className="mt-1 text-muted-foreground">{view.ticket.blocked.reason}</p> : null}
-        {view.submissions.filter((s) => s.id === view.ticket.current_submission).map((submission) => <div key={submission.id} className="mt-2">
-          <p>{submission.stale ? "旧版本成果，仅供核对" : view.ticket.state === "accepted" ? "已验收成果" : "已提交成果，等待验收"}</p>
+        {view.submissions.filter((s) => s.id === view.ticket.accepted_submission || s.id === view.ticket.current_submission).map((submission) => <div key={submission.id} className="mt-2">
+          <p>{submission.stale ? "旧版本成果，仅供核对" : submission.id === view.ticket.accepted_submission ? "已验收成果" : "已提交成果，等待验收"}</p>
           {submission.evidence.map((line, index) => <p key={index} className="break-words">{line}</p>)}
           {submission.artifacts.map((artifact, index) => <button type="button" key={artifact.sha256} style={{ marginRight: "0.5rem" }} className="underline" onClick={() => {
             void ticketClient.artifact(artifact.sha256).then((blob) => {

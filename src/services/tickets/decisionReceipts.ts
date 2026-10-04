@@ -11,10 +11,20 @@ export function readDecisionReceipts(session: string): Record<string, ResponseCo
     const raw = sessionStorage.getItem(name)
     if (!raw || raw.length > 32768) throw new Error("请求回执无法核对，回答和批准已暂停。")
     const command = JSON.parse(raw) as ResponseCommand
-    if (!command.operation_id || command.binding?.supervisor_session_id !== session
-      || !command.target?.request_id || name !== key(session, command.target.request_id)
-      || !Number.isSafeInteger(command.expected_seq) || !Number.isSafeInteger(command.expected_epoch)
-      || !["question", "approval"].includes(command.decision?.kind)) throw new Error("请求回执无法核对，回答和批准已暂停。")
+    const identity = (value: unknown): value is string => typeof value === "string" && value.trim().length > 0 && value.length <= 512
+    const revision = (value: unknown) => Number.isSafeInteger(value) && (value as number) >= 1
+    if (!command || typeof command !== "object" || Array.isArray(command)
+      || !identity(command.operation_id) || command.binding?.supervisor_session_id !== session
+      || !identity(command.binding?.scope_id) || !revision(command.binding?.binding_revision)
+      || !identity(command.target?.request_id) || name !== key(session, command.target.request_id)
+      || !identity(command.target?.work_id)
+      || !(command.target?.assignment_id === null || identity(command.target?.assignment_id))
+      || !revision(command.target?.generation) || !revision(command.target?.contract_revision) || !revision(command.target?.prompt_revision)
+      || !Number.isSafeInteger(command.expected_seq) || command.expected_seq < 0 || !revision(command.expected_epoch)
+      || !(command.decision?.kind === "question" && typeof command.decision.answer === "string" && command.decision.answer.trim().length > 0
+        || command.decision?.kind === "approval" && identity(command.decision.fingerprint) && typeof command.decision.approve === "boolean")) {
+      throw new Error("请求回执无法核对，回答和批准已暂停。")
+    }
     result[command.target.request_id] = command
   }
   return result
