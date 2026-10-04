@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, vi } from "vitest"
+import { changeLocale, i18nReady } from "../shared/i18n"
 import { resolveDefaultBrowserRuntimeConfig } from "../runtime/browserRuntime"
 import { installRuntimeConfig } from "../runtime/runtimeConfig"
 
@@ -70,7 +71,9 @@ if (typeof ResizeObserver === "undefined") {
 }
 installRuntimeConfig(resolveDefaultBrowserRuntimeConfig())
 
-beforeEach(() => {
+beforeEach(async () => {
+  await i18nReady
+  await changeLocale("zh-CN")
   localStorageForTests.clear()
   sessionStorageForTests.clear()
 })
