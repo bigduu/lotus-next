@@ -1,6 +1,6 @@
 import { uiText, useUiLocale } from "@shared/i18n/ui"
-import { CircleHelp } from "lucide-react"
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { Sparkles } from "lucide-react"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import type { ReasoningEffortSelection } from "@shared/utils/reasoningEffort"
 
 const ordinaryLabels: Record<ReasoningEffortSelection, string> = {
@@ -49,20 +49,19 @@ export function RootOrchestrationControl({
 
   return (
     <div className="flex min-w-0 max-w-full flex-wrap items-center gap-1.5 text-xs" aria-busy={loading || pending || recovering}>
-      <span role="status" aria-live="polite" className="text-muted-foreground">{status}</span>
-      {selected !== null ? <span className="text-muted-foreground">{uiText("single_call_reasoning_14a4fc24")}{ordinaryLabels[ordinaryValue]}</span> : null}
-      <Popover>
-        <PopoverTrigger asChild>
-          <button type="button" aria-label={uiText("about_ultra_orchestration_85ab439b")} className="rounded p-1 text-muted-foreground hover:text-foreground">
-            <CircleHelp className="size-3.5" aria-hidden="true" />
+      <span role="status" aria-live="polite" className="sr-only">{status}</span>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <button type="button" aria-label={uiText("about_ultra_orchestration_85ab439b")} className={`rounded p-1 hover:text-foreground ${selected ? "text-primary" : "text-muted-foreground"}`}>
+            <Sparkles className="size-3.5" aria-hidden="true" />
           </button>
-        </PopoverTrigger>
-        <PopoverContent side="top" align="start" className="text-xs leading-relaxed">
-          <p>{uiText("ultra_is_a_separate_root_orchestration_mode_above_max_r_d8ebbb6c")}</p>
-          <p className="mt-2">{uiText("root_can_use_subagent_plan_task_session_history_current_0c8b74f6")}</p>
-          <p className="mt-2">{uiText("this_mode_is_incompatible_with_skill_workflow_and_legac_7fbdc903")}</p>
-        </PopoverContent>
-      </Popover>
+        </TooltipTrigger>
+        <TooltipContent side="top" align="start" className="max-w-xs border bg-popover text-popover-foreground shadow-md text-xs leading-relaxed">
+          <p>{status}</p>
+          {selected !== null ? <p>{uiText("single_call_reasoning_14a4fc24")}{ordinaryLabels[ordinaryValue]}</p> : null}
+          <p className="mt-2">{uiText("ultra_is_a_separate_root_orchestration_mode_above_max_r_d8ebbb6c")}</p>
+        </TooltipContent>
+      </Tooltip>
       {error || conflict ? (
         <span role="alert" className="basis-full text-destructive">
           {conflict || error}

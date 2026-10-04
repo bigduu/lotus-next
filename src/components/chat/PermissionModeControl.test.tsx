@@ -70,6 +70,20 @@ afterEach(() => {
 })
 
 describe("PermissionModeControl", () => {
+  it("reads permissions when the selected session arrives after the composer mounts", async () => {
+    useAppStore.setState({ chats: [] })
+    await mount("a", true)
+    expect(read).not.toHaveBeenCalled()
+    expect(selector().selectedOptions[0].text).not.toContain("Checking")
+    await act(async () => {
+      useAppStore.setState({ chats: [sessionSummaryToChatItem(summary("a"))] })
+    })
+    await flush()
+    expect(read).toHaveBeenCalledExactlyOnceWith("a")
+    expect(selector().value).toBe("default")
+    expect(selector().disabled).toBe(false)
+  })
+
   it("uses the compact composer presentation without dropping its accessible help", async () => {
     await mount("a", true)
     const section = document.querySelector("section")
