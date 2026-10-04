@@ -43,6 +43,10 @@ import {
 import { HomeDashboard } from "@/components/app/HomeDashboard"
 import { MessageList } from "@/components/app/MessageList"
 import { useGuidanceQueue } from "@/hooks/useGuidanceQueue"
+import { useTicketWork } from "@/hooks/useTicketWork"
+import { useTicketIngress } from "@/hooks/useTicketIngress"
+import { TicketWorkPanel } from "@/components/chat/TicketWorkPanel"
+import type { PendingRequest as TicketRequest } from "@services/tickets/types"
 import { SessionGuidance } from "@/components/app/SessionGuidance"
 import { Composer } from "@/components/app/Composer"
 import { Toasts } from "@/components/app/Toasts"
@@ -243,6 +247,19 @@ export function ChatPane({
       : null)
   const runFailureGuidance = generationFailed ? describeRunFailure(runErrorDetail) : null
   const queue = useGuidanceQueue(currentSessionId, currentlyRunning)
+  const tickets = useTicketWork(currentSessionId)
+  const ticketIngress = useTicketIngress(currentSessionId)
+  const ticketScope = tickets.state?.current.scope
+  const pendingTicketMessage = ticketIngress.hasPending(currentSessionId)
+  const semanticComposer = tickets.negotiated === false || pendingTicketMessage || ticketScope?.capabilities?.semantic_messages_v1 === true
+    && ticketScope.mutation_enabled === true
+    && ticketScope.binding.supervisor_session_id === currentSessionId
+  const [ticketReference, setTicketReference] = useState<TicketRequest | null>(null)
+  const replayReferences = ticketIngress.references(currentSessionId)
+  const visibleTicketReference = pendingTicketMessage && replayReferences?.in_reply_to
+    ? { work_id: replayReferences.thread_id ?? replayReferences.in_reply_to, id: replayReferences.in_reply_to }
+    : ticketReference
+  useEffect(() => { setTicketReference(null) }, [currentSessionId])
   // The secondary chat hook remains mounted when its pane closes. Read state
   // follows the rendered pane, including the same breakpoint as its md:flex.
   const splitVisible = useMediaQuery("(min-width: 768px)")
@@ -580,7 +597,8 @@ export function ChatPane({
 
   const submit = () => {
     // Keep an in-flight admission from capturing or clearing a second draft.
-    if (submissionPending || modelSaving || queue.busy || rootMode.busy || goalRequestActive.current) return
+    if (submissionPending || modelSaving || queue.busy || ticketIngress.busy || rootMode.busy || goalRequestActive.current) return
+    if (semanticComposer && !tickets.canSendIngress) { showToast("工单连接或写入权限尚未确认，请刷新后重试。"); return }
     if (rootSessionUnsafe()) {
       setRootModeConflict(uiText("the_root_permission_change_is_unconfirmed_sending_and_e_a75a6b4f"))
       return
@@ -590,7 +608,7 @@ export function ChatPane({
     const text = draftAtSubmit?.content ?? ""
     const goalCommand = !selectedWorkflow && !typedWorkflow && !selectedSkill && attachments.length === 0
       ? /^\/goal(?:\s+([\s\S]*))?$/i.exec(text.trim()) : null
-    if (goalCommand && (currentSessionId || !goalCommand[1]?.trim())) {
+    if (goalCommand && !pendingTicketMessage && (currentSessionId || !goalCommand[1]?.trim())) {
       if (!currentSessionId) { showToast(uiText("open_a_session_before_setting_a_goal_83867da8")); return }
       const revision = draftAtSubmit?.contentRevision ?? 0
       const objective = goalCommand[1]?.trim()
@@ -681,7 +699,18 @@ export function ChatPane({
       ? `${snapshot.selectedWorkflow.content}${text.trim() ? `\n\n${text.trim()}` : ""}`
       : text
     const images = snapshot.attachments.map((a) => ({ base64: a.base64, name: a.name, size: a.size, type: a.type }))
-    const submission = currentSessionId && (currentlyRunning || queue.hasUnconfirmed)
+    if (semanticComposer && (snapshot.selectedSkill || snapshot.selectedWorkflow || snapshot.typedWorkflow)) {
+      showToast("请把工单指令直接写在普通输入框中，并先移除工作流或技能选择。")
+      return
+    }
+    const frozenReference = ticketReference
+    const submission = semanticComposer && currentSessionId
+      ? ticketIngress.send({ session_id: currentSessionId, message: finalText,
+          model: activeModel, model_ref: currentChat?.config.model_ref ?? undefined,
+          images: images.length ? images : undefined,
+          ...(frozenReference ? { thread_id: frozenReference.work_id, in_reply_to: frozenReference.id } : {}),
+        })
+      : currentSessionId && (currentlyRunning || queue.hasUnconfirmed)
       ? queue.send(finalText, images)
       : send(finalText, {
           skillIds: snapshot.selectedSkill ? [snapshot.selectedSkill.id] : undefined,
@@ -720,6 +749,7 @@ export function ChatPane({
           return
         }
         if (result.kind !== "accepted") return
+        if (frozenReference) setTicketReference((current) => current?.id === frozenReference.id ? null : current)
 
         // Commit only fields that still have the exact mutation revision captured
         // by this submission. A late acknowledgement must never erase edits or a
@@ -1059,6 +1089,14 @@ export function ChatPane({
         ) : null}
 
         {queue.error && <div role="alert" className="mx-auto mb-1 w-[calc(100%-1.5rem)] max-w-6xl rounded-lg border border-destructive/40 px-3 py-2 text-xs text-destructive">{queue.error}</div>}
+        <TicketWorkPanel controller={tickets} onReference={tickets.canSendIngress && ticketScope?.capabilities?.message_references_v1 === true && !pendingTicketMessage ? (request) => { setTicketReference(request); composerInputRef.current?.focus() } : undefined} />
+        {semanticComposer && visibleTicketReference ? <div className="mx-4 mb-2 flex items-center gap-2 text-xs" data-testid="ticket-reference">
+          <span>引用：{tickets.state?.works[visibleTicketReference.work_id]?.ticket.contract.title ?? visibleTicketReference.work_id} 的请求</span>
+          <button type="button" className="underline" disabled={pendingTicketMessage} onClick={() => setTicketReference(null)}>清除引用</button>
+        </div> : null}
+        {semanticComposer && (ticketIngress.error || pendingTicketMessage) ? <div role="alert" className="mx-4 mb-2 text-xs text-destructive">{ticketIngress.error ?? "上次消息尚未确认，请用原文和原附件重试。"}
+          {ticketIngress.executePending === currentSessionId ? <button type="button" className="ml-2 underline" onClick={() => void ticketIngress.retryExecute()}>重试启动</button> : null}
+        </div> : null}
         <div data-composer-region className="relative shrink-0">
           {/* Keep the jump control centered on the same max-width column as the composer. */}
           {!atBottom && (
@@ -1083,8 +1121,9 @@ export function ChatPane({
           onStop={stop}
           sending={currentlyRunning}
           queueMode={queue.mode}
-          onQueueModeChange={currentSessionId && !submissionPending ? queue.setMode : undefined}
-          queueControls={currentSessionId ? <SessionGuidance key={currentSessionId} sessionId={currentSessionId} messages={queue.pending} busy={queue.busy} onCancel={(id) => void queue.cancel(id)} onPreview={setPreview} /> : null}
+          onQueueModeChange={currentSessionId && !submissionPending && !semanticComposer ? queue.setMode : undefined}
+          sendWhileRunning={semanticComposer}
+          queueControls={currentSessionId && !semanticComposer ? <SessionGuidance key={currentSessionId} sessionId={currentSessionId} messages={queue.pending} busy={queue.busy} onCancel={(id) => void queue.cancel(id)} onPreview={setPreview} /> : null}
           workflowControl={workflowPicker === "composer" || typedWorkflow || workflowError ? workflowControl("composer") : null}
           catalogState={catalogState}
           catalogDisabled={workflowDisabled}
@@ -1151,7 +1190,7 @@ export function ChatPane({
                 allowUltra={rootMode.isRoot}
                 thinkingMode={rootMode.thinkingMode}
                 onChange={(selection) => { setRootModeConflict(null); void rootMode.choose(selection) }}
-                disabled={rootMode.controlDisabled}
+                disabled={rootMode.controlDisabled || ticketIngress.busy}
                 menuPlacement="up"
                 menuAlign="right"
               />
@@ -1171,7 +1210,7 @@ export function ChatPane({
               ) : null}
             </>
           )}
-          submissionPending={submissionPending || goalSaving || queue.busy || modelSaving || rootMode.busy}
+          submissionPending={submissionPending || goalSaving || queue.busy || ticketIngress.busy || modelSaving || rootMode.busy}
           inputRef={composerInputRef}
           attachments={attachments}
           onAddFiles={(files) => void addFiles(files)}

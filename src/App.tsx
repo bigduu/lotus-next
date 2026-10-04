@@ -1,3 +1,4 @@
+import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { useEffect, useRef, useState } from "react"
 import { copyText } from "@shared/utils/clipboard"
 import { Inspector } from "@/components/chat/Inspector"
@@ -31,6 +32,7 @@ import {
 } from "@/components/app/RightWorkbench"
 
 function App() {
+  useUiLocale()
   // The main pane follows the global current session.
   const chat = useChat()
   const { booted, chats, currentSessionId, currentChat, select, newChat } = chat
@@ -193,9 +195,9 @@ function App() {
   const copySessionId = async (sessionId: string) => {
     try {
       await copyText(sessionId)
-      setCopyFeedback({ message: "会话 ID 已复制", failed: false })
+      setCopyFeedback({ message: uiText("session_id_copied_3afb54a6"), failed: false })
     } catch {
-      setCopyFeedback({ message: "复制会话 ID 失败", failed: true })
+      setCopyFeedback({ message: uiText("could_not_copy_session_id_3db157e7"), failed: true })
     }
   }
 
@@ -377,7 +379,7 @@ function App() {
         }}
         onSelect={select}
         onRename={(id, title) => void persistSessionTitle(id, title)}
-        onDelete={(c) => setPendingDelete({ id: c.id, title: c.title || "新会话" })}
+        onDelete={(c) => setPendingDelete({ id: c.id, title: c.title || uiText("new_session_c57c30bc") })}
         onTogglePin={(c) => (c.pinned ? unpinSession(c.id) : pinSession(c.id))}
         onCopySessionId={copySessionId}
         onOpenSettings={() => setSettingsOpen(true)}

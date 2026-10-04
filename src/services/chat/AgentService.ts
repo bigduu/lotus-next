@@ -312,6 +312,9 @@ export interface AgentEvent {
   pinned?: boolean;
   // MessageAppended / SessionCreated events
   message_id?: string;
+  thread_id?: string;
+  in_reply_to?: string;
+  correlation_id?: string;
   role?: "user" | "assistant" | "tool" | "system";
   created_at?: string;
   kind?: SessionKind;
@@ -356,6 +359,10 @@ export interface AccountStreamHandlers {
 
 export interface ChatRequest {
   message: string;
+  message_id?: string;
+  thread_id?: string;
+  in_reply_to?: string;
+  correlation_id?: string;
   session_id?: string;
   project_id?: string;
   system_prompt?: string;
@@ -390,6 +397,8 @@ export interface GoalCommandResponse {
 }
 
 export interface ChatResponse {
+  message_id?: string;
+  ingress_seq?: number;
   session_id: string;
   status: string;
   stream_url?: string;
@@ -544,6 +553,9 @@ function parsePendingQuestion(sessionId: string, value: unknown): PendingQuestio
 }
 
 export interface MessageHistoryItem {
+  thread_id?: string;
+  in_reply_to?: string;
+  correlation_id?: string;
   id: string;
   role: "user" | "assistant";
   content: string;
@@ -600,7 +612,8 @@ const parseMessageHistory = (sessionId: string, value: unknown): MessageHistoryR
     const message = interactionRecord(value);
     if (
       !message ||
-      !hasExactMessageHistoryKeys(message, ["id", "role", "content", "created_at"]) ||
+      Object.keys(message).some((key) => !["id", "role", "content", "created_at", "thread_id", "in_reply_to", "correlation_id"].includes(key)) ||
+      ["thread_id", "in_reply_to", "correlation_id"].some((key) => message[key] !== undefined && (typeof message[key] !== "string" || (message[key] as string).length > 128)) ||
       typeof message.id !== "string" ||
       (message.role !== "user" && message.role !== "assistant") ||
       typeof message.content !== "string" ||

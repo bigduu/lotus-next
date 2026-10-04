@@ -129,6 +129,7 @@ export function Composer({
   sending,
   queueMode,
   onQueueModeChange,
+  sendWhileRunning = false,
   queueControls,
   permissionControl,
   runtimeControls,
@@ -174,6 +175,7 @@ export function Composer({
   sending: boolean
   queueMode?: GuidanceMode
   onQueueModeChange?: (mode: GuidanceMode) => void
+  sendWhileRunning?: boolean
   queueControls?: ReactNode
   /** Permission selector shown in the lower-left composer toolbar. */
   permissionControl?: ReactNode
@@ -218,6 +220,7 @@ export function Composer({
   const inputId = useId()
   const fileInputRef = useRef<HTMLInputElement>(null)
   const canQueue = sending && !!onQueueModeChange
+  const canSubmit = !sending || canQueue || sendWhileRunning
   const hasContent = !!draft.trim() || attachments.length > 0 || !!selectedWorkflow
 
   return (
@@ -331,7 +334,7 @@ export function Composer({
                 if (e.defaultPrevented || nativeEvent.isComposing || nativeEvent.keyCode === 229) return
                 if (e.key === "Enter" && !e.shiftKey) {
                   e.preventDefault()
-                  if (!submissionPending && hasContent && (!sending || canQueue)) onSubmit()
+                  if (!submissionPending && hasContent && canSubmit) onSubmit()
                 }
               }}
               title={uiText("enter_to_send_shift_enter_for_a_new_line_b6153e81")}
@@ -405,7 +408,7 @@ export function Composer({
                 <Button size="icon" disabled aria-label={uiText("sending_2d88d503")} className="rounded-full">
                   <LoaderCircle className="animate-spin" />
                 </Button>
-              ) : (!sending || (canQueue && hasContent)) ? (
+              ) : canSubmit ? (
                 <Button size="icon" onClick={onSubmit} disabled={!hasContent} className="rounded-full"
                   aria-label={canQueue ? uiText("add_to_queue_bc3b684c") : uiText("send_message_00881483")} title={canQueue ? uiText("add_to_queue_bc3b684c") : uiText("send_message_00881483")}><ArrowUp /></Button>
               ) : null}

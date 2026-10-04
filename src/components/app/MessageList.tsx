@@ -764,7 +764,7 @@ export function MessageList({
           ) : null}
           {reasoning ? <Reasoning text={reasoning} /> : null}
           {isUser ? (
-            text
+            <>{m.role === "user" && "inReplyTo" in m && m.inReplyTo ? <div className="mb-1 text-xs opacity-70" data-testid="message-request-reference">引用请求：{m.inReplyTo}</div> : null}{text}</>
           ) : text.trim() ? (
             <AssistantMarkdown isStreaming={false} onPreviewImage={onPreviewImage}>{text}</AssistantMarkdown>
           ) : null}

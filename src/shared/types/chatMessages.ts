@@ -91,6 +91,9 @@ export interface UserMessage extends BaseMessage {
   role: "user";
   content: string;
   images?: MessageImage[];
+  threadId?: string;
+  inReplyTo?: string;
+  correlationId?: string;
 }
 
 export interface UserFileReferenceMessage extends BaseMessage {
