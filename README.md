@@ -85,3 +85,8 @@ npm run test:e2e:built
 `verify` checks types, lint, unit tests, architecture, the build and package contents. The browser suite exercises that output at desktop, tablet and phone viewports. Its deterministic fixtures are separate from the real-Bamboo acceptance lanes; neither is a claim of physical-device or public-network testing.
 
 See [verification and packaging](docs/verification.md) for isolated real-runtime tests, immutable published-artifact checks and manifest verification, and [bundle baseline](docs/bundle-baseline.md) for measured build context. These are contributor checks, not prerequisites for installing Bodhi.
+
+## License
+
+Project-owned code and documentation are licensed under the [MIT License](./LICENSE).
+Third-party components retain their respective licenses and copyright notices.
