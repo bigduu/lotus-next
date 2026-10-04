@@ -1,3 +1,4 @@
+import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { X } from "lucide-react"
 
 /** Fullscreen image preview (tap backdrop or ✕ to dismiss). */
@@ -8,6 +9,7 @@ export function ImageLightbox({
   src: string | null
   onClose: () => void
 }) {
+  useUiLocale()
   if (!src) return null
   return (
     <div
@@ -23,7 +25,7 @@ export function ImageLightbox({
       <button
         onClick={onClose}
         className="absolute right-4 top-4 rounded-full bg-white/15 p-2 text-white backdrop-blur transition-colors hover:bg-white/25"
-        aria-label="关闭预览"
+        aria-label={uiText("close_preview_1eb05d31")}
       >
         <X className="size-5" />
       </button>

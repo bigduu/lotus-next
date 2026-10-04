@@ -1,3 +1,4 @@
+import { uiText } from "@shared/i18n/ui"
 import type { Message } from "@shared/types/chatMessages"
 import { buildMarkdown } from "./exportMarkdown"
 
@@ -30,7 +31,7 @@ function createExportOverlay() {
   card.style.padding = "12px 16px"
   card.style.maxWidth = "80vw"
   card.style.boxShadow = "0 8px 24px rgba(0,0,0,0.12)"
-  card.textContent = "正在导出 PDF…"
+  card.textContent = uiText("exporting_pdf_9bdbbc51")
   overlay.appendChild(card)
   document.body.appendChild(overlay)
 
@@ -68,6 +69,6 @@ export async function downloadPdf(messages: Message[], title: string) {
     overlay.remove()
   } catch (error) {
     console.error("PDF export failed:", error)
-    overlay.fail(`导出 PDF 失败：${error instanceof Error ? error.message : String(error)}`)
+    overlay.fail(uiText("could_not_export_pdf_0c1eb07c", { v0: error instanceof Error ? error.message : String(error) }))
   }
 }

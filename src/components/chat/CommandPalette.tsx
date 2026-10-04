@@ -1,3 +1,4 @@
+import { useUiText } from "@shared/i18n/ui"
 import { useEffect, useMemo, useRef, useState } from "react"
 import { Search, Plus, Settings as SettingsIcon, MessageSquare } from "lucide-react"
 import { cn } from "@/lib/utils"
@@ -31,6 +32,7 @@ export function CommandPalette({
   onNewChat: () => void
   onSettings: () => void
 }) {
+  const uiText = useUiText()
   const [q, setQ] = useState("")
   const [active, setActive] = useState(0)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -49,14 +51,14 @@ export function CommandPalette({
       {
         kind: "action",
         id: "new",
-        label: "新建对话",
+        label: uiText("new_conversation_6897a8ef"),
         icon: <Plus className="size-4" />,
         run: onNewChat,
       },
       {
         kind: "action",
         id: "settings",
-        label: "系统设置",
+        label: uiText("system_settings_68ea5dd4"),
         icon: <SettingsIcon className="size-4" />,
         run: onSettings,
       },
@@ -71,14 +73,14 @@ export function CommandPalette({
       .map((c) => ({
         kind: "session",
         id: c.id,
-        label: c.title || "新会话",
+        label: c.title || uiText("new_session_c57c30bc"),
         run: () => onSelect(c.id),
       }))
     const acts = query
       ? actions.filter((a) => a.label.toLowerCase().includes(query))
       : actions
     return [...acts, ...sessionItems]
-  }, [q, chats, onNewChat, onSettings, onSelect])
+  }, [q, chats, onNewChat, onSettings, onSelect, uiText])
 
   useEffect(() => {
     setActive((a) => Math.min(a, Math.max(0, items.length - 1)))
@@ -121,13 +123,13 @@ export function CommandPalette({
                 onClose()
               }
             }}
-            placeholder="搜索会话或操作…"
+            placeholder={uiText("search_sessions_or_actions_b2a0f9e8")}
             className="w-full bg-transparent py-3 text-sm outline-none placeholder:text-muted-foreground"
           />
         </div>
         <div className="max-h-80 overflow-y-auto p-1">
           {items.length === 0 ? (
-            <p className="px-3 py-6 text-center text-sm text-muted-foreground">无匹配</p>
+            <p className="px-3 py-6 text-center text-sm text-muted-foreground">{uiText("no_matches_7a54f3fc")}</p>
           ) : (
             items.map((it, i) => (
               <button

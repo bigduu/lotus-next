@@ -1,3 +1,4 @@
+import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { useCallback, useEffect, useRef, useState } from "react"
 import { Plus, RefreshCw, RotateCw, Trash2 } from "lucide-react"
 import {
@@ -19,18 +20,19 @@ import { cn } from "@/lib/utils"
 import { PluginFormDialog, type PluginFormMode } from "./plugins/PluginFormDialog"
 
 function StatusBadge({ status }: { status: PluginStatus }) {
+  useUiLocale()
   if (status === "installing") {
-    return <Badge variant="warning">安装中(可能为异常残留)</Badge>
+    return <Badge variant="warning">{uiText("installing_possibly_an_incomplete_installation_ce4290b2")}</Badge>
   }
-  return <Badge variant="secondary">已安装</Badge>
+  return <Badge variant="secondary">{uiText("installed_a8b6c39d")}</Badge>
 }
 
 function sourceSummary(source: PluginSourceSpec): string {
   switch (source.type) {
     case "local_dir":
-      return `本地目录 · ${source.path}`
+      return uiText("local_directory_9a7b72f1", { v0: source.path })
     case "local_archive":
-      return `本地压缩包 · ${source.path}`
+      return uiText("local_archive_7e17d5f1", { v0: source.path })
     case "url":
       return `URL · ${source.url}`
     default:
@@ -41,16 +43,16 @@ function sourceSummary(source: PluginSourceSpec): string {
 function registeredChips(registered: RegisteredResources): { key: string; label: string }[] {
   const chips: { key: string; label: string }[] = []
   if (registered.mcp_server_ids?.length) {
-    chips.push({ key: "mcp", label: `${registered.mcp_server_ids.length} 个 MCP 服务器` })
+    chips.push({ key: "mcp", label: uiText("mcp_servers_bf3157a8", { v0: registered.mcp_server_ids.length , count: registered.mcp_server_ids.length }) })
   }
   if (registered.skill_dirs?.length) {
-    chips.push({ key: "skills", label: `${registered.skill_dirs.length} 个技能` })
+    chips.push({ key: "skills", label: uiText("skills_c576d453", { v0: registered.skill_dirs.length , count: registered.skill_dirs.length }) })
   }
   if (registered.preset_ids?.length) {
-    chips.push({ key: "prompts", label: `${registered.preset_ids.length} 个提示词` })
+    chips.push({ key: "prompts", label: uiText("prompts_b7b44efd", { v0: registered.preset_ids.length , count: registered.preset_ids.length }) })
   }
   if (registered.workflow_filenames?.length) {
-    chips.push({ key: "workflows", label: `${registered.workflow_filenames.length} 个工作流` })
+    chips.push({ key: "workflows", label: uiText("workflows_a9684d0d", { v0: registered.workflow_filenames.length , count: registered.workflow_filenames.length }) })
   }
   return chips
 }
@@ -63,6 +65,7 @@ interface FormState {
 }
 
 export function SettingsPlugins() {
+  useUiLocale()
   const [plugins, setPlugins] = useState<InstalledPluginView[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -111,7 +114,7 @@ export function SettingsPlugins() {
       // 409 = already installed — steer the user toward Update instead of
       // just repeating the raw backend error.
       if (form?.mode === "install" && isApiError(e) && e.status === 409) {
-        throw new Error(`${getErrorMessage(e)}(该插件已安装,请改用「更新」)`)
+        throw new Error(uiText("already_installed_use_update_a919ad86", { v0: getErrorMessage(e) }))
       }
       throw e
     }
@@ -138,19 +141,16 @@ export function SettingsPlugins() {
     <div className="space-y-3">
       <div className="flex items-center justify-between gap-2">
         <p className="text-xs leading-relaxed text-muted-foreground">
-          安装 / 更新 / 卸载扩展插件。插件可能会注册 MCP 服务器、技能、提示词或工作流。
-        </p>
+          {uiText("install_update_or_uninstall_plugins_plugins_may_registe_e706479a")}</p>
         <div className="flex shrink-0 gap-2">
           <Button size="sm" variant="secondary" onClick={() => void reload()} disabled={loading}>
-            <RefreshCw className={cn("size-4", loading && "animate-spin")} /> 刷新
-          </Button>
+            <RefreshCw className={cn("size-4", loading && "animate-spin")} />{uiText("refresh_aee88743")}</Button>
           <Button
             size="sm"
             variant="secondary"
             onClick={() => setForm({ mode: "install" })}
           >
-            <Plus className="size-4" /> 安装插件
-          </Button>
+            <Plus className="size-4" />{uiText("install_plugin_edc3f028")}</Button>
         </div>
       </div>
 
@@ -161,18 +161,17 @@ export function SettingsPlugins() {
         >
           <span>{error}</span>
           <Button size="sm" variant="secondary" className="h-7 shrink-0 px-2" onClick={() => void reload()}>
-            重试
-          </Button>
+            {uiText("retry_b8784c8d")}</Button>
         </div>
       ) : null}
 
       {loading && plugins.length === 0 ? (
-        <p className="text-xs text-muted-foreground">加载中…</p>
+        <p className="text-xs text-muted-foreground">{uiText("loading_4927a53b")}</p>
       ) : plugins.length === 0 ? (
-        <p className="text-xs text-muted-foreground">暂无插件</p>
+        <p className="text-xs text-muted-foreground">{uiText("no_plugins_yet_c3e55896")}</p>
       ) : (
         <>
-          <p className="text-xs text-muted-foreground">共 {plugins.length} 个插件</p>
+          <p className="text-xs text-muted-foreground">{uiText("total_76e547a8")} {plugins.length} {uiText("plugins_07219a59")}</p>
           <ul className="space-y-2">
             {plugins.map((p) => {
               const chips = registeredChips(p.registered)
@@ -219,8 +218,7 @@ export function SettingsPlugins() {
                         })
                       }
                     >
-                      <RotateCw className="size-3.5" /> 更新
-                    </Button>
+                      <RotateCw className="size-3.5" />{uiText("update_3055a035")}</Button>
                     <Button
                       size="sm"
                       variant="secondary"
@@ -230,8 +228,7 @@ export function SettingsPlugins() {
                         setDeleting(p)
                       }}
                     >
-                      <Trash2 className="size-3.5" /> 删除
-                    </Button>
+                      <Trash2 className="size-3.5" />{uiText("delete_2f9daa82")}</Button>
                   </div>
                 </li>
               )
@@ -257,10 +254,9 @@ export function SettingsPlugins() {
         }}
       >
         <ResponsiveDialogContent showCloseButton={false} className="p-5">
-          <ResponsiveDialogTitle>删除插件</ResponsiveDialogTitle>
+          <ResponsiveDialogTitle>{uiText("delete_plugin_a0c9ae7e")}</ResponsiveDialogTitle>
           <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
-            确定删除「{deleting?.name || deleting?.id}」?其注册的 MCP 服务器、技能、提示词或工作流将一并移除,该操作不可撤销。
-          </p>
+            {uiText("delete_72f49a52")}{deleting?.name || deleting?.id}{uiText("its_mcp_servers_skills_prompts_and_workflows_will_also__539475bd")}</p>
           {deleteError ? (
             <p className="mt-2 text-xs break-all text-destructive" role="alert">
               {deleteError}
@@ -268,10 +264,9 @@ export function SettingsPlugins() {
           ) : null}
           <div className="mt-5 flex justify-end gap-2">
             <Button size="sm" variant="secondary" onClick={() => setDeleting(null)} disabled={deleteBusy}>
-              取消
-            </Button>
+              {uiText("cancel_2cd0f3be")}</Button>
             <Button size="sm" variant="destructive" onClick={() => void confirmDelete()} disabled={deleteBusy}>
-              {deleteBusy ? "删除中…" : "删除"}
+              {deleteBusy ? uiText("deleting_5e8e7af5") : uiText("delete_2f9daa82")}
             </Button>
           </div>
         </ResponsiveDialogContent>

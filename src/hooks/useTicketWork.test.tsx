@@ -7,6 +7,7 @@ import { ticketClient } from "@services/tickets/client"
 import { ticketSnapshot } from "@services/tickets/testFixtures"
 import type { ResponseCommand, TicketSnapshot } from "@services/tickets/types"
 import { ApiError } from "@services/api"
+import { changeLocale } from "@shared/i18n"
 
 vi.mock("@services/tickets/client", () => ({ ticketClient: { load: vi.fn(), scope: vi.fn(), changes: vi.fn(), respond: vi.fn(), artifact: vi.fn() } }))
 let root: Root, container: HTMLDivElement, controller: ReturnType<typeof useTicketWork>
@@ -288,4 +289,20 @@ it.each(["generation", "prompt_revision", "assignment_id"])("clears a definitely
   expect(sessionStorage.getItem("lotus-next.ticket-decision.root.q-E")).toBeNull()
   await act(async () => { expect(await controller.respond(controller.state!.requests[old.id], { kind: "question", answer: "revised answer" })).toBe(true) })
   expect(vi.mocked(ticketClient.respond).mock.calls[1][0].target).toEqual(expect.objectContaining({ generation: revised.generation, prompt_revision: revised.prompt_revision, assignment_id: revised.assignment_id }))
+})
+
+it("switches ticket labels and plural counts without changing request data or the answer input", async () => {
+  await mount()
+  const input = container.querySelector("input")!
+  const rawPrompt = controller.state!.requests["q-E"].prompt
+  await act(async () => { await changeLocale("en-US") })
+  expect(container.querySelector("aside")?.getAttribute("aria-label")).toBe("Work overview")
+  expect(container.textContent).toContain("unanswered question")
+  expect(input.getAttribute("aria-label")).toBe("Answer 报告A")
+  expect(container.textContent).toContain(rawPrompt)
+  expect(container.querySelector("input")).toBe(input)
+  await act(async () => { await changeLocale("zh-CN") })
+  expect(container.querySelector("aside")?.getAttribute("aria-label")).toBe("工作总览")
+  expect(container.textContent).toContain(rawPrompt)
+  expect(container.querySelector("input")).toBe(input)
 })

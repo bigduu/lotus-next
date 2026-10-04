@@ -4,6 +4,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest"
 import { browserService } from "@services/browser/BrowserService"
 import { ApiError } from "@services/api"
 import { useBrowserSession } from "./useBrowserSession"
+import { changeLocale } from "@shared/i18n"
 import type { BrowserState } from "@services/browser/types"
 
 vi.mock("@services/browser/BrowserService", () => ({
@@ -629,4 +630,15 @@ it("sends an explicitly empty prompt and discards a late result after model tab 
   await act(async () => { releaseResponse(pendingState()); await answering })
   expect(browser.state?.page_epoch).toBe(18)
   expect(browser.state?.active_tab_id).toBe("tab-b")
+})
+
+it("updates an existing browser error after switching language without restarting the browser", async () => {
+  const cause = new ApiError("raw 后端诊断", 404, "Not Found")
+  vi.mocked(browserService.open).mockRejectedValueOnce(cause)
+  await act(async () => root.render(<Harness />))
+  expect(browser.error).toBe("当前 Bamboo 尚未提供内置浏览器。")
+  await act(async () => { await changeLocale("en-US") })
+  expect(browser.error).toBe("This Bamboo version does not provide a built-in browser yet.")
+  expect(browserService.open).toHaveBeenCalledTimes(1)
+  expect(cause.message).toContain("raw 后端诊断")
 })

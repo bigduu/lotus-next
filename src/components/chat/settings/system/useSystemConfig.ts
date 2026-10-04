@@ -1,3 +1,4 @@
+import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { useCallback, useEffect, useRef, useState } from "react"
 import { apiClient, getErrorMessage } from "@services/api"
 import {
@@ -62,6 +63,7 @@ export interface SystemConfigApi {
  * defensively carry the last-known overrides on every section save.
  */
 export function useSystemConfig(): SystemConfigApi {
+  useUiLocale()
   const [config, setConfig] = useState<SystemBambooConfig | null>(null)
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
@@ -99,7 +101,7 @@ export function useSystemConfig(): SystemConfigApi {
       const issue = Object.values(validation.errors ?? {})
         .flat()
         .filter(Boolean)[0]
-      throw new Error(issue?.message || "配置校验未通过")
+      throw new Error(issue?.message || uiText("configuration_validation_failed_ed3442af"))
     }
 
     const saved = (await serviceFactory.setBambooConfig(withLimits)) as SystemBambooConfig

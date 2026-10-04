@@ -1,3 +1,4 @@
+import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { useEffect, useState } from "react"
 import { AlertTriangle } from "lucide-react"
 import type { PluginSourceSpec } from "@services/plugin"
@@ -14,13 +15,14 @@ export type PluginFormMode = "install" | "update"
 
 const SOURCE_KINDS = [
   { value: "url", label: "URL" },
-  { value: "local_dir", label: "本地目录" },
-  { value: "local_archive", label: "本地压缩包" },
+  { value: "local_dir", get label() { return uiText("local_directory_aeb65d05") } },
+  { value: "local_archive", get label() { return uiText("local_archive_b6a1a973") } },
 ] as const
 
 type SourceKind = (typeof SOURCE_KINDS)[number]["value"]
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  useUiLocale()
   return (
     <label className="block">
       <span className="mb-1 block text-xs text-muted-foreground">{label}</span>
@@ -54,6 +56,7 @@ export function PluginFormDialog({
   /** Should throw on failure — the error is surfaced inline in the dialog. */
   onSubmit: (source: PluginSourceSpec) => Promise<void>
 }) {
+  useUiLocale()
   const [kind, setKind] = useState<SourceKind>("url")
   const [url, setUrl] = useState("")
   const [sha256, setSha256] = useState("")
@@ -74,14 +77,14 @@ export function PluginFormDialog({
 
   const validate = (): string | null => {
     if (kind === "url") {
-      if (!url.trim()) return "URL 不能为空"
+      if (!url.trim()) return uiText("url_is_required_b0a85a80")
       try {
         new URL(url.trim())
       } catch {
-        return "URL 格式无效"
+        return uiText("invalid_url_format_aed7aaa6")
       }
     } else if (!path.trim()) {
-      return "路径不能为空"
+      return uiText("path_is_required_72b2ecec")
     }
     return null
   }
@@ -127,13 +130,13 @@ export function PluginFormDialog({
       <ResponsiveDialogContent className="sm:max-w-lg">
         <div className="border-b px-4 py-3.5">
           <ResponsiveDialogTitle>
-            {mode === "update" ? `更新插件「${pluginName || pluginId}」` : "安装插件"}
+            {mode === "update" ? uiText("update_plugin_ccd7d265", { v0: pluginName || pluginId }) : uiText("install_plugin_edc3f028")}
           </ResponsiveDialogTitle>
         </div>
 
         <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-4">
           <div>
-            <div className="mb-1 text-xs text-muted-foreground">来源类型</div>
+            <div className="mb-1 text-xs text-muted-foreground">{uiText("source_type_38e1e77b")}</div>
             <div className="flex gap-2">
               {SOURCE_KINDS.map((k) => (
                 <Button
@@ -160,9 +163,9 @@ export function PluginFormDialog({
                   onChange={(e) => setUrl(e.target.value)}
                 />
               </Field>
-              <Field label="sha256 校验和(可选)">
+              <Field label={uiText("sha256_checksum_optional_a604f8f4")}>
                 <Input
-                  placeholder="用于校验下载内容完整性"
+                  placeholder={uiText("verify_downloaded_content_integrity_ac604aa0")}
                   value={sha256}
                   autoComplete="off"
                   className="font-mono text-xs"
@@ -171,7 +174,7 @@ export function PluginFormDialog({
               </Field>
             </>
           ) : (
-            <Field label={kind === "local_dir" ? "本地目录路径" : "本地压缩包路径"}>
+            <Field label={kind === "local_dir" ? uiText("local_directory_path_80cfccba") : uiText("local_archive_path_8a4bb71d")}>
               <Input
                 placeholder={
                   kind === "local_dir" ? "/Users/me/my-plugin" : "/Users/me/my-plugin.zip"
@@ -186,9 +189,8 @@ export function PluginFormDialog({
           <div className="flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs leading-relaxed text-amber-700 dark:text-amber-400">
             <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
             <span>
-              {mode === "update" ? "更新" : "安装"}
-              插件可能会注册新的 MCP 服务器,或运行插件自带的可执行程序。请确认来源可信后再继续。
-            </span>
+              {mode === "update" ? uiText("update_3055a035") : uiText("install_e8f88f51")}
+              {uiText("plugins_may_register_mcp_servers_or_run_bundled_executa_0c705da8")}</span>
           </div>
         </div>
 
@@ -200,16 +202,15 @@ export function PluginFormDialog({
           ) : null}
           <div className="flex justify-end gap-2">
             <Button size="sm" variant="secondary" onClick={onCancel} disabled={busy}>
-              取消
-            </Button>
+              {uiText("cancel_2cd0f3be")}</Button>
             <Button size="sm" onClick={() => void save()} disabled={busy}>
               {busy
                 ? mode === "update"
-                  ? "更新中…"
-                  : "安装中…"
+                  ? uiText("updating_a0bacec4")
+                  : uiText("installing_19658d9f")
                 : mode === "update"
-                  ? "更新"
-                  : "安装"}
+                  ? uiText("update_3055a035")
+                  : uiText("install_e8f88f51")}
             </Button>
           </div>
         </div>

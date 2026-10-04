@@ -1,16 +1,18 @@
+import { uiText, useUiLocale } from "@shared/i18n/ui"
 import type { SessionMetrics, SessionStatus } from "@services/metrics"
 import { cn } from "@/lib/utils"
 import { formatCompact, formatDateTime, formatDuration, formatExact } from "./format"
 
 const STATUS_META: Record<SessionStatus, { label: string; dotClass: string }> = {
-  running: { label: "进行中", dotClass: "bg-[#2a78d6] dark:bg-[#3987e5]" },
-  awaiting_response: { label: "待回应", dotClass: "bg-amber-500" },
-  completed: { label: "已完成", dotClass: "bg-emerald-600 dark:bg-emerald-500" },
-  error: { label: "出错", dotClass: "bg-destructive" },
-  cancelled: { label: "已取消", dotClass: "bg-muted-foreground" },
+  running: { get label() { return uiText("active_dc9591e5") }, dotClass: "bg-[#2a78d6] dark:bg-[#3987e5]" },
+  awaiting_response: { get label() { return uiText("awaiting_response_bf0b6179") }, dotClass: "bg-amber-500" },
+  completed: { get label() { return uiText("completed_f28461bb") }, dotClass: "bg-emerald-600 dark:bg-emerald-500" },
+  error: { get label() { return uiText("errors_01ad2bc5") }, dotClass: "bg-destructive" },
+  cancelled: { get label() { return uiText("cancelled_a37778f1") }, dotClass: "bg-muted-foreground" },
 }
 
 function StatusCell({ status }: { status: SessionStatus }) {
+  useUiLocale()
   const meta = STATUS_META[status] ?? { label: status, dotClass: "bg-muted-foreground" }
   return (
     <span className="flex items-center gap-1.5 whitespace-nowrap">
@@ -21,8 +23,9 @@ function StatusCell({ status }: { status: SessionStatus }) {
 }
 
 export function SessionsTable({ sessions }: { sessions: SessionMetrics[] }) {
+  useUiLocale()
   if (sessions.length === 0) {
-    return <p className="text-xs text-muted-foreground">暂无会话记录</p>
+    return <p className="text-xs text-muted-foreground">{uiText("no_session_records_yet_8fae1d55")}</p>
   }
 
   return (
@@ -30,14 +33,14 @@ export function SessionsTable({ sessions }: { sessions: SessionMetrics[] }) {
       <table className="w-full min-w-[620px] text-xs">
         <thead className="sticky top-0 z-10 bg-background text-muted-foreground">
           <tr className="[&>th]:px-2 [&>th]:py-1.5 [&>th]:font-medium">
-            <th className="text-left">会话</th>
-            <th className="text-left">模型</th>
-            <th className="text-left">状态</th>
-            <th className="text-right">轮次</th>
+            <th className="text-left">{uiText("session_a6328025")}</th>
+            <th className="text-left">{uiText("model_c98e118e")}</th>
+            <th className="text-left">{uiText("status_6320b4a8")}</th>
+            <th className="text-right">{uiText("round_4890584b")}</th>
             <th className="text-right">Tokens</th>
-            <th className="text-right">工具</th>
-            <th className="text-right">时长</th>
-            <th className="text-right">开始时间</th>
+            <th className="text-right">{uiText("tool_5ca6730d")}</th>
+            <th className="text-right">{uiText("duration_04a95e06")}</th>
+            <th className="text-right">{uiText("started_6a9906c7")}</th>
           </tr>
         </thead>
         <tbody>

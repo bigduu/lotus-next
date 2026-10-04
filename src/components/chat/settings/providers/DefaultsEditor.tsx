@@ -1,3 +1,4 @@
+import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { useEffect, useMemo, useRef, useState } from "react"
 import type { ReasoningEffort } from "@services/chat/AgentService"
 import { useProviderStore } from "@shared/store/appStore/slices/providerSlice"
@@ -24,12 +25,12 @@ import { EditableModelCombobox } from "./EditableModelCombobox"
 const UNSET = "__unset__"
 const AUTO_EFFORT = "__auto__"
 const REASONING_EFFORTS: readonly { value: ReasoningEffort; label: string }[] = [
-  { value: "none", label: "关闭" },
-  { value: "low", label: "低" },
-  { value: "medium", label: "中" },
-  { value: "high", label: "高" },
-  { value: "xhigh", label: "极高" },
-  { value: "max", label: "最大" },
+  { value: "none", get label() { return uiText("reasoning_none") } },
+  { value: "low", get label() { return uiText("low_aa9e366f") } },
+  { value: "medium", get label() { return uiText("medium_a567bdaa") } },
+  { value: "high", get label() { return uiText("high_b1c27820") } },
+  { value: "xhigh", get label() { return uiText("extra_high_392d0dce") } },
+  { value: "max", get label() { return uiText("max_9730c15f") } },
 ]
 
 interface ModelRoleDefinition {
@@ -42,26 +43,26 @@ interface ModelRoleDefinition {
 const PRIMARY_ROLES = [
   {
     key: "chat",
-    label: "对话(必填)",
-    description: "用于主对话，也是其他未设置用途的最终回退模型。",
+    get label() { return uiText("chat_required_e8946535") },
+    get description() { return uiText("used_for_main_chat_and_as_the_final_fallback_for_other__56810104") },
     required: true,
   },
   {
     key: "fast",
-    label: "快速",
-    description: "用于标题生成、Mermaid 修复等轻量任务；未设置时回退到对话模型。",
+    get label() { return uiText("fast_db945cfe") },
+    get description() { return uiText("used_for_lightweight_tasks_such_as_title_generation_and_5614b007") },
     required: false,
   },
   {
     key: "vision",
-    label: "视觉",
-    description: "用于图片理解与视觉回退；未设置时依次回退到快速、对话模型。",
+    get label() { return uiText("vision_209c47b5") },
+    get description() { return uiText("used_for_image_understanding_and_vision_fallback_falls__5854c68e") },
     required: false,
   },
   {
     key: "sub_agent",
-    label: "子代理",
-    description: "新建子代理时默认使用；未设置时依次回退到快速、对话模型。",
+    get label() { return uiText("sub_agent_acd37b4c") },
+    get description() { return uiText("default_for_new_subagents_falls_back_to_fast_then_chat__41df0ee5") },
     required: false,
   },
 ] as const satisfies readonly ModelRoleDefinition[]
@@ -69,32 +70,32 @@ const PRIMARY_ROLES = [
 const ADVANCED_ROLES = [
   {
     key: "task_summary",
-    label: "任务摘要",
-    description: "用于任务总结与对话压缩；未设置时依次回退到快速、对话模型。",
+    get label() { return uiText("task_summary_6c36c26b") },
+    get description() { return uiText("used_for_task_summaries_and_conversation_compression_fa_a7e90752") },
     required: false,
   },
   {
     key: "memory_background",
-    label: "记忆后台",
-    description: "用于记忆重排、召回后台任务与 Auto Dream；未设置时依次回退到快速、对话模型。",
+    get label() { return uiText("memory_background_86e700b0") },
+    get description() { return uiText("used_for_memory_reranking_background_recall_and_auto_dr_1069ef2e") },
     required: false,
   },
   {
     key: "planning",
-    label: "规划",
-    description: "用于任务拆解、架构与协调；未设置时依次回退到快速、对话模型。",
+    get label() { return uiText("planning_29d38fc5") },
+    get description() { return uiText("used_for_task_breakdown_architecture_and_coordination_f_e1bd2846") },
     required: false,
   },
   {
     key: "search",
-    label: "搜索",
-    description: "用于代码搜索、文件导航与符号定位；未设置时依次回退到快速、对话模型。",
+    get label() { return uiText("search_44ce7ae9") },
+    get description() { return uiText("used_for_code_search_file_navigation_and_symbol_lookup__7ea18af5") },
     required: false,
   },
   {
     key: "code_review",
-    label: "代码审查",
-    description: "用于代码审查与 PR 分析；未设置时依次回退到快速、对话模型。",
+    get label() { return uiText("code_review_1fa3244c") },
+    get description() { return uiText("used_for_code_review_and_pr_analysis_falls_back_to_fast_5273eb65") },
     required: false,
   },
 ] as const satisfies readonly ModelRoleDefinition[]
@@ -154,6 +155,7 @@ const hasSubagentIssue = (
 
 /** Edit all defaults.* references while preserving server authority. */
 export function DefaultsEditor() {
+  useUiLocale()
   const runtimeSnapshot = useProviderStore((state) => state.providerSnapshot)
   const repairSnapshot = useProviderStore((state) => state.providerRepairSnapshot)
   const repairIssues = useProviderStore((state) => state.providerRepairIssues)
@@ -214,26 +216,26 @@ export function DefaultsEditor() {
       const value = draft.roles[role.key]
       if (!value.provider && !value.model.trim()) {
         if (role.required) {
-          setError("对话(chat)默认模型必须选择提供方并填写模型")
+          setError(uiText("select_a_provider_and_model_for_the_chat_default_5d2bf930"))
           return
         }
         if (hasRoleIssue(repairIssues, role.key)) {
-          setError(`「${role.label}」的失效引用必须显式替换为现有实例和模型`)
+          setError(uiText("explicitly_replace_the_broken_reference_with_an_existin_158974d9", { v0: role.label }))
           return
         }
         continue
       }
       if (!value.provider || !value.model.trim()) {
-        setError(`「${role.label}」必须同时选择提供方并填写模型`)
+        setError(uiText("select_both_a_provider_and_model_for_ebb2b990", { v0: role.label }))
         return
       }
       const selectedInstance = instancesById.get(value.provider)
       if (!selectedInstance) {
-        setError(`「${role.label}」引用的提供方已失效，请选择现有实例`)
+        setError(uiText("the_provider_referenced_by_is_invalid_select_an_existin_55330622", { v0: role.label }))
         return
       }
       if (!selectedInstance.enabled) {
-        setError(`「${role.label}」引用的提供方已停用，请先启用该实例或选择其他已启用实例`)
+        setError(uiText("the_provider_referenced_by_is_disabled_enable_it_or_sel_e71c0c57", { v0: role.label }))
         return
       }
     }
@@ -241,11 +243,11 @@ export function DefaultsEditor() {
     for (const [subagent, value] of Object.entries(draft.subagentModels)) {
       const selectedInstance = instancesById.get(value.provider)
       if (!value.provider || !value.model.trim() || !selectedInstance) {
-        setError(`子代理「${subagent}」的失效引用必须显式替换为现有实例和模型`)
+        setError(uiText("explicitly_replace_the_broken_subagent_reference_with_a_523237bc", { v0: subagent }))
         return
       }
       if (!selectedInstance.enabled) {
-        setError(`子代理「${subagent}」引用的提供方已停用，请先启用该实例或选择其他已启用实例`)
+        setError(uiText("the_provider_for_subagent_is_disabled_enable_it_or_sele_ef0263ac", { v0: subagent }))
         return
       }
     }
@@ -290,7 +292,7 @@ export function DefaultsEditor() {
       const remainingIssues = findProviderSnapshotRelationIssues(refreshed)
       if (remainingIssues.length > 0) {
         setError(
-          `偏好已保存，但仍有 ${remainingIssues.length} 处失效引用；请完成其余替换后再使用聊天。`,
+          uiText("preferences_saved_but_references_remain_invalid_repair__777c4ffa", { v0: remainingIssues.length }),
         )
       } else {
         setSaved(true)
@@ -310,13 +312,12 @@ export function DefaultsEditor() {
       <>
         {current && !known ? (
           <SelectItem value={current} disabled>
-            {current}(已失效，请替换)
-          </SelectItem>
+            {current}{uiText("invalid_replace_67f9041a")}</SelectItem>
         ) : null}
         {instances.map((instance) => (
           <SelectItem key={instance.id} value={instance.id} disabled={!instance.enabled}>
             {instance.label || instance.type}
-            {!instance.enabled ? "（已停用）" : ""}
+            {!instance.enabled ? uiText("disabled_7f9b2a77") : ""}
           </SelectItem>
         ))}
       </>
@@ -355,20 +356,20 @@ export function DefaultsEditor() {
               })
             }}
           >
-            <SelectTrigger className="w-full" aria-label={`${role.label}提供方`}>
-              <SelectValue placeholder="提供方" />
+            <SelectTrigger className="w-full" aria-label={uiText("provider_a386a8dd", { v0: role.label })}>
+              <SelectValue placeholder={uiText("provider_9e218722")} />
             </SelectTrigger>
             <SelectContent>
-              {!role.required && !invalid ? <SelectItem value={UNSET}>未设置</SelectItem> : null}
+              {!role.required && !invalid ? <SelectItem value={UNSET}>{uiText("not_set_2f5f1d6f")}</SelectItem> : null}
               {providerOptions(value.provider)}
             </SelectContent>
           </Select>
           <EditableModelCombobox
-            label={`${role.label}模型`}
+            label={uiText("model_a40c0922", { v0: role.label })}
             hideLabel
             value={value.model}
             models={models}
-            placeholder="模型 ID"
+            placeholder={uiText("model_id_8b84338d")}
             disabled={!value.provider}
             onChange={(model) => setRole(role.key, { model })}
           />
@@ -382,11 +383,11 @@ export function DefaultsEditor() {
               })
             }
           >
-            <SelectTrigger className="w-full" aria-label={`${role.label}推理强度`}>
-              <SelectValue placeholder="推理强度" />
+            <SelectTrigger className="w-full" aria-label={uiText("reasoning_level_fab1021c", { v0: role.label })}>
+              <SelectValue placeholder={uiText("reasoning_level_c8c14507")} />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value={AUTO_EFFORT}>自动</SelectItem>
+              <SelectItem value={AUTO_EFFORT}>{uiText("auto_7eb336e4")}</SelectItem>
               {REASONING_EFFORTS.map((effort) => (
                 <SelectItem key={effort.value} value={effort.value}>
                   {effort.label}
@@ -410,10 +411,10 @@ export function DefaultsEditor() {
   if (!canManage) {
     const message =
       providerStatus === "incompatible"
-        ? "当前 Bamboo 的提供方配置格式与 Lotus Next 不兼容。"
+        ? uiText("this_bamboo_provider_configuration_format_is_incompatib_8eefe79f")
         : providerStatus === "unavailable"
-          ? "提供方设置当前不可用。"
-          : "正在加载提供方设置…"
+          ? uiText("provider_settings_are_currently_unavailable_b04506b2")
+          : uiText("loading_provider_settings_46da40c3")
     return (
       <section className="rounded-lg border p-3">
         <p
@@ -433,19 +434,16 @@ export function DefaultsEditor() {
 
   return (
     <section className="rounded-lg border p-3">
-      <div className="mb-2 text-xs font-medium text-muted-foreground">默认模型偏好</div>
+      <div className="mb-2 text-xs font-medium text-muted-foreground">{uiText("default_model_preferences_acdce210")}</div>
       <p className="mb-2 text-xs text-muted-foreground">
-        四个常用用途优先显示；专用模型未设置时统一回退到快速模型，再回退到对话模型。模型 ID 可从发现结果选择，也可手动输入。
-        推理强度未设置时保留该任务的默认策略；发生回退时优先使用回退模型自己配置的推理强度。
-      </p>
+        {uiText("four_common_purposes_appear_first_unset_specialist_mode_50869c72")}</p>
 
       {hasCompatibilityRouteIssue(repairIssues) || compatibilitySyncRequired ? (
         <p role="alert" className="mb-2 rounded-md border border-amber-500/50 p-2 text-xs text-amber-700 dark:text-amber-300">
-          当前提供方路由尚未与「对话」模型偏好同步。确认「对话」提供方和模型后保存偏好，Lotus Next 会自动完成同步。
-        </p>
+          {uiText("provider_routing_is_not_synchronized_with_chat_preferen_23f833cd")}</p>
       ) : null}
 
-      <div role="group" aria-label="常用模型用途" className="space-y-2">
+      <div role="group" aria-label={uiText("common_model_purposes_4ad51f49")} className="space-y-2">
         {PRIMARY_ROLES.map(renderRoleEditor)}
       </div>
 
@@ -454,17 +452,15 @@ export function DefaultsEditor() {
         open={hasAdvancedRepairIssue || undefined}
       >
         <summary className="cursor-pointer px-2.5 py-2 text-xs font-medium text-muted-foreground">
-          高级模型路由
-          <span className="font-normal">
-            {" · 一般无需配置"}
-            {configuredAdvancedRoleCount > 0 ? ` · 已配置 ${configuredAdvancedRoleCount} 项` : ""}
+          {uiText("advanced_model_routing_62a178ed")} <span className="font-normal">
+            {uiText("usually_unnecessary_f3a49923")}
+            {configuredAdvancedRoleCount > 0 ? uiText("configured_e17db314", { v0: configuredAdvancedRoleCount }) : ""}
           </span>
         </summary>
         <div className="border-t p-2.5">
           <p className="mb-2 text-[11px] leading-relaxed text-muted-foreground">
-            仅在对应专用任务中覆盖常用模型；留空即可使用自动回退。
-          </p>
-          <div role="group" aria-label="高级模型用途" className="space-y-2">
+            {uiText("override_common_models_only_for_the_corresponding_speci_e1d880b7")}</p>
+          <div role="group" aria-label={uiText("advanced_model_purposes_c23c6a8e")} className="space-y-2">
             {ADVANCED_ROLES.map(renderRoleEditor)}
           </div>
         </div>
@@ -472,7 +468,7 @@ export function DefaultsEditor() {
 
       {Object.keys(draft.subagentModels).length > 0 ? (
         <div className="mt-3 space-y-2">
-          <div className="text-xs font-medium text-muted-foreground">子代理模型映射</div>
+          <div className="text-xs font-medium text-muted-foreground">{uiText("subagent_model_mapping_4238aed0")}</div>
           {Object.entries(draft.subagentModels).map(([subagent, value]) => {
             const models = value.provider && catalog ? getModelsForProvider(value.provider) : []
             const invalid = hasSubagentIssue(repairIssues, subagent)
@@ -497,17 +493,17 @@ export function DefaultsEditor() {
                       })
                     }
                   >
-                    <SelectTrigger className="w-full" aria-label={`子代理 ${subagent} 提供方`}>
-                      <SelectValue placeholder="提供方" />
+                    <SelectTrigger className="w-full" aria-label={uiText("subagent_provider_7c3689a7", { v0: subagent })}>
+                      <SelectValue placeholder={uiText("provider_9e218722")} />
                     </SelectTrigger>
                     <SelectContent>{providerOptions(value.provider)}</SelectContent>
                   </Select>
                   <EditableModelCombobox
-                    label={`子代理 ${subagent} 模型`}
+                    label={uiText("subagent_model_f8fb17fb", { v0: subagent })}
                     hideLabel
                     value={value.model}
                     models={models}
-                    placeholder="模型 ID"
+                    placeholder={uiText("model_id_8b84338d")}
                     disabled={!value.provider}
                     onChange={(model) => setSubagent(subagent, { model })}
                   />
@@ -525,12 +521,12 @@ export function DefaultsEditor() {
                   >
                     <SelectTrigger
                       className="w-full"
-                      aria-label={`子代理 ${subagent} 推理强度`}
+                      aria-label={uiText("subagent_reasoning_level_f14c2262", { v0: subagent })}
                     >
-                      <SelectValue placeholder="推理强度" />
+                      <SelectValue placeholder={uiText("reasoning_level_c8c14507")} />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value={AUTO_EFFORT}>自动</SelectItem>
+                      <SelectItem value={AUTO_EFFORT}>{uiText("auto_7eb336e4")}</SelectItem>
                       {REASONING_EFFORTS.map((effort) => (
                         <SelectItem key={effort.value} value={effort.value}>
                           {effort.label}
@@ -548,13 +544,13 @@ export function DefaultsEditor() {
       {error ? <p className="mt-2 text-xs text-destructive">{error}</p> : null}
 
       <div className="mt-2.5 flex items-center justify-end gap-2">
-        {saved ? <span className="text-xs text-emerald-500">已保存</span> : null}
+        {saved ? <span className="text-xs text-emerald-500">{uiText("saved_1bd91a7d")}</span> : null}
         <Button
           size="sm"
           onClick={() => void save()}
           disabled={saving || (!dirty && !compatibilitySyncRequired)}
         >
-          {saving ? "保存中…" : "保存偏好"}
+          {saving ? uiText("saving_ff509c9b") : uiText("save_preferences_f96c9903")}
         </Button>
       </div>
     </section>

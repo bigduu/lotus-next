@@ -1,3 +1,4 @@
+import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { useState } from "react"
 import { Button } from "@/components/ui/button"
 import {
@@ -10,6 +11,7 @@ const KEY = "bodhi_onboarded_v1"
 
 /** First-run welcome. Self-hides once dismissed (localStorage flag). */
 export function Onboarding() {
+  useUiLocale()
   const [done, setDone] = useState(() => {
     try {
       return localStorage.getItem(KEY) === "1"
@@ -37,15 +39,11 @@ export function Onboarding() {
       >
         <div className="mx-auto mb-3 size-12 rounded-2xl bg-primary" />
         <ResponsiveDialogTitle className="text-lg">
-          欢迎使用 Bodhi
-        </ResponsiveDialogTitle>
+          {uiText("welcome_to_bodhi_094c7fae")}</ResponsiveDialogTitle>
         <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
-          移动优先的 AI 助手。左上角菜单切换会话,输入 <code>/</code> 选择技能,可粘贴或选择图片,
-          右上角「检查器」查看任务、配置与子代理。
-        </p>
+          {uiText("an_ai_assistant_for_mobile_use_the_top_left_menu_to_swi_cf369af5")} <code>/</code>{uiText("to_choose_skills_paste_or_select_images_and_use_the_top_acab9973")}</p>
         <Button className="mt-5 w-full" onClick={finish}>
-          开始使用
-        </Button>
+          {uiText("get_started_715ee9dc")}</Button>
       </ResponsiveDialogContent>
     </ResponsiveDialog>
   )

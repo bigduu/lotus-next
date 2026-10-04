@@ -1,3 +1,4 @@
+import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { useCallback, useEffect, useRef, useState } from "react"
 import { isApiError, NetworkRequestError, RequestCancelledError, RequestTimeoutError } from "@services/api"
 import { browserService } from "@services/browser/BrowserService"
@@ -41,18 +42,19 @@ const conflictCode = (error: unknown): string | null => {
 
 const userMessage = (error: unknown): string => {
   if (isApiError(error)) {
-    if (error.status === 404) return "当前 Bamboo 尚未提供内置浏览器。"
+    if (error.status === 404) return uiText("this_bamboo_version_does_not_provide_a_built_in_browser_625d56e1")
     if (error.status === 409) {
-      if (conflictCode(error) === "dialog_pending") return "请先处理网页弹窗。"
-      if (conflictCode(error) === "stale_dialog") return "网页弹窗已变化，状态已刷新。"
-      return "网页状态已变化，状态已刷新；请重试操作。"
+      if (conflictCode(error) === "dialog_pending") return uiText("handle_the_web_dialog_first_55d896f4")
+      if (conflictCode(error) === "stale_dialog") return uiText("the_web_dialog_changed_state_was_refreshed_b70b58be")
+      return uiText("page_state_changed_and_was_refreshed_retry_the_operatio_27f1b7ca")
     }
-    if (error.status === 503) return "浏览器运行时暂不可用，请稍后重试。"
+    if (error.status === 503) return uiText("browser_runtime_is_temporarily_unavailable_try_again_la_4ef4c6b7")
   }
-  return "浏览器暂时无法使用，请重试。"
+  return uiText("the_browser_is_unavailable_right_now_try_again_93656b3a")
 }
 
 export function useBrowserSession(sessionId: string | null, active: boolean) {
+  useUiLocale()
   const [state, setState] = useState<BrowserState | null>(null)
   const [readySessionId, setReadySessionId] = useState<string | null>(null)
   const [frame, setFrame] = useState<DisplayedBrowserFrame | null>(null)
@@ -61,7 +63,8 @@ export function useBrowserSession(sessionId: string | null, active: boolean) {
   const [busy, setBusy] = useState(false)
   const [domLoading, setDomLoading] = useState(false)
   const [screenshotLoading, setScreenshotLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const [errorCause, setErrorCause] = useState<{ cause: unknown } | null>(null)
+  const error = errorCause === null ? null : userMessage(errorCause.cause)
   const [retryVersion, setRetryVersion] = useState(0)
   const scopeRef = useRef<Scope | null>(null)
   const stateRef = useRef<BrowserState | null>(null)
@@ -111,7 +114,7 @@ export function useBrowserSession(sessionId: string | null, active: boolean) {
     setReadySessionId(null)
     setFrame(null)
     setDom(null)
-    setError(null)
+    setErrorCause(null)
     setBusy(false)
     setDomLoading(false)
     setScreenshotLoading(false)
@@ -153,13 +156,13 @@ export function useBrowserSession(sessionId: string | null, active: boolean) {
             if (!isCurrent()) return
             if (isTransientStateReadError(cause)) {
               emptyStateReadFailures += 1
-              if (emptyStateReadFailures >= TRANSIENT_STATE_READ_NOTICE_THRESHOLD) setError(userMessage(cause))
+              if (emptyStateReadFailures >= TRANSIENT_STATE_READ_NOTICE_THRESHOLD) setErrorCause({ cause })
               continue
             }
             throw cause
           }
           if (!isCurrent()) return
-          if (emptyStateReadFailures > 0) setError(null)
+          if (emptyStateReadFailures > 0) setErrorCause(null)
           emptyStateReadFailures = 0
           if (version === stateVersionRef.current) publishState(refreshed)
           lastStateRefresh = Date.now()
@@ -290,7 +293,7 @@ export function useBrowserSession(sessionId: string | null, active: boolean) {
 
     void run().catch((cause: unknown) => {
       if (!isCurrent() || cause instanceof RequestCancelledError) return
-      setError(userMessage(cause))
+      setErrorCause({ cause })
       setLoading(false)
     })
 
@@ -345,17 +348,17 @@ export function useBrowserSession(sessionId: string | null, active: boolean) {
           const next = await action(scope, expectedEpoch)
           if (scopeRef.current !== scope || scope.controller.signal.aborted) return null
           publishState(next)
-          setError(null)
+          setErrorCause(null)
           return next
         } catch (cause) {
           if (scopeRef.current !== scope || scope.controller.signal.aborted) return null
           await refreshOnConflict(scope, cause)
           if (scopeRef.current !== scope || scope.controller.signal.aborted) return null
           if (conflictCode(cause) === "dialog_pending" || stateRef.current?.pending_dialog) {
-            setError(null)
+            setErrorCause(null)
             return null
           }
-          setError(userMessage(cause))
+          setErrorCause({ cause })
           return null
         } finally {
           if (shouldInvalidateFrame && scopeRef.current === scope) {
@@ -445,15 +448,15 @@ export function useBrowserSession(sessionId: string | null, active: boolean) {
         })
         if (!matchesDialog()) return
         publishState(next)
-        setError(null)
+        setErrorCause(null)
       } catch (cause) {
         if (!matchesDialog()) return
         await refreshOnConflict(scope, cause)
         if (!matchesDialog()) {
-          setError(null)
+          setErrorCause(null)
           return
         }
-        setError(userMessage(cause))
+        setErrorCause({ cause })
       } finally {
         if (scopeRef.current === scope) setBusy(false)
       }
@@ -480,11 +483,11 @@ export function useBrowserSession(sessionId: string | null, active: boolean) {
         snapshot.url !== stateRef.current?.url
       ) return
       setDom(snapshot)
-      setError(null)
+      setErrorCause(null)
     } catch (cause) {
       if (scopeRef.current === scope && !scope.controller.signal.aborted) {
         await refreshOnConflict(scope, cause)
-        if (scopeRef.current === scope) setError(stateRef.current?.pending_dialog ? null : userMessage(cause))
+        if (scopeRef.current === scope) setErrorCause(stateRef.current?.pending_dialog ? null : { cause })
       }
     } finally {
       if (scopeRef.current === scope) setDomLoading(false)
@@ -504,12 +507,12 @@ export function useBrowserSession(sessionId: string | null, active: boolean) {
       if (scopeRef.current !== scope || scope.controller.signal.aborted) return null
       if (stateVersion === stateVersionRef.current) publishState(refreshed)
       if (version !== mutationVersionRef.current || !matchesActiveBrowserPage(screenshot, stateRef.current)) return null
-      setError(null)
+      setErrorCause(null)
       return screenshot
     } catch (cause) {
       if (scopeRef.current === scope && !scope.controller.signal.aborted) {
         await refreshOnConflict(scope, cause)
-        if (scopeRef.current === scope) setError(stateRef.current?.pending_dialog ? null : userMessage(cause))
+        if (scopeRef.current === scope) setErrorCause(stateRef.current?.pending_dialog ? null : { cause })
       }
       return null
     } finally {

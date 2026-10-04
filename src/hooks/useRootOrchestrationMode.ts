@@ -1,3 +1,4 @@
+import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { useCallback, useEffect, useRef, useState } from "react"
 import {
   agentClient, isThinkingMode, type ThinkingMode, type ReasoningEffort,
@@ -67,14 +68,15 @@ function birthMismatch(error: unknown): boolean {
 const outcomeNotice = (status: RootModeOperationResponse["status"]): string | null => {
   switch (status) {
     case "committed": return null
-    case "rejected_incompatible": return "Bamboo 已拒绝本次 Root 模式切换；当前模式已重新读取。"
-    case "fenced": return "切换请求已安全撤销；当前模式已重新读取。"
-    case "fenced_by_successor": return "另一个操作已更新 Root 模式；当前模式已重新读取。"
+    case "rejected_incompatible": return uiText("bamboo_rejected_this_root_mode_change_the_current_mode__5b0f50d4")
+    case "fenced": return uiText("the_change_request_was_safely_canceled_the_current_mode_45bd934b")
+    case "fenced_by_successor": return uiText("another_operation_updated_root_mode_the_current_mode_wa_e0dd0ad0")
   }
 }
 
 /** Existing Roots use message-free, terminally recoverable mode operations. */
 export function useRootOrchestrationMode(sessionId: string | null, kind?: SessionKind) {
+  useUiLocale()
   const fenceState = useRootModeFenceState(sessionId)
   const fence = sessionId ? readRootModeFence(sessionId) : { kind: "clear" as const }
   const unsafe = fenceState !== "clear"
@@ -113,7 +115,7 @@ export function useRootOrchestrationMode(sessionId: string | null, kind?: Sessio
         || !/^[0-9a-f]{64}$/i.test(session.root_mode_birth_token)) {
         setSaved({
           sessionId: id, kind: session.kind ?? null, authority: null, loading: false,
-          error: "无法确认思考模式：Bamboo 未返回一致的独立 Ultra 模式和 Root 权限信息。请更新 Bamboo 后重新读取。",
+          error: uiText("thinking_mode_could_not_be_confirmed_bamboo_did_not_ret_ba55db0f"),
         })
         return null
       }
@@ -125,7 +127,7 @@ export function useRootOrchestrationMode(sessionId: string | null, kind?: Sessio
       }
       if (authority.epoch < minimumEpoch) {
         setSaved({ sessionId: id, kind: "root", authority: null, loading: false,
-          error: "当前状态仍早于已确认的模式切换；请重新读取服务器状态后继续。" })
+          error: uiText("current_state_predates_the_confirmed_mode_change_reload_07a3df79") })
         return null
       }
       setSaved({
@@ -142,7 +144,7 @@ export function useRootOrchestrationMode(sessionId: string | null, kind?: Sessio
       if (readGeneration.current !== generation || currentSessionId.current !== id) return null
       setSaved({
         sessionId: id, kind: null, authority: null,
-        loading: false, error: `无法读取 Root 模式：${getErrorMessage(error)}`,
+        loading: false, error: uiText("could_not_read_root_mode_a54a59bf", { v0: getErrorMessage(error) }),
       })
       return null
     }
@@ -163,8 +165,8 @@ export function useRootOrchestrationMode(sessionId: string | null, kind?: Sessio
       for (const operation of initial.operations) {
         try {
           const response = await agentClient.recoverRootMode(id, operation)
-          if (!verifiedOutcome(response, operation)) throw new Error("Bamboo 未返回与此请求匹配的终态证明")
-          if (!finishRootModeOperation(id, operation)) throw new Error("本地安全标记无法清除")
+          if (!verifiedOutcome(response, operation)) throw new Error(uiText("bamboo_did_not_return_terminal_state_evidence_matching__e7c81005"))
+          if (!finishRootModeOperation(id, operation)) throw new Error(uiText("could_not_clear_the_local_safety_marker_88e9a7a3"))
           outcomes.set(operation.operationId, response.status)
           minimumEpoch = Math.max(minimumEpoch, response.status === "fenced_by_successor"
             ? response.current_epoch : response.resulting_epoch)
@@ -172,9 +174,9 @@ export function useRootOrchestrationMode(sessionId: string | null, kind?: Sessio
         } catch (error) {
           if (birthMismatch(error) && finishRootModeOperation(id, operation)) {
             outcomes.set(operation.operationId, "birth_mismatch")
-            notice = "会话身份已改变；已重新读取当前 Root 模式。"
+            notice = uiText("session_identity_changed_the_current_root_mode_was_relo_1fc1b49a")
           } else {
-            failure = `无法确认 Root 模式切换：${getErrorMessage(error)}。请重试恢复。`
+            failure = uiText("could_not_confirm_root_mode_change_retry_recovery_1fff2314", { v0: getErrorMessage(error) })
           }
         }
       }
@@ -231,15 +233,15 @@ export function useRootOrchestrationMode(sessionId: string | null, kind?: Sessio
     const id = sessionId
     const operation = beginRootModeOperation(id, authority.epoch, authority.birthToken, next)
     if (!operation) {
-      setRecoveryFailure({ sessionId: id, message: "无法保存 Root 模式安全标记；切换未发送。" })
+      setRecoveryFailure({ sessionId: id, message: uiText("could_not_save_the_root_mode_safety_marker_the_change_w_4c40ae2b") })
       return { status: "unconfirmed", authority: null }
     }
     ++readGeneration.current
     setRecoveryFailure(null)
     try {
       const response = await agentClient.selectRootMode(id, operation)
-      if (!verifiedOutcome(response, operation)) throw new Error("Bamboo 未返回与此请求匹配的终态证明")
-      if (!finishRootModeOperation(id, operation)) throw new Error("本地安全标记无法清除")
+      if (!verifiedOutcome(response, operation)) throw new Error(uiText("bamboo_did_not_return_terminal_state_evidence_matching__e7c81005"))
+      if (!finishRootModeOperation(id, operation)) throw new Error(uiText("could_not_clear_the_local_safety_marker_88e9a7a3"))
       if (currentSessionId.current === id && readRootModeFence(id).kind === "clear") {
         const minimumEpoch = response.status === "fenced_by_successor" ? response.current_epoch : response.resulting_epoch
         return { status: response.status, authority: await refresh(id, outcomeNotice(response.status), minimumEpoch) }
@@ -247,7 +249,7 @@ export function useRootOrchestrationMode(sessionId: string | null, kind?: Sessio
     } catch (error) {
       if (birthMismatch(error) && finishRootModeOperation(id, operation)) {
         return { status: "birth_mismatch", authority: currentSessionId.current === id
-          ? await refresh(id, "会话身份已改变；已重新读取当前 Root 模式。") : null }
+          ? await refresh(id, uiText("session_identity_changed_the_current_root_mode_was_relo_1fc1b49a")) : null }
       } else {
         const recovered = await recoverPending(id)
         return { status: recovered.outcomes.get(operation.operationId) ?? "unconfirmed", authority: recovered.authority }
@@ -263,16 +265,16 @@ export function useRootOrchestrationMode(sessionId: string | null, kind?: Sessio
   }
 
   const pendingError = fence.kind === "legacy"
-    ? "旧版聊天模式切换没有可恢复的请求身份；此会话保持停止发送。请新建会话。"
+    ? uiText("the_legacy_chat_mode_change_has_no_recoverable_request__b94e28d9")
     : fence.kind === "invalid"
-      ? "本地 Root 模式请求记录无效，无法安全恢复；此会话保持停止发送。"
+      ? uiText("the_local_root_mode_request_record_is_invalid_and_canno_6ef1c36c")
       : fence.kind === "storage-unavailable"
-        ? "无法读取本地 Root 权限安全状态。请在可用存储的浏览器中重试。"
+        ? uiText("could_not_read_local_root_permission_safety_state_retry_0f33322f")
         : recoveringId === sessionId
-          ? "正在确认 Root 模式切换的终态；此会话暂时停止发送。"
+          ? uiText("confirming_the_terminal_state_of_the_root_mode_change_s_ae6d8992")
           : recoveryFailure?.sessionId === sessionId
             ? recoveryFailure.message
-            : "Root 模式切换结果尚未确认；此会话暂时停止发送。请恢复该请求。"
+            : uiText("the_root_mode_change_is_unconfirmed_sending_is_temporar_94ddc690")
 
   return {
     child, unsafe, selected, confirmed, loading, authority,

@@ -1,3 +1,4 @@
+import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { useState } from "react"
 import { Switch } from "@/components/ui/switch"
 import {
@@ -16,9 +17,9 @@ import type { SectionMessage, SystemBambooConfig, SystemConfigApi } from "./useS
 type FallbackMode = "placeholder" | "error" | "ocr"
 
 const MODE_OPTIONS: Array<{ value: FallbackMode; label: string }> = [
-  { value: "placeholder", label: "占位文本替换" },
-  { value: "error", label: "直接报错" },
-  { value: "ocr", label: "OCR 提取文本" },
+  { value: "placeholder", get label() { return uiText("replace_with_placeholder_text_a3640565") } },
+  { value: "error", get label() { return uiText("return_an_error_3d9f8301") } },
+  { value: "ocr", get label() { return uiText("extract_text_with_ocr_f28621fc") } },
 ]
 
 function normalizeMode(raw: unknown): FallbackMode {
@@ -34,6 +35,7 @@ export function SectionHooks({
   config: SystemBambooConfig
   saveSection: SystemConfigApi["saveSection"]
 }) {
+  useUiLocale()
   // Seed once at mount: re-seeding on config change would clobber in-progress
   // edits whenever another section saves (each save reloads the shared config).
   const [enabled, setEnabled] = useState(() => config.hooks?.image_fallback?.enabled === true)
@@ -51,7 +53,7 @@ export function SectionHooks({
     setMsg(null)
     try {
       await saveSection({ hooks: { image_fallback: { enabled: nextEnabled, mode: nextMode } } })
-      setMsg({ kind: "ok", text: "已保存" })
+      setMsg({ kind: "ok", text: uiText("saved_1bd91a7d") })
     } catch (e) {
       setEnabled(prev.enabled)
       setMode(prev.mode)
@@ -66,10 +68,9 @@ export function SectionHooks({
       <div className="text-xs font-medium text-muted-foreground">Hooks</div>
       <div className="flex items-center justify-between gap-2">
         <div>
-          <div className="text-sm">图片预检回退</div>
+          <div className="text-sm">{uiText("image_preflight_fallback_db10bcdd")}</div>
           <div className="text-xs text-muted-foreground">
-            当模型不支持图片输入时,按所选方式处理图片内容
-          </div>
+            {uiText("choose_how_to_handle_images_when_the_model_does_not_sup_91164dd4")}</div>
         </div>
         <Switch
           checked={enabled}
@@ -78,7 +79,7 @@ export function SectionHooks({
         />
       </div>
       <div className="flex items-center justify-between gap-2">
-        <div className="text-sm">回退方式</div>
+        <div className="text-sm">{uiText("fallback_method_7d710102")}</div>
         <Select
           value={mode}
           disabled={!enabled || busy}

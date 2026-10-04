@@ -1,3 +1,4 @@
+import { uiLanguage } from "@shared/i18n/ui"
 import type { TokenBudgetUsage as AgentTokenBudgetUsage } from "@services/chat/AgentService";
 
 /**
@@ -184,7 +185,7 @@ export function getUsageColor(usage: TokenUsage): "success" | "warning" | "error
  * Format token count with commas for readability.
  */
 export function formatTokenCount(count: number): string {
-  return count.toLocaleString();
+  return count.toLocaleString(uiLanguage());
 }
 
 /**

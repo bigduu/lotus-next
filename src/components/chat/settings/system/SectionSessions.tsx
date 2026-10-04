@@ -1,3 +1,4 @@
+import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { useMemo, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Switch } from "@/components/ui/switch"
@@ -14,13 +15,14 @@ type PendingAction =
   | { type: "dev-reset" }
 
 const CLEANUP_LABEL: Record<"all" | "empty" | "children", string> = {
-  all: "删除全部会话",
-  empty: "删除空会话",
-  children: "删除子会话",
+  get all() { return uiText("delete_all_sessions_ddae77af") },
+  get empty() { return uiText("delete_empty_sessions_1a185d3a") },
+  get children() { return uiText("delete_child_sessions_a50c6edd") },
 }
 
 /** 会话维护 — 清空当前会话 / 批量清理 / 开发重置(带确认). */
 export function SectionSessions() {
+  useUiLocale()
   const chats = useAppStore((s) => s.chats)
   const currentSessionId = useAppStore((s) => s.currentSessionId)
   const loadChats = useAppStore((s) => s.loadChats)
@@ -42,24 +44,24 @@ export function SectionSessions() {
     switch (action.type) {
       case "clear-current":
         return {
-          title: "清空当前会话消息?",
-          description: "将删除当前会话的全部消息与事件记录,会话本身保留。此操作不可撤销。",
-          label: "清空",
+          title: uiText("clear_current_session_messages_fd367d05"),
+          description: uiText("delete_all_messages_and_events_from_the_current_session_1b83eb83"),
+          label: uiText("clear_1ef3de06"),
         }
       case "cleanup": {
         const scope =
-          action.mode === "all" ? "全部会话" : action.mode === "empty" ? "所有空会话" : "所有子会话"
+          action.mode === "all" ? uiText("all_sessions_19c6c208") : action.mode === "empty" ? uiText("all_empty_sessions_5ed386ae") : uiText("all_child_sessions_343eb995")
         return {
           title: `${CLEANUP_LABEL[action.mode]}?`,
-          description: `将删除${scope}${keepPinned ? "(已置顶的会话会保留)" : "(包括已置顶的会话)"}。此操作不可撤销。`,
-          label: "删除",
+          description: uiText("delete_this_cannot_be_undone_185d9a6f", { v0: scope, v1: keepPinned ? uiText("pinned_kept") : uiText("pinned_included") }),
+          label: uiText("delete_2f9daa82"),
         }
       }
       case "dev-reset":
         return {
-          title: "重置会话存储?",
-          description: "开发用途:删除后端全部会话数据并重建索引。此操作不可撤销。",
-          label: "重置",
+          title: uiText("reset_session_storage_40780a5f"),
+          description: uiText("for_development_delete_all_backend_session_data_and_reb_86af26c4"),
+          label: uiText("reset_cb5d682b"),
         }
     }
   }
@@ -73,15 +75,15 @@ export function SectionSessions() {
         await agentClient.clearSession(pending.sessionId)
         await loadChatHistory(pending.sessionId)
         await refreshChats()
-        setMsg({ kind: "ok", text: "当前会话已清空" })
+        setMsg({ kind: "ok", text: uiText("current_session_cleared_cc0d93c0") })
       } else if (pending.type === "cleanup") {
         await agentClient.cleanupSessions(pending.mode, keepPinned)
         await loadChats()
-        setMsg({ kind: "ok", text: "清理完成" })
+        setMsg({ kind: "ok", text: uiText("cleanup_complete_6d256e25") })
       } else {
         await agentClient.devResetSessions()
         await loadChats()
-        setMsg({ kind: "ok", text: "会话存储已重置" })
+        setMsg({ kind: "ok", text: uiText("session_storage_reset_30160c67") })
       }
       setPending(null)
     } catch (e) {
@@ -101,16 +103,16 @@ export function SectionSessions() {
 
   return (
     <section className="space-y-2 rounded-lg border p-3">
-      <div className="text-xs font-medium text-muted-foreground">会话维护</div>
+      <div className="text-xs font-medium text-muted-foreground">{uiText("session_maintenance_6ce8056e")}</div>
 
       <div className="space-y-1">
-        <div className="text-xs text-muted-foreground">当前会话</div>
+        <div className="text-xs text-muted-foreground">{uiText("current_session_9800a458")}</div>
         {current ? (
           <div className="flex items-center justify-between gap-2">
             <div className="min-w-0">
               <div className="truncate text-sm">{current.title || current.id}</div>
               <div className="truncate text-xs text-muted-foreground">
-                {current.kind === "child" ? "子会话" : "根会话"} · {current.id}
+                {current.kind === "child" ? uiText("child_7f54b15e") : uiText("root_session_label")} · {current.id}
               </div>
             </div>
             <Button
@@ -118,17 +120,16 @@ export function SectionSessions() {
               variant="secondary"
               onClick={() => open({ type: "clear-current", sessionId: current.id })}
             >
-              清空消息
-            </Button>
+              {uiText("clear_messages_d37fb6f4")}</Button>
           </div>
         ) : (
-          <p className="text-xs text-muted-foreground">暂无活动会话</p>
+          <p className="text-xs text-muted-foreground">{uiText("no_active_session_d3a91aa2")}</p>
         )}
       </div>
 
       <div className="space-y-2 border-t pt-2">
         <div className="flex items-center justify-between gap-2">
-          <div className="text-sm">批量清理时保留已置顶</div>
+          <div className="text-sm">{uiText("keep_pinned_sessions_during_bulk_cleanup_66ca3998")}</div>
           <Switch checked={keepPinned} onCheckedChange={setKeepPinned} />
         </div>
         <div className="flex flex-wrap gap-2">
@@ -147,11 +148,9 @@ export function SectionSessions() {
 
       <div className="space-y-1 border-t pt-2">
         <div className="text-xs text-muted-foreground">
-          开发重置:删除后端全部会话数据并重建索引
-        </div>
+          {uiText("development_reset_delete_all_backend_session_data_and_r_0331fbb6")}</div>
         <Button size="sm" variant="destructive" onClick={() => open({ type: "dev-reset" })}>
-          重置会话存储
-        </Button>
+          {uiText("reset_session_storage_226dd63a")}</Button>
       </div>
 
       <StatusLine msg={msg} />

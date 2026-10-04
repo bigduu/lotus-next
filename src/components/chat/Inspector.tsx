@@ -1,3 +1,4 @@
+import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { useEffect, useMemo, useState } from "react"
 import { ArrowRight, Copy, X, FolderGit2 } from "lucide-react"
 import { useShallow } from "zustand/react/shallow"
@@ -33,6 +34,7 @@ function GoalSection({
   goldConfig?: GoldConfig | null
   goalState?: GoalState | null
 }) {
+  useUiLocale()
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState("")
   const [autoContinue, setAutoContinue] = useState(false)
@@ -60,14 +62,14 @@ function GoalSection({
       })
       setEditing(false)
       await useAppStore.getState().loadChatHistory(sessionId)
-    } catch { setSaveError("保存目标失败，请重试。") }
+    } catch { setSaveError(uiText("could_not_save_goal_please_try_again_46d0ad3b")) }
     finally { setSaving(false) }
   }
 
   return (
     <section className="rounded-lg border p-3">
       <div className="mb-2 flex items-center justify-between">
-        <span className="text-xs font-medium text-muted-foreground">目标</span>
+        <span className="text-xs font-medium text-muted-foreground">{uiText("target_57060c88")}</span>
         {!editing ? (
           <button
             onClick={() => {
@@ -79,50 +81,45 @@ function GoalSection({
             }}
             className="text-xs text-primary hover:underline"
           >
-            {goal ? "编辑" : "设置"}
+            {goal ? uiText("edit_05183656") : uiText("goal_set_action")}
           </button>
         ) : null}
       </div>
-      <p className="mb-2 text-xs text-muted-foreground">聊天指令：<code>/goal 目标内容</code> 设置并推进，<code>/goal off</code> 暂停，<code>/goal clear</code> 清除。</p>
+      <p className="mb-2 text-xs text-muted-foreground">{uiText("chat_commands_a9207e15")}<code>{uiText("goal_goal_text_4fe4dd06")}</code>{uiText("set_and_pursue_270d1beb")}<code>/goal off</code>{uiText("pause_bfaa6e86")}<code>/goal clear</code>{uiText("clear_531ffd78")}</p>
       {editing ? (
         <>
           <textarea
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
             autoFocus
-            placeholder="描述这段会话要达成的目标…"
+            placeholder={uiText("describe_the_goal_for_this_session_668b351d")}
             className="min-h-16 w-full resize-y rounded-md border bg-background px-2.5 py-1.5 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
           />
           <label className="mt-2 flex items-center gap-2 text-xs">
             <input type="checkbox" checked={autoContinue} onChange={(event) => setAutoContinue(event.target.checked)} />
-            自动继续推进目标
-          </label>
+            {uiText("continue_pursuing_the_goal_automatically_9a0d0cd4")}</label>
           <label className="mt-2 flex items-center gap-2 text-xs">
             <input type="checkbox" checked={recoverTimeouts} disabled={!autoContinue} onChange={(event) => setRecoverTimeouts(event.target.checked)} />
-            无输出超时后尝试恢复
-          </label>
-          {autoContinue && recoverTimeouts && <p className="mt-1 text-xs text-muted-foreground">每个目标额外尝试最多 {Math.min(recoveryPolicy.max_attempts, 10)} 次，恢复窗口 {Math.min(recoveryPolicy.max_elapsed_seconds, 3600) / 60} 分钟。停止操作会结束等待。</p>}
+            {uiText("attempt_recovery_after_an_output_timeout_227c0054")}</label>
+          {autoContinue && recoverTimeouts && <p className="mt-1 text-xs text-muted-foreground">{uiText("extra_attempts_per_goal_at_most_71934320")} {Math.min(recoveryPolicy.max_attempts, 10)} {uiText("attempts_recovery_window_123ea7f2")} {Math.min(recoveryPolicy.max_elapsed_seconds, 3600) / 60} {uiText("minutes_stopping_ends_the_wait_4accfbf3")}</p>}
           {saveError && <p role="alert" className="mt-1 text-xs text-destructive">{saveError}</p>}
           <div className="mt-1.5 flex justify-end gap-2">
             <Button size="sm" variant="secondary" disabled={saving} onClick={() => setEditing(false)}>
-              取消
-            </Button>
+              {uiText("cancel_2cd0f3be")}</Button>
             <Button size="sm" disabled={saving} onClick={save}>
-              保存
-            </Button>
+              {uiText("save_a3030bf8")}</Button>
           </div>
         </>
       ) : goal ? (
         <>
           <p className="text-sm leading-relaxed">{goal}</p>
           {goalState?.status ? (
-            <div className="mt-1.5 text-xs text-muted-foreground">状态:{goalState.status}</div>
+            <div className="mt-1.5 text-xs text-muted-foreground">{uiText("status_ed1eb79b")}{goalState.status}</div>
           ) : null}
         </>
       ) : (
         <p className="text-xs leading-relaxed text-muted-foreground">
-          未设置目标。设置后,agent 会朝目标推进并自检是否达成。
-        </p>
+          {uiText("no_goal_set_set_one_for_the_agent_to_pursue_and_check_f_221f6826")}</p>
       )}
     </section>
   )
@@ -137,6 +134,7 @@ const STATUS: Record<string, { icon: string; cls: string }> = {
 }
 
 function Row({ label, value }: { label: string; value: string }) {
+  useUiLocale()
   return (
     <div className="flex items-center justify-between gap-3 py-0.5 text-sm">
       <span className="text-muted-foreground">{label}</span>
@@ -148,6 +146,7 @@ function Row({ label, value }: { label: string; value: string }) {
 const formatTokenValue = (count: number): string => `${formatTokenCount(count)} tokens`
 
 export function PrefixCacheDetails({ usage }: { usage?: TokenUsage }) {
+  useUiLocale()
   const prefixCache = usage?.prefixCache
   const prefixCachePercentage = prefixCache
     ? getPrefixCachePercentage(prefixCache)
@@ -166,50 +165,47 @@ export function PrefixCacheDetails({ usage }: { usage?: TokenUsage }) {
       <div className="mb-1 text-xs text-muted-foreground">Prefix Cache</div>
       {prefixCache && prefixCacheRateLabel ? (
         <>
-          <Row label="命中率" value={prefixCacheRateLabel} />
+          <Row label={uiText("hit_rate_da9e37af")} value={prefixCacheRateLabel} />
           <Row
-            label="缓存读取"
+            label={uiText("cache_reads_1ded6559")}
             value={formatTokenValue(prefixCache.cacheReadInputTokens)}
           />
           <Row
-            label="新输入"
+            label={uiText("new_input_56164cf0")}
             value={formatTokenValue(prefixCache.inputTokens)}
           />
           <Row
-            label="缓存创建"
+            label={uiText("cache_creation_92797c69")}
             value={formatTokenValue(prefixCache.cacheCreationInputTokens)}
           />
           <Row
-            label="Provider 输入"
+            label={uiText("provider_input_cbf1d1f1")}
             value={formatTokenValue(getPrefixCacheTotalInputTokens(prefixCache))}
           />
           <Row
-            label="数据状态"
-            value={cacheValueRetained ? "上一次已完成轮次" : "最新已完成轮次"}
+            label={uiText("data_status_bbd51f73")}
+            value={cacheValueRetained ? uiText("previous_completed_round_836ba413") : uiText("latest_completed_round_fe872c8f")}
           />
           <p className="mt-1.5 text-[11px] leading-relaxed text-muted-foreground">
-            命中率 = 缓存读取 ÷（新输入 + 缓存创建 + 缓存读取）。
-          </p>
+            {uiText("hit_rate_cache_reads_new_input_cache_creation_cache_rea_ae5ec6f5")}</p>
         </>
       ) : typeof cacheReadTokens === "number" && cacheReadTokens > 0 ? (
         <>
-          <Row label="缓存读取" value={formatTokenValue(cacheReadTokens)} />
-          <Row label="Provider 输入" value="等待完整数据" />
-          <Row label="命中率" value="等待精确数据" />
+          <Row label={uiText("cache_reads_1ded6559")} value={formatTokenValue(cacheReadTokens)} />
+          <Row label={uiText("provider_input_cbf1d1f1")} value={uiText("waiting_for_complete_data_a333ea86")} />
+          <Row label={uiText("hit_rate_da9e37af")} value={uiText("waiting_for_exact_data_42730723")} />
           <Row
-            label="数据状态"
-            value={cacheValueRetained ? "上一次有效值" : "最新兼容数据"}
+            label={uiText("data_status_bbd51f73")}
+            value={cacheValueRetained ? uiText("previous_valid_value_84e70723") : uiText("latest_compatible_data_a6b924c0")}
           />
           <p className="mt-1.5 text-[11px] leading-relaxed text-muted-foreground">
-            命中率必须使用同一轮 Provider 输入计算；上方预估总量口径不同，不能作为分母。
-          </p>
+            {uiText("hit_rate_requires_provider_input_from_the_same_round_th_3f9518c8")}</p>
         </>
       ) : (
         <>
-          <Row label="命中率" value="暂无数据" />
+          <Row label={uiText("hit_rate_da9e37af")} value={uiText("no_data_yet_497c8569")} />
           <p className="mt-1.5 text-[11px] leading-relaxed text-muted-foreground">
-            完成一次带 Provider usage 的模型调用后显示。
-          </p>
+            {uiText("shown_after_a_model_call_reports_provider_usage_709de1e3")}</p>
         </>
       )}
     </div>
@@ -217,23 +213,24 @@ export function PrefixCacheDetails({ usage }: { usage?: TokenUsage }) {
 }
 
 export function ContextUsageDetails({ usage }: { usage: TokenUsage }) {
+  useUiLocale()
   return (
     <div data-context-usage-details>
-      <div className="mb-1 text-xs text-muted-foreground">上下文估算</div>
-      <Row label="预估总量" value={formatTokenValue(usage.totalTokens)} />
-      <Row label="系统提示词" value={formatTokenValue(usage.systemTokens)} />
-      <Row label="会话窗口" value={formatTokenValue(usage.windowTokens)} />
+      <div className="mb-1 text-xs text-muted-foreground">{uiText("context_estimate_11f23d14")}</div>
+      <Row label={uiText("estimated_total_58f48562")} value={formatTokenValue(usage.totalTokens)} />
+      <Row label={uiText("system_prompt_0894b78b")} value={formatTokenValue(usage.systemTokens)} />
+      <Row label={uiText("session_window_7b78e572")} value={formatTokenValue(usage.windowTokens)} />
       {usage.summaryTokens > 0 ? (
-        <Row label="摘要" value={formatTokenValue(usage.summaryTokens)} />
+        <Row label={uiText("summary_21c04b2e")} value={formatTokenValue(usage.summaryTokens)} />
       ) : null}
       {(usage.thinkingTokens ?? 0) > 0 ? (
-        <Row label="推理" value={formatTokenValue(usage.thinkingTokens!)} />
+        <Row label={uiText("reasoning_132411ba")} value={formatTokenValue(usage.thinkingTokens!)} />
       ) : null}
       {usage.maxContextTokens ? (
         <>
-          <Row label="上下文窗口" value={formatTokenValue(usage.maxContextTokens)} />
+          <Row label={uiText("context_window_bb074b86")} value={formatTokenValue(usage.maxContextTokens)} />
           <Row
-            label="上下文占用"
+            label={uiText("context_occupancy_ba08613d")}
             value={`${Math.min(100, (usage.totalTokens / usage.maxContextTokens) * 100).toFixed(1).replace(/\.0$/, "")}%`}
           />
           <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-muted">
@@ -280,6 +277,7 @@ export function Inspector({
   /** Render only the Inspector content inside a parent workbench shell. */
   embedded?: boolean
 }) {
+  useUiLocale()
   const chat = useAppStore((s) =>
     sessionId ? selectSessionById(sessionId)(s) : selectCurrentChat(s),
   )
@@ -326,7 +324,7 @@ export function Inspector({
   const body = (
     <>
         {!embedded ? <div className="flex items-center justify-between border-b px-4 py-3">
-          <span className="text-sm font-semibold">检查器</span>
+          <span className="text-sm font-semibold">{uiText("inspector_fc48a7f2")}</span>
           <Button size="icon" variant="ghost" onClick={onClose}>
             <X />
           </Button>
@@ -338,23 +336,22 @@ export function Inspector({
             onSelectActor={onSelectActor} />
           <section className="rounded-lg border p-3">
             <div className="mb-2 flex items-center justify-between">
-              <span className="text-xs font-medium text-muted-foreground">工作目录</span>
+              <span className="text-xs font-medium text-muted-foreground">{uiText("working_directory_3db7b06b")}</span>
               {onEditWorkspace ? (
                 <button onClick={onEditWorkspace} className="text-xs text-primary hover:underline">
-                  {sessionId ? "更改" : "选择"}
+                  {sessionId ? uiText("change_6b01fce4") : uiText("select_c11330b8")}
                 </button>
               ) : null}
             </div>
             <div className="flex items-center gap-2">
               <FolderGit2 className="size-4 shrink-0 text-muted-foreground" />
               <span className="min-w-0 flex-1 truncate font-mono text-xs" title={workspace || undefined}>
-                {workspace || "默认目录"}
+                {workspace || uiText("default_directory_4ff28651")}
               </span>
             </div>
             {sessionId ? (
               <p className="mt-1.5 text-[11px] text-muted-foreground">
-                会话创建时设定;更改用于新建会话与 @ 文件引用。
-              </p>
+                {uiText("set_when_the_session_is_created_changes_apply_to_new_se_33699fd8")}</p>
             ) : null}
           </section>
 
@@ -368,19 +365,18 @@ export function Inspector({
           ) : null}
 
           <section className="rounded-lg border p-3">
-            <div className="mb-2 text-xs font-medium text-muted-foreground">任务清单</div>
+            <div className="mb-2 text-xs font-medium text-muted-foreground">{uiText("task_list_a4ea7d95")}</div>
             {evaluation?.isEvaluating ? (
               <p className="mb-2 flex items-center gap-1.5 text-xs text-primary">
                 <span className="size-1.5 animate-pulse rounded-full bg-primary" />
-                正在评估任务进度…
-              </p>
+                {uiText("evaluating_task_progress_602a2eb0")}</p>
             ) : evaluation?.reasoning ? (
               <p className="mb-2 rounded bg-muted/60 px-2 py-1.5 text-[11px] leading-relaxed text-muted-foreground">
                 {evaluation.reasoning}
               </p>
             ) : null}
             {!taskList || taskList.items.length === 0 ? (
-              <p className="text-xs text-muted-foreground">暂无任务</p>
+              <p className="text-xs text-muted-foreground">{uiText("no_tasks_yet_da968898")}</p>
             ) : (
               <ul className="space-y-1.5">
                 {taskList.items.map((it) => {
@@ -406,7 +402,7 @@ export function Inspector({
           {fileChangeGroups.length > 0 ? (
             <section className="rounded-lg border p-3">
               <div className="mb-1.5 flex items-center justify-between gap-2">
-                <span className="text-xs font-medium text-muted-foreground">文件变更</span>
+                <span className="text-xs font-medium text-muted-foreground">{uiText("file_changes_4d016b2f")}</span>
                 {onOpenReview ? (
                   <button
                     type="button"
@@ -420,8 +416,7 @@ export function Inspector({
               </div>
               <div className="mb-1.5 flex items-center justify-between gap-2 text-[11px] text-muted-foreground">
                 <span>
-                  {fileChangeSummary.fileCount} 个文件 · {fileChangeSummary.editCount} 次修改
-                </span>
+                  {uiText("count_files", { count: fileChangeSummary.fileCount })} · {uiText("count_changes", { count: fileChangeSummary.editCount })}</span>
                 <span className="shrink-0">
                   <span className="text-green-600 dark:text-green-400">
                     +{fileChangeSummary.addedLines}
@@ -446,22 +441,21 @@ export function Inspector({
           {/* Developer telemetry — folded away by default for a clean surface. */}
           <details className="rounded-lg border p-3">
             <summary className="cursor-pointer select-none text-xs font-medium text-muted-foreground">
-              高级信息
-            </summary>
+              {uiText("advanced_details_d305be8b")}</summary>
             <div className="mt-3 space-y-3">
               <div>
-                <div className="mb-1 text-xs text-muted-foreground">配置</div>
+                <div className="mb-1 text-xs text-muted-foreground">{uiText("config_148d195e")}</div>
                 {sessionId ? (
                   <div className="flex items-start justify-between gap-3 py-0.5 text-sm">
-                    <span className="shrink-0 text-muted-foreground">会话 ID</span>
+                    <span className="shrink-0 text-muted-foreground">{uiText("session_id_a76bd2d8")}</span>
                     <div className="flex min-w-0 items-start gap-1">
                       <code className="break-all text-right font-mono text-xs" style={{ userSelect: "text" }} title={sessionId}>
                         {sessionId}
                       </code>
                       <button
                         type="button"
-                        aria-label="复制会话 ID"
-                        title="复制会话 ID"
+                        aria-label={uiText("copy_session_id_7df96a6b")}
+                        title={uiText("copy_session_id_7df96a6b")}
                         onClick={() => onCopySessionId(sessionId)}
                         className="shrink-0 rounded p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                       >
@@ -470,10 +464,10 @@ export function Inspector({
                     </div>
                   </div>
                 ) : null}
-                <Row label="模型" value={model} />
-                {provider ? <Row label="提供方" value={provider} /> : null}
+                <Row label={uiText("model_c98e118e")} value={model} />
+                {provider ? <Row label={uiText("provider_9e218722")} value={provider} /> : null}
                 {cfg?.reasoningEffort ? (
-                  <Row label="推理强度" value={cfg.reasoningEffort} />
+                  <Row label={uiText("reasoning_level_c8c14507")} value={cfg.reasoningEffort} />
                 ) : null}
               </div>
               {usage ? <ContextUsageDetails usage={usage} /> : null}
@@ -507,7 +501,7 @@ export function Inspector({
     <>
       <button
         className="fixed inset-0 z-40 bg-black/50"
-        aria-label="关闭检查器"
+        aria-label={uiText("close_inspector_ac416b66")}
         onClick={onClose}
       />
       <aside

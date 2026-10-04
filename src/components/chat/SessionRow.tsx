@@ -1,3 +1,4 @@
+import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { useEffect, useId, useRef, useState } from "react"
 import { Copy, MoreHorizontal, Pencil, Pin, PinOff, Sparkles, Trash2 } from "lucide-react"
 import { cn } from "@/lib/utils"
@@ -31,6 +32,7 @@ export function SessionRow({
   onTogglePin: () => void
   onCopySessionId: () => void
 }) {
+  useUiLocale()
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(chat.title ?? "")
   const inputRef = useRef<HTMLInputElement>(null)
@@ -88,17 +90,17 @@ export function SessionRow({
         {chat.isRunning ? (
           <span className="size-1.5 shrink-0 animate-pulse rounded-full bg-primary" />
         ) : unread ? (
-          <span aria-hidden="true" title="有新消息" className="size-1.5 shrink-0 rounded-full bg-primary" />
+          <span aria-hidden="true" title={uiText("new_messages_ce3b9bb1")} className="size-1.5 shrink-0 rounded-full bg-primary" />
         ) : (
           <span className="size-1.5 shrink-0" />
         )}
-        <span className="truncate">{chat.title || "新会话"}</span>
+        <span className="truncate">{chat.title || uiText("new_session_c57c30bc")}</span>
       </button>
-      {unread && <span id={unreadDescriptionId} className="sr-only">未读消息</span>}
+      {unread && <span id={unreadDescriptionId} className="sr-only">{uiText("unread_messages_519491f4")}</span>}
 
       <DropdownMenu>
         <DropdownMenuTrigger
-          aria-label="会话操作"
+          aria-label={uiText("session_actions_e6f6d875")}
           className={cn(
             "mr-1 shrink-0 rounded p-1 text-muted-foreground outline-none transition-opacity hover:bg-accent hover:text-foreground",
             "opacity-100 data-[state=open]:opacity-100 focus-within:opacity-100 md:opacity-0 md:group-hover/row:opacity-100",
@@ -113,20 +115,17 @@ export function SessionRow({
           >
             {chat.pinned ? (
               <>
-                <PinOff className="size-3.5" /> 取消置顶
-              </>
+                <PinOff className="size-3.5" />{uiText("unpin_c92179b7")}</>
             ) : (
               <>
-                <Pin className="size-3.5" /> 置顶
-              </>
+                <Pin className="size-3.5" />{uiText("pin_173f88d2")}</>
             )}
           </DropdownMenuItem>
           <DropdownMenuItem
             onClick={() => setEditing(true)}
             className="gap-2 rounded-lg px-2.5 py-1.5"
           >
-            <Pencil className="size-3.5" /> 重命名
-          </DropdownMenuItem>
+            <Pencil className="size-3.5" />{uiText("rename_0d0cbac2")}</DropdownMenuItem>
           <DropdownMenuItem
             onClick={() => {
               // The new title lands via the feed's session_title_updated event
@@ -135,21 +134,18 @@ export function SessionRow({
             }}
             className="gap-2 rounded-lg px-2.5 py-1.5"
           >
-            <Sparkles className="size-3.5" /> AI 生成标题
-          </DropdownMenuItem>
+            <Sparkles className="size-3.5" />{uiText("generate_title_with_ai_f327dbdd")}</DropdownMenuItem>
           <DropdownMenuItem
             onClick={onCopySessionId}
             className="gap-2 rounded-lg px-2.5 py-1.5"
           >
-            <Copy className="size-3.5" /> 复制会话 ID
-          </DropdownMenuItem>
+            <Copy className="size-3.5" />{uiText("copy_session_id_7df96a6b")}</DropdownMenuItem>
           <DropdownMenuItem
             variant="destructive"
             onClick={onDelete}
             className="gap-2 rounded-lg px-2.5 py-1.5"
           >
-            <Trash2 className="size-3.5" /> 删除
-          </DropdownMenuItem>
+            <Trash2 className="size-3.5" />{uiText("delete_2f9daa82")}</DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
     </div>

@@ -1,3 +1,4 @@
+import { uiText, useUiLocale } from "@shared/i18n/ui"
 import type { ReactNode } from "react"
 import {
   ChevronRight,
@@ -35,6 +36,7 @@ function EnvironmentRow({
   onClick?: () => void
   ariaLabel?: string
 }) {
+  useUiLocale()
   const content = (
     <>
       <span className="text-muted-foreground">{icon}</span>
@@ -73,11 +75,12 @@ export function EnvironmentLauncher({
   controlsId: string
   onToggle: () => void
 }) {
+  useUiLocale()
   return (
     <Button
       size="icon"
       variant="ghost"
-      aria-label={open ? "收起 Environment" : "打开 Environment"}
+      aria-label={open ? uiText("collapse_environment_4c6b8293") : uiText("open_environment_052cba79")}
       aria-expanded={open}
       aria-controls={controlsId}
       onClick={onToggle}
@@ -94,11 +97,12 @@ export function RightPanelLauncher({
   open: boolean
   onToggle: () => void
 }) {
+  useUiLocale()
   return (
     <Button
       size="icon"
       variant="ghost"
-      aria-label={open ? "收起侧边面板" : "打开侧边面板"}
+      aria-label={open ? uiText("collapse_side_panel_e7d2fdd8") : uiText("open_side_panel_732ea38b")}
       aria-expanded={open}
       aria-controls="right-workbench"
       onClick={onToggle}
@@ -133,14 +137,15 @@ export function EnvironmentCard({
   onOpenReview: () => void
   onPreviewImage: (src: string) => void
 }) {
+  useUiLocale()
   const workspaceLabel = workspace
     ? (workspace.split(/[\\/]/).filter(Boolean).at(-1) ?? workspace)
-    : "未设置工作区"
+    : uiText("no_workspace_set_ed50070e")
   const placementLabel = placement
     ? placement.kind === "local"
       ? "Local"
       : placement.kind
-    : "运行位置未确认"
+    : uiText("execution_location_unconfirmed_64b94db6")
 
   return (
     <section
@@ -154,7 +159,7 @@ export function EnvironmentCard({
       <EnvironmentRow
         icon={<FileDiff className="size-4" />}
         label="Changes"
-        detail={`${changedFiles} 个变更文件`}
+        detail={uiText("changed_files_b757f839", { v0: changedFiles , count: changedFiles })}
         trailing={
           <span className="flex shrink-0 items-center gap-1 text-xs tabular-nums">
             <span className="text-green-600 dark:text-green-400">+{addedLines}</span>
@@ -214,13 +219,13 @@ export function EnvironmentCard({
                   previewUrl ? <ChevronRight className="size-4 text-muted-foreground" /> : undefined
                 }
                 onClick={previewUrl ? () => onPreviewImage(previewUrl) : undefined}
-                ariaLabel={previewUrl ? `预览 ${source.name}` : undefined}
+                ariaLabel={previewUrl ? uiText("preview_2078e163", { v0: source.name }) : undefined}
               />
             )
           })}
         </div>
       ) : (
-        <div className="px-3 py-2 text-xs text-muted-foreground">当前会话暂无来源文件</div>
+        <div className="px-3 py-2 text-xs text-muted-foreground">{uiText("this_session_has_no_source_files_yet_b1b2a050")}</div>
       )}
     </section>
   )

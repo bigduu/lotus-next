@@ -1,3 +1,4 @@
+import { useUiText } from "@shared/i18n/ui"
 import { isSessionUnread, useSessionReadState } from "@/lib/sessionReadState"
 import { useId, useMemo, useState } from "react"
 import { ChevronRight, Plus, Search, X, Cog, PanelLeftClose, FolderClosed, CalendarDays, ChevronDown } from "lucide-react"
@@ -70,6 +71,7 @@ export function Sidebar({
   onOpenSettings: () => void
   onOpenProjectManager: () => void
 }) {
+  const uiText = useUiText()
   const [search, setSearch] = useState("")
   const [groupingMode, setGroupingMode] = useState<SidebarGroupingMode>(readGroupingMode)
   const [pinnedProjectIds, setPinnedProjectIds] = useState(readPinnedProjectIds)
@@ -116,10 +118,10 @@ export function Sidebar({
     // inspector's sub-agents panel, not as top-level chats.
     if (groupingMode === "project") {
       const grouped = groupChatsByProject(rootChats, (projectId) => {
-        if (!projectId) return "未分配"
+        if (!projectId) return uiText("unassigned_52496e5a")
         const project = projects[projectId]
-        if (!project) return "未知项目"
-        return project.status === "archived" ? `${project.name} · 已归档` : project.name
+        if (!project) return uiText("unknown_project_9714067d")
+        return project.status === "archived" ? uiText("archived_01a84e81", { v0: project.name }) : project.name
       })
       const pinnedSessions = grouped.find((group) => group.key === "__pinned")
       const projectGroups = grouped.filter((group) => group.key !== "__pinned")
@@ -139,7 +141,7 @@ export function Sidebar({
       return pinnedSessions ? [pinnedSessions, ...projectGroups] : projectGroups
     }
     return groupChats(rootChats, new Date())
-  }, [groupingMode, pinnedProjectIds, projects, rootChats])
+  }, [groupingMode, pinnedProjectIds, projects, rootChats, uiText])
 
   const isProjectMode = groupingMode === "project"
   // Project groups are few and stable — the "older" fold is a date-mode concept.
@@ -215,7 +217,7 @@ export function Sidebar({
     try {
       await useAppStore.getState().unarchiveProject(project.id, project.revision)
     } catch (error) {
-      setProjectActionError(error instanceof Error ? error.message : "恢复项目失败")
+      setProjectActionError(error instanceof Error ? error.message : uiText("could_not_restore_project_4f2a985d"))
     } finally {
       setProjectActionBusy(false)
     }
@@ -229,7 +231,7 @@ export function Sidebar({
     try {
       await useAppStore.getState().updateProject(project.id, project.revision, { section })
     } catch (error) {
-      setProjectActionError(error instanceof Error ? error.message : "移动项目失败")
+      setProjectActionError(error instanceof Error ? error.message : uiText("could_not_move_project_2811a114"))
     } finally {
       setProjectActionBusy(false)
     }
@@ -289,7 +291,7 @@ export function Sidebar({
             onReveal={() => {
               setProjectActionError(null)
               void openLocalFolder(project.project_path ?? "").catch((error) => {
-                setProjectActionError(error instanceof Error ? error.message : "无法打开项目目录")
+                setProjectActionError(error instanceof Error ? error.message : uiText("could_not_open_project_directory_b25cc8f5"))
               })
             }}
             onArchive={() => {
@@ -311,7 +313,7 @@ export function Sidebar({
           >
             <ChevronRight aria-hidden="true" className={cn("size-3 shrink-0", expanded && "rotate-90")} />
             <span>{group.label}</span>
-            <span className="ml-auto whitespace-nowrap pl-2 font-normal">{group.chats.length} 个会话</span>
+            <span className="ml-auto whitespace-nowrap pl-2 font-normal">{uiText("project_sessions", { count: group.chats.length })}</span>
           </button>
         )}
         <div id={contentId} hidden={!expanded}>
@@ -345,12 +347,12 @@ export function Sidebar({
               {projectExpanded ? (
                 <>
                   <ChevronDown aria-hidden="true" className="size-3 shrink-0" />
-                  <span>收起</span>
+                  <span>{uiText("collapse_afd4b783")}</span>
                 </>
               ) : (
                 <>
                   <ChevronRight aria-hidden="true" className="size-3 shrink-0" />
-                  <span>展开 {group.chats.length - PROJECT_GROUP_PREVIEW_COUNT} 个</span>
+                  <span>{uiText("expand_00bd3960")} {uiText("count_items", { count: group.chats.length - PROJECT_GROUP_PREVIEW_COUNT })}</span>
                 </>
               )}
             </button>
@@ -394,7 +396,7 @@ export function Sidebar({
               <div key={section} className="mb-1" data-project-section={section}>
                 <button
                   type="button"
-                  aria-label={`切换 ${section} Section`}
+                  aria-label={uiText("toggle_section_541f86f6", { v0: section })}
                   aria-expanded={expanded}
                   aria-controls={contentId}
                   disabled={!!query}
@@ -408,7 +410,7 @@ export function Sidebar({
                 >
                   <ChevronRight aria-hidden="true" className={cn("size-3 shrink-0", expanded && "rotate-90")} />
                   <span className="truncate">{section}</span>
-                  <span className="ml-auto whitespace-nowrap pl-2 font-normal">{groupedProjects.length} 个项目</span>
+                  <span className="ml-auto whitespace-nowrap pl-2 font-normal">{uiText("count_projects", { count: groupedProjects.length })}</span>
                 </button>
                 <div id={contentId} hidden={!expanded}>
                   {expanded ? groupedProjects.map(renderGroup) : null}
@@ -453,7 +455,7 @@ export function Sidebar({
             size="icon"
             variant="ghost"
             className="hidden size-8 text-muted-foreground md:inline-flex"
-            aria-label="收起侧栏"
+            aria-label={uiText("collapse_sidebar_bb0b6e36")}
             onClick={onToggleCollapse}
           >
             <PanelLeftClose className="size-4" />
@@ -468,8 +470,7 @@ export function Sidebar({
               onClose()
             }}
           >
-            <Plus className="size-4" /> 新建会话
-          </Button>
+            <Plus className="size-4" />{uiText("new_session_58e21b87")}</Button>
           <Button
             variant="ghost"
             className="w-full justify-start gap-2"
@@ -478,8 +479,7 @@ export function Sidebar({
               onClose()
             }}
           >
-            <FolderClosed className="size-4" /> 管理项目
-          </Button>
+            <FolderClosed className="size-4" />{uiText("manage_projects_302f96cf")}</Button>
         </div>
         <div className="px-3 pb-2">
           <div className="relative">
@@ -487,13 +487,13 @@ export function Sidebar({
             <Input
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="搜索会话"
+              placeholder={uiText("search_sessions_feb95554")}
               className="py-1.5 pl-8 pr-7"
             />
             {search ? (
               <button
                 onClick={() => setSearch("")}
-                aria-label="清除"
+                aria-label={uiText("clear_bce23772")}
                 className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded p-0.5 text-muted-foreground hover:text-foreground"
               >
                 <X className="size-3.5" />
@@ -503,13 +503,13 @@ export function Sidebar({
         </div>
         <div className="flex items-center gap-2 px-3">
           <span className="flex-1 text-xs font-medium text-muted-foreground">
-            {isProjectMode ? "项目" : "最近"}
+            {isProjectMode ? uiText("project_79f326be") : uiText("recent_997a5e6e")}
           </span>
           <Button
             size="sm"
             variant="ghost"
             className="text-muted-foreground"
-            aria-label={isProjectMode ? "切换为最近视图" : "切换为项目视图"}
+            aria-label={isProjectMode ? uiText("switch_to_recent_view_fce00dbe") : uiText("switch_to_project_view_43561b9a")}
             onClick={() => switchGroupingMode(isProjectMode ? "date" : "project")}
           >
             {isProjectMode ? (
@@ -517,7 +517,7 @@ export function Sidebar({
             ) : (
               <FolderClosed className="size-4" />
             )}
-            {isProjectMode ? "最近" : "项目"}
+            {isProjectMode ? uiText("recent_997a5e6e") : uiText("project_79f326be")}
           </Button>
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-3">
@@ -532,7 +532,7 @@ export function Sidebar({
           ) : null}
           {chats.length === 0 && (
             <p className="px-2 py-4 text-xs text-muted-foreground">
-              {booted ? "暂无会话" : "加载中…"}
+              {booted ? uiText("no_sessions_yet_69e71f03") : uiText("loading_4927a53b")}
             </p>
           )}
           {renderVisibleGroups()}
@@ -549,8 +549,8 @@ export function Sidebar({
                 }))}
               >
                 <ChevronRight aria-hidden="true" className={cn("size-3 shrink-0", disclosures.olderExpanded && "rotate-90")} />
-                <span>更早</span>
-                <span className="ml-auto whitespace-nowrap pl-2 font-normal">{olderGroups.length} 天 · {olderCount} 个会话</span>
+                <span>{uiText("earlier_c56a5bb6")}</span>
+                <span className="ml-auto whitespace-nowrap pl-2 font-normal">{uiText("count_days", { count: olderGroups.length })} · {uiText("project_sessions", { count: olderCount })}</span>
               </button>
               <div id={`${disclosureId}-older`} hidden={!disclosures.olderExpanded}>
                 {disclosures.olderExpanded ? olderGroups.map(renderGroup) : null}
@@ -567,8 +567,7 @@ export function Sidebar({
               onClose()
             }}
           >
-            <Cog className="size-4" /> 系统设置
-          </Button>
+            <Cog className="size-4" />{uiText("system_settings_68ea5dd4")}</Button>
         </div>
       </aside>
 
@@ -601,7 +600,7 @@ export function Sidebar({
           ).then(() => {
             setPendingArchiveProjectId(null)
           }).catch((error) => {
-            setProjectActionError(error instanceof Error ? error.message : "移除项目失败")
+            setProjectActionError(error instanceof Error ? error.message : uiText("could_not_remove_project_1086e674"))
           }).finally(() => {
             setProjectActionBusy(false)
           })

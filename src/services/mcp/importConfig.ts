@@ -1,3 +1,4 @@
+import { uiText } from "@shared/i18n/ui"
 import {
   DEFAULT_HEALTHCHECK_INTERVAL_MS,
   DEFAULT_REQUEST_TIMEOUT_MS,
@@ -65,63 +66,63 @@ export type McpImportValidation = { ok: true; value: ParsedMcpImport } | { ok: f
 /** Mirrors only the supported map shapes. Never returns parser text or secret values. */
 export function parseMcpImport(text: string): McpImportValidation {
   const fail = (error: string): McpImportValidation => ({ ok: false, error });
-  if (!text.trim()) return fail("请提供包含 mcpServers 对象的完整 JSON 配置。");
+  if (!text.trim()) return fail(uiText("provide_a_complete_json_configuration_containing_a_mcps_2e2c18b7"));
   if (text.length > MAX_MCP_IMPORT_BYTES || new TextEncoder().encode(text).length > MAX_MCP_IMPORT_BYTES) {
-    return fail("JSON 配置不能超过 1 MiB。");
+    return fail(uiText("json_configuration_must_be_at_most_1_mib_9939f15a"));
   }
   let root: unknown;
-  try { root = JSON.parse(text); } catch { return fail("JSON 格式无效。请检查引号、逗号和括号；错误详情不会显示配置内容。"); }
+  try { root = JSON.parse(text); } catch { return fail(uiText("invalid_json_check_quotes_commas_and_brackets_error_det_f1e650ac")); }
   if (!isMcpRecord(root) || !only(root, ["mcpServers"]) || !isMcpRecord(root.mcpServers)) {
-    return fail("仅支持完整的 {\"mcpServers\": {\"服务器 ID\": {...}}} 对象。");
+    return fail(uiText("only_a_complete_mcpservers_server_id_object_is_supporte_afa6183d"));
   }
   const entries = Object.entries(root.mcpServers);
-  if (!entries.length) return fail("mcpServers 不能为空；导入不能用于清空全部服务器。");
-  if (entries.length > MAX_SERVERS) return fail("一次最多导入 500 个服务器。");
-  if (has(root.mcpServers, "servers")) return fail("不支持 legacy servers 列表，且 servers 是保留的服务器 ID。");
+  if (!entries.length) return fail(uiText("mcpservers_cannot_be_empty_import_cannot_clear_all_serv_570ab194"));
+  if (entries.length > MAX_SERVERS) return fail(uiText("import_at_most_500_servers_at_a_time_4dd89598"));
+  if (has(root.mcpServers, "servers")) return fail(uiText("legacy_servers_lists_are_unsupported_servers_is_a_reser_47c104f7"));
   const servers: McpImportPreviewServer[] = [];
   for (const [index, [id, raw]] of entries.entries()) {
-    const invalid = (reason: string) => fail(`第 ${index + 1} 项：${reason}`);
+    const invalid = (reason: string) => fail(uiText("entry_82cdfe37", { v0: index + 1, v1: reason }));
     // Unlike form input, map keys cannot be trimmed without changing the target ID.
-    if (id !== id.trim() || !MCP_SERVER_ID_PATTERN.test(id)) return invalid("服务器 ID 只能包含字母、数字、- 和 _，不能包含空白。");
-    if (!isMcpRecord(raw)) return invalid("服务器配置必须是对象。");
+    if (id !== id.trim() || !MCP_SERVER_ID_PATTERN.test(id)) return invalid(uiText("server_ids_may_contain_only_letters_digits_and_without__ab6bab76"));
+    if (!isMcpRecord(raw)) return invalid(uiText("server_configuration_must_be_an_object_8ae12c4c"));
     const internal = has(raw, "transport");
-    if (internal && has(raw, "disabled")) return invalid("内部 transport 配置请使用 enabled；disabled 会被后端忽略。");
+    if (internal && has(raw, "disabled")) return invalid(uiText("use_enabled_for_internal_transport_configuration_the_ba_83e877c7"));
     if (!only(raw, internal ? [...commonKeys, "transport"] : flatKeys)) {
-      return invalid("包含不支持或混合的字段；HTTP 请使用 transport_kind: \"streamable_http\"，不能使用 type: \"http\"。");
+      return invalid(uiText("unsupported_or_mixed_fields_for_http_use_transport_kind_7577394c"));
     }
-    if (!validCommon(raw, !internal) || !optional(raw, "disabled", boolean)) return invalid("启用状态、工具列表或超时配置类型无效。");
+    if (!validCommon(raw, !internal) || !optional(raw, "disabled", boolean)) return invalid(uiText("invalid_types_for_enabled_state_tool_list_or_timeout_se_c69275c8"));
     const transport = internal ? raw.transport : raw;
-    if (!isMcpRecord(transport)) return invalid("transport 必须是对象。");
+    if (!isMcpRecord(transport)) return invalid(uiText("transport_must_be_an_object_1b0b3231"));
     let kind: TransportConfig["type"];
     if (internal) {
-      if (transport.type !== "stdio" && transport.type !== "sse" && transport.type !== "streamable_http") return invalid("不支持此 transport 类型。");
+      if (transport.type !== "stdio" && transport.type !== "sse" && transport.type !== "streamable_http") return invalid(uiText("unsupported_transport_type_5751fa29"));
       kind = transport.type;
-      if (!only(transport, ["type", ...(kind === "stdio" ? stdioKeys : remoteKeys)])) return invalid("transport 包含不支持的字段。");
+      if (!only(transport, ["type", ...(kind === "stdio" ? stdioKeys : remoteKeys)])) return invalid(uiText("transport_contains_unsupported_fields_379bbbcd"));
     } else {
       const command = raw.command !== undefined && raw.command !== null;
       const url = raw.url !== undefined && raw.url !== null;
-      if (command === url) return invalid("必须提供 command 或 url，且不能同时提供两者。");
+      if (command === url) return invalid(uiText("provide_either_command_or_url_not_both_c8e9f37c"));
       if (raw.transport_kind !== undefined && raw.transport_kind !== null &&
-        (command || (raw.transport_kind !== "sse" && raw.transport_kind !== "streamable_http"))) return invalid("transport_kind 仅支持远程 sse 或 streamable_http。");
+        (command || (raw.transport_kind !== "sse" && raw.transport_kind !== "streamable_http"))) return invalid(uiText("transport_kind_supports_only_remote_sse_or_streamable_h_647a07bf"));
       kind = command ? "stdio" : raw.transport_kind === "streamable_http" ? "streamable_http" : "sse";
       if (!only(raw, [...commonKeys, "disabled", ...(kind === "stdio" ? stdioKeys : [...remoteKeys, "transport_kind", "headers_encrypted", "header_credential_refs"])])) {
-        return invalid("不能混合不同传输方式的配置字段。");
+        return invalid(uiText("do_not_mix_fields_from_different_transport_types_0c9b1f51"));
       }
     }
     if (kind === "stdio") {
       if (typeof transport.command !== "string" || !transport.command.trim() ||
         !optional(transport, "args", strings) || !optional(transport, "cwd", string, true) ||
-        !optional(transport, "startup_timeout_ms", integer, !internal)) return invalid("stdio 命令、参数、工作目录或启动超时无效。");
+        !optional(transport, "startup_timeout_ms", integer, !internal)) return invalid(uiText("invalid_stdio_command_arguments_working_directory_or_st_d88fa0a6"));
       for (const key of ["env", "env_encrypted", "env_credential_refs"]) {
-        if (!optional(transport, key, stringMap)) return invalid("环境变量及凭据引用必须是字符串映射。");
+        if (!optional(transport, key, stringMap)) return invalid(uiText("environment_variables_and_credential_references_must_be_aa85c455"));
       }
     } else {
       try {
-        if (typeof transport.url !== "string" || !["http:", "https:"].includes(new URL(transport.url).protocol)) return invalid("远程 URL 必须使用 HTTP 或 HTTPS。");
-      } catch { return invalid("远程 URL 格式无效。"); }
+        if (typeof transport.url !== "string" || !["http:", "https:"].includes(new URL(transport.url).protocol)) return invalid(uiText("remote_urls_must_use_http_or_https_290c9d54"));
+      } catch { return invalid(uiText("invalid_remote_url_format_161cb180")); }
       if (!optional(transport, "headers", (value) => validHeaders(value, !internal)) ||
         !optional(transport, "connect_timeout_ms", integer, !internal) ||
-        !optional(raw, "headers_encrypted", stringMap) || !optional(raw, "header_credential_refs", stringMap)) return invalid("请求头或连接超时无效；请求头值必须是字符串。");
+        !optional(raw, "headers_encrypted", stringMap) || !optional(raw, "header_credential_refs", stringMap)) return invalid(uiText("invalid_headers_or_connection_timeout_header_values_mus_ac9684fd"));
     }
     // Internal enabled defaults true; flat enabled overrides !disabled. Map ID wins.
     servers.push({ id, transport: kind, enabled: typeof raw.enabled === "boolean" ? raw.enabled : internal || !raw.disabled });
@@ -264,12 +265,12 @@ export type McpImportFailureKind = "busy" | "rejected" | "uncertain" | "not_appl
 export class McpImportFailure extends Error {
   constructor(public readonly kind: McpImportFailureKind) {
     super({
-      busy: "已有导入正在进行。请等待完成后刷新列表；没有再次发送导入请求。",
-      rejected: "服务器拒绝了导入，未提交配置。请检查配置后重新操作；错误详情已隐藏。",
-      uncertain: "暂时无法确认导入结果。系统已停止后续操作，也不会重复提交。",
-      not_applied: "已自动核对实际列表，本次配置没有生效。可以重新导入。",
-      list_changed: "当前服务器列表已变化。请重新查看预览并确认；尚未发送导入请求。",
-      list_unavailable: "无法确认当前服务器列表。请刷新后重新预览；尚未发送导入请求。",
+      busy: uiText("an_import_is_already_in_progress_wait_for_completion_th_fb46ceab"),
+      rejected: uiText("the_server_rejected_the_import_without_committing_confi_32d442f4"),
+      uncertain: uiText("the_import_result_cannot_be_confirmed_yet_further_opera_2d04c1a1"),
+      not_applied: uiText("the_actual_list_was_checked_automatically_this_configur_99fce191"),
+      list_changed: uiText("the_server_list_has_changed_review_the_preview_and_conf_2e03f9bc"),
+      list_unavailable: uiText("the_current_server_list_could_not_be_confirmed_refresh__986de92b"),
     }[kind]);
     this.name = "McpImportFailure";
   }

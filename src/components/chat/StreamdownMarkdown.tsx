@@ -1,3 +1,4 @@
+import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { lazy, Suspense, useLayoutEffect, useMemo, useRef, type RefObject } from "react"
 import { cjk } from "@streamdown/cjk"
 import rehypeSanitize from "rehype-sanitize"
@@ -66,6 +67,7 @@ function useCompactCodeBlocks(
   hostRef: RefObject<HTMLDivElement | null>,
   content: string,
 ): void {
+  useUiLocale()
   useLayoutEffect(() => {
     const root = hostRef.current?.querySelector<HTMLElement>(".assistant-streamdown")
     if (!root) return
@@ -98,6 +100,7 @@ function useTrackedTypewriterCaret(
   content: string,
   isStreaming: boolean,
 ): void {
+  useUiLocale()
   const trackerRef = useRef<TypewriterCaretTracker | null>(null)
 
   useLayoutEffect(() => {
@@ -214,10 +217,11 @@ export function DeferredMermaidRenderer({
   isIncomplete,
   language,
 }: CustomRendererProps) {
+  useUiLocale()
   if (isIncomplete) {
     return (
       <div
-        aria-label="Mermaid 图表仍在接收内容"
+        aria-label={uiText("mermaid_diagram_is_still_streaming_317ebd6c")}
         className="my-4 min-w-0 rounded-xl border bg-sidebar p-2"
         data-mermaid-state="incomplete"
         role="status"
@@ -234,7 +238,7 @@ export function DeferredMermaidRenderer({
     <Suspense
       fallback={
         <div
-          aria-label="正在加载 Mermaid 图表"
+          aria-label={uiText("loading_mermaid_diagram_b8e5834f")}
           className="my-4 min-h-24 animate-pulse rounded-xl border bg-sidebar"
           data-mermaid-state="loading"
           role="status"
@@ -273,6 +277,7 @@ export function StreamdownMarkdown({
   isStreaming: boolean
   onPreviewImage?: (src: string) => void
 }) {
+  useUiLocale()
   const hostRef = useRef<HTMLDivElement>(null)
   const components = useMemo(() => ({
     img: ({ node: _node, ...props }: React.ComponentProps<"img"> & { node?: unknown }) => (

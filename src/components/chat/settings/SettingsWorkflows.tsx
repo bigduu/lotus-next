@@ -1,3 +1,4 @@
+import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { useCallback, useEffect, useRef, useState } from "react"
 import { Plus, RefreshCw, Trash2 } from "lucide-react"
 import { commandService, type CommandItem } from "@services/command"
@@ -24,6 +25,7 @@ function isSafeWorkflowName(name: string): boolean {
 }
 
 export function SettingsWorkflows() {
+  useUiLocale()
   const [workflows, setWorkflows] = useState<CommandItem[]>([])
   const [loading, setLoading] = useState(true)
   const [listError, setListError] = useState<string | null>(null)
@@ -51,7 +53,7 @@ export function SettingsWorkflows() {
       setWorkflows(items)
       return items
     } catch (error) {
-      setListError(`加载 workflow 列表失败:${getErrorMessage(error)}`)
+      setListError(uiText("could_not_load_workflow_list_2b2396a1", { v0: getErrorMessage(error) }))
       return []
     } finally {
       setLoading(false)
@@ -93,7 +95,7 @@ export function SettingsWorkflows() {
       setEditorContent(detail.content ?? "")
     } catch (error) {
       if (selectSeqRef.current !== seq) return
-      setEditorError(`加载内容失败:${getErrorMessage(error)}`)
+      setEditorError(uiText("could_not_load_content_1df3cf32", { v0: getErrorMessage(error) }))
     } finally {
       if (selectSeqRef.current === seq) setLoadingContent(false)
     }
@@ -103,11 +105,11 @@ export function SettingsWorkflows() {
     const name = editorName.trim()
     setEditorError(null)
     if (!isSafeWorkflowName(name)) {
-      setEditorError("名称无效:不能为空,且不能包含 /、\\ 或 ..")
+      setEditorError(uiText("invalid_name_required_and_cannot_contain_or_42cdaab3"))
       return
     }
     if (creating && workflows.some((workflow) => workflow.name === name)) {
-      setEditorError(`已存在同名 workflow「${name}」`)
+      setEditorError(uiText("a_workflow_named_already_exists_1194d8fa", { v0: name }))
       return
     }
     setSaving(true)
@@ -120,7 +122,7 @@ export function SettingsWorkflows() {
       setTimeout(() => setSavedTick(false), 2000)
       await reload()
     } catch (error) {
-      setEditorError(`保存失败:${getErrorMessage(error)}`)
+      setEditorError(uiText("could_not_save_c4b7c511", { v0: getErrorMessage(error) }))
     } finally {
       setSaving(false)
     }
@@ -133,7 +135,7 @@ export function SettingsWorkflows() {
       if (selectedName === name) closeEditor()
       await reload()
     } catch (error) {
-      setListError(`删除「${name}」失败:${getErrorMessage(error)}`)
+      setListError(uiText("could_not_delete_e74a58dc", { v0: name, v1: getErrorMessage(error) }))
     }
   }
 
@@ -142,14 +144,13 @@ export function SettingsWorkflows() {
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between gap-2">
-        <p className="text-xs text-muted-foreground">Markdown workflow,可在聊天中以 /名称 调用。</p>
+        <p className="text-xs text-muted-foreground">{uiText("markdown_workflows_can_be_invoked_in_chat_with_name_8bf54549")}</p>
         <div className="flex shrink-0 gap-1.5">
-          <Button size="sm" variant="ghost" onClick={() => void reload()} aria-label="刷新">
+          <Button size="sm" variant="ghost" onClick={() => void reload()} aria-label={uiText("refresh_aee88743")}>
             <RefreshCw className={cn("size-4", loading && "animate-spin")} />
           </Button>
           <Button size="sm" variant="secondary" onClick={startCreate}>
-            <Plus className="size-4" /> 新增
-          </Button>
+            <Plus className="size-4" />{uiText("add_0006d696")}</Button>
         </div>
       </div>
 
@@ -158,7 +159,7 @@ export function SettingsWorkflows() {
       {editorOpen ? (
         <div className="space-y-2.5 rounded-lg border bg-muted/30 p-3">
           <Input
-            placeholder="名称(不含 .md 后缀)"
+            placeholder={uiText("name_without_md_extension_d694eedf")}
             value={editorName}
             disabled={!creating}
             onChange={(e) => {
@@ -168,7 +169,7 @@ export function SettingsWorkflows() {
           />
           <Textarea
             className="min-h-48 resize-y font-mono text-xs"
-            placeholder={loadingContent ? "加载中…" : "Markdown 内容"}
+            placeholder={loadingContent ? uiText("loading_4927a53b") : uiText("markdown_content_eefe6dfc")}
             value={editorContent}
             disabled={loadingContent}
             onChange={(e) => {
@@ -178,21 +179,20 @@ export function SettingsWorkflows() {
           />
           {editorError ? <p className="text-xs text-destructive">{editorError}</p> : null}
           <div className="flex items-center justify-end gap-2">
-            {savedTick ? <span className="text-xs text-muted-foreground">已保存</span> : null}
+            {savedTick ? <span className="text-xs text-muted-foreground">{uiText("saved_1bd91a7d")}</span> : null}
             <Button size="sm" variant="secondary" onClick={closeEditor}>
-              关闭
-            </Button>
+              {uiText("close_3fd47edc")}</Button>
             <Button size="sm" onClick={() => void save()} disabled={saving || !dirty || !editorName.trim()}>
-              {saving ? "保存中…" : "保存"}
+              {saving ? uiText("saving_ff509c9b") : uiText("save_a3030bf8")}
             </Button>
           </div>
         </div>
       ) : null}
 
       {loading && workflows.length === 0 ? (
-        <p className="text-xs text-muted-foreground">加载中…</p>
+        <p className="text-xs text-muted-foreground">{uiText("loading_4927a53b")}</p>
       ) : workflows.length === 0 ? (
-        <p className="text-xs text-muted-foreground">暂无 workflow</p>
+        <p className="text-xs text-muted-foreground">{uiText("no_workflows_yet_5c7b21e5")}</p>
       ) : (
         <ul className="space-y-2">
           {workflows.map((workflow) => {
@@ -218,7 +218,7 @@ export function SettingsWorkflows() {
                     e.stopPropagation()
                     void remove(workflow.name)
                   }}
-                  aria-label="删除"
+                  aria-label={uiText("delete_2f9daa82")}
                   className="shrink-0 rounded p-1 text-muted-foreground hover:text-destructive"
                 >
                   <Trash2 className="size-3.5" />

@@ -1,3 +1,4 @@
+import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type KeyboardEvent } from "react"
 import { defaultRangeExtractor, observeElementRect, useVirtualizer, type Range, type Rect, type Virtualizer } from "@tanstack/react-virtual"
 import { ChevronDown, ChevronRight, RefreshCw } from "lucide-react"
@@ -11,39 +12,39 @@ const ROW_HEIGHT = 64
 const INITIAL_RECT = { width: 320, height: 320 }
 
 const LIFECYCLE_LABEL: Record<ActorTreeNode["lifecycle"], string> = {
-  active: "活动记录",
-  unknown: "生命周期未知",
-  cold: "未启动",
-  queued: "排队中",
-  running: "运行中",
-  suspended: "已暂停",
-  completed: "已完成",
-  failed: "失败",
-  cancelled: "已取消",
-  retired: "已退出",
-  lost: "已失联",
+  get active() { return uiText("activity_f98dfe0b") },
+  get unknown() { return uiText("lifecycle_unknown_2217e6e4") },
+  get cold() { return uiText("not_started_e6fc5eb8") },
+  get queued() { return uiText("queued_d6f766f2") },
+  get running() { return uiText("running_1f0eb99b") },
+  get suspended() { return uiText("paused_eb0c326b") },
+  get completed() { return uiText("completed_f28461bb") },
+  get failed() { return uiText("failed_28384d7a") },
+  get cancelled() { return uiText("cancelled_a37778f1") },
+  get retired() { return uiText("exited_899df7e2") },
+  get lost() { return uiText("unreachable_8deefc6c") },
 }
 
 const PLACEMENT_LABEL: Record<ActorTreeNode["placement"], string> = {
-  docker: "容器",
+  get docker() { return uiText("container_6d23f04b") },
   ssh: "SSH",
-  schedulable: "待调度",
-  local: "本机",
-  remote: "远端",
-  container: "容器",
-  scheduled: "待调度",
-  unknown: "位置未知",
+  get schedulable() { return uiText("pending_scheduling_d8eb0fb8") },
+  get local() { return uiText("local_8a94c4a1") },
+  get remote() { return uiText("remote_edca84b9") },
+  get container() { return uiText("container_6d23f04b") },
+  get scheduled() { return uiText("pending_scheduling_d8eb0fb8") },
+  get unknown() { return uiText("unknown_location_b9ac919c") },
 }
 
 const HEALTH_LABEL: Record<ActorHealth, string> = {
-  healthy: "正常",
-  waiting: "等待中",
-  stalled: "停滞",
-  failed: "异常",
-  orphaned: "孤立",
-  blocked_needs_input: "等待输入",
-  lost: "失联",
-  unknown: "状态未知",
+  get healthy() { return uiText("healthy_296de0e3") },
+  get waiting() { return uiText("waiting_26c8cfcb") },
+  get stalled() { return uiText("stalled_97daa1e1") },
+  get failed() { return uiText("unhealthy_428fb8bf") },
+  get orphaned() { return uiText("orphaned_a1d6c892") },
+  get blocked_needs_input() { return uiText("waiting_for_input_6569c6e6") },
+  get lost() { return uiText("disconnected_481cf3ad") },
+  get unknown() { return uiText("unknown_state_93e474c6") },
 }
 
 interface VisibleActorRow {
@@ -123,6 +124,7 @@ export function ActorTree({
   onRetry,
   className,
 }: ActorTreeProps) {
+  useUiLocale()
   const treeId = useId()
   const scrollRef = useRef<HTMLDivElement | null>(null)
   const [expandedActorIds, setExpandedActorIds] = useState<ReadonlySet<string>>(
@@ -232,24 +234,24 @@ export function ActorTree({
   return (
     <div className={cn("flex min-h-0 min-w-0 flex-col", className)} data-actor-tree>
       <div className="flex items-center justify-between gap-2 px-3 py-2 text-sm font-medium">
-        <span>代理结构</span>
-        {topology.needsSnapshot ? <span role="status" className="text-xs font-normal text-muted-foreground">正在同步…</span> : null}
+        <span>{uiText("agent_structure_4cf93237")}</span>
+        {topology.needsSnapshot ? <span role="status" className="text-xs font-normal text-muted-foreground">{uiText("syncing_954ec984")}</span> : null}
       </div>
       {error ? (
         <div role="alert" className="flex items-center gap-2 px-3 py-2 text-xs text-destructive">
           <span className="min-w-0 flex-1 break-words">{error}</span>
-          {onRetry ? <Button size="sm" variant="outline" onClick={onRetry}><RefreshCw />重试</Button> : null}
+          {onRetry ? <Button size="sm" variant="outline" onClick={onRetry}><RefreshCw />{uiText("retry_b8784c8d")}</Button> : null}
         </div>
       ) : null}
       {rows.length === 0 ? (
         <p className="px-3 py-4 text-sm text-muted-foreground">
-          {topology.needsSnapshot ? "正在载入代理结构…" : error ? "代理结构尚未确认。" : "没有可显示的代理。"}
+          {topology.needsSnapshot ? uiText("loading_agent_structure_53ba2f19") : error ? uiText("agent_structure_is_not_confirmed_yet_eeda2d8c") : uiText("no_agents_to_display_ea1f7e8b")}
         </p>
       ) : (
         <div
           ref={scrollRef}
           role="tree"
-          aria-label="代理会话结构"
+          aria-label={uiText("agent_session_structure_0bfa0e40")}
           aria-activedescendant={`${treeId}-actor-${visibleActiveIndex}`}
           tabIndex={0}
           onKeyDown={onTreeKeyDown}
@@ -265,11 +267,11 @@ export function ActorTree({
               const selected = selectedActorId === node.actorId
               const unread = unreadActorIds?.has(node.actorId) ?? false
               const counts = [
-                node.queuedCount !== null && node.queuedCount > 0 ? `排队 ${node.queuedCount}` : null,
-                node.waitingForCount !== null && node.waitingForCount > 0 ? `等待 ${node.waitingForCount}` : null,
-                node.pendingRequestCount !== null && node.pendingRequestCount > 0 ? `请求 ${node.pendingRequestCount}` : null,
+                node.queuedCount !== null && node.queuedCount > 0 ? uiText("queued_0d272e30", { v0: node.queuedCount }) : null,
+                node.waitingForCount !== null && node.waitingForCount > 0 ? uiText("waiting_23f9a84a", { v0: node.waitingForCount }) : null,
+                node.pendingRequestCount !== null && node.pendingRequestCount > 0 ? uiText("requests_25082fa5", { v0: node.pendingRequestCount }) : null,
               ].filter((count): count is string => count !== null)
-              const health = node.health === null ? "健康状态未知" : HEALTH_LABEL[node.health]
+              const health = node.health === null ? uiText("health_unknown_d7b6f7ae") : HEALTH_LABEL[node.health]
               return (
                 <div
                   key={virtualRow.key}
@@ -281,7 +283,11 @@ export function ActorTree({
                   aria-setsize={row.siblingCount}
                   aria-expanded={row.hasChildren ? expanded : undefined}
                   aria-selected={selected}
-                  aria-label={`${node.title || "未命名代理"}，${node.role || "代理"}，${LIFECYCLE_LABEL[node.lifecycle]}，${PLACEMENT_LABEL[node.placement]}，${health}${counts.length ? `，${counts.join("，")}` : ""}${unread ? "，有未读消息" : ""}`}
+                  aria-label={[
+                    node.title || uiText("unnamed_agent_1ff6bc72"), node.role || uiText("agent_5e84ea61"),
+                    LIFECYCLE_LABEL[node.lifecycle], PLACEMENT_LABEL[node.placement], health, ...counts,
+                    unread ? uiText("has_unread_messages") : null,
+                  ].filter(Boolean).join(uiText("list_separator"))}
                   data-actor-id={node.actorId}
                   className={cn(
                     "absolute left-0 top-0 flex h-16 w-full cursor-pointer items-center gap-2 overflow-hidden border-b px-2 text-left text-sm hover:bg-accent/50",
@@ -301,11 +307,11 @@ export function ActorTree({
                   </span>
                   <span className="min-w-0 flex-1">
                     <span className="flex min-w-0 items-center gap-1">
-                      <span className="truncate font-medium">{node.title || "未命名代理"}</span>
+                      <span className="truncate font-medium">{node.title || uiText("unnamed_agent_1ff6bc72")}</span>
                       {unread ? <span className="size-1.5 shrink-0 rounded-full bg-primary" aria-hidden="true" /> : null}
                     </span>
                     <span className="block truncate text-xs text-muted-foreground">
-                      {node.role || "代理"} · {LIFECYCLE_LABEL[node.lifecycle]} · {PLACEMENT_LABEL[node.placement]} · {health}
+                      {node.role || uiText("agent_5e84ea61")} · {LIFECYCLE_LABEL[node.lifecycle]} · {PLACEMENT_LABEL[node.placement]} · {health}
                       {counts.length ? ` · ${counts.join(" · ")}` : ""}
                     </span>
                   </span>

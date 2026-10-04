@@ -1,3 +1,4 @@
+import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { Component, useState, type ErrorInfo, type ReactNode } from "react"
 import { Bug, RotateCcw } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -63,6 +64,7 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
 }
 
 function DefaultErrorFallback({ error, onReset }: { error: Error; onReset: () => void }) {
+  useUiLocale()
   const [showDetails, setShowDetails] = useState(false)
 
   return (
@@ -71,17 +73,15 @@ function DefaultErrorFallback({ error, onReset }: { error: Error; onReset: () =>
       className="flex min-h-[200px] flex-col items-center justify-center gap-3 p-6 text-center"
     >
       <Bug className="size-9 text-amber-500" />
-      <div className="text-base font-semibold">页面出错了</div>
+      <div className="text-base font-semibold">{uiText("something_went_wrong_04c5b397")}</div>
       <p className="max-w-md text-sm text-muted-foreground">
-        这个区域渲染时发生了异常。你可以重试;若持续出错,请刷新页面。
-      </p>
+        {uiText("this_section_could_not_render_try_again_or_reload_the_p_e644d5da")}</p>
       <div className="mt-1 flex gap-2">
         <Button size="sm" onClick={onReset}>
           <RotateCcw className="size-4" />
-          重试
-        </Button>
+          {uiText("retry_b8784c8d")}</Button>
         <Button size="sm" variant="ghost" onClick={() => setShowDetails((v) => !v)} aria-expanded={showDetails}>
-          {showDetails ? "隐藏详情" : "显示详情"}
+          {showDetails ? uiText("hide_details_2e1b7da4") : uiText("show_details_448d5d38")}
         </Button>
       </div>
       {showDetails && (

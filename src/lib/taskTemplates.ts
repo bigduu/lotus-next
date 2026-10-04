@@ -1,3 +1,4 @@
+import { uiText } from "@shared/i18n/ui"
 /**
  * Quick-start task templates for the home dashboard (ported from lotus's
  * EmptyTaskLauncher catalog). Picking one prefills the composer and stashes
@@ -32,11 +33,11 @@ export const CATEGORY_ORDER: TemplateCategory[] = [
 ]
 
 export const CATEGORY_LABELS: Record<TemplateCategory, string> = {
-  development: "开发",
-  debugging: "排障",
-  analysis: "分析",
-  documentation: "文档",
-  operations: "运维",
+  get development() { return uiText("development_9ec42862") },
+  get debugging() { return uiText("troubleshooting_0793d14f") },
+  get analysis() { return uiText("analysis_2af437d3") },
+  get documentation() { return uiText("documentation_2687ccdb") },
+  get operations() { return uiText("operations_2805edf2") },
 }
 
 const CODE_REVIEW = [
@@ -132,16 +133,16 @@ export const TASK_TEMPLATES: TaskTemplate[] = [
   {
     id: "blank",
     icon: "plus",
-    title: "空白会话",
-    description: "从零开始,默认助手 + 空白输入框。",
+    get title() { return uiText("blank_session_b3d1db15") },
+    get description() { return uiText("start_from_scratch_with_the_default_assistant_and_an_em_6ccce42b") },
     prefill: "",
     category: "development",
   },
   {
     id: "codeReview",
     icon: "code",
-    title: "代码评审",
-    description: "以评审视角开一个会话,附带可编辑的评审说明。",
+    get title() { return uiText("code_review_fd5dc005") },
+    get description() { return uiText("start_a_review_session_with_editable_review_instruction_88b1cc9f") },
     prefill:
       "Review the relevant code changes in this workspace or repository. Start with the overall scope, then list risks, notable diffs, and the most important fixes.",
     taskPrompt: CODE_REVIEW,
@@ -150,8 +151,8 @@ export const TASK_TEMPLATES: TaskTemplate[] = [
   {
     id: "implementFeature",
     icon: "wrench",
-    title: "实现功能",
-    description: "按现有代码约定,一步步规划并实现新功能。",
+    get title() { return uiText("implement_a_feature_1ddbacbb") },
+    get description() { return uiText("plan_and_implement_a_feature_step_by_step_following_exi_13d8115d") },
     prefill:
       "Help me implement a new feature in this workspace. Start by understanding the codebase structure, then propose an implementation plan before writing code.",
     taskPrompt: IMPLEMENT_FEATURE,
@@ -160,8 +161,8 @@ export const TASK_TEMPLATES: TaskTemplate[] = [
   {
     id: "refactor",
     icon: "gitCompare",
-    title: "重构建议",
-    description: "获取针对性的代码质量与可维护性改进建议。",
+    get title() { return uiText("refactoring_advice_2b476822") },
+    get description() { return uiText("get_focused_advice_on_code_quality_and_maintainability_651b3684") },
     prefill:
       "Suggest refactoring improvements for the code in this workspace. Focus on readability, maintainability, and performance. Propose incremental changes with clear rationale.",
     taskPrompt: REFACTOR,
@@ -170,8 +171,8 @@ export const TASK_TEMPLATES: TaskTemplate[] = [
   {
     id: "bugInvestigation",
     icon: "bug",
-    title: "Bug 调查",
-    description: "通过代码、日志与运行时行为定位问题根因。",
+    get title() { return uiText("investigate_a_bug_af57765b") },
+    get description() { return uiText("find_the_root_cause_using_code_logs_and_runtime_behavio_7ce9e8b4") },
     prefill:
       "Help me investigate a bug. I'll describe the symptoms and share relevant code or logs. Trace the root cause and suggest targeted fixes.",
     taskPrompt: BUG_INVESTIGATION,
@@ -180,8 +181,8 @@ export const TASK_TEMPLATES: TaskTemplate[] = [
   {
     id: "explainError",
     icon: "helpCircle",
-    title: "解释报错",
-    description: "从错误信息或堆栈理解哪里出了问题。",
+    get title() { return uiText("explain_an_error_28d73930") },
+    get description() { return uiText("understand_an_error_message_or_stack_trace_dcea6ce4") },
     prefill:
       "Help me understand the following error. Explain the root cause, suggest fixes, and share prevention tips.",
     taskPrompt: EXPLAIN_ERROR,
@@ -190,8 +191,8 @@ export const TASK_TEMPLATES: TaskTemplate[] = [
   {
     id: "tokenUsage",
     icon: "barChart",
-    title: "Token 用量诊断",
-    description: "诊断上下文增长、截断风险与 token 预算压力。",
+    get title() { return uiText("token_usage_diagnostics_2c9aeec8") },
+    get description() { return uiText("diagnose_context_growth_truncation_risks_and_token_budg_fb7d69ae") },
     prefill:
       "Help me investigate token usage, context growth, and truncation risk for this session or workflow. Summarize the likely drivers and recommend concrete next fixes.",
     taskPrompt: TOKEN_USAGE,
@@ -200,8 +201,8 @@ export const TASK_TEMPLATES: TaskTemplate[] = [
   {
     id: "architectureReview",
     icon: "network",
-    title: "读仓库架构",
-    description: "分析仓库结构、模块与架构模式。",
+    get title() { return uiText("explore_repository_architecture_362772ad") },
+    get description() { return uiText("analyze_repository_structure_modules_and_architecture_p_c4144c28") },
     prefill:
       "Analyze the architecture of this repository. Map the key modules, data flow, abstractions, and dependency patterns. Identify strengths and potential improvements.",
     taskPrompt: ARCHITECTURE_REVIEW,
@@ -210,8 +211,8 @@ export const TASK_TEMPLATES: TaskTemplate[] = [
   {
     id: "compareFiles",
     icon: "fileSearch",
-    title: "对比文件",
-    description: "对比文件或代码片段,理解差异与影响。",
+    get title() { return uiText("compare_files_ab62da9c") },
+    get description() { return uiText("compare_files_or_code_snippets_to_understand_difference_4f4b61db") },
     prefill:
       "Compare the following files or code sections. Highlight key differences, their implications, and any potential risks.",
     taskPrompt: COMPARE_FILES,
@@ -220,8 +221,8 @@ export const TASK_TEMPLATES: TaskTemplate[] = [
   {
     id: "releaseNotes",
     icon: "fileText",
-    title: "生成发布说明",
-    description: "从 git 历史与代码变更生成结构化发布说明。",
+    get title() { return uiText("generate_release_notes_3f4a4bc9") },
+    get description() { return uiText("create_structured_release_notes_from_git_history_and_co_4ce6bd0b") },
     prefill:
       "Generate release notes for the latest changes in this workspace. Categorize into features, fixes, improvements, and breaking changes.",
     taskPrompt: RELEASE_NOTES,
@@ -230,8 +231,8 @@ export const TASK_TEMPLATES: TaskTemplate[] = [
   {
     id: "summarizeWork",
     icon: "bookOpen",
-    title: "总结工作",
-    description: "为站会或周报生成工作总结。",
+    get title() { return uiText("summarize_work_0aefa71c") },
+    get description() { return uiText("prepare_a_work_summary_for_a_stand_up_or_weekly_update_139cd09f") },
     prefill:
       "Help me summarize my recent work for a status update. Pull key accomplishments, blockers, and next steps.",
     taskPrompt: SUMMARIZE_WORK,
@@ -240,8 +241,8 @@ export const TASK_TEMPLATES: TaskTemplate[] = [
   {
     id: "writeDocs",
     icon: "fileText",
-    title: "写文档",
-    description: "基于代码与项目上下文创建或完善技术文档。",
+    get title() { return uiText("write_documentation_af1b8189") },
+    get description() { return uiText("create_or_improve_technical_documentation_using_project_9f5371fb") },
     prefill:
       "Help me write technical documentation for this project. Analyze the code and produce clear, well-structured Markdown documentation.",
     taskPrompt: WRITE_DOCS,
@@ -250,8 +251,8 @@ export const TASK_TEMPLATES: TaskTemplate[] = [
   {
     id: "createSchedule",
     icon: "clock",
-    title: "创建定时任务",
-    description: "设置一个按计划自动运行的循环任务。",
+    get title() { return uiText("create_a_scheduled_task_edd706c3") },
+    get description() { return uiText("set_up_a_recurring_task_to_run_automatically_on_a_sched_9ec9d769") },
     prefill:
       "Help me set up a recurring scheduled task. I'll describe what I want it to do, and you guide me through the configuration.",
     taskPrompt: SCHEDULED_TASK,
@@ -260,8 +261,8 @@ export const TASK_TEMPLATES: TaskTemplate[] = [
   {
     id: "sessionReview",
     icon: "search",
-    title: "回顾会话历史",
-    description: "检视过往会话,发现模式与需要跟进的点。",
+    get title() { return uiText("review_session_history_e0929a0e") },
+    get description() { return uiText("inspect_past_sessions_for_patterns_and_follow_up_items_ea45ad91") },
     prefill:
       "Help me review my recent session history. Summarize key decisions, outcomes, and areas that need follow-up.",
     taskPrompt: SESSION_REVIEW,

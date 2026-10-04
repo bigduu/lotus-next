@@ -1,3 +1,4 @@
+import { uiText } from "@shared/i18n/ui"
 import { debugLog } from "@shared/utils/debugFlags";
 /**
  * Agent Client Service
@@ -512,7 +513,7 @@ export type PermissionDecisionResult = {
 
 export class PendingInteractionContractError extends Error {
   constructor() {
-    super("无法确认当前请求，请刷新后重试。");
+    super(uiText("the_current_request_could_not_be_confirmed_refresh_and__015fae5f"));
     this.name = "PendingInteractionContractError";
   }
 }

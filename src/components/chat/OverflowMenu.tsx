@@ -1,3 +1,4 @@
+import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { type ReactNode } from "react"
 import { MoreHorizontal } from "lucide-react"
 
@@ -12,12 +13,13 @@ type Item = { label: string; icon?: ReactNode; onClick: () => void }
 
 /** Header "⋯" overflow menu for secondary actions (export, split, …). */
 export function OverflowMenu({ items }: { items: Item[] }) {
+  useUiLocale()
   if (items.length === 0) return null
 
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
-        aria-label="更多"
+        aria-label={uiText("more_38844b13")}
         className="inline-flex size-9 items-center justify-center rounded-md text-muted-foreground transition-colors outline-none hover:bg-accent hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50"
       >
         <MoreHorizontal className="size-5" />

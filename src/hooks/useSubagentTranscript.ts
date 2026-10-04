@@ -1,3 +1,4 @@
+import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 
 import { agentClient } from "@services/chat/AgentService"
@@ -43,6 +44,7 @@ const initialScope = (sessionId: string | null): ScopedTranscript => ({
 })
 
 export function useSubagentTranscript(sessionId: string | null): SubagentTranscript {
+  useUiLocale()
   const [scope, setScope] = useState<ScopedTranscript>(() => initialScope(sessionId))
   const retryRef = useRef<() => void>(() => {})
 
@@ -94,7 +96,7 @@ export function useSubagentTranscript(sessionId: string | null): SubagentTranscr
         publish({
           ...current,
           loading: false,
-          error: "子代理消息暂时无法加载，请稍后重试。",
+          error: uiText("subagent_messages_cannot_be_loaded_right_now_try_again__3a4bddca"),
         })
         return
       } finally {

@@ -1,3 +1,4 @@
+import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { useEffect, useState } from "react"
 import {
   isNotifyEnabled,
@@ -20,15 +21,16 @@ const EVENT_ROWS: {
   key: keyof Omit<NotificationPreferences, "enabled">
   label: string
 }[] = [
-  { key: "onClarification", label: "Agent 需要澄清时" },
-  { key: "onToolApproval", label: "工具执行需要批准时" },
-  { key: "onContextPressure", label: "上下文接近上限时" },
-  { key: "onSubAgentComplete", label: "后台子任务完成时" },
-  { key: "onRunComplete", label: "任务运行成功完成时" },
-  { key: "onRunFailed", label: "任务运行失败时" },
+  { key: "onClarification", get label() { return uiText("when_the_agent_needs_clarification_e088e7d7") } },
+  { key: "onToolApproval", get label() { return uiText("when_a_tool_needs_approval_97b94cf2") } },
+  { key: "onContextPressure", get label() { return uiText("when_context_approaches_its_limit_b54b0d2c") } },
+  { key: "onSubAgentComplete", get label() { return uiText("when_a_background_subtask_completes_92a62146") } },
+  { key: "onRunComplete", get label() { return uiText("when_a_task_run_completes_successfully_f1a64ada") } },
+  { key: "onRunFailed", get label() { return uiText("when_a_task_run_fails_55780996") } },
 ]
 
 export function SettingsNotifications() {
+  useUiLocale()
   // Browser-local toggle: whether this tab surfaces browser notifications.
   const [enabled, setEnabled] = useState(isNotifyEnabled())
   const [perm, setPerm] = useState(notifyPermission())
@@ -45,7 +47,7 @@ export function SettingsNotifications() {
     try {
       setPrefs(await getNotificationPreferences())
     } catch (e) {
-      setPrefsError(e instanceof Error ? e.message : "加载通知偏好失败")
+      setPrefsError(e instanceof Error ? e.message : uiText("could_not_load_notification_preferences_c66b5a75"))
     } finally {
       setPrefsLoading(false)
     }
@@ -66,7 +68,7 @@ export function SettingsNotifications() {
       .then((saved) => setPrefs(saved))
       .catch((e) => {
         setPrefs(previous)
-        setSaveError(e instanceof Error ? e.message : "保存通知偏好失败")
+        setSaveError(e instanceof Error ? e.message : uiText("could_not_save_notification_preferences_951b0058"))
       })
   }
 
@@ -84,27 +86,25 @@ export function SettingsNotifications() {
   return (
     <div className="space-y-4">
       <section className="rounded-lg border p-3">
-        <div className="mb-2 text-xs font-medium text-muted-foreground">通知偏好(服务端)</div>
+        <div className="mb-2 text-xs font-medium text-muted-foreground">{uiText("notification_preferences_server_fffc7e6d")}</div>
         <p className="mb-3 text-xs leading-relaxed text-muted-foreground">
-          何时提醒由后端统一判定(分类、去重、偏好过滤)。以下设置保存在服务端,对所有设备生效。
-        </p>
+          {uiText("the_backend_determines_notifications_centrally_includin_bb244be6")}</p>
         {prefsLoading ? (
-          <p className="text-xs text-muted-foreground">加载中…</p>
+          <p className="text-xs text-muted-foreground">{uiText("loading_4927a53b")}</p>
         ) : prefsError ? (
           <div className="flex items-center justify-between gap-2">
             <p className="text-xs text-destructive">{prefsError}</p>
             <Button size="sm" variant="secondary" className="shrink-0" onClick={() => void loadPrefs()}>
-              重试
-            </Button>
+              {uiText("retry_b8784c8d")}</Button>
           </div>
         ) : prefs ? (
           <div className="space-y-3">
             <div className="flex items-center justify-between gap-3">
-              <div className="text-sm">启用通知(总开关)</div>
+              <div className="text-sm">{uiText("enable_notifications_master_switch_fef57a27")}</div>
               <Switch
                 checked={prefs.enabled}
                 onCheckedChange={(v) => updatePref("enabled", v)}
-                aria-label="启用通知"
+                aria-label={uiText("enable_notifications_73e369d5")}
               />
             </div>
             <div
@@ -113,7 +113,7 @@ export function SettingsNotifications() {
                 !prefs.enabled && "pointer-events-none opacity-50",
               )}
             >
-              <div className="text-xs font-medium text-muted-foreground">在以下情况提醒:</div>
+              <div className="text-xs font-medium text-muted-foreground">{uiText("notify_me_in_these_situations_cbbff5c0")}</div>
               {EVENT_ROWS.map((row) => (
                 <div key={row.key} className="flex items-center justify-between gap-3">
                   <div className="text-sm">{row.label}</div>
@@ -132,35 +132,33 @@ export function SettingsNotifications() {
       </section>
 
       <section className="rounded-lg border p-3">
-        <div className="mb-2 text-xs font-medium text-muted-foreground">浏览器通知(本设备)</div>
+        <div className="mb-2 text-xs font-medium text-muted-foreground">{uiText("browser_notifications_this_device_ff712968")}</div>
         <div className="flex items-start justify-between gap-3">
           <div>
-            <div className="text-sm font-medium">任务完成提醒</div>
+            <div className="text-sm font-medium">{uiText("task_completion_alerts_90a30333")}</div>
             <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-              agent 任务在后台(标签页不可见或在看别的会话)完成时,通过浏览器通知提醒你。
-            </p>
+              {uiText("receive_a_browser_notification_when_an_agent_task_compl_c0524c35")}</p>
           </div>
           <Switch
             checked={enabled}
             onCheckedChange={() => void toggleBrowser()}
-            aria-label="任务完成提醒"
+            aria-label={uiText("task_completion_alerts_90a30333")}
             className="mt-0.5"
           />
         </div>
         {perm === "denied" ? (
-          <p className="mt-2 text-xs text-destructive">浏览器已拒绝通知权限,请在浏览器站点设置里允许。</p>
+          <p className="mt-2 text-xs text-destructive">{uiText("notifications_are_blocked_allow_them_in_your_browser_s__83cdc1ce")}</p>
         ) : perm === "unsupported" ? (
-          <p className="mt-2 text-xs text-muted-foreground">当前环境不支持通知。</p>
+          <p className="mt-2 text-xs text-muted-foreground">{uiText("notifications_are_not_supported_in_this_environment_37a9c6ef")}</p>
         ) : null}
         {enabled && perm === "granted" ? (
           <Button
             size="sm"
             variant="secondary"
             className="mt-3"
-            onClick={() => notify("Bodhi · 测试通知", "通知工作正常 ✓")}
+            onClick={() => notify(uiText("bodhi_test_notification_7de1d35e"), uiText("notifications_are_working_3a772497"))}
           >
-            发送测试通知
-          </Button>
+            {uiText("send_test_notification_5e0022a1")}</Button>
         ) : null}
       </section>
 

@@ -1,3 +1,4 @@
+import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { Button } from "@/components/ui/button"
 import {
   ResponsiveDialog,
@@ -15,6 +16,7 @@ export function DeleteSessionDialog({
   onCancel: () => void
   onConfirm: (id: string) => void
 }) {
+  useUiLocale()
   return (
     <ResponsiveDialog
       open={!!pending}
@@ -23,22 +25,19 @@ export function DeleteSessionDialog({
       }}
     >
       <ResponsiveDialogContent showCloseButton={false} className="p-5">
-        <ResponsiveDialogTitle>删除会话</ResponsiveDialogTitle>
+        <ResponsiveDialogTitle>{uiText("delete_session_d51250d1")}</ResponsiveDialogTitle>
         <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
-          确定删除「{pending?.title}」?此操作无法撤销。
-        </p>
+          {uiText("delete_session_description", { title: pending?.title ?? "" })}</p>
         <div className="mt-5 flex justify-end gap-2">
           <Button variant="secondary" onClick={onCancel}>
-            取消
-          </Button>
+            {uiText("cancel_2cd0f3be")}</Button>
           <Button
             variant="destructive"
             onClick={() => {
               if (pending) onConfirm(pending.id)
             }}
           >
-            删除
-          </Button>
+            {uiText("delete_2f9daa82")}</Button>
         </div>
       </ResponsiveDialogContent>
     </ResponsiveDialog>

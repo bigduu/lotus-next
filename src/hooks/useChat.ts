@@ -1,3 +1,4 @@
+import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { useOutputRate } from "./useOutputRate"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useShallow } from "zustand/react/shallow"
@@ -229,6 +230,7 @@ export function useChat(
   // pane to it (e.g. App's setSecondSid).
   onSessionCreated?: (sessionId: string) => void,
 ) {
+  useUiLocale()
   const isBound = boundSessionId !== undefined
 
   const chats = useAppStore(useShallow((s) => s.chats))
@@ -416,9 +418,9 @@ export function useChat(
     } catch {
       if (!ownsQuestionScope(scope) || questionReadSequenceRef.current !== sequence) return "stale"
       updateQuestionState((current) => ({ ...current, loading: false, unavailable: true,
-        error: current.recordedKey ? "决定已记录，但暂时无法读取后续状态。请刷新。"
-          : current.retry ? "上次提交结果尚未确认，当前请求也暂时无法读取。请刷新或重试上次提交。"
-            : "暂时无法读取确认请求，请刷新后重试。" }))
+        error: current.recordedKey ? uiText("your_decision_was_recorded_but_subsequent_state_cannot__624ad0a2")
+          : current.retry ? uiText("the_previous_submission_is_unconfirmed_and_the_current__c5a7efbd")
+            : uiText("the_confirmation_request_cannot_be_read_right_now_refre_05a4bdbe") }))
       return "unavailable"
     }
   }, [ownsQuestionScope, updateQuestionState])
@@ -756,7 +758,7 @@ export function useChat(
           ? opts?.reasoningEffort ?? undefined
           : reasoningEffort
         if (getRootModeFenceState(runSid) !== "clear") {
-          throw new Error("Root 权限切换结果未知；消息已保存，但尚未启动执行。请先处理模式切换。")
+          throw new Error(uiText("the_root_permission_change_is_unconfirmed_your_message__64f12563"))
         }
         void agentClient.execute(runSid, effectiveModel || undefined, executeReasoningEffort, undefined, effectiveModelRef).catch((err) => {
           if (!ownsStream()) return
@@ -895,7 +897,7 @@ export function useChat(
             const last = liveSegRef.current[liveSegRef.current.length - 1]
             if (last && last.kind === "tools") last.calls.push(call)
             else liveSegRef.current.push({ kind: "tools", calls: [call] })
-            setStreamStatus(`正在运行 ${toolName}…`)
+            setStreamStatus(uiText("running_29ee24a4", { v0: toolName }))
             flushSegments()
           },
           onToolToken: (toolCallId, content) => {
@@ -957,7 +959,7 @@ export function useChat(
             store.setTruncationInfo(runSid, usage.truncation_occurred, usage.segments_removed)
           },
           onContextCompressionStatus: (_phase, status) => {
-            if (status === "started") setStreamStatus("正在压缩上下文…")
+            if (status === "started") setStreamStatus(uiText("compressing_context_57b37811"))
             else setStreamStatus(null)
           },
           onSubAgentStarted: (parentSid, childId, title) => {
@@ -973,7 +975,7 @@ export function useChat(
               childBufRef.current[childId] = (childBufRef.current[childId] || "") + e.content
               patch.outputPreview = childBufRef.current[childId].slice(-400)
             } else if (e.type === "tool_start" && e.tool_name) {
-              patch.outputPreview = `· 调用 ${e.tool_name}…`
+              patch.outputPreview = uiText("calling_ace05fd8", { v0: e.tool_name })
             }
             if (patch.outputPreview !== undefined) {
               useAppStore.getState().applyChildProgress(parentSid, childId, patch)
@@ -1014,7 +1016,7 @@ export function useChat(
               if (await reconcileQuestion(scope) === "absent" && ownsQuestionScope(scope)
                   && !questionStateRef.current.question) {
                 updateQuestionState((current) => ({ ...current,
-                  error: current.error ?? "确认请求尚未准备好，请刷新。" }))
+                  error: current.error ?? uiText("the_confirmation_request_is_not_ready_please_refresh_3093bf30") }))
               }
             })()
           },
@@ -1619,7 +1621,7 @@ export function useChat(
             kind: "generation-failed",
             operationId: operation.id,
             sessionId: acknowledgedSessionId,
-            message: "Root 权限切换结果未知；消息已保存，但尚未启动执行。请先处理模式切换。",
+            message: uiText("the_root_permission_change_is_unconfirmed_your_message__64f12563"),
           })
         } else {
           void agentClient
@@ -1863,7 +1865,7 @@ export function useChat(
       ++questionReadSequenceRef.current
       updateQuestionState((state) => ({ ...state, question: null, retry: null, recordedKey: key,
         unavailable: false, loading: false,
-        error: continuationConfirmed ? null : "回答已记录，但暂时无法确认任务是否继续。请刷新。" }))
+        error: continuationConfirmed ? null : uiText("your_response_was_recorded_but_task_continuation_is_unc_844b0635") }))
       await reconcileQuestion(scope, !continuationConfirmed)
       if (!ownsQuestionScope(scope) || questionSubmitRef.current !== token) return
       void useAppStore.getState().loadChatHistory(scope.sessionId).catch(() => {})
@@ -1878,9 +1880,9 @@ export function useChat(
       const rejected = isApiError(error) && error.status >= 400 && error.status < 500
       updateQuestionState((state) => ({ ...state, retry: !rejected ? decision : null,
         unavailable: rejected,
-        error: rejected ? "当前请求或权限已变化，请按刷新后的选项重新确认。"
-          : decision ? "提交结果尚未确认。请刷新，或重试上次提交以确认结果。"
-            : "回答结果尚未确认，请刷新当前问题后重试。" }))
+        error: rejected ? uiText("the_request_or_permissions_have_changed_confirm_again_u_a1ebae48")
+          : decision ? uiText("submission_is_unconfirmed_refresh_or_retry_the_last_sub_f3127c94")
+            : uiText("the_response_result_is_unconfirmed_refresh_the_current__2c1a59fd") }))
       await reconcileQuestion(scope, true)
     } finally {
       if (questionSubmitRef.current === token) {

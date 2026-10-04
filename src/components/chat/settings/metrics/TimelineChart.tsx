@@ -1,3 +1,4 @@
+import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { useEffect, useMemo, useRef, useState } from "react"
 import type { UnifiedTimelinePoint } from "@services/metrics"
 import { Button } from "@/components/ui/button"
@@ -12,6 +13,7 @@ const MARGIN = { top: 8, right: 12, bottom: 20, left: 40 }
 const SVG_HEIGHT = MARGIN.top + PLOT_HEIGHT + MARGIN.bottom
 
 function useContainerWidth() {
+  useUiLocale()
   const ref = useRef<HTMLDivElement>(null)
   const [width, setWidth] = useState(0)
   useEffect(() => {
@@ -51,6 +53,7 @@ function areaPath(xs: number[], ys: number[], baseline: number): string {
 }
 
 export function TimelineChart({ points }: { points: UnifiedTimelinePoint[] }) {
+  useUiLocale()
   const { ref, width } = useContainerWidth()
   const [view, setView] = useState<"chart" | "table">("chart")
   const [hoverIndex, setHoverIndex] = useState<number | null>(null)
@@ -97,7 +100,7 @@ export function TimelineChart({ points }: { points: UnifiedTimelinePoint[] }) {
   }
 
   if (n === 0) {
-    return <p className="text-xs text-muted-foreground">暂无数据</p>
+    return <p className="text-xs text-muted-foreground">{uiText("no_data_yet_497c8569")}</p>
   }
 
   const hovered = hoverIndex != null ? points[hoverIndex] : null
@@ -111,8 +114,7 @@ export function TimelineChart({ points }: { points: UnifiedTimelinePoint[] }) {
         <div className="flex items-center gap-3 text-xs text-muted-foreground">
           <span className="flex items-center gap-1.5">
             <span className="h-0.5 w-3 rounded-full" style={{ background: CHAT_COLOR }} />
-            会话 Tokens
-          </span>
+            {uiText("session_tokens_17dc5fdb")}</span>
           <span className="flex items-center gap-1.5">
             <span className="h-0.5 w-3 rounded-full" style={{ background: FORWARD_COLOR }} />
             Forward Tokens
@@ -121,8 +123,8 @@ export function TimelineChart({ points }: { points: UnifiedTimelinePoint[] }) {
         <div className="flex gap-1">
           {(
             [
-              ["chart", "图表"],
-              ["table", "表格"],
+              ["chart", uiText("chart_8cb443ab")],
+              ["table", uiText("table_22d9e7c5")],
             ] as const
           ).map(([key, label]) => (
             <Button
@@ -143,11 +145,11 @@ export function TimelineChart({ points }: { points: UnifiedTimelinePoint[] }) {
           <table className="w-full min-w-[420px] text-xs">
             <thead className="sticky top-0 bg-background text-muted-foreground">
               <tr className="[&>th]:px-2 [&>th]:py-1.5 [&>th]:font-medium">
-                <th className="text-left">日期</th>
-                <th className="text-right">会话 Tokens</th>
+                <th className="text-left">{uiText("date_70d0c1b3")}</th>
+                <th className="text-right">{uiText("session_tokens_17dc5fdb")}</th>
                 <th className="text-right">Forward Tokens</th>
-                <th className="text-right">会话数</th>
-                <th className="text-right">转发数</th>
+                <th className="text-right">{uiText("sessions_578c55a3")}</th>
+                <th className="text-right">{uiText("forward_requests_8afb028b")}</th>
               </tr>
             </thead>
             <tbody>
@@ -171,7 +173,7 @@ export function TimelineChart({ points }: { points: UnifiedTimelinePoint[] }) {
                 width={width}
                 height={SVG_HEIGHT}
                 role="img"
-                aria-label="Token 趋势图"
+                aria-label={uiText("token_trend_chart_5ce8cd83")}
                 tabIndex={0}
                 className="block outline-none focus-visible:ring-1 focus-visible:ring-ring"
                 onPointerMove={(e) => moveHover(e.clientX, e.currentTarget.getBoundingClientRect())}
@@ -335,7 +337,7 @@ export function TimelineChart({ points }: { points: UnifiedTimelinePoint[] }) {
                     <span className="font-semibold tabular-nums">
                       {formatExact(hovered.chat_tokens)}
                     </span>
-                    <span className="text-muted-foreground">会话 Tokens</span>
+                    <span className="text-muted-foreground">{uiText("session_tokens_17dc5fdb")}</span>
                   </div>
                   <div className="flex items-center gap-1.5">
                     <span className="h-0.5 w-3 shrink-0 rounded-full" style={{ background: FORWARD_COLOR }} />
@@ -345,8 +347,7 @@ export function TimelineChart({ points }: { points: UnifiedTimelinePoint[] }) {
                     <span className="text-muted-foreground">Forward Tokens</span>
                   </div>
                   <div className="mt-1 text-muted-foreground">
-                    {formatExact(hovered.chat_sessions)} 会话 · {formatExact(hovered.forward_requests)} 次转发
-                  </div>
+                    {formatExact(hovered.chat_sessions)} {uiText("sessions_d2a38975")} {formatExact(hovered.forward_requests)} {uiText("forward_requests_4ec8d920")}</div>
                 </div>
               ) : null}
             </>

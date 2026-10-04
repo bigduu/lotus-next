@@ -1,3 +1,4 @@
+import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { useEffect, useMemo, useState } from "react"
 import { Trash2, Plus } from "lucide-react"
 import { serviceFactory } from "@services/common/ServiceFactory"
@@ -20,6 +21,7 @@ type Entry = { pattern: string; match_type: string; enabled: boolean }
 const MATCH_TYPES = ["exact", "regex"]
 
 export function SettingsMasking() {
+  useUiLocale()
   const [entries, setEntries] = useState<Entry[]>([])
   const [loading, setLoading] = useState(true)
   const [pattern, setPattern] = useState("")
@@ -67,15 +69,14 @@ export function SettingsMasking() {
   return (
     <div className="space-y-3">
       <p className="text-xs leading-relaxed text-muted-foreground">
-        匹配的内容会在发往模型 / 日志前被掩码,避免密钥等敏感信息外泄。
-      </p>
+        {uiText("matches_are_masked_before_being_sent_to_models_or_logs__c8a6d58b")}</p>
 
       <section className="space-y-2 rounded-lg border p-3">
-        <div className="text-xs font-medium text-muted-foreground">新增规则</div>
+        <div className="text-xs font-medium text-muted-foreground">{uiText("add_rule_83009fcf")}</div>
         <div className="flex gap-2">
           <Input
             className="flex-1"
-            placeholder="要掩码的内容 / 模式"
+            placeholder={uiText("content_pattern_to_mask_d870245d")}
             value={pattern}
             onChange={(e) => setPattern(e.target.value)}
             onKeyDown={(e) => {
@@ -101,11 +102,11 @@ export function SettingsMasking() {
       </section>
 
       <section className="rounded-lg border p-3">
-        <div className="mb-2 text-xs font-medium text-muted-foreground">掩码规则 ({entries.length})</div>
+        <div className="mb-2 text-xs font-medium text-muted-foreground">{uiText("masking_rules_5f1fa4a9")}{entries.length})</div>
         {loading ? (
-          <p className="text-xs text-muted-foreground">加载中…</p>
+          <p className="text-xs text-muted-foreground">{uiText("loading_4927a53b")}</p>
         ) : entries.length === 0 ? (
-          <p className="text-xs text-muted-foreground">暂无</p>
+          <p className="text-xs text-muted-foreground">{uiText("none_yet_b336a174")}</p>
         ) : (
           <ul className="space-y-1.5">
             {entries.map((e, i) => (
@@ -115,7 +116,7 @@ export function SettingsMasking() {
                   onCheckedChange={() =>
                     void save(entries.map((x, j) => (j === i ? { ...x, enabled: !x.enabled } : x)))
                   }
-                  aria-label="启用规则"
+                  aria-label={uiText("enable_rule_d23ee517")}
                 />
                 <span className="min-w-0 flex-1 truncate font-mono text-xs">{e.pattern}</span>
                 <span className="shrink-0 rounded bg-muted px-1 text-[10px] text-muted-foreground">
@@ -123,7 +124,7 @@ export function SettingsMasking() {
                 </span>
                 <button
                   onClick={() => void save(entries.filter((_, j) => j !== i))}
-                  aria-label="删除"
+                  aria-label={uiText("delete_2f9daa82")}
                   className="shrink-0 rounded p-1 text-muted-foreground hover:text-destructive"
                 >
                   <Trash2 className="size-3.5" />
@@ -135,10 +136,10 @@ export function SettingsMasking() {
       </section>
 
       <section className="space-y-2 rounded-lg border p-3">
-        <div className="text-xs font-medium text-muted-foreground">预览</div>
+        <div className="text-xs font-medium text-muted-foreground">{uiText("preview_13d61fea")}</div>
         <Textarea
           className="min-h-16 resize-y rounded-md border px-2.5 py-1.5 text-sm"
-          placeholder="输入一段文本,看看掩码后的效果…"
+          placeholder={uiText("enter_text_to_preview_masking_48b25eea")}
           value={sample}
           onChange={(e) => setSample(e.target.value)}
         />

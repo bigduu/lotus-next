@@ -1,3 +1,4 @@
+import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { useEffect, useMemo, useState } from "react"
 import { Folder, FolderOpen, FolderPlus, Loader2, Trash2 } from "lucide-react"
 import { useAppStore } from "@shared/store/appStore"
@@ -23,9 +24,9 @@ const normalizePath = (value: string): string => {
 const projectErrorMessage = (error: unknown, fallback: string): string => {
   if (isApiError(error)) {
     if (error.status === 409 || error.status === 412) {
-      return "项目刚被其他操作修改，请关闭后重试"
+      return uiText("the_project_was_changed_by_another_operation_close_this_c06150ff")
     }
-    if (error.status === 404) return "项目不存在或已被移除"
+    if (error.status === 404) return uiText("the_project_does_not_exist_or_has_been_removed_6a68f3ee")
     return error.message || fallback
   }
   return error instanceof Error ? error.message : fallback
@@ -44,6 +45,7 @@ export function ProjectEditDialog({
   projectId: string | null
   onClose: () => void
 }) {
+  useUiLocale()
   const project = useAppStore((state) => (projectId ? state.projects[projectId] : undefined))
   const ensureProject = useAppStore((state) => state.ensureProject)
   const updateProject = useAppStore((state) => state.updateProject)
@@ -71,13 +73,13 @@ export function ProjectEditDialog({
       .then(() => {
         if (cancelled) return
         const fresh = useAppStore.getState().projects[projectId]
-        if (!fresh) throw new Error("项目不存在")
+        if (!fresh) throw new Error(uiText("project_does_not_exist_b2667460"))
         setName(fresh.name)
         setPrimaryPath(fresh.project_path ?? "")
         setBindings(fresh.workspace_bindings)
       })
       .catch((reason) => {
-        if (!cancelled) setError(projectErrorMessage(reason, "加载项目失败"))
+        if (!cancelled) setError(projectErrorMessage(reason, uiText("could_not_load_project_10e9dd1f")))
       })
       .finally(() => {
         if (!cancelled) setLoading(false)
@@ -108,7 +110,7 @@ export function ProjectEditDialog({
       if (target === "primary") setPrimaryPath(path)
       else addPath(path)
     } catch (reason) {
-      setError(projectErrorMessage(reason, "无法打开目录选择器"))
+      setError(projectErrorMessage(reason, uiText("could_not_open_the_folder_picker_645d74e6")))
     }
   }
 
@@ -123,11 +125,11 @@ export function ProjectEditDialog({
         list.findIndex((candidate) => candidate.path === binding.path) === index,
       )
     if (!trimmedName) {
-      setError("请输入项目名称")
+      setError(uiText("enter_a_project_name_0fb3237e"))
       return
     }
     if (!normalizedPrimary) {
-      setError("请选择项目主目录")
+      setError(uiText("select_the_project_s_primary_directory_5c187cfd"))
       return
     }
 
@@ -137,10 +139,10 @@ export function ProjectEditDialog({
       const validationPaths = [normalizedPrimary, ...desiredBindings.map((binding) => binding.path)]
       const validations = await Promise.all(validationPaths.map((path) => workspaceService.validatePath(path)))
       const invalid = validations.find((result) => !result.is_valid)
-      if (invalid) throw new Error(invalid.error_message || "源目录无效")
+      if (invalid) throw new Error(invalid.error_message || uiText("invalid_source_directory_80ab8f9e"))
 
       let current = useAppStore.getState().projects[projectId]
-      if (!current) throw new Error("项目不存在")
+      if (!current) throw new Error(uiText("project_does_not_exist_b2667460"))
       const patch: { name?: string; project_path?: string } = {}
       if (trimmedName !== current.name) patch.name = trimmedName
       if (normalizedPrimary !== current.project_path) patch.project_path = normalizedPrimary
@@ -163,7 +165,7 @@ export function ProjectEditDialog({
       }
       onClose()
     } catch (reason) {
-      setError(projectErrorMessage(reason, "保存项目失败"))
+      setError(projectErrorMessage(reason, uiText("could_not_save_project_a052bb9e")))
     } finally {
       setSaving(false)
     }
@@ -174,13 +176,13 @@ export function ProjectEditDialog({
     setError(null)
     try {
       const current = useAppStore.getState().projects[projectId]
-      if (!current) throw new Error("项目不存在")
+      if (!current) throw new Error(uiText("project_does_not_exist_b2667460"))
       if (current.status === "archived") await unarchiveProject(current.id, current.revision)
       else await archiveProject(current.id, current.revision)
       setConfirmRemove(false)
       onClose()
     } catch (reason) {
-      setError(projectErrorMessage(reason, project.status === "archived" ? "恢复项目失败" : "移除项目失败"))
+      setError(projectErrorMessage(reason, project.status === "archived" ? uiText("could_not_restore_project_4f2a985d") : uiText("could_not_remove_project_1086e674")))
     } finally {
       setSaving(false)
     }
@@ -202,40 +204,35 @@ export function ProjectEditDialog({
         {confirmRemove ? (
           <>
             <div className="p-4 pb-2">
-              <ResponsiveDialogTitle>{`移除“${project.name}”？`}</ResponsiveDialogTitle>
+              <ResponsiveDialogTitle>{uiText("remove_bdb7b58b", { v0: project.name })}</ResponsiveDialogTitle>
               <ResponsiveDialogDescription className="mt-2 leading-relaxed">
-                项目会从新建会话入口移除，但现有会话和项目数据不会删除；之后可以在“管理项目”中恢复。
-              </ResponsiveDialogDescription>
+                {uiText("the_project_will_be_removed_from_new_session_choices_ex_d355c682")}</ResponsiveDialogDescription>
               {error ? <p className="mt-2 text-xs text-destructive">{error}</p> : null}
             </div>
             <div className="flex justify-end gap-2 p-4 pt-2">
               <Button variant="secondary" disabled={saving} onClick={() => setConfirmRemove(false)}>
-                取消
-              </Button>
+                {uiText("cancel_2cd0f3be")}</Button>
               <Button variant="destructive" disabled={saving} onClick={() => void removeOrRestore()}>
                 {saving ? <Loader2 className="size-4 animate-spin" /> : null}
-                移除项目
-              </Button>
+                {uiText("remove_project_84663136")}</Button>
             </div>
           </>
         ) : (
           <>
           <div className="border-b p-4">
-            <ResponsiveDialogTitle>编辑项目</ResponsiveDialogTitle>
+            <ResponsiveDialogTitle>{uiText("edit_project_577feeef")}</ResponsiveDialogTitle>
             <ResponsiveDialogDescription className="mt-1">
-              名称和源目录由 Bamboo 项目清单持久化，所有窗口会使用同一份配置。
-            </ResponsiveDialogDescription>
+              {uiText("bamboo_persists_names_and_source_directories_in_its_pro_20919dcd")}</ResponsiveDialogDescription>
           </div>
 
           <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4">
             {loading ? (
               <div className="flex items-center gap-2 py-8 text-sm text-muted-foreground">
-                <Loader2 className="size-4 animate-spin" /> 正在读取项目…
-              </div>
+                <Loader2 className="size-4 animate-spin" />{uiText("loading_project_6d8a4e84")}</div>
             ) : (
               <>
                 <div className="grid gap-1.5">
-                  <label htmlFor="edit-project-name" className="text-sm font-medium">项目名称</label>
+                  <label htmlFor="edit-project-name" className="text-sm font-medium">{uiText("project_name_867698fb")}</label>
                   <Input
                     id="edit-project-name"
                     value={name}
@@ -246,30 +243,29 @@ export function ProjectEditDialog({
 
                 <div className="space-y-2">
                   <div>
-                    <div className="text-sm font-medium">源目录</div>
+                    <div className="text-sm font-medium">{uiText("source_directories_28af332c")}</div>
                     <p className="mt-0.5 text-xs text-muted-foreground">
-                      主目录是新会话的默认工作区；可以继续绑定其他仓库或 worktree。
-                    </p>
+                      {uiText("the_primary_directory_is_the_default_workspace_for_new__2518446f")}</p>
                   </div>
 
                   <div className="overflow-hidden rounded-lg border">
                     <div className="flex items-center gap-2 border-b px-3 py-2.5">
                       <Folder className="size-4 shrink-0 text-muted-foreground" />
                       <Input
-                        aria-label="项目主目录"
+                        aria-label={uiText("primary_project_directory_0852e851")}
                         className="h-8 min-w-0 flex-1 border-0 bg-transparent shadow-none focus-visible:ring-0"
                         value={primaryPath}
                         onChange={(event) => setPrimaryPath(event.target.value)}
-                        placeholder="主目录绝对路径"
+                        placeholder={uiText("absolute_path_to_primary_directory_ab8e5c38")}
                       />
-                      <span className="shrink-0 text-[11px] text-muted-foreground">主要</span>
+                      <span className="shrink-0 text-[11px] text-muted-foreground">{uiText("primary_5ccd91f4")}</span>
                       {isTauriEnvironment() ? (
                         <Button
                           type="button"
                           size="icon"
                           variant="ghost"
                           className="size-8"
-                          aria-label="选择项目主目录"
+                          aria-label={uiText("select_primary_project_directory_30a25dc5")}
                           onClick={() => void choosePath("primary")}
                         >
                           <FolderOpen className="size-3.5" />
@@ -285,7 +281,7 @@ export function ProjectEditDialog({
                           size="icon"
                           variant="ghost"
                           className="size-8 text-muted-foreground hover:text-destructive"
-                          aria-label={`移除源目录 ${binding.path}`}
+                          aria-label={uiText("remove_source_directory_c14882d9", { v0: binding.path })}
                           onClick={() => setBindings((current) => current.filter((item) => item.path !== binding.path))}
                         >
                           <Trash2 className="size-3.5" />
@@ -295,7 +291,7 @@ export function ProjectEditDialog({
                     <div className="flex items-center gap-2 px-3 py-2.5">
                       <FolderPlus className="size-4 shrink-0 text-muted-foreground" />
                       <Input
-                        aria-label="新增源目录"
+                        aria-label={uiText("add_source_directory_398c49c7")}
                         className="h-8 min-w-0 flex-1 border-0 bg-transparent shadow-none focus-visible:ring-0"
                         value={newPath}
                         onChange={(event) => setNewPath(event.target.value)}
@@ -305,7 +301,7 @@ export function ProjectEditDialog({
                             addPath()
                           }
                         }}
-                        placeholder="添加文件夹绝对路径"
+                        placeholder={uiText("add_an_absolute_folder_path_0a395954")}
                       />
                       {isTauriEnvironment() ? (
                         <Button
@@ -313,15 +309,14 @@ export function ProjectEditDialog({
                           size="icon"
                           variant="ghost"
                           className="size-8"
-                          aria-label="选择新增源目录"
+                          aria-label={uiText("select_source_directory_to_add_4b3ae33c")}
                           onClick={() => void choosePath("binding")}
                         >
                           <FolderOpen className="size-3.5" />
                         </Button>
                       ) : null}
                       <Button type="button" size="sm" variant="ghost" disabled={!newPath.trim()} onClick={() => addPath()}>
-                        添加
-                      </Button>
+                        {uiText("add_7a8a11ea")}</Button>
                     </div>
                   </div>
                 </div>
@@ -338,8 +333,7 @@ export function ProjectEditDialog({
           <div className="flex items-center justify-between gap-3 border-t px-4 py-3">
             {project.status === "archived" ? (
               <Button variant="outline" disabled={saving || loading} onClick={() => void removeOrRestore()}>
-                恢复项目
-              </Button>
+                {uiText("restore_project_52a1d56b")}</Button>
             ) : (
               <Button
                 variant="ghost"
@@ -350,15 +344,13 @@ export function ProjectEditDialog({
                   setConfirmRemove(true)
                 }}
               >
-                移除本地项目
-              </Button>
+                {uiText("remove_local_project_e951cbd0")}</Button>
             )}
             <div className="ml-auto flex gap-2">
-              <Button variant="secondary" disabled={saving} onClick={onClose}>取消</Button>
+              <Button variant="secondary" disabled={saving} onClick={onClose}>{uiText("cancel_2cd0f3be")}</Button>
               <Button disabled={saving || loading || !name.trim() || !primaryPath.trim()} onClick={() => void save()}>
                 {saving ? <Loader2 className="size-4 animate-spin" /> : null}
-                保存
-              </Button>
+                {uiText("save_a3030bf8")}</Button>
             </div>
           </div>
           </>

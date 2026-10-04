@@ -1,3 +1,4 @@
+import { uiText, useUiLocale } from "@shared/i18n/ui"
 import type { ReactNode } from "react"
 import { Button } from "@/components/ui/button"
 import {
@@ -16,7 +17,7 @@ export function ConfirmDialog({
   onOpenChange,
   title,
   description,
-  confirmLabel = "确认",
+  confirmLabel = uiText("confirm_36f33ada"),
   destructive = true,
   busy = false,
   error,
@@ -33,6 +34,7 @@ export function ConfirmDialog({
   error?: string | null
   onConfirm: () => void
 }) {
+  useUiLocale()
   return (
     <ResponsiveDialog open={open} onOpenChange={(o) => (busy ? undefined : onOpenChange(o))}>
       <ResponsiveDialogContent className="gap-0 p-4 sm:max-w-sm">
@@ -43,15 +45,14 @@ export function ConfirmDialog({
         {error ? <p className="mt-2 text-xs text-destructive">{error}</p> : null}
         <div className="mt-4 flex justify-end gap-2">
           <Button size="sm" variant="secondary" disabled={busy} onClick={() => onOpenChange(false)}>
-            取消
-          </Button>
+            {uiText("cancel_2cd0f3be")}</Button>
           <Button
             size="sm"
             variant={destructive ? "destructive" : "default"}
             disabled={busy}
             onClick={onConfirm}
           >
-            {busy ? "处理中…" : confirmLabel}
+            {busy ? uiText("processing_d3d21191") : confirmLabel}
           </Button>
         </div>
       </ResponsiveDialogContent>

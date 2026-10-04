@@ -1,3 +1,4 @@
+import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { useEffect, useMemo, useState } from "react"
 import { RefreshCw } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -17,6 +18,7 @@ export function SectionTools({
   config: SystemBambooConfig
   saveSection: SystemConfigApi["saveSection"]
 }) {
+  useUiLocale()
   const [available, setAvailable] = useState<string[]>([])
   // Seed once at mount: re-seeding on config change would clobber in-progress
   // edits whenever another section saves (each save reloads the shared config).
@@ -60,7 +62,7 @@ export function SectionTools({
     try {
       await saveSection({ tools: { disabled } })
       setSaved(disabled)
-      setMsg({ kind: "ok", text: "已保存" })
+      setMsg({ kind: "ok", text: uiText("saved_1bd91a7d") })
     } catch (e) {
       setMsg({ kind: "error", text: getErrorMessage(e) })
     } finally {
@@ -71,20 +73,20 @@ export function SectionTools({
   return (
     <section className="space-y-2 rounded-lg border p-3">
       <div className="flex items-center justify-between">
-        <div className="text-xs font-medium text-muted-foreground">工具</div>
+        <div className="text-xs font-medium text-muted-foreground">{uiText("tool_5ca6730d")}</div>
         <button
           onClick={loadTools}
-          aria-label="重新加载工具列表"
+          aria-label={uiText("reload_tool_list_979c8a01")}
           className="rounded p-1 text-muted-foreground hover:text-foreground"
         >
           <RefreshCw className="size-3.5" />
         </button>
       </div>
-      <p className="text-xs text-muted-foreground">关闭的工具将从模型可用工具中全局移除。</p>
-      {loadError ? <p className="text-xs text-destructive">工具列表加载失败:{loadError}</p> : null}
+      <p className="text-xs text-muted-foreground">{uiText("disabled_tools_are_removed_globally_from_models_availab_566d0b52")}</p>
+      {loadError ? <p className="text-xs text-destructive">{uiText("could_not_load_tool_list_875327bd")}{loadError}</p> : null}
 
       {allNames.length === 0 ? (
-        <p className="text-xs text-muted-foreground">暂无工具</p>
+        <p className="text-xs text-muted-foreground">{uiText("no_tools_yet_dae2b2c5")}</p>
       ) : (
         <ul className="max-h-56 space-y-1.5 overflow-y-auto pr-1">
           {allNames.map((name) => (
@@ -103,7 +105,7 @@ export function SectionTools({
       <div className="flex items-center justify-between gap-2">
         <StatusLine msg={msg} />
         <Button size="sm" className="ml-auto" onClick={save} disabled={busy || !dirty}>
-          {busy ? "保存中…" : "保存"}
+          {busy ? uiText("saving_ff509c9b") : uiText("save_a3030bf8")}
         </Button>
       </div>
     </section>

@@ -1,3 +1,4 @@
+import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { Container, Monitor, Server } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { cn } from "@/lib/utils"
@@ -33,6 +34,7 @@ export function MachineTag({
   compact?: boolean
   className?: string
 }) {
+  useUiLocale()
   if (!placement || !placement.host) return null
 
   const { kind, host } = placement
@@ -42,7 +44,7 @@ export function MachineTag({
   return (
     <Badge
       variant="outline"
-      title={`运行于 ${kind} · ${host}`}
+      title={uiText("running_on_caee1687", { v0: kind, v1: host })}
       className={cn(
         "max-w-full gap-1 font-normal text-muted-foreground",
         isRemote &&
@@ -51,7 +53,7 @@ export function MachineTag({
       )}
     >
       <Icon />
-      {!compact ? <span className="opacity-65">机器</span> : null}
+      {!compact ? <span className="opacity-65">{uiText("machine_ece969c3")}</span> : null}
       <span className="truncate">{`${kind} · ${host}`}</span>
     </Badge>
   )

@@ -1,3 +1,4 @@
+import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { useEffect, useState } from "react"
 import mermaid from "mermaid"
 
@@ -103,6 +104,7 @@ type State =
   | { kind: "error"; message: string }
 
 export default function StaticMermaid({ code, scale = 3 }: { code: string; scale?: number }) {
+  useUiLocale()
   const [state, setState] = useState<State>({ kind: "loading" })
 
   useEffect(() => {
@@ -141,7 +143,7 @@ export default function StaticMermaid({ code, scale = 3 }: { code: string; scale
           fontSize: 12,
         }}
       >
-        {`Mermaid 渲染失败: ${state.message}\n\n${code}`}
+        {uiText("could_not_render_mermaid_5386be07", { v0: state.message, v1: code })}
       </pre>
     )
   }

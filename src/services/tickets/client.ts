@@ -1,3 +1,4 @@
+import { uiText } from "@shared/i18n/ui"
 import { apiClient, isApiError } from "@services/api"
 import type { Cursor, ReadEnvelope, ResponseCommand, SnapshotRef, TicketScope, TicketSnapshot, WorkView } from "./types"
 
@@ -5,7 +6,7 @@ const sameSnapshot = (a: ReadEnvelope<unknown>, expected: SnapshotRef) => {
   if (a.snapshot.commit !== expected.commit || a.snapshot.seq !== expected.seq || a.snapshot.authority_epoch !== expected.authority_epoch
     || !Number.isSafeInteger(a.snapshot.seq) || a.snapshot.seq < 0
     || !Number.isSafeInteger(a.snapshot.authority_epoch) || a.snapshot.authority_epoch < 1) {
-    throw new Error("工单快照不一致，请刷新后重试。")
+    throw new Error(uiText("ticket_the_ticket_snapshot_is_inconsistent_refresh_a_4e2cb547"))
   }
 }
 const completeCoverage = (coverage: string) => coverage === "authoritative_scope" || coverage === "complete"
@@ -73,7 +74,7 @@ export const ticketClient = {
     return apiClient.postOnce<{ operation_id: string; committed_seq: number }>("tickets/requests/respond", command)
   },
   async artifact(hash: string) {
-    if (!/^[a-f0-9]{64}$/.test(hash)) throw new Error("成果引用无效。")
+    if (!/^[a-f0-9]{64}$/.test(hash)) throw new Error(uiText("ticket_the_artifact_reference_is_invalid__5e443df8"))
     const response = await apiClient.fetchRaw("tickets/artifacts/" + hash)
     return response.blob()
   },

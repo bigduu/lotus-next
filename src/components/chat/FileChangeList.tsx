@@ -1,3 +1,4 @@
+import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { FileDiff } from "lucide-react"
 import type { SessionFileChangeGroup } from "@/lib/sessionFileChanges"
 import {
@@ -35,6 +36,7 @@ export function FileChangeList({
   onSelect,
   scrollToGroupId,
 }: FileChangeListProps) {
+  useUiLocale()
   if (variant === "summary") {
     return (
       <div className="space-y-0.5">
@@ -46,7 +48,7 @@ export function FileChangeList({
               type="button"
               className="flex w-full items-center gap-1.5 rounded px-1 py-1 text-left text-xs hover:bg-accent"
               onClick={() => onSelect?.(group)}
-              title={`在 Review 中查看 ${path}`}
+              title={uiText("view_in_review_93af0688", { v0: path })}
             >
               <FileDiff className="size-3.5 shrink-0 text-muted-foreground" />
               <span className="min-w-0 flex-1 truncate font-mono" title={group.filePath}>
@@ -54,8 +56,7 @@ export function FileChangeList({
               </span>
               {group.changes.length > 1 ? (
                 <span className="shrink-0 text-[10px] text-muted-foreground">
-                  {group.changes.length} 次
-                </span>
+                  {uiText("count_changes", { count: group.changes.length })}</span>
               ) : null}
               <span className="shrink-0 text-[11px]">
                 <span className="text-green-600 dark:text-green-400">+{group.addedLines}</span>{" "}

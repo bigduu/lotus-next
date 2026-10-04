@@ -1,3 +1,4 @@
+import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { useEffect, useState } from "react"
 import { apiClient, getErrorMessage } from "@services/api"
 import type { BambooConfig, NotificationsConfig } from "@services/common/ServiceFactory"
@@ -59,6 +60,7 @@ function Field({
   type?: string
   placeholder?: string
 }) {
+  useUiLocale()
   return (
     <label className="block">
       <span className="mb-1 block text-xs text-muted-foreground">{label}</span>
@@ -87,6 +89,7 @@ function Field({
  * server-side, though omitting the key outright never even needs that path).
  */
 export function ChannelsSection() {
+  useUiLocale()
   const [notifications, setNotifications] = useState<NotificationsConfig | undefined>(undefined)
   const [draft, setDraft] = useState<ChannelsDraft>(() => draftFromConfig(undefined))
   const [loading, setLoading] = useState(true)
@@ -177,8 +180,8 @@ export function ChannelsSection() {
   if (loading) {
     return (
       <section className="rounded-lg border p-3">
-        <div className="mb-2 text-xs font-medium text-muted-foreground">通知渠道</div>
-        <p className="text-xs text-muted-foreground">加载中…</p>
+        <div className="mb-2 text-xs font-medium text-muted-foreground">{uiText("notification_channels_b2354ceb")}</div>
+        <p className="text-xs text-muted-foreground">{uiText("loading_4927a53b")}</p>
       </section>
     )
   }
@@ -186,12 +189,11 @@ export function ChannelsSection() {
   if (loadError) {
     return (
       <section className="rounded-lg border p-3">
-        <div className="mb-2 text-xs font-medium text-muted-foreground">通知渠道</div>
+        <div className="mb-2 text-xs font-medium text-muted-foreground">{uiText("notification_channels_b2354ceb")}</div>
         <div className="flex items-center justify-between gap-2">
           <p className="text-xs text-destructive">{loadError}</p>
           <Button size="sm" variant="secondary" className="shrink-0" onClick={() => void load()}>
-            重试
-          </Button>
+            {uiText("retry_b8784c8d")}</Button>
         </div>
       </section>
     )
@@ -199,22 +201,21 @@ export function ChannelsSection() {
 
   return (
     <section className="rounded-lg border p-3">
-      <div className="mb-2 text-xs font-medium text-muted-foreground">通知渠道</div>
+      <div className="mb-2 text-xs font-medium text-muted-foreground">{uiText("notification_channels_b2354ceb")}</div>
       <p className="mb-3 text-xs leading-relaxed text-muted-foreground">
-        配置后端如何投递通知(桌面通知、ntfy、Bark),保存后对所有设备生效。
-      </p>
+        {uiText("configure_backend_notification_delivery_desktop_ntfy_ba_d7494474")}</p>
 
       <div className="space-y-4">
         <div className="space-y-1.5">
-          <div className="text-sm font-medium">桌面通知</div>
+          <div className="text-sm font-medium">{uiText("desktop_notifications_717084d9")}</div>
           <Select value={draft.desktopMode} onValueChange={(v) => patch({ desktopMode: v as DesktopMode })}>
             <SelectTrigger className="w-full">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="auto">自动(独立运行时开启,Bodhi 内嵌时关闭)</SelectItem>
-              <SelectItem value="on">开启</SelectItem>
-              <SelectItem value="off">关闭</SelectItem>
+              <SelectItem value="auto">{uiText("auto_on_when_standalone_off_when_embedded_in_bodhi_abe65183")}</SelectItem>
+              <SelectItem value="on">{uiText("on_8da97ddd")}</SelectItem>
+              <SelectItem value="off">{uiText("notifications_off")}</SelectItem>
             </SelectContent>
           </Select>
         </div>
@@ -225,7 +226,7 @@ export function ChannelsSection() {
             <Switch
               checked={draft.ntfyEnabled}
               onCheckedChange={(v) => patch({ ntfyEnabled: v })}
-              aria-label="启用 ntfy"
+              aria-label={uiText("enable_ntfy_22f70ff4")}
             />
           </div>
           <Field
@@ -241,11 +242,11 @@ export function ChannelsSection() {
             placeholder="my-bamboo-topic"
           />
           <Field
-            label="Token(可选,自托管实例)"
+            label={uiText("token_optional_self_hosted_397fbbe8")}
             value={draft.ntfyToken}
             onChange={(v) => patch({ ntfyToken: v })}
             type="password"
-            placeholder={hasStoredNtfyToken ? "已配置，留空保持不变" : "公共 ntfy.sh 主题无需填写"}
+            placeholder={hasStoredNtfyToken ? uiText("configured_leave_blank_to_keep_f3805ede") : uiText("not_required_for_public_ntfy_sh_topics_fe732726")}
           />
         </div>
 
@@ -255,7 +256,7 @@ export function ChannelsSection() {
             <Switch
               checked={draft.barkEnabled}
               onCheckedChange={(v) => patch({ barkEnabled: v })}
-              aria-label="启用 Bark"
+              aria-label={uiText("enable_bark_d60caf2b")}
             />
           </div>
           <Field
@@ -269,7 +270,7 @@ export function ChannelsSection() {
             value={draft.barkDeviceKey}
             onChange={(v) => patch({ barkDeviceKey: v })}
             type="password"
-            placeholder={hasStoredBarkKey ? "已配置，留空保持不变" : "iOS Bark app 中的设备密钥"}
+            placeholder={hasStoredBarkKey ? uiText("configured_leave_blank_to_keep_f3805ede") : uiText("device_key_from_the_ios_bark_app_2d3b3e59")}
           />
         </div>
 
@@ -278,19 +279,19 @@ export function ChannelsSection() {
         <div className="flex items-end justify-between gap-2 border-t pt-3">
           <div className="space-y-1">
             <Button size="sm" variant="secondary" onClick={() => void sendTest()} disabled={testing}>
-              {testing ? "发送中…" : "测试通知渠道"}
+              {testing ? uiText("sending_364970d8") : uiText("test_notification_channels_109fe0da")}
             </Button>
             {attempted ? (
               <p className="text-xs text-muted-foreground">
-                {attempted.length > 0 ? `已尝试:${attempted.join(", ")}` : "未启用任何渠道"}
+                {attempted.length > 0 ? uiText("attempted_0e32a3d3", { v0: attempted.join(", ") }) : uiText("no_channels_enabled_14d78be1")}
               </p>
             ) : null}
             {testError ? <p className="text-xs text-destructive">{testError}</p> : null}
           </div>
           <div className="flex items-center gap-2">
-            {saved ? <span className="text-xs text-emerald-500">已保存</span> : null}
+            {saved ? <span className="text-xs text-emerald-500">{uiText("saved_1bd91a7d")}</span> : null}
             <Button size="sm" onClick={() => void save()} disabled={saving}>
-              {saving ? "保存中…" : "保存渠道设置"}
+              {saving ? uiText("saving_ff509c9b") : uiText("save_channel_settings_e9951ba0")}
             </Button>
           </div>
         </div>

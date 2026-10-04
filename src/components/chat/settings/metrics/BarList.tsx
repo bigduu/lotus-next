@@ -1,3 +1,4 @@
+import { uiText, useUiLocale, uiLanguage } from "@shared/i18n/ui"
 import { formatCompact } from "./format"
 
 export interface BarListItem {
@@ -15,7 +16,7 @@ export interface BarListItem {
 export function BarList({
   items,
   color = "var(--mx-chat)",
-  emptyText = "暂无数据",
+  emptyText = uiText("no_data_yet_497c8569"),
   formatValue = formatCompact,
 }: {
   items: BarListItem[]
@@ -23,6 +24,7 @@ export function BarList({
   emptyText?: string
   formatValue?: (value: number) => string
 }) {
+  useUiLocale()
   if (items.length === 0) {
     return <p className="text-xs text-muted-foreground">{emptyText}</p>
   }
@@ -31,7 +33,7 @@ export function BarList({
   return (
     <ul className="space-y-2">
       {items.map((item) => (
-        <li key={item.key} title={`${item.label}: ${item.value.toLocaleString()}`}>
+        <li key={item.key} title={`${item.label}: ${item.value.toLocaleString(uiLanguage())}`}>
           <div className="flex items-baseline justify-between gap-2">
             <span className="min-w-0 truncate text-xs">
               {item.label}

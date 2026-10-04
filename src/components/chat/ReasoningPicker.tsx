@@ -1,3 +1,4 @@
+import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { Check, Gauge } from "lucide-react"
 import { cn } from "@/lib/utils"
 import type { ReasoningEffortSelection } from "@shared/utils/reasoningEffort"
@@ -11,16 +12,16 @@ import {
 } from "@/components/ui/dropdown-menu"
 
 const EFFORTS: { value: ReasoningEffortSelection; label: string }[] = [
-  { value: "auto", label: "自动" },
-  { value: "none", label: "关闭" },
-  { value: "low", label: "低" },
-  { value: "medium", label: "中" },
-  { value: "high", label: "高" },
-  { value: "xhigh", label: "极高" },
-  { value: "max", label: "最大" },
+  { value: "auto", get label() { return uiText("auto_7eb336e4") } },
+  { value: "none", get label() { return uiText("reasoning_none") } },
+  { value: "low", get label() { return uiText("low_aa9e366f") } },
+  { value: "medium", get label() { return uiText("medium_a567bdaa") } },
+  { value: "high", get label() { return uiText("high_b1c27820") } },
+  { value: "xhigh", get label() { return uiText("extra_high_392d0dce") } },
+  { value: "max", get label() { return uiText("max_9730c15f") } },
 ]
 
-const reasoningEffortLabel = (value: ReasoningEffortSelection) => EFFORTS.find((e) => e.value === value)?.label ?? "自动"
+const reasoningEffortLabel = (value: ReasoningEffortSelection) => EFFORTS.find((e) => e.value === value)?.label ?? uiText("auto_7eb336e4")
 
 /** Reasoning-effort switcher — mirrors ModelPicker's pill + checkmark menu. */
 export function ReasoningPicker({
@@ -40,14 +41,15 @@ export function ReasoningPicker({
   allowUltra?: boolean
   thinkingMode?: ThinkingMode | null
 }) {
-  const current = allowUltra && thinkingMode === null ? "未确认"
-    : allowUltra && thinkingMode === "ultra" ? "Ultra · 编排" : reasoningEffortLabel(value)
+  useUiLocale()
+  const current = allowUltra && thinkingMode === null ? uiText("unconfirmed_c098e854")
+    : allowUltra && thinkingMode === "ultra" ? uiText("ultra_orchestration_5857fcd7") : reasoningEffortLabel(value)
   const standard = !allowUltra || thinkingMode !== "ultra"
 
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
-        aria-label="推理强度"
+        aria-label={uiText("reasoning_level_c8c14507")}
         disabled={disabled}
         className="inline-flex items-center gap-1 rounded-full border bg-card px-2.5 py-1 text-xs font-medium text-foreground outline-none transition-colors hover:bg-accent focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50"
       >
@@ -62,7 +64,7 @@ export function ReasoningPicker({
         {allowUltra ? (
           <DropdownMenuItem onClick={() => onChange("ultra")} className="gap-2 rounded-xl px-3 py-2">
             <Check className={cn("size-4 shrink-0 text-primary", thinkingMode === "ultra" ? "opacity-100" : "opacity-0")} />
-            <span className={cn("truncate", thinkingMode === "ultra" && "font-medium")}>Ultra · 编排</span>
+            <span className={cn("truncate", thinkingMode === "ultra" && "font-medium")}>{uiText("ultra_orchestration_5857fcd7")}</span>
           </DropdownMenuItem>
         ) : null}
         {EFFORTS.map((e) => (

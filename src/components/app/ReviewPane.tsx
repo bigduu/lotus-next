@@ -1,3 +1,4 @@
+import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { useMemo } from "react"
 import { FileDiff } from "lucide-react"
 import { useShallow } from "zustand/react/shallow"
@@ -23,6 +24,7 @@ export function ReviewPane({
   workspace?: string | null
   targetFilePath?: string | null
 }) {
+  useUiLocale()
   const messages = useAppStore(
     useShallow((state) =>
       sessionId ? (selectSessionById(sessionId)(state)?.messages ?? []) : [],
@@ -45,8 +47,7 @@ export function ReviewPane({
   if (!sessionId) {
     return (
       <div className="flex min-h-0 flex-1 items-center justify-center p-8 text-center text-sm text-muted-foreground">
-        打开一个会话后即可查看变更。
-      </div>
+        {uiText("open_a_session_to_view_changes_7de76304")}</div>
     )
   }
 
@@ -54,7 +55,7 @@ export function ReviewPane({
     return (
       <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 p-8 text-center text-sm text-muted-foreground">
         <FileDiff className="size-6 opacity-60" />
-        <p>当前会话还没有可 Review 的文件变更。</p>
+        <p>{uiText("this_session_has_no_file_changes_to_review_yet_062e5342")}</p>
       </div>
     )
   }
@@ -63,10 +64,9 @@ export function ReviewPane({
     <div className="min-h-0 flex-1 overflow-y-auto p-4">
       <div className="mb-3 flex items-center gap-2 text-sm font-medium">
         <FileDiff className="size-4 text-muted-foreground" />
-        <span>文件变更</span>
+        <span>{uiText("file_changes_4d016b2f")}</span>
         <span className="text-xs font-normal text-muted-foreground">
-          {summary.fileCount} 个文件 · {summary.editCount} 次修改
-        </span>
+          {uiText("count_files", { count: summary.fileCount })} · {uiText("count_changes", { count: summary.editCount })}</span>
         <span className="ml-auto shrink-0 text-xs font-normal">
           <span className="text-green-600 dark:text-green-400">+{summary.addedLines}</span>{" "}
           <span className="text-red-600 dark:text-red-400">−{summary.removedLines}</span>

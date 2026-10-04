@@ -1,23 +1,18 @@
-const compactFormatter = new Intl.NumberFormat("en", {
-  notation: "compact",
-  maximumFractionDigits: 1,
-})
-
-const exactFormatter = new Intl.NumberFormat("en-US")
+import { uiLanguage } from "@shared/i18n/ui"
 
 export function formatCompact(value: number | null | undefined): string {
   if (value == null || Number.isNaN(value)) return "0"
-  return compactFormatter.format(value)
+  return new Intl.NumberFormat(uiLanguage(), { notation: "compact", maximumFractionDigits: 1 }).format(value)
 }
 
 export function formatExact(value: number | null | undefined): string {
   if (value == null || Number.isNaN(value)) return "0"
-  return exactFormatter.format(value)
+  return new Intl.NumberFormat(uiLanguage()).format(value)
 }
 
 export function formatPercent(value: number | null | undefined): string {
   if (value == null || Number.isNaN(value)) return "0%"
-  return `${value.toFixed(1)}%`
+  return new Intl.NumberFormat(uiLanguage(), { style: "percent", minimumFractionDigits: 1, maximumFractionDigits: 1 }).format(value / 100)
 }
 
 export function formatDuration(durationMs?: number | null): string {
@@ -37,7 +32,7 @@ export function formatDateTime(value?: string | null): string {
   if (!value) return "-"
   const parsed = new Date(value)
   if (Number.isNaN(parsed.getTime())) return value
-  return parsed.toLocaleString("zh-CN", {
+  return parsed.toLocaleString(uiLanguage(), {
     month: "2-digit",
     day: "2-digit",
     hour: "2-digit",

@@ -1,3 +1,4 @@
+import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { useMemo, useState } from "react"
 import { Columns2, FileDiff, Rows3, WrapText } from "lucide-react"
 import { useContainerWidth } from "@/hooks/useContainerWidth"
@@ -55,6 +56,7 @@ export function FileChangeView({
   scrollMode = "contained",
   allowSplit,
 }: FileChangeViewProps) {
+  useUiLocale()
   const [containerRef, containerWidth] = useContainerWidth<HTMLDivElement>(allowSplit === undefined)
   const [internalViewMode, setInternalViewMode] = useState<FileChangeViewMode>("unified")
   const [internalWrapLines, setInternalWrapLines] = useState(false)
@@ -103,8 +105,7 @@ export function FileChangeView({
           </span>
           {payload.diff?.truncated ? (
             <span className="shrink-0 rounded bg-muted px-1 text-[10px] text-muted-foreground">
-              已截断
-            </span>
+              {uiText("truncated_4fb9aa6e")}</span>
           ) : null}
           <button
             type="button"
@@ -113,8 +114,8 @@ export function FileChangeView({
               "shrink-0 rounded p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground",
               shouldWrapLines && "bg-accent text-foreground",
             )}
-            title={shouldWrapLines ? "不换行" : "自动换行"}
-            aria-label={shouldWrapLines ? "不换行" : "自动换行"}
+            title={shouldWrapLines ? uiText("no_wrapping_5e4313a9") : uiText("wrap_lines_b096842c")}
+            aria-label={shouldWrapLines ? uiText("no_wrapping_5e4313a9") : uiText("wrap_lines_b096842c")}
             aria-pressed={shouldWrapLines}
           >
             <WrapText className="size-3.5" />
@@ -126,8 +127,8 @@ export function FileChangeView({
                 setInternalViewMode((current) => (current === "split" ? "unified" : "split"))
               }
               className="shrink-0 rounded p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground"
-              title={effectiveViewMode === "split" ? "统一视图" : "对照视图"}
-              aria-label={effectiveViewMode === "split" ? "统一视图" : "对照视图"}
+              title={effectiveViewMode === "split" ? uiText("unified_view_ed58c78e") : uiText("side_by_side_view_0b210103")}
+              aria-label={effectiveViewMode === "split" ? uiText("unified_view_ed58c78e") : uiText("side_by_side_view_0b210103")}
             >
               {effectiveViewMode === "split" ? (
                 <Rows3 className="size-3.5" />
@@ -188,7 +189,7 @@ export function FileChangeView({
       ) : (
         <div
           role="table"
-          aria-label={`${fileName} 统一差异`}
+          aria-label={uiText("unified_diff_3046b5d4", { v0: fileName })}
           className={cn(overflowClass, "font-mono text-xs leading-relaxed")}
         >
           {lines.map((line, index) => (

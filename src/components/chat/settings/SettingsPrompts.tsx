@@ -1,3 +1,4 @@
+import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { useState } from "react"
 import { Pencil, Plus, Trash2 } from "lucide-react"
 import { useAppStore } from "@shared/store/appStore"
@@ -43,6 +44,7 @@ function ToggleRow({
   checked: boolean
   onCheckedChange: (checked: boolean) => void
 }) {
+  useUiLocale()
   return (
     <div className="flex items-start justify-between gap-3">
       <div className="min-w-0">
@@ -62,6 +64,7 @@ function ToggleRow({
 }
 
 export function SettingsPrompts() {
+  useUiLocale()
   const systemPrompts = useAppStore((state) => state.systemPrompts)
   const addSystemPrompt = useAppStore((state) => state.addSystemPrompt)
   const updateSystemPrompt = useAppStore((state) => state.updateSystemPrompt)
@@ -120,7 +123,7 @@ export function SettingsPrompts() {
     try {
       await deleteSystemPrompt(prompt.id)
     } catch (error) {
-      setListError(`删除「${prompt.name}」失败:${getErrorMessage(error)}`)
+      setListError(uiText("could_not_delete_e74a58dc", { v0: prompt.name, v1: getErrorMessage(error) }))
     }
   }
 
@@ -146,14 +149,13 @@ export function SettingsPrompts() {
       {/* ── presets ── */}
       <section className="rounded-lg border p-3">
         <div className="mb-2 flex items-center justify-between">
-          <div className="text-xs font-medium text-muted-foreground">系统提示词预设</div>
+          <div className="text-xs font-medium text-muted-foreground">{uiText("system_prompt_presets_3aced1c3")}</div>
           <Button size="sm" variant="secondary" onClick={() => openDialog(null)}>
-            <Plus className="size-4" /> 新增
-          </Button>
+            <Plus className="size-4" />{uiText("add_0006d696")}</Button>
         </div>
         {listError ? <p className="mb-2 text-xs text-destructive">{listError}</p> : null}
         {systemPrompts.length === 0 ? (
-          <p className="text-xs text-muted-foreground">暂无预设</p>
+          <p className="text-xs text-muted-foreground">{uiText("no_presets_yet_0c75be1d")}</p>
         ) : (
           <ul className="space-y-2">
             {systemPrompts.map((prompt) => (
@@ -163,8 +165,7 @@ export function SettingsPrompts() {
                     <span className="truncate text-sm font-medium">{prompt.name}</span>
                     {prompt.isDefault ? (
                       <Badge variant="secondary" className="shrink-0 text-[10px]">
-                        默认
-                      </Badge>
+                        {uiText("default_844b8cc8")}</Badge>
                     ) : null}
                   </div>
                   <div className="truncate text-xs text-muted-foreground">
@@ -175,14 +176,14 @@ export function SettingsPrompts() {
                   <>
                     <button
                       onClick={() => openDialog(prompt)}
-                      aria-label="编辑"
+                      aria-label={uiText("edit_05183656")}
                       className="shrink-0 rounded p-1 text-muted-foreground hover:text-foreground"
                     >
                       <Pencil className="size-3.5" />
                     </button>
                     <button
                       onClick={() => void removePreset(prompt)}
-                      aria-label="删除"
+                      aria-label={uiText("delete_2f9daa82")}
                       className="shrink-0 rounded p-1 text-muted-foreground hover:text-destructive"
                     >
                       <Trash2 className="size-3.5" />
@@ -197,31 +198,29 @@ export function SettingsPrompts() {
 
       {/* ── enhancement text ── */}
       <section className="rounded-lg border p-3">
-        <div className="mb-2 text-xs font-medium text-muted-foreground">提示词增强</div>
+        <div className="mb-2 text-xs font-medium text-muted-foreground">{uiText("prompt_enhancement_e4500793")}</div>
         <p className="mb-2 text-xs leading-relaxed text-muted-foreground">
-          追加到系统提示词末尾的自定义内容,对所有会话生效。
-        </p>
+          {uiText("custom_content_appended_to_system_prompts_for_all_sessi_7e014a9a")}</p>
         <Textarea
           className="min-h-24 resize-y text-sm"
-          placeholder="输入要追加的增强内容…"
+          placeholder={uiText("enter_enhancement_text_to_append_bb366915")}
           value={enhancement}
           onChange={(e) => setEnhancement(e.target.value)}
         />
         <div className="mt-2 flex items-center justify-end gap-2">
-          {enhancementSaved ? <span className="text-xs text-muted-foreground">已保存</span> : null}
+          {enhancementSaved ? <span className="text-xs text-muted-foreground">{uiText("saved_1bd91a7d")}</span> : null}
           <Button size="sm" onClick={saveEnhancement}>
-            保存
-          </Button>
+            {uiText("save_a3030bf8")}</Button>
         </div>
       </section>
 
       {/* ── enhancement toggles ── */}
       <section className="rounded-lg border p-3">
-        <div className="mb-2 text-xs font-medium text-muted-foreground">增强开关</div>
+        <div className="mb-2 text-xs font-medium text-muted-foreground">{uiText("enhancement_switches_e2a6a5a8")}</div>
         <div className="space-y-3">
           <ToggleRow
-            label="Mermaid 图表增强"
-            description="引导模型在解释流程、架构时输出 Mermaid 图表。"
+            label={uiText("mermaid_diagram_enhancement_267bc7a4")}
+            description={uiText("encourage_mermaid_diagrams_when_explaining_workflows_an_d05fbd2a")}
             checked={mermaidEnabled}
             onCheckedChange={(checked) => {
               setMermaidEnabled(checked)
@@ -229,8 +228,8 @@ export function SettingsPrompts() {
             }}
           />
           <ToggleRow
-            label="任务列表规则"
-            description="引导模型用 Task 工具管理多步任务进度。"
+            label={uiText("task_list_rules_ec44f37e")}
+            description={uiText("encourage_the_model_to_track_multi_step_tasks_with_the__97ac7808")}
             checked={taskEnabled}
             onCheckedChange={(checked) => {
               setTaskEnabled(checked)
@@ -239,8 +238,8 @@ export function SettingsPrompts() {
           />
           {showCopilotToggle ? (
             <ToggleRow
-              label="Copilot 结束前确认"
-              description="要求 Copilot 会话结束前必须调用 conclusion_with_options 工具向你确认,否则视为未完成。"
+              label={uiText("copilot_completion_confirmation_735f51ca")}
+              description={uiText("require_copilot_to_call_conclusion_with_options_for_you_c22f3eda")}
               checked={copilotEnabled}
               onCheckedChange={(checked) => {
                 setCopilotEnabled(checked)
@@ -259,26 +258,25 @@ export function SettingsPrompts() {
         }}
       >
         <ResponsiveDialogContent className="p-5 sm:max-w-lg">
-          <ResponsiveDialogTitle>{editingPrompt ? "编辑预设" : "新增预设"}</ResponsiveDialogTitle>
+          <ResponsiveDialogTitle>{editingPrompt ? uiText("edit_preset_4e32d8db") : uiText("add_preset_0a866812")}</ResponsiveDialogTitle>
           <div className="mt-3 space-y-2.5">
-            <Input placeholder="名称" value={name} onChange={(e) => setName(e.target.value)} />
+            <Input placeholder={uiText("name_d44e9b3d")} value={name} onChange={(e) => setName(e.target.value)} />
             <Textarea
               className="min-h-40 resize-y text-sm"
-              placeholder="提示词内容"
+              placeholder={uiText("prompt_content_cc1ab53a")}
               value={content}
               onChange={(e) => setContent(e.target.value)}
             />
             {dialogError ? <p className="text-xs text-destructive">{dialogError}</p> : null}
             <div className="flex justify-end gap-2">
               <Button size="sm" variant="secondary" onClick={closeDialog}>
-                取消
-              </Button>
+                {uiText("cancel_2cd0f3be")}</Button>
               <Button
                 size="sm"
                 onClick={() => void savePreset()}
                 disabled={saving || !name.trim() || !content.trim()}
               >
-                {saving ? "保存中…" : "保存"}
+                {saving ? uiText("saving_ff509c9b") : uiText("save_a3030bf8")}
               </Button>
             </div>
           </div>

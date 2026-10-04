@@ -1,3 +1,4 @@
+import { uiText } from "@shared/i18n/ui"
 import type { Decision, PendingRequest, ResponseCommand, TicketSnapshot, WorkView } from "./types"
 
 export interface TicketState {
@@ -13,7 +14,7 @@ export function applyTicketSnapshot(previous: TicketState | null, next: TicketSn
     if (next.snapshot.authority_epoch < previous.current.snapshot.authority_epoch
       || (sameAuthority && next.snapshot.seq < previous.current.snapshot.seq)) return previous
     if (sameAuthority && next.snapshot.seq === previous.current.snapshot.seq
-      && next.snapshot.commit !== previous.current.snapshot.commit) throw new Error("工单快照需要重新同步。")
+      && next.snapshot.commit !== previous.current.snapshot.commit) throw new Error(uiText("ticket_the_ticket_snapshot_needs_to_be_synchronized__dbde96ba"))
   }
   const requests = sameAuthority && previous ? { ...previous.requests } : {}
   const works = sameAuthority && previous && !next.complete ? { ...previous.works } : {}
@@ -25,7 +26,7 @@ export function applyTicketSnapshot(previous: TicketState | null, next: TicketSn
       if (old && (old.generation > request.generation || old.prompt_revision > request.prompt_revision
         || old.contract_revision > request.contract_revision || old.updated_seq > request.updated_seq)) continue
       if (old && old.updated_seq === request.updated_seq && old.status !== request.status) {
-        throw new Error("请求状态存在冲突，请刷新工单。")
+        throw new Error(uiText("ticket_request_statuses_conflict_refresh_the_ticket__1788ebf0"))
       }
       requests[request.id] = request
     }
@@ -46,9 +47,9 @@ export function responseCommand(state: TicketState, request: PendingRequest, dec
   const current = state.requests[request.id]
   if (!current || current.updated_seq !== request.updated_seq || current.prompt_revision !== request.prompt_revision
     || current.generation !== request.generation || current.contract_revision !== request.contract_revision
-    || current.assignment_id !== request.assignment_id || effectiveStatus(state, current) !== "open") throw new Error("这个请求已失效，请使用当前请求。")
+    || current.assignment_id !== request.assignment_id || effectiveStatus(state, current) !== "open") throw new Error(uiText("ticket_this_request_is_no_longer_active_use_the_curr_87d4e1a7"))
   if (request.kind.kind !== decision.kind || (request.kind.kind === "approval" && decision.kind === "approval"
-    && request.kind.fingerprint !== decision.fingerprint)) throw new Error("动作或批准范围已变化。")
+    && request.kind.fingerprint !== decision.fingerprint)) throw new Error(uiText("ticket_the_action_or_approval_scope_has_changed__82a9436c"))
   return { operation_id: operationId, binding: state.current.scope.binding,
     expected_seq: state.current.snapshot.seq, expected_epoch: state.current.snapshot.authority_epoch,
     target: { request_id: request.id, work_id: request.work_id, assignment_id: request.assignment_id,

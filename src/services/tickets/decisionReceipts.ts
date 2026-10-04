@@ -1,3 +1,4 @@
+import { uiText } from "@shared/i18n/ui"
 import type { ResponseCommand } from "./types"
 
 const prefix = (session: string) => `lotus-next.ticket-decision.${encodeURIComponent(session)}.`
@@ -9,7 +10,7 @@ export function readDecisionReceipts(session: string): Record<string, ResponseCo
   const result: Record<string, ResponseCommand> = {}
   for (const name of Object.keys(sessionStorage).filter((name) => name.startsWith(prefix(session)))) {
     const raw = sessionStorage.getItem(name)
-    if (!raw || raw.length > 32768) throw new Error("请求回执无法核对，回答和批准已暂停。")
+    if (!raw || raw.length > 32768) throw new Error(uiText("ticket_request_receipts_could_not_be_verified_answer_4dfb4150"))
     const command = JSON.parse(raw) as ResponseCommand
     const identity = (value: unknown): value is string => typeof value === "string" && value.trim().length > 0 && value.length <= 512
     const revision = (value: unknown) => Number.isSafeInteger(value) && (value as number) >= 1
@@ -23,7 +24,7 @@ export function readDecisionReceipts(session: string): Record<string, ResponseCo
       || !Number.isSafeInteger(command.expected_seq) || command.expected_seq < 0 || !revision(command.expected_epoch)
       || !(command.decision?.kind === "question" && typeof command.decision.answer === "string" && command.decision.answer.trim().length > 0
         || command.decision?.kind === "approval" && identity(command.decision.fingerprint) && typeof command.decision.approve === "boolean")) {
-      throw new Error("请求回执无法核对，回答和批准已暂停。")
+      throw new Error(uiText("ticket_request_receipts_could_not_be_verified_answer_4dfb4150"))
     }
     result[command.target.request_id] = command
   }
@@ -32,9 +33,9 @@ export function readDecisionReceipts(session: string): Record<string, ResponseCo
 
 export function saveDecisionReceipt(session: string, command: ResponseCommand) {
   const raw = JSON.stringify(command)
-  if (raw.length > 32768) throw new Error("请求回执超出保存限制，尚未发送。")
+  if (raw.length > 32768) throw new Error(uiText("ticket_the_request_receipt_exceeds_the_storage_limit_34b4aced"))
   sessionStorage.setItem(key(session, command.target.request_id), raw)
-  if (sessionStorage.getItem(key(session, command.target.request_id)) !== raw) throw new Error("请求回执未保存，尚未发送。")
+  if (sessionStorage.getItem(key(session, command.target.request_id)) !== raw) throw new Error(uiText("ticket_the_request_receipt_was_not_saved_nothing_was_bf0abec3"))
 }
 
 export function clearDecisionReceipt(session: string, command: ResponseCommand) {

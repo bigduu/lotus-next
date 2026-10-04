@@ -1,3 +1,4 @@
+import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { useEffect, useRef, useState } from "react"
 import { apiClient, getErrorMessage, isApiError } from "@services/api"
 import { agentClient, type ChatRequest, type ChatResponse } from "@services/chat/AgentService"
@@ -22,7 +23,7 @@ function readReceipt(id: string): Delivery | undefined {
     || (value.references !== undefined && (typeof value.references !== "object" || value.references === null
       || Object.entries(value.references).some(([key, reference]) => !["thread_id", "in_reply_to", "correlation_id"].includes(key)
         || typeof reference !== "string" || reference.length === 0 || reference.length > 128)))) {
-    throw new Error("原消息回执无法读取，请先确认上次发送结果。")
+    throw new Error(uiText("ticket_the_original_message_receipt_could_not_be_rea_0d475435"))
   }
   return value
 }
@@ -37,6 +38,7 @@ function canonicalRequest(value: unknown): unknown {
 // One ordinary composer, one canonical Human ingress. An uncertain delivery
 // retains its exact payload/ID; no automatic retry of a changed instruction.
 export function useTicketIngress(sessionId?: string | null) {
+  useUiLocale()
   const sequence = useRef(0)
   const view = useRef({ sessionId })
   if (view.current.sessionId !== sessionId) view.current = { sessionId }
@@ -53,7 +55,7 @@ export function useTicketIngress(sessionId?: string | null) {
     try {
       const pending = readReceipt(target)?.phase === "activation"
       setExecutePending(pending ? target : null)
-      setError(pending ? "消息已保存，启动尚未确认；可以重试启动。" : null)
+      setError(pending ? uiText("ticket_message_saved_but_start_is_not_confirmed_you__c27c17c7") : null)
     } catch (failure) { setError(getErrorMessage(failure)) }
   }
   useEffect(() => {
@@ -66,7 +68,7 @@ export function useTicketIngress(sessionId?: string | null) {
     if (!sessionId) return
     try {
       if (readReceipt(sessionId)?.phase === "activation") {
-        setExecutePending(sessionId); setError("消息已保存，启动尚未确认；可以重试启动。")
+        setExecutePending(sessionId); setError(uiText("ticket_message_saved_but_start_is_not_confirmed_you__c27c17c7"))
       }
     } catch (failure) { setError(getErrorMessage(failure)) }
   }, [sessionId])
@@ -87,16 +89,16 @@ export function useTicketIngress(sessionId?: string | null) {
   }
   const execute = async (sessionId: string, delivery: Delivery, captured: View) => {
     if (getRootModeFenceState(sessionId) !== "clear") {
-      refreshReceipt(sessionId); updateError(captured, sessionId, "消息已保存；Root 模式切换尚未确认，启动已暂停。")
+      refreshReceipt(sessionId); updateError(captured, sessionId, uiText("ticket_message_saved_but_the_root_mode_change_is_not_12907d7e"))
       return false
     }
     try {
       const result = await agentClient.execute(sessionId)
-      if (result.session_id !== sessionId || !["started", "already_running", "completed"].includes(result.status)) throw new Error("消息已保存，运行尚未启动。")
-      if (!clearOwnedReceipt(sessionId, delivery.id)) throw new Error("消息回执已变化，请刷新后核对。")
+      if (result.session_id !== sessionId || !["started", "already_running", "completed"].includes(result.status)) throw new Error(uiText("ticket_message_saved_the_run_has_not_started__383c6c1b"))
+      if (!clearOwnedReceipt(sessionId, delivery.id)) throw new Error(uiText("ticket_the_message_receipt_has_changed_refresh_and_c_5517657b"))
       void useAppStore.getState().loadChatHistory(sessionId).catch(() => {})
       return true
-    } catch { refreshReceipt(sessionId); updateError(captured, sessionId, "消息已保存，启动尚未确认；可以重试启动。"); return false }
+    } catch { refreshReceipt(sessionId); updateError(captured, sessionId, uiText("ticket_message_saved_but_start_is_not_confirmed_you__c27c17c7")); return false }
   }
   const send = async (request: ChatRequest): Promise<SendSubmissionResult> => {
     const sessionId = request.session_id
@@ -112,19 +114,19 @@ export function useTicketIngress(sessionId?: string | null) {
       const prior = readReceipt(sessionId)
       replay = !!prior
       if (prior?.phase === "activation") {
-        refreshReceipt(sessionId); updateError(captured, sessionId, "消息已保存，请先确认启动，避免重复发送。")
+        refreshReceipt(sessionId); updateError(captured, sessionId, uiText("ticket_message_saved_confirm_the_start_first_to_avoi_d9f0157f"))
         return { kind: "blocked" }
       }
       if (prior?.references && Object.entries(prior.references).some(([key, value]) =>
         request[key as keyof References] !== undefined && request[key as keyof References] !== value)) {
-        updateError(captured, sessionId, "上次消息尚未确认，请保持原引用后重试。")
+        updateError(captured, sessionId, uiText("ticket_the_previous_message_is_not_confirmed_keep_th_18bb3408"))
         return { kind: "blocked" }
       }
       const restored = prior?.references ? { ...request, ...prior.references } : request
       const bytes = new TextEncoder().encode(JSON.stringify(prior && prior.fingerprint_version === undefined ? restored : canonicalRequest(restored)))
       const fingerprint = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)), (byte) => byte.toString(16).padStart(2, "0")).join("")
       if (prior && prior.fingerprint !== fingerprint) {
-        updateError(captured, sessionId, "上次消息尚未确认，请先用原文重试，避免重复创建工作。")
+        updateError(captured, sessionId, uiText("ticket_the_previous_message_is_not_confirmed_retry_w_26be7bc7"))
         return { kind: "blocked" }
       }
       if (getRootModeFenceState(sessionId) !== "clear") return { kind: "blocked" }
@@ -138,8 +140,8 @@ export function useTicketIngress(sessionId?: string | null) {
       sessionStorage.setItem(receiptKey(sessionId), JSON.stringify(saved))
       const response = await apiClient.postOnce<ChatResponse>("chat", { ...restored, message_id: saved.id, correlation_id: restored.correlation_id ?? saved.id })
       if (response.session_id !== sessionId || response.message_id !== saved.id
-        || !Number.isSafeInteger(response.ingress_seq) || (response.ingress_seq ?? 0) < 1) throw new Error("未收到同一条消息的持久化确认。")
-      if (readReceipt(sessionId)?.id !== saved.id) throw new Error("消息回执已变化，请刷新后核对。")
+        || !Number.isSafeInteger(response.ingress_seq) || (response.ingress_seq ?? 0) < 1) throw new Error(uiText("ticket_no_persistence_confirmation_was_received_for__9144eecb"))
+      if (readReceipt(sessionId)?.id !== saved.id) throw new Error(uiText("ticket_the_message_receipt_has_changed_refresh_and_c_5517657b"))
       const acknowledged: Delivery = { ...saved, phase: "activation" }
       sessionStorage.setItem(receiptKey(sessionId), JSON.stringify(acknowledged))
       refreshReceipt(sessionId)
@@ -149,7 +151,7 @@ export function useTicketIngress(sessionId?: string | null) {
       if (!replay && deliveryId && isApiError(failure) && failure.status >= 400 && failure.status < 500) {
         try { clearOwnedReceipt(sessionId, deliveryId) } catch { /* Preserve an unreadable recovery receipt. */ }
       }
-      updateError(captured, sessionId, getErrorMessage(failure) + " 草稿已保留；重试将使用同一条消息。")
+      updateError(captured, sessionId, getErrorMessage(failure) + uiText("ticket__draft_preserved_retrying_will_use_the_same_m_0c9ddb59"))
       return { kind: "unconfirmed", operationId }
     } finally { admittedSessions.delete(sessionId); notifyAdmissions() }
   }

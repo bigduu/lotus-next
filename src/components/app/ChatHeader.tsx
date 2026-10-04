@@ -1,3 +1,4 @@
+import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { type ReactNode } from "react"
 import { Menu } from "lucide-react"
 import { useShallow } from "zustand/react/shallow"
@@ -30,6 +31,7 @@ export function ChatHeader({
   /** Desktop: sidebar is collapsed, so show the menu button to bring it back. */
   sidebarCollapsed: boolean
 }) {
+  useUiLocale()
   // Which machine the current session runs on — only badge non-local placements
   // (root sessions default to the backend's own host; that's noise here).
   const placement = useAppStore(
@@ -46,7 +48,7 @@ export function ChatHeader({
         size="icon"
         variant="ghost"
         className={cn("md:hidden", sidebarCollapsed && "md:inline-flex")}
-        aria-label="菜单"
+        aria-label={uiText("menu_4ce4cafd")}
         onClick={onOpenSidebar}
       >
         <Menu />

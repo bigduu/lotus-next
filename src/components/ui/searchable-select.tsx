@@ -1,3 +1,4 @@
+import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { useMemo, useRef, useState } from "react"
 import { Check, ChevronDown, Search, X } from "lucide-react"
 import { cn } from "@/lib/utils"
@@ -61,19 +62,20 @@ export function SearchableSelect<T, V>({
   getValue,
   getLabel,
   getSearchTerms,
-  placeholder = "选择…",
-  searchPlaceholder = "搜索…",
-  clearLabel = "清空搜索",
-  emptyText = "没有匹配的选项",
+  placeholder = uiText("select_4aea6b5f"),
+  searchPlaceholder = uiText("search_a249f60c"),
+  clearLabel = uiText("clear_search_b6f00afa"),
+  emptyText = uiText("no_matching_options_e4a57cc0"),
   menuPlacement = "down",
   menuAlign = "left",
-  searchAriaLabel = "搜索",
-  optionListAriaLabel = "选项列表",
+  searchAriaLabel = uiText("search_44ce7ae9"),
+  optionListAriaLabel = uiText("options_c9710c82"),
   optionDataAttr = "data-searchable-option",
   className,
   disabled = false,
   title,
 }: SearchableSelectProps<T, V>) {
+  useUiLocale()
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState("")
   const searchRef = useRef<HTMLInputElement>(null)

@@ -1,3 +1,4 @@
+import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { useCallback, useEffect, useMemo, useState } from "react"
 import { RefreshCw, Search } from "lucide-react"
 import { skillService } from "@services/skill/SkillService"
@@ -11,6 +12,7 @@ import { Switch } from "@/components/ui/switch"
 import { cn } from "@/lib/utils"
 
 export function SettingsSkills() {
+  useUiLocale()
   const config = useBambooConfigStore((s) => s.config)
   const loadConfig = useBambooConfigStore((s) => s.loadConfig)
   const saveConfig = useBambooConfigStore((s) => s.saveConfig)
@@ -41,7 +43,7 @@ export function SettingsSkills() {
         ])
         setSkills(res.skills)
       } catch (e) {
-        setLoadError(e instanceof Error ? e.message : "加载技能失败")
+        setLoadError(e instanceof Error ? e.message : uiText("failed_to_load_skills_25d4f16d"))
       } finally {
         setLoading(false)
       }
@@ -81,7 +83,7 @@ export function SettingsSkills() {
     } catch (e) {
       setSaveError({
         id: skill.id,
-        message: e instanceof Error ? e.message : "保存技能状态失败",
+        message: e instanceof Error ? e.message : uiText("failed_to_save_skill_state_369d373b"),
       })
     } finally {
       setSavingId(null)
@@ -109,8 +111,7 @@ export function SettingsSkills() {
     <div className="space-y-3">
       <div className="flex items-start justify-between gap-2">
         <p className="text-xs leading-relaxed text-muted-foreground">
-          在输入框输入 <code>/</code> 触发技能。被禁用的技能不会进入系统提示,运行时也禁止 load_skill。
-        </p>
+          {uiText("type_in_the_composer_dcfa53f6")} <code>/</code>{uiText("to_trigger_a_skill_disabled_skills_are_excluded_from_sy_fa49c48f")}</p>
         <Button
           size="sm"
           variant="secondary"
@@ -118,15 +119,14 @@ export function SettingsSkills() {
           onClick={() => void load(true)}
           disabled={loading}
         >
-          <RefreshCw className={cn("size-4", loading && "animate-spin")} /> 刷新
-        </Button>
+          <RefreshCw className={cn("size-4", loading && "animate-spin")} />{uiText("refresh_aee88743")}</Button>
       </div>
 
       <div className="relative">
         <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
         <Input
           className="pl-8"
-          placeholder="搜索技能(名称 / 描述 / 工具)"
+          placeholder={uiText("search_skills_name_description_tools_7b0a1647")}
           value={search}
           onChange={(e) => setSearch(e.target.value)}
         />
@@ -135,16 +135,15 @@ export function SettingsSkills() {
       {loadError ? <p className="text-xs text-destructive">{loadError}</p> : null}
 
       {loading && skills.length === 0 ? (
-        <p className="text-xs text-muted-foreground">加载中…</p>
+        <p className="text-xs text-muted-foreground">{uiText("loading_4927a53b")}</p>
       ) : filtered.length === 0 ? (
         <p className="text-xs text-muted-foreground">
-          {q ? "没有匹配的技能" : "暂无技能"}
+          {q ? uiText("no_skills_match_the_current_search_578e81dc") : uiText("no_skills_yet_990d5ec7")}
         </p>
       ) : (
         <>
           <p className="text-xs text-muted-foreground">
-            共 {skills.length} 个技能
-            {disabledIds.size > 0 ? `,已禁用 ${disabledIds.size} 个` : ""}
+            {uiText("total_76e547a8")} {skills.length} {uiText("skills_ac2141d1")} {disabledIds.size > 0 ? uiText("disabled_7f49fd2e", { v0: disabledIds.size }) : ""}
           </p>
           <ul className="space-y-2">
             {filtered.map((s) => {
@@ -155,14 +154,13 @@ export function SettingsSkills() {
                     <span className="min-w-0 flex-1 truncate font-medium">{s.name}</span>
                     {disabled ? (
                       <Badge variant="outline" className="text-[10px]">
-                        已禁用
-                      </Badge>
+                        {uiText("disabled_bc5a87a7")}</Badge>
                     ) : null}
                     <Switch
                       checked={!disabled}
                       disabled={savingId === s.id}
                       onCheckedChange={(checked) => void toggle(s, checked)}
-                      aria-label={disabled ? `启用 ${s.name}` : `禁用 ${s.name}`}
+                      aria-label={disabled ? uiText("enable_57077dfa", { v0: s.name }) : uiText("disable_df52dc37", { v0: s.name })}
                     />
                   </div>
                   {s.description ? (
@@ -179,7 +177,7 @@ export function SettingsSkills() {
                       ) : null}
                       {s.compatibility ? (
                         <Badge variant="secondary" className="text-[10px]">
-                          兼容: {s.compatibility}
+                          {uiText("compatible_0225420a")} {s.compatibility}
                         </Badge>
                       ) : null}
                       {(s.tool_refs ?? []).map((ref) => (
