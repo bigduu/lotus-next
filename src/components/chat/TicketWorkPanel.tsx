@@ -1,5 +1,6 @@
 import { useState } from "react"
 import { ticketClient } from "@services/tickets/client"
+import { artifactDownloadName } from "@services/tickets/artifactDownload"
 import { effectiveStatus, type TicketState } from "@services/tickets/state"
 import type { PendingRequest, WorkState } from "@services/tickets/types"
 import type { useTicketWork } from "@/hooks/useTicketWork"
@@ -67,7 +68,7 @@ export function TicketWorkPanel({ controller, onReference }: { controller: Contr
           {submission.evidence.map((line, index) => <p key={index} className="break-words">{line}</p>)}
           {submission.artifacts.map((artifact, index) => <button type="button" key={artifact.sha256} style={{ marginRight: "0.5rem" }} className="underline" onClick={() => {
             void ticketClient.artifact(artifact.sha256).then((blob) => {
-              const href = URL.createObjectURL(blob); const link = document.createElement("a"); link.href = href; link.download = "work-result-" + artifact.sha256.slice(0, 8) + ".txt"; link.click(); URL.revokeObjectURL(href)
+              const href = URL.createObjectURL(blob); const link = document.createElement("a"); link.href = href; link.download = artifactDownloadName(artifact.sha256, artifact.uri, blob.type); link.click(); URL.revokeObjectURL(href)
             }).catch(() => setArtifactError("成果暂时无法读取，请刷新后重试。"))
           }}>读取成果 {index + 1}</button>)}
         </div>)}
