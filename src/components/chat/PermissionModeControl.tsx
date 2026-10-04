@@ -31,6 +31,7 @@ export function PermissionModeControl(props: Props) {
 function SessionPermissionControl({ sessionId, title, compact = false }: Props) {
   const { t } = useTranslation()
   const labelId = useId()
+  const hasChat = useAppStore((state) => state.chats.some((chat) => chat.id === sessionId))
   const mode = useAppStore((state) => state.chats.find((chat) => chat.id === sessionId)?.config.permissionMode)
   const etag = useAppStore((state) => state.chats.find((chat) => chat.id === sessionId)?.config.permissionModeEtag)
   const request = useAppStore((state) => state.permissionModeRequests[sessionId])
@@ -42,17 +43,17 @@ function SessionPermissionControl({ sessionId, title, compact = false }: Props) 
   const cancelRef = useRef<HTMLButtonElement>(null)
 
   useEffect(() => {
-    if (needsRead) void refresh(sessionId)
-  }, [sessionId, refresh, needsRead])
+    if (hasChat && needsRead) void refresh(sessionId)
+  }, [sessionId, refresh, needsRead, hasChat])
 
   const validSnapshot = Boolean(parseSessionPermissionMode(mode) && sessionPermissionRevision(etag) !== null)
   const ready = request?.status === "ready" && validSnapshot
   const saving = request?.status === "saving"
   const confirmed = validSnapshot && (ready || saving)
-  const busy = !request || request.status === "loading" || saving
-  const unavailableLabel = request?.status === "unsupported"
+  const busy = (hasChat && !request) || request?.status === "loading" || saving
+  const unavailableLabel = !hasChat ? t("chat.permissionMode.unconfirmed") : request?.status === "unsupported"
     ? t("chat.permissionMode.unavailable")
-    : request?.status === "unconfirmed" ? t("chat.permissionMode.unconfirmed") : t("chat.permissionMode.loading")
+    : busy ? t("chat.permissionMode.loading") : t("chat.permissionMode.unconfirmed")
   const helpText = confirmed ? t(`chat.permissionMode.help.${mode!}`) : t("chat.permissionMode.readRequired")
   const errorText = request?.error ? t(`chat.permissionMode.errors.${request.error}`) : null
 
@@ -94,7 +95,7 @@ function SessionPermissionControl({ sessionId, title, compact = false }: Props) 
           </select>
           {compact ? <CompactPermissionChevron /> : null}
         </div>
-        <span role="status" className="text-xs text-muted-foreground">
+        <span role="status" className={compact ? "sr-only" : "text-xs text-muted-foreground"}>
           {saving ? t("chat.permissionMode.saving") : busy ? t("chat.permissionMode.loading") : null}
         </span>
         {request?.error ? (

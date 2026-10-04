@@ -29,7 +29,7 @@ try {
   await page.goto(baseUrl)
   const input = page.getByRole("textbox", { name: "Messages", exact: true })
   await expect(input).toBeVisible()
-  await expect(page.getByRole("status").filter({ hasText: "Server confirmed standard mode" })).toBeVisible()
+  await expect(page.getByRole("button", { name: "About Ultra orchestration" })).toBeVisible()
   await capture("english-desktop")
   await input.fill("输入法测试 / code <h1>Hello</h1>")
   await input.dispatchEvent("compositionstart", { data: "中" })
