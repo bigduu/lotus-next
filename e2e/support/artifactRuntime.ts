@@ -204,6 +204,10 @@ const apiResponse = (method: string, pathnameWithSearch: string): unknown => {
       return { has_pending_question: false }
     case "GET /api/v1/health":
       return { status: "ok" }
+    case "GET /api/v1/tickets/scope":
+      // Ordinary surface fixtures model the default-off backend. Ticket
+      // negotiation must succeed without inventing a Supervisor scope.
+      return { available: false, mutation_enabled: false, dispatch_enabled: false }
     case "GET /api/v1/bamboo/config":
       return { proxy_auth_mode: "auto" }
     case "GET /api/v1/bamboo/tools":
