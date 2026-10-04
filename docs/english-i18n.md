@@ -25,7 +25,7 @@ Started from main `a02163700edff8c2fd50977b3e3858be53960998`, after composer #21
 
 ## Executable-copy audit and retained literals
 
-`npm run i18n:check` checks both catalog keys and interpolation placeholders, typed literal `uiText` lookups, and Chinese executable literals across `src`. The current catalogs have **1,801 matching keys**. Existing English was retained or reused rather than treated as missing. The audit excludes locale resources and test data; it is not a claim that arbitrary backend/user text can be translated.
+`npm run i18n:check` checks both catalog keys and interpolation placeholders, typed literal `uiText` lookups, and Chinese executable literals across `src`. The current catalogs have **1,804 matching keys**. Existing English was retained or reused rather than treated as missing. The audit excludes locale resources and test data; it is not a claim that arbitrary backend/user text can be translated.
 
 Intentionally retained locations:
 
@@ -47,13 +47,17 @@ The screenshot acceptance script `scripts/i18n-real-browser.mjs` connects to an 
 
 Provisioning note: the backend's combined setup write returned `a compatibility write changed multiple sections (core, providers)`. The isolated test setup was marked complete via the canonical core-section API with its revision precondition. This pre-existing setup write limitation was not modified or presented as localized backend behavior.
 
-Real screenshot captures below are from the final application source above, with animations disabled; desktop long English settings labels wrap. They do not use fixture-generated backend data.
+Real screenshot captures below are from the verified application source `fb6fe49` above, before the later review corrections, with animations disabled; desktop long English settings labels wrap. They do not use fixture-generated backend data.
 
 ![English desktop provider settings](assets/i18n/english-provider-desktop.png)
 ![English narrow provider settings](assets/i18n/english-provider-phone.png)
 ![English confirmation on phone](assets/i18n/english-confirm-phone.png)
 ![Chinese composer on phone](assets/i18n/chinese-composer-phone.png)
 ![English raw backend failure on phone](assets/i18n/english-real-error-phone.png)
+
+## Review corrections
+
+The GitHub review found and this branch fixes: preferred locale chunk failure blocking startup despite available English, ambiguous reasoning “Close” (now “None”, while close buttons stay “Close” and notification disabling is “Off”), the application noun “Apply” (now “Application”), mixed punctuation in schedule deletion (now one interpolated question), and output rates using the browser locale (now the selected UI locale). The focused four-file regression suite passed39/39, including a failing Chinese bundle with English startup and saved-choice recovery, unchanged close controls, raw schedule names, and French/English output-rate formatting. A real browser transport regression blocks the Chinese chunk and checks English mounting followed by Chinese recovery on reload: **1/1 passed**. Type/lint/build/package checks passed at local review-fix source `b7db725b09b27e91628628f3661be4d88d1dcfff`; startup JS1,448,385 raw/438,833 gzip and CSS105,801 raw/17,187 gzip remain within unchanged budgets. Earlier screenshot/test sources retain their provenance; final exact-head CI validates the review corrections.
 
 ## Reproduce
 
