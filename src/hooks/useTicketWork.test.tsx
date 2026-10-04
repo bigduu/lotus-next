@@ -272,3 +272,20 @@ it.each([null, "other-result"])("shows accepted evidence via its pointer while c
   if (currentSubmission) expect(container.textContent).toContain("已提交成果，等待验收")
   else expect(container.textContent).not.toContain("current pending evidence")
 })
+
+it.each(["generation", "prompt_revision", "assignment_id"])("clears a definitely uncommitted receipt when conflict refresh changes %s", async (field) => {
+  await mount()
+  const old = controller.state!.requests["q-E"]
+  const view = snapshot.views[4]; const revised = view.requests[0]
+  snapshot.snapshot.seq = 11; snapshot.snapshot.commit = "commit-11"
+  revised.updated_seq = 11
+  if (field === "generation") { view.ticket.generation = 2; revised.generation = 2 }
+  else if (field === "prompt_revision") revised.prompt_revision = 2
+  else revised.assignment_id = "replacement-assignment"
+  vi.mocked(ticketClient.respond).mockRejectedValueOnce(new ApiError("revision_conflict", 409, "Conflict"))
+  await act(async () => { expect(await controller.respond(old, { kind: "question", answer: "old answer" })).toBe(false) })
+  expect(controller.uncertain[old.id]).toBeUndefined()
+  expect(sessionStorage.getItem("lotus-next.ticket-decision.root.q-E")).toBeNull()
+  await act(async () => { expect(await controller.respond(controller.state!.requests[old.id], { kind: "question", answer: "revised answer" })).toBe(true) })
+  expect(vi.mocked(ticketClient.respond).mock.calls[1][0].target).toEqual(expect.objectContaining({ generation: revised.generation, prompt_revision: revised.prompt_revision, assignment_id: revised.assignment_id }))
+})

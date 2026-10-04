@@ -123,7 +123,8 @@ export function useTicketWork(sessionId: string | null | undefined) {
           || current.current.current.scope.binding.scope_id !== command.binding.scope_id
           || current.current.current.scope.binding.binding_revision !== command.binding.binding_revision
           || current.current.current.snapshot.seq <= command.expected_seq) throw failure
-        command = responseCommand(current.current, request, decision, crypto.randomUUID())
+        try { command = responseCommand(current.current, request, decision, crypto.randomUUID()) }
+        catch { throw failure }
         saveDecisionReceipt(captured!, command)
         await sendDecision(command)
       }
