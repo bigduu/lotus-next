@@ -213,6 +213,38 @@ describe("public Actor interest", () => {
 })
 
 describe("local actor snapshot lifecycle", () => {
+  it.each(["initial", "changed"] as const)("refreshes a %s tree directive without flashing a transport gap", async (reason) => {
+    const cursor7 = `at1-${"a".repeat(64)}-7`
+    const cursor8 = `at1-${"a".repeat(64)}-8`
+    vi.mocked(getActorSnapshot).mockResolvedValueOnce(actorSnapshotFixture("root", 1, cursor7))
+    await mount("root")
+    const confirmed = state.snapshot
+    const pending = deferred()
+    vi.mocked(getActorSnapshot).mockReturnValueOnce(pending.promise)
+    const handlers = vi.mocked(subscribeActorTree).mock.calls[0][2]
+    await act(async () => { handlers.onControl({ type: "actor_snapshot_required", reason, cursor: cursor8 }) })
+    expect(state.loading).toBe(true)
+    expect(state.snapshot).toBe(confirmed)
+    expect(state.gapReason).toBeNull()
+    await act(async () => pending.resolve(actorSnapshotFixture("root", 1, cursor8)))
+    expect(state.loading).toBe(false)
+    expect(state.snapshot?.stream_cursor).toBe(cursor8)
+    expect(state.gapReason).toBeNull()
+  })
+
+  it.each(["gap", "unavailable"] as const)("shows a genuine %s tree warning while recovery is pending", async (reason) => {
+    const cursor7 = `at1-${"a".repeat(64)}-7`
+    vi.mocked(getActorSnapshot).mockResolvedValueOnce(actorSnapshotFixture("root", 1, cursor7))
+    await mount("root")
+    const pending = deferred()
+    vi.mocked(getActorSnapshot).mockReturnValueOnce(pending.promise)
+    const handlers = vi.mocked(subscribeActorTree).mock.calls[0][2]
+    await act(async () => { handlers.onControl({ type: "actor_snapshot_required", reason, cursor: cursor7 }) })
+    expect(state.gapReason).toBe("transport_gap")
+    await act(async () => pending.resolve(actorSnapshotFixture("root", 1, cursor7)))
+    expect(state.gapReason).toBeNull()
+  })
+
   it("keeps a confirmed tree subscribed and retries a temporary transaction read", async () => {
     const cursor7 = `at1-${"a".repeat(64)}-7`
     const cursor8 = `at1-${"a".repeat(64)}-8`

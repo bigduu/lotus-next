@@ -150,21 +150,24 @@ export function useActorSnapshot(rootId: string | null, active: boolean, interes
   useEffect(() => {
     if (!treeAuthorized || !rootId) return
     let live = true
-    const markTreeGap = (cursor: string | null) => {
+    const requireTreeSnapshot = (cursor: string | null, gap: boolean) => {
       if (!live || scope.current.rootId !== rootId || !scope.current.active) return
       const prior = requiredTreeCursor.current
       if (prior === undefined) requiredTreeCursor.current = cursor
       else if (prior === null || cursor === null) requiredTreeCursor.current = null
       else if (actorTreeCursorCovers(cursor, prior)) requiredTreeCursor.current = cursor
       else if (!actorTreeCursorCovers(prior, cursor)) requiredTreeCursor.current = null
-      setState((previous) => previous.rootId === rootId ? {
+      // Initial and changed directives invalidate the read, not the transport.
+      // Still track their cursor so an unsuccessful or stale read cannot hide
+      // an unresolved update, but do not flash a gap warning during normal reads.
+      if (gap) setState((previous) => previous.rootId === rootId ? {
         ...previous, gapReason: workerGap.current ?? "transport_gap",
       } : previous)
       queueRefresh()
     }
     const subscription = subscribeActorTree(rootId, treeCursor, {
-      onControl: (control) => markTreeGap(control.cursor),
-      onGap: () => markTreeGap(snapshotRef.current?.stream_cursor ?? null),
+      onControl: (control) => requireTreeSnapshot(control.cursor, control.reason === "gap" || control.reason === "unavailable"),
+      onGap: () => requireTreeSnapshot(snapshotRef.current?.stream_cursor ?? null, true),
     })
     return () => { live = false; subscription.close() }
   }, [treeAuthorized, rootId, treeCursor, queueRefresh])
