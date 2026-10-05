@@ -1,5 +1,7 @@
 # Lotus Next
 
+[English](README.md) · [简体中文](README.zh-CN.md)
+
 ![Lotus Next brand illustration: a luminous lotus flower by the water, symbolizing clarity and beauty.](docs/assets/lotus-next-nature-hero.png)
 
 *Brand illustration, not a software screenshot. The lotus symbolizes clarity and beauty.*
@@ -36,7 +38,7 @@ npm ci
 npm run dev -- --host 127.0.0.1
 ```
 
-Open **http://127.0.0.1:9563**. On a fresh backend, finish `bamboo init` first; the initial setup gate directs you to backend/desktop configuration. Open **Settings → Providers** to configure a provider if your Bamboo instance does not already have one. Start with a small task in a sample workspace, then follow the tool activity and any approval prompts.
+Open **http://127.0.0.1:9563**. On a fresh backend, finish `bamboo init` first; the initial setup gate directs you to backend/desktop configuration. Open **Settings → Provider** to configure a provider if your Bamboo instance does not already have one. Start with a small task in a sample workspace, then follow the tool activity and any approval prompts.
 
 The explicit host option keeps this development server on loopback; the repository's unqualified `npm run dev` listens on the network. Vite proxies `/api` and `/v2` to Bamboo on port `9562`. An unavailable backend cannot execute tasks or provide server-backed settings.
 
@@ -58,7 +60,7 @@ Checked on 2026-10-03:
 
 | Layer | Verified identity |
 |---|---|
-| Zenith pin and observed upstream `main` | `1131c275cb441694a41f996228d9f91473d920f5` |
+| Zenith pin and upstream `main` observed then | `1131c275cb441694a41f996228d9f91473d920f5` |
 | npm `latest` | `@bigduu/lotus-next@2026.9.22`, source `a480e2bb94f5dd08fe4b01b2f8844a2c9ed03245` |
 | Latest public Bodhi installer | `app-v2026.9.20`, locking Lotus Next `2026.9.16` |
 

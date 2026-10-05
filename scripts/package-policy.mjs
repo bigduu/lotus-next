@@ -1,4 +1,4 @@
-const metadataFiles = new Set(["README.md", "package.json"])
+const metadataFiles = new Set(["README.md", "README.zh-CN.md", "package.json"])
 const licenseMetadata = /^(?:copying|licen[cs]e|unlicense)(?:\.(?:md|rst|txt))?$/i
 
 const forbiddenDirectoryNames = new Set([
