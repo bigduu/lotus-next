@@ -20,6 +20,7 @@ export function ChatHeader({
   sidePaneOpen,
   onToggleSidePane,
   sidebarCollapsed,
+  supervisorControl,
 }: {
   title: string
   hasSession: boolean
@@ -30,6 +31,7 @@ export function ChatHeader({
   onToggleSidePane: () => void
   /** Desktop: sidebar is collapsed, so show the menu button to bring it back. */
   sidebarCollapsed: boolean
+  supervisorControl?: ReactNode
 }) {
   useUiLocale()
   // Which machine the current session runs on — only badge non-local placements
@@ -58,6 +60,7 @@ export function ChatHeader({
         <MachineTag placement={placement} compact className="max-w-36 shrink-0" />
       ) : null}
       <OverflowMenu items={overflowItems} />
+      {supervisorControl}
       {hasSession ? (
         <>
           {environment}

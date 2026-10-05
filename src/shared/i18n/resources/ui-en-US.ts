@@ -1,5 +1,16 @@
 // Application-owned UI copy.
 export const uiEnUs = {
+  "supervisor_work_status_attention": "Check current work status",
+  "supervisor_overview_open": "Supervisor overview",
+  "supervisor_overview_recent": "Recent work",
+  "supervisor_overview_outputs": "Outputs",
+  "supervisor_overview_all": "View all work",
+  "supervisor_overview_pending": "Details are still being updated",
+  "supervisor_overview_empty": "No work yet",
+  "supervisor_overview_no_outputs": "No outputs yet",
+  "supervisor_overview_running": "Working on your tasks",
+  "supervisor_overview_idle": "No work in progress",
+  "supervisor_work_back": "All work",
   "supervisor_work_tab": "Work",
   "supervisor_work_description": "Progress and decisions",
   "supervisor_work_attention": "{{count}} need attention",

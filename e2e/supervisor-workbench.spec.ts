@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises"
 import { installArtifactRuntime, standaloneScenario } from "./support/artifactRuntime.js"
 import type { TicketSnapshot, WorkView } from "../src/services/tickets/types.js"
 
-test("Work stays in the right panel with compact chat status, readable results and preserved decisions", async ({ page }, testInfo) => {
+test("Supervisor floating overview opens focused Work details and preserves drafts, results and exact decisions", async ({ page }, testInfo) => {
   const supervisor = "bamboo-default-supervisor"
   const opaque = "63f417ee-0828-41b6-a40d-21f0ac37cf96"
   const hash = "a".repeat(64)
@@ -67,11 +67,37 @@ test("Work stays in the right panel with compact chat status, readable results a
   await expect(status).toContainText("3 项工作")
   await expect(status).toContainText("2 项待处理")
   await expect(page.getByTestId("ticket-work-overview")).toHaveCount(0)
+  const popover = page.getByTestId("supervisor-overview")
+  const openAll = async () => {
+    await status.click()
+    await popover.getByRole("button", { name: "查看全部工作", exact: true }).click()
+  }
+  const composer = page.locator("[data-composer-region] textarea").first()
+  await composer.fill("保留我的输入")
   await status.click()
+  await expect(popover).toBeVisible()
+  await expect(popover).toContainText("最近工作")
+  await expect(popover).toContainText("交付成果")
+  await expect(popover).toContainText("代码交付")
+  const floatingText = await popover.innerText()
+  expect(floatingText).not.toContain(opaque); expect(floatingText).not.toContain(hash); expect(floatingText).not.toContain("/private/internal")
+  const box = await popover.boundingBox()
+  expect(box!.x).toBeGreaterThanOrEqual(0)
+  expect(box!.x + box!.width).toBeLessThanOrEqual(page.viewportSize()!.width)
+  expect(box!.y + box!.height).toBeLessThanOrEqual(page.viewportSize()!.height)
+  await page.screenshot({ path: testInfo.outputPath("supervisor-floating-overview.png") })
+  await page.keyboard.press("Escape")
+  await expect(popover).toHaveCount(0)
+  await expect(status).toBeFocused()
+  await expect(composer).toHaveValue("保留我的输入")
+  await status.click()
+  await popover.getByRole("button", { name: /报告A/ }).click()
   const workbench = page.locator("#right-workbench")
   const overview = workbench.getByTestId("ticket-work-overview")
   await expect(overview).toBeVisible()
-  await expect(overview).toContainText("代码交付")
+  await expect(overview.getByText("代码交付", { exact: true })).toBeHidden()
+  await expect(overview).toBeFocused()
+  await expect(composer).toHaveValue("保留我的输入")
   const text = await overview.innerText()
   expect(text).not.toContain(opaque); expect(text).not.toContain(hash); expect(text).not.toContain("/private/internal")
   const input = overview.getByRole("textbox", { name: "回答 报告A" })
@@ -79,6 +105,10 @@ test("Work stays in the right panel with compact chat status, readable results a
   await workbench.getByRole("button", { name: "收起工作面板", exact: true }).click()
   await expect(workbench).toBeHidden()
   await status.click()
+  await popover.getByRole("button", { name: /代码交付.*读取成果 1/ }).click()
+  await expect(overview.getByText("代码交付", { exact: true })).toBeVisible()
+  await expect(input).toBeHidden()
+  await overview.getByRole("button", { name: "所有工作", exact: true }).click()
   await expect(input).toHaveValue("蓝色")
   await workbench.getByRole("button", { name: "打开工作面板标签页" }).click()
   await page.getByRole("menuitem", { name: /检查器/ }).click()
@@ -104,6 +134,6 @@ test("Work stays in the right panel with compact chat status, readable results a
   if (testInfo.project.name !== "desktop-chromium") await expect(workbench).toBeHidden()
   await expect(page.getByTestId("ticket-reference")).toContainText("报告A")
   await expect(page.locator("[data-composer-region] textarea").first()).toBeFocused()
-  await status.click()
+  await openAll()
   await expect(input).toHaveValue("蓝色")
 })

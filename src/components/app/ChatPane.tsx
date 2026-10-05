@@ -47,7 +47,8 @@ import { useGuidanceQueue } from "@/hooks/useGuidanceQueue"
 import { useTicketWork } from "@/hooks/useTicketWork"
 import { useTicketIngress } from "@/hooks/useTicketIngress"
 import { TicketWorkPanel } from "@/components/chat/TicketWorkPanel"
-import { TicketWorkStatus } from "@/components/chat/TicketWorkStatus"
+import { SupervisorOverview } from "@/components/chat/SupervisorOverview"
+import { isDefaultSupervisor } from "@/lib/supervisor"
 import type { PendingRequest as TicketRequest } from "@services/tickets/types"
 import { SessionGuidance } from "@/components/app/SessionGuidance"
 import { Composer } from "@/components/app/Composer"
@@ -263,11 +264,19 @@ export function ChatPane({
     && ticketScope.mutation_enabled === true
     && ticketScope.binding.supervisor_session_id === currentSessionId
   const [ticketReference, setTicketReference] = useState<TicketRequest | null>(null)
+  const [selectedWorkId, setSelectedWorkId] = useState<string | null>(null)
+  const workPanelHost = useRef(workPanelTarget)
+  workPanelHost.current = workPanelTarget
+  const openTicketWork = (workId: string | null) => {
+    setSelectedWorkId(workId)
+    onOpenWork?.()
+    requestAnimationFrame(() => workPanelHost.current?.querySelector<HTMLElement>('[data-testid="ticket-work-overview"]')?.focus())
+  }
   const replayReferences = ticketIngress.references(currentSessionId)
   const visibleTicketReference = pendingTicketMessage && replayReferences?.in_reply_to
     ? { work_id: replayReferences.thread_id ?? replayReferences.in_reply_to, id: replayReferences.in_reply_to }
     : ticketReference
-  useEffect(() => { setTicketReference(null) }, [currentSessionId])
+  useEffect(() => { setTicketReference(null); setSelectedWorkId(null) }, [currentSessionId])
   // The secondary chat hook remains mounted when its pane closes. Read state
   // follows the rendered pane, including the same breakpoint as its md:flex.
   const splitVisible = useMediaQuery("(min-width: 768px)")
@@ -965,6 +974,9 @@ export function ChatPane({
             sidePaneOpen={sidePaneOpen ?? false}
             onToggleSidePane={() => launchWorkbench(onToggleSidePane ?? onOpenInspector)}
             sidebarCollapsed={sidebarCollapsed}
+            supervisorControl={currentChat && isDefaultSupervisor(currentChat) && ticketScope?.binding.supervisor_session_id === currentSessionId ? (
+              <SupervisorOverview controller={tickets} running={currentlyRunning} onSelectWork={onOpenWork ? openTicketWork : undefined} />
+            ) : null}
           />
         )}
 
@@ -1097,9 +1109,8 @@ export function ChatPane({
         ) : null}
 
         {queue.error && <div role="alert" className="mx-auto mb-1 w-[calc(100%-1.5rem)] max-w-6xl rounded-lg border border-destructive/40 px-3 py-2 text-xs text-destructive">{queue.error}</div>}
-        {ticketScope?.binding.supervisor_session_id === currentSessionId ? <TicketWorkStatus controller={tickets} onOpen={onOpenWork} /> : null}
         {workPanelTarget ? createPortal(ticketScope?.binding.supervisor_session_id === currentSessionId ? (
-          <TicketWorkPanel controller={tickets} onReference={tickets.canSendIngress && ticketScope.capabilities?.message_references_v1 === true && !pendingTicketMessage ? (request) => {
+          <TicketWorkPanel controller={tickets} selectedWorkId={selectedWorkId} onShowAll={() => openTicketWork(null)} onReference={tickets.canSendIngress && ticketScope.capabilities?.message_references_v1 === true && !pendingTicketMessage ? (request) => {
             setTicketReference(request)
             onWorkReference?.()
             requestAnimationFrame(() => composerInputRef.current?.focus())
