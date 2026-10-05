@@ -18,7 +18,7 @@ beforeEach(() => {
 });
 
 describe("McpService import/list contract", () => {
-  it.each(["streamablehttp", "streamable_http", "sse", "stdio"])("preserves %s transport through normalized list and edit payload", async (type) => {
+  it.each(["streamablehttp", "streamable_http", "stdio"])("preserves %s transport through normalized list and edit payload", async (type) => {
     const service = new McpService(); get.mockResolvedValue({ servers: [record(type)] });
     const [server] = await service.getServers();
     const expected = type.startsWith("streamable") ? "streamable_http" : type;
@@ -29,7 +29,7 @@ describe("McpService import/list contract", () => {
   });
 
   it.each([{}, { servers: null }, { servers: {} }, { servers: [null] }, { servers: [{ id: "x" }] },
-    { servers: [record("http")] }, { servers: [record("sse", " ")] }, { servers: [record(), record()] },
+    { servers: [record("http")] }, { servers: [record("sse")] }, { servers: [record("sse", " ")] }, { servers: [record(), record()] },
     { servers: [{ ...record(), config: { id: "different", transport: record().config.transport } }] },
     { servers: [{ ...record(), config: { transport: { type: "sse", url: "https://example.test", headers: {} } } }] },
   ])("fails closed on malformed inventory rather than returning an empty/destructive preview", async (response) => {

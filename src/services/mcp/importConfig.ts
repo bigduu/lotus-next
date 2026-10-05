@@ -2,7 +2,7 @@ import { uiText } from "@shared/i18n/ui"
 import {
   DEFAULT_HEALTHCHECK_INTERVAL_MS,
   DEFAULT_REQUEST_TIMEOUT_MS,
-  DEFAULT_SSE_CONNECT_TIMEOUT_MS,
+  DEFAULT_HTTP_CONNECT_TIMEOUT_MS,
   DEFAULT_STDIO_STARTUP_TIMEOUT_MS,
   MCP_SERVER_ID_PATTERN,
   type McpImportRequest,
@@ -95,7 +95,7 @@ export function parseMcpImport(text: string): McpImportValidation {
     if (!isMcpRecord(transport)) return invalid(uiText("transport_must_be_an_object_1b0b3231"));
     let kind: TransportConfig["type"];
     if (internal) {
-      if (transport.type !== "stdio" && transport.type !== "sse" && transport.type !== "streamable_http") return invalid(uiText("unsupported_transport_type_5751fa29"));
+      if (transport.type !== "stdio" && transport.type !== "streamable_http") return invalid(uiText("unsupported_transport_type_5751fa29"));
       kind = transport.type;
       if (!only(transport, ["type", ...(kind === "stdio" ? stdioKeys : remoteKeys)])) return invalid(uiText("transport_contains_unsupported_fields_379bbbcd"));
     } else {
@@ -103,8 +103,8 @@ export function parseMcpImport(text: string): McpImportValidation {
       const url = raw.url !== undefined && raw.url !== null;
       if (command === url) return invalid(uiText("provide_either_command_or_url_not_both_c8e9f37c"));
       if (raw.transport_kind !== undefined && raw.transport_kind !== null &&
-        (command || (raw.transport_kind !== "sse" && raw.transport_kind !== "streamable_http"))) return invalid(uiText("transport_kind_supports_only_remote_sse_or_streamable_h_647a07bf"));
-      kind = command ? "stdio" : raw.transport_kind === "streamable_http" ? "streamable_http" : "sse";
+        (command || raw.transport_kind !== "streamable_http")) return invalid(uiText("transport_kind_supports_only_remote_sse_or_streamable_h_647a07bf"));
+      kind = command ? "stdio" : "streamable_http";
       if (!only(raw, [...commonKeys, "disabled", ...(kind === "stdio" ? stdioKeys : [...remoteKeys, "transport_kind", "headers_encrypted", "header_credential_refs"])])) {
         return invalid(uiText("do_not_mix_fields_from_different_transport_types_0c9b1f51"));
       }
@@ -202,7 +202,7 @@ function comparableImportedServer(
     ]),
     connect_timeout_ms: typeof transport.connect_timeout_ms === "number"
       ? transport.connect_timeout_ms
-      : DEFAULT_SSE_CONNECT_TIMEOUT_MS,
+      : DEFAULT_HTTP_CONNECT_TIMEOUT_MS,
   } };
 }
 
@@ -231,7 +231,7 @@ function comparableActualServer(server: McpServer) {
     type: config.transport.type,
     url: config.transport.url,
     header_names: sortedStrings(config.transport.headers.map((header) => header.name)),
-    connect_timeout_ms: config.transport.connect_timeout_ms ?? DEFAULT_SSE_CONNECT_TIMEOUT_MS,
+    connect_timeout_ms: config.transport.connect_timeout_ms ?? DEFAULT_HTTP_CONNECT_TIMEOUT_MS,
   } };
 }
 

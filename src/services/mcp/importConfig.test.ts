@@ -37,25 +37,31 @@ const listedServer = (command = "fixture-mcp"): McpServer => ({
 });
 
 describe("MCP JSON import validation and safe preview", () => {
-  it("preserves flat/internal stdio, SSE and HTTP entries with their actual enabled semantics", () => {
+  it("preserves flat/internal stdio and HTTP entries with their actual enabled semantics", () => {
     const servers = {
       flat: { ...stdio, id: "ignored-id", disabled: true, enabled: true },
-      disabled: { url: "https://example.test/sse", headers: { Authorization: secret }, disabled: true },
+      disabled: { url: "https://example.test/mcp", transport_kind: "streamable_http", headers: { Authorization: secret }, disabled: true },
       http: { url: "https://example.test/mcp", transport_kind: "streamable_http", enabled: false },
       internal: { transport: { type: "streamable_http", url: "https://example.test/mcp", headers: [{ name: "Authorization", value: secret }] } },
       internalStdio: { enabled: false, transport: { type: "stdio", command: "fixture-mcp", args: [], env: { TOKEN: secret } } },
-      internalSse: { enabled: true, transport: { type: "sse", url: "http://localhost/sse", headers: [] } },
+      internalHttp: { enabled: true, transport: { type: "streamable_http", url: "http://localhost/mcp", headers: [] } },
     };
     const parsed = parseMcpImport(json(servers));
     expect(parsed.ok).toBe(true);
     if (!parsed.ok) return;
     expect(parsed.value.mcpServers).toEqual(servers);
     expect(parsed.value.servers).toEqual([
-      { id: "flat", transport: "stdio", enabled: true }, { id: "disabled", transport: "sse", enabled: false },
+      { id: "flat", transport: "stdio", enabled: true }, { id: "disabled", transport: "streamable_http", enabled: false },
       { id: "http", transport: "streamable_http", enabled: false }, { id: "internal", transport: "streamable_http", enabled: true },
-      { id: "internalStdio", transport: "stdio", enabled: false }, { id: "internalSse", transport: "sse", enabled: true },
+      { id: "internalStdio", transport: "stdio", enabled: false }, { id: "internalHttp", transport: "streamable_http", enabled: true },
     ]);
     expect(JSON.stringify(parsed.value.servers)).not.toContain(secret);
+  });
+
+  it("defaults flat URL imports to Streamable HTTP", () => {
+    const parsed = parseMcpImport(json({ remote: { url: "https://example.test/mcp" } }));
+    expect(parsed.ok).toBe(true);
+    if (parsed.ok) expect(parsed.value.servers).toEqual([{ id: "remote", transport: "streamable_http", enabled: true }]);
   });
 
   it.each(["", "null", "[]", "{", `{"mcpServers": {"x": "${secret}"}`, "{}", json({}), json([]), json(null),
@@ -85,6 +91,7 @@ describe("MCP JSON import validation and safe preview", () => {
   });
 
   it.each([
+    { url: "https://example.test/sse", transport_kind: "sse" },
     { type: "http", url: "https://example.test/mcp" }, { transport: "sse", url: "https://example.test/sse" },
     { transport: { type: "streamablehttp", url: "https://example.test/mcp" } },
     { transport: { type: "sse", url: "https://example.test/sse" }, disabled: true },

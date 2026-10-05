@@ -37,7 +37,6 @@ export type {
   ServerListResponse,
   ToolListResponse,
   TransportConfig,
-  SseTransportConfig,
   StdioTransportConfig,
 } from "./mcp";
 export {
@@ -45,7 +44,7 @@ export {
   createDefaultRuntimeInfo,
   DEFAULT_HEALTHCHECK_INTERVAL_MS,
   DEFAULT_REQUEST_TIMEOUT_MS,
-  DEFAULT_SSE_CONNECT_TIMEOUT_MS,
+  DEFAULT_HTTP_CONNECT_TIMEOUT_MS,
   DEFAULT_STDIO_STARTUP_TIMEOUT_MS,
   ServerStatus,
 } from "./mcp";

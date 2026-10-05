@@ -34,7 +34,7 @@ function transportSummary(t: TransportConfig): string {
   if (t.type === "stdio") {
     return `stdio · ${[t.command, ...t.args].filter(Boolean).join(" ")}`
   }
-  return `${t.type === "sse" ? "sse" : "Streamable HTTP"} · ${t.url}`
+  return `Streamable HTTP · ${t.url}`
 }
 
 /** Live runtime status — deliberately separate from the config.enabled switch. */

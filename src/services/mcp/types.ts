@@ -27,13 +27,6 @@ export interface StdioTransportConfig {
   startup_timeout_ms?: number;
 }
 
-export interface SseTransportConfig {
-  type: "sse";
-  url: string;
-  headers: HeaderConfig[];
-  connect_timeout_ms?: number;
-}
-
 export interface StreamableHttpTransportConfig {
   type: "streamable_http";
   url: string;
@@ -41,7 +34,7 @@ export interface StreamableHttpTransportConfig {
   connect_timeout_ms?: number;
 }
 
-export type TransportConfig = StdioTransportConfig | SseTransportConfig | StreamableHttpTransportConfig;
+export type TransportConfig = StdioTransportConfig | StreamableHttpTransportConfig;
 
 export interface McpServerConfig {
   id: string;
@@ -153,7 +146,7 @@ export const MCP_SERVER_ID_PATTERN = /^[a-zA-Z0-9_-]+$/;
 export const DEFAULT_REQUEST_TIMEOUT_MS = 60_000;
 export const DEFAULT_HEALTHCHECK_INTERVAL_MS = 30_000;
 export const DEFAULT_STDIO_STARTUP_TIMEOUT_MS = 20_000;
-export const DEFAULT_SSE_CONNECT_TIMEOUT_MS = 10_000;
+export const DEFAULT_HTTP_CONNECT_TIMEOUT_MS = 10_000;
 
 export const createDefaultMcpServerConfig = (id: string): McpServerConfig => ({
   id,
