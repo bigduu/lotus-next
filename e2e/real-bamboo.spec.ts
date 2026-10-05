@@ -1961,8 +1961,8 @@ test("MCP JSON import merges, replaces, rolls back and survives a real restart",
   } };
   const merged = { mcpServers: {
     "lotus-import-update": { ...stdio("NEW_TOKEN"), enabled: false },
-    "lotus-import-sse": {
-      url: "http://127.0.0.1:1/sse", disabled: true,
+    "lotus-import-map-http": {
+      url: "http://127.0.0.1:1/mcp", transport_kind: "streamable_http", disabled: true,
       headers: { Authorization: `Bearer ${secret}` },
     },
     "lotus-import-http": {
@@ -2083,6 +2083,16 @@ test("MCP JSON import merges, replaces, rolls back and survives a real restart",
       await expect(dialog.getByRole("button", { name: "导入", exact: true })).toBeDisabled();
       expect(postCount()).toBe(0);
     }
+    for (const entry of [
+      { url: "http://127.0.0.1:1/sse", transport_kind: "sse", headers: { Authorization: secret } },
+      { transport: { type: "sse", url: "http://127.0.0.1:1/sse", headers: [{ name: "Authorization", value: secret }] } },
+    ]) {
+      await dialog.getByRole("textbox", { name: "MCP JSON 配置", exact: true }).fill(JSON.stringify({ mcpServers: { retired: entry } }));
+      await expect(dialog.getByRole("alert")).toBeVisible();
+      await expect(dialog.getByRole("alert")).not.toContainText(secret);
+      await expect(dialog.getByRole("button", { name: "导入", exact: true })).toBeDisabled();
+      expect(postCount()).toBe(0);
+    }
     expect(await readServers(contract.baseUrl.origin)).toEqual([]);
     await dialog.getByRole("textbox", { name: "MCP JSON 配置", exact: true }).fill(JSON.stringify(initial, null, 2));
     await expect(dialog.getByText("lotus-import-keep", { exact: true })).toBeVisible();
@@ -2097,14 +2107,16 @@ test("MCP JSON import merges, replaces, rolls back and survives a real restart",
     await capture(page, "desktop-file-merge-preview");
     expect(await submit(page, merged, "merge")).toMatchObject({ mode: "merge", added: 2, updated: 1, removed: 0 });
     const afterMerge = await readServers(contract.baseUrl.origin);
-    expect(afterMerge.map((server) => server.id)).toEqual(["lotus-import-http", "lotus-import-keep", "lotus-import-sse", "lotus-import-update"]);
+    expect(afterMerge.map((server) => server.id)).toEqual(["lotus-import-http", "lotus-import-keep", "lotus-import-map-http", "lotus-import-update"]);
     const updated = asRecord(afterMerge.find((server) => server.id === "lotus-import-update")?.config);
     expect(asRecord(updated?.transport)?.env).toEqual({ NEW_TOKEN: "****...****" });
-    for (const [id, transport] of [["lotus-import-sse", "sse"], ["lotus-import-http", "streamablehttp"]]) {
+    for (const id of ["lotus-import-map-http", "lotus-import-http"]) {
       const server = afterMerge.find((entry) => entry.id === id)!;
       expect(server.enabled).toBe(false);
-      expect(asRecord(asRecord(server.config)?.transport)).toMatchObject({
-        type: transport, headers: [{ name: "Authorization", value: "****...****" }],
+      const transport = asRecord(asRecord(server.config)?.transport);
+      expect(["streamable_http", "streamablehttp"]).toContain(transport?.type);
+      expect(transport).toMatchObject({
+        headers: [{ name: "Authorization", value: "****...****" }],
       });
     }
     await expect(row(page, settings, "lotus-import-http").getByText(/Streamable HTTP/)).toBeVisible();
