@@ -296,13 +296,32 @@ it("switches ticket labels and plural counts without changing request data or th
   const input = container.querySelector("input")!
   const rawPrompt = controller.state!.requests["q-E"].prompt
   await act(async () => { await changeLocale("en-US") })
-  expect(container.querySelector("aside")?.getAttribute("aria-label")).toBe("Work overview")
+  expect(container.querySelector('[data-testid="ticket-work-overview"]')?.getAttribute("aria-label")).toBe("Work overview")
   expect(container.textContent).toContain("unanswered question")
   expect(input.getAttribute("aria-label")).toBe("Answer 报告A")
   expect(container.textContent).toContain(rawPrompt)
   expect(container.querySelector("input")).toBe(input)
   await act(async () => { await changeLocale("zh-CN") })
-  expect(container.querySelector("aside")?.getAttribute("aria-label")).toBe("工作总览")
+  expect(container.querySelector('[data-testid="ticket-work-overview"]')?.getAttribute("aria-label")).toBe("工作总览")
   expect(container.textContent).toContain(rawPrompt)
   expect(container.querySelector("input")).toBe(input)
+})
+
+it("keeps opaque evidence and execution paths in closed diagnostics while results remain usable", async () => {
+  const view = snapshot.views[0]
+  view.ticket.state = "accepted"; view.ticket.accepted_submission = "opaque-submission"
+  view.ticket.contract.objective = "Read /private/internal/worktree/answer.rs"
+  view.submissions = [{ id: "opaque-submission", work_id: "A", generation: 1, contract_revision: 1,
+    stale: false, updated_seq: 10, artifacts: [{ uri: "managed:result", sha256: "a".repeat(64) }],
+    evidence: ["canonical Child 63f417ee-0828-41b6-a40d-21f0ac37cf96; run opaque-run; sha256 " + "b".repeat(64)] }]
+  await mount()
+  for (const text of [view.ticket.contract.objective, view.submissions[0].id, view.submissions[0].evidence[0]]) {
+    const node = [...container.querySelectorAll("p")].find((p) => p.textContent === text)!
+    expect(node.closest("details")).not.toBeNull()
+    expect(node.closest("details")!.open).toBe(false)
+  }
+  const result = [...container.querySelectorAll("button")].find((button) => button.textContent === "读取成果 1")!
+  expect(result).toBeDefined()
+  expect(result.closest("details")).toBeNull()
+  expect(container.textContent).toContain("1 份成果可查看")
 })

@@ -2,6 +2,7 @@ import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { useMarkSessionRead } from "@/lib/sessionReadState"
 import { useMediaQuery } from "@shared/hooks/useMediaQuery"
 import { useEffect, useId, useMemo, useRef, useState } from "react"
+import { createPortal } from "react-dom"
 import {
   ChevronDown,
   ChevronLeft,
@@ -46,6 +47,7 @@ import { useGuidanceQueue } from "@/hooks/useGuidanceQueue"
 import { useTicketWork } from "@/hooks/useTicketWork"
 import { useTicketIngress } from "@/hooks/useTicketIngress"
 import { TicketWorkPanel } from "@/components/chat/TicketWorkPanel"
+import { TicketWorkStatus } from "@/components/chat/TicketWorkStatus"
 import type { PendingRequest as TicketRequest } from "@services/tickets/types"
 import { SessionGuidance } from "@/components/app/SessionGuidance"
 import { Composer } from "@/components/app/Composer"
@@ -164,6 +166,9 @@ export function ChatPane({
   onOpenWorkspacePicker,
   onOpenInspector,
   onOpenReview,
+  workPanelTarget,
+  onOpenWork,
+  onWorkReference,
   sidePaneOpen,
   onToggleSidePane,
   splitOpen,
@@ -182,6 +187,9 @@ export function ChatPane({
   onOpenWorkspacePicker: () => void
   onOpenInspector: () => void
   onOpenReview?: () => void
+  workPanelTarget?: HTMLElement | null
+  onOpenWork?: () => void
+  onWorkReference?: () => void
   sidePaneOpen?: boolean
   onToggleSidePane?: () => void
   splitOpen: boolean
@@ -1089,9 +1097,16 @@ export function ChatPane({
         ) : null}
 
         {queue.error && <div role="alert" className="mx-auto mb-1 w-[calc(100%-1.5rem)] max-w-6xl rounded-lg border border-destructive/40 px-3 py-2 text-xs text-destructive">{queue.error}</div>}
-        <TicketWorkPanel controller={tickets} onReference={tickets.canSendIngress && ticketScope?.capabilities?.message_references_v1 === true && !pendingTicketMessage ? (request) => { setTicketReference(request); composerInputRef.current?.focus() } : undefined} />
+        {ticketScope?.binding.supervisor_session_id === currentSessionId ? <TicketWorkStatus controller={tickets} onOpen={onOpenWork} /> : null}
+        {workPanelTarget ? createPortal(ticketScope?.binding.supervisor_session_id === currentSessionId ? (
+          <TicketWorkPanel controller={tickets} onReference={tickets.canSendIngress && ticketScope.capabilities?.message_references_v1 === true && !pendingTicketMessage ? (request) => {
+            setTicketReference(request)
+            onWorkReference?.()
+            requestAnimationFrame(() => composerInputRef.current?.focus())
+          } : undefined} />
+        ) : <p role="status" className="p-4 text-sm text-muted-foreground">{tickets.negotiated ? uiText("supervisor_work_unavailable") : uiText("loading_4927a53b")}</p>, workPanelTarget) : null}
         {semanticComposer && visibleTicketReference ? <div className="mx-4 mb-2 flex items-center gap-2 text-xs" data-testid="ticket-reference">
-          <span>{uiText("ticket_reference", { title: tickets.state?.works[visibleTicketReference.work_id]?.ticket.contract.title ?? visibleTicketReference.work_id })}</span>
+          <span>{uiText("ticket_reference", { title: tickets.state?.works[visibleTicketReference.work_id]?.ticket.contract.title ?? uiText("supervisor_work_tab") })}</span>
           <button type="button" className="underline" disabled={pendingTicketMessage} onClick={() => setTicketReference(null)}>{uiText("ticket_clear_reference_b2e538a2")}</button>
         </div> : null}
         {semanticComposer && (ticketIngress.error || pendingTicketMessage) ? <div role="alert" className="mx-4 mb-2 text-xs text-destructive">{ticketIngress.error ?? uiText("ticket_the_previous_message_is_not_confirmed_retry_w_7369504e")}

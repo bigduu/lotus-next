@@ -2,7 +2,7 @@ import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { useEffect, useRef, type ReactNode } from "react"
 import { DragDropProvider } from "@dnd-kit/react"
 import { isSortable, useSortable } from "@dnd-kit/react/sortable"
-import { ArrowLeft, Bot, FileDiff, Globe2, GripVertical, Plus, SlidersHorizontal, X } from "lucide-react"
+import { ArrowLeft, Bot, FileDiff, Globe2, GripVertical, Plus, SlidersHorizontal, X, ListChecks } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
@@ -15,10 +15,11 @@ import { visibleWorkbenchTabIds } from "@/lib/workbenchTabs"
 import { cn } from "@/lib/utils"
 import type { BrowserTabSummary } from "@services/browser/types"
 
-export type RightWorkbenchTab = "inspector" | "review" | "browser" | "session"
+export type RightWorkbenchTab = "inspector" | "review" | "browser" | "session" | "work"
 export type WorkbenchToolTab = Exclude<RightWorkbenchTab, "browser">
 
 const toolEntries = [
+  { id: "work", get label() { return uiText("supervisor_work_tab") }, get description() { return uiText("supervisor_work_description") }, icon: ListChecks },
   { id: "inspector", get label() { return uiText("inspector_fc48a7f2") }, get description() { return uiText("view_current_session_ea4cbea5") }, icon: SlidersHorizontal },
   { id: "review", label: "Review", get description() { return uiText("view_file_changes_93cce2ed") }, icon: FileDiff },
   { id: "browser", get label() { return uiText("browser_e19c3b9e") }, get description() { return uiText("enter_a_url_to_open_0d932314") }, icon: Globe2 },
@@ -84,8 +85,11 @@ export function RightWorkbench({
   review,
   browser,
   session,
+  work,
+  workEnabled = false,
   sessionTitle,
   docked = false,
+  visible = true,
   browserEnabled = true,
   browserSessionAvailable = true,
   browserEntryOpen = false,
@@ -107,8 +111,11 @@ export function RightWorkbench({
   review: ReactNode
   browser: ReactNode
   session: ReactNode
+  work?: ReactNode
+  workEnabled?: boolean
   sessionTitle?: string | null
   docked?: boolean
+  visible?: boolean
   browserEnabled?: boolean
   browserSessionAvailable?: boolean
   browserEntryOpen?: boolean
@@ -152,6 +159,7 @@ export function RightWorkbench({
     if (entry === "browser" && (!browserEnabled || !browserSessionAvailable || browserBusy)) return
     onTabChange(entry)
   }
+  const enabledEntries = toolEntries.filter((entry) => (browserEnabled || entry.id !== "browser") && (workEnabled || entry.id !== "work"))
   const body = (
     <Tabs
       value={selectedValue}
@@ -238,7 +246,7 @@ export function RightWorkbench({
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
-            {toolEntries.filter((entry) => browserEnabled || entry.id !== "browser").map((entry) => {
+            {enabledEntries.map((entry) => {
               const Icon = entry.icon
               return <DropdownMenuItem key={entry.id} disabled={entry.id === "browser" && (!browserEnabled || !browserSessionAvailable || browserBusy)} onSelect={() => openEntry(entry.id)}><Icon />{entry.label}</DropdownMenuItem>
             })}
@@ -247,12 +255,17 @@ export function RightWorkbench({
         <Button size="icon" variant="ghost" aria-label={uiText("collapse_workbench_739b282d")} onClick={onClose}><X /></Button>
       </div>
 
-      {openToolTabs.includes("inspector") ? <TabsContent value="inspector" className="flex min-h-0 overflow-hidden">{inspector}</TabsContent> : null}
-      {openToolTabs.includes("review") ? <TabsContent value="review" className="flex min-h-0 overflow-hidden">{review}</TabsContent> : null}
-      {browserEnabled ? <TabsContent value={browserValue} className="flex min-h-0 min-w-0 overflow-hidden">{browser}</TabsContent> : null}
+      {visible && openToolTabs.includes("inspector") ? <TabsContent value="inspector" className="flex min-h-0 overflow-hidden">{inspector}</TabsContent> : null}
+      {visible && openToolTabs.includes("review") ? <TabsContent value="review" className="flex min-h-0 overflow-hidden">{review}</TabsContent> : null}
+      {workEnabled && openToolTabs.includes("work") ? (
+        <TabsContent value="work" forceMount className={cn("min-h-0 overflow-hidden", activeTab === "work" ? "flex" : "hidden")}>
+          {work}
+        </TabsContent>
+      ) : null}
+      {visible && browserEnabled ? <TabsContent value={browserValue} className="flex min-h-0 min-w-0 overflow-hidden">{browser}</TabsContent> : null}
       {/* Keep an open root session mounted across tab changes so its draft and
           in-flight send survive; App gates child projection by active tab. */}
-      {openToolTabs.includes("session") ? (
+      {visible && openToolTabs.includes("session") ? (
         <TabsContent value="session" forceMount className={cn("min-h-0 overflow-hidden", activeTab === "session" ? "flex" : "hidden")}>
           {session}
         </TabsContent>
@@ -262,7 +275,7 @@ export function RightWorkbench({
           <h2 className="text-base font-medium">{uiText("nothing_open_yet_7202c019")}</h2>
           <p className="mt-1 text-sm text-muted-foreground">{uiText("choose_a_tool_or_enter_a_url_to_open_a_page_1d14dfed")}</p>
           <div className="mt-5 flex flex-col gap-2">
-            {toolEntries.filter((entry) => browserEnabled || entry.id !== "browser").map((entry) => {
+            {enabledEntries.map((entry) => {
               const Icon = entry.icon
               const disabled = entry.id === "browser" && (!browserEnabled || !browserSessionAvailable || browserBusy)
               return (
@@ -289,14 +302,15 @@ export function RightWorkbench({
     <aside
       id="right-workbench"
       aria-label={uiText("workbench_c2730bc7")}
+      hidden={!visible}
       className={cn("flex min-h-0 flex-col bg-card", docked ? "shrink-0 border-l" : "fixed inset-y-0 right-0 z-50 border-l shadow-lg")}
-      style={docked ? { width: width ?? 520, maxWidth: "46vw" } : { width: "min(92vw, 42rem)" }}
+      style={{ ...(docked ? { width: width ?? 520, maxWidth: "46vw" } : { width: "min(92vw, 42rem)" }), display: visible ? undefined : "none" }}
     >{body}</aside>
   )
 
   if (docked) return panel
   return <>
-    <button className="fixed inset-0 z-40 bg-black/50" aria-label={uiText("collapse_workbench_739b282d")} onClick={onClose} />
+    <button hidden={!visible} style={{ display: visible ? undefined : "none" }} className="fixed inset-0 z-40 bg-black/50" aria-label={uiText("collapse_workbench_739b282d")} onClick={onClose} />
     {panel}
   </>
 }
