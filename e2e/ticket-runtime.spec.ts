@@ -26,7 +26,10 @@ test("five real Worker questions E/B/D/A/C, exact approvals, references and brow
     }, { origin: fixture.origin, session: fixture.session_id })
     await page.goto(fixture.origin)
     const openWork = async () => {
-      if (!await page.getByTestId("ticket-work-overview").isVisible()) await page.getByTestId("ticket-work-status").click()
+      if (!await page.getByTestId("ticket-work-overview").isVisible()) {
+        await page.getByTestId("ticket-work-status").click()
+        await page.getByTestId("supervisor-overview").getByRole("button", { name: "查看全部工作", exact: true }).click()
+      }
     }
     await openWork()
     const overview = page.getByTestId("ticket-work-overview")

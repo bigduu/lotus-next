@@ -1,5 +1,16 @@
 // Application-owned UI copy.
 export const uiZhCn = {
+  "supervisor_work_status_attention": "请查看当前工作状态",
+  "supervisor_overview_open": "Supervisor 概览",
+  "supervisor_overview_recent": "最近工作",
+  "supervisor_overview_outputs": "交付成果",
+  "supervisor_overview_all": "查看全部工作",
+  "supervisor_overview_pending": "详细信息待更新",
+  "supervisor_overview_empty": "还没有工作",
+  "supervisor_overview_no_outputs": "还没有交付成果",
+  "supervisor_overview_running": "正在处理工作",
+  "supervisor_overview_idle": "暂无进行中的工作",
+  "supervisor_work_back": "所有工作",
   "supervisor_work_tab": "工作",
   "supervisor_work_description": "进度与待处理事项",
   "supervisor_work_attention": "{{count}} 项待处理",
