@@ -25,6 +25,10 @@ test("five real Worker questions E/B/D/A/C, exact approvals, references and brow
       localStorage.setItem("lotus_next_last_session", session)
     }, { origin: fixture.origin, session: fixture.session_id })
     await page.goto(fixture.origin)
+    const openWork = async () => {
+      if (!await page.getByTestId("ticket-work-overview").isVisible()) await page.getByTestId("ticket-work-status").click()
+    }
+    await openWork()
     const overview = page.getByTestId("ticket-work-overview")
     await expect(overview).toBeVisible()
     await expect(overview).toContainText("5 个待答问题")
@@ -40,6 +44,7 @@ test("five real Worker questions E/B/D/A/C, exact approvals, references and brow
     const composer = page.locator("[data-composer-region] textarea").first()
     await composer.fill("今天只聊聊天，不批准任何动作。")
     await composer.press("Enter")
+    await openWork()
     await expect(page.getByTestId("message-request-reference")).toContainText(requests.E.id)
     await expect(overview).toContainText("5 个待答问题")
 
@@ -72,6 +77,7 @@ test("five real Worker questions E/B/D/A/C, exact approvals, references and brow
       }).toEqual(["submitted", 2, "答案 " + id, true])
       if (index === 1) {
         await page.reload()
+        await openWork()
         await expect(overview).toContainText("3 个待答问题")
         await expect(overview).toContainText("已处理和失效请求（2）")
       }
@@ -102,6 +108,7 @@ test("five real Worker questions E/B/D/A/C, exact approvals, references and brow
     } })
     expect([409, 422]).toContain(stale.status())
     await page.reload()
+    await openWork()
     await expect(overview).toContainText("0 个待批准动作")
     await expect(page.getByText(/^Ticket decision committed at seq /)).toHaveCount(0)
     await page.screenshot({ path: file.replace(/\.json$/, "-approval-superseded.png"), fullPage: true })

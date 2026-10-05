@@ -24,6 +24,7 @@ import { ReviewPane } from "@/components/app/ReviewPane"
 import { BrowserPaneView } from "@/components/app/BrowserPane"
 import { useBrowserSession } from "@/hooks/useBrowserSession"
 import { isPhoneDevice } from "@/lib/browserAvailability"
+import { isDefaultSupervisor } from "@/lib/supervisor"
 import { reorderVisibleWorkbenchTabIds, visibleWorkbenchTabIds } from "@/lib/workbenchTabs"
 import {
   RightWorkbench,
@@ -71,6 +72,9 @@ function App() {
   const [workbenchTab, setWorkbenchTab] = useState<RightWorkbenchTab | null>(null)
   const workbenchSelectionVersionRef = useRef(0)
   const [openToolTabs, setOpenToolTabs] = useState<WorkbenchToolTab[]>([])
+  const [workPanelTarget, setWorkPanelTarget] = useState<HTMLDivElement | null>(null)
+  const workEnabled = !!currentChat && isDefaultSupervisor(currentChat)
+  const visibleToolTabs = openToolTabs.filter((tab) => tab !== "work" || workEnabled)
   const [workbenchOrderBySession, setWorkbenchOrderBySession] = useState<Record<string, string[]>>({})
   const [browserEntryOpen, setBrowserEntryOpen] = useState(false)
   const [browserEntryDraft, setBrowserEntryDraft] = useState("")
@@ -92,7 +96,7 @@ function App() {
   )
   const { readySessionId: browserReadySessionId, state: browserState, openUrlInNewTab, hasPendingDialog } = browser
   const browserTabsForWorkbench = browserReadySessionId === currentSessionId ? browserState?.tabs : null
-  const selectedWorkbenchTab = !browserEnabled && workbenchTab === "browser" ? null : workbenchTab
+  const selectedWorkbenchTab = (!browserEnabled && workbenchTab === "browser") || (!workEnabled && workbenchTab === "work") ? null : workbenchTab
 
   useEffect(() => {
     if (browserReadySessionId !== currentSessionId) return
@@ -244,7 +248,7 @@ function App() {
   const displayWorkspace = workspacePath ?? pickedWorkspace
   const secondSession = chats.find((item) => item.id === secondSid)
   const visibleTabIds = visibleWorkbenchTabIds(
-    openToolTabs,
+    visibleToolTabs,
     browserTabsForWorkbench,
     workbenchOrderBySession[workbenchOrderScope],
   )
@@ -377,7 +381,10 @@ function App() {
           if (projectId) setPickedWorkspace(null)
           newChat()
         }}
-        onSelect={select}
+        onSelect={(id) => {
+          select(id)
+          if (isWide && chats.some((item) => item.id === id && isDefaultSupervisor(item))) openWorkbench("work")
+        }}
         onRename={(id, title) => void persistSessionTitle(id, title)}
         onDelete={(c) => setPendingDelete({ id: c.id, title: c.title || uiText("new_session_c57c30bc") })}
         onTogglePin={(c) => (c.pinned ? unpinSession(c.id) : pinSession(c.id))}
@@ -399,6 +406,9 @@ function App() {
         onOpenWorkspacePicker={() => setWsPickerOpen(true)}
         onOpenInspector={() => openWorkbench("inspector")}
         onOpenReview={() => openReview()}
+        workPanelTarget={workEnabled ? workPanelTarget : null}
+        onOpenWork={workEnabled ? () => openWorkbench("work") : undefined}
+        onWorkReference={() => { if (!isWide) setWorkbenchOpen(false) }}
         sidePaneOpen={workbenchOpen}
         onToggleSidePane={toggleWorkbench}
         splitOpen={workbenchOpen && workbenchTab === "session"}
@@ -411,14 +421,17 @@ function App() {
         sidebarCollapsed={sidebarCollapsed}
       />
 
-      {workbenchOpen ? (
+      {workbenchOpen || (workEnabled && openToolTabs.includes("work")) ? (
         <>
-          {isWide ? <ResizeHandle onPointerDown={workbenchResize.startResize} /> : null}
+          {isWide && workbenchOpen ? <ResizeHandle onPointerDown={workbenchResize.startResize} /> : null}
           <RightWorkbench
+            visible={workbenchOpen}
             docked={isWide}
             width={workbenchResize.width}
             activeTab={selectedWorkbenchTab}
-            openToolTabs={openToolTabs}
+            openToolTabs={visibleToolTabs}
+            workEnabled={workEnabled}
+            work={<div ref={setWorkPanelTarget} className="min-h-0 flex-1 overflow-y-auto" />}
             tabOrder={workbenchOrderBySession[workbenchOrderScope]}
             onTabReorder={(order) => {
               workbenchSelectionVersionRef.current += 1
@@ -457,7 +470,7 @@ function App() {
               <Inspector
                 embedded
                 sessionId={currentSessionId}
-                open={selectedWorkbenchTab === "inspector"}
+                open={workbenchOpen && selectedWorkbenchTab === "inspector"}
                 onClose={() => setWorkbenchOpen(false)}
                 workspace={displayWorkspace}
                 onEditWorkspace={() => setWsPickerOpen(true)}
@@ -486,7 +499,7 @@ function App() {
               <BrowserPaneView
                 key={currentSessionId ?? "no-session"}
                 sessionId={currentSessionId}
-                active={workbenchTab === "browser"}
+                active={workbenchOpen && workbenchTab === "browser"}
                 newTabEntry={browserEntryOpen}
                 entryDraft={browserEntryDraft}
                 onEntryDraftChange={(draft) => {
@@ -503,7 +516,7 @@ function App() {
             session={(
               <SecondarySessionPane
                 sessionId={secondSid}
-                active={selectedWorkbenchTab === "session"}
+                active={workbenchOpen && selectedWorkbenchTab === "session"}
                 chats={chats}
                 onPickSession={pickSecond}
                 onClose={() => setWorkbenchOpen(false)}

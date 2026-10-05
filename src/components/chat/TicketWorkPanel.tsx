@@ -14,7 +14,7 @@ function RequestCard({ controller, state, request }: { controller: Controller; s
   useUiLocale()
   const [answer, setAnswer] = useState("")
   const status = effectiveStatus(state, request)
-  const title = state.works[request.work_id]?.ticket.contract.title ?? request.work_id
+  const title = state.works[request.work_id]?.ticket.contract.title ?? uiText("supervisor_work_tab")
   const retry = controller.uncertain[request.id]
   const busy = controller.busy[request.id] === true
   const disabled = !controller.canRespond || busy || status !== "open" || !!retry
@@ -26,10 +26,10 @@ function RequestCard({ controller, state, request }: { controller: Controller; s
     {approval ? <dl className="my-2 grid grid-cols-2 gap-2 text-xs">
       <dt>{uiText("ticket_action_be37d841")}</dt><dd>{approval.action.kind} → {approval.action.target}</dd>
       {approval.action.amount ? <><dt>{uiText("ticket_amount_ffc62430")}</dt><dd>{approval.action.amount}</dd></> : null}
-      <dt>{uiText("ticket_data_5440f742")}</dt><dd className="break-all font-mono">{approval.action.data_hash}</dd>
       <dt>{uiText("permission_978cbca6")}</dt><dd>{new Intl.ListFormat(uiLanguage()).format(approval.action.permissions) || uiText("ticket_no_additional_permissions_25c9693a")}</dd>
       <dt>{uiText("ticket_risk_af75e78c")}</dt><dd>{approval.action.risk}</dd>
     </dl> : null}
+    {approval ? <details className="my-2 text-xs text-muted-foreground"><summary className="cursor-pointer">{uiText("supervisor_work_submission_diagnostics")}</summary><dl className="mt-1"><dt>{uiText("ticket_data_5440f742")}</dt><dd className="break-all font-mono">{approval.action.data_hash}</dd></dl></details> : null}
     {status === "open" && !approval ? <form className="mt-2 flex gap-2" onSubmit={(event) => {
       event.preventDefault(); if (!answer.trim() || disabled) return
       void controller.respond(request, { kind: "question", answer: answer.trim() }).then((ok) => { if (ok) setAnswer("") })
@@ -54,34 +54,41 @@ export function TicketWorkPanel({ controller, onReference }: { controller: Contr
   const overview = state.current.scope.overview.data
   const open = Object.values(state.requests).filter((q) => effectiveStatus(state, q) === "open")
   const history = Object.values(state.requests).filter((q) => effectiveStatus(state, q) !== "open")
-  return <aside aria-label={uiText("ticket_work_overview_223a6f34")} data-testid="ticket-work-overview" style={{ maxHeight: "45vh" }} className="mx-4 mb-3 overflow-y-auto rounded-xl border bg-muted/20 p-3">
+  return <section aria-label={uiText("ticket_work_overview_223a6f34")} data-testid="ticket-work-overview" className="p-4">
     <div className="flex items-center justify-between gap-3"><strong>{uiText("ticket_work_overview_223a6f34")}</strong><button type="button" className="text-xs underline" onClick={() => void controller.refresh()}>{uiText("refresh_aee88743")}</button></div>
     <p className="my-2 text-xs text-muted-foreground">{uiText("ticket_work_count", { count: overview.work_count })} · {uiText("ticket_question_count", { count: overview.open_questions })} · {uiText("ticket_approval_count", { count: overview.open_approvals })} · {uiText("ticket_acceptance_count", { count: overview.needs_acceptance })}</p>
     {!state.current.complete ? <p role="status" className="text-sm text-muted-foreground">{uiText("ticket_only_some_work_is_shown_other_work_may_still__ee267ea7")}</p> : null}
     {!controller.connected ? <p role="status" className="text-sm text-muted-foreground">{uiText("ticket_the_connection_is_not_confirmed_answers_and_a_aaac8c0d")}</p> : null}
     {!state.current.scope.mutation_enabled || state.current.scope.health !== "writable" ? <p className="text-sm text-muted-foreground">{uiText("ticket_this_ticket_is_read_only__4b7b2251")}</p> : null}
     {controller.error ? <p role="alert" className="my-2 text-sm text-destructive">{controller.error}</p> : null}
-    <div className="grid gap-2 sm:grid-cols-2">
-      {Object.values(state.works).filter((v) => !v.ticket.archived).map((view) => <section key={view.ticket.id} className="rounded-lg border p-2 text-xs">
-        <div className="flex justify-between gap-2"><strong>{view.ticket.contract.title}</strong><span>{labels[view.ticket.state]}</span></div>
-        <p className="mt-1 break-words text-muted-foreground">{view.ticket.contract.objective}</p>
+    <div className="grid gap-3">
+      {Object.values(state.works).filter((v) => !v.ticket.archived).map((view) => <section key={view.ticket.id} className="rounded-xl border bg-background p-3 text-sm">
+        <div className="flex justify-between gap-2"><strong className="min-w-0 break-words">{view.ticket.contract.title}</strong><span className="shrink-0 text-xs text-muted-foreground">{labels[view.ticket.state]}</span></div>
         {view.ticket.blocked ? <p className="mt-1 text-muted-foreground">{view.ticket.blocked.reason}</p> : null}
         {view.submissions.filter((s) => s.id === view.ticket.accepted_submission || s.id === view.ticket.current_submission).map((submission) => <div key={submission.id} className="mt-2">
           <p>{submission.stale ? uiText("ticket_previous_submission_for_reference_only_8540a39f") : submission.id === view.ticket.accepted_submission ? uiText("ticket_accepted_submission_a269d4af") : uiText("ticket_submitted_awaiting_acceptance_14447588")}</p>
-          {submission.evidence.map((line, index) => <p key={index} className="break-words">{line}</p>)}
+          <p className="mt-1 text-xs text-muted-foreground">{uiText("supervisor_work_result_count", { count: submission.artifacts.length })}</p>
           {submission.artifacts.map((artifact, index) => <button type="button" key={artifact.sha256} style={{ marginRight: "0.5rem" }} className="underline" onClick={() => {
             void ticketClient.artifact(artifact.sha256).then((blob) => {
               const href = URL.createObjectURL(blob); const link = document.createElement("a"); link.href = href; link.download = artifactDownloadName(artifact.sha256, artifact.uri, blob.type); link.click(); URL.revokeObjectURL(href)
             }).catch(() => setArtifactError(uiText("ticket_the_artifact_could_not_be_read_refresh_and_tr_d3969eb3")))
           }}>{uiText("ticket_artifact_label", { number: index + 1 })}</button>)}
+          <details className="mt-2 text-xs text-muted-foreground"><summary className="cursor-pointer">{uiText("supervisor_work_submission_diagnostics")}</summary>
+            <p className="mt-1 break-all font-mono">{submission.id}</p>
+            {submission.evidence.map((line, index) => <p key={index} className="break-words">{line}</p>)}
+          </details>
         </div>)}
+        <details className="mt-2 text-xs text-muted-foreground"><summary className="cursor-pointer">{uiText("supervisor_work_diagnostics")}</summary>
+          <p className="mt-1 break-words whitespace-pre-wrap">{view.ticket.contract.objective}</p>
+          <p className="mt-1 break-all font-mono">{view.ticket.id}</p>
+        </details>
       </section>)}
     </div>
     {artifactError ? <p role="alert">{artifactError}</p> : null}
-    {open.length ? <div className="mt-3 grid gap-2 sm:grid-cols-2">{open.map((request) => <div key={request.id}>
+    {open.length ? <div className="mt-3 grid gap-3">{open.map((request) => <div key={request.id}>
       <RequestCard controller={controller} state={state} request={request} />
       {onReference ? <button type="button" className="mt-1 text-xs underline" onClick={() => onReference(request)}>{uiText("ticket_reference_this_request_in_the_message_box_b3e84d5b")}</button> : null}
     </div>)}</div> : null}
-    {history.length ? <details className="mt-3"><summary className="cursor-pointer text-xs">{uiText("ticket_history_label", { count: history.length })}</summary><div className="mt-2 grid gap-2 sm:grid-cols-2">{history.map((request) => <RequestCard key={request.id} controller={controller} state={state} request={request} />)}</div></details> : null}
-  </aside>
+    {history.length ? <details className="mt-3"><summary className="cursor-pointer text-xs">{uiText("ticket_history_label", { count: history.length })}</summary><div className="mt-2 grid gap-3">{history.map((request) => <RequestCard key={request.id} controller={controller} state={state} request={request} />)}</div></details> : null}
+  </section>
 }

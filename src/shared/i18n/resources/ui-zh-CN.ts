@@ -1,5 +1,13 @@
 // Application-owned UI copy.
 export const uiZhCn = {
+  "supervisor_work_tab": "工作",
+  "supervisor_work_description": "进度与待处理事项",
+  "supervisor_work_attention": "{{count}} 项待处理",
+  "supervisor_work_connection_attention": "请检查连接",
+  "supervisor_work_unavailable": "当前 Supervisor 暂不支持工作面板。",
+  "supervisor_work_diagnostics": "工作详情与诊断",
+  "supervisor_work_submission_diagnostics": "提交诊断",
+  "supervisor_work_result_count": "{{count}} 份成果可查看",
   "connection_lost_reconnecting_7ea3f97f": "连接已断开,正在重连…",
   "unknown_page_e238756f": "未知网页",
   "enter_a_valid_http_or_https_address_65ce84dd": "请输入有效的 http 或 https 地址。",

@@ -101,9 +101,10 @@ it("keeps an open root session mounted while another workbench tab is selected",
     return <div data-testid="running-session">{status}</div>
   }
 
-  const renderWorkbench = (activeTab: "session" | "inspector") => (
+  const renderWorkbench = (activeTab: "session" | "inspector", visible = true) => (
     <RightWorkbench
       docked
+      visible={visible}
       activeTab={activeTab}
       openToolTabs={["inspector", "session"]}
       onTabChange={vi.fn()}
@@ -123,6 +124,42 @@ it("keeps an open root session mounted while another workbench tab is selected",
   act(() => root.render(renderWorkbench("session")))
   expect(host.querySelector('[data-testid="running-session"]')?.textContent).toBe("sending")
   expect(onMount).toHaveBeenCalledTimes(1)
+  act(() => root.render(renderWorkbench("session", false)))
+  expect(onUnmount).toHaveBeenCalledOnce()
+  expect(host.querySelector('[data-testid="running-session"]')).toBeNull()
+})
+
+it("preserves a Work decision draft across tab switches", () => {
+  const host = document.body.appendChild(document.createElement("div"))
+  const root = createRoot(host)
+  roots.push(root)
+  const onMount = vi.fn()
+  function WorkDecision() {
+    const [answer, setAnswer] = useState("")
+    useEffect(() => { onMount() }, [])
+    return <input aria-label="Work answer" value={answer} onChange={(event) => setAnswer(event.target.value)} />
+  }
+  const render = (activeTab: "work" | "inspector", visible = true) => <RightWorkbench docked activeTab={activeTab} visible={visible}
+    openToolTabs={["work", "inspector"]} workEnabled work={<WorkDecision />}
+    onTabChange={vi.fn()} onToolClose={vi.fn()} onClose={vi.fn()}
+    inspector={<div>inspector</div>} review={null} browser={null} session={null} />
+  act(() => root.render(render("work")))
+  const input = host.querySelector<HTMLInputElement>('input[aria-label="Work answer"]')!
+  act(() => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, "蓝色")
+    input.dispatchEvent(new Event("input", { bubbles: true }))
+  })
+  act(() => root.render(render("inspector")))
+  expect(host.querySelector('input[aria-label="Work answer"]')).toBe(input)
+  expect(input.closest('[role="tabpanel"]')?.className).toContain("hidden")
+  act(() => root.render(render("work")))
+  expect(input.value).toBe("蓝色")
+  act(() => root.render(render("work", false)))
+  expect(input.closest("aside")?.hidden).toBe(true)
+  expect(input.closest("aside")?.style.display).toBe("none")
+  act(() => root.render(render("work")))
+  expect(input.value).toBe("蓝色")
+  expect(onMount).toHaveBeenCalledOnce()
 })
 
 it("omits the browser tab and content when the phone layout disables it", () => {
