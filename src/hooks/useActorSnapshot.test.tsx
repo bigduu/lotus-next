@@ -239,10 +239,10 @@ describe("local actor snapshot lifecycle", () => {
     const pending = deferred()
     vi.mocked(getActorSnapshot).mockReturnValueOnce(pending.promise)
     const handlers = vi.mocked(subscribeActorTree).mock.calls[0][2]
-    await act(async () => { handlers.onControl({ type: "actor_snapshot_required", reason, cursor: cursor7 }) })
+    await act(async () => { handlers.onControl({ type: "actor_snapshot_required", reason, cursor: reason === "unavailable" ? null : cursor7 }) })
     expect(state.gapReason).toBe("transport_gap")
     await act(async () => pending.resolve(actorSnapshotFixture("root", 1, cursor7)))
-    expect(state.gapReason).toBeNull()
+    expect(state.gapReason).toBe(reason === "unavailable" ? "transport_gap" : null)
   })
 
   it("keeps a confirmed tree subscribed and retries a temporary transaction read", async () => {
