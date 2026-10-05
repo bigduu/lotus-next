@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test"
+import { expect, test, type Page, type WebSocketRoute } from "@playwright/test"
 import { actorSnapshotFixture } from "../src/test/fixtures/actorSnapshot.js"
 import { installArtifactRuntime, standaloneScenario } from "./support/artifactRuntime.js"
 
@@ -46,6 +46,63 @@ async function openInspector(page: Page) {
   await page.locator("#right-workbench").getByRole("button", { name: /检查器.*查看当前会话/ }).click()
   return page.locator("[data-actor-snapshot-panel]")
 }
+
+test("normal tree refreshes keep Inspector and child side-chat content stationary", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop-chromium", "shared desktop right-pane regression")
+  await prepare(page)
+  let socket: WebSocketRoute | undefined
+  const subscriptions: string[] = []
+  await page.routeWebSocket(/.*/, (ws) => {
+    socket = ws
+    ws.onMessage((message) => {
+      const value = frame(JSON.parse(String(message)))
+      if (value.type === "hello") ws.send(JSON.stringify({ type: "welcome" }))
+      if (value.type === "ping") ws.send(JSON.stringify({ type: "pong" }))
+      if (value.type === "subscribe_tree") subscriptions.push(String(value.ch))
+    })
+  })
+  let revision = 7
+  let pendingRead = false
+  let release: (() => void) | undefined
+  const cursor = () => `at1-${"a".repeat(64)}-${revision}`
+  await page.route(`**/api/v1/actors/${rootId}/snapshot?*`, async (route) => {
+    if (pendingRead) await new Promise<void>((resolve) => { release = resolve })
+    await route.fulfill({ json: actorSnapshotFixture(rootId, 128, cursor()) })
+  })
+  await page.goto(standaloneScenario.entryUrl)
+  const panel = await openInspector(page)
+  await expect(panel.getByRole("tree")).toBeVisible()
+  const workbench = page.locator("#right-workbench")
+  const tree = panel.getByRole("tree")
+  const verifyRefresh = async (target: ReturnType<Page["locator"]>) => {
+    await expect.poll(() => subscriptions.length).toBeGreaterThan(0)
+    const before = await target.boundingBox()
+    expect(before).not.toBeNull()
+    pendingRead = true
+    release = undefined
+    revision += 1
+    socket!.send(JSON.stringify({ ch: subscriptions.at(-1), seq: revision,
+      control: { type: "actor_snapshot_required", reason: "changed", cursor: cursor() } }))
+    await expect.poll(() => !!release).toBe(true)
+    await expect(workbench.locator("[data-actor-gap]")).toHaveCount(0)
+    const during = await target.boundingBox()
+    expect(during?.y).toBe(before?.y)
+    expect(during?.height).toBe(before?.height)
+    pendingRead = false
+    release!()
+    await expect.poll(async () => (await target.boundingBox())?.y).toBe(before?.y)
+    await expect(workbench.locator("[data-actor-gap]")).toHaveCount(0)
+  }
+  await verifyRefresh(tree)
+  await page.screenshot({ path: testInfo.outputPath("actor-refresh-stable-inspector.png") })
+  await panel.locator('[data-actor-id="actor-0"] [data-actor-toggle]').click()
+  await panel.locator('[data-actor-id="actor-8"] [data-actor-toggle]').click()
+  await panel.locator(`[data-actor-id="${childId}"]`).click()
+  const side = workbench.locator("[data-subagent-transcript-pane] .overflow-y-auto")
+  await expect(workbench.getByText("isolated selected child answer")).toBeVisible()
+  await verifyRefresh(side)
+  await page.screenshot({ path: testInfo.outputPath("actor-refresh-stable-side-chat.png") })
+})
 
 test("129 persistent actors render recursively without expanding the content subscription scope", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name === "tablet-chromium", "desktop and phone acceptance")
