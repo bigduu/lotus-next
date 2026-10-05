@@ -327,6 +327,28 @@ beforeEach(() => {
 })
 afterEach(() => { for (const root of roots.splice(0)) act(() => root.unmount()); document.body.replaceChildren(); vi.unstubAllGlobals() })
 describe("ChatPane composer acknowledgement", () => {
+  it("renders Work in the external workbench target and keeps only status in chat", async () => {
+    const value = ticketSnapshot()
+    value.scope.binding.supervisor_session_id = "root-session"
+    runtime.ticketWork = { state: applyTicketSnapshot(null, value), connected: true, negotiated: true,
+      error: null, busy: {}, uncertain: {}, respond: async () => false, refresh: async () => {}, canRespond: true, canSendIngress: true }
+    const host = document.body.appendChild(document.createElement("div"))
+    const target = document.body.appendChild(document.createElement("div"))
+    const root = createRoot(host); roots.push(root)
+    const onOpen = vi.fn(), onReference = vi.fn()
+    await act(async () => root.render(<ChatPane chat={createChat(vi.fn<Send>(), "root-session")}
+      pickedWorkspace={null} onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()}
+      splitOpen={false} onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false}
+      workPanelTarget={target} onOpenWork={onOpen} onWorkReference={onReference} />))
+    expect(host.querySelector('[data-testid="ticket-work-overview"]')).toBeNull()
+    expect(target.querySelector('[data-testid="ticket-work-overview"]')).not.toBeNull()
+    act(() => host.querySelector<HTMLButtonElement>('[data-testid="ticket-work-status"]')!.click())
+    expect(onOpen).toHaveBeenCalledOnce()
+    const reference = [...target.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "在普通输入中引用此请求")!
+    act(() => reference.click())
+    expect(onReference).toHaveBeenCalledOnce()
+    expect(host.querySelector('[data-testid="ticket-reference"]')?.textContent).toContain("报告A")
+  })
   it("holds the draft and does not choose legacy routing while a running Supervisor negotiates tickets", async () => {
     runtime.ticketWork = { state: null, connected: false, negotiated: false, error: null,
       busy: {}, uncertain: {}, respond: async () => false, refresh: async () => {}, canRespond: false, canSendIngress: false }

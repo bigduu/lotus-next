@@ -1,5 +1,13 @@
 // Application-owned UI copy.
 export const uiEnUs = {
+  "supervisor_work_tab": "Work",
+  "supervisor_work_description": "Progress and decisions",
+  "supervisor_work_attention": "{{count}} need attention",
+  "supervisor_work_connection_attention": "Check connection",
+  "supervisor_work_unavailable": "Work is unavailable for this Supervisor.",
+  "supervisor_work_diagnostics": "Work details and diagnostics",
+  "supervisor_work_submission_diagnostics": "Submission diagnostics",
+  "supervisor_work_result_count": "{{count}} results available",
   "connection_lost_reconnecting_7ea3f97f": "Connection lost. Reconnecting…",
   "unknown_page_e238756f": "Unknown page",
   "enter_a_valid_http_or_https_address_65ce84dd": "Enter a valid HTTP or HTTPS address.",
