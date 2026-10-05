@@ -5,7 +5,7 @@ import {
   createDefaultRuntimeInfo,
   DEFAULT_HEALTHCHECK_INTERVAL_MS,
   DEFAULT_REQUEST_TIMEOUT_MS,
-  DEFAULT_SSE_CONNECT_TIMEOUT_MS,
+  DEFAULT_HTTP_CONNECT_TIMEOUT_MS,
   DEFAULT_STDIO_STARTUP_TIMEOUT_MS,
   ServerStatus,
   type McpActionResponse,
@@ -57,7 +57,7 @@ const normalizeTransport = (value: unknown, fallback: TransportConfig): Transpor
   }
 
   const transport = value as Record<string, unknown>;
-  if (transport.type === "sse" || transport.type === "streamablehttp" || transport.type === "streamable_http") {
+  if (transport.type === "streamablehttp" || transport.type === "streamable_http") {
     const headers = Array.isArray(transport.headers)
       ? transport.headers
           .map((item) => {
@@ -75,10 +75,10 @@ const normalizeTransport = (value: unknown, fallback: TransportConfig): Transpor
       : [];
 
     return {
-      type: transport.type === "sse" ? "sse" : "streamable_http",
+      type: "streamable_http",
       url: typeof transport.url === "string" ? transport.url : "",
       headers,
-      connect_timeout_ms: toNumber(transport.connect_timeout_ms, DEFAULT_SSE_CONNECT_TIMEOUT_MS),
+      connect_timeout_ms: toNumber(transport.connect_timeout_ms, DEFAULT_HTTP_CONNECT_TIMEOUT_MS),
     };
   }
 
@@ -288,7 +288,7 @@ export class McpService {
         if (typeof transport.command !== "string" || (transport.args !== undefined &&
           (!Array.isArray(transport.args) || !transport.args.every((arg) => typeof arg === "string"))) ||
           (transport.env !== undefined && (!isMcpRecord(transport.env) || !Object.values(transport.env).every((value) => typeof value === "string")))) return false;
-      } else if (["sse", "streamablehttp", "streamable_http"].includes(transport.type as string)) {
+      } else if (["streamablehttp", "streamable_http"].includes(transport.type as string)) {
         if (typeof transport.url !== "string" || (transport.headers !== undefined && (!Array.isArray(transport.headers) ||
           !transport.headers.every((header) => isMcpRecord(header) && typeof header.name === "string" && typeof header.value === "string")))) return false;
       } else return false;

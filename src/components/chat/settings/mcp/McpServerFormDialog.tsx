@@ -3,7 +3,7 @@ import { useEffect, useState } from "react"
 import { Plus, X } from "lucide-react"
 import {
   createDefaultMcpServerConfig,
-  DEFAULT_SSE_CONNECT_TIMEOUT_MS,
+  DEFAULT_HTTP_CONNECT_TIMEOUT_MS,
   DEFAULT_STDIO_STARTUP_TIMEOUT_MS,
   type McpServerConfig,
   type TransportConfig,
@@ -215,8 +215,8 @@ export function McpServerFormDialog({
               .map((e) => ({ name: e.k.trim(), value: e.v })),
             connect_timeout_ms:
               initial && initial.transport.type !== "stdio"
-                ? (initial.transport.connect_timeout_ms ?? DEFAULT_SSE_CONNECT_TIMEOUT_MS)
-                : DEFAULT_SSE_CONNECT_TIMEOUT_MS,
+                ? (initial.transport.connect_timeout_ms ?? DEFAULT_HTTP_CONNECT_TIMEOUT_MS)
+                : DEFAULT_HTTP_CONNECT_TIMEOUT_MS,
           }
     return {
       ...base,
@@ -289,7 +289,7 @@ export function McpServerFormDialog({
           <div>
             <div className="mb-1 text-xs text-muted-foreground">{uiText("transport_84dada05")}</div>
             <div className="flex flex-wrap gap-2">
-              {(["stdio", "sse", "streamable_http"] as const).map((k) => (
+              {(["stdio", "streamable_http"] as const).map((k) => (
                 <Button
                   key={k}
                   type="button"
@@ -299,7 +299,7 @@ export function McpServerFormDialog({
                   className="flex-1"
                   onClick={() => setKind(k)}
                 >
-                  {k === "stdio" ? uiText("stdio_local_process_e3d7ac94") : k === "sse" ? uiText("sse_remote_038b1ed3") : uiText("streamable_http_remote_7ac7cbb2")}
+                  {k === "stdio" ? uiText("stdio_local_process_e3d7ac94") : uiText("streamable_http_remote_7ac7cbb2")}
                 </Button>
               ))}
             </div>
@@ -344,7 +344,7 @@ export function McpServerFormDialog({
             <>
               <Field label="URL">
                 <Input
-                  placeholder="http://localhost:4000/sse"
+                  placeholder="http://localhost:4000/mcp"
                   value={url}
                   autoComplete="off"
                   onChange={(e) => setUrl(e.target.value)}

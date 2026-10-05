@@ -220,6 +220,14 @@ describe("SettingsMcp JSON import integration", () => {
     expect(post).not.toHaveBeenCalled()
   })
 
+  it("offers only supported transports when creating a server", async () => {
+    await mount()
+    await click("新增")
+    expect(button("stdio(本地进程)")).toBeTruthy()
+    expect(button("Streamable HTTP(远程)")).toBeTruthy()
+    expect([...document.querySelectorAll("button")].some((button) => button.textContent === "SSE(远程)")).toBe(false)
+  })
+
   it("keeps an imported Streamable HTTP server editable without changing its transport, headers or timeout", async () => {
     get.mockResolvedValue({ servers: [record("remote", "streamablehttp")] })
     await mount()
