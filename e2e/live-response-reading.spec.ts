@@ -77,6 +77,25 @@ test("home-to-chat follows streaming and late layout, pauses for reading, and re
     el.firstElementChild!.append(image)
   })
   await expect.poll(gap).toBeLessThanOrEqual(2)
+  // Dynamic content can briefly shrink (clamping scrollTop) before its
+  // replacement grows. That browser-generated movement must not unpin reading.
+  await area.evaluate((el) => {
+    const block = el.querySelector('[data-late-layout]')
+    if (!block) throw new Error("late layout block missing")
+    block.remove()
+    void el.scrollHeight
+    const replacement = el.ownerDocument.createElement("div")
+    replacement.setAttribute("data-late-layout", "true")
+    replacement.style.height = "700px"
+    el.firstElementChild!.append(replacement)
+  })
+  await expect.poll(gap).toBeLessThanOrEqual(2)
+  // A virtualizer/browser scroll correction is not an upward reader gesture.
+  await area.evaluate((el) => { el.scrollTop -= 64 })
+  await expect.poll(gap).toBeLessThanOrEqual(2)
+  emit("token", "Output after automatic scroll correction.\n\n".repeat(12))
+  await expect(page.locator(".assistant-streamdown")).toContainText("Output after automatic scroll correction.")
+  await expect.poll(gap).toBeLessThanOrEqual(2)
   // Multiline composer height reduces the available viewport while pinned.
   await input.fill("A line\n".repeat(8))
   await expect.poll(gap).toBeLessThanOrEqual(2)

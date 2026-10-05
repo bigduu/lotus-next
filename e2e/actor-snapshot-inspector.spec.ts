@@ -166,6 +166,65 @@ test("129 persistent actors render recursively without expanding the content sub
   expect(await page.locator("html").evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1)
 })
 
+test("child side chat follows automatic corrections and pauses only for upward reading", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop-chromium", "shared desktop scroll regression")
+  await prepare(page)
+  let socket: WebSocketRoute | undefined
+  const subscriptions: string[] = []
+  await page.routeWebSocket(/.*/, (ws) => {
+    socket = ws
+    ws.onMessage((raw) => {
+      const value = frame(JSON.parse(String(raw)))
+      if (value.type === "hello") ws.send(JSON.stringify({ type: "welcome" }))
+      if (value.type === "ping") ws.send(JSON.stringify({ type: "pong" }))
+      if (value.type === "subscribe") subscriptions.push(String(value.ch))
+    })
+  })
+  await page.route(`**/api/v1/actors/${rootId}/snapshot?*`, (route) => route.fulfill({ json: snapshot }))
+  await page.route(`**/api/v1/sessions/${childId}/history?*`, (route) => route.fulfill({ json: {
+    session_id: childId, projection: "messages", is_delta: false, truncated: false, total_message_count: 1,
+    messages: [{ id: "child-long-message", role: "assistant", content: "Child answer paragraph.\n\n".repeat(120), created_at: at }],
+  } }))
+  await page.goto(standaloneScenario.entryUrl)
+  const panel = await openInspector(page)
+  await panel.locator('[data-actor-id="actor-0"] [data-actor-toggle]').click()
+  await panel.locator('[data-actor-id="actor-8"] [data-actor-toggle]').click()
+  await panel.locator(`[data-actor-id="${childId}"]`).click()
+  const workbench = page.locator("#right-workbench")
+  const area = workbench.locator("[data-subagent-transcript-pane] .overflow-y-auto")
+  const gap = () => area.evaluate((el) => el.scrollHeight - el.scrollTop - el.clientHeight)
+  await expect(workbench.locator(".assistant-streamdown")).toContainText("Child answer paragraph.")
+  await expect.poll(() => subscriptions.includes(`message.${childId}`)).toBe(true)
+  await expect.poll(gap).toBeLessThanOrEqual(2)
+  let version = 0
+  let live = ""
+  const grow = async () => {
+    version += 1
+    live += `Child update ${version}.\n\n` + "More child output.\n\n".repeat(12)
+    socket!.send(JSON.stringify({ ch: `message.${childId}`, seq: version, event: {
+      type: "snapshot", version, history_committed: false,
+      messages: [{ id: "child-live-tail", content: live, created_at: at }],
+    } }))
+    await expect(workbench.locator(".assistant-streamdown").last()).toContainText(`Child update ${version}.`)
+  }
+  await area.evaluate((el) => { el.scrollTop -= 64 })
+  await expect.poll(gap).toBeLessThanOrEqual(2)
+  await grow()
+  await expect.poll(gap).toBeLessThanOrEqual(2)
+  await area.hover()
+  await page.mouse.wheel(0, -250)
+  const jump = workbench.getByRole("button", { name: "滚动到底部", exact: true })
+  await expect(jump).toBeVisible()
+  await grow()
+  // Virtualized history may adjust its offset while measuring rows. It must
+  // stay in paused reading rather than following the newly appended bottom.
+  await expect(jump).toBeVisible()
+  expect(await gap()).toBeGreaterThan(2)
+  await jump.click()
+  await expect.poll(gap).toBeLessThanOrEqual(2)
+  await page.screenshot({ path: testInfo.outputPath("child-bottom-follow-restored.png") })
+})
+
 test("pending and budget-rejected snapshots never present a partial actor tree", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name === "tablet-chromium", "desktop and phone acceptance")
   const { observation } = await prepare(page)
