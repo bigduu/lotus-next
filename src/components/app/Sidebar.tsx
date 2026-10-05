@@ -1,7 +1,7 @@
 import { useUiText } from "@shared/i18n/ui"
 import { isSessionUnread, useSessionReadState } from "@/lib/sessionReadState"
 import { useId, useMemo, useState } from "react"
-import { ChevronRight, Plus, Search, X, Cog, PanelLeftClose, FolderClosed, CalendarDays, ChevronDown } from "lucide-react"
+import { ChevronRight, Plus, Search, X, Cog, PanelLeftClose, FolderClosed, CalendarDays, ChevronDown, CircleDot } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { SessionRow } from "@/components/chat/SessionRow"
@@ -14,6 +14,7 @@ import { readPinnedProjectIds, writePinnedProjectIds } from "@/lib/projectSideba
 import { useAppStore } from "@shared/store/appStore"
 import { openLocalFolder } from "@shared/utils/openExternalLink"
 import { cn } from "@/lib/utils"
+import { isDefaultSupervisor } from "@/lib/supervisor"
 import type { ChatItem } from "@shared/types/chatMessages"
 
 export type SidebarGroupingMode = "date" | "project"
@@ -83,6 +84,7 @@ export function Sidebar({
   const projects = useAppStore((state) => state.projects)
   const readState = useSessionReadState()
   const disclosureId = useId()
+  const supervisorStatusId = useId()
   const query = search.trim().toLowerCase()
 
   const switchGroupingMode = (mode: SidebarGroupingMode) => {
@@ -94,7 +96,10 @@ export function Sidebar({
     }
   }
 
-  const rootChats = useMemo(() => chats.filter((chat) => !chat.parentSessionId), [chats])
+  const supervisor = chats.find(isDefaultSupervisor)
+  const supervisorActive = supervisor?.id === currentSessionId
+  const supervisorUnread = !!supervisor && isSessionUnread(supervisor, readState)
+  const rootChats = useMemo(() => chats.filter((chat) => !chat.parentSessionId && !isDefaultSupervisor(chat)), [chats])
   const projectSections = useMemo(
     () => [...new Set(
       Object.values(projects)
@@ -462,6 +467,27 @@ export function Sidebar({
           </Button>
         </div>
         <div className="px-2 pb-2">
+          {supervisor ? (
+            <Button
+              variant="ghost"
+              aria-current={supervisorActive ? "page" : undefined}
+              aria-describedby={supervisor.isRunning || supervisorUnread ? supervisorStatusId : undefined}
+              className={cn("mb-2 w-full justify-start gap-2", supervisorActive && "bg-sidebar-accent", supervisorUnread && "font-semibold")}
+              onClick={() => {
+                onSelect(supervisor.id)
+                onClose()
+              }}
+            >
+              <CircleDot className="size-4" aria-hidden="true" />
+              <span className="flex-1 text-left">Supervisor</span>
+              {supervisor.isRunning || supervisorUnread ? (
+                <span aria-hidden="true" className={cn("size-1.5 rounded-full bg-primary", supervisor.isRunning && "animate-pulse")} />
+              ) : null}
+              <span id={supervisorStatusId} className="sr-only">
+                {supervisor.isRunning ? uiText("running_1f0eb99b") : supervisorUnread ? uiText("unread_messages_519491f4") : ""}
+              </span>
+            </Button>
+          ) : null}
           <Button
             variant="ghost"
             className="w-full justify-start gap-2"
@@ -530,7 +556,7 @@ export function Sidebar({
               {projectActionError}
             </button>
           ) : null}
-          {chats.length === 0 && (
+          {rootChats.length === 0 && (
             <p className="px-2 py-4 text-xs text-muted-foreground">
               {booted ? uiText("no_sessions_yet_69e71f03") : uiText("loading_4927a53b")}
             </p>

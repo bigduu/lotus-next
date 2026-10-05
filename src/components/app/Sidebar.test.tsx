@@ -21,6 +21,7 @@ vi.mock("@/components/chat/SessionRow", () => ({
 import { Sidebar } from "./Sidebar"
 import { useAppStore } from "@shared/store/appStore"
 import { PINNED_PROJECTS_STORAGE_KEY } from "@/lib/projectSidebarPreferences"
+import { DEFAULT_SUPERVISOR_SESSION_ID } from "@/lib/supervisor"
 
 type Props = ComponentProps<typeof Sidebar>
 let root: Root
@@ -203,6 +204,41 @@ function buttonByLabel(label: string): HTMLButtonElement {
 describe("Sidebar navigation hierarchy", () => {
   beforeEach(() => {
     localStorage.removeItem("lotus.sidebar.grouping-mode.v1")
+  })
+
+  it("keeps the canonical Supervisor above primary controls and out of ordinary sessions", () => {
+    const supervisor = chat(DEFAULT_SUPERVISOR_SESSION_ID, 5, { title: "Renamed assistant", pinned: true, isRunning: true })
+    render({ chats: [supervisor, chat("ordinary", 5, { title: "Supervisor" })], currentSessionId: supervisor.id })
+    const entry = button("Supervisor")
+    expect(entry.getAttribute("aria-current")).toBe("page")
+    expect(container.textContent!.indexOf("Supervisor")).toBeLessThan(container.textContent!.indexOf("新建会话"))
+    expect(row(supervisor.id)).toBeNull()
+    expect(row("ordinary")).not.toBeNull()
+    expect(button("今天").textContent).toBe("今天1 个会话")
+    expect(container.textContent).not.toContain("Pin bamboo-default-supervisor")
+    expect(document.getElementById(entry.getAttribute("aria-describedby")!)?.textContent).toBe("运行中")
+    act(() => entry.click())
+    expect(props.onSelect).toHaveBeenCalledWith(supervisor.id)
+    expect(props.onClose).toHaveBeenCalledOnce()
+    expect(props.onNewChat).not.toHaveBeenCalled()
+    search("no match")
+    expect(button("Supervisor")).toBe(entry)
+    expect(container.querySelectorAll("[data-session]")).toHaveLength(0)
+    click("项目")
+    search("")
+    expect(row(supervisor.id)).toBeNull()
+    expect(row("ordinary")).not.toBeNull()
+    expect(container.textContent).toContain("1 个会话")
+  })
+
+  it("does not invent a Supervisor from a title or child and counts only ordinary sessions", () => {
+    render({ chats: [chat("ordinary", 5, { title: "Supervisor" }), chat(DEFAULT_SUPERVISOR_SESSION_ID, 5, { kind: "child", parentSessionId: "ordinary" })] })
+    expect(container.querySelectorAll('button[aria-current="page"]')).toHaveLength(0)
+    expect(row("ordinary")).not.toBeNull()
+    expect(button("Supervisor").closest("[data-session]")).toBe(row("ordinary"))
+    render({ chats: [chat(DEFAULT_SUPERVISOR_SESSION_ID, 5)] })
+    expect(container.querySelectorAll("[data-session]")).toHaveLength(0)
+    expect(container.textContent).toContain("暂无会话")
   })
 
   it("shows labeled primary actions beneath the Bodhi identity", () => {
