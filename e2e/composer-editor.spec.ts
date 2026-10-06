@@ -192,11 +192,42 @@ for (const direction of ["Backspace", "Delete"]) {
       await editor.press("End")
       await editor.press("Backspace") // The insertion's trailing space.
       await expect(editor.locator('[data-type="mention"]')).toHaveCount(1)
+      await editor.press("Backspace")
     } else {
-      await editor.press("Control+Home")
-      for (let index = 0; index < "Review ".length; index += 1) await editor.press("ArrowRight")
+      // Test atomic forward deletion from an established caret, independently
+      // of platform-specific Home-key navigation and locator refocusing.
+      await editor.evaluate((element) => {
+        const document = element.ownerDocument
+        const mention = element.querySelector('[data-type="mention"]')
+        if (!mention) throw new Error("Expected the selected file mention")
+        const range = document.createRange()
+        range.setStartBefore(mention)
+        range.collapse(true)
+        const selection = document.defaultView!.getSelection()!
+        selection.removeAllRanges()
+        selection.addRange(range)
+        document.dispatchEvent(new document.defaultView!.Event("selectionchange"))
+      })
+      await expect.poll(() => editor.evaluate((element) => {
+        const document = element.ownerDocument
+        const selection = document.defaultView!.getSelection()
+        const anchor = selection?.anchorNode
+        const mention = element.querySelector('[data-type="mention"]')
+        if (!anchor || !element.contains(anchor) || !mention) return null
+        // Browsers may normalize the point to the preceding text node's end.
+        // Its exact prefix and position outside the atom must remain the same.
+        const prefix = document.createRange()
+        prefix.selectNodeContents(element)
+        prefix.setEnd(anchor, selection!.anchorOffset)
+        return {
+          collapsed: selection?.isCollapsed,
+          outsideMention: !mention.contains(anchor),
+          prefix: prefix.toString(),
+        }
+      })).toEqual({ collapsed: true, outsideMention: true, prefix: "Review " })
+      await expect(editor).toBeFocused()
+      await page.keyboard.press("Delete")
     }
-    await editor.press(direction)
     await expect(editor.locator('[data-type="mention"]')).toHaveCount(0)
     await expectComposerText(editor, direction === "Backspace" ? "Review " : "Review  ")
     await expect(page.getByRole("listbox")).toHaveCount(0)
