@@ -1,6 +1,4 @@
 import { expect, test, type Locator, type Page } from "@playwright/test"
-import type { Editor } from "@tiptap/core"
-import type { Transaction } from "@tiptap/pm/state"
 import { actorSnapshotFixture } from "../src/test/fixtures/actorSnapshot.js"
 import { installArtifactRuntime, standaloneScenario } from "./support/artifactRuntime.js"
 import { composerText, expectComposerText } from "./support/composer.js"
@@ -241,72 +239,25 @@ for (const direction of ["Backspace", "Delete"]) {
   })
 }
 
-test("typed HTTP links stay editable and clicking never navigates away", async ({ page }, testInfo) => {
+test("typed HTTP links stay editable and clicking never navigates away", async ({ page }) => {
   const { editor, chats, observation } = await openComposer(page)
-  // Bounded diagnostics for this fake-fixture case only. Forward every event
-  // synchronously and unchanged; never delay input or suppress a page error.
-  const diagnostics = await editor.evaluateHandle((element) => {
-    const browser = element.ownerDocument.defaultView!
-    const instance = (element as typeof element & { editor: Editor }).editor
-    const events: unknown[] = []
-    const counts: Record<string, number> = {}
-    let sequence = 0
-    const record = (kind: string, details: unknown) => {
-      counts[kind] = (counts[kind] ?? 0) + 1
-      events.push({ sequence: ++sequence, time: performance.now(), kind, details })
-      if (events.length > 256) events.shift()
-    }
-    const text = () => instance.state.doc.textBetween(0, instance.state.doc.content.size, "\n")
-    const original = instance.emit
-    const wrapped = ((event: string, ...args: unknown[]) => {
-      if (event === "beforeTransaction" || event === "update") {
-        const transaction = (args[0] as { transaction: Transaction }).transaction
-        record(event, {
-          text: text(), nextText: transaction.doc.textBetween(0, transaction.doc.content.size, "\n"),
-          docChanged: transaction.docChanged, preventUpdate: transaction.getMeta("preventUpdate"),
-          steps: transaction.steps.map((step) => step.toJSON()),
-          syncStack: transaction.getMeta("preventUpdate") ? new Error().stack : undefined,
-        })
-      } else if (event === "create" || event === "destroy") record(event, { id: element.id })
-      return Reflect.apply(original, instance, [event, ...args])
-    }) as typeof instance.emit
-    instance.emit = wrapped
-    const input = (event: { type: string; data?: string | null; inputType?: string }) => record(event.type, { data: event.data, inputType: event.inputType })
-    const error = (event: { type: string; message?: string }) => record("pageError", { message: event.message, text: text() })
-    element.addEventListener("input", input)
-    browser.addEventListener("error", error)
-    return {
-      finish: () => {
-        if (instance.emit === wrapped) instance.emit = original
-        element.removeEventListener("input", input)
-        browser.removeEventListener("error", error)
-        return { initialId: element.id, connected: element.isConnected, sameEditor: (element as typeof element & { editor: Editor }).editor === instance, counts, events }
-      },
-    }
-  })
-  try {
-    const originalUrl = page.url()
-    const originalPages = page.context().pages().length
-    await editor.pressSequentially("See https://example.test/guide and http://example.test/help ")
-    const links = editor.locator("a")
-    await expect(links).toHaveCount(2)
-    await expect(links.nth(0)).toHaveAttribute("href", "https://example.test/guide")
-    await expect(links.nth(1)).toHaveAttribute("href", "http://example.test/help")
-    await links.nth(0).click()
-    expect(page.url()).toBe(originalUrl)
-    expect(page.context().pages()).toHaveLength(originalPages)
-    await editor.press("Control+End")
-    await editor.pressSequentially("then reply")
-    await editor.press("Enter")
-    await expect.poll(() => chats.length).toBe(1)
-    expect(chats[0].message).toBe("See https://example.test/guide and http://example.test/help then reply")
-    expect(observation.httpRequests.some(({ url }) => url.startsWith("https://example.test/"))).toBe(false)
-    expect(observation.pageErrors).toEqual([])
-  } finally {
-    const report = await diagnostics.evaluate((diagnostic) => diagnostic.finish())
-    await testInfo.attach("composer-update-diagnostics", { body: JSON.stringify(report, null, 2), contentType: "application/json" })
-    await diagnostics.dispose()
-  }
+  const originalUrl = page.url()
+  const originalPages = page.context().pages().length
+  await editor.pressSequentially("See https://example.test/guide and http://example.test/help ")
+  const links = editor.locator("a")
+  await expect(links).toHaveCount(2)
+  await expect(links.nth(0)).toHaveAttribute("href", "https://example.test/guide")
+  await expect(links.nth(1)).toHaveAttribute("href", "http://example.test/help")
+  await links.nth(0).click()
+  expect(page.url()).toBe(originalUrl)
+  expect(page.context().pages()).toHaveLength(originalPages)
+  await editor.press("Control+End")
+  await editor.pressSequentially("then reply")
+  await editor.press("Enter")
+  await expect.poll(() => chats.length).toBe(1)
+  expect(chats[0].message).toBe("See https://example.test/guide and http://example.test/help then reply")
+  expect(observation.httpRequests.some(({ url }) => url.startsWith("https://example.test/"))).toBe(false)
+  expect(observation.pageErrors).toEqual([])
 })
 
 test("inline references and links fit the composer at every supported viewport", async ({ page }, testInfo) => {

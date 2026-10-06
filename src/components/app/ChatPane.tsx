@@ -484,9 +484,14 @@ export function ChatPane({
 
   // Escape hides the pickers until the draft changes again (typing re-opens).
   const [menusDismissed, setMenusDismissed] = useState(false)
+  const menuDraftRef = useRef({ key: draftKey, text: draft })
   useEffect(() => {
-    setMenusDismissed(false)
-  }, [draft])
+    const changed = menuDraftRef.current.key !== draftKey || menuDraftRef.current.text !== draft
+    menuDraftRef.current = { key: draftKey, text: draft }
+    // Even an equal-state dispatch can leave a React lane pending during
+    // rapid external-editor updates. Open menus need no reset dispatch.
+    if (changed && menusDismissed) setMenusDismissed(false)
+  }, [draft, draftKey, menusDismissed])
 
   const slashQuery = !menusDismissed && draft.startsWith("/") ? draft.slice(1) : null
   const catalogState = useWorkflowCatalog(currentSessionId, slashQuery !== null || workflowPicker !== null)
