@@ -1,3 +1,4 @@
+import { installResizeDiagnostics } from "./support/resizeDiagnostics.js"
 import { expect, test, type Page, type WebSocketRoute } from "@playwright/test"
 import { actorSnapshotFixture } from "../src/test/fixtures/actorSnapshot.js"
 import { installArtifactRuntime, standaloneScenario } from "./support/artifactRuntime.js"
@@ -377,6 +378,7 @@ test("selected Child follows successor activation and fences late frames across 
 
 test("child side chat follows automatic corrections and pauses only for upward reading", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "desktop-chromium", "shared desktop scroll regression")
+  await installResizeDiagnostics(page)
   await prepare(page)
   let socket: WebSocketRoute | undefined
   const subscriptions: string[] = []
@@ -431,6 +433,7 @@ test("child side chat follows automatic corrections and pauses only for upward r
   expect(await gap()).toBeGreaterThan(2)
   await jump.click()
   await expect.poll(gap).toBeLessThanOrEqual(2)
+  expect(await page.evaluate(() => (globalThis as unknown as { __resizeDiagnostics: { errors: unknown[] } }).__resizeDiagnostics.errors)).toEqual([])
   await page.screenshot({ path: testInfo.outputPath("child-bottom-follow-restored.png") })
 })
 

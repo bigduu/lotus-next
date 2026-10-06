@@ -1,8 +1,10 @@
+import { installResizeDiagnostics } from "./support/resizeDiagnostics.js"
 import { expect, test, type WebSocketRoute } from "@playwright/test"
 import { installArtifactRuntime, standaloneScenario } from "./support/artifactRuntime.js"
 
 test("home-to-chat follows streaming and late layout, pauses for reading, and reconnects", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "desktop-chromium", "desktop scrolling regression")
+  await installResizeDiagnostics(page)
   await page.addInitScript(() => localStorage.setItem("bodhi_onboarded_v1", "1"))
   const observation = await installArtifactRuntime(page, standaloneScenario)
   let socket: WebSocketRoute | undefined
@@ -143,4 +145,5 @@ test("home-to-chat follows streaming and late layout, pauses for reading, and re
   await area.evaluate((el) => { const content = el.firstElementChild!; const block = el.ownerDocument.createElement("div"); block.style.height = "1800px"; content.append(block) })
   await expect.poll(gap).toBeLessThanOrEqual(2)
   expect(observation.pageErrors).toEqual([])
+  expect(await page.evaluate(() => (globalThis as unknown as { __resizeDiagnostics: { errors: unknown[] } }).__resizeDiagnostics.errors)).toEqual([])
 })
