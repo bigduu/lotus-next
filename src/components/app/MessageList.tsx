@@ -527,6 +527,10 @@ export function MessageList({
     initialRect: INITIAL_VIRTUAL_RECT,
     observeElementRect: observeHistoryRect,
     measureElement: measureHistoryElement,
+    // Row measurements update React layout and the pinned scroll position.
+    // Defer them beyond the current resize delivery instead of resizing an
+    // already-delivered ancestor again in the same browser frame.
+    useAnimationFrameWithResizeObserver: true,
   })
 
   const previousExpansionStateRef = useRef({
