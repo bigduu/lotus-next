@@ -3,10 +3,11 @@ import path from "node:path"
 import { describe, expect, it } from "vitest"
 
 const styles = readFileSync(path.resolve(process.cwd(), "src/index.css"), "utf8")
+const layoutStyles = readFileSync(path.resolve(process.cwd(), "src/components/chat/StreamdownLayout.css"), "utf8")
 const componentLayerMarker = "@layer components {"
-const componentLayerStart = styles.indexOf(componentLayerMarker)
-const componentLayerEnd = styles.indexOf("\n}\n\n@media", componentLayerStart)
-const componentRules = styles.slice(
+const componentLayerStart = layoutStyles.indexOf(componentLayerMarker)
+const componentLayerEnd = layoutStyles.indexOf("\n}", componentLayerStart)
+const componentRules = layoutStyles.slice(
   componentLayerStart + componentLayerMarker.length,
   componentLayerEnd,
 )
@@ -20,13 +21,13 @@ describe("assistant Streamdown production styles", () => {
   )
 
   it("keeps table, code, URL, CJK and reduced-motion behavior responsive", () => {
-    expect(styles).toContain('.assistant-streamdown [data-streamdown="link"]')
-    expect(styles).toContain('.assistant-streamdown [data-streamdown="table-wrapper"]')
-    expect(styles).toContain('.assistant-streamdown [data-streamdown="table-header-cell"]')
-    expect(styles).toContain('.assistant-streamdown [data-streamdown="code-block-body"]')
-    expect(styles).toContain("line-break: auto")
-    expect(styles).toContain("overflow-wrap: anywhere")
-    expect(styles).toContain("@media (prefers-reduced-motion: reduce)")
+    expect(layoutStyles).toContain('.assistant-streamdown [data-streamdown="link"]')
+    expect(layoutStyles).toContain('.assistant-streamdown [data-streamdown="table-wrapper"]')
+    expect(layoutStyles).toContain('.assistant-streamdown [data-streamdown="table-header-cell"]')
+    expect(layoutStyles).toContain('.assistant-streamdown [data-streamdown="code-block-body"]')
+    expect(layoutStyles).toContain("line-break: auto")
+    expect(layoutStyles).toContain("overflow-wrap: anywhere")
+    expect(layoutStyles).toContain("@media (prefers-reduced-motion: reduce)")
   })
 
   it("applies the narrow-width overflow and wrapping contract through CSSOM", () => {

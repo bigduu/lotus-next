@@ -258,7 +258,8 @@ describe("MessageList assistant streaming ownership", () => {
     })
 
     const userSurface = container.querySelector<HTMLElement>('[data-message-role="user"]')
-    expect(userSurface?.classList.contains("bg-primary")).toBe(true)
+    expect(userSurface?.classList.contains("user-message-surface")).toBe(true)
+    expect(userSurface?.classList.contains("bg-primary")).toBe(false)
 
     const assistantSurfaces = container.querySelectorAll<HTMLElement>(
       '[data-message-role="assistant"]',

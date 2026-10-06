@@ -6,6 +6,9 @@ describe("Settings preload error policy", () => {
   it.each([
     "Failed to fetch dynamically imported module: https://app.example/assets/Settings-AbC_123.js",
     "Unable to preload CSS for /base/assets/Settings-z9-Y.js?revision=next",
+    "Unable to preload CSS for /base/assets/Settings-z9-Y.css?revision=next",
+    new Error("Unable to preload CSS for /assets/Settings-z9-Y.css"),
+    new Error("Failed to fetch dynamically imported module: /assets/Settings-z9-Y.js"),
     new Error("Importing a module script failed: /assets/Settings-123.js#retry"),
   ])("routes the exact generated Settings feature failure locally", (payload) => {
     expect(isSettingsFeaturePreloadError(payload)).toBe(true)

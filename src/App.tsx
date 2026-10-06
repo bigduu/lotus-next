@@ -8,6 +8,7 @@ import { LazySettings } from "@/components/chat/LazySettings"
 import { Onboarding } from "@/components/chat/Onboarding"
 import { WorkspacePicker } from "@/components/chat/WorkspacePicker"
 import { useThemeStore } from "@shared/store/themeStore"
+import { getUserMessageColors } from "@shared/theme/userMessageColors"
 import { useChat } from "@/hooks/useChat"
 import { useResizableWidth } from "@/hooks/useResizableWidth"
 import { ResizeHandle } from "@/components/ui/resize-handle"
@@ -56,17 +57,23 @@ function App() {
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [paletteOpen, setPaletteOpen] = useState(false)
+  const paletteReturnFocusRef = useRef<HTMLElement | null>(null)
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && (e.key === "k" || e.key === "K")) {
         e.preventDefault()
+        if (!paletteOpen) {
+          paletteReturnFocusRef.current = document.activeElement instanceof HTMLElement
+            ? document.activeElement
+            : null
+        }
         setPaletteOpen((v) => !v)
       }
     }
     window.addEventListener("keydown", onKey)
     return () => window.removeEventListener("keydown", onKey)
-  }, [])
+  }, [paletteOpen])
 
   const [workbenchOpen, setWorkbenchOpen] = useState(false)
   const [workbenchTab, setWorkbenchTab] = useState<RightWorkbenchTab | null>(null)
@@ -180,6 +187,26 @@ function App() {
     edge: "left",
   })
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const chatShellRef = useRef<HTMLDivElement>(null)
+  const settingsReturnFocusRef = useRef<HTMLElement | null>(null)
+  const openSettings = () => {
+    if (!settingsOpen) {
+      settingsReturnFocusRef.current = paletteOpen
+        ? paletteReturnFocusRef.current
+        : document.activeElement instanceof HTMLElement ? document.activeElement : null
+    }
+    setSidebarOpen(false)
+    setPaletteOpen(false)
+    setSettingsOpen(true)
+  }
+  const closeSettings = () => {
+    setSettingsOpen(false)
+    requestAnimationFrame(() => {
+      const opener = settingsReturnFocusRef.current
+      if (opener?.isConnected && opener.getClientRects().length > 0) opener.focus()
+      else chatShellRef.current?.querySelector<HTMLTextAreaElement>("textarea")?.focus()
+    })
+  }
   const [pendingDelete, setPendingDelete] = useState<{ id: string; title: string } | null>(null)
   // Workspace chosen in the picker — shared across the main pane (composer +
   // inspector). The session's own cwd wins for display; otherwise the picked one.
@@ -217,9 +244,16 @@ function App() {
   }, [])
 
   const themeMode = useThemeStore((s) => s.themeMode)
+  const userMessageColorPreset = useThemeStore((s) => s.userMessageColorPreset)
+  const customUserMessageColor = useThemeStore((s) => s.customUserMessageColor)
   useEffect(() => {
     document.documentElement.classList.toggle("dark", themeMode === "dark")
   }, [themeMode])
+  useEffect(() => {
+    const colors = getUserMessageColors(themeMode, userMessageColorPreset, customUserMessageColor)
+    document.documentElement.style.setProperty("--user-message-background", colors.background)
+    document.documentElement.style.setProperty("--user-message-foreground", colors.foreground)
+  }, [themeMode, userMessageColorPreset, customUserMessageColor])
 
   // VDI / graphics compatibility mode (ported from legacy lotus): reflect the
   // persisted flag as a `data-vdi-safe` attribute so CSS can strip blur/glass
@@ -361,7 +395,15 @@ function App() {
 
   return (
     <ExternalLinkProvider onOpenInApp={browserEnabled && currentSessionId ? openLinkInApp : undefined}>
-    <div className="relative flex h-full overflow-hidden bg-background text-foreground">
+    <div className="relative flex h-full min-h-0 flex-col bg-background text-foreground">
+    {/* Preserve drafts, streaming subscriptions and workbench state across navigation. */}
+    <div
+      ref={chatShellRef}
+      data-slot="chat-shell"
+      inert={settingsOpen}
+      aria-hidden={settingsOpen || undefined}
+      className={`relative h-full min-h-0 overflow-hidden ${settingsOpen ? "hidden" : "flex"}`}
+    >
       {/* WSS-only transport: surface a dead /v2/stream connection instead of
           silently freezing. Renders nothing while the connection is healthy. */}
       <AvailabilityBanner />
@@ -389,13 +431,14 @@ function App() {
         onDelete={(c) => setPendingDelete({ id: c.id, title: c.title || uiText("new_session_c57c30bc") })}
         onTogglePin={(c) => (c.pinned ? unpinSession(c.id) : pinSession(c.id))}
         onCopySessionId={copySessionId}
-        onOpenSettings={() => setSettingsOpen(true)}
+        onOpenSettings={openSettings}
         onOpenProjectManager={() => setProjectManagerOpen(true)}
       />
       {!sidebarCollapsed ? <ResizeHandle onPointerDown={sidebarResize.startResize} /> : null}
 
       <ChatPane
         chat={chat}
+        pageVisible={!settingsOpen}
         pickedWorkspace={pickedWorkspace}
         pendingProjectId={pendingProjectId}
         onSelectProject={(projectId) => {
@@ -516,6 +559,7 @@ function App() {
             session={(
               <SecondarySessionPane
                 sessionId={secondSid}
+                pageVisible={!settingsOpen}
                 active={workbenchOpen && selectedWorkbenchTab === "session"}
                 chats={chats}
                 onPickSession={pickSecond}
@@ -528,7 +572,6 @@ function App() {
         </>
       ) : null}
 
-      <LazySettings open={settingsOpen} onClose={() => setSettingsOpen(false)} />
       <Onboarding />
 
       <WorkspacePicker
@@ -544,18 +587,6 @@ function App() {
       />
 
       <ProjectManagerModal open={projectManagerOpen} onClose={() => setProjectManagerOpen(false)} />
-
-      <CommandPalette
-        open={paletteOpen}
-        onClose={() => setPaletteOpen(false)}
-        chats={chats}
-        onSelect={(id) => {
-          select(id)
-          setSidebarOpen(false)
-        }}
-        onNewChat={newChat}
-        onSettings={() => setSettingsOpen(true)}
-      />
 
       <DeleteSessionDialog
         pending={pendingDelete}
@@ -575,6 +606,30 @@ function App() {
           </span>
         </div>
       ) : null}
+    </div>
+      <LazySettings open={settingsOpen} onClose={closeSettings} />
+      <CommandPalette
+        open={paletteOpen}
+        onClose={() => {
+          setPaletteOpen(false)
+          requestAnimationFrame(() => {
+            const opener = paletteReturnFocusRef.current
+            if (opener?.isConnected && opener.getClientRects().length > 0) opener.focus()
+            else if (chatShellRef.current?.getClientRects().length) chatShellRef.current.querySelector<HTMLTextAreaElement>("textarea")?.focus()
+          })
+        }}
+        chats={chats}
+        onSelect={(id) => {
+          setSettingsOpen(false)
+          select(id)
+          setSidebarOpen(false)
+        }}
+        onNewChat={() => {
+          setSettingsOpen(false)
+          newChat()
+        }}
+        onSettings={openSettings}
+      />
     </div>
     </ExternalLinkProvider>
   )

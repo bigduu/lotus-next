@@ -3,6 +3,8 @@
 @plugin "@tailwindcss/typography";
 /* Translation prose is not a source of utility classes. */
 @source not "./shared/i18n";
+/* Browser assertions and fixtures do not contribute application utilities. */
+@source not "../e2e";
 @source not inline("paused");
 @source "../node_modules/streamdown/dist/*.js";
 @source "../node_modules/@streamdown/code/dist/*.js";
@@ -12,65 +14,73 @@
 @custom-variant dark (&:is(.dark *));
 
 :root {
-  --radius: 0.65rem;
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.145 0 0);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0 0);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0 0);
-  /* Brand primary — 石绿 (malachite) #157f6b, matching lotus. */
-  --primary: oklch(0.501 0.077 169);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.97 0 0);
-  --secondary-foreground: oklch(0.205 0 0);
-  --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.556 0 0);
-  --accent: oklch(0.97 0 0);
-  --accent-foreground: oklch(0.205 0 0);
+  --radius: 0.75rem;
+  --motion-fast: 140ms;
+  --motion-normal: 220ms;
+  --motion-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --background: #fafbfb;
+  --foreground: #1b221f;
+  --card: #ffffff;
+  --card-foreground: var(--foreground);
+  --popover: #ffffff;
+  --popover-foreground: var(--foreground);
+  /* Quiet jade: reserve the stronger tone for actions and focus. */
+  --primary: #396957;
+  --primary-foreground: #fafafa;
+  --secondary: #ecf0ee;
+  --secondary-foreground: var(--foreground);
+  --muted: #ecf0ee;
+  --muted-foreground: #5a635f;
+  --accent: #e2efe8;
+  --accent-foreground: #20392f;
   --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.922 0 0);
-  --input: oklch(0.922 0 0);
-  --ring: oklch(0.501 0.077 169);
-  --sidebar: oklch(0.985 0 0);
-  --sidebar-foreground: oklch(0.145 0 0);
-  --sidebar-primary: oklch(0.501 0.077 169);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.97 0 0);
-  --sidebar-accent-foreground: oklch(0.205 0 0);
-  --sidebar-border: oklch(0.922 0 0);
-  --sidebar-ring: oklch(0.501 0.077 169);
+  --border: #dde2e0;
+  --input: #cdd4d1;
+  --ring: var(--primary);
+  --sidebar: #f1f5f3;
+  --sidebar-foreground: var(--foreground);
+  --sidebar-primary: var(--primary);
+  --sidebar-primary-foreground: #fafafa;
+  --sidebar-accent: var(--accent);
+  --sidebar-accent-foreground: var(--accent-foreground);
+  --sidebar-border: var(--border);
+  --sidebar-ring: var(--primary);
+  --user-message-background: #e4eee9;
+  --user-message-foreground: #24312c;
 }
 
 .dark {
-  --background: oklch(0.145 0 0);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.205 0 0);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.205 0 0);
-  --popover-foreground: oklch(0.985 0 0);
-  /* Brand primary lifted for dark — 石绿 #46c2a0, matching lotus. */
-  --primary: oklch(0.738 0.114 168);
-  --primary-foreground: oklch(0.205 0 0);
-  --secondary: oklch(0.269 0 0);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.269 0 0);
-  --muted-foreground: oklch(0.708 0 0);
-  --accent: oklch(0.269 0 0);
-  --accent-foreground: oklch(0.985 0 0);
+  --background: #101412;
+  --foreground: #eaeeec;
+  --card: #181d1b;
+  --popover: #1e2320;
+  --primary: #7db29d;
+  --primary-foreground: #0f1612;
+  --secondary: #242927;
+  --muted: #242927;
+  --muted-foreground: #a0a6a3;
+  --accent: #24312b;
+  --accent-foreground: #d0e4da;
   --destructive: oklch(0.704 0.191 22.216);
   --border: oklch(1 0 0 / 10%);
   --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.738 0.114 168);
-  --sidebar: oklch(0.205 0 0);
-  --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: oklch(0.738 0.114 168);
-  --sidebar-primary-foreground: oklch(0.205 0 0);
-  --sidebar-accent: oklch(0.269 0 0);
-  --sidebar-accent-foreground: oklch(0.985 0 0);
-  --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: oklch(0.738 0.114 168);
+  --sidebar: #151a18;
+  --sidebar-primary-foreground: var(--primary-foreground);
+  --user-message-background: #263e34;
+  --user-message-foreground: #e8eeea;
 }
+
+.user-message-surface {
+  background: var(--user-message-background);
+  color: var(--user-message-foreground);
+}
+
+.button-interaction {
+  transition: var(--motion-fast) var(--motion-ease);
+  transition-property: color, background-color, border-color, box-shadow, transform, opacity;
+}
+
+.button-interaction:active:not(:disabled) { transform: scale(0.98); }
 
 @theme inline {
   --radius-sm: calc(var(--radius) - 4px);
@@ -153,10 +163,8 @@
     flex-direction: column;
     /* Standalone ("Add to Home Screen") app: keep content clear of the
        notch/dynamic-island and home indicator. Zero on desktop/in-browser. */
-    padding-top: env(safe-area-inset-top);
-    padding-bottom: env(safe-area-inset-bottom);
-    padding-left: env(safe-area-inset-left);
-    padding-right: env(safe-area-inset-right);
+    padding: env(safe-area-inset-top) env(safe-area-inset-right)
+      env(safe-area-inset-bottom) env(safe-area-inset-left);
   }
 }
 
@@ -169,66 +177,19 @@ body[data-vdi-safe="true"] * {
   -webkit-backdrop-filter: none !important;
 }
 
-@layer components {
-  .assistant-streamdown {
-    width: 100%;
-    min-width: 0;
-    line-break: auto;
-    word-break: normal;
-  }
-
-  .assistant-streamdown [data-streamdown="link"] {
-    overflow-wrap: anywhere;
-    word-break: break-word;
-  }
-
-  .assistant-streamdown [data-streamdown="table-wrapper"],
-  .assistant-streamdown [data-streamdown="code-block"],
-  .assistant-streamdown [data-mermaid-state] {
-    width: 100%;
-    min-width: 0;
-    max-width: 100%;
-  }
-
-  .assistant-streamdown [data-streamdown="table-wrapper"] > div:last-child {
-    max-width: 100%;
-    overflow-x: auto;
-  }
-
-  .assistant-streamdown [data-streamdown="table"] {
-    width: max-content;
-    min-width: 100%;
-  }
-
-  .assistant-streamdown [data-streamdown="table-header-cell"],
-  .assistant-streamdown [data-streamdown="table-cell"] {
-    white-space: normal;
-    overflow-wrap: break-word;
-    word-break: normal;
-  }
-
-  .assistant-streamdown [data-streamdown="code-block-body"] {
-    max-width: 100%;
-    overflow-x: hidden;
-  }
-
-  .assistant-streamdown [data-streamdown="code-block-body"] pre,
-  .assistant-streamdown [data-streamdown="code-block-body"] code {
-    white-space: pre-wrap;
-    overflow-wrap: anywhere;
-    word-break: break-word;
-  }
-
-  .assistant-streamdown [data-streamdown="image"],
-  .assistant-streamdown [data-mermaid-state="ready"] svg {
-    max-width: 100%;
-    height: auto;
-  }
+body[data-vdi-safe="true"] .motion-page-enter {
+  animation: none;
 }
 
+
 @media (prefers-reduced-motion: reduce) {
-  .assistant-streamdown [data-sd-animate],
-  .assistant-streamdown [data-sd-animate-marker]::marker {
-    animation: none !important;
+  .button-interaction:active { transform: none; }
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
 }

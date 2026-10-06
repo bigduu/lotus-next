@@ -10,6 +10,7 @@ import {
   type PluginConfig,
 } from "streamdown"
 import "streamdown/styles.css"
+import "./StreamdownLayout.css"
 
 import { cn } from "@/lib/utils"
 import { InlineImage } from "./InlineImage"
@@ -35,11 +36,12 @@ const ANIMATED_TOKEN_SELECTOR = 'span[data-sd-animate="true"]'
 
 const COMPACT_CODE_BLOCK_STYLES = {
   block: { gap: "0.25rem", marginBlock: "0.5rem", padding: "0.375rem" },
-  body: { fontSize: "0.875rem", lineHeight: "1.55", padding: "0.625rem 0.75rem" },
+  body: { fontSize: "0.875rem", fontWeight: "400", lineHeight: "1.55", padding: "0.625rem 0.75rem" },
   header: { fontSize: "0.75rem", height: "1.25rem", lineHeight: "1rem" },
   source: {
     background: "transparent",
     fontSize: "inherit",
+    fontWeight: "inherit",
     lineHeight: "inherit",
     margin: "0",
     padding: "0",

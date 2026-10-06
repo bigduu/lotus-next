@@ -1,0 +1,77 @@
+@layer components {
+  .assistant-streamdown {
+    width: 100%;
+    min-width: 0;
+    line-break: auto;
+    word-break: normal;
+  }
+
+  .assistant-streamdown [data-streamdown="link"] {
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
+
+  .assistant-streamdown [data-streamdown="table-wrapper"],
+  .assistant-streamdown [data-streamdown="code-block"],
+  .assistant-streamdown [data-mermaid-state] {
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .assistant-streamdown [data-streamdown="table-wrapper"] > div:last-child {
+    max-width: 100%;
+    overflow-x: auto;
+  }
+
+  .assistant-streamdown [data-streamdown="table"] {
+    width: max-content;
+    min-width: 100%;
+  }
+
+  .assistant-streamdown [data-streamdown="table-header-cell"],
+  .assistant-streamdown [data-streamdown="table-cell"] {
+    white-space: normal;
+    overflow-wrap: break-word;
+    word-break: normal;
+  }
+
+  .assistant-streamdown [data-streamdown="code-block-body"] {
+    max-width: 100%;
+    overflow-x: hidden;
+  }
+
+  .assistant-streamdown [data-streamdown="code-block-body"] pre,
+  .assistant-streamdown [data-streamdown="code-block-body"] code {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
+
+  .assistant-streamdown [data-streamdown="image"],
+  .assistant-streamdown [data-mermaid-state="ready"] svg {
+    max-width: 100%;
+    height: auto;
+  }
+}
+
+/* Scope text weights to Markdown, leaving app headings/actions intact. These
+   rules sit outside layers so Streamdown's utility classes cannot restore 600. */
+.assistant-streamdown [data-streamdown="strong"] {
+  font-weight: 500;
+}
+
+.assistant-streamdown [data-streamdown="inline-code"] {
+  font-weight: 400;
+}
+
+.assistant-streamdown :is(h1, h2, h3, h4, h5, h6, th) [data-streamdown="strong"] {
+  font-weight: inherit;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .assistant-streamdown [data-sd-animate],
+  .assistant-streamdown [data-sd-animate-marker]::marker {
+    animation: none !important;
+  }
+}

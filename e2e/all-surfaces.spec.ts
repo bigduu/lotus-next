@@ -18,6 +18,13 @@ import {
 
 type Surface = Page | FrameLocator
 type RuntimeHandle = { surface: Surface; observation: RuntimeObservation }
+
+const selectSettingsCategory = async (surface: Surface, id: string, label: string) => {
+  const categories = surface.locator("#settings-category")
+  await categories.waitFor({ state: "attached" })
+  if (await categories.isVisible()) await categories.selectOption(id)
+  else await surface.getByRole("button", { name: label, exact: true }).click()
+}
 type RuntimeFixtures = {
   startRuntime(
     scenario: ArtifactScenario,
@@ -232,7 +239,7 @@ test("system settings can disable generated summaries in favor of retrieval wind
     await surface.getByRole("button", { name: "菜单" }).click()
   }
   await settingsButton.click()
-  await surface.getByRole("button", { name: "系统", exact: true }).click()
+  await selectSettingsCategory(surface, "system", "系统")
 
   const section = surface.locator("section").filter({ hasText: "上下文管理" })
   const summarySwitch = section.getByRole("switch", { name: "自动生成上下文摘要" })
@@ -258,6 +265,111 @@ test("system settings can disable generated summaries in favor of retrieval wind
   await expect(summarySwitch).not.toBeChecked()
 })
 
+test("settings page preserves the chat draft, workbench and keyboard return path", async ({
+  page,
+  startRuntime,
+}, testInfo) => {
+  const { surface } = await startRuntime(standaloneScenario)
+  const composer = surface.getByRole("textbox", { name: "消息", exact: true })
+  await expect(composer).toBeVisible()
+  await composer.fill("draft retained across settings navigation")
+  await composer.evaluate((element) => element.setAttribute("data-navigation-marker", "same-composer"))
+  const launcher = surface.getByRole("button", { name: "打开侧边面板", exact: true })
+  await launcher.click()
+  const workbench = surface.getByRole("complementary", { name: "工作面板", exact: true })
+  await expect(workbench).toBeVisible()
+
+  await page.keyboard.press("Control+k")
+  const paletteSearch = surface.getByPlaceholder("搜索会话或操作…")
+  await paletteSearch.fill("系统设置")
+  await paletteSearch.press("Enter")
+  const settings = surface.locator('[data-slot="settings-page"]')
+  const title = settings.getByRole("heading", { name: "系统设置", exact: true })
+  await expect(title).toBeVisible()
+  await expect(title).toBeFocused()
+  await expect(composer).toBeHidden()
+  await expect(workbench).toBeHidden()
+  await expect(surface.locator('[data-slot="chat-shell"]')).toHaveAttribute("inert", "")
+  const bounds = await settings.boundingBox()
+  expect(bounds?.width).toBeGreaterThanOrEqual((page.viewportSize()?.width ?? 0) - 1)
+  expect(bounds?.height).toBeGreaterThanOrEqual((page.viewportSize()?.height ?? 0) - 1)
+  await expect(surface.getByRole("dialog")).toHaveCount(0)
+  await expect(settings.getByRole("heading", { name: "通用", exact: true })).toBeVisible()
+  await settings.getByRole("button", { name: "浅色", exact: true }).click()
+  await expect(settings.getByRole("button", { name: "浅色", exact: true })).toHaveAttribute("aria-pressed", "true")
+  await testInfo.attach(`settings-page-light-${testInfo.project.name}`, {
+    body: await page.screenshot({ animations: "disabled" }), contentType: "image/png",
+  })
+  await settings.getByRole("button", { name: "深色", exact: true }).click()
+  await testInfo.attach(`settings-page-dark-${testInfo.project.name}`, {
+    body: await page.screenshot({ animations: "disabled" }), contentType: "image/png",
+  })
+  await page.emulateMedia({ reducedMotion: "reduce" })
+  await selectSettingsCategory(surface, "providers", "提供方")
+  await expect(settings.getByRole("heading", { name: "提供方", exact: true })).toBeVisible()
+  const duration = await settings.getByRole("region", { name: "提供方", exact: true }).evaluate(
+    (element) => element.ownerDocument.defaultView!.getComputedStyle(element).animationDuration,
+  )
+  expect(Number.parseFloat(duration)).toBeLessThanOrEqual(0.001)
+  expect(await page.evaluate(() => {
+    const browser = globalThis as unknown as { document: { documentElement: { scrollWidth: number; clientWidth: number } } }
+    return browser.document.documentElement.scrollWidth - browser.document.documentElement.clientWidth
+  })).toBeLessThanOrEqual(1)
+  await settings.getByRole("button", { name: "返回聊天", exact: true }).click()
+  await expect(settings).toBeHidden()
+  await expect(workbench).toBeVisible()
+  await expect(composer).toHaveValue("draft retained across settings navigation")
+  await expect(composer).toHaveAttribute("data-navigation-marker", "same-composer")
+  await expect(surface.getByRole("button", { name: "收起侧边面板", exact: true })).toBeFocused()
+
+  await page.keyboard.press("Control+k")
+  await paletteSearch.fill("系统设置")
+  await paletteSearch.press("Enter")
+  await expect(settings.getByRole("heading", { name: "提供方", exact: true })).toBeVisible()
+  await expect(title).toBeFocused()
+  await title.press("Escape")
+  await expect(settings).toBeHidden()
+  await expect(composer).toHaveValue("draft retained across settings navigation")
+})
+
+test("message bubble presets and custom colors preview immediately and survive reload", async ({
+  page,
+  startRuntime,
+}) => {
+  const { surface } = await startRuntime(standaloneScenario)
+  await expect(surface.getByRole("textbox", { name: "消息", exact: true })).toBeVisible()
+  const openSettings = async () => {
+    await expect(surface.getByRole("textbox", { name: "消息", exact: true })).toBeVisible()
+    await page.keyboard.press("Control+k")
+    const search = surface.getByPlaceholder("搜索会话或操作…")
+    await search.fill("系统设置")
+    await search.press("Enter")
+    await expect(surface.locator("#app-language")).toBeVisible()
+  }
+  await openSettings()
+  const settings = surface.locator('[data-slot="settings-page"]')
+  await settings.getByRole("button", { name: "雾蓝", exact: true }).click()
+  await expect(settings.getByRole("button", { name: "雾蓝", exact: true })).toHaveAttribute("aria-pressed", "true")
+  await expect.poll(() => surface.locator("html").evaluate((element) => (element as unknown as { style: { getPropertyValue(name: string): string } }).style.getPropertyValue("--user-message-background"))).toBe("#293b4a")
+  const color = settings.getByLabel("自定义气泡颜色", { exact: true })
+  await color.evaluate((element) => {
+    Object.getOwnPropertyDescriptor(Object.getPrototypeOf(element), "value")!.set!.call(element, "#777777")
+    element.dispatchEvent(new element.ownerDocument.defaultView!.Event("input", { bubbles: true }))
+    element.dispatchEvent(new element.ownerDocument.defaultView!.Event("change", { bubbles: true }))
+  })
+  await expect(settings.getByRole("button", { name: "自定义", exact: true })).toHaveAttribute("aria-pressed", "true")
+  await expect.poll(() => surface.locator("html").evaluate((element) => (element as unknown as { style: { getPropertyValue(name: string): string } }).style.getPropertyValue("--user-message-background"))).toBe("#777777")
+  await expect.poll(() => surface.locator("html").evaluate((element) => (element as unknown as { style: { getPropertyValue(name: string): string } }).style.getPropertyValue("--user-message-foreground"))).toBe("#000000")
+  await expect(settings.getByText("这是一条你发送的消息。", { exact: true })).toHaveCSS("background-color", "rgb(119, 119, 119)")
+  await page.reload()
+  await openSettings()
+  await expect(settings.getByRole("button", { name: "自定义", exact: true })).toHaveAttribute("aria-pressed", "true")
+  await expect(color).toHaveValue("#777777")
+  await expect(settings.getByText("这是一条你发送的消息。", { exact: true })).toHaveCSS("color", "rgb(0, 0, 0)")
+  await settings.getByRole("button", { name: "玉石绿", exact: true }).click()
+  await expect.poll(() => surface.locator("html").evaluate((element) => (element as unknown as { style: { getPropertyValue(name: string): string } }).style.getPropertyValue("--user-message-background"))).toBe("#263e34")
+})
+
 test("malformed provider snapshot is visibly incompatible without legacy fallback", async ({
   page,
   startRuntime,
@@ -278,7 +390,7 @@ test("malformed provider snapshot is visibly incompatible without legacy fallbac
     await expect(settingsButton).toBeInViewport()
   }
   await settingsButton.click()
-  await surface.getByRole("button", { name: "提供方", exact: true }).click()
+  await selectSettingsCategory(surface, "providers", "提供方")
 
   await expect(
     surface.getByRole("alert").filter({ hasText: "提供方配置格式与 Lotus Next 不兼容" }),
@@ -313,6 +425,8 @@ test("embedded base path owns entry, assets, lazy settings, and return navigatio
   await expectReadyShell(surface)
   expect(observation.staticUrls.some((url) => pathname(url) === settingsPath)).toBe(false)
 
+  await surface.getByRole("textbox", { name: "消息", exact: true }).fill("all-surface viewport smoke")
+
   const settingsButton = surface.getByRole("button", { name: "系统设置" })
   if ((page.viewportSize()?.width ?? 0) < 768) {
     await surface.getByRole("button", { name: "菜单" }).click()
@@ -321,8 +435,8 @@ test("embedded base path owns entry, assets, lazy settings, and return navigatio
   await settingsButton.click()
   await expect(surface.getByRole("heading", { name: "系统设置" })).toBeVisible()
   await expect(surface.getByText("Bodhi · lotus-next")).toBeVisible()
-  await expect(surface.getByText("fixture-model", { exact: true }).first()).toBeVisible()
-  await surface.getByRole("button", { name: "提供方", exact: true }).click()
+  await expect(surface.getByRole("textbox", { name: "消息", exact: true })).toBeHidden()
+  await selectSettingsCategory(surface, "providers", "提供方")
   const fixtureProviderRow = surface.locator("li").filter({ hasText: "Fixture provider" })
   await expect(fixtureProviderRow.getByText("Fixture provider", { exact: true })).toBeVisible()
   await expect(fixtureProviderRow.getByText("OpenAI", { exact: true })).toBeVisible()
@@ -333,19 +447,7 @@ test("embedded base path owns entry, assets, lazy settings, and return navigatio
   const providerType = surface.getByRole("combobox", { name: "提供方类型" })
   await providerType.click()
   const selectContent = surface.locator('[data-slot="select-content"]')
-  const settingsDialog = surface.locator('[data-slot="responsive-dialog-content"]')
   await expect(selectContent).toBeVisible()
-  const [selectZIndex, dialogZIndex] = await Promise.all([
-    selectContent.evaluate((element) =>
-      Number.parseInt(element.ownerDocument.defaultView?.getComputedStyle(element).zIndex ?? "0", 10),
-    ),
-    settingsDialog.evaluate((element) =>
-      Number.parseInt(element.ownerDocument.defaultView?.getComputedStyle(element).zIndex ?? "0", 10),
-    ),
-  ])
-  expect(selectZIndex, "portalled Select content must render above System Settings").toBeGreaterThan(
-    dialogZIndex,
-  )
   await surface.getByRole("option", { name: "Anthropic", exact: true }).press("Escape")
   await expect(selectContent).toBeHidden()
   await expect(surface.getByRole("heading", { name: "系统设置" })).toBeVisible()
@@ -363,10 +465,11 @@ test("embedded base path owns entry, assets, lazy settings, and return navigatio
     { message: "the Settings feature should load from the embedded artifact base" },
   ).toBe(true)
 
-  await surface.getByRole("button", { name: "关闭设置" }).click()
+  await surface.getByRole("button", { name: "返回聊天" }).click()
   await expect(
     surface.getByRole("textbox", { name: "消息", exact: true }),
   ).toBeVisible()
+  await expect(surface.getByRole("textbox", { name: "消息", exact: true })).toHaveValue("all-surface viewport smoke")
 
   expect(
     observation.staticUrls.every((url) => pathname(url).startsWith(embeddedScenario.appPath)),
