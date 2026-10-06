@@ -2,6 +2,8 @@ import { act, createRef, type ComponentProps } from "react"
 import { createRoot, type Root } from "react-dom/client"
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest"
 
+import type { Editor } from "@tiptap/core"
+import type { ComposerInputHandle } from "@/components/chat/ComposerEditor"
 import { Composer } from "./Composer"
 import { changeLocale } from "@shared/i18n"
 import { useAppStore } from "@shared/store/appStore"
@@ -34,7 +36,7 @@ function mountComposer(overrides: Partial<ComponentProps<typeof Composer>> = {})
   document.body.appendChild(container)
   const root = createRoot(container)
   mountedRoots.push(root)
-  const inputRef = createRef<HTMLTextAreaElement>()
+  const inputRef = createRef<ComposerInputHandle>()
   const props: ComponentProps<typeof Composer> = {
     draft: "保留这条消息",
     onDraftChange: vi.fn(),
@@ -56,10 +58,9 @@ function mountComposer(overrides: Partial<ComponentProps<typeof Composer>> = {})
     onClearWorkflow: vi.fn(),
     onPickWorkflow: vi.fn(),
     slashQuery: null,
-    atQuery: null,
+    onMentionQueryChange: vi.fn(),
     displayWorkspace: null,
     workspaceFiles: [],
-    onPickFile: vi.fn(),
     hasSession: true,
     onOpenWorkspacePicker: vi.fn(),
     selectedProjectId: null,
@@ -70,13 +71,13 @@ function mountComposer(overrides: Partial<ComponentProps<typeof Composer>> = {})
 
   act(() => root.render(<Composer {...props} />))
 
-  const textarea = container.querySelector<HTMLTextAreaElement>('textarea[aria-label="消息"]')
+  const textarea = container.querySelector<HTMLDivElement>('[data-composer-editor][aria-label="消息"]')
   expect(textarea).not.toBeNull()
   return { container, inputRef, props, textarea: textarea! }
 }
 
 function dispatchSubmitShortcut(
-  textarea: HTMLTextAreaElement,
+  textarea: HTMLElement,
   options: KeyboardEventInit = {},
 ) {
   const event = new KeyboardEvent("keydown", {
@@ -121,11 +122,11 @@ describe("Composer submission controls", () => {
   it("keeps the optional output rate inside the input without changing its layout", () => {
     const view = mountComposer({ outputRate: null })
     const surface = view.container.querySelector("[data-composer-surface]")
-    const inputRow = view.textarea.parentElement
+    const inputRow = view.textarea.parentElement?.parentElement
     const inputClass = view.textarea.className
     const inputPadding = view.textarea.style.paddingRight
 
-    expect(surface?.contains(inputRow)).toBe(true)
+    expect(surface?.contains(inputRow ?? null)).toBe(true)
     expect(inputRow?.className).toContain("relative")
     expect(inputPadding).toBe("128px")
     expect(inputRow?.querySelector("[data-output-rate]")).toBeNull()
@@ -136,13 +137,13 @@ describe("Composer submission controls", () => {
     expect(rate?.title).toBe("根据流式文本估算，不用于计费")
     expect(rate?.className).toContain("absolute")
     expect(rate?.className).not.toContain("pointer-events-none")
-    expect(view.textarea.parentElement).toBe(inputRow)
+    expect(view.textarea.parentElement?.parentElement).toBe(inputRow)
     expect(view.textarea.className).toBe(inputClass)
     expect(view.textarea.style.paddingRight).toBe(inputPadding)
 
     act(() => mountedRoots.at(-1)?.render(<Composer {...view.props} outputRate={null} />))
     expect(inputRow?.querySelector("[data-output-rate]")).toBeNull()
-    expect(view.textarea.parentElement).toBe(inputRow)
+    expect(view.textarea.parentElement?.parentElement).toBe(inputRow)
     expect(view.textarea.className).toBe(inputClass)
     expect(view.textarea.style.paddingRight).toBe(inputPadding)
   })
@@ -170,9 +171,9 @@ describe("Composer submission controls", () => {
     expect(onSubmit).toHaveBeenCalledTimes(1)
   })
 
-  it.each([{}, { ctrlKey: true }, { metaKey: true }])("leaves Shift+Enter to insert a newline with modifiers %j", (modifiers) => {
+  it.each([{}, { ctrlKey: true }, { metaKey: true }])("inserts a newline for Shift+Enter with modifiers %j", (modifiers) => {
     const { textarea, props } = mountComposer()
-    expect(dispatchSubmitShortcut(textarea, { ...modifiers, shiftKey: true }).defaultPrevented).toBe(false)
+    expect(dispatchSubmitShortcut(textarea, { ...modifiers, shiftKey: true }).defaultPrevented).toBe(true)
     expect(props.onSubmit).not.toHaveBeenCalled()
   })
 
@@ -197,18 +198,11 @@ describe("Composer submission controls", () => {
     expect(props.onSubmit).toHaveBeenCalledOnce()
   })
 
-  it.each(["slash", "file"])("lets the open %s picker select on Enter without sending", (picker) => {
+  it("lets the open slash picker select on Enter without sending", () => {
     const onPick = vi.fn()
-    const { textarea, props } = mountComposer(picker === "slash" ? {
-      draft: "/goal", slashQuery: "goal", onPickGoal: onPick,
-    } : {
-      draft: "@read", atQuery: "read", displayWorkspace: "/workspace", onPickFile: onPick,
-      workspaceFiles: [{ name: "README.md", path: "README.md", is_directory: false }],
-    })
-    // The real window capture listener must leave IME and Shift+Enter alone.
+    const { textarea, props } = mountComposer({ draft: "/goal", slashQuery: "goal", onPickGoal: onPick })
     expect(dispatchSubmitShortcut(textarea, { isComposing: true }).defaultPrevented).toBe(false)
     expect(dispatchSubmitShortcut(textarea, { keyCode: 229 }).defaultPrevented).toBe(false)
-    expect(dispatchSubmitShortcut(textarea, { shiftKey: true }).defaultPrevented).toBe(false)
     expect(onPick).not.toHaveBeenCalled()
     expect(dispatchSubmitShortcut(textarea).defaultPrevented).toBe(true)
     expect(onPick).toHaveBeenCalledOnce()
@@ -244,7 +238,7 @@ describe("Composer submission controls", () => {
     expect(container.querySelector('button[aria-label="停止生成"]')).toBeNull()
     expect(container.querySelector('button[aria-label="发送消息"]')).toBeNull()
     expect(textarea.getAttribute("aria-busy")).toBe("true")
-    expect(inputRef.current).toBe(textarea)
+    expect(inputRef.current?.focus).toBeTypeOf("function")
 
     act(() => pendingButton?.click())
     expect(onStop).not.toHaveBeenCalled()
@@ -348,4 +342,25 @@ it("formats the output rate with the selected UI locale instead of the French br
   await act(async () => { await changeLocale("fr-FR") })
   expect(view.container.querySelector("[data-output-rate]")?.textContent).toContain((1234.5).toLocaleString("fr-FR", { minimumFractionDigits: 1, maximumFractionDigits: 1 }))
   vi.restoreAllMocks()
+})
+
+
+it("routes @file Enter only to the owning composer in split panes", async () => {
+  const files = [{ name: "README.md", path: "README.md", is_directory: false }]
+  const first = mountComposer({ draft: "@re", displayWorkspace: "/first", workspaceFiles: files })
+  const second = mountComposer({ draft: "@re", displayWorkspace: "/second", workspaceFiles: files })
+  const editor = (element: HTMLElement) => (element as HTMLElement & { editor: Editor }).editor
+  await act(async () => {
+    editor(first.textarea).commands.setTextSelection(4)
+    editor(second.textarea).commands.setTextSelection(4)
+    editor(second.textarea).view.focus()
+    await Promise.resolve()
+  })
+  expect(first.container.querySelector('[role="listbox"]')).not.toBeNull()
+  expect(second.container.querySelector('[role="listbox"]')).not.toBeNull()
+  await act(async () => { dispatchSubmitShortcut(second.textarea); await Promise.resolve() })
+  expect(first.container.querySelector('[data-type="mention"]')).toBeNull()
+  expect(second.container.querySelector('[data-type="mention"]')?.textContent).toBe("@README.md")
+  expect(first.props.onSubmit).not.toHaveBeenCalled()
+  expect(second.props.onSubmit).not.toHaveBeenCalled()
 })

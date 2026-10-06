@@ -193,3 +193,12 @@ body[data-vdi-safe="true"] .motion-page-enter {
     scroll-behavior: auto !important;
   }
 }
+
+/* Tiptap's placeholder is decoration only; the editor stays a single textbox. */
+.composer-editor p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  float: left;
+  height: 0;
+  color: var(--muted-foreground);
+  pointer-events: none;
+}

@@ -44,7 +44,7 @@ test("five real Worker questions E/B/D/A/C, exact approvals, references and brow
     const eCard = page.getByTestId("ticket-request-" + requests.E.id)
     await eCard.locator("..").getByRole("button", { name: "在普通输入中引用此请求" }).click()
     await expect(page.getByTestId("ticket-reference")).toBeVisible()
-    const composer = page.locator("[data-composer-region] textarea").first()
+    const composer = page.locator("[data-composer-region] [data-composer-editor]").first()
     await composer.fill("今天只聊聊天，不批准任何动作。")
     await composer.press("Enter")
     await openWork()

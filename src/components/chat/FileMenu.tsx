@@ -42,15 +42,32 @@ export function FileMenu({
     activeItemRef.current?.scrollIntoView({ block: "nearest" })
   }, [active])
 
+  useEffect(() => {
+    const input = document.getElementById(inputId)
+    if (!input || filtered.length === 0) return
+    input.setAttribute("aria-controls", `${inputId}-files`)
+    input.setAttribute("aria-expanded", "true")
+    input.setAttribute("aria-autocomplete", "list")
+    input.setAttribute("aria-activedescendant", `${inputId}-file-${active}`)
+    return () => {
+      for (const attribute of ["aria-controls", "aria-expanded", "aria-autocomplete", "aria-activedescendant"]) input.removeAttribute(attribute)
+    }
+  }, [inputId, active, filtered.length])
+
   if (filtered.length === 0) return null
 
   return (
     <div className="mx-auto mb-2 w-full max-w-6xl overflow-hidden rounded-xl border bg-popover shadow-lg">
       <div className="border-b px-3 py-1.5 text-xs text-muted-foreground">{uiText("workspace_files_c0c1e416")}</div>
-      <div className="max-h-64 overflow-y-auto p-1">
+      <div role="listbox" id={`${inputId}-files`} aria-label={uiText("workspace_files_c0c1e416")} className="max-h-64 overflow-y-auto p-1">
         {filtered.map((f, i) => (
           <button
             key={f.path}
+            role="option"
+            id={`${inputId}-file-${i}`}
+            aria-selected={i === active}
+            tabIndex={-1}
+            onMouseDown={(event) => event.preventDefault()}
             ref={i === active ? activeItemRef : undefined}
             onClick={() => onPick(f)}
             className={cn(

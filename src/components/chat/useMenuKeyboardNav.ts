@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react"
  * Keyboard navigation for composer-anchored pickers (SlashMenu / FileMenu):
  * ↑/↓ move the highlight, Enter or Tab picks the highlighted item, Escape
  * dismisses. Listens on window in CAPTURE phase so it wins over the composer
- * Textarea's own key handling while the textarea keeps focus (the menus are
+ * editor's own key handling while the input keeps focus (the menus are
  * input-driven and never focused themselves). Cmd/Ctrl+Enter is left alone —
  * that stays "send".
  */
@@ -31,12 +31,18 @@ export function useMenuKeyboardNav(
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (countRef.current === 0) return
       // Never interfere with IME composition (CJK input commits via Enter).
       if (e.isComposing || e.keyCode === 229) return
-      // The menus are driven by the composer TEXTAREA; keys typed into any
-      // other control (sidebar search, dialogs…) are none of our business.
-      if (!(e.target instanceof HTMLTextAreaElement) || e.target.id !== inputId) return
+      // Only the owning composer may control this picker, including split panes.
+      const input = document.getElementById(inputId)
+      if (!(e.target instanceof Node) || !input?.contains(e.target) || input.dataset.composing === "true") return
+      if (e.key === "Escape") {
+        e.preventDefault()
+        e.stopPropagation()
+        dismissRef.current?.()
+        return
+      }
+      if (countRef.current === 0) return
       if (e.key === "ArrowDown") {
         e.preventDefault()
         e.stopPropagation()
@@ -47,7 +53,7 @@ export function useMenuKeyboardNav(
         setActive((i) => (i - 1 + countRef.current) % countRef.current)
       } else if (
         (e.key === "Enter" && !e.metaKey && !e.ctrlKey && !e.shiftKey) ||
-        e.key === "Tab"
+        (e.key === "Tab" && !e.shiftKey)
       ) {
         e.preventDefault()
         e.stopPropagation()

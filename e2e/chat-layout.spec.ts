@@ -104,7 +104,7 @@ async function expectComposerAlignment(scope: Locator) {
   const edges = await scope.evaluate((element) => {
     const transcript = element.querySelector("[data-message-list-content]")!.getBoundingClientRect()
     const composer = element.querySelector("[data-composer-surface]")!.getBoundingClientRect()
-    const input = element.querySelector('textarea[aria-label="消息"]')!
+    const input = element.querySelector('[data-composer-editor]')!
     const style = element.ownerDocument.defaultView!.getComputedStyle(input)
     return {
       transcriptWidth: transcript.width, composerWidth: composer.width,

@@ -133,11 +133,13 @@ vi.mock("@/components/chat/PermissionModeControl", () => ({
 vi.mock("@/components/app/Composer", () => ({
   Composer: (props: ComposerProps) => (runtime.composer = props,
     <div data-testid="composer-shell">
-      <textarea ref={props.inputRef} aria-label="消息" value={props.draft} onChange={(event) => props.onDraftChange(event.currentTarget.value)} />
+      <textarea ref={props.inputRef as React.Ref<HTMLTextAreaElement>} aria-label="消息" value={props.draft} onChange={(event) => props.onDraftChange(event.currentTarget.value)} />
       {props.permissionControl}
       {props.runtimeControls}
     </div>),
 }))
+import { workspaceService } from "@services/workspace"
+import type { WorkspaceFileEntry } from "@services/workspace/types"
 import { agentClient } from "@services/chat/AgentService"
 import { beginRootModeOperation, getRootModeFenceState } from "@/lib/rootModeTransitionFence"
 import { ApiError, RequestTimeoutError } from "@services/api/errors"
@@ -1610,4 +1612,33 @@ it("returns from a child inside the side pane without changing the main session"
 
   expect(pickSideSession).toHaveBeenCalledExactlyOnceWith("parent")
   expect(chat.select).not.toHaveBeenCalled()
+})
+
+
+describe("caret-driven workspace file lookup", () => {
+  it("ignores delayed results from the previous workspace and retries after a failed open", async () => {
+    const first = deferred<WorkspaceFileEntry[]>()
+    const second = deferred<WorkspaceFileEntry[]>()
+    const list = vi.mocked(workspaceService.listWorkspaceFiles)
+    list.mockReset().mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise)
+    await mount(vi.fn<Send>(), null)
+    act(() => composer().onMentionQueryChange("read"))
+    expect(list).toHaveBeenLastCalledWith("/picked")
+    const render = (workspace: string) => roots.at(-1)!.render(<ChatPane chat={createChat(vi.fn<Send>(), null)} pickedWorkspace={workspace}
+      onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()} splitOpen={false}
+      onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false} />)
+    await act(async () => render("/different"))
+    expect(list).toHaveBeenLastCalledWith("/different")
+    const selected = { path: "current.ts", name: "current.ts", is_directory: false }
+    await act(async () => second.resolve([selected]))
+    await act(async () => first.resolve([{ path: "stale.ts", name: "stale.ts", is_directory: false }]))
+    expect(composer().workspaceFiles).toEqual([selected])
+    list.mockRejectedValueOnce(new Error("temporary")).mockResolvedValueOnce([selected])
+    await act(async () => render("/retry"))
+    expect(composer().workspaceFiles).toEqual([])
+    act(() => composer().onMentionQueryChange(null))
+    await act(async () => composer().onMentionQueryChange("again"))
+    expect(composer().workspaceFiles).toEqual([selected])
+    list.mockReset().mockResolvedValue([])
+  })
 })

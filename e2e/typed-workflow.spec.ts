@@ -1,3 +1,4 @@
+import { expectComposerText } from "./support/composer.js"
 import { expect, test, type Page, type TestInfo } from "@playwright/test"
 import { installArtifactRuntime, standaloneScenario } from "./support/artifactRuntime.js"
 import { modelEffortPicker, selectEffort } from "./support/modelEffortPicker.js"
@@ -102,7 +103,7 @@ test("exact Workflow survives Root conflict then succeeds after explicit mode di
   await expect(chip(page).getByRole("alert")).toContainText("root_orchestration_incompatible_mode")
   await expect.poll(() => state.detailReads).toBeGreaterThan(before)
   await expect(mode).toContainText("Ultra"); expect(modes).toHaveLength(0)
-  await expect(message(page)).toHaveValue("Review this exact file only")
+  await expectComposerText(message(page), "Review this exact file only")
   await screenshot(page, info, "workflow-root-conflict")
   await chip(page).getByRole("button", { name: /编辑目录工作流/ }).click()
   await expect(args(page)).toHaveValue('{"target":"src/scope.ts"}')
@@ -111,7 +112,7 @@ test("exact Workflow survives Root conflict then succeeds after explicit mode di
   await expect(mode).not.toContainText("Ultra")
   await page.getByRole("button", { name: "发送消息", exact: true }).click()
   await expect.poll(() => chats.length).toBe(2)
-  await expect(message(page)).toHaveValue(""); expect(modes).toHaveLength(1)
+  await expectComposerText(message(page), ""); expect(modes).toHaveLength(1)
   await page.reload(); await expect(mode).not.toContainText("Ultra")
   await expect(chip(page)).toHaveCount(0)
   expect(await page.locator("html").evaluate((el) => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(1)
@@ -199,7 +200,7 @@ test("Environment and slash selection share a message chip with IME, removal, an
   for (const composition of [{ isComposing: true }, { keyCode: 229 }]) {
     await message(page).dispatchEvent("keydown", { key: "Enter", bubbles: true, cancelable: true, ...composition })
   }
-  await expect(message(page)).toHaveValue("/Bounded"); expect(chats).toHaveLength(0)
+  await expectComposerText(message(page), "/Bounded"); expect(chats).toHaveLength(0)
   await message(page).press("Enter")
   await expect(args(page)).toBeVisible()
   await args(page).fill('{"target":"src"}')
@@ -215,7 +216,7 @@ test("Environment and slash selection share a message chip with IME, removal, an
     await message(page).fill("newer unsent draft")
   } finally { acknowledge() }
   await expect(message(page)).toHaveAttribute("aria-busy", "false")
-  await expect(message(page)).toHaveValue("newer unsent draft")
+  await expectComposerText(message(page), "newer unsent draft")
   await expect(chip(page)).toHaveCount(0)
   expect(chats[0].message).toBe("frozen request")
   expect(chats[0].workflow_selection).toEqual({ id: entry.id, source: "workspace", revision: 7, args: { target: "src" } })
@@ -254,11 +255,11 @@ test("two panes keep catalog choices and keyboard focus isolated", async ({ page
   await inputs.nth(1).fill("/Side")
   await expect(page.getByRole("button", { name: /\/Side review workspace/ })).toBeVisible()
   await inputs.nth(1).press("Enter")
-  await expect(inputs.nth(1)).toHaveValue("")
-  await expect(inputs.nth(0)).toHaveValue("/Bounded")
+  await expectComposerText(inputs.nth(1), "")
+  await expectComposerText(inputs.nth(0), "/Bounded")
   await expect(workbench.locator("[data-workflow-chip]")).toContainText("Side review")
   await inputs.nth(0).press("Enter")
-  await expect(inputs.nth(0)).toHaveValue("")
+  await expectComposerText(inputs.nth(0), "")
   await expect(page.locator("[data-workflow-chip]")).toHaveCount(2)
   await workbench.getByRole("button", { name: /编辑目录工作流 Side review/ }).click()
   await expect(args(page)).toBeVisible()

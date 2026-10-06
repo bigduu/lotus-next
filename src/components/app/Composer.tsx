@@ -1,5 +1,5 @@
 import { uiText, useUiLocale, uiLanguage } from "@shared/i18n/ui"
-import { useId, useRef, type Ref, type ReactNode } from "react"
+import { useId, useRef, useState, useEffect, type Ref, type ReactNode } from "react"
 import {
   X,
   Paperclip,
@@ -15,7 +15,7 @@ import {
 } from "lucide-react"
 import { useShallow } from "zustand/react/shallow"
 import { Button } from "@/components/ui/button"
-import { Textarea } from "@/components/ui/textarea"
+import { ComposerEditor, type ComposerInputHandle, type ComposerFocusSnapshot, type FileSuggestion } from "@/components/chat/ComposerEditor"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -122,6 +122,7 @@ type AttachmentView = { id: string; url: string; name: string }
 
 export function Composer({
   draft,
+  draftKey,
   contentShiftX = 0,
   outputRate,
   onDraftChange,
@@ -157,10 +158,9 @@ export function Composer({
   onOpenCatalog,
   onPickGoal,
   slashQuery,
-  atQuery,
+  onMentionQueryChange,
   displayWorkspace,
   workspaceFiles,
-  onPickFile,
   hasSession,
   onOpenWorkspacePicker,
   selectedProjectId,
@@ -168,6 +168,7 @@ export function Composer({
   onDismissMenus,
 }: {
   draft: string
+  draftKey?: string
   /** Keep the entire input column aligned with the transcript beside Environment. */
   contentShiftX?: number
   /** Estimated streaming output speed; absent when the current run has no rate. */
@@ -191,7 +192,7 @@ export function Composer({
   onPickCatalogEntry?: (entry: WorkflowCatalogEntry) => void
   catalogDisabled?: boolean
   submissionPending: boolean
-  inputRef: Ref<HTMLTextAreaElement>
+  inputRef: Ref<ComposerInputHandle>
   attachments: AttachmentView[]
   onAddFiles: (files: FileList | File[]) => void
   onRemoveAttachment: (id: string) => void
@@ -208,10 +209,9 @@ export function Composer({
   onOpenCatalog?: () => void
   onPickGoal?: () => void
   slashQuery: string | null
-  atQuery: string | null
+  onMentionQueryChange: (query: string | null) => void
   displayWorkspace: string | null | undefined
   workspaceFiles: WorkspaceFileEntry[]
-  onPickFile: (entry: WorkspaceFileEntry) => void
   hasSession: boolean
   onOpenWorkspacePicker: () => void
   /** Project pinned for the next NEW session (composer chip). */
@@ -221,7 +221,12 @@ export function Composer({
 }) {
   useUiLocale()
   const inputId = useId()
+  const focusSnapshot = useRef<ComposerFocusSnapshot>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const [fileSuggestion, setFileSuggestion] = useState<FileSuggestion | null>(null)
+  const mentionQuery = fileSuggestion?.query ?? null
+  useEffect(() => onMentionQueryChange(mentionQuery), [mentionQuery, onMentionQueryChange])
+  useEffect(() => setFileSuggestion(null), [draftKey, displayWorkspace])
   const canQueue = sending && !!onQueueModeChange
   const canSubmit = !sending || canQueue || sendWhileRunning
   const hasContent = !!draft.trim() || attachments.length > 0 || !!selectedWorkflow
@@ -250,8 +255,9 @@ export function Composer({
           onDismiss={onDismissMenus}
         />
       )}
-      {slashQuery === null && atQuery !== null && displayWorkspace ? (
-        <FileMenu inputId={inputId} files={workspaceFiles} query={atQuery} onPick={onPickFile} onDismiss={onDismissMenus} />
+      {slashQuery === null && fileSuggestion && displayWorkspace ? (
+        <FileMenu inputId={inputId} files={workspaceFiles} query={fileSuggestion.query}
+          onPick={(entry) => fileSuggestion.pick(entry.path)} onDismiss={() => fileSuggestion.dismiss()} />
       ) : null}
       {selectedSkill && (
         <div className="mx-auto mb-2 flex w-full max-w-6xl">
@@ -321,35 +327,22 @@ export function Composer({
           {workflowControl}
           {workflowUndoControl}
           <div className="relative">
-            <Textarea
+            <ComposerEditor
+              key={draftKey}
               id={inputId}
-              ref={inputRef}
+              inputRef={inputRef}
+              focusSnapshot={focusSnapshot}
               value={draft}
-              aria-label={uiText("messages_4da199fa")}
-              aria-busy={submissionPending}
-              onChange={(e) => onDraftChange(e.target.value)}
-              onPaste={(e) => {
-                const files = Array.from(e.clipboardData.files)
-                if (files.length) {
-                  // Stop the browser from also pasting the file path as text
-                  // (e.g. CleanShot dumps the screenshot path into the box).
-                  e.preventDefault()
-                  onAddFiles(files)
-                }
-              }}
-              onKeyDown={(e) => {
-                const nativeEvent = e.nativeEvent
-                if (e.defaultPrevented || nativeEvent.isComposing || nativeEvent.keyCode === 229) return
-                if (e.key === "Enter" && !e.shiftKey) {
-                  e.preventDefault()
-                  if (!submissionPending && hasContent && canSubmit) onSubmit()
-                }
-              }}
+              label={uiText("messages_4da199fa")}
+              busy={submissionPending}
+              onChange={onDraftChange}
+              onAddFiles={onAddFiles}
+              onSubmit={() => { if (!submissionPending && hasContent && canSubmit) onSubmit() }}
+              mentionScope={displayWorkspace}
+              mentionsEnabled={slashQuery === null && !!displayWorkspace}
+              onSuggestionChange={setFileSuggestion}
               title={uiText("enter_to_send_shift_enter_for_a_new_line_b6153e81")}
               placeholder={canQueue ? uiText("type_a_message_to_add_to_the_queue_38c6f67b") : uiText("send_a_message_ae2f86f0")}
-              rows={1}
-              style={{ paddingRight: 128 }}
-              className="max-h-40 min-h-11 resize-none border-0 bg-transparent px-2 py-2 shadow-none focus-visible:ring-0 dark:bg-transparent"
             />
             {typeof outputRate === "number" && (
               <span

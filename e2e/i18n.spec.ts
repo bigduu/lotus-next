@@ -1,3 +1,4 @@
+import { expectComposerText } from "./support/composer.js"
 import { expect, test, type Page } from "@playwright/test"
 import { installArtifactRuntime, standaloneScenario } from "./support/artifactRuntime.js"
 
@@ -36,7 +37,7 @@ for (const initial of ["zh-CN", "en-US"]) {
     await input.fill("中文 IME draft <code>const x = 1</code>")
     await input.dispatchEvent("compositionstart", { data: "中" })
     await input.dispatchEvent("keydown", { key: "Enter", keyCode: 229, isComposing: true, bubbles: true })
-    await expect(input).toHaveValue("中文 IME draft <code>const x = 1</code>")
+    await expectComposerText(input, "中文 IME draft <code>const x = 1</code>")
     const sends = observation.httpRequests.filter((request) => request.method === "POST" && /\/chat$/.test(request.url))
     expect(sends).toHaveLength(0)
     await input.dispatchEvent("compositionend", { data: "中" })
@@ -47,7 +48,7 @@ for (const initial of ["zh-CN", "en-US"]) {
     await expect(page.locator("html")).toHaveAttribute("lang", next)
     await expect.poll(() => page.evaluate(() => localStorage.getItem("lotus_ui_locale_v1"))).toBe(next)
     await page.getByRole("button", { name: english ? "返回聊天" : "Back to chat", exact: true }).click()
-    await expect(page.getByRole("textbox", { name: english ? "消息" : "Messages", exact: true })).toHaveValue("中文 IME draft <code>const x = 1</code>")
+    await expectComposerText(page.getByRole("textbox", { name: english ? "消息" : "Messages", exact: true }), "中文 IME draft <code>const x = 1</code>")
     await page.reload()
     await expect(page.getByRole("textbox", { name: english ? "消息" : "Messages", exact: true })).toBeVisible()
     await openSettings(page, !english)
