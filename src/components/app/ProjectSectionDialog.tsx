@@ -1,8 +1,8 @@
 import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { useState } from "react"
-import { Loader2 } from "lucide-react"
+import { Trash2 } from "lucide-react"
 import { useAppStore } from "@shared/store/appStore"
-import { isApiError } from "@services/api"
+import type { ProjectSidebarSection } from "@/lib/projectSidebarPreferences"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import {
@@ -12,91 +12,68 @@ import {
   ResponsiveDialogTitle,
 } from "@/components/ui/responsive-dialog"
 
-const sectionErrorMessage = (error: unknown): string => {
-  if (isApiError(error)) {
-    if (error.status === 409 || error.status === 412) {
-      return uiText("the_project_was_changed_by_another_operation_close_this_c06150ff")
-    }
-    return error.message || uiText("could_not_create_section_1341fc1d")
-  }
-  return error instanceof Error ? error.message : uiText("could_not_create_section_1341fc1d")
-}
-
-export function ProjectSectionDialog({
-  projectId,
-  existingSections,
-  onClose,
-}: {
+export function ProjectSectionDialog({ projectId, existingSections, mode = "create", onCreate, onRemove, onClose }: {
   projectId: string | null
-  existingSections: readonly string[]
+  existingSections: readonly ProjectSidebarSection[]
+  mode?: "create" | "manage"
+  onCreate: (name: string) => void
+  onRemove: (sectionId: string) => void
   onClose: () => void
 }) {
   useUiLocale()
   const project = useAppStore((state) => (projectId ? state.projects[projectId] : undefined))
-  const updateProject = useAppStore((state) => state.updateProject)
   const [name, setName] = useState("")
-  const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
-
   if (!projectId || !project) return null
 
-  const trimmedName = name.trim()
-  const existing = existingSections.includes(trimmedName)
-
-  const save = async () => {
-    if (!trimmedName) {
-      setError(uiText("enter_a_section_name_38cd3a84"))
+  const save = () => {
+    const trimmed = name.trim()
+    if (!trimmed || [...trimmed].length > 80 || Array.from(trimmed).some((character) => { const code = character.codePointAt(0)!; return code < 32 || code === 127 })) {
+      setError(uiText("sidebar_section_invalid_name"))
       return
     }
-    if ([...trimmedName].length > 80) {
-      setError(uiText("section_names_must_be_at_most_80_characters_bb35b446"))
+    if (existingSections.some((section) => section.name.toLocaleLowerCase() === trimmed.toLocaleLowerCase())) {
+      setError(uiText("sidebar_section_duplicate"))
       return
     }
-
-    setSaving(true)
+    onCreate(trimmed)
+    setName("")
     setError(null)
-    try {
-      const current = useAppStore.getState().projects[projectId]
-      if (!current) throw new Error(uiText("project_does_not_exist_b2667460"))
-      await updateProject(current.id, current.revision, { section: trimmedName })
-      onClose()
-    } catch (reason) {
-      setError(sectionErrorMessage(reason))
-    } finally {
-      setSaving(false)
-    }
+    if (mode === "create") onClose()
   }
 
   return (
-    <ResponsiveDialog open onOpenChange={(open) => (!open && !saving ? onClose() : undefined)}>
-      <ResponsiveDialogContent className="gap-0 p-0 sm:max-w-sm" dismissable={!saving}>
+    <ResponsiveDialog open onOpenChange={(open) => { if (!open) onClose() }}>
+      <ResponsiveDialogContent className="gap-0 p-0 sm:max-w-sm">
         <div className="p-4 pb-2">
-          <ResponsiveDialogTitle>{uiText("new_section_3807938b")}</ResponsiveDialogTitle>
+          <ResponsiveDialogTitle>{uiText(mode === "create" ? "sidebar_create_section" : "sidebar_manage_sections")} · {project.name}</ResponsiveDialogTitle>
           <ResponsiveDialogDescription className="mt-2 leading-relaxed">
-            {uiText("section_move_description", { name: project.name })}</ResponsiveDialogDescription>
+            {uiText("sidebar_section_device_hint")}
+          </ResponsiveDialogDescription>
         </div>
-        <div className="grid gap-1.5 p-4">
-          <label htmlFor="project-section-name" className="text-sm font-medium">{uiText("section_name_04c7cd79")}</label>
-          <Input
-            id="project-section-name"
-            value={name}
-            onChange={(event) => setName(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter") {
-                event.preventDefault()
-                void save()
-              }
-            }}
-            autoFocus
-          />
-          {existing ? <p className="text-xs text-muted-foreground">{uiText("this_section_already_exists_the_project_will_be_added_t_336498c9")}</p> : null}
-          {error ? <p className="text-xs text-destructive">{error}</p> : null}
-        </div>
-        <div className="flex justify-end gap-2 p-4 pt-2">
-          <Button variant="secondary" disabled={saving} onClick={onClose}>{uiText("cancel_2cd0f3be")}</Button>
-          <Button disabled={saving || !trimmedName} onClick={() => void save()}>
-            {saving ? <Loader2 className="size-4 animate-spin" /> : null}
-            {uiText("create_and_move_1ccd04d0")}</Button>
+        <form onSubmit={(event) => { event.preventDefault(); save() }} className="grid gap-1.5 p-4">
+          <label htmlFor="project-section-name" className="text-sm font-medium">{uiText("sidebar_section_name")}</label>
+          <div className="flex gap-2">
+            <Input id="project-section-name" value={name} onChange={(event) => { setName(event.target.value); setError(null) }} autoFocus aria-invalid={!!error} aria-describedby={error ? "project-section-error" : undefined} />
+            <Button type="submit" disabled={!name.trim()}>{uiText("create_cde2cd07")}</Button>
+          </div>
+          {error ? <p id="project-section-error" role="alert" className="text-xs text-destructive">{error}</p> : null}
+        </form>
+        {mode === "manage" && existingSections.length > 0 ? (
+          <div className="grid gap-2 border-t p-4">
+            <p className="text-xs text-muted-foreground">{uiText("sidebar_section_remove_hint")}</p>
+            {existingSections.map((section) => (
+              <div key={section.id} className="flex min-w-0 items-center gap-2">
+                <span className="flex-1 truncate text-sm">{section.name}</span>
+                <Button size="icon" variant="ghost" aria-label={`${uiText("sidebar_section_remove")} ${section.name}`} onClick={() => onRemove(section.id)}>
+                  <Trash2 className="size-4" />
+                </Button>
+              </div>
+            ))}
+          </div>
+        ) : null}
+        <div className="flex justify-end p-4 pt-2">
+          <Button variant="secondary" onClick={onClose}>{uiText("cancel_2cd0f3be")}</Button>
         </div>
       </ResponsiveDialogContent>
     </ResponsiveDialog>

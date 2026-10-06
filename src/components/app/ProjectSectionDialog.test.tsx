@@ -36,30 +36,55 @@ afterEach(() => {
   document.body.replaceChildren()
 })
 
+const setName = (name: string) => {
+  const input = document.querySelector<HTMLInputElement>("#project-section-name")!
+  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!
+  act(() => { setter.call(input, name); input.dispatchEvent(new Event("input", { bubbles: true })) })
+}
+const submit = () => act(() => { document.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })) })
+
 describe("ProjectSectionDialog", () => {
-  it("persists a trimmed Section through the Project CAS update", async () => {
-    const updateProject = vi.fn(async (_id, _revision, patch) => ({
-      ...project,
-      ...patch,
-      revision: 5,
-    }))
+  it("creates a trimmed device section without mutating the backend Project", async () => {
+    const updateProject = vi.fn()
     useAppStore.setState({ projects: { [project.id]: project }, updateProject })
     const onClose = vi.fn()
-
+    const onCreate = vi.fn()
     await act(async () => root.render(
-      <ProjectSectionDialog projectId={project.id} existingSections={[]} onClose={onClose} />,
+      <ProjectSectionDialog projectId={project.id} existingSections={[]} onCreate={onCreate} onRemove={vi.fn()} onClose={onClose} />,
     ))
-    const input = document.querySelector<HTMLInputElement>("#project-section-name")!
-    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!
-    act(() => {
-      setter.call(input, "  Development  ")
-      input.dispatchEvent(new Event("input", { bubbles: true }))
-    })
-    const create = [...document.querySelectorAll<HTMLButtonElement>("button")]
-      .find((button) => button.textContent?.includes("创建并移动"))!
-    await act(async () => create.click())
-
-    expect(updateProject).toHaveBeenCalledWith("project-a", 4, { section: "Development" })
+    expect(document.body.textContent).toContain("分区仅整理此设备的侧栏，不会改变项目目录或会话的运行环境。")
+    setName("  Development  ")
+    submit()
+    expect(onCreate).toHaveBeenCalledWith("Development")
     expect(onClose).toHaveBeenCalledOnce()
+    expect(updateProject).not.toHaveBeenCalled()
+  })
+
+  it("rejects a duplicate or overlong name and keeps the dialog open", async () => {
+    useAppStore.setState({ projects: { [project.id]: project } })
+    const onCreate = vi.fn()
+    const onClose = vi.fn()
+    await act(async () => root.render(
+      <ProjectSectionDialog projectId={project.id} existingSections={[{ id: "lotus", name: "Lotus" }]} onCreate={onCreate} onRemove={vi.fn()} onClose={onClose} />,
+    ))
+    setName(" lotus ")
+    submit()
+    expect(document.querySelector('[role="alert"]')?.textContent).toContain("同名分区")
+    setName("莲".repeat(81))
+    submit()
+    expect(document.querySelector('[role="alert"]')?.textContent).toContain("1–80")
+    expect(onCreate).not.toHaveBeenCalled()
+    expect(onClose).not.toHaveBeenCalled()
+  })
+
+  it("removes a section through its device callback and explains where sessions go", async () => {
+    useAppStore.setState({ projects: { [project.id]: project } })
+    const onRemove = vi.fn()
+    await act(async () => root.render(
+      <ProjectSectionDialog projectId={project.id} mode="manage" existingSections={[{ id: "legacy", name: "Lotus" }]} onCreate={vi.fn()} onRemove={onRemove} onClose={vi.fn()} />,
+    ))
+    expect(document.body.textContent).toContain("会话保留在原项目中，并移到无分区。")
+    act(() => document.querySelector<HTMLButtonElement>('button[aria-label="移除分区 Lotus"]')!.click())
+    expect(onRemove).toHaveBeenCalledWith("legacy")
   })
 })

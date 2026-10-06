@@ -1,12 +1,13 @@
-import { act, type ComponentProps } from "react"
+import { act, StrictMode, type ComponentProps } from "react"
 import { createRoot, type Root } from "react-dom/client"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import type { ChatItem } from "@shared/types/chatMessages"
 
 vi.mock("@/components/chat/SessionRow", () => ({
-  SessionRow: ({ chat, active, onSelect, onRename, onDelete, onTogglePin, onCopySessionId }: {
+  SessionRow: ({ chat, active, onSelect, onRename, onDelete, onTogglePin, onCopySessionId, sections = [], onMoveToSection }: {
     chat: ChatItem; active: boolean; onSelect(): void; onRename(title: string): void
     onDelete(): void; onTogglePin(): void; onCopySessionId(): void
+    sections?: readonly { id: string; name: string }[]; projectId?: string; onMoveToSection?: (id: string | null) => void
   }) => (
     <div data-session={chat.id} data-active={active}>
       <button onClick={onSelect}>{chat.title}</button>
@@ -14,13 +15,18 @@ vi.mock("@/components/chat/SessionRow", () => ({
       <button onClick={onDelete}>Delete {chat.id}</button>
       <button onClick={onTogglePin}>Pin {chat.id}</button>
       <button onClick={onCopySessionId}>Copy {chat.id}</button>
+      {onMoveToSection ? <>
+        {sections.map((section) => <button key={section.id} onClick={() => onMoveToSection(section.id)}>Move {chat.id} to {section.name}</button>)}
+        <button onClick={() => onMoveToSection(null)}>Unsection {chat.id}</button>
+      </> : null}
     </div>
   ),
 }))
 
 import { Sidebar } from "./Sidebar"
 import { useAppStore } from "@shared/store/appStore"
-import { PINNED_PROJECTS_STORAGE_KEY } from "@/lib/projectSidebarPreferences"
+import { PINNED_PROJECTS_STORAGE_KEY, PROJECT_SECTIONS_STORAGE_KEY, SIDEBAR_SESSION_DRAG_TYPE,
+  readProjectSectionPreferences, writeProjectSectionPreferences, createProjectSection, getProjectSections, getSessionSection } from "@/lib/projectSidebarPreferences"
 import { DEFAULT_SUPERVISOR_SESSION_ID } from "@/lib/supervisor"
 
 type Props = ComponentProps<typeof Sidebar>
@@ -67,6 +73,9 @@ function search(value: string) {
 }
 
 beforeEach(() => {
+  vi.restoreAllMocks()
+  localStorage.clear()
+  useAppStore.setState({ projects: {} })
   vi.useFakeTimers()
   vi.setSystemTime(new Date("2026-09-05T15:00:00"))
   container = document.body.appendChild(document.createElement("div"))
@@ -301,50 +310,29 @@ describe("Sidebar project grouping", () => {
     expect(button("未分配")).toBeDefined()
   })
 
-  it("groups Projects into collapsible persisted Sections", () => {
-    useAppStore.setState({
-      projects: {
-        p1: {
-          id: "p1", name: "Zenith", section: "Development", status: "active", revision: 1, resource_revision: 1,
-          project_path: "/tmp/zenith", project_path_status: "configured", workspace_count: 1,
-          created_at: "2026-01-01T00:00:00Z", updated_at: "2026-01-01T00:00:00Z",
-          schema_version: 2, workspace_bindings: [],
-        },
-        p2: {
-          id: "p2", name: "Nova", section: "Development", status: "active", revision: 1, resource_revision: 1,
-          project_path: "/tmp/nova", project_path_status: "configured", workspace_count: 1,
-          created_at: "2026-01-01T00:00:00Z", updated_at: "2026-01-01T00:00:00Z",
-          schema_version: 2, workspace_bindings: [],
-        },
-        p3: {
-          id: "p3", name: "Support", section: "Operations", status: "active", revision: 1, resource_revision: 1,
-          project_path: "/tmp/support", project_path_status: "configured", workspace_count: 1,
-          created_at: "2026-01-01T00:00:00Z", updated_at: "2026-01-01T00:00:00Z",
-          schema_version: 2, workspace_bindings: [],
-        },
-      },
-    })
-    render({
-      chats: [
-        chat("zenith-chat", 5, { config: { systemPromptId: "", baseSystemPrompt: "", lastUsedEnhancedPrompt: null, projectId: "p1" } }),
-        chat("nova-chat", 4, { config: { systemPromptId: "", baseSystemPrompt: "", lastUsedEnhancedPrompt: null, projectId: "p2" } }),
-        chat("support-chat", 3, { config: { systemPromptId: "", baseSystemPrompt: "", lastUsedEnhancedPrompt: null, projectId: "p3" } }),
-      ],
-    })
-    act(() => buttonByLabel("切换为项目视图").click())
-
-    const development = container.querySelector('[data-project-section="Development"]')
-    const operations = container.querySelector('[data-project-section="Operations"]')
-    expect(development?.textContent).toContain("Development2 个项目")
-    expect(development?.textContent).toContain("Zenith")
-    expect(development?.textContent).toContain("Nova")
-    expect(operations?.textContent).toContain("Support")
-
-    act(() => buttonByLabel("切换 Development Section").click())
+  it("keeps legacy sections empty until explicit moves and scopes same-name folds independently", () => {
+    useAppStore.setState({ projects: { p1: project("p1", "Zenith", "lotus"), p2: project("p2", "Nova", "lotus") } })
+    render({ chats: [projectChat("zenith-chat", "p1"), projectChat("nova-chat", "p2")] })
+    click("项目")
+    const zenith = container.querySelector('[data-sidebar-project="p1"]')!
+    const nova = container.querySelector('[data-sidebar-project="p2"]')!
+    const lotusA = zenith.querySelector('[data-project-section="lotus"]')!
+    const lotusB = nova.querySelector('[data-project-section="lotus"]')!
+    expect(lotusA.textContent).toContain("lotus0 个会话")
+    expect(lotusB.textContent).toContain("lotus0 个会话")
+    expect(zenith.querySelector('[data-section-id="none"]')!.contains(row("zenith-chat"))).toBe(true)
+    expect(nova.querySelector('[data-section-id="none"]')!.contains(row("nova-chat"))).toBe(true)
+    expect(getSessionSection(readProjectSectionPreferences(), "p1", "zenith-chat", "lotus")).toBeNull()
+    click("Move zenith-chat to lotus")
+    click("Move nova-chat to lotus")
+    expect(lotusA.textContent).toContain("lotus1 个会话")
+    expect(lotusA.contains(row("zenith-chat"))).toBe(true)
+    expect(lotusB.contains(row("nova-chat"))).toBe(true)
+    act(() => lotusA.querySelector<HTMLButtonElement>("button[aria-expanded]")!.click())
     expect(row("zenith-chat")).toBeNull()
-    expect(row("nova-chat")).toBeNull()
-    expect(row("support-chat")).not.toBeNull()
-    expect(buttonByLabel("切换 Development Section").getAttribute("aria-expanded")).toBe("false")
+    expect(row("nova-chat")).not.toBeNull()
+    expect(button("Zenith").getAttribute("aria-expanded")).toBe("true")
+    expect(lotusB.querySelector("button")?.getAttribute("aria-expanded")).toBe("true")
   })
 
   it("preselects the enclosing project for a new chat in project mode", () => {
@@ -424,5 +412,144 @@ describe("Sidebar project grouping", () => {
     act(() => buttonByLabel("在 Empty project 中新建会话").click())
     expect(props.onNewChat).toHaveBeenCalledWith("empty")
     expect(props.onClose).toHaveBeenCalledOnce()
+  })
+})
+
+function project(id: string, name: string, section: string | null = null) {
+  return {
+    id, name, section, status: "active" as const, revision: 1, resource_revision: 1,
+    project_path: `/tmp/${id}`, project_path_status: "configured" as const, workspace_count: 1,
+    created_at: "2026-01-01T00:00:00Z", updated_at: "2026-01-01T00:00:00Z",
+    schema_version: 2, workspace_bindings: [],
+  }
+}
+function projectChat(id: string, projectId: string, extra: Partial<ChatItem> = {}) {
+  return chat(id, 5, { config: { systemPromptId: "", baseSystemPrompt: "", lastUsedEnhancedPrompt: null, projectId }, ...extra })
+}
+function drop(target: Element, payload: unknown) {
+  const event = new Event("drop", { bubbles: true, cancelable: true })
+  Object.defineProperty(event, "dataTransfer", { value: { getData: (type: string) => type === SIDEBAR_SESSION_DRAG_TYPE ? JSON.stringify(payload) : "" } })
+  act(() => target.dispatchEvent(event))
+}
+
+describe("Sidebar device sections", () => {
+  function setup() {
+    useAppStore.setState({ projects: { p1: project("p1", "Zenith", "Development"), p2: project("p2", "Nova", "Development") } })
+    let preferences = createProjectSection(readProjectSectionPreferences(), "p1", "lotus", "Development")
+    preferences = createProjectSection(preferences, "p2", "lotus", "Development")
+    writeProjectSectionPreferences(preferences)
+    render({ chats: [projectChat("first", "p1"), projectChat("second", "p1"), projectChat("foreign", "p2"), projectChat("pinned", "p1", { pinned: true })] })
+    click("项目")
+  }
+
+  it("moves a session by menu callback, persists explicit no section, and preserves pinned actions", () => {
+    setup()
+    const updateProject = vi.fn()
+    useAppStore.setState({ updateProject })
+    click("Move first to lotus")
+    const localA = container.querySelector('[data-section-project="p1"][data-project-section="lotus"]')!
+    expect(localA.contains(row("first"))).toBe(true)
+    expect(localA.textContent).toContain("lotus1 个会话")
+    expect(container.querySelector('[data-section-project="p2"][data-project-section="lotus"]')!.textContent).toContain("lotus0 个会话")
+    click("Unsection first")
+    expect(container.querySelector('[data-section-project="p1"][data-section-id="none"]')!.contains(row("first"))).toBe(true)
+    expect(getSessionSection(readProjectSectionPreferences(), "p1", "first", "Development")).toBeNull()
+    click("Move pinned to lotus")
+    expect(row("pinned")).not.toBeNull()
+    click("Pin pinned")
+    expect(props.onTogglePin).toHaveBeenCalledWith(props.chats[3])
+    expect(useAppStore.getState().projects.p1.section).toBe("Development")
+    expect(updateProject).not.toHaveBeenCalled()
+  })
+
+  it("accepts same-project drops into empty sections and rejects foreign, forged, missing or child sessions", () => {
+    setup()
+    const target = container.querySelector('[data-section-project="p1"][data-project-section="lotus"]')!
+    expect(target.textContent).toContain("拖动会话到这里")
+    const original = localStorage.getItem(PROJECT_SECTIONS_STORAGE_KEY)
+    drop(target, { projectId: "p2", sessionId: "foreign" })
+    drop(target, { projectId: "p1", sessionId: "foreign" })
+    drop(target, { projectId: "p1", sessionId: "missing" })
+    render({ chats: [...props.chats, projectChat("child", "p1", { parentSessionId: "first" })] })
+    drop(target, { projectId: "p1", sessionId: "child" })
+    expect(localStorage.getItem(PROJECT_SECTIONS_STORAGE_KEY)).toBe(original)
+    drop(target, { projectId: "p1", sessionId: "first" })
+    expect(target.contains(row("first"))).toBe(true)
+    expect(props.chats[0].config.projectId).toBe("p1")
+  })
+
+  it("reveals an active session's section, restores folds after search, and opens a new target when moved", () => {
+    setup()
+    const target = container.querySelector('[data-section-project="p1"][data-project-section="lotus"]')!
+    const unsectioned = container.querySelector('[data-section-project="p1"][data-section-id="none"]')!
+    act(() => target.querySelector<HTMLButtonElement>('button[aria-expanded]')!.click())
+    act(() => unsectioned.querySelector<HTMLButtonElement>('button[aria-expanded]')!.click())
+    expect(row("first")).toBeNull()
+    search("first")
+    expect(row("first")).not.toBeNull()
+    search("")
+    expect(row("first")).toBeNull()
+    render({ currentSessionId: "first" })
+    expect(row("first")?.getAttribute("data-active")).toBe("true")
+    click("Move first to lotus")
+    const revealed = container.querySelector('[data-section-project="p1"][data-project-section="lotus"]')!
+    expect(revealed.querySelector("button")?.getAttribute("aria-expanded")).toBe("true")
+    expect(revealed.contains(row("first"))).toBe(true)
+  })
+
+  it("keeps device moves usable when storage writes are blocked", () => {
+    setup()
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => { throw new Error("blocked") })
+    click("Move first to lotus")
+    expect(container.querySelector('[data-section-project="p1"][data-project-section="lotus"]')!.contains(row("first"))).toBe(true)
+    click("Unsection first")
+    expect(container.querySelector('[data-section-project="p1"][data-section-id="none"]')!.contains(row("first"))).toBe(true)
+  })
+
+  it("creates empty sections and preserves only explicit assignments through StrictMode and reload", async () => {
+    vi.useRealTimers()
+    useAppStore.setState({ projects: { p1: project("p1", "Zenith", "lotus") } })
+    const chats = [projectChat("first", "p1"), projectChat("untouched", "p1")]
+    await act(async () => root.render(<StrictMode><Sidebar {...props} chats={chats} /></StrictMode>))
+    click("项目")
+    expect(container.querySelector('[data-project-section="lotus"]')!.textContent).toContain("lotus0 个会话")
+    const trigger = buttonByLabel("Zenith 项目操作")
+    await act(async () => { trigger.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })) })
+    const createMenu = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find((item) => item.textContent?.includes("创建分区"))!
+    expect(createMenu).toBeDefined()
+    await act(async () => createMenu.click())
+    const input = document.querySelector<HTMLInputElement>("#project-section-name")!
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!
+    act(() => { setter.call(input, "Research"); input.dispatchEvent(new Event("input", { bubbles: true })) })
+    await act(async () => { document.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })) })
+    const section = container.querySelector('[data-project-section="Research"]')!
+    expect(section).not.toBeNull()
+    expect(section.textContent).toContain("Research0 个会话")
+    expect(section.contains(row("first"))).toBe(false)
+    expect(section.contains(row("untouched"))).toBe(false)
+    expect(container.querySelector('[data-section-id="none"]')!.contains(row("first"))).toBe(true)
+    expect(container.querySelector('[data-section-id="none"]')!.contains(row("untouched"))).toBe(true)
+    const persisted = getProjectSections(readProjectSectionPreferences(), "p1", "lotus").find((candidate) => candidate.name === "Research")!
+    expect(section.getAttribute("data-section-id")).toBe(persisted.id)
+    expect(getProjectSections(readProjectSectionPreferences(), "p1", "lotus")).toHaveLength(2)
+    expect(getSessionSection(readProjectSectionPreferences(), "p1", "first", "lotus")).toBeNull()
+    expect(getSessionSection(readProjectSectionPreferences(), "p1", "untouched", "lotus")).toBeNull()
+
+    click("Move first to Research")
+    expect(section.contains(row("first"))).toBe(true)
+    expect(getSessionSection(readProjectSectionPreferences(), "p1", "first", "lotus")).toBe(persisted.id)
+    await act(async () => root.unmount())
+    root = createRoot(container)
+    const refreshedChats = [...chats, projectChat("new-session", "p1")]
+    await act(async () => root.render(<StrictMode><Sidebar {...props} chats={refreshedChats} /></StrictMode>))
+    const restored = container.querySelector('[data-project-section="Research"]')!
+    expect(restored.getAttribute("data-section-id")).toBe(persisted.id)
+    expect(restored.textContent).toContain("Research1 个会话")
+    expect(restored.contains(row("first"))).toBe(true)
+    const noSection = container.querySelector('[data-section-id="none"]')!
+    expect(noSection.contains(row("untouched"))).toBe(true)
+    expect(noSection.contains(row("new-session"))).toBe(true)
+    expect(getSessionSection(readProjectSectionPreferences(), "p1", "new-session", "lotus")).toBeNull()
+    expect(container.querySelector('[data-project-section="lotus"]')!.textContent).toContain("lotus0 个会话")
   })
 })

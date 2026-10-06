@@ -19,6 +19,7 @@ import {
   MessageSquare,
 } from "lucide-react"
 import { Input } from "@/components/ui/input"
+import { BrandMark } from "@/components/ui/brand-mark"
 import { cn } from "@/lib/utils"
 import {
   TASK_TEMPLATES,
@@ -138,7 +139,7 @@ export function HomeDashboard({
     <div className="min-h-0 flex-1 overflow-y-auto">
       <div className="mx-auto w-full max-w-6xl px-4 py-6">
         <div className="mb-5 flex items-center gap-3">
-          <div className="size-9 rounded-xl bg-primary" />
+          <BrandMark className="size-9" />
           <div>
             <h1 className="text-base font-semibold">{uiText("start_a_new_task_625aa91a")}</h1>
             <p className="text-xs text-muted-foreground">{uiText("choose_a_template_or_type_below_6a05a677")}</p>

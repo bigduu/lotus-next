@@ -1,5 +1,17 @@
 // Application-owned UI copy.
 export const uiEnUs = {
+  "sidebar_create_section": "Create section",
+  "sidebar_manage_sections": "Manage sections",
+  "sidebar_move_to_section": "Move to section…",
+  "sidebar_no_section": "No section",
+  "sidebar_section_name": "Section name",
+  "sidebar_section_device_hint": "Sections organize the sidebar on this device. They do not change project folders or session runtime environments.",
+  "sidebar_section_remove": "Remove section",
+  "sidebar_section_remove_hint": "Sessions stay in their project and move to No section.",
+  "sidebar_section_empty": "Drop a session here",
+  "sidebar_section_duplicate": "A section with this name already exists in this project.",
+  "sidebar_section_invalid_name": "Enter a section name of 1–80 characters.",
+  "sidebar_section_select_target": "Choose a section",
   "bubble_colors": "Message bubbles",
   "bubble_colors_hint": "Choose the background of messages you send. Changes preview immediately and are saved on this device; text color adjusts for readability.",
   "bubble_custom_color": "Custom bubble color",

@@ -1,12 +1,16 @@
 import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { useEffect, useId, useRef, useState } from "react"
-import { Copy, MoreHorizontal, Pencil, Pin, PinOff, Sparkles, Trash2 } from "lucide-react"
+import { Check, Copy, List, MoreHorizontal, Pencil, Pin, PinOff, Sparkles, Trash2 } from "lucide-react"
 import { cn } from "@/lib/utils"
+import { SIDEBAR_SESSION_DRAG_TYPE, type ProjectSidebarSection } from "@/lib/projectSidebarPreferences"
 import { agentClient } from "@services/chat/AgentService"
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 
@@ -22,6 +26,10 @@ export function SessionRow({
   onDelete,
   onTogglePin,
   onCopySessionId,
+  projectId,
+  sections = [],
+  sectionId = null,
+  onMoveToSection,
 }: {
   chat: Chat
   active: boolean
@@ -31,6 +39,10 @@ export function SessionRow({
   onDelete: () => void
   onTogglePin: () => void
   onCopySessionId: () => void
+  projectId?: string
+  sections?: readonly ProjectSidebarSection[]
+  sectionId?: string | null
+  onMoveToSection?: (sectionId: string | null) => void
 }) {
   useUiLocale()
   const [editing, setEditing] = useState(false)
@@ -74,6 +86,14 @@ export function SessionRow({
 
   return (
     <div
+      data-sidebar-session={chat.id}
+      data-session-project={projectId}
+      draggable={!!projectId && !!onMoveToSection}
+      onDragStart={(event) => {
+        if (!projectId || !onMoveToSection) return
+        event.dataTransfer.setData(SIDEBAR_SESSION_DRAG_TYPE, JSON.stringify({ projectId, sessionId: chat.id }))
+        event.dataTransfer.effectAllowed = "move"
+      }}
       className={cn(
         "group/row relative mb-0.5 flex items-center rounded-md transition-colors hover:bg-sidebar-accent",
         active && "bg-sidebar-accent",
@@ -109,6 +129,23 @@ export function SessionRow({
           <MoreHorizontal className="size-4" />
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="min-w-32 rounded-xl">
+          {projectId && onMoveToSection ? (
+            <DropdownMenuSub>
+              <DropdownMenuSubTrigger className="gap-2 rounded-lg px-2.5 py-1.5">
+                <List className="size-3.5" />{uiText("sidebar_move_to_section")}
+              </DropdownMenuSubTrigger>
+              <DropdownMenuSubContent aria-label={uiText("sidebar_section_select_target")}>
+                {sections.map((section) => (
+                  <DropdownMenuItem key={section.id} onClick={() => onMoveToSection(section.id)} disabled={section.id === sectionId}>
+                    {section.id === sectionId ? <Check /> : <List />}{section.name}
+                  </DropdownMenuItem>
+                ))}
+                <DropdownMenuItem onClick={() => onMoveToSection(null)} disabled={sectionId === null}>
+                  {sectionId === null ? <Check /> : <List />}{uiText("sidebar_no_section")}
+                </DropdownMenuItem>
+              </DropdownMenuSubContent>
+            </DropdownMenuSub>
+          ) : null}
           <DropdownMenuItem
             onClick={onTogglePin}
             className="gap-2 rounded-lg px-2.5 py-1.5"

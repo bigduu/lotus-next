@@ -1,5 +1,17 @@
 // Application-owned UI copy.
 export const uiZhCn = {
+  "sidebar_create_section": "创建分区",
+  "sidebar_manage_sections": "管理分区",
+  "sidebar_move_to_section": "移动到分区…",
+  "sidebar_no_section": "无分区",
+  "sidebar_section_name": "分区名称",
+  "sidebar_section_device_hint": "分区仅整理此设备的侧栏，不会改变项目目录或会话的运行环境。",
+  "sidebar_section_remove": "移除分区",
+  "sidebar_section_remove_hint": "会话保留在原项目中，并移到无分区。",
+  "sidebar_section_empty": "拖动会话到这里",
+  "sidebar_section_duplicate": "此项目中已有同名分区。",
+  "sidebar_section_invalid_name": "请输入 1–80 个字符的分区名称。",
+  "sidebar_section_select_target": "选择分区",
   "bubble_colors": "消息气泡",
   "bubble_colors_hint": "选择你发送的消息背景。修改会即时预览并保存在此设备，文字颜色会自动调整以保持清晰。",
   "bubble_custom_color": "自定义气泡颜色",
