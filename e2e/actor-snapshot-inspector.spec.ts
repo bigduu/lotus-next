@@ -166,6 +166,215 @@ test("129 persistent actors render recursively without expanding the content sub
   expect(await page.locator("html").evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1)
 })
 
+// Synthetic strict public DTOs exercise the built production hook/transport.
+// This is successor-activation UI acceptance, not a second real Host execution.
+const activationA = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+const activationB = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+const treeCursor = (revision: number) => `at1-${"a".repeat(64)}-${revision}`
+function activationSnapshot(activationId: string, attempt: number,
+  status: "reserved" | "running" | "succeeded", revision: number) {
+  const value = actorSnapshotFixture(rootId, 128, treeCursor(revision))
+  return { ...value, snapshot_id: `as1-${revision.toString(16).padStart(64, "0")}`,
+    nodes: value.nodes.map((node) => node.actor_id !== childId ? node : {
+      ...node, logical_state: status === "succeeded" ? "cold" : "active", placement_class: "remote",
+      revision: { ...node.revision, actor_directory_revision: revision },
+      activation: { activation_id: activationId, attempt, status },
+    }),
+  }
+}
+const actorEvent = (activationId: string, attempt: number, seq: number) => ({
+  ch: `actor.${childId}`, seq, event: {
+    type: "actor_changed", actor_id: childId, root_actor_id: rootId, parent_actor_id: "actor-8",
+    activation_id: activationId, attempt, event_id: `ae1-${seq.toString(16).padStart(64, "0")}`, class: "lifecycle",
+  },
+})
+
+// Every physical interest has one owner in this UI: Inspector and child preview
+// are mutually exclusive. Shared simultaneous consumers remain transport-unit
+// coverage; do not invent a production mount just to manufacture that state.
+function expectBoundedInterests(frames: unknown[], channel: string, finalBalance: number) {
+  let balance = 0
+  for (const raw of frames) {
+    const value = frame(raw)
+    if (value.ch !== channel) continue
+    if (value.type === "subscribe" || value.type === "subscribe_tree") balance += 1
+    if (value.type === "unsubscribe") balance -= 1
+    expect(balance, `one physical interest for ${channel}`).toBeGreaterThanOrEqual(0)
+    expect(balance, `one physical interest for ${channel}`).toBeLessThanOrEqual(1)
+  }
+  expect(balance, `remaining interests for ${channel}`).toBe(finalBalance)
+}
+
+test("selected Child follows successor activation and fences late frames across Root and close navigation", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name === "tablet-chromium", "desktop and phone acceptance")
+  const { observation, requests } = await prepare(page)
+  let socket: WebSocketRoute | undefined
+  const serverFrames: unknown[] = []
+  await page.routeWebSocket(/.*/, (ws) => {
+    socket = ws
+    observation.webSocketUrls.push(ws.url())
+    ws.onMessage((raw) => {
+      const value = frame(JSON.parse(String(raw)))
+      observation.clientFrames.push(value)
+      if (value.type === "hello") ws.send(JSON.stringify({ type: "welcome" }))
+      if (value.type === "ping") ws.send(JSON.stringify({ type: "pong" }))
+    })
+  })
+  // Observe delivery without replacing the production onmessage handler. The
+  // test still uses the routed socket and the built v2Stream/hook unmodified.
+  await page.addInitScript(() => {
+    type Socket = { addEventListener: (type: string, listener: (event: { data: string }) => void) => void }
+    const browser = globalThis as unknown as {
+      WebSocket: new (url: string, protocols?: string | string[]) => Socket
+      __actorAcceptanceFrames: string[]
+    }
+    browser.__actorAcceptanceFrames = []
+    const OriginalWebSocket = browser.WebSocket
+    browser.WebSocket = class extends OriginalWebSocket {
+      constructor(url: string, protocols?: string | string[]) {
+        super(url, protocols)
+        this.addEventListener("message", (event) => browser.__actorAcceptanceFrames.push(event.data))
+      }
+    }
+  })
+  const receivedFrames = () => page.evaluate(() => (globalThis as unknown as {
+    __actorAcceptanceFrames: string[]
+  }).__actorAcceptanceFrames)
+  const send = async (value: unknown) => {
+    serverFrames.push(value)
+    const payload = JSON.stringify(value)
+    const occurrence = serverFrames.filter((item) => JSON.stringify(item) === payload).length
+    socket!.send(payload)
+    await expect.poll(async () => (await receivedFrames()).filter((item) => item === payload).length,
+      { message: "the exact routed frame reached the production socket" }).toBe(occurrence)
+  }
+  const sent = (type: string, ch: string) => observation.clientFrames.filter((raw) => frame(raw).type === type && frame(raw).ch === ch)
+  const actor = `actor.${childId}`, tree = `tree.${rootId}`, message = `message.${childId}`
+  const reads = () => requests.filter((url) => new URL(url).pathname === `/api/v1/actors/${rootId}/snapshot`).length
+  let current = activationSnapshot(activationA, 1, "running", 7)
+  const snapshots: ReturnType<typeof activationSnapshot>[] = []
+  await page.route(`**/api/v1/actors/${rootId}/snapshot?*`, (route) => {
+    snapshots.push(current)
+    return route.fulfill({ json: current })
+  })
+  // After an explicit receive receipt, socket dispatch and hook invalidation
+  // are synchronous/microtask-based. Drain two browser turns before asserting no
+  // HTTP read; a stable label alone would miss an unnecessary stale refresh.
+  const settleFrames = () => page.evaluate("new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))")
+  try {
+    await page.goto(standaloneScenario.entryUrl)
+    const panel = await openInspector(page)
+    await panel.locator('[data-actor-id="actor-0"] [data-actor-toggle]').click()
+    await panel.locator('[data-actor-id="actor-8"] [data-actor-toggle]').click()
+    const selected = panel.locator(`[data-actor-id="${childId}"]`)
+    await expect(selected).toHaveAttribute("aria-label", /运行中，远端/)
+    await selected.click()
+    const workbench = page.locator("#right-workbench")
+    await expect(workbench.getByText("isolated selected child answer")).toBeVisible()
+    await expect.poll(() => sent("subscribe", actor).length).toBe(1)
+    await expect.poll(() => sent("subscribe", message).length).toBe(1)
+    await workbench.getByRole("tab", { name: "检查器", exact: true }).click()
+    await expect(selected).toHaveAttribute("aria-selected", "true")
+    await expect.poll(() => sent("subscribe", actor).length).toBe(2)
+    await expect.poll(() => sent("unsubscribe", actor).length).toBe(1)
+    await expect.poll(() => sent("unsubscribe", message).length).toBe(1)
+    await expect(panel).toHaveAttribute("aria-busy", "false")
+
+    // Establish the numeric Actor cursor before any event. Tree cursors are a
+    // separate authority and must not fabricate an Actor replay position.
+    let before = reads()
+    await send({ ch: actor, seq: 1, control: { type: "actor_snapshot_required", reason: "initial", cursor: 1 } })
+    await expect.poll(reads).toBe(before + 1)
+    await expect(panel).toHaveAttribute("aria-busy", "false")
+    await expect(workbench.locator("[data-actor-gap]")).toHaveCount(0)
+
+    // A committed tree snapshot installs B for the same persistent Child.
+    current = activationSnapshot(activationB, 2, "reserved", 8)
+    before = reads()
+    await send({ ch: tree, seq: 8, control: { type: "actor_snapshot_required", reason: "changed", cursor: current.stream_cursor } })
+    await expect.poll(reads).toBe(before + 1)
+    await expect(selected).toHaveAttribute("aria-label", /排队中，远端/)
+    await expect(selected).toHaveAttribute("aria-selected", "true")
+    expect(snapshots.at(-1)!.nodes.find((node) => node.actor_id === childId)!.activation).toEqual({
+      activation_id: activationB, attempt: 2, status: "reserved",
+    })
+    expect(sent("subscribe", actor)).toHaveLength(2)
+
+    before = reads()
+    await send(actorEvent(activationA, 1, 2))
+    await settleFrames()
+    expect(reads(), "late A must not invalidate the already-authorized B snapshot").toBe(before)
+    await expect(selected).toHaveAttribute("aria-label", /排队中，远端/)
+    await expect(workbench.locator("[data-actor-gap]")).toHaveCount(0)
+
+    current = activationSnapshot(activationB, 2, "running", 9)
+    await send(actorEvent(activationB, 2, 3))
+    await expect.poll(reads).toBe(before + 1)
+    await expect(selected).toHaveAttribute("aria-label", /运行中，远端/)
+    await expect(panel).toHaveAttribute("aria-busy", "false")
+    before = reads()
+    await send(actorEvent(activationB, 2, 3))
+    await settleFrames()
+    expect(reads(), "duplicate B must not invalidate the snapshot again").toBe(before)
+    await expect(selected).toHaveAttribute("aria-label", /运行中，远端/)
+    await expect(workbench.locator("[data-actor-gap]")).toHaveCount(0)
+
+    current = activationSnapshot(activationB, 2, "succeeded", 10)
+    await send(actorEvent(activationB, 2, 4))
+    await expect.poll(reads).toBe(before + 1)
+    await expect(selected).toHaveAttribute("aria-label", /已完成，远端/)
+    await expect(selected).toHaveAttribute("aria-selected", "true")
+    expect(snapshots.at(-1)!.nodes.find((node) => node.actor_id === childId)!.activation).toEqual({
+      activation_id: activationB, attempt: 2, status: "succeeded",
+    })
+    await page.screenshot({ path: testInfo.outputPath("actor-successor-b-completed.png") })
+
+    before = reads()
+    await send({ ch: actor, seq: 5, control: { type: "actor_snapshot_required", reason: "gap", cursor: 5 } })
+    const gap = panel.locator(`[data-actor-gap="transport_gap"][data-actor-gap-origin="${childId}"]`)
+    await expect(gap).toBeVisible()
+    await expect.poll(reads).toBe(before + 1)
+    await expect(panel).toHaveAttribute("aria-busy", "false")
+    await panel.getByRole("button", { name: "刷新代理结构" }).click()
+    await expect.poll(reads).toBe(before + 2)
+    await expect(panel).toHaveAttribute("aria-busy", "false")
+    await expect(gap, "successful B snapshots cannot repair retained Actor replay loss").toBeVisible()
+
+    await panel.locator(`[data-actor-id="${rootId}"]`).click()
+    await expect(panel.locator(`[data-actor-id="${rootId}"]`)).toHaveAttribute("aria-selected", "true")
+    await expect.poll(() => sent("unsubscribe", actor).length).toBe(2)
+    before = reads()
+    await send(actorEvent(activationB, 2, 6))
+    await settleFrames()
+    expect(reads(), "departed Child frames must not refresh the selected Root").toBe(before)
+    await expect(gap, "Root selection must preserve the Child gap origin").toBeVisible()
+    await expect(workbench.locator("[data-subagent-transcript-pane]")).toHaveCount(0)
+
+    await workbench.getByRole("button", { name: "收起工作面板", exact: true }).click()
+    await expect(panel).toHaveCount(0)
+    await expect.poll(() => sent("unsubscribe", tree).length).toBe(sent("subscribe_tree", tree).length)
+    before = reads()
+    await send(actorEvent(activationB, 2, 7))
+    await send({ ch: tree, seq: 11, control: { type: "actor_snapshot_required", reason: "gap", cursor: treeCursor(11) } })
+    await settleFrames()
+    expect(reads(), "closed Inspector must ignore late Actor and tree callbacks").toBe(before)
+    for (const channel of [actor, message, tree, `actor.${rootId}`]) expectBoundedInterests(observation.clientFrames, channel, 0)
+    expect(sent("subscribe", actor)).toHaveLength(2)
+    expect(sent("subscribe", message)).toHaveLength(1)
+    expect(sent("subscribe", `agent.${childId}`)).toHaveLength(0)
+    expect(observation.webSocketUrls).toHaveLength(1)
+    expect(observation.webSocketUrls[0]).toContain("/v2/stream")
+    expect(observation.pageErrors).toEqual([])
+  } finally {
+    await testInfo.attach("actor-successor-public-wire-receipts", {
+      body: JSON.stringify({ clientFrames: observation.clientFrames, serverFrames,
+        receivedFrames: (await receivedFrames()).map((item) => JSON.parse(item)), snapshots,
+        snapshotRequests: requests.filter((url) => new URL(url).pathname === `/api/v1/actors/${rootId}/snapshot`) }, null, 2),
+      contentType: "application/json",
+    })
+  }
+})
+
 test("child side chat follows automatic corrections and pauses only for upward reading", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "desktop-chromium", "shared desktop scroll regression")
   await prepare(page)
