@@ -5,6 +5,7 @@ import { useProviderStore } from "@shared/store/appStore/slices/providerSlice"
 import {
   PROVIDER_DEFAULT_MODEL_REF_KEYS,
   findProviderSnapshotRelationIssues,
+  getRuntimeModelIds,
   type DefaultsConfig,
   type ProviderDefaultModelRefKey,
   type ProviderSnapshotRelationIssue,
@@ -238,6 +239,10 @@ export function DefaultsEditor() {
         setError(uiText("the_provider_referenced_by_is_disabled_enable_it_or_sel_e71c0c57", { v0: role.label }))
         return
       }
+      if (!getRuntimeModelIds(selectedInstance, defaults).includes(value.model.trim())) {
+        setError(uiText("runtime_models_role_required", { model: value.model.trim() }))
+        return
+      }
     }
 
     for (const [subagent, value] of Object.entries(draft.subagentModels)) {
@@ -248,6 +253,10 @@ export function DefaultsEditor() {
       }
       if (!selectedInstance.enabled) {
         setError(uiText("the_provider_for_subagent_is_disabled_enable_it_or_sele_ef0263ac", { v0: subagent }))
+        return
+      }
+      if (!getRuntimeModelIds(selectedInstance, defaults).includes(value.model.trim())) {
+        setError(uiText("runtime_models_role_required", { model: value.model.trim() }))
         return
       }
     }

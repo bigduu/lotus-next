@@ -12,7 +12,7 @@ const service = vi.hoisted(() => ({
 vi.mock("@services/config/SettingsService", () => ({ settingsService: service }));
 
 import { useProviderStore } from "./providerSlice";
-import type { ProviderInstancesConfig } from "@shared/types/providerConfig";
+import { resolveNewChatModelRef, type ProviderInstancesConfig } from "@shared/types/providerConfig";
 
 const snapshot = (model = "gpt-5.6-sol"): ProviderInstancesConfig => ({
   default_provider_instance_id: "work",
@@ -43,6 +43,7 @@ describe("provider instance authority", () => {
       providerError: null,
       catalog: null,
       isCatalogFetching: false,
+      discoveredModelsByProvider: {},
     });
   });
 
@@ -60,6 +61,26 @@ describe("provider instance authority", () => {
     expect(state.isProviderModelRefEnabled()).toBe(true);
     expect(state.getProviderType("work")).toBe("openai");
     expect(state.getProviderType("openai")).toBeUndefined();
+  });
+
+  it("loads Bamboo null role defaults as ready and retains exact first-instance admission", async () => {
+    const initial = snapshot();
+    const wire = {
+      ...initial,
+      defaults: null,
+      features: { provider_model_ref: false },
+      instances: [{ ...initial.instances[0], config: { model: "instance-default", runtime_models: ["instance-default", "vendor:custom-name"] } }],
+    };
+    service.getProviderInstances.mockResolvedValue(wire);
+    await expect(useProviderStore.getState().loadProviderInstances()).resolves.toEqual({ ...wire, defaults: undefined });
+    const state = useProviderStore.getState();
+    expect(state.providerStatus).toBe("ready");
+    expect(state.providerSnapshot?.defaults).toBeUndefined();
+    expect(state.providerRepairIssues).toEqual([]);
+    expect(state.catalog).toBeNull();
+    expect(resolveNewChatModelRef(state.providerSnapshot, "vendor:custom-name")).toEqual({ provider: "work", model: "vendor:custom-name" });
+    expect(state.getProviderType("openai")).toBeUndefined();
+    expect(state.isProviderModelRefEnabled()).toBe(false);
   });
 
   it("revokes direct runtime authority while an authoritative reload is pending", async () => {
@@ -206,7 +227,7 @@ describe("provider instance authority", () => {
     expect(JSON.stringify(useProviderStore.getState())).not.toContain(canary);
   });
 
-  it("merges a targeted model refresh from the POST response without refetching all providers", async () => {
+  it("stores targeted discoveries separately without admitting them or refetching providers", async () => {
     const discovered = {
       reference: { provider: "work", model: "gpt-new" },
       display_name: "GPT New",
@@ -233,12 +254,13 @@ describe("provider instance authority", () => {
     expect(
       useProviderStore.getState().catalog?.models.map((model) => model.reference),
     ).toEqual([
+      { provider: "work", model: "stale" },
       { provider: "other", model: "keep" },
-      { provider: "work", model: "gpt-new" },
     ]);
+    expect(useProviderStore.getState().discoveredModelsByProvider.work).toEqual([discovered]);
   });
 
-  it("does not let a slow full-catalog read overwrite a later targeted result", async () => {
+  it("keeps a slow runtime catalog read independent from discovery candidates", async () => {
     let resolveCatalog!: (catalog: {
       providers: never[];
       models: Array<{
@@ -287,11 +309,12 @@ describe("provider instance authority", () => {
     await fullCatalogLoad;
 
     expect(useProviderStore.getState().getModelsForProvider("work").map((model) => model.reference.model)).toEqual([
-      "fresh-targeted",
+      "stale-full-read",
     ]);
+    expect(useProviderStore.getState().discoveredModelsByProvider.work).toEqual([fresh]);
   });
 
-  it("treats an empty targeted result as a successful catalog replacement", async () => {
+  it("clears empty discovery candidates while preserving admitted runtime models", async () => {
     service.fetchCatalogModels.mockResolvedValue({
       fetched: [{ provider: "work", models: [] }],
     });
@@ -315,7 +338,8 @@ describe("provider instance authority", () => {
 
     await useProviderStore.getState().fetchCatalogModels("work");
 
-    expect(useProviderStore.getState().getModelsForProvider("work")).toEqual([]);
+    expect(useProviderStore.getState().getModelsForProvider("work").map((model) => model.reference.model)).toEqual(["stale"]);
+    expect(useProviderStore.getState().discoveredModelsByProvider.work).toEqual([]);
     expect(service.getProviderCatalog).not.toHaveBeenCalled();
   });
 
@@ -486,9 +510,10 @@ describe("provider instance authority", () => {
 
     await useProviderStore.getState().fetchCatalogModels("work");
 
-    expect(useProviderStore.getState().catalog?.models.map((model) => model.reference)).toEqual([
+    expect(useProviderStore.getState().discoveredModelsByProvider.work.map((model) => model.reference)).toEqual([
       { provider: "work", model: "keep" },
     ]);
+    expect(useProviderStore.getState().catalog).toBeNull();
   });
 
   it("does not expose a credential-bearing mutation error", async () => {

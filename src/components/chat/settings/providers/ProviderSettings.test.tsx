@@ -3,6 +3,7 @@ import { createRoot, type Root } from "react-dom/client"
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest"
 
 import { apiClient } from "@services/api"
+import { useAppStore } from "@shared/store/appStore"
 import type { FetchModelsResponse } from "@services/config/SettingsService"
 import { useProviderStore, type ProviderState } from "@shared/store/appStore/slices/providerSlice"
 import {
@@ -32,7 +33,7 @@ const instance: ProviderInstance = {
   type: "openai",
   label: "Primary OpenAI",
   enabled: true,
-  config: { api_key: "****...****", base_url: "https://api.openai.com/v1" },
+  config: { api_key: "****...****", base_url: "https://api.openai.com/v1", runtime_models: ["gpt-5.4", "gpt-5.6", "gpt-5.6-sol", "gpt-5.6-luna", "new-chat", "new-planning", "new-review"] },
 }
 
 const snapshot = (model = "gpt-5.4"): ProviderInstancesConfig => ({
@@ -114,6 +115,7 @@ const chooseSelectOption = async (triggerName: string, optionText: string) => {
 }
 
 const setStore = (patch: Partial<ProviderState>) => {
+  useAppStore.setState({ fetchModels: vi.fn().mockResolvedValue(undefined) })
   useProviderStore.setState({
     ...initialStore,
     providerSnapshot: snapshot(),
@@ -328,7 +330,7 @@ describe("Provider add and model discovery", () => {
     const fetchCatalogModels = vi.fn().mockImplementation(async (provider: string) => {
       expect(provider).toBe(created.id)
       useProviderStore.setState({
-        catalog: { providers: [], models: [discoveredModel] },
+        discoveredModelsByProvider: { [provider]: [discoveredModel] },
       })
       return { fetched: [{ provider, models: [discoveredModel] }] }
     })
@@ -339,7 +341,12 @@ describe("Provider add and model discovery", () => {
 
     expect(createProviderInstance).toHaveBeenCalledTimes(1)
     expect(fetchCatalogModels).toHaveBeenCalledExactlyOnceWith(created.id)
-    expect(container.textContent).toContain("实例已保存，并发现 1 个模型")
+    expect(container.textContent).toContain("实例已保存，并发现 1 个候选模型")
+    expect(useProviderStore.getState().catalog).toBeNull()
+    const selectedCandidate = container.querySelector<HTMLInputElement>('input[type="checkbox"][aria-label="claude-discovered"]')!
+    expect(selectedCandidate.checked).toBe(false)
+    expect(updateProviderInstance).not.toHaveBeenCalled()
+    await click(selectedCandidate)
 
     const modelInput = roleByName("combobox", "默认模型(可选)", container) as HTMLInputElement
     await act(async () => modelInput.focus())
@@ -354,7 +361,7 @@ describe("Provider add and model discovery", () => {
     expect(updateProviderInstance).toHaveBeenCalledWith(
       created.id,
       expect.objectContaining({
-        config: expect.objectContaining({ model: "claude-discovered" }),
+        config: expect.objectContaining({ model: "claude-discovered", runtime_models: ["claude-discovered"] }),
       }),
     )
   })
@@ -411,12 +418,17 @@ describe("Provider add and model discovery", () => {
     const modelInput = roleByName("combobox", "默认模型(可选)", container) as HTMLInputElement
     await changeInput(modelInput, "vendor/custom-model")
     await click([...container.querySelectorAll("button")].find((button) => button.textContent === "保存") ?? null)
+    expect(updateProviderInstance).not.toHaveBeenCalled()
+    expect(container.textContent).toContain("请将默认模型加入运行时模型")
+    await changeInput(container.querySelector<HTMLInputElement>('input[aria-label="自定义模型 ID"]')!, " vendor/custom-model ")
+    await click([...container.querySelectorAll("button")].find((button) => button.textContent === "添加模型") ?? null)
+    await click([...container.querySelectorAll("button")].find((button) => button.textContent === "保存") ?? null)
     await flush()
 
     expect(updateProviderInstance).toHaveBeenCalledWith(
       created.id,
       expect.objectContaining({
-        config: expect.objectContaining({ model: "vendor/custom-model" }),
+        config: expect.objectContaining({ model: "vendor/custom-model", runtime_models: ["vendor/custom-model"] }),
       }),
     )
   })
@@ -536,6 +548,110 @@ describe("Provider instance credential handling", () => {
   })
 })
 
+describe("Explicit runtime model selection", () => {
+  it("saves only selected candidates and custom ids, and preserves an explicit empty list", async () => {
+    const current = { ...instance, config: { ...instance.config, runtime_models: [] } }
+    const candidates = ["usable", "unusable"].map((model) => ({
+      reference: { provider: instance.id, model }, display_name: model,
+      provider_display_name: instance.label,
+      capabilities: { supports_tools: true, supports_vision: false, supports_reasoning: false },
+    }))
+    const onSave = vi.fn().mockResolvedValue(undefined)
+    const container = await mount(<InstanceEditor instance={current} modelOptions={candidates} onSave={onSave} onCancel={vi.fn()} />)
+    const editor = container.querySelector('[data-testid="runtime-models-editor"]')!
+    expect([...editor.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')].every((input) => !input.checked)).toBe(true)
+    await click(editor.querySelector('input[aria-label="usable"]'))
+    await changeInput(editor.querySelector<HTMLInputElement>('input[aria-label="自定义模型 ID"]')!, " vendor:custom-name ")
+    await click([...editor.querySelectorAll("button")].find((button) => button.textContent === "添加模型") ?? null)
+    await click([...container.querySelectorAll("button")].find((button) => button.textContent === "保存") ?? null)
+    expect(onSave.mock.calls[0]?.[0].config.runtime_models).toEqual(["usable", "vendor:custom-name"])
+    expect(onSave.mock.calls[0]?.[0].config.runtime_models).not.toContain("unusable")
+  })
+
+  it("does not admit a custom id while an IME composition is being confirmed", async () => {
+    const onSave = vi.fn().mockResolvedValue(undefined)
+    const container = await mount(<InstanceEditor instance={{ ...instance, config: { ...instance.config, runtime_models: [] } }} onSave={onSave} onCancel={vi.fn()} />)
+    const input = container.querySelector<HTMLInputElement>('input[aria-label="自定义模型 ID"]')!
+    await changeInput(input, "自定义模型")
+    await act(async () => input.dispatchEvent(new KeyboardEvent("keydown", {
+      key: "Enter", isComposing: true, bubbles: true, cancelable: true,
+    })))
+    expect(input.value).toBe("自定义模型")
+    expect(container.querySelector('input[type="checkbox"]')).toBeNull()
+    await click([...container.querySelectorAll("button")].find((button) => button.textContent === "保存") ?? null)
+    expect(onSave.mock.calls[0]?.[0].config.runtime_models).toEqual([])
+  })
+
+  it("requires a custom default to be admitted through the provider first", async () => {
+    setStore({})
+    const post = vi.spyOn(apiClient, "post").mockResolvedValue(undefined)
+    const container = await mount(<DefaultsEditor />)
+    await changeInput(roleByName("combobox", "对话(必填)模型", container) as HTMLInputElement, "unadmitted")
+    await click([...container.querySelectorAll("button")].find((button) => button.textContent === "保存偏好") ?? null)
+    expect(post).not.toHaveBeenCalled()
+    expect(container.textContent).toContain("请先将 unadmitted 加入该提供方的运行时模型并保存")
+  })
+
+  it("explains how to remove an admitted model still used by a default preference", async () => {
+    const onSave = vi.fn().mockResolvedValue(undefined)
+    const container = await mount(<InstanceEditor instance={instance} defaults={snapshot().defaults} onSave={onSave} onCancel={vi.fn()} />)
+    await click(container.querySelector('input[type="checkbox"][aria-label="gpt-5.4"]'))
+    await click([...container.querySelectorAll("button")].find((button) => button.textContent === "保存") ?? null)
+    expect(onSave).not.toHaveBeenCalled()
+    expect(container.textContent).toContain("模型偏好仍在使用 gpt-5.4")
+  })
+
+  it("allows explicitly clearing legacy fast and vision assignments after modern preferences move", async () => {
+    const legacyInstance = { ...instance, config: { ...instance.config, fast_model: "old-fast", vision_model: "old-vision", runtime_models: ["gpt-5.4", "gpt-5.6", "old-fast", "old-vision"] } }
+    const modernDefaults = { ...snapshot().defaults!, fast: { provider: instance.id, model: "gpt-5.6" }, vision: { provider: instance.id, model: "gpt-5.6" } }
+    const onSave = vi.fn().mockResolvedValue(undefined)
+    const container = await mount(<InstanceEditor instance={legacyInstance} defaults={modernDefaults} onSave={onSave} onCancel={vi.fn()} />)
+    const legacyField = (label: string) => [...container.querySelectorAll("label")].find((field) => field.textContent === label)!.querySelector<HTMLInputElement>("input")!
+    expect(legacyField("旧版快速模型").value).toBe("old-fast")
+    expect(legacyField("旧版视觉模型").value).toBe("old-vision")
+    await click(container.querySelector('input[type="checkbox"][aria-label="old-fast"]'))
+    await click(container.querySelector('input[type="checkbox"][aria-label="old-vision"]'))
+    await click([...container.querySelectorAll("button")].find((button) => button.textContent === "保存") ?? null)
+    expect(onSave).not.toHaveBeenCalled()
+    expect(container.textContent).toContain("模型偏好仍在使用 old-fast")
+
+    await changeInput(legacyField("旧版快速模型"), "")
+    await changeInput(legacyField("旧版视觉模型"), "")
+    await click([...container.querySelectorAll("button")].find((button) => button.textContent === "保存") ?? null)
+    expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ config: expect.objectContaining({ runtime_models: ["gpt-5.4", "gpt-5.6"], fast_model: null, vision_model: null }) }))
+  })
+
+  it("validates edited legacy assignments and still protects a modern default using the old model", async () => {
+    const legacyInstance = { ...instance, config: { ...instance.config, fast_model: "old-fast", runtime_models: ["gpt-5.4", "old-fast", "new-fast"] } }
+    const onSave = vi.fn().mockResolvedValue(undefined)
+    const container = await mount(<InstanceEditor instance={legacyInstance} defaults={{ ...snapshot().defaults!, fast: { provider: instance.id, model: "old-fast" } }} onSave={onSave} onCancel={vi.fn()} />)
+    const field = [...container.querySelectorAll("label")].find((label) => label.textContent === "旧版快速模型")!.querySelector<HTMLInputElement>("input")!
+    await changeInput(field, "new-fast")
+    await click(container.querySelector('input[type="checkbox"][aria-label="old-fast"]'))
+    await click([...container.querySelectorAll("button")].find((button) => button.textContent === "保存") ?? null)
+    expect(onSave).not.toHaveBeenCalled()
+    expect(container.textContent).toContain("模型偏好仍在使用 old-fast")
+  })
+
+  it("saves an explicitly edited legacy assignment only when its new model is admitted", async () => {
+    const legacyInstance = { ...instance, config: { ...instance.config, fast_model: "old-fast", runtime_models: ["gpt-5.4", "old-fast", "new-fast"] } }
+    const onSave = vi.fn().mockResolvedValue(undefined)
+    const container = await mount(<InstanceEditor instance={legacyInstance} defaults={snapshot().defaults} onSave={onSave} onCancel={vi.fn()} />)
+    const field = [...container.querySelectorAll("label")].find((label) => label.textContent === "旧版快速模型")!.querySelector<HTMLInputElement>("input")!
+    expect(container.textContent).not.toContain("旧版视觉模型")
+    await changeInput(field, "unadmitted-fast")
+    await click([...container.querySelectorAll("button")].find((button) => button.textContent === "保存") ?? null)
+    expect(onSave).not.toHaveBeenCalled()
+    expect(container.textContent).toContain("模型偏好仍在使用 unadmitted-fast")
+
+    await changeInput(field, "new-fast")
+    await click(container.querySelector('input[type="checkbox"][aria-label="old-fast"]'))
+    await click([...container.querySelectorAll("button")].find((button) => button.textContent === "保存") ?? null)
+    expect(onSave.mock.calls[0]?.[0].config).toMatchObject({ runtime_models: ["gpt-5.4", "new-fast"], fast_model: "new-fast" })
+    expect(onSave.mock.calls[0]?.[0].config).not.toHaveProperty("vision_model")
+  })
+})
+
 describe("Editable provider model combobox", () => {
   it("supports keyboard selection, scrolls long lists, and consumes Escape before the dialog", async () => {
     const onOpenChange = vi.fn()
@@ -575,6 +691,7 @@ describe("Editable provider model combobox", () => {
           <InstanceEditor
             instance={instance}
             modelOptions={models}
+            initialRuntimeModels={models.map((model) => model.reference.model)}
             onSave={vi.fn().mockResolvedValue(undefined)}
             onCancel={vi.fn()}
           />
@@ -758,7 +875,7 @@ describe("Provider defaults authoritative refresh", () => {
     await flush()
     expect(loadProviderInstances).toHaveBeenCalledTimes(2)
     expect(useProviderStore.getState().providerStatus).toBe("loading")
-    expect(container.textContent).not.toContain("已保存")
+    expect(container.querySelector(".text-emerald-500")).toBeNull()
 
     resolveRefresh(snapshot("gpt-5.6"))
     await flush()
@@ -786,7 +903,7 @@ describe("Provider defaults authoritative refresh", () => {
     await click([...container.querySelectorAll("button")].find((button) => button.textContent === "保存偏好") ?? null)
     await flush()
     expect(loadProviderInstances).toHaveBeenCalledTimes(1)
-    expect(container.textContent).not.toContain("已保存")
+    expect(container.querySelector(".text-emerald-500")).toBeNull()
 
     resolveRefresh(snapshot("gpt-5.6"))
     await flush()

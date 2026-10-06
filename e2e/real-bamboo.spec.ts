@@ -1255,11 +1255,14 @@ test("production Provider add discovers models, accepts custom IDs, and repairs 
       provider: createdId,
     });
     await expect(
-      page.getByText("实例已保存，并发现 1 个模型。请选择模型后再次保存。", {
+      page.getByText("实例已保存，并发现 1 个候选模型。请选择运行时模型并保存后使用。", {
         exact: true,
       }),
     ).toBeVisible();
 
+    expect(asRecord(created?.config)?.runtime_models).toEqual([]);
+    const runtimeModels = page.getByTestId("runtime-models-editor");
+    await runtimeModels.getByRole("checkbox", { name: selectedModel, exact: true }).check();
     let modelInput = page.getByRole("combobox", {
       name: "默认模型(可选)",
     });
@@ -1271,18 +1274,22 @@ test("production Provider add discovers models, accepts custom IDs, and repairs 
     await modelInput.press("Enter");
     await expect(modelInput).toHaveValue(selectedModel);
     await saveModel(modelInput, selectedModel);
+    expect((await readCreatedConfig())?.runtime_models).toEqual([selectedModel]);
 
     await page
       .locator("li")
       .filter({ hasText: providerLabel })
       .getByRole("button", { name: "编辑", exact: true })
       .click();
+    await runtimeModels.getByRole("textbox", { name: "自定义模型 ID", exact: true }).fill(customModel);
+    await runtimeModels.getByRole("button", { name: "添加模型", exact: true }).click();
     modelInput = page.getByRole("combobox", {
       name: "默认模型(可选)",
     });
     await modelInput.fill(customModel);
     await expect(modelInput).toHaveValue(customModel);
     await saveModel(modelInput, customModel);
+    expect((await readCreatedConfig())?.runtime_models).toEqual([selectedModel, customModel]);
     expect(stringField(await readCreatedConfig(), "api_key")).toBe(
       "****...****",
     );

@@ -4,7 +4,15 @@ import { installArtifactRuntime, standaloneScenario } from "./support/artifactRu
 test("an existing session saves its model before the next request", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "desktop-chromium", "desktop composer workflow")
   await page.addInitScript(() => localStorage.setItem("bodhi_onboarded_v1", "1"))
-  const observation = await installArtifactRuntime(page, standaloneScenario)
+  const observation = await installArtifactRuntime(page, standaloneScenario, [], {
+    providerInstancesResponse: {
+      default_provider_instance_id: "fixture-provider",
+      instances: [{ id: "fixture-provider", type: "openai", label: "Fixture provider", enabled: true,
+        config: { model: "fixture-model", runtime_models: ["fixture-model", "grok-4.7"] } }],
+      defaults: { chat: { provider: "fixture-provider", model: "fixture-model" } },
+      features: { provider_model_ref: true },
+    },
+  })
   const session = {
     id: "all-surface-session", title: "Model selection", kind: "root", title_version: 1,
     root_orchestration_only: false, thinking_mode: "standard",

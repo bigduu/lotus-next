@@ -39,7 +39,15 @@ async function setup(page: Page, beforeSessionRestoration?: () => Promise<void>)
     localStorage.setItem("bodhi_onboarded_v1", "1")
     localStorage.setItem("lotus_next_last_session", id)
   }, mainId)
-  const observation = await installArtifactRuntime(page, standaloneScenario)
+  const observation = await installArtifactRuntime(page, standaloneScenario, [], {
+    providerInstancesResponse: {
+      default_provider_instance_id: "fixture-provider",
+      instances: [{ id: "fixture-provider", type: "openai", label: "Fixture provider", enabled: true,
+        config: { model: "fixture-model", runtime_models: ["fixture-model", alternateModel] } }],
+      defaults: { chat: { provider: "fixture-provider", model: "fixture-model" } },
+      features: { provider_model_ref: true },
+    },
+  })
   const session = (id: string, title: string, effort: string) => ({
     id, title, kind: "root", title_version: 1, root_session_id: id,
     parent_session_id: null, spawn_depth: 0, root_orchestration_only: false,
