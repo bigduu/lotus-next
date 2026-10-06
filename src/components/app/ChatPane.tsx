@@ -56,8 +56,7 @@ import { Toasts } from "@/components/app/Toasts"
 import { ImageLightbox } from "@/components/app/ImageLightbox"
 import { peekPendingTemplatePrompt } from "@/lib/taskTemplates"
 import { ContextUsageRing } from "@/components/app/ContextUsageRing"
-import { ReasoningPicker } from "@/components/chat/ReasoningPicker"
-import { ModelPicker } from "@/components/chat/ModelPicker"
+import { ModelEffortPicker } from "@/components/chat/ModelEffortPicker"
 import { NewSessionPermissionControl, PermissionModeControl } from "@/components/chat/PermissionModeControl"
 import { RootOrchestrationControl } from "@/components/chat/RootOrchestrationControl"
 import { useWorkflowCatalog } from "@/components/chat/useWorkflowCatalog"
@@ -1216,7 +1215,11 @@ export function ChatPane({
                   onClick={() => launchWorkbench(onOpenInspector)}
                 />
               ) : null}
-              <ReasoningPicker
+              <ModelEffortPicker
+                models={models.length > 0 && activeModel && !models.includes(activeModel) ? [activeModel, ...models] : models}
+                model={activeModel}
+                onModelChange={(model) => void handleModelChange(model)}
+                modelDisabled={modelControlDisabled}
                 value={rootMode.ordinaryValue}
                 allowUltra={rootMode.isRoot}
                 thinkingMode={rootMode.thinkingMode}
@@ -1225,20 +1228,6 @@ export function ChatPane({
                 menuPlacement="up"
                 menuAlign="right"
               />
-              {models.length > 0 ? (
-                <ModelPicker
-                  models={
-                    activeModel && !models.includes(activeModel)
-                      ? [activeModel, ...models]
-                      : models
-                  }
-                  value={activeModel}
-                  onChange={(model) => void handleModelChange(model)}
-                  disabled={modelControlDisabled}
-                  menuPlacement="up"
-                  menuAlign="right"
-                />
-              ) : null}
             </>
           )}
           submissionPending={submissionPending || goalSaving || queue.busy || ticketIngress.busy || modelSaving || rootMode.busy}

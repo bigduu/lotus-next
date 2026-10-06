@@ -9,12 +9,16 @@ import type { ReasoningEffortSelection } from "@shared/utils/reasoningEffort"
 
 type ComposerProps = ComponentProps<(typeof import("./Composer"))["Composer"]>
 type MessageListProps = ComponentProps<(typeof import("./MessageList"))["MessageList"]>
-type ModelPickerProps = ComponentProps<
-  (typeof import("@/components/chat/ModelPicker"))["ModelPicker"]
+type ModelEffortPickerProps = ComponentProps<
+  (typeof import("@/components/chat/ModelEffortPicker"))["ModelEffortPicker"]
 >
-type ReasoningPickerProps = ComponentProps<
-  (typeof import("@/components/chat/ReasoningPicker"))["ReasoningPicker"]
->
+type ModelPickerProps = Pick<ModelEffortPickerProps, "models" | "menuPlacement" | "menuAlign"> & {
+  value: string
+  onChange: ModelEffortPickerProps["onModelChange"]
+  disabled?: boolean
+}
+type ReasoningPickerProps = Pick<ModelEffortPickerProps,
+  "value" | "onChange" | "disabled" | "allowUltra" | "thinkingMode" | "menuPlacement" | "menuAlign">
 type ChatPaneProps = ComponentProps<(typeof import("./ChatPane"))["ChatPane"]>
 type Send = ChatPaneProps["chat"]["send"]
 type TicketController = ReturnType<(typeof import("@/hooks/useTicketWork"))["useTicketWork"]>
@@ -108,11 +112,18 @@ vi.mock("@/components/app/ImageLightbox", () => ({
     src ? <div data-image-lightbox data-src={src} /> : null,
 }))
 vi.mock("@/components/app/ContextUsageRing", () => ({ ContextUsageRing: () => <span data-testid="context-usage" /> }))
-vi.mock("@/components/chat/ReasoningPicker", () => ({ reasoningEffortLabel: (value: string) => value, ReasoningPicker: (props: ReasoningPickerProps) => (runtime.reasoningPicker = props, <span data-testid="reasoning-picker" />) }))
-vi.mock("@/components/chat/ModelPicker", () => ({
-  ModelPicker: (props: ModelPickerProps) => {
-    runtime.modelPicker = props
-    return <span data-testid="model-picker" />
+vi.mock("@/components/chat/ModelEffortPicker", () => ({
+  ModelEffortPicker: (props: ModelEffortPickerProps) => {
+    runtime.modelPicker = {
+      models: props.models, value: props.model, onChange: props.onModelChange,
+      disabled: props.modelDisabled, menuPlacement: props.menuPlacement, menuAlign: props.menuAlign,
+    }
+    runtime.reasoningPicker = {
+      value: props.value, onChange: props.onChange, disabled: props.disabled,
+      allowUltra: props.allowUltra, thinkingMode: props.thinkingMode,
+      menuPlacement: props.menuPlacement, menuAlign: props.menuAlign,
+    }
+    return <span data-testid="model-effort-picker" />
   },
 }))
 vi.mock("@/components/chat/PermissionModeControl", () => ({
@@ -470,8 +481,7 @@ describe("ChatPane composer acknowledgement", () => {
     const composerShell = document.querySelector('[data-testid="composer-shell"]')
 
     expect(composerShell?.querySelector('[data-testid="session-permission"]')).not.toBeNull()
-    expect(composerShell?.querySelector('[data-testid="reasoning-picker"]')).not.toBeNull()
-    expect(composerShell?.querySelector('[data-testid="model-picker"]')).not.toBeNull()
+    expect(composerShell?.querySelector('[data-testid="model-effort-picker"]')).not.toBeNull()
     expect(document.querySelector('[data-testid="new-session-permission"]')).toBeNull()
   })
 
@@ -1269,12 +1279,12 @@ describe("Root orchestration-only control", () => {
     expect(thinkingPicker().disabled).toBe(false)
   })
 
-  it("keeps the independent thinking picker in a narrow composer", async () => {
+  it("keeps the combined model and thinking picker in a narrow composer", async () => {
     await mount(vi.fn<Send>(), null)
     resizePane(false)
     expect(runtime.reasoningPicker?.allowUltra).toBe(true)
     expect(runtime.reasoningPicker?.disabled).toBe(false)
-    expect(document.querySelector('[data-testid="composer-shell"]')?.contains(document.querySelector('[data-testid="reasoning-picker"]'))).toBe(true)
+    expect(document.querySelector('[data-testid="composer-shell"]')?.contains(document.querySelector('[data-testid="model-effort-picker"]'))).toBe(true)
     expect(document.querySelector('input[type="checkbox"]')).toBeNull()
   })
 })

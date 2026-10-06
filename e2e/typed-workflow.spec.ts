@@ -1,5 +1,6 @@
 import { expect, test, type Page, type TestInfo } from "@playwright/test"
 import { installArtifactRuntime, standaloneScenario } from "./support/artifactRuntime.js"
+import { modelEffortPicker, selectEffort } from "./support/modelEffortPicker.js"
 
 const sessionId = "all-surface-session"
 const birth = "b".repeat(64)
@@ -84,7 +85,7 @@ test("exact Workflow survives Root conflict then succeeds after explicit mode di
       : route.fulfill({ json: { session_id: sessionId, status: "success" } })
   })
   await ready(page)
-  const mode = page.getByRole("button", { name: "推理强度" })
+  const mode = modelEffortPicker(page)
   await expect(mode).toContainText("Ultra"); expect(state.catalogReads).toBe(0)
   await openCatalog(page)
   await expect(picker(page).getByRole("button", { name: /Deploy orchestration/ })).toBeDisabled()
@@ -106,7 +107,7 @@ test("exact Workflow survives Root conflict then succeeds after explicit mode di
   await chip(page).getByRole("button", { name: /编辑目录工作流/ }).click()
   await expect(args(page)).toHaveValue('{"target":"src/scope.ts"}')
   await picker(page).getByRole("button", { name: "关闭工作流目录", exact: true }).click()
-  await mode.click(); await page.getByRole("menuitem", { name: "自动", exact: true }).click()
+  await selectEffort(page, "自动")
   await expect(mode).not.toContainText("Ultra")
   await page.getByRole("button", { name: "发送消息", exact: true }).click()
   await expect.poll(() => chats.length).toBe(2)

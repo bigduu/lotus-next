@@ -55,9 +55,10 @@ test("an existing session saves its model before the next request", async ({ pag
 
   try {
     await page.goto(standaloneScenario.entryUrl)
-    const currentModel = page.locator('button[data-slot="popover-trigger"]').filter({ hasText: "fixture-model" })
+    const currentModel = page.getByTestId("model-effort-picker")
     await expect(currentModel).toBeVisible()
     await currentModel.click()
+    await page.getByTestId("model-picker-model").click()
     await page.getByRole("searchbox", { name: "搜索模型" }).fill("grok")
     await page.locator("[data-model-option]").filter({ hasText: "grok-4.7" }).click()
 
@@ -66,11 +67,15 @@ test("an existing session saves its model before the next request", async ({ pag
       model: "grok-4.7", provider: "fixture-provider",
       model_ref: { provider: "fixture-provider", model: "grok-4.7" },
     })
-    await expect(currentModel).toBeDisabled()
+    await expect(currentModel).toContainText("fixture-model")
+    await currentModel.click()
+    await expect(page.getByTestId("model-picker-model")).toBeDisabled()
+    await page.keyboard.press("Escape")
     expect(chatRequests).toHaveLength(0)
 
     releasePatch()
-    await expect(page.locator('button[data-slot="popover-trigger"]').filter({ hasText: "grok-4.7" })).toBeEnabled()
+    await expect(currentModel).toBeEnabled()
+    await expect(currentModel).toContainText("grok-4.7")
     await page.getByRole("textbox", { name: "消息", exact: true }).fill("Continue with the selected model")
     await page.getByRole("button", { name: "发送消息", exact: true }).click()
     await expect.poll(() => chatRequests.length).toBe(1)
