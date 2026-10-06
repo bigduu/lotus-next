@@ -159,6 +159,14 @@ function deferred<T>(): Deferred<T> {
 function pendingForever<T>(): Promise<T> {
   return new Promise<T>(() => {})
 }
+function appendPersistedUser(sessionId: string, text: string, id = "persisted-user") {
+  let chat = mocks.appState.chats.find((candidate) => candidate.id === sessionId)
+  if (!chat) {
+    chat = { id: sessionId, messages: [] }
+    mocks.appState.chats.push(chat)
+  }
+  chat.messages = [...(chat.messages ?? []), { id, role: "user", content: text, createdAt: "2026-10-06T10:00:00Z" }]
+}
 async function flushMicrotasks() {
   await act(async () => {
     await Promise.resolve()
@@ -166,7 +174,7 @@ async function flushMicrotasks() {
     await Promise.resolve()
   })
 }
-async function mountUseChat(initialProps: HookProps) {
+async function mountUseChat(initialProps: HookProps, onRender?: (value: HookValue) => void) {
   const container = document.createElement("div")
   document.body.appendChild(container)
   const root = createRoot(container)
@@ -174,6 +182,7 @@ async function mountUseChat(initialProps: HookProps) {
   let current: HookValue | null = null
   function MainHarness() {
     current = useChat()
+    onRender?.(current)
     return null
   }
   function BoundHarness({
@@ -181,6 +190,7 @@ async function mountUseChat(initialProps: HookProps) {
     onSessionCreated,
   }: Extract<HookProps, { mode: "bound" }>) {
     current = useChat(sessionId, onSessionCreated)
+    onRender?.(current)
     return null
   }
   const render = async (props: HookProps) => {
@@ -315,6 +325,141 @@ afterEach(() => {
 })
 describe("useChat two-phase send lifecycle", () => {
   const fenceRoot = (enabled = false) => beginRootModeOperation("root-session", 0, "a".repeat(64), enabled)
+
+  it.each(["main", "bound"] as const)("keeps the %s pane's user bubble until its acknowledged message is in history", async (mode) => {
+    const sessionId = "delayed-user-history"
+    const text = "repeat the same request"
+    const oldUser = { id: "old-user", role: "user", content: text, createdAt: "2026-10-06T10:00:00Z" }
+    const oldAssistant = { id: "old-reply", role: "assistant", type: "text", content: "previous response", createdAt: "2026-10-06T10:00:01Z" }
+    mocks.appState.chats = [{ id: sessionId, messages: [oldUser, oldAssistant], config: { model: "test-model" } }]
+    mocks.appState.currentSessionId = sessionId
+    const initialHistory = deferred<void>()
+    mocks.appState.loadChatHistory.mockReturnValueOnce(initialHistory.promise)
+    mocks.sendMessage.mockResolvedValueOnce({ session_id: sessionId, message_id: "acknowledged-user" })
+    let handlers!: SubscriptionHandlers
+    mocks.subscribeToEvents.mockImplementationOnce((_sessionId: string, nextHandlers: SubscriptionHandlers) => {
+      handlers = nextHandlers
+      return pendingForever()
+    })
+    const props: HookProps = mode === "main" ? { mode } : { mode, sessionId }
+    const renders: Array<{ pending: string | null; messages: HookValue["messages"] }> = []
+    const hook = await mountUseChat(props, (value) => renders.push({ pending: value.pendingUserText, messages: value.messages }))
+    await act(async () => { await hook.current.send(text) })
+    expect(hook.current.pendingUserText).toBe(text)
+
+    // A successful GET can still contain only the previous turn. Run-started
+    // summaries and the first assistant token are not durable user-message proof.
+    await act(async () => { initialHistory.resolve(); await Promise.resolve() })
+    expect(hook.current.pendingUserText).toBe(text)
+    mocks.appState.chats = [{ ...mocks.appState.chats[0], isRunning: true, messages: [oldUser, oldAssistant] }]
+    await hook.rerender(props)
+    expect(hook.current.pendingUserText).toBe(text)
+    await act(async () => {
+      handlers.onToken("reply before user history")
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+    })
+    expect(hook.current.streaming).toBe("reply before user history")
+    expect(hook.current.pendingUserText).toBe(text)
+
+    const currentAssistant = { ...oldAssistant, id: "current-reply", content: "reply before user history" }
+    mocks.appState.chats = [{ ...mocks.appState.chats[0], messages: [oldUser, oldAssistant, currentAssistant] }]
+    await hook.rerender(props)
+    expect(hook.current.pendingUserText).toBe(text)
+    const currentUser = { ...oldUser, id: "acknowledged-user" }
+    mocks.appState.chats = [{ ...mocks.appState.chats[0], messages: [oldUser, oldAssistant, currentUser, currentAssistant] }]
+    renders.length = 0
+    await hook.rerender(props)
+    expect(hook.current.pendingUserText).toBeNull()
+    expect(renders.length).toBeGreaterThan(0)
+    expect(renders.every((render) => render.pending === null)).toBe(true)
+    expect(hook.current.messages.filter((message) => message.role === "user")).toHaveLength(2)
+    expect(mocks.appState.loadChatHistory).toHaveBeenLastCalledWith(sessionId, { mode: "monotonic" })
+  })
+
+  it("matches a new user ID when an acknowledgement has no message ID, even for identical text", async () => {
+    const sessionId = "legacy-acknowledgement"
+    const text = "same text"
+    const oldUser = { id: "old-user", role: "user", content: text, createdAt: "2026-10-06T10:00:00Z" }
+    mocks.appState.chats = [{ id: sessionId, messages: [oldUser] }]
+    mocks.sendMessage.mockResolvedValueOnce({ session_id: sessionId })
+    mocks.subscribeToEvents.mockReturnValueOnce(pendingForever())
+    const props: HookProps = { mode: "bound", sessionId }
+    const hook = await mountUseChat(props)
+    await act(async () => { await hook.current.send(text) })
+    expect(hook.current.pendingUserText).toBe(text)
+    mocks.appState.chats = [{ id: sessionId, messages: [oldUser, { ...oldUser, id: "unrelated-user", content: "other request" }] }]
+    await hook.rerender(props)
+    expect(hook.current.pendingUserText).toBe(text)
+    mocks.appState.chats = [{ id: sessionId, messages: [oldUser, { ...oldUser, id: "new-user" }] }]
+    await hook.rerender(props)
+    expect(hook.current.pendingUserText).toBeNull()
+  })
+
+  it("does not let an earlier history request retire a later send of the same text", async () => {
+    const sessionId = "repeated-operations"
+    const text = "again"
+    const firstHistory = deferred<void>()
+    const secondHistory = deferred<void>()
+    const firstSubscription = deferred<void>()
+    let firstHandlers!: SubscriptionHandlers
+    mocks.appState.chats = [{ id: sessionId, messages: [] }]
+    mocks.sendMessage
+      .mockResolvedValueOnce({ session_id: sessionId, message_id: "first-user" })
+      .mockResolvedValueOnce({ session_id: sessionId, message_id: "second-user" })
+    mocks.appState.loadChatHistory
+      .mockReturnValueOnce(firstHistory.promise)
+      .mockResolvedValueOnce(undefined)
+      .mockReturnValueOnce(secondHistory.promise)
+    mocks.subscribeToEvents
+      .mockImplementationOnce((_sessionId: string, handlers: SubscriptionHandlers) => { firstHandlers = handlers; return firstSubscription.promise })
+      .mockReturnValueOnce(pendingForever())
+    const props: HookProps = { mode: "bound", sessionId }
+    const hook = await mountUseChat(props)
+    await act(async () => { await hook.current.send(text) })
+    appendPersistedUser(sessionId, text, "first-user")
+    await hook.rerender(props)
+    expect(hook.current.pendingUserText).toBeNull()
+    await act(async () => { firstHandlers.onComplete(); firstSubscription.resolve() })
+    expect(hook.current.sending).toBe(false)
+    await act(async () => { await hook.current.send(text) })
+    expect(hook.current.pendingUserText).toBe(text)
+    await act(async () => { firstHistory.resolve(); secondHistory.resolve() })
+    expect(hook.current.pendingUserText).toBe(text)
+    appendPersistedUser(sessionId, text, "second-user")
+    await hook.rerender(props)
+    expect(hook.current.pendingUserText).toBeNull()
+    expect(hook.current.messages.filter((message) => message.role === "user")).toHaveLength(2)
+  })
+
+  it.each(["complete", "error", "cancelled"] as const)("retains the user bubble when %s history resolves without the user message", async (terminal) => {
+    const sessionId = "stale-terminal-user-history"
+    const text = "accepted user message"
+    const initialHistory = deferred<void>()
+    const terminalHistory = deferred<void>()
+    const subscription = deferred<void>()
+    let handlers!: SubscriptionHandlers
+    mocks.appState.chats = [{ id: sessionId, messages: [] }]
+    mocks.sendMessage.mockResolvedValueOnce({ session_id: sessionId, message_id: "accepted-user" })
+    mocks.appState.loadChatHistory.mockReturnValueOnce(initialHistory.promise).mockReturnValueOnce(terminalHistory.promise)
+    mocks.subscribeToEvents.mockImplementationOnce((_sessionId: string, nextHandlers: SubscriptionHandlers) => { handlers = nextHandlers; return subscription.promise })
+    const props: HookProps = { mode: "bound", sessionId }
+    const hook = await mountUseChat(props)
+    await act(async () => { await hook.current.send(text) })
+    await act(async () => {
+      if (terminal === "complete") handlers.onComplete()
+      else if (terminal === "error") handlers.onError("generation failed")
+      else handlers.onCancelled()
+      subscription.resolve()
+      terminalHistory.resolve()
+    })
+    expect(hook.current.sending).toBe(false)
+    expect(hook.current.pendingUserText).toBe(text)
+    appendPersistedUser(sessionId, text, "accepted-user")
+    await hook.rerender(props)
+    expect(hook.current.pendingUserText).toBeNull()
+    await act(async () => { initialHistory.resolve() })
+    expect(hook.current.pendingUserText).toBeNull()
+  })
 
   it.each(["workflow_revision_missing", "workflow_revision_mismatch", "workflow_source_mismatch", "root_orchestration_incompatible_mode"])("forwards exact typed selection without inline Root choice and returns %s", async (code) => {
     mocks.appState.chats = [{ id: "root-session", messages: [], config: { model: "test-model" } }]
@@ -476,7 +621,7 @@ describe("useChat two-phase send lifecycle", () => {
     expect(hook.current.sendFailure).toMatchObject({
       kind: "generation-failed", message: expect.stringContaining("消息已保存"),
     })
-    expect(mocks.appState.loadChatHistory).toHaveBeenCalledWith("root-session")
+    expect(mocks.appState.loadChatHistory).toHaveBeenCalledWith("root-session", { mode: "monotonic" })
   })
 
   it("does not start detached execution after another tab fences an acknowledged Session", async () => {
@@ -1026,6 +1171,7 @@ describe("useChat two-phase send lifecycle", () => {
         expect(mocks.appState.loadChatHistory).toHaveBeenNthCalledWith(2, "terminal-session")
       }
       await act(async () => {
+        appendPersistedUser("terminal-session", "optimistic terminal payload")
         terminalHistory.resolve()
         await Promise.resolve()
         await Promise.resolve()
@@ -1139,6 +1285,11 @@ describe("useChat two-phase send lifecycle", () => {
       const chat = mocks.appState.chats.find((candidate) => candidate.id === sessionId)
       if (chat) {
         chat.messages = [{
+          id: "persisted-user",
+          role: "user",
+          content: "recover the missing semantic terminal",
+          createdAt: "2026-09-19T12:00:00Z",
+        }, {
           id: "persisted-final",
           role: "assistant",
           type: "text",
@@ -1209,7 +1360,7 @@ describe("useChat two-phase send lifecycle", () => {
       ])
       expect(mocks.execute).toHaveBeenCalledWith("ack-session", "test-model", undefined, undefined, undefined)
       expect(mocks.appState.refreshChatsNow).toHaveBeenCalledTimes(1)
-      expect(mocks.appState.loadChatHistory).toHaveBeenCalledWith("ack-session")
+      expect(mocks.appState.loadChatHistory).toHaveBeenCalledWith("ack-session", { mode: "monotonic" })
       expect(hook.current.sendFailure).toBeNull()
     },
   )
@@ -1261,6 +1412,7 @@ describe("useChat two-phase send lifecycle", () => {
     expect(mocks.truncateSessionMessages).toHaveBeenCalledTimes(1)
     expect(mocks.execute).toHaveBeenCalledTimes(1)
     await act(async () => {
+      appendPersistedUser("exact-session", "accepted payload")
       truncation.resolve()
       await firstRetry
     })
@@ -1340,6 +1492,7 @@ describe("useChat two-phase send lifecycle", () => {
     )
     await hook.rerender({ mode: "bound", sessionId: "session-b" })
     await act(async () => {
+      appendPersistedUser("session-a", "optimistic payload owned by A")
       truncation.resolve()
       await retrying
       await Promise.resolve()
@@ -1463,7 +1616,7 @@ describe("useChat two-phase send lifecycle", () => {
     mocks.sendMessage.mockResolvedValueOnce({ session_id: "stopped-session" })
     mocks.appState.loadChatHistory
       .mockReturnValueOnce(initialHistory.promise)
-      .mockResolvedValueOnce(undefined)
+      .mockImplementationOnce(async () => { appendPersistedUser("stopped-session", "stop this acknowledged run") })
     mocks.subscribeToEvents.mockImplementationOnce(
       (_sessionId: string, _handlers: SubscriptionHandlers, controller: AbortController) => {
         subscriptionController = controller
