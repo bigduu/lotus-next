@@ -1,0 +1,122 @@
+name: Native Actor acceptance
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/actor-native.yml
+      - e2e/actor-native-runtime.spec.ts
+      - playwright.actor-runtime.config.ts
+      - playwright.config.ts
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: native-actor-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  native-actor:
+    name: Native Actor / Node 24
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      # Reviewed test-only fixture on accepted Bamboo production.
+      BAMBOO_ACTOR_FIXTURE_REVISION: 56d869287c8df816289f222b5ec5cdada72af517
+      BAMBOO_FRONTEND_BUILD_MODE: api-only
+      RUST_MIN_STACK: "8388608"
+      CARGO_PROFILE_DEV_DEBUG: "0"
+      CARGO_INCREMENTAL: "0"
+      CARGO_BUILD_JOBS: "1"
+
+    steps:
+      - name: Check out Lotus Next
+        uses: actions/checkout@v7
+
+      - name: Check out the exact native Actor fixture
+        uses: actions/checkout@v7
+        with:
+          repository: bigduu/Bamboo-agent
+          ref: ${{ env.BAMBOO_ACTOR_FIXTURE_REVISION }}
+          path: .e2e-actor-bamboo
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies and build Lotus
+        run: npm ci && npm run build
+
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache the focused Rust build
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: .e2e-actor-bamboo
+          shared-key: native-actor-browser
+
+      - name: Compile the locked native fixture separately
+        timeout-minutes: 30
+        working-directory: .e2e-actor-bamboo
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ../test-results-actor-native
+          test "$(git rev-parse HEAD)" = "$BAMBOO_ACTOR_FIXTURE_REVISION"
+          cargo test --locked --test local_zero_tool_actor --no-run --message-format=json \
+            > ../test-results-actor-native/compile.jsonl 2> ../test-results-actor-native/compile.log
+          jq -r 'select(.reason == "compiler-artifact" and .target.name == "local_zero_tool_actor" and .profile.test) | .executable // empty' \
+            ../test-results-actor-native/compile.jsonl > ../test-results-actor-native/executable
+          test "$(wc -l < ../test-results-actor-native/executable)" -eq 1
+          { git rev-parse HEAD; git -C .. rev-parse HEAD; rustc --version; node --version; } \
+            > ../test-results-actor-native/build-identity.txt
+
+      - name: Verify native authority and real Actor browser receipts
+        timeout-minutes: 10
+        shell: bash
+        env:
+          BAMBOO_ACTOR_BROWSER_STATIC_DIR: ${{ github.workspace }}/dist
+          BAMBOO_ACTOR_BROWSER_INFO: ${{ github.workspace }}/test-results-actor-native/fixture.json
+          LOTUS_ACTOR_FIXTURE_INFO: ${{ github.workspace }}/test-results-actor-native/fixture.json
+        run: |
+          set -euo pipefail
+          fixture="$(cat test-results-actor-native/executable)"
+          "$fixture" --ignored --exact actual_message_only_native_actor_browser_fixture --nocapture \
+            > test-results-actor-native/native.log 2>&1 &
+          native_pid=$!
+          browser_status=0
+          npx playwright test --config=playwright.actor-runtime.config.ts || browser_status=$?
+          # A launch failure has no test catch handler. Release the bounded native
+          # wait with a failure receipt so Rust's owned Host cleanup still runs.
+          if [ ! -f test-results-actor-native/fixture.done ]; then
+            printf '%s\n' '{"pass":false,"error":"browser did not produce a completion receipt"}' \
+              > test-results-actor-native/fixture.done
+          fi
+          native_status=0
+          wait "$native_pid" || native_status=$?
+          test "$browser_status" -eq 0
+          test "$native_status" -eq 0
+          jq -e '.pass == true and .held_cut_runs == 1 and .child_provider_calls == 1 and .host_killed_and_waited == true' \
+            test-results-actor-native/fixture.native
+
+      - name: Upload native Actor evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v5
+        with:
+          name: native-actor-browser-evidence
+          path: |
+            playwright-report-actor-runtime/
+            test-results-actor-runtime/
+            test-results-actor-native/
+          if-no-files-found: error
+          retention-days: 14
