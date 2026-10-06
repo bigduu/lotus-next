@@ -578,41 +578,44 @@ function BackgroundBadge({ bashId }: { bashId: string }) {
   )
 }
 
-function EntryRow({ e, running, onPreviewImage }: { e: Entry; running: boolean; onPreviewImage?: (src: string) => void }) {
+const ENTRY_HEADING_CLASS = "flex min-w-0 items-center gap-1.5 rounded-sm py-1 text-sm text-muted-foreground"
+
+function EntryHeading({ e, presentation, running, open }: {
+  e: Entry
+  presentation: ToolPresentation
+  running: boolean
+  open?: boolean
+}) {
+  const SummaryIcon = presentation.icon
+  return <>
+    <SummaryIcon className="size-3.5 shrink-0" />
+    <span className="shrink-0">{presentation.label}</span>
+    {presentation.detail ? (
+      <span className="min-w-0 truncate font-mono text-xs opacity-70">{presentation.detail}</span>
+    ) : null}
+    {e.result?.isError ? <span className="shrink-0 text-destructive">{uiText("errors_01ad2bc5")}</span> : null}
+    {e.background ? <BackgroundBadge bashId={e.background.bashId} /> : null}
+    {running ? <span className="shrink-0">{uiText("running_14d9f2d8")}</span> : null}
+    {open !== undefined ? <ChevronRight className={cn("size-3 shrink-0 transition-transform", open && "rotate-90")} /> : null}
+  </>
+}
+
+function EntryRow({ e, running, expanded = false, onPreviewImage }: {
+  e: Entry
+  running: boolean
+  expanded?: boolean
+  onPreviewImage?: (src: string) => void
+}) {
   useUiLocale()
-  const [open, setOpen] = useState(false)
+  const [localOpen, setOpen] = useState(expanded)
+  const open = expanded || localOpen
   const { primary, rest } = cleanParams(e.params)
   const presentation = presentTool(e)
-  const SummaryIcon = presentation.icon
   // File-editing tool results render as a real diff instead of raw JSON.
   const fileChange = open && e.result?.text ? parseFileChangeResultPayload(e.result.text) : null
   const result = open && e.result?.text ? prettyResult(e.result.text) : ""
   const images = open ? e.images?.map(safeViewImageSource).filter((src): src is string => Boolean(src)) : undefined
-  return (
-    <div data-tool-call-entry className="min-w-0">
-      <details open={open}>
-        <summary
-          data-tool-call-entry-toggle
-          aria-expanded={open}
-          onClick={(event) => {
-            event.preventDefault()
-            setOpen(!open)
-          }}
-          className="flex min-w-0 cursor-pointer list-none items-center gap-1.5 rounded-sm py-1 text-sm text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [&::-webkit-details-marker]:hidden"
-        >
-          <SummaryIcon className="size-3.5 shrink-0" />
-          <span className="shrink-0">{presentation.label}</span>
-          {presentation.detail ? (
-            <span className="min-w-0 truncate font-mono text-xs opacity-70">
-              {presentation.detail}
-            </span>
-          ) : null}
-          {e.result?.isError ? <span className="shrink-0 text-destructive">{uiText("errors_01ad2bc5")}</span> : null}
-          {e.background ? <BackgroundBadge bashId={e.background.bashId} /> : null}
-          {running ? <span className="shrink-0">{uiText("running_14d9f2d8")}</span> : null}
-          <ChevronRight className={cn("size-3 shrink-0 transition-transform", open && "rotate-90")} />
-        </summary>
-        {open ? (
+  const detail = open ? (
           <div data-tool-call-entry-detail className="mt-1 border-l border-border pl-4 text-[11px]">
             {presentation.label !== e.toolName ? (
               <div className="text-muted-foreground opacity-70">{e.toolName}</div>
@@ -650,8 +653,27 @@ function EntryRow({ e, running, onPreviewImage }: { e: Entry; running: boolean; 
               </pre>
             ) : null}
           </div>
-        ) : null}
-      </details>
+        ) : null
+  return (
+    <div data-tool-call-entry className="min-w-0">
+      {expanded ? <>
+        <div data-tool-call-entry-heading className={ENTRY_HEADING_CLASS}>
+          <EntryHeading e={e} presentation={presentation} running={running} />
+        </div>
+        {detail}
+      </> : (
+        <details open={open}>
+          <summary
+            data-tool-call-entry-toggle
+            aria-expanded={open}
+            onClick={(event) => { event.preventDefault(); setOpen(!open) }}
+            className={cn(ENTRY_HEADING_CLASS, "cursor-pointer list-none hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [&::-webkit-details-marker]:hidden")}
+          >
+            <EntryHeading e={e} presentation={presentation} running={running} open={open} />
+          </summary>
+          {detail}
+        </details>
+      )}
     </div>
   )
 }
@@ -662,6 +684,10 @@ function EntryRow({ e, running, onPreviewImage }: { e: Entry; running: boolean; 
  */
 type ToolCallsProps = {
   items: Message[]
+  /** A Process owns its disclosure; previews never create another one. */
+  presentation?: "group" | "process" | "preview"
+  /** Show a Process's only call directly after its enclosing disclosure opens. */
+  singleExpanded?: boolean
   active?: boolean
   /** Exact running calls in a live segment, even after partial output arrives. */
   runningCallIds?: ReadonlySet<string>
@@ -673,6 +699,8 @@ type ToolCallsProps = {
 
 export function ToolCalls({
   items,
+  presentation = "group",
+  singleExpanded = false,
   active,
   runningCallIds,
   open: controlledOpen,
@@ -688,13 +716,44 @@ export function ToolCalls({
   }
 
   const entries = buildEntries(items)
+  const isRunning = (entry: Entry) => runningCallIds
+    ? runningCallIds.has(entry.id) : Boolean(active && !entry.result)
+  if (presentation === "preview") {
+    const entry = entries.findLast(isRunning) ?? entries.at(-1)
+    if (!entry) return null
+    // Only the fixed browser status projection may accompany a preview. Generic
+    // tool/browser result bodies stay in the existing sanitized detail view.
+    const browserStatus = entry.focusedBrowserInput || entry.browserEvalTool || entry.browserSelectOption
+      || entry.browserFileInput || entry.browserDialogResponse || entry.browserDialogStatus || entry.browserDownload
+      || entry.result?.text === approvalStatus() ? entry.result?.text : undefined
+    return <div className="flex justify-start">
+      <div data-tool-call-preview className={cn("w-full max-w-[85%] px-3.5", ENTRY_HEADING_CLASS)}>
+        <EntryHeading e={entry} presentation={presentTool(entry)} running={isRunning(entry)} />
+        {browserStatus ? <span className="min-w-0 truncate text-xs">{browserStatus}</span> : null}
+      </div>
+    </div>
+  }
+  if (presentation === "process") {
+    if (entries.length === 0) return null
+    return <div className="flex justify-start">
+      <div data-tool-call-panel className="w-full max-w-[85%] space-y-1 px-3.5 text-xs">
+        {entries.map((e) => <EntryRow
+          key={e.id}
+          e={e}
+          running={isRunning(e)}
+          expanded={singleExpanded && entries.length === 1}
+          onPreviewImage={onPreviewImage}
+        />)}
+      </div>
+    </div>
+  }
   const uniqueNames = Array.from(new Set(entries.map((e) => e.toolName).filter(Boolean)))
   const summary = summarizeEntries(entries)
   const SummaryIcon = active ? Loader2 : summary.icon
 
   return (
     <div className="flex justify-start">
-      <div className="w-full max-w-[85%]">
+      <div className="w-full max-w-[85%] px-3.5">
         <button
           type="button"
           onClick={() => setOpen(!open)}
@@ -719,7 +778,7 @@ export function ToolCalls({
               <EntryRow
                 key={e.id}
                 e={e}
-                running={runningCallIds ? runningCallIds.has(e.id) : Boolean(active && !e.result)}
+                running={isRunning(e)}
                 onPreviewImage={onPreviewImage}
               />
             ))}

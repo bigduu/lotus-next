@@ -14,10 +14,11 @@ export function Reasoning({ text, active = false, spaced = false }: { text: stri
         type="button"
         aria-expanded={open}
         aria-controls={contentId}
+        data-reasoning-toggle
         onClick={() => setOpen((v) => !v)}
-        className="inline-flex items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
+        className="inline-flex items-center gap-1.5 rounded-sm text-xs text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       >
-        <Brain className={cn("size-3", active && "animate-pulse")} />
+        <Brain className={cn("size-3.5 shrink-0", active && "animate-pulse")} />
         <span>{active ? uiText("thinking_64088d8c") : uiText("reasoning_a62acb18")}</span>
         <ChevronRight className={cn("size-3 transition-transform", open && "rotate-90")} />
       </button>

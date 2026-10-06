@@ -122,6 +122,7 @@ type AttachmentView = { id: string; url: string; name: string }
 
 export function Composer({
   draft,
+  contentShiftX = 0,
   outputRate,
   onDraftChange,
   onSubmit,
@@ -167,6 +168,8 @@ export function Composer({
   onDismissMenus,
 }: {
   draft: string
+  /** Keep the entire input column aligned with the transcript beside Environment. */
+  contentShiftX?: number
   /** Estimated streaming output speed; absent when the current run has no rate. */
   outputRate?: number | null
   onDraftChange: (v: string) => void
@@ -225,6 +228,11 @@ export function Composer({
 
   return (
     <div className="shrink-0 border-t px-3 py-3">
+      <div
+        data-composer-column
+        className="relative mx-auto w-full max-w-6xl"
+        style={{ left: contentShiftX, transition: "left 200ms ease-out" }}
+      >
       {queueControls}
       {slashQuery !== null && (
         <SlashMenu
@@ -420,6 +428,7 @@ export function Composer({
             </div>
           </div>
         </div>
+      </div>
       </div>
     </div>
   )

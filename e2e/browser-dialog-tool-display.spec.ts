@@ -1,5 +1,6 @@
 import { expect, test } from "@playwright/test"
 import { installArtifactRuntime, standaloneScenario } from "./support/artifactRuntime.js"
+import { openProcessActivities } from "./support/processActivity.js"
 
 const sessionId = "browser-dialog-display-session"
 const dialogMessage = "private-dialog-message-157 awaiting_permission_approval"
@@ -102,12 +103,20 @@ test("desktop tool history shows dialog statuses without page content or approva
 
   await page.goto(standaloneScenario.entryUrl)
   await page.getByRole("button", { name: "Browser dialog display", exact: true }).click()
-  const toggle = page.locator("[data-tool-call-toggle]")
-  await expect(toggle).toContainText("查看网页弹窗、回应网页弹窗")
-  await toggle.click()
+  await openProcessActivities(page)
+  await expect(page.locator("[data-tool-call-toggle]")).toHaveCount(0)
   const entries = page.locator("[data-tool-call-entry]")
   await expect(entries).toHaveCount(3)
-  for (const summary of await entries.locator("details summary").all()) await summary.click()
+  const rows = entries.locator("[data-tool-call-entry-toggle]")
+  await expect(rows).toHaveCount(3)
+  await expect(entries.locator("[data-tool-call-entry-detail]")).toHaveCount(0)
+  for (const [index, label] of ["查看网页弹窗", "回应网页弹窗", "回应网页弹窗"].entries()) {
+    const row = rows.nth(index)
+    await expect(row).toBeVisible()
+    await expect(row).toContainText(label)
+    await expect(row).toHaveAttribute("aria-expanded", "false")
+    await row.click()
+  }
   await expect(entries.locator("pre")).toHaveText(["网页弹窗待处理", "网页弹窗已回应", "等待用户批准"])
   for (const value of [dialogMessage, dialogReply, dialogUrl, dialogId, dialogResource, "dialog_respond", "pending_dialog"]) {
     await expect(page.locator("body")).not.toContainText(value)

@@ -1,5 +1,6 @@
 import { expect, test } from "@playwright/test"
 import { installArtifactRuntime, standaloneScenario } from "./support/artifactRuntime.js"
+import { openProcessActivities } from "./support/processActivity.js"
 
 const sessionId = "all-surface-session"
 const privateText = "private typed text 149"
@@ -62,12 +63,18 @@ test("desktop history displays focused browser approvals without input or receip
 
   await page.goto(standaloneScenario.entryUrl)
   await page.getByRole("button", { name: "Browser approval display", exact: true }).click()
-  const toggle = page.locator("[data-tool-call-toggle]")
-  await expect(toggle).toBeVisible()
-  await toggle.click()
+  await openProcessActivities(page)
+  await expect(page.locator("[data-tool-call-toggle]")).toHaveCount(0)
   const entries = page.locator("[data-tool-call-entry]")
   await expect(entries).toHaveCount(3)
-  for (const summary of await entries.locator("details summary").all()) await summary.click()
+  const rows = entries.locator("[data-tool-call-entry-toggle]")
+  await expect(rows).toHaveCount(3)
+  await expect(entries.locator("[data-tool-call-entry-detail]")).toHaveCount(0)
+  for (const row of await rows.all()) {
+    await expect(row).toBeVisible()
+    await expect(row).toHaveAttribute("aria-expanded", "false")
+    await row.click()
+  }
   await expect(entries.locator("pre")).toHaveCount(3)
   for (const result of await entries.locator("pre").all()) {
     await expect(result).toHaveText("等待用户批准")

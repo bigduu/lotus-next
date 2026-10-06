@@ -1132,6 +1132,7 @@ export function ChatPane({
             <div
               data-scroll-to-bottom-anchor
               className="pointer-events-none absolute inset-x-0 top-0 z-20 mx-auto flex max-w-6xl -translate-y-1/2 justify-center px-3"
+              style={{ transform: `translateX(${messageContentShift}px)`, transition: "transform 200ms ease-out" }}
             >
               <button
                 onClick={scrollToBottom}
@@ -1144,6 +1145,7 @@ export function ChatPane({
           )}
           <Composer
           draft={draft}
+          contentShiftX={messageContentShift}
           outputRate={outputRate}
           onDraftChange={setDraft}
           onSubmit={submit}

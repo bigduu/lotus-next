@@ -1,0 +1,34 @@
+.process-activity { padding-inline: 14px; }
+.process-activity-toggle {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+  overflow: hidden;
+  border-radius: 6px;
+  padding-block: 4px;
+  text-align: left;
+  cursor: pointer;
+}
+.process-activity-toggle:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+.process-activity-icon { width: 14px; height: 14px; flex: none; color: var(--muted-foreground); }
+.process-activity-toggle[aria-expanded="true"] .process-activity-icon { rotate: 90deg; }
+.process-activity-label, .process-activity-count { min-width: 0; max-width: 35%; flex: 0 1 auto; overflow: hidden; color: var(--muted-foreground); font-size: 12px; white-space: nowrap; text-overflow: ellipsis; }
+.process-activity-brief { min-width: 40px; flex: 1; overflow: hidden; color: var(--foreground); font-size: 13px; line-height: 20px; white-space: nowrap; text-overflow: ellipsis; }
+.process-activity-shimmer {
+  --process-metal: #3c4652;
+  --process-shine: #637183;
+  color: transparent;
+  background: linear-gradient(110deg, var(--foreground) 35%, var(--process-metal) 45%, var(--process-shine) 50%, var(--process-metal) 55%, var(--foreground) 65%) 200% 0 / 240% 100%;
+  background-clip: text;
+  -webkit-background-clip: text;
+  animation: process-silver-sweep 2s linear infinite;
+}
+.dark .process-activity-shimmer { --process-metal: #a4adba; --process-shine: #e6e9ef; }
+.process-activity-content { padding-top: 4px; }
+.process-activity-content[hidden] { display: none; }
+@keyframes process-silver-sweep { to { background-position: -200% 0; } }
+body[data-vdi-safe="true"] .process-activity-shimmer { color: var(--foreground); background: none; animation: none; }
+@media (prefers-reduced-motion: reduce) { .process-activity-shimmer { color: var(--foreground); background: none; animation: none; } }
+@media (max-width: 479px) { .process-activity-count { display: none; } }

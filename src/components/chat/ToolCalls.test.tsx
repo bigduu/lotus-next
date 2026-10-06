@@ -6,7 +6,9 @@ import { afterAll, afterEach, beforeAll, expect, it, vi } from "vitest"
 import type { Message } from "@shared/types/chatMessages"
 import { mapHistoryMessagesToUi } from "@shared/store/appStore/slices/chatSessionSlice/messageMapping"
 import { apiClient } from "@services/api"
+import { useAppStore } from "@shared/store/appStore"
 import { ToolCalls } from "./ToolCalls"
+import { ProcessActivity } from "./ProcessActivity"
 
 const mountedRoots: Root[] = []
 const reactActEnvironment = globalThis as typeof globalThis & {
@@ -1114,6 +1116,146 @@ it("omits malformed and oversized browser_eval previews while ordinary tools sti
   const ordinary = renderOpenTools(toolMessages(true))
   expect(ordinary.textContent).toContain("/tmp/example.ts")
   expect(ordinary.textContent).toContain("done")
+})
+
+it("shows a Process's only tool result after opening only the Process disclosure", () => {
+  const host = document.body.appendChild(document.createElement("div"))
+  const root = createRoot(host); mountedRoots.push(root)
+  act(() => root.render(<ProcessActivity>
+    <ToolCalls items={toolMessages(true)} presentation="process" singleExpanded />
+  </ProcessActivity>))
+  const processToggle = host.querySelector<HTMLButtonElement>("[data-process-toggle]")!
+  const content = host.querySelector<HTMLElement>("[data-process-content]")!
+  expect(content.hidden).toBe(true)
+  expect(host.querySelector("[data-tool-call-toggle]")).toBeNull()
+  expect(host.querySelector("[data-tool-call-entry-toggle]")).toBeNull()
+  expect(host.querySelector("details")).toBeNull()
+  act(() => processToggle.click())
+  expect(content.hidden).toBe(false)
+  expect(host.querySelector("[data-tool-call-entry-heading]")?.textContent).toContain("读取文件")
+  expect(host.querySelector("[data-tool-call-entry-detail]")?.textContent).toContain("/tmp/example.ts")
+  expect(host.querySelector("[data-tool-call-entry-detail] pre")?.textContent).toBe("done")
+})
+
+it("keeps only individual disclosures for multiple tools inside a Process", () => {
+  const host = document.body.appendChild(document.createElement("div"))
+  const root = createRoot(host); mountedRoots.push(root)
+  act(() => root.render(<ToolCalls items={mixedToolMessages()} presentation="process" />))
+  expect(host.querySelector("[data-tool-call-toggle]")).toBeNull()
+  const rows = host.querySelectorAll<HTMLElement>("[data-tool-call-entry-toggle]")
+  expect(rows).toHaveLength(3)
+  expect(host.querySelector("[data-tool-call-entry-detail]")).toBeNull()
+  act(() => rows[0].click())
+  expect(rows[0].getAttribute("aria-expanded")).toBe("true")
+  expect(rows[1].getAttribute("aria-expanded")).toBe("false")
+  expect(host.querySelectorAll("[data-tool-call-entry-detail]")).toHaveLength(1)
+  expect(host.querySelector("[data-tool-call-entry-detail]")?.textContent).toContain("npm run test:run")
+})
+
+it("keeps a directly expanded call's result visible when its Process gains another tool", () => {
+  const host = document.body.appendChild(document.createElement("div"))
+  const root = createRoot(host); mountedRoots.push(root)
+  act(() => root.render(<ToolCalls items={toolMessages(true)} presentation="process" singleExpanded />))
+  expect(host.querySelector("[data-tool-call-entry-toggle]")).toBeNull()
+  act(() => root.render(<ToolCalls items={[...toolMessages(true), ...singleToolMessage("Bash")]} presentation="process" />))
+  const rows = host.querySelectorAll<HTMLElement>("[data-tool-call-entry-toggle]")
+  expect(rows).toHaveLength(2)
+  expect(rows[0].getAttribute("aria-expanded")).toBe("true")
+  expect(rows[1].getAttribute("aria-expanded")).toBe("false")
+  expect(host.querySelector("[data-tool-call-entry-detail] pre")?.textContent).toBe("done")
+})
+
+it("renders the latest running preview as one readable line without disclosure or raw results", () => {
+  const host = document.body.appendChild(document.createElement("div"))
+  const root = createRoot(host); mountedRoots.push(root)
+  act(() => root.render(<ToolCalls items={mixedToolMessages()} presentation="preview" active runningCallIds={new Set(["bash-1"])} />))
+  const preview = host.querySelector("[data-tool-call-preview]")!
+  expect(preview.textContent).toContain("运行命令")
+  expect(preview.textContent).toContain("npm run test:run")
+  expect(preview.textContent).toContain("运行中…")
+  expect(host.querySelector("button, summary, details, [aria-expanded]")).toBeNull()
+  expect(host.querySelectorAll("[data-tool-call-preview]")).toHaveLength(1)
+  act(() => root.render(<ToolCalls items={toolMessages(true)} presentation="preview" active runningCallIds={new Set(["call-1"])} />))
+  expect(preview.textContent).toContain("读取文件")
+  expect(preview.textContent).toContain("tmp/example.ts")
+  expect(preview.textContent).toContain("运行中…")
+  expect(preview.textContent).not.toContain("done")
+  act(() => root.render(<ToolCalls items={toolMessages(true)} presentation="preview" runningCallIds={new Set()} />))
+  expect(preview.textContent).not.toContain("运行中…")
+})
+
+it.each(["process", "preview"] as const)("keeps private browser inputs and approval receipts hidden in %s presentation", (presentation) => {
+  const messages = browserMessages({ action: "type", text: privateText, unexpected: { text: privateText } })
+  const original = JSON.stringify(messages)
+  const host = document.body.appendChild(document.createElement("div"))
+  const root = createRoot(host); mountedRoots.push(root)
+  act(() => root.render(<ToolCalls items={messages} presentation={presentation} singleExpanded />))
+  expect(host.textContent).toContain("等待用户批准")
+  for (const value of [privateText, privateKey, privateResource, "permission_request"]) expect(host.textContent).not.toContain(value)
+  expect(host.querySelector("button, summary, details, [aria-expanded]")).toBeNull()
+  expect(JSON.stringify(messages)).toBe(original)
+})
+
+it("does not copy ordinary browser result bodies into a preview", () => {
+  const host = document.body.appendChild(document.createElement("div"))
+  const root = createRoot(host); mountedRoots.push(root)
+  const messages = browserMessages({ action: "tabs" }, JSON.stringify({ value: privateEvalResult, url: privateEvalUrl }))
+  act(() => root.render(<ToolCalls items={messages} presentation="preview" />))
+  expect(host.textContent).not.toContain(privateEvalResult)
+  expect(host.textContent).not.toContain(privateEvalUrl)
+  expect(host.querySelector("pre")).toBeNull()
+})
+
+it("preserves safe ViewImage previews in a directly expanded Process call", () => {
+  const host = document.body.appendChild(document.createElement("div"))
+  const root = createRoot(host); mountedRoots.push(root)
+  const onPreviewImage = vi.fn()
+  const messages = [
+    ...singleToolMessage("view_image"),
+    { id: "image-result", role: "tool", type: "tool_result", toolCallId: "view_image-call", result: { result: "image ready" },
+      images: [{ id: "image", base64: "aGVsbG8=", type: "image/png", name: "image.png", size: 5 }], createdAt: "2026-09-20T00:00:01Z" },
+  ] as unknown as Message[]
+  act(() => root.render(<ToolCalls items={messages} presentation="process" singleExpanded onPreviewImage={onPreviewImage} />))
+  const image = host.querySelector("img")!
+  expect(image.getAttribute("src")).toBe("data:image/png;base64,aGVsbG8=")
+  act(() => image.closest("button")?.click())
+  expect(onPreviewImage).toHaveBeenCalledWith("data:image/png;base64,aGVsbG8=")
+  expect(host.querySelector("[data-tool-call-entry-toggle]")).toBeNull()
+})
+
+it("preserves file diffs instead of exposing their result JSON in a Process call", () => {
+  const host = document.body.appendChild(document.createElement("div"))
+  const root = createRoot(host); mountedRoots.push(root)
+  const messages = [
+    ...singleToolMessage("apply_patch"),
+    { id: "diff-result", role: "tool", type: "tool_result", toolCallId: "apply_patch-call", result: { result: JSON.stringify({
+      operation: "edit", file_path: "/tmp/example.ts", diff: { unified: "--- a/example.ts\n+++ b/example.ts\n@@ -1 +1 @@\n-before\n+after\n" },
+    }) }, createdAt: "2026-09-20T00:00:01Z" },
+  ] as unknown as Message[]
+  act(() => root.render(<ToolCalls items={messages} presentation="process" singleExpanded />))
+  expect(host.querySelector("[data-tool-call-entry-detail]")?.textContent).toContain("before")
+  expect(host.querySelector("[data-tool-call-entry-detail]")?.textContent).toContain("after")
+  expect(host.querySelector("[data-tool-call-entry-detail] pre")).toBeNull()
+  expect(host.textContent).not.toContain('"unified"')
+})
+
+it.each(["process", "preview"] as const)("keeps the background shell badge reactive in %s presentation", (presentation) => {
+  const host = document.body.appendChild(document.createElement("div"))
+  const root = createRoot(host); mountedRoots.push(root)
+  const bashId = `tool-presentation-background-${presentation}`
+  const messages = [
+    ...singleToolMessage("Bash"),
+    { id: "background-result", role: "tool", type: "tool_result", toolCallId: "Bash-call", result: { result: JSON.stringify({
+      bash_id: bashId, command: "npm run test:run", status: "running", environment: { private: "hidden environment" },
+    }) }, createdAt: "2026-09-20T00:00:01Z" },
+  ] as unknown as Message[]
+  act(() => root.render(<ToolCalls items={messages} presentation={presentation} singleExpanded />))
+  expect(host.textContent).toContain("后台运行中…")
+  expect(host.textContent).not.toContain("hidden environment")
+  act(() => useAppStore.getState().setBashCompleted(bashId, "completed", 0))
+  expect(host.textContent).toContain("已完成")
+  expect(host.textContent).toContain("exit 0")
+  expect(host.textContent).not.toContain("后台运行中…")
 })
 
 it("uses English list punctuation after changing language without translating raw tool names", async () => {

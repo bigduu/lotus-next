@@ -1,5 +1,7 @@
 // Application-owned UI copy.
 export const uiEnUs = {
+  "process_activity": "Activity",
+  "process_tool_count": "{{count}} tool calls",
   "sidebar_create_section": "Create section",
   "sidebar_manage_sections": "Manage sections",
   "sidebar_move_to_section": "Move to section…",

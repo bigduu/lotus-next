@@ -46,6 +46,7 @@ vi.mock("@/components/chat/ToolCalls", () => ({
 }))
 
 import { MessageList } from "./MessageList"
+import { uiText } from "@shared/i18n/ui"
 import type { Message } from "@shared/types/chatMessages"
 import type { LiveSegment } from "@/hooks/useChat"
 
@@ -158,6 +159,68 @@ it("renders message-only previews without transcript actions", () => {
 })
 
 describe("MessageList assistant streaming ownership", () => {
+  it("keeps the optimistic user visible while admission has no inspectable activity", () => {
+    const container = document.createElement("div")
+    document.body.appendChild(container)
+    const root = createRoot(container)
+    mountedRoots.push(root)
+    const props: Parameters<typeof MessageList>[0] = {
+      scrollRef: createRef<HTMLDivElement>(), contentRef: createRef<HTMLDivElement>(),
+      onScroll: vi.fn(), messages: [], mergedSubAgents: {}, sending: true,
+      latestRunFinished: false, streaming: "", streamingActive: true,
+      streamingReasoning: null, liveSegments: [], streamStatus: null,
+      pendingUserText: "My submitted message", forking: false,
+      onSelectSubAgent: vi.fn(), onPreviewImage: vi.fn(), onRegenerate: vi.fn(),
+      onFork: vi.fn(), onDelete: vi.fn(), onEditMessage: vi.fn(),
+    }
+    const render = (updates: Partial<typeof props> = {}) => act(() => {
+      root.render(<MessageList {...props} {...updates} />)
+    })
+    const expectUser = () => {
+      expect(container.querySelectorAll('[data-message-role="user"]')).toHaveLength(1)
+      expect(container.querySelector("[data-pending-user-message]")?.textContent).toBe("My submitted message")
+    }
+
+    render()
+    expectUser()
+    expect(container.querySelector('[role="status"]')?.textContent).toBe(uiText("thinking_64088d8c"))
+    expect(container.querySelector("[data-process-shimmer]")).not.toBeNull()
+    expect(container.querySelector("[data-process-toggle]")).toBeNull()
+    expect(container.querySelector("[data-process-content]")).toBeNull()
+    render({ liveSegments: [{ kind: "tools", calls: [] }] })
+    expectUser()
+    expect(container.querySelector("[data-process-toggle]")).toBeNull()
+    render({ streamStatus: "Preparing context" })
+    expectUser()
+    expect(container.querySelector('[role="status"]')?.textContent).toBe("Preparing context")
+    expect(container.querySelector("[data-process-toggle]")).toBeNull()
+    expect(container.querySelector("[data-process-content]")).toBeNull()
+    render({ streamingReasoning: "Checking the request." })
+    expectUser()
+    expect(container.querySelector("[data-process-toggle]")).not.toBeNull()
+    expect(container.querySelector("[data-reasoning]")?.textContent).toBe("Checking the request.")
+    const originalAnimate = HTMLElement.prototype.animate
+    HTMLElement.prototype.animate = vi.fn(() => ({ finished: new Promise(() => {}), cancel: vi.fn() } as unknown as Animation))
+    try {
+      const runningTool: LiveSegment = { kind: "tools", calls: [{ toolCallId: "read", toolName: "Read", args: { file_path: "app.ts" }, output: "", status: "running" }] }
+      render({ liveSegments: [runningTool], streamingReasoning: "Reasoning arrives while the read still runs." })
+      expectUser()
+      expect(container.querySelector("[data-process-current] [data-running-calls]")?.getAttribute("data-running-calls")).toBe("read")
+      expect(container.querySelector("[data-process-shimmer]")).toBeNull()
+      render({ liveSegments: [{ ...runningTool, calls: runningTool.calls.map((call) => ({ ...call, status: "completed", output: "File read." })) }], streamingReasoning: "Now checking the result." })
+      expect(container.querySelector("[data-process-current]")).toBeNull()
+      expect(container.querySelector("[data-process-handoff] [data-running-calls]")?.getAttribute("data-running-calls")).toBe("")
+      expect(container.querySelector("[data-process-handoff] [data-tool-active]")?.getAttribute("data-tool-active")).toBe("false")
+      expect(container.querySelector("[data-process-shimmer]")?.textContent).toBe("Now checking the result.")
+      render({ streaming: "The response starts." })
+      expectUser()
+      expect(container.querySelector('[data-assistant-content="The response starts."]')).not.toBeNull()
+      expect(container.querySelector("[data-process-toggle]")).toBeNull()
+    } finally {
+      HTMLElement.prototype.animate = originalAnimate
+    }
+  })
+
   it("renders persisted and frozen text statically, and only the active tail as streaming", () => {
     const container = document.createElement("div")
     document.body.appendChild(container)
@@ -177,7 +240,7 @@ describe("MessageList assistant streaming ownership", () => {
           scrollRef={createRef<HTMLDivElement>()}
           contentRef={createRef<HTMLDivElement>()}
           onScroll={vi.fn()}
-          messages={[persisted]}
+          messages={[persisted, { id: "next-request", role: "user", content: "next request", createdAt: "" }]}
           mergedSubAgents={{}}
           sending
           latestRunFinished={false}
@@ -185,7 +248,7 @@ describe("MessageList assistant streaming ownership", () => {
           streamingActive
           streamingReasoning={null}
           liveSegments={[{ kind: "text", text: "frozen round", reasoning: null }]}
-          streamStatus={null}
+          streamStatus="Compressing context"
           pendingUserText={null}
           forking={false}
           onSelectSubAgent={vi.fn()}
@@ -209,6 +272,12 @@ describe("MessageList assistant streaming ownership", () => {
       "frozen round": "false",
       "active tail": "true",
     })
+    expect(container.querySelector("[data-process-brief]")?.textContent).toBe("Compressing context")
+    expect(container.querySelector("[data-process-shimmer]")).toBeNull()
+    const body = container.querySelector('[data-assistant-content="active tail"]')!
+    const process = container.querySelector("[data-process-activity]")!
+    expect(body.compareDocumentPosition(process) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(container.querySelector('[data-message-actions^="live-"]')).toBeNull()
   })
 
   it("keeps user bubbles colored while assistant surfaces stay transparent", () => {
@@ -259,7 +328,6 @@ describe("MessageList assistant streaming ownership", () => {
 
     const userSurface = container.querySelector<HTMLElement>('[data-message-role="user"]')
     expect(userSurface?.classList.contains("user-message-surface")).toBe(true)
-    expect(userSurface?.classList.contains("bg-primary")).toBe(false)
 
     const assistantSurfaces = container.querySelectorAll<HTMLElement>(
       '[data-message-role="assistant"]',
@@ -427,116 +495,88 @@ function toolTurn(prefix: string, start: string, finish: string): Message[] {
   ] as Message[]
 }
 
-describe("MessageList completed process disclosure", () => {
-  it("folds the latest finished tool process while keeping its final answer visible", () => {
-    const container = renderMessageList(
-      toolTurn("latest", "2026-09-20T00:00:00Z", "2026-09-20T00:01:05Z"),
-      true,
-    )
-
-    const process = container.querySelector<HTMLDetailsElement>("details[data-completed-process]")
-    expect(process).not.toBeNull()
-    expect(process?.open).toBe(false)
-    expect(process?.querySelector("summary")?.textContent).toBe("处理了 1分5秒")
-    expect(process?.querySelector("summary")?.getAttribute("title")).toBe("1 次工具调用")
-    expect(process?.querySelector('[data-assistant-content="latest process"]')).toBeNull()
-    expect(process?.querySelector('[data-reasoning="latest final reasoning"]')).toBeNull()
-    const final = container.querySelector('[data-assistant-content="latest final"]')
-    expect(final).not.toBeNull()
-    expect(process?.contains(final)).toBe(false)
-    expect(container.querySelectorAll('[data-reasoning="latest final reasoning"]')).toHaveLength(0)
-    const collapsedHeight = Number.parseFloat(
-      container.querySelector<HTMLElement>("[data-virtual-history]")?.style.height || "0",
-    )
-
-    act(() => process?.querySelector("summary")?.click())
-    expect(process?.open).toBe(true)
-    expect(process?.querySelector('[data-assistant-content="latest process"]')).not.toBeNull()
-    expect(process?.querySelector('[data-reasoning="latest final reasoning"]')).not.toBeNull()
+describe("MessageList activity grouping", () => {
+  it("keeps every visible body outside the folded activity, including completed turns", () => {
+    const container = renderMessageList(toolTurn("latest", "2026-09-20T00:00:00Z", "2026-09-20T00:01:05Z"), true)
+    const process = container.querySelector<HTMLElement>("[data-process-activity]")!
+    const toggle = process.querySelector<HTMLButtonElement>("[data-process-toggle]")!
+    expect(toggle.getAttribute("aria-expanded")).toBe("false")
+    expect(toggle.getAttribute("aria-label")).toBe("处理了 45秒")
+    expect(toggle.textContent).toContain("1 次工具调用")
+    for (const text of ["latest process", "latest final"]) {
+      const body = container.querySelector(`[data-assistant-content="${text}"]`)
+      expect(body).not.toBeNull()
+      expect(process.contains(body)).toBe(false)
+    }
     expect(container.querySelectorAll('[data-reasoning="latest final reasoning"]')).toHaveLength(1)
-    const expandedHeight = Number.parseFloat(
-      container.querySelector<HTMLElement>("[data-virtual-history]")?.style.height || "0",
-    )
-    expect(expandedHeight).toBeGreaterThan(collapsedHeight)
+    expect(process.querySelector('[data-reasoning="latest final reasoning"]')).not.toBeNull()
+    act(() => toggle.click())
+    expect(process.querySelector<HTMLElement>("[data-process-content]")?.hidden).toBe(false)
   })
 
-  it("keeps sibling measurements when one tool group expands", () => {
+  it("merges tools and reasoning through empty messages and splits only at visible messages", () => {
+    const tools = toolTurn("one", "2026-09-20T00:00:00Z", "2026-09-20T00:01:05Z").slice(2, 4)
+    const thought = (id: string, content = ""): Message => ({ id, role: "assistant", type: "text", content, metadata: { reasoning: id }, createdAt: "" })
+    const container = renderMessageList([
+      ...tools, thought("first reasoning"), { id: "empty", role: "assistant", type: "text", content: "", createdAt: "" },
+      { id: "system", role: "system", content: "not a visible boundary", createdAt: "" },
+      ...toolTurn("two", "", "").slice(2, 4), thought("second reasoning"),
+      thought("body reasoning", "Visible progress"), ...toolTurn("three", "", "").slice(2, 4), thought("last reasoning"),
+    ], false)
+    const groups = container.querySelectorAll("[data-process-activity]")
+    expect(groups).toHaveLength(2)
+    expect(groups[0]?.querySelectorAll("[data-tool-items]")).toHaveLength(2)
+    expect(groups[0]?.querySelectorAll("[data-reasoning]")).toHaveLength(3)
+    expect(groups[0]?.querySelector("[data-process-brief]")?.textContent).toBe("body reasoning")
+    expect(groups[1]?.querySelector("[data-process-brief]")?.textContent).toBe("last reasoning")
+    const body = container.querySelector('[data-assistant-content="Visible progress"]')!
+    expect(groups[0]?.contains(body)).toBe(false)
+    expect(groups[1]?.contains(body)).toBe(false)
+  })
+
+  it("treats image-only messages as visible boundaries", () => {
+    const container = renderMessageList([
+      ...toolTurn("one", "", "").slice(2, 4),
+      { id: "picture", role: "assistant", type: "text", content: "", images: [{ url: "https://example.test/image.png" }], createdAt: "" } as unknown as Message,
+      ...toolTurn("two", "", "").slice(2, 4),
+    ], false)
+    expect(container.querySelectorAll("[data-process-activity]")).toHaveLength(2)
+    expect(container.querySelector('[data-message-row="picture"] img')).not.toBeNull()
+  })
+
+  it("resizes only the owning activity row when its nested tool group expands", () => {
     const heightSpy = vi.spyOn(HTMLElement.prototype, "offsetHeight", "get")
       .mockImplementation(function (this: HTMLElement) {
         const key = this.dataset.historyEntryKey
         if (key === "message-latest-user") return 52
         if (key === "message-latest-process") return 44
-        if (key === "tools-latest-call") {
-          return this.querySelector('[aria-expanded="true"]') ? 293 : 25
-        }
+        if (key === "activity-latest-call") return this.querySelector('[data-tool-items][aria-expanded="true"]') ? 293 : 25
         if (key === "message-latest-final") return 640
         return 0
       })
-
     try {
-      const container = renderMessageList(
-        toolTurn("latest", "2026-09-20T00:00:00Z", "2026-09-20T00:01:05Z"),
-        false,
-      )
-      const finalRow = container.querySelector<HTMLElement>(
-        '[data-history-entry-key="message-latest-final"]',
-      )!
+      const container = renderMessageList(toolTurn("latest", "2026-09-20T00:00:00Z", "2026-09-20T00:01:05Z"), false)
+      act(() => container.querySelector<HTMLButtonElement>("[data-process-toggle]")!.click())
+      const finalRow = container.querySelector<HTMLElement>('[data-history-entry-key="message-latest-final"]')!
       const toolToggle = container.querySelector<HTMLButtonElement>('[data-tool-items="2"]')!
       const initialTop = Number.parseFloat(finalRow.style.transform.match(/[\d.]+/)?.[0] ?? "0")
-
       act(() => toolToggle.click())
-
       const expandedTop = Number.parseFloat(finalRow.style.transform.match(/[\d.]+/)?.[0] ?? "0")
       expect(toolToggle.getAttribute("aria-expanded")).toBe("true")
       expect(expandedTop - initialTop).toBe(268)
-    } finally {
-      heightSpy.mockRestore()
-    }
+    } finally { heightSpy.mockRestore() }
   })
 
-  it("does not fold the latest process before the run finishes normally", () => {
-    const container = renderMessageList(
-      toolTurn("active", "2026-09-20T00:00:00Z", "2026-09-20T00:01:05Z"),
-      false,
-    )
-
-    expect(container.querySelector("details[data-completed-process]")).toBeNull()
-    expect(container.querySelector('[data-assistant-content="active process"]')).not.toBeNull()
-    expect(container.querySelector('[data-assistant-content="active final"]')).not.toBeNull()
-    expect(container.querySelector('[data-reasoning="active final reasoning"]')).not.toBeNull()
-  })
-
-  it("keeps an earlier completed process folded while a newer turn is unfinished", () => {
-    const earlier = toolTurn(
-      "earlier",
-      "2026-09-20T00:00:00Z",
-      "2026-09-20T00:01:05Z",
-    )
-    const latest: Message[] = [
-      {
-        id: "new-user",
-        role: "user",
-        content: "new request",
-        createdAt: "2026-09-20T00:02:00Z",
-      },
-      {
-        id: "new-response",
-        role: "assistant",
-        type: "text",
-        content: "new response",
-        createdAt: "2026-09-20T00:02:05Z",
-      },
-    ]
-    const container = renderMessageList([...earlier, ...latest], false)
-
-    const disclosures = container.querySelectorAll("details[data-completed-process]")
-    expect(disclosures).toHaveLength(1)
-    expect(disclosures[0]?.querySelector('[data-assistant-content="earlier process"]')).toBeNull()
-    expect(disclosures[0]?.contains(container.querySelector('[data-assistant-content="earlier final"]'))).toBe(false)
+  it("keeps earlier activity folded without hiding the newer turn", () => {
+    const container = renderMessageList([
+      ...toolTurn("earlier", "2026-09-20T00:00:00Z", "2026-09-20T00:01:05Z"),
+      { id: "new-user", role: "user", content: "new request", createdAt: "" },
+      { id: "new-response", role: "assistant", type: "text", content: "new response", createdAt: "" },
+    ], false)
+    expect(container.querySelectorAll("[data-process-activity]")).toHaveLength(1)
+    expect(container.querySelector("[data-process-toggle]")?.getAttribute("aria-expanded")).toBe("false")
+    expect(container.querySelector('[data-assistant-content="earlier process"]')).not.toBeNull()
     expect(container.querySelector('[data-assistant-content="new response"]')).not.toBeNull()
-
-    act(() => disclosures[0]?.querySelector("summary")?.click())
-    expect(disclosures[0]?.querySelector('[data-assistant-content="earlier process"]')).not.toBeNull()
   })
 })
 
@@ -633,19 +673,19 @@ describe("MessageList history virtualization", () => {
     ] as Message[]
     const container = renderMessageList(messages, false)
     const virtualHistory = container.querySelector<HTMLElement>("[data-virtual-history]")!
-    let process = container.querySelector<HTMLDetailsElement>("details[data-completed-process]")
+    let process = container.querySelector<HTMLElement>("[data-process-activity]")
     expect(process).not.toBeNull()
 
-    act(() => process?.querySelector("summary")?.click())
-    expect(process?.open).toBe(true)
-    expect(process?.querySelector('[data-assistant-content="virtual process"]')).not.toBeNull()
+    act(() => process?.querySelector<HTMLButtonElement>("[data-process-toggle]")?.click())
+    expect(process?.querySelector("[data-process-toggle]")?.getAttribute("aria-expanded")).toBe("true")
+    expect(process?.querySelector('[data-reasoning="virtual final reasoning"]')).not.toBeNull()
 
     scrollVirtualList(container, Number.parseFloat(virtualHistory.style.height) - 720)
-    expect(container.querySelector("details[data-completed-process]")).toBeNull()
+    expect(container.querySelector("[data-process-activity]")).toBeNull()
 
     scrollVirtualList(container, 0)
-    process = container.querySelector<HTMLDetailsElement>("details[data-completed-process]")
-    expect(process?.open).toBe(true)
-    expect(process?.querySelector('[data-assistant-content="virtual process"]')).not.toBeNull()
+    process = container.querySelector<HTMLElement>("[data-process-activity]")
+    expect(process?.querySelector("[data-process-toggle]")?.getAttribute("aria-expanded")).toBe("true")
+    expect(process?.querySelector('[data-reasoning="virtual final reasoning"]')).not.toBeNull()
   })
 })
