@@ -2,6 +2,7 @@ import { act } from "react"
 import { createRoot, type Root } from "react-dom/client"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { ApiError } from "@services/api/errors"
+import { changeLocale } from "@shared/i18n"
 import { getActorSnapshot, type ActorSubtreeSnapshot } from "@services/chat/actorSnapshot"
 import { subscribeActor, subscribeActorTree } from "@services/chat/v2Stream"
 import { ActorSnapshotPanel } from "@/components/chat/ActorSnapshotPanel"
@@ -156,6 +157,75 @@ describe("public Actor interest", () => {
     expect(state.snapshot?.stream_cursor).toBeNull()
   })
 
+  it("keeps an unresolved gap attributed to its originating Actor across selection and snapshot refresh", async () => {
+    await mount("root", true, "actor-0")
+    const handlers = vi.mocked(subscribeActor).mock.calls[0][1]
+    const pending = deferred()
+    vi.mocked(getActorSnapshot).mockReturnValueOnce(pending.promise)
+    await act(async () => { handlers.onGap(); await Promise.resolve() })
+    expect(state.gapReason).toBe("transport_gap")
+    expect(state.gapActorId).toBe("actor-0")
+
+    await mount("root", true, "actor-1")
+    expect(state.loading).toBe(true)
+    expect(state.gapActorId).toBe("actor-0")
+    expect(subscribeActor).toHaveBeenLastCalledWith("actor-1", expect.any(Object))
+    const coveredTree = actorSnapshotFixture("root", 128, `at1-${"a".repeat(64)}-8`)
+    await act(async () => pending.resolve(coveredTree))
+    expect(state.loading).toBe(false)
+    expect(state.gapReason).toBe("transport_gap")
+    expect(state.gapActorId).toBe("actor-0")
+
+    await mount("root", true, "actor-0")
+    expect(state.gapActorId).toBe("actor-0")
+    vi.mocked(getActorSnapshot).mockResolvedValueOnce(actorSnapshotFixture("other"))
+    await mount("other", true, "actor-0")
+    expect(state.gapReason).toBeNull()
+    expect(state.gapActorId).toBeNull()
+  })
+
+  it("fences late Actor callbacks so they cannot replace the new selection's gap observation", async () => {
+    await mount("root", true, "actor-0")
+    const oldHandlers = vi.mocked(subscribeActor).mock.calls[0][1]
+    await act(async () => { oldHandlers.onGap(); await Promise.resolve() })
+    await mount("root", true, "actor-1")
+    const handlers = vi.mocked(subscribeActor).mock.calls[1][1]
+    const event = { type: "actor_changed" as const, actor_id: "spoofed-actor", root_actor_id: "other",
+      parent_actor_id: "root", activation_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      attempt: 1, event_id: `ae1-${"a".repeat(64)}`, class: "lifecycle" as const }
+    await act(async () => { handlers.onEvent(event, 2); await Promise.resolve() })
+    expect(state.gapReason).toBe("scope_mismatch")
+    expect(state.gapActorId).toBe("actor-1")
+    const requests = vi.mocked(getActorSnapshot).mock.calls.length
+    await act(async () => {
+      oldHandlers.onGap()
+      oldHandlers.onControl({ type: "actor_snapshot_required", reason: "gap", cursor: 3 })
+      oldHandlers.onEvent({ ...event, actor_id: "actor-0" }, 4)
+      await Promise.resolve()
+    })
+    expect(state.gapReason).toBe("scope_mismatch")
+    expect(state.gapActorId).toBe("actor-1")
+    expect(getActorSnapshot).toHaveBeenCalledTimes(requests)
+  })
+
+  it("restores the Actor origin after a Root snapshot regression warning is resolved", async () => {
+    const current = actorSnapshotFixture()
+    current.nodes[1].revision.session_metadata_version = 8
+    vi.mocked(getActorSnapshot).mockResolvedValue(current)
+    await mount("root", true, "actor-0")
+    const handlers = vi.mocked(subscribeActor).mock.calls[0][1]
+    await act(async () => { handlers.onGap(); await Promise.resolve() })
+    expect(state.gapActorId).toBe("actor-0")
+    vi.mocked(getActorSnapshot).mockResolvedValueOnce(actorSnapshotFixture())
+    await act(async () => state.refresh())
+    expect(state.gapReason).toBe("snapshot_regression")
+    expect(state.gapActorId).toBeNull()
+    await mount("root", true, "actor-1")
+    await act(async () => state.refresh())
+    expect(state.gapReason).toBe("transport_gap")
+    expect(state.gapActorId).toBe("actor-0")
+  })
+
   it("ignores an old activation frame after a newer authorized snapshot", async () => {
     const current = actorSnapshotFixture()
     current.nodes[1].activation = {
@@ -296,6 +366,27 @@ describe("local actor snapshot lifecycle", () => {
     expect(state.gapReason).toBeNull()
     expect(state.snapshot?.stream_cursor).toBe(cursor8)
     expect(subscribeActorTree).toHaveBeenLastCalledWith("root", cursor8, expect.any(Object))
+  })
+
+  it("keeps Root tree gaps separate from Child selection until a covering snapshot arrives", async () => {
+    const cursor7 = `at1-${"a".repeat(64)}-7`
+    const cursor8 = `at1-${"a".repeat(64)}-8`
+    vi.mocked(getActorSnapshot).mockResolvedValueOnce(actorSnapshotFixture("root", 2, cursor7))
+    await mount("root", true, "actor-0")
+    const handlers = vi.mocked(subscribeActorTree).mock.calls[0][2]
+    const pending = deferred()
+    vi.mocked(getActorSnapshot).mockReturnValueOnce(pending.promise)
+    await act(async () => { handlers.onControl({ type: "actor_snapshot_required", reason: "gap", cursor: cursor8 }) })
+    await mount("root", true, "actor-1")
+    expect(state.gapReason).toBe("transport_gap")
+    expect(state.gapActorId).toBeNull()
+    await act(async () => pending.resolve(actorSnapshotFixture("root", 2, cursor7)))
+    expect(state.gapReason).toBe("transport_gap")
+    expect(state.gapActorId).toBeNull()
+    vi.mocked(getActorSnapshot).mockResolvedValueOnce(actorSnapshotFixture("root", 2, cursor8))
+    await act(async () => state.refresh())
+    expect(state.gapReason).toBeNull()
+    expect(state.gapActorId).toBeNull()
   })
 
   it("does not use a tree cursor to erase a separate Actor event gap", async () => {
@@ -446,6 +537,23 @@ describe("snapshot-only ActorTree panel", () => {
     const handlers = vi.mocked(subscribeActor).mock.calls[0][1]
     await act(async () => { handlers.onGap(); await Promise.resolve() })
     expect(host.querySelector('[data-actor-gap="transport_gap"]')?.textContent).toContain("连续性仍无法确认")
+  })
+
+  it("names the originating Actor in the warning after selecting another Child", async () => {
+    const selected = vi.fn()
+    await act(async () => root.render(<ActorSnapshotPanel rootId="root" active selectedActorId="actor-0" onSelectActor={selected} />))
+    const handlers = vi.mocked(subscribeActor).mock.calls[0][1]
+    await act(async () => { handlers.onGap(); await Promise.resolve() })
+    await act(async () => root.render(<ActorSnapshotPanel rootId="root" active selectedActorId="actor-1" onSelectActor={selected} />))
+    const warning = host.querySelector('[data-actor-gap="transport_gap"]')
+    expect(warning?.getAttribute("data-actor-gap-origin")).toBe("actor-0")
+    expect(warning?.textContent).toContain("actor-0")
+    expect(warning?.textContent).not.toContain("actor-1")
+    expect(warning?.textContent).toContain("连续性仍无法确认")
+    expect(warning?.textContent).toContain("不能证明事件重放已恢复")
+    await act(async () => { await changeLocale("en-US") })
+    expect(warning?.textContent).toContain("Actor actor-0 event continuity is still unconfirmed")
+    expect(warning?.textContent).toContain("Reloading state does not prove event replay has recovered")
   })
 
   it("reveals an initially selected depth-three child when the snapshot arrives", async () => {
