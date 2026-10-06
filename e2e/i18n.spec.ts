@@ -30,7 +30,9 @@ for (const initial of ["zh-CN", "en-US"]) {
     const english = initial === "en-US"
     const input = page.getByRole("textbox", { name: english ? "Messages" : "消息", exact: true })
     await expect(input).toBeVisible()
-    await expect(page.getByRole("button", { name: "fixture-model", exact: true })).toBeVisible()
+    const modelPicker = page.getByRole("button", { name: english ? "Model and reasoning effort" : "模型与推理强度", exact: true })
+    await expect(modelPicker).toBeVisible()
+    await expect(modelPicker).toContainText("fixture-model")
     await input.fill("中文 IME draft <code>const x = 1</code>")
     await input.dispatchEvent("compositionstart", { data: "中" })
     await input.dispatchEvent("keydown", { key: "Enter", keyCode: 229, isComposing: true, bubbles: true })

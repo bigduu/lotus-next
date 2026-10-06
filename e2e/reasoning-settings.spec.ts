@@ -3,6 +3,7 @@ import {
   installArtifactRuntime,
   standaloneScenario,
 } from "./support/artifactRuntime.js"
+import { modelEffortPicker, selectEffort } from "./support/modelEffortPicker.js"
 
 const providerSnapshot = {
   default_provider_instance_id: "fixture-provider",
@@ -50,7 +51,7 @@ test("new conversation mirrors the Chat reasoning setting instead of stale Mediu
   await page.goto(standaloneScenario.entryUrl)
 
   // Existing sessions retain their own durable reasoning value.
-  const composerReasoning = page.getByRole("button", { name: "推理强度", exact: true })
+  const composerReasoning = modelEffortPicker(page)
   await expect(composerReasoning).toContainText("中")
 
   await page.getByRole("button", { name: "系统设置", exact: true }).click()
@@ -68,11 +69,9 @@ test("new conversation mirrors the Chat reasoning setting instead of stale Mediu
   await expect(composerReasoning).toContainText("最大")
 
   // Auto and Off are separate, selectable states.
-  await composerReasoning.click()
-  await page.getByRole("menuitem", { name: "关闭", exact: true }).click()
+  await selectEffort(page, "关闭")
   await expect(composerReasoning).toContainText("关闭")
-  await composerReasoning.click()
-  await page.getByRole("menuitem", { name: "自动", exact: true }).click()
+  await selectEffort(page, "自动")
   await expect(composerReasoning).toContainText("自动")
 
   expect(observation.pageErrors).toEqual([])

@@ -43,7 +43,8 @@ async function expectFixtureSessionReady(page: Page) {
   // Restore the saved session before typing; a draft belongs to that session,
   // while the initial unsaved composer can already be mounted during boot.
   await expect(page.getByRole("banner")).toContainText("Process activity acceptance")
-  await expect(page.getByRole("button", { name: "fixture-model", exact: true })).toBeVisible()
+  await expect(page.getByTestId("model-effort-picker")).toBeVisible()
+  await expect(page.getByTestId("model-effort-picker")).toContainText("fixture-model")
 }
 
 async function expandProcessDetails(process: Locator) {

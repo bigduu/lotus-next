@@ -1,5 +1,6 @@
 import { expect, test, type Page } from "@playwright/test"
 import { installArtifactRuntime, standaloneScenario } from "./support/artifactRuntime.js"
+import { modelEffortPicker, selectEffort } from "./support/modelEffortPicker.js"
 
 const sessionId = "all-surface-session"
 const childId = "root-mode-child"
@@ -20,11 +21,10 @@ type Receipt = {
 }
 
 async function selectThinking(page: Page, label: string) {
-  await page.getByRole("button", { name: "推理强度" }).click()
-  await page.getByRole("menuitem", { name: label, exact: true }).click()
+  await selectEffort(page, label)
 }
 async function toggleThinking(page: Page) {
-  const current = await page.getByRole("button", { name: "推理强度" }).textContent()
+  const current = await modelEffortPicker(page).textContent()
   await selectThinking(page, current?.includes("Ultra") ? "自动" : "Ultra · 编排")
 }
 
@@ -78,7 +78,7 @@ test("creation and message-free Root switches survive reload and typed rejection
   await page.route(`**/api/v1/execute/${sessionId}`, (route) => route.fulfill({ json: { status: "started", session_id: sessionId } }))
 
   await page.goto(standaloneScenario.entryUrl)
-  const mode = page.getByRole("button", { name: "推理强度" })
+  const mode = modelEffortPicker(page)
   const composer = page.getByRole("textbox", { name: "消息", exact: true })
   await expect(mode).toBeVisible(); await selectThinking(page, "Ultra · 编排")
   await expect(mode).toContainText("Ultra")
@@ -88,8 +88,8 @@ test("creation and message-free Root switches survive reload and typed rejection
   await expect(mode).toContainText("Ultra")
   expect(chats).toHaveLength(0); expect(operations).toHaveLength(0)
   await mode.click()
-  await expect(page.getByRole("menuitem").first()).toHaveText("Ultra · 编排")
-  await expect(page.getByRole("menuitem", { name: "最大", exact: true })).toBeVisible()
+  await expect(page.getByRole("slider", { name: "推理强度", exact: true })).toHaveAttribute("max", "7")
+  await expect(page.getByRole("slider", { name: "推理强度", exact: true })).toHaveValue("7")
   const menuScreenshot = testInfo.outputPath("ultra-thinking-picker-menu.png")
   await page.screenshot({ path: menuScreenshot, animations: "disabled" }); await testInfo.attach("ultra-thinking-picker-menu", { path: menuScreenshot, contentType: "image/png" })
   await page.keyboard.press("Escape")
@@ -159,7 +159,7 @@ test("Root without native reasoning keeps High during Ultra and shows a truthful
   })
   await page.route("**/api/v1/chat", (route) => { chats += 1; return route.abort() })
   await page.goto(standaloneScenario.entryUrl)
-  const picker = page.getByRole("button", { name: "推理强度" }); const composer = page.getByRole("textbox", { name: "消息", exact: true })
+  const picker = modelEffortPicker(page); const composer = page.getByRole("textbox", { name: "消息", exact: true })
   await expect(picker).toContainText("高")
   await composer.fill("retain bounded task across partial exit")
   await selectThinking(page, "Ultra · 编排")
@@ -197,14 +197,17 @@ for (const legacy of ["missing", "contradictory", "active-run"] as const) {
     await page.route("**/api/v1/chat", (route) => { sends += 1; return route.abort() })
     await page.route(`**/api/v1/execute/${sessionId}`, (route) => { sends += 1; return route.abort() })
     await page.goto(standaloneScenario.entryUrl)
-    const picker = page.getByRole("button", { name: "推理强度" })
-    await expect(picker).toBeDisabled()
+    const picker = modelEffortPicker(page)
     if (legacy === "active-run") {
+      await expect(picker).toBeDisabled()
       await expect(picker).toContainText("Ultra")
       await expectExplanation(page, "服务器已确认 Ultra 编排")
     } else {
       await expect(picker).toContainText("未确认")
       await expect(page.getByRole("alert").filter({ hasText: "无法确认思考模式" })).toContainText("请更新 Bamboo 后重新读取")
+      await picker.click()
+      await expect(page.getByRole("slider", { name: "推理强度", exact: true })).toBeDisabled()
+      await page.keyboard.press("Escape")
       const draft = page.getByRole("textbox", { name: "消息", exact: true })
       await draft.fill("retain draft until Root authority is confirmed")
       await page.getByRole("button", { name: "发送消息", exact: true }).click()
@@ -234,9 +237,10 @@ test("restored Child composer keeps ordinary effort without a Root Ultra option"
     return route.fallback()
   })
   await page.goto(standaloneScenario.entryUrl)
-  const picker = page.getByRole("button", { name: "推理强度" })
+  const picker = modelEffortPicker(page)
   await expect(picker).toBeEnabled(); await picker.click()
-  await expect(page.getByRole("menuitem", { name: "Ultra · 编排" })).toHaveCount(0)
+  await expect(page.getByRole("slider", { name: "推理强度", exact: true })).toHaveAttribute("max", "6")
+  await expect(page.getByText("Ultra · 编排", { exact: true })).toHaveCount(0)
   await expect(page.getByRole("checkbox", { name: "Root 仅编排模式" })).toHaveCount(0)
   expect(observation.pageErrors).toEqual([])
 })
@@ -278,11 +282,14 @@ test("a timed-out mode operation recovers after reload without chat replay", asy
     executes += 1; return route.fulfill({ json: { status: "started", session_id: sessionId } })
   })
   await page.goto(standaloneScenario.entryUrl)
-  const mode = page.getByRole("button", { name: "推理强度" })
+  const mode = modelEffortPicker(page)
   const composer = page.getByRole("textbox", { name: "消息", exact: true })
   await expect(mode).toContainText("Ultra"); await toggleThinking(page)
   await expect(page.getByRole("status").filter({ hasText: "权限结果未知" })).toBeVisible()
-  await expect(mode).toBeDisabled(); await expect(page.getByRole("button", { name: "恢复切换" })).toBeVisible()
+  await mode.click()
+  await expect(page.getByRole("slider", { name: "推理强度", exact: true })).toBeDisabled()
+  await page.keyboard.press("Escape")
+  await expect(page.getByRole("button", { name: "恢复切换" })).toBeVisible()
   await composer.fill("keep draft while recovering")
   await page.getByRole("button", { name: "发送消息", exact: true }).click()
   await expect(composer).toHaveValue("keep draft while recovering")
@@ -345,8 +352,10 @@ test("every concurrent pending operation needs its own terminal recovery", async
   await page.route(`**/api/v1/execute/${sessionId}`, (route) => { mutations += 1; return route.abort() })
   await page.goto(standaloneScenario.entryUrl)
   await expect.poll(() => recoveries).toBe(2)
-  const mode = page.getByRole("button", { name: "推理强度" })
-  await expect(mode).toBeDisabled()
+  const mode = modelEffortPicker(page)
+  await mode.click()
+  await expect(page.getByRole("slider", { name: "推理强度", exact: true })).toBeDisabled()
+  await page.keyboard.press("Escape")
   expect(await page.evaluate((id) => Object.keys(localStorage).filter((key) => key.startsWith(`lotus-next.root-mode-operation.v2.${id}.`)), sessionId))
     .toEqual([`lotus-next.root-mode-operation.v2.${sessionId}.${ids.find((id) => id !== firstOperationId)}`])
   const composer = page.getByRole("textbox", { name: "消息", exact: true })
@@ -381,7 +390,9 @@ test("a legacy combined-chat marker remains fail closed", async ({ page }, testI
   })
   await page.goto(standaloneScenario.entryUrl)
   await expect(page.getByText(/旧版聊天模式切换没有可恢复的请求身份/)).toBeVisible()
-  await expect(page.getByRole("button", { name: "推理强度" })).toBeDisabled()
+  await modelEffortPicker(page).click()
+  await expect(page.getByRole("slider", { name: "推理强度", exact: true })).toBeDisabled()
+  await page.keyboard.press("Escape")
   await expect(page.getByRole("button", { name: "恢复切换" })).toHaveCount(0)
   const composer = page.getByRole("textbox", { name: "消息", exact: true })
   await composer.fill("blocked legacy request"); await page.getByRole("button", { name: "发送消息", exact: true }).click()

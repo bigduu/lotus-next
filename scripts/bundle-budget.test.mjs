@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from "vitest"
 
 import {
   analyzeBundleBudget,
+  BUNDLE_BUDGET,
   findBundleBudgetViolations,
 } from "./bundle-budget.mjs"
 
@@ -250,15 +251,15 @@ describe("ordinary-chat production bundle budget", () => {
     const violations = findBundleBudgetViolations({
       ...report,
       javascript: { rawBytes: 1_950_000, gzipBytes: 568_000 },
-      css: { rawBytes: 106_001, gzipBytes: 18_001 },
+      css: { rawBytes: BUNDLE_BUDGET.cssRawBytes + 1, gzipBytes: BUNDLE_BUDGET.cssGzipBytes + 1 },
     }).join("\n")
 
     expect(violations).toMatch(/raw size 1950000 exceeds 1820000/)
     expect(violations).toMatch(/gzip size 568000 exceeds 535000/)
     expect(violations).toMatch(/raw reduction .* is below 6\.00%/)
     expect(violations).toMatch(/gzip reduction .* is below 5\.00%/)
-    expect(violations).toMatch(/CSS raw size 106001 exceeds 106000/)
-    expect(violations).toMatch(/CSS gzip size 18001 exceeds 18000/)
+    expect(violations).toContain(`CSS raw size ${BUNDLE_BUDGET.cssRawBytes + 1} exceeds ${BUNDLE_BUDGET.cssRawBytes}`)
+    expect(violations).toContain(`CSS gzip size ${BUNDLE_BUDGET.cssGzipBytes + 1} exceeds ${BUNDLE_BUDGET.cssGzipBytes}`)
   })
 
   it("freezes the two immediate bootstrap owners and Root-owned Settings entry", async () => {
