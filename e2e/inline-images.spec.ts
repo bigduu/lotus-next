@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises"
 import { fileURLToPath } from "node:url"
 import { expect, test } from "@playwright/test"
 import { installArtifactRuntime, standaloneScenario } from "./support/artifactRuntime.js"
+import { openProcessActivities } from "./support/processActivity.js"
 
 test("assistant local image fallback and ViewImage preview remain usable at narrow width", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "desktop-chromium", "desktop image preview screenshot")
@@ -40,12 +41,14 @@ test("assistant local image fallback and ViewImage preview remain usable at narr
   await expect(page.getByRole("status").filter({ hasText: "本地图片无法在此处预览" })).toBeVisible()
   expect(observation.httpRequests.some(({ url }) => url.includes("/Users/example/diagram.png"))).toBe(false)
 
-  await page.locator("[data-tool-call-toggle]").click()
-  const row = page.locator("[data-tool-call-entry-toggle]")
-  await expect(row).toContainText("查看图片")
-  await expect(page.locator("[data-tool-call-entry-detail] img")).toHaveCount(0)
-  await row.click()
+  const process = page.locator("[data-process-toggle]")
+  await expect(process).toHaveAttribute("aria-expanded", "false")
   const image = page.locator("[data-tool-call-entry-detail] img")
+  await expect(image).toHaveCount(1)
+  await expect(image).not.toBeVisible()
+  await openProcessActivities(page)
+  await expect(page.locator("[data-tool-call-toggle], [data-tool-call-entry-toggle]")).toHaveCount(0)
+  await expect(page.locator("[data-tool-call-entry-heading]")).toContainText("查看图片")
   await expect(image).toHaveAttribute("src", dataUrl)
   await expect(image).toBeVisible()
   const wideScreenshot = testInfo.outputPath("view-image-wide.png")

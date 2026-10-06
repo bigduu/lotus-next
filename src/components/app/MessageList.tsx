@@ -17,6 +17,7 @@ import {
 } from "@tanstack/react-virtual"
 import { Copy, Pencil, RotateCcw, GitFork, MoreHorizontal, Trash2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { BrandMark } from "@/components/ui/brand-mark"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -28,7 +29,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { AssistantMarkdown } from "@/components/chat/AssistantMarkdown"
 import { Reasoning } from "@/components/chat/Reasoning"
 import { ToolCalls } from "@/components/chat/ToolCalls"
-import { StreamingReasoning } from "@/components/chat/StreamingReasoning"
+import { ProcessActivity } from "@/components/chat/ProcessActivity"
 import { SubAgents } from "@/components/chat/SubAgents"
 import { cn } from "@/lib/utils"
 import type { Message } from "@shared/types/chatMessages"
@@ -91,36 +92,24 @@ function messageReasoning(m: Message): string {
   return typeof r === "string" ? r : ""
 }
 
-type RenderItem = { kind: "msg"; m: Message } | { kind: "tools"; items: Message[] }
-
-type CompletedProcessGroup = {
-  startIndex: number
-  endIndex: number
+type ProcessPart =
+  | { kind: "reasoning"; text: string; createdAt?: string }
+  | { kind: "tools"; items: Message[]; runningCallIds?: ReadonlySet<string> }
+type ProcessItem = {
+  kind: "process"
   key: string
-  label: string
-  toolCallCount: number
-  finalReasoning: string
+  parts: ProcessPart[]
+  active?: boolean
+  thinking?: boolean
+  status?: string | null
 }
+type RenderItem = { kind: "msg"; m: Message; streaming?: boolean } | ProcessItem
 
-type CompletedProcessLayout = {
-  byStart: Map<number, CompletedProcessGroup>
-  foldedIndexes: Set<number>
-  finalReasoningIndexes: Set<number>
+type HistoryEntry = {
+  key: string
+  item: RenderItem
+  itemIndex: number
 }
-
-type HistoryEntry =
-  | {
-      kind: "item"
-      key: string
-      item: RenderItem
-      itemIndex: number
-      suppressReasoning: boolean
-    }
-  | {
-      kind: "completed-process"
-      key: string
-      group: CompletedProcessGroup
-    }
 
 const HISTORY_ROW_GAP = 8
 const INITIAL_VIRTUAL_RECT = { width: 1024, height: 720 }
@@ -150,28 +139,87 @@ const MESSAGE_SURFACE_LAYOUT =
 const ASSISTANT_MESSAGE_SURFACE =
   "bg-transparent text-base font-normal leading-7 text-foreground"
 
-// Collapse consecutive tool messages into one group so a round's tool calls
-// show as a single compact chip instead of many full-width lines.
+function appendProcessPart(items: RenderItem[], key: string, part: ProcessPart): ProcessItem {
+  const previous = items.at(-1)
+  const process = previous?.kind === "process"
+    ? previous
+    : { kind: "process" as const, key: `activity-${key}`, parts: [] }
+  if (process !== previous) items.push(process)
+  const lastPart = process.parts.at(-1)
+  if (lastPart?.kind === "tools" && part.kind === "tools") {
+    lastPart.items.push(...part.items)
+    if (part.runningCallIds) lastPart.runningCallIds = new Set([
+      ...(lastPart.runningCallIds ?? []), ...part.runningCallIds,
+    ])
+  } else process.parts.push(part)
+  return process
+}
+
+// Only visible messages interrupt an activity. Reasoning attached to a body
+// belongs to the activity immediately before that body, just as it does live.
 function buildRenderItems(messages: Message[]): RenderItem[] {
   const out: RenderItem[] = []
   for (const m of messages) {
     if (m.role === "system") continue
     if (isToolMessage(m)) {
-      const last = out[out.length - 1]
-      if (last && last.kind === "tools") last.items.push(m)
-      else out.push({ kind: "tools", items: [m] })
+      appendProcessPart(out, m.id, { kind: "tools", items: [m] })
     } else {
-      out.push({ kind: "msg", m })
+      const reasoning = m.role === "assistant" ? messageReasoning(m) : ""
+      if (reasoning.trim()) appendProcessPart(out, m.id, { kind: "reasoning", text: reasoning, createdAt: m.createdAt })
+      const images = (m as { images?: unknown[] }).images
+      if (messageText(m).trim() || images?.length) out.push({ kind: "msg", m })
     }
   }
   return out
 }
 
+function buildLiveItems(
+  segments: LiveSegment[],
+  text: string | null,
+  reasoning: string | null,
+  active: boolean,
+  status: string | null,
+): RenderItem[] {
+  const out: RenderItem[] = []
+  let bodyIndex = 0
+  const appendText = (body: string, thought: string | null, streaming = false) => {
+    if (thought?.trim()) appendProcessPart(out, `live-${bodyIndex}`, { kind: "reasoning", text: thought })
+    if (!body.trim()) return
+    out.push({ kind: "msg", streaming, m: {
+      id: `live-body-${bodyIndex++}`, role: "assistant", type: "text", content: body, createdAt: "",
+    } })
+  }
+  for (const segment of segments) {
+    if (segment.kind === "text") appendText(segment.text, segment.reasoning)
+    else if (segment.calls.length) appendProcessPart(out, `live-${bodyIndex}`, {
+      kind: "tools", items: liveToolMessages(segment),
+      runningCallIds: new Set(segment.calls.filter((call) => call.status === "running").map((call) => call.toolCallId)),
+    })
+  }
+  appendText(text ?? "", reasoning, active)
+  if (active && (!text?.trim() || status)) {
+    const last = out.at(-1)
+    // Admission displays Thinking without an empty disclosure; real records
+    // turn this same stable row into an inspectable process.
+    const process: ProcessItem = last?.kind === "process" ? last : {
+      kind: "process", key: `activity-live-${bodyIndex}`, parts: [],
+    }
+    if (process !== last) out.push(process)
+    process.active = true
+    const running = process.parts.some((part) => part.kind === "tools" && part.runningCallIds?.size)
+    process.thinking = !text?.trim() && !running && !status?.trim()
+    process.status = status
+  }
+  return out
+}
+
 function itemTimestamp(item: RenderItem, edge: "first" | "last" = "first"): number | null {
-  const messages = item.kind === "msg" ? [item.m] : item.items
-  const ordered = edge === "first" ? messages : [...messages].reverse()
-  for (const message of ordered) {
-    const timestamp = Date.parse(String(message.createdAt || ""))
+  const timestamps = item.kind === "msg" ? [item.m.createdAt] : item.parts.flatMap((part) =>
+    part.kind === "tools" ? part.items.map((message) => message.createdAt) : [part.createdAt],
+  )
+  const ordered = edge === "first" ? timestamps : [...timestamps].reverse()
+  for (const value of ordered) {
+    const timestamp = Date.parse(String(value || ""))
     if (Number.isFinite(timestamp)) return timestamp
   }
   return null
@@ -191,7 +239,7 @@ function formatElapsedDuration(durationMs: number): string | null {
 function isFinalAssistantResponse(item: RenderItem): boolean {
   if (item.kind !== "msg" || item.m.role !== "assistant") return false
   const images = (item.m as { images?: unknown[] }).images
-  return Boolean(messageText(item.m).trim() || messageReasoning(item.m).trim() || images?.length)
+  return Boolean(messageText(item.m).trim() || images?.length)
 }
 
 function buildActionableAssistantIndexes(
@@ -218,8 +266,8 @@ function buildActionableAssistantIndexes(
 function toolCallCount(items: RenderItem[]): number {
   const ids = new Set<string>()
   for (const item of items) {
-    if (item.kind !== "tools") continue
-    for (const message of item.items) {
+    if (item.kind !== "process") continue
+    for (const message of item.parts.flatMap((part) => part.kind === "tools" ? part.items : [])) {
       for (const call of (message as { toolCalls?: { toolCallId?: string }[] }).toolCalls ?? []) {
         if (call.toolCallId) ids.add(call.toolCallId)
       }
@@ -228,126 +276,23 @@ function toolCallCount(items: RenderItem[]): number {
   return ids.size
 }
 
-/**
- * Fold the process portion of completed turns while leaving the final answer
- * visible. Earlier turns are known to be terminal once a later user message
- * exists; the latest turn waits for Bamboo's persisted `completed` run state,
- * which is Lotus's equivalent of a provider `stop_reason = finished`.
- */
-function buildCompletedProcessLayout(
-  items: RenderItem[],
-  latestRunFinished: boolean,
-): CompletedProcessLayout {
-  const byStart = new Map<number, CompletedProcessGroup>()
-  const foldedIndexes = new Set<number>()
-  const finalReasoningIndexes = new Set<number>()
-  const userIndexes = items.flatMap((item, index) =>
-    item.kind === "msg" && item.m.role === "user" ? [index] : [],
-  )
-
-  userIndexes.forEach((userIndex, turnIndex) => {
-    const isLatestTurn = turnIndex === userIndexes.length - 1
-    if (isLatestTurn && !latestRunFinished) return
-    const turnEnd = (userIndexes[turnIndex + 1] ?? items.length) - 1
-    const processStart = userIndex + 1
-    let lastToolIndex = -1
-    for (let index = processStart; index <= turnEnd; index += 1) {
-      if (items[index]?.kind === "tools") lastToolIndex = index
-    }
-    if (lastToolIndex < processStart) return
-
-    let finalResponseIndex = -1
-    for (let index = turnEnd; index > lastToolIndex; index -= 1) {
-      if (isFinalAssistantResponse(items[index])) {
-        finalResponseIndex = index
-        break
-      }
-    }
-    // For older turns, a final response is the only durable evidence available
-    // that the tool process finished normally. The latest turn has the explicit
-    // completed status and may legitimately end without a text response.
-    if (!isLatestTurn && finalResponseIndex < 0) return
-
-    const processEnd = finalResponseIndex >= 0 ? finalResponseIndex - 1 : turnEnd
-    if (processEnd < processStart) return
-    const processItems = items.slice(processStart, processEnd + 1)
-    const calls = toolCallCount(processItems)
-    if (calls === 0) return
-
-    const startedAt = itemTimestamp(items[userIndex])
-    const finishedAt = itemTimestamp(
-      items[finalResponseIndex >= 0 ? finalResponseIndex : processEnd],
-      "last",
-    )
-    const elapsed = startedAt != null && finishedAt != null
-      ? formatElapsedDuration(finishedAt - startedAt)
-      : null
-    const userMessage = items[userIndex]
-    const key = userMessage.kind === "msg" ? userMessage.m.id : String(userIndex)
-    const finalResponse = finalResponseIndex >= 0 ? items[finalResponseIndex] : null
-    const finalReasoning = finalResponse?.kind === "msg"
-      ? messageReasoning(finalResponse.m)
-      : ""
-    byStart.set(processStart, {
-      startIndex: processStart,
-      endIndex: processEnd,
-      key: `completed-process-${key}`,
-      label: elapsed ? uiText("processed_db5f0926", { v0: elapsed }) : uiText("completed_processing_74a8d4a9"),
-      toolCallCount: calls,
-      finalReasoning,
-    })
-    for (let index = processStart; index <= processEnd; index += 1) {
-      foldedIndexes.add(index)
-    }
-    if (finalReasoning) finalReasoningIndexes.add(finalResponseIndex)
-  })
-
-  return { byStart, foldedIndexes, finalReasoningIndexes }
-}
-
 function renderItemKey(item: RenderItem, index: number): string {
   if (item.kind === "msg") return `message-${item.m.id}`
-  return `tools-${item.items[0]?.id ?? index}`
+  return item.key || `activity-${index}`
 }
 
-function hasRenderableMessageContent(message: Message, suppressReasoning: boolean): boolean {
-  const images = (message as { images?: unknown[] }).images
-  return Boolean(
-    messageText(message).trim() ||
-    images?.length ||
-    (!suppressReasoning && messageReasoning(message)),
-  )
+function findSpawnItemIndex(items: RenderItem[]): number {
+  return items.findLastIndex((item) => item.kind === "process" && item.parts.some((part) =>
+    part.kind === "tools" && part.items.some((message) =>
+      (message as { toolCalls?: { toolName?: string }[] }).toolCalls?.some((call) =>
+        /task|sub.?agent|spawn/i.test(call.toolName || ""),
+      ),
+    ),
+  ))
 }
 
-function buildHistoryEntries(
-  items: RenderItem[],
-  layout: CompletedProcessLayout,
-): HistoryEntry[] {
-  const entries: HistoryEntry[] = []
-  for (let index = 0; index < items.length; index += 1) {
-    const completedProcess = layout.byStart.get(index)
-    if (completedProcess) {
-      entries.push({
-        kind: "completed-process",
-        key: completedProcess.key,
-        group: completedProcess,
-      })
-      index = completedProcess.endIndex
-      continue
-    }
-    if (layout.foldedIndexes.has(index)) continue
-    const item = items[index]
-    const suppressReasoning = layout.finalReasoningIndexes.has(index)
-    if (item.kind === "msg" && !hasRenderableMessageContent(item.m, suppressReasoning)) continue
-    entries.push({
-      kind: "item",
-      key: renderItemKey(item, index),
-      item,
-      itemIndex: index,
-      suppressReasoning,
-    })
-  }
-  return entries
+function buildHistoryEntries(items: RenderItem[]): HistoryEntry[] {
+  return items.map((item, itemIndex) => ({ key: renderItemKey(item, itemIndex), item, itemIndex }))
 }
 
 function estimateHistoryEntrySize(
@@ -356,11 +301,7 @@ function estimateHistoryEntrySize(
   toolOpen: boolean,
 ): number {
   if (!entry) return 120
-  if (entry.kind === "completed-process") {
-    const processLength = entry.group.endIndex - entry.group.startIndex + 1
-    return processOpen ? Math.min(720, 96 + processLength * 120) : 28
-  }
-  if (entry.item.kind === "tools") return toolOpen ? 280 : 36
+  if (entry.item.kind === "process") return processOpen ? 96 + entry.item.parts.length * (toolOpen ? 160 : 40) : 36
   return entry.item.m.role === "user" ? 112 : 220
 }
 
@@ -538,18 +479,15 @@ export function MessageList({
   const [editingMsg, setEditingMsg] = useState<{ id: string; text: string } | null>(null)
 
   const renderItems = useMemo(() => buildRenderItems(messages), [messages])
+  const liveItems = useMemo(
+    () => buildLiveItems(liveSegments, streaming, streamingReasoning, sending || streamingActive, streamStatus),
+    [liveSegments, sending, streamStatus, streaming, streamingActive, streamingReasoning],
+  )
   const actionableAssistantIndexes = useMemo(
     () => buildActionableAssistantIndexes(renderItems, !sending),
     [renderItems, sending],
   )
-  const completedProcessLayout = useMemo(
-    () => buildCompletedProcessLayout(renderItems, latestRunFinished),
-    [latestRunFinished, renderItems],
-  )
-  const historyEntries = useMemo(
-    () => buildHistoryEntries(renderItems, completedProcessLayout),
-    [completedProcessLayout, renderItems],
-  )
+  const historyEntries = useMemo(() => buildHistoryEntries(renderItems), [renderItems])
   const [openProcessKeys, setOpenProcessKeys] = useState<Set<string>>(() => new Set())
   const [openToolKeys, setOpenToolKeys] = useState<Set<string>>(() => new Set())
   const historyEntriesRef = useRef(historyEntries)
@@ -573,8 +511,10 @@ export function MessageList({
     const entry = historyEntriesRef.current[index]
     return estimateHistoryEntrySize(
       entry,
-      entry?.kind === "completed-process" && openProcessKeysRef.current.has(entry.key),
-      entry?.kind === "item" && entry.item.kind === "tools" && openToolKeysRef.current.has(entry.key),
+      Boolean(entry && openProcessKeysRef.current.has(entry.key)),
+      entry?.item.kind === "process" && entry.item.parts.some((part) =>
+        part.kind === "tools" && openToolKeysRef.current.has(`tools-${part.items[0]?.id}`),
+      ),
     )
   }, [])
   const virtualizer = useVirtualizer<HTMLDivElement, HTMLDivElement>({
@@ -605,7 +545,10 @@ export function MessageList({
       "[data-history-entry-key]",
     )
     for (const row of rows ?? []) {
-      if (!row.dataset.historyEntryKey || !changedKeys.has(row.dataset.historyEntryKey)) continue
+      const ownsChange = row.dataset.historyEntryKey && changedKeys.has(row.dataset.historyEntryKey)
+        || [...row.querySelectorAll<HTMLElement>("[data-expansion-key]")]
+          .some((element) => changedKeys.has(element.dataset.expansionKey ?? ""))
+      if (!ownsChange) continue
       const index = virtualizer.indexFromElement(row)
       virtualizer.resizeItem(index, row.offsetHeight || estimateSize(index))
     }
@@ -622,52 +565,94 @@ export function MessageList({
   // scrolls up with the conversation instead of staying pinned at the bottom.
   const spawnItemIdx = useMemo(() => {
     if (Object.keys(mergedSubAgents).length === 0) return -1
-    for (let i = renderItems.length - 1; i >= 0; i -= 1) {
-      const it = renderItems[i]
-      if (
-        it.kind === "tools" &&
-        it.items.some((m) =>
-          (m as { toolCalls?: { toolName?: string }[] }).toolCalls?.some((tc) =>
-            /task|sub.?agent|spawn/i.test(tc.toolName || ""),
-          ),
-        )
-      ) {
-        return i
-      }
-    }
-    return -1
+    return findSpawnItemIndex(renderItems)
   }, [renderItems, mergedSubAgents])
+  const liveSpawnItemIdx = useMemo(() => Object.keys(mergedSubAgents).length
+    ? findSpawnItemIndex(liveItems) : -1, [liveItems, mergedSubAgents])
 
   const renderItem = (
     it: RenderItem,
     idx: number,
-    options?: { suppressReasoning?: boolean },
+    options?: { live?: boolean },
   ) => {
-    if (it.kind === "tools") {
-      const isLast = idx === renderItems.length - 1
-      const toolStateKey = renderItemKey(it, idx)
-      const tools = (
-        <ToolCalls
-          key={it.items[0]?.id ?? `tools-${idx}`}
-          items={it.items}
-          // A retained final stream is display content, not evidence that
-          // the persisted tool round is still running. ChatPane passes a
-          // session-scoped running value here.
-          active={isLast && sending}
-          open={openToolKeys.has(toolStateKey)}
-          onOpenChange={(open) => setToolOpen(toolStateKey, open)}
-          onPreviewImage={onPreviewImage}
-        />
+    if (it.kind === "process") {
+      const active = options?.live ? it.active : idx === renderItems.length - 1 && sending && !pendingUserText && !latestRunFinished && liveItems.length === 0
+      const reasoning = it.parts.findLast((part) => part.kind === "reasoning")
+      const latestTool = it.parts.findLast((part) => part.kind === "tools" && part.runningCallIds?.size)
+        ?? it.parts.findLast((part) => part.kind === "tools")
+      const toolPart = latestTool?.kind === "tools" ? latestTool : undefined
+      const latestCallIds = toolPart?.items.flatMap((message) => "type" in message && message.type === "tool_call" ? message.toolCalls.map((call) => call.toolCallId) : [])
+      const latestCallId = latestCallIds?.findLast((id) => toolPart?.runningCallIds?.has(id)) ?? latestCallIds?.at(-1)
+      const preview = toolPart && latestCallId ? {
+        key: latestCallId,
+        running: Boolean(toolPart.runningCallIds?.size),
+        content: <ToolCalls items={toolPart.items} presentation="preview" active={Boolean(active && toolPart.runningCallIds?.size)} runningCallIds={toolPart.runningCallIds ?? new Set<string>()} />,
+        snapshot: (key: string) => {
+          const items = it.parts.flatMap((part) => part.kind === "tools" ? part.items.flatMap<Message>((message) => {
+            if ("type" in message && message.type === "tool_call") {
+              const calls = message.toolCalls.filter((call) => call.toolCallId === key)
+              return calls.length ? [{ ...message, toolCalls: calls }] : []
+            }
+            return "toolCallId" in message && message.toolCallId === key ? [message] : []
+          }) : [])
+          const runningCallIds = new Set(it.parts.flatMap((part) => part.kind === "tools" ? [...part.runningCallIds ?? []] : []))
+          return <ToolCalls items={items} presentation="preview" active={Boolean(active && runningCallIds.has(key))} runningCallIds={runningCallIds} />
+        },
+      } : undefined
+      const startedAt = itemTimestamp(it)
+      const finishedAt = itemTimestamp(it, "last")
+      const elapsed = !options?.live && !active && toolCallCount([it]) && startedAt != null && finishedAt != null
+        ? formatElapsedDuration(finishedAt - startedAt) : null
+      const process = (
+        <div data-expansion-key={it.key}>
+          <ProcessActivity
+            reasoning={reasoning?.kind === "reasoning" ? reasoning.text : undefined}
+            toolCallCount={toolCallCount([it])}
+            label={elapsed ? uiText("processed_db5f0926", { v0: elapsed }) : undefined}
+            active={active}
+            thinking={it.thinking}
+            status={preview?.running ? undefined : it.status}
+            hasDetails={it.parts.length > 0}
+            preview={preview}
+            open={openProcessKeys.has(it.key)}
+            onOpenChange={(open) => setProcessOpen(it.key, open)}
+          >
+            <div className="-mx-3.5 flex flex-col gap-2">
+              {it.parts.map((part, partIndex) => {
+                if (part.kind === "reasoning") return (
+                  <div key={`reasoning-${partIndex}`} className="px-3.5">
+                    <Reasoning text={part.text} />
+                  </div>
+                )
+                const toolKey = `tools-${part.items[0]?.id}`
+                return (
+                  <div key={toolKey} data-expansion-key={toolKey}>
+                    <ToolCalls
+                      items={part.items}
+                      presentation="process"
+                      singleExpanded={toolCallCount([it]) === 1}
+                      active={part.runningCallIds !== undefined ? part.runningCallIds.size > 0 : Boolean(active && partIndex === it.parts.length - 1)}
+                      runningCallIds={part.runningCallIds}
+                      open={openToolKeys.has(toolKey)}
+                      onOpenChange={(open) => setToolOpen(toolKey, open)}
+                      onPreviewImage={onPreviewImage}
+                    />
+                  </div>
+                )
+              })}
+            </div>
+          </ProcessActivity>
+        </div>
       )
-      if (idx === spawnItemIdx) {
+      if (!options?.live && idx === spawnItemIdx) {
         return (
           <Fragment key={`spawn-${idx}`}>
-            {tools}
+            {process}
             <SubAgents agents={mergedSubAgents} onOpen={onSelectSubAgent} />
           </Fragment>
         )
       }
-      return tools
+      return process
     }
     const m = it.m
     const text = messageText(m)
@@ -675,10 +660,9 @@ export function MessageList({
       m as { images?: Array<{ url?: string; base64?: string; type?: string }> }
     ).images
     const isUser = m.role === "user"
-    const showMessageActions = !readOnly && (isUser || actionableAssistantIndexes.has(idx))
-    const reasoning = isUser || options?.suppressReasoning ? "" : messageReasoning(m)
+    const showMessageActions = !readOnly && !options?.live && (isUser || actionableAssistantIndexes.has(idx))
     // Truly empty (no text, no images, no reasoning) → skip the blank bubble.
-    if (!text.trim() && !imgs?.length && !reasoning) return null
+    if (!text.trim() && !imgs?.length) return null
 
     if (isUser && editingMsg?.id === m.id) {
       return (
@@ -762,11 +746,10 @@ export function MessageList({
               })}
             </div>
           ) : null}
-          {reasoning ? <Reasoning text={reasoning} /> : null}
           {isUser ? (
-            <>{m.role === "user" && "inReplyTo" in m && m.inReplyTo ? <div className="mb-1 text-xs opacity-70" data-testid="message-request-reference">{uiText("ticket_referenced_request__7209ca36")}{m.inReplyTo}</div> : null}{text}</>
+            <>{m.role === "user" && "inReplyTo" in m && m.inReplyTo ? <div className="mb-1 text-xs" data-testid="message-request-reference">{uiText("ticket_referenced_request__7209ca36")}{m.inReplyTo}</div> : null}{text}</>
           ) : text.trim() ? (
-            <AssistantMarkdown isStreaming={false} onPreviewImage={onPreviewImage}>{text}</AssistantMarkdown>
+            <AssistantMarkdown isStreaming={Boolean(it.streaming)} onPreviewImage={onPreviewImage}>{text}</AssistantMarkdown>
           ) : null}
         </div>
         {isUser ? null : actions}
@@ -774,70 +757,24 @@ export function MessageList({
     )
   }
 
-  const renderHistoryEntry = (entry: HistoryEntry) => {
-    if (entry.kind === "item") {
-      return renderItem(entry.item, entry.itemIndex, {
-        suppressReasoning: entry.suppressReasoning,
-      })
-    }
-
-    const processOpen = openProcessKeys.has(entry.key)
-    return (
-      <details
-        open={processOpen}
-        data-completed-process
-        className="w-full"
-      >
-        <summary
-          onClick={(event) => {
-            event.preventDefault()
-            setProcessOpen(entry.key, !processOpen)
-          }}
-          className="cursor-pointer select-none text-xs text-muted-foreground hover:text-foreground"
-          title={uiText("tool_calls_bdfa142a", { v0: entry.group.toolCallCount , count: entry.group.toolCallCount })}
-        >
-          {entry.group.label}
-        </summary>
-        {processOpen ? (
-          <div className="mt-2 flex flex-col gap-2 border-l-2 border-border pl-2.5">
-            {renderItems
-              .slice(entry.group.startIndex, entry.group.endIndex + 1)
-              .map((processItem, processOffset) =>
-                renderItem(processItem, entry.group.startIndex + processOffset),
-              )}
-            {entry.group.finalReasoning ? (
-              <div className="flex justify-start">
-                <div
-                  data-completed-final-reasoning
-                  className={cn(MESSAGE_SURFACE_LAYOUT, ASSISTANT_MESSAGE_SURFACE)}
-                >
-                  <Reasoning text={entry.group.finalReasoning} />
-                </div>
-              </div>
-            ) : null}
-          </div>
-        ) : null}
-      </details>
-    )
-  }
+  const renderHistoryEntry = (entry: HistoryEntry) => renderItem(entry.item, entry.itemIndex)
 
   const virtualItems = virtualizer.getVirtualItems()
 
   return (
-    <div ref={setScrollElement} onScroll={onScroll} className="min-h-0 flex-1 overflow-y-auto">
+    <div ref={setScrollElement} onScroll={onScroll} className="min-h-0 flex-1 overflow-y-auto px-3">
       <div
         ref={contentRef}
         data-message-list-content
-        className="relative mx-auto flex w-full max-w-6xl flex-col gap-2 px-3 py-4"
+        className="relative mx-auto flex w-full max-w-6xl flex-col gap-2 py-4"
         style={{
           left: contentShiftX,
           transition: "left 200ms ease-out",
-          WebkitFontSmoothing: "auto",
         }}
       >
         {messages.length === 0 && !streaming && !pendingUserText && liveSegments.length === 0 && (
           <div className="flex flex-col items-center gap-2 py-20 text-center">
-            <div className="size-10 rounded-xl bg-primary" />
+            <BrandMark className="size-10 text-primary" />
             <p className="text-sm text-muted-foreground">{uiText("start_a_new_conversation_bab6ab18")}</p>
           </div>
         )}
@@ -860,7 +797,6 @@ export function MessageList({
                   className={cn(
                     "absolute left-0 top-0 w-full",
                     virtualItem.index > 0 &&
-                      entry.kind === "item" &&
                       entry.item.kind === "msg" &&
                       entry.item.m.role === "user" &&
                       "pt-2",
@@ -876,81 +812,25 @@ export function MessageList({
 
         {pendingUserText ? (
           <div className="mt-2 flex justify-end">
-            <div className="user-message-surface max-w-[85%] overflow-hidden whitespace-pre-wrap rounded-2xl px-3.5 py-2 text-base leading-7 [overflow-wrap:anywhere]">
+            <div data-pending-user-message data-message-role="user" className="user-message-surface max-w-[85%] overflow-hidden whitespace-pre-wrap rounded-2xl px-3.5 py-2 text-base leading-7 [overflow-wrap:anywhere]">
               {pendingUserText}
             </div>
           </div>
         ) : null}
 
-        {spawnItemIdx === -1 ? (
+        {spawnItemIdx === -1 && liveSpawnItemIdx === -1 ? (
           <SubAgents agents={mergedSubAgents} onOpen={onSelectSubAgent} />
         ) : null}
 
-        {/* Frozen live-run timeline: text rounds + tool groups streamed so far. */}
-        {liveSegments.map((seg, i) =>
-          seg.kind === "tools" ? (
-            <ToolCalls
-              key={`live-tools-${i}`}
-              items={liveToolMessages(seg)}
-              active={seg.calls.some((c) => c.status === "running")}
-              runningCallIds={new Set(seg.calls.filter((c) => c.status === "running").map((c) => c.toolCallId))}
-              onPreviewImage={onPreviewImage}
-            />
-          ) : (
-            <div key={`live-text-${i}`} className="flex justify-start">
-              <div
-                data-message-role="assistant"
-                className={cn(
-                  MESSAGE_SURFACE_LAYOUT,
-                  ASSISTANT_MESSAGE_SURFACE,
-                )}
-              >
-                {seg.reasoning ? <Reasoning text={seg.reasoning} /> : null}
-                {seg.text.trim() ? (
-                  <AssistantMarkdown isStreaming={false} onPreviewImage={onPreviewImage}>{seg.text}</AssistantMarkdown>
-                ) : null}
-              </div>
-            </div>
-          ),
-        )}
-
-        {streaming !== null && (
-          <div className="flex justify-start">
-            <div
-              data-message-role="assistant"
-              className={cn(
-                MESSAGE_SURFACE_LAYOUT,
-                ASSISTANT_MESSAGE_SURFACE,
-              )}
-              style={{ transform: "translateZ(0)" }}
-            >
-              {streamingReasoning ? (
-                // Live reasoning ("思考过程") so the user sees progress instead of
-                // waiting on a blank bubble while the model thinks.
-                <StreamingReasoning text={streamingReasoning} spaced={!!streaming} />
-              ) : null}
-              {streaming ? (
-                // Live markdown while streaming (RAF-throttled to once/frame),
-                // with provider built-in-tool blocks folded the same as the
-                // final message — so no raw **/``` flash mid-stream.
-                <AssistantMarkdown isStreaming={streamingActive} onPreviewImage={onPreviewImage}>{streaming}</AssistantMarkdown>
-              ) : streamingReasoning ? null : streamStatus ? (
-                // "what is the agent doing" one-liner (tool running / compacting)
-                // instead of anonymous dots while no text streams.
-                <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
-                  <span className="size-1.5 animate-pulse rounded-full bg-muted-foreground" />
-                  {streamStatus}
-                </span>
-              ) : (
-                <span className="inline-flex gap-1">
-                  <span className="size-1.5 animate-pulse rounded-full bg-muted-foreground" />
-                  <span className="size-1.5 animate-pulse rounded-full bg-muted-foreground [animation-delay:150ms]" />
-                  <span className="size-1.5 animate-pulse rounded-full bg-muted-foreground [animation-delay:300ms]" />
-                </span>
-              )}
-            </div>
-          </div>
-        )}
+        {/* The live projection uses the same message-only activity boundaries. */}
+        {liveItems.map((item, index) => (
+          <Fragment key={renderItemKey(item, index)}>
+            {renderItem(item, index, { live: true })}
+            {index === liveSpawnItemIdx && spawnItemIdx === -1 ? (
+              <SubAgents agents={mergedSubAgents} onOpen={onSelectSubAgent} />
+            ) : null}
+          </Fragment>
+        ))}
       </div>
     </div>
   )

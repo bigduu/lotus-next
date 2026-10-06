@@ -1,5 +1,6 @@
 import { expect, test } from "@playwright/test"
 import { installArtifactRuntime, standaloneScenario } from "./support/artifactRuntime.js"
+import { openProcessActivities } from "./support/processActivity.js"
 
 const sessionId = "browser-select-display-session"
 const privateValue = "private-option-value-153"
@@ -77,12 +78,19 @@ test("desktop history keeps status for bounded large values without option data"
 
   await page.goto(standaloneScenario.entryUrl)
   await page.getByRole("button", { name: "Browser selection display", exact: true }).click()
-  const toggle = page.locator("[data-tool-call-toggle]")
-  await expect(toggle).toContainText("选择网页选项")
-  await toggle.click()
+  await openProcessActivities(page)
+  await expect(page.locator("[data-tool-call-toggle]")).toHaveCount(0)
   const entries = page.locator("[data-tool-call-entry]")
   await expect(entries).toHaveCount(2)
-  for (const summary of await entries.locator("details summary").all()) await summary.click()
+  const rows = entries.locator("[data-tool-call-entry-toggle]")
+  await expect(rows).toHaveCount(2)
+  await expect(entries.locator("[data-tool-call-entry-detail]")).toHaveCount(0)
+  for (const row of await rows.all()) {
+    await expect(row).toBeVisible()
+    await expect(row).toContainText("选择网页选项")
+    await expect(row).toHaveAttribute("aria-expanded", "false")
+    await row.click()
+  }
   await expect(entries.locator("pre")).toHaveText(["网页选项已选择", "等待用户批准"])
   for (const privateText of [privateValue, privateSelector, privateResource, "select_option", "selected_values", "permission_request"]) {
     await expect(page.locator("body")).not.toContainText(privateText)

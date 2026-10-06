@@ -1,5 +1,7 @@
 // Application-owned UI copy.
 export const uiZhCn = {
+  "process_activity": "处理过程",
+  "process_tool_count": "{{count}} 次工具调用",
   "sidebar_create_section": "创建分区",
   "sidebar_manage_sections": "管理分区",
   "sidebar_move_to_section": "移动到分区…",

@@ -3,7 +3,7 @@ import { installArtifactRuntime, standaloneScenario } from "./support/artifactRu
 
 const sessionId = "tool-call-activity-session"
 
-test("expanded tool groups show every compact call and reveal details on demand", async ({ page }, testInfo) => {
+test("one process disclosure shows every compact call and reveals individual details on demand", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "desktop-chromium", "desktop tool activity screenshot")
   await page.addInitScript(() => localStorage.setItem("bodhi_onboarded_v1", "1"))
   const observation = await installArtifactRuntime(page, standaloneScenario)
@@ -64,18 +64,22 @@ test("expanded tool groups show every compact call and reveal details on demand"
   await page.goto(standaloneScenario.entryUrl)
   await page.getByRole("button", { name: "Tool activity", exact: true }).click()
 
-  const group = page.locator("[data-tool-call-toggle]")
-  await expect(group).toHaveAttribute("aria-expanded", "false")
-  await expect(group).toContainText("5 项操作")
-  await group.focus()
+  const process = page.locator("[data-process-toggle]")
+  await expect(process).toHaveAttribute("aria-expanded", "false")
+  await expect(process).toContainText("5 次工具调用")
+  await expect(page.locator("[data-tool-call-toggle]")).toHaveCount(0)
+  await expect(page.locator("[data-tool-call-entry-toggle]").first()).not.toBeVisible()
+  await process.focus()
   await page.keyboard.press("Enter")
-  await expect(group).toHaveAttribute("aria-expanded", "true")
+  await expect(process).toHaveAttribute("aria-expanded", "true")
 
   const rows = page.locator("[data-tool-call-entry-toggle]")
   await expect(rows).toHaveCount(calls.length)
   await expect(page.getByText(/展开更早的/)).toHaveCount(0)
   await expect(page.locator("[data-tool-call-entry-detail]")).toHaveCount(0)
   for (const [index, detail] of ["MessageList.tsx", "npm run test:run", "data-tool-call-toggle", "tool-activity.png", "ToolCalls.tsx"].entries()) {
+    await expect(rows.nth(index)).toBeVisible()
+    await expect(rows.nth(index)).toHaveAttribute("aria-expanded", "false")
     await expect(rows.nth(index)).toContainText(detail)
   }
 
