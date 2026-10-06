@@ -1,8 +1,9 @@
 import { useUiText } from "@shared/i18n/ui"
 import { isSessionUnread, useSessionReadState } from "@/lib/sessionReadState"
-import { useId, useMemo, useState } from "react"
+import { useEffect, useId, useMemo, useRef, useState, type DragEvent } from "react"
 import { ChevronRight, Plus, Search, X, Cog, PanelLeftClose, FolderClosed, CalendarDays, ChevronDown, CircleDot } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { BrandMark } from "@/components/ui/brand-mark"
 import { Input } from "@/components/ui/input"
 import { SessionRow } from "@/components/chat/SessionRow"
 import { ProjectArchiveDialog } from "@/components/app/ProjectArchiveDialog"
@@ -10,7 +11,11 @@ import { ProjectEditDialog } from "@/components/app/ProjectEditDialog"
 import { ProjectGroupHeader } from "@/components/app/ProjectGroupHeader"
 import { ProjectSectionDialog } from "@/components/app/ProjectSectionDialog"
 import { groupChats, groupChatsByProject, type ChatGroup } from "@/lib/groupChats"
-import { readPinnedProjectIds, writePinnedProjectIds } from "@/lib/projectSidebarPreferences"
+import {
+  readPinnedProjectIds, writePinnedProjectIds, readProjectSectionPreferences, writeProjectSectionPreferences,
+  getProjectSections, getSessionSection, createProjectSection, removeProjectSection, setSessionSection,
+  SIDEBAR_SESSION_DRAG_TYPE, type ProjectSectionPreferences,
+} from "@/lib/projectSidebarPreferences"
 import { useAppStore } from "@shared/store/appStore"
 import { openLocalFolder } from "@shared/utils/openExternalLink"
 import { cn } from "@/lib/utils"
@@ -23,6 +28,7 @@ const GROUPING_MODE_STORAGE_KEY = "lotus.sidebar.grouping-mode.v1"
 
 /** Max sessions rendered per project group before the rest folds away. */
 const PROJECT_GROUP_PREVIEW_COUNT = 7
+const sectionDisclosureKey = (projectId: string, sectionId: string | null) => JSON.stringify([projectId, sectionId])
 
 /** Read the persisted grouping mode; falls back to "date" for legacy users. */
 const readGroupingMode = (): SidebarGroupingMode => {
@@ -76,6 +82,11 @@ export function Sidebar({
   const [search, setSearch] = useState("")
   const [groupingMode, setGroupingMode] = useState<SidebarGroupingMode>(readGroupingMode)
   const [pinnedProjectIds, setPinnedProjectIds] = useState(readPinnedProjectIds)
+  const [sectionPreferences, setSectionPreferences] = useState(readProjectSectionPreferences)
+  const persistedSections = useRef(sectionPreferences)
+  const [sectionDialogMode, setSectionDialogMode] = useState<"create" | "manage">("create")
+  const [dragOverSection, setDragOverSection] = useState<string | null>(null)
+  const draggingProjectId = useRef<string | null>(null)
   const [editingProjectId, setEditingProjectId] = useState<string | null>(null)
   const [sectioningProjectId, setSectioningProjectId] = useState<string | null>(null)
   const [pendingArchiveProjectId, setPendingArchiveProjectId] = useState<string | null>(null)
@@ -86,6 +97,12 @@ export function Sidebar({
   const disclosureId = useId()
   const supervisorStatusId = useId()
   const query = search.trim().toLowerCase()
+
+  useEffect(() => {
+    if (persistedSections.current === sectionPreferences) return
+    writeProjectSectionPreferences(sectionPreferences)
+    persistedSections.current = sectionPreferences
+  }, [sectionPreferences])
 
   const switchGroupingMode = (mode: SidebarGroupingMode) => {
     setGroupingMode(mode)
@@ -100,15 +117,6 @@ export function Sidebar({
   const supervisorActive = supervisor?.id === currentSessionId
   const supervisorUnread = !!supervisor && isSessionUnread(supervisor, readState)
   const rootChats = useMemo(() => chats.filter((chat) => !chat.parentSessionId && !isDefaultSupervisor(chat)), [chats])
-  const projectSections = useMemo(
-    () => [...new Set(
-      Object.values(projects)
-        .filter((project) => project.status === "active")
-        .map((project) => project.section?.trim())
-        .filter((section): section is string => !!section),
-    )].sort((left, right) => left.localeCompare(right)),
-    [projects],
-  )
   const projectSessionCounts = useMemo(() => {
     const counts = new Map<string, number>()
     for (const chat of rootChats) {
@@ -153,7 +161,14 @@ export function Sidebar({
   const dateGroups = isProjectMode ? [] : groups.filter((group) => group.key !== "__pinned")
   const olderGroups = dateGroups.slice(5)
   const activeGroup = groups.find((group) => group.chats.some((c) => c.id === currentSessionId))
-  const activeSection = activeGroup ? projects[activeGroup.key]?.section ?? null : null
+  const activeProject = isProjectMode && activeGroup ? projects[activeGroup.key] : undefined
+  const activeSectionId = activeProject && currentSessionId
+    ? getSessionSection(sectionPreferences, activeProject.id, currentSessionId, activeProject.section) : null
+  const activeSection = activeProject ? sectionDisclosureKey(activeProject.id, activeSectionId) : null
+  const activePreviewKey = activeSection ?? activeGroup?.key
+  const activeBucketChats = activeProject && activeGroup
+    ? activeGroup.chats.filter((chat) => getSessionSection(sectionPreferences, activeProject.id, chat.id, activeProject.section) === activeSectionId)
+    : activeGroup?.chats ?? []
   const activeIsOlder = olderGroups.some((group) => group.key === activeGroup?.key)
   const activePath = JSON.stringify([currentSessionId ?? null, activeGroup?.key, activeSection, activeIsOlder])
   const [disclosures, setDisclosures] = useState(() => ({
@@ -163,8 +178,8 @@ export function Sidebar({
     closedSections: new Set<string>(),
     // Reveal the active session even when it sits beyond the preview fold.
     expandedProjectGroups: new Set(
-      isProjectMode && activeGroup && activeGroup.chats.findIndex((c) => c.id === currentSessionId) >= PROJECT_GROUP_PREVIEW_COUNT
-        ? [activeGroup.key]
+      isProjectMode && activePreviewKey && activeBucketChats.findIndex((c) => c.id === currentSessionId) >= PROJECT_GROUP_PREVIEW_COUNT
+        ? [activePreviewKey]
         : [],
     ),
   }))
@@ -179,8 +194,8 @@ export function Sidebar({
     if (activeSection) closedSections.delete(activeSection)
     // A session in a project group beyond the preview fold must be revealed.
     const expandedProjectGroups = new Set(disclosures.expandedProjectGroups)
-    if (activeGroup && activeGroup.chats.findIndex((c) => c.id === currentSessionId) >= PROJECT_GROUP_PREVIEW_COUNT) {
-      expandedProjectGroups.add(activeGroup.key)
+    if (activePreviewKey && activeBucketChats.findIndex((c) => c.id === currentSessionId) >= PROJECT_GROUP_PREVIEW_COUNT) {
+      expandedProjectGroups.add(activePreviewKey)
     }
     setDisclosures({
       activePath,
@@ -228,30 +243,114 @@ export function Sidebar({
     }
   }
 
-  const moveProjectToSection = async (projectId: string, section: string | null) => {
-    const project = useAppStore.getState().projects[projectId]
-    if (!project || projectActionBusy || (project.section ?? null) === section) return
-    setProjectActionBusy(true)
-    setProjectActionError(null)
+  const updateSectionPreferences = (update: (previous: ProjectSectionPreferences) => ProjectSectionPreferences) => {
+    setSectionPreferences(update)
+  }
+
+  const moveSessionToSection = (projectId: string, sessionId: string, sectionId: string | null) => {
+    const chat = rootChats.find((candidate) => candidate.id === sessionId)
+    // Canonical project identity is read from the session, never from the drag payload.
+    if (chat?.config?.projectId?.trim() !== projectId || !projects[projectId]) return
+    updateSectionPreferences((previous) => setSessionSection(previous, projectId, sessionId, sectionId, projects[projectId]?.section))
+  }
+
+  const readDraggedSession = (event: DragEvent<HTMLElement>): { projectId: string; sessionId: string } | null => {
     try {
-      await useAppStore.getState().updateProject(project.id, project.revision, { section })
-    } catch (error) {
-      setProjectActionError(error instanceof Error ? error.message : uiText("could_not_move_project_2811a114"))
-    } finally {
-      setProjectActionBusy(false)
-    }
+      const payload: unknown = JSON.parse(event.dataTransfer.getData(SIDEBAR_SESSION_DRAG_TYPE))
+      if (!payload || typeof payload !== "object" || !("projectId" in payload) || !("sessionId" in payload)) return null
+      if (typeof payload.projectId !== "string" || typeof payload.sessionId !== "string") return null
+      return { projectId: payload.projectId, sessionId: payload.sessionId }
+    } catch { return null }
+  }
+
+  const renderSession = (chat: ChatItem) => {
+    const projectId = chat.config?.projectId?.trim()
+    const project = projectId ? projects[projectId] : undefined
+    return <SessionRow
+      key={chat.id} chat={chat} active={chat.id === currentSessionId}
+      unread={chat.id !== currentSessionId && isSessionUnread(chat, readState)}
+      projectId={project?.id}
+      sections={project ? getProjectSections(sectionPreferences, project.id, project.section) : undefined}
+      sectionId={project ? getSessionSection(sectionPreferences, project.id, chat.id, project.section) : undefined}
+      onMoveToSection={project ? (sectionId) => moveSessionToSection(project.id, chat.id, sectionId) : undefined}
+      onSelect={() => { onSelect(chat.id); onClose() }}
+      onRename={(title) => onRename(chat.id, title)} onDelete={() => onDelete(chat)}
+      onTogglePin={() => onTogglePin(chat)} onCopySessionId={() => onCopySessionId(chat.id)}
+    />
+  }
+
+  const renderSessionBucket = (bucket: ChatGroup, expanded: boolean, previewKey: string) => {
+    const fold = isProjectMode && !query && bucket.key !== "__pinned" && bucket.chats.length > PROJECT_GROUP_PREVIEW_COUNT
+    const showAll = disclosures.expandedProjectGroups.has(previewKey)
+    const shown = fold && !showAll ? bucket.chats.slice(0, PROJECT_GROUP_PREVIEW_COUNT) : bucket.chats
+    return <>
+      {expanded ? shown.map(renderSession) : null}
+      {expanded && fold ? (
+        <button type="button" className="flex w-full items-center gap-1 rounded-md px-2 py-1.5 text-left text-xs text-muted-foreground outline-none hover:bg-sidebar-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+          onClick={() => setDisclosures((previous) => {
+            const expandedProjectGroups = new Set(previous.expandedProjectGroups)
+            if (expandedProjectGroups.has(previewKey)) expandedProjectGroups.delete(previewKey)
+            else expandedProjectGroups.add(previewKey)
+            return { ...previous, expandedProjectGroups }
+          })}>
+          {showAll ? <ChevronDown aria-hidden="true" className="size-3 shrink-0" /> : <ChevronRight aria-hidden="true" className="size-3 shrink-0" />}
+          <span>{showAll ? uiText("collapse_afd4b783") : `${uiText("expand_00bd3960")} ${uiText("count_items", { count: bucket.chats.length - PROJECT_GROUP_PREVIEW_COUNT })}`}</span>
+        </button>
+      ) : null}
+    </>
+  }
+
+  const renderProjectSections = (group: ChatGroup) => {
+    const project = projects[group.key]!
+    const sections = getProjectSections(sectionPreferences, project.id, project.section)
+    if (!sections.length) return renderSessionBucket(group, true, sectionDisclosureKey(project.id, null))
+    const targets = [...sections, { id: null, name: uiText("sidebar_no_section") }]
+    return targets.map((section) => {
+      const key = sectionDisclosureKey(project.id, section.id)
+      const bucket = { ...group, chats: group.chats.filter((chat) => getSessionSection(sectionPreferences, project.id, chat.id, project.section) === section.id) }
+      if (query && !bucket.chats.length) return null
+      const expanded = !!query || !disclosures.closedSections.has(key)
+      const contentId = `${disclosureId}-section-${encodeURIComponent(key)}`
+      return <div key={key} data-project-section={section.name} data-section-id={section.id ?? "none"} data-section-project={project.id}
+        style={{ marginInlineStart: 12 }} className={cn("mb-1 rounded-md", dragOverSection === key && "bg-sidebar-accent")}
+        onDragOver={(event) => {
+          if (!event.dataTransfer.types.includes(SIDEBAR_SESSION_DRAG_TYPE) || (draggingProjectId.current && draggingProjectId.current !== project.id)) return
+          event.preventDefault()
+          event.dataTransfer.dropEffect = "move"
+          setDragOverSection(key)
+        }}
+        onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDragOverSection(null) }}
+        onDrop={(event) => {
+          event.preventDefault()
+          setDragOverSection(null)
+          draggingProjectId.current = null
+          const payload = readDraggedSession(event)
+          if (payload?.projectId === project.id) moveSessionToSection(project.id, payload.sessionId, section.id)
+        }}>
+        <button type="button" aria-expanded={expanded} aria-controls={contentId} disabled={!!query}
+          className="flex w-full items-center gap-1 rounded-md px-2 py-1.5 text-left text-xs font-medium text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default"
+          onClick={() => setDisclosures((previous) => {
+            const closedSections = new Set(previous.closedSections)
+            if (closedSections.has(key)) closedSections.delete(key)
+            else closedSections.add(key)
+            return { ...previous, closedSections }
+          })}>
+          <ChevronRight aria-hidden="true" className={cn("size-3 shrink-0", expanded && "rotate-90")} />
+          <span className="truncate">{section.name}</span>
+          <span className="ml-auto whitespace-nowrap pl-2 font-normal">{uiText("project_sessions", { count: bucket.chats.length })}</span>
+        </button>
+        <div id={contentId} hidden={!expanded}>
+          {renderSessionBucket(bucket, expanded, key)}
+          {expanded && !bucket.chats.length ? <p className="px-2 py-2 text-xs text-muted-foreground">{uiText("sidebar_section_empty")}</p> : null}
+        </div>
+      </div>
+    })
   }
 
   const renderGroup = (group: ChatGroup) => {
     const pinned = group.key === "__pinned"
     const expanded = pinned || !!query || !disclosures.closedDates.has(group.key)
     const contentId = `${disclosureId}-${group.key}`
-    // Project groups cap their visible rows; date groups and search show all.
-    const projectFold = isProjectMode && !query && !pinned && group.chats.length > PROJECT_GROUP_PREVIEW_COUNT
-    const projectExpanded = projectFold && disclosures.expandedProjectGroups.has(group.key)
-    const shownChats = projectFold && !projectExpanded
-      ? group.chats.slice(0, PROJECT_GROUP_PREVIEW_COUNT)
-      : group.chats
     const project = isProjectMode ? projects[group.key] : undefined
     const toggleExpanded = () => setDisclosures((previous) => {
       const closedDates = new Set(previous.closedDates)
@@ -260,7 +359,7 @@ export function Sidebar({
       return { ...previous, closedDates }
     })
     return (
-      <div key={group.key} className="mb-1">
+      <div key={group.key} data-sidebar-project={project?.id} className="mb-1">
         {pinned ? (
           <div className="px-2 pt-3 pb-1 text-xs font-medium text-muted-foreground">
             {group.label}
@@ -274,8 +373,6 @@ export function Sidebar({
             contentId={contentId}
             disabled={!!query}
             pinned={pinnedProjectIds.has(project.id)}
-            sections={projectSections}
-            sectionBusy={projectActionBusy}
             onToggleExpanded={toggleExpanded}
             onNewChat={() => {
               onNewChat(project.id)
@@ -286,11 +383,13 @@ export function Sidebar({
               setEditingProjectId(project.id)
             }}
             onTogglePin={() => toggleProjectPin(project.id)}
-            onMoveToSection={(section) => {
-              void moveProjectToSection(project.id, section)
-            }}
             onCreateSection={() => {
               setProjectActionError(null)
+              setSectionDialogMode("create")
+              setSectioningProjectId(project.id)
+            }}
+            onManageSections={() => {
+              setSectionDialogMode("manage")
               setSectioningProjectId(project.id)
             }}
             onReveal={() => {
@@ -322,109 +421,9 @@ export function Sidebar({
           </button>
         )}
         <div id={contentId} hidden={!expanded}>
-          {expanded ? shownChats.map((c) => (
-            <SessionRow
-              key={c.id}
-              chat={c}
-              active={c.id === currentSessionId}
-              unread={c.id !== currentSessionId && isSessionUnread(c, readState)}
-              onSelect={() => {
-                onSelect(c.id)
-                onClose()
-              }}
-              onRename={(title) => onRename(c.id, title)}
-              onDelete={() => onDelete(c)}
-              onTogglePin={() => onTogglePin(c)}
-              onCopySessionId={() => onCopySessionId(c.id)}
-            />
-          )) : null}
-          {projectFold ? (
-            <button
-              type="button"
-              className="flex w-full items-center gap-1 rounded-md px-2 py-1.5 text-left text-xs text-muted-foreground outline-none hover:bg-sidebar-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
-              onClick={() => setDisclosures((previous) => {
-                const expandedProjectGroups = new Set(previous.expandedProjectGroups)
-                if (expandedProjectGroups.has(group.key)) expandedProjectGroups.delete(group.key)
-                else expandedProjectGroups.add(group.key)
-                return { ...previous, expandedProjectGroups }
-              })}
-            >
-              {projectExpanded ? (
-                <>
-                  <ChevronDown aria-hidden="true" className="size-3 shrink-0" />
-                  <span>{uiText("collapse_afd4b783")}</span>
-                </>
-              ) : (
-                <>
-                  <ChevronRight aria-hidden="true" className="size-3 shrink-0" />
-                  <span>{uiText("expand_00bd3960")} {uiText("count_items", { count: group.chats.length - PROJECT_GROUP_PREVIEW_COUNT })}</span>
-                </>
-              )}
-            </button>
-          ) : null}
+          {project ? (expanded ? renderProjectSections(group) : null) : renderSessionBucket(group, expanded, group.key)}
         </div>
       </div>
-    )
-  }
-
-  const renderVisibleGroups = () => {
-    if (!isProjectMode) return visibleGroups.map(renderGroup)
-
-    const pinnedGroups: ChatGroup[] = []
-    const unsectionedGroups: ChatGroup[] = []
-    const sectionGroups = new Map<string, ChatGroup[]>()
-
-    for (const group of visibleGroups) {
-      if (group.key === "__pinned") {
-        pinnedGroups.push(group)
-        continue
-      }
-      const section = projects[group.key]?.section?.trim()
-      if (!section) {
-        unsectionedGroups.push(group)
-        continue
-      }
-      const entries = sectionGroups.get(section) ?? []
-      entries.push(group)
-      sectionGroups.set(section, entries)
-    }
-
-    return (
-      <>
-        {pinnedGroups.map(renderGroup)}
-        {[...sectionGroups.entries()]
-          .sort(([left], [right]) => left.localeCompare(right))
-          .map(([section, groupedProjects]) => {
-            const expanded = !!query || !disclosures.closedSections.has(section)
-            const contentId = `${disclosureId}-section-${encodeURIComponent(section)}`
-            return (
-              <div key={section} className="mb-1" data-project-section={section}>
-                <button
-                  type="button"
-                  aria-label={uiText("toggle_section_541f86f6", { v0: section })}
-                  aria-expanded={expanded}
-                  aria-controls={contentId}
-                  disabled={!!query}
-                  className="flex w-full items-center gap-1 rounded-md px-2 pt-3 pb-1 text-left text-xs font-medium text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default"
-                  onClick={() => setDisclosures((previous) => {
-                    const closedSections = new Set(previous.closedSections)
-                    if (closedSections.has(section)) closedSections.delete(section)
-                    else closedSections.add(section)
-                    return { ...previous, closedSections }
-                  })}
-                >
-                  <ChevronRight aria-hidden="true" className={cn("size-3 shrink-0", expanded && "rotate-90")} />
-                  <span className="truncate">{section}</span>
-                  <span className="ml-auto whitespace-nowrap pl-2 font-normal">{uiText("count_projects", { count: groupedProjects.length })}</span>
-                </button>
-                <div id={contentId} hidden={!expanded}>
-                  {expanded ? groupedProjects.map(renderGroup) : null}
-                </div>
-              </div>
-            )
-          })}
-        {unsectionedGroups.map(renderGroup)}
-      </>
     )
   }
 
@@ -440,12 +439,13 @@ export function Sidebar({
       )}
 
       <aside
+        onDragStart={(event) => { draggingProjectId.current = readDraggedSession(event)?.projectId ?? null }}
+        onDragEnd={() => { draggingProjectId.current = null; setDragOverSection(null) }}
         style={{
           ["--sidebar-w" as string]: `${width}px`,
           ["--text-xs" as string]: "13px",
           ["--text-sm" as string]: "15px",
           fontFamily: '-apple-system, "PingFang SC", sans-serif',
-          WebkitFontSmoothing: "auto",
           color: "var(--sidebar-foreground)",
         }}
         className={cn(
@@ -455,6 +455,7 @@ export function Sidebar({
         )}
       >
         <div className="flex items-center gap-2 px-3 py-3">
+          <BrandMark className="size-7" />
           <span className="flex-1 text-sm font-semibold">Bodhi</span>
           <Button
             size="icon"
@@ -561,7 +562,7 @@ export function Sidebar({
               {booted ? uiText("no_sessions_yet_69e71f03") : uiText("loading_4927a53b")}
             </p>
           )}
-          {renderVisibleGroups()}
+          {visibleGroups.map(renderGroup)}
           {!query && olderGroups.length > 0 ? (
             <div className="mb-1">
               <button
@@ -602,7 +603,15 @@ export function Sidebar({
       <ProjectSectionDialog
         key={sectioningProjectId ?? "closed"}
         projectId={sectioningProjectId}
-        existingSections={projectSections}
+        existingSections={sectioningProjectId ? getProjectSections(sectionPreferences, sectioningProjectId, projects[sectioningProjectId]?.section) : []}
+        mode={sectionDialogMode}
+        onCreate={(name) => {
+          const sectionId = `section:${crypto.randomUUID()}`
+          if (sectioningProjectId) updateSectionPreferences((previous) => createProjectSection(previous, sectioningProjectId, name, projects[sectioningProjectId]?.section, sectionId))
+        }}
+        onRemove={(sectionId) => {
+          if (sectioningProjectId) updateSectionPreferences((previous) => removeProjectSection(previous, sectioningProjectId, sectionId, projects[sectioningProjectId]?.section))
+        }}
         onClose={() => setSectioningProjectId(null)}
       />
 

@@ -2,7 +2,6 @@ import { uiText, useUiLocale } from "@shared/i18n/ui"
 import {
   Archive,
   ArchiveRestore,
-  Check,
   ChevronRight,
   FolderClosed,
   FolderOpen,
@@ -21,9 +20,6 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
-  DropdownMenuSub,
-  DropdownMenuSubContent,
-  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { cn } from "@/lib/utils"
@@ -36,14 +32,12 @@ export function ProjectGroupHeader({
   contentId,
   disabled,
   pinned,
-  sections,
-  sectionBusy,
   onToggleExpanded,
   onNewChat,
   onEdit,
   onTogglePin,
-  onMoveToSection,
   onCreateSection,
+  onManageSections,
   onReveal,
   onArchive,
 }: {
@@ -54,14 +48,12 @@ export function ProjectGroupHeader({
   contentId: string
   disabled: boolean
   pinned: boolean
-  sections: readonly string[]
-  sectionBusy: boolean
   onToggleExpanded: () => void
   onNewChat: () => void
   onEdit: () => void
   onTogglePin: () => void
-  onMoveToSection: (section: string | null) => void
   onCreateSection: () => void
+  onManageSections: () => void
   onReveal: () => void
   onArchive: () => void
 }) {
@@ -124,30 +116,10 @@ export function ProjectGroupHeader({
             <DropdownMenuItem onClick={onTogglePin}>
               {pinned ? <PinOff /> : <Pin />} {pinned ? uiText("unpin_c92179b7") : uiText("pin_173f88d2")}
             </DropdownMenuItem>
-            <DropdownMenuSub>
-              <DropdownMenuSubTrigger disabled={project.status === "archived" || sectionBusy}>
-                <List /> Section
-              </DropdownMenuSubTrigger>
-              <DropdownMenuSubContent>
-                {sections.map((section) => (
-                  <DropdownMenuItem
-                    key={section}
-                    disabled={sectionBusy || project.section === section}
-                    onClick={() => onMoveToSection(section)}
-                  >
-                    {project.section === section ? <Check /> : <List />}
-                    {section}
-                  </DropdownMenuItem>
-                ))}
-                {project.section ? (
-                  <DropdownMenuItem disabled={sectionBusy} onClick={() => onMoveToSection(null)}>
-                    <List />{uiText("no_section_e1585232")}</DropdownMenuItem>
-                ) : null}
-                {sections.length > 0 || project.section ? <DropdownMenuSeparator /> : null}
-                <DropdownMenuItem disabled={sectionBusy} onClick={onCreateSection}>
-                  <Plus />{uiText("new_section_6a6aedcb")}</DropdownMenuItem>
-              </DropdownMenuSubContent>
-            </DropdownMenuSub>
+            <DropdownMenuItem onClick={onCreateSection}>
+              <Plus />{uiText("sidebar_create_section")}</DropdownMenuItem>
+            <DropdownMenuItem onClick={onManageSections}>
+              <List />{uiText("sidebar_manage_sections")}</DropdownMenuItem>
             <DropdownMenuItem disabled={project.status === "archived"} onClick={onEdit}>
               <Pencil />{uiText("edit_project_577feeef")}</DropdownMenuItem>
             <DropdownMenuSeparator />

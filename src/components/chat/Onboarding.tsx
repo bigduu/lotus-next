@@ -1,6 +1,7 @@
 import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { useState } from "react"
 import { Button } from "@/components/ui/button"
+import { BrandMark } from "@/components/ui/brand-mark"
 import {
   ResponsiveDialog,
   ResponsiveDialogContent,
@@ -37,7 +38,7 @@ export function Onboarding() {
         showCloseButton={false}
         className="p-6 text-center sm:max-w-sm"
       >
-        <div className="mx-auto mb-3 size-12 rounded-2xl bg-primary" />
+        <BrandMark className="mx-auto mb-3 size-12" />
         <ResponsiveDialogTitle className="text-lg">
           {uiText("welcome_to_bodhi_094c7fae")}</ResponsiveDialogTitle>
         <p className="mt-2 text-sm leading-relaxed text-muted-foreground">

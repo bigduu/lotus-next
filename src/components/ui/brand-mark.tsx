@@ -1,0 +1,28 @@
+import type { ComponentProps } from "react"
+
+import { cn } from "@/lib/utils"
+
+/** A compact rendering of Bodhi's tree identity, legible in navigation chrome. */
+function BrandMark({ className, ...props }: ComponentProps<"svg">) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox="0 0 32 32"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.6"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      focusable="false"
+      className={cn("size-8 shrink-0 text-primary", className)}
+      {...props}
+    >
+      <path d="M10.5 21c-2.4 1.7-5.7.7-7-1.8-1.5-2.8-.3-5.9 2.3-7.2-.4-3 1.8-5.6 4.8-5.3a5.8 5.8 0 0 1 10.8 0c3-.3 5.2 2.3 4.8 5.3 2.6 1.3 3.8 4.4 2.3 7.2-1.3 2.5-4.6 3.5-7 1.8" />
+      <path d="M16 6.5c-2.6 2.7-2.6 5.2 0 7.5 2.6-2.3 2.6-4.8 0-7.5ZM7.5 12.5c.3 4.3 2.6 6.3 6.4 5.5-.6-3.7-2.8-5.5-6.4-5.5ZM24.5 12.5c-.3 4.3-2.6 6.3-6.4 5.5.6-3.7 2.8-5.5 6.4-5.5Z" />
+      <path d="M16 14v8c0 3.2-2.2 5.7-5.5 6.5M16 22c0 3.2 2.2 5.7 5.5 6.5M11 15.5l5 6 5-6M6 29.5c6.7-2 13.3-2 20 0" />
+    </svg>
+  )
+}
+
+export { BrandMark }
