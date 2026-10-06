@@ -65,49 +65,235 @@ jobs:
           workspaces: .e2e-actor-bamboo
           shared-key: native-actor-browser
 
-      - name: Compile the locked native fixture separately
+      - name: Compile bounded base and observer-control fixtures
         timeout-minutes: 30
         working-directory: .e2e-actor-bamboo
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p ../test-results-actor-native
-          test "$(git rev-parse HEAD)" = "$BAMBOO_ACTOR_FIXTURE_REVISION"
-          cargo test --locked --test local_zero_tool_actor --no-run --message-format=json \
-            > ../test-results-actor-native/compile.jsonl 2> ../test-results-actor-native/compile.log
-          jq -r 'select(.reason == "compiler-artifact" and .target.name == "local_zero_tool_actor" and .profile.test) | .executable // empty' \
-            ../test-results-actor-native/compile.jsonl > ../test-results-actor-native/executable
-          test "$(wc -l < ../test-results-actor-native/executable)" -eq 1
-          { git rev-parse HEAD; git -C .. rev-parse HEAD; rustc --version; node --version; } \
-            > ../test-results-actor-native/build-identity.txt
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib, json, os, shutil, subprocess
+          
+          root = Path.cwd()
+          out = root.parent / 'test-results-actor-native'
+          out.mkdir(exist_ok=True)
+          binaries = root / '.actor-proof-binaries'
+          binaries.mkdir()
+          builder = root / 'crates/app/bamboo-server/src/app_state/builder.rs'
+          original = builder.read_bytes()
+          needle = b'external_runner.set_actor_event_observer(Some(actor_event_hub.clone()));'
+          assert original.count(needle) == 1, 'one reviewed observer binding'
+          sha = lambda p: hashlib.sha256(Path(p).read_bytes()).hexdigest()
+          manifest = {'bamboo_commit': subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip(),
+                      'lotus_commit': subprocess.check_output(['git', '-C', '..', 'rev-parse', 'HEAD'], text=True).strip(),
+                      'builder_source_sha256': sha(builder), 'variants': {}}
+          assert manifest['bamboo_commit'] == os.environ['BAMBOO_ACTOR_FIXTURE_REVISION']
+          try:
+              for name in ['base', 'no_observer']:
+                  if name == 'no_observer':
+                      builder.write_bytes(original.replace(needle, b'external_runner.set_actor_event_observer(None);'))
+                      (out / 'no-observer.patch').write_bytes(subprocess.check_output(['git', 'diff', '--', str(builder)]))
+                  with (out / f'compile-{name}.jsonl').open('w') as stdout, (out / f'compile-{name}.log').open('w') as stderr:
+                      subprocess.run(['cargo', 'test', '--locked', '--test', 'local_zero_tool_actor', '--no-run', '--message-format=json'],
+                                     stdout=stdout, stderr=stderr, check=True)
+                  messages = [json.loads(line) for line in (out / f'compile-{name}.jsonl').read_text().splitlines()]
+                  assert messages[-1] == {'reason': 'build-finished', 'success': True}
+                  def executable(target):
+                      paths = [m['executable'] for m in messages if m.get('reason') == 'compiler-artifact'
+                               and m['target']['name'] == target and m.get('executable')]
+                      assert len(paths) == 1, (target, paths)
+                      return Path(paths[0])
+                  fixture, bamboo = executable('local_zero_tool_actor'), executable('bamboo')
+                  saved_fixture, saved_bamboo = binaries / f'{name}-fixture', binaries / f'{name}-bamboo'
+                  shutil.copy2(fixture, saved_fixture)
+                  shutil.copy2(bamboo, saved_bamboo)
+                  manifest['variants'][name] = {'fixture': str(saved_fixture), 'fixture_sha256': sha(saved_fixture),
+                      'bamboo': str(saved_bamboo), 'bamboo_sha256': sha(saved_bamboo), 'runtime_path': str(bamboo),
+                      'builder_source_sha256': sha(builder)}
+          finally:
+              builder.write_bytes(original)
+              manifest['builder_restored'] = sha(builder) == manifest['builder_source_sha256']
+              (out / 'binary-identity.json').write_text(json.dumps(manifest, indent=2))
+          assert manifest['builder_restored']
+          subprocess.run(['git', 'diff', '--exit-code'], check=True)
+          assert manifest['variants']['base']['bamboo_sha256'] != manifest['variants']['no_observer']['bamboo_sha256']
+          (out / 'build-identity.txt').write_text('\n'.join([manifest['bamboo_commit'], manifest['lotus_commit'],
+              subprocess.check_output(['rustc', '--version'], text=True).strip(),
+              subprocess.check_output(['node', '--version'], text=True).strip()]) + '\n')
+          PY
 
-      - name: Verify native authority and real Actor browser receipts
+      - name: Verify three negative controls and restored real Actor proof
         timeout-minutes: 10
         shell: bash
-        env:
-          BAMBOO_ACTOR_BROWSER_STATIC_DIR: ${{ github.workspace }}/dist
-          BAMBOO_ACTOR_BROWSER_INFO: ${{ github.workspace }}/test-results-actor-native/fixture.json
-          LOTUS_ACTOR_FIXTURE_INFO: ${{ github.workspace }}/test-results-actor-native/fixture.json
         run: |
           set -euo pipefail
-          fixture="$(cat test-results-actor-native/executable)"
-          "$fixture" --ignored --exact actual_message_only_native_actor_browser_fixture --nocapture \
-            > test-results-actor-native/native.log 2>&1 &
-          native_pid=$!
-          browser_status=0
-          npx playwright test --config=playwright.actor-runtime.config.ts || browser_status=$?
-          # A launch failure has no test catch handler. Release the bounded native
-          # wait with a failure receipt so Rust's owned Host cleanup still runs.
-          if [ ! -f test-results-actor-native/fixture.done ]; then
-            printf '%s\n' '{"pass":false,"error":"browser did not produce a completion receipt"}' \
-              > test-results-actor-native/fixture.done
-          fi
-          native_status=0
-          wait "$native_pid" || native_status=$?
-          test "$browser_status" -eq 0
-          test "$native_status" -eq 0
-          jq -e '.pass == true and .held_cut_runs == 1 and .child_provider_calls == 1 and .host_killed_and_waited == true' \
-            test-results-actor-native/fixture.native
+          python3 - <<'PY'
+          from pathlib import Path
+          import base64, hashlib, json, os, re, shutil, signal, subprocess
+          
+          root = Path.cwd()
+          out = root / 'test-results-actor-native'
+          manifest = json.loads((out / 'binary-identity.json').read_text())
+          hook = root / 'src/hooks/useActorSnapshot.ts'
+          builder = root / '.e2e-actor-bamboo/crates/app/bamboo-server/src/app_state/builder.rs'
+          original = hook.read_bytes()
+          sha = lambda p: hashlib.sha256(Path(p).read_bytes()).hexdigest()
+          hook_hash = sha(hook)
+          results = []
+          
+          def write(path, value):
+              path.write_text(json.dumps(value, indent=2))
+          
+          def walk(value):
+              if isinstance(value, dict):
+                  yield value
+                  for child in value.values():
+                      yield from walk(child)
+              elif isinstance(value, list):
+                  for child in value:
+                      yield from walk(child)
+          
+          def raw_assertion_message(test):
+              return re.sub(r'\x1b\[[0-9;]*m', '', (test.get('error') or {}).get('message', ''))
+          
+          def restored_sources():
+              assert sha(hook) == hook_hash, 'exact frontend source restored'
+              assert sha(builder) == manifest['builder_source_sha256'], 'exact backend source restored'
+              subprocess.run(['git', 'diff', '--exit-code'], check=True)
+              subprocess.run(['git', '-C', '.e2e-actor-bamboo', 'diff', '--exit-code'], check=True)
+          
+          def run_case(name, variant):
+              case = out / name
+              case.mkdir()
+              binary = manifest['variants'][variant]
+              assert sha(binary['fixture']) == binary['fixture_sha256']
+              assert sha(binary['bamboo']) == binary['bamboo_sha256']
+              shutil.copy2(binary['bamboo'], binary['runtime_path'])
+              assert sha(binary['runtime_path']) == binary['bamboo_sha256']
+              info = case / 'fixture.json'
+              env = os.environ | {'BAMBOO_ACTOR_BROWSER_INFO': str(info), 'LOTUS_ACTOR_FIXTURE_INFO': str(info),
+                  'BAMBOO_ACTOR_BROWSER_STATIC_DIR': str(root / 'dist'),
+                  'PLAYWRIGHT_JSON_OUTPUT_FILE': str(case / 'playwright.json'),
+                  'PLAYWRIGHT_HTML_OUTPUT_DIR': str(case / 'report')}
+              write(case / 'identity.json', {'case': name, 'variant': variant, 'binary': binary,
+                  'hook_sha256': sha(hook), 'builder_sha256': sha(builder), 'bamboo_commit': manifest['bamboo_commit'],
+                  'lotus_commit': manifest['lotus_commit'], 'restored_positive': name == 'restored_positive'})
+              with (case / 'native.log').open('w') as native_log, (case / 'browser.log').open('w') as browser_log:
+                  native = subprocess.Popen([binary['fixture'], '--ignored', '--exact',
+                      'actual_message_only_native_actor_browser_fixture', '--nocapture'],
+                      env=env, stdout=native_log, stderr=subprocess.STDOUT, start_new_session=True)
+                  try:
+                      browser = subprocess.run(['npx', 'playwright', 'test', '--config=playwright.actor-runtime.config.ts',
+                          '--reporter=line,json,html', '--output=' + str(case / 'playwright')],
+                          env=env, stdout=browser_log, stderr=subprocess.STDOUT, timeout=270)
+                  finally:
+                      done = case / 'fixture.done'
+                      if not done.exists():
+                          pending = case / 'fixture.done.pending'
+                          write(pending, {'pass': False, 'error': 'browser did not produce a completion receipt'})
+                          pending.rename(done)
+                      try:
+                          native_status = native.wait(timeout=150)
+                      except subprocess.TimeoutExpired:
+                          os.killpg(native.pid, signal.SIGTERM)
+                          native.wait(timeout=10)
+                          raise AssertionError('native did not provide bounded owned cleanup')
+              write(case / 'exit-status.json', {'browser': browser.returncode, 'native': native_status})
+              fixture = json.loads(info.read_text())
+              report = json.loads((case / 'playwright.json').read_text())
+              tests = [item for item in walk(report) if 'workerIndex' in item and 'attachments' in item and 'retry' in item]
+              assert len(tests) == 1 and tests[0]['retry'] == 0, 'one unretried browser test'
+              test = tests[0]
+              attachments = [a for a in test['attachments'] if a['name'] == 'native-actor-wire-receipts']
+              assert len(attachments) == 1 and attachments[0].get('body'), 'actual wire receipt required'
+              wire = json.loads(base64.b64decode(attachments[0]['body']))
+              write(case / 'wire-receipts.json', wire)
+              assert not wire['page_errors'], 'page crash cannot count as a negative'
+              cleanup = [json.loads(line) for line in (case / 'fixture.cleanup.jsonl').read_text().splitlines()]
+              expected_hosts = 2 if name in ['clear_gap', 'restored_positive'] else 1
+              assert len(cleanup) == expected_hosts
+              assert len({row['pid'] for row in cleanup}) == expected_hosts
+              assert cleanup[0]['pid'] == fixture['host_pid'] and cleanup[0]['phase'] == 'initial_host'
+              for row in cleanup:
+                  assert row['owner'] == 'native_actor_fixture' and row['kill_success'] and row['wait_success']
+                  assert row['host_killed_and_waited'] and row['kill_error'] is None and row['wait_error'] is None
+              if expected_hosts == 2:
+                  restarted = json.loads((case / 'fixture.restarted').read_text())
+                  assert restarted['previous_host_pid'] == fixture['host_pid'] and restarted['previous_host_killed_and_waited']
+                  assert cleanup[0]['reason'] == 'completed_before_cold_reopen' and not cleanup[0]['unwinding']
+                  assert cleanup[1]['pid'] == restarted['host_pid'] and cleanup[1]['phase'] == 'restarted_host'
+              child = fixture['child_id']
+              sent = [row['value'] for row in wire['frames'] if row['direction'] == 'sent']
+              received = [row['value'] for row in wire['frames'] if row['direction'] == 'received']
+              # Formatted errors include neighboring source lines; they cannot identify
+              # the failed gate. Use only the thrown assertion's raw message.
+              error = raw_assertion_message(test)
+              if name != 'restored_positive':
+                  assert browser.returncode != 0 and native_status != 0 and test['status'] == 'failed'
+                  assert 'Test timeout of' not in error, 'overall timeout cannot count as a controlled failure'
+                  assert json.loads((case / 'fixture.done').read_text())['pass'] is False
+                  assert cleanup[-1]['reason'] == 'drop' and cleanup[-1]['unwinding']
+              if name == 'no_subscribe':
+                  assert 'selected Child requires canonical Actor interest' in error
+                  assert not (case / 'fixture.release').exists() and not (case / 'fixture.completed').exists()
+                  assert not any(f.get('type') == 'subscribe' and f.get('ch') == 'actor.' + child for f in sent)
+                  assert any(f.get('type') == 'subscribe' and f.get('ch') == 'message.' + child for f in sent)
+                  assert wire['history'] and all(h['answers'] == 0 for h in wire['history'])
+              else:
+                  completed = json.loads((case / 'fixture.completed').read_text())
+                  assert completed['completed'] and completed['held_cut_runs'] == 1 and completed['child_provider_calls'] == 1
+                  assert completed['root_provider_calls'] in [2, 3]
+                  assert completed['actor_id'] == child and completed['activation_id'] == fixture['activation_id']
+                  assert any(h['answers'] == 1 for h in wire['history']), 'independent safe history completed'
+                  if name == 'no_observer':
+                      assert 'native producer must emit a real body-free actor_changed' in error
+                      assert not (case / 'fixture.restart').exists()
+                      assert any(f.get('ch') == 'actor.' + child and f.get('control', {}).get('reason') == 'initial' for f in received)
+                      assert not any(f.get('ch') == 'actor.' + child and f.get('event', {}).get('type') == 'actor_changed' for f in received)
+                  elif name == 'clear_gap':
+                      assert 'toBeVisible' in error and 'data-actor-gap-origin' in error and child in error
+                      assert any(f.get('ch') == 'actor.' + child and f.get('control', {}).get('reason') == 'gap' for f in received)
+                      assert any(f.get('ch') == 'actor.' + child and f.get('event', {}).get('type') == 'actor_changed' for f in received)
+                  else:
+                      assert name == 'restored_positive' and browser.returncode == 0 and native_status == 0 and test['status'] == 'passed'
+                      native_receipt = json.loads((case / 'fixture.native').read_text())
+                      assert native_receipt['pass'] and native_receipt['held_cut_runs'] == 1 and native_receipt['child_provider_calls'] == 1
+                      assert native_receipt['root_provider_calls'] == completed['root_provider_calls']
+                      assert native_receipt['host_killed_and_waited'] and not any(row['unwinding'] for row in cleanup)
+                      assert cleanup[1]['reason'] == 'completed_transport_cleanup'
+              results.append({'case': name, 'verified': True, 'expected_failure': name != 'restored_positive',
+                  'browser_status': test['status'], 'native_exit': native_status, 'cleanup': cleanup, 'assertion': error})
+              write(out / 'controls-summary.json', results)
+          
+          try:
+              restored_sources()
+              run_case('no_observer', 'no_observer')
+              controls = [
+                  ('no_subscribe', b'    const subscription = subscribeActor(interestedActorId, {',
+                   b'    if (interestedActorId !== rootId) return // Negative control: omit Child Actor interest\n    const subscription = subscribeActor(interestedActorId, {'),
+                  ('clear_gap', b'      snapshotRef.current = snapshot\n',
+                   b'      workerGap.current = null // Negative control: wrongly clear Actor continuity on tree refresh\n      snapshotRef.current = snapshot\n')]
+              for name, before, after in controls:
+                  assert original.count(before) == 1, 'one reviewed mutation location'
+                  hook.write_bytes(original.replace(before, after))
+                  (out / (name + '.patch')).write_bytes(subprocess.check_output(['git', 'diff', '--', str(hook)]))
+                  with (out / (name + '-build.log')).open('w') as log:
+                      subprocess.run(['npm', 'run', 'build'], stdout=log, stderr=subprocess.STDOUT, check=True, timeout=120)
+                  run_case(name, 'base')
+                  hook.write_bytes(original)
+              restored_sources()
+              with (out / 'restored-build.log').open('w') as log:
+                  subprocess.run(['npm', 'run', 'build'], stdout=log, stderr=subprocess.STDOUT, check=True, timeout=120)
+              restored_sources()
+              run_case('restored_positive', 'base')
+              assert len(results) == 4 and all(row['verified'] for row in results)
+          finally:
+              hook.write_bytes(original)
+              restored_sources()
+              write(out / 'restored-source-hashes.json', {'hook_sha256': sha(hook), 'builder_sha256': sha(builder),
+                  'original_hook_sha256': hook_hash, 'original_builder_sha256': manifest['builder_source_sha256']})
+          PY
 
       - name: Upload native Actor evidence
         if: ${{ always() }}
