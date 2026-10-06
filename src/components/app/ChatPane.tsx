@@ -178,6 +178,7 @@ export function ChatPane({
   onOpenSidebar,
   sidebarCollapsed,
   secondary,
+  pageVisible = true,
 }: {
   chat: ChatState
   pickedWorkspace: string | null
@@ -201,6 +202,8 @@ export function ChatPane({
   sidebarCollapsed: boolean
   /** When set, render a slim split-pane header (session picker) instead of the full one. */
   secondary?: SecondaryConfig
+  /** Retain the mounted conversation while another app page is visible. */
+  pageVisible?: boolean
 }) {
   useUiLocale()
   const {
@@ -282,7 +285,7 @@ export function ChatPane({
   const splitVisible = useMediaQuery("(min-width: 768px)")
   const [chatLayoutRef, chatLayoutWidth] = useContainerWidth<HTMLDivElement>()
   const environmentHasRoom = chatLayoutWidth >= ENVIRONMENT_AUTO_SHOW_MIN_WIDTH
-  useMarkSessionRead(!secondary || splitVisible ? currentChat : null)
+  useMarkSessionRead(pageVisible && (!secondary || splitVisible) ? currentChat : null)
   const [environmentPreference, setEnvironmentPreference] =
     useState<EnvironmentPreference>("auto")
   const environmentId = useId()

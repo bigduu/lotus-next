@@ -2,18 +2,15 @@ import { uiText, useUiLocale } from "@shared/i18n/ui"
 import {
   lazy,
   Suspense,
+  useEffect,
+  useId,
+  useRef,
   useState,
   type ComponentType,
 } from "react"
-import { X } from "lucide-react"
+import { ArrowLeft } from "lucide-react"
 import { ErrorBoundary } from "@/components/app/ErrorBoundary"
 import { Button } from "@/components/ui/button"
-import {
-  ResponsiveDialog,
-  ResponsiveDialogContent,
-  ResponsiveDialogTitle,
-} from "@/components/ui/responsive-dialog"
-import { cn } from "@/lib/utils"
 import type { SettingsTabId } from "./Settings"
 
 export interface SettingsProps {
@@ -64,7 +61,7 @@ function SettingsLoadFailure({ onClose }: { onClose: () => void }) {
 
 const defaultLoadSettings: SettingsLoader = () => import("./Settings")
 
-/** The single stable, responsive shell around the lazy Settings feature. */
+/** The stable page shell around the lazy Settings feature. */
 export function LazySettings({
   open,
   onClose,
@@ -72,58 +69,64 @@ export function LazySettings({
 }: SettingsProps) {
   useUiLocale()
   // Both owners are initialized once for this boundary instance. Closing the
-  // Radix content preserves the accepted tab while the lazy type stays cached.
+  // page preserves the accepted tab while the lazy type stays cached.
   const [tab, setTab] = useState<SettingsTabId>("general")
+  const titleId = useId()
+  const titleRef = useRef<HTMLHeadingElement>(null)
   const [SettingsFeature] = useState(() =>
     lazy(async () => {
       const loaded = await loadSettings()
       return { default: loaded.SettingsContent }
     }),
   )
+
+  useEffect(() => {
+    if (open) titleRef.current?.focus({ preventScroll: true })
+  }, [open])
+
   if (!open) return null
 
   return (
-    <ResponsiveDialog
-      open
-      onOpenChange={(nextOpen) => {
-        if (!nextOpen) onClose()
+    <main
+      data-slot="settings-page"
+      aria-labelledby={titleId}
+      className="motion-page-enter animate-in fade-in-0 slide-in-from-bottom-2 flex h-full min-h-0 w-full flex-1 flex-col bg-background"
+      style={{ animationDuration: "var(--motion-normal)", animationTimingFunction: "var(--motion-ease)" }}
+      onKeyDown={(event) => {
+        if (event.key !== "Escape" || event.defaultPrevented || event.nativeEvent.isComposing) return
+        const target = event.target
+        if (target instanceof Element && target.closest(
+          '[role="dialog"], [role="alertdialog"], [role="combobox"], [role="listbox"], [role="menu"], [data-slot="popover-content"], [data-slot="dropdown-menu-content"], select',
+        )) {
+          // Portaled controls still bubble through their React page owner.
+          // Their Escape behavior belongs to the nested control.
+          return
+        }
+        event.preventDefault()
+        onClose()
       }}
     >
-      <ResponsiveDialogContent
-        showCloseButton={false}
-        onInteractOutside={(event) => {
-          const target = event.detail.originalEvent.target
-          if (target instanceof Element && target.closest('[data-slot="popover-content"]')) {
-            // Radix portals live outside the Dialog DOM tree. Keep an intentional
-            // nested combobox selection from dismissing the whole Settings shell.
-            event.preventDefault()
-          }
-        }}
-        className={cn(
-          "h-[88dvh] p-0 sm:h-[80vh]",
-          tab === "model-limits" ? "sm:max-w-5xl" : "sm:max-w-3xl",
-        )}
+      <header
+        className="flex shrink-0 items-center gap-4 border-b p-4 sm:px-6"
+        style={{ borderBottomColor: "color-mix(in oklab, var(--border) 70%, transparent)" }}
       >
-        <div className="flex items-center justify-between border-b px-4 py-3">
-          <ResponsiveDialogTitle>{uiText("system_settings_68ea5dd4")}</ResponsiveDialogTitle>
-          <Button
-            aria-label={uiText("close_settings_77b17fc4")}
-            size="icon"
-            variant="ghost"
-            onClick={onClose}
-          >
-            <X />
-          </Button>
-        </div>
-        <ErrorBoundary
-          name="Settings"
-          fallback={<SettingsLoadFailure onClose={onClose} />}
-        >
-          <Suspense fallback={<SettingsLoading />}>
-            <SettingsFeature tab={tab} onTabChange={setTab} />
-          </Suspense>
-        </ErrorBoundary>
-      </ResponsiveDialogContent>
-    </ResponsiveDialog>
+        <Button variant="ghost" size="sm" onClick={onClose}>
+          <ArrowLeft aria-hidden="true" />
+          {uiText("back_to_chat_5b8ac6b1")}
+        </Button>
+        <div className="h-5 w-px bg-border" aria-hidden="true" />
+        <h1 ref={titleRef} id={titleId} tabIndex={-1} className="text-base font-semibold tracking-tight outline-none sm:text-lg">
+          {uiText("system_settings_68ea5dd4")}
+        </h1>
+      </header>
+      <ErrorBoundary
+        name="Settings"
+        fallback={<SettingsLoadFailure onClose={onClose} />}
+      >
+        <Suspense fallback={<SettingsLoading />}>
+          <SettingsFeature tab={tab} onTabChange={setTab} />
+        </Suspense>
+      </ErrorBoundary>
+    </main>
   )
 }

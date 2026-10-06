@@ -1,4 +1,4 @@
-const settingsChunkUrl = /(?:^|\/)Settings-[A-Za-z0-9_-]+\.js(?:[?#]|$)/
+const settingsChunkUrl = /(?:^|\/)Settings-[A-Za-z0-9_-]+\.(?:js|css)(?:[?#]|$)/
 
 /**
  * Settings has a local Suspense/ErrorBoundary recovery surface. Let its import
@@ -6,11 +6,10 @@ const settingsChunkUrl = /(?:^|\/)Settings-[A-Za-z0-9_-]+\.js(?:[?#]|$)/
  * preload reload policy used by renderer/PDF chunks.
  */
 export const isSettingsFeaturePreloadError = (payload: unknown): boolean => {
-  const details =
-    payload instanceof Error
-      ? `${payload.message}\n${payload.stack ?? ""}`
-      : typeof payload === "string"
-        ? payload
-        : ""
-  return settingsChunkUrl.test(details)
+  if (payload instanceof Error) {
+    return [payload.message, ...(payload.stack?.split("\n") ?? [])].some((line) =>
+      settingsChunkUrl.test(line.trim()),
+    )
+  }
+  return typeof payload === "string" && settingsChunkUrl.test(payload)
 }

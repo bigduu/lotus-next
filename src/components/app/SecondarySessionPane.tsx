@@ -9,6 +9,7 @@ import type { ChatItem } from "@shared/types/chat"
 type Props = {
   sessionId: string | null
   active?: boolean
+  pageVisible?: boolean
   chats: ChatItem[]
   onPickSession: (id: string | null) => void
   onClose: () => void
@@ -26,6 +27,8 @@ function InteractiveSecondaryPane({
   onClose,
   onOpenInspector,
   onOpenReview,
+  active = true,
+  pageVisible = true,
 }: InteractiveProps) {
   useUiLocale()
   const [loadState, setLoadState] = useState<"idle" | "loading" | "error">("idle")
@@ -55,6 +58,7 @@ function InteractiveSecondaryPane({
       ) : null}
       <ChatPane
         chat={chat}
+        pageVisible={pageVisible && active}
         secondary={{ sessionId, chats, onPickSession, onClose, hideClose: true }}
         pickedWorkspace={null}
         onOpenWorkspacePicker={() => {}}

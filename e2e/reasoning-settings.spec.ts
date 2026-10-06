@@ -58,7 +58,7 @@ test("new conversation mirrors the Chat reasoning setting instead of stale Mediu
   await expect(
     page.getByRole("combobox", { name: "对话(必填)推理强度", exact: true }),
   ).toContainText("最大")
-  await page.getByRole("button", { name: "关闭设置", exact: true }).click()
+  await page.getByRole("button", { name: "返回聊天", exact: true }).click()
 
   await page.getByRole("button", { name: "新建会话", exact: true }).click()
   await expect(composerReasoning).toContainText("最大")

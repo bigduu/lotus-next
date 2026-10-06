@@ -60,8 +60,8 @@ function StatTile({
 
 export function SettingsMetrics() {
   const uiText = useUiText()
-  const [preset, setPreset] = useState<PresetId>("30d")
-  const [startDate, setStartDate] = useState<string>(() => addDays(todayString(), -29))
+  const [preset, setPreset] = useState<PresetId>("7d")
+  const [startDate, setStartDate] = useState<string>(() => addDays(todayString(), -6))
   const [endDate, setEndDate] = useState<string>(() => todayString())
 
   const applyPreset = (id: Exclude<PresetId, "custom">, presetDays: number) => {
@@ -74,7 +74,7 @@ export function SettingsMetrics() {
   const days = useMemo(() => {
     if (startDate && endDate) return Math.min(inclusiveDayCount(startDate, endDate), 365)
     if (startDate) return Math.min(inclusiveDayCount(startDate, todayString()), 365)
-    return 30
+    return 7
   }, [startDate, endDate])
 
   const filters = useMemo(

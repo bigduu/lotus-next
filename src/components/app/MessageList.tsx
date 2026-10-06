@@ -742,7 +742,7 @@ export function MessageList({
           className={cn(
             MESSAGE_SURFACE_LAYOUT,
             isUser
-              ? "whitespace-pre-wrap bg-primary text-base leading-7 text-primary-foreground"
+              ? "user-message-surface whitespace-pre-wrap text-base leading-7"
               : ASSISTANT_MESSAGE_SURFACE,
           )}
         >
@@ -876,7 +876,7 @@ export function MessageList({
 
         {pendingUserText ? (
           <div className="mt-2 flex justify-end">
-            <div className="max-w-[85%] overflow-hidden whitespace-pre-wrap rounded-2xl bg-primary px-3.5 py-2 text-base leading-7 text-primary-foreground [overflow-wrap:anywhere]">
+            <div className="user-message-surface max-w-[85%] overflow-hidden whitespace-pre-wrap rounded-2xl px-3.5 py-2 text-base leading-7 [overflow-wrap:anywhere]">
               {pendingUserText}
             </div>
           </div>

@@ -9,7 +9,14 @@ const openSettings = async (page: Page, english: boolean) => {
     await page.getByRole("button", { name: english ? "Menu" : "菜单", exact: true }).click()
   }
   await button.click()
-  await page.getByRole("button", { name: english ? "General" : "通用", exact: true }).click()
+  await selectSettingsCategory(page, "general", english ? "General" : "通用")
+}
+
+const selectSettingsCategory = async (page: Page, id: string, label: string) => {
+  const categories = page.locator("#settings-category")
+  await categories.waitFor({ state: "attached" })
+  if (await categories.isVisible()) await categories.selectOption(id)
+  else await page.getByRole("button", { name: label, exact: true }).click()
 }
 
 for (const initial of ["zh-CN", "en-US"]) {
@@ -37,7 +44,7 @@ for (const initial of ["zh-CN", "en-US"]) {
     await expect(page.getByRole("heading", { name: english ? "系统设置" : "System Settings", exact: true })).toBeVisible()
     await expect(page.locator("html")).toHaveAttribute("lang", next)
     await expect.poll(() => page.evaluate(() => localStorage.getItem("lotus_ui_locale_v1"))).toBe(next)
-    await page.getByRole("button", { name: english ? "关闭设置" : "Close settings", exact: true }).click()
+    await page.getByRole("button", { name: english ? "返回聊天" : "Back to chat", exact: true }).click()
     await expect(page.getByRole("textbox", { name: english ? "消息" : "Messages", exact: true })).toHaveValue("中文 IME draft <code>const x = 1</code>")
     await page.reload()
     await expect(page.getByRole("textbox", { name: english ? "消息" : "Messages", exact: true })).toBeVisible()
@@ -48,9 +55,9 @@ for (const initial of ["zh-CN", "en-US"]) {
       const longLabel = page.getByRole("button", { name: english ? "环境变量" : "Environment Variables", exact: true })
       expect(await longLabel.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true)
     }
-    await page.getByRole("button", { name: english ? "提供方" : "Provider", exact: true }).click()
+    await selectSettingsCategory(page, "providers", english ? "提供方" : "Provider")
     await expect(page.getByText(english ? "默认模型偏好" : "Default model preferences", { exact: true })).toBeVisible()
-    await page.getByRole("button", { name: english ? "系统" : "System", exact: true }).click()
+    await selectSettingsCategory(page, "system", english ? "系统" : "System")
     await page.getByRole("button", { name: english ? "清除本地缓存" : "Clear local storage", exact: true }).click()
     await expect(page.getByRole("heading", { name: english ? "清除本地缓存?" : "Clear local storage?", exact: true })).toBeVisible()
     await page.getByRole("button", { name: english ? "取消" : "Cancel", exact: true }).last().click()

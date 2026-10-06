@@ -1,5 +1,5 @@
 import { useUiText } from "@shared/i18n/ui"
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
 import { Search, Plus, Settings as SettingsIcon, MessageSquare } from "lucide-react"
 import { cn } from "@/lib/utils"
 
@@ -37,8 +37,10 @@ export function CommandPalette({
   const [active, setActive] = useState(0)
   const inputRef = useRef<HTMLInputElement>(null)
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (open) {
+      // Clear the previous search before this input can be painted/edited.
+      // A passive effect can otherwise erase a quickly entered new query.
       setQ("")
       setActive(0)
       requestAnimationFrame(() => inputRef.current?.focus())
