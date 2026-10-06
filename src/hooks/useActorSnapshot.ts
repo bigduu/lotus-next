@@ -13,6 +13,8 @@ interface SnapshotState {
   error: string | null
   /** A gap clears only when its own authority domain is proven recovered. */
   gapReason: ActorSnapshotGapReason | null
+  /** Origin of the retained Actor warning; null for Root/tree observations. */
+  gapActorId: string | null
 }
 
 function failureMessage(error: unknown): string {
@@ -33,7 +35,7 @@ function retryableSnapshotFailure(error: unknown): boolean {
 /** A public snapshot view with one selected or previewed Actor interest. */
 export function useActorSnapshot(rootId: string | null, active: boolean, interestedActorId: string | null = null, descendantCountHint: number | null = null) {
   useUiLocale()
-  const [state, setState] = useState<SnapshotState>({ rootId: null, snapshot: null, loading: false, error: null, gapReason: null })
+  const [state, setState] = useState<SnapshotState>({ rootId: null, snapshot: null, loading: false, error: null, gapReason: null, gapActorId: null })
   const generation = useRef(0)
   const request = useRef<AbortController | null>(null)
   const retryTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -41,7 +43,9 @@ export function useActorSnapshot(rootId: string | null, active: boolean, interes
   const refreshQueued = useRef<string | null>(null)
   const refreshAfterFlight = useRef(false)
   const snapshotRef = useRef<ActorSubtreeSnapshot | null>(null)
-  const workerGap = useRef<ActorSnapshotGapReason | null>(null)
+  // Keep the latest unresolved Actor observation tied to its subscription,
+  // even when another Child is selected. A tree snapshot cannot repair replay.
+  const workerGap = useRef<{ reason: ActorSnapshotGapReason; actorId: string } | null>(null)
   /** undefined means no tree gap; null means the old Root has no proof cursor. */
   const requiredTreeCursor = useRef<string | null | undefined>(undefined)
   const lastCountHint = useRef<{ rootId: string | null; count: number | null }>({ rootId: null, count: null })
@@ -58,13 +62,14 @@ export function useActorSnapshot(rootId: string | null, active: boolean, interes
     const controller = new AbortController()
     request.current = controller
     setState((previous) => ({ rootId: id, snapshot: previous.rootId === id ? previous.snapshot : null,
-      loading: true, error: null, gapReason: previous.rootId === id ? previous.gapReason : null }))
+      loading: true, error: null, gapReason: previous.rootId === id ? previous.gapReason : null,
+      gapActorId: previous.rootId === id ? previous.gapActorId : null }))
     try {
       const snapshot = await getActorSnapshot(id, id, controller.signal)
       if (controller.signal.aborted || generation.current !== version || scope.current.rootId !== id || !scope.current.active) return
       if (snapshotRef.current && actorSnapshotRegresses(snapshotRef.current, snapshot)) {
         setState((previous) => previous.rootId === id ? {
-          ...previous, loading: false, error: null, gapReason: "snapshot_regression",
+          ...previous, loading: false, error: null, gapReason: "snapshot_regression", gapActorId: null,
         } : previous)
         return
       }
@@ -75,7 +80,8 @@ export function useActorSnapshot(rootId: string | null, active: boolean, interes
         requiredTreeCursor.current = undefined
       }
       setState(() => ({ rootId: id, snapshot, loading: false, error: null,
-        gapReason: workerGap.current ?? (requiredTreeCursor.current !== undefined ? "transport_gap" : null) }))
+        gapReason: workerGap.current?.reason ?? (requiredTreeCursor.current !== undefined ? "transport_gap" : null),
+        gapActorId: workerGap.current?.actorId ?? null }))
     } catch (error) {
       if (controller.signal.aborted || generation.current !== version || scope.current.rootId !== id || !scope.current.active) return
       if (snapshotRef.current && requiredTreeCursor.current !== undefined && retryableSnapshotFailure(error)) {
@@ -84,7 +90,7 @@ export function useActorSnapshot(rootId: string | null, active: boolean, interes
         // rate until a covering Root snapshot proves the gap repaired.
         setState((previous) => previous.rootId === id ? {
           ...previous, loading: false, error: failureMessage(error),
-          gapReason: workerGap.current ?? "transport_gap",
+          gapReason: workerGap.current?.reason ?? "transport_gap", gapActorId: workerGap.current?.actorId ?? null,
         } : previous)
         const delay = Math.min(500 * 2 ** Math.min(retryAttempts.current, 6), 30_000)
         retryAttempts.current += 1
@@ -96,7 +102,8 @@ export function useActorSnapshot(rootId: string | null, active: boolean, interes
       }
       snapshotRef.current = null
       setState((previous) => ({ rootId: id, snapshot: null, loading: false, error: failureMessage(error),
-        gapReason: previous.rootId === id ? previous.gapReason : null }))
+        gapReason: previous.rootId === id ? previous.gapReason : null,
+        gapActorId: previous.rootId === id ? previous.gapActorId : null }))
     } finally {
       if (request.current === controller) {
         request.current = null
@@ -161,7 +168,7 @@ export function useActorSnapshot(rootId: string | null, active: boolean, interes
       // Still track their cursor so an unsuccessful or stale read cannot hide
       // an unresolved update, but do not flash a gap warning during normal reads.
       if (gap) setState((previous) => previous.rootId === rootId ? {
-        ...previous, gapReason: workerGap.current ?? "transport_gap",
+        ...previous, gapReason: workerGap.current?.reason ?? "transport_gap", gapActorId: workerGap.current?.actorId ?? null,
       } : previous)
       queueRefresh()
     }
@@ -181,8 +188,10 @@ export function useActorSnapshot(rootId: string | null, active: boolean, interes
     let live = true
     const markGap = (reason: ActorSnapshotGapReason) => {
       if (!live || scope.current.rootId !== rootId || scope.current.interestedActorId !== interestedActorId || !scope.current.active) return
-      workerGap.current = reason
-      setState((previous) => previous.rootId === rootId ? { ...previous, gapReason: reason } : previous)
+      workerGap.current = { reason, actorId: interestedActorId }
+      setState((previous) => previous.rootId === rootId ? {
+        ...previous, gapReason: reason, gapActorId: interestedActorId,
+      } : previous)
       queueRefresh()
     }
     const subscription = subscribeActor(interestedActorId, {
@@ -217,6 +226,6 @@ export function useActorSnapshot(rootId: string | null, active: boolean, interes
   }, [authorized, rootId, interestedActorId, queueRefresh])
 
   const visible = state.rootId === rootId ? state : { rootId, snapshot: null,
-    loading: active && rootId !== null, error: null, gapReason: null }
+    loading: active && rootId !== null, error: null, gapReason: null, gapActorId: null }
   return { ...visible, refresh }
 }

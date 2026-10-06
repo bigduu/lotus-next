@@ -351,6 +351,7 @@ export const uiZhCn = {
   "saved_agent_state_health_and_queue_information_unavaila_f82ce646": "已保存的代理状态 · 健康与队列信息尚未提供",
   "refresh_agent_structure_277bb85d": "刷新代理结构",
   "an_older_agent_structure_was_returned_the_last_confirme_15ec0d29": "代理结构返回了较旧版本；已保留上次确认的状态，请重新读取。",
+  "actor_event_gap_origin": "代理 {{actorId}} 的事件连续性仍无法确认；重新读取状态不能证明事件重放已恢复。",
   "there_is_a_gap_in_agent_events_state_was_reloaded_but_e_0c545fcb": "代理事件出现间隙；已重新读取状态，但事件连续性仍无法确认。",
   "select_a_root_session_to_load_agent_structure_abe1ec98": "选择 Root 会话后读取代理结构。",
   "activity_f98dfe0b": "活动记录",

@@ -351,6 +351,7 @@ export const uiEnUs = {
   "saved_agent_state_health_and_queue_information_unavaila_f82ce646": "Saved agent state · Health and queue information unavailable",
   "refresh_agent_structure_277bb85d": "Refresh agent structure",
   "an_older_agent_structure_was_returned_the_last_confirme_15ec0d29": "An older agent structure was returned. The last confirmed state was kept. Reload to try again.",
+  "actor_event_gap_origin": "Actor {{actorId}} event continuity is still unconfirmed. Reloading state does not prove event replay has recovered.",
   "there_is_a_gap_in_agent_events_state_was_reloaded_but_e_0c545fcb": "There is a gap in agent events. State was reloaded, but event continuity is still unconfirmed.",
   "select_a_root_session_to_load_agent_structure_abe1ec98": "Select a Root session to load agent structure.",
   "activity_f98dfe0b": "Activity",
