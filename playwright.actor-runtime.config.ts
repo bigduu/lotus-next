@@ -15,6 +15,6 @@ export default defineConfig({
   timeout: 240_000,
   expect: { timeout: 15_000 },
   reporter: [["line"], ["html", { open: "never", outputFolder: "playwright-report-actor-runtime" }]],
-  use: { colorScheme: "dark", locale: "zh-CN", screenshot: "only-on-failure", trace: "retain-on-failure" },
+  use: { actionTimeout: 15_000, colorScheme: "dark", locale: "zh-CN", screenshot: "only-on-failure", trace: "retain-on-failure" },
   projects: [{ name: "native-actor-chromium", use: { ...devices["Desktop Chrome"], viewport: { width: 1440, height: 900 } } }],
 })

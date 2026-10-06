@@ -98,7 +98,24 @@ test("one native Child: real Actor/tree invalidation, isolated history and hones
       localStorage.setItem("lotus_next_backend_endpoint_v1", origin)
       localStorage.setItem("lotus_next_last_session", root)
     }, { origin: fixture.origin, root })
+    // The welcome flag does not complete the real backend's first-run setup.
+    // Exercise its ordinary UI action and verify persistence without fixtures.
+    const setupPath = "/api/v1/bamboo/setup/status"
+    const initialSetup = page.waitForResponse((response) => new URL(response.url()).pathname === setupPath)
     await page.goto(fixture.origin)
+    const initialSetupResponse = await initialSetup
+    expect(initialSetupResponse.ok()).toBe(true)
+    expect((await initialSetupResponse.json()).is_complete).toBe(false)
+    await expect(page.getByRole("heading", { name: "首次设置", exact: true })).toBeVisible()
+    const completedSetup = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/v1/bamboo/setup/complete" && response.request().method() === "POST")
+    await page.getByRole("button", { name: "已完成，继续", exact: true }).click()
+    const completedSetupResponse = await completedSetup
+    expect(completedSetupResponse.ok()).toBe(true)
+    expect((await completedSetupResponse.json()).success).toBe(true)
+    const setupStatus = await page.request.get(fixture.origin + setupPath)
+    expect(setupStatus.ok()).toBe(true)
+    expect((await setupStatus.json()).is_complete).toBe(true)
+    await expect(page.getByRole("button", { name: "打开侧边面板" })).toBeVisible()
     await page.getByRole("button", { name: "打开侧边面板" }).click()
     await workbench.getByRole("button", { name: /检查器.*查看当前会话/ }).click()
     await expect(inspect.getByRole("tree")).toBeVisible()
