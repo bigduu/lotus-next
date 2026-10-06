@@ -151,6 +151,21 @@ type RetainedTerminal = {
   baselineMessageId: string | null
 }
 
+type PendingUserMessage = {
+  operationId: number
+  sid: string
+  text: string
+  acknowledgedMessageId: string | null
+  baselineMessageIds: ReadonlySet<string>
+}
+
+const hasPersistedUserMessage = (messages: Message[], pending: PendingUserMessage): boolean =>
+  messages.some((message) => message.role === "user" && (
+    pending.acknowledgedMessageId !== null
+      ? message.id === pending.acknowledgedMessageId
+      : !pending.baselineMessageIds.has(message.id) && "content" in message && message.content.trim() === pending.text
+  ))
+
 const hasPersistedTerminalText = (
   messages: Message[],
   finalText: string,
@@ -338,11 +353,7 @@ export function useChat(
   // conversation, never leaking into another session the user switched to.
   const [streamSid, setStreamSid] = useState<string | null>(null)
   // Optimistic just-sent user message (shows instantly before history reloads).
-  const [pending, setPending] = useState<{
-    operationId: number
-    sid: string
-    text: string
-  } | null>(null)
+  const [pending, setPending] = useState<PendingUserMessage | null>(null)
   const [sending, setSending] = useState(false)
   const { rate: outputRate, record: recordOutput, reset: resetOutputRate } = useOutputRate(sid, (sending || currentChat?.isRunning === true) && streamSid === sid)
   const [submissionPending, setSubmissionPending] = useState(false)
@@ -464,7 +475,10 @@ export function useChat(
   const liveSegments = streamSid === sid ? liveSegmentsState : EMPTY_SEGMENTS
   const streamStatus = streamSid === sid ? streamStatusState : null
   const streamPhase = streamSid === sid ? streamPhaseState : null
-  const pendingUserText = pending?.sid === sid ? pending.text : null
+  const pendingIsHydrated = !!pending && pending.sid === sid && hasPersistedUserMessage(messages, pending)
+  // Swap to the persisted bubble in this render, before the cleanup effect,
+  // so history arrival cannot produce a frame containing both copies.
+  const pendingUserText = pending?.sid === sid && !pendingIsHydrated ? pending.text : null
   const sendFailure = sendFailures.get(sid ?? null) ?? null
 
   const noteSessionOperation = useCallback((sessionId: string | null, operationId: number) => {
@@ -507,8 +521,18 @@ export function useChat(
 
   const clearPendingOperation = useCallback((operationId: number) => {
     if (!mountedRef.current) return
-    setPending((current) => (current?.operationId === operationId ? null : current))
+    setPending((current) => {
+      if (current?.operationId !== operationId) return current
+      const persisted = selectSessionById(current.sid)(useAppStore.getState())?.messages ?? []
+      // History readers may resolve with an old snapshot, skip a missing chat,
+      // or finish before persistence. Only the submitted user message retires it.
+      return hasPersistedUserMessage(persisted, current) ? null : current
+    })
   }, [])
+
+  useEffect(() => {
+    if (pending && pendingIsHydrated) clearPendingOperation(pending.operationId)
+  }, [clearPendingOperation, pending, pendingIsHydrated])
 
   const setStreamStatus = useCallback((status: string | null) => {
     if (streamStatusRef.current === status) return
@@ -1508,6 +1532,9 @@ export function useChat(
         originSessionId: startSid,
         originNavigationEpoch: navigationRef.current.epoch,
       }
+      const baselineMessageIds = new Set(
+        (selectSessionById(startSid ?? null)(useAppStore.getState())?.messages ?? []).map((message) => message.id),
+      )
       operationSequenceRef.current = operation.id
       noteSessionOperation(startSid, operation.id)
       activeSendRef.current = operation
@@ -1519,6 +1546,7 @@ export function useChat(
 
       const templatePrompt = !startSid ? opts?.templatePrompt ?? null : null
       let acknowledgedSessionId: string
+      let acknowledgedMessageId: string | null = null
       try {
         // Client-side prompt enhancement (OS info + operational guidance + the
         // user's own enhancement text), recomputed per send like lotus does.
@@ -1573,6 +1601,7 @@ export function useChat(
         if (!acknowledgedSessionId || (startSid && acknowledgedSessionId !== startSid)) {
           throw new Error("The chat submission response did not acknowledge the expected session.")
         }
+        acknowledgedMessageId = typeof res.message_id === "string" && res.message_id.trim() ? res.message_id.trim() : null
         recordUsedModel(acknowledgedModel)
       } catch (err) {
         console.error("[useChat] message submission was not acknowledged", err)
@@ -1649,6 +1678,8 @@ export function useChat(
             operationId: operation.id,
             sid: acknowledgedSessionId,
             text: body,
+            acknowledgedMessageId,
+            baselineMessageIds,
           })
         }
 
@@ -1695,7 +1726,7 @@ export function useChat(
               .refreshChatsNow()
               .catch((err) => console.warn("[useChat] acknowledged session refresh failed", err))
           }
-          await useAppStore.getState().loadChatHistory(acknowledgedSessionId)
+          await useAppStore.getState().loadChatHistory(acknowledgedSessionId, { mode: "monotonic" })
           clearPendingOperation(operation.id)
         })().catch((err) => {
           console.warn("[useChat] acknowledged message hydration failed", err)
