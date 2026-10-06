@@ -1,7 +1,37 @@
 import path from "node:path"
+import { readFile } from "node:fs/promises"
+import MagicString from "magic-string"
 import { defineConfig, loadEnv, type Plugin } from "vite"
 import react from "@vitejs/plugin-react"
 import tailwindcss from "@tailwindcss/vite"
+
+/** The 1.1.8 tarball omits the TS source referenced by its published map. */
+export function rehypeHardenDevelopmentSourceMap(): Plugin {
+  return {
+    name: "lotus-next-rehype-harden-development-sourcemap",
+    apply: "serve",
+    enforce: "pre",
+    async load(id) {
+      const file = id.split("?", 1)[0]
+      if (!file.replaceAll("\\", "/").endsWith("/node_modules/rehype-harden/dist/index.js")) return
+      const metadata = await readFile(path.resolve(path.dirname(file), "../package.json"), "utf8")
+      const packageInfo = JSON.parse(metadata)
+      if (packageInfo.version !== "1.1.8") return
+      const publishedMap = await readFile(`${file}.map`, "utf8")
+      const map = JSON.parse(publishedMap)
+      if (map.sources?.length !== 1 ||
+        map.sources[0] !== "../src/index.ts" || map.sourcesContent?.[0] != null) return
+
+      const code = await readFile(file, "utf8")
+      // Preserve the shipped sanitizer byte-for-byte and map to that actual
+      // source, rather than retaining coordinates for unpublished TypeScript.
+      return {
+        code,
+        map: new MagicString(code).generateMap({ source: file, includeContent: true, hires: true }),
+      }
+    },
+  }
+}
 
 const allowedPublicViteNames = new Set([
   "VITE_APP_REVISION",
@@ -314,7 +344,7 @@ export default defineConfig(({ mode }) => {
 
   return {
     base: portableArtifactBase,
-    plugins: [react(), tailwindcss(), bundleOwnershipPlugin()],
+    plugins: [react(), tailwindcss(), rehypeHardenDevelopmentSourceMap(), bundleOwnershipPlugin()],
     optimizeDeps: {
       exclude: [...developmentDependencyOptimization.exclude],
       include: [...developmentDependencyOptimization.include],

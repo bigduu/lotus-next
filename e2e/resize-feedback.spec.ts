@@ -23,10 +23,13 @@ test("virtualized history resizes without recursive notifications and retains re
     await page.setViewportSize({ width, height: 700 + width % 200 })
     await expect.poll(() => area.evaluate((el) => el.scrollHeight - el.scrollTop - el.clientHeight)).toBeLessThanOrEqual(2)
     await area.hover()
-    await page.mouse.wheel(0, -400)
+    // Read far enough above the bottom that estimated row-size compensation
+    // cannot turn this reader-control check into a near-bottom anchoring check.
+    await page.mouse.wheel(0, -1200)
     const jump = page.getByRole("button", { name: "滚动到底部", exact: true })
     await expect(jump).toBeVisible()
     await jump.click()
+    await expect.poll(() => area.evaluate((el) => el.scrollHeight - el.scrollTop - el.clientHeight)).toBeLessThanOrEqual(2)
   }
   const diagnostics = await page.evaluate(() => (globalThis as unknown as { __resizeDiagnostics: { errors: unknown[] } }).__resizeDiagnostics)
   await testInfo.attach("resize-delivery-diagnostics", { body: JSON.stringify(diagnostics), contentType: "application/json" })
