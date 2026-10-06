@@ -1,6 +1,6 @@
-import { useEffect, useLayoutEffect, useImperativeHandle, useRef, type Ref, type RefObject } from "react"
-import { isAndroid } from "@tiptap/core"
-import { EditorContent, useEditor } from "@tiptap/react"
+import { useEffect, useLayoutEffect, useImperativeHandle, useRef, useState, type Ref, type RefObject } from "react"
+import { isAndroid, type Editor } from "@tiptap/core"
+import { EditorContent, useEditor, type UseEditorOptions } from "@tiptap/react"
 import Document from "@tiptap/extension-document"
 import Paragraph from "@tiptap/extension-paragraph"
 import Text from "@tiptap/extension-text"
@@ -17,6 +17,14 @@ export type ComposerFocusSnapshot = { text: string; from: number; to: number } |
 export type ComposerInputHandle = { focus: () => void }
 export type FileSuggestion = { query: string; pick: (path: string) => void; dismiss: () => void }
 const fileSuggestionKey = new PluginKey("composer-files")
+
+function referenceSignature(editor: Editor): string {
+  const references: [number, string][] = []
+  editor.state.doc.descendants((node, position) => {
+    if (node.type.name === "mention") references.push([position, node.attrs.id])
+  })
+  return JSON.stringify(references)
+}
 
 type Props = {
   id: string
@@ -39,7 +47,12 @@ type Props = {
 export function ComposerEditor(props: Props) {
   const latest = useRef(props)
   latest.current = props
-  const editor = useEditor({
+  const normalizedValue = props.value.replace(/\r\n?/g, "\n")
+  const publishedDraft = useRef({ text: normalizedValue, references: "[]" })
+  const editorRef = useRef<Editor | null>(null)
+  // This component is keyed by draft identity. Configure the editor once;
+  // controlled text acknowledgements must not reconfigure its DOM view.
+  const [editorOptions] = useState<UseEditorOptions>(() => ({
     extensions: [
       Document, Paragraph, Text, HardBreak, UndoRedo,
       Placeholder.configure({ placeholder: () => latest.current.placeholder }),
@@ -91,7 +104,7 @@ export function ComposerEditor(props: Props) {
       handleKeyDown: (view, event) => {
         if (event.defaultPrevented || event.isComposing || event.keyCode === 229 || view.composing) return false
         if (event.key === "Enter") {
-          if (event.shiftKey) editor?.commands.setHardBreak()
+          if (event.shiftKey) editorRef.current?.commands.setHardBreak()
           else latest.current.onSubmit()
           return true
         }
@@ -133,7 +146,7 @@ export function ComposerEditor(props: Props) {
           // library's IME/Safari/virtual-keyboard safeguards below.
           if (event.key === "Enter" && event.shiftKey && isAndroid() && /Chrome\//.test(navigator.userAgent)) {
             event.preventDefault()
-            editor?.commands.setHardBreak()
+            editorRef.current?.commands.setHardBreak()
             return true
           }
           return false
@@ -160,8 +173,19 @@ export function ComposerEditor(props: Props) {
         },
       },
     },
-    onUpdate: ({ editor }) => latest.current.onChange(composerText(editor.state.doc)),
-  })
+    onUpdate: ({ editor }) => {
+      const text = composerText(editor.state.doc)
+      const references = referenceSignature(editor)
+      // Link/format transactions are document updates, but not new plaintext
+      // drafts. Explicit atom selection still counts as an edit when its text
+      // is unchanged, so an in-flight send cannot clear that newer selection.
+      if (text === publishedDraft.current.text && references === publishedDraft.current.references) return
+      publishedDraft.current = { text, references }
+      latest.current.onChange(text)
+    },
+  }))
+  const editor = useEditor(editorOptions)
+  editorRef.current = editor
 
   useEffect(() => {
     if (editor) exitSuggestion(editor.view, fileSuggestionKey)
@@ -204,9 +228,12 @@ export function ComposerEditor(props: Props) {
   useImperativeHandle(props.inputRef, () => ({ focus: () => editor?.view.focus() }), [editor])
 
   useEffect(() => {
-    if (!editor || composerText(editor.state.doc) === props.value) return
-    editor.commands.setContent(composerDocument(props.value), { emitUpdate: false })
-  }, [editor, props.value])
+    if (!editor) return
+    if (composerText(editor.state.doc) !== normalizedValue) {
+      editor.commands.setContent(composerDocument(normalizedValue), { emitUpdate: false })
+    }
+    publishedDraft.current = { text: normalizedValue, references: referenceSignature(editor) }
+  }, [editor, normalizedValue])
 
   useEffect(() => {
     if (!editor) return

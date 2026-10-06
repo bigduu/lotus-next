@@ -56,6 +56,58 @@ describe("Tiptap composer integration", () => {
     expect(view.props.onChange).toHaveBeenLastCalledWith("before @docs/设计 @ file (2).md suffix")
     expect(view.props.onSubmit).not.toHaveBeenCalled()
   })
+  it("does not publish formatting-only link transactions as new plaintext drafts", () => {
+    const view = mount({ value: "https://example.com/guide" })
+    act(() => view.editor.commands.selectAll())
+    for (let index = 0; index < 3; index += 1) {
+      act(() => view.editor.commands.unsetLink())
+      act(() => view.editor.commands.setLink({ href: "https://example.com/guide" }))
+    }
+    expect(composerText(view.editor.state.doc)).toBe("https://example.com/guide")
+    expect(view.props.onChange).not.toHaveBeenCalled()
+  })
+  it("publishes an explicitly selected reference even when its plaintext is unchanged", async () => {
+    let suggestion: FileSuggestion | null = null
+    const text = "@README.md "
+    const view = mount({ value: text, onSuggestionChange: (next) => { suggestion = next } })
+    await act(async () => { view.editor.commands.setTextSelection(11); await Promise.resolve() })
+    expect((suggestion as FileSuggestion | null)?.query).toBe("README.md")
+    await act(async () => { suggestion!.pick("README.md"); await Promise.resolve() })
+    expect(view.input.querySelector('[data-type="mention"]')?.textContent).toBe("@README.md")
+    expect(composerText(view.editor.state.doc)).toBe(text)
+    expect(view.props.onChange).toHaveBeenCalledExactlyOnceWith(text)
+  })
+  it("keeps editor options stable during controlled draft acknowledgements and busy updates", () => {
+    const view = mount({ value: "one" })
+    const configure = vi.spyOn(view.editor, "setOptions")
+    act(() => view.editor.commands.setTextSelection(4))
+    act(() => view.editor.commands.insertContent(" two"))
+    const selection = view.editor.state.selection.from
+    view.render({ value: "one two", busy: true })
+    expect(configure).not.toHaveBeenCalled()
+    expect(view.editor.state.selection.from).toBe(selection)
+    expect(view.input.getAttribute("aria-busy")).toBe("true")
+  })
+  it("publishes distinct A-to-B-to-A text edits even before the controlled value rerenders", () => {
+    const first = "https://example.com/a"
+    const second = "https://example.com/b"
+    const view = mount({ value: first })
+    act(() => {
+      view.editor.commands.setContent({ type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: second }] }] })
+      view.editor.commands.setContent({ type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: first }] }] })
+    })
+    expect(view.props.onChange).toHaveBeenNthCalledWith(1, second)
+    expect(view.props.onChange).toHaveBeenNthCalledWith(2, first)
+    expect(composerText(view.editor.state.doc)).toBe(first)
+  })
+  it("acknowledges an external draft without later echoing its link formatting", () => {
+    const view = mount({ value: "old draft" })
+    view.render({ value: "https://example.com/restored" })
+    act(() => view.editor.commands.selectAll())
+    act(() => view.editor.commands.unsetLink())
+    expect(composerText(view.editor.state.doc)).toBe("https://example.com/restored")
+    expect(view.props.onChange).not.toHaveBeenCalled()
+  })
   it("reopens a dismissed file query only after another document edit", async () => {
     let suggestion: FileSuggestion | null = null
     const view = mount({ value: "@re", onSuggestionChange: (value) => { suggestion = value } })

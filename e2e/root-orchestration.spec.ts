@@ -189,6 +189,13 @@ for (const legacy of ["missing", "contradictory", "active-run"] as const) {
     await page.addInitScript((id) => { localStorage.setItem("bodhi_onboarded_v1", "1"); localStorage.setItem("lotus_next_last_session", id) }, sessionId)
     const observation = await installArtifactRuntime(page, standaloneScenario)
     let writes = 0; let sends = 0
+    if (legacy === "active-run") {
+      await page.route("**/api/v1/sessions?*", (route) => {
+        const sessions = new URL(route.request().url()).searchParams.get("kind") === "child"
+          ? [] : [{ ...rootSession, is_running: true }]
+        return route.fulfill({ json: { sessions, total: sessions.length, limit: 200, offset: 0 } })
+      })
+    }
     await page.route(`**/api/v1/sessions/${sessionId}`, (route) => route.fulfill({ json: { session: {
       ...rootSession, root_orchestration_only: true, reasoning_effort: "high",
       thinking_mode: legacy === "missing" ? undefined : legacy === "contradictory" ? "standard" : "ultra",
