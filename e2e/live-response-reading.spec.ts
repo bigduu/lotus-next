@@ -56,13 +56,14 @@ test("home-to-chat follows streaming and late layout, pauses for reading, and re
   expect(shimmerStyle.animation).toBe("process-silver-sweep")
   await page.emulateMedia({ reducedMotion: "reduce" })
   await expect(shimmer).toBeVisible()
-  const reducedStyle = await shimmer.evaluate((element) => {
+  await expect.poll(() => shimmer.evaluate((element) => {
     const style = element.ownerDocument.defaultView!.getComputedStyle(element)
     return { image: style.backgroundImage, animation: style.animationName, color: style.color }
+  })).toEqual({
+    image: "none",
+    animation: "none",
+    color: expect.not.stringMatching(/^rgba\(0, 0, 0, 0\)$/),
   })
-  expect(reducedStyle.image).toBe("none")
-  expect(reducedStyle.animation).toBe("none")
-  expect(reducedStyle.color).not.toBe("rgba(0, 0, 0, 0)")
   await page.emulateMedia({ reducedMotion: "no-preference" })
   await expect(shimmer).toBeVisible()
   await reasoning.click()
