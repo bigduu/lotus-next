@@ -5,6 +5,7 @@ import { modelEffortPicker, selectEffort } from "./support/modelEffortPicker.js"
 const mainId = "all-surface-session"
 const sideId = "model-effort-side-root"
 const alternateModel = "local-analysis-model-with-a-long-responsive-display-name"
+const mainTitle = "Main model and effort"
 const birth = "a".repeat(64)
 const at = "2026-10-06T00:00:00.000Z"
 
@@ -33,7 +34,7 @@ async function screenshot(page: Page, info: TestInfo, name: string) {
   await info.attach(detailName, { path: detailFile, contentType: "image/png" })
 }
 
-async function setup(page: Page) {
+async function setup(page: Page, beforeSessionRestoration?: () => Promise<void>) {
   await page.addInitScript((id) => {
     localStorage.setItem("bodhi_onboarded_v1", "1")
     localStorage.setItem("lotus_next_last_session", id)
@@ -49,7 +50,7 @@ async function setup(page: Page) {
     has_attachments: false, is_running: false, last_run_status: "completed",
     permission_mode: "default", bypass_permissions: false,
   })
-  const main = session(mainId, "Main model and effort", "medium")
+  const main = session(mainId, mainTitle, "medium")
   const side = session(sideId, "Side model and effort", "low")
   const sessions = [main, side]
   const patches: Array<{ id: string; body: Record<string, unknown> }> = []
@@ -63,8 +64,18 @@ async function setup(page: Page) {
     route.fulfill({ json: { fetched: [{ provider: "fixture-provider", models }] } }))
   await page.route("**/api/v1/bamboo/provider-catalog", (route) =>
     route.fulfill({ json: { providers: [], models } }))
-  await page.route("**/api/v1/sessions?*", (route) => {
-    const roots = new URL(route.request().url()).searchParams.get("kind") === "child" ? [] : sessions
+  let restorationReleased = false
+  let restorationGate: Promise<void> | undefined
+  await page.route("**/api/v1/sessions?*", async (route) => {
+    const child = new URL(route.request().url()).searchParams.get("kind") === "child"
+    if (!child && beforeSessionRestoration && !restorationReleased) {
+      // Bootstrap and index sync can request roots concurrently. Hold their
+      // initial responses together, then let subsequent refreshes through.
+      restorationGate ??= beforeSessionRestoration()
+      await restorationGate
+      restorationReleased = true
+    }
+    const roots = child ? [] : sessions
     return route.fulfill({ json: { sessions: roots, total: roots.length, limit: 200, offset: 0 } })
   })
   for (const current of sessions) {
@@ -107,8 +118,36 @@ async function setup(page: Page) {
   }
   await page.goto(standaloneScenario.entryUrl)
   await expect(modelEffortPicker(page)).toBeVisible()
+  // A visible picker can still belong to the new-session draft. Wait for the
+  // saved session's identity and validated Root authority before editing it.
+  await expect(page.getByRole("banner")).toContainText(main.title)
+  await expect(modelEffortPicker(page)).toContainText("fixture-model")
+  await expect(modelEffortPicker(page)).toContainText("中")
+  await expect(page.getByRole("status").filter({ hasText: "服务器已确认普通模式" })).toHaveText("服务器已确认普通模式")
   return { observation, main, side, patches, operations }
 }
+
+test("saved-session restoration completes before the picker test edits its draft", async ({ page }) => {
+  const draft = "Preserve this draft while changing model and effort"
+  const input = page.getByRole("textbox", { name: "消息", exact: true })
+  let restorationChecks = 0
+  const { observation, patches } = await setup(page, async () => {
+    restorationChecks += 1
+    await expect(modelEffortPicker(page)).toBeVisible()
+    await expect(page.getByRole("banner")).not.toContainText(mainTitle)
+    await expect(page.getByRole("status").filter({ hasText: "下次创建时使用普通模式" })).toHaveText("下次创建时使用普通模式")
+    await expect(input).toHaveValue("")
+  })
+  expect(restorationChecks).toBe(1)
+  await input.fill(draft)
+  await expect(input).toHaveValue(draft)
+  await selectEffort(page, "高")
+  await expect(modelEffortPicker(page)).toContainText("高")
+  await expect(input).toHaveValue(draft)
+  expect(patches).toEqual([{ id: mainId, body: { reasoning_effort: "high" } }])
+  expect(observation.pageErrors).toEqual([])
+  expect(observation.errorResponses).toEqual([])
+})
 
 test("the combined picker persists effort and model, supports keyboard, and fits the viewport", async ({ page }, info) => {
   const { observation, main, patches, operations } = await setup(page)
