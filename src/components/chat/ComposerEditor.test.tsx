@@ -56,6 +56,67 @@ describe("Tiptap composer integration", () => {
     expect(view.props.onChange).toHaveBeenLastCalledWith("before @docs/设计 @ file (2).md suffix")
     expect(view.props.onSubmit).not.toHaveBeenCalled()
   })
+  it("reopens a dismissed file query only after another document edit", async () => {
+    let suggestion: FileSuggestion | null = null
+    const view = mount({ value: "@re", onSuggestionChange: (value) => { suggestion = value } })
+    await act(async () => { view.editor.commands.setTextSelection(4); await Promise.resolve() })
+    const first = suggestion as FileSuggestion | null
+    expect(first?.query).toBe("re")
+    await act(async () => { first!.dismiss(); await Promise.resolve() })
+    expect(suggestion).toBeNull()
+    await act(async () => { view.editor.view.dispatch(view.editor.state.tr); await Promise.resolve() })
+    expect(suggestion).toBeNull()
+    await act(async () => { view.editor.commands.insertContent("a"); await Promise.resolve() })
+    expect((suggestion as FileSuggestion | null)?.query).toBe("rea")
+    expect(composerText(view.editor.state.doc)).toBe("@rea")
+  })
+  it("focuses synchronously without a delayed focus stealing a newly opened parameter input", () => {
+    const view = mount({ value: "/workflow" })
+    const callbacks: FrameRequestCallback[] = []
+    vi.spyOn(globalThis, "requestAnimationFrame").mockImplementation((callback) => { callbacks.push(callback); return callbacks.length })
+    act(() => view.ref.current!.focus())
+    const parameters = document.body.appendChild(document.createElement("input"))
+    parameters.focus()
+    act(() => { for (const callback of callbacks) callback(0) })
+    expect(document.activeElement).toBe(parameters)
+  })
+  it("handles physical Shift+Enter before the Android keydown bypass with one hard break", () => {
+    vi.spyOn(navigator, "userAgent", "get").mockReturnValue("Mozilla/5.0 (Linux; Android 14) Chrome/151.0.0.0 Mobile Safari/537.36")
+    const view = mount({ value: "one" })
+    act(() => view.editor.commands.setTextSelection(4))
+    const event = new KeyboardEvent("keydown", { key: "Enter", keyCode: 13, shiftKey: true, cancelable: true })
+    let handled: boolean | void = false
+    act(() => { handled = view.editor.view.props.handleDOMEvents!.keydown!(view.editor.view, event) })
+    expect(handled).toBe(true)
+    expect(event.defaultPrevented).toBe(true)
+    act(() => view.editor.commands.insertContent("two"))
+    expect(composerText(view.editor.state.doc)).toBe("one\ntwo")
+    expect(view.props.onSubmit).not.toHaveBeenCalled()
+  })
+  it.each([
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X) AppleWebKit/605.1.15 Version/18.0 Safari/605.1.15",
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148 Safari/604.1",
+    "Mozilla/5.0 (Windows NT 10.0) Chrome/151.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Android 14; Mobile; rv:130.0) Gecko/130.0 Firefox/130.0",
+  ])("leaves non-Android-Chrome Shift+Enter to ProseMirror's native safeguards: %s", (userAgent) => {
+    vi.spyOn(navigator, "userAgent", "get").mockReturnValue(userAgent)
+    const view = mount({ value: "keep" })
+    const event = new KeyboardEvent("keydown", { key: "Enter", keyCode: 13, shiftKey: true, cancelable: true })
+    let handled: boolean | void = false
+    act(() => { handled = view.editor.view.props.handleDOMEvents!.keydown!(view.editor.view, event) })
+    expect(handled).toBe(false)
+    expect(event.defaultPrevented).toBe(false)
+    expect(composerText(view.editor.state.doc)).toBe("keep")
+  })
+  it.each([{ isComposing: true }, { keyCode: 229 }])("never handles an IME Shift+Enter as a line break: %j", (ime) => {
+    vi.spyOn(navigator, "userAgent", "get").mockReturnValue("Mozilla/5.0 (Linux; Android 14) Chrome/151.0.0.0 Mobile Safari/537.36")
+    const view = mount({ value: "中文" })
+    const event = new KeyboardEvent("keydown", { key: "Enter", shiftKey: true, cancelable: true, ...ime })
+    act(() => view.editor.view.props.handleDOMEvents!.keydown!(view.editor.view, event))
+    expect(event.defaultPrevented).toBe(false)
+    expect(composerText(view.editor.state.doc)).toBe("中文")
+    expect(view.props.onSubmit).not.toHaveBeenCalled()
+  })
   it("deletes a whole selected reference with Backspace and supports undo", async () => {
     const view = mount()
     act(() => view.editor.commands.insertContent([{ type: "mention", attrs: { id: "a b@中文.ts" } }]))

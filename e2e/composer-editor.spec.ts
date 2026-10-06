@@ -138,9 +138,41 @@ for (const [query, path] of [["read", "README.md"], ["docs", "docs/设计 文档
   test(`a file picked in the middle of a sentence submits its exact path: ${path}`, async ({ page }) => {
     const { editor, chats, observation } = await openComposer(page)
     await editor.fill("Before  after")
-    await editor.press("Control+Home")
-    for (let index = 0; index < "Before ".length; index += 1) await editor.press("ArrowRight")
-    await chooseFile(page, editor, query, path)
+    await expectComposerText(editor, "Before  after")
+    // Establish native selection explicitly: this is an insertion-at-caret
+    // contract, not an assertion about platform-specific Ctrl+Home behavior.
+    await editor.evaluate((element, offset) => {
+      const document = element.ownerDocument
+      const text = element.querySelector("p")?.firstChild
+      if (!text || text.nodeType !== 3 || text.textContent !== "Before  after") throw new Error("Expected the initial plain-text paragraph")
+      const range = document.createRange()
+      range.setStart(text, offset)
+      range.collapse(true)
+      const selection = document.defaultView!.getSelection()!
+      selection.removeAllRanges()
+      selection.addRange(range)
+      document.dispatchEvent(new document.defaultView!.Event("selectionchange"))
+    }, "Before ".length)
+    await expect.poll(() => editor.evaluate((element) => {
+      const selection = element.ownerDocument.defaultView!.getSelection()
+      const text = element.querySelector("p")?.firstChild
+      return {
+        focused: element.ownerDocument.activeElement === element,
+        anchorInText: selection?.anchorNode === text,
+        focusInText: selection?.focusNode === text,
+        anchor: selection?.anchorOffset,
+        focus: selection?.focusOffset,
+        collapsed: selection?.isCollapsed,
+      }
+    })).toEqual({ focused: true, anchorInText: true, focusInText: true, anchor: 7, focus: 7, collapsed: true })
+    // Type into the positioned selection without refocusing the locator.
+    await page.keyboard.type(`@${query}`)
+    await expectComposerText(editor, `Before @${query} after`)
+    await page.getByRole("option", { name: path, exact: true }).click()
+    const mention = editor.locator('[data-type="mention"]')
+    await expect(mention).toHaveText(`@${path}`)
+    await expect(mention).toHaveAttribute("contenteditable", "false")
+    await expect(editor).toBeFocused()
     await expectComposerText(editor, `Before @${path} after`)
     expect(chats).toHaveLength(0)
     await editor.press("Enter")

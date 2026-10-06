@@ -17,7 +17,7 @@ export const BUNDLE_BASELINE = Object.freeze({
 // imports: JS 1,869,605 / 574,609; CSS 106,544 / 17,822. The compressed JS
 // increase is 121,343 bytes (~118.5 KiB), not an optimization win.
 // Composition after accepted model/effort picker #254 (main03c67a2): clean
-// JS 1,493,924 / 453,670; CSS 108,088 / 18,290. Composed editor build:
+// JS 1,493,924 / 453,670; CSS 108,088 / 18,290. Initial composed editor build:
 // JS 1,871,317 / 575,029; CSS 108,850 / 18,394. Editor delta remains
 // +121,359 gzip JS bytes (~118.5 KiB), +762 raw / +104 gzip CSS bytes.
 // The composed CSS fits #254's existing 109,000 / 18,500 ceilings, so this

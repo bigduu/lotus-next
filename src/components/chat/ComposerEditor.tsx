@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useImperativeHandle, useRef, type Ref, type RefObject } from "react"
+import { isAndroid } from "@tiptap/core"
 import { EditorContent, useEditor } from "@tiptap/react"
 import Document from "@tiptap/extension-document"
 import Paragraph from "@tiptap/extension-paragraph"
@@ -62,6 +63,7 @@ export function ComposerEditor(props: Props) {
           allow: ({ state, range }) => latest.current.mentionsEnabled
             && !!state.doc.resolve(range.from).parent.type.contentMatch.matchType(state.schema.nodes.mention),
           items: () => [], // Existing workspace FileMenu owns asynchronous results.
+          shouldResetDismissed: ({ transaction }) => transaction.docChanged,
           render: () => {
             const update = (suggestion: SuggestionProps) => {
               latest.current.onSuggestionChange({
@@ -123,7 +125,19 @@ export function ComposerEditor(props: Props) {
         return true
       },
       handleDOMEvents: {
-        keydown: (view, event) => event.isComposing || event.keyCode === 229 || view.composing,
+        keydown: (view, event) => {
+          if (event.isComposing || event.keyCode === 229 || view.composing || view.dom.dataset.composing === "true") return true
+          // Android Chrome bypasses ProseMirror handleKeyDown for physical
+          // Enter. Handle its explicit Shift variant once, before native DOM
+          // insertion can leave an extra BR. Plain Enter still uses the
+          // library's IME/Safari/virtual-keyboard safeguards below.
+          if (event.key === "Enter" && event.shiftKey && isAndroid() && /Chrome\//.test(navigator.userAgent)) {
+            event.preventDefault()
+            editor?.commands.setHardBreak()
+            return true
+          }
+          return false
+        },
         compositionstart: (view) => { view.dom.dataset.composing = "true"; return false },
         compositionend: (view) => {
           requestAnimationFrame(() => { delete view.dom.dataset.composing })
@@ -187,7 +201,7 @@ export function ComposerEditor(props: Props) {
     }
   }, [editor, props.focusSnapshot])
 
-  useImperativeHandle(props.inputRef, () => ({ focus: () => editor?.commands.focus() }), [editor])
+  useImperativeHandle(props.inputRef, () => ({ focus: () => editor?.view.focus() }), [editor])
 
   useEffect(() => {
     if (!editor || composerText(editor.state.doc) === props.value) return
