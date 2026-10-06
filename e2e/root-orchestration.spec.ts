@@ -1,3 +1,4 @@
+import { expectComposerText } from "./support/composer.js"
 import { expect, test, type Page } from "@playwright/test"
 import { installArtifactRuntime, standaloneScenario } from "./support/artifactRuntime.js"
 import { modelEffortPicker, selectEffort } from "./support/modelEffortPicker.js"
@@ -169,14 +170,14 @@ test("Root without native reasoning keeps High during Ultra and shows a truthful
   await selectThinking(page, "低")
   await expect(page.getByRole("alert").filter({ hasText: "已退出 Ultra" })).toBeVisible()
   await expectExplanation(page, "服务器已确认普通模式")
-  await expect(picker).toContainText("高"); await expect(composer).toHaveValue("retain bounded task across partial exit")
+  await expect(picker).toContainText("高"); await expectComposerText(composer, "retain bounded task across partial exit")
   expect(sequence.indexOf("mode:false")).toBeLessThan(sequence.indexOf("ordinary")); expect(chats).toBe(0)
   const partial = testInfo.outputPath("ultra-partial-exit-high-preserved.png")
   await page.screenshot({ path: partial }); await testInfo.attach("ultra-partial-exit", { path: partial, contentType: "image/png" })
   await selectThinking(page, "自动")
   await expect(picker).toContainText("自动")
   await expect(page.getByRole("alert").filter({ hasText: "已退出 Ultra" })).toHaveCount(0)
-  await expect(composer).toHaveValue("retain bounded task across partial exit")
+  await expectComposerText(composer, "retain bounded task across partial exit")
   await page.reload(); await expect(picker).toContainText("自动")
   expect(enabled).toBe(false); expect(effort).toBeUndefined(); expect(chats).toBe(0)
   expect(observation.pageErrors).toEqual([])
@@ -218,7 +219,7 @@ for (const legacy of ["missing", "contradictory", "active-run"] as const) {
       const draft = page.getByRole("textbox", { name: "消息", exact: true })
       await draft.fill("retain draft until Root authority is confirmed")
       await page.getByRole("button", { name: "发送消息", exact: true }).click()
-      await expect(draft).toHaveValue("retain draft until Root authority is confirmed")
+      await expectComposerText(draft, "retain draft until Root authority is confirmed")
     }
     expect(writes).toBe(0); expect(sends).toBe(0); expect(observation.pageErrors).toEqual([])
   })
@@ -299,7 +300,7 @@ test("a timed-out mode operation recovers after reload without chat replay", asy
   await expect(page.getByRole("button", { name: "恢复切换" })).toBeVisible()
   await composer.fill("keep draft while recovering")
   await page.getByRole("button", { name: "发送消息", exact: true }).click()
-  await expect(composer).toHaveValue("keep draft while recovering")
+  await expectComposerText(composer, "keep draft while recovering")
   expect(chats).toBe(0); expect(executes).toBe(0)
   const uncertainScreenshot = testInfo.outputPath("root-mode-uncertain.png")
   await page.screenshot({ path: uncertainScreenshot })
@@ -368,7 +369,7 @@ test("every concurrent pending operation needs its own terminal recovery", async
   const composer = page.getByRole("textbox", { name: "消息", exact: true })
   await composer.fill("wait for both operation proofs")
   await page.getByRole("button", { name: "发送消息", exact: true }).click()
-  await expect(composer).toHaveValue("wait for both operation proofs"); expect(mutations).toBe(0)
+  await expectComposerText(composer, "wait for both operation proofs"); expect(mutations).toBe(0)
   releaseSecond!()
   await expectExplanation(page, "服务器已确认 Ultra 编排")
   await expect(mode).toBeEnabled(); await expect(mode).toContainText("Ultra")
@@ -403,5 +404,5 @@ test("a legacy combined-chat marker remains fail closed", async ({ page }, testI
   await expect(page.getByRole("button", { name: "恢复切换" })).toHaveCount(0)
   const composer = page.getByRole("textbox", { name: "消息", exact: true })
   await composer.fill("blocked legacy request"); await page.getByRole("button", { name: "发送消息", exact: true }).click()
-  await expect(composer).toHaveValue("blocked legacy request"); expect(mutations).toBe(0)
+  await expectComposerText(composer, "blocked legacy request"); expect(mutations).toBe(0)
 })

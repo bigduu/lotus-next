@@ -1,6 +1,7 @@
 import { expect, test, type Page, type TestInfo } from "@playwright/test"
 import { installArtifactRuntime, standaloneScenario } from "./support/artifactRuntime.js"
 import { modelEffortPicker, selectEffort } from "./support/modelEffortPicker.js"
+import { expectComposerText } from "./support/composer.js"
 
 const mainId = "all-surface-session"
 const sideId = "model-effort-side-root"
@@ -144,14 +145,14 @@ test("saved-session restoration completes before the picker test edits its draft
     await expect(modelEffortPicker(page)).toBeVisible()
     await expect(page.getByRole("banner")).not.toContainText(mainTitle)
     await expect(page.getByRole("status").filter({ hasText: "下次创建时使用普通模式" })).toHaveText("下次创建时使用普通模式")
-    await expect(input).toHaveValue("")
+    await expectComposerText(input, "")
   })
   expect(restorationChecks).toBe(1)
   await input.fill(draft)
-  await expect(input).toHaveValue(draft)
+  await expectComposerText(input, draft)
   await selectEffort(page, "高")
   await expect(modelEffortPicker(page)).toContainText("高")
-  await expect(input).toHaveValue(draft)
+  await expectComposerText(input, draft)
   expect(patches).toEqual([{ id: mainId, body: { reasoning_effort: "high" } }])
   expect(observation.pageErrors).toEqual([])
   expect(observation.errorResponses).toEqual([])
@@ -206,7 +207,7 @@ test("the combined picker persists effort and model, supports keyboard, and fits
   await expect(picker).toContainText("自动")
   expect(main.thinking_mode).toBe("standard")
   expect(patches.at(-1)).toEqual({ id: mainId, body: { clear_reasoning_effort: true } })
-  await expect(input).toHaveValue("Preserve this draft while changing model and effort")
+  await expectComposerText(input, "Preserve this draft while changing model and effort")
 
   await picker.click()
   await page.getByTestId("model-picker-model").click()
@@ -222,7 +223,7 @@ test("the combined picker persists effort and model, supports keyboard, and fits
     model: alternateModel, provider: "fixture-provider",
     model_ref: { provider: "fixture-provider", model: alternateModel },
   } })
-  await expect(input).toHaveValue("Preserve this draft while changing model and effort")
+  await expectComposerText(input, "Preserve this draft while changing model and effort")
   await page.reload()
   await expect(picker).toContainText(alternateModel)
   await expect(picker).toContainText("自动")

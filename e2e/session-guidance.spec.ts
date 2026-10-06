@@ -1,3 +1,4 @@
+import { expectComposerText } from "./support/composer.js"
 import { expect, test } from "@playwright/test"
 import { installArtifactRuntime, standaloneScenario, embeddedScenario, secureRemoteScenario } from "./support/artifactRuntime.js"
 
@@ -58,7 +59,7 @@ for (const scenario of [standaloneScenario, embeddedScenario, secureRemoteScenar
     await expect(surface.getByAltText("queued.png", { exact: true })).toBeVisible()
     await input.fill("保留已有内容，并补充验证结果。")
     await surface.getByRole("button", { name: "加入队列", exact: true }).click()
-    await expect(input).toHaveValue("")
+    await expectComposerText(input, "")
     expect(queue[0]?.mode).toBe("after_run")
     expect(queuedImages[0]?.base64).toBe(pixel.toString("base64"))
     await expect(surface.getByAltText("queued.png", { exact: true })).toHaveCount(0)

@@ -1,3 +1,4 @@
+import { expectComposerText } from "./support/composer.js"
 import { expect, test } from "@playwright/test"
 import { installArtifactRuntime, standaloneScenario } from "./support/artifactRuntime.js"
 
@@ -45,21 +46,21 @@ for (const running of [false, true]) {
     await input.fill("/goal")
     await expect(page.getByRole("button", { name: /\/goal 指令/ })).toBeVisible()
     await input.press("Enter")
-    await expect(input).toHaveValue("")
+    await expectComposerText(input, "")
     expect(requests).toHaveLength(0)
 
     await input.press("Enter")
-    await expect(input).toHaveValue("")
+    await expectComposerText(input, "")
     expect(requests).toHaveLength(0)
     await input.fill("第一行")
     await input.press("Shift+Enter")
-    await expect(input).toHaveValue("第一行\n")
+    await expectComposerText(input, "第一行\n")
     expect(requests).toHaveLength(0)
     await input.fill("第一行\n第二行")
     for (const composition of [{ isComposing: true }, { keyCode: 229 }]) {
       await input.dispatchEvent("keydown", { key: "Enter", bubbles: true, cancelable: true, ...composition })
     }
-    await expect(input).toHaveValue("第一行\n第二行")
+    await expectComposerText(input, "第一行\n第二行")
     expect(requests).toHaveLength(0)
     if (running) await page.getByRole("combobox", { name: "发送时机" }).selectOption("after_run")
     try {
@@ -70,12 +71,12 @@ for (const running of [false, true]) {
       await expect(input).toHaveAttribute("aria-busy", "true")
       await input.press("Enter")
       await input.press("Control+Enter")
-      await expect(input).toHaveValue("第一行\n第二行")
+      await expectComposerText(input, "第一行\n第二行")
       expect(requests).toHaveLength(1)
     } finally {
       acknowledge()
     }
-    await expect(input).toHaveValue("")
+    await expectComposerText(input, "")
     await expect(input).toHaveAttribute("aria-busy", "false")
     expect(requests).toHaveLength(1)
     expect(observation.pageErrors).toEqual([])

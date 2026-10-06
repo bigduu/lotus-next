@@ -1,3 +1,4 @@
+import type { ComposerInputHandle } from "@/components/chat/ComposerEditor"
 import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { useMarkSessionRead } from "@/lib/sessionReadState"
 import { useMediaQuery } from "@shared/hooks/useMediaQuery"
@@ -311,12 +312,12 @@ export function ChatPane({
   )
   const tokenUsage = liveTokenUsage ?? currentChat?.config?.tokenUsage
 
-  // Per-session persisted draft (survives session switches + reloads via the
+  // Per-session in-memory draft (survives session switches via the
   // inputStates slice). New-chat drafts key off a per-pane sentinel so the
   // main pane's and a split pane's empty composers don't share one draft.
   const draftKey = currentSessionId ?? (secondary ? "__new_chat_pane2__" : "")
   const draft = useAppStore((s) => s.inputStates[draftKey]?.content ?? "")
-  const composerInputRef = useRef<HTMLTextAreaElement>(null)
+  const composerInputRef = useRef<ComposerInputHandle>(null)
   const currentDraftKeyRef = useRef(draftKey)
   currentDraftKeyRef.current = draftKey
   const setDraft = (value: string | ((prev: string) => string)) => {
@@ -483,9 +484,14 @@ export function ChatPane({
 
   // Escape hides the pickers until the draft changes again (typing re-opens).
   const [menusDismissed, setMenusDismissed] = useState(false)
+  const menuDraftRef = useRef({ key: draftKey, text: draft })
   useEffect(() => {
-    setMenusDismissed(false)
-  }, [draft])
+    const changed = menuDraftRef.current.key !== draftKey || menuDraftRef.current.text !== draft
+    menuDraftRef.current = { key: draftKey, text: draft }
+    // Even an equal-state dispatch can leave a React lane pending during
+    // rapid external-editor updates. Open menus need no reset dispatch.
+    if (changed && menusDismissed) setMenusDismissed(false)
+  }, [draft, draftKey, menusDismissed])
 
   const slashQuery = !menusDismissed && draft.startsWith("/") ? draft.slice(1) : null
   const catalogState = useWorkflowCatalog(currentSessionId, slashQuery !== null || workflowPicker !== null)
@@ -506,12 +512,8 @@ export function ChatPane({
     composerInputRef.current?.focus()
   }
 
-  // @file references: detect a trailing "@query" and list workspace files.
-  const atQuery = (() => {
-    if (menusDismissed) return null
-    const m = draft.match(/@([^\s@]*)$/)
-    return m ? m[1] : null
-  })()
+  // Tiptap reports the active @query at the caret, including mid-message edits.
+  const [atQuery, setAtQuery] = useState<string | null>(null)
   const workspacePath = currentChat?.config?.workspacePath
   // For a NEW session, a selected Project owns the workspace: its primary
   // path overrides a manually-picked one, and @-file completion follows it.
@@ -588,26 +590,24 @@ export function ChatPane({
   const [workspaceFiles, setWorkspaceFiles] = useState<WorkspaceFileEntry[]>([])
   const filesLoadedForRef = useRef<string | null>(null)
   useEffect(() => {
-    // @-file references follow the EFFECTIVE workspace — the session's cwd, or the
-    // one picked for a new chat — so completions match where the agent will run.
-    if (atQuery === null || !displayWorkspace) return
-    if (filesLoadedForRef.current === displayWorkspace) return
+    filesLoadedForRef.current = null
+    setWorkspaceFiles([])
+  }, [displayWorkspace])
+  const filePickerOpen = atQuery !== null
+  useEffect(() => {
+    if (!filePickerOpen || !displayWorkspace || filesLoadedForRef.current === displayWorkspace) return
+    let cancelled = false
     const target = displayWorkspace
-    filesLoadedForRef.current = target
-    workspaceService
-      .listWorkspaceFiles(target)
-      .then(setWorkspaceFiles)
-      .catch(() => {
-        // Don't cache a transient failure as an empty list — let the next
-        // @-open retry the fetch.
-        if (filesLoadedForRef.current === target) filesLoadedForRef.current = null
-        setWorkspaceFiles([])
-      })
-  }, [atQuery, displayWorkspace])
-
-  const pickFile = (entry: WorkspaceFileEntry) => {
-    setDraft((d) => d.replace(/@[^\s@]*$/, `@${entry.path} `))
-  }
+    workspaceService.listWorkspaceFiles(target).then((files) => {
+      if (cancelled) return
+      filesLoadedForRef.current = target
+      setWorkspaceFiles(files)
+    }).catch(() => {
+      if (!cancelled) setWorkspaceFiles([])
+    })
+    // Closing the menu or changing workspace must not publish stale results.
+    return () => { cancelled = true }
+  }, [filePickerOpen, displayWorkspace])
 
   // Lazily fetch workflow commands the first time a slash menu opens.
   const workflowsLoadedRef = useRef(false)
@@ -1154,6 +1154,7 @@ export function ChatPane({
           )}
           <Composer
           draft={draft}
+          draftKey={draftKey}
           contentShiftX={messageContentShift}
           outputRate={outputRate}
           onDraftChange={setDraft}
@@ -1260,10 +1261,9 @@ export function ChatPane({
           onPickCatalog={() => { openWorkflowPicker("composer"); if (slashQuery !== null) setDraft("") }}
           onPickGoal={currentSessionId ? () => { launchWorkbench(onOpenInspector); setDraft(""); setMenusDismissed(true) } : undefined}
           slashQuery={slashQuery}
-          atQuery={atQuery}
+          onMentionQueryChange={setAtQuery}
           displayWorkspace={displayWorkspace}
           workspaceFiles={workspaceFiles}
-          onPickFile={pickFile}
           hasSession={!!currentSessionId}
           onOpenWorkspacePicker={onOpenWorkspacePicker}
           selectedProjectId={pendingProjectId ?? null}

@@ -1,3 +1,4 @@
+import { expectComposerText } from "./support/composer.js"
 import { expect, test } from "@playwright/test"
 import { installArtifactRuntime, standaloneScenario } from "./support/artifactRuntime.js"
 
@@ -75,7 +76,7 @@ test("Stop is a primary realtime control and never enters the message queue", as
   await stop.click()
   await expect(stop).toBeHidden()
   await expect(page.getByRole("button", { name: "发送消息", exact: true })).toBeVisible()
-  await expect(input).toHaveValue("这条消息只用于同时显示发送与停止控件")
+  await expectComposerText(input, "这条消息只用于同时显示发送与停止控件")
   await expect.poll(() => observation.clientFrames).toContainEqual({
     type: "stop",
     session_id: "all-surface-session",

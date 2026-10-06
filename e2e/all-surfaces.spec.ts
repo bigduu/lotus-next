@@ -1,3 +1,4 @@
+import { expectComposerText } from "./support/composer.js"
 import {
   expect,
   test as base,
@@ -102,7 +103,7 @@ const expectReadyShell = async (surface: Surface): Promise<void> => {
     surface.locator("header").getByText("All-surface acceptance", { exact: true }),
   ).toBeVisible()
   await composer.fill("all-surface viewport smoke")
-  await expect(composer).toHaveValue("all-surface viewport smoke")
+  await expectComposerText(composer, "all-surface viewport smoke")
   await expect(
     surface.getByRole("button", { name: "发送消息", exact: true }),
   ).toBeEnabled()
@@ -318,7 +319,7 @@ test("settings page preserves the chat draft, workbench and keyboard return path
   await settings.getByRole("button", { name: "返回聊天", exact: true }).click()
   await expect(settings).toBeHidden()
   await expect(workbench).toBeVisible()
-  await expect(composer).toHaveValue("draft retained across settings navigation")
+  await expectComposerText(composer, "draft retained across settings navigation")
   await expect(composer).toHaveAttribute("data-navigation-marker", "same-composer")
   await expect(surface.getByRole("button", { name: "收起侧边面板", exact: true })).toBeFocused()
 
@@ -329,7 +330,7 @@ test("settings page preserves the chat draft, workbench and keyboard return path
   await expect(title).toBeFocused()
   await title.press("Escape")
   await expect(settings).toBeHidden()
-  await expect(composer).toHaveValue("draft retained across settings navigation")
+  await expectComposerText(composer, "draft retained across settings navigation")
 })
 
 test("message bubble presets and custom colors preview immediately and survive reload", async ({
@@ -469,7 +470,7 @@ test("embedded base path owns entry, assets, lazy settings, and return navigatio
   await expect(
     surface.getByRole("textbox", { name: "消息", exact: true }),
   ).toBeVisible()
-  await expect(surface.getByRole("textbox", { name: "消息", exact: true })).toHaveValue("all-surface viewport smoke")
+  await expectComposerText(surface.getByRole("textbox", { name: "消息", exact: true }), "all-surface viewport smoke")
 
   expect(
     observation.staticUrls.every((url) => pathname(url).startsWith(embeddedScenario.appPath)),

@@ -50,7 +50,24 @@ const runtime = vi.hoisted(() => ({
   stickyAtBottom: true, scrollToBottom: vi.fn(),
   queueSend: vi.fn(), revision: 0, getWorkflow: vi.fn(), listCommands: vi.fn(), peekTemplate: vi.fn(),
   ticketWork: null as TicketController | null,
+  observeStateDispatch: null as ((dispatch: unknown, value: unknown) => void) | null,
 }))
+// Observe actual dispatcher calls, including equal-state updates which React
+// may queue without rendering. Always retain the real hook and stable setter.
+vi.mock("react", async (original) => {
+  const React = await original<typeof import("react")>()
+  const wrappers = new WeakMap<object, (value: unknown) => void>()
+  const useState = ((initialState: unknown) => {
+    const [state, dispatch] = React.useState(initialState)
+    let wrapped = wrappers.get(dispatch)
+    if (!wrapped) {
+      wrapped = (value: unknown) => { runtime.observeStateDispatch?.(dispatch, value); dispatch(value) }
+      wrappers.set(dispatch, wrapped)
+    }
+    return [state, wrapped]
+  }) as typeof React.useState
+  return { ...React, useState }
+})
 vi.mock("zustand/react/shallow", () => ({ useShallow: <T,>(selector: T) => selector }))
 vi.mock("@shared/store/appStore", async () => {
   const React = await import("react")
@@ -133,11 +150,13 @@ vi.mock("@/components/chat/PermissionModeControl", () => ({
 vi.mock("@/components/app/Composer", () => ({
   Composer: (props: ComposerProps) => (runtime.composer = props,
     <div data-testid="composer-shell">
-      <textarea ref={props.inputRef} aria-label="消息" value={props.draft} onChange={(event) => props.onDraftChange(event.currentTarget.value)} />
+      <textarea ref={props.inputRef as React.Ref<HTMLTextAreaElement>} aria-label="消息" value={props.draft} onChange={(event) => props.onDraftChange(event.currentTarget.value)} />
       {props.permissionControl}
       {props.runtimeControls}
     </div>),
 }))
+import { workspaceService } from "@services/workspace"
+import type { WorkspaceFileEntry } from "@services/workspace/types"
 import { agentClient } from "@services/chat/AgentService"
 import { beginRootModeOperation, getRootModeFenceState } from "@/lib/rootModeTransitionFence"
 import { ApiError, RequestTimeoutError } from "@services/api/errors"
@@ -280,6 +299,7 @@ beforeEach(() => {
     removeEventListener: (_name: string, listener: (event: MediaQueryListEvent) => void) => mediaListeners.delete(listener),
   })))
   runtime.composer = null; runtime.messageList = null; runtime.modelPicker = null; runtime.reasoningPicker = null
+  runtime.observeStateDispatch = null
   runtime.providerState.providerStatus = "ready"
   runtime.providerState.providerSnapshot = {
     default_provider_instance_id: "easycli",
@@ -1286,6 +1306,40 @@ describe("Root orchestration-only control", () => {
     expect(runtime.state.inputStates["root-session"]?.content).toBe("/goal literal task")
   })
 
+  it("dispatches a menu reset only when a dismissed draft changes, not on every typed prefix", async () => {
+    const textarea = await mount(vi.fn<Send>(), "root-session")
+    change(textarea, "/a")
+    const calls: Array<{ dispatch: unknown; value: unknown }> = []
+    runtime.observeStateDispatch = (dispatch, value) => calls.push({ dispatch, value })
+    act(() => composer().onDismissMenus?.())
+    expect(calls).toHaveLength(1)
+    expect(calls[0].value).toBe(true)
+    const dismissDispatch = calls[0].dispatch
+    const resets: unknown[] = []
+    runtime.observeStateDispatch = (dispatch, value) => { if (dispatch === dismissDispatch) resets.push(value) }
+    act(() => write("root-session", "/a"))
+    expect(composer().slashQuery).toBeNull()
+    expect(resets).toEqual([])
+    change(textarea, "/ab")
+    expect(composer().slashQuery).toBe("ab")
+    expect(resets).toEqual([false])
+    resets.length = 0
+    for (let length = 1; length <= 64; length += 1) change(textarea, `/ab${"x".repeat(length)}`)
+    expect(resets).toEqual([])
+    change(textarea, "/a")
+    expect(composer().slashQuery).toBe("a")
+    expect(resets).toEqual([])
+    act(() => composer().onDismissMenus?.())
+    act(() => write("other-session", "/a"))
+    expect(composer().slashQuery).toBeNull()
+    expect(resets).toEqual([true])
+    await act(async () => roots.at(-1)!.render(<ChatPane chat={createChat(vi.fn<Send>(), "other-session")} pickedWorkspace="/picked"
+      onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()} splitOpen={false}
+      onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false} />))
+    expect(composer().slashQuery).toBe("a")
+    expect(resets).toEqual([true, false])
+  })
+
   it("keeps the confirmed server label while a Root run is active", async () => {
     vi.mocked(agentClient.getSession).mockImplementation(async (sessionId) => ({
       session: { ...rootFields, id: sessionId, kind: "root", root_orchestration_only: true, thinking_mode: "ultra" },
@@ -1669,4 +1723,33 @@ it("returns from a child inside the side pane without changing the main session"
 
   expect(pickSideSession).toHaveBeenCalledExactlyOnceWith("parent")
   expect(chat.select).not.toHaveBeenCalled()
+})
+
+
+describe("caret-driven workspace file lookup", () => {
+  it("ignores delayed results from the previous workspace and retries after a failed open", async () => {
+    const first = deferred<WorkspaceFileEntry[]>()
+    const second = deferred<WorkspaceFileEntry[]>()
+    const list = vi.mocked(workspaceService.listWorkspaceFiles)
+    list.mockReset().mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise)
+    await mount(vi.fn<Send>(), null)
+    act(() => composer().onMentionQueryChange("read"))
+    expect(list).toHaveBeenLastCalledWith("/picked")
+    const render = (workspace: string) => roots.at(-1)!.render(<ChatPane chat={createChat(vi.fn<Send>(), null)} pickedWorkspace={workspace}
+      onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()} splitOpen={false}
+      onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false} />)
+    await act(async () => render("/different"))
+    expect(list).toHaveBeenLastCalledWith("/different")
+    const selected = { path: "current.ts", name: "current.ts", is_directory: false }
+    await act(async () => second.resolve([selected]))
+    await act(async () => first.resolve([{ path: "stale.ts", name: "stale.ts", is_directory: false }]))
+    expect(composer().workspaceFiles).toEqual([selected])
+    list.mockRejectedValueOnce(new Error("temporary")).mockResolvedValueOnce([selected])
+    await act(async () => render("/retry"))
+    expect(composer().workspaceFiles).toEqual([])
+    act(() => composer().onMentionQueryChange(null))
+    await act(async () => composer().onMentionQueryChange("again"))
+    expect(composer().workspaceFiles).toEqual([selected])
+    list.mockReset().mockResolvedValue([])
+  })
 })

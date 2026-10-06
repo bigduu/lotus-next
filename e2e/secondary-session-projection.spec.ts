@@ -1,3 +1,4 @@
+import { expectComposerText } from "./support/composer.js"
 import { expect, test } from "@playwright/test"
 import { installArtifactRuntime, standaloneScenario } from "./support/artifactRuntime.js"
 
@@ -97,7 +98,7 @@ test("split root remains interactive while child uses only projected history and
   await rootComposer.fill("keep root draft across tabs")
   await workbench.getByRole("tab", { name: "检查器" }).click()
   await workbench.getByRole("tab", { name: "Other root" }).click()
-  await expect(rootComposer).toHaveValue("keep root draft across tabs")
+  await expectComposerText(rootComposer, "keep root draft across tabs")
   await rootComposer.fill("")
 
   // The parent transcript's SubAgent tool group exposes the actual child-open action.

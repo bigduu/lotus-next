@@ -11,15 +11,27 @@ export const BUNDLE_BASELINE = Object.freeze({
   javascriptGzipBytes: 567_482,
 })
 
+// 2026-10-06: the requested Tiptap 3.31.4 composer adds real startup cost.
+// Pre-feature (f74b778 production sources): JS 1,492,239 raw / 453,266 gzip;
+// CSS 105,782 raw / 17,719 gzip. With the minimal official editor and subpath
+// imports: JS 1,869,605 / 574,609; CSS 106,544 / 17,822. The compressed JS
+// increase is 121,343 bytes (~118.5 KiB), not an optimization win.
+// Composition after accepted model/effort picker #254 (main03c67a2): clean
+// JS 1,493,924 / 453,670; CSS 108,088 / 18,290. Initial composed editor build:
+// JS 1,871,317 / 575,029; CSS 108,850 / 18,394. Editor delta remains
+// +121,359 gzip JS bytes (~118.5 KiB), +762 raw / +104 gzip CSS bytes.
+// The composed CSS fits #254's existing 109,000 / 18,500 ceilings, so this
+// integration does not expand those accepted CSS limits.
+// The original 6% raw / 5% gzip reduction targets predate this feature. Keep
+// that historical baseline above and every absolute/relative/ownership check;
+// explicitly permit at most 4% gzip growth against it with narrow absolute
+// ceilings. No optional renderer/Settings ownership boundary is relaxed.
 export const BUNDLE_BUDGET = Object.freeze({
-  javascriptRawBytes: 1_820_000,
-  javascriptGzipBytes: 535_000,
-  minimumRawReduction: 0.06,
-  minimumGzipReduction: 0.05,
-  // Keep a narrow raw-CSS ceiling for the current ordinary-chat UI while the
-  // gzip limit remains the release-size authority. Recalibrated after the
-  // model-limit, sidebar-folding, message-surface, cache-inspector, and unified
-  // model/effort picker slices (the picker adds about 2.1 KB raw / 0.6 KB gzip CSS).
+  javascriptRawBytes: 1_900_000,
+  javascriptGzipBytes: 590_000,
+  minimumRawReduction: 0.02,
+  minimumGzipReduction: -0.04,
+  // Preserve #254's accepted CSS ceilings, verified by the composed build above.
   cssRawBytes: 109_000,
   cssGzipBytes: 18_500,
 })
@@ -413,7 +425,7 @@ export function formatBundleBudgetReport(report) {
     BUNDLE_BASELINE.javascriptGzipBytes
   const settings = report.optionalFeatures.find((feature) => feature.label === "Settings")
   return [
-    `Ordinary-chat startup JS: ${report.javascript.rawBytes} raw / ${report.javascript.gzipBytes} gzip (${percent(rawReduction)} raw, ${percent(gzipReduction)} gzip reduction).`,
+    `Ordinary-chat startup JS: ${report.javascript.rawBytes} raw / ${report.javascript.gzipBytes} gzip (${percent(rawReduction)} raw, ${percent(gzipReduction)} gzip reduction vs historical pre-editor baseline).`,
     `Initial CSS: ${report.css.rawBytes} raw / ${report.css.gzipBytes} gzip.`,
     `Settings feature: ${settings?.file ?? "missing"}; startup closure: ${report.closureFiles.join(", ")}.`,
   ].join("\n")

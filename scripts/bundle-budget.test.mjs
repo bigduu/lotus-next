@@ -5,8 +5,9 @@ import path from "node:path"
 import { afterEach, describe, expect, it } from "vitest"
 
 import {
-  analyzeBundleBudget,
+  BUNDLE_BASELINE,
   BUNDLE_BUDGET,
+  analyzeBundleBudget,
   findBundleBudgetViolations,
 } from "./bundle-budget.mjs"
 
@@ -246,18 +247,27 @@ describe("ordinary-chat production bundle budget", () => {
     )
   })
 
-  it("enforces raw, gzip, relative-improvement, and CSS ceilings independently", async () => {
+  it("keeps the historical baseline and the bounded approved editor allowance explicit", () => {
+    expect(BUNDLE_BASELINE).toEqual({ javascriptRawBytes: 1_949_302, javascriptGzipBytes: 567_482 })
+    expect(BUNDLE_BUDGET).toEqual({
+      javascriptRawBytes: 1_900_000, javascriptGzipBytes: 590_000,
+      minimumRawReduction: 0.02, minimumGzipReduction: -0.04,
+      cssRawBytes: 109_000, cssGzipBytes: 18_500,
+    })
+  })
+
+  it("enforces raw, gzip, historical-comparison, and CSS ceilings independently", async () => {
     const report = analyzeBundleBudget(await createFixture())
     const violations = findBundleBudgetViolations({
       ...report,
-      javascript: { rawBytes: 1_950_000, gzipBytes: 568_000 },
+      javascript: { rawBytes: 1_950_000, gzipBytes: 600_000 },
       css: { rawBytes: BUNDLE_BUDGET.cssRawBytes + 1, gzipBytes: BUNDLE_BUDGET.cssGzipBytes + 1 },
     }).join("\n")
 
-    expect(violations).toMatch(/raw size 1950000 exceeds 1820000/)
-    expect(violations).toMatch(/gzip size 568000 exceeds 535000/)
-    expect(violations).toMatch(/raw reduction .* is below 6\.00%/)
-    expect(violations).toMatch(/gzip reduction .* is below 5\.00%/)
+    expect(violations).toMatch(/raw size 1950000 exceeds 1900000/)
+    expect(violations).toMatch(/gzip size 600000 exceeds 590000/)
+    expect(violations).toMatch(/raw reduction .* is below 2\.00%/)
+    expect(violations).toMatch(/gzip reduction .* is below -4\.00%/)
     expect(violations).toContain(`CSS raw size ${BUNDLE_BUDGET.cssRawBytes + 1} exceeds ${BUNDLE_BUDGET.cssRawBytes}`)
     expect(violations).toContain(`CSS gzip size ${BUNDLE_BUDGET.cssGzipBytes + 1} exceeds ${BUNDLE_BUDGET.cssGzipBytes}`)
   })

@@ -1,3 +1,4 @@
+import { expectComposerText } from "./support/composer.js"
 import { expect, test } from "@playwright/test"
 import { installArtifactRuntime, standaloneScenario } from "./support/artifactRuntime.js"
 
@@ -159,7 +160,7 @@ test("desktop and tablet keep the shared browser frame while a person answers Ja
     const composer = page.getByRole("textbox", { name: "消息", exact: true })
     await composer.fill("请模型处理当前网页弹窗")
     await expect(composer).toBeFocused()
-    await expect(composer).toHaveValue("请模型处理当前网页弹窗")
+    await expectComposerText(composer, "请模型处理当前网页弹窗")
     await composer.press("Enter")
     await expect.poll(() => chatMessages).toEqual(["请模型处理当前网页弹窗"])
     await expect.poll(() => executeCalls).toEqual(["POST"])

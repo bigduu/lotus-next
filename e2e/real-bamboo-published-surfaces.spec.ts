@@ -1,3 +1,4 @@
+import { expectComposerText } from "./support/composer.js"
 import {
   devices,
   expect,
@@ -316,7 +317,7 @@ const exerciseSurface = async ({
       }),
     ).toBeVisible();
     await composer.fill(`published ${definition.label} acceptance`);
-    await expect(composer).toHaveValue(`published ${definition.label} acceptance`);
+    await expectComposerText(composer, `published ${definition.label} acceptance`);
     await expect(
       page.getByRole("button", { name: "发送消息", exact: true }),
     ).toBeEnabled();
