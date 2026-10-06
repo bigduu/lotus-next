@@ -98,7 +98,10 @@ export const PROVIDER_LABELS: Record<ProviderKind, string> = {
  * The shape varies by provider kind and is intentionally stored as a generic
  * record so the frontend preserves provider-specific and future fields.
  */
-export type ProviderInstanceConfig = Record<string, unknown>;
+export type ProviderInstanceConfig = Record<string, unknown> & {
+  /** Models explicitly admitted to chat and subagent routing. Empty means none. */
+  runtime_models?: string[];
+};
 
 /**
  * A single configured provider instance.
@@ -134,6 +137,30 @@ export interface UpdateProviderInstanceRequest {
   config?: ProviderInstanceConfig;
 }
 
+/** Legacy configured choices seed admission once; upstream discovery never does. */
+export const getRuntimeModelIds = (
+  instance: ProviderInstance,
+  defaults?: DefaultsConfig,
+): string[] => {
+  const configured = instance.config.runtime_models;
+  if (Array.isArray(configured)) {
+    return [...new Set(configured.map((model) => model.trim()).filter(Boolean))];
+  }
+  const models: string[] = [];
+  for (const key of ["model", "fast_model", "vision_model"]) {
+    const value = instance.config[key];
+    if (typeof value === "string" && value.trim()) models.push(value.trim());
+  }
+  for (const key of PROVIDER_DEFAULT_MODEL_REF_KEYS) {
+    const ref = defaults?.[key];
+    if (ref?.provider === instance.id && ref.model.trim()) models.push(ref.model.trim());
+  }
+  for (const ref of Object.values(defaults?.subagent_models ?? {})) {
+    if (ref.provider === instance.id && ref.model.trim()) models.push(ref.model.trim());
+  }
+  return [...new Set(models)];
+};
+
 /**
  * Response shape from GET /bamboo/settings/provider-instances.
  *
@@ -148,6 +175,26 @@ export interface ProviderInstancesConfig {
     provider_model_ref?: boolean;
   };
 }
+
+/** A new chat can choose models only from its saved, enabled Chat provider. */
+export const resolveNewChatModelRef = (
+  snapshot: ProviderInstancesConfig | null | undefined,
+  selectedModel?: string,
+): ProviderModelRef | undefined => {
+  const chat = snapshot?.defaults?.chat;
+  // First-provider and legacy snapshots may not have role defaults yet.
+  // An explicit Chat ref always takes precedence over the compatibility id.
+  const providerId = chat?.provider ?? snapshot?.default_provider_instance_id;
+  const instance = snapshot?.instances.find((candidate) => candidate.id === providerId);
+  if (!instance?.enabled) return undefined;
+  const admitted = getRuntimeModelIds(instance, snapshot?.defaults);
+  const selected = selectedModel?.trim();
+  const fallback = chat?.model.trim() ?? (typeof instance.config.model === "string" ? instance.config.model.trim() : undefined);
+  const model = selected && admitted.includes(selected)
+    ? selected
+    : fallback && admitted.includes(fallback) ? fallback : undefined;
+  return model ? { provider: instance.id, model } : undefined;
+};
 
 export class ProviderSnapshotValidationError extends Error {
   constructor(message: string) {
@@ -202,7 +249,10 @@ export const parseProviderInstance = (
     !PROVIDER_KINDS.includes(value.type as ProviderKind) ||
     typeof value.label !== "string" ||
     typeof value.enabled !== "boolean" ||
-    !isRecord(value.config)
+    !isRecord(value.config) ||
+    (value.config.runtime_models !== undefined &&
+      (!Array.isArray(value.config.runtime_models) ||
+        !value.config.runtime_models.every((model) => typeof model === "string" && model.trim())))
   ) {
     throw new ProviderSnapshotValidationError(`${context} is invalid`);
   }
@@ -210,7 +260,8 @@ export const parseProviderInstance = (
 };
 
 const assertDefaults = (value: unknown): DefaultsConfig | undefined => {
-  if (value === undefined) return undefined;
+  // Bamboo serializes an unconfigured Option<DefaultsConfig> as null.
+  if (value === undefined || value === null) return undefined;
   if (!isRecord(value) || !isModelRef(value.chat)) {
     throw new ProviderSnapshotValidationError("Provider defaults must contain a valid chat model reference");
   }

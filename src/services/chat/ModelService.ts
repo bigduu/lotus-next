@@ -24,18 +24,13 @@ export class ModelService {
 
   async getModels(provider?: string): Promise<string[]> {
     try {
-      const response = await settingsService.fetchCatalogModels(provider);
+      const catalog = await settingsService.getProviderCatalog();
 
-      // Flatten all models from all providers into a single list of IDs
+      // Discovery is a candidate step. Only the admitted runtime catalog supplies options.
       const modelIds: string[] = [];
-      for (const result of response.fetched) {
-        if (result.models && result.models.length > 0) {
-          for (const model of result.models) {
-            if (model.reference && model.reference.model) {
-              modelIds.push(model.reference.model);
-            }
-          }
-        }
+      for (const model of catalog.models) {
+        if (provider && model.reference?.provider !== provider) continue;
+        if (model.reference?.model) modelIds.push(model.reference.model);
       }
 
       // Remove duplicates and sort

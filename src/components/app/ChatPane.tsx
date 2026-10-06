@@ -33,6 +33,7 @@ import { prepareWorkflowSelection, workflowUnavailableReason, type TypedWorkflow
 import { getErrorMessage } from "@services/api/errors"
 import type { ChildProgress } from "@shared/store/appStore/slices/executionStateSlice/types"
 import { useProviderStore } from "@shared/store/appStore/slices/providerSlice"
+import { getRuntimeModelIds, resolveNewChatModelRef } from "@shared/types/providerConfig"
 import type { ReasoningEffortSelection } from "@shared/utils/reasoningEffort"
 import type { SkillDefinition } from "@shared/types/skill"
 import { ChatHeader } from "@/components/app/ChatHeader"
@@ -415,7 +416,16 @@ export function ChatPane({
     }
     return out
   }, [chats, currentSessionId, subAgents])
-  const models = useAppStore(useShallow((s) => s.models))
+  const providerSnapshot = useProviderStore((s) => s.providerSnapshot)
+  const providerStatus = useProviderStore((s) => s.providerStatus)
+  const modelProviderId = currentChat?.config?.model_ref?.provider
+    ?? providerSnapshot?.defaults?.chat.provider ?? providerSnapshot?.default_provider_instance_id
+  const modelProvider = providerSnapshot?.instances.find((instance) => instance.id === modelProviderId)
+  const models = useMemo(() =>
+    providerStatus === "ready" && modelProvider?.enabled
+      ? getRuntimeModelIds(modelProvider, providerSnapshot?.defaults)
+      : [],
+  [providerStatus, modelProvider, providerSnapshot?.defaults])
   const selectedModel = useAppStore((s) => s.selectedModel)
   const setSelectedModel = useAppStore((s) => s.setSelectedModel)
   const changeSessionModel = useAppStore((s) => s.changeSessionModel)
@@ -448,7 +458,7 @@ export function ChatPane({
   // only a draft for a new session and cannot relabel a running session.
   const activeModel = currentSessionId
     ? currentChat?.config?.model_ref?.model || currentChat?.config?.model || defaultChatModel || ""
-    : selectedModel || defaultChatModel || ""
+    : resolveNewChatModelRef(providerSnapshot, selectedModel)?.model || ""
   const [modelSaving, setModelSaving] = useState(false)
   const modelControlDisabled = modelSaving || currentlyRunning || submissionPending
     || queue.busy || queue.hasUnconfirmed
@@ -1216,7 +1226,7 @@ export function ChatPane({
                 />
               ) : null}
               <ModelEffortPicker
-                models={models.length > 0 && activeModel && !models.includes(activeModel) ? [activeModel, ...models] : models}
+                models={models}
                 model={activeModel}
                 onModelChange={(model) => void handleModelChange(model)}
                 modelDisabled={modelControlDisabled}

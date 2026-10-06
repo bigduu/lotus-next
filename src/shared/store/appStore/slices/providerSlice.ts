@@ -89,6 +89,8 @@ export interface ProviderState {
   /** Cached provider catalog. It is supplementary server state, not provider authority. */
   catalog: ProviderCatalog | null;
   isCatalogFetching: boolean;
+  /** Upstream suggestions awaiting explicit runtime admission. */
+  discoveredModelsByProvider: Record<string, ProviderModelDescriptor[]>;
 
   loadProviderInstances: () => Promise<ProviderInstancesConfig>;
   createProviderInstance: (
@@ -144,6 +146,7 @@ export const useProviderStore = create<ProviderState>((set, get) => {
     providerError: null,
     catalog: null,
     isCatalogFetching: false,
+    discoveredModelsByProvider: {},
 
     loadProviderInstances: async () => {
       const revision = ++providerLoadRevision;
@@ -244,8 +247,7 @@ export const useProviderStore = create<ProviderState>((set, get) => {
       request = Promise.resolve()
         .then(() => settingsService.getProviderCatalog())
         .then((catalog) => {
-          // A later targeted POST response is more precise than this full read.
-          // Never let a slow initial catalog request overwrite that response.
+          // Only admitted catalog reads may update runtime model suggestions.
           if (revision === catalogLoadRevision) set({ catalog });
         })
         .catch(() => {
@@ -278,17 +280,10 @@ export const useProviderStore = create<ProviderState>((set, get) => {
           const models = parseFetchedModels(result.models).filter(
             (model) => model.reference.provider === provider,
           );
-          ++catalogLoadRevision;
           set((state) => ({
-            catalog: {
-              providers: state.catalog?.providers ?? [],
-              models: [
-                ...(state.catalog?.models ?? []).filter(
-                  (model) => model.reference.provider !== provider,
-                ),
-                ...models,
-              ],
-              updated_at: state.catalog?.updated_at,
+            discoveredModelsByProvider: {
+              ...state.discoveredModelsByProvider,
+              [provider]: models,
             },
           }));
           return response;
@@ -301,25 +296,16 @@ export const useProviderStore = create<ProviderState>((set, get) => {
             (result.error === undefined || typeof result.error === "string") &&
             !result.error?.trim(),
         );
-        const refreshedProviders = new Set(
-          successfulResults.map((result) => result.provider as string),
-        );
-        const fetchedModels = successfulResults.flatMap((result) =>
+        const discoveries = Object.fromEntries(successfulResults.map((result) => [
+          result.provider,
           parseFetchedModels(result.models).filter(
             (model) => model.reference.provider === result.provider,
           ),
-        );
-        ++catalogLoadRevision;
+        ]));
         set((state) => ({
-          catalog: {
-            providers: state.catalog?.providers ?? [],
-            models: [
-              ...(state.catalog?.models ?? []).filter(
-                (model) => !refreshedProviders.has(model.reference.provider),
-              ),
-              ...fetchedModels,
-            ],
-            updated_at: state.catalog?.updated_at,
+          discoveredModelsByProvider: {
+            ...state.discoveredModelsByProvider,
+            ...discoveries,
           },
         }));
         return response;

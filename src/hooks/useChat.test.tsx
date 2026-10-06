@@ -60,9 +60,11 @@ const mocks = vi.hoisted(() => {
     acknowledgeTemplate: vi.fn(),
     providerState: {
       providerSnapshot: null,
+      catalog: null,
       getProviderType: vi.fn<(instanceId: string) => ProviderKind | undefined>(() => undefined),
     } as {
       providerSnapshot: ProviderInstancesConfig | null
+      catalog: unknown
       getProviderType: ReturnType<typeof vi.fn<(instanceId: string) => ProviderKind | undefined>>
     },
   }
@@ -82,8 +84,10 @@ vi.mock("@shared/store/appStore", () => {
   }
 })
 vi.mock("@shared/store/appStore/slices/providerSlice", () => ({
-  useProviderStore: (selector: (state: unknown) => unknown) =>
-    selector(mocks.providerState),
+  useProviderStore: Object.assign(
+    (selector: (state: unknown) => unknown) => selector(mocks.providerState),
+    { getState: () => mocks.providerState },
+  ),
 }))
 vi.mock("@services/chat/AgentService", () => ({
   agentClient: {
@@ -271,7 +275,12 @@ beforeEach(() => {
   mocks.appState.inputStates = {}
   mocks.appState.lastSelectedPromptId = null
   mocks.appState.systemPrompts = []
-  mocks.providerState.providerSnapshot = null
+  mocks.providerState.providerSnapshot = {
+    default_provider_instance_id: "test-provider",
+    instances: [{ id: "test-provider", type: "openai", label: "Test", enabled: true, config: { runtime_models: ["test-model"] } }],
+    defaults: { chat: { provider: "test-provider", model: "test-model" } },
+  }
+  mocks.providerState.catalog = null
   mocks.providerState.getProviderType.mockReset()
   mocks.providerState.getProviderType.mockReturnValue(undefined)
   for (const mock of [
@@ -325,6 +334,71 @@ afterEach(() => {
 })
 describe("useChat two-phase send lifecycle", () => {
   const fenceRoot = (enabled = false) => beginRootModeOperation("root-session", 0, "a".repeat(64), enabled)
+
+  it("submits and executes a saved custom model with its provider before catalog metadata loads", async () => {
+    const customRef = { provider: "test-provider", model: "vendor:custom-name" }
+    mocks.providerState.providerSnapshot!.instances[0].config.runtime_models!.push(customRef.model)
+    mocks.appState.selectedModel = customRef.model
+    mocks.sendMessage.mockResolvedValueOnce({ session_id: "custom-session" })
+    mocks.subscribeToEvents.mockReturnValueOnce(pendingForever())
+    const hook = await mountUseChat({ mode: "bound", sessionId: null })
+
+    await act(async () => { await hook.current.send("use the admitted custom model") })
+
+    expect(mocks.providerState.catalog).toBeNull()
+    expect(mocks.sendMessage).toHaveBeenCalledWith(expect.objectContaining({ model: customRef.model, model_ref: customRef }))
+    expect(mocks.execute).toHaveBeenCalledWith("custom-session", customRef.model, undefined, undefined, customRef)
+  })
+
+  it.each([["custom-model", "custom-model"], ["foreign-cached-model", "test-model"]])("uses saved instance admission without role defaults for selected %s", async (selected, expectedModel) => {
+    const snapshot = mocks.providerState.providerSnapshot!
+    snapshot.defaults = undefined
+    snapshot.features = { provider_model_ref: false }
+    snapshot.instances[0].config.model = "test-model"
+    snapshot.instances[0].config.runtime_models = ["test-model", "custom-model"]
+    mocks.appState.selectedModel = selected
+    mocks.sendMessage.mockResolvedValueOnce({ session_id: "instance-only-session" })
+    mocks.subscribeToEvents.mockReturnValueOnce(pendingForever())
+    const hook = await mountUseChat({ mode: "bound", sessionId: null })
+    await act(async () => { await hook.current.send("start from the first provider") })
+    const expectedRef = { provider: "test-provider", model: expectedModel }
+    expect(mocks.sendMessage).toHaveBeenCalledWith(expect.objectContaining({ model: expectedModel, model_ref: expectedRef }))
+    expect(mocks.execute).toHaveBeenCalledWith("instance-only-session", expectedModel, undefined, undefined, expectedRef)
+  })
+
+  it("resolves a cached new-chat submission against the current provider and freezes that ref for execute", async () => {
+    const snapshot = mocks.providerState.providerSnapshot!
+    snapshot.instances.push({ id: "second-provider", type: "openai", label: "Second", enabled: true, config: { runtime_models: ["second-default"] } })
+    const response = deferred<{ session_id: string }>()
+    mocks.sendMessage.mockReturnValueOnce(response.promise)
+    mocks.subscribeToEvents.mockReturnValueOnce(pendingForever())
+    const hook = await mountUseChat({ mode: "bound", sessionId: null })
+    const cachedSend = hook.current.send
+    // The global cached choice still belongs to the previous provider.
+    snapshot.defaults = { chat: { provider: "second-provider", model: "second-default" } }
+    let sending!: Promise<SendSubmissionResult>
+    act(() => { sending = cachedSend("use the newly configured provider") })
+    const expectedRef = { provider: "second-provider", model: "second-default" }
+    expect(mocks.sendMessage).toHaveBeenCalledWith(expect.objectContaining({ model: expectedRef.model, model_ref: expectedRef }))
+
+    // A later preference change must not reroute the acknowledged session.
+    snapshot.defaults = { chat: { provider: "test-provider", model: "test-model" } }
+    await hook.rerender({ mode: "bound", sessionId: null })
+    await act(async () => { response.resolve({ session_id: "switched-session" }); await sending })
+    expect(mocks.execute).toHaveBeenCalledWith("switched-session", expectedRef.model, undefined, undefined, expectedRef)
+  })
+
+  it.each(["empty", "disabled", "missing"] as const)("blocks a new chat when saved admission is %s", async (mode) => {
+    if (mode === "empty") mocks.providerState.providerSnapshot!.instances[0].config.runtime_models = []
+    if (mode === "disabled") mocks.providerState.providerSnapshot!.instances[0].enabled = false
+    if (mode === "missing") mocks.providerState.providerSnapshot = null
+    const hook = await mountUseChat({ mode: "bound", sessionId: null })
+    let result!: SendSubmissionResult
+    await act(async () => { result = await hook.current.send("no eligible runtime model") })
+    expect(result).toEqual({ kind: "blocked" })
+    expect(mocks.sendMessage).not.toHaveBeenCalled()
+    expect(mocks.execute).not.toHaveBeenCalled()
+  })
 
   it.each(["main", "bound"] as const)("keeps the %s pane's user bubble until its acknowledged message is in history", async (mode) => {
     const sessionId = "delayed-user-history"
@@ -762,7 +836,7 @@ describe("useChat two-phase send lifecycle", () => {
     expect(mocks.acknowledgeTemplate).toHaveBeenCalledTimes(1)
     expect(mocks.acknowledgeTemplate).toHaveBeenCalledWith(templatePrompt)
     expect(mocks.execute).toHaveBeenCalledTimes(1)
-    expect(mocks.execute).toHaveBeenCalledWith("detached-session", "test-model", undefined, undefined, undefined)
+    expect(mocks.execute).toHaveBeenCalledWith("detached-session", "test-model", undefined, undefined, { provider: "test-provider", model: "test-model" })
     expect(mocks.subscribeToEvents).not.toHaveBeenCalled()
     expect(mocks.appState.selectSession).not.toHaveBeenCalled()
   })
@@ -788,7 +862,7 @@ describe("useChat two-phase send lifecycle", () => {
     expect(firstResult).toMatchObject({ kind: "accepted", sessionId: "session-one" })
     expect(mocks.sendMessage).toHaveBeenCalledTimes(1)
     expect(mocks.execute).toHaveBeenCalledTimes(1)
-    expect(mocks.execute).toHaveBeenCalledWith("session-one", "test-model", undefined, undefined, undefined)
+    expect(mocks.execute).toHaveBeenCalledWith("session-one", "test-model", undefined, undefined, { provider: "test-provider", model: "test-model" })
   })
   it("routes a main-pane new session through the global session store", async () => {
     mocks.sendMessage.mockResolvedValueOnce({ session_id: "main-session" })
@@ -805,7 +879,7 @@ describe("useChat two-phase send lifecycle", () => {
     })
     expect(mocks.appState.selectSession).toHaveBeenCalledTimes(1)
     expect(mocks.appState.selectSession).toHaveBeenCalledWith("main-session")
-    expect(mocks.execute).toHaveBeenCalledWith("main-session", "test-model", undefined, undefined, undefined)
+    expect(mocks.execute).toHaveBeenCalledWith("main-session", "test-model", undefined, undefined, { provider: "test-provider", model: "test-model" })
     expect(mocks.subscribeToEvents).toHaveBeenCalledWith(
       "main-session",
       expect.any(Object),
@@ -1358,7 +1432,7 @@ describe("useChat two-phase send lifecycle", () => {
         "subscribe:ack-session",
         "accepted",
       ])
-      expect(mocks.execute).toHaveBeenCalledWith("ack-session", "test-model", undefined, undefined, undefined)
+      expect(mocks.execute).toHaveBeenCalledWith("ack-session", "test-model", undefined, undefined, { provider: "test-provider", model: "test-model" })
       expect(mocks.appState.refreshChatsNow).toHaveBeenCalledTimes(1)
       expect(mocks.appState.loadChatHistory).toHaveBeenCalledWith("ack-session", { mode: "monotonic" })
       expect(hook.current.sendFailure).toBeNull()
@@ -1697,7 +1771,7 @@ describe("useChat two-phase send lifecycle", () => {
     })
     expect(onSessionCreated).not.toHaveBeenCalled()
     expect(mocks.subscribeToEvents).not.toHaveBeenCalled()
-    expect(mocks.execute).toHaveBeenCalledWith("late-session", "test-model", undefined, undefined, undefined)
+    expect(mocks.execute).toHaveBeenCalledWith("late-session", "test-model", undefined, undefined, { provider: "test-provider", model: "test-model" })
     expect(hook.current.sending).toBe(false)
     expect(hook.current.submissionPending).toBe(false)
     expect(hook.current.streaming).toBeNull()
