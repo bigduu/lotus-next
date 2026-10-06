@@ -3,8 +3,9 @@ import { useEffect, useRef, useState } from "react"
 import { Trash2, Plus, Pencil, RefreshCw } from "lucide-react"
 import { getErrorMessage } from "@services/api"
 import { useProviderStore } from "@shared/store/appStore/slices/providerSlice"
+import { useAppStore } from "@shared/store/appStore"
 import type { ProviderInstance } from "@shared/types/providerConfig"
-import { PROVIDER_LABELS } from "@shared/types/providerConfig"
+import { getRuntimeModelIds, PROVIDER_LABELS } from "@shared/types/providerConfig"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Switch } from "@/components/ui/switch"
@@ -32,6 +33,7 @@ export function SettingsProviders() {
   const loadCatalog = useProviderStore((s) => s.loadCatalog)
   const fetchCatalogModels = useProviderStore((s) => s.fetchCatalogModels)
   const catalog = useProviderStore((s) => s.catalog)
+  const discoveries = useProviderStore((s) => s.discoveredModelsByProvider)
 
   const settingsSnapshot = snapshot ?? repairSnapshot
   const instances = settingsSnapshot?.instances ?? []
@@ -104,10 +106,10 @@ export function SettingsProviders() {
     )
     try {
       await fetchCatalogModels(created.id)
-      const count = useProviderStore.getState().getModelsForProvider(created.id).length
+      const count = useProviderStore.getState().discoveredModelsByProvider[created.id]?.length ?? 0
       const text =
         count > 0
-          ? uiText("instance_saved_models_discovered_select_a_model_and_sav_9d490eb2", { v0: count , count: count })
+          ? uiText("runtime_models_saved_discovered", { count })
           : uiText("instance_saved_but_no_models_were_found_enter_a_custom__a6488023")
       if (result.instanceConfirmed) {
         setFetchNotice({
@@ -151,6 +153,8 @@ export function SettingsProviders() {
       enabled: v.enabled,
       config: v.config,
     })
+    await loadCatalog()
+    await useAppStore.getState().fetchModels()
     setFetchNotice((notice) => (notice?.id === id ? null : notice))
     setEditing(null)
   }
@@ -172,14 +176,15 @@ export function SettingsProviders() {
   }
 
   const fetchModels = async (inst: ProviderInstance) => {
+    setEditing(inst.id)
     setFetchingId(inst.id)
     setFetchNotice(null)
     try {
       await fetchCatalogModels(inst.id)
-      const count = useProviderStore.getState().getModelsForProvider(inst.id).length
+      const count = useProviderStore.getState().discoveredModelsByProvider[inst.id]?.length ?? 0
       setFetchNotice({
         id: inst.id,
-        text: count > 0 ? uiText("refreshed_models_1563711d", { v0: count , count: count }) : uiText("no_models_found_you_can_enter_a_custom_model_id_in_the__f7b4e163"),
+        text: count > 0 ? uiText("runtime_models_discovered", { count }) : uiText("no_models_found_you_can_enter_a_custom_model_id_in_the__f7b4e163"),
         tone: count > 0 ? "success" : "warning",
       })
     } catch {
@@ -215,7 +220,7 @@ export function SettingsProviders() {
   }
 
   const modelsForInstance = (instanceId: string) =>
-    catalog?.models.filter((model) => model.reference.provider === instanceId) ?? []
+    discoveries[instanceId] ?? catalog?.models.filter((model) => model.reference.provider === instanceId) ?? []
 
   const confirmDelete = async () => {
     if (!deleting) return
@@ -284,6 +289,8 @@ export function SettingsProviders() {
               <InstanceEditor
                 instance={inst}
                 modelOptions={modelsForInstance(inst.id)}
+                initialRuntimeModels={getRuntimeModelIds(inst, settingsSnapshot?.defaults)}
+                defaults={settingsSnapshot?.defaults}
                 onCancel={() => setEditing(null)}
                 onSave={(v) => updateInstance(inst.id, v)}
               />

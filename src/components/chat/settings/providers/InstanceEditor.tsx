@@ -1,9 +1,9 @@
 import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { useState } from "react"
 import { ChevronDown, ChevronRight } from "lucide-react"
-import type { ProviderInstance, ProviderKind } from "@shared/types/providerConfig"
+import type { DefaultsConfig, ProviderInstance, ProviderKind } from "@shared/types/providerConfig"
 import type { ProviderModelDescriptor } from "@shared/types/providerModelRef"
-import { PROVIDER_LABELS } from "@shared/types/providerConfig"
+import { getRuntimeModelIds, PROVIDER_LABELS } from "@shared/types/providerConfig"
 import { getErrorMessage } from "@services/api"
 import { isMaskedSecret } from "@/lib/secrets"
 import { VENDOR_PRESETS } from "@/lib/providerPresets"
@@ -20,6 +20,7 @@ import {
 } from "@/components/ui/select"
 import { CopilotAuth } from "./CopilotAuth"
 import { EditableModelCombobox } from "./EditableModelCombobox"
+import { RuntimeModelsEditor } from "./RuntimeModelsEditor"
 
 const PROVIDER_TYPES: ProviderKind[] = ["anthropic", "openai", "gemini", "copilot", "bodhi"]
 const REASONING_EFFORTS = [
@@ -54,6 +55,10 @@ interface Draft {
   apiKey: string
   baseUrl: string
   model: string
+  /** null means this instance has no legacy assignment to edit. */
+  fastModel: string | null
+  visionModel: string | null
+  runtimeModels: string[]
   reasoningEffort: string
   responsesOnlyModels: string
   headlessAuth: boolean
@@ -72,6 +77,9 @@ function draftFromInstance(inst: ProviderInstance | null): Draft {
     apiKey: isMaskedSecret(cfg.api_key) ? "" : str(cfg.api_key),
     baseUrl: str(cfg.base_url),
     model: str(cfg.model),
+    fastModel: typeof cfg.fast_model === "string" && cfg.fast_model.trim() ? cfg.fast_model : null,
+    visionModel: typeof cfg.vision_model === "string" && cfg.vision_model.trim() ? cfg.vision_model : null,
+    runtimeModels: inst ? getRuntimeModelIds(inst) : [],
     reasoningEffort: str(cfg.reasoning_effort),
     responsesOnlyModels: Array.isArray(cfg.responses_only_models)
       ? (cfg.responses_only_models as unknown[]).map(str).filter(Boolean).join("\n")
@@ -97,6 +105,10 @@ function buildPayload(
 ): { payload: InstanceSavePayload } | { error: string } {
   const type = draft.type
   const config: Record<string, unknown> = {}
+  config.runtime_models = [...new Set(draft.runtimeModels.map((model) => model.trim()).filter(Boolean))]
+  if (draft.model.trim() && !(config.runtime_models as string[]).includes(draft.model.trim())) {
+    return { error: uiText("runtime_models_default_required") }
+  }
 
   const setOrClear = (key: string, value: unknown, hasValue: boolean) => {
     if (hasValue) config[key] = value
@@ -119,6 +131,12 @@ function buildPayload(
   }
 
   setOrClear("model", draft.model.trim(), draft.model.trim() !== "")
+  if (draft.fastModel !== null) {
+    setOrClear("fast_model", draft.fastModel.trim(), draft.fastModel.trim() !== "")
+  }
+  if (draft.visionModel !== null) {
+    setOrClear("vision_model", draft.visionModel.trim(), draft.visionModel.trim() !== "")
+  }
   setOrClear("reasoning_effort", draft.reasoningEffort, draft.reasoningEffort !== "")
 
   // NOTE: no max_tokens field here on purpose — the backend instance→provider
@@ -204,6 +222,8 @@ export function InstanceEditor({
   onSave,
   onCancel,
   modelOptions = [],
+  initialRuntimeModels,
+  defaults,
 }: {
   /** null = create mode */
   instance: ProviderInstance | null
@@ -212,16 +232,23 @@ export function InstanceEditor({
   onCancel: () => void
   /** Server-discovered suggestions; custom ids remain valid without them. */
   modelOptions?: readonly ProviderModelDescriptor[]
+  /** Includes configured legacy defaults; an explicit empty list stays empty. */
+  initialRuntimeModels?: readonly string[]
+  defaults?: DefaultsConfig
 }) {
   useUiLocale()
   const isEdit = instance != null
   const hasStoredApiKey = isMaskedSecret(
     ((instance?.config ?? {}) as Record<string, unknown>).api_key,
   )
-  const [draft, setDraft] = useState<Draft>(() => draftFromInstance(instance))
+  const [draft, setDraft] = useState<Draft>(() => ({
+    ...draftFromInstance(instance),
+    ...(initialRuntimeModels ? { runtimeModels: [...initialRuntimeModels] } : {}),
+  }))
   const [showAdvanced, setShowAdvanced] = useState(() => {
     const d = draftFromInstance(instance)
     return d.requestOverridesJson !== "" || d.responsesOnlyModels !== ""
+      || d.fastModel !== null || d.visionModel !== null
   })
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -251,6 +278,17 @@ export function InstanceEditor({
   }
 
   const submit = async () => {
+    if (instance) {
+      const required = getRuntimeModelIds({
+        ...instance,
+        config: { fast_model: draft.fastModel, vision_model: draft.visionModel },
+      }, defaults)
+      const removed = required.find((model) => !draft.runtimeModels.includes(model))
+      if (removed) {
+        setError(uiText("runtime_models_in_use", { model: removed }))
+        return
+      }
+    }
     const result = buildPayload(draft, isEdit, hasStoredApiKey)
     if ("error" in result) {
       setError(result.error)
@@ -385,11 +423,23 @@ export function InstanceEditor({
         </div>
       ) : null}
 
+      <RuntimeModelsEditor
+        value={draft.runtimeModels}
+        onChange={(runtimeModels) => patch({ runtimeModels })}
+        candidates={modelOptions}
+      />
+
       <EditableModelCombobox
         label={uiText("default_model_optional_d2c2a9cc")}
         value={draft.model}
         onChange={(v) => patch({ model: v })}
-        models={modelOptions}
+        models={draft.runtimeModels.map((model) => modelOptions.find((item) => item.reference.model === model) ?? {
+          reference: { provider: instance?.id ?? "", model },
+          display_name: model,
+          provider_display_name: instance?.label ?? "",
+          capabilities: { supports_tools: true, supports_vision: false, supports_reasoning: false },
+          source: "manual",
+        })}
         placeholder={preset ? preset.suggested_models.join(", ") : "glm-5.2"}
       />
 
@@ -425,6 +475,20 @@ export function InstanceEditor({
 
       {showAdvanced ? (
         <div className="space-y-2.5">
+          {draft.fastModel !== null || draft.visionModel !== null ? (
+            <fieldset className="space-y-2 rounded-md border p-2.5">
+              <legend className="px-1 text-xs font-medium">{uiText("runtime_models_legacy_assignments")}</legend>
+              <p className="text-xs text-muted-foreground">{uiText("runtime_models_legacy_assignments_hint")}</p>
+              {draft.fastModel !== null ? (
+                <Field label={uiText("runtime_models_legacy_fast_model")} value={draft.fastModel}
+                  onChange={(fastModel) => patch({ fastModel })} />
+              ) : null}
+              {draft.visionModel !== null ? (
+                <Field label={uiText("runtime_models_legacy_vision_model")} value={draft.visionModel}
+                  onChange={(visionModel) => patch({ visionModel })} />
+              ) : null}
+            </fieldset>
+          ) : null}
           {type === "openai" || type === "copilot" ? (
             <label className="block">
               <span className="mb-1 block text-xs text-muted-foreground">

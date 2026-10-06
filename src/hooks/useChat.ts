@@ -32,6 +32,8 @@ import {
   getRootModeFenceState,
 } from "@/lib/rootModeTransitionFence"
 import type { Message } from "@shared/types/chat"
+import { resolveNewChatModelRef } from "@shared/types/providerConfig"
+import type { ProviderModelRef } from "@shared/types/providerModelRef"
 import {
   getReasoningEffortForProvider,
   type ReasoningEffortSelection,
@@ -260,49 +262,30 @@ export function useChat(
   // Global default model (configured in provider settings). It seeds new
   // sessions; an existing session keeps its own bound model unless the user
   // explicitly picks another one.
-  const defaultChatModel = useProviderStore((s) => s.providerSnapshot?.defaults?.chat?.model)
+  const providerSnapshot = useProviderStore((s) => s.providerSnapshot)
+  const defaultChatModel = providerSnapshot?.defaults?.chat?.model
   // The full provider+model ref for the configured Chat default. Under Bamboo's
   // `features.provider_model_ref` cascade a bare model id (no provider) is
   // outranked by the server's `defaults.chat` — so the client must send the
   // complete ref for the user's pick to actually win. Same session affinity:
   // an existing session keeps the ref it was created with unless the user
   // explicitly switches models.
-  const defaultChatRef = useProviderStore((s) => s.providerSnapshot?.defaults?.chat)
-  // Models offered by the chat-header picker are flattened across ALL provider
-  // instances. Only pair the default provider with a model that actually
-  // belongs to it (its own configured default, or one discovered for that
-  // instance); a pick from another instance must NOT be re-bound onto this
-  // provider — that would send a wrong provider+model pair. It degrades to the
-  // bare model and the server-side legacy cascade instead.
-  const defaultProviderModelIds = useProviderStore(useShallow((s) => {
-    const providerId = s.providerSnapshot?.defaults?.chat?.provider
-    if (!providerId?.trim()) return null
-    const known = new Set<string>()
-    const configured = s.providerSnapshot?.defaults?.chat?.model
-    if (configured?.trim()) known.add(configured)
-    for (const m of s.catalog?.models ?? []) {
-      if (m.reference.provider === providerId) known.add(m.reference.model)
-    }
-    return known
-  }))
+  const defaultChatRef = providerSnapshot?.defaults?.chat
   const sessionModelRef = currentChat?.config?.model_ref
   const sessionModel = sessionModelRef?.model || currentChat?.config?.model || ""
   // Picker choices on an existing session are persisted before execution.
   // The global draft choice must never outrank that session's saved model.
-  const newSessionModel = sid ? undefined : selectedModel
-  const effectiveModel = newSessionModel || sessionModel || defaultChatModel || ""
-  const acknowledgedModel = effectiveModel
-  // Full ref to send alongside `model`. Explicit picker choices are paired
-  // with the configured Chat provider only when they are known to belong to
-  // it. With no explicit pick, an existing session's own provider+model ref is
-  // authoritative; only a new/unbound session falls back to the Chat default.
+  const newSessionRef = useMemo(() => sid
+    ? undefined
+    : resolveNewChatModelRef(providerSnapshot, selectedModel),
+  [sid, providerSnapshot, selectedModel])
+  const effectiveModel = sid
+    ? sessionModel || defaultChatModel || ""
+    : newSessionRef?.model || ""
+  // The saved provider snapshot is the admission authority. Supplementary
+  // catalog metadata may still be loading when a custom model is selected.
   const effectiveModelRef = useMemo(() => {
-    if (newSessionModel) {
-      return defaultChatRef?.provider?.trim() &&
-        defaultProviderModelIds?.has(newSessionModel)
-        ? { provider: defaultChatRef.provider, model: newSessionModel }
-        : undefined
-    }
+    if (!sid) return newSessionRef
     if (sessionModelRef?.provider?.trim() && sessionModelRef.model?.trim()) {
       return { provider: sessionModelRef.provider, model: sessionModelRef.model }
     }
@@ -313,15 +296,15 @@ export function useChat(
   }, [
     defaultChatModel,
     defaultChatRef,
-    defaultProviderModelIds,
-    newSessionModel,
+    sid,
+    newSessionRef,
     sessionModel,
     sessionModelRef,
   ])
   const chatReasoningEffort = useProviderStore(
     (s) => s.providerSnapshot?.defaults?.chat?.reasoning_effort,
   )
-  const effectiveProviderId = newSessionModel
+  const effectiveProviderId = !sid
     ? effectiveModelRef?.provider
     : sessionModelRef?.provider || effectiveModelRef?.provider
   const effectiveProviderReasoningEffort = useProviderStore((s) =>
@@ -736,6 +719,8 @@ export function useChat(
         pendingOperationId?: number
         /** `null` explicitly omits an execute-time override (Auto). */
         reasoningEffort?: ReasoningEffort | null
+        /** Keep a just-acknowledged new session on its submitted model. */
+        modelSelection?: { model: string; modelRef?: ProviderModelRef }
       },
     ) => {
       const operationId = opts?.operationId ?? operationSequenceRef.current + 1
@@ -784,7 +769,9 @@ export function useChat(
         if (getRootModeFenceState(runSid) !== "clear") {
           throw new Error(uiText("the_root_permission_change_is_unconfirmed_your_message__64f12563"))
         }
-        void agentClient.execute(runSid, effectiveModel || undefined, executeReasoningEffort, undefined, effectiveModelRef).catch((err) => {
+        const executeModel = opts?.modelSelection?.model ?? effectiveModel
+        const executeModelRef = opts?.modelSelection ? opts.modelSelection.modelRef : effectiveModelRef
+        void agentClient.execute(runSid, executeModel || undefined, executeReasoningEffort, undefined, executeModelRef).catch((err) => {
           if (!ownsStream()) return
           // The run never started, so no terminal will ever arrive — settle
           // the subscription instead of leaving it (and the UI) hanging.
@@ -1512,6 +1499,17 @@ export function useChat(
       if (activeSendRef.current) return { kind: "busy" }
 
       const startSid = sid
+      // Re-read admission at submission: a cached composer callback must not
+      // carry a draft model across a saved Chat-provider change.
+      const providerState = useProviderStore.getState()
+      const submittedModelRef = startSid ? effectiveModelRef : resolveNewChatModelRef(
+        providerState.providerSnapshot,
+        useAppStore.getState().selectedModel,
+      )
+      const submittedModel = startSid ? effectiveModel : submittedModelRef?.model || ""
+      if (!startSid && !submittedModelRef) return { kind: "blocked" }
+      const submittedProviderType = startSid ? providerType
+        : submittedModelRef ? providerState.getProviderType(submittedModelRef.provider) : undefined
       if (startSid && getRootModeFenceState(startSid) !== "clear") return { kind: "blocked" }
       // Existing Root mode changes use a separate, recoverable operation.
       if (startSid && typeof opts?.rootOrchestrationOnly === "boolean") return { kind: "blocked" }
@@ -1550,7 +1548,7 @@ export function useChat(
       try {
         // Client-side prompt enhancement (OS info + operational guidance + the
         // user's own enhancement text), recomputed per send like lotus does.
-        const enhancePrompt = getSystemPromptEnhancementText(providerType).trim()
+        const enhancePrompt = getSystemPromptEnhancementText(submittedProviderType).trim()
         // New sessions keep the selected/default system-prompt preset as their
         // durable base. A just-picked home-dashboard template is appended as a
         // task-mode block instead of replacing that base prompt. Existing
@@ -1567,14 +1565,14 @@ export function useChat(
         const res = await agentClient.sendMessage({
           message: body,
           session_id: startSid ?? undefined,
-          model: effectiveModel,
+          model: submittedModel,
           // Complete provider+model ref: a bare `model` alone is outranked by
           // the server's `defaults.chat` under `features.provider_model_ref`.
-          model_ref: effectiveModelRef,
+          model_ref: submittedModelRef,
           reasoning_effort: !startSid ? submittedReasoningEffort : undefined,
           enhance_prompt: enhancePrompt || undefined,
           copilot_conclusion_with_options_enhancement_enabled:
-            providerType === "copilot" && isCopilotConclusionWithOptionsEnhancementEnabled(),
+            submittedProviderType === "copilot" && isCopilotConclusionWithOptionsEnhancementEnabled(),
           system_prompt: systemPrompt,
           selected_skill_ids: opts?.skillIds?.length ? opts.skillIds : undefined,
           ...(opts?.workflowSelection ? { workflow_selection: opts.workflowSelection } : {}),
@@ -1602,7 +1600,7 @@ export function useChat(
           throw new Error("The chat submission response did not acknowledge the expected session.")
         }
         acknowledgedMessageId = typeof res.message_id === "string" && res.message_id.trim() ? res.message_id.trim() : null
-        recordUsedModel(acknowledgedModel)
+        recordUsedModel(submittedModel)
       } catch (err) {
         console.error("[useChat] message submission was not acknowledged", err)
         const rejectionCode = rootModeRejectionCode(err)
@@ -1654,7 +1652,7 @@ export function useChat(
           })
         } else {
           void agentClient
-            .execute(acknowledgedSessionId, effectiveModel || undefined, submittedReasoningEffort, undefined, effectiveModelRef)
+            .execute(acknowledgedSessionId, submittedModel || undefined, submittedReasoningEffort, undefined, submittedModelRef)
             .catch((err) => {
               console.warn("[useChat] detached generation start failed", err)
               publishSendFailure({
@@ -1702,6 +1700,7 @@ export function useChat(
           operationId: operation.id,
           pendingOperationId: operation.pendingOperationId,
           reasoningEffort: submittedReasoningEffort ?? null,
+          modelSelection: { model: submittedModel, modelRef: submittedModelRef },
         })
           .catch((err) => {
             console.error("[useChat] acknowledged generation failed", err)
@@ -1745,7 +1744,6 @@ export function useChat(
       isBound,
       onSessionCreated,
       effectiveModel,
-      acknowledgedModel,
       effectiveModelRef,
       providerType,
       reasoningEffort,

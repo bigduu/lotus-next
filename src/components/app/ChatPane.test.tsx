@@ -46,7 +46,7 @@ const runtime = vi.hoisted(() => ({
   messageList: null as MessageListProps | null,
   modelPicker: null as ModelPickerProps | null,
   reasoningPicker: null as ReasoningPickerProps | null,
-  providerState: { providerSnapshot: null as ProviderInstancesConfig | null },
+  providerState: { providerSnapshot: null as ProviderInstancesConfig | null, providerStatus: "ready" },
   stickyAtBottom: true, scrollToBottom: vi.fn(),
   queueSend: vi.fn(), revision: 0, getWorkflow: vi.fn(), listCommands: vi.fn(), peekTemplate: vi.fn(),
   ticketWork: null as TicketController | null,
@@ -282,7 +282,13 @@ beforeEach(() => {
     removeEventListener: (_name: string, listener: (event: MediaQueryListEvent) => void) => mediaListeners.delete(listener),
   })))
   runtime.composer = null; runtime.messageList = null; runtime.modelPicker = null; runtime.reasoningPicker = null
-  runtime.providerState.providerSnapshot = null
+  runtime.providerState.providerStatus = "ready"
+  runtime.providerState.providerSnapshot = {
+    default_provider_instance_id: "easycli",
+    instances: [{ id: "easycli", type: "openai", label: "Easycli", enabled: true,
+      config: { runtime_models: ["test-model", "gpt-6-sol", "grok-4.7"] } }],
+    defaults: { chat: { provider: "easycli", model: "test-model" } },
+  }
   runtime.listeners.clear(); runtime.revision = 0
   runtime.state = {
     chats: [], getInputState: (id) => runtime.state.inputStates[id] ?? { content: "", contentRevision: 0 },
@@ -521,7 +527,7 @@ describe("ChatPane composer acknowledgement", () => {
         type: "openai",
         label: "Easycli",
         enabled: true,
-        config: {},
+        config: { runtime_models: ["gpt-5.6-sol", "gpt-5.6-luna"] },
       }],
       defaults: {
         chat: { provider: "easycli", model: "gpt-5.6-sol" },
@@ -548,7 +554,7 @@ describe("ChatPane composer acknowledgement", () => {
     runtime.state.models = ["gpt-6-sol", "grok-4.7"]
     runtime.providerState.providerSnapshot = {
       default_provider_instance_id: "easycli",
-      instances: [{ id: "easycli", type: "openai", label: "Easycli", enabled: true, config: {} }],
+      instances: [{ id: "easycli", type: "openai", label: "Easycli", enabled: true, config: { runtime_models: ["gpt-6-sol", "grok-4.7"] } }],
       defaults: { chat: { provider: "easycli", model: "gpt-6-sol" } },
       features: { provider_model_ref: true },
     }
@@ -565,6 +571,59 @@ describe("ChatPane composer acknowledgement", () => {
     await act(async () => { pending.resolve(); await pending.promise })
     expect(runtime.modelPicker?.disabled).toBe(false)
     expect(composer().submissionPending).toBe(false)
+  })
+
+  it("uses this session provider's saved admission and excludes other providers and historical ids", async () => {
+    runtime.state.models = ["old-global", "other-only"]
+    runtime.providerState.providerSnapshot = {
+      default_provider_instance_id: "other",
+      instances: [
+        { id: "work", type: "openai", label: "Work", enabled: true, config: { runtime_models: ["newly-added", "vendor:custom-name"] } },
+        { id: "other", type: "openai", label: "Other", enabled: true, config: { runtime_models: ["other-only"] } },
+      ],
+      defaults: { chat: { provider: "other", model: "other-only" } },
+    }
+    const chat = createChat(vi.fn<Send>(), "session-1")
+    chat.currentChat!.config.model_ref = { provider: "work", model: "historical-removed" }
+    const container = document.body.appendChild(document.createElement("div"))
+    const root = createRoot(container); roots.push(root)
+    await act(async () => root.render(<ChatPane chat={chat} pickedWorkspace="/picked"
+      onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()} splitOpen={false}
+      onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false} />))
+
+    expect(runtime.modelPicker?.models).toEqual(["newly-added", "vendor:custom-name"])
+    expect(runtime.modelPicker?.value).toBe("historical-removed")
+  })
+
+  it("shows the new Chat default after a provider switch leaves a cached choice from the previous provider", async () => {
+    const snapshot = runtime.providerState.providerSnapshot!
+    snapshot.instances.push({ id: "other", type: "openai", label: "Other", enabled: true, config: { runtime_models: ["other-default", "other-custom"] } })
+    await mount(vi.fn<Send>(), null)
+    expect(runtime.modelPicker?.value).toBe("test-model")
+    runtime.providerState.providerSnapshot = { ...snapshot, defaults: { chat: { provider: "other", model: "other-default" } } }
+    await act(async () => roots.at(-1)!.render(<ChatPane chat={createChat(vi.fn<Send>(), null)} pickedWorkspace="/picked"
+      onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()} splitOpen={false}
+      onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false} />))
+
+    expect(runtime.state.selectedModel).toBe("test-model")
+    expect(runtime.modelPicker?.models).toEqual(["other-default", "other-custom"])
+    expect(runtime.modelPicker?.value).toBe("other-default")
+  })
+
+  it("offers the first provider's saved admission before role defaults have been configured", async () => {
+    runtime.providerState.providerSnapshot!.defaults = undefined
+    runtime.providerState.providerSnapshot!.instances[0].config.model = "test-model"
+    await mount(vi.fn<Send>(), null)
+    expect(runtime.modelPicker?.models).toEqual(["test-model", "gpt-6-sol", "grok-4.7"])
+    expect(runtime.modelPicker?.value).toBe("test-model")
+  })
+
+  it.each(["empty", "unavailable"])("hides model options when provider admission is %s", async (mode) => {
+    runtime.state.models = ["stale-global"]
+    runtime.providerState.providerSnapshot!.instances[0].config.runtime_models = []
+    if (mode === "unavailable") runtime.providerState.providerStatus = "unavailable"
+    await mount(vi.fn<Send>(), null)
+    expect(runtime.modelPicker?.models).toEqual([])
   })
 
   it("does not accept a model change during a live run", async () => {
