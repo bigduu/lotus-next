@@ -130,6 +130,25 @@ describe("QuestionDialog actual controls", () => {
     expect(props.onAnswer).not.toHaveBeenCalled()
   })
 
+  it("opens typed approvals without focusing a decision and consumes repeated or composing Enter", async () => {
+    const { props, render } = await mountQuestion()
+    const dialog = document.querySelector<HTMLDivElement>("[data-approval-presentation]")!
+    expect(document.activeElement).toBe(dialog)
+    const allow = button("仅本次允许")
+    for (const init of [{ repeat: true }, { isComposing: true }]) {
+      const event = new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true, ...init })
+      act(() => allow.dispatchEvent(event))
+      expect(event.defaultPrevented).toBe(true)
+    }
+    expect(props.onAnswer).not.toHaveBeenCalled()
+    const next = permission()
+    if (next.interaction_kind === "permission") next.permission_request.request_generation = "generation/b"
+    await render({ q: next })
+    expect(document.activeElement).toBe(document.querySelector("[data-approval-presentation]"))
+    click("仅本次允许")
+    expect(props.onAnswer).toHaveBeenCalledExactlyOnceWith("allow_once")
+  })
+
   it("keeps the separate child approval controls and boolean response contract", async () => {
     const onRespond = vi.fn()
     const root = createRoot(document.body.appendChild(document.createElement("div")))
@@ -137,7 +156,12 @@ describe("QuestionDialog actual controls", () => {
     await act(async () => root.render(<ApprovalDialog a={{ childSessionId: "child/a", requestId: "child/request",
       toolName: "Bash", permission: "execute_command", resource: "echo child" }} onRespond={onRespond} />))
     expect(document.body.textContent).toContain("子代理请求授权")
+    expect(document.activeElement).toBe(document.querySelector("[data-approval-presentation]"))
     const choices = [...document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')]
+    const repeated = new KeyboardEvent("keydown", { key: "Enter", repeat: true, bubbles: true, cancelable: true })
+    act(() => choices[1].dispatchEvent(repeated))
+    expect(repeated.defaultPrevented).toBe(true)
+    expect(onRespond).not.toHaveBeenCalled()
     act(() => { choices[0].click(); choices[1].click() })
     expect(onRespond.mock.calls.map(([value]) => value).sort()).toEqual([false, true])
     expect(document.body.textContent).not.toContain("仅本次允许")

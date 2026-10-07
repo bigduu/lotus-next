@@ -3,6 +3,7 @@ import { useState } from "react"
 import type { PendingQuestion, PendingApproval } from "@/hooks/useChat"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
+import { ApprovalPresentation } from "./ApprovalPresentation"
 import {
   ResponsiveDialog,
   ResponsiveDialogContent,
@@ -41,6 +42,29 @@ export function QuestionDialog({
     ? [{ value: "allow_once", label: uiText("allow_once_390dd1fc") }, { value: "deny_once", label: uiText("deny_once_29b8bbf3") }]
       .filter((option) => permission.allowed_decisions.includes(option.value))
     : q.options.map((value) => ({ value, label: value }))
+  const statusAndRefresh = (
+    <>
+      {submitting || loading ? <p role="status" className="mt-3 text-sm text-muted-foreground">{submitting ? uiText("submitting_26ef00b7") : uiText("refreshing_71659de8")}</p> : null}
+      {error ? <p role="alert" className="mt-3 text-sm text-destructive">{error}</p> : null}
+      {permission && options.length === 0 ? <p className="mt-3 text-sm text-muted-foreground">{uiText("no_action_choices_are_available_for_this_request_refres_7be8bf22")}</p> : null}
+      <div className="mt-3 flex gap-2">
+        <Button variant="outline" disabled={loading || submitting} onClick={onRefresh}>{uiText("refresh_request_0ab317cc")}</Button>
+        {canRetry ? <Button variant="secondary" disabled={loading || submitting} onClick={onRetry}>{uiText("retry_last_submission_2970e28a")}</Button> : null}
+      </div>
+    </>
+  )
+  if (permission) {
+    return (
+      <ApprovalPresentation
+        key={JSON.stringify([permission.session_id, permission.request_id, permission.request_generation, permission.policy_revision])}
+        title={uiText("action_approval_required_3bd71c54")}
+        description={q.question}
+        disabled={disabled}
+        actions={options.map((option) => ({ id: option.value, label: option.label, onSelect: () => onAnswer(option.value) }))}
+        footer={statusAndRefresh}
+      />
+    )
+  }
   return (
     <ResponsiveDialog open>
       <ResponsiveDialogContent
@@ -48,7 +72,7 @@ export function QuestionDialog({
         showCloseButton={false}
         className="p-5"
       >
-        <ResponsiveDialogTitle>{permission ? uiText("action_approval_required_3bd71c54") : uiText("your_confirmation_is_needed_383ebd59")}</ResponsiveDialogTitle>
+        <ResponsiveDialogTitle>{uiText("your_confirmation_is_needed_383ebd59")}</ResponsiveDialogTitle>
         <ResponsiveDialogDescription className="mt-2 whitespace-pre-wrap text-sm leading-relaxed text-foreground">
           {q.question}
         </ResponsiveDialogDescription>
@@ -65,7 +89,7 @@ export function QuestionDialog({
             </Button>
           ))}
         </div>
-        {!permission && q.allow_custom ? (
+        {q.allow_custom ? (
           <div className="mt-3">
             <Textarea
               value={custom}
@@ -83,13 +107,7 @@ export function QuestionDialog({
               {uiText("submit_answer_0c1762dd")}</Button>
           </div>
         ) : null}
-        {submitting || loading ? <p role="status" className="mt-3 text-sm text-muted-foreground">{submitting ? uiText("submitting_26ef00b7") : uiText("refreshing_71659de8")}</p> : null}
-        {error ? <p role="alert" className="mt-3 text-sm text-destructive">{error}</p> : null}
-        {permission && options.length === 0 ? <p className="mt-3 text-sm text-muted-foreground">{uiText("no_action_choices_are_available_for_this_request_refres_7be8bf22")}</p> : null}
-        <div className="mt-3 flex gap-2">
-          <Button variant="outline" disabled={loading || submitting} onClick={onRefresh}>{uiText("refresh_request_0ab317cc")}</Button>
-          {canRetry ? <Button variant="secondary" disabled={loading || submitting} onClick={onRetry}>{uiText("retry_last_submission_2970e28a")}</Button> : null}
-        </div>
+        {statusAndRefresh}
       </ResponsiveDialogContent>
     </ResponsiveDialog>
   )
@@ -104,15 +122,15 @@ export function ApprovalDialog({
 }) {
   useUiLocale()
   return (
-    <ResponsiveDialog open>
-      <ResponsiveDialogContent
-        dismissable={false}
-        showCloseButton={false}
-        className="p-5"
-      >
-        <ResponsiveDialogTitle>{uiText("subagent_approval_request_4321e83b")}</ResponsiveDialogTitle>
-        <p className="mt-2 text-sm text-muted-foreground">
-          {uiText("a_subagent_requests_approval_for_an_operation_940aa95b")}</p>
+    <ApprovalPresentation
+      key={JSON.stringify([a.childSessionId, a.requestId])}
+      title={uiText("subagent_approval_request_4321e83b")}
+      description={uiText("a_subagent_requests_approval_for_an_operation_940aa95b")}
+      actions={[
+        { id: "deny", label: uiText("deny_136de7a8"), onSelect: () => onRespond(false) },
+        { id: "approve", label: uiText("approve_8cbe697b"), onSelect: () => onRespond(true) },
+      ]}
+    >
         <div className="mt-3 space-y-1 rounded-lg border p-3 text-sm">
           {a.toolName ? (
             <div>
@@ -130,17 +148,6 @@ export function ApprovalDialog({
             </div>
           ) : null}
         </div>
-        <div className="mt-4 flex gap-2">
-          <Button
-            variant="secondary"
-            className="flex-1"
-            onClick={() => onRespond(false)}
-          >
-            {uiText("deny_136de7a8")}</Button>
-          <Button className="flex-1" onClick={() => onRespond(true)}>
-            {uiText("approve_8cbe697b")}</Button>
-        </div>
-      </ResponsiveDialogContent>
-    </ResponsiveDialog>
+    </ApprovalPresentation>
   )
 }
