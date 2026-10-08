@@ -64,7 +64,6 @@ jobs:
       - name: Resolve the reviewed immutable release candidate
         id: source
         env:
-          GH_TOKEN: ${{ github.token }}
           SOURCE_REF_INPUT: ${{ inputs.source_ref }}
           EXPECTED_SOURCE_SHA_INPUT: ${{ inputs.expected_source_sha }}
           EXPECTED_WORKFLOW_SHA: ${{ github.workflow_sha }}

@@ -74,7 +74,17 @@ export const verifySourceReceipt = (receipt, environment, actualSourceSha) => {
   return receipt
 }
 
-const main = () => {
+export const readPublicEvidence = async (endpoint, fetchEvidence = fetch) => {
+  const response = await fetchEvidence(`https://api.github.com/repos/${repository}/${endpoint}`, {
+    headers: { Accept: "application/vnd.github+json", "User-Agent": "lotus-next-release-source" },
+    signal: AbortSignal.timeout(30_000),
+    redirect: "error",
+  })
+  assert.equal(response.status, 200, "Public acceptance evidence could not be read")
+  return response.json()
+}
+
+const main = async () => {
   const environment = process.env
   assert.equal(environment.GITHUB_REPOSITORY, repository)
   assert.equal(environment.GITHUB_REF, `refs/heads/${environment.DEFAULT_BRANCH}`)
@@ -90,11 +100,12 @@ const main = () => {
     sourceRef: environment.SOURCE_REF_INPUT,
     expectedSourceSha: environment.EXPECTED_SOURCE_SHA_INPUT,
   })
-  const api = (endpoint) => JSON.parse(execFileSync("gh", ["api", `repos/${repository}/${endpoint}`], { encoding: "utf8" }))
-  verifyAcceptanceEvidence(candidate,
-    api(`actions/runs/${candidate.acceptanceRunId}`),
-    api(`actions/runs/${candidate.acceptanceRunId}/jobs?per_page=100`),
-    api(`pulls/${candidate.productPullRequest}`))
+  const [run, jobs, pullRequest] = await Promise.all([
+    readPublicEvidence(`actions/runs/${candidate.acceptanceRunId}`),
+    readPublicEvidence(`actions/runs/${candidate.acceptanceRunId}/jobs?per_page=100`),
+    readPublicEvidence(`pulls/${candidate.productPullRequest}`),
+  ])
+  verifyAcceptanceEvidence(candidate, run, jobs, pullRequest)
   git(["fetch", "--no-tags", "origin", candidate.sourceRef])
   assert.equal(git(["cat-file", "-t", "FETCH_HEAD"]), "tag", "An annotated release tag is required")
   const tagObjectSha = git(["rev-parse", "FETCH_HEAD"])
@@ -128,4 +139,9 @@ const main = () => {
   console.log(`Accepted source ${candidate.sourceRef} -> ${candidate.sourceSha}; workflow ${environment.GITHUB_SHA}`)
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main()
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  main().catch((error) => {
+    console.error(error.message)
+    process.exitCode = 1
+  })
+}

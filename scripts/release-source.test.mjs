@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest"
-import { resolveReleaseRequest, verifyAcceptanceEvidence, verifySourceReceipt } from "./release-source.mjs"
+import { describe, expect, it, vi } from "vitest"
+import { resolveReleaseRequest, verifyAcceptanceEvidence, verifySourceReceipt, readPublicEvidence } from "./release-source.mjs"
 
 const sourceSha = "5242eaf1d6e8cd8d437e8a4dcb82c63d00af82f1"
 const candidate = {
@@ -27,6 +27,16 @@ const environment = {
 }
 
 describe("accepted immutable release source", () => {
+  it("reads public acceptance metadata without sending a token or widening permissions", async () => {
+    const fetchEvidence = vi.fn().mockResolvedValue({ status: 200, json: async () => ({ id: 123 }) })
+    expect(await readPublicEvidence("actions/runs/123", fetchEvidence)).toEqual({ id: 123 })
+    const [url, options] = fetchEvidence.mock.calls[0]
+    expect(url).toBe("https://api.github.com/repos/bigduu/lotus-next/actions/runs/123")
+    expect(options.headers).not.toHaveProperty("Authorization")
+    expect(options.redirect).toBe("error")
+    expect(options.signal).toBeInstanceOf(AbortSignal)
+    await expect(readPublicEvidence("actions/runs/123", vi.fn().mockResolvedValue({ status: 403 }))).rejects.toThrow()
+  })
   it("selects only the committed reviewed candidate", () => {
     expect(resolveReleaseRequest(document, request)).toEqual(candidate)
   })
