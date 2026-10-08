@@ -41,6 +41,7 @@ export interface RuntimeObservation {
 export interface ArtifactRuntimeOptions {
   /** Override only the canonical provider snapshot for failure-path acceptance. */
   readonly providerInstancesResponse?: unknown
+  readonly bootstrapRequestState?: "local_bypass" | "authenticated" | "unauthenticated"
 }
 
 export const standaloneScenario: ArtifactScenario = {
@@ -460,7 +461,22 @@ export const installArtifactRuntime = async (
         url.pathname === "/api/v1/bamboo/settings/provider-instances" &&
         options.providerInstancesResponse !== undefined
           ? options.providerInstancesResponse
-          : request.method() === "GET" && url.pathname === `/api/v1/history/${FIXTURE_SESSION_ID}`
+          : request.method() === "GET" && url.pathname === "/api/v1/bootstrap"
+            ? (() => {
+                const requestState = options.bootstrapRequestState
+                  ?? (scenario.name === "secure-remote" ? "unauthenticated" : "local_bypass")
+                return {
+                  ...bootstrapDocument,
+                  capabilities: [...bootstrapDocument.capabilities, "auth.password_cookie.v1"],
+                  auth: {
+                    ...bootstrapDocument.auth,
+                    request_state: requestState,
+                    policy: requestState === "authenticated" ? "credential_required" : "open",
+                    password_enabled: requestState === "authenticated",
+                  },
+                }
+              })()
+            : request.method() === "GET" && url.pathname === `/api/v1/history/${FIXTURE_SESSION_ID}`
             ? { session_id: FIXTURE_SESSION_ID, messages: historyMessages }
             : apiResponse(request.method(), `${url.pathname}${url.search}`)
       if (response === undefined) {

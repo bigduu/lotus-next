@@ -733,3 +733,41 @@ describe("canonical password verification", () => {
     );
   });
 });
+
+
+describe("admitted bootstrap access handoff", () => {
+  it.each([
+    ["open", "unauthenticated", false],
+    ["open", "local_bypass", false],
+    ["credential_required", "authenticated", true],
+  ])("passes only the validated %s/%s request state without another HTTP request", async (policy, state, password) => {
+    const admitted = vi.fn()
+    apiMock.fetchRaw.mockResolvedValueOnce(jsonResponse(withAuth(policy, state, password, false)))
+    expect(await requestServerBootstrap(new AbortController().signal, admitted)).toEqual({ kind: "ready" })
+    expect(admitted).toHaveBeenCalledExactlyOnceWith(state)
+    expect(apiMock.fetchRaw).toHaveBeenCalledTimes(1)
+  })
+
+  it.each([
+    withAuth("credential_required", "unauthenticated", true, false),
+    withAuth("repair_required", "local_bypass", true, false),
+    { ...exactFixture(), schema_version: 999 },
+    { ...exactFixture(), server: { product: "other", version: "1" } },
+  ])("never hands off access for a rejected bootstrap %j", (value) => {
+    const admitted = vi.fn()
+    expect(classifyServerBootstrapDocument(value, admitted).kind).not.toBe("ready")
+    expect(admitted).not.toHaveBeenCalled()
+  })
+
+  it("never hands off a late response after caller cancellation", async () => {
+    const controller = new AbortController()
+    const admitted = vi.fn()
+    const response = jsonResponse(withAuth("open", "local_bypass", false, false))
+    apiMock.fetchRaw.mockImplementationOnce(async () => {
+      controller.abort()
+      return response
+    })
+    await expect(requestServerBootstrap(controller.signal, admitted)).rejects.toBeInstanceOf(RequestCancelledError)
+    expect(admitted).not.toHaveBeenCalled()
+  })
+})
