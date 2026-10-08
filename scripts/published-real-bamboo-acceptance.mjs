@@ -18,6 +18,7 @@ import {
   verifyArtifactManifest,
 } from "./artifact-manifest.mjs"
 import { writeAcceptedIdentity } from "./release-acceptance-identity.mjs"
+import { verifySourceReceipt } from "./release-source.mjs"
 
 export const PUBLISHED_ARTIFACT_IDENTITY = Object.freeze({
   schemaVersion: 1,
@@ -37,10 +38,9 @@ export const PUBLISHED_ARTIFACT_IDENTITY = Object.freeze({
   resourceCount: 34,
 })
 
-const repositoryRoot = path.resolve(
-  path.dirname(fileURLToPath(import.meta.url)),
-  "..",
-)
+const repositoryRoot = process.env.LOTUS_NEXT_ACCEPTANCE_SOURCE_DIR
+  ? path.resolve(process.env.LOTUS_NEXT_ACCEPTANCE_SOURCE_DIR)
+  : path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 const playwrightCli = path.join(
   repositoryRoot,
   "node_modules",
@@ -370,8 +370,19 @@ const downloadAndVerifyArtifact = (temporaryRoot) => {
 
 export const packAndVerifyCurrentArtifact = (temporaryRoot) => {
   const expectedRevision = runCaptured("git", ["rev-parse", "HEAD^{commit}"]).stdout.trim()
-  if (process.env.GITHUB_SHA && expectedRevision !== process.env.GITHUB_SHA) {
-    throw new Error("Current-source checkout does not match the workflow head SHA.")
+  if (process.env.LOTUS_NEXT_RELEASE_SOURCE_RECEIPT) {
+    verifySourceReceipt(
+      JSON.parse(readFileSync(process.env.LOTUS_NEXT_RELEASE_SOURCE_RECEIPT, "utf8")),
+      process.env,
+      expectedRevision,
+    )
+  } else {
+    if (process.env.LOTUS_NEXT_ACCEPTANCE_SOURCE_DIR) {
+      throw new Error("A separate acceptance source requires a run-bound source receipt.")
+    }
+    if (process.env.GITHUB_SHA && expectedRevision !== process.env.GITHUB_SHA) {
+      throw new Error("Current-source checkout does not match the workflow head SHA.")
+    }
   }
   const packageDocument = JSON.parse(
     readFileSync(path.join(repositoryRoot, "package.json"), "utf8"),

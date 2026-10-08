@@ -7,6 +7,14 @@ on:
         description: "Exact new SemVer to publish (for example, 2026.9.12)"
         required: true
         type: string
+      source_ref:
+        description: "Accepted annotated release tag (refs/tags/lotus-next-vVERSION)"
+        required: true
+        type: string
+      expected_source_sha:
+        description: "Exact 40-character source SHA in the reviewed candidate record"
+        required: true
+        type: string
 
 run-name: Publish @bigduu/lotus-next@${{ inputs.version }}
 
@@ -19,10 +27,9 @@ concurrency:
 
 env:
   LOTUS_NEXT_RELEASE_VERSION: ${{ inputs.version }}
-  LOTUS_NEXT_SOURCE_REVISION: ${{ github.sha }}
   LOTUS_NEXT_SOURCE_DIRTY: "false"
-  LOTUS_NEXT_EXPECTED_SOURCE_REVISION: ${{ github.sha }}
   LOTUS_NEXT_EXPECTED_SOURCE_DIRTY: "false"
+  DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
   NPM_CONFIG_AUDIT: "false"
   NPM_CONFIG_FUND: "false"
   NPM_CONFIG_PROGRESS: "false"
@@ -30,11 +37,21 @@ env:
 jobs:
   preflight:
     name: Validate publication request
+    outputs:
+      source_sha: ${{ steps.source.outputs.source_sha }}
+      source_tree: ${{ steps.source.outputs.source_tree }}
+      source_ref: ${{ steps.source.outputs.source_ref }}
+      bamboo_sha: ${{ steps.source.outputs.bamboo_sha }}
+      workflow_sha: ${{ steps.source.outputs.workflow_sha }}
+      tag_object_sha: ${{ steps.source.outputs.tag_object_sha }}
     runs-on: ubuntu-latest
 
     steps:
-      - name: Check out exact source
+      - name: Check out exact publication control source
         uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
 
       - name: Set up current npm
         uses: actions/setup-node@v7
@@ -43,6 +60,23 @@ jobs:
           registry-url: https://registry.npmjs.org
           scope: "@bigduu"
           package-manager-cache: false
+
+      - name: Resolve the reviewed immutable release candidate
+        id: source
+        env:
+          SOURCE_REF_INPUT: ${{ inputs.source_ref }}
+          EXPECTED_SOURCE_SHA_INPUT: ${{ inputs.expected_source_sha }}
+          EXPECTED_WORKFLOW_SHA: ${{ github.workflow_sha }}
+          SOURCE_RECEIPT_PATH: ${{ runner.temp }}/release-source-receipt.json
+        run: node scripts/release-source.mjs
+
+      - name: Upload the run-bound release source receipt
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-source-receipt
+          path: ${{ runner.temp }}/release-source-receipt.json
+          if-no-files-found: error
+          retention-days: 30
 
       - name: Validate version, source, and registry vacancy
         env:
@@ -70,6 +104,11 @@ jobs:
   verify:
     name: Node ${{ matrix.node }} release artifact
     needs: preflight
+    env:
+      LOTUS_NEXT_SOURCE_REVISION: ${{ needs.preflight.outputs.source_sha }}
+      LOTUS_NEXT_EXPECTED_SOURCE_REVISION: ${{ needs.preflight.outputs.source_sha }}
+      PUBLICATION_WORKFLOW_SHA: ${{ needs.preflight.outputs.workflow_sha }}
+      ACCEPTED_SOURCE_TREE: ${{ needs.preflight.outputs.source_tree }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -81,13 +120,16 @@ jobs:
     steps:
       - name: Check out exact source
         uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.preflight.outputs.source_sha }}
+          persist-credentials: false
 
-      - name: Require a clean default-branch source commit
-        env:
-          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+      - name: Require accepted source under the default-branch publication workflow
         run: |
           test "${GITHUB_REF}" = "refs/heads/${DEFAULT_BRANCH}"
-          test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
+          test "${GITHUB_SHA}" = "${PUBLICATION_WORKFLOW_SHA}"
+          test "$(git rev-parse HEAD)" = "${LOTUS_NEXT_EXPECTED_SOURCE_REVISION}"
+          test "$(git rev-parse "HEAD^{tree}")" = "${ACCEPTED_SOURCE_TREE}"
           test -z "$(git status --porcelain --untracked-files=all)"
 
       - name: Set up Node.js
@@ -142,15 +184,48 @@ jobs:
 
   real-bamboo:
     name: Real Bamboo / Node 22 release artifact
-    needs: verify
+    needs: [preflight, verify]
     runs-on: ubuntu-latest
     timeout-minutes: 60
     env:
-      BAMBOO_E2E_REVISION: ba3e2dfe37c52f4ca9d0b33955501d8c61c412c8
+      LOTUS_NEXT_SOURCE_REVISION: ${{ needs.preflight.outputs.source_sha }}
+      LOTUS_NEXT_EXPECTED_SOURCE_REVISION: ${{ needs.preflight.outputs.source_sha }}
+      PUBLICATION_WORKFLOW_SHA: ${{ needs.preflight.outputs.workflow_sha }}
+      ACCEPTED_SOURCE_TREE: ${{ needs.preflight.outputs.source_tree }}
+      BAMBOO_E2E_REVISION: ${{ needs.preflight.outputs.bamboo_sha }}
+      LOTUS_NEXT_ACCEPTANCE_SOURCE_DIR: ${{ github.workspace }}
 
     steps:
+      - name: Check out trusted publication acceptance controls
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.preflight.outputs.workflow_sha }}
+          persist-credentials: false
+
+      - name: Preserve trusted acceptance controls outside the source checkout
+        run: |
+          mkdir "${RUNNER_TEMP}/release-control"
+          cp scripts/published-real-bamboo-acceptance.mjs scripts/artifact-manifest.mjs scripts/release-acceptance-identity.mjs scripts/release-source.mjs "${RUNNER_TEMP}/release-control/"
+
+      - name: Download the run-bound release source receipt
+        uses: actions/download-artifact@v8
+        with:
+          name: release-source-receipt
+          path: ${{ runner.temp }}/accepted-source
+
       - name: Check out exact Lotus Next source
         uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.preflight.outputs.source_sha }}
+          persist-credentials: false
+
+      - name: Require accepted source under the default-branch publication workflow
+        run: |
+          test "${GITHUB_REF}" = "refs/heads/${DEFAULT_BRANCH}"
+          test "${GITHUB_SHA}" = "${PUBLICATION_WORKFLOW_SHA}"
+          test "$(git rev-parse HEAD)" = "${LOTUS_NEXT_EXPECTED_SOURCE_REVISION}"
+          test "$(git rev-parse "HEAD^{tree}")" = "${ACCEPTED_SOURCE_TREE}"
+          test -z "$(git status --porcelain --untracked-files=all)"
 
       - name: Check out the paired Bamboo revision
         uses: actions/checkout@v7
@@ -205,7 +280,8 @@ jobs:
         env:
           BAMBOO_E2E_SOURCE_DIR: ${{ github.workspace }}/.e2e-bamboo
           ACCEPTED_IDENTITY_PATH: ${{ runner.temp }}/accepted-identity.json
-        run: node scripts/published-real-bamboo-acceptance.mjs --current-source --accepted-identity "${ACCEPTED_IDENTITY_PATH}"
+          LOTUS_NEXT_RELEASE_SOURCE_RECEIPT: ${{ runner.temp }}/accepted-source/release-source-receipt.json
+        run: node "${RUNNER_TEMP}/release-control/published-real-bamboo-acceptance.mjs" --current-source --accepted-identity "${ACCEPTED_IDENTITY_PATH}"
 
       - name: Upload the accepted browser artifact identity
         uses: actions/upload-artifact@v7
@@ -233,8 +309,14 @@ jobs:
   publish:
     name: Pack, publish, and verify registry artifact
     needs:
+      - preflight
       - verify
       - real-bamboo
+    env:
+      LOTUS_NEXT_SOURCE_REVISION: ${{ needs.preflight.outputs.source_sha }}
+      LOTUS_NEXT_EXPECTED_SOURCE_REVISION: ${{ needs.preflight.outputs.source_sha }}
+      PUBLICATION_WORKFLOW_SHA: ${{ needs.preflight.outputs.workflow_sha }}
+      ACCEPTED_SOURCE_TREE: ${{ needs.preflight.outputs.source_tree }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -243,13 +325,16 @@ jobs:
     steps:
       - name: Check out exact source
         uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.preflight.outputs.source_sha }}
+          persist-credentials: false
 
-      - name: Require a clean default-branch source commit
-        env:
-          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+      - name: Require accepted source under the default-branch publication workflow
         run: |
           test "${GITHUB_REF}" = "refs/heads/${DEFAULT_BRANCH}"
-          test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
+          test "${GITHUB_SHA}" = "${PUBLICATION_WORKFLOW_SHA}"
+          test "$(git rev-parse HEAD)" = "${LOTUS_NEXT_EXPECTED_SOURCE_REVISION}"
+          test "$(git rev-parse "HEAD^{tree}")" = "${ACCEPTED_SOURCE_TREE}"
           test -z "$(git status --porcelain --untracked-files=all)"
 
       - name: Set up publishing Node.js
@@ -321,7 +406,7 @@ jobs:
             --dist "${RUNNER_TEMP}/local-roundtrip/package/dist" \
             --expected-name "@bigduu/lotus-next" \
             --expected-version "${LOTUS_NEXT_RELEASE_VERSION}" \
-            --expected-revision "${GITHUB_SHA}" \
+            --expected-revision "${LOTUS_NEXT_EXPECTED_SOURCE_REVISION}" \
             --expected-dirty false
 
       - name: Download the accepted browser artifact identity
@@ -336,7 +421,22 @@ jobs:
             --accepted "${RUNNER_TEMP}/accepted-real-bamboo/accepted-identity.json" \
             --dist "${RUNNER_TEMP}/local-roundtrip/package/dist" \
             --expected-version "${LOTUS_NEXT_RELEASE_VERSION}" \
-            --expected-revision "${GITHUB_SHA}"
+            --expected-revision "${LOTUS_NEXT_EXPECTED_SOURCE_REVISION}"
+
+      - name: Download the run-bound release source receipt
+        uses: actions/download-artifact@v8
+        with:
+          name: release-source-receipt
+          path: ${{ runner.temp }}/accepted-source
+
+      - name: Recheck the immutable source tag before publication
+        env:
+          ACCEPTED_SOURCE_REF: ${{ needs.preflight.outputs.source_ref }}
+          ACCEPTED_TAG_OBJECT_SHA: ${{ needs.preflight.outputs.tag_object_sha }}
+        run: |
+          git ls-remote --exit-code origin "${ACCEPTED_SOURCE_REF}" "${ACCEPTED_SOURCE_REF}^{}" > "${RUNNER_TEMP}/source-tag.txt"
+          test "$(awk -v ref="${ACCEPTED_SOURCE_REF}" '$2 == ref { print $1 }' "${RUNNER_TEMP}/source-tag.txt")" = "${ACCEPTED_TAG_OBJECT_SHA}"
+          test "$(awk -v ref="${ACCEPTED_SOURCE_REF}^{}" '$2 == ref { print $1 }' "${RUNNER_TEMP}/source-tag.txt")" = "${LOTUS_NEXT_EXPECTED_SOURCE_REVISION}"
 
       - name: Require npm publication credentials
         env:
@@ -400,7 +500,7 @@ jobs:
             --dist "${RUNNER_TEMP}/registry-roundtrip/package/dist" \
             --expected-name "@bigduu/lotus-next" \
             --expected-version "${LOTUS_NEXT_RELEASE_VERSION}" \
-            --expected-revision "${GITHUB_SHA}" \
+            --expected-revision "${LOTUS_NEXT_EXPECTED_SOURCE_REVISION}" \
             --expected-dirty false
 
       - name: Record immutable publication identity
@@ -409,8 +509,44 @@ jobs:
           {
             echo "### Published artifact"
             echo "- Package: \`@bigduu/lotus-next@${LOTUS_NEXT_RELEASE_VERSION}\`"
-            echo "- Source: \`${GITHUB_SHA}\`"
+            echo "- Source: \`${LOTUS_NEXT_EXPECTED_SOURCE_REVISION}\`"
+            echo "- Publication workflow: \`${GITHUB_SHA}\`"
             echo "- npm integrity: \`${{ steps.pack.outputs.integrity }}\`"
             echo "- npm shasum: \`${{ steps.pack.outputs.shasum }}\`"
             echo "- Universal manifest SHA-256: \`${MANIFEST_SHA256}\`"
           } >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Record the verified publication source receipt
+        env:
+          EXPECTED_INTEGRITY: ${{ steps.pack.outputs.integrity }}
+          EXPECTED_SHASUM: ${{ steps.pack.outputs.shasum }}
+        run: |
+          node --input-type=module - <<'NODE'
+          import assert from "node:assert/strict"
+          import { createHash } from "node:crypto"
+          import { readFileSync, writeFileSync } from "node:fs"
+          const root = process.env.RUNNER_TEMP
+          const receipt = JSON.parse(readFileSync(root + "/accepted-source/release-source-receipt.json", "utf8"))
+          assert.equal(receipt.workflowSha, process.env.GITHUB_SHA)
+          assert.equal(receipt.runId, process.env.GITHUB_RUN_ID)
+          assert.equal(receipt.runAttempt, process.env.GITHUB_RUN_ATTEMPT)
+          assert.equal(receipt.sourceSha, process.env.LOTUS_NEXT_EXPECTED_SOURCE_REVISION)
+          assert.equal(receipt.version, process.env.LOTUS_NEXT_RELEASE_VERSION)
+          const bytes = readFileSync(root + "/registry-roundtrip/package/dist/lotus-next-manifest.json")
+          const manifest = JSON.parse(bytes)
+          assert.equal(manifest.sourceRevision, receipt.sourceSha)
+          assert.equal(manifest.packageVersion, receipt.version)
+          writeFileSync(root + "/publication-source-receipt.json", JSON.stringify({ ...receipt,
+            npmIntegrity: process.env.EXPECTED_INTEGRITY, npmShasum: process.env.EXPECTED_SHASUM,
+            manifestSha256: createHash("sha256").update(bytes).digest("hex"),
+            resourcesSha256: manifest.resourcesSha256, sourceDirty: manifest.sourceDirty,
+          }, null, 2) + "\n")
+          NODE
+
+      - name: Upload the verified publication source receipt
+        uses: actions/upload-artifact@v7
+        with:
+          name: publication-source-receipt
+          path: ${{ runner.temp }}/publication-source-receipt.json
+          if-no-files-found: error
+          retention-days: 30
