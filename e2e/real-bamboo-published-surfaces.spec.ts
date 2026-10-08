@@ -436,6 +436,24 @@ const exerciseSurface = async ({
       ),
       contentType: "application/json",
     });
+    if (currentSourceArtifact && !definition.mobile) {
+      // Each surface must start with an empty browser. Closing the context
+      // leaves its shared Bamboo tab alive, so close it through the real UI.
+      const panel = page.getByRole("complementary", { name: "工作面板" });
+      await panel.getByRole("button", {
+        name: "关闭浏览器标签页 1：Alpha fixture", exact: true,
+      }).click();
+      await expect(panel.getByRole("tab", { name: /浏览器标签页/ })).toHaveCount(0);
+      await expect(panel.getByText("还没有打开内容", { exact: true })).toBeVisible();
+      await expect.poll(async () => page.evaluate(async (sessionPath) => {
+        const response = await fetch(sessionPath, { cache: "no-store" });
+        return response.ok ? await response.json() : null;
+      }, `/api/v1/browser/sessions/${encodeURIComponent(sessionId)}`)).toMatchObject({
+        active_tab_id: null,
+        tabs: [],
+      });
+      await assertCanonicalPage(observation, entryUrl.origin, sessionId);
+    }
   } finally {
     await observation?.stop().catch(() => undefined);
     await context.close();
