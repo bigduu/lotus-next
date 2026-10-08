@@ -16,7 +16,7 @@ import {
 import { buildArtifactManifest } from "./artifact-manifest.mjs"
 
 const expectedBambooRevision =
-  "b9c6071400744dacd5a4aeda93887516d6278ee9"
+  "ba3e2dfe37c52f4ca9d0b33955501d8c61c412c8"
 const readRepositoryFile = (relativePath) =>
   readFileSync(resolve(process.cwd(), relativePath), "utf8")
 

@@ -55,8 +55,16 @@ export default defineConfig({
       // The desktop suite ends with an MCP import that restarts Bamboo and may
       // change its host port. Run tabs first while the setup URL is current.
       name: "real-bamboo-desktop-chromium",
-      testIgnore: "**/real-bamboo-browser-tabs.spec.ts",
+      testIgnore: ["**/real-bamboo-browser-tabs.spec.ts", "**/real-bamboo-workflow-runs.spec.ts"],
       dependencies: ["real-bamboo-browser-tabs-chromium"],
+      use: desktopUse,
+    },
+    {
+      // Workflow fixture seeding restarts Bamboo. Keep it last so a changed
+      // ephemeral port cannot strand an existing desktop document.
+      name: "real-bamboo-workflow-runs-chromium",
+      testMatch: "**/real-bamboo-workflow-runs.spec.ts",
+      dependencies: ["real-bamboo-desktop-chromium"],
       use: desktopUse,
     },
   ],

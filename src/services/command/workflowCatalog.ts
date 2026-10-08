@@ -121,9 +121,15 @@ export function workflowUnavailableReason(entry: WorkflowCatalogEntry): string |
 export function prepareWorkflowSelection(draft: TypedWorkflowDraft): WorkflowSelection {
   const reason = workflowUnavailableReason(draft.entry)
   if (reason) throw new Error(reason)
-  validateWorkflowSchema(draft.entry.argument_schema)
+  return { id: draft.entry.id, source: draft.entry.source, revision: draft.entry.revision,
+    args: parseWorkflowArguments(draft.entry, draft.argsText) }
+}
+
+/** Shared argument validation; each caller still owns its invocation admission. */
+export function parseWorkflowArguments(entry: WorkflowCatalogEntry, argsText: string): unknown {
+  validateWorkflowSchema(entry.argument_schema)
   let args: unknown
-  try { args = JSON.parse(draft.argsText) } catch { throw new Error(uiText("workflow_arguments_must_be_valid_json_6fedffe3")) }
+  try { args = JSON.parse(argsText) } catch { throw new Error(uiText("workflow_arguments_must_be_valid_json_6fedffe3")) }
   // JSON.parse can produce Infinity or round integers before HTTP JSON
   // encoding. Reject them even when the catalog has an unconstrained schema.
   const pending = [args]
@@ -133,8 +139,8 @@ export function prepareWorkflowSelection(draft: TypedWorkflowDraft): WorkflowSel
     if (Array.isArray(value)) for (const child of value) pending.push(child)
     else if (object(value)) for (const child of Object.values(value)) pending.push(child)
   }
-  validateArgs(draft.entry.argument_schema, args)
-  return { id: draft.entry.id, source: draft.entry.source, revision: draft.entry.revision, args }
+  validateArgs(entry.argument_schema, args)
+  return args
 }
 
 export async function getWorkflowCatalog(sessionId: string | null, signal?: AbortSignal): Promise<WorkflowCatalog> {
