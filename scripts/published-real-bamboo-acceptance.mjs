@@ -18,6 +18,7 @@ import {
   verifyArtifactManifest,
 } from "./artifact-manifest.mjs"
 import { writeAcceptedIdentity } from "./release-acceptance-identity.mjs"
+import { writeRetainedAcceptanceConfig } from "./bootstrap-response-retention.mjs"
 import { verifySourceReceipt } from "./release-source.mjs"
 
 export const PUBLISHED_ARTIFACT_IDENTITY = Object.freeze({
@@ -454,7 +455,10 @@ const generateTlsIdentity = (temporaryRoot) => {
   return { certificatePath, keyPath }
 }
 
-const runAcceptanceMode = ({ mode, tls }, artifact) => {
+const runAcceptanceMode = ({ mode, tls }, artifact, controlDirectory) => {
+  const configPath = writeRetainedAcceptanceConfig({
+    directory: controlDirectory, sourceDirectory: repositoryRoot,
+  })
   const environment = {
     ...process.env,
     LOTUS_REAL_ACCEPTANCE_MODE: mode,
@@ -480,7 +484,7 @@ const runAcceptanceMode = ({ mode, tls }, artifact) => {
     [
       playwrightCli,
       "test",
-      "--config=playwright.real-bamboo.config.ts",
+      `--config=${configPath}`,
       // The full-suite tab test is a dependency of the desktop project, but
       // artifact acceptance deliberately selects only the surface tests.
       "--no-deps",
@@ -512,7 +516,7 @@ const main = () => {
     )
     const tls = generateTlsIdentity(temporaryRoot)
     for (const mode of acceptanceRunPlan(tls)) {
-      runAcceptanceMode(mode, artifact)
+      runAcceptanceMode(mode, artifact, path.join(temporaryRoot, "browser-control"))
     }
     if (arguments_.length === 3) {
       const accepted = writeAcceptedIdentity(arguments_[2], artifact.identity)

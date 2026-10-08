@@ -205,7 +205,7 @@ jobs:
       - name: Preserve trusted acceptance controls outside the source checkout
         run: |
           mkdir "${RUNNER_TEMP}/release-control"
-          cp scripts/published-real-bamboo-acceptance.mjs scripts/artifact-manifest.mjs scripts/release-acceptance-identity.mjs scripts/release-source.mjs "${RUNNER_TEMP}/release-control/"
+          cp scripts/bootstrap-response-retention.mjs scripts/published-real-bamboo-acceptance.mjs scripts/artifact-manifest.mjs scripts/release-acceptance-identity.mjs scripts/release-source.mjs "${RUNNER_TEMP}/release-control/"
 
       - name: Download the run-bound release source receipt
         uses: actions/download-artifact@v8
