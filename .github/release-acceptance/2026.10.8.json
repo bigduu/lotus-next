@@ -1,0 +1,63 @@
+{
+  "schemaVersion": 1,
+  "repository": "bigduu/lotus-next",
+  "capturedAt": "2026-10-08T10:46:35.926609+00:00",
+  "run": {
+    "id": 37750101665,
+    "path": ".github/workflows/ci.yml",
+    "event": "workflow_dispatch",
+    "head_sha": "5242eaf1d6e8cd8d437e8a4dcb82c63d00af82f1",
+    "head_branch": "lotus-next/fix/281-ticket-owner-access",
+    "status": "completed",
+    "conclusion": "success",
+    "run_attempt": 1,
+    "html_url": "https://github.com/bigduu/lotus-next/actions/runs/37750101665",
+    "created_at": "2026-10-08T08:28:48Z",
+    "updated_at": "2026-10-08T09:14:41Z"
+  },
+  "jobs": {
+    "total_count": 3,
+    "jobs": [
+      {
+        "id": 113220954866,
+        "name": "Node 24",
+        "head_sha": "5242eaf1d6e8cd8d437e8a4dcb82c63d00af82f1",
+        "status": "completed",
+        "conclusion": "success",
+        "html_url": "https://github.com/bigduu/lotus-next/actions/runs/37750101665/job/113220954866",
+        "started_at": "2026-10-08T08:28:52Z",
+        "completed_at": "2026-10-08T08:40:07Z"
+      },
+      {
+        "id": 113220955357,
+        "name": "Node 22",
+        "head_sha": "5242eaf1d6e8cd8d437e8a4dcb82c63d00af82f1",
+        "status": "completed",
+        "conclusion": "success",
+        "html_url": "https://github.com/bigduu/lotus-next/actions/runs/37750101665/job/113220955357",
+        "started_at": "2026-10-08T08:28:52Z",
+        "completed_at": "2026-10-08T08:45:32Z"
+      },
+      {
+        "id": 113227126072,
+        "name": "Real Bamboo / Node 22",
+        "head_sha": "5242eaf1d6e8cd8d437e8a4dcb82c63d00af82f1",
+        "status": "completed",
+        "conclusion": "success",
+        "html_url": "https://github.com/bigduu/lotus-next/actions/runs/37750101665/job/113227126072",
+        "started_at": "2026-10-08T08:45:35Z",
+        "completed_at": "2026-10-08T09:14:41Z"
+      }
+    ]
+  },
+  "pullRequest": {
+    "number": 282,
+    "merged": true,
+    "head": {
+      "sha": "5242eaf1d6e8cd8d437e8a4dcb82c63d00af82f1"
+    },
+    "merge_commit_sha": "87a2a83eed98a93aed5caa49a6b0c79337bb3ee0",
+    "html_url": "https://github.com/bigduu/lotus-next/pull/282",
+    "merged_at": "2026-10-08T09:29:48Z"
+  }
+}

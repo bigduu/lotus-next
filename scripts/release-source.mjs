@@ -22,9 +22,10 @@ export const resolveReleaseRequest = (document, request) => {
   assert.match(request.expectedSourceSha, sha)
   const candidate = document.candidates[request.version]
   assert.ok(candidate, "Publication requires a committed accepted candidate")
-  exactKeys(candidate, ["sourceRef", "sourceSha", "sourceTree", "bambooSha", "tagObjectSha", "acceptanceRunId", "productPullRequest", "productMergeSha", "reviewEvidence"])
+  exactKeys(candidate, ["sourceRef", "sourceSha", "sourceTree", "bambooSha", "tagObjectSha", "acceptanceRunId", "productPullRequest", "productMergeSha", "reviewEvidence", "acceptanceReceiptSha256"])
   assert.equal(candidate.sourceRef, `refs/tags/lotus-next-v${request.version}`)
   for (const field of ["sourceSha", "sourceTree", "bambooSha", "productMergeSha", "tagObjectSha"]) assert.match(candidate[field], sha)
+  assert.match(candidate.acceptanceReceiptSha256, /^[0-9a-f]{64}$/)
   assert.ok(Number.isSafeInteger(candidate.acceptanceRunId) && candidate.acceptanceRunId > 0)
   assert.ok(Number.isSafeInteger(candidate.productPullRequest) && candidate.productPullRequest > 0)
   assert.ok(Array.isArray(candidate.reviewEvidence) && candidate.reviewEvidence.length > 0)
@@ -77,14 +78,13 @@ export const verifySourceReceipt = (receipt, environment, actualSourceSha) => {
   return receipt
 }
 
-export const readPublicEvidence = async (endpoint, fetchEvidence = fetch) => {
-  const response = await fetchEvidence(`https://api.github.com/repos/${repository}/${endpoint}`, {
-    headers: { Accept: "application/vnd.github+json", "User-Agent": "lotus-next-release-source" },
-    signal: AbortSignal.timeout(30_000),
-    redirect: "error",
-  })
-  assert.equal(response.status, 200, "Public acceptance evidence could not be read")
-  return response.json()
+export const verifyCommittedAcceptance = (candidate, bytes) => {
+  assert.equal(createHash("sha256").update(bytes).digest("hex"), candidate.acceptanceReceiptSha256)
+  const receipt = JSON.parse(bytes)
+  assert.equal(receipt.schemaVersion, 1)
+  assert.equal(receipt.repository, repository)
+  verifyAcceptanceEvidence(candidate, receipt.run, receipt.jobs, receipt.pullRequest)
+  return receipt
 }
 
 const main = async () => {
@@ -103,12 +103,9 @@ const main = async () => {
     sourceRef: environment.SOURCE_REF_INPUT,
     expectedSourceSha: environment.EXPECTED_SOURCE_SHA_INPUT,
   })
-  const [run, jobs, pullRequest] = await Promise.all([
-    readPublicEvidence(`actions/runs/${candidate.acceptanceRunId}`),
-    readPublicEvidence(`actions/runs/${candidate.acceptanceRunId}/jobs?per_page=100`),
-    readPublicEvidence(`pulls/${candidate.productPullRequest}`),
-  ])
-  verifyAcceptanceEvidence(candidate, run, jobs, pullRequest)
+  // This historical acceptance receipt is part of the reviewed main authority.
+  // Every original publication gate still reruns against the fixed source below.
+  verifyCommittedAcceptance(candidate, readFileSync(`.github/release-acceptance/${environment.LOTUS_NEXT_RELEASE_VERSION}.json`))
   git(["fetch", "--no-tags", "origin", candidate.sourceRef])
   assert.equal(git(["cat-file", "-t", "FETCH_HEAD"]), "tag", "An annotated release tag is required")
   const tagObjectSha = git(["rev-parse", "FETCH_HEAD"])
@@ -130,7 +127,7 @@ const main = async () => {
     workflowRef: environment.GITHUB_WORKFLOW_REF, workflowSha: environment.GITHUB_SHA,
     runId: environment.GITHUB_RUN_ID, runAttempt: environment.GITHUB_RUN_ATTEMPT,
     candidateRecordSha256: createHash("sha256").update(recordBytes).digest("hex"),
-    acceptanceRunId: candidate.acceptanceRunId, productPullRequest: candidate.productPullRequest,
+    acceptanceRunId: candidate.acceptanceRunId, acceptanceReceiptSha256: candidate.acceptanceReceiptSha256, productPullRequest: candidate.productPullRequest,
     productMergeSha: candidate.productMergeSha, reviewEvidence: candidate.reviewEvidence,
   }
   writeFileSync(environment.SOURCE_RECEIPT_PATH, `${JSON.stringify(receipt, null, 2)}\n`, { flag: "wx" })

@@ -13,7 +13,8 @@
         "https://github.com/bigduu/lotus-next/pull/282#issuecomment-6055988963",
         "https://github.com/bigduu/lotus-next/pull/282#issuecomment-6055995084"
       ],
-      "tagObjectSha": "4d0e2ec1780efea0798dc4f8ef55e528ffc32b38"
+      "tagObjectSha": "4d0e2ec1780efea0798dc4f8ef55e528ffc32b38",
+      "acceptanceReceiptSha256": "588d4b6925af536ad640c1e4361cf50b1debca8f2af3eafe1bc94e829ba14ea5"
     }
   }
 }

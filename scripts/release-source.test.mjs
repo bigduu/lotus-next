@@ -1,12 +1,14 @@
-import { describe, expect, it, vi } from "vitest"
-import { resolveReleaseRequest, verifyAcceptanceEvidence, verifySourceReceipt, readPublicEvidence } from "./release-source.mjs"
+import { describe, expect, it } from "vitest"
+import { createHash } from "node:crypto"
+import { readFileSync } from "node:fs"
+import { resolveReleaseRequest, verifyAcceptanceEvidence, verifySourceReceipt, verifyCommittedAcceptance } from "./release-source.mjs"
 
 const sourceSha = "5242eaf1d6e8cd8d437e8a4dcb82c63d00af82f1"
 const candidate = {
   sourceRef: "refs/tags/lotus-next-v2026.10.8", sourceSha,
   sourceTree: "7c8866f30563022b4ceec7ce6515f99040835196",
   bambooSha: "0a7589586da0e5c60895e3222ece487415b7a9df",
-  tagObjectSha: "1".repeat(40), acceptanceRunId: 37750101665, productPullRequest: 282,
+  acceptanceReceiptSha256: "1".repeat(64), tagObjectSha: "1".repeat(40), acceptanceRunId: 37750101665, productPullRequest: 282,
   productMergeSha: "87a2a83eed98a93aed5caa49a6b0c79337bb3ee0",
   reviewEvidence: ["https://github.com/bigduu/lotus-next/pull/282#issuecomment-6055995084"],
 }
@@ -27,15 +29,16 @@ const environment = {
 }
 
 describe("accepted immutable release source", () => {
-  it("reads public acceptance metadata without sending a token or widening permissions", async () => {
-    const fetchEvidence = vi.fn().mockResolvedValue({ status: 200, json: async () => ({ id: 123 }) })
-    expect(await readPublicEvidence("actions/runs/123", fetchEvidence)).toEqual({ id: 123 })
-    const [url, options] = fetchEvidence.mock.calls[0]
-    expect(url).toBe("https://api.github.com/repos/bigduu/lotus-next/actions/runs/123")
-    expect(options.headers).not.toHaveProperty("Authorization")
-    expect(options.redirect).toBe("error")
-    expect(options.signal).toBeInstanceOf(AbortSignal)
-    await expect(readPublicEvidence("actions/runs/123", vi.fn().mockResolvedValue({ status: 403 }))).rejects.toThrow()
+  it("verifies real reviewed historical acceptance bytes and rejects tampering", () => {
+    const accepted = JSON.parse(readFileSync(".github/release-candidates.json", "utf8")).candidates["2026.10.8"]
+    const bytes = readFileSync(".github/release-acceptance/2026.10.8.json")
+    const actual = verifyCommittedAcceptance(accepted, bytes)
+    expect(actual.run.head_sha).toBe(accepted.sourceSha)
+    expect(actual.jobs.jobs.every((job) => job.conclusion === "success")).toBe(true)
+    expect(() => verifyCommittedAcceptance(accepted, Buffer.concat([bytes, Buffer.from(" ")]))).toThrow()
+    const altered = { ...actual, run: { ...actual.run, head_sha: workflowSha } }
+    const alteredBytes = Buffer.from(JSON.stringify(altered))
+    expect(() => verifyCommittedAcceptance({ ...accepted, acceptanceReceiptSha256: createHash("sha256").update(alteredBytes).digest("hex") }, alteredBytes)).toThrow()
   })
   it("selects only the committed reviewed candidate", () => {
     expect(resolveReleaseRequest(document, request)).toEqual(candidate)
