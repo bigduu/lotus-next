@@ -129,6 +129,9 @@ const installSessionEntry = async (
 ): Promise<void> => {
   await context.addInitScript(
     ({ backendOrigin, selectedSessionId }) => {
+      // Init scripts also run in the opaque initial about:blank document and
+      // child frames. Only the owned app origin has storage to initialize.
+      if ((globalThis as unknown as { location: { origin: string } }).location.origin !== backendOrigin) return;
       const browserGlobal = globalThis as unknown as {
         localStorage: {
           removeItem(key: string): void;
@@ -197,7 +200,7 @@ const openJianduSettings = async (
 ): Promise<Locator> => {
   const sidebar = await openSidebar(page, phone);
   await sidebar.getByRole("button", { name: "系统设置", exact: true }).click();
-  const settings = page.getByRole("dialog", { name: "系统设置" });
+  const settings = page.getByRole("main", { name: "系统设置", exact: true });
   await expect(settings).toBeVisible();
   await settings
     .getByRole("button", { name: "Jiandu 记忆", exact: true })
@@ -281,7 +284,7 @@ const memoryRow = (settings: Locator, title: string): Locator =>
   settings.getByRole("listitem").filter({ hasText: title });
 
 const closeSettings = async (settings: Locator): Promise<void> => {
-  await settings.getByRole("button", { name: "关闭设置", exact: true }).click();
+  await settings.getByRole("button", { name: "返回聊天", exact: true }).click();
   await expect(settings).toHaveCount(0);
 };
 
@@ -888,8 +891,11 @@ test("production UI completes and rehydrates one real Bamboo chat round trip", a
 
     await page.getByRole("button", { name: "系统设置" }).click();
     await expect(page.getByRole("heading", { name: "系统设置" })).toBeVisible();
-    await expect(page.getByText("gpt-4o-mini", { exact: true }).first()).toBeVisible();
-    await page.getByRole("button", { name: "提供方", exact: true }).click();
+    const settings = page.getByRole("main", { name: "系统设置", exact: true });
+    await settings.getByRole("button", { name: "提供方", exact: true }).click();
+    const chatModel = settings.getByRole("combobox", { name: "对话(必填)模型", exact: true });
+    await expect(chatModel).toBeVisible();
+    await expect(chatModel).toHaveValue("gpt-4o-mini");
     const providerRow = page.locator("li").filter({ hasText: "Lotus real Bamboo E2E" });
     await expect(providerRow.getByText("Lotus real Bamboo E2E", { exact: true })).toBeVisible();
     await expect(providerRow.getByText("OpenAI", { exact: true })).toBeVisible();
@@ -903,7 +909,7 @@ test("production UI completes and rehydrates one real Bamboo chat round trip", a
       "已配置，留空保持不变",
     );
     await page.getByRole("button", { name: "取消", exact: true }).click();
-    await page.getByRole("button", { name: "关闭设置" }).click();
+    await page.getByRole("button", { name: "返回聊天" }).click();
     await expect(composer).toBeVisible();
 
     const providerBeforeChat = asRecord(
@@ -1190,27 +1196,21 @@ test("production Provider add discovers models, accepts custom IDs, and repairs 
     });
     await providerType.click();
     const selectContent = page.locator('[data-slot="select-content"]');
-    const settingsDialog = page.locator(
-      '[data-slot="responsive-dialog-content"]',
-    );
-    const zIndex = (locator: Locator) =>
-      locator.evaluate((element) =>
-        Number.parseInt(
-          element.ownerDocument.defaultView?.getComputedStyle(element).zIndex ??
-            "0",
-          10,
-        ),
-      );
     await expect(selectContent).toBeVisible();
-    expect(await zIndex(selectContent)).toBeGreaterThan(
-      await zIndex(settingsDialog),
-    );
     const openAiOption = page.getByRole("option", {
       name: "OpenAI",
       exact: true,
     });
     await expect(openAiOption).toBeVisible();
+    // Settings is a page now. Prove the portaled menu wins hit testing above
+    // that page, rather than comparing against a nonexistent modal z-index.
+    await expect.poll(() => openAiOption.evaluate((element) => {
+      const { left, top, width, height } = element.getBoundingClientRect();
+      const hit = element.ownerDocument.elementFromPoint(left + width / 2, top + height / 2);
+      return hit === element || element.contains(hit);
+    })).toBe(true);
     await openAiOption.click();
+    await expect(providerType).toHaveText("OpenAI");
 
     const nameInput = page.getByLabel("名称", { exact: true });
     await nameInput.fill(providerLabel);
@@ -1395,7 +1395,7 @@ test("production Provider add discovers models, accepts custom IDs, and repairs 
       model: selectedModel,
     });
 
-    await page.getByRole("button", { name: "关闭设置" }).click();
+    await page.getByRole("button", { name: "返回聊天" }).click();
     await page.waitForLoadState("networkidle");
     await assertCleanPage(observation, contract.baseUrl.origin);
   } finally {
@@ -1997,7 +1997,8 @@ test("MCP JSON import merges, replaces, rolls back and survives a real restart",
   const openMcp = async (page: Page, phone: boolean): Promise<Locator> => {
     const sidebar = await openSidebar(page, phone);
     await sidebar.getByRole("button", { name: "系统设置", exact: true }).click();
-    const settings = page.getByRole("dialog", { name: "系统设置", exact: true });
+    const settings = page.getByRole("main", { name: "系统设置", exact: true });
+    await expect(settings).toBeVisible();
     await settings.getByRole("button", { name: "MCP", exact: true }).click();
     await expect(settings.getByRole("button", { name: "导入 JSON", exact: true })).toBeEnabled();
     return settings;

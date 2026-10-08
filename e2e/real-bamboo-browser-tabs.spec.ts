@@ -143,6 +143,7 @@ const requestPopupThroughAgent = async (page: Page, baseUrl: string, sessionId: 
 
 const installSessionEntry = async (context: BrowserContext, baseUrl: string, sessionId: string) => {
   await context.addInitScript(({ origin, selectedSessionId }) => {
+    if ((globalThis as unknown as { location: { origin: string } }).location.origin !== origin) return
     localStorage.setItem("bodhi_onboarded_v1", "1")
     localStorage.removeItem("copilot_backend_base_url")
     localStorage.setItem("lotus_next_backend_endpoint_v1", origin)

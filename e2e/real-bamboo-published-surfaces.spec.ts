@@ -88,14 +88,16 @@ const expectedSocketOrigin = (pageOrigin: string): string => {
 const installPublishedArtifactEntry = async (
   context: BrowserContext,
   sessionId: string,
+  appOrigin: string,
 ): Promise<void> => {
-  await context.addInitScript((selectedSessionId) => {
+  await context.addInitScript(({ selectedSessionId, origin }) => {
+    if ((globalThis as unknown as { location: { origin: string } }).location.origin !== origin) return;
     const storage = globalThis.localStorage;
     storage.setItem("bodhi_onboarded_v1", "1");
     storage.removeItem("copilot_backend_base_url");
     storage.removeItem("lotus_next_backend_endpoint_v1");
     storage.setItem("lotus_next_last_session", selectedSessionId);
-  }, sessionId);
+  }, { selectedSessionId: sessionId, origin: appOrigin });
 };
 
 const assertSuccessfulDocumentNavigation = (
@@ -298,7 +300,7 @@ const exerciseSurface = async ({
     locale: "zh-CN",
     ignoreHTTPSErrors: entryUrl.protocol === "https:",
   });
-  await installPublishedArtifactEntry(context, sessionId);
+  await installPublishedArtifactEntry(context, sessionId, entryUrl.origin);
   const page = await context.newPage();
   const observationLabel =
     `published-${entryUrl.protocol.slice(0, -1)}-${definition.label}`;
@@ -337,12 +339,16 @@ const exerciseSurface = async ({
     });
     await expect(settingsButton).toBeVisible();
     await settingsButton.click();
-    const settings = page.getByRole("dialog", { name: "系统设置" });
+    const settings = page.getByRole(currentSourceArtifact ? "main" : "dialog", {
+      name: "系统设置", exact: true,
+    });
     await expect(settings).toBeVisible();
     await expect(
       settings.getByRole("heading", { name: "系统设置", exact: true }),
     ).toBeVisible();
-    await settings.getByRole("button", { name: "关闭设置", exact: true }).click();
+    await settings.getByRole("button", {
+      name: currentSourceArtifact ? "返回聊天" : "关闭设置", exact: true,
+    }).click();
     await expect(settings).toHaveCount(0);
     await composer.focus();
     await expect(composer).toBeFocused();
@@ -357,6 +363,7 @@ const exerciseSurface = async ({
       const panel = page.getByRole("complementary", { name: "工作面板" });
       await panel.getByRole("button", { name: /浏览器.*输入网址后打开/ }).click();
       const pane = panel.getByRole("region", { name: "内置浏览器" });
+      await expect(pane.getByRole("heading", { name: "还没有打开网页", exact: true })).toBeVisible();
       const address = pane.getByRole("textbox", { name: "网页地址" });
       const navigateButton = pane.getByRole("button", { name: "打开", exact: true });
       await expect(navigateButton).toBeEnabled();
