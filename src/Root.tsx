@@ -3,6 +3,7 @@ import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { useCallback, useEffect, useRef, useState } from "react"
 import { Loader2 } from "lucide-react"
 import App from "./App"
+import { OwnerAccessContext } from "@/hooks/ownerAccessContext"
 import { PasswordGate } from "@/components/auth/PasswordGate"
 import { Button } from "@/components/ui/button"
 import {
@@ -22,8 +23,8 @@ type DiagnosticOutcome = Exclude<NonReadyBootstrapOutcome, { kind: "auth-require
 
 type RootView =
   | { kind: "loading" }
-  | { kind: "setup"; message: string }
-  | { kind: "app" }
+  | { kind: "setup"; message: string; ownerAccess: boolean }
+  | { kind: "app"; ownerAccess: boolean }
   | { kind: "internal-failure" }
   | NonReadyBootstrapOutcome
 
@@ -134,13 +135,14 @@ export default function Root() {
 
   /** Post-bootstrap: preserve the existing setup card and fail-open behavior. */
   const resolveSetup = useCallback(
-    async (operation: ActiveOperation) => {
+    async (operation: ActiveOperation, ownerAccess: boolean) => {
       try {
         const setup = await ServiceFactory.getInstance().getSetupStatus()
         if (!isCurrent(operation)) return
         if (!setup.is_complete) {
           setView({
             kind: "setup",
+            ownerAccess,
             message: setup.message || uiText("initial_app_setup_is_not_complete__38590db7"),
           })
           return
@@ -151,7 +153,7 @@ export default function Root() {
         // local/dev fail-open behavior only after bootstrap admission.
       }
 
-      if (isCurrent(operation)) setView({ kind: "app" })
+      if (isCurrent(operation)) setView({ kind: "app", ownerAccess })
     },
     [isCurrent],
   )
@@ -160,8 +162,11 @@ export default function Root() {
     async (operation: ActiveOperation) => {
       for (let attempt = 0; ; attempt += 1) {
         let outcome: BootstrapOutcome
+        let ownerAccess = false
         try {
-          outcome = await requestServerBootstrap(operation.controller.signal)
+          outcome = await requestServerBootstrap(operation.controller.signal, (state) => {
+            ownerAccess = state === "local_bypass" || state === "authenticated"
+          })
         } catch {
           if (!isCurrent(operation)) return
           // The service rejects only for caller cancellation. Any unexpected
@@ -191,7 +196,7 @@ export default function Root() {
         }
 
         if (outcome.kind === "ready") {
-          await resolveSetup(operation)
+          await resolveSetup(operation, ownerAccess)
           return
         }
 
@@ -209,14 +214,15 @@ export default function Root() {
   }, [beginOperation, runBootstrap])
 
   const completeSetup = useCallback(() => {
+    const ownerAccess = view.kind === "setup" && view.ownerAccess
     const operation = beginOperation()
     setView({ kind: "loading" })
     void (async () => {
       await ServiceFactory.getInstance().markSetupComplete().catch(() => undefined)
       if (!isCurrent(operation)) return
-      await resolveSetup(operation)
+      await resolveSetup(operation, ownerAccess)
     })()
-  }, [beginOperation, isCurrent, resolveSetup])
+  }, [beginOperation, isCurrent, resolveSetup, view])
 
   useEffect(() => {
     startBootstrap()
@@ -280,7 +286,9 @@ export default function Root() {
     )
   }
 
-  if (view.kind === "app") return <App />
+  if (view.kind === "app") return (
+    <OwnerAccessContext value={view.ownerAccess}><App /></OwnerAccessContext>
+  )
 
   const copy = diagnosticCopy(view)
   return (
