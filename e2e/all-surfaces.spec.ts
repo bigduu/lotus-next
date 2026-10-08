@@ -271,6 +271,9 @@ test("settings page preserves the chat draft, workbench and keyboard return path
   startRuntime,
 }, testInfo) => {
   const { surface } = await startRuntime(standaloneScenario)
+  // Startup selects the fixture session asynchronously; visibility alone can
+  // still refer to the new-session composer, whose draft has a different key.
+  await expect(surface.getByRole("banner")).toContainText("All-surface acceptance")
   const composer = surface.getByRole("textbox", { name: "消息", exact: true })
   await expect(composer).toBeVisible()
   await composer.fill("draft retained across settings navigation")
