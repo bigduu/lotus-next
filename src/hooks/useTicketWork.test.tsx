@@ -2,6 +2,7 @@ import { act } from "react"
 import { createRoot, type Root } from "react-dom/client"
 import { afterEach, beforeEach, expect, it, vi } from "vitest"
 import { useTicketWork } from "./useTicketWork"
+import { OwnerAccessContext } from "./ownerAccessContext"
 import { TicketWorkPanel } from "@/components/chat/TicketWorkPanel"
 import { ticketClient } from "@services/tickets/client"
 import { ticketSnapshot } from "@services/tickets/testFixtures"
@@ -46,7 +47,9 @@ beforeEach(() => {
   container = document.createElement("div"); document.body.append(container); root = createRoot(container)
 })
 afterEach(() => { act(() => root.unmount()); container.remove(); vi.resetAllMocks(); vi.useRealTimers() })
-const mount = async (session = "root") => { await act(async () => root.render(<Harness session={session} />)) }
+const mount = async (session = "root", ownerAccess = true) => {
+  await act(async () => root.render(<OwnerAccessContext value={ownerAccess}><Harness session={session} /></OwnerAccessContext>))
+}
 
 it("rebases one known pre-commit question conflict only while its exact identity remains open", async () => {
   await mount()
@@ -324,4 +327,41 @@ it("keeps opaque evidence and execution paths in closed diagnostics while result
   expect(result).toBeDefined()
   expect(result.closest("details")).toBeNull()
   expect(container.textContent).toContain("1 份成果可查看")
+})
+
+
+it("denies owner-only requests when Root access is absent or explicitly denied", async () => {
+  await act(async () => root.render(<Harness />))
+  expect(controller.negotiated).toBe(true)
+  expect(controller.state).toBeNull()
+  await mount("root", false)
+  await act(async () => {
+    window.dispatchEvent(new Event("focus"))
+    window.dispatchEvent(new Event("online"))
+    await controller.refresh()
+    expect(await controller.respond(snapshot.views[0].requests[0], { kind: "question", answer: "denied" })).toBe(false)
+  })
+  expect(ticketClient.load).not.toHaveBeenCalled()
+  expect(ticketClient.scope).not.toHaveBeenCalled()
+  expect(ticketClient.changes).not.toHaveBeenCalled()
+  expect(ticketClient.respond).not.toHaveBeenCalled()
+  expect(controller.canSendIngress).toBe(false)
+  expect(controller.canRespond).toBe(false)
+})
+
+it("revokes pending owner reads and reloads only after fresh access admission", async () => {
+  let finish!: (value: TicketSnapshot) => void
+  vi.mocked(ticketClient.load).mockReturnValueOnce(new Promise((resolve) => { finish = resolve }))
+  await mount("root", true)
+  const signal = vi.mocked(ticketClient.load).mock.calls[0][1]!
+  await mount("root", false)
+  expect(signal.aborted).toBe(true)
+  await act(async () => { finish(structuredClone(snapshot)) })
+  expect(controller.state).toBeNull()
+  expect(controller.canRespond).toBe(false)
+  await act(async () => controller.refresh())
+  expect(ticketClient.load).toHaveBeenCalledTimes(1)
+  await mount("root", true)
+  expect(ticketClient.load).toHaveBeenCalledTimes(2)
+  expect(controller.state?.current.scope.binding.supervisor_session_id).toBe("root")
 })
