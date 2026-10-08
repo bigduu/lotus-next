@@ -17,6 +17,21 @@ export const retainBootstrapResponseBodies = (browser) => {
     context.newPage = async function (...pageArguments) {
       const page = await originalNewPage.apply(this, pageArguments)
       const session = await context.newCDPSession(page)
+      // This release spec gives each surface a fresh page. Keep a single-use
+      // Playwright Request binding across navigation, never a per-document reset.
+      // A second bootstrap is rejected before any old CDP body can be reused.
+      let bootstrapRequest
+      let bootstrapRequestCount = 0
+      page.on("request", (request) => {
+        if (!isBootstrap(request.url())) return
+        bootstrapRequestCount++
+        bootstrapRequest ??= request
+      })
+      const assertSingleRequest = (request) => {
+        if (bootstrapRequestCount !== 1 || bootstrapRequest !== request) {
+          throw new Error("Bootstrap evidence requires one unique request on a fresh page")
+        }
+      }
       const records = new Map()
       const waiters = new Set()
       const progress = () => { for (const wake of waiters) wake(); waiters.clear() }
@@ -62,7 +77,9 @@ export const retainBootstrapResponseBodies = (browser) => {
       // Register before returning the page, ahead of the unchanged observer.
       page.on("response", (response) => {
         if (!isBootstrap(response.url()) || !response.ok()) return
+        const request = response.request()
         response.json = async () => {
+          assertSingleRequest(request)
           const deadline = performance.now() + 10_000
           let matches
           for (;;) {
@@ -80,7 +97,9 @@ export const retainBootstrapResponseBodies = (browser) => {
           if (matches.length !== 1) throw new Error("Ambiguous bootstrap CDP response identity")
           // JSON syntax/contract, duplicate requests and HTTP/browser errors
           // remain subject to the original observer and canonical assertions.
-          return JSON.parse((await matches[0].body).toString("utf8"))
+          const bytes = await matches[0].body
+          assertSingleRequest(request)
+          return JSON.parse(bytes.toString("utf8"))
         }
       })
       await session.send("Network.enable", {

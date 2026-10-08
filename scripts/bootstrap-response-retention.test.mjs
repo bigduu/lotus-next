@@ -25,8 +25,10 @@ const fixture = async ({ contents = '{"actual":true}', failure, base64Encoded = 
   }
   const response = ({ method = "GET", status = 200 } = {}) => {
     const originalJson = vi.fn(async () => ({ fabricatedFallback: true }))
+    const request = { url: () => url, method: () => method }
     const value = { url: () => url, ok: () => status >= 200 && status < 300,
-      status: () => status, request: () => ({ method: () => method }), json: originalJson }
+      status: () => status, request: () => request, json: originalJson }
+    page.emit("request", request)
     page.emit("response", value)
     return { value, originalJson }
   }
@@ -86,6 +88,19 @@ describe("release bootstrap response retention", () => {
       await vi.advanceTimersByTimeAsync(10_000)
       await result
     } finally { vi.useRealTimers() }
+  })
+
+  it("rejects a new document before its CDP response arrives instead of reusing the old body", async () => {
+    const f = await fixture()
+    f.exchange("previous-document")
+    await expect(f.response().value.json()).resolves.toEqual({ actual: true })
+    // Playwright sees the current request/response while CDP still contains only
+    // the old successful exchange. Event ordering must not select its body.
+    const { value, originalJson } = f.response()
+    await expect(value.json()).rejects.toThrow("one unique request on a fresh page")
+    expect(originalJson).not.toHaveBeenCalled()
+    f.exchange("current-document")
+    await expect(value.json()).rejects.toThrow("one unique request on a fresh page")
   })
 
   it("retains original HTTP error handling", async () => {
