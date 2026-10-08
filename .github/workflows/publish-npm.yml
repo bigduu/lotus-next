@@ -146,7 +146,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     env:
-      BAMBOO_E2E_REVISION: 3ee8c458f7f3672ef40afc9c35c236e6da0f9b0d
+      BAMBOO_E2E_REVISION: b9c6071400744dacd5a4aeda93887516d6278ee9
 
     steps:
       - name: Check out exact Lotus Next source
