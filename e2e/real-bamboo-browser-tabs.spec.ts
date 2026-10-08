@@ -189,6 +189,7 @@ const exerciseSurface = async (
     const pane = panel.getByRole("region", { name: "内置浏览器" })
     const address = pane.getByRole("textbox", { name: "网页地址" })
     const picture = pane.getByAltText("网页画面")
+    await expect(pane.getByRole("heading", { name: "还没有打开网页", exact: true })).toBeVisible()
     await expect(panel.getByRole("tab", { name: /浏览器标签页/ })).toHaveCount(0)
     await address.fill(fixtureUrl("alpha"))
     await pane.getByRole("button", { name: "打开", exact: true }).click()
