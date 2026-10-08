@@ -13,6 +13,7 @@ import {
   Columns2,
   X,
   PanelRightOpen,
+  BookText,
 } from "lucide-react"
 import { useShallow } from "zustand/react/shallow"
 import { Button } from "@/components/ui/button"
@@ -63,6 +64,7 @@ import { NewSessionPermissionControl, PermissionModeControl } from "@/components
 import { RootOrchestrationControl } from "@/components/chat/RootOrchestrationControl"
 import { useWorkflowCatalog } from "@/components/chat/useWorkflowCatalog"
 import { WorkflowSelectionControl } from "@/components/chat/WorkflowSelectionControl"
+import { WorkflowRunsDialog } from "@/components/chat/WorkflowRunsDialog"
 import {
   Select,
   SelectContent,
@@ -495,6 +497,7 @@ export function ChatPane({
 
   const slashQuery = !menusDismissed && draft.startsWith("/") ? draft.slice(1) : null
   const catalogState = useWorkflowCatalog(currentSessionId, slashQuery !== null || workflowPicker !== null)
+  const [workflowRunsOpen, setWorkflowRunsOpen] = useState(false)
   const workflowDisabled = submissionPending || currentlyRunning || queue.hasUnconfirmed || rootMode.unsafe
   // A hidden Environment must not strand its open editor (phone/workbench changes).
   useEffect(() => {
@@ -863,6 +866,8 @@ export function ChatPane({
   }
   const selectSubAgentInPane = onSelectSubAgent ?? secondary?.onPickSession ?? select
   const overflowItems = [
+    ...(currentSessionId ? [{ label: uiText("workflow_run_title"), icon: <BookText className="size-4" />,
+      onClick: () => setWorkflowRunsOpen(true) }] : []),
     ...(currentSessionId && messages.length > 0
       ? [
           {
@@ -954,6 +959,9 @@ export function ChatPane({
             </Select>
             {currentSessionId ? (
               <>
+                <Button size="icon" variant="ghost" aria-label={uiText("workflow_run_title")} onClick={() => setWorkflowRunsOpen(true)}>
+                  <BookText className="size-4" />
+                </Button>
                 <Button
                   size="icon"
                   variant="ghost"
@@ -1297,6 +1305,8 @@ export function ChatPane({
       </div>
 
       <Toasts forking={forking} toast={toast} />
+      {workflowRunsOpen && currentSessionId && pageVisible !== false ? <WorkflowRunsDialog key={currentSessionId}
+        sessionId={currentSessionId} sessionTitle={currentChat?.title || currentSessionId} onClose={() => setWorkflowRunsOpen(false)} /> : null}
 
       <ImageLightbox src={preview} onClose={() => setPreview(null)} />
 
