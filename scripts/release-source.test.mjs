@@ -57,6 +57,9 @@ describe("accepted immutable release source", () => {
     const jobs = { total_count: 3, jobs: ["Node 22", "Node 24", "Real Bamboo / Node 22"].map((name) => ({ name, head_sha: sourceSha, status: "completed", conclusion: "success" })) }
     const pr = { number: 282, merged: true, head: { sha: sourceSha }, merge_commit_sha: candidate.productMergeSha }
     expect(() => verifyAcceptanceEvidence(candidate, run, jobs, pr)).not.toThrow()
+    expect(() => verifyAcceptanceEvidence(candidate, { ...run, path: run.path + "@release/2026.10.8", head_branch: "release/2026.10.8" }, jobs, pr)).not.toThrow()
+    expect(() => verifyAcceptanceEvidence(candidate, { ...run, path: ".github/workflows/other.yml@main", head_branch: "main" }, jobs, pr)).toThrow()
+    expect(() => verifyAcceptanceEvidence(candidate, { ...run, path: run.path + "@wrong", head_branch: "release/2026.10.8" }, jobs, pr)).toThrow()
     for (const conclusion of ["skipped", "failure", "cancelled"]) {
       const skipped = clone(jobs)
       skipped.jobs[2].conclusion = conclusion

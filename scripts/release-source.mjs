@@ -36,7 +36,10 @@ export const resolveReleaseRequest = (document, request) => {
 
 export const verifyAcceptanceEvidence = (candidate, run, jobs, pullRequest) => {
   assert.equal(run.id, candidate.acceptanceRunId)
-  assert.equal(run.path, ".github/workflows/ci.yml")
+  const [path, ref, ...extra] = run.path.split("@")
+  assert.equal(path, ".github/workflows/ci.yml")
+  assert.equal(extra.length, 0)
+  if (ref !== undefined) assert.equal(ref, run.head_branch, "Acceptance workflow ref suffix differs from its run")
   assert.equal(run.event, "workflow_dispatch")
   assert.equal(run.head_sha, candidate.sourceSha)
   assert.equal(run.status, "completed")
