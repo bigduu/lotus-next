@@ -223,11 +223,9 @@ describe("published real-Bamboo acceptance policy", () => {
       "e2e/support/Dockerfile.real-bamboo",
     )
 
-    for (const workflow of [ci, publication]) {
-      expect(workflow).toContain(
-        `BAMBOO_E2E_REVISION: ${expectedBambooRevision}`,
-      )
-    }
+    expect(ci).toContain(`BAMBOO_E2E_REVISION: ${expectedBambooRevision}`)
+    expect(publication).toContain('BAMBOO_E2E_REVISION: ${{ needs.preflight.outputs.bamboo_sha }}')
+    expect(publication).toContain("run: node scripts/release-source.mjs")
     expect(runtime).toContain(
       `export const REAL_BAMBOO_REVISION = "${expectedBambooRevision}";`,
     )
@@ -244,11 +242,9 @@ describe("published real-Bamboo acceptance policy", () => {
     const ci = readRepositoryFile(".github/workflows/ci.yml")
     const publication = readRepositoryFile(".github/workflows/publish-npm.yml")
 
-    for (const workflow of [ci, publication]) {
-      expect(workflow).toContain(
-        "run: node scripts/published-real-bamboo-acceptance.mjs --current-source",
-      )
-    }
+    expect(ci).toContain("run: node scripts/published-real-bamboo-acceptance.mjs --current-source")
+    expect(publication).toContain('run: node "${RUNNER_TEMP}/release-control/published-real-bamboo-acceptance.mjs" --current-source')
+    expect(publication).toContain("LOTUS_NEXT_RELEASE_SOURCE_RECEIPT:")
     for (const directory of [
       "playwright-report-real-bamboo/",
       "playwright-report-real-bamboo-local/",
@@ -286,7 +282,7 @@ describe("published real-Bamboo acceptance policy", () => {
     const publish = index("Publish the exact verified tarball with provenance")
     expect([acceptance, upload, finalPack, download, compare, credentials, publish].every((position) => position >= 0)).toBe(true)
     expect(publication).toContain(
-      'run: node scripts/published-real-bamboo-acceptance.mjs --current-source --accepted-identity "${ACCEPTED_IDENTITY_PATH}"',
+      'run: node "${RUNNER_TEMP}/release-control/published-real-bamboo-acceptance.mjs" --current-source --accepted-identity "${ACCEPTED_IDENTITY_PATH}"',
     )
     expect(acceptance).toBeLessThan(upload)
     expect(publication).toContain("uses: actions/upload-artifact@v7")
