@@ -193,6 +193,22 @@ const selectRootSession = async (
   ).toBeVisible();
 };
 
+const selectSettingsCategory = async (
+  settings: Locator,
+  phone: boolean,
+  id: "jiandu" | "mcp",
+  label: string,
+): Promise<void> => {
+  if (phone) {
+    const category = settings.getByRole("combobox", { name: "系统设置", exact: true });
+    await expect(category).toBeVisible();
+    await category.selectOption(id);
+    await expect(category).toHaveValue(id);
+  } else {
+    await settings.getByRole("button", { name: label, exact: true }).click();
+  }
+};
+
 const openJianduSettings = async (
   page: Page,
   phone: boolean,
@@ -202,9 +218,7 @@ const openJianduSettings = async (
   await sidebar.getByRole("button", { name: "系统设置", exact: true }).click();
   const settings = page.getByRole("main", { name: "系统设置", exact: true });
   await expect(settings).toBeVisible();
-  await settings
-    .getByRole("button", { name: "Jiandu 记忆", exact: true })
-    .click();
+  await selectSettingsCategory(settings, phone, "jiandu", "Jiandu 记忆");
   await expect(
     settings.getByRole("heading", { name: "项目记忆", exact: true }),
   ).toBeVisible();
@@ -1999,7 +2013,7 @@ test("MCP JSON import merges, replaces, rolls back and survives a real restart",
     await sidebar.getByRole("button", { name: "系统设置", exact: true }).click();
     const settings = page.getByRole("main", { name: "系统设置", exact: true });
     await expect(settings).toBeVisible();
-    await settings.getByRole("button", { name: "MCP", exact: true }).click();
+    await selectSettingsCategory(settings, phone, "mcp", "MCP");
     await expect(settings.getByRole("button", { name: "导入 JSON", exact: true })).toBeEnabled();
     return settings;
   };
