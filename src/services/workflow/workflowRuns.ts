@@ -123,7 +123,7 @@ export function workflowRunError(error: unknown, mutation = false): string {
   if (isApiError(error)) {
     if (error.status === 401 || error.status === 403) return uiText("workflow_run_not_authorized")
     if (error.status === 404) return uiText("workflow_run_not_found")
-    if (error.status === 409) return uiText("workflow_run_terminal_conflict")
+    if (error.status === 409) return uiText("workflow_run_conflict")
     if (error.status === 400) {
       try {
         if (JSON.parse(error.body ?? "null")?.code === "workflow_monetary_budget_unsupported") {

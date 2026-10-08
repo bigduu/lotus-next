@@ -211,10 +211,11 @@ function RunSession({ sessionId }: { sessionId: string }) {
             <div className="grid grid-cols-2 gap-2 text-xs text-muted-foreground">
               <span>{uiText("workflow_run_steps")}: {run.usage.steps}/{run.budget.max_steps}</span>
               <span>{uiText("workflow_run_retries")}: {run.usage.retries}/{run.budget.max_retries}</span>
-              <span>{uiText("workflow_run_agents")}: {run.child_agent_count}/{run.budget.max_agents}</span>
+              <span>{uiText("workflow_run_agents")}: {run.usage.agents}/{run.budget.max_agents}</span>
               <span>{uiText("workflow_run_time_budget")}: {run.budget.wall_time_ms / 1_000}s</span>
               <span>{uiText("workflow_run_tokens")}: {run.usage.tokens}{run.budget.max_tokens === null ? "" : `/${run.budget.max_tokens}`}</span>
-              {run.usage.cost_micros === null ? <span>{uiText("workflow_run_cost_unmetered")}</span> : null}
+              <span>{run.usage.cost_micros === null ? uiText("workflow_run_cost_unmetered")
+                : `${uiText("workflow_run_cost_metered")}: ${run.usage.cost_micros}${run.budget.max_cost_micros === null ? "" : `/${run.budget.max_cost_micros}`}`}</span>
             </div>
             {run.suspension ? <p className="text-xs">{uiText(`workflow_run_suspension_${run.suspension}`)}</p> : null}
             {run.failure ? <p className="text-xs text-destructive">{uiText(`workflow_run_failure_${run.failure.code}`)}</p> : null}

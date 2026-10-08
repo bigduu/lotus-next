@@ -108,6 +108,12 @@ describe("session-scoped Workflow Run client", () => {
     expect(workflowRunError(error, true)).toContain("不支持金额预算")
     expect(workflowRunError(error, true)).not.toContain("PRIVATE_MESSAGE")
   })
+  it("maps a conflict to refresh guidance without claiming a new run is terminal", () => {
+    const result = workflowRunError(new ApiError("PRIVATE_CONFLICT", 409, "Conflict"), true)
+    expect(result).toContain("编排状态已变化")
+    expect(result).not.toContain("此运行已结束")
+    expect(result).not.toContain("PRIVATE_CONFLICT")
+  })
   it("never automatically replays an ambiguous start or displays raw backend errors", async () => {
     const sentinel = "PRIVATE_TOKEN_PATH_BODY"
     client.postOnce.mockRejectedValue(new NetworkRequestError(new Error(sentinel)))

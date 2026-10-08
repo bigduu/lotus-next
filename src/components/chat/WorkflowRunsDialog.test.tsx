@@ -101,6 +101,31 @@ describe("Workflow Run dialog", () => {
     expect(body().querySelector<HTMLTextAreaElement>("textarea")!.value).toBe('{"file":"keep/me.md"}')
     await choose(8); expect(body().querySelector<HTMLTextAreaElement>("textarea")!.value).toBe("{}")
   })
+  it.each([
+    { cost: 50, limit: 2000, expected: "50/2000" },
+    { cost: 50, limit: null, expected: "50" },
+    { cost: 0, limit: 2000, expected: "0/2000" },
+  ])("shows metered usage and its optional budget without treating zero as unmetered ($expected)", async ({ cost, limit, expected }) => {
+    const run = snapshot()
+    run.usage = { ...run.usage, agents: 2, cost_micros: cost }
+    run.budget = { ...run.budget, max_agents: 4, max_cost_micros: limit }
+    run.child_agent_count = 2
+    mocks.list.mockResolvedValue([run]); mocks.detail.mockResolvedValue(run)
+    await mount()
+    expect(body().textContent).toContain("代理: 2/4")
+    expect(body().textContent).toContain(`金额用量（微单位）: ${expected}`)
+    expect(body().textContent).not.toContain("金额用量：未计量")
+  })
+  it("preserves the start draft on a conflict without claiming a run has already ended", async () => {
+    mocks.start.mockRejectedValue(new ApiError("PRIVATE_CONFLICT", 409, "Conflict"))
+    await mount(); await choose(); await args('{"file":"keep/me.md"}'); await click(button("启动运行"))
+    expect(body().textContent).toContain("编排状态已变化")
+    expect(body().textContent).not.toContain("此运行已结束")
+    expect(body().textContent).not.toContain("PRIVATE_CONFLICT")
+    expect(body().querySelector<HTMLSelectElement>("select")!.value).toBe("user:review:7")
+    expect(body().querySelector<HTMLTextAreaElement>("textarea")!.value).toBe('{"file":"keep/me.md"}')
+    expect(mocks.start).toHaveBeenCalledTimes(1)
+  })
   it("does not assume an ambiguous start failed or automatically replay it", async () => {
     mocks.start.mockRejectedValue(new Error("PRIVATE_BODY"))
     await mount(); await choose(); await args('{"file":"safe.md"}'); await click(button("启动运行"))
