@@ -223,14 +223,14 @@ describe("StreamdownMarkdown streaming behavior", () => {
 
     expect(transitioning.container.querySelector("[data-sd-animate]")).not.toBeNull()
     expect(
-      document.querySelector('[data-assistant-typewriter-caret="true"]'),
+      transitioning.container.querySelector('[data-assistant-typewriter-caret-target="true"]'),
     ).not.toBeNull()
     expect(transitioning.container.innerHTML).not.toContain("--streamdown-caret")
 
     await transitioning.render(finalSource, false)
     expect(transitioning.container.querySelector("[data-sd-animate]")).toBeNull()
     expect(
-      document.querySelector('[data-assistant-typewriter-caret="true"]'),
+      transitioning.container.querySelector('[data-assistant-typewriter-caret-target="true"]'),
     ).toBeNull()
     const transitionedStaticDom = semanticHtml(transitioning.container)
 
@@ -277,6 +277,31 @@ describe("StreamdownMarkdown streaming behavior", () => {
     expect(activeCaretTarget()?.textContent).toBe("世")
     act(() => startAnimation(token("界")))
     expect(activeCaretTarget()?.textContent).toBe("界")
+  })
+
+  it("marks only the active token without adding nodes to React text children", async () => {
+    const view = await mountMarkdown("你好", true)
+    await view.render("你好世界", true)
+    const active = view.container.querySelector<HTMLElement>('[data-assistant-typewriter-caret-target="true"]')!
+    expect(active.textContent).toBe("好")
+    expect(active.childNodes).toHaveLength(1)
+    expect(active.firstChild?.nodeType).toBe(Node.TEXT_NODE)
+    expect(view.container.querySelectorAll('[data-assistant-typewriter-caret-target="true"]')).toHaveLength(1)
+    expect(document.querySelector('[data-assistant-typewriter-caret="true"]')).toBeNull()
+
+    const event = new Event("animationstart", { bubbles: true })
+    Object.defineProperty(event, "animationName", { value: "sd-fadeIn" })
+    const next = [...view.container.querySelectorAll<HTMLElement>("[data-sd-animate]")].find((node) => node.textContent === "世")!
+    act(() => next.dispatchEvent(event))
+    expect(active.hasAttribute("data-assistant-typewriter-caret-target")).toBe(false)
+    expect(next.hasAttribute("data-assistant-typewriter-caret-target")).toBe(true)
+    expect(next.childNodes).toHaveLength(1)
+
+    await view.render("你好世界", false)
+    expect(view.container.querySelector('[data-assistant-typewriter-caret-target="true"]')).toBeNull()
+    // A stale token event after cleanup must not restart the caret.
+    act(() => next.dispatchEvent(event))
+    expect(next.hasAttribute("data-assistant-typewriter-caret-target")).toBe(false)
   })
 })
 
