@@ -204,7 +204,9 @@ test("animated caret follows a single character when narrow lines wrap", async (
   // Streamdown may retain trailing spaces in a character token. They must
   // still leave a single fragment at a narrow Latin line's trailing edge.
   emit("token", "\n\nwrap text ")
-  await expect(target).toHaveText("t")
+  const finalCharacter = page.locator(".assistant-streamdown [data-sd-animate]").last()
+  await expect(finalCharacter).toHaveAttribute("data-assistant-typewriter-caret-target", "true")
+  await expect(finalCharacter).toHaveText("t")
   await target.evaluate((element) => {
     const paragraph = element.closest("p")! as typeof element
     paragraph.style.maxWidth = "9px"
