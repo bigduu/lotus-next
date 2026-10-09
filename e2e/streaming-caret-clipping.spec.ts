@@ -54,6 +54,7 @@ async function startCaretFixture(page: Page, history: readonly unknown[] = []) {
   let socket: WebSocketRoute | undefined
   let subscribed = false
   let seq = 0
+  let running = false
   await page.routeWebSocket(/.*/, (ws) => {
     socket = ws
     ws.onMessage((raw) => {
@@ -64,17 +65,29 @@ async function startCaretFixture(page: Page, history: readonly unknown[] = []) {
     })
   })
   await page.route("**/api/v1/chat", (route) => route.fulfill({ json: { session_id: SESSION_ID, status: "success" } }))
-  await page.route(`**/api/v1/execute/${SESSION_ID}`, (route) => route.fulfill({ json: { status: "started", session_id: SESSION_ID } }))
+  await page.route(`**/api/v1/execute/${SESSION_ID}`, (route) => {
+    running = true
+    return route.fulfill({ json: { status: "started", session_id: SESSION_ID } })
+  })
   await page.goto(standaloneScenario.entryUrl)
   const input = page.getByRole("textbox", { name: "消息", exact: true })
   await expect(input).toBeVisible()
+  // Keep canonical metadata while reporting the fixture runner's real phase.
+  const { session } = await page.evaluate(async (id) =>
+    (await fetch(`/api/v1/sessions/${id}`)).json(), SESSION_ID) as { session: Record<string, unknown> }
+  await page.route(`**/api/v1/sessions/${SESSION_ID}`, (route) => route.fulfill({
+    json: { session: { ...session, is_running: running } },
+  }))
   await input.fill("Show the streaming caret fixture")
   await page.getByRole("button", { name: "发送消息", exact: true }).click()
   await expect.poll(() => subscribed).toBe(true)
   const emit = (type: string, value = "") => socket!.send(JSON.stringify({
     ch: `agent.${SESSION_ID}`, seq: ++seq, event: { type, content: value },
   }))
-  const terminal = () => socket!.send(JSON.stringify({ ch: `agent.${SESSION_ID}`, seq: ++seq, control: { type: "terminal" } }))
+  const terminal = () => {
+    running = false
+    socket!.send(JSON.stringify({ ch: `agent.${SESSION_ID}`, seq: ++seq, control: { type: "terminal" } }))
+  }
   return { observation, input, emit, terminal }
 }
 
