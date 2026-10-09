@@ -32,7 +32,11 @@ async function openProcessFixture(page: Page, messages: readonly unknown[] = [],
     }
     if (pathname === `/api/v1/sessions/${sessionId}`) return route.fulfill({ json: { session: fixtureSession }, headers: { ETag: '"1"' } })
     if (pathname === "/api/v1/chat") return route.fulfill({ json: { session_id: sessionId, status: "success" } })
-    if (pathname === `/api/v1/execute/${sessionId}`) return route.fulfill({ json: { status: "started", session_id: sessionId } })
+    if (pathname === `/api/v1/execute/${sessionId}`) {
+      fixtureSession.is_running = true
+      fixtureSession.last_run_status = "running"
+      return route.fulfill({ json: { status: "started", session_id: sessionId } })
+    }
     if (pathname === `/api/v1/task/${sessionId}`) return route.fulfill({ json: { session_id: sessionId, items: [] } })
     await route.fallback()
   })

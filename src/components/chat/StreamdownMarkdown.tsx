@@ -111,52 +111,15 @@ function useTrackedTypewriterCaret(
     const root = hostRef.current?.querySelector<HTMLElement>(".assistant-streamdown")
     if (!root) return
 
-    // Keep the visual caret outside React's text spans. Portaling or appending
-    // into a span whose text children React owns causes reconciliation warnings.
-    // A fixed, pointer-transparent overlay can follow the same glyph coordinates
-    // without affecting wrapping or the Markdown DOM.
-    const caret = document.createElement("span")
-    caret.className = "animate-pulse"
-    caret.dataset.assistantTypewriterCaret = "true"
-    caret.setAttribute("aria-hidden", "true")
-    Object.assign(caret.style, {
-      borderRadius: "1px",
-      display: "none",
-      pointerEvents: "none",
-      position: "fixed",
-      zIndex: "30",
-    })
-    document.body.append(caret)
-
+    // CSS paints the caret on this glyph's ::after, outside React's text
+    // children but inside every clipping ancestor. Layout, scrolling and
+    // direction changes then follow the glyph without a body-level overlay.
     let positionedTarget: HTMLElement | null = null
-    const updateCaretPosition = () => {
-      if (!positionedTarget?.isConnected) {
-        caret.style.display = "none"
-        return
-      }
-      const rect = positionedTarget.getBoundingClientRect()
-      const computed = window.getComputedStyle(positionedTarget)
-      const fontSize = Number.parseFloat(computed.fontSize) || rect.height
-      const height = Math.min(rect.height, fontSize * 0.9)
-      const width = Math.max(3, fontSize * 0.45)
-      const gap = Math.max(1, fontSize * 0.08)
-      const left = computed.direction === "rtl" ? rect.left - width - gap : rect.right + gap
-
-      Object.assign(caret.style, {
-        backgroundColor: computed.color,
-        display: "block",
-        height: `${height}px`,
-        left: `${left}px`,
-        top: `${rect.top + (rect.height - height) / 2}px`,
-        width: `${width}px`,
-      })
-    }
     const positionAt = (target: HTMLElement | null) => {
       if (positionedTarget === target) return
       positionedTarget?.removeAttribute("data-assistant-typewriter-caret-target")
       positionedTarget = target
       target?.setAttribute("data-assistant-typewriter-caret-target", "true")
-      updateCaretPosition()
     }
 
     const handleAnimationStart = (event: Event) => {
@@ -170,14 +133,9 @@ function useTrackedTypewriterCaret(
 
     trackerRef.current = { positionAt, root }
     root.addEventListener("animationstart", handleAnimationStart)
-    window.addEventListener("resize", updateCaretPosition)
-    window.addEventListener("scroll", updateCaretPosition, true)
     return () => {
       root.removeEventListener("animationstart", handleAnimationStart)
-      window.removeEventListener("resize", updateCaretPosition)
-      window.removeEventListener("scroll", updateCaretPosition, true)
       positionedTarget?.removeAttribute("data-assistant-typewriter-caret-target")
-      caret.remove()
       trackerRef.current = null
     }
   }, [hostRef, isStreaming])

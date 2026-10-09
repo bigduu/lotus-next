@@ -69,8 +69,34 @@
   font-weight: inherit;
 }
 
+.assistant-streamdown [data-assistant-typewriter-caret-target="true"] {
+  position: relative;
+}
+
+/* A glyph-owned pseudo-element follows wrapping, RTL, scrolling and every
+   clipping ancestor without inserting children into React's text spans. */
+.assistant-streamdown [data-assistant-typewriter-caret-target="true"]::after {
+  content: "";
+  position: absolute;
+  inset-inline-start: calc(100% + max(1px, 0.08em));
+  top: 50%;
+  width: max(3px, 0.45em);
+  height: 0.9em;
+  border-radius: 1px;
+  background: currentColor;
+  pointer-events: none;
+  transform: translateY(-50%);
+  animation: assistant-caret-pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+@keyframes assistant-caret-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .assistant-streamdown [data-sd-animate],
+  .assistant-streamdown [data-assistant-typewriter-caret-target="true"]::after,
   .assistant-streamdown [data-sd-animate-marker]::marker {
     animation: none !important;
   }
