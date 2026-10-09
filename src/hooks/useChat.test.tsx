@@ -53,6 +53,7 @@ const mocks = vi.hoisted(() => {
     restoreSessionState: vi.fn(),
     respondToChildApproval: vi.fn(),
     getPendingQuestion: vi.fn(),
+    getSession: vi.fn(),
     submitPermissionDecision: vi.fn(),
     shouldObserve: false,
     apiGet: vi.fn(),
@@ -101,6 +102,7 @@ vi.mock("@services/chat/AgentService", () => ({
     restoreSessionState: mocks.restoreSessionState,
     respondToChildApproval: mocks.respondToChildApproval,
     getPendingQuestion: mocks.getPendingQuestion,
+    getSession: mocks.getSession,
     submitPermissionDecision: mocks.submitPermissionDecision,
   },
 }))
@@ -302,6 +304,7 @@ beforeEach(() => {
     mocks.restoreSessionState,
     mocks.respondToChildApproval,
     mocks.getPendingQuestion,
+    mocks.getSession,
     mocks.submitPermissionDecision,
     mocks.apiGet,
     mocks.apiPost,
@@ -321,6 +324,7 @@ beforeEach(() => {
   mocks.subscribeToEvents.mockResolvedValue(undefined)
   mocks.truncateSessionMessages.mockResolvedValue(undefined)
   mocks.getPendingQuestion.mockResolvedValue({ has_pending_question: false })
+  mocks.getSession.mockRejectedValue(new Error("no status fixture"))
   mocks.apiGet.mockRejectedValue(new Error("no pending question"))
   mocks.apiPost.mockResolvedValue(undefined)
   consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {})
@@ -328,6 +332,7 @@ beforeEach(() => {
 })
 afterEach(() => {
   for (const root of mountedRoots.splice(0)) act(() => root.unmount())
+  vi.useRealTimers()
   document.body.replaceChildren()
   consoleErrorSpy.mockRestore()
   consoleWarnSpy.mockRestore()
@@ -2272,5 +2277,131 @@ describe("useChat pending reads during permission submission", () => {
     expect(mocks.submitPermissionDecision).toHaveBeenCalledTimes(1)
     expect(mocks.subscribeToEvents).toHaveBeenCalledTimes(1)
     expect(mocks.execute).not.toHaveBeenCalled()
+  })
+})
+
+describe("owned streams without a terminal frame", () => {
+  const sessionId = "orphaned-owned-stream"
+  async function start() {
+    vi.useFakeTimers()
+    mocks.appState.chats = [{ id: sessionId, isRunning: true, lastRunStatus: "completed", messages: [] }]
+    mocks.sendMessage.mockResolvedValue({ session_id: sessionId })
+    const subscription = deferred<void>()
+    mocks.subscribeToEvents.mockImplementation((_id, _handlers, controller: AbortController) =>
+      { controller.signal.addEventListener("abort", () => subscription.resolve(), { once: true }); return subscription.promise },
+    )
+    mocks.appState.refreshChatsNow.mockImplementation(async () => {
+      mocks.appState.chats[0].isRunning = false
+    })
+    mocks.getSession.mockResolvedValue({ session: { id: sessionId, is_running: false, last_run_status: "completed" } })
+    const hook = await mountUseChat({ mode: "bound", sessionId })
+    await act(async () => { await hook.current.send("inspect the worktree") })
+    return { hook, controller: mocks.subscribeToEvents.mock.calls[0][2] as AbortController, closeSubscription: subscription.resolve }
+  }
+  async function advance(ms: number) {
+    await act(async () => { await vi.advanceTimersByTimeAsync(ms) })
+  }
+
+  it("clears an owned run after two idle reads without trusting an old completed status", async () => {
+    const { hook, controller } = await start()
+    expect(hook.current.sending).toBe(true)
+    await advance(5_000)
+    expect(controller.signal.aborted).toBe(false)
+    expect(mocks.getSession).toHaveBeenCalledTimes(1)
+    await advance(2_000)
+    expect(controller.signal.aborted).toBe(true)
+    expect(hook.current.sending).toBe(false)
+    expect(hook.current.streaming).toBeNull()
+    expect(hook.current.sendFailure).toMatchObject({ kind: "generation-failed", sessionId })
+    expect(mocks.appState.loadChatHistory).toHaveBeenLastCalledWith(sessionId, { mode: "monotonic" })
+    const readCount = mocks.getSession.mock.calls.length
+    await advance(20_000)
+    expect(mocks.getSession).toHaveBeenCalledTimes(readCount)
+  })
+
+  it("does not read an idle pre-start summary until execute acknowledges admission", async () => {
+    const execution = deferred<void>()
+    mocks.execute.mockReturnValueOnce(execution.promise)
+    const { hook, controller } = await start()
+    await advance(15_000)
+    expect(mocks.getSession).not.toHaveBeenCalled()
+    expect(controller.signal.aborted).toBe(false)
+    await act(async () => { execution.resolve(); await Promise.resolve() })
+    await advance(7_000)
+    expect(controller.signal.aborted).toBe(true)
+    expect(hook.current.sending).toBe(false)
+  })
+
+  it("keeps a successor and a suspended question alive after the first idle read", async () => {
+    const { hook, controller } = await start()
+    await advance(5_000)
+    mocks.getSession.mockResolvedValue({ session: { id: sessionId, is_running: true } })
+    await advance(2_000)
+    expect(controller.signal.aborted).toBe(false)
+    mocks.getSession.mockResolvedValue({ session: { id: sessionId, is_running: false, has_pending_question: true } })
+    await advance(10_000)
+    expect(controller.signal.aborted).toBe(false)
+    expect(hook.current.sending).toBe(true)
+    expect(hook.current.sendFailure).toBeNull()
+    expect(mocks.appState.refreshChatsNow).not.toHaveBeenCalled()
+  })
+
+  it("preserves a running successor admitted while history is being read", async () => {
+    const { hook, controller } = await start()
+    mocks.appState.loadChatHistory.mockImplementation(async () => {
+      mocks.appState.chats[0].isRunning = true
+    })
+    await advance(7_000)
+    expect(controller.signal.aborted).toBe(false)
+    expect(hook.current.sending).toBe(true)
+    expect(hook.current.sendFailure).toBeNull()
+  })
+
+  it("settles a successfully persisted reply without a false interruption", async () => {
+    const { hook, controller } = await start()
+    const handlers = mocks.subscribeToEvents.mock.calls[0][1] as SubscriptionHandlers
+    await act(async () => { handlers.onToken("durable final reply") })
+    mocks.appState.loadChatHistory.mockImplementation(async () => {
+      mocks.appState.chats[0].messages = [{ id: "final-message", role: "assistant", type: "text", content: "durable final reply" }]
+    })
+    await advance(7_000)
+    expect(controller.signal.aborted).toBe(true)
+    expect(hook.current.sending).toBe(false)
+    expect(hook.current.sendFailure).toBeNull()
+    expect(hook.current.streaming).toBeNull()
+  })
+
+  it("ignores a status response after the owning pane has unmounted", async () => {
+    const { hook, controller } = await start()
+    const status = deferred<unknown>()
+    mocks.getSession.mockReturnValueOnce(status.promise)
+    await advance(5_000)
+    hook.unmount()
+    await act(async () => { status.resolve({ session: { id: sessionId, is_running: false } }); await Promise.resolve() })
+    expect(controller.signal.aborted).toBe(true)
+    expect(mocks.appState.refreshChatsNow).not.toHaveBeenCalled()
+    await advance(10_000)
+    expect(mocks.getSession).toHaveBeenCalledTimes(1)
+  })
+
+  it("ignores an idle status response when a terminal event arrives during the read", async () => {
+    const { hook, controller, closeSubscription } = await start()
+    const status = deferred<unknown>()
+    mocks.getSession.mockReturnValueOnce(status.promise)
+    await advance(5_000)
+    const handlers = mocks.subscribeToEvents.mock.calls[0][1] as SubscriptionHandlers
+    await act(async () => { handlers.onComplete(); closeSubscription(); await Promise.resolve() })
+    const historyReads = mocks.appState.loadChatHistory.mock.calls.length
+    await act(async () => {
+      status.resolve({ session: { id: sessionId, is_running: false } })
+      await Promise.resolve()
+    })
+    await advance(10_000)
+    expect(mocks.getSession).toHaveBeenCalledTimes(1)
+    expect(mocks.appState.loadChatHistory).toHaveBeenCalledTimes(historyReads)
+    expect(mocks.appState.refreshChatsNow).not.toHaveBeenCalled()
+    expect(hook.current.sendFailure).toBeNull()
+    expect(hook.current.sending).toBe(false)
+    expect(controller.signal.aborted).toBe(false)
   })
 })
