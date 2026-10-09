@@ -757,6 +757,10 @@ export function useChat(
       const subscription = { operationId, sessionId: runSid }
       subscriptionRef.current = subscription
       subscribedSidRef.current = runSid
+      let executeAcknowledged = false
+      let reconcileTimer: ReturnType<typeof setTimeout> | undefined
+      const clearReconcileTimer = () => clearTimeout(reconcileTimer)
+      ac.signal.addEventListener("abort", clearReconcileTimer, { once: true })
       // On resume (after answering a question/permission) the backend already
       // continues the suspended run — only subscribe, don't kick a fresh execute.
       if (!opts?.resume) {
@@ -771,7 +775,9 @@ export function useChat(
         }
         const executeModel = opts?.modelSelection?.model ?? effectiveModel
         const executeModelRef = opts?.modelSelection ? opts.modelSelection.modelRef : effectiveModelRef
-        void agentClient.execute(runSid, executeModel || undefined, executeReasoningEffort, undefined, executeModelRef).catch((err) => {
+        void agentClient.execute(runSid, executeModel || undefined, executeReasoningEffort, undefined, executeModelRef).then(() => {
+          executeAcknowledged = true
+        }).catch((err) => {
           if (!ownsStream()) return
           // The run never started, so no terminal will ever arrive — settle
           // the subscription instead of leaving it (and the UI) hanging.
@@ -886,6 +892,69 @@ export function useChat(
           }
           stopStream(null, operationId)
         })()
+      }
+
+      // A fenced-out runner can disappear without publishing either a semantic
+      // terminal or a WS terminal control. Owned sends must reconcile too:
+      // their `sending` flag otherwise prevents the passive recovery effect.
+      // Start only after execute acknowledges admission, and confirm idle twice
+      // with fresh detail reads so a stale pre-start summary cannot stop a run.
+      let observedIdle = false
+      let subscriptionOpen = true
+      const canReconcile = () => ownsStream() && subscriptionOpen && !ac.signal.aborted && !terminal.settlement
+      const reconcileOwnedRun = async () => {
+        if (!canReconcile()) return
+        let delay = 5_000
+        try {
+          if (!executeAcknowledged) return
+          const { session } = await agentClient.getSession(runSid)
+          if (!canReconcile()) return
+          if (session.id !== runSid || session.is_running || session.has_pending_question
+              || session.last_run_status === "suspended") {
+            observedIdle = false
+            return
+          }
+          if (!observedIdle) {
+            observedIdle = true
+            delay = 2_000
+            return
+          }
+          await useAppStore.getState().refreshChatsNow()
+          if (!canReconcile()) return
+          if (useAppStore.getState().chats.find((chat) => chat.id === runSid)?.isRunning) {
+            observedIdle = false
+            return
+          }
+          await useAppStore.getState().loadChatHistory(runSid, { mode: "monotonic" })
+          if (!canReconcile()) return
+          const currentQuestion = questionStateRef.current
+          if (useAppStore.getState().chats.find((chat) => chat.id === runSid)?.isRunning
+              || currentQuestion.scope.sessionId === runSid && currentQuestion.question) {
+            observedIdle = false
+            return
+          }
+          const tail = useAppStore.getState().chats.find((chat) => chat.id === runSid)
+            ?.messages?.findLast((message) => message.role !== "system")
+          // `last_run_status` can be left over from an earlier run when final
+          // persistence was fenced out. Require this run's durable text too.
+          const finalText = streamBufRef.current.trim()
+          const durableReply = finalText && tail?.role === "assistant" && tail.type === "text"
+            && tail.id !== streamBaselineMessageIdRef.current && tail.content.trim() === finalText
+          if (session.last_run_status === "cancelled") settleCancelled(true)
+          else if (session.last_run_status === "completed" && durableReply) settleCompleted(true)
+          else settleFailed(true, session.last_run_error)
+          ac.abort()
+        } catch (err) {
+          observedIdle = false
+          console.warn("[useChat] owned-stream status reconciliation failed", err)
+        } finally {
+          if (canReconcile()) {
+            reconcileTimer = setTimeout(() => { void reconcileOwnedRun() }, delay)
+          }
+        }
+      }
+      if (!opts?.resume) {
+        reconcileTimer = setTimeout(() => { void reconcileOwnedRun() }, 5_000)
       }
 
       await agentClient.subscribeToEvents(
@@ -1070,6 +1139,9 @@ export function useChat(
         },
         ac,
       ).finally(() => {
+        subscriptionOpen = false
+        clearReconcileTimer()
+        ac.signal.removeEventListener("abort", clearReconcileTimer)
         if (subscriptionRef.current === subscription) {
           subscriptionRef.current = null
           subscribedSidRef.current = null
