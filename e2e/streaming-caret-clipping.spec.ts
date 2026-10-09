@@ -5,7 +5,7 @@ import { installResizeDiagnostics } from "./support/resizeDiagnostics.js"
 const SESSION_ID = "all-surface-session"
 
 async function expectCaretPaint(page: Page, target: Locator, painted: boolean) {
-  const geometry = await target.evaluate((element) => {
+  const measure = () => target.evaluate((element) => {
     const browser = element.ownerDocument.defaultView!
     const rect = element.getBoundingClientRect()
     const style = browser.getComputedStyle(element)
@@ -23,26 +23,36 @@ async function expectCaretPaint(page: Page, target: Locator, painted: boolean) {
       height,
     }
   })
-  expect(geometry.fragments).toBe(1)
-  expect(geometry.content).toBe('""')
-  expect(geometry.position).toBe("absolute")
-  // Compare the exact glyph-adjacent pixels with the pseudo-element disabled.
-  // Bounding boxes alone cannot prove that overflow or clip-path clipped paint.
-  const viewport = page.viewportSize()!
-  const x = Math.max(0, Math.floor(geometry.x))
-  const y = Math.max(0, Math.floor(geometry.y))
-  const clip = {
-    x, y,
-    width: Math.min(viewport.width - x, Math.ceil(geometry.width) + 1),
-    height: Math.min(viewport.height - y, Math.ceil(geometry.height) + 1),
-  }
-  expect(clip.width).toBeGreaterThan(0)
-  expect(clip.height).toBeGreaterThan(0)
-  const before = await page.screenshot({ clip, animations: "disabled" })
-  const hidden = await page.addStyleTag({ content: '[data-assistant-typewriter-caret-target="true"]::after { visibility: hidden !important; }' })
-  const withoutCaret = await page.screenshot({ clip, animations: "disabled" })
-  await hidden.evaluate((element) => element.remove())
-  expect(before.equals(withoutCaret)).toBe(!painted)
+  await expect(async () => {
+    const geometry = await measure()
+    expect(geometry.fragments).toBe(1)
+    expect(geometry.content).toBe('""')
+    expect(geometry.position).toBe("absolute")
+    // Compare the exact glyph-adjacent pixels with the pseudo-element disabled.
+    // Bounding boxes alone cannot prove that overflow or clip-path clipped paint.
+    const viewport = page.viewportSize()!
+    const x = Math.max(0, Math.floor(geometry.x))
+    const y = Math.max(0, Math.floor(geometry.y))
+    const clip = {
+      x, y,
+      width: Math.min(viewport.width - x, Math.ceil(geometry.width) + 1),
+      height: Math.min(viewport.height - y, Math.ceil(geometry.height) + 1),
+    }
+    expect(clip.width).toBeGreaterThan(0)
+    expect(clip.height).toBeGreaterThan(0)
+    const before = await page.screenshot({ clip, animations: "disabled" })
+    const hidden = await page.addStyleTag({ content: '[data-assistant-typewriter-caret-target="true"]::after { visibility: hidden !important; }' })
+    let withoutCaret: Buffer
+    try {
+      withoutCaret = await page.screenshot({ clip, animations: "disabled" })
+    } finally {
+      await hidden.evaluate((element) => element.remove())
+    }
+    // ResizeObserver and sticky following can settle after a layout mutation.
+    // Only compare paint when both captures used the glyph's actual coordinates.
+    expect(await measure()).toEqual(geometry)
+    expect(before.equals(withoutCaret)).toBe(!painted)
+  }).toPass({ timeout: 8_000 })
 }
 
 async function startCaretFixture(page: Page, history: readonly unknown[] = []) {
@@ -205,8 +215,8 @@ test("animated caret follows a single character when narrow lines wrap", async (
   // still leave a single fragment at a narrow Latin line's trailing edge.
   emit("token", "\n\nwrap text ")
   const finalCharacter = page.locator(".assistant-streamdown [data-sd-animate]").last()
-  await expect(finalCharacter).toHaveAttribute("data-assistant-typewriter-caret-target", "true")
   await expect(finalCharacter).toHaveText("t")
+  await expect(finalCharacter).toHaveAttribute("data-assistant-typewriter-caret-target", "true")
   await target.evaluate((element) => {
     const paragraph = element.closest("p")! as typeof element
     paragraph.style.maxWidth = "9px"
