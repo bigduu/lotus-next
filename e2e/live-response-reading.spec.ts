@@ -19,13 +19,17 @@ test("home-to-chat follows streaming and late layout, pauses for reading, and re
       if (frame.type === "subscribe" && frame.ch === "agent.all-surface-session") subscribed = true
     })
   })
-  const session = { id: "all-surface-session", title: "Live reading", kind: "root", model: "fixture-model", model_ref: { provider: "fixture-provider", model: "fixture-model" }, created_at: "2026-09-07T00:00:00Z", updated_at: "2026-09-07T00:00:00Z", permission_mode: "default", is_running: false }
+  const session = { id: "all-surface-session", title: "Live reading", kind: "root", model: "fixture-model", model_ref: { provider: "fixture-provider", model: "fixture-model" }, created_at: "2026-09-07T00:00:00Z", updated_at: "2026-09-07T00:00:00Z", permission_mode: "default", is_running: false, last_run_status: "stopped" }
   await page.route("**/api/v1/sessions?*", (route) => route.fulfill({
     json: { sessions: [session], total: 1, limit: 200, offset: 0 },
   }))
   await page.route("**/api/v1/sessions/all-surface-session", (route) => route.fulfill({ json: { session } }))
   await page.route("**/api/v1/chat", (route) => route.fulfill({ json: { session_id: session.id, status: "success" } }))
-  await page.route("**/api/v1/execute/all-surface-session", (route) => route.fulfill({ json: { status: "started", session_id: session.id } }))
+  await page.route("**/api/v1/execute/all-surface-session", (route) => {
+    session.is_running = true
+    session.last_run_status = "running"
+    return route.fulfill({ json: { status: "started", session_id: session.id } })
+  })
   await page.route("**/api/v1/task/all-surface-session", (route) => route.fulfill({ json: { session_id: session.id, items: [] } }))
   await page.goto(standaloneScenario.entryUrl)
   const area = page.locator("div.min-h-0.flex-1.overflow-y-auto").last()
@@ -42,6 +46,10 @@ test("home-to-chat follows streaming and late layout, pauses for reading, and re
   let streamedText = ""
   const emit = (type: string, content: string) => {
     if (type === "token") streamedText += content
+    if (type === "complete") {
+      session.is_running = false
+      session.last_run_status = "completed"
+    }
     socket!.send(JSON.stringify({ ch: `agent.${session.id}`, seq: ++seq, event: { type, content } }))
   }
   emit("reasoning_token", "Detailed reasoning.\n".repeat(100))
