@@ -1,5 +1,5 @@
 import { uiText, useUiLocale } from "@shared/i18n/ui"
-import { useEffect, useRef, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import { copyText } from "@shared/utils/clipboard"
 import { Inspector } from "@/components/chat/Inspector"
 import { CommandPalette } from "@/components/chat/CommandPalette"
@@ -38,8 +38,18 @@ function App() {
   useUiLocale()
   // The main pane follows the global current session.
   const chat = useChat()
-  const { booted, chats, currentSessionId, currentChat, select, newChat } = chat
-  const sidebarSelectionVersion = useRef(0)
+  const { booted, chats, currentSessionId, currentChat, select: selectSession, newChat: createChat } = chat
+  const mainNavigationVersion = useRef(0)
+  // Navigation intent matters even when returning to the same session or
+  // starting another empty composer while Supervisor is still opening.
+  const select = useCallback((id: string) => {
+    mainNavigationVersion.current += 1
+    selectSession(id)
+  }, [selectSession])
+  const newChat = useCallback(() => {
+    mainNavigationVersion.current += 1
+    createChat()
+  }, [createChat])
 
   // Only a confirmed root mounts the interactive side chat; unknown and child
   // sessions use the message-only projection until summary metadata resolves.
@@ -420,21 +430,20 @@ function App() {
         booted={booted}
         currentSessionId={currentSessionId}
         onNewChat={(projectId) => {
-          sidebarSelectionVersion.current += 1
           setPendingProjectId(projectId ?? null)
           // The project (or its default workspace) owns the next session's cwd.
           if (projectId) setPickedWorkspace(null)
           newChat()
         }}
         onSelect={async (id) => {
-          const version = ++sidebarSelectionVersion.current
+          const version = ++mainNavigationVersion.current
           const previousSessionId = useAppStore.getState().currentSessionId
           if (id === DEFAULT_SUPERVISOR_SESSION_ID) {
             await agentClient.ensureDefaultSupervisor()
             if (!await useAppStore.getState().restoreSession(id)) {
               throw new Error(uiText("workflow_run_not_found"))
             }
-            if (version !== sidebarSelectionVersion.current || previousSessionId !== useAppStore.getState().currentSessionId) return
+            if (version !== mainNavigationVersion.current || previousSessionId !== useAppStore.getState().currentSessionId) return
           }
           select(id)
           if (isWide && id === DEFAULT_SUPERVISOR_SESSION_ID) openWorkbench("work")
@@ -449,7 +458,7 @@ function App() {
       {!sidebarCollapsed ? <ResizeHandle onPointerDown={sidebarResize.startResize} /> : null}
 
       <ChatPane
-        chat={chat}
+        chat={{ ...chat, select, newChat }}
         pageVisible={!settingsOpen}
         pickedWorkspace={pickedWorkspace}
         pendingProjectId={pendingProjectId}
