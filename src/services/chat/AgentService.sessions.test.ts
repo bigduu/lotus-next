@@ -18,6 +18,20 @@ beforeEach(() => {
 });
 
 describe("session index transport", () => {
+  it("opens the canonical Supervisor through the owner bootstrap route without a chat message", async () => {
+    api.post.mockResolvedValue({ session_id: "bamboo-default-supervisor", incarnation_id: "550e8400-e29b-41d4-a716-446655440000", created: true });
+    await agentClient.ensureDefaultSupervisor();
+    expect(api.post).toHaveBeenCalledExactlyOnceWith("supervisor/default", {});
+    expect(api.get).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { session_id: "ordinary", incarnation_id: "id" },
+    { session_id: "bamboo-default-supervisor" },
+  ])("rejects a response that does not confirm the Supervisor authority %j", async (receipt) => {
+    api.post.mockResolvedValue(receipt);
+    await expect(agentClient.ensureDefaultSupervisor()).rejects.toThrow("did not confirm");
+  });
   it("encodes the filtered pagination contract without losing opaque root ids", async () => {
     await agentClient.listSessions({
       limit: 25,
