@@ -59,6 +59,7 @@ interface Draft {
   fastModel: string | null
   visionModel: string | null
   runtimeModels: string[]
+  initialRuntimeModels: readonly string[]
   modelCapabilities: NonNullable<ProviderInstance["config"]["model_capabilities"]>
   reasoningEffort: string
   responsesOnlyModels: string
@@ -81,6 +82,7 @@ function draftFromInstance(inst: ProviderInstance | null): Draft {
     fastModel: typeof cfg.fast_model === "string" && cfg.fast_model.trim() ? cfg.fast_model : null,
     visionModel: typeof cfg.vision_model === "string" && cfg.vision_model.trim() ? cfg.vision_model : null,
     runtimeModels: inst ? getRuntimeModelIds(inst) : [],
+    initialRuntimeModels: inst ? getRuntimeModelIds(inst) : [],
     modelCapabilities: structuredClone(inst?.config.model_capabilities ?? {}),
     reasoningEffort: str(cfg.reasoning_effort),
     responsesOnlyModels: Array.isArray(cfg.responses_only_models)
@@ -107,9 +109,13 @@ function buildPayload(
 ): { payload: InstanceSavePayload } | { error: string } {
   const type = draft.type
   const config: Record<string, unknown> = {}
-  if (Object.keys(draft.modelCapabilities).length > 0) {
-    config.model_capabilities = draft.modelCapabilities
+  const modelCapabilities = { ...draft.modelCapabilities }
+  for (const model of draft.runtimeModels) {
+    if (!draft.initialRuntimeModels.includes(model) && modelCapabilities[model]?.supports_vision !== false) {
+      modelCapabilities[model] = { ...modelCapabilities[model], supports_vision: true }
+    }
   }
+  config.model_capabilities = modelCapabilities
   config.runtime_models = [...new Set(draft.runtimeModels.map((model) => model.trim()).filter(Boolean))]
   if (draft.model.trim() && !(config.runtime_models as string[]).includes(draft.model.trim())) {
     return { error: uiText("runtime_models_default_required") }
@@ -248,7 +254,7 @@ export function InstanceEditor({
   )
   const [draft, setDraft] = useState<Draft>(() => ({
     ...draftFromInstance(instance),
-    ...(initialRuntimeModels ? { runtimeModels: [...initialRuntimeModels] } : {}),
+    ...(initialRuntimeModels ? { runtimeModels: [...initialRuntimeModels], initialRuntimeModels: [...initialRuntimeModels] } : {}),
   }))
   const [showAdvanced, setShowAdvanced] = useState(() => {
     const d = draftFromInstance(instance)

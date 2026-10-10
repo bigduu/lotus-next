@@ -549,7 +549,7 @@ describe("Provider instance credential handling", () => {
 })
 
 describe("Explicit runtime model selection", () => {
-  it("saves independent Vision choices, reloads them, and restores inheritance", async () => {
+  it("defaults Vision on, saves independent opt-outs, reloads and re-enables one model", async () => {
     const current: ProviderInstance = { ...instance, config: { ...instance.config, runtime_models: ["image", "text"] } }
     const onSave = vi.fn().mockResolvedValue(undefined)
     const container = await mount(<InstanceEditor instance={current} onSave={onSave} onCancel={vi.fn()} />)
@@ -558,20 +558,36 @@ describe("Explicit runtime model selection", () => {
       expect(select).not.toBeNull()
       await act(async () => { select.value = value; select.dispatchEvent(new Event("change", { bubbles: true })) })
     }
-    await setVision(container, "image", "true")
+    expect(container.querySelector<HTMLSelectElement>('select[aria-label="image 的 Vision 支持"]')!.value).toBe("true")
+    expect(container.querySelector<HTMLSelectElement>('select[aria-label="text 的 Vision 支持"]')!.value).toBe("true")
+    await setVision(container, "image", "false")
     await setVision(container, "text", "false")
     await click([...container.querySelectorAll("button")].find((button) => button.textContent === "保存") ?? null)
     const config = onSave.mock.calls[0][0].config
-    expect(config.model_capabilities).toEqual({ image: { supports_vision: true }, text: { supports_vision: false } })
+    expect(config.model_capabilities).toEqual({ image: { supports_vision: false }, text: { supports_vision: false } })
     const reloaded = await mount(<InstanceEditor instance={{ ...current, config: { ...current.config, ...config } }} onSave={onSave} onCancel={vi.fn()} />)
-    expect(reloaded.querySelector<HTMLSelectElement>('select[aria-label="image 的 Vision 支持"]')!.value).toBe("true")
+    expect(reloaded.querySelector<HTMLSelectElement>('select[aria-label="image 的 Vision 支持"]')!.value).toBe("false")
     expect(reloaded.querySelector<HTMLSelectElement>('select[aria-label="text 的 Vision 支持"]')!.value).toBe("false")
     const other = await mount(<InstanceEditor instance={{ ...current, id: "other" }} onSave={vi.fn()} onCancel={vi.fn()} />)
-    expect(other.querySelector<HTMLSelectElement>('select[aria-label="image 的 Vision 支持"]')!.value).toBe("inherit")
-    await setVision(reloaded, "image", "inherit")
+    expect(other.querySelector<HTMLSelectElement>('select[aria-label="image 的 Vision 支持"]')!.value).toBe("true")
+    await setVision(reloaded, "image", "true")
     await click([...reloaded.querySelectorAll("button")].find((button) => button.textContent === "保存") ?? null)
-    expect(onSave.mock.calls[1][0].config.model_capabilities.image.supports_vision).toBeNull()
+    expect(onSave.mock.calls[1][0].config.model_capabilities.image.supports_vision).toBe(true)
     expect(onSave.mock.calls[1][0].config.model_capabilities.text.supports_vision).toBe(false)
+  })
+
+  it("keeps untouched legacy missing and null Vision declarations on ordinary save", async () => {
+    const current: ProviderInstance = { ...instance, config: { ...instance.config,
+      runtime_models: ["missing", "null-model"],
+      model_capabilities: { "null-model": { supports_vision: null, note: "keep" } },
+    } }
+    const onSave = vi.fn().mockResolvedValue(undefined)
+    const container = await mount(<InstanceEditor instance={current} onSave={onSave} onCancel={vi.fn()} />)
+    for (const model of ["missing", "null-model"]) {
+      expect(container.querySelector<HTMLSelectElement>(`select[aria-label="${model} 的 Vision 支持"]`)!.value).toBe("true")
+    }
+    await click([...container.querySelectorAll("button")].find((button) => button.textContent === "保存") ?? null)
+    expect(onSave.mock.calls[0][0].config.model_capabilities).toEqual({ "null-model": { supports_vision: null, note: "keep" } })
   })
 
   it("saves only selected candidates and custom ids, and preserves an explicit empty list", async () => {
@@ -591,6 +607,9 @@ describe("Explicit runtime model selection", () => {
     await click([...container.querySelectorAll("button")].find((button) => button.textContent === "保存") ?? null)
     expect(onSave.mock.calls[0]?.[0].config.runtime_models).toEqual(["usable", "vendor:custom-name"])
     expect(onSave.mock.calls[0]?.[0].config.runtime_models).not.toContain("unusable")
+    expect(onSave.mock.calls[0]?.[0].config.model_capabilities).toEqual({
+      usable: { supports_vision: true }, "vendor:custom-name": { supports_vision: true },
+    })
   })
 
   it("does not admit a custom id while an IME composition is being confirmed", async () => {

@@ -83,6 +83,8 @@ test("discovery requires explicit admission and preserves custom models after re
   await editor.getByRole("textbox", { name: "自定义模型 ID", exact: true }).fill(custom)
   await editor.getByRole("button", { name: "添加模型", exact: true }).click()
   await expect(editor.getByRole("checkbox", { name: custom, exact: true })).toBeChecked()
+  await expect(editor.getByRole("combobox", { name: `${chosen} 的 Vision 支持`, exact: true })).toHaveValue("true")
+  await expect(editor.getByRole("combobox", { name: `${custom} 的 Vision 支持`, exact: true })).toHaveValue("true")
   await editor.getByRole("combobox", { name: `${chosen} 的 Vision 支持`, exact: true }).selectOption("true")
   await editor.getByRole("combobox", { name: `${custom} 的 Vision 支持`, exact: true }).selectOption("false")
 
