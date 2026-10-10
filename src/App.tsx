@@ -25,7 +25,8 @@ import { ReviewPane } from "@/components/app/ReviewPane"
 import { BrowserPaneView } from "@/components/app/BrowserPane"
 import { useBrowserSession } from "@/hooks/useBrowserSession"
 import { isPhoneDevice } from "@/lib/browserAvailability"
-import { isDefaultSupervisor } from "@/lib/supervisor"
+import { DEFAULT_SUPERVISOR_SESSION_ID, isDefaultSupervisor } from "@/lib/supervisor"
+import { agentClient } from "@services/chat/AgentService"
 import { reorderVisibleWorkbenchTabIds, visibleWorkbenchTabIds } from "@/lib/workbenchTabs"
 import {
   RightWorkbench,
@@ -38,6 +39,7 @@ function App() {
   // The main pane follows the global current session.
   const chat = useChat()
   const { booted, chats, currentSessionId, currentChat, select, newChat } = chat
+  const sidebarSelectionVersion = useRef(0)
 
   // Only a confirmed root mounts the interactive side chat; unknown and child
   // sessions use the message-only projection until summary metadata resolves.
@@ -418,14 +420,24 @@ function App() {
         booted={booted}
         currentSessionId={currentSessionId}
         onNewChat={(projectId) => {
+          sidebarSelectionVersion.current += 1
           setPendingProjectId(projectId ?? null)
           // The project (or its default workspace) owns the next session's cwd.
           if (projectId) setPickedWorkspace(null)
           newChat()
         }}
-        onSelect={(id) => {
+        onSelect={async (id) => {
+          const version = ++sidebarSelectionVersion.current
+          const previousSessionId = useAppStore.getState().currentSessionId
+          if (id === DEFAULT_SUPERVISOR_SESSION_ID) {
+            await agentClient.ensureDefaultSupervisor()
+            if (!await useAppStore.getState().restoreSession(id)) {
+              throw new Error(uiText("workflow_run_not_found"))
+            }
+            if (version !== sidebarSelectionVersion.current || previousSessionId !== useAppStore.getState().currentSessionId) return
+          }
           select(id)
-          if (isWide && chats.some((item) => item.id === id && isDefaultSupervisor(item))) openWorkbench("work")
+          if (isWide && id === DEFAULT_SUPERVISOR_SESSION_ID) openWorkbench("work")
         }}
         onRename={(id, title) => void persistSessionTitle(id, title)}
         onDelete={(c) => setPendingDelete({ id: c.id, title: c.title || uiText("new_session_c57c30bc") })}

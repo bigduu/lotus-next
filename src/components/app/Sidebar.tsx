@@ -19,7 +19,8 @@ import {
 import { useAppStore } from "@shared/store/appStore"
 import { openLocalFolder } from "@shared/utils/openExternalLink"
 import { cn } from "@/lib/utils"
-import { isDefaultSupervisor } from "@/lib/supervisor"
+import { DEFAULT_SUPERVISOR_SESSION_ID, isDefaultSupervisor } from "@/lib/supervisor"
+import { getErrorMessage } from "@services/api/errors"
 import type { ChatItem } from "@shared/types/chatMessages"
 
 export type SidebarGroupingMode = "date" | "project"
@@ -70,7 +71,7 @@ export function Sidebar({
   booted: boolean
   currentSessionId: string | null | undefined
   onNewChat: (projectId?: string | null) => void
-  onSelect: (id: string) => void
+  onSelect: (id: string) => void | Promise<void>
   onRename: (id: string, title: string) => void
   onDelete: (chat: ChatItem) => void
   onTogglePin: (chat: ChatItem) => void
@@ -96,6 +97,24 @@ export function Sidebar({
   const readState = useSessionReadState()
   const disclosureId = useId()
   const supervisorStatusId = useId()
+  const supervisorOpening = useRef(false)
+  const [supervisorBusy, setSupervisorBusy] = useState(false)
+  const [supervisorError, setSupervisorError] = useState<string | null>(null)
+  const openSupervisor = async () => {
+    if (supervisorOpening.current) return
+    supervisorOpening.current = true
+    setSupervisorBusy(true)
+    setSupervisorError(null)
+    try {
+      await onSelect(DEFAULT_SUPERVISOR_SESSION_ID)
+      onClose()
+    } catch (error) {
+      setSupervisorError(getErrorMessage(error))
+    } finally {
+      supervisorOpening.current = false
+      setSupervisorBusy(false)
+    }
+  }
   const query = search.trim().toLowerCase()
 
   useEffect(() => {
@@ -114,7 +133,7 @@ export function Sidebar({
   }
 
   const supervisor = chats.find(isDefaultSupervisor)
-  const supervisorActive = supervisor?.id === currentSessionId
+  const supervisorActive = currentSessionId === DEFAULT_SUPERVISOR_SESSION_ID
   const supervisorUnread = !!supervisor && isSessionUnread(supervisor, readState)
   const rootChats = useMemo(() => chats.filter((chat) => !chat.parentSessionId && !isDefaultSupervisor(chat)), [chats])
   const projectSessionCounts = useMemo(() => {
@@ -468,27 +487,25 @@ export function Sidebar({
           </Button>
         </div>
         <div className="px-2 pb-2">
-          {supervisor ? (
-            <Button
-              variant="ghost"
-              aria-current={supervisorActive ? "page" : undefined}
-              aria-describedby={supervisor.isRunning || supervisorUnread ? supervisorStatusId : undefined}
-              className={cn("mb-2 w-full justify-start gap-2", supervisorActive && "bg-sidebar-accent", supervisorUnread && "font-semibold")}
-              onClick={() => {
-                onSelect(supervisor.id)
-                onClose()
-              }}
-            >
-              <CircleDot className="size-4" aria-hidden="true" />
-              <span className="flex-1 text-left">Supervisor</span>
-              {supervisor.isRunning || supervisorUnread ? (
-                <span aria-hidden="true" className={cn("size-1.5 rounded-full bg-primary", supervisor.isRunning && "animate-pulse")} />
-              ) : null}
-              <span id={supervisorStatusId} className="sr-only">
-                {supervisor.isRunning ? uiText("running_1f0eb99b") : supervisorUnread ? uiText("unread_messages_519491f4") : ""}
-              </span>
-            </Button>
-          ) : null}
+          <Button
+            variant="ghost"
+            aria-current={supervisorActive ? "page" : undefined}
+            aria-describedby={supervisor?.isRunning || supervisorUnread ? supervisorStatusId : undefined}
+            aria-busy={supervisorBusy || undefined}
+            disabled={!booted || supervisorBusy}
+            className={cn("mb-2 w-full justify-start gap-2", supervisorActive && "bg-sidebar-accent", supervisorUnread && "font-semibold")}
+            onClick={() => void openSupervisor()}
+          >
+            <CircleDot className="size-4" aria-hidden="true" />
+            <span className="flex-1 text-left">Supervisor</span>
+            {supervisor?.isRunning || supervisorUnread ? (
+              <span aria-hidden="true" className={cn("size-1.5 rounded-full bg-primary", supervisor?.isRunning && "animate-pulse")} />
+            ) : null}
+            <span id={supervisorStatusId} className="sr-only">
+              {supervisor?.isRunning ? uiText("running_1f0eb99b") : supervisorUnread ? uiText("unread_messages_519491f4") : ""}
+            </span>
+          </Button>
+          {supervisorError ? <p role="alert" className="px-2 pb-2 text-sm text-destructive">{supervisorError}</p> : null}
           <Button
             variant="ghost"
             className="w-full justify-start gap-2"

@@ -215,7 +215,7 @@ describe("Sidebar navigation hierarchy", () => {
     localStorage.removeItem("lotus.sidebar.grouping-mode.v1")
   })
 
-  it("keeps the canonical Supervisor above primary controls and out of ordinary sessions", () => {
+  it("keeps the canonical Supervisor above primary controls and out of ordinary sessions", async () => {
     const supervisor = chat(DEFAULT_SUPERVISOR_SESSION_ID, 5, { title: "Renamed assistant", pinned: true, isRunning: true })
     render({ chats: [supervisor, chat("ordinary", 5, { title: "Supervisor" })], currentSessionId: supervisor.id })
     const entry = button("Supervisor")
@@ -226,7 +226,7 @@ describe("Sidebar navigation hierarchy", () => {
     expect(button("今天").textContent).toBe("今天1 个会话")
     expect(container.textContent).not.toContain("Pin bamboo-default-supervisor")
     expect(document.getElementById(entry.getAttribute("aria-describedby")!)?.textContent).toBe("运行中")
-    act(() => entry.click())
+    await act(async () => entry.click())
     expect(props.onSelect).toHaveBeenCalledWith(supervisor.id)
     expect(props.onClose).toHaveBeenCalledOnce()
     expect(props.onNewChat).not.toHaveBeenCalled()
@@ -244,10 +244,50 @@ describe("Sidebar navigation hierarchy", () => {
     render({ chats: [chat("ordinary", 5, { title: "Supervisor" }), chat(DEFAULT_SUPERVISOR_SESSION_ID, 5, { kind: "child", parentSessionId: "ordinary" })] })
     expect(container.querySelectorAll('button[aria-current="page"]')).toHaveLength(0)
     expect(row("ordinary")).not.toBeNull()
-    expect(button("Supervisor").closest("[data-session]")).toBe(row("ordinary"))
+    expect(button("Supervisor").closest("[data-session]")).toBeNull()
     render({ chats: [chat(DEFAULT_SUPERVISOR_SESSION_ID, 5)] })
     expect(container.querySelectorAll("[data-session]")).toHaveLength(0)
     expect(container.textContent).toContain("暂无会话")
+  })
+
+  it("keeps the empty Supervisor entry visible before load, after an empty refresh and after remount", async () => {
+    render({ chats: [], booted: false })
+    expect(button("Supervisor").disabled).toBe(true)
+    expect(container.textContent!.indexOf("Supervisor")).toBeLessThan(container.textContent!.indexOf("新建会话"))
+    render({ booted: true })
+    await act(async () => button("Supervisor").click())
+    expect(props.onSelect).toHaveBeenCalledWith(DEFAULT_SUPERVISOR_SESSION_ID)
+    expect(props.onNewChat).not.toHaveBeenCalled()
+    render({ chats: [], currentSessionId: DEFAULT_SUPERVISOR_SESSION_ID })
+    expect(button("Supervisor").getAttribute("aria-current")).toBe("page")
+    expect(container.querySelectorAll("[data-session]")).toHaveLength(0)
+    act(() => root.unmount())
+    root = createRoot(container)
+    render({ currentSessionId: null })
+    expect(button("Supervisor").disabled).toBe(false)
+  })
+
+  it("coalesces repeated opening clicks and keeps errors retryable", async () => {
+    let finish!: () => void
+    const opening = new Promise<void>((resolve) => { finish = resolve })
+    const onSelect = vi.fn().mockReturnValueOnce(opening).mockRejectedValueOnce(new Error("offline"))
+    render({ chats: [], onSelect })
+    act(() => {
+      button("Supervisor").click()
+      button("Supervisor").click()
+    })
+    expect(onSelect).toHaveBeenCalledOnce()
+    expect(button("Supervisor").disabled).toBe(true)
+    await act(async () => finish())
+    expect(props.onClose).toHaveBeenCalledOnce()
+    expect(button("Supervisor").disabled).toBe(false)
+    await act(async () => button("Supervisor").click())
+    expect(container.querySelector('[role="alert"]')?.textContent).toBe("offline")
+    expect(props.onClose).toHaveBeenCalledOnce()
+    expect(button("Supervisor").disabled).toBe(false)
+    await act(async () => button("Supervisor").click())
+    expect(container.querySelector('[role="alert"]')).toBeNull()
+    expect(props.onClose).toHaveBeenCalledTimes(2)
   })
 
   it("shows labeled primary actions beneath the Bodhi identity", () => {

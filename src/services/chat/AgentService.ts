@@ -1367,6 +1367,14 @@ export class AgentClient {
     return apiClient.get<GetSessionResponse>(`sessions/${encodeURIComponent(sessionId)}`);
   }
 
+  /** Open the canonical Supervisor without starting a run or enabling Tickets. */
+  async ensureDefaultSupervisor(): Promise<void> {
+    const receipt = await apiClient.post<{ session_id: string; incarnation_id: string }>("supervisor/default", {});
+    if (receipt?.session_id !== "bamboo-default-supervisor" || typeof receipt.incarnation_id !== "string" || !receipt.incarnation_id) {
+      throw new Error("The backend did not confirm the default Supervisor identity.");
+    }
+  }
+
   /** Change an existing Root's mode without appending a chat message. */
   async selectRootMode(sessionId: string, input: RootModeOperationInput): Promise<RootModeOperationResponse> {
     return apiClient.post<RootModeOperationResponse>(
