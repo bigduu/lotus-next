@@ -101,6 +101,9 @@ export const PROVIDER_LABELS: Record<ProviderKind, string> = {
 export type ProviderInstanceConfig = Record<string, unknown> & {
   /** Models explicitly admitted to chat and subagent routing. Empty means none. */
   runtime_models?: string[];
+  /** Exact model ID in this instance; missing/null supports_vision inherits. */
+  model_capabilities?: Record<string, { supports_vision?: boolean | null; [key: string]: unknown }>;
+
 };
 
 /**
