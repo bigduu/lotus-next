@@ -9,10 +9,14 @@ export function RuntimeModelsEditor({
   value,
   onChange,
   candidates,
+  modelCapabilities,
+  onVisionChange,
 }: {
   value: readonly string[]
   onChange: (models: string[]) => void
   candidates: readonly ProviderModelDescriptor[]
+  modelCapabilities: Record<string, { supports_vision?: boolean | null }>
+  onVisionChange: (model: string, supportsVision: boolean | null) => void
 }) {
   useUiLocale()
   const [query, setQuery] = useState("")
@@ -42,6 +46,7 @@ export function RuntimeModelsEditor({
     <fieldset data-testid="runtime-models-editor" className="space-y-2 rounded-md border bg-background p-2.5">
       <legend className="px-1 text-xs font-medium">{uiText("runtime_models")}</legend>
       <p className="text-xs text-muted-foreground">{uiText("runtime_models_hint")}</p>
+      <p className="text-xs text-muted-foreground">{uiText("model_vision_hint")}</p>
       <p role="status" className="text-xs text-muted-foreground">
         {uiText("runtime_models_selected", { count: value.length })}
       </p>
@@ -54,7 +59,8 @@ export function RuntimeModelsEditor({
       />
       <div className="max-h-52 space-y-1 overflow-y-auto">
         {options.map(([id, label]) => (
-          <label key={id} className="flex cursor-pointer items-start gap-2 rounded px-1 py-1.5 text-xs hover:bg-muted">
+          <div key={id} className="flex flex-wrap items-start justify-between gap-2 rounded px-1 py-1.5 text-xs hover:bg-muted">
+          <label className="flex min-w-0 flex-1 cursor-pointer items-start gap-2">
             <input
               type="checkbox"
               aria-label={id}
@@ -69,6 +75,22 @@ export function RuntimeModelsEditor({
               {label !== id ? <span className="block text-muted-foreground">{label}</span> : null}
             </span>
           </label>
+          {selected.has(id) ? (
+            <label className="flex shrink-0 items-center gap-1">
+              <span>{uiText("model_vision_label")}</span>
+              <select
+                aria-label={uiText("model_vision_for", { model: id })}
+                className="max-w-full rounded border bg-background px-1 py-1 text-xs"
+                value={modelCapabilities[id]?.supports_vision == null ? "inherit" : String(modelCapabilities[id].supports_vision)}
+                onChange={(event) => onVisionChange(id, event.target.value === "inherit" ? null : event.target.value === "true")}
+              >
+                <option value="inherit">{uiText("model_vision_inherit")}</option>
+                <option value="true">{uiText("model_vision_yes")}</option>
+                <option value="false">{uiText("model_vision_no")}</option>
+              </select>
+            </label>
+          ) : null}
+          </div>
         ))}
         {options.length === 0 ? <p className="py-1 text-xs text-muted-foreground">{uiText("runtime_models_empty")}</p> : null}
       </div>

@@ -83,6 +83,9 @@ test("discovery requires explicit admission and preserves custom models after re
   await editor.getByRole("textbox", { name: "自定义模型 ID", exact: true }).fill(custom)
   await editor.getByRole("button", { name: "添加模型", exact: true }).click()
   await expect(editor.getByRole("checkbox", { name: custom, exact: true })).toBeChecked()
+  await editor.getByRole("combobox", { name: `${chosen} 的 Vision 支持`, exact: true }).selectOption("true")
+  await editor.getByRole("combobox", { name: `${custom} 的 Vision 支持`, exact: true }).selectOption("false")
+
   await editor.getByRole("searchbox", { name: "搜索候选模型", exact: true }).fill("usable")
   await expect(editor.getByRole("checkbox", { name: chosen, exact: true })).toBeVisible()
   await editor.getByRole("searchbox", { name: "搜索候选模型", exact: true }).fill("")
@@ -93,6 +96,14 @@ test("discovery requires explicit admission and preserves custom models after re
   await expect(editor).toHaveCount(0)
   expect(writes).toHaveLength(1)
   expect(writes[0]).toMatchObject({ config: { runtime_models: ["fixture-model", chosen, custom] } })
+  expect(writes[0]).toMatchObject({ config: { model_capabilities: {
+    [chosen]: { supports_vision: true }, [custom]: { supports_vision: false },
+  } } })
+
+  await row.getByRole("button", { name: "编辑", exact: true }).click()
+  await expect(editor.getByRole("combobox", { name: `${chosen} 的 Vision 支持`, exact: true })).toHaveValue("true")
+  await expect(editor.getByRole("combobox", { name: `${custom} 的 Vision 支持`, exact: true })).toHaveValue("false")
+  await editor.locator("xpath=ancestor::li[1]").getByRole("button", { name: "取消", exact: true }).click()
   await page.getByRole("button", { name: "返回聊天", exact: true }).click()
   const modelButton = page.getByTestId("model-effort-picker")
   await modelButton.click()
