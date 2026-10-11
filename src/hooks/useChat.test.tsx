@@ -28,6 +28,7 @@ const mocks = vi.hoisted(() => {
     }>,
     currentSessionId: null as string | null,
     sessionIndexRevision: 0,
+    executionBySession: {},
     selectedModel: "test-model" as string | undefined,
     inputStates: {} as Record<string, { reasoningEffort?: string }>,
     lastSelectedPromptId: null as string | null,
