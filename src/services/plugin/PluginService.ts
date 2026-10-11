@@ -1,9 +1,8 @@
 /**
  * Plugin Service
  *
- * Talks to bamboo's `/api/v1/plugins` endpoints. That API lives on an
- * unmerged bamboo branch at the time this was written, so every response is
- * parsed defensively (never trust the raw JSON shape) — mirroring the
+ * Talks to bamboo's `/api/v1/plugins` endpoints. Every response is
+ * parsed defensively (never trust the raw JSON shape), mirroring the
  * normalize* pattern in mcp/McpService.ts.
  */
 import { apiClient } from "../api";
@@ -75,7 +74,14 @@ const normalizePlugin = (record: PluginApiRecord): InstalledPluginView => ({
 export class PluginService {
   async listPlugins(): Promise<InstalledPluginView[]> {
     const response = await apiClient.get<PluginListResponse>("plugins");
-    return Array.isArray(response?.plugins) ? response.plugins.map(normalizePlugin) : [];
+    const ids = new Set<string>();
+    if (!Array.isArray(response?.plugins) || !response.plugins.every((plugin) => {
+      if (!plugin || typeof plugin.id !== "string" || !plugin.id.trim() || ids.has(plugin.id) ||
+        (plugin.status !== "installed" && plugin.status !== "installing")) return false;
+      ids.add(plugin.id);
+      return true;
+    })) throw new Error("Plugin inventory could not be verified.");
+    return response.plugins.map(normalizePlugin);
   }
 
   async installPlugin(source: PluginSourceSpec): Promise<InstalledPluginView> {
