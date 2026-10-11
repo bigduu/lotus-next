@@ -1310,18 +1310,43 @@ export function useChat(
   }, [sid, summaryRunning, sending, stopStream])
 
   // ── Pending-question rehydration ──────────────────────────────────────
+  // The execution reducer retains only terminal statuses. Keep the raw pane
+  // summary's suspended hint even when its optional pending flag is absent.
+  const summarySuspended = currentChat?.lastRunStatus === "suspended"
+  const [recoveredQuestion, hasPendingQuestion, pendingSummary, lastRunStatus] = useAppStore(useShallow((state) => {
+    const execution = sid ? state.executionBySession[sid] : undefined
+    return [
+      execution?.interaction.pendingQuestion ?? null,
+      execution?.backend.hasPendingQuestion ?? null,
+      execution?.backend.hasPendingQuestion || summarySuspended ? execution?.backend ?? null : null,
+      execution?.backend.lastRunStatus ?? null,
+    ] as const
+  }))
   // A run suspended on a question keeps waiting across reloads and devices,
   // but the ask event only flows to the subscription that was live when it
-  // fired. On every session open, ask the backend for the pending question so
-  // the dialog reappears (and stale dialogs from the previous session clear).
+  // fired. Account-feed recovery can also discover a pending question after
+  // the pane's initial read or its agent subscription has ended. Treat those
+  // store snapshots as notifications, never as typed decision authority.
+  // Fresh pending summaries matter even when their legacy display payload is
+  // unchanged: request generation, policy revision or allowed choices may differ.
+  // A fresh suspended summary also retries an earlier pre-publication read.
+  // Even an explicit false flag is only a hint; the canonical GET (and existing
+  // submission fences) decides absence. GET completion never changes this signal.
+  // The reducer replaces backend only on summary reads; its object identity also
+  // distinguishes snapshots received within the same syncedAt millisecond.
   useEffect(() => {
     const scope = navigationRef.current
-    questionSubmitRef.current = null
-    updateQuestionState(() => ({ scope, question: null, loading: false, submitting: false,
-      unavailable: false, error: null, retry: null, recordedKey: null }))
+    // Recovery within the same visit must preserve in-flight/uncertain decisions.
+    // Only navigation resets ownership; the canonical reader fences stale GETs
+    // and replaces a question when its server identity or allowed choices change.
+    if (!sameQuestionScope(questionStateRef.current.scope, scope)) {
+      questionSubmitRef.current = null
+      updateQuestionState(() => ({ scope, question: null, loading: false, submitting: false,
+        unavailable: false, error: null, retry: null, recordedKey: null }))
+    }
     if (!sid) return
     void reconcileQuestion(scope)
-  }, [sid, reconcileQuestion, updateQuestionState])
+  }, [sid, recoveredQuestion, hasPendingQuestion, pendingSummary, lastRunStatus, summarySuspended, reconcileQuestion, updateQuestionState])
 
   // ── Tab-visibility reconcile (main instance only) ────────────────────
   // A backgrounded tab/webview freezes the WS and every reconnect timer; runs
