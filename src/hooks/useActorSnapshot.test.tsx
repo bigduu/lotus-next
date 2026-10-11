@@ -556,6 +556,26 @@ describe("snapshot-only ActorTree panel", () => {
     expect(warning?.textContent).toContain("Reloading state does not prove event replay has recovered")
   })
 
+  it("preserves a long Actor gap identity and full warning across repeated refresh", async () => {
+    const actorId = `child-${"a".repeat(128)}`
+    const snapshot = actorSnapshotFixture("root", 1)
+    snapshot.nodes[1].actor_id = actorId
+    vi.mocked(getActorSnapshot).mockResolvedValue(snapshot)
+    await act(async () => root.render(<ActorSnapshotPanel rootId="root" active selectedActorId={actorId} onSelectActor={vi.fn()} />))
+    const handlers = vi.mocked(subscribeActor).mock.calls[0][1]
+    await act(async () => { handlers.onGap(); await Promise.resolve() })
+    const warning = host.querySelector('[data-actor-gap="transport_gap"]')!
+    const text = warning.textContent
+    expect(warning.getAttribute("data-actor-gap-origin")).toBe(actorId)
+    expect(text).toContain(actorId)
+    // Layout is verified in Chromium; this guards wrapping without truncating data.
+    expect(warning.classList.contains("[overflow-wrap:anywhere]")).toBe(true)
+    for (let index = 0; index < 2; index += 1) {
+      await act(async () => host.querySelector<HTMLButtonElement>('button[aria-label="刷新代理结构"]')!.click())
+      expect(host.querySelector('[data-actor-gap]')?.textContent).toBe(text)
+    }
+  })
+
   it("reveals an initially selected depth-three child when the snapshot arrives", async () => {
     const pending = deferred(); vi.mocked(getActorSnapshot).mockReturnValueOnce(pending.promise)
     const selected = vi.fn()

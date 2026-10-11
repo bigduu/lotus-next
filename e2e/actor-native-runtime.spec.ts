@@ -3,6 +3,7 @@
 import { expect, test } from "@playwright/test"
 import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs"
 import { parseActorChannelFrame } from "../src/services/chat/actorChannel.js"
+import { expectInspectorGeometry } from "./support/inspectorGeometry.js"
 interface ActorSubtreeSnapshot {
   schema_version: number
   root_actor_id: string
@@ -257,10 +258,12 @@ test("one native Child: real Actor/tree invalidation, isolated history and hones
     const gap = inspect.locator(`[data-actor-gap="transport_gap"][data-actor-gap-origin="${child}"]`)
     await expect(gap).toBeVisible()
     await expect.poll(() => snapshots.slice(restartSnapshot).some((s) => childNode(s)?.activation?.status === "succeeded")).toBe(true)
+    await expectInspectorGeometry(inspect, testInfo, "native-restart-gap-before-refresh")
     const priorReads = snapshots.length
     await inspect.getByRole("button", { name: "刷新代理结构" }).click()
     await expect.poll(() => snapshots.length).toBeGreaterThan(priorReads)
     await expect(inspect).toHaveAttribute("aria-busy", "false")
+    await expectInspectorGeometry(inspect, testInfo, "native-restart-gap-after-refresh")
     if (expectedSchema === "2") {
       // This GET begins after the new Host's ready receipt, so a late response
       // from before the cold restart cannot stand in for persisted evidence.

@@ -28,7 +28,7 @@ export function ActorSnapshotPanel({ rootId, active, selectedActorId, descendant
         <span>{uiText("saved_agent_state_health_and_queue_information_unavaila_f82ce646")}</span>
         {rootId ? <Button size="sm" variant="ghost" disabled={state.loading} onClick={() => { void state.refresh() }} aria-label={uiText("refresh_agent_structure_277bb85d")}><RefreshCw /></Button> : null}
       </div>
-      {state.gapReason ? <p role="status" data-actor-gap={state.gapReason} data-actor-gap-origin={state.gapActorId ?? undefined} className="px-3 pb-2 text-xs text-muted-foreground">
+      {state.gapReason ? <p role="status" data-actor-gap={state.gapReason} data-actor-gap-origin={state.gapActorId ?? undefined} className="px-3 pb-2 text-xs text-muted-foreground [overflow-wrap:anywhere]">
         {state.gapReason === "snapshot_regression"
           ? uiText("an_older_agent_structure_was_returned_the_last_confirme_15ec0d29")
           : state.gapActorId

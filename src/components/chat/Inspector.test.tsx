@@ -2,7 +2,7 @@ import { act } from "react"
 import { createRoot } from "react-dom/client"
 import { afterEach, describe, expect, it } from "vitest"
 import type { TokenUsage } from "@shared/types/tokenBudget"
-import { ContextUsageDetails, PrefixCacheDetails } from "./Inspector"
+import { ContextUsageDetails, Inspector, PrefixCacheDetails } from "./Inspector"
 
 afterEach(() => {
   document.body.replaceChildren()
@@ -15,6 +15,15 @@ const renderDetails = (usage?: TokenUsage) => {
   act(() => root.render(<PrefixCacheDetails usage={usage} />))
   return { container, root }
 }
+
+it("allows the embedded Inspector to shrink inside its workbench flex row", () => {
+  const container = document.createElement("div")
+  document.body.appendChild(container)
+  const root = createRoot(container)
+  act(() => root.render(<Inspector embedded open sessionId={null} onClose={() => {}} onCopySessionId={() => {}} />))
+  expect(container.firstElementChild?.classList.contains("min-w-0")).toBe(true)
+  act(() => root.unmount())
+})
 
 describe("PrefixCacheDetails", () => {
   it("shows the exact provider split and retained-round status", () => {

@@ -1,4 +1,5 @@
 import { installResizeDiagnostics } from "./support/resizeDiagnostics.js"
+import { expectInspectorGeometry } from "./support/inspectorGeometry.js"
 import { expect, test, type Page, type WebSocketRoute } from "@playwright/test"
 import { actorSnapshotFixture, actorSnapshotV2Fixture } from "../src/test/fixtures/actorSnapshot.js"
 import { installArtifactRuntime, standaloneScenario } from "./support/artifactRuntime.js"
@@ -16,7 +17,7 @@ const sessions = snapshot.nodes.map((node) => ({
   permission_mode: "default", bypass_permissions: false, subagent_count: node.role === "root" ? 128 : 0,
 }))
 const frame = (value: unknown): Record<string, unknown> => value && typeof value === "object" ? value as Record<string, unknown> : {}
-async function prepare(page: Page) {
+async function prepare(page: Page, sessionRows = sessions, historyChildId = childId) {
   await page.addInitScript((id) => { localStorage.setItem("bodhi_onboarded_v1", "1"); localStorage.setItem("lotus_next_last_session", id) }, rootId)
   const observation = await installArtifactRuntime(page, standaloneScenario)
   const requests: string[] = []
@@ -24,16 +25,16 @@ async function prepare(page: Page) {
   await page.route("**/api/v1/**", (route) => {
     const url = new URL(route.request().url())
     if (url.pathname === "/api/v1/sessions") {
-      const selected = sessions.filter((item) => !url.searchParams.get("kind") || item.kind === url.searchParams.get("kind"))
+      const selected = sessionRows.filter((item) => !url.searchParams.get("kind") || item.kind === url.searchParams.get("kind"))
       return route.fulfill({ json: { sessions: selected, total: selected.length, limit: 200, offset: 0 } })
     }
-    const item = sessions.find((session) => url.pathname === `/api/v1/sessions/${session.id}`)
+    const item = sessionRows.find((session) => url.pathname === `/api/v1/sessions/${session.id}`)
     if (item) return route.fulfill({ json: { session: { ...item, ...(item.kind === "root" ? {
       root_orchestration_only: false, thinking_mode: "standard", root_mode_transition_epoch: 0, root_mode_birth_token: "a".repeat(64),
     } : {}) } } })
     if (url.pathname === `/api/v1/task/${rootId}`) return route.fulfill({ json: { session_id: rootId, items: [] } })
-    if (url.pathname === `/api/v1/sessions/${childId}/history` && url.searchParams.get("projection") === "messages") {
-      return route.fulfill({ json: { session_id: childId, projection: "messages", is_delta: false,
+    if (url.pathname === `/api/v1/sessions/${historyChildId}/history` && url.searchParams.get("projection") === "messages") {
+      return route.fulfill({ json: { session_id: historyChildId, projection: "messages", is_delta: false,
         truncated: false, total_message_count: 1,
         messages: [{ id: "selected-child-message", role: "assistant", content: "isolated selected child answer", created_at: at }],
       } })
@@ -530,4 +531,68 @@ test("one expiry read cannot invent a stop or keep polling unchanged native evid
   expect(reads).toBe(2)
   await expect(panel.locator('[data-actor-id="actor-0"]')).toHaveAttribute("aria-label", /运行中/)
   await expect(panel.locator('[data-actor-id="actor-0"]')).not.toHaveAttribute("aria-label", /停止未确认|已取消/)
+})
+
+test("long Actor gap text stays readable through repeated refresh and keyboard focus", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name === "tablet-chromium", "desktop and narrow Inspector geometry")
+  const longChildId = `child-${"a".repeat(128)}`
+  const source = actorSnapshotV2Fixture("stopped", rootId)
+  Object.assign(source.nodes[1], { actor_id: longChildId, title: "Long-token Child" })
+  const { observation } = await prepare(page, [sessions[0], { ...sessions[1], id: longChildId, title: "Long-token Child" }], longChildId)
+  let reads = 0
+  await page.route(`**/api/v1/actors/${rootId}/snapshot?*`, (route) => {
+    reads += 1
+    return route.fulfill({ contentType: "application/vnd.bamboo.actor-snapshot.v2+json", body: JSON.stringify(source) })
+  })
+  let socket: WebSocketRoute | undefined
+  const actor = `actor.${longChildId}`
+  let actorInterests = 0
+  await page.routeWebSocket(/.*/, (ws) => {
+    socket = ws
+    ws.onMessage((raw) => {
+      const value = frame(JSON.parse(String(raw)))
+      if (value.type === "hello") ws.send(JSON.stringify({ type: "welcome" }))
+      if (value.type === "ping") ws.send(JSON.stringify({ type: "pong" }))
+      if (value.type === "subscribe" && value.ch === actor) {
+        actorInterests += 1
+        ws.send(JSON.stringify({ ch: actor, seq: 1, control: { type: "actor_snapshot_required", reason: "initial", cursor: 1 } }))
+      }
+    })
+  })
+  await page.goto(standaloneScenario.entryUrl)
+  const panel = await openInspector(page)
+  await expect(panel.getByRole("tree")).toBeVisible()
+  await expectInspectorGeometry(panel, testInfo, "before-gap")
+  await panel.locator(`[data-actor-id="${longChildId}"]`).click()
+  await expect(page.locator("[data-subagent-transcript-pane]")).toBeVisible()
+  await page.locator("#right-workbench").getByRole("tab", { name: "检查器", exact: true }).click()
+  await expect.poll(() => actorInterests).toBe(2)
+  await expect(panel).toHaveAttribute("aria-busy", "false")
+  socket!.send(JSON.stringify({ ch: actor, seq: 2, control: { type: "actor_snapshot_required", reason: "gap", cursor: 2 } }))
+  const gap = panel.locator('[data-actor-gap="transport_gap"]')
+  await expect(gap).toContainText(longChildId)
+  await expect(panel).toHaveAttribute("aria-busy", "false")
+  const originalText = await gap.textContent()
+  await expectInspectorGeometry(panel, testInfo, "gap-before-refresh")
+  const refresh = panel.getByRole("button", { name: "刷新代理结构" })
+  for (let index = 0; index < 2; index += 1) {
+    const before = reads
+    await refresh.click()
+    await expect.poll(() => reads).toBeGreaterThan(before)
+    await expect(panel).toHaveAttribute("aria-busy", "false")
+    await expect(gap).toHaveText(originalText!)
+    await expectInspectorGeometry(panel, testInfo, `gap-after-refresh-${index + 1}`)
+  }
+  await panel.getByRole("tree").focus()
+  await page.keyboard.press("Shift+Tab")
+  await expect(refresh).toBeFocused()
+  await expectInspectorGeometry(panel, testInfo, "gap-keyboard-focus")
+  const before = reads
+  await page.keyboard.press("Enter")
+  await expect.poll(() => reads).toBeGreaterThan(before)
+  await expect(panel).toHaveAttribute("aria-busy", "false")
+  await expect(gap).toHaveText(originalText!)
+  await expectInspectorGeometry(panel, testInfo, "gap-keyboard-refresh")
+  await page.screenshot({ path: testInfo.outputPath("actor-gap-readable-after-refresh.png") })
+  expect(observation.pageErrors).toEqual([])
 })
