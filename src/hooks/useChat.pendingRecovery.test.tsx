@@ -3,6 +3,7 @@ import { createRoot, type Root } from "react-dom/client"
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from "vitest"
 import { useAppStore } from "@shared/store/appStore"
 import { sessionSummaryToChatItem } from "@shared/store/appStore/slices/chatSessionSlice/messageMapping"
+import { applySessionsList } from "@shared/store/appStore/slices/chatSessionSlice/refreshChats"
 import { agentClient, type PendingQuestionResponse, type PermissionDecisionResult, type SessionSummary } from "@services/chat/AgentService"
 import { NetworkRequestError } from "@services/api/errors"
 import { QuestionDialog } from "@/components/chat/Dialogs"
@@ -41,6 +42,15 @@ const summary = (id = "session/a", pending = false, terminal = false): SessionSu
   is_running: false, has_pending_question: pending,
   last_run_status: terminal ? "completed" : pending ? "suspended" : undefined,
 })
+const optionalPendingSummary = (id: string, pending: boolean | undefined, status?: string): SessionSummary => {
+  const next = { ...summary(id), last_run_status: status }
+  if (pending === undefined) delete next.has_pending_question
+  else next.has_pending_question = pending
+  return next
+}
+// This is the actual summary refresh path, including both the unfiltered
+// ChatItem status and the execution reducer's terminal-only backend status.
+const publishSummary = (next: SessionSummary) => applySessionsList([next], useAppStore.setState, { kind: "upsert" })
 const recover = (id = "session/a", callId = "call/a") => useAppStore.getState().setPendingQuestion(id, {
   question: "Legacy notification must not become the dialog", options: ["Approve forever"],
   allowCustom: true, toolCallId: callId,
@@ -104,6 +114,117 @@ afterEach(() => {
 })
 
 describe("useChat recovered pending approval dialog", () => {
+  describe("suspended summaries with an optional pending flag", () => {
+    it.each([
+      ["main", true], ["main", false], ["main", undefined],
+      ["bound", true], ["bound", false], ["bound", undefined],
+    ] as const)("recovers the %s pane when suspended arrives with has_pending_question=%s", async (mode, flag) => {
+      vi.useFakeTimers()
+      const sessionId = mode === "main" ? "session/a" : "session/b"
+      publishSummary(optionalPendingSummary(sessionId, flag))
+      await mount(mode === "main" ? undefined : sessionId)
+      expect(dialog()).toBeNull()
+      getPending.mockClear().mockResolvedValue(permission(sessionId))
+      const suspended = optionalPendingSummary(sessionId, flag, "suspended")
+      if (flag === undefined) expect(suspended).not.toHaveProperty("has_pending_question")
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1)
+        publishSummary(suspended)
+      })
+      expect(useAppStore.getState().executionBySession[sessionId].backend.lastRunStatus).toBeNull()
+      expect(useAppStore.getState().chats.find((item) => item.id === sessionId)?.lastRunStatus).toBe("suspended")
+      expect(dialog()).not.toBeNull()
+      expect(chat().pendingQuestion).toEqual(permission(sessionId))
+      expect(getPending).toHaveBeenCalledExactlyOnceWith(sessionId)
+      expect(submit).not.toHaveBeenCalled()
+      expectNoExecution()
+    })
+
+    it.each([true, false, undefined])("same-millisecond suspended snapshots with flag %s retry publication without supplying authority or looping", async (flag) => {
+      vi.useFakeTimers()
+      const suspended = optionalPendingSummary("session/b", flag, "suspended")
+      publishSummary(suspended)
+      const firstSyncedAt = useAppStore.getState().executionBySession["session/b"].backend.syncedAt
+      await mount("session/b")
+      expect(dialog()).toBeNull()
+      getPending.mockClear()
+      // No clock advance: every real summary must signal, even within one ms.
+      await act(async () => publishSummary(suspended))
+      expect(getPending).toHaveBeenCalledExactlyOnceWith("session/b")
+      expect(dialog()).toBeNull() // Canonical absence overrides every summary hint.
+      getPending.mockClear().mockResolvedValue(permission("session/b"))
+      await act(async () => publishSummary(suspended))
+      expect(useAppStore.getState().executionBySession["session/b"].backend.syncedAt).toBe(firstSyncedAt)
+      expect(dialog()).not.toBeNull()
+      expect(chat().pendingQuestion).toEqual(permission("session/b"))
+      expect(getPending).toHaveBeenCalledExactlyOnceWith("session/b")
+      getPending.mockClear()
+      await mount("session/b")
+      await act(async () => {
+        publishSummary(optionalPendingSummary("session/a", true, "suspended"))
+        useAppStore.getState().applyChildProgress("session/b", "child/b", { title: "Unrelated progress" })
+      })
+      expect(getPending).not.toHaveBeenCalled()
+      expect(chat().pendingQuestion).toEqual(permission("session/b"))
+      expect(submit).not.toHaveBeenCalled()
+      expectNoExecution()
+    })
+
+    it.each(["main", "bound"])("fences a suspended-summary recovery GET across A to B to A in the %s pane", async (mode) => {
+      const bound = mode === "bound"
+      await mount(bound ? "session/a" : undefined)
+      const older = deferred<PendingQuestionResponse>()
+      getPending.mockReturnValueOnce(older.promise)
+      await act(async () => publishSummary(optionalPendingSummary("session/a", undefined, "suspended")))
+      expect(chat().questionLoading).toBe(true)
+      getPending.mockResolvedValueOnce(absent).mockResolvedValue(permission("session/a", "generation/new"))
+      if (bound) await mount("session/b")
+      else await act(async () => useAppStore.setState({ currentSessionId: "session/b" }))
+      const readsInB = getPending.mock.calls.length
+      await act(async () => publishSummary(optionalPendingSummary("session/a", undefined, "suspended")))
+      expect(getPending).toHaveBeenCalledTimes(readsInB)
+      expect(dialog()).toBeNull()
+      if (bound) await mount("session/a")
+      else await act(async () => useAppStore.setState({ currentSessionId: "session/a" }))
+      await act(async () => { older.resolve(permission()); await older.promise })
+      expect(chat().pendingQuestion).toEqual(permission("session/a", "generation/new"))
+      expect(chat().questionLoading).toBe(false)
+      expect(submit).not.toHaveBeenCalled()
+      expectNoExecution()
+    })
+
+    it("does not reopen a late suspended read after a terminal summary confirms canonical absence", async () => {
+      await mount("session/b")
+      const older = deferred<PendingQuestionResponse>()
+      getPending.mockReturnValueOnce(older.promise)
+      await act(async () => publishSummary(optionalPendingSummary("session/b", undefined, "suspended")))
+      expect(chat().questionLoading).toBe(true)
+      getPending.mockResolvedValue(absent)
+      await act(async () => publishSummary(optionalPendingSummary("session/b", false, "completed")))
+      await act(async () => { older.resolve(permission("session/b")); await older.promise })
+      expect(chat().pendingQuestion).toBeNull()
+      expect(chat().questionLoading).toBe(false)
+      expect(dialog()).toBeNull()
+      expect(submit).not.toHaveBeenCalled()
+      expectNoExecution()
+    })
+
+    it("preserves an uncertain retry when a suspended summary explicitly says no pending question", async () => {
+      getPending.mockResolvedValue(permission("session/b"))
+      await mount("session/b")
+      submit.mockRejectedValueOnce(new NetworkRequestError())
+      await click("仅本次允许")
+      getPending.mockClear().mockResolvedValue(absent)
+      await act(async () => publishSummary(optionalPendingSummary("session/b", false, "suspended")))
+      expect(getPending).toHaveBeenCalledExactlyOnceWith("session/b")
+      expect(chat().questionCanRetry).toBe(true)
+      expect(button("仅本次允许")?.disabled).toBe(true)
+      expect(button("仅本次拒绝")?.disabled).toBe(true)
+      expect(submit).toHaveBeenCalledTimes(1)
+      expectNoExecution()
+    })
+  })
+
   it("reopens the active pane through the account-feed recovery action after its initial absent read", async () => {
     vi.useFakeTimers()
     await mount()

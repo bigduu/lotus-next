@@ -1310,12 +1310,15 @@ export function useChat(
   }, [sid, summaryRunning, sending, stopStream])
 
   // ── Pending-question rehydration ──────────────────────────────────────
-  const [recoveredQuestion, hasPendingQuestion, pendingSyncedAt, lastRunStatus] = useAppStore(useShallow((state) => {
+  // The execution reducer retains only terminal statuses. Keep the raw pane
+  // summary's suspended hint even when its optional pending flag is absent.
+  const summarySuspended = currentChat?.lastRunStatus === "suspended"
+  const [recoveredQuestion, hasPendingQuestion, pendingSummary, lastRunStatus] = useAppStore(useShallow((state) => {
     const execution = sid ? state.executionBySession[sid] : undefined
     return [
       execution?.interaction.pendingQuestion ?? null,
       execution?.backend.hasPendingQuestion ?? null,
-      execution?.backend.hasPendingQuestion ? execution.backend.syncedAt : null,
+      execution?.backend.hasPendingQuestion || summarySuspended ? execution?.backend ?? null : null,
       execution?.backend.lastRunStatus ?? null,
     ] as const
   }))
@@ -1326,6 +1329,11 @@ export function useChat(
   // store snapshots as notifications, never as typed decision authority.
   // Fresh pending summaries matter even when their legacy display payload is
   // unchanged: request generation, policy revision or allowed choices may differ.
+  // A fresh suspended summary also retries an earlier pre-publication read.
+  // Even an explicit false flag is only a hint; the canonical GET (and existing
+  // submission fences) decides absence. GET completion never changes this signal.
+  // The reducer replaces backend only on summary reads; its object identity also
+  // distinguishes snapshots received within the same syncedAt millisecond.
   useEffect(() => {
     const scope = navigationRef.current
     // Recovery within the same visit must preserve in-flight/uncertain decisions.
@@ -1338,7 +1346,7 @@ export function useChat(
     }
     if (!sid) return
     void reconcileQuestion(scope)
-  }, [sid, recoveredQuestion, hasPendingQuestion, pendingSyncedAt, lastRunStatus, reconcileQuestion, updateQuestionState])
+  }, [sid, recoveredQuestion, hasPendingQuestion, pendingSummary, lastRunStatus, summarySuspended, reconcileQuestion, updateQuestionState])
 
   // ── Tab-visibility reconcile (main instance only) ────────────────────
   // A backgrounded tab/webview freezes the WS and every reconnect timer; runs
