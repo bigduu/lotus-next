@@ -81,7 +81,7 @@ test("Nova explicitly installs the selected app, reconciles a lost response, and
   await expect(installed).toContainText("重连请求已发送，请查看实际连接状态")
   await expect(installed).toContainText("尚未验证桌面权限")
   await expect(installed).toContainText("已停止")
-  await expect(installed.getByRole("switch", { name: "启用 Chrome sidecar" })).not.toBeChecked()
+  await expect(installed.getByRole("switch", { name: "Chrome sidecar 连接" })).not.toBeChecked()
   expect(posts).toEqual([
     { path: "/api/v1/plugins/nova/app/install", body: { artifact_id: "fixture-reviewed-app" } },
     { path: "/api/v1/mcp/servers/nova/connect", body: null },
