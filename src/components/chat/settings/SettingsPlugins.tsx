@@ -5,6 +5,7 @@ import {
   pluginService,
   type InstalledPluginView,
   type JianduSetupReport,
+  type NovaAppSetupReport,
   type PluginSourceSpec,
   type PluginStatus,
   type RegisteredResources,
@@ -21,7 +22,8 @@ import {
 } from "@/components/ui/responsive-dialog"
 import { cn } from "@/lib/utils"
 import { PluginFormDialog, type PluginFormMode } from "./plugins/PluginFormDialog"
-import { NovaSetupNotice, OfficialPluginCards } from "./plugins/OfficialPluginCards"
+import { OfficialPluginCards } from "./plugins/OfficialPluginCards"
+import { NovaSetupPanel, type NovaSetupError } from "./plugins/NovaSetupPanel"
 import { PluginRuntime } from "./plugins/PluginRuntime"
 import { NOVA_PLUGIN } from "./plugins/officialPlugins"
 import { JianduSetupPanel, type JianduSetupError } from "./plugins/JianduSetupPanel"
@@ -75,6 +77,7 @@ interface FormState {
 type ReconciliationIntent =
   | { type: "install"; id: string }
   | { type: "jiandu-install" }
+  | { type: "nova-app-install"; artifactId: string; version: string }
   | { type: "toggle"; id: string; enabled: boolean }
 
 export function SettingsPlugins() {
@@ -86,6 +89,9 @@ export function SettingsPlugins() {
   const [serversConfirmed, setServersConfirmed] = useState(false)
   const [jiandu, setJiandu] = useState<JianduSetupReport | null>(null)
   const [jianduError, setJianduError] = useState<JianduSetupError>("loading")
+  const [novaSetup, setNovaSetup] = useState<NovaAppSetupReport | null>(null)
+  const [novaSetupError, setNovaSetupError] = useState<NovaSetupError>("loading")
+  const [novaReconnectSent, setNovaReconnectSent] = useState(false)
   const [copiedJianduConfig, setCopiedJianduConfig] = useState<string | null>(null)
   const [copyError, setCopyError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
@@ -114,10 +120,11 @@ export function SettingsPlugins() {
     const generation = ++readGeneration.current
     readingRef.current = true
     if (!silent) setLoading(true)
-    const [list, runtime, setup] = await Promise.allSettled([
+    const [list, runtime, setup, novaApp] = await Promise.allSettled([
       pluginService.listPlugins(),
       mcpService.getServers(),
       pluginService.getJianduSetup(),
+      pluginService.getNovaAppSetup(),
     ])
     if (!mountedRef.current || generation !== readGeneration.current) return
     if (list.status === "fulfilled") {
@@ -132,10 +139,16 @@ export function SettingsPlugins() {
     if (runtime.status === "fulfilled") setServers(runtime.value)
     setJiandu(setup.status === "fulfilled" ? setup.value : null)
     setJianduError(setup.status === "fulfilled" ? null : isApiError(setup.reason) && setup.reason.status === 404 ? "legacy" : "unknown")
+    setNovaSetup(novaApp.status === "fulfilled" ? novaApp.value : null)
+    setNovaSetupError(novaApp.status === "fulfilled" ? null : isApiError(novaApp.reason) && novaApp.reason.status === 404 ? "legacy" : "unknown")
     const intent = reconciliationIntent.current
     if (
       (intent?.type === "install" && list.status === "fulfilled" && list.value.some((plugin) => plugin.id === intent.id && plugin.status === "installed")) ||
       (intent?.type === "jiandu-install" && setup.status === "fulfilled" && setup.value.installed.state === "ready") ||
+      (intent?.type === "nova-app-install" && novaApp.status === "fulfilled" &&
+        novaApp.value.artifact?.artifact_id === intent.artifactId && novaApp.value.app?.success &&
+        novaApp.value.app.state === "installed" && novaApp.value.app.version === intent.version &&
+        novaApp.value.app.connector_compatible === true && novaApp.value.app.signing === "ad_hoc" && novaApp.value.app.development === true) ||
       (intent?.type === "toggle" && runtime.status === "fulfilled" && runtime.value.some((server) => server.id === intent.id && server.enabled === intent.enabled))
     ) {
       reconciliationIntent.current = null
@@ -168,6 +181,7 @@ export function SettingsPlugins() {
     reconciliationIntent.current = null
     setOperation(id)
     setActionError(null)
+    setNovaReconnectSent(false)
     setCopyError(null)
     setCopiedJianduConfig(null)
     return true
@@ -205,6 +219,47 @@ export function SettingsPlugins() {
       // The same fresh setup read reconciles both successful and uncertain POSTs.
     } finally {
       if (mountedRef.current) setActionError(uiText("plugin_jiandu_install_unconfirmed"))
+      await finishOperation()
+    }
+  }
+
+  const installNovaApp = async () => {
+    if (!novaSetup?.install.available || !novaSetup.artifact || !beginOperation("nova-app-install", false)) return
+    const { artifact_id: artifactId, version } = novaSetup.artifact
+    reconciliationIntent.current = { type: "nova-app-install", artifactId, version }
+    try {
+      await pluginService.installNovaApp(artifactId)
+    } catch {
+      // No automatic POST retry. The owned backend operation may still finish.
+    } finally {
+      if (mountedRef.current) setActionError(uiText("plugin_nova_app_install_unconfirmed"))
+      await finishOperation()
+    }
+  }
+
+  const reconnectNova = async () => {
+    const expectedId = novaSetup?.desktop_server_id
+    if (!expectedId || !beginOperation("nova-reconnect", false)) return
+    try {
+      // Revalidate ownership and enabled state at click time; connect itself
+      // force-restarts and enables its target, so never call it for a disabled ID.
+      const [fresh, runtime] = await Promise.all([pluginService.getNovaAppSetup(), mcpService.getServers()])
+      if (!mountedRef.current) return
+      setNovaSetup(fresh)
+      setNovaSetupError(null)
+      setServers(runtime)
+      setServersConfirmed(true)
+      if (fresh.desktop_server_id !== expectedId || !fresh.app?.success || fresh.app.state !== "installed" ||
+        fresh.app.connector_compatible !== true || !runtime.some((server) => server.id === expectedId && server.enabled)) {
+        setActionError(uiText("plugin_nova_app_reconnect_unconfirmed"))
+        return
+      }
+      await mcpService.connectServer(expectedId)
+      if (mountedRef.current) setNovaReconnectSent(true)
+    } catch {
+      // enabled=true alone cannot prove that a requested restart was applied.
+      if (mountedRef.current) setActionError(uiText("plugin_nova_app_reconnect_unconfirmed"))
+    } finally {
       await finishOperation()
     }
   }
@@ -290,6 +345,12 @@ export function SettingsPlugins() {
     disabled={operation !== null || loading} installing={operation === "jiandu-install"}
     copying={operation === "jiandu-copy"} copiedConfiguration={copiedJianduConfig} copyError={copyError}
     onInstall={() => void installJiandu()} onCopy={() => void copyJiandu()} />
+  const novaPanel = <NovaSetupPanel report={novaSetup} error={novaSetupError}
+    disabled={operation !== null || loading} installing={operation === "nova-app-install"} reconnecting={operation === "nova-reconnect"}
+    reconnectSent={novaReconnectSent}
+    canReconnect={Boolean(novaSetup?.app?.success && novaSetup.app.state === "installed" && novaSetup.app.connector_compatible &&
+      novaSetup.desktop_server_id && serversConfirmed && servers.some((server) => server.id === novaSetup.desktop_server_id && server.enabled))}
+    onInstall={() => void installNovaApp()} onReconnect={() => void reconnectNova()} />
 
   return (
     <div className="space-y-4">
@@ -328,7 +389,7 @@ export function SettingsPlugins() {
         </TabsList>
         <TabsContent value="discover" className="pt-2">
           <OfficialPluginCards nova={plugins.find((plugin) => plugin.id === NOVA_PLUGIN.id)} installing={operation === "nova-install"}
-            disabled={!confirmed || operation !== null} onInstallNova={() => void installNova()} onManageNova={() => setTab("installed")} jianduSetup={jianduPanel} />
+            disabled={!confirmed || operation !== null} onInstallNova={() => void installNova()} onManageNova={() => setTab("installed")} novaSetup={novaPanel} jianduSetup={jianduPanel} />
           <p className="mt-3 text-xs leading-relaxed text-muted-foreground">{uiText("plugin_install_location")}</p>
         </TabsContent>
         <TabsContent value="installed" className="pt-2">
@@ -379,7 +440,7 @@ export function SettingsPlugins() {
                       ) : null}
                       <PluginRuntime ids={p.registered.mcp_server_ids ?? []} servers={servers} confirmed={serversConfirmed}
                         disabled={!confirmed || operation !== null || p.status === "installing"} onToggle={(server, enabled) => void toggleServer(server, enabled)} />
-                      {p.id === NOVA_PLUGIN.id ? <div className="mt-3"><NovaSetupNotice /></div> : null}
+                      {p.id === NOVA_PLUGIN.id ? <div className="mt-3">{novaPanel}</div> : null}
                       {p.id === "jiandu" ? <div className="mt-3">{jianduPanel}</div> : null}
                       <div className="mt-2 flex justify-end gap-2">
                         <Button

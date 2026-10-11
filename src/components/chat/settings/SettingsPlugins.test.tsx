@@ -2,7 +2,7 @@ import { act } from "react"
 import { createRoot, type Root } from "react-dom/client"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { apiClient, ApiError } from "@services/api"
-import type { InstalledPluginView, JianduSetupReport } from "@services/plugin"
+import type { InstalledPluginView, JianduSetupReport, NovaAppSetupReport } from "@services/plugin"
 import { changeLocale } from "@shared/i18n"
 import { SettingsPlugins } from "./SettingsPlugins"
 import { NOVA_PLUGIN } from "./plugins/officialPlugins"
@@ -30,6 +30,17 @@ const jianduReport = (ready = false): JianduSetupReport => ({
   installed: { state: ready ? "ready" : "missing", version: ready ? "0.3.2" : null, reason: null },
   external_client: ready ? { command: "/fixture/jiandu/bin/linux/jiandu", args: ["--data-dir", '/srv/custom memory/"active"'] } : null,
 })
+const novaAppReport = (installed = false): NovaAppSetupReport => ({
+  plugin_id: "nova", host: { os: "macos", arch: "aarch64", supported: true, reason: null },
+  connector: { state: "verified", version: "0.3.1", reason: null }, capability: { supported: true, reason: null },
+  app: installed ? { success: true, state: "installed", message: "Verified app", next_action: "Open and grant permissions",
+    path: "/Applications/Nova.app", version: "0.3.1", signing: "ad_hoc", development: true, connector_compatible: true }
+    : { success: true, state: "missing", message: "No app", next_action: "Explicit installation" },
+  install: { available: !installed, reason: installed ? "app_not_missing" : null },
+  artifact: { artifact_id: "fixture-reviewed-app", version: "0.3.1", url: "https://fixture.invalid/app.zip", sha256: "a".repeat(64), signing: "ad_hoc", install_mode: "local_ad_hoc", development: true },
+  manual_guidance: "Open the app and grant permissions manually", desktop_server_id: "nova", desktop_readiness: "not_tested",
+})
+let novaAppSetup: NovaAppSetupReport | null
 let jianduSetup: JianduSetupReport | null
 const deferred = <T,>() => {
   let resolve!: (value: T) => void
@@ -56,9 +67,13 @@ async function mount() {
 }
 beforeEach(() => {
   inventory = []; servers = []
-  jianduSetup = null
+  jianduSetup = null; novaAppSetup = null
   copy.mockReset().mockResolvedValue(undefined)
   get.mockReset().mockImplementation(async (path) => {
+    if (path === "plugins/nova/app") {
+      if (!novaAppSetup) throw new ApiError("Not Found", 404, "Not Found")
+      return novaAppSetup
+    }
     if (path === "plugins/jiandu/setup") {
       if (!jianduSetup) throw new ApiError("Not Found", 404, "Not Found")
       return jianduSetup
@@ -556,6 +571,209 @@ describe("official plugin center", () => {
     expect(document.body.textContent).toContain("无法检查或复制配置")
     expect(document.body.textContent).not.toContain("SECRET_CLIPBOARD_DETAILS")
     expect(document.body.textContent).not.toContain("已复制配置")
+  })
+
+  it("installs the GET-selected Nova app explicitly and waits for fresh passive confirmation", async () => {
+    novaAppSetup = novaAppReport()
+    const pending = deferred<unknown>(); post.mockReturnValueOnce(pending.promise)
+    await mount(); await click("安装 Nova.app（本地 ad-hoc）")
+    expect(post).toHaveBeenCalledExactlyOnceWith("plugins/nova/app/install", { artifact_id: "fixture-reviewed-app" })
+    expect(button("安装中…").disabled).toBe(true)
+    await act(async () => { novaAppSetup = novaAppReport(true); pending.resolve(novaAppSetup) })
+    expect(document.body.textContent).toContain("已检测到 Nova.app")
+    expect(document.body.textContent).toContain("尚未验证桌面权限")
+    expect(document.querySelector('[role="alert"]')).toBeNull()
+    expect(button("重连 Nova 桌面连接").disabled).toBe(true)
+    expect(post).toHaveBeenCalledTimes(1)
+  })
+
+  it("does not treat a successful POST report as passive app confirmation", async () => {
+    novaAppSetup = novaAppReport(); post.mockResolvedValueOnce(novaAppReport(true))
+    await mount(); await click("安装 Nova.app（本地 ad-hoc）")
+    expect(document.body.textContent).toContain("尚未确认 Nova.app 安装结果")
+    expect(document.body.textContent).not.toContain("已检测到 Nova.app")
+    expect(button("重连 Nova 桌面连接")).toBeUndefined()
+  })
+
+  it("reconciles a lost app install response only when a later fresh status verifies the captured artifact", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] })
+    novaAppSetup = novaAppReport(); await mount()
+    let unavailable = true
+    get.mockImplementation(async (path) => {
+      if (path === "plugins/nova/app") { if (unavailable) throw new Error("status timeout"); return novaAppSetup }
+      if (path === "plugins/jiandu/setup") throw new ApiError("Not Found", 404, "Not Found")
+      return path === "plugins" ? { plugins: inventory } : { servers }
+    })
+    post.mockRejectedValueOnce(new Error("response lost"))
+    await click("安装 Nova.app（本地 ad-hoc）")
+    expect(button("安装 Nova.app（本地 ad-hoc）").disabled).toBe(true)
+    expect(document.body.textContent).toContain("尚未确认 Nova.app 安装结果")
+    unavailable = false; novaAppSetup = novaAppReport(true)
+    await act(async () => { vi.advanceTimersByTime(10_000) })
+    expect(document.querySelector('[role="alert"]')).toBeNull()
+    expect(post).toHaveBeenCalledTimes(1)
+  })
+
+  it("preserves an existing incompatible app and does not clear an unconfirmed installation", async () => {
+    novaAppSetup = novaAppReport(); await mount()
+    post.mockImplementationOnce(async () => {
+      novaAppSetup = novaAppReport(true); novaAppSetup.app = { ...novaAppSetup.app!, version: "0.2.1", connector_compatible: false }
+      throw new Error("existing app refused")
+    })
+    await click("安装 Nova.app（本地 ad-hoc）")
+    expect(document.body.textContent).toContain("v0.2.1")
+    expect(document.body.textContent).toContain("现有应用将保留")
+    expect(document.body.textContent).toContain("尚未确认 Nova.app 安装结果")
+    expect(button("安装 Nova.app（本地 ad-hoc）")).toBeUndefined()
+    expect(button("重连 Nova 桌面连接").disabled).toBe(true)
+  })
+
+  it.each(["developer_id", "other", "ad_hoc"] as const)("does not describe an existing %s non-development app as a local ad-hoc development build", async (signing) => {
+    novaAppSetup = novaAppReport(true)
+    novaAppSetup.app = { ...novaAppSetup.app!, signing, development: false }
+    await mount()
+    expect(document.body.textContent).toContain("已检测到 Nova.app")
+    expect(document.body.textContent).toContain("尚未验证桌面权限")
+    expect(document.body.textContent).toContain("请在系统设置中为 Nova 授予辅助功能与屏幕录制权限")
+    expect(document.body.textContent).not.toContain("这是开发构建")
+    expect(document.body.textContent).not.toContain("本机自签名")
+    expect(button("安装 Nova.app（本地 ad-hoc）")).toBeUndefined()
+    expect(post).not.toHaveBeenCalled()
+  })
+
+  it("does not let a delayed app confirmation clear a newer plugin installation error", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] })
+    novaAppSetup = novaAppReport(); await mount()
+    post.mockRejectedValue(new Error("response lost"))
+    await click("安装 Nova.app（本地 ad-hoc）")
+    await click("安装 Nova 插件")
+    novaAppSetup = novaAppReport(true)
+    await act(async () => { vi.advanceTimersByTime(10_000) })
+    expect(document.body.textContent).toContain("若 Nova 仍未出现")
+    expect(post).toHaveBeenCalledTimes(2)
+  })
+
+  it("installs the app using independent setup when generic plugin inventory is unavailable", async () => {
+    novaAppSetup = novaAppReport()
+    get.mockImplementation(async (path) => {
+      if (path === "plugins") throw new Error("inventory unavailable")
+      return path === "plugins/nova/app" ? novaAppSetup : { servers }
+    })
+    post.mockImplementationOnce(async () => { novaAppSetup = novaAppReport(true); return novaAppSetup })
+    await mount(); expect(button("安装 Nova 插件").disabled).toBe(true)
+    await click("安装 Nova.app（本地 ad-hoc）")
+    expect(post).toHaveBeenCalledExactlyOnceWith("plugins/nova/app/install", { artifact_id: "fixture-reviewed-app" })
+    expect(document.body.textContent).not.toContain("尚未确认 Nova.app 安装结果")
+  })
+
+  it("revalidates both resources and reconnects only the owned enabled desktop server once", async () => {
+    novaAppSetup = novaAppReport(true)
+    servers = [server(true, "ready"), { ...server(false), id: "nova-chrome-devtools", name: "Chrome sidecar", config: { ...server(false).config, id: "nova-chrome-devtools" } }]
+    const pending = deferred<unknown>(); post.mockReturnValueOnce(pending.promise)
+    await mount(); await click("重连 Nova 桌面连接")
+    expect(button("重连中…").disabled).toBe(true)
+    expect(post).toHaveBeenCalledExactlyOnceWith("mcp/servers/nova/connect")
+    await act(async () => { pending.resolve({ server_id: "nova" }) })
+    expect(document.body.textContent).toContain("重连请求已发送，请查看实际连接状态")
+    expect(document.body.textContent).toContain("尚未验证桌面权限")
+    expect(servers.find((s) => s.id === "nova-chrome-devtools")?.enabled).toBe(false)
+    expect(document.querySelector('[role="alert"]')).toBeNull()
+  })
+
+  it.each(["disabled", "missing", "changed ownership", "app missing", "unknown setup", "unknown runtime"])("withholds reconnect when the fresh %s no longer confirms it", async (state) => {
+    novaAppSetup = novaAppReport(true); servers = [server(true, "ready")]
+    await mount()
+    if (state === "disabled") servers = [server(false)]
+    if (state === "missing") servers = []
+    if (state === "changed ownership") {
+      novaAppSetup = { ...novaAppSetup, desktop_server_id: "other-desktop" }
+      servers = [{ ...server(true), id: "other-desktop", config: { ...server(true).config, id: "other-desktop" } }]
+    }
+    if (state === "app missing") novaAppSetup = novaAppReport()
+    if (state.startsWith("unknown")) get.mockImplementation(async (path) => {
+      if ((state === "unknown setup" && path === "plugins/nova/app") || (state === "unknown runtime" && path === "mcp/servers")) throw new Error("temporarily unavailable")
+      if (path === "plugins/nova/app") return novaAppSetup
+      return path === "plugins" ? { plugins: inventory } : { servers }
+    })
+    await click("重连 Nova 桌面连接")
+    expect(post).not.toHaveBeenCalled()
+    expect(document.body.textContent).toContain("无法确认桌面重连结果")
+  })
+
+  it("does not equate an already enabled server with a successful lost-response reconnect", async () => {
+    novaAppSetup = novaAppReport(true); servers = [server(true, "ready")]
+    post.mockRejectedValueOnce(new Error("response lost"))
+    await mount(); await click("重连 Nova 桌面连接")
+    expect(document.body.textContent).toContain("无法确认桌面重连结果")
+    expect(post).toHaveBeenCalledExactlyOnceWith("mcp/servers/nova/connect")
+  })
+
+  it("keeps missing app status unavailable for reconnect even when the server ID is proven", async () => {
+    novaAppSetup = novaAppReport(); servers = [server(true, "ready")]
+    await mount()
+    expect(button("重连 Nova 桌面连接")).toBeUndefined()
+    expect(post).not.toHaveBeenCalled()
+  })
+
+  it("reconnects from independent setup and runtime authority when generic plugin inventory fails", async () => {
+    novaAppSetup = novaAppReport(true); servers = [server(true, "stopped")]
+    get.mockImplementation(async (path) => {
+      if (path === "plugins") throw new Error("inventory unavailable")
+      if (path === "plugins/nova/app") return novaAppSetup
+      return { servers }
+    })
+    await mount(); await click("重连 Nova 桌面连接")
+    expect(post).toHaveBeenCalledExactlyOnceWith("mcp/servers/nova/connect")
+    expect(document.body.textContent).toContain("重连请求已发送")
+    expect(button("安装 Nova 插件").disabled).toBe(true)
+  })
+
+  it.each([
+    ["legacy_cli_unavailable", "当前连接器不支持应用设置"],
+    ["invalid_report", "无法确认 Nova.app 状态"],
+    ["status_failed", "无法确认 Nova.app 状态"],
+    ["status_timeout", "无法确认 Nova.app 状态"],
+  ])("withholds app install for a %s capability result and keeps manual guidance", async (reason, message) => {
+    novaAppSetup = novaAppReport(); novaAppSetup.app = null
+    novaAppSetup.capability = { supported: false, reason }; novaAppSetup.install = { available: false, reason }
+    await mount()
+    expect(document.body.textContent).toContain(message)
+    expect(button("安装 Nova.app（本地 ad-hoc）").disabled).toBe(true)
+    expect(post).not.toHaveBeenCalled()
+  })
+
+  it("withholds app install when the server has no accepted app artifact", async () => {
+    novaAppSetup = novaAppReport(); novaAppSetup.artifact = null
+    novaAppSetup.install = { available: false, reason: "artifact_unavailable" }
+    await mount()
+    expect(document.body.textContent).toContain("尚无已接受的匹配应用安装包")
+    expect(button("安装 Nova.app（本地 ad-hoc）").disabled).toBe(true)
+    expect(post).not.toHaveBeenCalled()
+  })
+
+  it.each(["windows", "linux"])("uses backend %s host authority without offering a macOS app install", async (os) => {
+    novaAppSetup = novaAppReport(); novaAppSetup.app = null
+    const reason = os === "windows" ? "app_not_required" : "unsupported_host"
+    novaAppSetup.host = { os, arch: "x86_64", supported: false, reason }
+    novaAppSetup.capability = { supported: false, reason }; novaAppSetup.install = { available: false, reason }
+    await mount()
+    expect(document.body.textContent).toContain(os === "windows" ? "无需单独安装 Nova.app" : "支持运行 macOS")
+    expect(button("安装 Nova.app（本地 ad-hoc）")).toBeUndefined()
+    expect(button("重连 Nova 桌面连接")).toBeUndefined()
+    expect(post).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ["memory_root_overlaps_plugin", "请将记忆目录移出 Jiandu 插件安装目录后刷新"],
+    ["memory_root_unavailable", "无法确认记忆目录安全性，请检查目录并刷新"],
+  ])("explains Jiandu %s ahead of generic unverified state without changing its authority", async (reason, message) => {
+    jianduSetup = jianduReport(); jianduSetup.install = { available: false, reason }
+    jianduSetup.installed = { state: "unverified", version: "0.3.2", reason }
+    await mount()
+    expect(document.body.textContent).toContain(message)
+    expect(document.body.textContent).not.toContain("已有安装，但尚未通过验证")
+    expect(button("安装 Jiandu 连接器").disabled).toBe(true)
+    expect(copy).not.toHaveBeenCalled(); expect(post).not.toHaveBeenCalled()
   })
 
   it("localizes discovery and setup guidance in English", async () => {
