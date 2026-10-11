@@ -16,7 +16,7 @@ const renderDetails = (usage?: TokenUsage) => {
   return { container, root }
 }
 
-it("allows the embedded Inspector to shrink inside its workbench flex row", () => {
+it("keeps the embedded Inspector within its workbench width", () => {
   const container = document.createElement("div")
   document.body.appendChild(container)
   const root = createRoot(container)
