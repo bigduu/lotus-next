@@ -94,10 +94,10 @@ test("Nova explicitly installs the selected app, reconciles a lost response, and
   expect(observation.pageErrors).toEqual([])
 })
 
-for (const state of ["legacy-backend", "legacy-cli", "unknown", "windows", "linux", "existing-app", "missing-artifact"]) {
+for (const state of ["legacy-backend", "legacy-cli", "unknown", "windows", "linux", "existing-app", "developer-id-app", "missing-artifact"]) {
   test(`Nova ${state} withholds app installation and keeps truthful guidance`, async ({ page }) => {
     await installArtifactRuntime(page, standaloneScenario)
-    const report = setup(state === "existing-app")
+    const report = setup(state === "existing-app" || state === "developer-id-app")
     report.install = { available: false, reason: "artifact_unavailable" }
     if (state === "legacy-cli" || state === "unknown") {
       report.app = null
@@ -110,6 +110,7 @@ for (const state of ["legacy-backend", "legacy-cli", "unknown", "windows", "linu
       report.app = null; report.capability = { supported: false, reason }; report.install.reason = reason
     }
     if (state === "existing-app") report.app = { ...report.app!, version: "0.2.1", connector_compatible: false }
+    if (state === "developer-id-app") report.app = { ...report.app!, signing: "developer_id", development: false }
     if (state === "missing-artifact") report.artifact = null
     const posts: string[] = []
     await page.route("**/api/v1/plugins**", async (route) => {
@@ -122,13 +123,18 @@ for (const state of ["legacy-backend", "legacy-cli", "unknown", "windows", "linu
     await expect(page.getByRole("textbox", { name: "消息", exact: true })).toBeVisible()
     await openPlugins(page)
     const card = page.getByRole("article", { name: "Nova", exact: true })
-    const messages: Record<string, string> = { "legacy-backend": "尚不支持 Nova.app 设置", "legacy-cli": "当前连接器不支持应用设置", unknown: "无法确认 Nova.app 状态", windows: "无需单独安装 Nova.app", linux: "支持运行 macOS", "existing-app": "现有应用将保留", "missing-artifact": "尚无已接受的匹配应用安装包" }
+    const messages: Record<string, string> = { "legacy-backend": "尚不支持 Nova.app 设置", "legacy-cli": "当前连接器不支持应用设置", unknown: "无法确认 Nova.app 状态", windows: "无需单独安装 Nova.app", linux: "支持运行 macOS", "existing-app": "现有应用将保留", "developer-id-app": "已检测到 Nova.app", "missing-artifact": "尚无已接受的匹配应用安装包" }
     await expect(card).toContainText(messages[state])
-    if (["windows", "linux", "existing-app"].includes(state)) await expect(card.getByRole("button", { name: "安装 Nova.app（本地 ad-hoc）" })).toHaveCount(0)
+    if (["windows", "linux", "existing-app", "developer-id-app"].includes(state)) await expect(card.getByRole("button", { name: "安装 Nova.app（本地 ad-hoc）" })).toHaveCount(0)
     else await expect(card.getByRole("button", { name: "安装 Nova.app（本地 ad-hoc）" })).toBeDisabled()
     if (state === "existing-app") {
       await expect(card).toContainText("v0.2.1")
       await expect(card.getByRole("button", { name: "重连 Nova 桌面连接" })).toBeDisabled()
+    }
+    if (state === "developer-id-app") {
+      await expect(card).not.toContainText("这是开发构建")
+      await expect(card).not.toContainText("本机自签名")
+      await expect(card).toContainText("此页面无法检查这些权限")
     }
     expect(posts).toEqual([])
   })

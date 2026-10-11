@@ -32,6 +32,7 @@ export function NovaSetupPanel({ report, error, disabled, installing, reconnecti
   useUiLocale()
   const app = report?.app
   const installed = app?.success && app.state === "installed"
+  const localDevelopmentBuild = report?.install.available || (installed && app.signing === "ad_hoc" && app.development === true)
   const reason = report?.host.reason ?? report?.connector.reason ?? report?.capability.reason ?? report?.install.reason
   const status = error === "loading" ? "loading_4927a53b" : error === "legacy" ? "plugin_nova_app_legacy_backend" : error
     ? "plugin_nova_app_unknown" : installed ? app.connector_compatible ? "plugin_nova_app_installed" : "plugin_nova_app_version_mismatch"
@@ -45,7 +46,7 @@ export function NovaSetupPanel({ report, error, disabled, installing, reconnecti
     {installed ? <p className="break-all">{uiText("plugin_nova_app_location", { path: app.path ?? "", version: app.version ?? "" })}</p> : null}
     {!report ? <p>{uiText("plugin_nova_setup_macos")}</p> : null}
     {(!report || report.host.os === "macos") ? <>
-      <p>{uiText("plugin_nova_app_local_sign")}</p>
+      {localDevelopmentBuild ? <p>{uiText("plugin_nova_app_local_sign")}</p> : null}
       <p>{uiText("plugin_nova_setup_permissions")}</p>
       {installed && !canReconnect ? <p>{uiText("plugin_nova_app_reconnect_unavailable")}</p> : null}
       <div className="flex flex-wrap items-center justify-end gap-2">

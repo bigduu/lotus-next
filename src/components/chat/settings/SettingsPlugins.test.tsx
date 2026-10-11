@@ -628,6 +628,19 @@ describe("official plugin center", () => {
     expect(button("重连 Nova 桌面连接").disabled).toBe(true)
   })
 
+  it.each(["developer_id", "other", "ad_hoc"] as const)("does not describe an existing %s non-development app as a local ad-hoc development build", async (signing) => {
+    novaAppSetup = novaAppReport(true)
+    novaAppSetup.app = { ...novaAppSetup.app!, signing, development: false }
+    await mount()
+    expect(document.body.textContent).toContain("已检测到 Nova.app")
+    expect(document.body.textContent).toContain("尚未验证桌面权限")
+    expect(document.body.textContent).toContain("请在系统设置中为 Nova 授予辅助功能与屏幕录制权限")
+    expect(document.body.textContent).not.toContain("这是开发构建")
+    expect(document.body.textContent).not.toContain("本机自签名")
+    expect(button("安装 Nova.app（本地 ad-hoc）")).toBeUndefined()
+    expect(post).not.toHaveBeenCalled()
+  })
+
   it("does not let a delayed app confirmation clear a newer plugin installation error", async () => {
     vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] })
     novaAppSetup = novaAppReport(); await mount()
