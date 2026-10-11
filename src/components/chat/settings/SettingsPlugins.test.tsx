@@ -61,6 +61,7 @@ beforeEach(() => {
 afterEach(() => {
   for (const root of roots.splice(0)) act(() => root.unmount())
   document.body.replaceChildren()
+  vi.useRealTimers()
 })
 
 describe("official plugin center", () => {
@@ -110,6 +111,36 @@ describe("official plugin center", () => {
     post.mockImplementationOnce(async () => { inventory = [nova()]; throw new Error("response lost") })
     await mount(); await click("安装 Nova 插件")
     expect(button("管理已安装插件")).toBeDefined()
+    expect(document.querySelector('[role="alert"]')).toBeNull()
+    expect(post).toHaveBeenCalledTimes(1)
+  })
+
+  it("clears an uncertain install error when a later inventory poll confirms the package", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] })
+    post.mockImplementationOnce(async () => { inventory = [nova()]; throw new Error("response lost") })
+    await mount()
+    get.mockImplementationOnce(async () => { throw new Error("inventory unavailable") })
+    await click("安装 Nova 插件")
+    expect(document.body.textContent).toContain("安装结果尚未确认")
+    expect(button("安装 Nova 插件").disabled).toBe(true)
+    await act(async () => { vi.advanceTimersByTime(10_000) })
+    expect(button("管理已安装插件")).toBeDefined()
+    expect(document.querySelector('[role="alert"]')).toBeNull()
+    expect(post).toHaveBeenCalledTimes(1)
+  })
+
+  it("does not confirm a lost install response from an incomplete installation", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] })
+    post.mockImplementationOnce(async () => {
+      inventory = [{ ...nova(), status: "installing" }]
+      throw new Error("response lost")
+    })
+    await mount(); await click("安装 Nova 插件")
+    expect(document.querySelector('[role="alert"]')?.textContent).toContain("安装结果尚未确认")
+    await act(async () => { vi.advanceTimersByTime(10_000) })
+    expect(document.querySelector('[role="alert"]')?.textContent).toContain("安装结果尚未确认")
+    inventory = [nova()]
+    await act(async () => { vi.advanceTimersByTime(10_000) })
     expect(document.querySelector('[role="alert"]')).toBeNull()
     expect(post).toHaveBeenCalledTimes(1)
   })
@@ -187,6 +218,67 @@ describe("official plugin center", () => {
     expect(document.body.textContent).not.toContain("SECRET_RUNTIME_ERROR")
   })
 
+  it.each([true, false])("clears a lost toggle response when fresh runtime confirms enabled=%s", async (enabled) => {
+    inventory = [nova()]; servers = [server(!enabled)]
+    post.mockImplementationOnce(async () => { servers = [server(enabled)]; throw new Error("response lost") })
+    await mount(); await installed()
+    await clickElement(document.querySelector<HTMLElement>('[role="switch"]')!)
+    expect(document.querySelector('[role="switch"]')?.getAttribute("aria-checked")).toBe(String(enabled))
+    expect(document.querySelector('[role="alert"]')).toBeNull()
+    expect(post).toHaveBeenCalledTimes(1)
+  })
+
+  it.each(["unknown", "unchanged"])("retains an uncertain toggle after %s runtime until a later poll confirms it", async (initialRead) => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] })
+    inventory = [nova()]; servers = [server()]
+    post.mockImplementationOnce(async () => { servers = [server(true)]; throw new Error("response lost") })
+    await mount(); await installed()
+    get.mockImplementationOnce(async () => ({ plugins: inventory }))
+    get.mockImplementationOnce(async () => {
+      if (initialRead === "unknown") throw new Error("runtime unavailable")
+      return { servers: [server()] }
+    })
+    await clickElement(document.querySelector<HTMLElement>('[role="switch"]')!)
+    expect(document.querySelector('[role="alert"]')?.textContent).toContain("无法确认连接变更结果")
+    await act(async () => { vi.advanceTimersByTime(10_000) })
+    expect(document.querySelector('[role="switch"]')?.getAttribute("aria-checked")).toBe("true")
+    expect(document.querySelector('[role="alert"]')).toBeNull()
+    expect(post).toHaveBeenCalledTimes(1)
+  })
+
+  it("does not let an older install intent clear a newer toggle error", async () => {
+    const other = { ...nova(), id: "other", name: "Other Plugin" }
+    inventory = [other]; servers = [server()]
+    post.mockImplementationOnce(async () => { inventory = [other, nova()]; throw new Error("response lost") })
+    await mount()
+    get.mockImplementationOnce(async () => { throw new Error("inventory unavailable") })
+    await click("安装 Nova 插件")
+    expect(document.body.textContent).toContain("安装结果尚未确认")
+    inventory = [other, { ...nova(), status: "installing" }]
+    await click("刷新")
+    await installed()
+    inventory = [other, nova()]
+    post.mockRejectedValueOnce(new Error("connection failed"))
+    await clickElement(document.querySelector<HTMLElement>('[role="switch"]')!)
+    expect(document.querySelector('[role="alert"]')?.textContent).toContain("无法确认连接变更结果")
+  })
+
+  it("does not let an older toggle intent clear a newer install error", async () => {
+    inventory = [nova()]; servers = [server()]
+    post.mockRejectedValueOnce(new Error("connection failed"))
+    await mount(); await installed()
+    await clickElement(document.querySelector<HTMLElement>('[role="switch"]')!)
+    inventory = []
+    await click("刷新")
+    await clickElement(document.querySelector<HTMLElement>('[role="tab"][id$="trigger-discover"]')!)
+    post.mockRejectedValueOnce(new Error("installation failed"))
+    await click("安装 Nova 插件")
+    expect(document.querySelector('[role="alert"]')?.textContent).toContain("安装结果尚未确认")
+    servers = [server(true)]
+    await click("刷新")
+    expect(document.querySelector('[role="alert"]')?.textContent).toContain("安装结果尚未确认")
+  })
+
   it("keeps advanced URL installation and installed package updates", async () => {
     await mount(); await click("高级安装")
     await fill(document.querySelector<HTMLInputElement>('input[placeholder="https://example.com/plugin.zip"]')!, "https://example.test/custom.zip")
@@ -242,6 +334,46 @@ describe("official plugin center", () => {
     expect(document.body.textContent).not.toContain("暂无插件")
     const retry = [...dialog.querySelectorAll<HTMLButtonElement>("button")].find((item) => item.textContent?.trim() === "删除")!
     expect(retry.disabled).toBe(true)
+    expect(remove).toHaveBeenCalledExactlyOnceWith("plugins/nova")
+  })
+
+  it.each(["unknown", "unchanged"])("closes uncertain removal after %s inventory when a later poll confirms absence", async (initialRead) => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] })
+    inventory = [nova()]; servers = [server()]
+    remove.mockImplementationOnce(async () => {
+      inventory = []; servers = []
+      throw new Error("response lost")
+    })
+    await mount(); await installed(); await click("删除")
+    get.mockImplementationOnce(async () => {
+      if (initialRead === "unknown") throw new Error("inventory unavailable")
+      return { plugins: [nova()] }
+    })
+    const dialog = document.querySelector('[role="dialog"]')!
+    await clickElement([...dialog.querySelectorAll<HTMLButtonElement>("button")].find((item) => item.textContent?.trim() === "删除")!)
+    expect(document.querySelector('[role="dialog"]')?.textContent).toContain("response lost")
+    expect(document.body.textContent).not.toContain("暂无插件")
+    await act(async () => { vi.advanceTimersByTime(10_000) })
+    expect(document.querySelector('[role="dialog"]')).toBeNull()
+    expect(document.body.textContent).toContain("暂无插件")
+    expect(document.body.textContent).not.toContain("response lost")
+    expect(remove).toHaveBeenCalledExactlyOnceWith("plugins/nova")
+  })
+
+  it("keeps a different removal dialog open when a later poll confirms the first target is absent", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] })
+    const other = { ...nova(), id: "other", name: "Other Plugin" }
+    inventory = [nova(), other]
+    remove.mockRejectedValueOnce(new Error("response lost"))
+    await mount(); await installed(); await click("删除")
+    const dialog = document.querySelector('[role="dialog"]')!
+    await clickElement([...dialog.querySelectorAll<HTMLButtonElement>("button")].find((item) => item.textContent?.trim() === "删除")!)
+    await click("取消")
+    await clickElement(document.querySelector<HTMLButtonElement>('li[aria-label="Other Plugin"] button:last-child')!)
+    inventory = [other]
+    await act(async () => { vi.advanceTimersByTime(10_000) })
+    expect(document.querySelector('[role="dialog"]')?.textContent).toContain("Other Plugin")
+    expect(document.querySelector('[role="dialog"]')?.textContent).not.toContain("response lost")
     expect(remove).toHaveBeenCalledExactlyOnceWith("plugins/nova")
   })
 

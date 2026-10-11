@@ -69,6 +69,10 @@ interface FormState {
   initialSource?: PluginSourceSpec | null
 }
 
+type ReconciliationIntent =
+  | { type: "install"; id: string }
+  | { type: "toggle"; id: string; enabled: boolean }
+
 export function SettingsPlugins() {
   useUiLocale()
   const [plugins, setPlugins] = useState<InstalledPluginView[]>([])
@@ -88,6 +92,7 @@ export function SettingsPlugins() {
   const busyRef = useRef(false)
   const readGeneration = useRef(0)
   const readingRef = useRef(false)
+  const reconciliationIntent = useRef<ReconciliationIntent | null>(null)
 
   useEffect(() => {
     mountedRef.current = true
@@ -116,6 +121,14 @@ export function SettingsPlugins() {
     }
     setServersConfirmed(runtime.status === "fulfilled")
     if (runtime.status === "fulfilled") setServers(runtime.value)
+    const intent = reconciliationIntent.current
+    if (
+      (intent?.type === "install" && list.status === "fulfilled" && list.value.some((plugin) => plugin.id === intent.id && plugin.status === "installed")) ||
+      (intent?.type === "toggle" && runtime.status === "fulfilled" && runtime.value.some((server) => server.id === intent.id && server.enabled === intent.enabled))
+    ) {
+      reconciliationIntent.current = null
+      setActionError(null)
+    }
     readingRef.current = false
     setLoading(false)
     return list.status === "fulfilled" ? list.value : null
@@ -129,10 +142,18 @@ export function SettingsPlugins() {
     return () => window.clearInterval(timer)
   }, [reload])
 
+  useEffect(() => {
+    if (confirmed && deleting && !plugins.some((plugin) => plugin.id === deleting.id)) {
+      setDeleting(null)
+      setDeleteError(null)
+    }
+  }, [confirmed, deleting, plugins])
+
   const beginOperation = (id: string) => {
     if (busyRef.current || !confirmed) return false
     busyRef.current = true
     readGeneration.current += 1
+    reconciliationIntent.current = null
     setOperation(id)
     setActionError(null)
     return true
@@ -149,18 +170,20 @@ export function SettingsPlugins() {
 
   const installNova = async () => {
     if (!beginOperation("nova-install")) return
+    reconciliationIntent.current = { type: "install", id: NOVA_PLUGIN.id }
     try {
       await pluginService.installPlugin(NOVA_PLUGIN.source)
     } catch {
       if (mountedRef.current) setActionError(uiText("plugin_install_failed"))
     } finally {
       const list = await finishOperation()
-      if (mountedRef.current && list) setActionError(list.some((plugin) => plugin.id === NOVA_PLUGIN.id) ? null : uiText("plugin_install_failed"))
+      if (mountedRef.current && list) setActionError(list.some((plugin) => plugin.id === NOVA_PLUGIN.id && plugin.status === "installed") ? null : uiText("plugin_install_failed"))
     }
   }
 
   const toggleServer = async (server: McpServer, enabled: boolean) => {
     if (!serversConfirmed || !beginOperation(`mcp:${server.id}`)) return
+    reconciliationIntent.current = { type: "toggle", id: server.id, enabled }
     try {
       await (enabled ? mcpService.connectServer(server.id) : mcpService.disconnectServer(server.id))
     } catch {
@@ -206,12 +229,8 @@ export function SettingsPlugins() {
     } catch (e) {
       if (mountedRef.current) setDeleteError(getErrorMessage(e))
     } finally {
-      const list = await finishOperation()
+      await finishOperation()
       if (mountedRef.current) {
-        if (list && !list.some((plugin) => plugin.id === targetId)) {
-          setDeleting(null)
-          setDeleteError(null)
-        }
         setDeleteBusy(false)
       }
     }
