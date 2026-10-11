@@ -10,6 +10,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { observePage, type PageObservation, type FrameObservation } from "./support/pageObservation.ts";
 import { restartRealBamboo } from "./support/restartRealBamboo.ts";
+import { closeSettings, selectSettingsCategory, settingsSurface } from "./support/settingsNavigation.ts";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -197,11 +198,9 @@ const openJianduSettings = async (
 ): Promise<Locator> => {
   const sidebar = await openSidebar(page, phone);
   await sidebar.getByRole("button", { name: "系统设置", exact: true }).click();
-  const settings = page.getByRole("dialog", { name: "系统设置" });
+  const settings = settingsSurface(page);
   await expect(settings).toBeVisible();
-  await settings
-    .getByRole("button", { name: "Jiandu 记忆", exact: true })
-    .click();
+  await selectSettingsCategory(settings, "jiandu", "Jiandu 记忆");
   await expect(
     settings.getByRole("heading", { name: "项目记忆", exact: true }),
   ).toBeVisible();
@@ -279,11 +278,6 @@ const createJianduMemory = async (
 
 const memoryRow = (settings: Locator, title: string): Locator =>
   settings.getByRole("listitem").filter({ hasText: title });
-
-const closeSettings = async (settings: Locator): Promise<void> => {
-  await settings.getByRole("button", { name: "关闭设置", exact: true }).click();
-  await expect(settings).toHaveCount(0);
-};
 
 const webSocketHttpOrigin = (url: string): string => {
   const parsed = new URL(url);
@@ -886,10 +880,18 @@ test("production UI completes and rehydrates one real Bamboo chat round trip", a
       .toBeGreaterThan(0);
     assertRealProviderSnapshot(first);
 
+    await expect(
+      page.getByRole("button", { name: "模型与推理强度", exact: true })
+        .getByText("gpt-4o-mini", { exact: true }),
+    ).toBeVisible();
     await page.getByRole("button", { name: "系统设置" }).click();
-    await expect(page.getByRole("heading", { name: "系统设置" })).toBeVisible();
-    await expect(page.getByText("gpt-4o-mini", { exact: true }).first()).toBeVisible();
-    await page.getByRole("button", { name: "提供方", exact: true }).click();
+    const settings = settingsSurface(page);
+    await expect(settings).toBeVisible();
+    await expect(settings.getByRole("heading", { name: "系统设置" })).toBeVisible();
+    await selectSettingsCategory(settings, "providers", "提供方");
+    await expect(
+      settings.getByRole("combobox", { name: "对话(必填)模型", exact: true }),
+    ).toHaveValue("gpt-4o-mini");
     const providerRow = page.locator("li").filter({ hasText: "Lotus real Bamboo E2E" });
     await expect(providerRow.getByText("Lotus real Bamboo E2E", { exact: true })).toBeVisible();
     await expect(providerRow.getByText("OpenAI", { exact: true })).toBeVisible();
@@ -903,7 +905,7 @@ test("production UI completes and rehydrates one real Bamboo chat round trip", a
       "已配置，留空保持不变",
     );
     await page.getByRole("button", { name: "取消", exact: true }).click();
-    await page.getByRole("button", { name: "关闭设置" }).click();
+    await closeSettings(settings);
     await expect(composer).toBeVisible();
 
     const providerBeforeChat = asRecord(
@@ -1182,7 +1184,9 @@ test("production Provider add discovers models, accepts custom IDs, and repairs 
     await assertBootstrap(observation);
     await assertLiveSocket(observation, contract.baseUrl.origin);
     await page.getByRole("button", { name: "系统设置" }).click();
-    await page.getByRole("button", { name: "提供方", exact: true }).click();
+    const settings = settingsSurface(page);
+    await expect(settings).toBeVisible();
+    await selectSettingsCategory(settings, "providers", "提供方");
     await page.getByRole("button", { name: "新增", exact: true }).click();
 
     const providerType = page.getByRole("combobox", {
@@ -1190,27 +1194,17 @@ test("production Provider add discovers models, accepts custom IDs, and repairs 
     });
     await providerType.click();
     const selectContent = page.locator('[data-slot="select-content"]');
-    const settingsDialog = page.locator(
-      '[data-slot="responsive-dialog-content"]',
-    );
-    const zIndex = (locator: Locator) =>
-      locator.evaluate((element) =>
-        Number.parseInt(
-          element.ownerDocument.defaultView?.getComputedStyle(element).zIndex ??
-            "0",
-          10,
-        ),
-      );
     await expect(selectContent).toBeVisible();
-    expect(await zIndex(selectContent)).toBeGreaterThan(
-      await zIndex(settingsDialog),
-    );
     const openAiOption = page.getByRole("option", {
       name: "OpenAI",
       exact: true,
     });
     await expect(openAiOption).toBeVisible();
+    // Settings is a page, so verify the portaled option receives real pointer
+    // input rather than comparing its z-index with the retired modal shell.
     await openAiOption.click();
+    await expect(providerType).toHaveText("OpenAI");
+    await expect(selectContent).toHaveCount(0);
 
     const nameInput = page.getByLabel("名称", { exact: true });
     await nameInput.fill(providerLabel);
@@ -1348,8 +1342,8 @@ test("production Provider add discovers models, accepts custom IDs, and repairs 
       "DELETE",
       `${instancesPath}/${encodeURIComponent(createdId!)}`,
     );
-    await page.getByRole("button", { name: "通用", exact: true }).click();
-    await page.getByRole("button", { name: "提供方", exact: true }).click();
+    await selectSettingsCategory(settings, "general", "通用");
+    await selectSettingsCategory(settings, "providers", "提供方");
     await expect(page.getByText(/提供方或模型偏好中有失效引用/)).toBeVisible();
 
     const repairProvider = page.getByRole("combobox", {
@@ -1395,7 +1389,7 @@ test("production Provider add discovers models, accepts custom IDs, and repairs 
       model: selectedModel,
     });
 
-    await page.getByRole("button", { name: "关闭设置" }).click();
+    await closeSettings(settings);
     await page.waitForLoadState("networkidle");
     await assertCleanPage(observation, contract.baseUrl.origin);
   } finally {
@@ -1997,8 +1991,9 @@ test("MCP JSON import merges, replaces, rolls back and survives a real restart",
   const openMcp = async (page: Page, phone: boolean): Promise<Locator> => {
     const sidebar = await openSidebar(page, phone);
     await sidebar.getByRole("button", { name: "系统设置", exact: true }).click();
-    const settings = page.getByRole("dialog", { name: "系统设置", exact: true });
-    await settings.getByRole("button", { name: "MCP", exact: true }).click();
+    const settings = settingsSurface(page);
+    await expect(settings).toBeVisible();
+    await selectSettingsCategory(settings, "mcp", "MCP");
     await expect(settings.getByRole("button", { name: "导入 JSON", exact: true })).toBeEnabled();
     return settings;
   };

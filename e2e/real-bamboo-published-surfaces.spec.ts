@@ -16,6 +16,7 @@ import {
   type PageObservation,
 } from "./support/pageObservation.ts";
 import { navigateWithNetworkChangeRecovery } from "./support/transientNavigation.ts";
+import { closeSettings, settingsSurface } from "./support/settingsNavigation.ts";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -337,13 +338,15 @@ const exerciseSurface = async ({
     });
     await expect(settingsButton).toBeVisible();
     await settingsButton.click();
-    const settings = page.getByRole("dialog", { name: "系统设置" });
+    // The pinned published baseline predates full-page Settings. Current-source
+    // packages must exercise the page contract, without falling back to a modal.
+    const settingsLayout = currentSourceArtifact ? "page" : "dialog";
+    const settings = settingsSurface(page, settingsLayout);
     await expect(settings).toBeVisible();
     await expect(
       settings.getByRole("heading", { name: "系统设置", exact: true }),
     ).toBeVisible();
-    await settings.getByRole("button", { name: "关闭设置", exact: true }).click();
-    await expect(settings).toHaveCount(0);
+    await closeSettings(settings, settingsLayout);
     await composer.focus();
     await expect(composer).toBeFocused();
 
