@@ -2,7 +2,7 @@ import { act } from "react"
 import { createRoot, type Root } from "react-dom/client"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { apiClient, ApiError } from "@services/api"
-import type { InstalledPluginView } from "@services/plugin"
+import type { InstalledPluginView, JianduSetupReport } from "@services/plugin"
 import { changeLocale } from "@shared/i18n"
 import { SettingsPlugins } from "./SettingsPlugins"
 import { NOVA_PLUGIN } from "./plugins/officialPlugins"
@@ -21,6 +21,16 @@ const server = (enabled = false, status = "stopped") => ({
 let inventory: InstalledPluginView[]
 let servers: ReturnType<typeof server>[]
 const get = vi.fn(); const post = vi.fn(); const remove = vi.fn()
+const copy = vi.hoisted(() => vi.fn())
+vi.mock("@shared/utils/clipboard", () => ({ copyText: copy }))
+const jianduReport = (ready = false): JianduSetupReport => ({
+  plugin_id: "jiandu", host: { os: "linux", arch: "x86_64", libc: "2.35", supported: true, reason: null },
+  release: { version: "0.3.2", manifest_url: "https://fixture.invalid/jiandu.tar.gz", sha256: "a".repeat(64) },
+  trust: { trusted: true, reason: null }, install: { available: !ready, reason: ready ? "already_installed" : null },
+  installed: { state: ready ? "ready" : "missing", version: ready ? "0.3.2" : null, reason: null },
+  external_client: ready ? { command: "/fixture/jiandu/bin/linux/jiandu", args: ["--data-dir", '/srv/custom memory/"active"'] } : null,
+})
+let jianduSetup: JianduSetupReport | null
 const deferred = <T,>() => {
   let resolve!: (value: T) => void
   let reject!: (reason: unknown) => void
@@ -46,7 +56,15 @@ async function mount() {
 }
 beforeEach(() => {
   inventory = []; servers = []
-  get.mockReset().mockImplementation(async (path) => path === "plugins" ? { plugins: inventory } : { servers })
+  jianduSetup = null
+  copy.mockReset().mockResolvedValue(undefined)
+  get.mockReset().mockImplementation(async (path) => {
+    if (path === "plugins/jiandu/setup") {
+      if (!jianduSetup) throw new ApiError("Not Found", 404, "Not Found")
+      return jianduSetup
+    }
+    return path === "plugins" ? { plugins: inventory } : { servers }
+  })
   post.mockReset().mockImplementation(async (path) => {
     if (path === "plugins/install") inventory = [nova()]
     if (path === "mcp/servers/nova/connect") servers = [server(true, "ready")]
@@ -65,13 +83,14 @@ afterEach(() => {
 })
 
 describe("official plugin center", () => {
-  it("explains built-in Jiandu memory and withholds its unpublished connector", async () => {
+  it("preserves built-in memory and disables the connector on legacy Bamboo", async () => {
     await mount()
     const card = document.querySelector('article[aria-label="Jiandu"]')!
     expect(card.textContent).toContain("基础记忆已内置")
     expect(card.textContent).toContain("无需安装此连接器")
     expect(card.querySelector("button")?.disabled).toBe(true)
     expect(card.querySelector("a")).toBeNull()
+    expect(card.textContent).toContain("请先更新服务")
     expect(document.body.textContent).toContain("另外安装并运行 Nova.app")
     expect(document.body.textContent).toContain("运行 Bamboo 的电脑")
     expect(post).not.toHaveBeenCalled()
@@ -393,6 +412,114 @@ describe("official plugin center", () => {
     await act(async () => { stale.resolve({ plugins: [] }) })
     expect(button("管理已安装插件")).toBeDefined()
     expect(button("安装 Nova 插件")).toBeUndefined()
+  })
+
+  it("installs Jiandu through the source-fixed action and confirms setup before copying", async () => {
+    jianduSetup = jianduReport()
+    const pending = deferred<unknown>()
+    post.mockReturnValueOnce(pending.promise)
+    await mount(); await click("安装 Jiandu 连接器")
+    expect(button("安装中…").disabled).toBe(true)
+    expect(post).toHaveBeenCalledExactlyOnceWith("plugins/official/jiandu/install", {})
+    expect(copy).not.toHaveBeenCalled()
+    await act(async () => { jianduSetup = jianduReport(true); pending.resolve(nova()) })
+    expect(button("复制 MCP 配置").disabled).toBe(false)
+    expect(document.body.textContent).toContain("基础记忆已内置")
+    expect(document.body.textContent).toContain("同一台电脑")
+    expect(servers).toEqual([])
+    const fresh = { ...jianduReport(true), external_client: { command: "/new/jiandu", args: ["--data-dir", "/new/active root"] as ["--data-dir", string] } }
+    jianduSetup = fresh
+    await click("复制 MCP 配置")
+    expect(copy).toHaveBeenCalledExactlyOnceWith(JSON.stringify({ mcpServers: { jiandu: fresh.external_client } }, null, 2))
+    expect(document.body.textContent).toContain("已复制配置")
+    expect(post).toHaveBeenCalledTimes(1)
+  })
+
+  it.each(["unsupported", "untrusted", "unverified", "incomplete"])("withholds Jiandu actions for %s setup", async (state) => {
+    jianduSetup = jianduReport()
+    jianduSetup.install = { available: false, reason: state }
+    if (state === "unsupported") jianduSetup.host = { ...jianduSetup.host, supported: false, reason: "unsupported_host" }
+    if (state === "untrusted") jianduSetup.trust = { trusted: false, reason: "publisher_not_trusted" }
+    if (state === "unverified" || state === "incomplete") jianduSetup.installed = { state: state === "incomplete" ? "installing" : "unverified", version: "0.3.2", reason: null }
+    await mount()
+    expect(button("安装 Jiandu 连接器").disabled).toBe(true)
+    expect(button("复制 MCP 配置")).toBeUndefined()
+    expect(post).not.toHaveBeenCalled(); expect(copy).not.toHaveBeenCalled()
+  })
+
+  it("keeps a successful install response unconfirmed until a fresh setup says ready", async () => {
+    jianduSetup = jianduReport()
+    await mount(); await click("安装 Jiandu 连接器")
+    expect(document.querySelector('[role="alert"]')?.textContent).toContain("尚未确认 Jiandu")
+    expect(button("复制 MCP 配置")).toBeUndefined()
+    expect(copy).not.toHaveBeenCalled()
+  })
+
+  it("reconciles a lost Jiandu install response through a later setup poll", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] })
+    jianduSetup = jianduReport()
+    await mount()
+    post.mockImplementationOnce(async () => { jianduSetup = jianduReport(true); throw new Error("response lost") })
+    get.mockImplementationOnce(async () => ({ plugins: [] }))
+    get.mockImplementationOnce(async () => ({ servers: [] }))
+    get.mockRejectedValueOnce(new Error("setup temporarily unavailable"))
+    await click("安装 Jiandu 连接器")
+    expect(button("安装 Jiandu 连接器").disabled).toBe(true)
+    expect(document.body.textContent).toContain("尚未确认 Jiandu")
+    await act(async () => { vi.advanceTimersByTime(10_000) })
+    expect(button("复制 MCP 配置").disabled).toBe(false)
+    expect(document.querySelector('[role="alert"]')).toBeNull()
+    expect(post).toHaveBeenCalledTimes(1)
+  })
+
+  it("does not copy stale client paths when fresh verification no longer passes", async () => {
+    jianduSetup = jianduReport(true)
+    await mount()
+    jianduSetup = { ...jianduReport(), install: { available: false, reason: "already_installed" }, installed: { state: "unverified", version: "0.3.2", reason: "invalid_managed_files" } }
+    await click("复制 MCP 配置")
+    expect(copy).not.toHaveBeenCalled()
+    expect(button("复制 MCP 配置")).toBeUndefined()
+    expect(document.body.textContent).toContain("未复制配置")
+  })
+
+  it("reconciles a duplicate-install conflict only through the fresh setup report", async () => {
+    jianduSetup = jianduReport()
+    post.mockImplementationOnce(async () => { jianduSetup = jianduReport(true); throw new ApiError("Conflict", 409, "Conflict") })
+    await mount(); await click("安装 Jiandu 连接器")
+    expect(button("复制 MCP 配置").disabled).toBe(false)
+    expect(document.querySelector('[role="alert"]')).toBeNull()
+    expect(post).toHaveBeenCalledExactlyOnceWith("plugins/official/jiandu/install", {})
+  })
+
+  it("does not let delayed Jiandu confirmation clear a newer Nova operation error", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] })
+    jianduSetup = jianduReport()
+    await mount()
+    post.mockRejectedValue(new Error("response lost"))
+    get.mockImplementationOnce(async () => ({ plugins: [] }))
+    get.mockImplementationOnce(async () => ({ servers: [] }))
+    get.mockRejectedValueOnce(new Error("setup unavailable"))
+    await click("安装 Jiandu 连接器")
+    await click("安装 Nova 插件")
+    jianduSetup = jianduReport(true)
+    await act(async () => { vi.advanceTimersByTime(10_000) })
+    expect(document.querySelector('[role="alert"]')?.textContent).toContain("若 Nova 仍未出现")
+    expect(button("复制 MCP 配置").disabled).toBe(false)
+    expect(post).toHaveBeenCalledTimes(2)
+  })
+
+  it("withholds copying when the fresh setup request fails and reports clipboard failure safely", async () => {
+    jianduSetup = jianduReport(true)
+    await mount()
+    get.mockRejectedValueOnce(new Error("SECRET_SETUP_DETAILS"))
+    await click("复制 MCP 配置")
+    expect(copy).not.toHaveBeenCalled()
+    expect(document.body.textContent).not.toContain("SECRET_SETUP_DETAILS")
+    copy.mockRejectedValueOnce(new Error("SECRET_CLIPBOARD_DETAILS"))
+    await click("复制 MCP 配置")
+    expect(document.body.textContent).toContain("无法检查或复制配置")
+    expect(document.body.textContent).not.toContain("SECRET_CLIPBOARD_DETAILS")
+    expect(document.body.textContent).not.toContain("已复制配置")
   })
 
   it("localizes discovery and setup guidance in English", async () => {

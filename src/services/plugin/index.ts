@@ -1,6 +1,7 @@
 export { PluginService, pluginService } from "./PluginService";
 export type {
   InstalledPluginView,
+  JianduSetupReport,
   PluginApiRecord,
   PluginInstallRequest,
   PluginListResponse,

@@ -9,6 +9,17 @@
 
 export type PluginStatus = "installing" | "installed";
 
+/** Host-derived authority for the optional connector; built-in memory is separate. */
+export interface JianduSetupReport {
+  plugin_id: "jiandu";
+  host: { os: string; arch: string; libc: string | null; supported: boolean; reason: string | null };
+  release: { version: string; manifest_url: string; sha256: string } | null;
+  trust: { trusted: boolean; reason: string | null };
+  install: { available: boolean; reason: string | null };
+  installed: { state: "missing" | "installing" | "ready" | "unverified"; version: string | null; reason: string | null };
+  external_client: { command: string; args: ["--data-dir", string] } | null;
+}
+
 export interface PluginSourceLocalDir {
   type: "local_dir";
   path: string;

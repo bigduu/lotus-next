@@ -8,6 +8,7 @@
 import { apiClient } from "../api";
 import type {
   InstalledPluginView,
+  JianduSetupReport,
   PluginApiRecord,
   PluginListResponse,
   PluginSourceSpec,
@@ -71,7 +72,52 @@ const normalizePlugin = (record: PluginApiRecord): InstalledPluginView => ({
   registered: normalizeRegistered(record.registered),
 });
 
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+const nullableString = (value: unknown) => value === null || typeof value === "string";
+const nonemptyString = (value: unknown): value is string => typeof value === "string" && value.trim().length > 0;
+const absoluteHostPath = (value: unknown, os: string): value is string =>
+  nonemptyString(value) && !value.includes("\0") && !value.includes("\r") && !value.includes("\n") &&
+  (os === "windows" ? /^(?:[A-Za-z]:[\\/]|\\\\[^\\/]+[\\/][^\\/]+)/.test(value) : value.startsWith("/"));
+
+const parseJianduSetup = (value: unknown): JianduSetupReport => {
+  const invalid = () => { throw new Error("Jiandu setup could not be verified."); };
+  if (!isRecord(value) || value.plugin_id !== "jiandu") return invalid();
+  const { host, release, trust, install, installed, external_client: client } = value;
+  if (!isRecord(host) || !nonemptyString(host.os) || !nonemptyString(host.arch) ||
+    !nullableString(host.libc) || typeof host.supported !== "boolean" || !nullableString(host.reason) ||
+    !isRecord(trust) || typeof trust.trusted !== "boolean" || !nullableString(trust.reason) ||
+    !isRecord(install) || typeof install.available !== "boolean" || !nullableString(install.reason) ||
+    !isRecord(installed) || typeof installed.state !== "string" || !["missing", "installing", "ready", "unverified"].includes(installed.state) ||
+    !nullableString(installed.version) || !nullableString(installed.reason)) return invalid();
+  if (release !== null && (!isRecord(release) || !nonemptyString(release.version) ||
+    !nonemptyString(release.manifest_url) || typeof release.sha256 !== "string" || !/^[a-f\d]{64}$/i.test(release.sha256))) return invalid();
+  if (client !== null && (!isRecord(client) || !absoluteHostPath(client.command, host.os) ||
+    !Array.isArray(client.args) || client.args.length !== 2 || client.args[0] !== "--data-dir" ||
+    !absoluteHostPath(client.args[1], host.os))) return invalid();
+  const eligible = host.supported && trust.trusted && release !== null;
+  if (install.available && (!eligible || installed.state !== "missing")) return invalid();
+  if ((installed.state === "ready") !== (client !== null) ||
+    (installed.state === "ready" && (!eligible || installed.version !== (release as Record<string, unknown>).version))) return invalid();
+  // Export only the reviewed command/args fields; never pass through optional
+  // transport settings or arbitrary extra wire keys into another MCP client.
+  return { ...value, external_client: client === null ? null : {
+    command: (client as Record<string, unknown>).command,
+    args: (client as Record<string, unknown>).args,
+  } } as unknown as JianduSetupReport;
+};
+
 export class PluginService {
+  async getJianduSetup(): Promise<JianduSetupReport> {
+    return parseJianduSetup(await apiClient.get<unknown>("plugins/jiandu/setup"));
+  }
+
+  async installOfficialJiandu(): Promise<void> {
+    // The source-fixed installer returns InstalledPluginView (201), not setup.
+    // Only a subsequent fresh setup GET can authorize external-client copying.
+    await apiClient.post<unknown>("plugins/official/jiandu/install", {});
+  }
+
   async listPlugins(): Promise<InstalledPluginView[]> {
     const response = await apiClient.get<PluginListResponse>("plugins");
     const ids = new Set<string>();
