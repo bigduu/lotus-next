@@ -219,6 +219,18 @@ describe("negotiated native task observations", () => {
     expect(actorSnapshotTree(parseActorSnapshot(source, "root")).byId["actor-0"].lifecycle).toBe("completed")
   })
 
+  it.each([
+    ["cold", "succeeded", "completed"], ["cold", "cancelled", "cancelled"],
+    ["failed", "failed", "failed"], ["retired", "cancelled", "retired"],
+  ] as const)("keeps %s/%s business outcome %s beside unconfirmed physical stop", (logical, activation, outcome) => {
+    const source = actorSnapshotV2Fixture("stop_unconfirmed")
+    source.nodes[1].logical_state = logical
+    source.nodes[1].activation!.status = activation
+    expect(actorSnapshotTree(parseActorSnapshot(source, "root")).byId["actor-0"]).toMatchObject({
+      lifecycle: outcome, health: "unknown", localTaskDiagnostic: "stop_unconfirmed",
+    })
+  })
+
   it("clears old stop diagnostics on a successor while rejecting an older activation", () => {
     const old = actorSnapshotV2Fixture("stop_unconfirmed")
     const next = actorSnapshotV2Fixture()

@@ -274,6 +274,8 @@ export function ActorTree({
               const lifecycle = node.lifecycle === "unknown" && node.localTaskDiagnostic
                 ? uiText(node.localTaskDiagnostic === "stop_unconfirmed" ? "native_task_stop_unconfirmed" : "native_task_stopped_outcome_unconfirmed")
                 : LIFECYCLE_LABEL[node.lifecycle]
+              const stopWarning = node.localTaskDiagnostic === "stop_unconfirmed" && node.lifecycle !== "unknown"
+                ? uiText("native_task_stop_unconfirmed") : null
               const health = node.health === null ? uiText("health_unknown_d7b6f7ae") : HEALTH_LABEL[node.health]
               return (
                 <div
@@ -288,7 +290,7 @@ export function ActorTree({
                   aria-selected={selected}
                   aria-label={[
                     node.title || uiText("unnamed_agent_1ff6bc72"), node.role || uiText("agent_5e84ea61"),
-                    lifecycle, PLACEMENT_LABEL[node.placement], health, ...counts,
+                    lifecycle, stopWarning, PLACEMENT_LABEL[node.placement], health, ...counts,
                     unread ? uiText("has_unread_messages") : null,
                   ].filter(Boolean).join(uiText("list_separator"))}
                   data-actor-id={node.actorId}
@@ -314,7 +316,7 @@ export function ActorTree({
                       {unread ? <span className="size-1.5 shrink-0 rounded-full bg-primary" aria-hidden="true" /> : null}
                     </span>
                     <span className="block truncate text-xs text-muted-foreground">
-                      {node.role || uiText("agent_5e84ea61")} · {lifecycle} · {PLACEMENT_LABEL[node.placement]} · {health}
+                      {node.role || uiText("agent_5e84ea61")} · {lifecycle}{stopWarning ? ` · ${stopWarning}` : ""} · {PLACEMENT_LABEL[node.placement]} · {health}
                       {counts.length ? ` · ${counts.join(" · ")}` : ""}
                     </span>
                   </span>

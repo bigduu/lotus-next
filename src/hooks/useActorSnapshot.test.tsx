@@ -742,6 +742,21 @@ describe("one bounded native observation expiry", () => {
     expect(selected).not.toHaveBeenCalled()
   })
 
+  it.each([["succeeded", "已完成"], ["cancelled", "已取消"]] as const)(
+    "keeps %s visible alongside the physical stop warning", async (status, label) => {
+      const source = actorSnapshotV2Fixture("stop_unconfirmed")
+      source.nodes[1].logical_state = "cold"
+      source.nodes[1].activation!.status = status
+      vi.mocked(getActorSnapshot).mockResolvedValue(source)
+      await act(async () => root.render(<ActorSnapshotPanel rootId="root" active selectedActorId="root" onSelectActor={vi.fn()} />))
+      const child = host.querySelector('[data-actor-id="actor-0"]')!
+      expect(child.getAttribute("aria-label")).toContain(label)
+      expect(child.getAttribute("aria-label")).toContain("停止未确认")
+      expect(child.textContent).toContain(label)
+      expect(child.textContent).toContain("停止未确认")
+    },
+  )
+
   it("distinguishes a stopped native task from a completed business outcome", async () => {
     vi.mocked(getActorSnapshot).mockResolvedValue(actorSnapshotV2Fixture("stopped"))
     await act(async () => root.render(<ActorSnapshotPanel rootId="root" active selectedActorId="root" onSelectActor={vi.fn()} />))
