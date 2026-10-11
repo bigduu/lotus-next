@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest"
+import { execFileSync } from "node:child_process"
 import { createHash } from "node:crypto"
-import { readFileSync } from "node:fs"
-import { resolveReleaseRequest, verifyAcceptanceEvidence, verifySourceReceipt, verifyCommittedAcceptance } from "./release-source.mjs"
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { dirname, join, resolve } from "node:path"
+import { resolveReleaseRequest, verifyAcceptanceEvidence, verifySourceReceipt, verifyCommittedAcceptance, verifyCandidateBackendPins } from "./release-source.mjs"
 
 const sourceSha = "5242eaf1d6e8cd8d437e8a4dcb82c63d00af82f1"
 const candidate = {
@@ -27,6 +30,111 @@ const environment = {
   GITHUB_WORKFLOW_REF: workflowRef, GITHUB_SHA: workflowSha, GITHUB_RUN_ID: "123", GITHUB_RUN_ATTEMPT: "1",
   LOTUS_NEXT_EXPECTED_SOURCE_REVISION: sourceSha, LOTUS_NEXT_RELEASE_VERSION: request.version,
 }
+
+describe("candidate Bamboo source bindings", () => {
+  const files = {
+    ci: readFileSync(".github/workflows/ci.yml", "utf8"),
+    publication: readFileSync(".github/workflows/publish-npm.yml", "utf8"),
+    runtime: readFileSync("e2e/support/realBambooRuntime.ts", "utf8"),
+    acceptanceTest: readFileSync("scripts/published-real-bamboo-acceptance.test.mjs", "utf8"),
+  }
+  const bambooSha = files.runtime.match(/export const REAL_BAMBOO_REVISION = "([0-9a-f]{40})";/)[1]
+  const currentCandidate = { ...candidate, bambooSha }
+  const dynamicBinding = "${{ needs.preflight.outputs.bamboo_sha }}"
+  const replaceBinding = (source, value) => source.replace(/BAMBOO_E2E_REVISION: [^\r\n]+/, `BAMBOO_E2E_REVISION: ${value}`)
+
+  it("accepts the actual receipt-bound publication workflow with its paired source pins", () => {
+    expect(() => verifyCandidateBackendPins(currentCandidate, files)).not.toThrow()
+  })
+  it("retains historical candidates whose publication workflow pins the accepted SHA literally", () => {
+    const historical = Object.fromEntries(Object.entries(files).map(([key, source]) => [key, source.replaceAll(bambooSha, candidate.bambooSha)]))
+    historical.publication = replaceBinding(historical.publication, candidate.bambooSha)
+    expect(() => verifyCandidateBackendPins(candidate, historical)).not.toThrow()
+  })
+  it("runs preflight against immutable candidate files and writes their Bamboo authority into the receipt and outputs", () => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), "lotus-source-preflight-")))
+    const repo = join(root, "repo")
+    mkdirSync(repo)
+    const git = (...args) => execFileSync("git", args, { cwd: repo, encoding: "utf8" }).trim()
+    const write = (path, source) => {
+      const target = join(repo, path)
+      mkdirSync(dirname(target), { recursive: true })
+      writeFileSync(target, source)
+    }
+    try {
+      git("init", "--quiet", "--initial-branch=main")
+      git("config", "user.name", "Lotus preflight test")
+      git("config", "user.email", "preflight@example.invalid")
+      for (const path of ["scripts/release-source.mjs", ".github/workflows/ci.yml", ".github/workflows/publish-npm.yml", "e2e/support/realBambooRuntime.ts", "scripts/published-real-bamboo-acceptance.test.mjs"]) {
+        write(path, readFileSync(resolve(path)))
+      }
+      git("add", ".")
+      git("commit", "--quiet", "-m", "Candidate source")
+      const sourceSha = git("rev-parse", "HEAD")
+      const sourceTree = git("rev-parse", "HEAD^{tree}")
+      git("tag", "-a", candidate.sourceRef.replace("refs/tags/", ""), "-m", "Accepted candidate")
+      const tagObjectSha = git("rev-parse", candidate.sourceRef)
+      git("commit", "--quiet", "--allow-empty", "-m", "Merged product")
+      const productMergeSha = git("rev-parse", "HEAD")
+      const acceptance = {
+        schemaVersion: 1, repository: "bigduu/lotus-next",
+        run: { id: candidate.acceptanceRunId, path: ".github/workflows/ci.yml", event: "workflow_dispatch", head_sha: sourceSha, status: "completed", conclusion: "success" },
+        jobs: { total_count: 3, jobs: ["Node 22", "Node 24", "Real Bamboo / Node 22"].map((name) => ({ name, head_sha: sourceSha, status: "completed", conclusion: "success" })) },
+        pullRequest: { number: candidate.productPullRequest, merged: true, head: { sha: sourceSha }, merge_commit_sha: productMergeSha },
+      }
+      const acceptanceBytes = JSON.stringify(acceptance)
+      const accepted = { ...currentCandidate, sourceSha, sourceTree, tagObjectSha, productMergeSha, acceptanceReceiptSha256: createHash("sha256").update(acceptanceBytes).digest("hex") }
+      write(".github/release-candidates.json", JSON.stringify({ schemaVersion: 1, candidates: { [request.version]: accepted } }))
+      write(`.github/release-acceptance/${request.version}.json`, acceptanceBytes)
+      // Publication controls can advance independently; their local CI pin must
+      // never replace the already accepted candidate's backend source authority.
+      write(".github/workflows/ci.yml", replaceBinding(files.ci, "a".repeat(40)))
+      git("add", ".")
+      git("commit", "--quiet", "-m", "Reviewed publication controls")
+      const workflowSha = git("rev-parse", "HEAD")
+      git("remote", "add", "origin", repo)
+      const receiptPath = join(root, "receipt.json")
+      const outputPath = join(root, "outputs")
+      execFileSync(process.execPath, [join(repo, "scripts/release-source.mjs")], {
+        cwd: repo,
+        env: { ...process.env, ...environment, GITHUB_SHA: workflowSha, EXPECTED_WORKFLOW_SHA: workflowSha, SOURCE_REF_INPUT: accepted.sourceRef, EXPECTED_SOURCE_SHA_INPUT: sourceSha, SOURCE_RECEIPT_PATH: receiptPath, GITHUB_OUTPUT: outputPath },
+        timeout: 10_000,
+      })
+      expect(sourceSha).not.toBe(workflowSha)
+      expect(JSON.parse(readFileSync(receiptPath, "utf8"))).toMatchObject({ sourceSha, sourceTree, workflowSha, bambooSha, tagObjectSha })
+      expect(readFileSync(outputPath, "utf8")).toContain(`bamboo_sha=${bambooSha}\n`)
+      expect(git("status", "--porcelain", "--untracked-files=all")).toBe("")
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+  it.each(["ci", "publication", "runtime", "acceptanceTest"])("rejects a missing %s source binding", (file) => {
+    expect(() => verifyCandidateBackendPins(currentCandidate, { ...files, [file]: "" })).toThrow()
+  })
+  it.each(["ci", "publication", "runtime", "acceptanceTest"])("rejects a mismatched %s pin despite the other matching bindings", (file) => {
+    const source = file === "publication" ? replaceBinding(files[file], workflowSha) : files[file].replaceAll(bambooSha, workflowSha)
+    expect(() => verifyCandidateBackendPins(currentCandidate, { ...files, [file]: source })).toThrow()
+  })
+  it("requires CI to pin the literal accepted revision even when publication uses the preflight output", () => {
+    expect(() => verifyCandidateBackendPins(currentCandidate, { ...files, ci: replaceBinding(files.ci, dynamicBinding) })).toThrow()
+  })
+  it.each([
+    "${{ inputs.bamboo_sha }}", "${{ env.BAMBOO_E2E_REVISION }}",
+    "${{ needs.verify.outputs.bamboo_sha }}", "${{ needs.preflight.outputs.source_sha }}",
+    "${{ needs.preflight.outputs.bamboo_sha || 'main' }}", dynamicBinding + "suffix", "main",
+  ])("rejects publication backend authority %s", (value) => {
+    expect(() => verifyCandidateBackendPins(currentCandidate, { ...files, publication: replaceBinding(files.publication, value) })).toThrow()
+  })
+  it.each(["ci", "publication"])("rejects commented or ambiguous %s assignments", (file) => {
+    const original = files[file]
+    const commented = original.replace(/^(\s*)(BAMBOO_E2E_REVISION:)/m, "$1# $2")
+    const duplicate = original + `\n      BAMBOO_E2E_REVISION: ${workflowSha}\n`
+    const suffixed = replaceBinding(original, (file === "ci" ? bambooSha : dynamicBinding) + "suffix")
+    for (const source of [commented, duplicate, suffixed]) {
+      expect(() => verifyCandidateBackendPins(currentCandidate, { ...files, [file]: source })).toThrow()
+    }
+  })
+})
 
 describe("accepted immutable release source", () => {
   it("verifies real reviewed historical acceptance bytes and rejects tampering", () => {

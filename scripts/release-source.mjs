@@ -87,6 +87,24 @@ export const verifyCommittedAcceptance = (candidate, bytes) => {
   return receipt
 }
 
+export const verifyCandidateBackendPins = (candidate, files) => {
+  const workflowPin = (source) => {
+    const assignments = [...source.matchAll(/^[ \t]*BAMBOO_E2E_REVISION:[ \t]*(.*)$/gm)]
+    assert.equal(assignments.length, 1, "Candidate workflow requires one backend source binding")
+    return assignments[0][1].trim()
+  }
+  assert.equal(workflowPin(files.ci), candidate.bambooSha, "Candidate CI backend pin differs from acceptance")
+  const publicationPin = workflowPin(files.publication)
+  // Historical candidates pin the SHA directly; current publication obtains it
+  // from the same accepted candidate through the run-bound preflight output.
+  assert.ok(
+    publicationPin === candidate.bambooSha || publicationPin === "${{ needs.preflight.outputs.bamboo_sha }}",
+    "Candidate publication backend source differs from acceptance",
+  )
+  assert.ok(files.runtime.includes(`REAL_BAMBOO_REVISION = "${candidate.bambooSha}"`))
+  assert.ok(files.acceptanceTest.includes(`"${candidate.bambooSha}"`))
+}
+
 const main = async () => {
   const environment = process.env
   assert.equal(environment.GITHUB_REPOSITORY, repository)
@@ -114,11 +132,12 @@ const main = async () => {
   assert.equal(git(["rev-parse", `${candidate.sourceSha}^{tree}`]), candidate.sourceTree)
   git(["fetch", "--no-tags", "origin", candidate.productMergeSha])
   assert.equal(git(["rev-parse", `${candidate.productMergeSha}^{tree}`]), candidate.sourceTree)
-  for (const file of [".github/workflows/ci.yml", ".github/workflows/publish-npm.yml"]) {
-    assert.ok(git(["show", `${candidate.sourceSha}:${file}`]).includes(`BAMBOO_E2E_REVISION: ${candidate.bambooSha}`), "Candidate workflow backend pin differs from acceptance")
-  }
-  assert.ok(git(["show", `${candidate.sourceSha}:e2e/support/realBambooRuntime.ts`]).includes(`REAL_BAMBOO_REVISION = "${candidate.bambooSha}"`))
-  assert.ok(git(["show", `${candidate.sourceSha}:scripts/published-real-bamboo-acceptance.test.mjs`]).includes(`"${candidate.bambooSha}"`))
+  verifyCandidateBackendPins(candidate, {
+    ci: git(["show", `${candidate.sourceSha}:.github/workflows/ci.yml`]),
+    publication: git(["show", `${candidate.sourceSha}:.github/workflows/publish-npm.yml`]),
+    runtime: git(["show", `${candidate.sourceSha}:e2e/support/realBambooRuntime.ts`]),
+    acceptanceTest: git(["show", `${candidate.sourceSha}:scripts/published-real-bamboo-acceptance.test.mjs`]),
+  })
   const receipt = {
     schemaVersion: 1, repository,
     version: environment.LOTUS_NEXT_RELEASE_VERSION,
