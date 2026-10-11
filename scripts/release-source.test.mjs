@@ -135,6 +135,26 @@ describe("candidate Bamboo source bindings", () => {
     expect(() => verifyCandidateBackendPins(currentCandidate, { ...files, publication: alter(files.publication) })).toThrow()
   })
   it.each([
+    ["single-quoted duplicate", (source) => source.replace("    outputs:\n", "    outputs:\n      'bamboo_sha': main\n")],
+    ["double-quoted duplicate", (source) => source.replace("    outputs:\n", '    outputs:\n      "bamboo_sha": main\n')],
+    ["merged output", (source) => source.replace("    outputs:\n", "    outputs:\n      <<: { bamboo_sha: main }\n")],
+    ["plain duplicate", (source) => source.replace("    outputs:\n", "    outputs:\n      bamboo_sha: main\n")],
+    ["missing reviewed output", (source) => source.replace("      source_tree: ${{ steps.source.outputs.source_tree }}\n", "")],
+    ["extra output", (source) => source.replace("    outputs:\n", "    outputs:\n      other: main\n")],
+    ["nested output", (source) => source.replace("      source_tree: ${{ steps.source.outputs.source_tree }}", "      source_tree:\n        override: main")],
+  ])("rejects preflight outputs with %s", (_name, alter) => {
+    expect(() => verifyCandidateBackendPins(currentCandidate, { ...files, publication: alter(files.publication) })).toThrow()
+  })
+  it.each(["preflight", "real-bamboo"].flatMap((job) => [
+    [job, "single-quoted equivalent", `  '${job}': {}`],
+    [job, "double-quoted equivalent", `  "${job}": {}`],
+    [job, "merged equivalent", `  <<: { ${job}: {} }`],
+    [job, "plain duplicate", `  ${job}: {}`],
+  ]))("rejects %s job name with %s", (_job, _name, extra) => {
+    const publication = files.publication.replace("jobs:\n", `jobs:\n${extra}\n`)
+    expect(() => verifyCandidateBackendPins(currentCandidate, { ...files, publication })).toThrow()
+  })
+  it.each([
     ["moving checkout ref", (source) => source.replace("ref: ${{ env.BAMBOO_E2E_REVISION }}", "ref: main")],
     ["different checkout revision", (source) => source.replace("ref: ${{ env.BAMBOO_E2E_REVISION }}", `ref: ${workflowSha}`)],
     ["unrelated checkout output", (source) => source.replace("ref: ${{ env.BAMBOO_E2E_REVISION }}", "ref: ${{ needs.preflight.outputs.source_sha }}")],

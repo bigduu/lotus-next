@@ -171,6 +171,7 @@ const verifyDynamicBackendWiring = (publication) => {
     NPM_CONFIG_PROGRESS: '"false"',
   })
   const jobs = workflowBlock(publication, "jobs", 0)
+  workflowMappingKeys(jobs, 2)
   const realBamboo = workflowBlock(jobs, "real-bamboo", 2)
   assert.deepEqual([...workflowMappingKeys(realBamboo, 4)].sort(), ["env", "name", "needs", "runs-on", "steps", "timeout-minutes"])
   assert.equal(workflowValue(realBamboo, "needs", 4), "[preflight, verify]")
@@ -195,6 +196,7 @@ const verifyDynamicBackendWiring = (publication) => {
   const preflight = workflowBlock(jobs, "preflight", 2)
   assert.deepEqual([...workflowMappingKeys(preflight, 4)].sort(), ["name", "outputs", "runs-on", "steps"])
   const outputs = workflowBlock(preflight, "outputs", 4)
+  assert.deepEqual([...workflowMappingKeys(outputs, 6, true)].sort(), ["bamboo_sha", "source_ref", "source_sha", "source_tree", "tag_object_sha", "workflow_sha"])
   assert.equal(workflowValue(outputs, "bamboo_sha", 6), "${{ steps.source.outputs.bamboo_sha }}")
   const steps = workflowBlock(preflight, "steps", 4).split(/^ {6}-[ \t]/m)
   const sourceSteps = steps.filter((step) => /^ {8}id:[ \t]*source[ \t]*$/m.test(step))
