@@ -1,5 +1,5 @@
 {
-  "source_commit": "4b4be14f868c94c449c3dcab9e4525b5d3fe3239",
+  "source_commit": "fcdd185dedc4fa43a7f8fc1324ea866d626db07b",
   "frontend": "Built Lotus Next frontend from this clean source commit",
   "backend": "Fixture APIs",
   "screenshots": {
@@ -25,10 +25,11 @@
   "validation": {
     "full_verify": "passed",
     "vitest_files_passed": 138,
-    "vitest_tests_passed": 2393,
+    "vitest_tests_passed": 2404,
     "built_browser_tests_passed": 3,
     "startup_css_raw_bytes": 108993,
-    "startup_css_gzip_bytes": 18412
+    "startup_css_gzip_bytes": 18412,
+    "focused_reconciliation_tests_passed": 27
   },
   "limitations": "Browser fixture evidence only. This does not verify native Bodhi, Nova.app installation, desktop permissions, or live package installation."
 }
