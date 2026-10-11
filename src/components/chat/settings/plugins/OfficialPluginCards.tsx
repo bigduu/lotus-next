@@ -4,6 +4,7 @@ import type { InstalledPluginView } from "@services/plugin"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { NOVA_PLUGIN } from "./officialPlugins"
+import type { ReactNode } from "react"
 
 export function NovaSetupNotice() {
   useUiLocale()
@@ -20,12 +21,13 @@ export function NovaSetupNotice() {
   )
 }
 
-export function OfficialPluginCards({ nova, installing, disabled, onInstallNova, onManageNova }: {
+export function OfficialPluginCards({ nova, installing, disabled, onInstallNova, onManageNova, jianduSetup }: {
   nova?: InstalledPluginView
   installing: boolean
   disabled: boolean
   onInstallNova: () => void
   onManageNova: () => void
+  jianduSetup: ReactNode
 }) {
   useUiLocale()
   return (
@@ -64,8 +66,7 @@ export function OfficialPluginCards({ nova, installing, disabled, onInstallNova,
           <p className="font-medium text-primary">{uiText("plugin_jiandu_builtin")}</p>
           <p className="mt-1 text-muted-foreground">{uiText("plugin_jiandu_builtin_detail")}</p>
         </div>
-        <p className="mt-3 text-xs leading-relaxed text-muted-foreground">{uiText("plugin_jiandu_unavailable_detail")}</p>
-        <div className="mt-auto flex justify-end pt-3"><Button size="sm" variant="secondary" disabled>{uiText("plugin_jiandu_unavailable")}</Button></div>
+        <div className="mt-auto pt-3">{jianduSetup}</div>
       </article>
     </div>
   )

@@ -4,6 +4,7 @@ import { Blocks, Plus, RefreshCw, RotateCw, Trash2 } from "lucide-react"
 import {
   pluginService,
   type InstalledPluginView,
+  type JianduSetupReport,
   type PluginSourceSpec,
   type PluginStatus,
   type RegisteredResources,
@@ -23,6 +24,8 @@ import { PluginFormDialog, type PluginFormMode } from "./plugins/PluginFormDialo
 import { NovaSetupNotice, OfficialPluginCards } from "./plugins/OfficialPluginCards"
 import { PluginRuntime } from "./plugins/PluginRuntime"
 import { NOVA_PLUGIN } from "./plugins/officialPlugins"
+import { JianduSetupPanel, type JianduSetupError } from "./plugins/JianduSetupPanel"
+import { copyText } from "@shared/utils/clipboard"
 
 function StatusBadge({ status }: { status: PluginStatus }) {
   useUiLocale()
@@ -71,6 +74,7 @@ interface FormState {
 
 type ReconciliationIntent =
   | { type: "install"; id: string }
+  | { type: "jiandu-install" }
   | { type: "toggle"; id: string; enabled: boolean }
 
 export function SettingsPlugins() {
@@ -80,6 +84,10 @@ export function SettingsPlugins() {
   const [confirmed, setConfirmed] = useState(false)
   const [servers, setServers] = useState<McpServer[]>([])
   const [serversConfirmed, setServersConfirmed] = useState(false)
+  const [jiandu, setJiandu] = useState<JianduSetupReport | null>(null)
+  const [jianduError, setJianduError] = useState<JianduSetupError>("loading")
+  const [copiedJianduConfig, setCopiedJianduConfig] = useState<string | null>(null)
+  const [copyError, setCopyError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
@@ -106,9 +114,10 @@ export function SettingsPlugins() {
     const generation = ++readGeneration.current
     readingRef.current = true
     if (!silent) setLoading(true)
-    const [list, runtime] = await Promise.allSettled([
+    const [list, runtime, setup] = await Promise.allSettled([
       pluginService.listPlugins(),
       mcpService.getServers(),
+      pluginService.getJianduSetup(),
     ])
     if (!mountedRef.current || generation !== readGeneration.current) return
     if (list.status === "fulfilled") {
@@ -121,9 +130,12 @@ export function SettingsPlugins() {
     }
     setServersConfirmed(runtime.status === "fulfilled")
     if (runtime.status === "fulfilled") setServers(runtime.value)
+    setJiandu(setup.status === "fulfilled" ? setup.value : null)
+    setJianduError(setup.status === "fulfilled" ? null : isApiError(setup.reason) && setup.reason.status === 404 ? "legacy" : "unknown")
     const intent = reconciliationIntent.current
     if (
       (intent?.type === "install" && list.status === "fulfilled" && list.value.some((plugin) => plugin.id === intent.id && plugin.status === "installed")) ||
+      (intent?.type === "jiandu-install" && setup.status === "fulfilled" && setup.value.installed.state === "ready") ||
       (intent?.type === "toggle" && runtime.status === "fulfilled" && runtime.value.some((server) => server.id === intent.id && server.enabled === intent.enabled))
     ) {
       reconciliationIntent.current = null
@@ -149,13 +161,15 @@ export function SettingsPlugins() {
     }
   }, [confirmed, deleting, plugins])
 
-  const beginOperation = (id: string) => {
-    if (busyRef.current || !confirmed) return false
+  const beginOperation = (id: string, requireInventory = true) => {
+    if (busyRef.current || (requireInventory && !confirmed)) return false
     busyRef.current = true
     readGeneration.current += 1
     reconciliationIntent.current = null
     setOperation(id)
     setActionError(null)
+    setCopyError(null)
+    setCopiedJianduConfig(null)
     return true
   }
 
@@ -178,6 +192,42 @@ export function SettingsPlugins() {
     } finally {
       const list = await finishOperation()
       if (mountedRef.current && list) setActionError(list.some((plugin) => plugin.id === NOVA_PLUGIN.id && plugin.status === "installed") ? null : uiText("plugin_install_failed"))
+    }
+  }
+
+  const installJiandu = async () => {
+    if (!jiandu?.install.available || !beginOperation("jiandu-install", false)) return
+    reconciliationIntent.current = { type: "jiandu-install" }
+    try {
+      await pluginService.installOfficialJiandu()
+    } catch {
+      // A lost response or 409 does not authorize another install or copying.
+      // The same fresh setup read reconciles both successful and uncertain POSTs.
+    } finally {
+      if (mountedRef.current) setActionError(uiText("plugin_jiandu_install_unconfirmed"))
+      await finishOperation()
+    }
+  }
+
+  const copyJiandu = async () => {
+    if (jiandu?.installed.state !== "ready" || !beginOperation("jiandu-copy", false)) return
+    try {
+      // Revalidate the managed files and active data root at the time of copying.
+      const fresh = await pluginService.getJianduSetup()
+      if (!mountedRef.current) return
+      setJiandu(fresh)
+      setJianduError(null)
+      if (fresh.installed.state !== "ready" || !fresh.external_client) {
+        setCopyError(uiText("plugin_jiandu_copy_unconfirmed"))
+        return
+      }
+      const configuration = JSON.stringify({ mcpServers: { jiandu: fresh.external_client } }, null, 2)
+      await copyText(configuration)
+      if (mountedRef.current) setCopiedJianduConfig(configuration)
+    } catch {
+      if (mountedRef.current) setCopyError(uiText("plugin_jiandu_copy_failed"))
+    } finally {
+      await finishOperation()
     }
   }
 
@@ -236,6 +286,11 @@ export function SettingsPlugins() {
     }
   }
 
+  const jianduPanel = <JianduSetupPanel report={jiandu} error={jianduError}
+    disabled={operation !== null || loading} installing={operation === "jiandu-install"}
+    copying={operation === "jiandu-copy"} copiedConfiguration={copiedJianduConfig} copyError={copyError}
+    onInstall={() => void installJiandu()} onCopy={() => void copyJiandu()} />
+
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -273,7 +328,7 @@ export function SettingsPlugins() {
         </TabsList>
         <TabsContent value="discover" className="pt-2">
           <OfficialPluginCards nova={plugins.find((plugin) => plugin.id === NOVA_PLUGIN.id)} installing={operation === "nova-install"}
-            disabled={!confirmed || operation !== null} onInstallNova={() => void installNova()} onManageNova={() => setTab("installed")} />
+            disabled={!confirmed || operation !== null} onInstallNova={() => void installNova()} onManageNova={() => setTab("installed")} jianduSetup={jianduPanel} />
           <p className="mt-3 text-xs leading-relaxed text-muted-foreground">{uiText("plugin_install_location")}</p>
         </TabsContent>
         <TabsContent value="installed" className="pt-2">
@@ -325,6 +380,7 @@ export function SettingsPlugins() {
                       <PluginRuntime ids={p.registered.mcp_server_ids ?? []} servers={servers} confirmed={serversConfirmed}
                         disabled={!confirmed || operation !== null || p.status === "installing"} onToggle={(server, enabled) => void toggleServer(server, enabled)} />
                       {p.id === NOVA_PLUGIN.id ? <div className="mt-3"><NovaSetupNotice /></div> : null}
+                      {p.id === "jiandu" ? <div className="mt-3">{jianduPanel}</div> : null}
                       <div className="mt-2 flex justify-end gap-2">
                         <Button
                           size="sm"
