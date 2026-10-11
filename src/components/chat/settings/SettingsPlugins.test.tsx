@@ -435,6 +435,42 @@ describe("official plugin center", () => {
     expect(post).toHaveBeenCalledTimes(1)
   })
 
+  it("installs Jiandu from its verified setup when unrelated plugin inventory is unavailable", async () => {
+    jianduSetup = jianduReport()
+    get.mockImplementation(async (path) => {
+      if (path === "plugins") throw new Error("inventory unavailable")
+      return path === "plugins/jiandu/setup" ? jianduSetup : { servers }
+    })
+    post.mockImplementationOnce(async () => { jianduSetup = jianduReport(true); return nova() })
+    await mount()
+    expect(button("安装 Jiandu 连接器").disabled).toBe(false)
+    expect(button("安装 Nova 插件").disabled).toBe(true)
+    expect(button("高级安装").disabled).toBe(true)
+    await click("安装 Jiandu 连接器")
+    expect(post).toHaveBeenCalledExactlyOnceWith("plugins/official/jiandu/install", {})
+    expect(button("复制 MCP 配置").disabled).toBe(false)
+    expect(document.body.textContent).not.toContain("尚未确认 Jiandu")
+    expect(servers).toEqual([])
+  })
+
+  it("copies fresh verified Jiandu paths when unrelated plugin inventory is unavailable", async () => {
+    jianduSetup = jianduReport(true)
+    get.mockImplementation(async (path) => {
+      if (path === "plugins") throw new Error("inventory unavailable")
+      return path === "plugins/jiandu/setup" ? jianduSetup : { servers }
+    })
+    await mount()
+    expect(button("复制 MCP 配置").disabled).toBe(false)
+    expect(button("安装 Nova 插件").disabled).toBe(true)
+    expect(button("高级安装").disabled).toBe(true)
+    const fresh = { ...jianduReport(true), external_client: { command: "/fresh/jiandu", args: ["--data-dir", "/fresh/active root"] as ["--data-dir", string] } }
+    jianduSetup = fresh
+    await click("复制 MCP 配置")
+    expect(copy).toHaveBeenCalledExactlyOnceWith(JSON.stringify({ mcpServers: { jiandu: fresh.external_client } }, null, 2))
+    expect(document.body.textContent).toContain("已复制配置")
+    expect(post).not.toHaveBeenCalled()
+  })
+
   it.each(["unsupported", "untrusted", "unverified", "incomplete"])("withholds Jiandu actions for %s setup", async (state) => {
     jianduSetup = jianduReport()
     jianduSetup.install = { available: false, reason: state }

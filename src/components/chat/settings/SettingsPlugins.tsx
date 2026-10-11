@@ -161,8 +161,8 @@ export function SettingsPlugins() {
     }
   }, [confirmed, deleting, plugins])
 
-  const beginOperation = (id: string) => {
-    if (busyRef.current || !confirmed) return false
+  const beginOperation = (id: string, requireInventory = true) => {
+    if (busyRef.current || (requireInventory && !confirmed)) return false
     busyRef.current = true
     readGeneration.current += 1
     reconciliationIntent.current = null
@@ -196,7 +196,7 @@ export function SettingsPlugins() {
   }
 
   const installJiandu = async () => {
-    if (!jiandu?.install.available || !beginOperation("jiandu-install")) return
+    if (!jiandu?.install.available || !beginOperation("jiandu-install", false)) return
     reconciliationIntent.current = { type: "jiandu-install" }
     try {
       await pluginService.installOfficialJiandu()
@@ -210,7 +210,7 @@ export function SettingsPlugins() {
   }
 
   const copyJiandu = async () => {
-    if (jiandu?.installed.state !== "ready" || !beginOperation("jiandu-copy")) return
+    if (jiandu?.installed.state !== "ready" || !beginOperation("jiandu-copy", false)) return
     try {
       // Revalidate the managed files and active data root at the time of copying.
       const fresh = await pluginService.getJianduSetup()
@@ -287,7 +287,7 @@ export function SettingsPlugins() {
   }
 
   const jianduPanel = <JianduSetupPanel report={jiandu} error={jianduError}
-    disabled={!confirmed || operation !== null || loading} installing={operation === "jiandu-install"}
+    disabled={operation !== null || loading} installing={operation === "jiandu-install"}
     copying={operation === "jiandu-copy"} copiedConfiguration={copiedJianduConfig} copyError={copyError}
     onInstall={() => void installJiandu()} onCopy={() => void copyJiandu()} />
 
