@@ -6,7 +6,7 @@ import { changeLocale } from "@shared/i18n"
 import { getActorSnapshot, type ActorSubtreeSnapshot } from "@services/chat/actorSnapshot"
 import { subscribeActor, subscribeActorTree } from "@services/chat/v2Stream"
 import { ActorSnapshotPanel } from "@/components/chat/ActorSnapshotPanel"
-import { actorSnapshotFixture } from "@/test/fixtures/actorSnapshot"
+import { actorSnapshotFixture, actorSnapshotV2Fixture } from "@/test/fixtures/actorSnapshot"
 import { useActorSnapshot } from "./useActorSnapshot"
 
 vi.mock("@services/chat/actorSnapshot", async (importOriginal) => ({
@@ -38,7 +38,7 @@ beforeEach(() => {
   vi.mocked(subscribeActorTree).mockClear()
   host = document.createElement("div"); document.body.appendChild(host); root = createRoot(host)
 })
-afterEach(() => { act(() => root.unmount()); host.remove(); vi.restoreAllMocks() })
+afterEach(() => { act(() => root.unmount()); host.remove(); vi.useRealTimers(); vi.restoreAllMocks() })
 const mount = async (id: string | null, active = true, actorId: string | null = null, descendantCount: number | null = null) => {
   await act(async () => root.render(<Harness id={id} active={active} actorId={actorId} descendantCount={descendantCount} />))
 }
@@ -575,5 +575,179 @@ describe("snapshot-only ActorTree panel", () => {
     expect(host.querySelector('[role="alert"]')?.textContent).toContain("暂时无法确认")
     expect(host.textContent).toContain("代理结构尚未确认")
     expect(host.querySelector('[role="tree"]')).toBeNull()
+  })
+})
+
+
+describe("one bounded native observation expiry", () => {
+  const advance = async (ms: number) => { await act(async () => { await vi.advanceTimersByTimeAsync(ms) }) }
+
+  it("refreshes once for an unchanged observation without extending or repeating its deadline", async () => {
+    vi.useFakeTimers()
+    vi.mocked(getActorSnapshot).mockResolvedValue(actorSnapshotV2Fixture())
+    await mount("root")
+    await advance(500)
+    await act(async () => { await state.refresh() })
+    expect(getActorSnapshot).toHaveBeenCalledTimes(2)
+    await advance(499)
+    expect(getActorSnapshot).toHaveBeenCalledTimes(2)
+    await advance(1)
+    expect(getActorSnapshot).toHaveBeenCalledTimes(3)
+    await advance(60_000)
+    expect(getActorSnapshot).toHaveBeenCalledTimes(3)
+    expect(state.snapshot?.nodes[1].local_task?.state).toBe("running")
+    expect(subscribeActor).not.toHaveBeenCalled()
+  })
+
+  it("waits for the full lease hint beyond 30 seconds before its single read", async () => {
+    vi.useFakeTimers()
+    vi.mocked(getActorSnapshot).mockResolvedValue(actorSnapshotV2Fixture("running", "root", 60_000))
+    await mount("root")
+    await advance(59_999)
+    expect(getActorSnapshot).toHaveBeenCalledOnce()
+    await advance(1)
+    expect(getActorSnapshot).toHaveBeenCalledTimes(2)
+    await advance(120_000)
+    expect(getActorSnapshot).toHaveBeenCalledTimes(2)
+  })
+
+  it("uses a changed observation to rearm even when a producer reuses snapshot identity", async () => {
+    vi.useFakeTimers()
+    vi.mocked(getActorSnapshot).mockResolvedValue(actorSnapshotV2Fixture())
+    await mount("root")
+    await advance(1_000)
+    const next = actorSnapshotV2Fixture()
+    next.nodes[1].local_task!.lease_expires_at = "2026-10-11T09:00:02Z"
+    vi.mocked(getActorSnapshot).mockResolvedValue(next)
+    await act(async () => { await state.refresh() })
+    await advance(1_000)
+    expect(getActorSnapshot).toHaveBeenCalledTimes(4)
+    await advance(60_000)
+    expect(getActorSnapshot).toHaveBeenCalledTimes(4)
+  })
+
+  it("schedules the next remaining actor only after the earliest evidence changes", async () => {
+    vi.useFakeTimers()
+    const initial = actorSnapshotV2Fixture()
+    initial.nodes.push({ ...initial.nodes[1], actor_id: "actor-1", local_task: {
+      ...initial.nodes[1].local_task!, lease_expires_at: "2026-10-11T09:00:02Z",
+    } })
+    const firstExpired = structuredClone(initial)
+    firstExpired.nodes[1].local_task!.state = "stop_unconfirmed"
+    firstExpired.nodes[1].local_task!.reason = "lease_expired_without_stop"
+    const bothExpired = structuredClone(firstExpired)
+    bothExpired.nodes[2].local_task!.state = "stop_unconfirmed"
+    bothExpired.nodes[2].local_task!.reason = "lease_expired_without_stop"
+    bothExpired.refresh_after_ms = null
+    vi.mocked(getActorSnapshot).mockResolvedValueOnce(initial).mockResolvedValueOnce(firstExpired).mockResolvedValue(bothExpired)
+    await mount("root")
+    await advance(1_000)
+    expect(getActorSnapshot).toHaveBeenCalledTimes(2)
+    await advance(1_000)
+    expect(getActorSnapshot).toHaveBeenCalledTimes(3)
+    await advance(60_000)
+    expect(getActorSnapshot).toHaveBeenCalledTimes(3)
+  })
+
+  it("coalesces expiry behind an in-flight read instead of aborting or overlapping it", async () => {
+    vi.useFakeTimers()
+    vi.mocked(getActorSnapshot).mockResolvedValue(actorSnapshotV2Fixture())
+    await mount("root")
+    const pending = deferred()
+    vi.mocked(getActorSnapshot).mockReturnValueOnce(pending.promise)
+    let refresh!: Promise<void>
+    act(() => { refresh = state.refresh() })
+    await advance(1_000)
+    expect(getActorSnapshot).toHaveBeenCalledTimes(2)
+    expect(vi.mocked(getActorSnapshot).mock.calls[1][2]?.aborted).toBe(false)
+    await act(async () => { pending.resolve(actorSnapshotV2Fixture()); await refresh })
+    expect(getActorSnapshot).toHaveBeenCalledTimes(3)
+    await advance(60_000)
+    expect(getActorSnapshot).toHaveBeenCalledTimes(3)
+  })
+
+  it.each(["inactive", "new-root", "unmounted"])("cancels an expiry when %s without granting another root interest", async (transition) => {
+    vi.useFakeTimers()
+    vi.mocked(getActorSnapshot).mockResolvedValueOnce(actorSnapshotV2Fixture()).mockResolvedValue(actorSnapshotFixture("other"))
+    await mount("root")
+    if (transition === "unmounted") await act(async () => root.render(null))
+    else await mount(transition === "new-root" ? "other" : "root", transition !== "inactive")
+    const reads = vi.mocked(getActorSnapshot).mock.calls.length
+    await advance(60_000)
+    expect(getActorSnapshot).toHaveBeenCalledTimes(reads)
+    expect(subscribeActor).not.toHaveBeenCalled()
+    if (transition === "new-root") expect(state.snapshot?.root_actor_id).toBe("other")
+  })
+
+  it("drops an expiry already queued as the consumer unmounts", async () => {
+    vi.useFakeTimers()
+    vi.mocked(getActorSnapshot).mockResolvedValue(actorSnapshotV2Fixture())
+    await mount("root")
+    act(() => {
+      vi.advanceTimersByTime(1_000)
+      root.render(null)
+    })
+    await act(async () => { await Promise.resolve() })
+    expect(getActorSnapshot).toHaveBeenCalledOnce()
+  })
+
+  it("clears revoked snapshots on the bounded read and does not retry a permission failure", async () => {
+    vi.useFakeTimers()
+    vi.mocked(getActorSnapshot).mockResolvedValueOnce(actorSnapshotV2Fixture()).mockRejectedValue(new ApiError("denied", 403, "Forbidden"))
+    await mount("root", true, "actor-0")
+    const close = vi.mocked(subscribeActor).mock.results.at(-1)!.value.close
+    await advance(1_000)
+    expect(state.snapshot).toBeNull()
+    expect(close).toHaveBeenCalledOnce()
+    await advance(60_000)
+    expect(getActorSnapshot).toHaveBeenCalledTimes(2)
+  })
+
+  it("does not manufacture expiry or stop evidence for v1 and unavailable observations", async () => {
+    vi.useFakeTimers()
+    await mount("root")
+    await advance(60_000)
+    expect(getActorSnapshot).toHaveBeenCalledOnce()
+    const next = actorSnapshotV2Fixture()
+    next.nodes[1].local_task = null
+    vi.mocked(getActorSnapshot).mockResolvedValue(next)
+    await act(async () => { await state.refresh() })
+    await advance(60_000)
+    expect(getActorSnapshot).toHaveBeenCalledTimes(2)
+  })
+
+  it("shows stop-unconfirmed after reload and removes it for the next activation", async () => {
+    const unknown = actorSnapshotV2Fixture("stop_unconfirmed")
+    vi.mocked(getActorSnapshot).mockResolvedValue(unknown)
+    const selected = vi.fn()
+    const panel = () => <ActorSnapshotPanel rootId="root" active selectedActorId="root" onSelectActor={selected} />
+    await act(async () => root.render(panel()))
+    const child = () => host.querySelector('[data-actor-id="actor-0"]')!
+    expect(child().getAttribute("aria-label")).toContain("停止未确认")
+    expect(child().getAttribute("aria-label")).not.toContain("运行中")
+    expect(host.querySelectorAll("button")).toHaveLength(1)
+    await act(async () => { await changeLocale("en-US") })
+    expect(child().getAttribute("aria-label")).toContain("Stop unconfirmed")
+    await act(async () => root.render(null))
+    await act(async () => root.render(panel()))
+    expect(child().getAttribute("aria-label")).toContain("Stop unconfirmed")
+    const next = actorSnapshotV2Fixture()
+    next.nodes[1].revision.actor_directory_revision = 3
+    next.nodes[1].activation!.attempt = 2
+    next.nodes[1].activation!.activation_id = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+    vi.mocked(getActorSnapshot).mockResolvedValue(next)
+    await act(async () => host.querySelector<HTMLButtonElement>("button")!.click())
+    expect(child().getAttribute("aria-label")).toContain("Running")
+    expect(child().getAttribute("aria-label")).not.toContain("Stop unconfirmed")
+    expect(selected).not.toHaveBeenCalled()
+  })
+
+  it("distinguishes a stopped native task from a completed business outcome", async () => {
+    vi.mocked(getActorSnapshot).mockResolvedValue(actorSnapshotV2Fixture("stopped"))
+    await act(async () => root.render(<ActorSnapshotPanel rootId="root" active selectedActorId="root" onSelectActor={vi.fn()} />))
+    const label = host.querySelector('[data-actor-id="actor-0"]')!.getAttribute("aria-label")
+    expect(label).toContain("任务已停止，结果待确认")
+    expect(label).not.toContain("已完成")
+    expect(label).not.toContain("已取消")
   })
 })

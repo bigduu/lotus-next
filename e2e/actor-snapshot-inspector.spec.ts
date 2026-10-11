@@ -1,6 +1,6 @@
 import { installResizeDiagnostics } from "./support/resizeDiagnostics.js"
 import { expect, test, type Page, type WebSocketRoute } from "@playwright/test"
-import { actorSnapshotFixture } from "../src/test/fixtures/actorSnapshot.js"
+import { actorSnapshotFixture, actorSnapshotV2Fixture } from "../src/test/fixtures/actorSnapshot.js"
 import { installArtifactRuntime, standaloneScenario } from "./support/artifactRuntime.js"
 
 const rootId = "all-surface-session"
@@ -463,4 +463,71 @@ test("pending and budget-rejected snapshots never present a partial actor tree",
   await expect(panel.getByRole("treeitem")).toHaveCount(1)
   await expect(panel.getByRole("alert")).toHaveCount(0)
   expect(observation.pageErrors).toEqual([])
+})
+
+
+// Negotiated public evidence only. These fixtures do not claim a native stop.
+test("native stop evidence survives reload and a successor clears only its own diagnosis", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name === "tablet-chromium", "desktop and narrow diagnostic acceptance")
+  const { observation, requests } = await prepare(page)
+  let current = actorSnapshotV2Fixture("stop_unconfirmed", rootId)
+  await page.route(`**/api/v1/actors/${rootId}/snapshot?*`, (route) => {
+    expect(route.request().method()).toBe("GET")
+    expect(route.request().headers().accept).toBe("application/vnd.bamboo.actor-snapshot.v2+json, application/json;q=0.9")
+    expect(new URL(route.request().url()).searchParams.toString()).toBe(`subtree_id=${rootId}`)
+    return route.fulfill({ contentType: "application/vnd.bamboo.actor-snapshot.v2+json", body: JSON.stringify(current) })
+  })
+  await page.goto(standaloneScenario.entryUrl)
+  let panel = await openInspector(page)
+  const row = () => panel.locator('[data-actor-id="actor-0"]')
+  await expect(row()).toHaveAttribute("aria-label", /停止未确认/)
+  await expect(row()).not.toHaveAttribute("aria-label", /运行中|已完成|已取消/)
+  await page.screenshot({ path: testInfo.outputPath("native-stop-unconfirmed.png") })
+  await page.reload()
+  panel = page.locator("[data-actor-snapshot-panel]")
+  if (!await panel.isVisible()) panel = await openInspector(page)
+  await expect(row()).toHaveAttribute("aria-label", /停止未确认/)
+
+  current = actorSnapshotV2Fixture("stopped", rootId)
+  await panel.getByRole("button", { name: "刷新代理结构" }).click()
+  await expect(row()).toHaveAttribute("aria-label", /任务已停止，结果待确认/)
+  await expect(row()).not.toHaveAttribute("aria-label", /已完成|已取消/)
+  current = actorSnapshotV2Fixture("running", rootId, null)
+  current.nodes[1].revision.actor_directory_revision = 3
+  current.nodes[1].activation = { activation_id: activationB, attempt: 2, status: "running" }
+  await panel.getByRole("button", { name: "刷新代理结构" }).click()
+  await expect(row()).toHaveAttribute("aria-label", /运行中/)
+  await expect(row()).not.toHaveAttribute("aria-label", /停止未确认|结果待确认/)
+  current = actorSnapshotV2Fixture("stop_unconfirmed", rootId)
+  await panel.getByRole("button", { name: "刷新代理结构" }).click()
+  await expect(panel.locator('[data-actor-gap="snapshot_regression"]')).toBeVisible()
+  await expect(row()).toHaveAttribute("aria-label", /运行中/)
+  await expect(row()).not.toHaveAttribute("aria-label", /停止未确认/)
+  expect(requests.some((url) => /\/sessions\/actor-[^/]+\/history/.test(new URL(url).pathname))).toBe(false)
+  expect(observation.clientFrames.some((value) => frame(value).type === "subscribe" && /^(actor|message)\.actor-/.test(String(frame(value).ch)))).toBe(false)
+  expect(observation.httpRequests.filter((request) => /\/(stop|cancel|retry)(?:\?|$)/.test(request.url))).toEqual([])
+  expect(observation.protocolErrors).toEqual([])
+  expect(observation.pageErrors).toEqual([])
+  expect(await page.locator("html").evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1)
+})
+
+test("one expiry read cannot invent a stop or keep polling unchanged native evidence", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop-chromium", "shared hook timer acceptance")
+  await prepare(page)
+  await page.clock.install()
+  let reads = 0
+  await page.route(`**/api/v1/actors/${rootId}/snapshot?*`, (route) => {
+    reads += 1
+    return route.fulfill({ contentType: "application/vnd.bamboo.actor-snapshot.v2+json",
+      body: JSON.stringify(actorSnapshotV2Fixture("running", rootId)) })
+  })
+  await page.goto(standaloneScenario.entryUrl)
+  const panel = await openInspector(page)
+  await expect(panel.locator('[data-actor-id="actor-0"]')).toHaveAttribute("aria-label", /运行中/)
+  await page.clock.runFor(1_000)
+  await expect.poll(() => reads).toBe(2)
+  await page.clock.runFor(60_000)
+  expect(reads).toBe(2)
+  await expect(panel.locator('[data-actor-id="actor-0"]')).toHaveAttribute("aria-label", /运行中/)
+  await expect(panel.locator('[data-actor-id="actor-0"]')).not.toHaveAttribute("aria-label", /停止未确认|已取消/)
 })

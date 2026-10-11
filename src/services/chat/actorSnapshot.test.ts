@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
-import { actorSnapshotFixture } from "@/test/fixtures/actorSnapshot"
-import { ACTOR_SNAPSHOT_MAX_BYTES, actorSnapshotRegresses, actorSnapshotTree, actorTreeCursorCovers, getActorSnapshot, parseActorSnapshot } from "./actorSnapshot"
+import { actorSnapshotFixture, actorSnapshotV2Fixture } from "@/test/fixtures/actorSnapshot"
+import { ACTOR_SNAPSHOT_ACCEPT, ACTOR_SNAPSHOT_V2_MEDIA_TYPE, ACTOR_SNAPSHOT_MAX_BYTES, actorSnapshotRegresses, actorSnapshotTree, actorTreeCursorCovers, getActorSnapshot, parseActorSnapshot } from "./actorSnapshot"
 
 const treeCursor = (revision: number, scope = "a".repeat(64)) => `at1-${scope}-${revision}`
 
@@ -166,7 +166,7 @@ describe("snapshot transport", () => {
     const controller = new AbortController()
     api.fetchRaw.mockResolvedValue(new Response(JSON.stringify(actorSnapshotFixture("root ?")), { headers: { "Content-Type": "application/json" } }))
     await getActorSnapshot("root ?", "root ?", controller.signal)
-    expect(api.fetchRaw).toHaveBeenCalledExactlyOnceWith("actors/root%20%3F/snapshot?subtree_id=root+%3F", { signal: controller.signal, cache: "no-store" })
+    expect(api.fetchRaw).toHaveBeenCalledExactlyOnceWith("actors/root%20%3F/snapshot?subtree_id=root+%3F", { signal: controller.signal, cache: "no-store", headers: { Accept: ACTOR_SNAPSHOT_ACCEPT } })
   })
   it("cancels oversized streaming bodies before JSON decoding", async () => {
     const cancel = vi.fn()
@@ -183,5 +183,139 @@ describe("snapshot transport", () => {
     const failure = new Error("HTTP rejected")
     api.fetchRaw.mockRejectedValue(failure)
     await expect(getActorSnapshot("root")).rejects.toBe(failure)
+  })
+})
+
+
+describe("negotiated native task observations", () => {
+  it.each(["running", "stopped", "stop_unconfirmed"] as const)("preserves strict %s evidence without making a business outcome", (state) => {
+    const source = actorSnapshotV2Fixture(state)
+    const parsed = parseActorSnapshot(source, "root")
+    expect(parsed).toEqual(source)
+    const tree = actorSnapshotTree(parsed)
+    expect(tree.byId["actor-0"].lifecycle).toBe(state === "running" ? "running" : "unknown")
+    expect(tree.byId["actor-0"].localTaskDiagnostic).toBe(state === "running" ? null : state)
+    expect(parsed.nodes[1].activation?.status).toBe("running")
+    expect(tree.byId["actor-0"]).not.toHaveProperty("canStop")
+  })
+
+  it.each([30_001, 60_000, 2_147_483_647])("accepts the full safe %i ms expiry hint", (delay) => {
+    const source = actorSnapshotV2Fixture("running", "root", delay)
+    expect(parseActorSnapshot(source, "root").refresh_after_ms).toBe(delay)
+  })
+
+  it("accepts native evidence with unknown concrete placement and with a local placement", () => {
+    const source = actorSnapshotV2Fixture("stop_unconfirmed")
+    expect(source.nodes[1].placement_class).toBeNull()
+    expect(actorSnapshotTree(parseActorSnapshot(source, "root")).byId["actor-0"].placement).toBe("unknown")
+    source.nodes[1].placement_class = "local"
+    expect(actorSnapshotTree(parseActorSnapshot(source, "root")).byId["actor-0"].placement).toBe("local")
+  })
+
+  it("preserves a durable business outcome independently from native stop proof", () => {
+    const source = actorSnapshotV2Fixture("stopped")
+    source.nodes[1].logical_state = "cold"
+    source.nodes[1].activation!.status = "succeeded"
+    expect(actorSnapshotTree(parseActorSnapshot(source, "root")).byId["actor-0"].lifecycle).toBe("completed")
+  })
+
+  it("clears old stop diagnostics on a successor while rejecting an older activation", () => {
+    const old = actorSnapshotV2Fixture("stop_unconfirmed")
+    const next = actorSnapshotV2Fixture()
+    next.nodes[1].revision.actor_directory_revision = 3
+    next.nodes[1].activation = { activation_id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", attempt: 2, status: "running" }
+    const tree = actorSnapshotTree(next, false, actorSnapshotTree(old))
+    expect(tree.byId["actor-0"]).toMatchObject({ lifecycle: "running", health: null, localTaskDiagnostic: null })
+    expect(actorSnapshotRegresses(next, old)).toBe(true)
+  })
+
+  it.each([
+    ["v1 extra diagnostic", (v: any) => { v.schema_version = 1; v.snapshot_id = `as1-${"a".repeat(64)}`; delete v.refresh_after_ms }],
+    ["v2 old hash", (v: any) => { v.snapshot_id = `as1-${"a".repeat(64)}` }],
+    ["missing hint", (v: any) => { delete v.refresh_after_ms }],
+    ["short hint", (v: any) => { v.refresh_after_ms = 999 }],
+    ["long hint", (v: any) => { v.refresh_after_ms = 2_147_483_648 }],
+    ["fractional hint", (v: any) => { v.refresh_after_ms = 1_000.5 }],
+    ["missing observation", (v: any) => { delete v.nodes[0].local_task }],
+    ["private proof", (v: any) => { v.nodes[1].local_task.pid = 123 }],
+    ["unknown state", (v: any) => { v.nodes[1].local_task.state = "cancelled" }],
+    ["missing reason", (v: any) => { v.nodes[1].local_task.state = "stop_unconfirmed" }],
+    ["unknown reason", (v: any) => { v.nodes[1].local_task.reason = "lost" }],
+    ["false reason", (v: any) => { v.nodes[1].local_task.reason = "execution_stop_unconfirmed" }],
+    ["foreign placement", (v: any) => { v.nodes[1].placement_class = "remote" }],
+    ["no current activation", (v: any) => { v.nodes[1].activation = null }],
+    ["root evidence", (v: any) => { v.nodes[0].local_task = v.nodes[1].local_task }],
+    ["non-RFC timestamp", (v: any) => { v.nodes[1].local_task.observed_at = "2026-10-11" }],
+    ["impossible date", (v: any) => { v.nodes[1].local_task.observed_at = "2026-02-30T09:00:00Z" }],
+    ["invalid zone", (v: any) => { v.nodes[1].local_task.lease_expires_at = "2026-10-11T09:00:00+25:00" }],
+  ])("rejects %s without rendering partial evidence", (_reason, corrupt) => {
+    const source = actorSnapshotV2Fixture(); corrupt(source)
+    expect(() => parseActorSnapshot(source, "root")).toThrow()
+  })
+
+  it("accepts stable lease expiry evidence without inferring stopped or cancelled", () => {
+    const source = actorSnapshotV2Fixture("stop_unconfirmed")
+    source.nodes[1].local_task!.reason = "lease_expired_without_stop"
+    source.nodes[1].local_task!.observed_at = "2026-10-11T09:00:01.123456789+00:00"
+    expect(actorSnapshotTree(parseActorSnapshot(source, "root")).byId["actor-0"].lifecycle).toBe("unknown")
+  })
+
+  it("reads a negotiated vendor response once and keeps old-host v1 compatibility", async () => {
+    api.fetchRaw.mockResolvedValueOnce(new Response(JSON.stringify(actorSnapshotV2Fixture("stop_unconfirmed")), { headers: { "Content-Type": ACTOR_SNAPSHOT_V2_MEDIA_TYPE } }))
+    expect((await getActorSnapshot("root")).schema_version).toBe(2)
+    api.fetchRaw.mockResolvedValueOnce(new Response(JSON.stringify(actorSnapshotFixture()), { headers: { "Content-Type": "application/json" } }))
+    expect((await getActorSnapshot("root")).schema_version).toBe(1)
+    expect(api.fetchRaw).toHaveBeenCalledTimes(2)
+  })
+
+  it("never retries a rejected negotiation or malformed v2 through a v1 fallback", async () => {
+    api.fetchRaw.mockRejectedValueOnce(new Error("HTTP 400"))
+    await expect(getActorSnapshot("root")).rejects.toThrow("HTTP 400")
+    expect(api.fetchRaw).toHaveBeenCalledOnce()
+    api.fetchRaw.mockResolvedValueOnce(new Response(JSON.stringify({ ...actorSnapshotV2Fixture(), unknown: true }), { headers: { "Content-Type": ACTOR_SNAPSHOT_V2_MEDIA_TYPE } }))
+    await expect(getActorSnapshot("root")).rejects.toThrow()
+    expect(api.fetchRaw).toHaveBeenCalledTimes(2)
+  })
+})
+
+
+describe("same-activation native evidence ordering", () => {
+  it.each(["running", "stop_unconfirmed"] as const)("keeps confirmed stop evidence over stale %s or absent evidence", (state) => {
+    const prior = actorSnapshotV2Fixture("stopped")
+    expect(actorSnapshotRegresses(prior, actorSnapshotV2Fixture(state))).toBe(true)
+    const missing = actorSnapshotV2Fixture()
+    missing.nodes[1].local_task = null
+    expect(actorSnapshotRegresses(prior, missing)).toBe(true)
+    expect(actorSnapshotRegresses(prior, actorSnapshotV2Fixture("stopped"))).toBe(false)
+  })
+
+  it("never clears explicit unknown through a running lease, but accepts genuine stopped proof", () => {
+    const prior = actorSnapshotV2Fixture("stop_unconfirmed")
+    const live = actorSnapshotV2Fixture()
+    live.nodes[1].local_task!.lease_expires_at = "2026-10-11T10:00:00Z"
+    expect(actorSnapshotRegresses(prior, live)).toBe(true)
+    expect(actorSnapshotRegresses(prior, actorSnapshotV2Fixture("stopped"))).toBe(false)
+    const expired = actorSnapshotV2Fixture("stop_unconfirmed")
+    expired.nodes[1].local_task!.reason = "lease_expired_without_stop"
+    expect(actorSnapshotRegresses(prior, expired)).toBe(true)
+  })
+
+  it("accepts running after expiry only with a strictly later lease for that activation", () => {
+    const prior = actorSnapshotV2Fixture("stop_unconfirmed")
+    prior.nodes[1].local_task!.reason = "lease_expired_without_stop"
+    const same = actorSnapshotV2Fixture()
+    expect(actorSnapshotRegresses(prior, same)).toBe(true)
+    same.nodes[1].local_task!.lease_expires_at = "2026-10-11T09:00:01.000000001Z"
+    expect(actorSnapshotRegresses(prior, same)).toBe(false)
+    expect(actorSnapshotRegresses(same, actorSnapshotV2Fixture())).toBe(true)
+  })
+
+  it("does not allow same-state evidence time to go backward", () => {
+    const prior = actorSnapshotV2Fixture("stopped")
+    prior.nodes[1].local_task!.observed_at = "2026-10-11T09:00:00.000000002Z"
+    const old = actorSnapshotV2Fixture("stopped")
+    old.nodes[1].local_task!.observed_at = "2026-10-11T10:00:00.000000001+01:00"
+    expect(actorSnapshotRegresses(prior, old)).toBe(true)
+    expect(actorSnapshotRegresses(old, prior)).toBe(false)
   })
 })

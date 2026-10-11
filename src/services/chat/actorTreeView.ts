@@ -10,6 +10,8 @@ export interface ActorTreeNode {
   lifecycle: ActorLifecycle | "active" | "unknown"
   placement: ActorPlacement | "docker" | "ssh" | "schedulable"
   health: ActorHealth | null
+  /** Native execution evidence does not replace the canonical business outcome. */
+  localTaskDiagnostic?: "stopped" | "stop_unconfirmed" | null
   queuedCount: number | null
   waitingForCount: number | null
   pendingRequestCount: number | null

@@ -1,5 +1,8 @@
 // Application-owned UI copy.
 export const uiZhCn = {
+  "native_task_stop_unconfirmed": "停止未确认",
+  "native_task_stopped_outcome_unconfirmed": "任务已停止，结果待确认",
+
   "workflow_run_title": "编排运行",
   "workflow_run_hint": "在当前会话中运行目录编排。聊天指令仍单独选择。",
   "workflow_run_refresh": "刷新",

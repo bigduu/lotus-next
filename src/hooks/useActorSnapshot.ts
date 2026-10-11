@@ -40,6 +40,9 @@ export function useActorSnapshot(rootId: string | null, active: boolean, interes
   const request = useRef<AbortController | null>(null)
   const retryTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const retryAttempts = useRef(0)
+  const expiryTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // One bounded observation set, independent of titles, transport hints and cursors.
+  const expiryObservation = useRef<{ key: string; due: number; consumed: boolean } | null>(null)
   const refreshQueued = useRef<string | null>(null)
   const refreshAfterFlight = useRef(false)
   const snapshotRef = useRef<ActorSubtreeSnapshot | null>(null)
@@ -132,8 +135,11 @@ export function useActorSnapshot(rootId: string | null, active: boolean, interes
     ++generation.current
     if (retryTimer.current !== null) { clearTimeout(retryTimer.current); retryTimer.current = null }
     retryAttempts.current = 0
+    if (expiryTimer.current !== null) { clearTimeout(expiryTimer.current); expiryTimer.current = null }
+    expiryObservation.current = null
     request.current?.abort()
     request.current = null
+    refreshQueued.current = null
     refreshAfterFlight.current = false
     snapshotRef.current = null
     workerGap.current = null
@@ -149,6 +155,34 @@ export function useActorSnapshot(rootId: string | null, active: boolean, interes
     if (active && rootId && previous.rootId === rootId && previous.count !== null &&
       descendantCountHint !== null && previous.count !== descendantCountHint) void refresh()
   }, [rootId, active, descendantCountHint, refresh])
+
+  useEffect(() => {
+    if (expiryTimer.current !== null) { clearTimeout(expiryTimer.current); expiryTimer.current = null }
+    const snapshot = state.snapshot
+    if (!active || !rootId || state.rootId !== rootId || snapshot?.schema_version !== 2) return
+    const hint = snapshot.refresh_after_ms
+    const now = performance.now()
+    const native = snapshot.nodes.filter((node) => node.local_task !== null && node.local_task !== undefined)
+      .sort((left, right) => left.actor_id.localeCompare(right.actor_id))
+    const key = JSON.stringify(native.map((node) => [node.actor_id, node.activation, node.local_task]))
+    const prior = expiryObservation.current
+    const observation = prior?.key === key ? prior : { key, due: Infinity, consumed: false }
+    expiryObservation.current = observation
+    if (hint === null || hint === undefined || observation.consumed || !native.some((node) => node.local_task?.state === "running")) return
+    // A repeated read may shorten an existing deadline, never postpone it.
+    observation.due = Math.min(observation.due, now + hint)
+    expiryTimer.current = setTimeout(() => {
+      expiryTimer.current = null
+      if (scope.current.rootId !== rootId || !scope.current.active) return
+      // A changed observation set can schedule the next earliest lease; an
+      // unchanged expired response cannot start a refresh loop.
+      observation.consumed = true
+      queueRefresh()
+    }, Math.max(0, observation.due - performance.now()))
+    return () => {
+      if (expiryTimer.current !== null) { clearTimeout(expiryTimer.current); expiryTimer.current = null }
+    }
+  }, [active, rootId, state.rootId, state.snapshot, queueRefresh])
 
   const treeAuthorized = active && !!rootId && state.rootId === rootId &&
     state.snapshot?.root_actor_id === rootId &&

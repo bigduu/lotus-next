@@ -1,5 +1,8 @@
 // Application-owned UI copy.
 export const uiEnUs = {
+  "native_task_stop_unconfirmed": "Stop unconfirmed",
+  "native_task_stopped_outcome_unconfirmed": "Task stopped; outcome unconfirmed",
+
   "workflow_run_title": "Workflow runs",
   "workflow_run_hint": "Run a catalog orchestration in this session. Chat instructions stay separate.",
   "workflow_run_refresh": "Refresh",
