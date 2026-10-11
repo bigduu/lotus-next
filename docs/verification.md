@@ -113,6 +113,10 @@ plain block keys and action inputs. Step environments, merged or quoted keys,
 duplicate mappings, and unreviewed inputs fail closed. This strengthens
 preflight rejection; the existing runtime gate still checks the exact Bamboo
 checkout SHA independently.
+The source authority step also requires its reviewed plain block shape and
+four exact environment inputs, without step execution overrides or inherited
+workflow/preflight run defaults. This bounded structural check does not evaluate
+arbitrary other steps, file mutations, action supply chains, or general YAML.
 Missing, duplicate, or mismatched workflow bindings are
 rejected without changing the tag, tree, acceptance, or workflow identity gates.
 

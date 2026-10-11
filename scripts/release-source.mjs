@@ -109,34 +109,48 @@ const workflowValue = (source, key, indentation) => {
   return assignments[0][1].trim()
 }
 
-const verifyPairedCheckoutShape = (step) => {
+const verifyWorkflowStepShape = (step, expectedKeys, blockKey, expectedInputs) => {
   const keys = []
   const inputs = []
   let currentKey
   for (const line of step.split(/\r?\n/)) {
     if (!line.trim() || line.trimStart().startsWith("#")) continue
-    const declaration = /^( *)([a-z][a-z0-9_-]*):(?:[ \t]+(.*))?$/.exec(line.trimEnd())
-    assert.ok(declaration, "Candidate paired checkout requires plain block keys")
+    const declaration = /^( *)([A-Za-z][A-Za-z0-9_-]*):(?:[ \t]+(.*))?$/.exec(line.trimEnd())
+    assert.ok(declaration, "Candidate authority step requires plain block keys")
     const [, spaces, key, value] = declaration
     // Splitting the sequence removes the first key's six-space dash prefix.
     if (keys.length === 0 || spaces.length === 8) {
       assert.equal(spaces.length, keys.length === 0 ? 0 : 8)
       keys.push(key)
       currentKey = key
-      if (key === "with") assert.equal(value, undefined, "Candidate paired checkout requires block inputs")
+      if (key === blockKey) assert.equal(value, undefined, "Candidate authority step requires block inputs")
     } else {
       assert.equal(spaces.length, 10)
-      assert.equal(currentKey, "with")
+      assert.equal(currentKey, blockKey)
       inputs.push(key)
     }
   }
-  // Reject step env, merge/quoted keys, duplicate mappings, and unreviewed
-  // action inputs instead of trying to evaluate YAML precedence rules.
-  assert.deepEqual(keys.sort(), ["name", "uses", "with"])
-  assert.deepEqual(inputs.sort(), ["path", "persist-credentials", "ref", "repository"])
+  // Reject overrides, merge/quoted keys, duplicates, and unreviewed inputs
+  // instead of trying to evaluate YAML precedence rules.
+  assert.deepEqual(keys.sort(), expectedKeys)
+  assert.deepEqual(inputs.sort(), expectedInputs)
+}
+
+const verifyNoRunDefaults = (source, indentation) => {
+  const keys = new Set()
+  for (const line of source.split(/\r?\n/)) {
+    if (!line.trim() || line.trimStart().startsWith("#") || line.search(/\S/) !== indentation) continue
+    const declaration = /^ *([a-z][a-z0-9_-]*):(?:[ \t]+.*)?$/.exec(line.trimEnd())
+    assert.ok(declaration, "Candidate execution scope requires plain mapping keys")
+    const key = declaration[1]
+    assert.notEqual(key, "defaults", "Candidate source authority cannot inherit run defaults")
+    assert.ok(!keys.has(key), "Candidate execution scope requires unique mapping keys")
+    keys.add(key)
+  }
 }
 
 const verifyDynamicBackendWiring = (publication) => {
+  verifyNoRunDefaults(publication, 0)
   const jobs = workflowBlock(publication, "jobs", 0)
   const realBamboo = workflowBlock(jobs, "real-bamboo", 2)
   assert.equal(workflowValue(realBamboo, "needs", 4), "[preflight, verify]")
@@ -145,7 +159,7 @@ const verifyDynamicBackendWiring = (publication) => {
   const checkoutSteps = workflowBlock(realBamboo, "steps", 4).split(/^ {6}-[ \t]/m)
     .filter((step) => /^ {10}path:[ \t]*\.e2e-bamboo[ \t]*$/m.test(step))
   assert.equal(checkoutSteps.length, 1, "Candidate publication requires one paired Bamboo checkout")
-  verifyPairedCheckoutShape(checkoutSteps[0])
+  verifyWorkflowStepShape(checkoutSteps[0], ["name", "uses", "with"], "with", ["path", "persist-credentials", "ref", "repository"])
   assert.equal(workflowValue(checkoutSteps[0], "uses", 8), "actions/checkout@v7")
   const checkout = workflowBlock(checkoutSteps[0], "with", 8)
   assert.equal(workflowValue(checkout, "repository", 10), "bigduu/Bamboo-agent")
@@ -153,13 +167,20 @@ const verifyDynamicBackendWiring = (publication) => {
   assert.equal(workflowValue(checkout, "path", 10), ".e2e-bamboo")
   assert.equal(workflowValue(checkout, "persist-credentials", 10), "false")
   const preflight = workflowBlock(jobs, "preflight", 2)
+  verifyNoRunDefaults(preflight, 4)
   const outputs = workflowBlock(preflight, "outputs", 4)
   assert.equal(workflowValue(outputs, "bamboo_sha", 6), "${{ steps.source.outputs.bamboo_sha }}")
   const steps = workflowBlock(preflight, "steps", 4).split(/^ {6}-[ \t]/m)
   const sourceSteps = steps.filter((step) => /^ {8}id:[ \t]*source[ \t]*$/m.test(step))
   assert.equal(sourceSteps.length, 1, "Candidate preflight requires one source authority step")
+  verifyWorkflowStepShape(sourceSteps[0], ["env", "id", "name", "run"], "env", ["EXPECTED_SOURCE_SHA_INPUT", "EXPECTED_WORKFLOW_SHA", "SOURCE_RECEIPT_PATH", "SOURCE_REF_INPUT"])
   assert.equal(workflowValue(sourceSteps[0], "id", 8), "source")
   assert.equal(workflowValue(sourceSteps[0], "run", 8), "node scripts/release-source.mjs")
+  const sourceEnvironment = workflowBlock(sourceSteps[0], "env", 8)
+  assert.equal(workflowValue(sourceEnvironment, "SOURCE_REF_INPUT", 10), "${{ inputs.source_ref }}")
+  assert.equal(workflowValue(sourceEnvironment, "EXPECTED_SOURCE_SHA_INPUT", 10), "${{ inputs.expected_source_sha }}")
+  assert.equal(workflowValue(sourceEnvironment, "EXPECTED_WORKFLOW_SHA", 10), "${{ github.workflow_sha }}")
+  assert.equal(workflowValue(sourceEnvironment, "SOURCE_RECEIPT_PATH", 10), "${{ runner.temp }}/release-source-receipt.json")
 }
 
 export const verifyCandidateBackendPins = (candidate, files) => {

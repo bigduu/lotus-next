@@ -168,6 +168,33 @@ describe("candidate Bamboo source bindings", () => {
     expect(() => verifyCandidateBackendPins(currentCandidate, { ...files, publication })).not.toThrow()
   })
   it.each([
+    ["working directory", "        working-directory: shim"],
+    ["shell", "        shell: node {0}"],
+    ["flow env", "        env: { SOURCE_REF_INPUT: main }"],
+    ["merged execution context", "        <<: { working-directory: shim }"],
+    ["quoted working directory", "        'working-directory': shim"],
+    ["continue on error", "        continue-on-error: true"],
+  ])("rejects a source authority step with %s", (_name, extra) => {
+    const publication = files.publication.replace("        id: source", `        id: source\n${extra}`)
+    expect(() => verifyCandidateBackendPins(currentCandidate, { ...files, publication })).toThrow()
+  })
+  it.each(["SOURCE_REF_INPUT", "EXPECTED_SOURCE_SHA_INPUT", "EXPECTED_WORKFLOW_SHA", "SOURCE_RECEIPT_PATH"])("rejects altered source authority input %s", (key) => {
+    const publication = files.publication.replace(new RegExp(`^          ${key}:.*$`, "m"), `          ${key}: main`)
+    expect(() => verifyCandidateBackendPins(currentCandidate, { ...files, publication })).toThrow()
+  })
+  it.each([
+    ["workflow block", (source) => `defaults:\n  run:\n    working-directory: shim\n${source}`],
+    ["workflow flow", (source) => `defaults: { run: { shell: 'node {0}' } }\n${source}`],
+    ["workflow quoted", (source) => `'defaults': { run: { working-directory: shim } }\n${source}`],
+    ["workflow merge", (source) => `<<: { defaults: { run: { working-directory: shim } } }\n${source}`],
+    ["preflight block", (source) => source.replace("  preflight:", "  preflight:\n    defaults:\n      run:\n        working-directory: shim")],
+    ["preflight flow", (source) => source.replace("  preflight:", "  preflight:\n    defaults: { run: { shell: 'node {0}' } }")],
+    ["preflight quoted", (source) => source.replace("  preflight:", "  preflight:\n    'defaults': { run: { working-directory: shim } }")],
+    ["preflight merge", (source) => source.replace("  preflight:", "  preflight:\n    <<: { defaults: { run: { working-directory: shim } } }")],
+  ])("rejects inherited source execution overrides in %s", (_name, alter) => {
+    expect(() => verifyCandidateBackendPins(currentCandidate, { ...files, publication: alter(files.publication) })).toThrow()
+  })
+  it.each([
     "${{ inputs.bamboo_sha }}", "${{ env.BAMBOO_E2E_REVISION }}",
     "${{ needs.verify.outputs.bamboo_sha }}", "${{ needs.preflight.outputs.source_sha }}",
     "${{ needs.preflight.outputs.bamboo_sha || 'main' }}", dynamicBinding + "suffix", "main",
