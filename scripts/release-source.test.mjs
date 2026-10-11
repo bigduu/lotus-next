@@ -195,6 +195,32 @@ describe("candidate Bamboo source bindings", () => {
     expect(() => verifyCandidateBackendPins(currentCandidate, { ...files, publication: alter(files.publication) })).toThrow()
   })
   it.each([
+    ["preflight block", (source) => source.replace("  preflight:", "  preflight:\n    env:\n      NODE_OPTIONS: --require ./shim.cjs")],
+    ["preflight flow", (source) => source.replace("  preflight:", "  preflight:\n    env: { NODE_OPTIONS: --require ./shim.cjs }")],
+    ["preflight quoted", (source) => source.replace("  preflight:", "  preflight:\n    'env': { NODE_OPTIONS: --require ./shim.cjs }")],
+    ["preflight merge", (source) => source.replace("  preflight:", "  preflight:\n    <<: { env: { NODE_OPTIONS: --require ./shim.cjs } }")],
+    ["preflight duplicate", (source) => source.replace("  preflight:", "  preflight:\n    env: {}\n    env: { NODE_OPTIONS: --require ./shim.cjs }")],
+    ["workflow extra entry", (source) => source.replace("env:\n", "env:\n  NODE_OPTIONS: --require ./shim.cjs\n")],
+    ["workflow missing entry", (source) => source.replace('  NPM_CONFIG_AUDIT: "false"\n', "")],
+    ["workflow quoted entry", (source) => source.replace("  NPM_CONFIG_AUDIT:", "  'NPM_CONFIG_AUDIT':")],
+    ["workflow merged entry", (source) => source.replace("env:\n", "env:\n  <<: { NODE_OPTIONS: --require ./shim.cjs }\n")],
+    ["workflow duplicate entry", (source) => source.replace('  NPM_CONFIG_AUDIT: "false"', '  NPM_CONFIG_AUDIT: "false"\n  NPM_CONFIG_AUDIT: "true"')],
+    ["workflow nested entry", (source) => source.replace('  NPM_CONFIG_AUDIT: "false"', '  NPM_CONFIG_AUDIT:\n    NODE_OPTIONS: --require ./shim.cjs')],
+    ["workflow flow", (source) => source.replace(/env:\n[\s\S]*?\n\njobs:/, "env: { NODE_OPTIONS: --require ./shim.cjs }\n\njobs:")],
+    ["workflow quoted", (source) => source.replace(/^env:/m, "'env':")],
+    ["workflow merge", (source) => `<<: { env: { NODE_OPTIONS: --require ./shim.cjs } }\n${source}`],
+    ["workflow duplicate", (source) => `env: { NODE_OPTIONS: --require ./shim.cjs }\n${source}`],
+  ])("rejects inherited source environments in %s", (_name, alter) => {
+    expect(() => verifyCandidateBackendPins(currentCandidate, { ...files, publication: alter(files.publication) })).toThrow()
+  })
+  it.each([
+    "LOTUS_NEXT_RELEASE_VERSION", "LOTUS_NEXT_SOURCE_DIRTY", "LOTUS_NEXT_EXPECTED_SOURCE_DIRTY", "DEFAULT_BRANCH",
+    "NPM_CONFIG_AUDIT", "NPM_CONFIG_FUND", "NPM_CONFIG_PROGRESS",
+  ])("rejects altered workflow environment input %s", (key) => {
+    const publication = files.publication.replace(new RegExp(`^  ${key}:.*$`, "m"), `  ${key}: --require ./shim.cjs`)
+    expect(() => verifyCandidateBackendPins(currentCandidate, { ...files, publication })).toThrow()
+  })
+  it.each([
     "${{ inputs.bamboo_sha }}", "${{ env.BAMBOO_E2E_REVISION }}",
     "${{ needs.verify.outputs.bamboo_sha }}", "${{ needs.preflight.outputs.source_sha }}",
     "${{ needs.preflight.outputs.bamboo_sha || 'main' }}", dynamicBinding + "suffix", "main",

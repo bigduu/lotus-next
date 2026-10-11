@@ -115,7 +115,11 @@ preflight rejection; the existing runtime gate still checks the exact Bamboo
 checkout SHA independently.
 The source authority step also requires its reviewed plain block shape and
 four exact environment inputs, without step execution overrides or inherited
-workflow/preflight run defaults. This bounded structural check does not evaluate
+workflow/preflight run defaults. Preflight job environments are rejected, and
+the workflow environment accepts only the seven reviewed plain, unique entries
+with exact values. This prevents inherited execution overrides such as
+`NODE_OPTIONS` from changing how the source script runs. This bounded structural
+check does not evaluate
 arbitrary other steps, file mutations, action supply chains, or general YAML.
 Missing, duplicate, or mismatched workflow bindings are
 rejected without changing the tag, tree, acceptance, or workflow identity gates.

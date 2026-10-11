@@ -136,21 +136,43 @@ const verifyWorkflowStepShape = (step, expectedKeys, blockKey, expectedInputs) =
   assert.deepEqual(inputs.sort(), expectedInputs)
 }
 
-const verifyNoRunDefaults = (source, indentation) => {
+const workflowMappingKeys = (source, indentation, flat = false) => {
   const keys = new Set()
   for (const line of source.split(/\r?\n/)) {
-    if (!line.trim() || line.trimStart().startsWith("#") || line.search(/\S/) !== indentation) continue
-    const declaration = /^ *([a-z][a-z0-9_-]*):(?:[ \t]+.*)?$/.exec(line.trimEnd())
+    if (!line.trim() || line.trimStart().startsWith("#")) continue
+    if (line.search(/\S/) !== indentation) {
+      assert.equal(flat, false, "Candidate environment requires flat mapping entries")
+      continue
+    }
+    const declaration = /^ *([A-Za-z][A-Za-z0-9_-]*):(?:[ \t]+.*)?$/.exec(line.trimEnd())
     assert.ok(declaration, "Candidate execution scope requires plain mapping keys")
     const key = declaration[1]
-    assert.notEqual(key, "defaults", "Candidate source authority cannot inherit run defaults")
     assert.ok(!keys.has(key), "Candidate execution scope requires unique mapping keys")
     keys.add(key)
   }
+  return keys
+}
+
+const verifyExecutionScope = (source, indentation, allowEnvironment = false) => {
+  const keys = workflowMappingKeys(source, indentation)
+  assert.ok(!keys.has("defaults"), "Candidate source authority cannot inherit run defaults")
+  assert.ok(allowEnvironment || !keys.has("env"), "Candidate source authority cannot inherit preflight environment")
 }
 
 const verifyDynamicBackendWiring = (publication) => {
-  verifyNoRunDefaults(publication, 0)
+  verifyExecutionScope(publication, 0, true)
+  const workflowEnvironment = workflowBlock(publication, "env", 0)
+  const expectedEnvironment = {
+    LOTUS_NEXT_RELEASE_VERSION: "${{ inputs.version }}",
+    LOTUS_NEXT_SOURCE_DIRTY: '"false"',
+    LOTUS_NEXT_EXPECTED_SOURCE_DIRTY: '"false"',
+    DEFAULT_BRANCH: "${{ github.event.repository.default_branch }}",
+    NPM_CONFIG_AUDIT: '"false"',
+    NPM_CONFIG_FUND: '"false"',
+    NPM_CONFIG_PROGRESS: '"false"',
+  }
+  assert.deepEqual([...workflowMappingKeys(workflowEnvironment, 2, true)].sort(), Object.keys(expectedEnvironment).sort())
+  for (const [key, value] of Object.entries(expectedEnvironment)) assert.equal(workflowValue(workflowEnvironment, key, 2), value)
   const jobs = workflowBlock(publication, "jobs", 0)
   const realBamboo = workflowBlock(jobs, "real-bamboo", 2)
   assert.equal(workflowValue(realBamboo, "needs", 4), "[preflight, verify]")
@@ -167,7 +189,7 @@ const verifyDynamicBackendWiring = (publication) => {
   assert.equal(workflowValue(checkout, "path", 10), ".e2e-bamboo")
   assert.equal(workflowValue(checkout, "persist-credentials", 10), "false")
   const preflight = workflowBlock(jobs, "preflight", 2)
-  verifyNoRunDefaults(preflight, 4)
+  verifyExecutionScope(preflight, 4)
   const outputs = workflowBlock(preflight, "outputs", 4)
   assert.equal(workflowValue(outputs, "bamboo_sha", 6), "${{ steps.source.outputs.bamboo_sha }}")
   const steps = workflowBlock(preflight, "steps", 4).split(/^ {6}-[ \t]/m)
