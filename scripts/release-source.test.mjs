@@ -119,6 +119,22 @@ describe("candidate Bamboo source bindings", () => {
     expect(() => verifyCandidateBackendPins(currentCandidate, { ...files, ci: replaceBinding(files.ci, dynamicBinding) })).toThrow()
   })
   it.each([
+    ["dispatch input", (source) => source.replace("steps.source.outputs.bamboo_sha", "inputs.bamboo_sha")],
+    ["moving ref", (source) => source.replace("${{ steps.source.outputs.bamboo_sha }}", "main")],
+    ["unrelated step output", (source) => source.replace("steps.source.outputs.bamboo_sha", "steps.other.outputs.bamboo_sha")],
+    ["commented output mapping", (source) => source.replace("      bamboo_sha:", "      # bamboo_sha:")],
+    ["duplicate output mapping", (source) => source.replace("      bamboo_sha:", "      bamboo_sha: main\n      bamboo_sha:")],
+    ["another job's environment", (source) => source.replace("  real-bamboo:", "  other-runtime:")],
+    ["missing preflight dependency", (source) => source.replace("    needs: [preflight, verify]", "    needs: verify")],
+    ["another environment level", (source) => source.replace(`      BAMBOO_E2E_REVISION: ${dynamicBinding}`, `          BAMBOO_E2E_REVISION: ${dynamicBinding}`)],
+    ["wrong source step", (source) => source.replace("        id: source", "        id: other")],
+    ["duplicate source step ID", (source) => source.replace("        id: source", "        id: source\n        id: other")],
+    ["commented source invocation", (source) => source.replace("        run: node scripts/release-source.mjs", "        # run: node scripts/release-source.mjs\n        run: echo bamboo_sha=main")],
+    ["invocation in another step", (source) => source.replace("        run: node scripts/release-source.mjs", "      - name: Unrelated step\n        run: node scripts/release-source.mjs")],
+  ])("rejects a dynamic binding wired to %s", (_name, alter) => {
+    expect(() => verifyCandidateBackendPins(currentCandidate, { ...files, publication: alter(files.publication) })).toThrow()
+  })
+  it.each([
     "${{ inputs.bamboo_sha }}", "${{ env.BAMBOO_E2E_REVISION }}",
     "${{ needs.verify.outputs.bamboo_sha }}", "${{ needs.preflight.outputs.source_sha }}",
     "${{ needs.preflight.outputs.bamboo_sha || 'main' }}", dynamicBinding + "suffix", "main",

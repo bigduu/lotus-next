@@ -87,6 +87,44 @@ export const verifyCommittedAcceptance = (candidate, bytes) => {
   return receipt
 }
 
+// Accept the reviewed workflow's explicit block form, failing closed if its
+// authority wiring changes. This is deliberately not a general YAML parser.
+const workflowBlock = (source, key, indentation) => {
+  const lines = source.split(/\r?\n/)
+  const header = `${" ".repeat(indentation)}${key}:`
+  const starts = lines.flatMap((line, index) => line.trimEnd() === header ? [index] : [])
+  assert.equal(starts.length, 1, `Candidate publication requires one ${key} block`)
+  let end = starts[0] + 1
+  while (end < lines.length) {
+    const line = lines[end]
+    if (line.trim() && !line.trimStart().startsWith("#") && line.search(/\S/) <= indentation) break
+    end++
+  }
+  return lines.slice(starts[0] + 1, end).join("\n")
+}
+
+const workflowValue = (source, key, indentation) => {
+  const assignments = [...source.matchAll(new RegExp(`^ {${indentation}}${key}:[ \\t]*(.*)$`, "gm"))]
+  assert.equal(assignments.length, 1, `Candidate publication requires one ${key} assignment`)
+  return assignments[0][1].trim()
+}
+
+const verifyDynamicBackendWiring = (publication) => {
+  const jobs = workflowBlock(publication, "jobs", 0)
+  const realBamboo = workflowBlock(jobs, "real-bamboo", 2)
+  assert.equal(workflowValue(realBamboo, "needs", 4), "[preflight, verify]")
+  const environment = workflowBlock(realBamboo, "env", 4)
+  assert.equal(workflowValue(environment, "BAMBOO_E2E_REVISION", 6), "${{ needs.preflight.outputs.bamboo_sha }}")
+  const preflight = workflowBlock(jobs, "preflight", 2)
+  const outputs = workflowBlock(preflight, "outputs", 4)
+  assert.equal(workflowValue(outputs, "bamboo_sha", 6), "${{ steps.source.outputs.bamboo_sha }}")
+  const steps = workflowBlock(preflight, "steps", 4).split(/^ {6}-[ \t]/m)
+  const sourceSteps = steps.filter((step) => /^ {8}id:[ \t]*source[ \t]*$/m.test(step))
+  assert.equal(sourceSteps.length, 1, "Candidate preflight requires one source authority step")
+  assert.equal(workflowValue(sourceSteps[0], "id", 8), "source")
+  assert.equal(workflowValue(sourceSteps[0], "run", 8), "node scripts/release-source.mjs")
+}
+
 export const verifyCandidateBackendPins = (candidate, files) => {
   const workflowPin = (source) => {
     const assignments = [...source.matchAll(/^[ \t]*BAMBOO_E2E_REVISION:[ \t]*(.*)$/gm)]
@@ -101,6 +139,7 @@ export const verifyCandidateBackendPins = (candidate, files) => {
     publicationPin === candidate.bambooSha || publicationPin === "${{ needs.preflight.outputs.bamboo_sha }}",
     "Candidate publication backend source differs from acceptance",
   )
+  if (publicationPin !== candidate.bambooSha) verifyDynamicBackendWiring(files.publication)
   assert.ok(files.runtime.includes(`REAL_BAMBOO_REVISION = "${candidate.bambooSha}"`))
   assert.ok(files.acceptanceTest.includes(`"${candidate.bambooSha}"`))
 }

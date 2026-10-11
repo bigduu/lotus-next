@@ -104,8 +104,10 @@ SHA. CI must pin that candidate's Bamboo SHA literally; publication may use the
 same literal (historical candidates) or the exact
 `${{ needs.preflight.outputs.bamboo_sha }}` binding. The latter obtains its SHA
 from the reviewed candidate and the run-bound source receipt, rather than a
-dispatch input or moving backend ref. Missing, duplicate, or mismatched workflow
-bindings are rejected without changing the tag, tree, acceptance, or workflow
-identity gates.
+dispatch input or moving backend ref. Preflight also checks that this binding
+is in the real-Bamboo job's environment, that the preflight output maps to
+`steps.source.outputs.bamboo_sha`, and that this source step runs the release
+authority script. Missing, duplicate, or mismatched workflow bindings are
+rejected without changing the tag, tree, acceptance, or workflow identity gates.
 
 The initial bundle-size baseline is recorded in [`docs/bundle-baseline.md`](bundle-baseline.md). It is an observation gate, not a size-budget change.
