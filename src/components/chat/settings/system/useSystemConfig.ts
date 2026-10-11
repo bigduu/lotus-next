@@ -15,7 +15,7 @@ export interface ModelLimitOverride {
   safety_margin?: number | null
 }
 
-export type ContextManagementStrategy = "summary" | "retrieval_window"
+export type ContextManagementStrategy = "summary" | "message_summary" | "retrieval_window"
 
 export interface RetrievalWindowConfig {
   min_recent_user_turns?: number

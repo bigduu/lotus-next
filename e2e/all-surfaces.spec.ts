@@ -220,10 +220,10 @@ test("standalone page-origin artifact reaches a usable canonical shell", async (
   expect(observation.staticUrls.some((url) => pathname(url).startsWith("/assets/"))).toBe(true)
 })
 
-test("system settings can disable generated summaries in favor of retrieval windows", async ({
+test("system settings save and restore all three context-management strategies", async ({
   page,
   startRuntime,
-}) => {
+}, testInfo) => {
   const configPatches: unknown[] = []
   page.on("request", (request) => {
     if (
@@ -235,6 +235,13 @@ test("system settings can disable generated summaries in favor of retrieval wind
   })
 
   const { surface } = await startRuntime(standaloneScenario)
+  let persistedConfig: Record<string, unknown> = { proxy_auth_mode: "auto" }
+  await page.route("**/api/v1/bamboo/config", async (route) => {
+    if (route.request().method() === "POST") {
+      persistedConfig = { ...persistedConfig, ...route.request().postDataJSON() }
+    }
+    await route.fulfill({ json: persistedConfig })
+  })
   const settingsButton = surface.getByRole("button", { name: "系统设置", exact: true })
   if ((page.viewportSize()?.width ?? 0) < 768) {
     await surface.getByRole("button", { name: "菜单" }).click()
@@ -243,17 +250,34 @@ test("system settings can disable generated summaries in favor of retrieval wind
   await selectSettingsCategory(surface, "system", "系统")
 
   const section = surface.locator("section").filter({ hasText: "上下文管理" })
-  const summarySwitch = section.getByRole("switch", { name: "自动生成上下文摘要" })
-  await expect(summarySwitch).toBeChecked()
+  const summary = section.getByRole("radio", { name: "完整对话摘要", exact: true })
+  const messages = section.getByRole("radio", { name: "消息正文摘要", exact: true })
+  const retrieval = section.getByRole("radio", { name: "原文检索窗口", exact: true })
+  await expect(summary).toBeChecked()
   await expect(section.getByText(/从下一次执行开始生效/)).toBeVisible()
 
-  await summarySwitch.click()
-  await expect(summarySwitch).not.toBeChecked()
+  await messages.check()
+  await expect(messages).toBeChecked()
+  await expect(section.getByText(/工具调用与结果退出模型上下文/)).toBeVisible()
+  await section.getByRole("button", { name: "保存", exact: true }).click()
+  await expect.poll(() => configPatches).toHaveLength(1)
+  expect(configPatches[0]).toMatchObject({ context_management: { strategy: "message_summary" } })
+  await expect(section.getByText("已保存", { exact: true })).toBeVisible()
+  await selectSettingsCategory(surface, "general", "通用")
+  await selectSettingsCategory(surface, "system", "系统")
+  await expect(messages).toBeChecked()
+  await expect(section.getByRole("button", { name: "保存", exact: true })).toBeDisabled()
+  await messages.scrollIntoViewIfNeeded()
+  await testInfo.attach(`context-management-message-summary-${testInfo.project.name}`, {
+    body: await page.screenshot({ animations: "disabled" }), contentType: "image/png",
+  })
+
+  await retrieval.check()
   await expect(section.getByText(/保存后请新建会话/)).toBeVisible()
   await section.getByRole("button", { name: "保存", exact: true }).click()
 
-  await expect.poll(() => configPatches).toHaveLength(1)
-  expect(configPatches[0]).toMatchObject({
+  await expect.poll(() => configPatches).toHaveLength(2)
+  expect(configPatches[1]).toMatchObject({
     context_management: {
       strategy: "retrieval_window",
       retrieval_window: {
@@ -263,7 +287,14 @@ test("system settings can disable generated summaries in favor of retrieval wind
     },
   })
   await expect(section.getByText("已保存", { exact: true })).toBeVisible()
-  await expect(summarySwitch).not.toBeChecked()
+  await expect(retrieval).toBeChecked()
+
+  await summary.check()
+  await section.getByRole("button", { name: "保存", exact: true }).click()
+  await expect.poll(() => configPatches).toHaveLength(3)
+  expect(configPatches[2]).toMatchObject({ context_management: { strategy: "summary" } })
+  await expect(section.getByText("已保存", { exact: true })).toBeVisible()
+  await expect(summary).toBeChecked()
 })
 
 test("settings page preserves the chat draft, workbench and keyboard return path", async ({
