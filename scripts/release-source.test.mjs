@@ -135,6 +135,18 @@ describe("candidate Bamboo source bindings", () => {
     expect(() => verifyCandidateBackendPins(currentCandidate, { ...files, publication: alter(files.publication) })).toThrow()
   })
   it.each([
+    ["moving checkout ref", (source) => source.replace("ref: ${{ env.BAMBOO_E2E_REVISION }}", "ref: main")],
+    ["different checkout revision", (source) => source.replace("ref: ${{ env.BAMBOO_E2E_REVISION }}", `ref: ${workflowSha}`)],
+    ["unrelated checkout output", (source) => source.replace("ref: ${{ env.BAMBOO_E2E_REVISION }}", "ref: ${{ needs.preflight.outputs.source_sha }}")],
+    ["other checkout repository", (source) => source.replace("repository: bigduu/Bamboo-agent", "repository: other/backend")],
+    ["commented checkout ref", (source) => source.replace("          ref: ${{ env.BAMBOO_E2E_REVISION }}", "          # ref: ${{ env.BAMBOO_E2E_REVISION }}\n          ref: main")],
+    ["duplicate checkout ref", (source) => source.replace("          ref: ${{ env.BAMBOO_E2E_REVISION }}", "          ref: ${{ env.BAMBOO_E2E_REVISION }}\n          ref: main")],
+    ["different checkout destination", (source) => source.replace("          path: .e2e-bamboo", "          path: other-backend")],
+    ["duplicate checkout destination", (source) => source.replace("          path: .e2e-bamboo", "          path: .e2e-bamboo\n          path: other-backend")],
+  ])("rejects a dynamic binding consumed by %s", (_name, alter) => {
+    expect(() => verifyCandidateBackendPins(currentCandidate, { ...files, publication: alter(files.publication) })).toThrow()
+  })
+  it.each([
     "${{ inputs.bamboo_sha }}", "${{ env.BAMBOO_E2E_REVISION }}",
     "${{ needs.verify.outputs.bamboo_sha }}", "${{ needs.preflight.outputs.source_sha }}",
     "${{ needs.preflight.outputs.bamboo_sha || 'main' }}", dynamicBinding + "suffix", "main",
