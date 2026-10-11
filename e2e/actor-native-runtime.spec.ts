@@ -3,16 +3,19 @@
 import { expect, test } from "@playwright/test"
 import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs"
 import { parseActorChannelFrame } from "../src/services/chat/actorChannel.js"
+import { expectInspectorGeometry } from "./support/inspectorGeometry.js"
 interface ActorSubtreeSnapshot {
   schema_version: number
   root_actor_id: string
   subtree_actor_id: string
   stream_cursor: string | null
-  nodes: { actor_id: string; title: string; activation: { status: string } | null }[]
+  nodes: { actor_id: string; title: string; activation: { status: string } | null;
+    local_task?: { state: "running" | "stopped" | "stop_unconfirmed"; reason: string | null } | null }[]
 }
 
 interface Fixture {
   schema_version: 1
+  execution_kind?: "tokio" | "worker"
   origin: string
   api: string
   root_id: string
@@ -33,13 +36,21 @@ const signal = (path: string, value: unknown) => {
 }
 
 test("one native Child: real Actor/tree invalidation, isolated history and honest restart gap", async ({ page }, testInfo) => {
+  // Default preserves the pinned v1 Host lane; opt-in 2 requires a paired v2 Host.
+  const expectedSchema = process.env.LOTUS_ACTOR_SNAPSHOT_SCHEMA ?? "1"
+  expect(["1", "2"]).toContain(expectedSchema)
+  const expectedKind = process.env.LOTUS_ACTOR_EXECUTION_KIND ?? "worker"
+  expect(["worker", "tokio"]).toContain(expectedKind)
+  if (expectedKind === "tokio") expect(expectedSchema, "Tokio acceptance must negotiate native diagnostics").toBe("2")
   const info = process.env.LOTUS_ACTOR_FIXTURE_INFO!
   await expect.poll(() => existsSync(info), { timeout: 60_000, message: "native authority checks reach the held provider cut" }).toBe(true)
   const fixture = JSON.parse(readFileSync(info, "utf8")) as Fixture
   expect(fixture.schema_version).toBe(1)
+  expect(fixture.execution_kind ?? "worker").toBe(expectedKind)
   const { root_id: root, child_id: child } = fixture
   const actor = `actor.${child}`, tree = `tree.${root}`, message = `message.${child}`
   const frames: ObservedFrame[] = [], requests: string[] = [], snapshots: ActorSubtreeSnapshot[] = []
+  const snapshotNegotiation: { schema_version: number; accept: string; content_type: string }[] = []
   const sockets: { url: string; closed: boolean }[] = []
   const errors: string[] = [], historyReceipts: { count: number; answers: number }[] = []
   const snapshotPath = `/api/v1/actors/${root}/snapshot`
@@ -51,7 +62,11 @@ test("one native Child: real Actor/tree invalidation, isolated history and hones
     if (!response.ok() || ![snapshotPath, historyPath].includes(url.pathname)) return
     try {
       const body = await response.json()
-      if (url.pathname === snapshotPath) snapshots.push(body as ActorSubtreeSnapshot)
+      if (url.pathname === snapshotPath) {
+        snapshots.push(body as ActorSubtreeSnapshot)
+        snapshotNegotiation.push({ schema_version: body.schema_version,
+          accept: response.request().headers().accept ?? "", content_type: response.headers()["content-type"] ?? "" })
+      }
       else historyReceipts.push({ count: body.messages.length,
         answers: body.messages.filter((m: { role: string; content: string }) => m.role === "assistant" && m.content === "F2_CHILD_COMPLETED").length })
     } catch { /* A response interrupted by the deliberate Host restart is not a receipt. */ }
@@ -121,12 +136,19 @@ test("one native Child: real Actor/tree invalidation, isolated history and hones
     await expect(inspect.getByRole("tree")).toBeVisible()
     await expect.poll(() => snapshots.some((s) => childNode(s)?.activation?.status === "running")).toBe(true)
     const initial = snapshots.find((s) => childNode(s)?.activation?.status === "running")!
-    expect(initial.schema_version).toBe(1)
+    expect(initial.schema_version).toBe(Number(expectedSchema))
+    if (expectedSchema === "2") {
+      if (expectedKind === "tokio") expect(childNode(initial)?.local_task).toMatchObject({ state: "running", reason: null })
+      else expect(childNode(initial)?.local_task).toBeNull()
+      expect(snapshotNegotiation[0]).toMatchObject({ schema_version: 2,
+        accept: "application/vnd.bamboo.actor-snapshot.v2+json, application/json;q=0.9" })
+      expect(snapshotNegotiation[0].content_type.split(";", 1)[0]).toBe("application/vnd.bamboo.actor-snapshot.v2+json")
+    }
     expect(initial.root_actor_id).toBe(root)
     expect(initial.subtree_actor_id).toBe(root)
     expect(initial.nodes.map((n) => n.actor_id).sort()).toEqual([root, child].sort())
     expect(childNode(initial)).toMatchObject({ root_actor_id: root, parent_actor_id: root, role: "child", depth: 1,
-      placement_class: "local", activation: { activation_id: fixture.activation_id, attempt: fixture.attempt, status: "running" } })
+      placement_class: expectedKind === "tokio" ? null : "local", activation: { activation_id: fixture.activation_id, attempt: fixture.attempt, status: "running" } })
     await expect.poll(() => sent("subscribe_tree", tree).length).toBeGreaterThan(0)
     const rootRow = inspect.locator(`[data-actor-id="${root}"]`)
     // Collapse and expand the actual Root; topology interest alone must not
@@ -157,9 +179,13 @@ test("one native Child: real Actor/tree invalidation, isolated history and hones
       { timeout: 45_000, message: "native producer must emit a real body-free actor_changed, not only legacy messages" }).toBe(true)
     assertPublicActorFrames()
     await expect.poll(() => snapshots.slice(releaseSnapshot).some((s) => childNode(s)?.activation?.status === "succeeded")).toBe(true)
+    if (expectedKind === "tokio") await expect.poll(() => snapshots.slice(releaseSnapshot).some((s) =>
+      childNode(s)?.activation?.status === "succeeded" && childNode(s)?.local_task?.state === "stopped")).toBe(true)
     await expect(transcript.getByText("F2_CHILD_COMPLETED", { exact: true })).toHaveCount(1)
     await expect.poll(() => existsSync(fixture.completed), { timeout: 45_000 }).toBe(true)
-    expect(JSON.parse(readFileSync(fixture.completed, "utf8"))).toMatchObject({ completed: true, held_cut_runs: 1, child_provider_calls: 1 })
+    const completionReceipt = JSON.parse(readFileSync(fixture.completed, "utf8"))
+    expect(completionReceipt).toMatchObject({ completed: true, held_cut_runs: expectedKind === "tokio" ? 0 : 1, child_provider_calls: 1 })
+    expect(completionReceipt.execution_kind ?? "worker").toBe(expectedKind)
     await page.screenshot({ path: testInfo.outputPath("native-completed-child.png") })
 
     // Actor invalidation refreshes immediately and can supersede the tree poll
@@ -232,10 +258,28 @@ test("one native Child: real Actor/tree invalidation, isolated history and hones
     const gap = inspect.locator(`[data-actor-gap="transport_gap"][data-actor-gap-origin="${child}"]`)
     await expect(gap).toBeVisible()
     await expect.poll(() => snapshots.slice(restartSnapshot).some((s) => childNode(s)?.activation?.status === "succeeded")).toBe(true)
+    await expectInspectorGeometry(inspect, testInfo, "native-restart-gap-before-refresh")
     const priorReads = snapshots.length
     await inspect.getByRole("button", { name: "刷新代理结构" }).click()
     await expect.poll(() => snapshots.length).toBeGreaterThan(priorReads)
     await expect(inspect).toHaveAttribute("aria-busy", "false")
+    await expectInspectorGeometry(inspect, testInfo, "native-restart-gap-after-refresh")
+    if (expectedSchema === "2") {
+      // This GET begins after the new Host's ready receipt, so a late response
+      // from before the cold restart cannot stand in for persisted evidence.
+      const reopened = await page.evaluate(async (url) => {
+        const response = await fetch(url, { cache: "no-store",
+          headers: { Accept: "application/vnd.bamboo.actor-snapshot.v2+json, application/json;q=0.9" } })
+        if (!response.ok) throw new Error(`snapshot status ${response.status}`)
+        return { body: await response.json() as ActorSubtreeSnapshot, contentType: response.headers.get("content-type") }
+      }, fixture.api + `/actors/${root}/snapshot?subtree_id=${root}`)
+      expect(reopened.contentType?.split(";", 1)[0]).toBe("application/vnd.bamboo.actor-snapshot.v2+json")
+      expect(reopened.body.schema_version).toBe(2)
+      expect(childNode(reopened.body)?.activation?.status).toBe("succeeded")
+      if (expectedKind === "tokio") expect(childNode(reopened.body)?.local_task).toMatchObject({ state: "stopped", reason: null })
+      else expect(childNode(reopened.body)?.local_task).toBeNull()
+      await testInfo.attach("post-restart-v2-snapshot", { body: JSON.stringify(reopened.body), contentType: "application/json" })
+    }
     const history = await page.evaluate(async (url) => {
       const response = await fetch(url)
       if (!response.ok) throw new Error(`history status ${response.status}`)
@@ -266,7 +310,7 @@ test("one native Child: real Actor/tree invalidation, isolated history and hones
     signal(fixture.done, { pass: false, error: String(error) })
     throw error
   } finally {
-    await testInfo.attach("native-actor-wire-receipts", { body: JSON.stringify({ frames, snapshots,
+    await testInfo.attach("native-actor-wire-receipts", { body: JSON.stringify({ frames, snapshots, snapshot_negotiation: snapshotNegotiation, expected_snapshot_schema: Number(expectedSchema), expected_execution_kind: expectedKind,
       history: historyReceipts, sockets, page_errors: errors }, null, 2), contentType: "application/json" })
   }
 })

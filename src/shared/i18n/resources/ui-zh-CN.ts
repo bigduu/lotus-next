@@ -1,5 +1,8 @@
 // Application-owned UI copy.
 export const uiZhCn = {
+  "native_task_stop_unconfirmed": "停止未确认",
+  "native_task_stopped_outcome_unconfirmed": "任务已停止，结果待确认",
+
   "plugin_center_description": "按需添加更多能力，在这里管理已安装的插件与连接。",
   "plugin_center_views": "插件视图",
   "plugin_discover": "发现",

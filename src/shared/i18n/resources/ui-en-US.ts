@@ -1,5 +1,8 @@
 // Application-owned UI copy.
 export const uiEnUs = {
+  "native_task_stop_unconfirmed": "Stop unconfirmed",
+  "native_task_stopped_outcome_unconfirmed": "Task stopped; outcome unconfirmed",
+
   "plugin_center_description": "Add optional capabilities when you need them. Manage installed packages and their connections in one place.",
   "plugin_center_views": "Plugin views",
   "plugin_discover": "Discover",

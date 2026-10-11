@@ -479,7 +479,7 @@ export function Inspector({
   )
 
   if (embedded) {
-    return <div className="flex min-h-0 flex-1 flex-col">{body}</div>
+    return <div className="flex min-h-0 min-w-0 flex-1 flex-col">{body}</div>
   }
 
   // Wide desktop: dock as an in-flow right column alongside the chat (no
