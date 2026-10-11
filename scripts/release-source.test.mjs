@@ -220,6 +220,31 @@ describe("candidate Bamboo source bindings", () => {
     const publication = files.publication.replace(new RegExp(`^  ${key}:.*$`, "m"), `  ${key}: --require ./shim.cjs`)
     expect(() => verifyCandidateBackendPins(currentCandidate, { ...files, publication })).toThrow()
   })
+  const alterRealBamboo = (alter) => {
+    const start = files.publication.indexOf("  real-bamboo:\n")
+    return files.publication.slice(0, start) + alter(files.publication.slice(start))
+  }
+  it.each([
+    ["extra entry", (source) => source.replace("    env:\n", "    env:\n      NODE_OPTIONS: --import=data:text/javascript;base64,c2hpbQ==\n")],
+    ["missing entry", (source) => source.replace("      LOTUS_NEXT_ACCEPTANCE_SOURCE_DIR: ${{ github.workspace }}\n", "")],
+    ["quoted entry", (source) => source.replace("      LOTUS_NEXT_ACCEPTANCE_SOURCE_DIR:", "      'LOTUS_NEXT_ACCEPTANCE_SOURCE_DIR':")],
+    ["merged entry", (source) => source.replace("    env:\n", "    env:\n      <<: { NODE_OPTIONS: --require ./shim.cjs }\n")],
+    ["duplicate entry", (source) => source.replace("      LOTUS_NEXT_ACCEPTANCE_SOURCE_DIR:", "      LOTUS_NEXT_ACCEPTANCE_SOURCE_DIR: shim\n      LOTUS_NEXT_ACCEPTANCE_SOURCE_DIR:")],
+    ["nested entry", (source) => source.replace("      LOTUS_NEXT_ACCEPTANCE_SOURCE_DIR: ${{ github.workspace }}", "      LOTUS_NEXT_ACCEPTANCE_SOURCE_DIR:\n        NODE_OPTIONS: --require ./shim.cjs")],
+    ["flow mapping", (source) => source.replace(/    env:\n[\s\S]*?\n\n    steps:/, `    env: { BAMBOO_E2E_REVISION: ${dynamicBinding} }\n\n    steps:`)],
+    ["quoted mapping", (source) => source.replace("    env:", "    'env':")],
+    ["merged mapping", (source) => source.replace("    env:", "    <<: { env: { NODE_OPTIONS: --require ./shim.cjs } }\n    env:")],
+    ["duplicate mapping", (source) => source.replace("    env:", "    env: { NODE_OPTIONS: --require ./shim.cjs }\n    env:")],
+  ])("rejects real-Bamboo inherited environment with %s", (_name, alter) => {
+    expect(() => verifyCandidateBackendPins(currentCandidate, { ...files, publication: alterRealBamboo(alter) })).toThrow()
+  })
+  it.each([
+    "LOTUS_NEXT_SOURCE_REVISION", "LOTUS_NEXT_EXPECTED_SOURCE_REVISION", "PUBLICATION_WORKFLOW_SHA",
+    "ACCEPTED_SOURCE_TREE", "BAMBOO_E2E_REVISION", "LOTUS_NEXT_ACCEPTANCE_SOURCE_DIR",
+  ])("rejects altered real-Bamboo environment input %s", (key) => {
+    const publication = alterRealBamboo((source) => source.replace(new RegExp(`^      ${key}:.*$`, "m"), `      ${key}: main`))
+    expect(() => verifyCandidateBackendPins(currentCandidate, { ...files, publication })).toThrow()
+  })
   it.each([
     "${{ inputs.bamboo_sha }}", "${{ env.BAMBOO_E2E_REVISION }}",
     "${{ needs.verify.outputs.bamboo_sha }}", "${{ needs.preflight.outputs.source_sha }}",

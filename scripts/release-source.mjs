@@ -159,10 +159,15 @@ const verifyExecutionScope = (source, indentation, allowEnvironment = false) => 
   assert.ok(allowEnvironment || !keys.has("env"), "Candidate source authority cannot inherit preflight environment")
 }
 
+const verifyWorkflowEnvironment = (source, indentation, expected) => {
+  const environment = workflowBlock(source, "env", indentation)
+  assert.deepEqual([...workflowMappingKeys(environment, indentation + 2, true)].sort(), Object.keys(expected).sort())
+  for (const [key, value] of Object.entries(expected)) assert.equal(workflowValue(environment, key, indentation + 2), value)
+}
+
 const verifyDynamicBackendWiring = (publication) => {
   verifyExecutionScope(publication, 0, true)
-  const workflowEnvironment = workflowBlock(publication, "env", 0)
-  const expectedEnvironment = {
+  verifyWorkflowEnvironment(publication, 0, {
     LOTUS_NEXT_RELEASE_VERSION: "${{ inputs.version }}",
     LOTUS_NEXT_SOURCE_DIRTY: '"false"',
     LOTUS_NEXT_EXPECTED_SOURCE_DIRTY: '"false"',
@@ -170,14 +175,19 @@ const verifyDynamicBackendWiring = (publication) => {
     NPM_CONFIG_AUDIT: '"false"',
     NPM_CONFIG_FUND: '"false"',
     NPM_CONFIG_PROGRESS: '"false"',
-  }
-  assert.deepEqual([...workflowMappingKeys(workflowEnvironment, 2, true)].sort(), Object.keys(expectedEnvironment).sort())
-  for (const [key, value] of Object.entries(expectedEnvironment)) assert.equal(workflowValue(workflowEnvironment, key, 2), value)
+  })
   const jobs = workflowBlock(publication, "jobs", 0)
   const realBamboo = workflowBlock(jobs, "real-bamboo", 2)
+  workflowMappingKeys(realBamboo, 4)
   assert.equal(workflowValue(realBamboo, "needs", 4), "[preflight, verify]")
-  const environment = workflowBlock(realBamboo, "env", 4)
-  assert.equal(workflowValue(environment, "BAMBOO_E2E_REVISION", 6), "${{ needs.preflight.outputs.bamboo_sha }}")
+  verifyWorkflowEnvironment(realBamboo, 4, {
+    LOTUS_NEXT_SOURCE_REVISION: "${{ needs.preflight.outputs.source_sha }}",
+    LOTUS_NEXT_EXPECTED_SOURCE_REVISION: "${{ needs.preflight.outputs.source_sha }}",
+    PUBLICATION_WORKFLOW_SHA: "${{ needs.preflight.outputs.workflow_sha }}",
+    ACCEPTED_SOURCE_TREE: "${{ needs.preflight.outputs.source_tree }}",
+    BAMBOO_E2E_REVISION: "${{ needs.preflight.outputs.bamboo_sha }}",
+    LOTUS_NEXT_ACCEPTANCE_SOURCE_DIR: "${{ github.workspace }}",
+  })
   const checkoutSteps = workflowBlock(realBamboo, "steps", 4).split(/^ {6}-[ \t]/m)
     .filter((step) => /^ {10}path:[ \t]*\.e2e-bamboo[ \t]*$/m.test(step))
   assert.equal(checkoutSteps.length, 1, "Candidate publication requires one paired Bamboo checkout")
