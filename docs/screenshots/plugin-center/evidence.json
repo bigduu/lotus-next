@@ -1,25 +1,34 @@
 {
-  "source_commit": "33b3035a88034cff4b275ffe9576f90a9a828b04",
-  "frontend": "Built Lotus Next frontend from this source tree",
+  "source_commit": "4b4be14f868c94c449c3dcab9e4525b5d3fe3239",
+  "frontend": "Built Lotus Next frontend from this clean source commit",
   "backend": "Fixture APIs",
   "screenshots": {
     "discover-desktop.png": {
       "viewport": {
         "width": 1440,
-        "height": 1000
-      }
+        "height": 900
+      },
+      "device_scale_factor": 1
     },
     "installed-phone.png": {
       "viewport": {
-        "width": 390,
-        "height": 844
+        "width": 412,
+        "height": 839
+      },
+      "device_scale_factor": 2.625,
+      "image_pixels": {
+        "width": 1082,
+        "height": 2202
       }
     }
   },
   "validation": {
+    "full_verify": "passed",
     "vitest_files_passed": 138,
-    "vitest_tests_passed": 2391,
-    "built_browser_tests_passed": 3
+    "vitest_tests_passed": 2393,
+    "built_browser_tests_passed": 3,
+    "startup_css_raw_bytes": 108993,
+    "startup_css_gzip_bytes": 18412
   },
   "limitations": "Browser fixture evidence only. This does not verify native Bodhi, Nova.app installation, desktop permissions, or live package installation."
 }
