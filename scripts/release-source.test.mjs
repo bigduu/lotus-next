@@ -245,6 +245,18 @@ describe("candidate Bamboo source bindings", () => {
     const publication = alterRealBamboo((source) => source.replace(new RegExp(`^      ${key}:.*$`, "m"), `      ${key}: main`))
     expect(() => verifyCandidateBackendPins(currentCandidate, { ...files, publication })).toThrow()
   })
+  const jobExecutionOverrides = [
+    ["block container", "    container:\n      image: node:24\n      env:\n        NODE_OPTIONS: --require ./shim.cjs"],
+    ["flow container", "    container: { image: 'node:24', env: { NODE_OPTIONS: --require ./shim.cjs } }"],
+    ["quoted container", "    'container': { image: 'node:24', env: { NODE_OPTIONS: --require ./shim.cjs } }"],
+    ["merged container", "    <<: { container: { image: 'node:24', env: { NODE_OPTIONS: --require ./shim.cjs } } }"],
+    ["duplicate container", "    container: node:24\n    container: { image: 'node:24', env: { NODE_OPTIONS: --require ./shim.cjs } }"],
+    ["run defaults", "    defaults: { run: { working-directory: shim } }"],
+  ]
+  it.each(["preflight", "real-bamboo"].flatMap((job) => jobExecutionOverrides.map(([name, extra]) => [job, name, extra])))("rejects %s job execution wrapper %s", (job, _name, extra) => {
+    const publication = files.publication.replace(`  ${job}:\n`, `  ${job}:\n${extra}\n`)
+    expect(() => verifyCandidateBackendPins(currentCandidate, { ...files, publication })).toThrow()
+  })
   it.each([
     "${{ inputs.bamboo_sha }}", "${{ env.BAMBOO_E2E_REVISION }}",
     "${{ needs.verify.outputs.bamboo_sha }}", "${{ needs.preflight.outputs.source_sha }}",

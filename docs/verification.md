@@ -118,7 +118,9 @@ four exact environment inputs, without step execution overrides or inherited
 workflow/preflight run defaults. Preflight job environments are rejected, and
 the workflow environment accepts only the seven reviewed plain, unique entries
 with exact values. The real-Bamboo job environment likewise requires its six
-reviewed plain, unique entries and exact values. This prevents inherited
+reviewed plain, unique entries and exact values. Both jobs permit only their
+current plain, unique top-level keys, rejecting added container execution and
+other wrappers without interpreting them. This prevents inherited
 execution overrides such as `NODE_OPTIONS` from changing how the source script,
 paired checkout, or Node verification gates run. This bounded structural check
 does not evaluate arbitrary other steps, file mutations, action supply chains,

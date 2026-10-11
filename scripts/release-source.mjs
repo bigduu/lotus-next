@@ -153,12 +153,6 @@ const workflowMappingKeys = (source, indentation, flat = false) => {
   return keys
 }
 
-const verifyExecutionScope = (source, indentation, allowEnvironment = false) => {
-  const keys = workflowMappingKeys(source, indentation)
-  assert.ok(!keys.has("defaults"), "Candidate source authority cannot inherit run defaults")
-  assert.ok(allowEnvironment || !keys.has("env"), "Candidate source authority cannot inherit preflight environment")
-}
-
 const verifyWorkflowEnvironment = (source, indentation, expected) => {
   const environment = workflowBlock(source, "env", indentation)
   assert.deepEqual([...workflowMappingKeys(environment, indentation + 2, true)].sort(), Object.keys(expected).sort())
@@ -166,7 +160,7 @@ const verifyWorkflowEnvironment = (source, indentation, expected) => {
 }
 
 const verifyDynamicBackendWiring = (publication) => {
-  verifyExecutionScope(publication, 0, true)
+  assert.ok(!workflowMappingKeys(publication, 0).has("defaults"), "Candidate source authority cannot inherit run defaults")
   verifyWorkflowEnvironment(publication, 0, {
     LOTUS_NEXT_RELEASE_VERSION: "${{ inputs.version }}",
     LOTUS_NEXT_SOURCE_DIRTY: '"false"',
@@ -178,7 +172,7 @@ const verifyDynamicBackendWiring = (publication) => {
   })
   const jobs = workflowBlock(publication, "jobs", 0)
   const realBamboo = workflowBlock(jobs, "real-bamboo", 2)
-  workflowMappingKeys(realBamboo, 4)
+  assert.deepEqual([...workflowMappingKeys(realBamboo, 4)].sort(), ["env", "name", "needs", "runs-on", "steps", "timeout-minutes"])
   assert.equal(workflowValue(realBamboo, "needs", 4), "[preflight, verify]")
   verifyWorkflowEnvironment(realBamboo, 4, {
     LOTUS_NEXT_SOURCE_REVISION: "${{ needs.preflight.outputs.source_sha }}",
@@ -199,7 +193,7 @@ const verifyDynamicBackendWiring = (publication) => {
   assert.equal(workflowValue(checkout, "path", 10), ".e2e-bamboo")
   assert.equal(workflowValue(checkout, "persist-credentials", 10), "false")
   const preflight = workflowBlock(jobs, "preflight", 2)
-  verifyExecutionScope(preflight, 4)
+  assert.deepEqual([...workflowMappingKeys(preflight, 4)].sort(), ["name", "outputs", "runs-on", "steps"])
   const outputs = workflowBlock(preflight, "outputs", 4)
   assert.equal(workflowValue(outputs, "bamboo_sha", 6), "${{ steps.source.outputs.bamboo_sha }}")
   const steps = workflowBlock(preflight, "steps", 4).split(/^ {6}-[ \t]/m)
