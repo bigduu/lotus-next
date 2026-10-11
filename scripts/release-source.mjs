@@ -87,6 +87,149 @@ export const verifyCommittedAcceptance = (candidate, bytes) => {
   return receipt
 }
 
+// Accept the reviewed workflow's explicit block form, failing closed if its
+// authority wiring changes. This is deliberately not a general YAML parser.
+const workflowBlock = (source, key, indentation) => {
+  const lines = source.split(/\r?\n/)
+  const header = `${" ".repeat(indentation)}${key}:`
+  const starts = lines.flatMap((line, index) => line.trimEnd() === header ? [index] : [])
+  assert.equal(starts.length, 1, `Candidate publication requires one ${key} block`)
+  let end = starts[0] + 1
+  while (end < lines.length) {
+    const line = lines[end]
+    if (line.trim() && !line.trimStart().startsWith("#") && line.search(/\S/) <= indentation) break
+    end++
+  }
+  return lines.slice(starts[0] + 1, end).join("\n")
+}
+
+const workflowValue = (source, key, indentation) => {
+  const assignments = [...source.matchAll(new RegExp(`^ {${indentation}}${key}:[ \\t]*(.*)$`, "gm"))]
+  assert.equal(assignments.length, 1, `Candidate publication requires one ${key} assignment`)
+  return assignments[0][1].trim()
+}
+
+const verifyWorkflowStepShape = (step, expectedKeys, blockKey, expectedInputs) => {
+  const keys = []
+  const inputs = []
+  let currentKey
+  for (const line of step.split(/\r?\n/)) {
+    if (!line.trim() || line.trimStart().startsWith("#")) continue
+    const declaration = /^( *)([A-Za-z][A-Za-z0-9_-]*):(?:[ \t]+(.*))?$/.exec(line.trimEnd())
+    assert.ok(declaration, "Candidate authority step requires plain block keys")
+    const [, spaces, key, value] = declaration
+    // Splitting the sequence removes the first key's six-space dash prefix.
+    if (keys.length === 0 || spaces.length === 8) {
+      assert.equal(spaces.length, keys.length === 0 ? 0 : 8)
+      keys.push(key)
+      currentKey = key
+      if (key === blockKey) assert.equal(value, undefined, "Candidate authority step requires block inputs")
+    } else {
+      assert.equal(spaces.length, 10)
+      assert.equal(currentKey, blockKey)
+      inputs.push(key)
+    }
+  }
+  // Reject overrides, merge/quoted keys, duplicates, and unreviewed inputs
+  // instead of trying to evaluate YAML precedence rules.
+  assert.deepEqual(keys.sort(), expectedKeys)
+  assert.deepEqual(inputs.sort(), expectedInputs)
+}
+
+const workflowMappingKeys = (source, indentation, flat = false) => {
+  const keys = new Set()
+  for (const line of source.split(/\r?\n/)) {
+    if (!line.trim() || line.trimStart().startsWith("#")) continue
+    if (line.search(/\S/) !== indentation) {
+      assert.equal(flat, false, "Candidate environment requires flat mapping entries")
+      continue
+    }
+    const declaration = /^ *([A-Za-z][A-Za-z0-9_-]*):(?:[ \t]+.*)?$/.exec(line.trimEnd())
+    assert.ok(declaration, "Candidate execution scope requires plain mapping keys")
+    const key = declaration[1]
+    assert.ok(!keys.has(key), "Candidate execution scope requires unique mapping keys")
+    keys.add(key)
+  }
+  return keys
+}
+
+const verifyWorkflowEnvironment = (source, indentation, expected) => {
+  const environment = workflowBlock(source, "env", indentation)
+  assert.deepEqual([...workflowMappingKeys(environment, indentation + 2, true)].sort(), Object.keys(expected).sort())
+  for (const [key, value] of Object.entries(expected)) assert.equal(workflowValue(environment, key, indentation + 2), value)
+}
+
+const verifyDynamicBackendWiring = (publication) => {
+  assert.ok(!workflowMappingKeys(publication, 0).has("defaults"), "Candidate source authority cannot inherit run defaults")
+  verifyWorkflowEnvironment(publication, 0, {
+    LOTUS_NEXT_RELEASE_VERSION: "${{ inputs.version }}",
+    LOTUS_NEXT_SOURCE_DIRTY: '"false"',
+    LOTUS_NEXT_EXPECTED_SOURCE_DIRTY: '"false"',
+    DEFAULT_BRANCH: "${{ github.event.repository.default_branch }}",
+    NPM_CONFIG_AUDIT: '"false"',
+    NPM_CONFIG_FUND: '"false"',
+    NPM_CONFIG_PROGRESS: '"false"',
+  })
+  const jobs = workflowBlock(publication, "jobs", 0)
+  workflowMappingKeys(jobs, 2)
+  const realBamboo = workflowBlock(jobs, "real-bamboo", 2)
+  assert.deepEqual([...workflowMappingKeys(realBamboo, 4)].sort(), ["env", "name", "needs", "runs-on", "steps", "timeout-minutes"])
+  assert.equal(workflowValue(realBamboo, "needs", 4), "[preflight, verify]")
+  verifyWorkflowEnvironment(realBamboo, 4, {
+    LOTUS_NEXT_SOURCE_REVISION: "${{ needs.preflight.outputs.source_sha }}",
+    LOTUS_NEXT_EXPECTED_SOURCE_REVISION: "${{ needs.preflight.outputs.source_sha }}",
+    PUBLICATION_WORKFLOW_SHA: "${{ needs.preflight.outputs.workflow_sha }}",
+    ACCEPTED_SOURCE_TREE: "${{ needs.preflight.outputs.source_tree }}",
+    BAMBOO_E2E_REVISION: "${{ needs.preflight.outputs.bamboo_sha }}",
+    LOTUS_NEXT_ACCEPTANCE_SOURCE_DIR: "${{ github.workspace }}",
+  })
+  const checkoutSteps = workflowBlock(realBamboo, "steps", 4).split(/^ {6}-[ \t]/m)
+    .filter((step) => /^ {10}path:[ \t]*\.e2e-bamboo[ \t]*$/m.test(step))
+  assert.equal(checkoutSteps.length, 1, "Candidate publication requires one paired Bamboo checkout")
+  verifyWorkflowStepShape(checkoutSteps[0], ["name", "uses", "with"], "with", ["path", "persist-credentials", "ref", "repository"])
+  assert.equal(workflowValue(checkoutSteps[0], "uses", 8), "actions/checkout@v7")
+  const checkout = workflowBlock(checkoutSteps[0], "with", 8)
+  assert.equal(workflowValue(checkout, "repository", 10), "bigduu/Bamboo-agent")
+  assert.equal(workflowValue(checkout, "ref", 10), "${{ env.BAMBOO_E2E_REVISION }}")
+  assert.equal(workflowValue(checkout, "path", 10), ".e2e-bamboo")
+  assert.equal(workflowValue(checkout, "persist-credentials", 10), "false")
+  const preflight = workflowBlock(jobs, "preflight", 2)
+  assert.deepEqual([...workflowMappingKeys(preflight, 4)].sort(), ["name", "outputs", "runs-on", "steps"])
+  const outputs = workflowBlock(preflight, "outputs", 4)
+  assert.deepEqual([...workflowMappingKeys(outputs, 6, true)].sort(), ["bamboo_sha", "source_ref", "source_sha", "source_tree", "tag_object_sha", "workflow_sha"])
+  assert.equal(workflowValue(outputs, "bamboo_sha", 6), "${{ steps.source.outputs.bamboo_sha }}")
+  const steps = workflowBlock(preflight, "steps", 4).split(/^ {6}-[ \t]/m)
+  const sourceSteps = steps.filter((step) => /^ {8}id:[ \t]*source[ \t]*$/m.test(step))
+  assert.equal(sourceSteps.length, 1, "Candidate preflight requires one source authority step")
+  verifyWorkflowStepShape(sourceSteps[0], ["env", "id", "name", "run"], "env", ["EXPECTED_SOURCE_SHA_INPUT", "EXPECTED_WORKFLOW_SHA", "SOURCE_RECEIPT_PATH", "SOURCE_REF_INPUT"])
+  assert.equal(workflowValue(sourceSteps[0], "id", 8), "source")
+  assert.equal(workflowValue(sourceSteps[0], "run", 8), "node scripts/release-source.mjs")
+  const sourceEnvironment = workflowBlock(sourceSteps[0], "env", 8)
+  assert.equal(workflowValue(sourceEnvironment, "SOURCE_REF_INPUT", 10), "${{ inputs.source_ref }}")
+  assert.equal(workflowValue(sourceEnvironment, "EXPECTED_SOURCE_SHA_INPUT", 10), "${{ inputs.expected_source_sha }}")
+  assert.equal(workflowValue(sourceEnvironment, "EXPECTED_WORKFLOW_SHA", 10), "${{ github.workflow_sha }}")
+  assert.equal(workflowValue(sourceEnvironment, "SOURCE_RECEIPT_PATH", 10), "${{ runner.temp }}/release-source-receipt.json")
+}
+
+export const verifyCandidateBackendPins = (candidate, files) => {
+  const workflowPin = (source) => {
+    const assignments = [...source.matchAll(/^[ \t]*BAMBOO_E2E_REVISION:[ \t]*(.*)$/gm)]
+    assert.equal(assignments.length, 1, "Candidate workflow requires one backend source binding")
+    return assignments[0][1].trim()
+  }
+  assert.equal(workflowPin(files.ci), candidate.bambooSha, "Candidate CI backend pin differs from acceptance")
+  const publicationPin = workflowPin(files.publication)
+  // Historical candidates pin the SHA directly; current publication obtains it
+  // from the same accepted candidate through the run-bound preflight output.
+  assert.ok(
+    publicationPin === candidate.bambooSha || publicationPin === "${{ needs.preflight.outputs.bamboo_sha }}",
+    "Candidate publication backend source differs from acceptance",
+  )
+  if (publicationPin !== candidate.bambooSha) verifyDynamicBackendWiring(files.publication)
+  assert.ok(files.runtime.includes(`REAL_BAMBOO_REVISION = "${candidate.bambooSha}"`))
+  assert.ok(files.acceptanceTest.includes(`"${candidate.bambooSha}"`))
+}
+
 const main = async () => {
   const environment = process.env
   assert.equal(environment.GITHUB_REPOSITORY, repository)
@@ -114,11 +257,12 @@ const main = async () => {
   assert.equal(git(["rev-parse", `${candidate.sourceSha}^{tree}`]), candidate.sourceTree)
   git(["fetch", "--no-tags", "origin", candidate.productMergeSha])
   assert.equal(git(["rev-parse", `${candidate.productMergeSha}^{tree}`]), candidate.sourceTree)
-  for (const file of [".github/workflows/ci.yml", ".github/workflows/publish-npm.yml"]) {
-    assert.ok(git(["show", `${candidate.sourceSha}:${file}`]).includes(`BAMBOO_E2E_REVISION: ${candidate.bambooSha}`), "Candidate workflow backend pin differs from acceptance")
-  }
-  assert.ok(git(["show", `${candidate.sourceSha}:e2e/support/realBambooRuntime.ts`]).includes(`REAL_BAMBOO_REVISION = "${candidate.bambooSha}"`))
-  assert.ok(git(["show", `${candidate.sourceSha}:scripts/published-real-bamboo-acceptance.test.mjs`]).includes(`"${candidate.bambooSha}"`))
+  verifyCandidateBackendPins(candidate, {
+    ci: git(["show", `${candidate.sourceSha}:.github/workflows/ci.yml`]),
+    publication: git(["show", `${candidate.sourceSha}:.github/workflows/publish-npm.yml`]),
+    runtime: git(["show", `${candidate.sourceSha}:e2e/support/realBambooRuntime.ts`]),
+    acceptanceTest: git(["show", `${candidate.sourceSha}:scripts/published-real-bamboo-acceptance.test.mjs`]),
+  })
   const receipt = {
     schemaVersion: 1, repository,
     version: environment.LOTUS_NEXT_RELEASE_VERSION,

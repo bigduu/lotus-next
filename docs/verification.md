@@ -99,4 +99,36 @@ second build, verifies the tarball, publishes with npm provenance, then
 downloads and verifies the registry copy. Publishing does not switch any
 Bamboo, Bodhi, or Zenith consumer.
 
+Publication preflight checks the accepted candidate's files at its exact source
+SHA. CI must pin that candidate's Bamboo SHA literally; publication may use the
+same literal (historical candidates) or the exact
+`${{ needs.preflight.outputs.bamboo_sha }}` binding. The latter obtains its SHA
+from the reviewed candidate and the run-bound source receipt, rather than a
+dispatch input or moving backend ref. Preflight also checks that this binding
+is in the real-Bamboo job's environment, that the preflight output maps to
+`steps.source.outputs.bamboo_sha`, and that this source step runs the release
+authority script. The paired Bamboo checkout must consume that environment
+binding from the official repository into `.e2e-bamboo`, with only the reviewed
+plain block keys and action inputs. Step environments, merged or quoted keys,
+duplicate mappings, and unreviewed inputs fail closed. This strengthens
+preflight rejection; the existing runtime gate still checks the exact Bamboo
+checkout SHA independently.
+The source authority step also requires its reviewed plain block shape and
+four exact environment inputs, without step execution overrides or inherited
+workflow/preflight run defaults. Preflight job environments are rejected, and
+the workflow environment accepts only the seven reviewed plain, unique entries
+with exact values. The real-Bamboo job environment likewise requires its six
+reviewed plain, unique entries and exact values. Both jobs permit only their
+current plain, unique top-level keys, rejecting added container execution and
+other wrappers without interpreting them. The parent job-name mapping requires
+plain, unique keys, and preflight outputs require their six reviewed plain,
+unique, flat entries, preventing equivalent quoted or merged overrides.
+These checks prevent inherited execution overrides such as `NODE_OPTIONS` from
+changing how the source script,
+paired checkout, or Node verification gates run. This bounded structural check
+does not evaluate arbitrary other steps, file mutations, action supply chains,
+or general YAML.
+Missing, duplicate, or mismatched workflow bindings are
+rejected without changing the tag, tree, acceptance, or workflow identity gates.
+
 The initial bundle-size baseline is recorded in [`docs/bundle-baseline.md`](bundle-baseline.md). It is an observation gate, not a size-budget change.

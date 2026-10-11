@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest"
+import { execFileSync } from "node:child_process"
 import { createHash } from "node:crypto"
-import { readFileSync } from "node:fs"
-import { resolveReleaseRequest, verifyAcceptanceEvidence, verifySourceReceipt, verifyCommittedAcceptance } from "./release-source.mjs"
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { dirname, join, resolve } from "node:path"
+import { resolveReleaseRequest, verifyAcceptanceEvidence, verifySourceReceipt, verifyCommittedAcceptance, verifyCandidateBackendPins } from "./release-source.mjs"
 
 const sourceSha = "5242eaf1d6e8cd8d437e8a4dcb82c63d00af82f1"
 const candidate = {
@@ -27,6 +30,270 @@ const environment = {
   GITHUB_WORKFLOW_REF: workflowRef, GITHUB_SHA: workflowSha, GITHUB_RUN_ID: "123", GITHUB_RUN_ATTEMPT: "1",
   LOTUS_NEXT_EXPECTED_SOURCE_REVISION: sourceSha, LOTUS_NEXT_RELEASE_VERSION: request.version,
 }
+
+describe("candidate Bamboo source bindings", () => {
+  const files = {
+    ci: readFileSync(".github/workflows/ci.yml", "utf8"),
+    publication: readFileSync(".github/workflows/publish-npm.yml", "utf8"),
+    runtime: readFileSync("e2e/support/realBambooRuntime.ts", "utf8"),
+    acceptanceTest: readFileSync("scripts/published-real-bamboo-acceptance.test.mjs", "utf8"),
+  }
+  const bambooSha = files.runtime.match(/export const REAL_BAMBOO_REVISION = "([0-9a-f]{40})";/)[1]
+  const currentCandidate = { ...candidate, bambooSha }
+  const dynamicBinding = "${{ needs.preflight.outputs.bamboo_sha }}"
+  const replaceBinding = (source, value) => source.replace(/BAMBOO_E2E_REVISION: [^\r\n]+/, `BAMBOO_E2E_REVISION: ${value}`)
+
+  it("accepts the actual receipt-bound publication workflow with its paired source pins", () => {
+    expect(() => verifyCandidateBackendPins(currentCandidate, files)).not.toThrow()
+  })
+  it("retains historical candidates whose publication workflow pins the accepted SHA literally", () => {
+    const historical = Object.fromEntries(Object.entries(files).map(([key, source]) => [key, source.replaceAll(bambooSha, candidate.bambooSha)]))
+    historical.publication = replaceBinding(historical.publication, candidate.bambooSha)
+    expect(() => verifyCandidateBackendPins(candidate, historical)).not.toThrow()
+  })
+  it("runs preflight against immutable candidate files and writes their Bamboo authority into the receipt and outputs", () => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), "lotus-source-preflight-")))
+    const repo = join(root, "repo")
+    mkdirSync(repo)
+    const git = (...args) => execFileSync("git", args, { cwd: repo, encoding: "utf8" }).trim()
+    const write = (path, source) => {
+      const target = join(repo, path)
+      mkdirSync(dirname(target), { recursive: true })
+      writeFileSync(target, source)
+    }
+    try {
+      git("init", "--quiet", "--initial-branch=main")
+      git("config", "user.name", "Lotus preflight test")
+      git("config", "user.email", "preflight@example.invalid")
+      for (const path of ["scripts/release-source.mjs", ".github/workflows/ci.yml", ".github/workflows/publish-npm.yml", "e2e/support/realBambooRuntime.ts", "scripts/published-real-bamboo-acceptance.test.mjs"]) {
+        write(path, readFileSync(resolve(path)))
+      }
+      git("add", ".")
+      git("commit", "--quiet", "-m", "Candidate source")
+      const sourceSha = git("rev-parse", "HEAD")
+      const sourceTree = git("rev-parse", "HEAD^{tree}")
+      git("tag", "-a", candidate.sourceRef.replace("refs/tags/", ""), "-m", "Accepted candidate")
+      const tagObjectSha = git("rev-parse", candidate.sourceRef)
+      git("commit", "--quiet", "--allow-empty", "-m", "Merged product")
+      const productMergeSha = git("rev-parse", "HEAD")
+      const acceptance = {
+        schemaVersion: 1, repository: "bigduu/lotus-next",
+        run: { id: candidate.acceptanceRunId, path: ".github/workflows/ci.yml", event: "workflow_dispatch", head_sha: sourceSha, status: "completed", conclusion: "success" },
+        jobs: { total_count: 3, jobs: ["Node 22", "Node 24", "Real Bamboo / Node 22"].map((name) => ({ name, head_sha: sourceSha, status: "completed", conclusion: "success" })) },
+        pullRequest: { number: candidate.productPullRequest, merged: true, head: { sha: sourceSha }, merge_commit_sha: productMergeSha },
+      }
+      const acceptanceBytes = JSON.stringify(acceptance)
+      const accepted = { ...currentCandidate, sourceSha, sourceTree, tagObjectSha, productMergeSha, acceptanceReceiptSha256: createHash("sha256").update(acceptanceBytes).digest("hex") }
+      write(".github/release-candidates.json", JSON.stringify({ schemaVersion: 1, candidates: { [request.version]: accepted } }))
+      write(`.github/release-acceptance/${request.version}.json`, acceptanceBytes)
+      // Publication controls can advance independently; their local CI pin must
+      // never replace the already accepted candidate's backend source authority.
+      write(".github/workflows/ci.yml", replaceBinding(files.ci, "a".repeat(40)))
+      git("add", ".")
+      git("commit", "--quiet", "-m", "Reviewed publication controls")
+      const workflowSha = git("rev-parse", "HEAD")
+      git("remote", "add", "origin", repo)
+      const receiptPath = join(root, "receipt.json")
+      const outputPath = join(root, "outputs")
+      execFileSync(process.execPath, [join(repo, "scripts/release-source.mjs")], {
+        cwd: repo,
+        env: { ...process.env, ...environment, GITHUB_SHA: workflowSha, EXPECTED_WORKFLOW_SHA: workflowSha, SOURCE_REF_INPUT: accepted.sourceRef, EXPECTED_SOURCE_SHA_INPUT: sourceSha, SOURCE_RECEIPT_PATH: receiptPath, GITHUB_OUTPUT: outputPath },
+        timeout: 10_000,
+      })
+      expect(sourceSha).not.toBe(workflowSha)
+      expect(JSON.parse(readFileSync(receiptPath, "utf8"))).toMatchObject({ sourceSha, sourceTree, workflowSha, bambooSha, tagObjectSha })
+      expect(readFileSync(outputPath, "utf8")).toContain(`bamboo_sha=${bambooSha}\n`)
+      expect(git("status", "--porcelain", "--untracked-files=all")).toBe("")
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+  it.each(["ci", "publication", "runtime", "acceptanceTest"])("rejects a missing %s source binding", (file) => {
+    expect(() => verifyCandidateBackendPins(currentCandidate, { ...files, [file]: "" })).toThrow()
+  })
+  it.each(["ci", "publication", "runtime", "acceptanceTest"])("rejects a mismatched %s pin despite the other matching bindings", (file) => {
+    const source = file === "publication" ? replaceBinding(files[file], workflowSha) : files[file].replaceAll(bambooSha, workflowSha)
+    expect(() => verifyCandidateBackendPins(currentCandidate, { ...files, [file]: source })).toThrow()
+  })
+  it("requires CI to pin the literal accepted revision even when publication uses the preflight output", () => {
+    expect(() => verifyCandidateBackendPins(currentCandidate, { ...files, ci: replaceBinding(files.ci, dynamicBinding) })).toThrow()
+  })
+  it.each([
+    ["dispatch input", (source) => source.replace("steps.source.outputs.bamboo_sha", "inputs.bamboo_sha")],
+    ["moving ref", (source) => source.replace("${{ steps.source.outputs.bamboo_sha }}", "main")],
+    ["unrelated step output", (source) => source.replace("steps.source.outputs.bamboo_sha", "steps.other.outputs.bamboo_sha")],
+    ["commented output mapping", (source) => source.replace("      bamboo_sha:", "      # bamboo_sha:")],
+    ["duplicate output mapping", (source) => source.replace("      bamboo_sha:", "      bamboo_sha: main\n      bamboo_sha:")],
+    ["another job's environment", (source) => source.replace("  real-bamboo:", "  other-runtime:")],
+    ["missing preflight dependency", (source) => source.replace("    needs: [preflight, verify]", "    needs: verify")],
+    ["another environment level", (source) => source.replace(`      BAMBOO_E2E_REVISION: ${dynamicBinding}`, `          BAMBOO_E2E_REVISION: ${dynamicBinding}`)],
+    ["wrong source step", (source) => source.replace("        id: source", "        id: other")],
+    ["duplicate source step ID", (source) => source.replace("        id: source", "        id: source\n        id: other")],
+    ["commented source invocation", (source) => source.replace("        run: node scripts/release-source.mjs", "        # run: node scripts/release-source.mjs\n        run: echo bamboo_sha=main")],
+    ["invocation in another step", (source) => source.replace("        run: node scripts/release-source.mjs", "      - name: Unrelated step\n        run: node scripts/release-source.mjs")],
+  ])("rejects a dynamic binding wired to %s", (_name, alter) => {
+    expect(() => verifyCandidateBackendPins(currentCandidate, { ...files, publication: alter(files.publication) })).toThrow()
+  })
+  it.each([
+    ["single-quoted duplicate", (source) => source.replace("    outputs:\n", "    outputs:\n      'bamboo_sha': main\n")],
+    ["double-quoted duplicate", (source) => source.replace("    outputs:\n", '    outputs:\n      "bamboo_sha": main\n')],
+    ["merged output", (source) => source.replace("    outputs:\n", "    outputs:\n      <<: { bamboo_sha: main }\n")],
+    ["plain duplicate", (source) => source.replace("    outputs:\n", "    outputs:\n      bamboo_sha: main\n")],
+    ["missing reviewed output", (source) => source.replace("      source_tree: ${{ steps.source.outputs.source_tree }}\n", "")],
+    ["extra output", (source) => source.replace("    outputs:\n", "    outputs:\n      other: main\n")],
+    ["nested output", (source) => source.replace("      source_tree: ${{ steps.source.outputs.source_tree }}", "      source_tree:\n        override: main")],
+  ])("rejects preflight outputs with %s", (_name, alter) => {
+    expect(() => verifyCandidateBackendPins(currentCandidate, { ...files, publication: alter(files.publication) })).toThrow()
+  })
+  it.each(["preflight", "real-bamboo"].flatMap((job) => [
+    [job, "single-quoted equivalent", `  '${job}': {}`],
+    [job, "double-quoted equivalent", `  "${job}": {}`],
+    [job, "merged equivalent", `  <<: { ${job}: {} }`],
+    [job, "plain duplicate", `  ${job}: {}`],
+  ]))("rejects %s job name with %s", (_job, _name, extra) => {
+    const publication = files.publication.replace("jobs:\n", `jobs:\n${extra}\n`)
+    expect(() => verifyCandidateBackendPins(currentCandidate, { ...files, publication })).toThrow()
+  })
+  it.each([
+    ["moving checkout ref", (source) => source.replace("ref: ${{ env.BAMBOO_E2E_REVISION }}", "ref: main")],
+    ["different checkout revision", (source) => source.replace("ref: ${{ env.BAMBOO_E2E_REVISION }}", `ref: ${workflowSha}`)],
+    ["unrelated checkout output", (source) => source.replace("ref: ${{ env.BAMBOO_E2E_REVISION }}", "ref: ${{ needs.preflight.outputs.source_sha }}")],
+    ["other checkout repository", (source) => source.replace("repository: bigduu/Bamboo-agent", "repository: other/backend")],
+    ["commented checkout ref", (source) => source.replace("          ref: ${{ env.BAMBOO_E2E_REVISION }}", "          # ref: ${{ env.BAMBOO_E2E_REVISION }}\n          ref: main")],
+    ["duplicate checkout ref", (source) => source.replace("          ref: ${{ env.BAMBOO_E2E_REVISION }}", "          ref: ${{ env.BAMBOO_E2E_REVISION }}\n          ref: main")],
+    ["different checkout destination", (source) => source.replace("          path: .e2e-bamboo", "          path: other-backend")],
+    ["duplicate checkout destination", (source) => source.replace("          path: .e2e-bamboo", "          path: .e2e-bamboo\n          path: other-backend")],
+  ])("rejects a dynamic binding consumed by %s", (_name, alter) => {
+    expect(() => verifyCandidateBackendPins(currentCandidate, { ...files, publication: alter(files.publication) })).toThrow()
+  })
+  it.each([
+    ["flow-style step env", "      - name: Check out the paired Bamboo revision\n        env: { BAMBOO_E2E_REVISION: main }"],
+    ["env-first flow style", "      - env: { BAMBOO_E2E_REVISION: main }\n        name: Check out the paired Bamboo revision"],
+    ["block step env", "      - name: Check out the paired Bamboo revision\n        env:\n          'BAMBOO_E2E_REVISION': main"],
+    ["env-first block style", "      - env:\n          'BAMBOO_E2E_REVISION': main\n        name: Check out the paired Bamboo revision"],
+    ["quoted env key", "      - name: Check out the paired Bamboo revision\n        'env': { BAMBOO_E2E_REVISION: main }"],
+    ["merged step env", "      - name: Check out the paired Bamboo revision\n        <<: { env: { BAMBOO_E2E_REVISION: main } }"],
+  ])("rejects a paired checkout with %s", (_name, header) => {
+    const publication = files.publication.replace("      - name: Check out the paired Bamboo revision", header)
+    expect(() => verifyCandidateBackendPins(currentCandidate, { ...files, publication })).toThrow()
+  })
+  it.each([
+    ["duplicate flow-style with", (source) => source.replace("          path: .e2e-bamboo", "          path: .e2e-bamboo\n        with: { ref: main }")],
+    ["quoted ref override", (source) => source.replace("          ref: ${{ env.BAMBOO_E2E_REVISION }}", "          ref: ${{ env.BAMBOO_E2E_REVISION }}\n          'ref': main")],
+  ])("rejects a paired checkout with %s", (_name, alter) => {
+    expect(() => verifyCandidateBackendPins(currentCandidate, { ...files, publication: alter(files.publication) })).toThrow()
+  })
+  it("allows commented environment examples without treating them as checkout declarations", () => {
+    const publication = files.publication.replace("      - name: Check out the paired Bamboo revision", "      - name: Check out the paired Bamboo revision\n        # env: { BAMBOO_E2E_REVISION: main }")
+    expect(() => verifyCandidateBackendPins(currentCandidate, { ...files, publication })).not.toThrow()
+  })
+  it.each([
+    ["working directory", "        working-directory: shim"],
+    ["shell", "        shell: node {0}"],
+    ["flow env", "        env: { SOURCE_REF_INPUT: main }"],
+    ["merged execution context", "        <<: { working-directory: shim }"],
+    ["quoted working directory", "        'working-directory': shim"],
+    ["continue on error", "        continue-on-error: true"],
+  ])("rejects a source authority step with %s", (_name, extra) => {
+    const publication = files.publication.replace("        id: source", `        id: source\n${extra}`)
+    expect(() => verifyCandidateBackendPins(currentCandidate, { ...files, publication })).toThrow()
+  })
+  it.each(["SOURCE_REF_INPUT", "EXPECTED_SOURCE_SHA_INPUT", "EXPECTED_WORKFLOW_SHA", "SOURCE_RECEIPT_PATH"])("rejects altered source authority input %s", (key) => {
+    const publication = files.publication.replace(new RegExp(`^          ${key}:.*$`, "m"), `          ${key}: main`)
+    expect(() => verifyCandidateBackendPins(currentCandidate, { ...files, publication })).toThrow()
+  })
+  it.each([
+    ["workflow block", (source) => `defaults:\n  run:\n    working-directory: shim\n${source}`],
+    ["workflow flow", (source) => `defaults: { run: { shell: 'node {0}' } }\n${source}`],
+    ["workflow quoted", (source) => `'defaults': { run: { working-directory: shim } }\n${source}`],
+    ["workflow merge", (source) => `<<: { defaults: { run: { working-directory: shim } } }\n${source}`],
+    ["preflight block", (source) => source.replace("  preflight:", "  preflight:\n    defaults:\n      run:\n        working-directory: shim")],
+    ["preflight flow", (source) => source.replace("  preflight:", "  preflight:\n    defaults: { run: { shell: 'node {0}' } }")],
+    ["preflight quoted", (source) => source.replace("  preflight:", "  preflight:\n    'defaults': { run: { working-directory: shim } }")],
+    ["preflight merge", (source) => source.replace("  preflight:", "  preflight:\n    <<: { defaults: { run: { working-directory: shim } } }")],
+  ])("rejects inherited source execution overrides in %s", (_name, alter) => {
+    expect(() => verifyCandidateBackendPins(currentCandidate, { ...files, publication: alter(files.publication) })).toThrow()
+  })
+  it.each([
+    ["preflight block", (source) => source.replace("  preflight:", "  preflight:\n    env:\n      NODE_OPTIONS: --require ./shim.cjs")],
+    ["preflight flow", (source) => source.replace("  preflight:", "  preflight:\n    env: { NODE_OPTIONS: --require ./shim.cjs }")],
+    ["preflight quoted", (source) => source.replace("  preflight:", "  preflight:\n    'env': { NODE_OPTIONS: --require ./shim.cjs }")],
+    ["preflight merge", (source) => source.replace("  preflight:", "  preflight:\n    <<: { env: { NODE_OPTIONS: --require ./shim.cjs } }")],
+    ["preflight duplicate", (source) => source.replace("  preflight:", "  preflight:\n    env: {}\n    env: { NODE_OPTIONS: --require ./shim.cjs }")],
+    ["workflow extra entry", (source) => source.replace("env:\n", "env:\n  NODE_OPTIONS: --require ./shim.cjs\n")],
+    ["workflow missing entry", (source) => source.replace('  NPM_CONFIG_AUDIT: "false"\n', "")],
+    ["workflow quoted entry", (source) => source.replace("  NPM_CONFIG_AUDIT:", "  'NPM_CONFIG_AUDIT':")],
+    ["workflow merged entry", (source) => source.replace("env:\n", "env:\n  <<: { NODE_OPTIONS: --require ./shim.cjs }\n")],
+    ["workflow duplicate entry", (source) => source.replace('  NPM_CONFIG_AUDIT: "false"', '  NPM_CONFIG_AUDIT: "false"\n  NPM_CONFIG_AUDIT: "true"')],
+    ["workflow nested entry", (source) => source.replace('  NPM_CONFIG_AUDIT: "false"', '  NPM_CONFIG_AUDIT:\n    NODE_OPTIONS: --require ./shim.cjs')],
+    ["workflow flow", (source) => source.replace(/env:\n[\s\S]*?\n\njobs:/, "env: { NODE_OPTIONS: --require ./shim.cjs }\n\njobs:")],
+    ["workflow quoted", (source) => source.replace(/^env:/m, "'env':")],
+    ["workflow merge", (source) => `<<: { env: { NODE_OPTIONS: --require ./shim.cjs } }\n${source}`],
+    ["workflow duplicate", (source) => `env: { NODE_OPTIONS: --require ./shim.cjs }\n${source}`],
+  ])("rejects inherited source environments in %s", (_name, alter) => {
+    expect(() => verifyCandidateBackendPins(currentCandidate, { ...files, publication: alter(files.publication) })).toThrow()
+  })
+  it.each([
+    "LOTUS_NEXT_RELEASE_VERSION", "LOTUS_NEXT_SOURCE_DIRTY", "LOTUS_NEXT_EXPECTED_SOURCE_DIRTY", "DEFAULT_BRANCH",
+    "NPM_CONFIG_AUDIT", "NPM_CONFIG_FUND", "NPM_CONFIG_PROGRESS",
+  ])("rejects altered workflow environment input %s", (key) => {
+    const publication = files.publication.replace(new RegExp(`^  ${key}:.*$`, "m"), `  ${key}: --require ./shim.cjs`)
+    expect(() => verifyCandidateBackendPins(currentCandidate, { ...files, publication })).toThrow()
+  })
+  const alterRealBamboo = (alter) => {
+    const start = files.publication.indexOf("  real-bamboo:\n")
+    return files.publication.slice(0, start) + alter(files.publication.slice(start))
+  }
+  it.each([
+    ["extra entry", (source) => source.replace("    env:\n", "    env:\n      NODE_OPTIONS: --import=data:text/javascript;base64,c2hpbQ==\n")],
+    ["missing entry", (source) => source.replace("      LOTUS_NEXT_ACCEPTANCE_SOURCE_DIR: ${{ github.workspace }}\n", "")],
+    ["quoted entry", (source) => source.replace("      LOTUS_NEXT_ACCEPTANCE_SOURCE_DIR:", "      'LOTUS_NEXT_ACCEPTANCE_SOURCE_DIR':")],
+    ["merged entry", (source) => source.replace("    env:\n", "    env:\n      <<: { NODE_OPTIONS: --require ./shim.cjs }\n")],
+    ["duplicate entry", (source) => source.replace("      LOTUS_NEXT_ACCEPTANCE_SOURCE_DIR:", "      LOTUS_NEXT_ACCEPTANCE_SOURCE_DIR: shim\n      LOTUS_NEXT_ACCEPTANCE_SOURCE_DIR:")],
+    ["nested entry", (source) => source.replace("      LOTUS_NEXT_ACCEPTANCE_SOURCE_DIR: ${{ github.workspace }}", "      LOTUS_NEXT_ACCEPTANCE_SOURCE_DIR:\n        NODE_OPTIONS: --require ./shim.cjs")],
+    ["flow mapping", (source) => source.replace(/    env:\n[\s\S]*?\n\n    steps:/, `    env: { BAMBOO_E2E_REVISION: ${dynamicBinding} }\n\n    steps:`)],
+    ["quoted mapping", (source) => source.replace("    env:", "    'env':")],
+    ["merged mapping", (source) => source.replace("    env:", "    <<: { env: { NODE_OPTIONS: --require ./shim.cjs } }\n    env:")],
+    ["duplicate mapping", (source) => source.replace("    env:", "    env: { NODE_OPTIONS: --require ./shim.cjs }\n    env:")],
+  ])("rejects real-Bamboo inherited environment with %s", (_name, alter) => {
+    expect(() => verifyCandidateBackendPins(currentCandidate, { ...files, publication: alterRealBamboo(alter) })).toThrow()
+  })
+  it.each([
+    "LOTUS_NEXT_SOURCE_REVISION", "LOTUS_NEXT_EXPECTED_SOURCE_REVISION", "PUBLICATION_WORKFLOW_SHA",
+    "ACCEPTED_SOURCE_TREE", "BAMBOO_E2E_REVISION", "LOTUS_NEXT_ACCEPTANCE_SOURCE_DIR",
+  ])("rejects altered real-Bamboo environment input %s", (key) => {
+    const publication = alterRealBamboo((source) => source.replace(new RegExp(`^      ${key}:.*$`, "m"), `      ${key}: main`))
+    expect(() => verifyCandidateBackendPins(currentCandidate, { ...files, publication })).toThrow()
+  })
+  const jobExecutionOverrides = [
+    ["block container", "    container:\n      image: node:24\n      env:\n        NODE_OPTIONS: --require ./shim.cjs"],
+    ["flow container", "    container: { image: 'node:24', env: { NODE_OPTIONS: --require ./shim.cjs } }"],
+    ["quoted container", "    'container': { image: 'node:24', env: { NODE_OPTIONS: --require ./shim.cjs } }"],
+    ["merged container", "    <<: { container: { image: 'node:24', env: { NODE_OPTIONS: --require ./shim.cjs } } }"],
+    ["duplicate container", "    container: node:24\n    container: { image: 'node:24', env: { NODE_OPTIONS: --require ./shim.cjs } }"],
+    ["run defaults", "    defaults: { run: { working-directory: shim } }"],
+  ]
+  it.each(["preflight", "real-bamboo"].flatMap((job) => jobExecutionOverrides.map(([name, extra]) => [job, name, extra])))("rejects %s job execution wrapper %s", (job, _name, extra) => {
+    const publication = files.publication.replace(`  ${job}:\n`, `  ${job}:\n${extra}\n`)
+    expect(() => verifyCandidateBackendPins(currentCandidate, { ...files, publication })).toThrow()
+  })
+  it.each([
+    "${{ inputs.bamboo_sha }}", "${{ env.BAMBOO_E2E_REVISION }}",
+    "${{ needs.verify.outputs.bamboo_sha }}", "${{ needs.preflight.outputs.source_sha }}",
+    "${{ needs.preflight.outputs.bamboo_sha || 'main' }}", dynamicBinding + "suffix", "main",
+  ])("rejects publication backend authority %s", (value) => {
+    expect(() => verifyCandidateBackendPins(currentCandidate, { ...files, publication: replaceBinding(files.publication, value) })).toThrow()
+  })
+  it.each(["ci", "publication"])("rejects commented or ambiguous %s assignments", (file) => {
+    const original = files[file]
+    const commented = original.replace(/^(\s*)(BAMBOO_E2E_REVISION:)/m, "$1# $2")
+    const duplicate = original + `\n      BAMBOO_E2E_REVISION: ${workflowSha}\n`
+    const suffixed = replaceBinding(original, (file === "ci" ? bambooSha : dynamicBinding) + "suffix")
+    for (const source of [commented, duplicate, suffixed]) {
+      expect(() => verifyCandidateBackendPins(currentCandidate, { ...files, [file]: source })).toThrow()
+    }
+  })
+})
 
 describe("accepted immutable release source", () => {
   it("verifies real reviewed historical acceptance bytes and rejects tampering", () => {
