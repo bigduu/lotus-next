@@ -198,16 +198,22 @@ export function SettingsPlugins() {
 
   const confirmDelete = async () => {
     if (!deleting || !beginOperation("delete")) return
+    const targetId = deleting.id
     setDeleteBusy(true)
     setDeleteError(null)
     try {
-      await pluginService.removePlugin(deleting.id)
-      setDeleting(null)
+      await pluginService.removePlugin(targetId)
     } catch (e) {
-      setDeleteError(getErrorMessage(e))
+      if (mountedRef.current) setDeleteError(getErrorMessage(e))
     } finally {
-      await finishOperation()
-      if (mountedRef.current) setDeleteBusy(false)
+      const list = await finishOperation()
+      if (mountedRef.current) {
+        if (list && !list.some((plugin) => plugin.id === targetId)) {
+          setDeleting(null)
+          setDeleteError(null)
+        }
+        setDeleteBusy(false)
+      }
     }
   }
 
@@ -365,7 +371,7 @@ export function SettingsPlugins() {
           <div className="mt-5 flex justify-end gap-2">
             <Button size="sm" variant="secondary" onClick={() => setDeleting(null)} disabled={deleteBusy}>
               {uiText("cancel_2cd0f3be")}</Button>
-            <Button size="sm" variant="destructive" onClick={() => void confirmDelete()} disabled={deleteBusy}>
+            <Button size="sm" variant="destructive" onClick={() => void confirmDelete()} disabled={deleteBusy || !confirmed}>
               {deleteBusy ? uiText("deleting_5e8e7af5") : uiText("delete_2f9daa82")}
             </Button>
           </div>

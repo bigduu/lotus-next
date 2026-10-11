@@ -27,7 +27,7 @@ export function PluginRuntime({ ids, servers, confirmed, disabled, onToggle }: {
           : status === ServerStatus.Degraded ? uiText("plugin_degraded")
           : uiText("stopped_f006455e")
         return (
-          <div key={id} className="flex flex-wrap items-center gap-x-3 gap-y-2 text-xs">
+          <div key={id} className="flex flex-wrap items-center gap-3 text-xs">
             <span className="min-w-0 flex-1 break-all text-muted-foreground">{server?.name || id}</span>
             <Badge variant={status === ServerStatus.Error ? "destructive" : "outline"}>{label}</Badge>
             {server ? <Switch checked={server.enabled} disabled={disabled} aria-label={uiText("plugin_toggle_connection", { name: server.name || id })}

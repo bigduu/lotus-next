@@ -210,6 +210,41 @@ describe("official plugin center", () => {
     expect(document.body.textContent).toContain("暂无插件")
   })
 
+  it("closes the removal dialog when reconciliation confirms a lost response was applied", async () => {
+    inventory = [nova()]; servers = [server()]
+    remove.mockImplementationOnce(async () => {
+      inventory = []; servers = []
+      throw new Error("response lost")
+    })
+    await mount(); await installed(); await click("删除")
+    const dialog = document.querySelector('[role="dialog"]')!
+    await clickElement([...dialog.querySelectorAll<HTMLButtonElement>("button")].find((item) => item.textContent?.trim() === "删除")!)
+    expect(remove).toHaveBeenCalledExactlyOnceWith("plugins/nova")
+    expect(document.querySelector('[role="dialog"]')).toBeNull()
+    expect(document.body.textContent).toContain("暂无插件")
+    expect(document.body.textContent).not.toContain("response lost")
+  })
+
+  it("keeps uncertain removal open when inventory reconciliation fails", async () => {
+    inventory = [nova()]; servers = [server()]
+    remove.mockImplementationOnce(async () => {
+      inventory = []; servers = []
+      throw new Error("response lost")
+    })
+    await mount(); await installed(); await click("删除")
+    get.mockImplementation(async (path) => {
+      if (path === "plugins") throw new Error("inventory unavailable")
+      return { servers }
+    })
+    const dialog = document.querySelector('[role="dialog"]')!
+    await clickElement([...dialog.querySelectorAll<HTMLButtonElement>("button")].find((item) => item.textContent?.trim() === "删除")!)
+    expect(document.querySelector('[role="dialog"]')?.textContent).toContain("response lost")
+    expect(document.body.textContent).not.toContain("暂无插件")
+    const retry = [...dialog.querySelectorAll<HTMLButtonElement>("button")].find((item) => item.textContent?.trim() === "删除")!
+    expect(retry.disabled).toBe(true)
+    expect(remove).toHaveBeenCalledExactlyOnceWith("plugins/nova")
+  })
+
   it("fences a stale automatic poll from undoing a completed installation", async () => {
     vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] })
     const stale = deferred<unknown>()
