@@ -36,17 +36,18 @@ test("Jiandu reconciles an uncertain installation and copies the fresh same-host
   const observation = await installArtifactRuntime(page, standaloneScenario)
   let report = setup()
   let installed = false
-  let failSetupOnce = false
+  let setupUnavailable = false
   const posts: { path: string; body: unknown }[] = []
   await page.route("**/api/v1/plugins**", async (route) => {
     const path = new URL(route.request().url()).pathname
     if (path.endsWith("/jiandu/setup")) {
-      if (failSetupOnce) { failSetupOnce = false; return route.fulfill({ status: 503, json: { error: "Fixture setup unavailable" } }) }
+      // Keep the outage across HTTP retries until the deliberate refresh below.
+      if (setupUnavailable) return route.fulfill({ status: 503, json: { error: "Fixture setup unavailable" } })
       return route.fulfill({ json: report })
     }
     if (route.request().method() === "GET") return route.fulfill({ json: { plugins: installed ? [plugin] : [] } })
     posts.push({ path, body: route.request().postDataJSON() })
-    installed = true; report = setup(true); failSetupOnce = true
+    installed = true; report = setup(true); setupUnavailable = true
     return route.fulfill({ status: 500, json: { error: "Fixture response lost after install" } })
   })
   await page.route("**/api/v1/mcp/servers**", (route) => route.fulfill({ json: { servers: [] } }))
@@ -61,6 +62,7 @@ test("Jiandu reconciles an uncertain installation and copies the fresh same-host
   await card.getByRole("button", { name: "安装 Jiandu 连接器" }).click()
   await expect(page.getByRole("alert")).toContainText("尚未确认 Jiandu")
   await expect(card.getByRole("button", { name: "安装 Jiandu 连接器" })).toBeDisabled()
+  setupUnavailable = false
   await page.getByRole("button", { name: "刷新插件与连接", exact: true }).click()
   await expect(card.getByRole("button", { name: "复制 MCP 配置" })).toBeEnabled()
   await expect(page.getByRole("alert")).toHaveCount(0)

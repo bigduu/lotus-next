@@ -66,7 +66,7 @@ export function OfficialPluginCards({ nova, installing, disabled, onInstallNova,
           <p className="font-medium text-primary">{uiText("plugin_jiandu_builtin")}</p>
           <p className="mt-1 text-muted-foreground">{uiText("plugin_jiandu_builtin_detail")}</p>
         </div>
-        <div className="mt-3">{jianduSetup}</div>
+        <div className="mt-auto pt-3">{jianduSetup}</div>
       </article>
     </div>
   )
