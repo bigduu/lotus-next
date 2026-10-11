@@ -1,28 +1,41 @@
 {
-  "source_commit": "b448417cb7ee0f3ef33f0124193bf34b2c2e5d24",
-  "frontend": "Built Lotus Next frontend from this clean source commit",
-  "resource_sha256": "327247b7dd6186e28e9e5fe5110f7e6dd4f419beaaf933ab7c1867c7f882e263",
+  "frontend": "Screenshots show the built Lotus Next frontend from screenshot_source_commit; this layout is unchanged by the later independent Jiandu authority fix.",
   "backend": "Fixture APIs and clipboard; Jiandu 0.3.2 with illustrative host paths",
   "screenshots": {
     "discover-desktop.png": {
-      "viewport": { "width": 1440, "height": 900 },
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
       "device_scale_factor": 1
     },
     "installed-phone.png": {
-      "viewport": { "width": 393, "height": 851 },
+      "viewport": {
+        "width": 393,
+        "height": 851
+      },
       "device_scale_factor": 1
     }
   },
   "validation": {
     "full_verify": "passed",
     "vitest_files_passed": 139,
-    "vitest_tests_passed": 2438,
-    "focused_plugin_tests_passed": 61,
+    "vitest_tests_passed": 2440,
+    "focused_plugin_tests_passed": 63,
     "built_browser_tests_passed": 21,
-    "built_browser_viewports": ["desktop", "tablet", "phone"],
+    "built_browser_viewports": [
+      "desktop",
+      "tablet",
+      "phone"
+    ],
     "startup_css_raw_bytes": 108993,
     "startup_css_gzip_bytes": 18412,
-    "manual_browser_flow": "Install Jiandu, refresh authoritative setup, copy same-host MCP configuration, inspect responsive Installed view"
+    "source_commit": "08df61488f7661d6815953f8a635547104516823",
+    "resource_sha256": "e1f9f769d73b3b0945890039190f9b419c3197977c1925404ff46f5f28a8bb0f",
+    "inventory_authority_regressions": "Two tests failed before the fix and passed afterwards: verified Jiandu setup authorizes install/copy independently of an unavailable generic plugin inventory; Nova and manual controls stay disabled."
   },
-  "limitations": "Browser fixture evidence only. This does not verify native Bodhi, live package installation, or an external MCP client's connection to the shared memory root."
+  "limitations": "Browser fixture evidence only. This does not verify native Bodhi, live package installation, or an external MCP client's connection to the shared memory root.",
+  "screenshot_source_commit": "b448417cb7ee0f3ef33f0124193bf34b2c2e5d24",
+  "screenshot_resource_sha256": "327247b7dd6186e28e9e5fe5110f7e6dd4f419beaaf933ab7c1867c7f882e263",
+  "screenshot_capture_flow": "Install Jiandu, refresh authoritative setup, copy same-host MCP configuration, inspect responsive Installed view"
 }
