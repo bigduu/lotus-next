@@ -108,7 +108,11 @@ dispatch input or moving backend ref. Preflight also checks that this binding
 is in the real-Bamboo job's environment, that the preflight output maps to
 `steps.source.outputs.bamboo_sha`, and that this source step runs the release
 authority script. The paired Bamboo checkout must consume that environment
-binding from the official repository into `.e2e-bamboo`.
+binding from the official repository into `.e2e-bamboo`, with only the reviewed
+plain block keys and action inputs. Step environments, merged or quoted keys,
+duplicate mappings, and unreviewed inputs fail closed. This strengthens
+preflight rejection; the existing runtime gate still checks the exact Bamboo
+checkout SHA independently.
 Missing, duplicate, or mismatched workflow bindings are
 rejected without changing the tag, tree, acceptance, or workflow identity gates.
 

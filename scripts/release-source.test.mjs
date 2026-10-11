@@ -147,6 +147,27 @@ describe("candidate Bamboo source bindings", () => {
     expect(() => verifyCandidateBackendPins(currentCandidate, { ...files, publication: alter(files.publication) })).toThrow()
   })
   it.each([
+    ["flow-style step env", "      - name: Check out the paired Bamboo revision\n        env: { BAMBOO_E2E_REVISION: main }"],
+    ["env-first flow style", "      - env: { BAMBOO_E2E_REVISION: main }\n        name: Check out the paired Bamboo revision"],
+    ["block step env", "      - name: Check out the paired Bamboo revision\n        env:\n          'BAMBOO_E2E_REVISION': main"],
+    ["env-first block style", "      - env:\n          'BAMBOO_E2E_REVISION': main\n        name: Check out the paired Bamboo revision"],
+    ["quoted env key", "      - name: Check out the paired Bamboo revision\n        'env': { BAMBOO_E2E_REVISION: main }"],
+    ["merged step env", "      - name: Check out the paired Bamboo revision\n        <<: { env: { BAMBOO_E2E_REVISION: main } }"],
+  ])("rejects a paired checkout with %s", (_name, header) => {
+    const publication = files.publication.replace("      - name: Check out the paired Bamboo revision", header)
+    expect(() => verifyCandidateBackendPins(currentCandidate, { ...files, publication })).toThrow()
+  })
+  it.each([
+    ["duplicate flow-style with", (source) => source.replace("          path: .e2e-bamboo", "          path: .e2e-bamboo\n        with: { ref: main }")],
+    ["quoted ref override", (source) => source.replace("          ref: ${{ env.BAMBOO_E2E_REVISION }}", "          ref: ${{ env.BAMBOO_E2E_REVISION }}\n          'ref': main")],
+  ])("rejects a paired checkout with %s", (_name, alter) => {
+    expect(() => verifyCandidateBackendPins(currentCandidate, { ...files, publication: alter(files.publication) })).toThrow()
+  })
+  it("allows commented environment examples without treating them as checkout declarations", () => {
+    const publication = files.publication.replace("      - name: Check out the paired Bamboo revision", "      - name: Check out the paired Bamboo revision\n        # env: { BAMBOO_E2E_REVISION: main }")
+    expect(() => verifyCandidateBackendPins(currentCandidate, { ...files, publication })).not.toThrow()
+  })
+  it.each([
     "${{ inputs.bamboo_sha }}", "${{ env.BAMBOO_E2E_REVISION }}",
     "${{ needs.verify.outputs.bamboo_sha }}", "${{ needs.preflight.outputs.source_sha }}",
     "${{ needs.preflight.outputs.bamboo_sha || 'main' }}", dynamicBinding + "suffix", "main",

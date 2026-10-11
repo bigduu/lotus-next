@@ -109,6 +109,33 @@ const workflowValue = (source, key, indentation) => {
   return assignments[0][1].trim()
 }
 
+const verifyPairedCheckoutShape = (step) => {
+  const keys = []
+  const inputs = []
+  let currentKey
+  for (const line of step.split(/\r?\n/)) {
+    if (!line.trim() || line.trimStart().startsWith("#")) continue
+    const declaration = /^( *)([a-z][a-z0-9_-]*):(?:[ \t]+(.*))?$/.exec(line.trimEnd())
+    assert.ok(declaration, "Candidate paired checkout requires plain block keys")
+    const [, spaces, key, value] = declaration
+    // Splitting the sequence removes the first key's six-space dash prefix.
+    if (keys.length === 0 || spaces.length === 8) {
+      assert.equal(spaces.length, keys.length === 0 ? 0 : 8)
+      keys.push(key)
+      currentKey = key
+      if (key === "with") assert.equal(value, undefined, "Candidate paired checkout requires block inputs")
+    } else {
+      assert.equal(spaces.length, 10)
+      assert.equal(currentKey, "with")
+      inputs.push(key)
+    }
+  }
+  // Reject step env, merge/quoted keys, duplicate mappings, and unreviewed
+  // action inputs instead of trying to evaluate YAML precedence rules.
+  assert.deepEqual(keys.sort(), ["name", "uses", "with"])
+  assert.deepEqual(inputs.sort(), ["path", "persist-credentials", "ref", "repository"])
+}
+
 const verifyDynamicBackendWiring = (publication) => {
   const jobs = workflowBlock(publication, "jobs", 0)
   const realBamboo = workflowBlock(jobs, "real-bamboo", 2)
@@ -118,11 +145,13 @@ const verifyDynamicBackendWiring = (publication) => {
   const checkoutSteps = workflowBlock(realBamboo, "steps", 4).split(/^ {6}-[ \t]/m)
     .filter((step) => /^ {10}path:[ \t]*\.e2e-bamboo[ \t]*$/m.test(step))
   assert.equal(checkoutSteps.length, 1, "Candidate publication requires one paired Bamboo checkout")
+  verifyPairedCheckoutShape(checkoutSteps[0])
   assert.equal(workflowValue(checkoutSteps[0], "uses", 8), "actions/checkout@v7")
   const checkout = workflowBlock(checkoutSteps[0], "with", 8)
   assert.equal(workflowValue(checkout, "repository", 10), "bigduu/Bamboo-agent")
   assert.equal(workflowValue(checkout, "ref", 10), "${{ env.BAMBOO_E2E_REVISION }}")
   assert.equal(workflowValue(checkout, "path", 10), ".e2e-bamboo")
+  assert.equal(workflowValue(checkout, "persist-credentials", 10), "false")
   const preflight = workflowBlock(jobs, "preflight", 2)
   const outputs = workflowBlock(preflight, "outputs", 4)
   assert.equal(workflowValue(outputs, "bamboo_sha", 6), "${{ steps.source.outputs.bamboo_sha }}")
