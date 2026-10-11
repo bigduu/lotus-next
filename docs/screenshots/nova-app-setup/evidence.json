@@ -1,9 +1,7 @@
 {
-  "frontend": "Built Lotus Next frontend; screenshots and local validation use source_commit.",
+  "frontend": "Built Lotus Next frontend; screenshot_source_commit captures the unchanged ad-hoc scenario. Validation uses the later signing-guidance fix source below.",
   "backend": "Fixture HTTP APIs: illustrative macOS/aarch64 Nova0.3.1 missing/installed app status, one enabled desktop server and a disabled Chrome sidecar. Jiandu0.3.2 fixture preserves built-in memory.",
-  "source_commit": "b8814580f84ba35d58df7cd5ac425c7fc165536f",
   "base_commit": "9e901166a5c00a62333a1ffa89a1c8e2f078c672",
-  "resource_sha256": "8706cd7a30ae5783e0639c3d43c0198a1f7262f2e6013313ca3b2b4889d991d8",
   "screenshots": {
     "discover-desktop.png": {
       "viewport": {
@@ -26,21 +24,26 @@
   "validation": {
     "full_verify": "passed",
     "vitest_files_passed": 139,
-    "vitest_tests_passed": 2688,
-    "focused_plugin_tests_passed": 122,
-    "built_browser_tests_passed": 45,
+    "vitest_tests_passed": 2691,
+    "focused_plugin_tests_passed": 125,
+    "built_browser_tests_passed": 48,
     "built_browser_viewports": [
       "desktop",
       "tablet",
       "phone"
     ],
-    "built_browser_scope": "24 Nova setup,18 Jiandu setup,3 plugin-center tests; no skipped or retried tests.",
+    "built_browser_scope": "27 Nova setup,18 Jiandu setup,3 plugin-center tests; no skipped or retried tests.",
     "startup_css_raw_bytes": 108993,
     "startup_css_gzip_bytes": 18412,
     "startup_css_raw_limit": 109000,
     "console_errors": 0,
     "page_errors": 0,
-    "initial_browser_failure": "Three initial core-flow tests failed because the test used the wrong accessible Chrome switch label; corrected test-only and final 45 tests passed."
+    "initial_browser_failure": "Three initial core-flow tests failed because the test used the wrong accessible Chrome switch label; corrected test-only and final 45 tests passed.",
+    "source_commit": "2255fda216f8a721d200fb383c805352849e96a5",
+    "resource_sha256": "e1c581c3627402f5f6f61e7fdc17ec95e96e228cae4ce3d7db4f97f752b0b9cb",
+    "signing_guidance_regression": "Three existing non-development signing cases failed before the fix, then the focused suite passed. Developer ID existing-app guidance is also checked in all three browser viewports; permission instructions remain visible."
   },
-  "limitations": "Browser fixture evidence only. No native Bodhi rendering, published download, local signing, native app installation, MCP restart, or macOS TCC permission behavior is certified. The selected backend artifact_id is illustrative; production installation uses the live GET artifact_id."
+  "limitations": "Browser fixture evidence only. No native Bodhi rendering, published download, local signing, native app installation, MCP restart, or macOS TCC permission behavior is certified. The selected backend artifact_id is illustrative; production installation uses the live GET artifact_id.",
+  "screenshot_source_commit": "b8814580f84ba35d58df7cd5ac425c7fc165536f",
+  "screenshot_resource_sha256": "8706cd7a30ae5783e0639c3d43c0198a1f7262f2e6013313ca3b2b4889d991d8"
 }
