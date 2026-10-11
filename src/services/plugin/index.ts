@@ -2,6 +2,8 @@ export { PluginService, pluginService } from "./PluginService";
 export type {
   InstalledPluginView,
   JianduSetupReport,
+  NovaAppReport,
+  NovaAppSetupReport,
   PluginApiRecord,
   PluginInstallRequest,
   PluginListResponse,

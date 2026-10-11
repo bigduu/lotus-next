@@ -9,6 +9,32 @@
 
 export type PluginStatus = "installing" | "installed";
 
+export interface NovaAppReport {
+  success: boolean;
+  state: "missing" | "installed" | "already_installed" | "unsupported" | "error";
+  message: string;
+  next_action: string;
+  path?: string;
+  version?: string;
+  signing?: "ad_hoc" | "developer_id" | "other";
+  development?: boolean;
+  connector_compatible?: boolean;
+}
+
+/** Host/connector ownership and passive app status; never a permission probe. */
+export interface NovaAppSetupReport {
+  plugin_id: "nova";
+  host: { os: string; arch: string; supported: boolean; reason: string | null };
+  connector: { state: "missing" | "installing" | "unverified" | "verified"; version: string | null; reason: string | null };
+  capability: { supported: boolean; reason: string | null };
+  app: NovaAppReport | null;
+  install: { available: boolean; reason: string | null };
+  artifact: { artifact_id: string; version: string; url: string; sha256: string; signing: "ad_hoc"; install_mode: "local_ad_hoc"; development: true } | null;
+  manual_guidance: string;
+  desktop_server_id: string | null;
+  desktop_readiness: "not_tested";
+}
+
 /** Host-derived authority for the optional connector; built-in memory is separate. */
 export interface JianduSetupReport {
   plugin_id: "jiandu";

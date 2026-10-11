@@ -6,27 +6,13 @@ import { Button } from "@/components/ui/button"
 import { NOVA_PLUGIN } from "./officialPlugins"
 import type { ReactNode } from "react"
 
-export function NovaSetupNotice() {
-  useUiLocale()
-  return (
-    <div className="rounded-lg border bg-muted/30 p-3 text-xs leading-relaxed text-muted-foreground">
-      <p className="font-medium text-foreground">{uiText("plugin_nova_setup_title")}</p>
-      <p className="mt-1">{uiText("plugin_nova_setup_macos")}</p>
-      <p className="mt-1">{uiText("plugin_nova_setup_permissions")}</p>
-      <a className="mt-2 inline-flex items-center gap-1 text-primary underline-offset-4 hover:underline"
-        href={NOVA_PLUGIN.setupUrl} target="_blank" rel="noreferrer">
-        {uiText("plugin_setup_guide")}<ExternalLink className="size-3" />
-      </a>
-    </div>
-  )
-}
-
-export function OfficialPluginCards({ nova, installing, disabled, onInstallNova, onManageNova, jianduSetup }: {
+export function OfficialPluginCards({ nova, installing, disabled, onInstallNova, onManageNova, novaSetup, jianduSetup }: {
   nova?: InstalledPluginView
   installing: boolean
   disabled: boolean
   onInstallNova: () => void
   onManageNova: () => void
+  novaSetup: ReactNode
   jianduSetup: ReactNode
 }) {
   useUiLocale()
@@ -42,7 +28,7 @@ export function OfficialPluginCards({ nova, installing, disabled, onInstallNova,
         </div>
         <p className="my-4 text-sm leading-relaxed text-muted-foreground">{uiText("plugin_nova_description")}</p>
         <div className="mb-3 flex flex-wrap gap-1.5"><Badge variant="secondary">macOS</Badge><Badge variant="secondary">Windows</Badge><Badge variant="outline">v{NOVA_PLUGIN.version}</Badge></div>
-        <NovaSetupNotice />
+        {novaSetup}
         <div className="mt-auto flex flex-wrap items-center justify-between gap-3 pt-3">
           <a className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
             href={NOVA_PLUGIN.releaseUrl} target="_blank" rel="noreferrer">{uiText("plugin_release_details")}<ExternalLink className="size-3" /></a>

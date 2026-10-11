@@ -14,7 +14,8 @@ const reasonKeys: Record<string, Parameters<typeof uiText>[0]> = {
   incomplete_install: "plugin_jiandu_incomplete",
   already_installed: "plugin_jiandu_unverified",
   unverified_install: "plugin_jiandu_unverified",
-  memory_root_unavailable: "plugin_jiandu_unverified",
+  memory_root_unavailable: "plugin_jiandu_root_unavailable",
+  memory_root_overlaps_plugin: "plugin_jiandu_root_overlap",
   invalid_managed_files: "plugin_jiandu_unverified",
 }
 
@@ -34,10 +35,11 @@ export function JianduSetupPanel({ report, error, disabled, installing, copying,
   const configuration = ready && report.external_client
     ? JSON.stringify({ mcpServers: { jiandu: report.external_client } }, null, 2) : null
   const reason = report?.host.reason ?? report?.trust.reason ?? report?.installed.reason ?? report?.install.reason
+  const memoryRootStatus = reason === "memory_root_unavailable" || reason === "memory_root_overlaps_plugin" ? reasonKeys[reason] : null
   const status = error === "loading" ? "loading_4927a53b" : error === "legacy" ? "plugin_jiandu_legacy" : error
-    ? "plugin_jiandu_unknown" : ready ? "plugin_jiandu_ready" : report?.installed.state === "installing"
+    ? "plugin_jiandu_unknown" : ready ? "plugin_jiandu_ready" : memoryRootStatus ?? (report?.installed.state === "installing"
       ? "plugin_jiandu_incomplete" : report?.installed.state === "unverified" ? "plugin_jiandu_unverified"
-        : report?.install.available ? "plugin_jiandu_optional" : reasonKeys[reason ?? ""] ?? "plugin_jiandu_unknown"
+        : report?.install.available ? "plugin_jiandu_optional" : reasonKeys[reason ?? ""] ?? "plugin_jiandu_unknown")
   return <div className="space-y-3">
     <p className="text-xs leading-relaxed text-muted-foreground" role="status">{uiText(status)}</p>
     {report ? <p className="text-xs text-muted-foreground">

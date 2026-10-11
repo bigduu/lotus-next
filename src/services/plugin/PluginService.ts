@@ -9,6 +9,7 @@ import { apiClient } from "../api";
 import type {
   InstalledPluginView,
   JianduSetupReport,
+  NovaAppSetupReport,
   PluginApiRecord,
   PluginListResponse,
   PluginSourceSpec,
@@ -107,7 +108,54 @@ const parseJianduSetup = (value: unknown): JianduSetupReport => {
   } } as unknown as JianduSetupReport;
 };
 
+const parseNovaAppSetup = (value: unknown): NovaAppSetupReport => {
+  const invalid = () => { throw new Error("Nova app setup could not be verified."); };
+  if (!isRecord(value) || value.plugin_id !== "nova") return invalid();
+  const { host, connector, capability, app, install, artifact, desktop_server_id: desktopId } = value;
+  if (!isRecord(host) || !nonemptyString(host.os) || !nonemptyString(host.arch) ||
+    typeof host.supported !== "boolean" || !nullableString(host.reason) ||
+    !isRecord(connector) || typeof connector.state !== "string" || !["missing", "installing", "unverified", "verified"].includes(connector.state) ||
+    !nullableString(connector.version) || !nullableString(connector.reason) ||
+    !isRecord(capability) || typeof capability.supported !== "boolean" || !nullableString(capability.reason) ||
+    !isRecord(install) || typeof install.available !== "boolean" || !nullableString(install.reason) ||
+    !nonemptyString(value.manual_guidance) || value.desktop_readiness !== "not_tested" ||
+    (desktopId !== null && (typeof desktopId !== "string" || !/^[a-zA-Z0-9_-]+$/.test(desktopId) || connector.state !== "verified"))) return invalid();
+  if (artifact !== null && (!isRecord(artifact) || !nonemptyString(artifact.artifact_id) ||
+    !nonemptyString(artifact.version) || !nonemptyString(artifact.url) || typeof artifact.sha256 !== "string" ||
+    !/^[a-f\d]{64}$/i.test(artifact.sha256) || artifact.signing !== "ad_hoc" ||
+    artifact.install_mode !== "local_ad_hoc" || artifact.development !== true)) return invalid();
+  if (app !== null) {
+    if (!isRecord(app) || typeof app.success !== "boolean" ||
+      typeof app.state !== "string" || !["missing", "installed", "already_installed", "unsupported", "error"].includes(app.state) ||
+      !nonemptyString(app.message) || !nonemptyString(app.next_action) ||
+      (app.path !== undefined && !absoluteHostPath(app.path, host.os)) ||
+      (app.version !== undefined && !nonemptyString(app.version)) ||
+      (app.signing !== undefined && (typeof app.signing !== "string" || !["ad_hoc", "developer_id", "other"].includes(app.signing))) ||
+      (app.development !== undefined && typeof app.development !== "boolean") ||
+      (app.connector_compatible !== undefined && typeof app.connector_compatible !== "boolean") ||
+      app.success !== (app.state === "missing" || app.state === "installed") ||
+      (app.state === "installed" && (app.path === undefined || app.version === undefined || app.signing === undefined ||
+        app.development === undefined || app.connector_compatible === undefined)) ||
+      !host.supported || connector.state !== "verified") return invalid();
+  }
+  if (capability.supported !== (app !== null)) return invalid();
+  if (install.available && (host.os !== "macos" || !["aarch64", "x86_64"].includes(host.arch) || !host.supported ||
+    connector.state !== "verified" || !capability.supported || !isRecord(app) || app.state !== "missing" || !app.success ||
+    !isRecord(artifact) || connector.version !== artifact.version || install.reason !== null)) return invalid();
+  return value as unknown as NovaAppSetupReport;
+};
+
 export class PluginService {
+  async getNovaAppSetup(): Promise<NovaAppSetupReport> {
+    return parseNovaAppSetup(await apiClient.get<unknown>("plugins/nova/app"));
+  }
+
+  async installNovaApp(artifactId: string): Promise<void> {
+    // The fixed backend catalogue owns URL/hash/signing. Ignore the POST report;
+    // a separate fresh GET reconciles even a lost installation response.
+    await apiClient.post<unknown>("plugins/nova/app/install", { artifact_id: artifactId });
+  }
+
   async getJianduSetup(): Promise<JianduSetupReport> {
     return parseJianduSetup(await apiClient.get<unknown>("plugins/jiandu/setup"));
   }
