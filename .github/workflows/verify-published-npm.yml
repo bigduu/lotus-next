@@ -1,0 +1,47 @@
+name: Verify already-published frontend artifact
+
+on:
+  workflow_dispatch:
+
+run-name: Verify existing @bigduu/lotus-next@2026.10.12
+
+permissions:
+  contents: read
+
+concurrency:
+  group: verify-lotus-next-2026.10.12
+  cancel-in-progress: false
+
+jobs:
+  verify-published:
+    name: Verify immutable registry recovery
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out exact recovery control source
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up read-only verification Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          package-manager-cache: false
+
+      - name: Verify original publication evidence and exact registry bytes
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          GITHUB_WORKFLOW_SHA: ${{ github.workflow_sha }}
+          RECOVERY_RECEIPT_PATH: ${{ runner.temp }}/publication-recovery-receipt.json
+        run: node scripts/verify-published-npm.mjs
+
+      - name: Upload the verified recovery source receipt
+        uses: actions/upload-artifact@v7
+        with:
+          name: publication-recovery-receipt
+          path: ${{ runner.temp }}/publication-recovery-receipt.json
+          if-no-files-found: error
+          retention-days: 30
