@@ -522,6 +522,40 @@ describe("Root ticket owner access", () => {
     expect(container.querySelector("[data-app-mounted]")?.getAttribute("data-owner-access")).toBe(expected)
   })
 
+  it("ignores a late owner admission from the aborted StrictMode generation", async () => {
+    const stale = deferred<BootstrapOutcome>()
+    let admitStale!: (state: string) => void
+    bootstrapMocks.requestServerBootstrap
+      .mockImplementationOnce((_signal, admitted) => { admitStale = admitted; return stale.promise })
+      .mockImplementationOnce(async (_signal, admitted) => {
+        admitted("unauthenticated")
+        return { kind: "ready" }
+      })
+    const { container } = await mountRoot(true)
+    expect(container.querySelector("[data-app-mounted]")?.getAttribute("data-owner-access")).toBe("false")
+    admitStale("local_bypass")
+    stale.resolve({ kind: "ready" })
+    await flushMicrotasks()
+    expect(container.querySelector("[data-app-mounted]")?.getAttribute("data-owner-access")).toBe("false")
+    expect(getSetupStatusMock).toHaveBeenCalledTimes(1)
+  })
+
+  it("requires current bootstrap admission after password verification", async () => {
+    bootstrapMocks.requestServerBootstrap
+      .mockResolvedValueOnce({ kind: "auth-required" })
+      .mockImplementationOnce(async (_signal, admitted) => {
+        admitted("unauthenticated")
+        return { kind: "ready" }
+      })
+    bootstrapMocks.verifyServerPassword.mockResolvedValue({ kind: "verified" })
+    const { container } = await mountRoot()
+    enterPassword(container, "secret")
+    await clickButton(container, "验证并继续")
+    await flushMicrotasks()
+    expect(bootstrapMocks.verifyServerPassword).toHaveBeenCalledTimes(1)
+    expect(container.querySelector("[data-app-mounted]")?.getAttribute("data-owner-access")).toBe("false")
+  })
+
   it("preserves admitted access through first-run setup without a second bootstrap request", async () => {
     bootstrapMocks.requestServerBootstrap.mockImplementation(async (_signal, admitted) => {
       admitted("local_bypass")

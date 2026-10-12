@@ -365,3 +365,35 @@ it("revokes pending owner reads and reloads only after fresh access admission", 
   expect(ticketClient.load).toHaveBeenCalledTimes(2)
   expect(controller.state?.current.scope.binding.supervisor_session_id).toBe("root")
 })
+
+it.each(["acknowledged", "conflict", "unknown"] as const)("ignores a late %s decision after owner access is revoked and readmitted", async (outcome) => {
+  await mount()
+  let finish!: () => void
+  vi.mocked(ticketClient.respond).mockImplementationOnce((command) => new Promise((resolve, reject) => {
+    finish = () => outcome === "acknowledged"
+      ? resolve({ operation_id: command.operation_id, committed_seq: command.expected_seq + 1 })
+      : reject(outcome === "conflict" ? new ApiError("revision_conflict", 409, "Conflict") : new Error("unknown outcome"))
+  }))
+  let pending!: Promise<boolean>
+  act(() => { pending = controller.respond(controller.state!.requests["q-A"], { kind: "question", answer: "before revocation" }) })
+  await mount("root", false)
+  expect(controller.state).toBeNull()
+  expect(controller.negotiated).toBe(true)
+  expect(controller.canRespond).toBe(false)
+  expect(controller.canSendIngress).toBe(false)
+  await act(async () => {
+    window.dispatchEvent(new Event("focus"))
+    window.dispatchEvent(new Event("online"))
+    await controller.refresh()
+  })
+  expect(ticketClient.load).toHaveBeenCalledTimes(1)
+  await mount("root", true)
+  const readmittedState = controller.state
+  await act(async () => { finish(); expect(await pending).toBe(false) })
+  expect(controller.state).toEqual(readmittedState)
+  expect(controller.state?.requests["q-A"].status).toBe("open")
+  expect(controller.error).toBeNull()
+  expect(controller.busy).toEqual({})
+  expect(ticketClient.respond).toHaveBeenCalledTimes(1)
+  expect(controller.canRespond).toBe(true)
+})

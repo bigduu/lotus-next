@@ -750,6 +750,7 @@ describe("admitted bootstrap access handoff", () => {
 
   it.each([
     withAuth("credential_required", "unauthenticated", true, false),
+    withAuth("open", "future-owner-state", false, false),
     withAuth("repair_required", "local_bypass", true, false),
     { ...exactFixture(), schema_version: 999 },
     { ...exactFixture(), server: { product: "other", version: "1" } },
