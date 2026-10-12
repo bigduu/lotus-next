@@ -19,6 +19,7 @@ import {
 } from "./artifact-manifest.mjs"
 import { writeAcceptedIdentity } from "./release-acceptance-identity.mjs"
 import { verifySourceReceipt } from "./release-source.mjs"
+import { publicationConfigPath } from "./release-browser.mjs"
 
 export const PUBLISHED_ARTIFACT_IDENTITY = Object.freeze({
   schemaVersion: 1,
@@ -83,7 +84,7 @@ const runCaptured = (command, arguments_, options = {}) => {
   return { stdout: result.stdout ?? "", stderr: result.stderr ?? "" }
 }
 
-const runInherited = (command, arguments_, options = {}) => {
+export const runInherited = (command, arguments_, options = {}) => {
   const result = spawnSync(command, arguments_, {
     cwd: repositoryRoot,
     stdio: "inherit",
@@ -183,20 +184,33 @@ const parsePackResult = (stdout) => {
   return expectedFilename
 }
 
-export const acceptanceArtifactMode = (arguments_) => {
-  if (arguments_.length === 0) return "published"
-  if (arguments_.length === 1 && arguments_[0] === "--current-source") {
-    return "current-source"
+export const acceptanceArguments = (arguments_) => {
+  const args = [...arguments_]
+  let browserRoot
+  if (args.at(-2) === "--publication-browser") {
+    browserRoot = args.pop()
+    args.pop()
+    if (!path.isAbsolute(browserRoot)) throw new Error("Publication browser directory must be absolute.")
   }
-  if (
-    arguments_.length === 3 &&
-    arguments_[0] === "--current-source" &&
-    arguments_[1] === "--accepted-identity" &&
-    arguments_[2]?.trim()
-  ) {
-    return "current-source"
+  if (args.length === 0 && !browserRoot) return { artifactMode: "published" }
+  if (args[0] === "--current-source" && (
+    args.length === 1 ||
+    (args.length === 3 && args[1] === "--accepted-identity" && args[2]?.trim())
+  )) return { artifactMode: "current-source", acceptedIdentityPath: args[2], browserRoot }
+  throw new Error("Usage: published-real-bamboo-acceptance.mjs [--current-source [--accepted-identity FILE] [--publication-browser DIRECTORY]]")
+}
+export const acceptanceArtifactMode = (arguments_) => acceptanceArguments(arguments_).artifactMode
+
+// A split publication checkout must use its verified external wrapper. Ordinary
+// in-repository acceptance retains the original config and runner unchanged.
+export const acceptanceConfigArgument = (browserRoot, sourceRoot = repositoryRoot, env = process.env) => {
+  if (!browserRoot) {
+    if (env.LOTUS_NEXT_ACCEPTANCE_SOURCE_DIR || env.LOTUS_NEXT_RELEASE_SOURCE_RECEIPT) {
+      throw new Error("Publication acceptance requires the verified publication browser.")
+    }
+    return "--config=playwright.real-bamboo.config.ts"
   }
-  throw new Error("Usage: published-real-bamboo-acceptance.mjs [--current-source [--accepted-identity FILE]]")
+  return `--config=${publicationConfigPath({ sourceRoot, browserRoot, kind: "real-bamboo", env })}`
 }
 
 export const verifyExtractedPublishedArtifact = ({ tarballPath, packageRoot }) => {
@@ -454,7 +468,7 @@ const generateTlsIdentity = (temporaryRoot) => {
   return { certificatePath, keyPath }
 }
 
-const runAcceptanceMode = ({ mode, tls }, artifact) => {
+export const runAcceptanceMode = ({ mode, tls }, artifact, browserRoot) => {
   const environment = {
     ...process.env,
     LOTUS_REAL_ACCEPTANCE_MODE: mode,
@@ -480,7 +494,7 @@ const runAcceptanceMode = ({ mode, tls }, artifact) => {
     [
       playwrightCli,
       "test",
-      "--config=playwright.real-bamboo.config.ts",
+      acceptanceConfigArgument(browserRoot, repositoryRoot, environment),
       // The full-suite tab test is a dependency of the desktop project, but
       // artifact acceptance deliberately selects only the surface tests.
       "--no-deps",
@@ -491,9 +505,17 @@ const runAcceptanceMode = ({ mode, tls }, artifact) => {
   )
 }
 
+export const runAcceptanceSurfaces = ({ tls, artifact, browserRoot, acceptedIdentityPath }, runMode = runAcceptanceMode) => {
+  for (const mode of acceptanceRunPlan(tls)) runMode(mode, artifact, browserRoot)
+  if (acceptedIdentityPath) {
+    const accepted = writeAcceptedIdentity(acceptedIdentityPath, artifact.identity)
+    process.stdout.write(`Recorded successful local and secure browser acceptance: ${JSON.stringify(accepted)}.\n`)
+  }
+}
+
 const main = () => {
-  const arguments_ = process.argv.slice(2)
-  const artifactMode = acceptanceArtifactMode(arguments_)
+  const { artifactMode, browserRoot, acceptedIdentityPath } = acceptanceArguments(process.argv.slice(2))
+  acceptanceConfigArgument(browserRoot)
   if (!process.env.BAMBOO_E2E_SOURCE_DIR?.trim()) {
     throw new Error(
       "Set BAMBOO_E2E_SOURCE_DIR to the clean exact Bamboo checkout required by the real-runtime harness.",
@@ -511,13 +533,7 @@ const main = () => {
       `Verified ${artifactMode} artifact ${JSON.stringify(artifact.identity)}.\n`,
     )
     const tls = generateTlsIdentity(temporaryRoot)
-    for (const mode of acceptanceRunPlan(tls)) {
-      runAcceptanceMode(mode, artifact)
-    }
-    if (arguments_.length === 3) {
-      const accepted = writeAcceptedIdentity(arguments_[2], artifact.identity)
-      process.stdout.write(`Recorded successful local and secure browser acceptance: ${JSON.stringify(accepted)}.\n`)
-    }
+    runAcceptanceSurfaces({ tls, artifact, browserRoot, acceptedIdentityPath })
   } finally {
     rmSync(temporaryRoot, { recursive: true, force: true })
   }

@@ -118,6 +118,19 @@ jobs:
           - 24
 
     steps:
+      - name: Check out trusted publication browser controls
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.preflight.outputs.workflow_sha }}
+          persist-credentials: false
+
+      - name: Preserve trusted browser controls outside the source checkout
+        run: |
+          test "$(git rev-parse HEAD)" = "${PUBLICATION_WORKFLOW_SHA}"
+          test -z "$(git status --porcelain --untracked-files=all)"
+          mkdir "${RUNNER_TEMP}/release-control"
+          cp scripts/release-browser.mjs "${RUNNER_TEMP}/release-control/"
+
       - name: Check out exact source
         uses: actions/checkout@v7
         with:
@@ -168,8 +181,24 @@ jobs:
       - name: Install Chromium
         run: npx playwright install --with-deps chromium
 
+      - name: Prepare the pinned publication browser outside the source checkout
+        run: node "${RUNNER_TEMP}/release-control/release-browser.mjs" prepare "${GITHUB_WORKSPACE}" "${RUNNER_TEMP}/release-browser"
+
       - name: Verify the all-surface production artifact
-        run: npm run test:e2e:built
+        run: |
+          node node_modules/@playwright/test/cli.js test --config="${RUNNER_TEMP}/release-browser/all-surface.config.mjs"
+          git diff -- package.json package-lock.json | cmp - "${RUNNER_TEMP}/release-identity.patch"
+          git diff --exit-code -- . ':(exclude)package.json' ':(exclude)package-lock.json'
+          test -z "$(git ls-files --others --exclude-standard)"
+
+      - name: Upload the outer browser identity
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: publish-browser-identity-node-${{ matrix.node }}
+          path: ${{ runner.temp }}/release-browser/browser-identity.json
+          if-no-files-found: error
+          retention-days: 30
 
       - name: Upload browser evidence
         if: ${{ !cancelled() }}
@@ -204,8 +233,10 @@ jobs:
 
       - name: Preserve trusted acceptance controls outside the source checkout
         run: |
+          test "$(git rev-parse HEAD)" = "${PUBLICATION_WORKFLOW_SHA}"
+          test -z "$(git status --porcelain --untracked-files=all)"
           mkdir "${RUNNER_TEMP}/release-control"
-          cp scripts/published-real-bamboo-acceptance.mjs scripts/artifact-manifest.mjs scripts/release-acceptance-identity.mjs scripts/release-source.mjs "${RUNNER_TEMP}/release-control/"
+          cp scripts/release-browser.mjs scripts/published-real-bamboo-acceptance.mjs scripts/artifact-manifest.mjs scripts/release-acceptance-identity.mjs scripts/release-source.mjs "${RUNNER_TEMP}/release-control/"
 
       - name: Download the run-bound release source receipt
         uses: actions/download-artifact@v8
@@ -271,23 +302,45 @@ jobs:
       - name: Install Chromium
         run: npx playwright install --with-deps chromium
 
+      - name: Prepare the pinned publication browser outside the source checkout
+        run: node "${RUNNER_TEMP}/release-control/release-browser.mjs" prepare "${GITHUB_WORKSPACE}" "${RUNNER_TEMP}/release-browser"
+
       - name: Verify the exact Bamboo round trip
         env:
           BAMBOO_E2E_SOURCE_DIR: ${{ github.workspace }}/.e2e-bamboo
-        run: npm run test:e2e:real-bamboo:built
+        run: |
+          node node_modules/@playwright/test/cli.js test --config="${RUNNER_TEMP}/release-browser/real-bamboo.config.mjs"
+          git diff -- package.json package-lock.json | cmp - "${RUNNER_TEMP}/release-identity.patch"
+          git diff --exit-code -- . ':(exclude)package.json' ':(exclude)package-lock.json'
+          test -z "$(git ls-files --others --exclude-standard)"
 
       - name: Verify the release artifact on local and secure browser surfaces
         env:
           BAMBOO_E2E_SOURCE_DIR: ${{ github.workspace }}/.e2e-bamboo
           ACCEPTED_IDENTITY_PATH: ${{ runner.temp }}/accepted-identity.json
           LOTUS_NEXT_RELEASE_SOURCE_RECEIPT: ${{ runner.temp }}/accepted-source/release-source-receipt.json
-        run: node "${RUNNER_TEMP}/release-control/published-real-bamboo-acceptance.mjs" --current-source --accepted-identity "${ACCEPTED_IDENTITY_PATH}"
+        run: node "${RUNNER_TEMP}/release-control/published-real-bamboo-acceptance.mjs" --current-source --accepted-identity "${ACCEPTED_IDENTITY_PATH}" --publication-browser "${RUNNER_TEMP}/release-browser"
+
+      - name: Require unchanged source after both packed browser surfaces
+        run: |
+          git diff -- package.json package-lock.json | cmp - "${RUNNER_TEMP}/release-identity.patch"
+          git diff --exit-code -- . ':(exclude)package.json' ':(exclude)package-lock.json'
+          test -z "$(git ls-files --others --exclude-standard)"
 
       - name: Upload the accepted browser artifact identity
         uses: actions/upload-artifact@v7
         with:
           name: real-bamboo-accepted-identity
           path: ${{ runner.temp }}/accepted-identity.json
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload the real Bamboo outer browser identity
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: publish-real-bamboo-browser-identity-node-22
+          path: ${{ runner.temp }}/release-browser/browser-identity.json
           if-no-files-found: error
           retention-days: 30
 

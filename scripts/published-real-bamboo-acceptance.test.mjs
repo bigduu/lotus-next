@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto"
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 
@@ -8,6 +8,10 @@ import { describe, expect, it } from "vitest"
 import {
   PUBLISHED_ARTIFACT_IDENTITY,
   acceptanceArtifactMode,
+  acceptanceArguments,
+  acceptanceConfigArgument,
+  runAcceptanceSurfaces,
+  runInherited,
   acceptanceRunPlan,
   assertPublishedArtifactIdentity,
   assertSafeTarMembers,
@@ -304,5 +308,54 @@ describe("published real-Bamboo acceptance policy", () => {
     expect(ci).toContain(
       "    if: ${{ github.event_name == 'workflow_dispatch' }}",
     )
+  })
+})
+
+
+describe("publication browser acceptance controller", () => {
+  it("accepts only an explicit absolute publication browser directory", () => {
+    expect(acceptanceArguments(["--current-source", "--accepted-identity", "/tmp/accepted.json", "--publication-browser", "/tmp/release-browser"])).toEqual({
+      artifactMode: "current-source", acceptedIdentityPath: "/tmp/accepted.json", browserRoot: "/tmp/release-browser",
+    })
+    expect(() => acceptanceArguments(["--publication-browser", "/tmp/release-browser"])).toThrow(/Usage/)
+    expect(() => acceptanceArguments(["--current-source", "--publication-browser", "relative"])).toThrow(/absolute/)
+    expect(() => acceptanceArguments(["--current-source", "--publication-browser", "/tmp/one", "--publication-browser", "/tmp/two"])).toThrow(/Usage/)
+  })
+
+  it("has no bundled-browser fallback for a split publication checkout", () => {
+    expect(acceptanceConfigArgument(undefined, process.cwd(), {})).toBe("--config=playwright.real-bamboo.config.ts")
+    expect(() => acceptanceConfigArgument(undefined, process.cwd(), { LOTUS_NEXT_ACCEPTANCE_SOURCE_DIR: process.cwd() })).toThrow(/requires the verified/)
+    expect(() => acceptanceConfigArgument(undefined, process.cwd(), { LOTUS_NEXT_RELEASE_SOURCE_RECEIPT: "/tmp/receipt.json" })).toThrow(/requires the verified/)
+    expect(() => acceptanceConfigArgument("/tmp/missing-browser", process.cwd(), {})).toThrow()
+  })
+
+  it.each(["local", "remote"])("a nonzero %s child prevents accepted identity", (failureMode) => {
+    const fixture = currentArtifactFixture()
+    const acceptedIdentityPath = join(fixture.root, "accepted.json")
+    const visited = []
+    try {
+      expect(() => runAcceptanceSurfaces({
+        tls: { certificatePath: "/tmp/test.crt", keyPath: "/tmp/test.key" },
+        artifact: fixture.verify(), browserRoot: "/tmp/release-browser", acceptedIdentityPath,
+      }, ({ mode }, _artifact, browserRoot) => {
+        visited.push(mode)
+        expect(browserRoot).toBe("/tmp/release-browser")
+        runInherited(process.execPath, ["-e", `process.exit(${mode === failureMode ? 7 : 0})`])
+      })).toThrow(/failed with exit 7/)
+      expect(visited).toEqual(failureMode === "local" ? ["local"] : ["local", "remote"])
+      expect(existsSync(acceptedIdentityPath)).toBe(false)
+    } finally {
+      rmSync(fixture.root, { recursive: true, force: true })
+    }
+  })
+
+  it("retains the original packed-surface filter, dependency mode and mode-specific child environment", () => {
+    const script = readRepositoryFile("scripts/published-real-bamboo-acceptance.mjs")
+    expect(script).toContain('"--no-deps",')
+    expect(script).toContain('"--grep",\n      "verified artifact browser surfaces",')
+    expect(script).toContain("LOTUS_REAL_ACCEPTANCE_MODE: mode")
+    expect(script).toContain("environment.NODE_EXTRA_CA_CERTS = tls.certificatePath")
+    expect(script).toContain("acceptanceConfigArgument(browserRoot, repositoryRoot, environment)")
+    expect(script).not.toMatch(/NODE_OPTIONS|NODE_PATH/)
   })
 })
