@@ -361,7 +361,17 @@ const exerciseSurface = async ({
       await panel.getByRole("button", { name: /浏览器.*输入网址后打开/ }).click();
       const pane = panel.getByRole("region", { name: "内置浏览器" });
       const address = pane.getByRole("textbox", { name: "网页地址" });
-      const navigateButton = pane.getByRole("button", { name: "打开", exact: true });
+      // Each acceptance mode starts a fresh session. Desktop opens its first
+      // tab; tablet reuses that page and must use the existing-page toolbar.
+      const startsWithEmptyBrowser = definition.label === "desktop";
+      await expect(pane).toHaveAttribute(
+        startsWithEmptyBrowser ? "data-browser-empty" : "data-browser-pane",
+        "true",
+      );
+      const navigateButton = pane.getByRole("button", {
+        name: startsWithEmptyBrowser ? "打开" : "访问网页",
+        exact: true,
+      });
       await expect(navigateButton).toBeEnabled();
       await address.fill(browserFixtureUrl);
       await navigateButton.click();
