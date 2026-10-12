@@ -1,7 +1,8 @@
 import { uiText, useUiLocale } from "@shared/i18n/ui"
-import { useCallback, useEffect, useRef, useState } from "react"
+import { useCallback, useContext, useEffect, useRef, useState } from "react"
 import { getErrorMessage, isApiError } from "@services/api"
 import { ticketClient } from "@services/tickets/client"
+import { OwnerAccessContext } from "./ownerAccessContext"
 import { applyTicketSnapshot, responseCommand, type TicketState } from "@services/tickets/state"
 import type { Decision, PendingRequest, ResponseCommand } from "@services/tickets/types"
 import { clearDecisionReceipt, readDecisionReceipts, saveDecisionReceipt } from "@services/tickets/decisionReceipts"
@@ -16,6 +17,7 @@ async function sendDecision(command: ResponseCommand) {
 
 export function useTicketWork(sessionId: string | null | undefined) {
   useUiLocale()
+  const ownerAccess = useContext(OwnerAccessContext)
   const [state, setState] = useState<TicketState | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [decisionError, setDecisionError] = useState<string | null>(null)
@@ -26,17 +28,23 @@ export function useTicketWork(sessionId: string | null | undefined) {
   const [uncertain, setUncertain] = useState<Record<string, ResponseCommand>>({})
   const current = useRef<TicketState | null>(null)
   const scope = useRef(sessionId)
+  const access = useRef(ownerAccess)
   const epoch = useRef(0)
   const activeRequests = useRef(new Set<string>())
-  if (scope.current !== sessionId) epoch.current += 1
+  if (scope.current !== sessionId || access.current !== ownerAccess) epoch.current += 1
   scope.current = sessionId
+  access.current = ownerAccess
   const refreshRef = useRef<() => Promise<void>>(async () => {})
 
   useEffect(() => {
     current.current = null; connection.current = false; setState(null); setConnected(false); setNegotiatedSession(null); setError(null); setBusy({}); setUncertain({})
     setDecisionError(null)
     activeRequests.current.clear()
-    if (!sessionId) return
+    refreshRef.current = async () => {}
+    if (!sessionId || !ownerAccess) {
+      setNegotiatedSession(sessionId ?? null)
+      return
+    }
     try { setUncertain(readDecisionReceipts(sessionId)) }
     catch (failure) { setDecisionError(getErrorMessage(failure)) }
     const controller = new AbortController()
@@ -86,12 +94,12 @@ export function useTicketWork(sessionId: string | null | undefined) {
     window.addEventListener("online", reconnect); window.addEventListener("focus", reconnect)
     void poll()
     return () => { controller.abort(); clearTimeout(timer); window.removeEventListener("online", reconnect); window.removeEventListener("focus", reconnect) }
-  }, [sessionId])
+  }, [sessionId, ownerAccess])
 
   const respond = useCallback(async (request: PendingRequest, decision: Decision) => {
     const captured = sessionId
     const capturedEpoch = epoch.current
-    if (!current.current || current.current.current.scope.binding.supervisor_session_id !== captured
+    if (!ownerAccess || !current.current || current.current.current.scope.binding.supervisor_session_id !== captured
       || !connection.current || !current.current.current.complete || !current.current.current.scope.mutation_enabled || current.current.current.scope.health !== "writable"
       || activeRequests.current.has(request.id)) return false
     let retry: ResponseCommand | undefined
@@ -148,13 +156,13 @@ export function useTicketWork(sessionId: string | null | undefined) {
       }
       return false
     } finally { if (scope.current === captured && epoch.current === capturedEpoch) { activeRequests.current.delete(request.id); setBusy((old) => ({ ...old, [request.id]: false })) } }
-  }, [sessionId])
+  }, [sessionId, ownerAccess])
 
-  return { state, error: decisionError ?? error, connected, negotiated: !sessionId || negotiatedSession === sessionId,
+  return { state, error: decisionError ?? error, connected, negotiated: !sessionId || !ownerAccess || negotiatedSession === sessionId,
     busy, uncertain, respond, refresh: () => refreshRef.current(),
-    canSendIngress: connected && state !== null && state.current.scope.binding.supervisor_session_id === sessionId
+    canSendIngress: ownerAccess && connected && state !== null && state.current.scope.binding.supervisor_session_id === sessionId
       && state.current.scope.health === "writable" && state.current.scope.mutation_enabled === true
       && state.current.scope.capabilities?.semantic_messages_v1 === true,
-    canRespond: connected && state !== null && state.current.scope.binding.supervisor_session_id === sessionId
+    canRespond: ownerAccess && connected && state !== null && state.current.scope.binding.supervisor_session_id === sessionId
       && state.current.complete && state.current.scope.health === "writable" && state.current.scope.mutation_enabled === true }
 }

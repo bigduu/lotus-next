@@ -1,4 +1,5 @@
-import { StrictMode, act } from "react"
+import { StrictMode, act, useContext } from "react"
+import { OwnerAccessContext } from "@/hooks/ownerAccessContext"
 import { createRoot, type Root as ReactRoot } from "react-dom/client"
 import {
   afterAll,
@@ -18,7 +19,7 @@ const bootstrapMocks = vi.hoisted(() => ({
 const runtimeMocks = vi.hoisted(() => ({ sidecarBackend: false }))
 
 vi.mock("./App", () => ({
-  default: () => <div data-app-mounted>Lotus Next App</div>,
+  default: function MockApp() { return <div data-app-mounted data-owner-access={String(useContext(OwnerAccessContext))}>Lotus Next App</div> },
 }))
 
 vi.mock("@/services/bootstrap/serverBootstrap", () => ({
@@ -502,5 +503,70 @@ describe("Root password revalidation", () => {
     expect(container.textContent).toContain("密码验证服务暂时不可用")
     expect(container.textContent).not.toContain("SECRET verifier implementation detail")
     expect(container.querySelector("[data-app-mounted]")).toBeNull()
+  })
+})
+
+
+describe("Root ticket owner access", () => {
+  it.each([
+    ["local_bypass", "true"],
+    ["authenticated", "true"],
+    ["unauthenticated", "false"],
+    [undefined, "false"],
+  ])("publishes only the current admitted %s owner state", async (state, expected) => {
+    bootstrapMocks.requestServerBootstrap.mockImplementation(async (_signal, admitted) => {
+      if (state !== undefined) admitted(state)
+      return { kind: "ready" }
+    })
+    const { container } = await mountRoot()
+    expect(container.querySelector("[data-app-mounted]")?.getAttribute("data-owner-access")).toBe(expected)
+  })
+
+  it("ignores a late owner admission from the aborted StrictMode generation", async () => {
+    const stale = deferred<BootstrapOutcome>()
+    let admitStale!: (state: string) => void
+    bootstrapMocks.requestServerBootstrap
+      .mockImplementationOnce((_signal, admitted) => { admitStale = admitted; return stale.promise })
+      .mockImplementationOnce(async (_signal, admitted) => {
+        admitted("unauthenticated")
+        return { kind: "ready" }
+      })
+    const { container } = await mountRoot(true)
+    expect(container.querySelector("[data-app-mounted]")?.getAttribute("data-owner-access")).toBe("false")
+    admitStale("local_bypass")
+    stale.resolve({ kind: "ready" })
+    await flushMicrotasks()
+    expect(container.querySelector("[data-app-mounted]")?.getAttribute("data-owner-access")).toBe("false")
+    expect(getSetupStatusMock).toHaveBeenCalledTimes(1)
+  })
+
+  it("requires current bootstrap admission after password verification", async () => {
+    bootstrapMocks.requestServerBootstrap
+      .mockResolvedValueOnce({ kind: "auth-required" })
+      .mockImplementationOnce(async (_signal, admitted) => {
+        admitted("unauthenticated")
+        return { kind: "ready" }
+      })
+    bootstrapMocks.verifyServerPassword.mockResolvedValue({ kind: "verified" })
+    const { container } = await mountRoot()
+    enterPassword(container, "secret")
+    await clickButton(container, "验证并继续")
+    await flushMicrotasks()
+    expect(bootstrapMocks.verifyServerPassword).toHaveBeenCalledTimes(1)
+    expect(container.querySelector("[data-app-mounted]")?.getAttribute("data-owner-access")).toBe("false")
+  })
+
+  it("preserves admitted access through first-run setup without a second bootstrap request", async () => {
+    bootstrapMocks.requestServerBootstrap.mockImplementation(async (_signal, admitted) => {
+      admitted("local_bypass")
+      return { kind: "ready" }
+    })
+    getSetupStatusMock.mockResolvedValueOnce({ is_complete: false, message: "setup" })
+      .mockResolvedValueOnce({ is_complete: true, message: "" })
+    const { container } = await mountRoot()
+    await clickButton(container, "已完成，继续")
+    await flushMicrotasks()
+    expect(container.querySelector("[data-app-mounted]")?.getAttribute("data-owner-access")).toBe("true")
+    expect(bootstrapMocks.requestServerBootstrap).toHaveBeenCalledTimes(1)
   })
 })

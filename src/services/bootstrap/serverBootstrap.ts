@@ -289,7 +289,10 @@ function rangeContains(minimum: number, maximum: number, supported: number): boo
 }
 
 /** Classify an already decoded bootstrap value without trusting its shape. */
-export function classifyServerBootstrapDocument(value: unknown): BootstrapOutcome {
+export function classifyServerBootstrapDocument(
+  value: unknown,
+  onReadyRequestState?: (state: BootstrapRequestState) => void,
+): BootstrapOutcome {
   const parsed = parseDocument(value);
   if (!parsed.ok) return { kind: "invalid", reason: parsed.reason };
 
@@ -343,14 +346,18 @@ export function classifyServerBootstrapDocument(value: unknown): BootstrapOutcom
     return { kind: "incompatible", reason: "device-contract" };
   }
 
+  const ready = (): BootstrapOutcome => {
+    onReadyRequestState?.(document.auth.request_state);
+    return { kind: "ready" };
+  };
   if (document.auth.policy === "repair_required") return { kind: "repair" };
-  if (document.auth.request_state === "local_bypass") return { kind: "ready" };
-  if (document.auth.policy === "open") return { kind: "ready" };
+  if (document.auth.request_state === "local_bypass") return ready();
+  if (document.auth.policy === "open") return ready();
   if (!document.auth.password_enabled) {
     return { kind: "auth-unsupported", mechanism: "device" };
   }
   return document.auth.request_state === "authenticated"
-    ? { kind: "ready" }
+    ? ready()
     : { kind: "auth-required" };
 }
 
@@ -383,7 +390,10 @@ function bootstrapFailure(error: unknown, signal: AbortSignal): BootstrapOutcome
 }
 
 /** Perform exactly one canonical bootstrap request. Root owns all retry policy. */
-export async function requestServerBootstrap(signal: AbortSignal): Promise<BootstrapOutcome> {
+export async function requestServerBootstrap(
+  signal: AbortSignal,
+  onReadyRequestState?: (state: BootstrapRequestState) => void,
+): Promise<BootstrapOutcome> {
   throwIfCancelled(signal);
 
   let response: Response;
@@ -420,7 +430,7 @@ export async function requestServerBootstrap(signal: AbortSignal): Promise<Boots
   }
 
   throwIfCancelled(signal);
-  return classifyServerBootstrapDocument(value);
+  return classifyServerBootstrapDocument(value, onReadyRequestState);
 }
 
 function passwordFailure(error: unknown, signal: AbortSignal): PasswordVerificationOutcome {
