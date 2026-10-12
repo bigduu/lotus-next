@@ -1,0 +1,755 @@
+{
+  "schemaVersion": 1,
+  "kind": "reviewed-original-publication-evidence",
+  "repository": "bigduu/lotus-next",
+  "version": "2026.10.12",
+  "evidenceOrigin": "Authenticated original Actions artifact archives were downloaded and SHA-256 checked before this record was reviewed. Recovery rechecks public metadata, not archive downloads.",
+  "originalRun": {
+    "id": 38228276879,
+    "run_attempt": 1,
+    "head_sha": "c50e0805a83c5e1cbcd6b37a07ca8646c23d2f9e",
+    "head_branch": "main",
+    "path": ".github/workflows/publish-npm.yml",
+    "event": "workflow_dispatch",
+    "status": "completed",
+    "conclusion": "failure",
+    "html_url": "https://github.com/bigduu/lotus-next/actions/runs/38228276879"
+  },
+  "originalJobs": {
+    "total_count": 5,
+    "jobs": [
+      {
+        "id": 114741096609,
+        "run_id": 38228276879,
+        "run_attempt": 1,
+        "head_sha": "c50e0805a83c5e1cbcd6b37a07ca8646c23d2f9e",
+        "head_branch": "main",
+        "name": "Validate publication request",
+        "status": "completed",
+        "conclusion": "success",
+        "steps": [
+          {
+            "number": 1,
+            "name": "Set up job",
+            "status": "completed",
+            "conclusion": "success"
+          },
+          {
+            "number": 2,
+            "name": "Check out exact publication control source",
+            "status": "completed",
+            "conclusion": "success"
+          },
+          {
+            "number": 3,
+            "name": "Set up current npm",
+            "status": "completed",
+            "conclusion": "success"
+          },
+          {
+            "number": 4,
+            "name": "Resolve the reviewed immutable release candidate",
+            "status": "completed",
+            "conclusion": "success"
+          },
+          {
+            "number": 5,
+            "name": "Upload the run-bound release source receipt",
+            "status": "completed",
+            "conclusion": "success"
+          },
+          {
+            "number": 6,
+            "name": "Validate version, source, and registry vacancy",
+            "status": "completed",
+            "conclusion": "success"
+          },
+          {
+            "number": 11,
+            "name": "Post Set up current npm",
+            "status": "completed",
+            "conclusion": "success"
+          },
+          {
+            "number": 12,
+            "name": "Post Check out exact publication control source",
+            "status": "completed",
+            "conclusion": "success"
+          },
+          {
+            "number": 13,
+            "name": "Complete job",
+            "status": "completed",
+            "conclusion": "success"
+          }
+        ]
+      },
+      {
+        "id": 114741208883,
+        "run_id": 38228276879,
+        "run_attempt": 1,
+        "head_sha": "c50e0805a83c5e1cbcd6b37a07ca8646c23d2f9e",
+        "head_branch": "main",
+        "name": "Node 22 release artifact",
+        "status": "completed",
+        "conclusion": "success",
+        "steps": [
+          {
+            "number": 1,
+            "name": "Set up job",
+            "status": "completed",
+            "conclusion": "success"
+          },
+          {
+            "number": 2,
+            "name": "Check out trusted publication browser controls",
+            "status": "completed",
+            "conclusion": "success"
+          },
+          {
+            "number": 3,
+            "name": "Preserve trusted browser controls outside the source checkout",
+            "status": "completed",
+            "conclusion": "success"
+          },
+          {
+            "number": 4,
+            "name": "Check out exact source",
+            "status": "completed",
+            "conclusion": "success"
+          },
+          {
+            "number": 5,
+            "name": "Require accepted source under the default-branch publication workflow",
+            "status": "completed",
+            "conclusion": "success"
+          },
+          {
+            "number": 6,
+            "name": "Set up Node.js",
+            "status": "completed",
+            "conclusion": "success"
+          },
+          {
+            "number": 7,
+            "name": "Install exact dependencies",
+            "status": "completed",
+            "conclusion": "success"
+          },
+          {
+            "number": 8,
+            "name": "Apply the release identity without a Git commit",
+            "status": "completed",
+            "conclusion": "success"
+          },
+          {
+            "number": 9,
+            "name": "Verify architecture, behavior, build, and package contents",
+            "status": "completed",
+            "conclusion": "success"
+          },
+          {
+            "number": 10,
+            "name": "Install Chromium",
+            "status": "completed",
+            "conclusion": "success"
+          },
+          {
+            "number": 11,
+            "name": "Prepare the pinned publication browser outside the source checkout",
+            "status": "completed",
+            "conclusion": "success"
+          },
+          {
+            "number": 12,
+            "name": "Verify the all-surface production artifact",
+            "status": "completed",
+            "conclusion": "success"
+          },
+          {
+            "number": 13,
+            "name": "Upload the outer browser identity",
+            "status": "completed",
+            "conclusion": "success"
+          },
+          {
+            "number": 14,
+            "name": "Upload browser evidence",
+            "status": "completed",
+            "conclusion": "success"
+          },
+          {
+            "number": 26,
+            "name": "Post Set up Node.js",
+            "status": "completed",
+            "conclusion": "success"
+          },
+          {
+            "number": 27,
+            "name": "Post Check out exact source",
+            "status": "completed",
+            "conclusion": "success"
+          },
+          {
+            "number": 28,
+            "name": "Post Check out trusted publication browser controls",
+            "status": "completed",
+            "conclusion": "success"
+          },
+          {
+            "number": 29,
+            "name": "Complete job",
+            "status": "completed",
+            "conclusion": "success"
+          }
+        ]
+      },
+      {
+        "id": 114741208907,
+        "run_id": 38228276879,
+        "run_attempt": 1,
+        "head_sha": "c50e0805a83c5e1cbcd6b37a07ca8646c23d2f9e",
+        "head_branch": "main",
+        "name": "Node 24 release artifact",
+        "status": "completed",
+        "conclusion": "success",
+        "steps": [
+          {
+            "number": 1,
+            "name": "Set up job",
+            "status": "completed",
+            "conclusion": "success"
+          },
+          {
+            "number": 2,
+            "name": "Check out trusted publication browser controls",
+            "status": "completed",
+            "conclusion": "success"
+          },
+          {
+            "number": 3,
+            "name": "Preserve trusted browser controls outside the source checkout",
+            "status": "completed",
+            "conclusion": "success"
+          },
+          {
+            "number": 4,
+            "name": "Check out exact source",
+            "status": "completed",
+            "conclusion": "success"
+          },
+          {
+            "number": 5,
+            "name": "Require accepted source under the default-branch publication workflow",
+            "status": "completed",
+            "conclusion": "success"
+          },
+          {
+            "number": 6,
+            "name": "Set up Node.js",
+            "status": "completed",
+            "conclusion": "success"
+          },
+          {
+            "number": 7,
+            "name": "Install exact dependencies",
+            "status": "completed",
+            "conclusion": "success"
+          },
+          {
+            "number": 8,
+            "name": "Apply the release identity without a Git commit",
+            "status": "completed",
+            "conclusion": "success"
+          },
+          {
+            "number": 9,
+            "name": "Verify architecture, behavior, build, and package contents",
+            "status": "completed",
+            "conclusion": "success"
+          },
+          {
+            "number": 10,
+            "name": "Install Chromium",
+            "status": "completed",
+            "conclusion": "success"
+          },
+          {
+            "number": 11,
+            "name": "Prepare the pinned publication browser outside the source checkout",
+            "status": "completed",
+            "conclusion": "success"
+          },
+          {
+            "number": 12,
+            "name": "Verify the all-surface production artifact",
+            "status": "completed",
+            "conclusion": "success"
+          },
+          {
+            "number": 13,
+            "name": "Upload the outer browser identity",
+            "status": "completed",
+            "conclusion": "success"
+          },
+          {
+            "number": 14,
+            "name": "Upload browser evidence",
+            "status": "completed",
+            "conclusion": "success"
+          },
+          {
+            "number": 26,
+            "name": "Post Set up Node.js",
+            "status": "completed",
+            "conclusion": "success"
+          },
+          {
+            "number": 27,
+            "name": "Post Check out exact source",
+            "status": "completed",
+            "conclusion": "success"
+          },
+          {
+            "number": 28,
+            "name": "Post Check out trusted publication browser controls",
+            "status": "completed",
+            "conclusion": "success"
+          },
+          {
+            "number": 29,
+            "name": "Complete job",
+            "status": "completed",
+            "conclusion": "success"
+          }
+        ]
+      },
+      {
+        "id": 114747014315,
+        "run_id": 38228276879,
+        "run_attempt": 1,
+        "head_sha": "c50e0805a83c5e1cbcd6b37a07ca8646c23d2f9e",
+        "head_branch": "main",
+        "name": "Real Bamboo / Node 22 release artifact",
+        "status": "completed",
+        "conclusion": "success",
+        "steps": [
+          {
+            "number": 1,
+            "name": "Set up job",
+            "status": "completed",
+            "conclusion": "success"
+          },
+          {
+            "number": 2,
+            "name": "Check out trusted publication acceptance controls",
+            "status": "completed",
+            "conclusion": "success"
+          },
+          {
+            "number": 3,
+            "name": "Preserve trusted acceptance controls outside the source checkout",
+            "status": "completed",
+            "conclusion": "success"
+          },
+          {
+            "number": 4,
+            "name": "Download the run-bound release source receipt",
+            "status": "completed",
+            "conclusion": "success"
+          },
+          {
+            "number": 5,
+            "name": "Check out exact Lotus Next source",
+            "status": "completed",
+            "conclusion": "success"
+          },
+          {
+            "number": 6,
+            "name": "Require accepted source under the default-branch publication workflow",
+            "status": "completed",
+            "conclusion": "success"
+          },
+          {
+            "number": 7,
+            "name": "Check out the paired Bamboo revision",
+            "status": "completed",
+            "conclusion": "success"
+          },
+          {
+            "number": 8,
+            "name": "Set up Node.js",
+            "status": "completed",
+            "conclusion": "success"
+          },
+          {
+            "number": 9,
+            "name": "Install exact dependencies",
+            "status": "completed",
+            "conclusion": "success"
+          },
+          {
+            "number": 10,
+            "name": "Apply the release identity without a Git commit",
+            "status": "completed",
+            "conclusion": "success"
+          },
+          {
+            "number": 11,
+            "name": "Build the release artifact",
+            "status": "completed",
+            "conclusion": "success"
+          },
+          {
+            "number": 12,
+            "name": "Install Chromium",
+            "status": "completed",
+            "conclusion": "success"
+          },
+          {
+            "number": 13,
+            "name": "Prepare the pinned publication browser outside the source checkout",
+            "status": "completed",
+            "conclusion": "success"
+          },
+          {
+            "number": 14,
+            "name": "Verify the exact Bamboo round trip",
+            "status": "completed",
+            "conclusion": "success"
+          },
+          {
+            "number": 15,
+            "name": "Verify the release artifact on local and secure browser surfaces",
+            "status": "completed",
+            "conclusion": "success"
+          },
+          {
+            "number": 16,
+            "name": "Require unchanged source after both packed browser surfaces",
+            "status": "completed",
+            "conclusion": "success"
+          },
+          {
+            "number": 17,
+            "name": "Upload the accepted browser artifact identity",
+            "status": "completed",
+            "conclusion": "success"
+          },
+          {
+            "number": 18,
+            "name": "Upload the real Bamboo outer browser identity",
+            "status": "completed",
+            "conclusion": "success"
+          },
+          {
+            "number": 19,
+            "name": "Upload real Bamboo evidence",
+            "status": "completed",
+            "conclusion": "success"
+          },
+          {
+            "number": 35,
+            "name": "Post Set up Node.js",
+            "status": "completed",
+            "conclusion": "success"
+          },
+          {
+            "number": 36,
+            "name": "Post Check out the paired Bamboo revision",
+            "status": "completed",
+            "conclusion": "success"
+          },
+          {
+            "number": 37,
+            "name": "Post Check out exact Lotus Next source",
+            "status": "completed",
+            "conclusion": "success"
+          },
+          {
+            "number": 38,
+            "name": "Post Check out trusted publication acceptance controls",
+            "status": "completed",
+            "conclusion": "success"
+          },
+          {
+            "number": 39,
+            "name": "Complete job",
+            "status": "completed",
+            "conclusion": "success"
+          }
+        ]
+      },
+      {
+        "id": 114758355794,
+        "run_id": 38228276879,
+        "run_attempt": 1,
+        "head_sha": "c50e0805a83c5e1cbcd6b37a07ca8646c23d2f9e",
+        "head_branch": "main",
+        "name": "Pack, publish, and verify registry artifact",
+        "status": "completed",
+        "conclusion": "failure",
+        "steps": [
+          {
+            "number": 1,
+            "name": "Set up job",
+            "status": "completed",
+            "conclusion": "success"
+          },
+          {
+            "number": 2,
+            "name": "Check out exact source",
+            "status": "completed",
+            "conclusion": "success"
+          },
+          {
+            "number": 3,
+            "name": "Require accepted source under the default-branch publication workflow",
+            "status": "completed",
+            "conclusion": "success"
+          },
+          {
+            "number": 4,
+            "name": "Set up publishing Node.js",
+            "status": "completed",
+            "conclusion": "success"
+          },
+          {
+            "number": 5,
+            "name": "Install exact dependencies",
+            "status": "completed",
+            "conclusion": "success"
+          },
+          {
+            "number": 6,
+            "name": "Apply and verify a new release identity",
+            "status": "completed",
+            "conclusion": "success"
+          },
+          {
+            "number": 7,
+            "name": "Build and verify the final package tree",
+            "status": "completed",
+            "conclusion": "success"
+          },
+          {
+            "number": 8,
+            "name": "Pack once without another lifecycle build",
+            "status": "completed",
+            "conclusion": "success"
+          },
+          {
+            "number": 9,
+            "name": "Verify the exact local tarball",
+            "status": "completed",
+            "conclusion": "success"
+          },
+          {
+            "number": 10,
+            "name": "Download the accepted browser artifact identity",
+            "status": "completed",
+            "conclusion": "success"
+          },
+          {
+            "number": 11,
+            "name": "Require the final tarball to match both real browser surfaces",
+            "status": "completed",
+            "conclusion": "success"
+          },
+          {
+            "number": 12,
+            "name": "Download the run-bound release source receipt",
+            "status": "completed",
+            "conclusion": "success"
+          },
+          {
+            "number": 13,
+            "name": "Recheck the immutable source tag before publication",
+            "status": "completed",
+            "conclusion": "success"
+          },
+          {
+            "number": 14,
+            "name": "Require npm publication credentials",
+            "status": "completed",
+            "conclusion": "success"
+          },
+          {
+            "number": 15,
+            "name": "Publish the exact verified tarball with provenance",
+            "status": "completed",
+            "conclusion": "success"
+          },
+          {
+            "number": 16,
+            "name": "Wait for the immutable registry version",
+            "status": "completed",
+            "conclusion": "success"
+          },
+          {
+            "number": 17,
+            "name": "Download and verify the registry copy",
+            "status": "completed",
+            "conclusion": "failure"
+          },
+          {
+            "number": 18,
+            "name": "Record immutable publication identity",
+            "status": "completed",
+            "conclusion": "skipped"
+          },
+          {
+            "number": 19,
+            "name": "Record the verified publication source receipt",
+            "status": "completed",
+            "conclusion": "skipped"
+          },
+          {
+            "number": 20,
+            "name": "Upload the verified publication source receipt",
+            "status": "completed",
+            "conclusion": "skipped"
+          },
+          {
+            "number": 39,
+            "name": "Post Set up publishing Node.js",
+            "status": "completed",
+            "conclusion": "skipped"
+          },
+          {
+            "number": 40,
+            "name": "Post Check out exact source",
+            "status": "completed",
+            "conclusion": "success"
+          },
+          {
+            "number": 41,
+            "name": "Complete job",
+            "status": "completed",
+            "conclusion": "success"
+          }
+        ]
+      }
+    ]
+  },
+  "artifacts": [
+    {
+      "id": 11739895603,
+      "name": "publish-real-bamboo-node-22",
+      "digest": "sha256:96e32951b2f82b4464455df33494f4bb8f6894885927b254f44d88178c5d11b9",
+      "size_in_bytes": 5154460,
+      "created_at": "2026-10-12T09:59:48Z",
+      "expires_at": "2026-11-11T09:59:47Z",
+      "workflow_run": {
+        "id": 38228276879,
+        "repository_id": 1281544268,
+        "head_repository_id": 1281544268,
+        "head_branch": "main",
+        "head_sha": "c50e0805a83c5e1cbcd6b37a07ca8646c23d2f9e"
+      }
+    },
+    {
+      "id": 11739895591,
+      "name": "real-bamboo-accepted-identity",
+      "digest": "sha256:b9bbf685cd1ec53af87640b122948f4f6b5c2d1ca636dc0b665af2b55b7b3059",
+      "size_in_bytes": 362,
+      "created_at": "2026-10-12T09:59:45Z",
+      "expires_at": "2026-11-11T09:59:45Z",
+      "workflow_run": {
+        "id": 38228276879,
+        "repository_id": 1281544268,
+        "head_repository_id": 1281544268,
+        "head_branch": "main",
+        "head_sha": "c50e0805a83c5e1cbcd6b37a07ca8646c23d2f9e"
+      }
+    },
+    {
+      "id": 11737635941,
+      "name": "release-source-receipt",
+      "digest": "sha256:00df2689d7e162f56146b59c2e84ddab63f40c83189de599011cbd63496ec11c",
+      "size_in_bytes": 755,
+      "created_at": "2026-10-12T09:11:43Z",
+      "expires_at": "2026-11-11T09:11:42Z",
+      "workflow_run": {
+        "id": 38228276879,
+        "repository_id": 1281544268,
+        "head_repository_id": 1281544268,
+        "head_branch": "main",
+        "head_sha": "c50e0805a83c5e1cbcd6b37a07ca8646c23d2f9e"
+      }
+    }
+  ],
+  "rawEvidence": {
+    "sourceReceipt": {
+      "artifactId": 11737635941,
+      "path": "release-source-receipt.json",
+      "sha256": "171959bc171ac0e7913643876ef021c27bbf9941bf7a88225b0461ba47024b66",
+      "utf8": "{\n  \"schemaVersion\": 1,\n  \"repository\": \"bigduu/lotus-next\",\n  \"version\": \"2026.10.12\",\n  \"sourceRef\": \"refs/tags/lotus-next-v2026.10.12\",\n  \"sourceSha\": \"d8b0eb6cad98ec53afe8dc4f6aeaa35ef050ec9f\",\n  \"sourceTree\": \"116eff816bc810e65e254d8051b0641a47e27cd1\",\n  \"bambooSha\": \"687f816c493c9c3a2785ca4cf6626e256339de85\",\n  \"tagObjectSha\": \"059e718f234acd7911f6a5822f5d43cf1e423f1e\",\n  \"workflowRef\": \"bigduu/lotus-next/.github/workflows/publish-npm.yml@refs/heads/main\",\n  \"workflowSha\": \"c50e0805a83c5e1cbcd6b37a07ca8646c23d2f9e\",\n  \"runId\": \"38228276879\",\n  \"runAttempt\": \"1\",\n  \"candidateRecordSha256\": \"303d6867ba697c9c6cfd1d88b0f6633b5a81e66bc65185c5de11a5f05468481e\",\n  \"acceptanceRunId\": 38192328532,\n  \"acceptanceReceiptSha256\": \"86a085034db902b0f5895a1977898d36d3f7578e87149a72b419f2546e8b5ce8\",\n  \"productPullRequest\": 306,\n  \"productMergeSha\": \"cd855c8fe3eb443d617dd6bfe7bd8caaa63526c2\",\n  \"reviewEvidence\": [\n    \"https://github.com/bigduu/lotus-next/pull/306#issuecomment-6116207915\",\n    \"https://github.com/bigduu/lotus-next/pull/306#issuecomment-6116209480\"\n  ]\n}\n"
+    },
+    "acceptedIdentity": {
+      "artifactId": 11739895591,
+      "path": "accepted-identity.json",
+      "sha256": "11cdff078ce1b39c03e4bbaac789caa1e80fd39504455dfab116fa12b7682156",
+      "utf8": "{\n  \"sourceRevision\": \"d8b0eb6cad98ec53afe8dc4f6aeaa35ef050ec9f\",\n  \"packageVersion\": \"2026.10.12\",\n  \"manifestSha256\": \"65297891364371b42e44dc0e0d6ce88a160b31121f2385b7c396260c07193d58\",\n  \"resourcesSha256\": \"60ef877ef46416a049a79085e1306351b4e1f7ba96ba39a32c9a4c24104a8c5d\",\n  \"resourceCount\": 710\n}\n"
+    },
+    "localArtifact": {
+      "artifactId": 11739895603,
+      "path": "test-results-real-bamboo/local/evidence/0d52cc7a20c04876a9a420c2a41fa9b3/artifact.json",
+      "sha256": "dd4060443780c9376e230b17f38cdc8e3fa92d375acfbac3ab489fd972f0f103",
+      "utf8": "{\n  \"schemaVersion\": 1,\n  \"registry\": \"local-pack\",\n  \"packageName\": \"@bigduu/lotus-next\",\n  \"packageVersion\": \"2026.10.12\",\n  \"sourceRevision\": \"d8b0eb6cad98ec53afe8dc4f6aeaa35ef050ec9f\",\n  \"sourceDirty\": false,\n  \"entrypoint\": \"index.html\",\n  \"npmShasum\": \"0ec6edfbe6830cfde9efd9545f72a73dad996381\",\n  \"npmIntegrity\": \"sha512-UWLteg5Bz7l8NERxisfubipMQPZ0oezIDLh1C+Df9kZFFhICYhmH6evX3C6cdPQAxvGdk9gGqeSBNjin3RTDoQ==\",\n  \"manifestSha256\": \"65297891364371b42e44dc0e0d6ce88a160b31121f2385b7c396260c07193d58\",\n  \"resourcesSha256\": \"60ef877ef46416a049a79085e1306351b4e1f7ba96ba39a32c9a4c24104a8c5d\",\n  \"resourceCount\": 710\n}\n"
+    },
+    "httpsArtifact": {
+      "artifactId": 11739895603,
+      "path": "test-results-real-bamboo/remote/evidence/6a9941fde6184ecd931e5874747989f5/artifact.json",
+      "sha256": "dd4060443780c9376e230b17f38cdc8e3fa92d375acfbac3ab489fd972f0f103",
+      "utf8": "{\n  \"schemaVersion\": 1,\n  \"registry\": \"local-pack\",\n  \"packageName\": \"@bigduu/lotus-next\",\n  \"packageVersion\": \"2026.10.12\",\n  \"sourceRevision\": \"d8b0eb6cad98ec53afe8dc4f6aeaa35ef050ec9f\",\n  \"sourceDirty\": false,\n  \"entrypoint\": \"index.html\",\n  \"npmShasum\": \"0ec6edfbe6830cfde9efd9545f72a73dad996381\",\n  \"npmIntegrity\": \"sha512-UWLteg5Bz7l8NERxisfubipMQPZ0oezIDLh1C+Df9kZFFhICYhmH6evX3C6cdPQAxvGdk9gGqeSBNjin3RTDoQ==\",\n  \"manifestSha256\": \"65297891364371b42e44dc0e0d6ce88a160b31121f2385b7c396260c07193d58\",\n  \"resourcesSha256\": \"60ef877ef46416a049a79085e1306351b4e1f7ba96ba39a32c9a4c24104a8c5d\",\n  \"resourceCount\": 710\n}\n"
+    }
+  },
+  "publishLog": {
+    "url": "https://api.github.com/repos/bigduu/lotus-next/actions/jobs/114758355794/logs",
+    "sha256": "e48a3bc7653ea885151d6319b1eb80ffcefae05172dab456af988bf0940b7dfd",
+    "bytes": 247789,
+    "excerpts": [
+      {
+        "line": 2487,
+        "text": "2026-10-12T10:02:21.5858791Z npm notice shasum: 0ec6edfbe6830cfde9efd9545f72a73dad996381"
+      },
+      {
+        "line": 2493,
+        "text": "2026-10-12T10:02:23.7483864Z npm notice publish Signed provenance statement with source and build information from GitHub Actions"
+      },
+      {
+        "line": 2496,
+        "text": "2026-10-12T10:02:27.6358136Z + @bigduu/lotus-next@2026.10.12"
+      },
+      {
+        "line": 2576,
+        "text": "2026-10-12T10:06:49.7955257Z   EXPECTED_INTEGRITY: sha512-UWLteg5Bz7l8NERxisfubipMQPZ0oezIDLh1C+Df9kZFFhICYhmH6evX3C6cdPQAxvGdk9gGqeSBNjin3RTDoQ=="
+      },
+      {
+        "line": 2577,
+        "text": "2026-10-12T10:06:49.7955979Z   EXPECTED_SHASUM: 0ec6edfbe6830cfde9efd9545f72a73dad996381"
+      },
+      {
+        "line": 2579,
+        "text": "2026-10-12T10:06:50.1474177Z npm error code ETARGET"
+      },
+      {
+        "line": 2580,
+        "text": "2026-10-12T10:06:50.1475513Z npm error notarget No matching version found for @bigduu/lotus-next@2026.10.12."
+      }
+    ]
+  },
+  "originalFinalPack": {
+    "filename": "bigduu-lotus-next-2026.10.12.tgz",
+    "npmShasum": "0ec6edfbe6830cfde9efd9545f72a73dad996381",
+    "npmIntegrity": "sha512-UWLteg5Bz7l8NERxisfubipMQPZ0oezIDLh1C+Df9kZFFhICYhmH6evX3C6cdPQAxvGdk9gGqeSBNjin3RTDoQ==",
+    "fileCount": 715
+  },
+  "independentlyObservedRegistry": {
+    "tarballSha256": "12056e280279ce7d3b75b3f552e0c4c973d571a4559e0b3bdfb3ea1d55afb404",
+    "unpackedSize": 18011311,
+    "observedAt": "2026-10-12T10:13:24.523375+00:00",
+    "evidenceOrigin": "Later independent read-only registry download, after the original run ended. This SHA-256 and exact unpacked size are not original producer witnesses."
+  }
+}
