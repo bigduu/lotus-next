@@ -119,7 +119,7 @@ describe("Sidebar date disclosures", () => {
   it("omits the older disclosure for exactly five populated dates with gaps", () => {
     render({ chats: [chat("a", 5), chat("b", 2), chat("c", -10), chat("d", -30), chat("e", -60)] })
     expect(container.textContent).not.toContain("更早")
-    expect(container.querySelectorAll("button[aria-expanded]")).toHaveLength(5)
+    expect(container.querySelectorAll('button[aria-expanded]:not([aria-haspopup="dialog"])')).toHaveLength(5)
     expect(container.querySelectorAll("[data-session]")).toHaveLength(5)
   })
 
