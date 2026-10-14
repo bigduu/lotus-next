@@ -5,6 +5,7 @@ export type {
   PatchProjectRequest,
   ProjectListResponse,
   ProjectManifest,
+  ProjectSidebar,
   ProjectPathStatus,
   ProjectResourceKind,
   ProjectResourceSummary,

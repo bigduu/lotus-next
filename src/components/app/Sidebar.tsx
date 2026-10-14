@@ -1,6 +1,6 @@
 import { useUiText } from "@shared/i18n/ui"
 import { isSessionUnread, useSessionReadState } from "@/lib/sessionReadState"
-import { useEffect, useId, useMemo, useRef, useState, type DragEvent } from "react"
+import { useId, useMemo, useRef, useState, type DragEvent } from "react"
 import { ChevronRight, Plus, Search, X, Cog, PanelLeftClose, FolderClosed, CalendarDays, ChevronDown } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { BrandMark } from "@/components/ui/brand-mark"
@@ -13,10 +13,11 @@ import { ProjectGroupHeader } from "@/components/app/ProjectGroupHeader"
 import { ProjectSectionDialog } from "@/components/app/ProjectSectionDialog"
 import { groupChats, groupChatsByProject, type ChatGroup } from "@/lib/groupChats"
 import {
-  readPinnedProjectIds, writePinnedProjectIds, readProjectSectionPreferences, writeProjectSectionPreferences,
+  readPinnedProjectIds, writePinnedProjectIds,
   getProjectSections, getSessionSection, createProjectSection, removeProjectSection, setSessionSection,
-  SIDEBAR_SESSION_DRAG_TYPE, type ProjectSectionPreferences,
+  SIDEBAR_SESSION_DRAG_TYPE,
 } from "@/lib/projectSidebarPreferences"
+import { useProjectSidebarSections } from "@/hooks/useProjectSidebarSections"
 import { useAppStore } from "@shared/store/appStore"
 import { openLocalFolder } from "@shared/utils/openExternalLink"
 import { cn } from "@/lib/utils"
@@ -84,8 +85,6 @@ export function Sidebar({
   const [search, setSearch] = useState("")
   const [groupingMode, setGroupingMode] = useState<SidebarGroupingMode>(readGroupingMode)
   const [pinnedProjectIds, setPinnedProjectIds] = useState(readPinnedProjectIds)
-  const [sectionPreferences, setSectionPreferences] = useState(readProjectSectionPreferences)
-  const persistedSections = useRef(sectionPreferences)
   const [sectionDialogMode, setSectionDialogMode] = useState<"create" | "manage">("create")
   const [dragOverSection, setDragOverSection] = useState<string | null>(null)
   const draggingProjectId = useRef<string | null>(null)
@@ -95,6 +94,7 @@ export function Sidebar({
   const [projectActionBusy, setProjectActionBusy] = useState(false)
   const [projectActionError, setProjectActionError] = useState<string | null>(null)
   const projects = useAppStore((state) => state.projects)
+  const { preferences: sectionPreferences, update: updateSectionPreferences, busy: sectionBusy, error: sectionError } = useProjectSidebarSections(projects)
   const readState = useSessionReadState()
   const disclosureId = useId()
   const supervisorOpening = useRef(false)
@@ -116,12 +116,6 @@ export function Sidebar({
     }
   }
   const query = search.trim().toLowerCase()
-
-  useEffect(() => {
-    if (persistedSections.current === sectionPreferences) return
-    writeProjectSectionPreferences(sectionPreferences)
-    persistedSections.current = sectionPreferences
-  }, [sectionPreferences])
 
   const switchGroupingMode = (mode: SidebarGroupingMode) => {
     setGroupingMode(mode)
@@ -262,15 +256,11 @@ export function Sidebar({
     }
   }
 
-  const updateSectionPreferences = (update: (previous: ProjectSectionPreferences) => ProjectSectionPreferences) => {
-    setSectionPreferences(update)
-  }
-
   const moveSessionToSection = (projectId: string, sessionId: string, sectionId: string | null) => {
     const chat = rootChats.find((candidate) => candidate.id === sessionId)
     // Canonical project identity is read from the session, never from the drag payload.
     if (chat?.config?.projectId?.trim() !== projectId || !projects[projectId]) return
-    updateSectionPreferences((previous) => setSessionSection(previous, projectId, sessionId, sectionId, projects[projectId]?.section))
+    void updateSectionPreferences(projectId, (previous) => setSessionSection(previous, projectId, sessionId, sectionId, projects[projectId]?.section))
   }
 
   const readDraggedSession = (event: DragEvent<HTMLElement>): { projectId: string; sessionId: string } | null => {
@@ -291,7 +281,7 @@ export function Sidebar({
       projectId={project?.id}
       sections={project ? getProjectSections(sectionPreferences, project.id, project.section) : undefined}
       sectionId={project ? getSessionSection(sectionPreferences, project.id, chat.id, project.section) : undefined}
-      onMoveToSection={project ? (sectionId) => moveSessionToSection(project.id, chat.id, sectionId) : undefined}
+      onMoveToSection={project && !sectionBusy.has(project.id) ? (sectionId) => moveSessionToSection(project.id, chat.id, sectionId) : undefined}
       onSelect={() => { onSelect(chat.id); onClose() }}
       onRename={(title) => onRename(chat.id, title)} onDelete={() => onDelete(chat)}
       onTogglePin={() => onTogglePin(chat)} onCopySessionId={() => onCopySessionId(chat.id)}
@@ -331,8 +321,10 @@ export function Sidebar({
       const expanded = !!query || !disclosures.closedSections.has(key)
       const contentId = `${disclosureId}-section-${encodeURIComponent(key)}`
       return <div key={key} data-project-section={section.name} data-section-id={section.id ?? "none"} data-section-project={project.id}
+        aria-disabled={sectionBusy.has(project.id)}
         style={{ marginInlineStart: 12 }} className={cn("mb-1 rounded-md", dragOverSection === key && "bg-sidebar-accent")}
         onDragOver={(event) => {
+          if (sectionBusy.has(project.id)) return
           if (!event.dataTransfer.types.includes(SIDEBAR_SESSION_DRAG_TYPE) || (draggingProjectId.current && draggingProjectId.current !== project.id)) return
           event.preventDefault()
           event.dataTransfer.dropEffect = "move"
@@ -343,6 +335,7 @@ export function Sidebar({
           event.preventDefault()
           setDragOverSection(null)
           draggingProjectId.current = null
+          if (sectionBusy.has(project.id)) return
           const payload = readDraggedSession(event)
           if (payload?.projectId === project.id) moveSessionToSection(project.id, payload.sessionId, section.id)
         }}>
@@ -378,7 +371,7 @@ export function Sidebar({
       return { ...previous, closedDates }
     })
     return (
-      <div key={group.key} data-sidebar-project={project?.id} className="mb-1">
+      <div key={group.key} data-sidebar-project={project?.id} aria-busy={project ? sectionBusy.has(project.id) : undefined} className="mb-1">
         {pinned ? (
           <div className="px-2 pt-3 pb-1 text-xs font-medium text-muted-foreground">
             {group.label}
@@ -550,6 +543,8 @@ export function Sidebar({
           </Button>
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-3">
+          {sectionBusy.size ? <p role="status" className="px-3 py-2 text-xs text-muted-foreground">{uiText("sidebar_sections_saving")}</p> : null}
+          {sectionError ? <p role="alert" className="px-3 py-2 text-xs text-destructive">{sectionError}</p> : null}
           {projectActionError ? (
             <button
               type="button"
@@ -607,12 +602,15 @@ export function Sidebar({
         projectId={sectioningProjectId}
         existingSections={sectioningProjectId ? getProjectSections(sectionPreferences, sectioningProjectId, projects[sectioningProjectId]?.section) : []}
         mode={sectionDialogMode}
+        busy={!!sectioningProjectId && sectionBusy.has(sectioningProjectId)}
+        saveError={sectionError}
+        unavailable={!!sectioningProjectId && projects[sectioningProjectId]?.sidebar === undefined}
         onCreate={(name) => {
           const sectionId = `section:${crypto.randomUUID()}`
-          if (sectioningProjectId) updateSectionPreferences((previous) => createProjectSection(previous, sectioningProjectId, name, projects[sectioningProjectId]?.section, sectionId))
+          return sectioningProjectId ? updateSectionPreferences(sectioningProjectId, (previous) => createProjectSection(previous, sectioningProjectId, name, projects[sectioningProjectId]?.section, sectionId)) : Promise.resolve(false)
         }}
         onRemove={(sectionId) => {
-          if (sectioningProjectId) updateSectionPreferences((previous) => removeProjectSection(previous, sectioningProjectId, sectionId, projects[sectioningProjectId]?.section))
+          return sectioningProjectId ? updateSectionPreferences(sectioningProjectId, (previous) => removeProjectSection(previous, sectioningProjectId, sectionId, projects[sectioningProjectId]?.section)) : Promise.resolve(false)
         }}
         onClose={() => setSectioningProjectId(null)}
       />

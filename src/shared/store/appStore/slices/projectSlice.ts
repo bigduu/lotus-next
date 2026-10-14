@@ -28,7 +28,13 @@ import type { AppState } from "..";
 type StoredProject = ProjectManifest & {
   /** True once the full manifest (bindings etc.) came from the API. */
   detail_loaded?: boolean;
+  /** Revision of the actual payload, before a feed event advertises a newer one. */
+  confirmed_revision?: number;
 };
+
+/** A whole-sidebar CAS must use the revision that belongs to its snapshot. */
+export const confirmedProjectRevision = (project: ProjectManifest): number =>
+  (project as StoredProject).confirmed_revision ?? project.revision;
 
 export interface ProjectSlice {
   projects: Record<string, ProjectManifest>;
@@ -486,7 +492,7 @@ function mergeProjectIntoMap(
   if (existing && project.revision < existing.revision) return;
 
   if (isManifest(project)) {
-    map[project.id] = { ...project, detail_loaded: true } as ProjectManifest;
+    map[project.id] = { ...project, detail_loaded: true, confirmed_revision: project.revision } as StoredProject;
     return;
   }
 
@@ -495,6 +501,7 @@ function mergeProjectIntoMap(
     schema_version: existing?.schema_version ?? 1,
     workspace_bindings: existing?.workspace_bindings ?? [],
     detail_loaded: existing?.detail_loaded ?? false,
+    confirmed_revision: project.revision,
   };
   map[project.id] = next;
 }
