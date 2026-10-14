@@ -4,6 +4,9 @@
     min-width: 0;
     line-break: auto;
     word-break: normal;
+    /* Preserve CoreText's stroke coverage: inherited grayscale smoothing makes
+       fine CJK horizontals look clipped on low-density WebKit displays. */
+    -webkit-font-smoothing: auto;
   }
 
   .assistant-streamdown [data-streamdown="link"] {

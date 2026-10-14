@@ -19,7 +19,7 @@ export function LazyAssistantMarkdown({
       fallback={
         <div
           aria-busy={isStreaming || undefined}
-          className="whitespace-pre-wrap text-base font-normal leading-7 text-foreground [overflow-wrap:anywhere]"
+          className="whitespace-pre-wrap text-base font-normal leading-7 text-foreground [overflow-wrap:anywhere] [-webkit-font-smoothing:auto]"
           data-assistant-markdown-fallback="true"
         >
           {children}
