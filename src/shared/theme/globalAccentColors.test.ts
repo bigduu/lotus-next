@@ -46,12 +46,13 @@ describe("global accent colors", () => {
     }
   })
 
-  it("chooses readable text across arbitrary custom colors", () => {
+  it("maintains normal-text contrast across arbitrary custom colors in both themes", () => {
     for (const color of ["#000000", "#ffffff", "#777777", "#ff0000", "#00ff00", "#0000ff", "#2563eb", "#ea580c"]) {
-      const colors = getGlobalAccentColors("dark", "custom", color)
-      expect(colors.primary).toBe(color)
-      const ratio = contrast(colors.primary, colors.primaryForeground)
-      expect(ratio).toBeGreaterThanOrEqual(3.0)
+      for (const mode of ["light", "dark"] as const) {
+        const colors = getGlobalAccentColors(mode, "custom", color)
+        expect(colors.primary).toBe(color)
+        expect(contrast(colors.primary, colors.primaryForeground)).toBeGreaterThanOrEqual(4.5)
+      }
     }
   })
 

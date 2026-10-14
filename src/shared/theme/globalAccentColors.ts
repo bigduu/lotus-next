@@ -119,7 +119,7 @@ export function getCustomAccentColors(
   // Use standard WCAG contrast check to select white or dark text on primary
   const contrastWithWhite = 1.05 / (luminance + 0.05)
   const contrastWithBlack = (luminance + 0.05) / 0.05
-  const primaryForeground = contrastWithWhite >= contrastWithBlack ? "#ffffff" : "#0f1612"
+  const primaryForeground = contrastWithWhite >= contrastWithBlack ? "#ffffff" : "#000000"
 
   const accent = mode === "dark"
     ? `color-mix(in oklab, ${primary} 22%, #181d1b)`
