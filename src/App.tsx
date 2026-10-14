@@ -9,6 +9,7 @@ import { Onboarding } from "@/components/chat/Onboarding"
 import { WorkspacePicker } from "@/components/chat/WorkspacePicker"
 import { useThemeStore } from "@shared/store/themeStore"
 import { getUserMessageColors } from "@shared/theme/userMessageColors"
+import { applyGlobalAccentToDocument, getGlobalAccentColors } from "@shared/theme/globalAccentColors"
 import { useChat } from "@/hooks/useChat"
 import { useResizableWidth } from "@/hooks/useResizableWidth"
 import { ResizeHandle } from "@/components/ui/resize-handle"
@@ -258,6 +259,8 @@ function App() {
   const themeMode = useThemeStore((s) => s.themeMode)
   const userMessageColorPreset = useThemeStore((s) => s.userMessageColorPreset)
   const customUserMessageColor = useThemeStore((s) => s.customUserMessageColor)
+  const globalAccentPreset = useThemeStore((s) => s.globalAccentPreset)
+  const customGlobalAccentColor = useThemeStore((s) => s.customGlobalAccentColor)
   useEffect(() => {
     document.documentElement.classList.toggle("dark", themeMode === "dark")
   }, [themeMode])
@@ -266,6 +269,10 @@ function App() {
     document.documentElement.style.setProperty("--user-message-background", colors.background)
     document.documentElement.style.setProperty("--user-message-foreground", colors.foreground)
   }, [themeMode, userMessageColorPreset, customUserMessageColor])
+  useEffect(() => {
+    const accent = getGlobalAccentColors(themeMode, globalAccentPreset, customGlobalAccentColor)
+    applyGlobalAccentToDocument(accent)
+  }, [themeMode, globalAccentPreset, customGlobalAccentColor])
 
   // VDI / graphics compatibility mode (ported from legacy lotus): reflect the
   // persisted flag as a `data-vdi-safe` attribute so CSS can strip blur/glass
