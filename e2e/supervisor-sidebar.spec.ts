@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test"
 import { installArtifactRuntime, standaloneScenario } from "./support/artifactRuntime.js"
 
-test("canonical Supervisor stays above ordinary session search and selects with the keyboard", async ({ page }, testInfo) => {
+test("Supervisor explains its role and supports persistent renaming with retry and cancellation", async ({ page }, testInfo) => {
   await page.addInitScript(() => localStorage.setItem("bodhi_onboarded_v1", "1"))
   await installArtifactRuntime(page, standaloneScenario)
   const ids = ["bamboo-default-supervisor", "all-surface-session"]
@@ -13,6 +13,8 @@ test("canonical Supervisor stays above ordinary session search and selects with 
     last_activity_at: "2026-10-05T00:00:00Z", message_count: 0, is_running: false,
     last_run_status: "completed", has_pending_question: false, subagent_count: 0,
   }))
+  let failRename = true
+  const renamed = "我的任务管家"
   await page.route("**/api/v1/**", async (route) => {
     const request = route.request()
     const path = new URL(request.url()).pathname
@@ -27,6 +29,17 @@ test("canonical Supervisor stays above ordinary session search and selects with 
     } else if (path === `/api/v1/respond/${ids[0]}/pending`) {
       await route.fulfill({ json: { has_pending_question: false } })
     } else if (request.method() === "PATCH" && path === `/api/v1/sessions/${ids[0]}`) {
+      const body = request.postDataJSON()
+      if (body.title) {
+        expect(body.title).toBe(renamed)
+        if (failRename) {
+          failRename = false
+          await route.fulfill({ status: 500, json: { error: "Save failed" } })
+          return
+        }
+        sessions[0]!.title = body.title
+        sessions[0]!.title_version++
+      }
       await route.fulfill({ json: {} })
     } else await route.fallback()
   })
@@ -51,7 +64,36 @@ test("canonical Supervisor stays above ordinary session search and selects with 
     await page.getByRole("button", { name: "菜单", exact: true }).click()
     await expect(supervisor).toBeInViewport({ ratio: 1 })
   }
-  await page.screenshot({ path: testInfo.outputPath("supervisor-top-entry.png") })
+  await expect(sidebar.getByText("统筹任务、协调会话，跟进进度与结果。", { exact: true })).toBeVisible()
+  await sidebar.getByRole("button", { name: "重命名统筹助手", exact: true }).click()
+  const dialog = page.getByRole("dialog", { name: "重命名统筹助手" })
+  const name = dialog.getByRole("textbox", { name: "助手名称" })
+  await expect(name).toHaveValue("Supervisor")
+  await dialog.screenshot({ path: testInfo.outputPath("supervisor-rename-dialog.png"), animations: "disabled" })
+  await name.fill("   ")
+  await expect(dialog.getByRole("button", { name: "保存", exact: true })).toBeDisabled()
+  await name.fill("取消的名字")
+  await name.press("Escape")
+  await expect(dialog).toHaveCount(0)
+  await expect(sidebar.getByRole("button", { name: "重命名统筹助手", exact: true })).toBeFocused()
+  await expect(supervisor).toBeVisible()
+  await sidebar.getByRole("button", { name: "重命名统筹助手", exact: true }).click()
+  await expect(name).toHaveValue("Supervisor")
+  await name.fill(`  ${renamed}  `)
+  await name.press("Enter")
+  await expect(dialog.getByRole("alert")).toHaveText("保存失败，请重试")
+  await expect(sidebar.getByRole("button", { name: "Supervisor", exact: true, includeHidden: true })).toHaveCount(1)
+  await expect(name).toHaveValue(`  ${renamed}  `)
+  await dialog.getByRole("button", { name: "保存", exact: true }).click()
+  await expect(dialog).toHaveCount(0)
+  await expect(sidebar.getByRole("button", { name: "重命名统筹助手", exact: true })).toBeFocused()
+  await expect(sidebar.getByRole("button", { name: renamed, exact: true })).toHaveAttribute("aria-current", "page")
+  await page.reload()
+  await expect(page.getByRole("textbox", { name: "消息", exact: true })).toBeVisible()
+  if (phone) await page.getByRole("button", { name: "菜单", exact: true }).click()
+  await expect(sidebar.getByRole("button", { name: renamed, exact: true })).toBeVisible()
+  await expect(sidebar.locator('[data-sidebar-session="bamboo-default-supervisor"]')).toHaveCount(0)
+  await sidebar.screenshot({ path: testInfo.outputPath("supervisor-renamed-entry.png"), animations: "disabled" })
 })
 
 for (const initialState of ["absent", "empty", "history"] as const) {
@@ -135,7 +177,7 @@ for (const navigation of ["return-to-session", "new-conversation"] as const) {
     await installArtifactRuntime(page, standaloneScenario)
     const supervisorId = "bamboo-default-supervisor"
     const sessions = ["navigation-a", "navigation-b", supervisorId].map((id) => ({
-      id, title: id, title_version: 1, kind: "root", root_session_id: id,
+      id, title: id === supervisorId ? "Supervisor" : id, title_version: 1, kind: "root", root_session_id: id,
       parent_session_id: null, spawn_depth: 0, model: "fixture-model",
       model_ref: { provider: "fixture-provider", model: "fixture-model" },
       created_at: "2026-10-05T00:00:00Z", updated_at: "2026-10-05T00:00:00Z",

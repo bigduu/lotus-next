@@ -1,10 +1,11 @@
 import { useUiText } from "@shared/i18n/ui"
 import { isSessionUnread, useSessionReadState } from "@/lib/sessionReadState"
 import { useEffect, useId, useMemo, useRef, useState, type DragEvent } from "react"
-import { ChevronRight, Plus, Search, X, Cog, PanelLeftClose, FolderClosed, CalendarDays, ChevronDown, CircleDot } from "lucide-react"
+import { ChevronRight, Plus, Search, X, Cog, PanelLeftClose, FolderClosed, CalendarDays, ChevronDown } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { BrandMark } from "@/components/ui/brand-mark"
 import { Input } from "@/components/ui/input"
+import { SupervisorEntry } from "@/components/app/SupervisorEntry"
 import { SessionRow } from "@/components/chat/SessionRow"
 import { ProjectArchiveDialog } from "@/components/app/ProjectArchiveDialog"
 import { ProjectEditDialog } from "@/components/app/ProjectEditDialog"
@@ -72,7 +73,7 @@ export function Sidebar({
   currentSessionId: string | null | undefined
   onNewChat: (projectId?: string | null) => void
   onSelect: (id: string) => void | Promise<void>
-  onRename: (id: string, title: string) => void
+  onRename: (id: string, title: string) => void | Promise<void>
   onDelete: (chat: ChatItem) => void
   onTogglePin: (chat: ChatItem) => void
   onCopySessionId: (sessionId: string) => void
@@ -96,7 +97,6 @@ export function Sidebar({
   const projects = useAppStore((state) => state.projects)
   const readState = useSessionReadState()
   const disclosureId = useId()
-  const supervisorStatusId = useId()
   const supervisorOpening = useRef(false)
   const [supervisorBusy, setSupervisorBusy] = useState(false)
   const [supervisorError, setSupervisorError] = useState<string | null>(null)
@@ -487,24 +487,9 @@ export function Sidebar({
           </Button>
         </div>
         <div className="px-2 pb-2">
-          <Button
-            variant="ghost"
-            aria-current={supervisorActive ? "page" : undefined}
-            aria-describedby={supervisor?.isRunning || supervisorUnread ? supervisorStatusId : undefined}
-            aria-busy={supervisorBusy || undefined}
-            disabled={!booted || supervisorBusy}
-            className={cn("mb-2 w-full justify-start gap-2", supervisorActive && "bg-sidebar-accent", supervisorUnread && "font-semibold")}
-            onClick={() => void openSupervisor()}
-          >
-            <CircleDot className="size-4" aria-hidden="true" />
-            <span className="flex-1 text-left">Supervisor</span>
-            {supervisor?.isRunning || supervisorUnread ? (
-              <span aria-hidden="true" className={cn("size-1.5 rounded-full bg-primary", supervisor?.isRunning && "animate-pulse")} />
-            ) : null}
-            <span id={supervisorStatusId} className="sr-only">
-              {supervisor?.isRunning ? uiText("running_1f0eb99b") : supervisorUnread ? uiText("unread_messages_519491f4") : ""}
-            </span>
-          </Button>
+          <SupervisorEntry chat={supervisor} active={supervisorActive} unread={supervisorUnread}
+            busy={supervisorBusy} disabled={!booted || supervisorBusy}
+            onSelect={() => void openSupervisor()} onRename={onRename} />
           {supervisorError ? <p role="alert" className="px-2 pb-2 text-sm text-destructive">{supervisorError}</p> : null}
           <Button
             variant="ghost"
