@@ -103,13 +103,13 @@ describe("durable Project sidebar sections", () => {
     const save = useAppStore.getState().updateProject
     useAppStore.setState({ updateProject: vi.fn().mockRejectedValueOnce(new Error("offline")).mockImplementation(save) })
     await mount()
-    expect(hook.error).toContain("未保存")
+    expect(hook.errors.p1).toContain("未保存")
     expect(readProjectSectionPreferences().projects.p1).toBeDefined()
     await act(async () => { await hook.update("p1", (previous) => setSessionSection(previous, "p1", "root-1", null, "Development")) })
     expect(useAppStore.getState().updateProject).toHaveBeenCalledTimes(3)
     expect(readProjectSectionPreferences().projects.p1).toBeUndefined()
     expect(hook.preferences.projects.p1?.sessionSections["root-1"]).toBeNull()
-    expect(hook.error).toBeNull()
+    expect(hook.errors.p1).toBeUndefined()
   })
 
   it("keeps newer edits made by a legacy tab during import", async () => {
@@ -169,7 +169,7 @@ describe("durable Project sidebar sections", () => {
     await mount()
     await act(async () => { expect(await create()).toBe(false) })
     expect(hook.preferences.projects.p1?.sections).toEqual([])
-    expect(hook.error).toContain("未保存")
+    expect(hook.errors.p1).toContain("未保存")
     expect(localStorage.getItem(PROJECT_SECTIONS_STORAGE_KEY)).toBeNull()
   })
 
@@ -181,7 +181,7 @@ describe("durable Project sidebar sections", () => {
     await act(async () => { expect(await create()).toBe(false) })
     expect(reload).toHaveBeenCalledWith("p1", { force: true })
     expect(hook.preferences.projects.p1?.sections[0]?.name).toBe("Other client")
-    expect(hook.error).toContain("其他客户端")
+    expect(hook.errors.p1).toContain("其他客户端")
     expect(useAppStore.getState().updateProject).toHaveBeenCalledOnce()
   })
 
@@ -200,7 +200,7 @@ describe("durable Project sidebar sections", () => {
     await mount()
     expect(useAppStore.getState().ensureProject).toHaveBeenCalledWith("p1", { force: true })
     expect(readProjectSectionPreferences().projects.p1).toBeDefined()
-    expect(hook.error).toContain("其他客户端")
+    expect(hook.errors.p1).toContain("其他客户端")
   })
 
   it("keeps local data and disables writes for an unsupported backend", async () => {
@@ -209,8 +209,26 @@ describe("durable Project sidebar sections", () => {
     await mount()
     await act(async () => { expect(await create()).toBe(false) })
     expect(useAppStore.getState().updateProject).not.toHaveBeenCalled()
-    expect(hook.error).toContain("更新 Bamboo")
+    expect(hook.errors.p1).toContain("更新 Bamboo")
     expect(readProjectSectionPreferences().projects.p1).toBeDefined()
+  })
+
+  it("keeps a failed Project's error when another Project saves successfully", async () => {
+    const save = useAppStore.getState().updateProject
+    useAppStore.setState({
+      projects: { p1: manifest(), p2: { ...manifest(), id: "p2", name: "Other Project" } },
+      updateProject: vi.fn((id, revision, request) => id === "p1" ? Promise.reject(new Error("offline")) : save(id, revision, request)),
+    })
+    await mount()
+    await act(async () => { await create() })
+    const originalError = hook.errors.p1
+    expect(originalError).toContain("未保存")
+    await act(async () => {
+      expect(await hook.update("p2", (previous) => createProjectSection(previous, "p2", "Other section"))).toBe(true)
+    })
+    expect(hook.errors.p1).toBe(originalError)
+    expect(hook.errors.p2).toBeUndefined()
+    expect(useAppStore.getState().projects.p2!.sidebar?.sections[0]?.name).toBe("Other section")
   })
 
   it("does not clear legacy data when a response lacks an import receipt", async () => {
@@ -218,6 +236,6 @@ describe("durable Project sidebar sections", () => {
     useAppStore.setState({ updateProject: vi.fn().mockResolvedValue({ ...manifest(), sidebar: undefined }) })
     await mount()
     expect(readProjectSectionPreferences().projects.p1).toBeDefined()
-    expect(hook.error).toContain("更新 Bamboo")
+    expect(hook.errors.p1).toContain("更新 Bamboo")
   })
 })

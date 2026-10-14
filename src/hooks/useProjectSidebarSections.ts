@@ -17,20 +17,25 @@ export function useProjectSidebarSections(projects: Record<string, ProjectManife
   const inFlight = useRef(new Set<string>())
   const attemptedImports = useRef(new Set<string>())
   const [busy, setBusy] = useState<ReadonlySet<string>>(new Set())
-  const [error, setError] = useState<string | null>(null)
+  const [errors, setErrors] = useState<Record<string, string>>({})
   const preferences = useMemo(() => serverSectionPreferences(projects, legacy), [projects, legacy])
 
   const update = useCallback(async (projectId: string, transform: SectionUpdate): Promise<boolean> => {
     if (inFlight.current.has(projectId)) return false
     inFlight.current.add(projectId)
     setBusy(new Set(inFlight.current))
-    setError(null)
+    setErrors((previous) => {
+      const next = { ...previous }
+      delete next[projectId]
+      return next
+    })
+    const reportError = (message: string) => setErrors((previous) => ({ ...previous, [projectId]: message }))
     let importing = false
     try {
       const store = useAppStore.getState()
       let project = store.projects[projectId]
       if (!project || project.sidebar === undefined) {
-        setError(uiText("sidebar_sections_unavailable"))
+        reportError(uiText("sidebar_sections_unavailable"))
         return false
       }
       if (project.sidebar === null && Object.hasOwn(legacy.projects, projectId)) {
@@ -39,7 +44,7 @@ export function useProjectSidebarSections(projects: Record<string, ProjectManife
           import_sidebar: toProjectSidebar(legacy.projects[projectId]!),
         })
         if (!project.sidebar) {
-          setError(uiText("sidebar_sections_unavailable"))
+          reportError(uiText("sidebar_sections_unavailable"))
           return false
         }
         clearImportedProjectSections(projectId, legacy.projects[projectId]!)
@@ -55,7 +60,7 @@ export function useProjectSidebarSections(projects: Record<string, ProjectManife
         sidebar: toProjectSidebar(next.projects[projectId]!),
       })
       if (!saved.sidebar) {
-        setError(uiText("sidebar_sections_unavailable"))
+        reportError(uiText("sidebar_sections_unavailable"))
         return false
       }
       return true
@@ -64,12 +69,12 @@ export function useProjectSidebarSections(projects: Record<string, ProjectManife
         // Keep the failed intent uncommitted and fetch the winning revision.
         try {
           await useAppStore.getState().ensureProject(projectId, { force: true })
-          setError(uiText("sidebar_sections_conflict"))
+          reportError(uiText("sidebar_sections_conflict"))
         } catch {
-          setError(uiText("sidebar_sections_refresh_failed"))
+          reportError(uiText("sidebar_sections_refresh_failed"))
         }
       } else {
-        setError(uiText("sidebar_sections_save_failed"))
+        reportError(uiText("sidebar_sections_save_failed"))
       }
       return false
     } finally {
@@ -86,5 +91,5 @@ export function useProjectSidebarSections(projects: Record<string, ProjectManife
     }
   }, [projects, legacy, update])
 
-  return { preferences, update, busy, error }
+  return { preferences, update, busy, errors }
 }

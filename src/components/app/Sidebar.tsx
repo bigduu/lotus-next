@@ -94,7 +94,7 @@ export function Sidebar({
   const [projectActionBusy, setProjectActionBusy] = useState(false)
   const [projectActionError, setProjectActionError] = useState<string | null>(null)
   const projects = useAppStore((state) => state.projects)
-  const { preferences: sectionPreferences, update: updateSectionPreferences, busy: sectionBusy, error: sectionError } = useProjectSidebarSections(projects)
+  const { preferences: sectionPreferences, update: updateSectionPreferences, busy: sectionBusy, errors: sectionErrors } = useProjectSidebarSections(projects)
   const readState = useSessionReadState()
   const disclosureId = useId()
   const supervisorOpening = useRef(false)
@@ -281,7 +281,7 @@ export function Sidebar({
       projectId={project?.id}
       sections={project ? getProjectSections(sectionPreferences, project.id, project.section) : undefined}
       sectionId={project ? getSessionSection(sectionPreferences, project.id, chat.id, project.section) : undefined}
-      onMoveToSection={project && !sectionBusy.has(project.id) ? (sectionId) => moveSessionToSection(project.id, chat.id, sectionId) : undefined}
+      onMoveToSection={project && project.sidebar !== undefined && !sectionBusy.has(project.id) ? (sectionId) => moveSessionToSection(project.id, chat.id, sectionId) : undefined}
       onSelect={() => { onSelect(chat.id); onClose() }}
       onRename={(title) => onRename(chat.id, title)} onDelete={() => onDelete(chat)}
       onTogglePin={() => onTogglePin(chat)} onCopySessionId={() => onCopySessionId(chat.id)}
@@ -321,10 +321,10 @@ export function Sidebar({
       const expanded = !!query || !disclosures.closedSections.has(key)
       const contentId = `${disclosureId}-section-${encodeURIComponent(key)}`
       return <div key={key} data-project-section={section.name} data-section-id={section.id ?? "none"} data-section-project={project.id}
-        aria-disabled={sectionBusy.has(project.id)}
+        aria-disabled={project.sidebar === undefined || sectionBusy.has(project.id)}
         style={{ marginInlineStart: 12 }} className={cn("mb-1 rounded-md", dragOverSection === key && "bg-sidebar-accent")}
         onDragOver={(event) => {
-          if (sectionBusy.has(project.id)) return
+          if (project.sidebar === undefined || sectionBusy.has(project.id)) return
           if (!event.dataTransfer.types.includes(SIDEBAR_SESSION_DRAG_TYPE) || (draggingProjectId.current && draggingProjectId.current !== project.id)) return
           event.preventDefault()
           event.dataTransfer.dropEffect = "move"
@@ -335,7 +335,7 @@ export function Sidebar({
           event.preventDefault()
           setDragOverSection(null)
           draggingProjectId.current = null
-          if (sectionBusy.has(project.id)) return
+          if (project.sidebar === undefined || sectionBusy.has(project.id)) return
           const payload = readDraggedSession(event)
           if (payload?.projectId === project.id) moveSessionToSection(project.id, payload.sessionId, section.id)
         }}>
@@ -544,7 +544,10 @@ export function Sidebar({
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-3">
           {sectionBusy.size ? <p role="status" className="px-3 py-2 text-xs text-muted-foreground">{uiText("sidebar_sections_saving")}</p> : null}
-          {sectionError ? <p role="alert" className="px-3 py-2 text-xs text-destructive">{sectionError}</p> : null}
+          {isProjectMode && Object.values(projects).some((project) => project.sidebar === undefined && getProjectSections(sectionPreferences, project.id, project.section).length) ? <p role="status" className="px-3 py-2 text-xs text-muted-foreground">{uiText("sidebar_sections_unavailable")}</p> : null}
+          {Object.entries(sectionErrors).filter(([id]) => projects[id] && id !== sectioningProjectId).map(([id, error]) => (
+            <p key={id} role="alert" className="px-3 py-2 text-xs text-destructive">{projects[id]!.name} · {error}</p>
+          ))}
           {projectActionError ? (
             <button
               type="button"
@@ -603,7 +606,7 @@ export function Sidebar({
         existingSections={sectioningProjectId ? getProjectSections(sectionPreferences, sectioningProjectId, projects[sectioningProjectId]?.section) : []}
         mode={sectionDialogMode}
         busy={!!sectioningProjectId && sectionBusy.has(sectioningProjectId)}
-        saveError={sectionError}
+        saveError={sectioningProjectId ? sectionErrors[sectioningProjectId] : null}
         unavailable={!!sectioningProjectId && projects[sectioningProjectId]?.sidebar === undefined}
         onCreate={(name) => {
           const sectionId = `section:${crypto.randomUUID()}`

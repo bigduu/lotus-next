@@ -544,6 +544,33 @@ describe("Sidebar server sections", () => {
     expect(localStorage.getItem(PROJECT_SECTIONS_STORAGE_KEY)).toBeNull()
   })
 
+  it("disables section moves and drops with an upgrade hint for an unsupported backend", async () => {
+    const { updateProject } = setup()
+    act(() => useAppStore.setState((state) => ({ projects: { ...state.projects, p1: { ...state.projects.p1!, sidebar: undefined } } })))
+    expect([...container.querySelectorAll("button")].some((item) => item.textContent?.startsWith("Move first to"))).toBe(false)
+    expect(container.querySelector('[role="status"]')?.textContent).toContain("更新 Bamboo 后端")
+    const target = container.querySelector('[data-section-project="p1"][data-section-id="legacy"]')!
+    expect(target.getAttribute("aria-disabled")).toBe("true")
+    await drop(target, { projectId: "p1", sessionId: "first" })
+    expect(updateProject).not.toHaveBeenCalled()
+  })
+
+  it("does not show one Project's failed save inside another Project's dialog", async () => {
+    vi.useRealTimers()
+    const { updateProject } = setup()
+    updateProject.mockRejectedValueOnce(new Error("offline"))
+    await clickAndSave("Move first to lotus")
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain("Zenith · 分区未保存")
+    const trigger = buttonByLabel("Nova 项目操作")
+    await act(async () => { trigger.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })) })
+    const createMenu = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find((item) => item.textContent?.includes("创建分区"))!
+    await act(async () => createMenu.click())
+    const dialog = document.querySelector('[role="dialog"]')!
+    expect(dialog.textContent).toContain("Nova")
+    expect(dialog.querySelector('[role="alert"]')).toBeNull()
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain("Zenith · 分区未保存")
+  })
+
   it("temporarily disables same-Project moves and drops while a save awaits confirmation", async () => {
     const { updateProject } = setup()
     const persist = updateProject.getMockImplementation()!
