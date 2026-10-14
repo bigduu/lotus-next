@@ -455,7 +455,7 @@ function App() {
           select(id)
           if (isWide && id === DEFAULT_SUPERVISOR_SESSION_ID) openWorkbench("work")
         }}
-        onRename={(id, title) => void persistSessionTitle(id, title)}
+        onRename={(id, title) => persistSessionTitle(id, title)}
         onDelete={(c) => setPendingDelete({ id: c.id, title: c.title || uiText("new_session_c57c30bc") })}
         onTogglePin={(c) => (c.pinned ? unpinSession(c.id) : pinSession(c.id))}
         onCopySessionId={copySessionId}
