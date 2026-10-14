@@ -92,8 +92,8 @@ async function fixture(page: Page, initial: string) {
           json: { error: "explicit initialization refusal", code, scope: scopeV1() } })
       }
       current = initializeOutcome === "conflict" ? "v1-read-only" : "v1-ready"; storedRevision = bindingRevision
-      if (initializeOutcome === "conflict") return route.fulfill({ status: 409,
-        json: { error: "another owner initialized this scope", code: "initialization_conflict", scope: scopeV1() } })
+      if (["conflict", "stale-readable"].includes(initializeOutcome)) return route.fulfill({ status: 409,
+        json: { error: "another owner initialized this scope", code: initializeOutcome === "conflict" ? "initialization_conflict" : "scope_binding_mismatch", scope: scopeV1() } })
       if (initializeOutcome === "unknown") return route.abort("failed")
       return route.fulfill({ json: { created: initializeOutcome === "malformed" ? "yes" : initializeOutcome !== "existing", scope: scopeV1() } })
     }
@@ -229,7 +229,8 @@ for (const outcome of ["created", "existing"] as const) {
 }
 
 for (const [outcome, message, readable] of [
-  ["conflict", "初始化期间工作范围已变化", true], ["recovery", "已有工作存储需要审阅后恢复", false],
+  ["conflict", "初始化期间工作范围已变化", true], ["stale-readable", "初始化期间工作范围已变化", true],
+  ["recovery", "已有工作存储需要审阅后恢复", false],
   ["stale", "已有工作绑定与当前身份或版本不匹配", false], ["disabled", "此服务尚未启用工作功能", false],
   ["denied", "查看工作需要已验证的所有者访问权限", false],
   ["unknown", "无法确认初始化响应", true], ["malformed", "无法确认初始化响应", true],
@@ -239,7 +240,10 @@ for (const [outcome, message, readable] of [
     const workbench = await openWork(page)
     await workbench.getByRole("button", { name: "初始化空工作范围", exact: true }).click()
     await expect(workbench).toContainText(message)
-    if (readable) await expect(workbench).toContainText("此工作范围还没有记录工作")
+    if (readable) {
+      await expect(workbench).toContainText("此工作范围还没有记录工作")
+      await expect(workbench).not.toContainText("离线恢复流程")
+    }
     else await expect(workbench.getByTestId("ticket-work-overview")).toHaveCount(0)
     if (outcome === "conflict") {
       await expect(workbench).toContainText("此服务已禁用工作变更")

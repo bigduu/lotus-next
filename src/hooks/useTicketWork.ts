@@ -201,6 +201,7 @@ export function useTicketWork(sessionId: string | null | undefined, authorityKey
     initializingSessions.add(capturedSession); notifyInitialization(); setInitializationError(null)
     const stillCurrent = () => scope.current === capturedSession && access.current && epoch.current === capturedEpoch
     let confirmed = false
+    let conflictDetail: string | undefined
     try {
       try {
         await ticketClient.initialize(confirmation)
@@ -214,6 +215,7 @@ export function useTicketWork(sessionId: string | null | undefined, authorityKey
           setError(null); setInitializationError(getErrorMessage(failure)); return false
         }
         const code = initializationRefusal(failure)
+        if (isApiError(failure) && failure.status === 409 && code) conflictDetail = getErrorMessage(failure)
         const message = code === "scope_requires_recovery" ? uiText("supervisor_work_recovery_guidance")
           : code === "scope_binding_mismatch" ? uiText("supervisor_work_binding_guidance")
           : code === "ticket_mutation_disabled" ? uiText("supervisor_work_disabled_guidance")
@@ -232,6 +234,11 @@ export function useTicketWork(sessionId: string | null | undefined, authorityKey
       const binding = current.current?.current.scope.binding
       const ready = connection.current && binding?.supervisor_session_id === confirmation.supervisor_session_id
         && binding.scope_id === "supervisor/" + confirmation.incarnation_id && binding.binding_revision === confirmation.binding_revision
+      // A known refused write does not make a freshly readable canonical scope
+      // an offline recovery case. Keep the refusal visible without stale advice.
+      if (conflictDetail && connection.current && current.current) {
+        setInitializationError(uiText("supervisor_work_initialization_conflict") + " " + conflictDetail)
+      }
       if (confirmed && !ready) setInitializationError(uiText("supervisor_work_initialization_unconfirmed"))
       return confirmed && ready
     } finally {
