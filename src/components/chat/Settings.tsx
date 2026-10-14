@@ -241,6 +241,7 @@ function GeneralTab() {
               id={customBubbleColorId}
               type="color"
               value={customUserMessageColor}
+              onInput={(event) => setCustomUserMessageColor(event.currentTarget.value)}
               onChange={(event) => setCustomUserMessageColor(event.target.value)}
             />
             <span>{customUserMessageColor.toUpperCase()}</span>

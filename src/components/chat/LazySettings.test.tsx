@@ -384,4 +384,73 @@ describe("Settings page controls", () => {
       })
     }
   })
+
+  it("updates custom message bubble preview, label, and store on color input and change events", async () => {
+    const previousTheme = useThemeStore.getState()
+    const previousExperience = useExperienceModeStore.getState()
+    vi.spyOn(metricsService, "getSummary").mockRejectedValue(new Error("offline"))
+    useThemeStore.setState({
+      themeMode: "light",
+      themePreference: "light",
+      userMessageColorPreset: "jade",
+      customUserMessageColor: "#345448",
+    })
+    useExperienceModeStore.setState({ mode: "advanced", isAdvanced: true })
+    const onTabChange = vi.fn()
+
+    try {
+      const view = await mount(<SettingsContent tab="general" onTabChange={onTabChange} />)
+
+      const customOption = [...view.container.querySelectorAll(".settings-bubble-option")].find(
+        (button) => button.textContent === uiText("bubble_custom"),
+      )
+      expect(customOption?.getAttribute("aria-pressed")).toBe("false")
+      await click(customOption ?? null)
+      expect(customOption?.getAttribute("aria-pressed")).toBe("true")
+      expect(useThemeStore.getState().userMessageColorPreset).toBe("custom")
+
+      const colorInput = view.container.querySelector<HTMLInputElement>('.settings-bubble-custom input[type="color"]')
+      expect(colorInput).not.toBeNull()
+      const colorLabel = view.container.querySelector(".settings-bubble-custom span")
+      const previewParagraph = view.container.querySelector<HTMLParagraphElement>(".settings-bubble-preview p")
+
+      expect(colorLabel?.textContent).toBe("#345448")
+      expect(previewParagraph?.style.backgroundColor).toBe("rgb(52, 84, 72)")
+
+      const setInputValue = (input: HTMLInputElement, value: string) => {
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, value)
+      }
+
+      await act(async () => {
+        if (colorInput) {
+          setInputValue(colorInput, "#ff0000")
+          colorInput.dispatchEvent(new Event("input", { bubbles: true }))
+        }
+        await Promise.resolve()
+      })
+
+      expect(useThemeStore.getState().customUserMessageColor).toBe("#ff0000")
+      expect(colorLabel?.textContent).toBe("#FF0000")
+      expect(previewParagraph?.style.backgroundColor).toBe("rgb(255, 0, 0)")
+      expect(previewParagraph?.style.color).toBe("rgb(0, 0, 0)")
+
+      await act(async () => {
+        if (colorInput) {
+          setInputValue(colorInput, "#2563eb")
+          colorInput.dispatchEvent(new Event("change", { bubbles: true }))
+        }
+        await Promise.resolve()
+      })
+
+      expect(useThemeStore.getState().customUserMessageColor).toBe("#2563eb")
+      expect(colorLabel?.textContent).toBe("#2563EB")
+      expect(previewParagraph?.style.backgroundColor).toBe("rgb(37, 99, 235)")
+      expect(previewParagraph?.style.color).toBe("rgb(255, 255, 255)")
+    } finally {
+      await act(async () => {
+        useThemeStore.setState(previousTheme)
+        useExperienceModeStore.setState(previousExperience)
+      })
+    }
+  })
 })
