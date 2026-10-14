@@ -1,6 +1,6 @@
 import { uiText } from "@shared/i18n/ui"
 import { apiClient, isApiError } from "@services/api"
-import { TicketScopeUnavailableError, unavailableScope, isTicketInitialization } from "./availability"
+import { TicketScopeUnavailableError, unavailableScope, isTicketInitialization, scopeAvailability } from "./availability"
 import type { Cursor, ReadEnvelope, ResponseCommand, SnapshotRef, TicketInitialization, TicketInitializationResult, TicketScope, TicketSnapshot, WorkView } from "./types"
 
 const sameSnapshot = (a: ReadEnvelope<unknown>, expected: SnapshotRef) => {
@@ -13,7 +13,15 @@ const sameSnapshot = (a: ReadEnvelope<unknown>, expected: SnapshotRef) => {
 const completeCoverage = (coverage: string) => coverage === "authoritative_scope" || coverage === "complete"
 
 function verifiedScope(scope: TicketScope, sessionId: string): TicketSnapshot["scope"] {
-  if (scope?.available === false) throw unavailableScope(scope.reason)
+  let presentation
+  try { presentation = scope && scopeAvailability(scope, sessionId) }
+  catch { throw new Error(uiText("supervisor_work_invalid_response")) }
+  if (scope?.available === false) {
+    if (presentation && presentation.kind !== "loading" && presentation.kind !== "ready") {
+      throw new TicketScopeUnavailableError(presentation.kind, presentation.detail, presentation)
+    }
+    throw unavailableScope(scope.reason)
+  }
   if (scope?.available !== true || !scope.binding || !scope.overview
     || typeof scope.mutation_enabled !== "boolean" || typeof scope.dispatch_enabled !== "boolean"
     || typeof scope.health !== "string" || !scope.health) {
@@ -50,6 +58,7 @@ export const ticketClient = {
     const response = await apiClient.postOnce<TicketInitializationResult>("tickets/initialize", command)
     if (!response || typeof response.created !== "boolean") throw new Error(uiText("supervisor_work_initialization_unconfirmed"))
     const scope = verifiedScope(response.scope, command.supervisor_session_id)
+    if (!scope.availability || scope.readable !== true) throw new Error(uiText("supervisor_work_initialization_unconfirmed"))
     if (scope.binding.binding_revision !== command.binding_revision
       || scope.binding.scope_id !== "supervisor/" + command.incarnation_id) {
       throw new Error(uiText("supervisor_work_initialization_unconfirmed"))

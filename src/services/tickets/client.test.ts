@@ -1,6 +1,6 @@
 import { beforeEach, expect, it, vi } from "vitest"
 import { ticketClient } from "./client"
-import { ticketSnapshot } from "./testFixtures"
+import { initializableTicketScope, readyTicketScopeV1, ticketSnapshot } from "./testFixtures"
 import { ApiError, apiClient } from "@services/api"
 vi.mock("@services/api", async (original) => ({ ...await original<typeof import("@services/api")>(), apiClient: { get: vi.fn(), post: vi.fn(), postOnce: vi.fn() } }))
 beforeEach(() => { vi.resetAllMocks() })
@@ -117,9 +117,7 @@ it("loads a valid zero-Work scope as a complete ready snapshot", async () => {
 
 const initialization = { supervisor_session_id: "root", incarnation_id: "11111111-1111-4111-8111-111111111111", binding_revision: 1 }
 const initializedScope = () => {
-  const scope = ticketSnapshot().scope
-  scope.binding.scope_id = "supervisor/" + initialization.incarnation_id
-  return scope
+  return readyTicketScopeV1()
 }
 
 it.each([true, false])("submits only the exact three initialization fields once and verifies created=%s", async (created) => {
@@ -156,4 +154,53 @@ it.each([409, 403, 503])("preserves initialization HTTP %s without transport rep
 it.each([0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1])("does not submit an unsafe initialization revision %s", async (bindingRevision) => {
   await expect(ticketClient.initialize({ ...initialization, binding_revision: bindingRevision })).rejects.toThrow()
   expect(apiClient.postOnce).not.toHaveBeenCalled()
+})
+
+it("retains the exact v1 empty-scope confirmation and stable reason without parsing prose", async () => {
+  const body = initializableTicketScope(); body.reason = "任意服务说明 disabled forbidden"
+  vi.mocked(apiClient.get).mockResolvedValue(body)
+  const failure = await ticketClient.load("root").catch((error) => error)
+  expect(failure).toMatchObject({ kind: "uninitialized", presentation: {
+    kind: "uninitialized", detail: body.reason, reasonCode: "scope_uninitialized", initialization: body.initialization,
+  } })
+  expect(apiClient.post).not.toHaveBeenCalled()
+  expect(apiClient.postOnce).not.toHaveBeenCalled()
+})
+
+it.each([
+  ["disabled", "ticket_mutation_disabled"], ["forbidden", "supervisor_mode_required"],
+  ["forbidden", "supervisor_identity_mismatch"], ["forbidden", "scope_binding_mismatch"],
+  ["error", "scope_requires_recovery"], ["error", "scope_io_error"],
+] as const)("preserves v1 %s/%s without a setup command", async (kind, reasonCode) => {
+  vi.mocked(apiClient.get).mockResolvedValue({ ...initializableTicketScope(), can_initialize: false, initialization: null,
+    availability: { kind, reason_code: reasonCode } })
+  await expect(ticketClient.load("root")).rejects.toMatchObject({ presentation: { kind, reasonCode } })
+  expect(apiClient.postOnce).not.toHaveBeenCalled()
+})
+
+it("keeps an existing v1 scope readable with both operation flags disabled", async () => {
+  const scope = readyTicketScopeV1(); scope.mutation_enabled = false; scope.dispatch_enabled = false
+  vi.mocked(apiClient.get).mockResolvedValue(scope)
+  vi.mocked(apiClient.post).mockResolvedValue({ ...scope.overview, data: [] })
+  expect(await ticketClient.load("root")).toMatchObject({ scope, complete: true })
+})
+
+it.each([
+  { availability: undefined }, { availability: { kind: "future", reason_code: "scope_uninitialized" } },
+  { availability: { kind: "uninitialized", reason_code: "unknown" } }, { readable: true },
+  { can_initialize: undefined }, { initialization: null }, { initialization: { ...initialization, supervisor_session_id: "another" } },
+  { initialization: { ...initialization, incarnation_id: "not-a-uuid" } }, { initialization: { ...initialization, binding_revision: 0 } },
+  { capabilities: { scope_initialize_v1: false } }, { mutation_enabled: false },
+  { can_initialize: false },
+])("never exposes unsafe or contradictory v1 initialization eligibility: %j", async (patch) => {
+  vi.mocked(apiClient.get).mockResolvedValue({ ...initializableTicketScope(), ...patch })
+  await expect(ticketClient.load("root")).rejects.toThrow("能力响应不完整")
+  expect(apiClient.postOnce).not.toHaveBeenCalled()
+})
+
+it("rejects a legacy-shaped initialization acknowledgement even if its old scope is readable", async () => {
+  const legacy = ticketSnapshot().scope; legacy.binding.scope_id = "supervisor/" + initialization.incarnation_id
+  vi.mocked(apiClient.postOnce).mockResolvedValue({ created: true, scope: legacy })
+  await expect(ticketClient.initialize(initialization)).rejects.toThrow("无法确认初始化响应")
+  expect(apiClient.postOnce).toHaveBeenCalledTimes(1)
 })

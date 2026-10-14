@@ -3,6 +3,8 @@ export type RequestStatus = "open" | "answered" | "approved" | "denied" | "super
 export interface ScopeBinding { scope_id: string; supervisor_session_id: string; binding_revision: number }
 export interface TicketInitialization { supervisor_session_id: string; incarnation_id: string; binding_revision: number }
 export interface TicketInitializationResult { created: boolean; scope: TicketScope }
+export type TicketScopeReasonCode = "scope_ready" | "scope_uninitialized" | "ticket_mutation_disabled" | "supervisor_mode_required" | "supervisor_identity_mismatch" | "scope_binding_mismatch" | "scope_requires_recovery" | "scope_io_error"
+export interface TicketScopeAvailability { kind: "ready" | "uninitialized" | "disabled" | "forbidden" | "error"; reason_code: TicketScopeReasonCode }
 export interface SnapshotRef { commit: string; seq: number; authority_epoch: number }
 export interface Cursor { commit: string; query_hash: string; offset: number }
 export interface ReadEnvelope<T> {
@@ -15,8 +17,9 @@ export interface Overview {
 }
 export interface TicketScope {
   available: boolean; reason?: string; health?: string; binding?: ScopeBinding
+  availability?: TicketScopeAvailability; readable?: boolean; can_initialize?: boolean; initialization?: TicketInitialization | null
   mutation_enabled: boolean; dispatch_enabled: boolean; overview?: ReadEnvelope<Overview>
-  capabilities?: { ticket_scope_v1?: boolean; multi_pending_v1?: boolean; precise_request_response_v1?: boolean; message_references_v1?: boolean; semantic_messages_v1?: boolean }
+  capabilities?: { scope_initialize_v1?: boolean; ticket_scope_v1?: boolean; multi_pending_v1?: boolean; precise_request_response_v1?: boolean; message_references_v1?: boolean; semantic_messages_v1?: boolean }
 }
 export interface Work {
   id: string; kind: "work" | "goal" | "step"; state: WorkState; generation: number
