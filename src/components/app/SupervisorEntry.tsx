@@ -4,7 +4,7 @@ import { useUiText } from "@shared/i18n/ui"
 import type { ChatItem } from "@shared/types/chatMessages"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
 import { cn } from "@/lib/utils"
 
 export function SupervisorEntry({ chat, active, unread, busy, disabled, onSelect, onRename }: {
@@ -42,25 +42,27 @@ export function SupervisorEntry({ chat, active, unread, busy, disabled, onSelect
     }
   }
 
-  return <div className="mb-2">
-    <div className={cn("flex items-center rounded-md", active && "bg-sidebar-accent")}>
-      <Button variant="ghost" aria-current={active ? "page" : undefined}
-        aria-describedby={`${descriptionId} ${statusId}`} aria-busy={busy || undefined} disabled={disabled}
-        className={cn("min-w-0 flex-1 justify-start gap-2", unread && "font-semibold")}
-        onClick={onSelect}>
-        <CircleDot className="size-4 shrink-0" aria-hidden="true" />
-        <span className="min-w-0 flex-1 truncate text-left" title={title}>{title}</span>
-        {chat?.isRunning || unread ? <span aria-hidden="true" className={cn("size-1.5 shrink-0 rounded-full bg-primary", chat?.isRunning && "animate-pulse")} /> : null}
-        <span id={statusId} className="sr-only">{chat?.isRunning ? uiText("running_1f0eb99b") : unread ? uiText("unread_messages_519491f4") : ""}</span>
-      </Button>
-      <Button variant="ghost" size="icon" className="mr-1 size-8 shrink-0 text-muted-foreground"
-        aria-label={uiText("supervisor_rename")} title={uiText("supervisor_rename")} disabled={!chat || disabled}
-        onClick={() => { setDraft(title); setError(false); setOpen(true) }}>
-        <Pencil className="size-3.5" aria-hidden="true" />
-      </Button>
-    </div>
-    <p id={descriptionId} className="px-3 pb-1 text-xs leading-relaxed text-muted-foreground">{uiText("supervisor_entry_description")}</p>
-    <Dialog open={open} onOpenChange={(value) => { if (!saving) setOpen(value) }}>
+  return <Dialog open={open} onOpenChange={(value) => { if (!saving) setOpen(value) }}>
+    <div className="mb-2">
+      <div className={cn("flex items-center rounded-md", active && "bg-sidebar-accent")}>
+        <Button variant="ghost" aria-current={active ? "page" : undefined}
+          aria-describedby={`${descriptionId} ${statusId}`} aria-busy={busy || undefined} disabled={disabled}
+          className={cn("min-w-0 flex-1 justify-start gap-2", unread && "font-semibold")}
+          onClick={onSelect}>
+          <CircleDot className="size-4 shrink-0" aria-hidden="true" />
+          <span className="min-w-0 flex-1 truncate text-left" title={title}>{title}</span>
+          {chat?.isRunning || unread ? <span aria-hidden="true" className={cn("size-1.5 shrink-0 rounded-full bg-primary", chat?.isRunning && "animate-pulse")} /> : null}
+          <span id={statusId} className="sr-only">{chat?.isRunning ? uiText("running_1f0eb99b") : unread ? uiText("unread_messages_519491f4") : ""}</span>
+        </Button>
+        <DialogTrigger asChild>
+          <Button variant="ghost" size="icon" className="mr-1 size-8 shrink-0 text-muted-foreground"
+            aria-label={uiText("supervisor_rename")} title={uiText("supervisor_rename")} disabled={!chat || disabled}
+            onClick={() => { setDraft(title); setError(false) }}>
+            <Pencil className="size-3.5" aria-hidden="true" />
+          </Button>
+        </DialogTrigger>
+      </div>
+      <p id={descriptionId} className="px-3 pb-1 text-xs leading-relaxed text-muted-foreground">{uiText("supervisor_entry_description")}</p>
       <DialogContent showCloseButton={!saving}>
         <form onSubmit={(event) => { event.preventDefault(); void save() }} className="grid gap-4">
           <DialogHeader>
@@ -77,6 +79,6 @@ export function SupervisorEntry({ chat, active, unread, busy, disabled, onSelect
           </DialogFooter>
         </form>
       </DialogContent>
-    </Dialog>
-  </div>
+    </div>
+  </Dialog>
 }

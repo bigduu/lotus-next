@@ -69,11 +69,13 @@ test("Supervisor explains its role and supports persistent renaming with retry a
   const dialog = page.getByRole("dialog", { name: "重命名统筹助手" })
   const name = dialog.getByRole("textbox", { name: "助手名称" })
   await expect(name).toHaveValue("Supervisor")
+  await dialog.screenshot({ path: testInfo.outputPath("supervisor-rename-dialog.png"), animations: "disabled" })
   await name.fill("   ")
   await expect(dialog.getByRole("button", { name: "保存", exact: true })).toBeDisabled()
   await name.fill("取消的名字")
   await name.press("Escape")
   await expect(dialog).toHaveCount(0)
+  await expect(sidebar.getByRole("button", { name: "重命名统筹助手", exact: true })).toBeFocused()
   await expect(supervisor).toBeVisible()
   await sidebar.getByRole("button", { name: "重命名统筹助手", exact: true }).click()
   await expect(name).toHaveValue("Supervisor")
@@ -84,13 +86,14 @@ test("Supervisor explains its role and supports persistent renaming with retry a
   await expect(name).toHaveValue(`  ${renamed}  `)
   await dialog.getByRole("button", { name: "保存", exact: true }).click()
   await expect(dialog).toHaveCount(0)
+  await expect(sidebar.getByRole("button", { name: "重命名统筹助手", exact: true })).toBeFocused()
   await expect(sidebar.getByRole("button", { name: renamed, exact: true })).toHaveAttribute("aria-current", "page")
   await page.reload()
   await expect(page.getByRole("textbox", { name: "消息", exact: true })).toBeVisible()
   if (phone) await page.getByRole("button", { name: "菜单", exact: true }).click()
   await expect(sidebar.getByRole("button", { name: renamed, exact: true })).toBeVisible()
   await expect(sidebar.locator('[data-sidebar-session="bamboo-default-supervisor"]')).toHaveCount(0)
-  await page.screenshot({ path: testInfo.outputPath("supervisor-renamed-entry.png"), animations: "disabled" })
+  await sidebar.screenshot({ path: testInfo.outputPath("supervisor-renamed-entry.png"), animations: "disabled" })
 })
 
 for (const initialState of ["absent", "empty", "history"] as const) {
@@ -174,7 +177,7 @@ for (const navigation of ["return-to-session", "new-conversation"] as const) {
     await installArtifactRuntime(page, standaloneScenario)
     const supervisorId = "bamboo-default-supervisor"
     const sessions = ["navigation-a", "navigation-b", supervisorId].map((id) => ({
-      id, title: id, title_version: 1, kind: "root", root_session_id: id,
+      id, title: id === supervisorId ? "Supervisor" : id, title_version: 1, kind: "root", root_session_id: id,
       parent_session_id: null, spawn_depth: 0, model: "fixture-model",
       model_ref: { provider: "fixture-provider", model: "fixture-model" },
       created_at: "2026-10-05T00:00:00Z", updated_at: "2026-10-05T00:00:00Z",
