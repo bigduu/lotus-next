@@ -1,0 +1,60 @@
+{
+  "scope": "isolated actual HTTP/UI scope initialization acceptance; no model or dispatch execution",
+  "pass": true,
+  "frontend_revision": "3f808b957e24772e0ced6b32c05c4f2674291db1",
+  "frontend_source_dirty": false,
+  "frontend_resources_sha256": "f9aabfc788f9cc101583115cdc63506d4645d5d2d37af2977805ab7fc6ecab36",
+  "backend_revision": "56611128e09bc92fb8368c6d77badad2bbed60ca",
+  "backend_binary_sha256": "e9f0af44236ca766226be686843c2c742a82ecd1f62197c209cd4e983defa17b",
+  "v1_contract_change_required": false,
+  "initialization": {
+    "status": 200,
+    "created": true,
+    "kind": "ready",
+    "readable": true,
+    "work_count": 0
+  },
+  "duplicate_explicit_confirmation": {
+    "status": 200,
+    "created": false
+  },
+  "ui_conflict": {
+    "status": 409,
+    "code": "scope_binding_mismatch",
+    "fresh_scope_readable": true,
+    "trigger": "one queued test request changes only the known binding_revision on the wire after a second real page initializes; the frontend original confirmation stays exact; no fabricated response"
+  },
+  "canonical_refresh_and_reload": true,
+  "standard_mode_withdraws_work": true,
+  "ultra_reentry_rejects_old_binding": true,
+  "automatic_initialization_retry_or_rebinding": false,
+  "mutation_enabled_before_after": true,
+  "dispatch_enabled_before_after": false,
+  "provider_credentials": "none in the disposable fixture",
+  "auto_dream": false,
+  "page_errors": [],
+  "unit_tests": {
+    "files": 144,
+    "passed": 3100
+  },
+  "built_browser_tests": {
+    "passed": 93,
+    "devices": [
+      "desktop",
+      "tablet",
+      "phone"
+    ]
+  },
+  "raw_evidence_sha256": "63ce76d61a286133bb52874d5a50b4d6348b27a604ce688394c854a97c19bec8",
+  "verification_logs_sha256": {
+    "verify": "61c9d9bb753f983b28015d15b3dbbc418e40e968e1e8583e29a7b8e5179daf84",
+    "browser": "e25afdcd698b17d670830982ea91d76775e77878f9a27d482cce7916670b0dd4",
+    "live": "99fbf2a15ff5b8a44072eedd6e021c42507989adbae45cf77ff2e8ec0f97b4b7"
+  },
+  "limitations": [
+    "The screenshot original runtime/config was not captured.",
+    "This is scope HTTP/UI acceptance, not proof of live model tools or dispatch.",
+    "Later Bamboo 3a241bc2 was not exercised with this binary.",
+    "No push, merge, publication, Rust compilation or user configuration change."
+  ]
+}

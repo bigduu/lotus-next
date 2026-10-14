@@ -55,8 +55,8 @@ remain readable and visibly disabled for the affected operations.
 
 ## Frozen v1 usable path (Bamboo #1971)
 
-The producer owner froze v1 before this implementation. The producer endpoint
-is still a separate dependency; browser fixtures do not prove a live deployment.
+The producer owner froze v1 before this implementation. The explicit endpoint is accepted against an isolated producer candidate below;
+merging and deployment remain separate. Browser fixtures alone do not prove live availability.
 
 GET `/api/v1/tickets/scope` retains all legacy fields and adds:
 
@@ -102,7 +102,7 @@ showing ready. A failed/mismatched canonical read remains unconfirmed.
 A 409 reports `initialization_conflict`, `scope_requires_recovery` or
 `scope_binding_mismatch` plus an owner-only scope. The client preserves the stable
 reason and re-reads canonical state; a readable conflict can restore the read
-view while mutation/dispatch stay disabled. The returned scope is not treated as
+view while respecting the current mutation/dispatch flags. The returned scope is not treated as
 a complete set of Work records. No POST is replayed. 401/403 withdraw the offer;
 503 uses the documented stable reason code and a fresh read. Transport failure,
 unknown/malformed acknowledgement or unsupported refusal stays visibly
@@ -154,9 +154,9 @@ the new bundle. Type-check, lint, i18n (2,079 keys), architecture, build and
 package gates passed; no budget changed. These checks do not claim that an
 initialization button or the producer's live endpoint has been accepted.
 
-Frozen v1 supersedes the earlier pending wire decisions. The live #1971 producer
-and a real owner-only round trip remain required before claiming live setup or
-identifying the screenshot's actual backend branch.
+Frozen v1 supersedes the earlier pending wire decisions. The isolated live
+round trip below closes the frontend setup contract gap. The screenshot's actual
+backend branch and configuration remain unverified.
 
 
 Final v1 frontend validation: 144 unit files / 3,100 tests passed; 90 built-browser
@@ -180,3 +180,62 @@ They exercise the actual frontend POST and canonical re-read against determinist
 responses. They are not a live #1971 round trip or proof of the screenshot's
 actual service configuration; the unrelated permission picker in the fixture
 retains its own unsupported-capability message.
+
+
+## Actual isolated HTTP/UI acceptance
+
+The final code candidate is Lotus `3f808b957e24772e0ced6b32c05c4f2674291db1`,
+with a clean source manifest and resources SHA-256
+`f9aabfc788f9cc101583115cdc63506d4645d5d2d37af2977805ab7fc6ecab36`.
+It was exercised against prebuilt Bamboo
+`56611128e09bc92fb8368c6d77badad2bbed60ca`, binary SHA-256
+`e9f0af44236ca766226be686843c2c742a82ecd1f62197c209cd4e983defa17b`.
+The frontend did not compile or modify Bamboo. Later producer `3a241bc2` has
+not been exercised by this frontend acceptance.
+
+The producer-owner handoff instance first confirmed the frozen v1 response and
+explicit UI initialization. A separate disposable instance of the same binary
+then verified the final frontend and mode changes without changing either
+handoff instance. It had no provider credentials or configured model; Dream and
+dispatch were disabled. Its test feature flags were fixed before launch, and
+remained mutation=true / dispatch=false across initialization. The normal
+setup-complete UI action affected only that disposable data directory.
+
+| Actual service/UI check | Observed result |
+| --- | --- |
+| Eligible fresh scope | uninitialized, marker=true, can_initialize=true, exact three-field confirmation |
+| Explicit UI initialization | HTTP 200, created=true; canonical ready/readable, zero Work |
+| Explicit duplicate confirmation | HTTP 200, created=false |
+| Stale revision UI request | HTTP 409, scope_binding_mismatch, fresh readable scope; canonical read restores the empty view |
+| Canonical refresh and reload | Ready empty remains readable; no second automatic POST |
+| Explicit Standard selection | Mode-required reason; previous Work and initialization action withdraw |
+| Explicit Ultra re-entry | Old binding rejected; no automatic rebind, import or initialization |
+
+To reproducibly obtain the readable 409, one page's initialization request was
+queued while a second real page initialized the store. The test changed only
+the known revision field of the queued request on the wire. The frontend's
+original submitted confirmation stayed exact, and all responses came from the
+actual service. This is deliberate request fault injection, not an observed
+natural race or a fabricated HTTP response.
+
+That round trip exposed a misleading frontend warning: a known 409 followed by
+a fully readable canonical scope still advised offline binding recovery.
+`3f808b9` now retains the refusal as a conflict while showing the current scope.
+Unreadable stale bindings retain offline recovery guidance. Unknown outcomes
+remain unconfirmed; no write is retried automatically.
+
+After the correction, full verification passed 144 files / 3,100 unit tests,
+93 built-browser cases, type-check, lint, 2,094 matching i18n keys, architecture,
+build and package checks. CSS remains 108,993 bytes under the unchanged budget.
+The live run passed with zero page errors. No v1 field change was needed.
+
+Machine-readable evidence summary: [live contract receipt](evidence/supervisor-work-live-contract.json).
+Actual service screenshots: [initialization offer](screenshots/supervisor-work-availability/live-initialize-desktop.png),
+[ready empty](screenshots/supervisor-work-availability/live-ready-empty-desktop.png),
+[readable 409 recovery](screenshots/supervisor-work-availability/live-readable-conflict-desktop.png),
+[old binding after mode changes](screenshots/supervisor-work-availability/live-old-binding-desktop.png).
+
+This validates the usable empty-scope setup and read path. It does not establish
+the original screenshot's configuration, live model-tool execution, dispatch,
+or the producer's later broker activation change. Producer review/merge and
+deployment remain separate dependencies. All frontend changes are local commits.
