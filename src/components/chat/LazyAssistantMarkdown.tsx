@@ -21,6 +21,7 @@ export function LazyAssistantMarkdown({
           aria-busy={isStreaming || undefined}
           className="whitespace-pre-wrap text-base font-normal leading-7 text-foreground [overflow-wrap:anywhere]"
           data-assistant-markdown-fallback="true"
+          style={{ WebkitFontSmoothing: "auto" }}
         >
           {children}
         </div>
