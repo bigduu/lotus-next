@@ -60,8 +60,10 @@ handler rejects Import/AttachLegacy and retains the verified offline Host port.
 The UI currently gives explicit offline operator guidance for the legacy
 uninitialized reason and does not claim initialization succeeded.
 
-The paired producer must fix the endpoint and response contract before a new
-button is wired. The minimal usable flow is:
+The paired producer [Bamboo #1971](https://github.com/bigduu/Bamboo-agent/issues/1971)
+now defines the initialize endpoint and three-field confirmation. The remaining
+availability shape/reason codes must be fixed before a new button is wired.
+The minimal usable flow is:
 
 1. A verified owner reads a stable availability/reason code that distinguishes
    an eligible new empty scope from legacy attach/import requirements.
@@ -77,8 +79,21 @@ button is wired. The minimal usable flow is:
    eligibility read. The user can act only on that newly confirmed state.
 6. History requiring import stays a separate reviewed offline procedure.
 
-No endpoint/field in this pending section is implemented or assumed. It is a
-producer dependency under #1968, not completion evidence.
+The client now implements only the confirmed request/receipt boundary:
+`POST /api/v1/tickets/initialize` submits supervisor_session_id, incarnation_id,
+and binding_revision exactly from the future eligible GET confirmation. It
+copies only those three fields and uses postOnce (no transport replay). Positive
+safe-integer revisions are required. A 2xx result needs boolean created and a
+valid readable scope bound to that exact Supervisor/incarnation/revision. Both
+created=true and created=false are valid, but neither replaces the required
+canonical re-read.
+
+The execute button remains absent until the producer fixes the availability
+wire shape and eligibility/reason codes. Required distinctions include current
+Standard mode, stale persisted binding, and nonempty/incomplete storage requiring
+offline recovery. These are producer dependencies under #1968/#1971, not
+completion evidence. No mode/feature/history field is sent, no rebinding is
+attempted, and no caller-selected operation_id is invented for this endpoint.
 
 ## Validation boundary
 
@@ -104,3 +119,18 @@ Deterministic fixture screenshots: [uninitialized desktop](screenshots/superviso
 [disabled phone](screenshots/supervisor-work-availability/disabled-phone.png).
 The empty recovery fixture models a changed canonical service response; it does
 not demonstrate the pending online initialization API.
+
+
+Confirmed initialization-client boundary validation: all 3,057 unit tests passed
+(144 files), including 14 added exact-command/receipt/refusal cases. The existing
+Work availability and owner-access built-browser regressions passed 33 cases on
+the new bundle. Type-check, lint, i18n (2,079 keys), architecture, build and
+package gates passed; no budget changed. These checks do not claim that an
+initialization button or the producer's live endpoint has been accepted.
+
+Remaining wire decisions: whether availability is a string or kind object; the
+stable reason codes for Standard mode, stale binding and offline-only storage;
+and the canonical HTTP conflict response. Successful scope must preserve its
+readable health/overview/capabilities, not just a boolean. Disabled flags must
+retain already-readable data. The frontend takes binding_revision from the
+confirmed payload, never from root_mode_transition_epoch.

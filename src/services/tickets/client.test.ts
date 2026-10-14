@@ -113,3 +113,47 @@ it("loads a valid zero-Work scope as a complete ready snapshot", async () => {
   expect(await ticketClient.load("root")).toMatchObject({ scope: value.scope, views: [], complete: true })
   expect(apiClient.post).toHaveBeenCalledTimes(1)
 })
+
+
+const initialization = { supervisor_session_id: "root", incarnation_id: "11111111-1111-4111-8111-111111111111", binding_revision: 1 }
+const initializedScope = () => {
+  const scope = ticketSnapshot().scope
+  scope.binding.scope_id = "supervisor/" + initialization.incarnation_id
+  return scope
+}
+
+it.each([true, false])("submits only the exact three initialization fields once and verifies created=%s", async (created) => {
+  vi.mocked(apiClient.postOnce).mockResolvedValue({ created, scope: initializedScope() })
+  expect(await ticketClient.initialize({ ...initialization, history: "never submit", mode: "ultra" } as typeof initialization)).toEqual({ created, scope: initializedScope() })
+  expect(apiClient.postOnce).toHaveBeenCalledExactlyOnceWith("tickets/initialize", initialization)
+  expect(apiClient.get).not.toHaveBeenCalled()
+  expect(apiClient.post).not.toHaveBeenCalled()
+})
+
+it.each(["created", "session", "incarnation", "revision", "scope"])("rejects an unconfirmed initialization %s receipt", async (changed) => {
+  const response: Record<string, unknown> = { created: true, scope: initializedScope() }
+  if (changed === "created") response.created = "yes"
+  else if (changed === "scope") response.scope = null
+  else {
+    const scope = response.scope as ReturnType<typeof initializedScope>
+    if (changed === "session") scope.binding.supervisor_session_id = "other"
+    if (changed === "incarnation") scope.binding.scope_id = "supervisor/other"
+    if (changed === "revision") scope.binding.binding_revision = 2
+  }
+  vi.mocked(apiClient.postOnce).mockResolvedValue(response)
+  await expect(ticketClient.initialize(initialization)).rejects.toThrow()
+  expect(apiClient.postOnce).toHaveBeenCalledTimes(1)
+})
+
+it.each([409, 403, 503])("preserves initialization HTTP %s without transport replay", async (status) => {
+  const failure = new ApiError("exact initialize refusal", status, "failure")
+  vi.mocked(apiClient.postOnce).mockRejectedValue(failure)
+  await expect(ticketClient.initialize(initialization)).rejects.toBe(failure)
+  expect(apiClient.postOnce).toHaveBeenCalledTimes(1)
+})
+
+
+it.each([0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1])("does not submit an unsafe initialization revision %s", async (bindingRevision) => {
+  await expect(ticketClient.initialize({ ...initialization, binding_revision: bindingRevision })).rejects.toThrow()
+  expect(apiClient.postOnce).not.toHaveBeenCalled()
+})

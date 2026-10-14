@@ -236,6 +236,7 @@ export const uiEnUs = {
   "supervisor_work_description": "Progress and decisions",
   "supervisor_work_attention": "{{count}} need attention",
   "supervisor_work_connection_attention": "Check connection",
+  "supervisor_work_initialization_unconfirmed": "The initialization response could not be confirmed. Check the current Work scope before trying again.",
   "supervisor_work_loading": "Checking Work availability…",
   "supervisor_work_disabled": "Work is disabled on this service.",
   "supervisor_work_uninitialized": "This Supervisor has no initialized Work scope.",

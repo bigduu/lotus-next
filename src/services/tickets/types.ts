@@ -1,6 +1,8 @@
 export type WorkState = "draft" | "ready" | "active" | "submitted" | "accepted" | "blocked" | "cancelled"
 export type RequestStatus = "open" | "answered" | "approved" | "denied" | "superseded" | "expired" | "consumed"
 export interface ScopeBinding { scope_id: string; supervisor_session_id: string; binding_revision: number }
+export interface TicketInitialization { supervisor_session_id: string; incarnation_id: string; binding_revision: number }
+export interface TicketInitializationResult { created: boolean; scope: TicketScope }
 export interface SnapshotRef { commit: string; seq: number; authority_epoch: number }
 export interface Cursor { commit: string; query_hash: string; offset: number }
 export interface ReadEnvelope<T> {

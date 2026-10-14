@@ -1,7 +1,7 @@
 import { uiText } from "@shared/i18n/ui"
 import { apiClient, isApiError } from "@services/api"
-import { TicketScopeUnavailableError, unavailableScope } from "./availability"
-import type { Cursor, ReadEnvelope, ResponseCommand, SnapshotRef, TicketScope, TicketSnapshot, WorkView } from "./types"
+import { TicketScopeUnavailableError, unavailableScope, isTicketInitialization } from "./availability"
+import type { Cursor, ReadEnvelope, ResponseCommand, SnapshotRef, TicketInitialization, TicketInitializationResult, TicketScope, TicketSnapshot, WorkView } from "./types"
 
 const sameSnapshot = (a: ReadEnvelope<unknown>, expected: SnapshotRef) => {
   if (a.snapshot.commit !== expected.commit || a.snapshot.seq !== expected.seq || a.snapshot.authority_epoch !== expected.authority_epoch
@@ -12,6 +12,20 @@ const sameSnapshot = (a: ReadEnvelope<unknown>, expected: SnapshotRef) => {
 }
 const completeCoverage = (coverage: string) => coverage === "authoritative_scope" || coverage === "complete"
 
+function verifiedScope(scope: TicketScope, sessionId: string): TicketSnapshot["scope"] {
+  if (scope?.available === false) throw unavailableScope(scope.reason)
+  if (scope?.available !== true || !scope.binding || !scope.overview
+    || typeof scope.mutation_enabled !== "boolean" || typeof scope.dispatch_enabled !== "boolean"
+    || typeof scope.health !== "string" || !scope.health) {
+    throw new Error(uiText("supervisor_work_invalid_response"))
+  }
+  if (scope.binding.supervisor_session_id !== sessionId) throw new TicketScopeUnavailableError("unbound")
+  if (scope.capabilities?.ticket_scope_v1 !== true || scope.capabilities.multi_pending_v1 !== true
+    || scope.capabilities.precise_request_response_v1 !== true) throw new TicketScopeUnavailableError("unsupported")
+  sameSnapshot(scope.overview, scope.overview.snapshot)
+  return { ...scope, binding: scope.binding, overview: scope.overview }
+}
+
 export const ticketClient = {
   async scope(sessionId: string, signal?: AbortSignal): Promise<TicketSnapshot["scope"] | null> {
     let scope: TicketScope
@@ -20,17 +34,27 @@ export const ticketClient = {
       if (isApiError(error) && error.status === 404) throw new TicketScopeUnavailableError("unsupported", error.message)
       throw error
     }
-    if (scope?.available === false) throw unavailableScope(scope.reason)
-    if (scope?.available !== true || !scope.binding || !scope.overview
-      || typeof scope.mutation_enabled !== "boolean" || typeof scope.dispatch_enabled !== "boolean"
-      || typeof scope.health !== "string" || !scope.health) {
-      throw new Error(uiText("supervisor_work_invalid_response"))
+    return verifiedScope(scope, sessionId)
+  },
+  async initialize(confirmation: TicketInitialization): Promise<TicketInitializationResult> {
+    if (!isTicketInitialization(confirmation, confirmation?.supervisor_session_id)) {
+      throw new Error(uiText("supervisor_work_initialization_unconfirmed"))
     }
-    if (scope.binding.supervisor_session_id !== sessionId) throw new TicketScopeUnavailableError("unbound")
-    if (scope.capabilities?.ticket_scope_v1 !== true || scope.capabilities.multi_pending_v1 !== true
-      || scope.capabilities.precise_request_response_v1 !== true) throw new TicketScopeUnavailableError("unsupported")
-    sameSnapshot(scope.overview, scope.overview.snapshot)
-    return { ...scope, binding: scope.binding, overview: scope.overview }
+    // Copy only the three confirmed wire fields. No caller option may enable
+    // a gate, select a mode, import history, or change the binding.
+    const command: TicketInitialization = {
+      supervisor_session_id: confirmation.supervisor_session_id,
+      incarnation_id: confirmation.incarnation_id,
+      binding_revision: confirmation.binding_revision,
+    }
+    const response = await apiClient.postOnce<TicketInitializationResult>("tickets/initialize", command)
+    if (!response || typeof response.created !== "boolean") throw new Error(uiText("supervisor_work_initialization_unconfirmed"))
+    const scope = verifiedScope(response.scope, command.supervisor_session_id)
+    if (scope.binding.binding_revision !== command.binding_revision
+      || scope.binding.scope_id !== "supervisor/" + command.incarnation_id) {
+      throw new Error(uiText("supervisor_work_initialization_unconfirmed"))
+    }
+    return { created: response.created, scope }
   },
   async load(sessionId: string, signal?: AbortSignal): Promise<TicketSnapshot | null> {
     const scope = await ticketClient.scope(sessionId, signal)

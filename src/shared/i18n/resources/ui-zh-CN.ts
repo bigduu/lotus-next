@@ -236,6 +236,7 @@ export const uiZhCn = {
   "supervisor_work_description": "进度与待处理事项",
   "supervisor_work_attention": "{{count}} 项待处理",
   "supervisor_work_connection_attention": "请检查连接",
+  "supervisor_work_initialization_unconfirmed": "无法确认初始化响应。请重新读取当前工作范围，再决定是否重试。",
   "supervisor_work_loading": "正在确认工作面板状态…",
   "supervisor_work_disabled": "此服务尚未启用工作功能。",
   "supervisor_work_uninitialized": "此 Supervisor 尚未初始化工作范围。",
