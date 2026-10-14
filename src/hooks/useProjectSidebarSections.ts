@@ -11,6 +11,31 @@ import {
 
 type SectionUpdate = (previous: ProjectSectionPreferences) => ProjectSectionPreferences
 
+class SidebarConfirmationError extends Error {}
+
+async function refreshProjectAfterPendingRead(projectId: string) {
+  // A forced read can join a request that predates the conflict/save response.
+  // Drain it first, then require a read started after that request settled.
+  await useAppStore.getState().ensureProject(projectId, { force: true }).catch(() => {})
+  await useAppStore.getState().ensureProject(projectId, { force: true })
+  const current = useAppStore.getState().projects[projectId]
+  if (!current || confirmedProjectRevision(current) < current.revision) throw new Error("Project snapshot is unavailable")
+}
+
+async function confirmSavedSidebar(projectId: string, saved: ProjectManifest) {
+  const reflected = () => {
+    const current = useAppStore.getState().projects[projectId]
+    return !!current?.sidebar && confirmedProjectRevision(current) >= saved.revision
+  }
+  if (reflected()) return
+  try {
+    await refreshProjectAfterPendingRead(projectId)
+  } catch {
+    throw new SidebarConfirmationError()
+  }
+  if (!reflected()) throw new SidebarConfirmationError()
+}
+
 export function useProjectSidebarSections(projects: Record<string, ProjectManifest>) {
   const uiText = useUiText()
   const [legacy] = useState(readProjectSectionPreferences)
@@ -47,6 +72,7 @@ export function useProjectSidebarSections(projects: Record<string, ProjectManife
           reportError(uiText("sidebar_sections_unavailable"))
           return false
         }
+        await confirmSavedSidebar(projectId, project)
         clearImportedProjectSections(projectId, legacy.projects[projectId]!)
         importing = false
       }
@@ -63,12 +89,15 @@ export function useProjectSidebarSections(projects: Record<string, ProjectManife
         reportError(uiText("sidebar_sections_unavailable"))
         return false
       }
+      await confirmSavedSidebar(projectId, saved)
       return true
     } catch (failure) {
-      if (isApiError(failure) && (failure.status === 412 || (importing && failure.status === 409))) {
+      if (failure instanceof SidebarConfirmationError) {
+        reportError(uiText("sidebar_sections_saved_refresh_failed"))
+      } else if (isApiError(failure) && (failure.status === 412 || (importing && failure.status === 409))) {
         // Keep the failed intent uncommitted and fetch the winning revision.
         try {
-          await useAppStore.getState().ensureProject(projectId, { force: true })
+          await refreshProjectAfterPendingRead(projectId)
           reportError(uiText("sidebar_sections_conflict"))
         } catch {
           reportError(uiText("sidebar_sections_refresh_failed"))

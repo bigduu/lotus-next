@@ -173,6 +173,7 @@ export const uiEnUs = {
   "sidebar_sections_unavailable": "Update the Bamboo backend to save sections. Existing local sections are kept and will be imported after updating.",
   "sidebar_sections_conflict": "Sections changed in another client. The latest version has been loaded; please retry this action.",
   "sidebar_sections_refresh_failed": "Sections changed in another client, but the latest version could not be loaded. Reload the page before retrying.",
+  "sidebar_sections_saved_refresh_failed": "Sections were saved, but the latest data could not be loaded. Reload the page before making more changes.",
   "sidebar_sections_save_failed": "Sections were not saved. Check the connection and try again. Existing local data is kept.",
   "sidebar_sections_saving": "Saving sections…",
   "sidebar_section_remove": "Remove section",

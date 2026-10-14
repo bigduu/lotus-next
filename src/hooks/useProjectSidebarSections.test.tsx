@@ -2,7 +2,7 @@ import { act, StrictMode } from "react"
 import { createRoot, type Root } from "react-dom/client"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { ApiError } from "@services/api/errors"
-import type { PatchProjectRequest, ProjectManifest, ProjectSidebar } from "@services/project"
+import { projectService, type PatchProjectRequest, type ProjectManifest, type ProjectSidebar } from "@services/project"
 import { useAppStore } from "@shared/store/appStore"
 import {
   PROJECT_SECTIONS_STORAGE_KEY, createProjectSection, readProjectSectionPreferences,
@@ -23,6 +23,10 @@ let root: Root
 let container: HTMLDivElement
 let hook: ReturnType<typeof useProjectSidebarSections>
 const environment = globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
+const projectActions = {
+  ensureProject: useAppStore.getState().ensureProject,
+  updateProject: useAppStore.getState().updateProject,
+}
 
 function Harness() {
   const projects = useAppStore((state) => state.projects)
@@ -183,6 +187,110 @@ describe("durable Project sidebar sections", () => {
     expect(hook.preferences.projects.p1?.sections[0]?.name).toBe("Other client")
     expect(hook.errors.p1).toContain("其他客户端")
     expect(useAppStore.getState().updateProject).toHaveBeenCalledOnce()
+  })
+
+  it("starts a fresh conflict read after an older in-flight Project read settles", async () => {
+    const winner = { ...manifest({ ...empty, sections: [{ id: "section:00000000-0000-4000-8000-000000000002", name: "Other client" }] }), revision: 3 }
+    let finishOlderRead!: (project: ProjectManifest) => void
+    const get = vi.spyOn(projectService, "getProject")
+      .mockImplementationOnce(() => new Promise<ProjectManifest>((resolve) => { finishOlderRead = resolve }))
+      .mockResolvedValueOnce(winner)
+    const patch = vi.spyOn(projectService, "patchProject").mockRejectedValueOnce(new ApiError("stale", 412, "Precondition Failed"))
+    useAppStore.setState(projectActions)
+    const olderRead = projectActions.ensureProject("p1", { force: true })
+    await mount()
+    let losingSave!: Promise<boolean>
+    await act(async () => { losingSave = create(); await Promise.resolve() })
+    expect(get).toHaveBeenCalledOnce()
+    await act(async () => {
+      finishOlderRead(manifest())
+      await olderRead
+      expect(await losingSave).toBe(false)
+    })
+    expect(get).toHaveBeenCalledTimes(2)
+    expect(hook.preferences.projects.p1?.sections[0]?.name).toBe("Other client")
+    patch.mockImplementationOnce(async (_id, revision, request) => ({ ...winner, sidebar: request.sidebar!, revision: revision + 1 }))
+    await act(async () => { expect(await create()).toBe(true) })
+    expect(patch).toHaveBeenLastCalledWith("p1", 3, expect.any(Object))
+    expect(hook.preferences.projects.p1?.sections.map((section) => section.name)).toEqual(["Other client", "Research"])
+  })
+
+  it.each([false, true])("confirms a save rejected by an event-ahead store (refresh fails: %s)", async (refreshFails) => {
+    const saved = { ...manifest({ ...empty, sections: [{ id: sectionId, name: "Research" }] }), revision: 2 }
+    const winner = { ...saved, revision: 3 }
+    let failEventRead!: (failure: Error) => void
+    const get = vi.spyOn(projectService, "getProject")
+      .mockResolvedValueOnce(manifest())
+      .mockImplementationOnce(() => new Promise<ProjectManifest>((_resolve, reject) => { failEventRead = reject }))
+    if (refreshFails) get.mockRejectedValueOnce(new Error("offline"))
+    else get.mockResolvedValueOnce(winner)
+    let confirmPatch!: (project: ProjectManifest) => void
+    const patch = vi.spyOn(projectService, "patchProject").mockImplementationOnce(() => new Promise<ProjectManifest>((resolve) => { confirmPatch = resolve }))
+    useAppStore.setState(projectActions)
+    await projectActions.ensureProject("p1", { force: true })
+    await mount()
+    let pending!: Promise<boolean>
+    await act(async () => {
+      pending = create()
+      useAppStore.getState().applyProjectEvent({ type: "project_updated", project_id: "p1", revision: 3 })
+      confirmPatch(saved)
+      await Promise.resolve()
+    })
+    // The event advertised revision 3, but PATCH's revision 2 was rejected by the merge.
+    expect(hook.preferences.projects.p1?.sections).toEqual([])
+    expect(hook.busy.has("p1")).toBe(true)
+    await act(async () => {
+      failEventRead(new Error("older event read failed"))
+      expect(await pending).toBe(!refreshFails)
+    })
+    expect(get).toHaveBeenCalledTimes(3)
+    expect(patch).toHaveBeenCalledOnce()
+    if (refreshFails) {
+      expect(hook.errors.p1).toContain("已保存")
+      expect(hook.errors.p1).toContain("重新加载")
+      expect(hook.preferences.projects.p1?.sections).toEqual([])
+    } else {
+      expect(hook.errors.p1).toBeUndefined()
+      expect(hook.preferences.projects.p1?.sections[0]?.name).toBe("Research")
+    }
+  })
+
+  it("does not claim a fresh conflict read was applied when a newer event rejects its payload", async () => {
+    let finishFreshRead!: (project: ProjectManifest) => void
+    const get = vi.spyOn(projectService, "getProject")
+      .mockResolvedValueOnce(manifest())
+      .mockResolvedValueOnce({ ...manifest(empty), revision: 2 })
+      .mockImplementationOnce(() => new Promise<ProjectManifest>((resolve) => { finishFreshRead = resolve }))
+    vi.spyOn(projectService, "patchProject").mockRejectedValueOnce(new ApiError("stale", 412, "Precondition Failed"))
+    useAppStore.setState(projectActions)
+    await projectActions.ensureProject("p1", { force: true })
+    await mount()
+    let pending!: Promise<boolean>
+    await act(async () => { pending = create(); await Promise.resolve() })
+    expect(get).toHaveBeenCalledTimes(3)
+    await act(async () => {
+      useAppStore.getState().applyProjectEvent({ type: "project_updated", project_id: "p1", revision: 4 })
+      finishFreshRead({ ...manifest(empty), revision: 3 })
+      expect(await pending).toBe(false)
+    })
+    expect(hook.errors.p1).toContain("无法读取最新版本")
+    expect(useAppStore.getState().projects.p1!.revision).toBe(4)
+  })
+
+  it("retains the legacy import source when its committed receipt cannot reach the store", async () => {
+    seedLegacy()
+    const saved = { ...manifest({ ...empty, sections: [{ id: sectionId, name: "Research" }] }), revision: 2 }
+    const pendingImport = { ...manifest(), revision: 3, confirmed_revision: 1 }
+    useAppStore.setState({
+      projects: { p1: pendingImport },
+      updateProject: vi.fn().mockResolvedValue(saved),
+      ensureProject: vi.fn().mockRejectedValue(new Error("offline")),
+    })
+    await mount()
+    expect(useAppStore.getState().updateProject).toHaveBeenCalledWith("p1", 1, expect.objectContaining({ import_sidebar: expect.any(Object) }))
+    expect(readProjectSectionPreferences().projects.p1).toBeDefined()
+    expect(hook.errors.p1).toContain("已保存")
+    expect(hook.errors.p1).toContain("重新加载")
   })
 
   it("uses the snapshot revision when an event advertises a newer Project revision", async () => {

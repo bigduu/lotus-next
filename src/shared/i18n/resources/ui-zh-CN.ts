@@ -173,6 +173,7 @@ export const uiZhCn = {
   "sidebar_sections_unavailable": "请更新 Bamboo 后端以保存分区。现有本地分区会保留，更新后自动迁移。",
   "sidebar_sections_conflict": "分区已在其他客户端更新。已重新读取，请重试本次操作。",
   "sidebar_sections_refresh_failed": "分区已在其他客户端更新，但暂时无法读取最新版本。请重新加载页面后重试。",
+  "sidebar_sections_saved_refresh_failed": "分区已保存，但暂时无法读取最新数据。请重新加载页面后再修改。",
   "sidebar_sections_save_failed": "分区未保存，请检查连接后重试。现有本地数据会保留。",
   "sidebar_sections_saving": "正在保存分区…",
   "sidebar_section_remove": "移除分区",
