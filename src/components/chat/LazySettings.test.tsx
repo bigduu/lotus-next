@@ -309,6 +309,82 @@ describe("Settings page controls", () => {
     }
   })
 
+  it("updates global accent preview, store, and document CSS variables on preset selection and custom color input without affecting message bubbles", async () => {
+    const previousTheme = useThemeStore.getState()
+    const previousExperience = useExperienceModeStore.getState()
+    vi.spyOn(metricsService, "getSummary").mockRejectedValue(new Error("offline"))
+    useThemeStore.setState({
+      themeMode: "light",
+      themePreference: "light",
+      userMessageColorPreset: "jade",
+      customUserMessageColor: "#345448",
+      globalAccentPreset: "teal",
+      customGlobalAccentColor: "#396957",
+    })
+    useExperienceModeStore.setState({ mode: "advanced", isAdvanced: true })
+    const onTabChange = vi.fn()
+
+    try {
+      const view = await mount(<SettingsContent tab="general" onTabChange={onTabChange} />)
+
+      // Verify preset choices are visible
+      const blueAccent = [...view.container.querySelectorAll(".settings-accent-option")].find(
+        (button) => button.textContent === uiText("accent_blue"),
+      )
+      expect(blueAccent).toBeDefined()
+      expect(blueAccent?.getAttribute("aria-pressed")).toBe("false")
+
+      // Click blue preset
+      await click(blueAccent ?? null)
+      expect(blueAccent?.getAttribute("aria-pressed")).toBe("true")
+      expect(useThemeStore.getState().globalAccentPreset).toBe("blue")
+      expect(document.documentElement.style.getPropertyValue("--primary")).toBe("#2563eb")
+
+      // Verify chat bubble preset was NOT changed
+      expect(useThemeStore.getState().userMessageColorPreset).toBe("jade")
+
+      // Test custom accent color picker
+      const customAccentBtn = [...view.container.querySelectorAll(".settings-accent-option")].find(
+        (button) => button.textContent === uiText("accent_custom"),
+      )
+      expect(customAccentBtn).toBeDefined()
+      await click(customAccentBtn ?? null)
+      expect(useThemeStore.getState().globalAccentPreset).toBe("custom")
+
+      const accentInput = view.container.querySelector<HTMLInputElement>(".settings-accent-custom input[type='color']")
+      expect(accentInput).not.toBeNull()
+
+      const setInputValue = (input: HTMLInputElement, value: string) => {
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, value)
+      }
+
+      // Simulate real-time color drag/input event
+      await act(async () => {
+        if (accentInput) {
+          setInputValue(accentInput, "#7c3aed")
+          accentInput.dispatchEvent(new Event("input", { bubbles: true }))
+        }
+        await Promise.resolve()
+      })
+
+      expect(useThemeStore.getState().customGlobalAccentColor).toBe("#7c3aed")
+      expect(document.documentElement.style.getPropertyValue("--primary")).toBe("#7c3aed")
+
+      // Hex label and preview reflect the selected custom accent
+      const accentLabel = view.container.querySelector(".settings-accent-custom span")
+      expect(accentLabel?.textContent).toBe("#7C3AED")
+
+      // Verify chat bubble settings remain completely independent
+      expect(useThemeStore.getState().userMessageColorPreset).toBe("jade")
+      expect(useThemeStore.getState().customUserMessageColor).toBe("#345448")
+    } finally {
+      await act(async () => {
+        useThemeStore.setState(previousTheme)
+        useExperienceModeStore.setState(previousExperience)
+      })
+    }
+  })
+
   it("updates custom message bubble preview, label, and store on color input and change events", async () => {
     const previousTheme = useThemeStore.getState()
     const previousExperience = useExperienceModeStore.getState()
@@ -325,7 +401,7 @@ describe("Settings page controls", () => {
     try {
       const view = await mount(<SettingsContent tab="general" onTabChange={onTabChange} />)
 
-      const customOption = [...view.container.querySelectorAll("button")].find(
+      const customOption = [...view.container.querySelectorAll(".settings-bubble-option")].find(
         (button) => button.textContent === uiText("bubble_custom"),
       )
       expect(customOption?.getAttribute("aria-pressed")).toBe("false")
@@ -333,7 +409,7 @@ describe("Settings page controls", () => {
       expect(customOption?.getAttribute("aria-pressed")).toBe("true")
       expect(useThemeStore.getState().userMessageColorPreset).toBe("custom")
 
-      const colorInput = view.container.querySelector<HTMLInputElement>('input[type="color"]')
+      const colorInput = view.container.querySelector<HTMLInputElement>('.settings-bubble-custom input[type="color"]')
       expect(colorInput).not.toBeNull()
       const colorLabel = view.container.querySelector(".settings-bubble-custom span")
       const previewParagraph = view.container.querySelector<HTMLParagraphElement>(".settings-bubble-preview p")

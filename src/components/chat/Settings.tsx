@@ -24,6 +24,7 @@ import {
 } from "lucide-react"
 import { useThemeStore } from "@shared/store/themeStore"
 import { getUserMessageColors, USER_MESSAGE_COLOR_PRESETS } from "@shared/theme/userMessageColors"
+import { getGlobalAccentColors, GLOBAL_ACCENT_PRESETS } from "@shared/theme/globalAccentColors"
 import {
   useExperienceModeStore,
   ADVANCED_ONLY_SETTINGS_TABS,
@@ -70,16 +71,24 @@ function GeneralTab() {
   const customUserMessageColor = useThemeStore((s) => s.customUserMessageColor)
   const setUserMessageColorPreset = useThemeStore((s) => s.setUserMessageColorPreset)
   const setCustomUserMessageColor = useThemeStore((s) => s.setCustomUserMessageColor)
+  const globalAccentPreset = useThemeStore((s) => s.globalAccentPreset)
+  const customGlobalAccentColor = useThemeStore((s) => s.customGlobalAccentColor)
+  const setGlobalAccentPreset = useThemeStore((s) => s.setGlobalAccentPreset)
+  const setCustomGlobalAccentColor = useThemeStore((s) => s.setCustomGlobalAccentColor)
   const experienceMode = useExperienceModeStore((s) => s.mode)
   const setExperienceMode = useExperienceModeStore((s) => s.setMode)
   const [metrics, setMetrics] = useState<MetricsSummary | null>(null)
   const appearanceId = useId()
+  const accentColorsId = useId()
+  const accentDescriptionId = useId()
+  const customAccentColorId = useId()
   const experienceId = useId()
   const experienceDescriptionId = useId()
   const bubbleColorsId = useId()
   const bubbleDescriptionId = useId()
   const customBubbleColorId = useId()
   const bubbleColors = getUserMessageColors(themeMode, userMessageColorPreset, customUserMessageColor)
+  const accentColors = getGlobalAccentColors(themeMode, globalAccentPreset, customGlobalAccentColor)
 
   useEffect(() => {
     metricsService
@@ -136,6 +145,66 @@ function GeneralTab() {
                 </Button>
               )
             })}
+          </div>
+        </section>
+        <section className="settings-row">
+          <h3 id={accentColorsId} className="text-sm font-medium">{uiText("accent_color")}</h3>
+          <p id={accentDescriptionId} className="settings-description">{uiText("accent_color_hint")}</p>
+          <div role="group" aria-labelledby={accentColorsId} aria-describedby={accentDescriptionId} className="settings-accent-options">
+            {GLOBAL_ACCENT_PRESETS.map((preset) => (
+              <Button
+                key={preset.id}
+                variant="outline"
+                size="sm"
+                className="settings-accent-option"
+                aria-pressed={globalAccentPreset === preset.id}
+                onClick={() => setGlobalAccentPreset(preset.id)}
+              >
+                <span className="settings-color-swatch" style={{ backgroundColor: preset[themeMode].primary }} aria-hidden="true" />
+                {uiText(`accent_${preset.id}`)}
+              </Button>
+            ))}
+            <Button
+              variant="outline"
+              size="sm"
+              className="settings-accent-option"
+              aria-pressed={globalAccentPreset === "custom"}
+              onClick={() => setGlobalAccentPreset("custom")}
+            >
+              <span className="settings-color-swatch" style={{ backgroundColor: customGlobalAccentColor }} aria-hidden="true" />
+              {uiText("accent_custom")}
+            </Button>
+          </div>
+          <div className="settings-accent-custom">
+            <label htmlFor={customAccentColorId}>{uiText("accent_custom_color")}</label>
+            <input
+              id={customAccentColorId}
+              type="color"
+              value={customGlobalAccentColor}
+              onInput={(event) => setCustomGlobalAccentColor(event.currentTarget.value)}
+              onChange={(event) => setCustomGlobalAccentColor(event.target.value)}
+            />
+            <span>{customGlobalAccentColor.toUpperCase()}</span>
+          </div>
+          <div className="settings-accent-preview">
+            <div className="settings-accent-preview-sample">
+              <Button size="sm" style={{ backgroundColor: accentColors.primary, color: accentColors.primaryForeground }}>
+                {uiText("accent_preview")}
+              </Button>
+              <span
+                className="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold"
+                style={{ backgroundColor: accentColors.accent, color: accentColors.accentForeground }}
+              >
+                Active
+              </span>
+              <span
+                className="inline-flex items-center rounded-md border px-2 py-0.5 text-xs font-medium"
+                style={{ borderColor: accentColors.primary, color: accentColors.primary }}
+              >
+                Focus
+              </span>
+            </div>
+            <span className="text-xs text-muted-foreground">{accentColors.primary.toUpperCase()}</span>
           </div>
         </section>
         <section className="settings-row">

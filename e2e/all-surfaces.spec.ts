@@ -383,7 +383,8 @@ test("message bubble presets and custom colors preview immediately and survive r
   }
   await openSettings()
   const settings = surface.locator('[data-slot="settings-page"]')
-  await settings.getByRole("button", { name: "雾蓝", exact: true }).click()
+  const bubbleOptions = settings.getByRole("group", { name: "消息气泡", exact: true })
+  await bubbleOptions.getByRole("button", { name: "雾蓝", exact: true }).click()
   await expect(settings.getByRole("button", { name: "雾蓝", exact: true })).toHaveAttribute("aria-pressed", "true")
   await expect.poll(() => surface.locator("html").evaluate((element) => (element as unknown as { style: { getPropertyValue(name: string): string } }).style.getPropertyValue("--user-message-background"))).toBe("#293b4a")
   const color = settings.getByLabel("自定义气泡颜色", { exact: true })
@@ -392,17 +393,74 @@ test("message bubble presets and custom colors preview immediately and survive r
     element.dispatchEvent(new element.ownerDocument.defaultView!.Event("input", { bubbles: true }))
     element.dispatchEvent(new element.ownerDocument.defaultView!.Event("change", { bubbles: true }))
   })
-  await expect(settings.getByRole("button", { name: "自定义", exact: true })).toHaveAttribute("aria-pressed", "true")
+  await expect(bubbleOptions.getByRole("button", { name: "自定义", exact: true })).toHaveAttribute("aria-pressed", "true")
   await expect.poll(() => surface.locator("html").evaluate((element) => (element as unknown as { style: { getPropertyValue(name: string): string } }).style.getPropertyValue("--user-message-background"))).toBe("#777777")
   await expect.poll(() => surface.locator("html").evaluate((element) => (element as unknown as { style: { getPropertyValue(name: string): string } }).style.getPropertyValue("--user-message-foreground"))).toBe("#000000")
   await expect(settings.getByText("这是一条你发送的消息。", { exact: true })).toHaveCSS("background-color", "rgb(119, 119, 119)")
   await page.reload()
   await openSettings()
-  await expect(settings.getByRole("button", { name: "自定义", exact: true })).toHaveAttribute("aria-pressed", "true")
+  await expect(bubbleOptions.getByRole("button", { name: "自定义", exact: true })).toHaveAttribute("aria-pressed", "true")
   await expect(color).toHaveValue("#777777")
   await expect(settings.getByText("这是一条你发送的消息。", { exact: true })).toHaveCSS("color", "rgb(0, 0, 0)")
   await settings.getByRole("button", { name: "玉石绿", exact: true }).click()
   await expect.poll(() => surface.locator("html").evaluate((element) => (element as unknown as { style: { getPropertyValue(name: string): string } }).style.getPropertyValue("--user-message-background"))).toBe("#263e34")
+})
+
+test("global accent colors survive theme changes and reload independently of message bubbles", async ({
+  page,
+  startRuntime,
+}, testInfo) => {
+  const { surface } = await startRuntime(standaloneScenario)
+  const openSettings = async () => {
+    await expect(surface.getByRole("textbox", { name: "消息", exact: true })).toBeVisible()
+    await page.keyboard.press("Control+k")
+    const search = surface.getByPlaceholder("搜索会话或操作…")
+    await search.fill("系统设置")
+    await search.press("Enter")
+    await expect(surface.locator("#app-language")).toBeVisible()
+  }
+  await openSettings()
+  const settings = surface.locator('[data-slot="settings-page"]')
+  const accents = settings.getByRole("group", { name: "全局强调色", exact: true })
+  const bubbles = settings.getByRole("group", { name: "消息气泡", exact: true })
+  const customAccent = accents.getByRole("button", { name: "自定义", exact: true })
+  const customBubble = bubbles.getByRole("button", { name: "自定义", exact: true })
+  const color = settings.getByLabel("自定义强调色", { exact: true })
+  const preview = settings.getByRole("button", { name: "强调色预览", exact: true })
+  const primary = () => surface.locator("html").evaluate((element) =>
+    (element as unknown as { style: { getPropertyValue(name: string): string } }).style.getPropertyValue("--primary"))
+
+  await bubbles.getByRole("button", { name: "雾蓝", exact: true }).click()
+  await accents.getByRole("button", { name: "蓝色", exact: true }).click()
+  await expect.poll(primary).toBe("#60a5fa")
+  await expect(preview).toHaveCSS("background-color", "rgb(96, 165, 250)")
+  await settings.getByRole("button", { name: "浅色", exact: true }).click()
+  await expect.poll(primary).toBe("#2563eb")
+  await expect(preview).toHaveCSS("background-color", "rgb(37, 99, 235)")
+  await settings.getByRole("button", { name: "深色", exact: true }).click()
+  await expect.poll(primary).toBe("#60a5fa")
+
+  await customAccent.click()
+  await color.fill("#7c3aed")
+  await expect(customAccent).toHaveAttribute("aria-pressed", "true")
+  await expect(customBubble).toHaveAttribute("aria-pressed", "false")
+  await expect.poll(primary).toBe("#7c3aed")
+  await expect(preview).toHaveCSS("background-color", "rgb(124, 58, 237)")
+  await expect(bubbles.getByRole("button", { name: "雾蓝", exact: true })).toHaveAttribute("aria-pressed", "true")
+  await expect(settings.getByText("这是一条你发送的消息。", { exact: true })).toHaveCSS("background-color", "rgb(41, 59, 74)")
+
+  await page.reload()
+  await openSettings()
+  await expect(customAccent).toHaveAttribute("aria-pressed", "true")
+  await expect(color).toHaveValue("#7c3aed")
+  await expect.poll(primary).toBe("#7c3aed")
+  await bubbles.getByRole("button", { name: "玉石绿", exact: true }).click()
+  await expect(customAccent).toHaveAttribute("aria-pressed", "true")
+  await expect.poll(primary).toBe("#7c3aed")
+  await expect(settings.getByText("这是一条你发送的消息。", { exact: true })).toHaveCSS("background-color", "rgb(38, 62, 52)")
+  await testInfo.attach(`global-accent-${testInfo.project.name}`, {
+    body: await page.screenshot({ animations: "disabled" }), contentType: "image/png",
+  })
 })
 
 test("malformed provider snapshot is visibly incompatible without legacy fallback", async ({
