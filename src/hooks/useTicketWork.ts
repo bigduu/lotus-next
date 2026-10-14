@@ -1,6 +1,7 @@
 import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { useCallback, useContext, useEffect, useRef, useState } from "react"
 import { getErrorMessage, isApiError } from "@services/api"
+import { ticketAvailabilityFailure, TicketScopeUnavailableError, type TicketAvailability } from "@services/tickets/availability"
 import { ticketClient } from "@services/tickets/client"
 import { OwnerAccessContext } from "./ownerAccessContext"
 import { applyTicketSnapshot, responseCommand, type TicketState } from "@services/tickets/state"
@@ -18,6 +19,8 @@ async function sendDecision(command: ResponseCommand) {
 export function useTicketWork(sessionId: string | null | undefined) {
   useUiLocale()
   const ownerAccess = useContext(OwnerAccessContext)
+  const [availability, setAvailability] = useState<TicketAvailability>({ kind: "loading" })
+  const [refreshing, setRefreshing] = useState(false)
   const [state, setState] = useState<TicketState | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [decisionError, setDecisionError] = useState<string | null>(null)
@@ -38,11 +41,12 @@ export function useTicketWork(sessionId: string | null | undefined) {
 
   useEffect(() => {
     current.current = null; connection.current = false; setState(null); setConnected(false); setNegotiatedSession(null); setError(null); setBusy({}); setUncertain({})
-    setDecisionError(null)
+    setDecisionError(null); setAvailability({ kind: "loading" }); setRefreshing(false)
     activeRequests.current.clear()
     refreshRef.current = async () => {}
     if (!sessionId || !ownerAccess) {
       setNegotiatedSession(sessionId ?? null)
+      setAvailability({ kind: !ownerAccess ? "forbidden" : "unbound" })
       return
     }
     try { setUncertain(readDecisionReceipts(sessionId)) }
@@ -52,7 +56,7 @@ export function useTicketWork(sessionId: string | null | undefined) {
     let refreshing = false
     const refresh = async (full = true) => {
       if (refreshing || controller.signal.aborted) return
-      refreshing = true
+      refreshing = true; setRefreshing(true)
       try {
         if (!full && current.current) {
           try {
@@ -62,7 +66,7 @@ export function useTicketWork(sessionId: string | null | undefined) {
               const negotiated = await ticketClient.scope(sessionId, controller.signal)
               if (controller.signal.aborted) return
               if (!negotiated) {
-                current.current = null; connection.current = true; setState(null); setConnected(true); setNegotiatedSession(sessionId); setError(null); return
+                current.current = null; connection.current = true; setState(null); setConnected(true); setNegotiatedSession(sessionId); setError(null); setAvailability({ kind: "unbound" }); return
               }
               const previous = current.current.current
               if (negotiated.binding.scope_id === previous.scope.binding.scope_id
@@ -71,7 +75,7 @@ export function useTicketWork(sessionId: string | null | undefined) {
                 && negotiated.overview.snapshot.seq === previous.snapshot.seq
                 && negotiated.overview.snapshot.authority_epoch === previous.snapshot.authority_epoch) {
                 current.current = { ...current.current, current: { ...previous, scope: negotiated } }
-                connection.current = true; setState(current.current); setConnected(true); setNegotiatedSession(sessionId); setError(null); return
+                connection.current = true; setState(current.current); setConnected(true); setNegotiatedSession(sessionId); setError(null); setAvailability({ kind: "ready" }); return
               }
             }
           } catch (failure) { if (!isApiError(failure) || ![409, 410].includes(failure.status)) throw failure }
@@ -80,10 +84,17 @@ export function useTicketWork(sessionId: string | null | undefined) {
         if (controller.signal.aborted) return
         current.current = result ? applyTicketSnapshot(current.current, result) : null
         setUncertain(readDecisionReceipts(sessionId))
-        connection.current = true; setState(current.current); setConnected(true); setNegotiatedSession(sessionId); setError(null)
+        connection.current = true; setState(current.current); setConnected(true); setNegotiatedSession(sessionId); setError(null); setAvailability({ kind: result ? "ready" : "unbound" })
       } catch (failure) {
-        if (!controller.signal.aborted) { connection.current = false; setConnected(false); setError(getErrorMessage(failure)) }
-      } finally { refreshing = false }
+        if (!controller.signal.aborted) {
+          const next = ticketAvailabilityFailure(failure)
+          connection.current = false; setConnected(false); setAvailability(next); setError(getErrorMessage(failure))
+          if (failure instanceof TicketScopeUnavailableError || next.kind === "forbidden") {
+            current.current = null; setState(null)
+          }
+          if (failure instanceof TicketScopeUnavailableError) setNegotiatedSession(sessionId)
+        }
+      } finally { refreshing = false; if (!controller.signal.aborted) setRefreshing(false) }
     }
     refreshRef.current = () => refresh()
     const poll = async () => {
@@ -158,7 +169,8 @@ export function useTicketWork(sessionId: string | null | undefined) {
     } finally { if (scope.current === captured && epoch.current === capturedEpoch) { activeRequests.current.delete(request.id); setBusy((old) => ({ ...old, [request.id]: false })) } }
   }, [sessionId, ownerAccess])
 
-  return { state, error: decisionError ?? error, connected, negotiated: !sessionId || !ownerAccess || negotiatedSession === sessionId,
+  return { state: ownerAccess && state?.current.scope.binding.supervisor_session_id === sessionId ? state : null,
+    availability: !ownerAccess ? { kind: "forbidden" as const } : availability, refreshing, canRefresh: ownerAccess && !!sessionId, error: decisionError ?? error, connected, negotiated: !sessionId || !ownerAccess || negotiatedSession === sessionId,
     busy, uncertain, respond, refresh: () => refreshRef.current(),
     canSendIngress: ownerAccess && connected && state !== null && state.current.scope.binding.supervisor_session_id === sessionId
       && state.current.scope.health === "writable" && state.current.scope.mutation_enabled === true

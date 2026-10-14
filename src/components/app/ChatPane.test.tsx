@@ -86,7 +86,7 @@ type ProviderState = typeof runtime.providerState
 vi.mock("@shared/store/appStore/slices/providerSlice", () => ({ useProviderStore: <T,>(selector: (state: ProviderState) => T) => selector(runtime.providerState) }))
 vi.mock("@/hooks/useGuidanceQueue", () => ({ useGuidanceQueue: () => ({ mode: "after_round", setMode: vi.fn(), send: runtime.queueSend, cancel: vi.fn(), pending: [], error: null, busy: false, hasUnconfirmed: false }) }))
 vi.mock("@/hooks/useTicketWork", () => ({ useTicketWork: () => runtime.ticketWork ?? {
-  state: null, connected: false, negotiated: true, error: null, busy: {}, uncertain: {},
+  state: null, connected: false, negotiated: true, availability: { kind: "ready" }, refreshing: false, canRefresh: true, error: null, busy: {}, uncertain: {},
   canRespond: false, canSendIngress: false, respond: vi.fn(), refresh: vi.fn(),
 } }))
 vi.mock("@/hooks/useStickyScroll", () => ({
@@ -367,7 +367,7 @@ describe("ChatPane composer acknowledgement", () => {
   it("opens the floating Supervisor overview in the header and keeps Work details in its existing target", async () => {
     const value = ticketSnapshot()
     value.scope.binding.supervisor_session_id = "bamboo-default-supervisor"
-    runtime.ticketWork = { state: applyTicketSnapshot(null, value), connected: true, negotiated: true,
+    runtime.ticketWork = { state: applyTicketSnapshot(null, value), connected: true, negotiated: true, availability: { kind: "ready" }, refreshing: false, canRefresh: true,
       error: null, busy: {}, uncertain: {}, respond: async () => false, refresh: async () => {}, canRespond: true, canSendIngress: true }
     const host = document.body.appendChild(document.createElement("div"))
     const target = document.body.appendChild(document.createElement("div"))
@@ -395,7 +395,7 @@ describe("ChatPane composer acknowledgement", () => {
     ["builtin ID with a parent", "bamboo-default-supervisor", "root", "parent"],
   ] as const)("does not offer Supervisor overview for %s even if a scope binds to it", async (_name, id, kind, parent) => {
     const value = ticketSnapshot(); value.scope.binding.supervisor_session_id = id
-    runtime.ticketWork = { state: applyTicketSnapshot(null, value), connected: true, negotiated: true,
+    runtime.ticketWork = { state: applyTicketSnapshot(null, value), connected: true, negotiated: true, availability: { kind: "ready" }, refreshing: false, canRefresh: true,
       error: null, busy: {}, uncertain: {}, respond: async () => false, refresh: async () => {}, canRespond: true, canSendIngress: true }
     const chat = createChat(vi.fn<Send>(), id)
     chat.currentChat!.title = "Supervisor"; chat.currentChat!.kind = kind; chat.currentChat!.parentSessionId = parent
@@ -406,8 +406,29 @@ describe("ChatPane composer acknowledgement", () => {
       onOpenSidebar={vi.fn()} sidebarCollapsed={false} onOpenWork={vi.fn()} />))
     expect(host.querySelector('[data-testid="ticket-work-status"]')).toBeNull()
   })
+  it.each(["loading", "disabled", "uninitialized", "unbound", "unsupported", "forbidden", "error"] as const)("renders the %s Work fallback with an explicit status and recovery", async (kind) => {
+    const refresh = vi.fn(async () => {})
+    runtime.ticketWork = { state: null, connected: false, negotiated: kind !== "loading", error: "exact service reason",
+      availability: { kind, detail: "exact service reason" }, refreshing: kind === "loading", canRefresh: true,
+      busy: {}, uncertain: {}, respond: async () => false, refresh, canRespond: false, canSendIngress: false }
+    const host = document.body.appendChild(document.createElement("div"))
+    const target = document.body.appendChild(document.createElement("div"))
+    const root = createRoot(host); roots.push(root)
+    await act(async () => root.render(<ChatPane chat={createChat(vi.fn<Send>(), "bamboo-default-supervisor")}
+      pickedWorkspace={null} onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()} splitOpen={false}
+      onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false} workPanelTarget={target} />))
+    expect(target.querySelector('[data-testid="ticket-work-availability"]')).not.toBeNull()
+    expect(target.querySelector(kind === "error" || kind === "forbidden" ? '[role="alert"]' : '[role="status"]')).not.toBeNull()
+    expect(target.textContent).toContain("exact service reason")
+    expect(target.querySelector("details")!.open).toBe(false)
+    if (kind !== "loading") {
+      act(() => target.querySelector<HTMLButtonElement>("button")!.click())
+      expect(refresh).toHaveBeenCalledOnce()
+    } else expect(target.querySelector("button")).toBeNull()
+    expect(target.textContent).not.toContain("当前 Supervisor 暂不支持工作面板")
+  })
   it("holds the draft and does not choose legacy routing while a running Supervisor negotiates tickets", async () => {
-    runtime.ticketWork = { state: null, connected: false, negotiated: false, error: null,
+    runtime.ticketWork = { state: null, connected: false, negotiated: false, availability: { kind: "loading" }, refreshing: false, canRefresh: true, error: null,
       busy: {}, uncertain: {}, respond: async () => false, refresh: async () => {}, canRespond: false, canSendIngress: false }
     const send = vi.fn<Send>()
     const textarea = await mount(send, "negotiating-root", true)
@@ -426,7 +447,7 @@ describe("ChatPane composer acknowledgement", () => {
     const value = ticketSnapshot()
     value.scope.binding.supervisor_session_id = id
     const ready = (): TicketController => ({
-      state: applyTicketSnapshot(null, value), connected: true, negotiated: true, error: null,
+      state: applyTicketSnapshot(null, value), connected: true, negotiated: true, availability: { kind: "ready" }, refreshing: false, canRefresh: true, error: null,
       busy: {}, uncertain: {}, respond: async () => false, refresh: async () => {},
       canRespond: value.complete, canSendIngress: true,
     })

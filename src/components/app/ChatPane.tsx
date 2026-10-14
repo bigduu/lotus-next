@@ -49,6 +49,7 @@ import { MessageList } from "@/components/app/MessageList"
 import { useGuidanceQueue } from "@/hooks/useGuidanceQueue"
 import { useTicketWork } from "@/hooks/useTicketWork"
 import { useTicketIngress } from "@/hooks/useTicketIngress"
+import { TicketWorkAvailability } from "@/components/chat/TicketWorkAvailability"
 import { TicketWorkPanel } from "@/components/chat/TicketWorkPanel"
 import { SupervisorOverview } from "@/components/chat/SupervisorOverview"
 import { isDefaultSupervisor } from "@/lib/supervisor"
@@ -1135,7 +1136,7 @@ export function ChatPane({
             onWorkReference?.()
             requestAnimationFrame(() => composerInputRef.current?.focus())
           } : undefined} />
-        ) : <p role="status" className="p-4 text-sm text-muted-foreground">{tickets.negotiated ? uiText("supervisor_work_unavailable") : uiText("loading_4927a53b")}</p>, workPanelTarget) : null}
+        ) : <TicketWorkAvailability availability={tickets.availability} refreshing={tickets.refreshing} canRefresh={tickets.canRefresh} onRefresh={() => void tickets.refresh()} />, workPanelTarget) : null}
         {semanticComposer && visibleTicketReference ? <div className="mx-4 mb-2 flex items-center gap-2 text-xs" data-testid="ticket-reference">
           <span>{uiText("ticket_reference", { title: tickets.state?.works[visibleTicketReference.work_id]?.ticket.contract.title ?? uiText("supervisor_work_tab") })}</span>
           <button type="button" className="underline" disabled={pendingTicketMessage} onClick={() => setTicketReference(null)}>{uiText("ticket_clear_reference_b2e538a2")}</button>

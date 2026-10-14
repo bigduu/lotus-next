@@ -1,5 +1,6 @@
 import { uiText } from "@shared/i18n/ui"
 import { apiClient, isApiError } from "@services/api"
+import { TicketScopeUnavailableError, unavailableScope } from "./availability"
 import type { Cursor, ReadEnvelope, ResponseCommand, SnapshotRef, TicketScope, TicketSnapshot, WorkView } from "./types"
 
 const sameSnapshot = (a: ReadEnvelope<unknown>, expected: SnapshotRef) => {
@@ -15,11 +16,19 @@ export const ticketClient = {
   async scope(sessionId: string, signal?: AbortSignal): Promise<TicketSnapshot["scope"] | null> {
     let scope: TicketScope
     try { scope = await apiClient.get<TicketScope>("tickets/scope", { signal }) }
-    catch (error) { if (isApiError(error) && error.status === 404) return null; throw error }
-    if (!scope.available || !scope.binding || !scope.overview
-      || scope.binding.supervisor_session_id !== sessionId
-      || !scope.capabilities?.ticket_scope_v1 || !scope.capabilities.multi_pending_v1
-      || !scope.capabilities.precise_request_response_v1) return null
+    catch (error) {
+      if (isApiError(error) && error.status === 404) throw new TicketScopeUnavailableError("unsupported", error.message)
+      throw error
+    }
+    if (scope?.available === false) throw unavailableScope(scope.reason)
+    if (scope?.available !== true || !scope.binding || !scope.overview
+      || typeof scope.mutation_enabled !== "boolean" || typeof scope.dispatch_enabled !== "boolean"
+      || typeof scope.health !== "string" || !scope.health) {
+      throw new Error(uiText("supervisor_work_invalid_response"))
+    }
+    if (scope.binding.supervisor_session_id !== sessionId) throw new TicketScopeUnavailableError("unbound")
+    if (scope.capabilities?.ticket_scope_v1 !== true || scope.capabilities.multi_pending_v1 !== true
+      || scope.capabilities.precise_request_response_v1 !== true) throw new TicketScopeUnavailableError("unsupported")
     sameSnapshot(scope.overview, scope.overview.snapshot)
     return { ...scope, binding: scope.binding, overview: scope.overview }
   },

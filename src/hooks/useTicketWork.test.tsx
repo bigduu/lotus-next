@@ -4,6 +4,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest"
 import { useTicketWork } from "./useTicketWork"
 import { OwnerAccessContext } from "./ownerAccessContext"
 import { TicketWorkPanel } from "@/components/chat/TicketWorkPanel"
+import { TicketScopeUnavailableError } from "@services/tickets/availability"
 import { ticketClient } from "@services/tickets/client"
 import { ticketSnapshot } from "@services/tickets/testFixtures"
 import type { ResponseCommand, TicketSnapshot } from "@services/tickets/types"
@@ -341,6 +342,7 @@ it("denies owner-only requests when Root access is absent or explicitly denied",
     await controller.refresh()
     expect(await controller.respond(snapshot.views[0].requests[0], { kind: "question", answer: "denied" })).toBe(false)
   })
+  expect(controller.canRefresh).toBe(false)
   expect(ticketClient.load).not.toHaveBeenCalled()
   expect(ticketClient.scope).not.toHaveBeenCalled()
   expect(ticketClient.changes).not.toHaveBeenCalled()
@@ -396,4 +398,65 @@ it.each(["acknowledged", "conflict", "unknown"] as const)("ignores a late %s dec
   expect(controller.busy).toEqual({})
   expect(ticketClient.respond).toHaveBeenCalledTimes(1)
   expect(controller.canRespond).toBe(true)
+})
+
+
+it.each(["disabled", "uninitialized", "unbound", "unsupported", "error"] as const)("exposes initial %s with its reason and permits explicit re-read", async (kind) => {
+  vi.mocked(ticketClient.load).mockRejectedValueOnce(new TicketScopeUnavailableError(kind, "exact service reason"))
+  await mount()
+  expect(controller.availability).toEqual({ kind, detail: "exact service reason" })
+  expect(controller.state).toBeNull()
+  expect(controller.negotiated).toBe(true)
+  expect(controller.canRespond).toBe(false)
+  expect(controller.canSendIngress).toBe(false)
+  await act(async () => controller.refresh())
+  expect(controller.availability.kind).toBe("ready")
+  expect(controller.state).not.toBeNull()
+})
+
+it.each([401, 403, 503])("exposes initial HTTP %s instead of indefinite loading", async (status) => {
+  vi.mocked(ticketClient.load).mockRejectedValueOnce(new ApiError("service failure", status, "failure"))
+  await mount()
+  expect(controller.availability.kind).toBe(status === 503 ? "error" : "forbidden")
+  expect(controller.state).toBeNull()
+  expect(controller.canRespond).toBe(false)
+  await act(async () => controller.refresh())
+  expect(controller.availability.kind).toBe("ready")
+})
+
+it("shows ready empty Work and does not infer missing access from zero records", async () => {
+  snapshot.views = []
+  snapshot.scope.overview.data = { ticket_count: 0, work_count: 0, states: {}, open_questions: 0, open_approvals: 0, needs_acceptance: 0 }
+  await mount()
+  expect(controller.availability.kind).toBe("ready")
+  expect(controller.canRespond).toBe(true)
+  expect(container.textContent).toContain("此工作范围还没有记录工作")
+})
+
+it("clears revoked scope data but retains disconnected data through transient read failures", async () => {
+  await mount()
+  vi.mocked(ticketClient.load).mockRejectedValueOnce(new Error("network failure"))
+  await act(async () => controller.refresh())
+  expect(controller.availability).toEqual({ kind: "error", detail: "network failure" })
+  expect(controller.state).not.toBeNull()
+  expect(controller.canRespond).toBe(false)
+  vi.mocked(ticketClient.load).mockRejectedValueOnce(new ApiError("owner revoked", 403, "Forbidden"))
+  await act(async () => controller.refresh())
+  expect(controller.availability.kind).toBe("forbidden")
+  expect(controller.state).toBeNull()
+})
+
+it("does not start duplicate refreshes or accept a late status after navigation", async () => {
+  await mount()
+  let finish!: (value: TicketSnapshot) => void
+  vi.mocked(ticketClient.load).mockReturnValueOnce(new Promise((resolve) => { finish = resolve }))
+  let pending!: Promise<void>
+  act(() => { pending = controller.refresh() })
+  expect(controller.refreshing).toBe(true)
+  await act(async () => controller.refresh())
+  expect(ticketClient.load).toHaveBeenCalledTimes(2)
+  await mount("other")
+  await act(async () => { finish(structuredClone(snapshot)); await pending })
+  expect(controller.availability.kind).toBe("ready")
+  expect(controller.refreshing).toBe(false)
 })

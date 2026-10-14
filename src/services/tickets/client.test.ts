@@ -5,15 +5,15 @@ import { ApiError, apiClient } from "@services/api"
 vi.mock("@services/api", async (original) => ({ ...await original<typeof import("@services/api")>(), apiClient: { get: vi.fn(), post: vi.fn(), postOnce: vi.fn() } }))
 beforeEach(() => { vi.resetAllMocks() })
 
-it("negotiates exact capabilities/binding and preserves legacy behavior when absent", async () => {
+it("preserves distinct unsupported and unbound negotiation outcomes", async () => {
   const value = ticketSnapshot()
   vi.mocked(apiClient.get).mockRejectedValueOnce(new ApiError("old backend", 404, "Not Found"))
-  expect(await ticketClient.load("root")).toBeNull()
+  await expect(ticketClient.load("root")).rejects.toMatchObject({ kind: "unsupported" })
   vi.mocked(apiClient.get).mockResolvedValueOnce(value.scope)
-  expect(await ticketClient.load("another-session")).toBeNull()
+  await expect(ticketClient.load("another-session")).rejects.toMatchObject({ kind: "unbound" })
   value.scope.capabilities!.precise_request_response_v1 = false
   vi.mocked(apiClient.get).mockResolvedValueOnce(value.scope)
-  expect(await ticketClient.load("root")).toBeNull()
+  await expect(ticketClient.load("root")).rejects.toMatchObject({ kind: "unsupported" })
   expect(apiClient.post).not.toHaveBeenCalled()
 })
 
@@ -77,4 +77,39 @@ it.each([{ truncated: true, omitted_count: 0 }, { truncated: false, omitted_coun
   vi.mocked(apiClient.get).mockResolvedValue(value.scope)
   vi.mocked(apiClient.post).mockResolvedValue({ ...value.scope.overview, ...flags, data: [], next_cursor: null })
   expect((await ticketClient.load("root"))?.complete).toBe(false)
+})
+
+
+it.each([
+  ["authority_unavailable: Ticket mutation feature is disabled", "disabled"],
+  ["authority_unavailable: existing Supervisor needs explicit attach/import; no automatic takeover", "uninitialized"],
+  ["authority_unavailable: damaged HEAD", "error"],
+  ["scope_denied: Supervisor scope binding changed", "error"],
+  ["", "error"],
+] as const)("retains the unavailable scope reason %s as %s", async (reason, kind) => {
+  vi.mocked(apiClient.get).mockResolvedValue({ available: false, reason, mutation_enabled: false, dispatch_enabled: false })
+  await expect(ticketClient.load("root")).rejects.toMatchObject({ kind, message: reason })
+  expect(apiClient.post).not.toHaveBeenCalled()
+})
+
+it.each([null, {}, { available: true }, { ...ticketSnapshot().scope, overview: undefined },
+  { ...ticketSnapshot().scope, mutation_enabled: undefined }, { ...ticketSnapshot().scope, health: undefined }])("reports an invalid capability response instead of manufacturing no scope: %j", async (body) => {
+  vi.mocked(apiClient.get).mockResolvedValue(body)
+  await expect(ticketClient.load("root")).rejects.toThrow("能力响应不完整")
+  expect(apiClient.post).not.toHaveBeenCalled()
+})
+
+it.each([401, 403, 503])("retains HTTP %s for the hook to distinguish access and service failures", async (status) => {
+  const failure = new ApiError("exact HTTP failure", status, "failure")
+  vi.mocked(apiClient.get).mockRejectedValue(failure)
+  await expect(ticketClient.load("root")).rejects.toBe(failure)
+})
+
+it("loads a valid zero-Work scope as a complete ready snapshot", async () => {
+  const value = ticketSnapshot()
+  value.scope.overview.data = { ticket_count: 0, work_count: 0, states: {}, open_questions: 0, open_approvals: 0, needs_acceptance: 0 }
+  vi.mocked(apiClient.get).mockResolvedValue(value.scope)
+  vi.mocked(apiClient.post).mockResolvedValue({ ...value.scope.overview, data: [] })
+  expect(await ticketClient.load("root")).toMatchObject({ scope: value.scope, views: [], complete: true })
+  expect(apiClient.post).toHaveBeenCalledTimes(1)
 })
