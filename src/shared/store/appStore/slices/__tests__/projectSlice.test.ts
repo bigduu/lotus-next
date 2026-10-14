@@ -13,7 +13,7 @@ vi.mock("@services/api", () => ({
     typeof e === "object" && e !== null && "status" in (e as Record<string, unknown>),
 }))
 
-import { createProjectSlice, type ProjectSlice } from "../projectSlice"
+import { confirmedProjectRevision, createProjectSlice, type ProjectSlice } from "../projectSlice"
 import { createSliceHarness } from "./sliceHarness"
 import type { ProjectManifest } from "@services/project"
 
@@ -103,5 +103,22 @@ describe("projectSlice", () => {
     api.get.mockRejectedValueOnce(Object.assign(new Error("gone"), { status: 404 }))
     await store.getState().ensureProject("missing")
     expect(store.getState().projectsMissing["missing"]).toBe(true)
+  })
+
+  it("keeps the sidebar snapshot's CAS revision while a newer feed event awaits its payload", async () => {
+    const sidebar = { sections: [], session_sections: {}, hidden_legacy: false }
+    api.get.mockResolvedValueOnce({ projects: [summaryOf(manifest("p1", { sidebar }))] })
+    await store.getState().loadProjects()
+    let reply!: (project: ProjectManifest) => void
+    api.get.mockReturnValueOnce(new Promise((resolve) => { reply = resolve }))
+    store.getState().applyProjectEvent({ type: "project_updated", project_id: "p1", revision: 2 })
+    const pending = store.getState().projects.p1!
+    expect(pending.revision).toBe(2)
+    expect(pending.sidebar).toEqual(sidebar)
+    expect(confirmedProjectRevision(pending)).toBe(1)
+    reply(manifest("p1", { revision: 2, sidebar: { ...sidebar, hidden_legacy: true } }))
+    await store.getState().ensureProject("p1", { force: true })
+    expect(confirmedProjectRevision(store.getState().projects.p1!)).toBe(2)
+    expect(store.getState().projects.p1!.sidebar?.hidden_legacy).toBe(true)
   })
 })

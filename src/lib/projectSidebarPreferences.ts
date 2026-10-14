@@ -1,3 +1,5 @@
+import type { ProjectSidebar, ProjectSummary } from "@services/project"
+
 const PINNED_PROJECTS_STORAGE_KEY = "lotus.sidebar.pinned-projects.v1"
 
 const normalizeProjectIds = (value: unknown): string[] => {
@@ -30,7 +32,7 @@ export const LEGACY_PROJECT_SECTION_ID = "legacy"
 export const SIDEBAR_SESSION_DRAG_TYPE = "application/x-lotus-sidebar-session"
 
 export type ProjectSidebarSection = { id: string; name: string }
-type ProjectSectionPreference = {
+export type ProjectSectionPreference = {
   sections: ProjectSidebarSection[]
   sessionSections: Record<string, string | null>
   hiddenLegacy: boolean
@@ -51,7 +53,7 @@ const emptyProjectPreference = (): ProjectSectionPreference => ({ sections: [], 
 const getProjectPreference = (preferences: ProjectSectionPreferences, projectId: string) =>
   Object.hasOwn(preferences.projects, projectId) ? preferences.projects[projectId]! : emptyProjectPreference()
 
-/** Device-only organization. Invalid entries must not suppress the server's legacy section. */
+/** Legacy import source only. New organization is written to Bamboo. */
 export function readProjectSectionPreferences(): ProjectSectionPreferences {
   try {
     const value: unknown = JSON.parse(localStorage.getItem(PROJECT_SECTIONS_STORAGE_KEY) ?? "null")
@@ -87,6 +89,38 @@ export function writeProjectSectionPreferences(preferences: ProjectSectionPrefer
     localStorage.setItem(PROJECT_SECTIONS_STORAGE_KEY, JSON.stringify(preferences))
   } catch {
     // The Sidebar retains the same preferences in React state for this session.
+  }
+}
+
+export const toProjectSidebar = (preference: ProjectSectionPreference): ProjectSidebar => ({
+  sections: preference.sections,
+  session_sections: preference.sessionSections,
+  hidden_legacy: preference.hiddenLegacy,
+})
+
+/** Even an empty server snapshot takes precedence over this device's old data. */
+export function serverSectionPreferences(projects: Record<string, ProjectSummary>, legacy: ProjectSectionPreferences): ProjectSectionPreferences {
+  return {
+    version: 1,
+    projects: Object.fromEntries(Object.values(projects).map((project) => [project.id, project.sidebar ? {
+      sections: project.sidebar.sections,
+      sessionSections: project.sidebar.session_sections,
+      hiddenLegacy: project.sidebar.hidden_legacy,
+    } : getProjectPreference(legacy, project.id)])),
+  }
+}
+
+/** Remove only an acknowledged import, preserving other Projects and pin preferences. */
+export function clearImportedProjectSections(projectId: string, imported: ProjectSectionPreference): void {
+  const preferences = readProjectSectionPreferences()
+  // A legacy tab may have edited its source while the request was in flight.
+  if (JSON.stringify(preferences.projects[projectId]) !== JSON.stringify(imported)) return
+  delete preferences.projects[projectId]
+  try {
+    if (Object.keys(preferences.projects).length) writeProjectSectionPreferences(preferences)
+    else localStorage.removeItem(PROJECT_SECTIONS_STORAGE_KEY)
+  } catch {
+    // The durable server snapshot still prevents reimport when storage is blocked.
   }
 }
 

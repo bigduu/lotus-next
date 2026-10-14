@@ -2,6 +2,8 @@ import { act, StrictMode, type ComponentProps } from "react"
 import { createRoot, type Root } from "react-dom/client"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import type { ChatItem } from "@shared/types/chatMessages"
+import type { PatchProjectRequest, ProjectManifest } from "@services/project"
+import { ApiError } from "@services/api"
 
 vi.mock("@/components/chat/SessionRow", () => ({
   SessionRow: ({ chat, active, onSelect, onRename, onDelete, onTogglePin, onCopySessionId, sections = [], onMoveToSection }: {
@@ -25,8 +27,7 @@ vi.mock("@/components/chat/SessionRow", () => ({
 
 import { Sidebar } from "./Sidebar"
 import { useAppStore } from "@shared/store/appStore"
-import { PINNED_PROJECTS_STORAGE_KEY, PROJECT_SECTIONS_STORAGE_KEY, SIDEBAR_SESSION_DRAG_TYPE,
-  readProjectSectionPreferences, writeProjectSectionPreferences, createProjectSection, getProjectSections, getSessionSection } from "@/lib/projectSidebarPreferences"
+import { PINNED_PROJECTS_STORAGE_KEY, PROJECT_SECTIONS_STORAGE_KEY, SIDEBAR_SESSION_DRAG_TYPE } from "@/lib/projectSidebarPreferences"
 import { DEFAULT_SUPERVISOR_SESSION_ID } from "@/lib/supervisor"
 
 type Props = ComponentProps<typeof Sidebar>
@@ -35,6 +36,10 @@ let container: HTMLDivElement
 let props: Props
 const environment = globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
 environment.IS_REACT_ACT_ENVIRONMENT = true
+const initialProjectActions = {
+  updateProject: useAppStore.getState().updateProject,
+  ensureProject: useAppStore.getState().ensureProject,
+}
 
 function chat(id: string, day: number, extra: Partial<ChatItem> = {}): ChatItem {
   return {
@@ -59,6 +64,10 @@ function click(label: string) {
   act(() => button(label).click())
 }
 
+async function clickAndSave(label: string) {
+  await act(async () => button(label).click())
+}
+
 function row(id: string) {
   return container.querySelector(`[data-session="${id}"]`)
 }
@@ -75,7 +84,7 @@ function search(value: string) {
 beforeEach(() => {
   vi.restoreAllMocks()
   localStorage.clear()
-  useAppStore.setState({ projects: {} })
+  useAppStore.setState({ projects: {}, ...initialProjectActions })
   vi.useFakeTimers()
   vi.setSystemTime(new Date("2026-09-05T15:00:00"))
   container = document.body.appendChild(document.createElement("div"))
@@ -350,8 +359,8 @@ describe("Sidebar project grouping", () => {
     expect(button("未分配")).toBeDefined()
   })
 
-  it("keeps legacy sections empty until explicit moves and scopes same-name folds independently", () => {
-    useAppStore.setState({ projects: { p1: project("p1", "Zenith", "lotus"), p2: project("p2", "Nova", "lotus") } })
+  it("keeps legacy sections empty until explicit server moves and scopes same-name folds independently", async () => {
+    const { updateProject, snapshots } = installProjectBackend({ p1: project("p1", "Zenith", "lotus"), p2: project("p2", "Nova", "lotus") })
     render({ chats: [projectChat("zenith-chat", "p1"), projectChat("nova-chat", "p2")] })
     click("项目")
     const zenith = container.querySelector('[data-sidebar-project="p1"]')!
@@ -362,9 +371,12 @@ describe("Sidebar project grouping", () => {
     expect(lotusB.textContent).toContain("lotus0 个会话")
     expect(zenith.querySelector('[data-section-id="none"]')!.contains(row("zenith-chat"))).toBe(true)
     expect(nova.querySelector('[data-section-id="none"]')!.contains(row("nova-chat"))).toBe(true)
-    expect(getSessionSection(readProjectSectionPreferences(), "p1", "zenith-chat", "lotus")).toBeNull()
-    click("Move zenith-chat to lotus")
-    click("Move nova-chat to lotus")
+    expect(snapshots.p1.sidebar!.session_sections["zenith-chat"]).toBeUndefined()
+    await clickAndSave("Move zenith-chat to lotus")
+    await clickAndSave("Move nova-chat to lotus")
+    expect(updateProject).toHaveBeenCalledTimes(2)
+    expect(snapshots.p1.sidebar!.session_sections["zenith-chat"]).toBe("legacy")
+    expect(snapshots.p2.sidebar!.session_sections["nova-chat"]).toBe("legacy")
     expect(lotusA.textContent).toContain("lotus1 个会话")
     expect(lotusA.contains(row("zenith-chat"))).toBe(true)
     expect(lotusB.contains(row("nova-chat"))).toBe(true)
@@ -455,70 +467,149 @@ describe("Sidebar project grouping", () => {
   })
 })
 
-function project(id: string, name: string, section: string | null = null) {
+function project(id: string, name: string, section: string | null = null): ProjectManifest {
   return {
     id, name, section, status: "active" as const, revision: 1, resource_revision: 1,
+    sidebar: { sections: [], session_sections: {}, hidden_legacy: false },
     project_path: `/tmp/${id}`, project_path_status: "configured" as const, workspace_count: 1,
     created_at: "2026-01-01T00:00:00Z", updated_at: "2026-01-01T00:00:00Z",
     schema_version: 2, workspace_bindings: [],
   }
 }
+
+function installProjectBackend(initial: Record<string, ProjectManifest>) {
+  const snapshots = structuredClone(initial)
+  const updateProject = vi.fn(async (id: string, revision: number, patch: PatchProjectRequest) => {
+    const current = snapshots[id]
+    if (current.revision !== revision) throw new ApiError("Project changed", 412, "Precondition Failed")
+    const next: ProjectManifest = { ...current, ...patch, revision: current.revision + 1 }
+    snapshots[id] = next
+    useAppStore.setState((state) => ({ projects: { ...state.projects, [id]: next } }))
+    return next
+  })
+  const ensureProject = vi.fn(async (id: string) => {
+    const current = snapshots[id]
+    useAppStore.setState((state) => ({ projects: { ...state.projects, [id]: current } }))
+  })
+  useAppStore.setState({ projects: structuredClone(initial), updateProject, ensureProject })
+  return { snapshots, updateProject, ensureProject }
+}
+
 function projectChat(id: string, projectId: string, extra: Partial<ChatItem> = {}) {
   return chat(id, 5, { config: { systemPromptId: "", baseSystemPrompt: "", lastUsedEnhancedPrompt: null, projectId }, ...extra })
 }
-function drop(target: Element, payload: unknown) {
+async function drop(target: Element, payload: unknown) {
   const event = new Event("drop", { bubbles: true, cancelable: true })
   Object.defineProperty(event, "dataTransfer", { value: { getData: (type: string) => type === SIDEBAR_SESSION_DRAG_TYPE ? JSON.stringify(payload) : "" } })
-  act(() => target.dispatchEvent(event))
+  await act(async () => target.dispatchEvent(event))
 }
 
-describe("Sidebar device sections", () => {
+describe("Sidebar server sections", () => {
+  const lotusA = "section:00000000-0000-4000-8000-000000000011"
+  const lotusB = "section:00000000-0000-4000-8000-000000000012"
   function setup() {
-    useAppStore.setState({ projects: { p1: project("p1", "Zenith", "Development"), p2: project("p2", "Nova", "Development") } })
-    let preferences = createProjectSection(readProjectSectionPreferences(), "p1", "lotus", "Development")
-    preferences = createProjectSection(preferences, "p2", "lotus", "Development")
-    writeProjectSectionPreferences(preferences)
+    const p1 = project("p1", "Zenith", "Development")
+    const p2 = project("p2", "Nova", "Development")
+    p1.sidebar!.sections.push({ id: lotusA, name: "lotus" })
+    p2.sidebar!.sections.push({ id: lotusB, name: "lotus" })
+    const backend = installProjectBackend({ p1, p2 })
     render({ chats: [projectChat("first", "p1"), projectChat("second", "p1"), projectChat("foreign", "p2"), projectChat("pinned", "p1", { pinned: true })] })
     click("项目")
+    return backend
   }
 
-  it("moves a session by menu callback, persists explicit no section, and preserves pinned actions", () => {
-    setup()
-    const updateProject = vi.fn()
-    useAppStore.setState({ updateProject })
-    click("Move first to lotus")
+  it("saves menu moves with the current Project revision and preserves canonical membership and pinned actions", async () => {
+    const { updateProject, snapshots } = setup()
+    const originalForeign = structuredClone(snapshots.p2)
+    await clickAndSave("Move first to lotus")
     const localA = container.querySelector('[data-section-project="p1"][data-project-section="lotus"]')!
     expect(localA.contains(row("first"))).toBe(true)
     expect(localA.textContent).toContain("lotus1 个会话")
     expect(container.querySelector('[data-section-project="p2"][data-project-section="lotus"]')!.textContent).toContain("lotus0 个会话")
-    click("Unsection first")
+    expect(updateProject).toHaveBeenNthCalledWith(1, "p1", 1, {
+      sidebar: { sections: [{ id: lotusA, name: "lotus" }], session_sections: { first: lotusA }, hidden_legacy: false },
+    })
+    await clickAndSave("Unsection first")
     expect(container.querySelector('[data-section-project="p1"][data-section-id="none"]')!.contains(row("first"))).toBe(true)
-    expect(getSessionSection(readProjectSectionPreferences(), "p1", "first", "Development")).toBeNull()
-    click("Move pinned to lotus")
+    expect(updateProject).toHaveBeenNthCalledWith(2, "p1", 2, {
+      sidebar: { sections: [{ id: lotusA, name: "lotus" }], session_sections: { first: null }, hidden_legacy: false },
+    })
+    await clickAndSave("Move pinned to lotus")
     expect(row("pinned")).not.toBeNull()
     click("Pin pinned")
     expect(props.onTogglePin).toHaveBeenCalledWith(props.chats[3])
     expect(useAppStore.getState().projects.p1.section).toBe("Development")
+    expect(snapshots.p2).toEqual(originalForeign)
+    expect(props.chats[0].config.projectId).toBe("p1")
+    expect(localStorage.getItem(PROJECT_SECTIONS_STORAGE_KEY)).toBeNull()
+  })
+
+  it("disables section moves and drops with an upgrade hint for an unsupported backend", async () => {
+    const { updateProject } = setup()
+    act(() => useAppStore.setState((state) => ({ projects: { ...state.projects, p1: { ...state.projects.p1!, sidebar: undefined } } })))
+    expect([...container.querySelectorAll("button")].some((item) => item.textContent?.startsWith("Move first to"))).toBe(false)
+    expect(container.querySelector('[role="status"]')?.textContent).toContain("更新 Bamboo 后端")
+    const target = container.querySelector('[data-section-project="p1"][data-section-id="legacy"]')!
+    expect(target.getAttribute("aria-disabled")).toBe("true")
+    await drop(target, { projectId: "p1", sessionId: "first" })
     expect(updateProject).not.toHaveBeenCalled()
   })
 
-  it("accepts same-project drops into empty sections and rejects foreign, forged, missing or child sessions", () => {
-    setup()
+  it("does not show one Project's failed save inside another Project's dialog", async () => {
+    vi.useRealTimers()
+    const { updateProject } = setup()
+    updateProject.mockRejectedValueOnce(new Error("offline"))
+    await clickAndSave("Move first to lotus")
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain("Zenith · 分区未保存")
+    const trigger = buttonByLabel("Nova 项目操作")
+    await act(async () => { trigger.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })) })
+    const createMenu = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find((item) => item.textContent?.includes("创建分区"))!
+    await act(async () => createMenu.click())
+    const dialog = document.querySelector('[role="dialog"]')!
+    expect(dialog.textContent).toContain("Nova")
+    expect(dialog.querySelector('[role="alert"]')).toBeNull()
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain("Zenith · 分区未保存")
+  })
+
+  it("temporarily disables same-Project moves and drops while a save awaits confirmation", async () => {
+    const { updateProject } = setup()
+    const persist = updateProject.getMockImplementation()!
+    let confirm!: () => Promise<void>
+    updateProject.mockImplementationOnce((...args) => new Promise<ProjectManifest>((resolve) => {
+      confirm = async () => { resolve(await persist(...args)) }
+    }))
+    click("Move first to lotus")
+    expect(container.querySelector('[role="status"]')?.textContent).toContain("正在保存分区")
+    expect([...container.querySelectorAll("button")].some((item) => item.textContent === "Move second to lotus")).toBe(false)
+    const target = container.querySelector('[data-section-project="p1"][data-project-section="lotus"]')!
+    expect(target.getAttribute("aria-disabled")).toBe("true")
+    await drop(target, { projectId: "p1", sessionId: "second" })
+    expect(updateProject).toHaveBeenCalledOnce()
+    await act(async () => { await confirm() })
+    expect(target.contains(row("first"))).toBe(true)
+    expect(target.getAttribute("aria-disabled")).toBe("false")
+    expect(container.querySelector('[role="status"]')).toBeNull()
+    expect(button("Move second to lotus")).toBeDefined()
+  })
+
+  it("saves same-project drops into empty sections and sends no write for foreign, forged, missing or child sessions", async () => {
+    const { updateProject, snapshots } = setup()
     const target = container.querySelector('[data-section-project="p1"][data-project-section="lotus"]')!
     expect(target.textContent).toContain("拖动会话到这里")
-    const original = localStorage.getItem(PROJECT_SECTIONS_STORAGE_KEY)
-    drop(target, { projectId: "p2", sessionId: "foreign" })
-    drop(target, { projectId: "p1", sessionId: "foreign" })
-    drop(target, { projectId: "p1", sessionId: "missing" })
+    await drop(target, { projectId: "p2", sessionId: "foreign" })
+    await drop(target, { projectId: "p1", sessionId: "foreign" })
+    await drop(target, { projectId: "p1", sessionId: "missing" })
     render({ chats: [...props.chats, projectChat("child", "p1", { parentSessionId: "first" })] })
-    drop(target, { projectId: "p1", sessionId: "child" })
-    expect(localStorage.getItem(PROJECT_SECTIONS_STORAGE_KEY)).toBe(original)
-    drop(target, { projectId: "p1", sessionId: "first" })
+    await drop(target, { projectId: "p1", sessionId: "child" })
+    expect(updateProject).not.toHaveBeenCalled()
+    await drop(target, { projectId: "p1", sessionId: "first" })
     expect(target.contains(row("first"))).toBe(true)
+    expect(updateProject).toHaveBeenCalledOnce()
+    expect(snapshots.p1.sidebar!.session_sections).toEqual({ first: lotusA })
     expect(props.chats[0].config.projectId).toBe("p1")
   })
 
-  it("reveals an active session's section, restores folds after search, and opens a new target when moved", () => {
+  it("reveals an active session's section, restores folds after search, and opens a confirmed new target", async () => {
     setup()
     const target = container.querySelector('[data-section-project="p1"][data-project-section="lotus"]')!
     const unsectioned = container.querySelector('[data-section-project="p1"][data-section-id="none"]')!
@@ -531,24 +622,69 @@ describe("Sidebar device sections", () => {
     expect(row("first")).toBeNull()
     render({ currentSessionId: "first" })
     expect(row("first")?.getAttribute("data-active")).toBe("true")
-    click("Move first to lotus")
+    await clickAndSave("Move first to lotus")
     const revealed = container.querySelector('[data-section-project="p1"][data-project-section="lotus"]')!
     expect(revealed.querySelector("button")?.getAttribute("aria-expanded")).toBe("true")
     expect(revealed.contains(row("first"))).toBe(true)
   })
 
-  it("keeps device moves usable when storage writes are blocked", () => {
-    setup()
+  it("saves server moves when device storage writes are blocked", async () => {
+    const { updateProject, snapshots } = setup()
     vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => { throw new Error("blocked") })
-    click("Move first to lotus")
+    await clickAndSave("Move first to lotus")
     expect(container.querySelector('[data-section-project="p1"][data-project-section="lotus"]')!.contains(row("first"))).toBe(true)
-    click("Unsection first")
+    await clickAndSave("Unsection first")
     expect(container.querySelector('[data-section-project="p1"][data-section-id="none"]')!.contains(row("first"))).toBe(true)
+    expect(updateProject).toHaveBeenCalledTimes(2)
+    expect(snapshots.p1.sidebar!.session_sections.first).toBeNull()
+  })
+
+  it("keeps a failed move uncommitted and retries against the last confirmed revision", async () => {
+    const { updateProject, snapshots } = setup()
+    updateProject.mockRejectedValueOnce(new Error("offline"))
+    await clickAndSave("Move first to lotus")
+    expect(container.querySelector('[data-section-project="p1"][data-section-id="none"]')!.contains(row("first"))).toBe(true)
+    expect(snapshots.p1.sidebar!.session_sections.first).toBeUndefined()
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain("分区未保存")
+    await clickAndSave("Move first to lotus")
+    expect(updateProject.mock.calls.map((call) => call[1])).toEqual([1, 1])
+    expect(container.querySelector('[data-section-project="p1"][data-project-section="lotus"]')!.contains(row("first"))).toBe(true)
+    expect(container.querySelector('[role="alert"]')).toBeNull()
+  })
+
+  it("refreshes a conflicting Project and leaves the losing move available for an explicit retry", async () => {
+    const { updateProject, ensureProject, snapshots } = setup()
+    snapshots.p1 = { ...snapshots.p1, revision: 2, sidebar: { ...snapshots.p1.sidebar!, session_sections: { second: lotusA } } }
+    await clickAndSave("Move first to lotus")
+    expect(ensureProject).toHaveBeenCalledWith("p1", { force: true })
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain("已在其他客户端更新")
+    const target = container.querySelector('[data-section-project="p1"][data-project-section="lotus"]')!
+    expect(target.contains(row("first"))).toBe(false)
+    expect(target.contains(row("second"))).toBe(true)
+    expect(snapshots.p1.sidebar!.session_sections).toEqual({ second: lotusA })
+    await clickAndSave("Move first to lotus")
+    expect(updateProject).toHaveBeenLastCalledWith("p1", 2, {
+      sidebar: { sections: [{ id: lotusA, name: "lotus" }], session_sections: { second: lotusA, first: lotusA }, hidden_legacy: false },
+    })
+    expect(target.contains(row("first"))).toBe(true)
+  })
+
+  it("renders an existing empty server snapshot instead of resurrecting stale device sections", async () => {
+    localStorage.setItem(PROJECT_SECTIONS_STORAGE_KEY, JSON.stringify({ version: 1, projects: {
+      p1: { sections: [{ id: lotusA, name: "Stale local" }], sessionSections: { first: lotusA }, hiddenLegacy: true },
+    } }))
+    const { updateProject } = installProjectBackend({ p1: project("p1", "Zenith", "Development") })
+    render({ chats: [projectChat("first", "p1")] })
+    click("项目")
+    await act(async () => {})
+    expect(container.querySelector('[data-project-section="Stale local"]')).toBeNull()
+    expect(container.querySelector('[data-section-id="none"]')!.contains(row("first"))).toBe(true)
+    expect(updateProject).not.toHaveBeenCalled()
   })
 
   it("creates empty sections and preserves only explicit assignments through StrictMode and reload", async () => {
     vi.useRealTimers()
-    useAppStore.setState({ projects: { p1: project("p1", "Zenith", "lotus") } })
+    const { updateProject, snapshots } = installProjectBackend({ p1: project("p1", "Zenith", "lotus") })
     const chats = [projectChat("first", "p1"), projectChat("untouched", "p1")]
     await act(async () => root.render(<StrictMode><Sidebar {...props} chats={chats} /></StrictMode>))
     click("项目")
@@ -569,15 +705,14 @@ describe("Sidebar device sections", () => {
     expect(section.contains(row("untouched"))).toBe(false)
     expect(container.querySelector('[data-section-id="none"]')!.contains(row("first"))).toBe(true)
     expect(container.querySelector('[data-section-id="none"]')!.contains(row("untouched"))).toBe(true)
-    const persisted = getProjectSections(readProjectSectionPreferences(), "p1", "lotus").find((candidate) => candidate.name === "Research")!
+    const persisted = snapshots.p1.sidebar!.sections.find((candidate) => candidate.name === "Research")!
     expect(section.getAttribute("data-section-id")).toBe(persisted.id)
-    expect(getProjectSections(readProjectSectionPreferences(), "p1", "lotus")).toHaveLength(2)
-    expect(getSessionSection(readProjectSectionPreferences(), "p1", "first", "lotus")).toBeNull()
-    expect(getSessionSection(readProjectSectionPreferences(), "p1", "untouched", "lotus")).toBeNull()
+    expect(snapshots.p1.sidebar!.sections).toHaveLength(1)
+    expect(snapshots.p1.sidebar!.session_sections).toEqual({})
 
-    click("Move first to Research")
+    await clickAndSave("Move first to Research")
     expect(section.contains(row("first"))).toBe(true)
-    expect(getSessionSection(readProjectSectionPreferences(), "p1", "first", "lotus")).toBe(persisted.id)
+    expect(snapshots.p1.sidebar!.session_sections.first).toBe(persisted.id)
     await act(async () => root.unmount())
     root = createRoot(container)
     const refreshedChats = [...chats, projectChat("new-session", "p1")]
@@ -589,7 +724,9 @@ describe("Sidebar device sections", () => {
     const noSection = container.querySelector('[data-section-id="none"]')!
     expect(noSection.contains(row("untouched"))).toBe(true)
     expect(noSection.contains(row("new-session"))).toBe(true)
-    expect(getSessionSection(readProjectSectionPreferences(), "p1", "new-session", "lotus")).toBeNull()
+    expect(snapshots.p1.sidebar!.session_sections["new-session"]).toBeUndefined()
     expect(container.querySelector('[data-project-section="lotus"]')!.textContent).toContain("lotus0 个会话")
+    expect(updateProject).toHaveBeenCalledTimes(2)
+    expect(localStorage.getItem(PROJECT_SECTIONS_STORAGE_KEY)).toBeNull()
   })
 })

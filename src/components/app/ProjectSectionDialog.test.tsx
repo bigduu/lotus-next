@@ -41,21 +41,25 @@ const setName = (name: string) => {
   const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!
   act(() => { setter.call(input, name); input.dispatchEvent(new Event("input", { bubbles: true })) })
 }
-const submit = () => act(() => { document.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })) })
+const submit = () => act(async () => { document.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })) })
 
 describe("ProjectSectionDialog", () => {
-  it("creates a trimmed device section without mutating the backend Project", async () => {
+  it("closes only after the trimmed section is confirmed by the server callback", async () => {
     const updateProject = vi.fn()
     useAppStore.setState({ projects: { [project.id]: project }, updateProject })
     const onClose = vi.fn()
-    const onCreate = vi.fn()
+    let confirm!: (saved: boolean) => void
+    const onCreate = vi.fn(() => new Promise<boolean>((resolve) => { confirm = resolve }))
     await act(async () => root.render(
       <ProjectSectionDialog projectId={project.id} existingSections={[]} onCreate={onCreate} onRemove={vi.fn()} onClose={onClose} />,
     ))
-    expect(document.body.textContent).toContain("分区仅整理此设备的侧栏，不会改变项目目录或会话的运行环境。")
+    expect(document.body.textContent).toContain("分区和会话归属会保存到服务端，可在连接同一服务的设备上恢复。")
     setName("  Development  ")
-    submit()
+    await submit()
     expect(onCreate).toHaveBeenCalledWith("Development")
+    expect(onClose).not.toHaveBeenCalled()
+    expect(document.querySelector<HTMLInputElement>("#project-section-name")!.value).toBe("  Development  ")
+    await act(async () => confirm(true))
     expect(onClose).toHaveBeenCalledOnce()
     expect(updateProject).not.toHaveBeenCalled()
   })
@@ -68,23 +72,79 @@ describe("ProjectSectionDialog", () => {
       <ProjectSectionDialog projectId={project.id} existingSections={[{ id: "lotus", name: "Lotus" }]} onCreate={onCreate} onRemove={vi.fn()} onClose={onClose} />,
     ))
     setName(" lotus ")
-    submit()
+    await submit()
     expect(document.querySelector('[role="alert"]')?.textContent).toContain("同名分区")
     setName("莲".repeat(81))
-    submit()
+    await submit()
     expect(document.querySelector('[role="alert"]')?.textContent).toContain("1–80")
     expect(onCreate).not.toHaveBeenCalled()
     expect(onClose).not.toHaveBeenCalled()
   })
 
-  it("removes a section through its device callback and explains where sessions go", async () => {
+  it("removes a section through its server callback and explains where sessions go", async () => {
     useAppStore.setState({ projects: { [project.id]: project } })
-    const onRemove = vi.fn()
+    const onRemove = vi.fn().mockResolvedValue(true)
     await act(async () => root.render(
       <ProjectSectionDialog projectId={project.id} mode="manage" existingSections={[{ id: "legacy", name: "Lotus" }]} onCreate={vi.fn()} onRemove={onRemove} onClose={vi.fn()} />,
     ))
     expect(document.body.textContent).toContain("会话保留在原项目中，并移到无分区。")
-    act(() => document.querySelector<HTMLButtonElement>('button[aria-label="移除分区 Lotus"]')!.click())
+    await act(async () => document.querySelector<HTMLButtonElement>('button[aria-label="移除分区 Lotus"]')!.click())
     expect(onRemove).toHaveBeenCalledWith("legacy")
+  })
+
+  it("retains the name and dialog after a failed save so the user can retry", async () => {
+    useAppStore.setState({ projects: { [project.id]: project } })
+    const onCreate = vi.fn().mockResolvedValueOnce(false).mockResolvedValueOnce(true)
+    const onClose = vi.fn()
+    const dialog = (saveError?: string) => <ProjectSectionDialog projectId={project.id} existingSections={[]} saveError={saveError} onCreate={onCreate} onRemove={vi.fn()} onClose={onClose} />
+    await act(async () => root.render(dialog()))
+    setName("Research")
+    await submit()
+    await act(async () => root.render(dialog("分区未保存，请检查连接后重试。")))
+    expect(document.querySelector<HTMLInputElement>("#project-section-name")!.value).toBe("Research")
+    expect(document.querySelector('[role="alert"]')?.textContent).toContain("分区未保存")
+    expect(onClose).not.toHaveBeenCalled()
+    await submit()
+    expect(onCreate).toHaveBeenNthCalledWith(2, "Research")
+    expect(onClose).toHaveBeenCalledOnce()
+  })
+
+  it("prevents edits, removal and close while a server save is pending", async () => {
+    useAppStore.setState({ projects: { [project.id]: project } })
+    const onCreate = vi.fn().mockResolvedValue(true)
+    const onRemove = vi.fn().mockResolvedValue(true)
+    const onClose = vi.fn()
+    const dialog = (busy: boolean) => <ProjectSectionDialog projectId={project.id} mode="manage" existingSections={[{ id: "legacy", name: "Lotus" }]} busy={busy} onCreate={onCreate} onRemove={onRemove} onClose={onClose} />
+    await act(async () => root.render(dialog(false)))
+    setName("Research")
+    await act(async () => root.render(dialog(true)))
+    expect(document.querySelector('[role="dialog"]')?.getAttribute("aria-busy")).toBe("true")
+    expect(document.querySelector<HTMLInputElement>("#project-section-name")!.disabled).toBe(true)
+    for (const button of document.querySelectorAll<HTMLButtonElement>('button[type="submit"], button[aria-label="移除分区 Lotus"]')) {
+      expect(button.disabled).toBe(true)
+      await act(async () => button.click())
+    }
+    const cancel = [...document.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "取消")!
+    expect(cancel.disabled).toBe(true)
+    await act(async () => cancel.click())
+    await submit()
+    expect(onCreate).not.toHaveBeenCalled()
+    expect(onRemove).not.toHaveBeenCalled()
+    expect(onClose).not.toHaveBeenCalled()
+  })
+
+  it("keeps local data readable but disables mutations for an unsupported backend", async () => {
+    useAppStore.setState({ projects: { [project.id]: project } })
+    const onCreate = vi.fn().mockResolvedValue(true)
+    const onRemove = vi.fn().mockResolvedValue(true)
+    await act(async () => root.render(
+      <ProjectSectionDialog projectId={project.id} mode="manage" existingSections={[{ id: "legacy", name: "Lotus" }]} unavailable onCreate={onCreate} onRemove={onRemove} onClose={vi.fn()} />,
+    ))
+    expect(document.querySelector('[role="alert"]')?.textContent).toContain("请更新 Bamboo 后端以保存分区")
+    expect(document.querySelector<HTMLInputElement>("#project-section-name")!.disabled).toBe(true)
+    expect(document.querySelector<HTMLButtonElement>('button[aria-label="移除分区 Lotus"]')!.disabled).toBe(true)
+    await submit()
+    expect(onCreate).not.toHaveBeenCalled()
+    expect(onRemove).not.toHaveBeenCalled()
   })
 })

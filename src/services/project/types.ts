@@ -15,12 +15,21 @@ export interface WorkspaceBinding {
   git_common_dir?: string | null;
 }
 
+/** Durable sidebar organization, independent of session execution metadata. */
+export interface ProjectSidebar {
+  sections: { id: string; name: string }[];
+  session_sections: Record<string, string | null>;
+  hidden_legacy: boolean;
+}
+
 export interface ProjectSummary {
   id: string;
   name: string;
   description?: string | null;
   /** Optional user-defined sidebar grouping, persisted by Bamboo. */
   section?: string | null;
+  /** null = not initialized; absent = backend predates durable sections. */
+  sidebar?: ProjectSidebar | null;
   status: ProjectStatus;
   revision: number;
   resource_revision: number;
@@ -58,6 +67,9 @@ export interface PatchProjectRequest {
   section?: string | null;
   /** CAS-updated primary folder; never inferred from workspace binding order. */
   project_path?: string;
+  sidebar?: ProjectSidebar;
+  /** One-time import; Bamboo filters stale assignments and never overwrites a snapshot. */
+  import_sidebar?: ProjectSidebar;
 }
 
 export interface WorkspaceBindingRequest {
