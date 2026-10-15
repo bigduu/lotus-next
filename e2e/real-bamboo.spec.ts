@@ -11,6 +11,7 @@ import path from "node:path";
 import { observePage, type PageObservation, type FrameObservation } from "./support/pageObservation.ts";
 import { restartRealBamboo } from "./support/restartRealBamboo.ts";
 import { closeSettings, selectSettingsCategory, settingsSurface } from "./support/settingsNavigation.ts";
+import { hasExecutedPermissionCommand } from "./support/permissionEvidence.ts";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -1668,14 +1669,8 @@ test("production session modes keep Bypass confirmation distinct from Auto execu
       return null;
     }
   };
-  const executedSafeCommand = (message: JsonRecord): boolean => {
-    const payload = toolPayload(message);
-    // A successful permission-placeholder message also contains the command
-    // text. Only real stdout plus a zero exit code proves Bash executed it.
-    return payload?.command === command && payload.exit_code === 0 &&
-      payload.timed_out === false &&
-      typeof payload.stdout === "string" && payload.stdout.trim() === toolMarker;
-  };
+  const executedSafeCommand = (messages: JsonRecord[]): boolean =>
+    hasExecutedPermissionCommand(messages, { toolCallId, command, marker: toolMarker });
   const permissionPromptSeen = (observation: PageObservation, id: string): boolean =>
     observation.webSockets.some((socket) =>
       socket.received.some((frame) => {
@@ -1833,7 +1828,7 @@ test("production session modes keep Bypass confirmation distinct from Auto execu
               expect(pending).toMatchObject({
                 has_pending_question: true,
                 interaction_kind: "permission",
-                tool_name: "Bash",
+                tool_name: "exec_command",
                 permission_request: {
                   reason_code: "configured_always_ask",
                   bypass_requested: true,
@@ -1844,7 +1839,7 @@ test("production session modes keep Bypass confirmation distinct from Auto execu
               });
               await expect.poll(() => permissionPromptSeen(observation, session.id)).toBe(true);
               const messages = await historyMessages(session.id);
-              expect(messages.some(executedSafeCommand)).toBe(false);
+              expect(executedSafeCommand(messages)).toBe(false);
               const placeholder = messages.map(toolPayload).find((payload) => payload !== null);
               expect(placeholder).toMatchObject({
                 status: "awaiting_permission_approval",
@@ -1852,12 +1847,13 @@ test("production session modes keep Bypass confirmation distinct from Auto execu
                 permission_request: { reason_code: "configured_always_ask" },
               });
               expect(placeholder?.stdout).toBeUndefined();
+              expect(placeholder?.output).toBeUndefined();
               expect(placeholder?.exit_code).toBeUndefined();
               expect(messages.some((message) => message.content === assistantMarker)).toBe(false);
             } else {
               await expect.poll(async () => {
                 const messages = await historyMessages(session.id);
-                return messages.some(executedSafeCommand) && messages.some((message) =>
+                return executedSafeCommand(messages) && messages.some((message) =>
                   message.role === "assistant" && message.content === assistantMarker,
                 );
               }).toBe(true);
@@ -1892,7 +1888,7 @@ test("production session modes keep Bypass confirmation distinct from Auto execu
             await expect.poll(async () =>
               asRecord(await fetchJson(sessionUrl(session.id, "/respond/pending")))?.has_pending_question,
             ).toBe(false);
-            expect((await historyMessages(session.id)).some(executedSafeCommand)).toBe(false);
+            expect(executedSafeCommand(await historyMessages(session.id))).toBe(false);
             await reloadPermissionPage("after-fixture-denial");
             await expect(modeControl).toHaveValue("bypass");
             await expect(page.getByRole("dialog", { name: "需要你确认", exact: true })).toHaveCount(0);

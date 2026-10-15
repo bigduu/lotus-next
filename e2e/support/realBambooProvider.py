@@ -364,7 +364,7 @@ class ProviderHandler(BaseHTTPRequestHandler):
             return
 
         # The permission acceptance scenario uses the same isolated provider
-        # and safe observation schema. It emits one harmless, real Bash call;
+        # and safe observation schema. It emits one harmless exec_command call;
         # Bamboo, not this fixture, owns the approval/execution decision.
         messages = body.get("messages", [])
         last_user = next(
@@ -396,20 +396,20 @@ class ProviderHandler(BaseHTTPRequestHandler):
                 delta["content"] = f"{self.assistant_marker}:permission"
             else:
                 tools = body.get("tools", [])
-                bash_name = next(
+                command_name = next(
                     (
                         tool["function"]["name"]
                         for tool in tools
                         if isinstance(tool, dict)
                         and isinstance(tool.get("function"), dict)
                         and isinstance(tool["function"].get("name"), str)
-                        and tool["function"]["name"].lower() == "bash"
+                        and tool["function"]["name"] == "exec_command"
                     ),
                     None,
                 ) if isinstance(tools, list) else None
-                if bash_name is None:
+                if command_name is None:
                     self._send_json(422, {"error": {"message": (
-                        "permission fixture requires an offered Bash tool"
+                        "permission fixture requires an offered exec_command tool"
                     )}})
                     return
                 delta = {
@@ -419,10 +419,10 @@ class ProviderHandler(BaseHTTPRequestHandler):
                         "id": PERMISSION_TOOL_CALL_ID,
                         "type": "function",
                         "function": {
-                            "name": bash_name,
+                            "name": command_name,
                             "arguments": json.dumps({
-                                "command": PERMISSION_TOOL_COMMAND,
-                                "description": "Print the isolated permission acceptance marker",
+                                "cmd": PERMISSION_TOOL_COMMAND,
+                                "yield_time_ms": 10000,
                             }),
                         },
                     }],
@@ -789,7 +789,7 @@ def validate_permission_scenario(*, port: int, api_key: str, user_marker: str,
         "stream": True,
         "messages": messages,
         "tools": [{"type": "function", "function": {
-            "name": "Bash", "parameters": {"type": "object"}
+            "name": "exec_command", "parameters": {"type": "object"}
         }}],
     }
 
@@ -809,9 +809,9 @@ def validate_permission_scenario(*, port: int, api_key: str, user_marker: str,
     first = frames_for(document)
     call = first[0]["choices"][0]["delta"]["tool_calls"][0]
     if (call["id"] != PERMISSION_TOOL_CALL_ID
-            or call["function"]["name"] != "Bash"
-            or json.loads(call["function"]["arguments"])["command"]
-            != PERMISSION_TOOL_COMMAND
+            or call["function"]["name"] != "exec_command"
+            or json.loads(call["function"]["arguments"])
+            != {"cmd": PERMISSION_TOOL_COMMAND, "yield_time_ms": 10000}
             or first[1]["choices"][0]["finish_reason"] != "tool_calls"):
         raise RuntimeError("permission fixture did not request the exact safe command")
 
@@ -828,12 +828,16 @@ def validate_permission_scenario(*, port: int, api_key: str, user_marker: str,
             or second[1]["choices"][0]["finish_reason"] != "stop"):
         raise RuntimeError("permission fixture did not complete after the tool result")
 
-    no_tool_document = {**document, "messages": messages[:1], "tools": []}
-    rejected_status, _, _ = request_completion(
-        api_key=api_key, port=port, request_document=no_tool_document
-    )
-    if rejected_status != 422:
-        raise RuntimeError("permission fixture invented a tool not offered by Bamboo")
+    for tools in [[], [{"type": "function", "function": {"name": "Bash"}}],
+                  [{"type": "function", "function": {"name": "Read"}}],
+                  [{"type": "function", "function": {"name": "exec_Command"}}],
+                  [{"type": "function", "function": {"name": None}}]]:
+        no_tool_document = {**document, "messages": messages[:1], "tools": tools}
+        rejected_status, _, _ = request_completion(
+            api_key=api_key, port=port, request_document=no_tool_document
+        )
+        if rejected_status != 422:
+            raise RuntimeError("permission fixture invented a tool not offered by Bamboo")
 
 
 def validate_browser_popup_scenario(*, port: int, api_key: str,
