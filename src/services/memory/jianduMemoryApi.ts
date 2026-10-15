@@ -56,6 +56,22 @@ export interface JianduProjectContext {
   projectId: string
 }
 
+/** Durable inventory across Global and Bamboo Projects, not a session snapshot. */
+export interface JianduMemoryOverview {
+  totalMemories: number
+  globalMemories: number
+  projectMemories: number
+  projectCount: number
+  byType: Record<JianduMemoryType, number>
+  byStatus: Record<JianduMemoryStatus, number>
+  lastReindexAt: string | null
+  lastDreamAt: string | null
+}
+
+export interface JianduMemoryOverviewClient {
+  getOverview(): Promise<JianduMemoryOverview>
+}
+
 export interface JianduMemoryListItem {
   id: string
   title: string
@@ -155,7 +171,7 @@ const requiredBoolean = (record: JsonRecord, key: string): boolean =>
 
 const requiredCount = (record: JsonRecord, key: string): number => {
   const value = record[key]
-  return typeof value === "number" && Number.isInteger(value) && value >= 0
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0
     ? value
     : fail("malformed_response")
 }
@@ -318,6 +334,30 @@ export const createLookupQuery = (input: CreateProjectMemoryInput): string => {
 const parameter = (name: string, value: unknown) => ({ name, value: JSON.stringify(value) })
 
 export class JianduMemoryApi implements JianduMemoryApiClient {
+  async getOverview(): Promise<JianduMemoryOverview> {
+    try {
+      // No session/Project selector: System Settings always starts at the
+      // server's aggregate inventory, even with no selected conversation.
+      const result = requiredRecord(await apiClient.get<unknown>("metrics/memory/summary"))
+      if (result.scope != null || result.project_key != null) return fail("malformed_response")
+      const totalMemories = requiredCount(result, "total_memories")
+      const byScope = countBreakdown(result.by_scope, ["global", "project"], totalMemories)
+      return {
+        totalMemories,
+        globalMemories: byScope.global,
+        projectMemories: byScope.project,
+        projectCount: requiredCount(result, "project_count"),
+        byType: countBreakdown(result.by_type, JIANDU_MEMORY_TYPES, totalMemories),
+        byStatus: countBreakdown(result.by_status, JIANDU_MEMORY_STATUSES, totalMemories),
+        lastReindexAt: optionalTimestamp(result, "last_reindex_at"),
+        lastDreamAt: optionalTimestamp(result, "last_dream_at"),
+      }
+    } catch (error) {
+      if (error instanceof JianduMemoryApiError) throw error
+      return safeRequestError(error, true)
+    }
+  }
+
   private async getSession(sessionId: string): Promise<SessionContextRecord> {
     try {
       const payload = await apiClient.get<unknown>(`sessions/${encodeURIComponent(sessionId)}`)
@@ -519,6 +559,24 @@ export class JianduMemoryApi implements JianduMemoryApiClient {
       return fail("malformed_response")
     }
   }
+}
+
+const countBreakdown = <T extends string>(
+  value: unknown,
+  labels: readonly T[],
+  expectedTotal: number,
+): Record<T, number> => {
+  const record = requiredRecord(value)
+  if (Object.keys(record).some((key) => !labels.includes(key as T))) return fail("malformed_response")
+  const entries = labels.map((label) => [label, record[label] === undefined ? 0 : requiredCount(record, label)] as const)
+  if (entries.reduce((sum, [, count]) => sum + count, 0) !== expectedTotal) return fail("malformed_response")
+  return Object.fromEntries(entries) as Record<T, number>
+}
+
+const optionalTimestamp = (record: JsonRecord, key: string): string | null => {
+  const value = optionalString(record, key)
+  if (value === undefined) return null
+  return Number.isFinite(Date.parse(value)) ? value : fail("malformed_response")
 }
 
 const filtersOrEmpty = <T extends string>(values: T[] | undefined, allowed: readonly T[]): T[] => {
