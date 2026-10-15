@@ -515,13 +515,47 @@ jobs:
           EXPECTED_INTEGRITY: ${{ steps.pack.outputs.integrity }}
           EXPECTED_SHASUM: ${{ steps.pack.outputs.shasum }}
         run: |
-          REGISTRY_CACHE="${RUNNER_TEMP}/registry-roundtrip-cache"
-          test ! -e "${REGISTRY_CACHE}"
-          mkdir -p "${RUNNER_TEMP}/registry" "${RUNNER_TEMP}/registry-roundtrip"
-          npm pack "@bigduu/lotus-next@${LOTUS_NEXT_RELEASE_VERSION}" --ignore-scripts --prefer-online --cache="${REGISTRY_CACHE}" --registry=https://registry.npmjs.org/ --pack-destination "${RUNNER_TEMP}/registry"
-          REGISTRY_TARBALL="$(find "${RUNNER_TEMP}/registry" -maxdepth 1 -type f -name '*.tgz' -print -quit)"
+          REGISTRY_TARBALL=""
+          READBACK_DEADLINE=$((SECONDS + 600))
+          test ! -e "${RUNNER_TEMP}/registry-dist.json"
+          mkdir -p "${RUNNER_TEMP}/registry-roundtrip"
+          # Publication happened once above. Only this exact public version's
+          # ETARGET propagation response may retry; every attempt owns new bytes
+          # and cache. Authentication, network, integrity and provenance errors
+          # retain their original failure behavior.
+          for READBACK_ATTEMPT in {1..121}; do
+            REGISTRY_CACHE="${RUNNER_TEMP}/registry-roundtrip-cache-${READBACK_ATTEMPT}"
+            READBACK_DIR="${RUNNER_TEMP}/registry-readback-${READBACK_ATTEMPT}"
+            test ! -e "${REGISTRY_CACHE}"
+            test ! -e "${READBACK_DIR}"
+            mkdir "${READBACK_DIR}"
+            if npm pack "@bigduu/lotus-next@${LOTUS_NEXT_RELEASE_VERSION}" --ignore-scripts --prefer-online --cache="${REGISTRY_CACHE}" --registry=https://registry.npmjs.org/ --pack-destination "${READBACK_DIR}" > "${READBACK_DIR}/pack.out" 2> "${READBACK_DIR}/npm.err" &&
+               npm view "@bigduu/lotus-next@${LOTUS_NEXT_RELEASE_VERSION}" dist --json --prefer-online --cache="${REGISTRY_CACHE}" --registry=https://registry.npmjs.org/ > "${READBACK_DIR}/dist.json" 2> "${READBACK_DIR}/npm.err"; then
+              cat "${READBACK_DIR}/pack.out"
+              cat "${READBACK_DIR}/npm.err" >&2
+              REGISTRY_TARBALL="$(find "${READBACK_DIR}" -maxdepth 1 -type f -name '*.tgz' -print -quit)"
+              cp "${READBACK_DIR}/dist.json" "${RUNNER_TEMP}/registry-dist.json"
+              break
+            fi
+            cat "${READBACK_DIR}/pack.out"
+            cat "${READBACK_DIR}/npm.err" >&2
+            node --input-type=module - "${READBACK_DIR}/npm.err" "${LOTUS_NEXT_RELEASE_VERSION}" <<'NODE'
+          import assert from "node:assert/strict"
+          import { readFileSync } from "node:fs"
+          import { stripVTControlCharacters } from "node:util"
+          const [errorPath, version] = process.argv.slice(2)
+          const error = stripVTControlCharacters(readFileSync(errorPath, "utf8"))
+          const codes = [...error.matchAll(/^npm (?:error|ERR!) code (\S+)\s*$/gm)].map((match) => match[1])
+          assert.ok(codes.length && codes.every((code) => code === "ETARGET"), "Registry readback failed outside ETARGET propagation")
+          assert.ok(error.includes(`No matching version found for @bigduu/lotus-next@${version}.`), "Registry error identifies another version")
+          NODE
+            if [ "${READBACK_ATTEMPT}" -ge 121 ] || [ "${SECONDS}" -ge "${READBACK_DEADLINE}" ]; then
+              echo "::error::The exact registry version stayed unavailable within the bounded readback window."
+              exit 1
+            fi
+            sleep 5
+          done
           test -n "${REGISTRY_TARBALL}"
-          npm view "@bigduu/lotus-next@${LOTUS_NEXT_RELEASE_VERSION}" dist --json --prefer-online --cache="${REGISTRY_CACHE}" --registry=https://registry.npmjs.org/ > "${RUNNER_TEMP}/registry-dist.json"
           export REGISTRY_TARBALL
           node --input-type=module - <<'NODE'
           import { createHash } from "node:crypto"
