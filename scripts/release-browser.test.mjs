@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { spawnSync } from "node:child_process"
 import { createHash } from "node:crypto"
-import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"
 import { deserialize } from "node:v8"
@@ -135,6 +135,63 @@ describe("original publication config equivalence", () => {
 })
 
 describe("fixed browser provenance and fail-closed preparation", () => {
+  const acceptedSource = Object.entries(JSON.parse(readFileSync(
+    path.join(sourceRoot, ".github/release-candidates.json"), "utf8",
+  )).candidates).sort(([a], [b]) => a.localeCompare(b, "en", { numeric: true })).at(-1)[1].sourceSha
+  const legacySource = "d8b0eb6cad98ec53afe8dc4f6aeaa35ef050ec9f"
+  const prepareAtDownloadBoundary = ({ expected = acceptedSource, checkout = acceptedSource } = {}) => {
+    const root = temporary()
+    const fixture = path.join(root, "source")
+    const git = spawnSync("git", ["init", "-q", fixture], { encoding: "utf8" })
+    assert.equal(git.status, 0, git.stderr)
+    // A HEAD-only Git fixture keeps this guard unit test usable in shallow CI.
+    // Actual source/tree acceptance belongs to the original workflow gates.
+    writeFileSync(path.join(fixture, ".git/HEAD"), `${checkout}\n`)
+    for (const filename of ["playwright.config.ts", "playwright.real-bamboo.config.ts"]) {
+      writeFileSync(path.join(fixture, filename), readFileSync(path.join(sourceRoot, filename)))
+    }
+    // Only the context's locked-runner metadata is needed. This fixture never
+    // downloads or executes a browser and does not claim browser acceptance.
+    for (const name of ["@playwright/test", "playwright", "playwright-core"]) {
+      const directory = path.join(fixture, "node_modules", name)
+      mkdirSync(directory, { recursive: true })
+      writeFileSync(path.join(directory, "package.json"), JSON.stringify({ name, version: "1.62.1" }))
+    }
+    const controls = path.join(root, "release-control")
+    mkdirSync(controls)
+    const helper = path.join(controls, "release-browser.mjs")
+    writeFileSync(helper, readFileSync(path.join(sourceRoot, "scripts/release-browser.mjs")))
+    const browserRoot = path.join(root, "release-browser")
+    const result = spawnSync(process.execPath, ["--input-type=module", "-e", `
+      globalThis.fetch = () => { process.stdout.write("PINNED_DOWNLOAD_BOUNDARY\\n"); throw new Error("INERT_DOWNLOAD_STOP") }
+      process.argv = ${JSON.stringify([process.execPath, helper, "prepare", fixture, browserRoot])}
+      await import(${JSON.stringify(pathToFileURL(helper).href)})
+    `], { encoding: "utf8", env: { ...process.env, RUNNER_TEMP: root,
+      PUBLICATION_WORKFLOW_SHA: "6520681865c11bc0eb3ac7866a803cb1bfa7d158",
+      GITHUB_SHA: "6520681865c11bc0eb3ac7866a803cb1bfa7d158",
+      LOTUS_NEXT_EXPECTED_SOURCE_REVISION: expected, GITHUB_RUN_ID: "1", GITHUB_RUN_ATTEMPT: "1" } })
+    return { ...result, browserDirectoryCreated: existsSync(browserRoot) }
+  }
+
+  it("prepares the reviewed candidate through all source guards before any download", () => {
+    const result = prepareAtDownloadBoundary()
+    expect(result.status).toBe(1) // The inert fetch deliberately stops here.
+    expect(result.stdout).toContain("PINNED_DOWNLOAD_BOUNDARY")
+    expect(result.stderr).toContain("INERT_DOWNLOAD_STOP")
+  })
+
+  it.each([
+    ["legacy source", { expected: legacySource, checkout: legacySource }, "Unexpected accepted source"],
+    ["unreviewed source", { expected: "f".repeat(40) }, "Unexpected accepted source"],
+    ["checkout drift", { checkout: legacySource }, "Source checkout drift"],
+  ])("rejects %s before creating or downloading the browser", (_name, input, error) => {
+    const result = prepareAtDownloadBoundary(input)
+    expect(result.status).toBe(1)
+    expect(result.stderr).toContain(error)
+    expect(result.stdout).not.toContain("PINNED_DOWNLOAD_BOUNDARY")
+    expect(result.browserDirectoryCreated).toBe(false)
+  })
+
   it("pins both reviewed official archives and executable hashes", () => {
     expect(Object.keys(BROWSER_PINS)).toEqual(["linux64", "mac-arm64"])
     for (const pin of Object.values(BROWSER_PINS)) {
