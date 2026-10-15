@@ -17,6 +17,7 @@ import { useIsMobile, useIsWide } from "@shared/hooks/useMediaQuery"
 import { useAppStore } from "@shared/store/appStore"
 import { isVdiSafeModeEnabled, onVdiSafeModeChange } from "@shared/utils/vdiSafeMode"
 import { Sidebar } from "@/components/app/Sidebar"
+import { WorktreeManager } from "@/components/app/WorktreeManager"
 import { ProjectManagerModal } from "@/components/app/ProjectManagerModal"
 import { DeleteSessionDialog } from "@/components/app/DeleteSessionDialog"
 import { ChatPane } from "@/components/app/ChatPane"
@@ -228,6 +229,8 @@ function App() {
   // Project selected for the NEXT new chat (project-grouped sidebar "新建").
   const [pendingProjectId, setPendingProjectId] = useState<string | null>(null)
   const [projectManagerOpen, setProjectManagerOpen] = useState(false)
+  const [worktreesOpen, setWorktreesOpen] = useState(false)
+  const [pickedWorktree, setPickedWorktree] = useState<{ projectId: string; path: string } | null>(null)
   const [copyFeedback, setCopyFeedback] = useState<{ message: string; failed: boolean } | null>(null)
 
   useEffect(() => {
@@ -437,6 +440,7 @@ function App() {
         booted={booted}
         currentSessionId={currentSessionId}
         onNewChat={(projectId) => {
+          setPickedWorktree(null)
           setPendingProjectId(projectId ?? null)
           // The project (or its default workspace) owns the next session's cwd.
           if (projectId) setPickedWorkspace(null)
@@ -461,6 +465,7 @@ function App() {
         onCopySessionId={copySessionId}
         onOpenSettings={openSettings}
         onOpenProjectManager={() => setProjectManagerOpen(true)}
+        onOpenWorktrees={() => setWorktreesOpen(true)}
       />
       {!sidebarCollapsed ? <ResizeHandle onPointerDown={sidebarResize.startResize} /> : null}
 
@@ -468,9 +473,11 @@ function App() {
         chat={{ ...chat, select, newChat }}
         pageVisible={!settingsOpen}
         pickedWorkspace={pickedWorkspace}
+        worktreePath={pickedWorktree?.projectId === pendingProjectId ? pickedWorktree.path : null}
         pendingProjectId={pendingProjectId}
         onSelectProject={(projectId) => {
           setPendingProjectId(projectId)
+          setPickedWorktree(null)
           // A manual project pick owns the workspace; drop a manual choice.
           if (projectId) setPickedWorkspace(null)
         }}
@@ -609,11 +616,22 @@ function App() {
         onClose={() => setWsPickerOpen(false)}
         onSelect={(p) => {
           setPickedWorkspace(p)
+          setPickedWorktree(null)
           // Manual workspace choice overrides a project pick for the next chat.
           if (p) setPendingProjectId(null)
         }}
       />
 
+      <WorktreeManager open={worktreesOpen} onClose={() => setWorktreesOpen(false)}
+        onOpen={(projectId, path) => {
+          newChat()
+          setPendingProjectId(projectId)
+          setPickedWorkspace(path)
+          setPickedWorktree({ projectId, path })
+          setWorktreesOpen(false)
+        }}
+        onSession={(id) => { select(id); setWorktreesOpen(false) }}
+      />
       <ProjectManagerModal open={projectManagerOpen} onClose={() => setProjectManagerOpen(false)} />
 
       <DeleteSessionDialog

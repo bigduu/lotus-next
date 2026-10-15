@@ -160,6 +160,7 @@ export function Composer({
   slashQuery,
   onMentionQueryChange,
   displayWorkspace,
+  showProjectWorkspace = false,
   workspaceFiles,
   hasSession,
   onOpenWorkspacePicker,
@@ -211,6 +212,8 @@ export function Composer({
   slashQuery: string | null
   onMentionQueryChange: (query: string | null) => void
   displayWorkspace: string | null | undefined
+  /** Keep an explicitly selected worktree visible beside its Project. */
+  showProjectWorkspace?: boolean
   workspaceFiles: WorkspaceFileEntry[]
   hasSession: boolean
   onOpenWorkspacePicker: () => void
@@ -376,7 +379,7 @@ export function Composer({
                   />
                   <button
                     onClick={onOpenWorkspacePicker}
-                    className={selectedProjectId ? "hidden" : "flex max-w-full items-center gap-1.5 rounded-full border bg-card px-2.5 py-1 text-xs text-muted-foreground hover:text-foreground"}
+                    className={selectedProjectId && !showProjectWorkspace ? "hidden" : "flex max-w-full items-center gap-1.5 rounded-full border bg-card px-2.5 py-1 text-xs text-muted-foreground hover:text-foreground"}
                     title={displayWorkspace || uiText("default_working_directory_3d80c40d")}
                   >
                     <FolderGit2 className="size-3.5 shrink-0" />

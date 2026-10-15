@@ -165,6 +165,7 @@ type ChatState = ReturnType<typeof useChat>
 export function ChatPane({
   chat,
   pickedWorkspace,
+  worktreePath,
   pendingProjectId,
   onSelectProject,
   onOpenWorkspacePicker,
@@ -185,6 +186,8 @@ export function ChatPane({
 }: {
   chat: ChatState
   pickedWorkspace: string | null
+  /** Explicit checkout selected in the worktree manager for this Project. */
+  worktreePath?: string | null
   /** Project preselected for the next NEW session (project-grouped sidebar). */
   pendingProjectId?: string | null
   /** Chip-driven project selection for the next NEW session. */
@@ -518,12 +521,13 @@ export function ChatPane({
   // Tiptap reports the active @query at the caret, including mid-message edits.
   const [atQuery, setAtQuery] = useState<string | null>(null)
   const workspacePath = currentChat?.config?.workspacePath
-  // For a NEW session, a selected Project owns the workspace: its primary
-  // path overrides a manually-picked one, and @-file completion follows it.
+  // A new session uses its explicitly selected worktree, then the Project
+  // primary path. Existing sessions retain their stored workspace.
   const selectedProjectPath = useAppStore((state) =>
     pendingProjectId ? state.projects[pendingProjectId]?.project_path : undefined,
   )
-  const displayWorkspace = workspacePath ?? selectedProjectPath ?? pickedWorkspace
+  const selectedWorktreePath = !currentSessionId ? worktreePath : null
+  const displayWorkspace = workspacePath ?? selectedWorktreePath ?? selectedProjectPath ?? pickedWorkspace
   const currentProjectName = useAppStore((state) => {
     const projectId = currentChat?.config?.projectId
     return projectId ? state.projects[projectId]?.name : undefined
@@ -713,7 +717,7 @@ export function ChatPane({
         : null,
       selectedWorkflow: selectedWorkflow ? Object.freeze({ ...selectedWorkflow }) : null,
       typedWorkflow: workflowSelection ? Object.freeze(workflowSelection) : null,
-      workspacePath: selectedProjectPath ?? pickedWorkspace,
+      workspacePath: selectedWorktreePath ?? selectedProjectPath ?? pickedWorkspace,
       projectId: pendingProjectId ?? null,
       templatePrompt: !currentSessionId && !secondary ? peekPendingTemplatePrompt() : null,
       // The home picker's selection only applies when this send creates a new
@@ -1271,6 +1275,7 @@ export function ChatPane({
           slashQuery={slashQuery}
           onMentionQueryChange={setAtQuery}
           displayWorkspace={displayWorkspace}
+          showProjectWorkspace={!!selectedWorktreePath}
           workspaceFiles={workspaceFiles}
           hasSession={!!currentSessionId}
           onOpenWorkspacePicker={onOpenWorkspacePicker}

@@ -1,7 +1,7 @@
 import { useUiText } from "@shared/i18n/ui"
 import { isSessionUnread, useSessionReadState } from "@/lib/sessionReadState"
 import { useId, useMemo, useRef, useState, type DragEvent } from "react"
-import { ChevronRight, Plus, Search, X, Cog, PanelLeftClose, FolderClosed, CalendarDays, ChevronDown } from "lucide-react"
+import { ChevronRight, Plus, Search, X, Cog, PanelLeftClose, FolderClosed, CalendarDays, ChevronDown, GitBranch } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { BrandMark } from "@/components/ui/brand-mark"
 import { Input } from "@/components/ui/input"
@@ -61,6 +61,7 @@ export function Sidebar({
   onCopySessionId,
   onOpenSettings,
   onOpenProjectManager,
+  onOpenWorktrees,
 }: {
   open: boolean
   onClose: () => void
@@ -80,6 +81,7 @@ export function Sidebar({
   onCopySessionId: (sessionId: string) => void
   onOpenSettings: () => void
   onOpenProjectManager: () => void
+  onOpenWorktrees?: () => void
 }) {
   const uiText = useUiText()
   const [search, setSearch] = useState("")
@@ -586,6 +588,9 @@ export function Sidebar({
           ) : null}
         </div>
         <div className="border-t p-2">
+          {onOpenWorktrees && <Button variant="ghost" className="w-full justify-start gap-2" onClick={() => { onOpenWorktrees(); onClose() }}>
+            <GitBranch className="size-4" />{uiText("worktrees_title")}
+          </Button>}
           <Button
             variant="ghost"
             className="w-full justify-start gap-2"
