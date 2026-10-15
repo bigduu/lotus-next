@@ -152,3 +152,55 @@ describe("Nova app setup authority", () => {
     expect(post).toHaveBeenCalledExactlyOnceWith("plugins/nova/app/install", { artifact_id: "fixture-reviewed-app" })
   })
 })
+
+
+const novaLifecycleReport = (): NovaAppSetupReport => ({
+  ...novaReport(true),
+  start: { available: true, reason: null },
+  observation: {
+    schema_version: 1, observed_at: new Date().toISOString(), app_runtime: "not_verified", permissions: "not_verified",
+    mcp: { server_id: "nova", state: "not_observed", tool_count: 0, configuration_applied: "not_verified" },
+  },
+})
+
+describe("Nova explicit lifecycle contract", () => {
+  it("accepts additive observations without promoting runtime or permissions", async () => {
+    const value = novaLifecycleReport(); get.mockResolvedValue(value)
+    expect(await service.getNovaAppSetup()).toEqual(value)
+    expect(value.desktop_readiness).toBe("not_tested")
+  })
+  it.each([
+    (r: NovaAppSetupReport) => ({ ...r, observation: undefined }),
+    (r: NovaAppSetupReport) => ({ ...r, start: undefined }),
+    (r: NovaAppSetupReport) => ({ ...r, observation: { ...r.observation, schema_version: 2 } }),
+    (r: NovaAppSetupReport) => ({ ...r, observation: { ...r.observation, observed_at: "invalid" } }),
+    (r: NovaAppSetupReport) => ({ ...r, observation: { ...r.observation, app_runtime: "running" } }),
+    (r: NovaAppSetupReport) => ({ ...r, observation: { ...r.observation, permissions: "granted" } }),
+    (r: NovaAppSetupReport) => ({ ...r, observation: { ...r.observation, mcp: { ...r.observation!.mcp, server_id: "chrome" } } }),
+    (r: NovaAppSetupReport) => ({ ...r, observation: { ...r.observation, mcp: { ...r.observation!.mcp, server_id: null, state: "ready" } } }),
+    (r: NovaAppSetupReport) => ({ ...r, observation: { ...r.observation, mcp: { ...r.observation!.mcp, tool_count: -1 } } }),
+    (r: NovaAppSetupReport) => ({ ...r, observation: { ...r.observation, mcp: { ...r.observation!.mcp, configuration_applied: "applied" } } }),
+    (r: NovaAppSetupReport) => ({ ...r, app: { ...r.app, connector_compatible: false } }),
+    (r: NovaAppSetupReport) => ({ ...r, app: { ...r.app, version: "0.2.1" } }),
+  ])("rejects malformed or contradictory lifecycle authority %#", async (alter) => {
+    get.mockResolvedValue(alter(novaLifecycleReport()))
+    await expect(service.getNovaAppSetup()).rejects.toThrow("could not be verified")
+  })
+  it("sends only the observed version/time and requires an explicit launch receipt", async () => {
+    const report = novaLifecycleReport()
+    const post = vi.spyOn(apiClient, "post").mockResolvedValue({ action: "start_requested", setup: report })
+    post.mockClear()
+    await expect(service.startNovaApp(report)).resolves.toBeUndefined()
+    expect(post).toHaveBeenCalledExactlyOnceWith("plugins/nova/app/start", {
+      observed_at: report.observation!.observed_at, app_version: "0.3.1",
+    })
+    post.mockResolvedValue({ action: "running", setup: report })
+    await expect(service.startNovaApp(report)).rejects.toThrow("could not be confirmed")
+  })
+  it("does not synthesize startup support on an older setup report", async () => {
+    const post = vi.spyOn(apiClient, "post").mockResolvedValue({})
+    post.mockClear()
+    await expect(service.startNovaApp(novaReport(true))).rejects.toThrow("could not be verified")
+    expect(post).not.toHaveBeenCalled()
+  })
+})

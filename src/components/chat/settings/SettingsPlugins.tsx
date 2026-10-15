@@ -92,6 +92,7 @@ export function SettingsPlugins() {
   const [novaSetup, setNovaSetup] = useState<NovaAppSetupReport | null>(null)
   const [novaSetupError, setNovaSetupError] = useState<NovaSetupError>("loading")
   const [novaReconnectSent, setNovaReconnectSent] = useState(false)
+  const [novaStartSent, setNovaStartSent] = useState(false)
   const [copiedJianduConfig, setCopiedJianduConfig] = useState<string | null>(null)
   const [copyError, setCopyError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
@@ -182,6 +183,7 @@ export function SettingsPlugins() {
     setOperation(id)
     setActionError(null)
     setNovaReconnectSent(false)
+    setNovaStartSent(false)
     setCopyError(null)
     setCopiedJianduConfig(null)
     return true
@@ -233,6 +235,30 @@ export function SettingsPlugins() {
       // No automatic POST retry. The owned backend operation may still finish.
     } finally {
       if (mountedRef.current) setActionError(uiText("plugin_nova_app_install_unconfirmed"))
+      await finishOperation()
+    }
+  }
+
+  const startNovaApp = async () => {
+    const expectedVersion = novaSetup?.app?.version
+    if (!novaSetup?.start?.available || !expectedVersion || !beginOperation("nova-app-start", false)) return
+    try {
+      // A stale screen never authorizes startup. The host independently checks
+      // this fresh observation again while owning its serialized operation.
+      const fresh = await pluginService.getNovaAppSetup()
+      if (!mountedRef.current) return
+      setNovaSetup(fresh)
+      setNovaSetupError(null)
+      if (!fresh.start?.available || !fresh.observation || fresh.app?.version !== expectedVersion) {
+        setActionError(uiText("plugin_nova_app_start_unconfirmed"))
+        return
+      }
+      await pluginService.startNovaApp(fresh)
+      if (mountedRef.current) setNovaStartSent(true)
+    } catch {
+      // Do not retry a POST or infer success from the App still being installed.
+      if (mountedRef.current) setActionError(uiText("plugin_nova_app_start_unconfirmed"))
+    } finally {
       await finishOperation()
     }
   }
@@ -347,10 +373,10 @@ export function SettingsPlugins() {
     onInstall={() => void installJiandu()} onCopy={() => void copyJiandu()} />
   const novaPanel = <NovaSetupPanel report={novaSetup} error={novaSetupError}
     disabled={operation !== null || loading} installing={operation === "nova-app-install"} reconnecting={operation === "nova-reconnect"}
-    reconnectSent={novaReconnectSent}
+    reconnectSent={novaReconnectSent} starting={operation === "nova-app-start"} startSent={novaStartSent}
     canReconnect={Boolean(novaSetup?.app?.success && novaSetup.app.state === "installed" && novaSetup.app.connector_compatible &&
       novaSetup.desktop_server_id && serversConfirmed && servers.some((server) => server.id === novaSetup.desktop_server_id && server.enabled))}
-    onInstall={() => void installNovaApp()} onReconnect={() => void reconnectNova()} />
+    onInstall={() => void installNovaApp()} onStart={() => void startNovaApp()} onReconnect={() => void reconnectNova()} />
 
   return (
     <div className="space-y-4">
