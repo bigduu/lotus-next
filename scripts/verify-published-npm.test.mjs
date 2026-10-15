@@ -81,7 +81,7 @@ afterEach(() => {
 
 const committedRecordBytes = readRepositoryBytes(".github/release-recoveries/2026.10.12.json")
 const committedRecord = JSON.parse(committedRecordBytes)
-const candidateBytes = readRepositoryBytes(".github/release-candidates.json")
+const candidateBytes = readRepositoryBytes("scripts/fixtures/recovery-2026.10.12-candidates.json")
 const acceptanceBytes = readRepositoryBytes(".github/release-acceptance/2026.10.12.json")
 const recordFixture = () => structuredClone(committedRecord)
 const rewriteEvidence = (record, name, mutate) => {
@@ -833,6 +833,18 @@ describe("fresh npm pack result", () => {
 
 const integrationFixture = () => {
   const root = temporaryDirectory()
+  // Model the immutable original recovery controller's checkout, rather than
+  // reading a later release's evolving candidate ledger from process.cwd().
+  const controllerDirectory = path.join(root, "controller")
+  for (const [file, bytes] of [
+    [".github/release-recoveries/2026.10.12.json", committedRecordBytes],
+    [".github/release-candidates.json", candidateBytes],
+    [".github/release-acceptance/2026.10.12.json", acceptanceBytes],
+  ]) {
+    const destination = path.join(controllerDirectory, file)
+    mkdirSync(path.dirname(destination), { recursive: true })
+    writeFileSync(destination, bytes)
+  }
   const environment = {
     ...recoveryEnvironment(),
     RUNNER_TEMP: root,
@@ -883,7 +895,7 @@ const integrationFixture = () => {
       return JSON.stringify(npmPackFixture(fake))
     }
     expect(command).toBe("git")
-    expect(options.cwd).toBe(process.cwd())
+    expect(options.cwd).toBe(controllerDirectory)
     const key = args.join(" ")
     if (Object.hasOwn(sample.gitOverrides, key)) return sample.gitOverrides[key]
     if (args[0] === "fetch") return ""
@@ -902,7 +914,7 @@ const integrationFixture = () => {
     }
     return contextGit(environment)(args)
   })
-  sample.verify = () => verifyPublishedNpm({ environment, cwd: process.cwd(), fetchImpl: sample.fetchImpl, exec: sample.exec, now: () => original.now })
+  sample.verify = () => verifyPublishedNpm({ environment, cwd: controllerDirectory, fetchImpl: sample.fetchImpl, exec: sample.exec, now: () => original.now })
   return sample
 }
 
