@@ -203,6 +203,10 @@ const openJianduSettings = async (
   await expect(settings).toBeVisible();
   await selectSettingsCategory(settings, "jiandu", "Jiandu 记忆");
   await expect(
+    settings.getByRole("heading", { name: "记忆总览", exact: true }),
+  ).toBeVisible();
+  await settings.getByRole("button", { name: "管理当前项目记忆", exact: true }).click();
+  await expect(
     settings.getByRole("heading", { name: "项目记忆", exact: true }),
   ).toBeVisible();
   await expect(settings.getByText(sessionTitle, { exact: true })).toBeVisible();
