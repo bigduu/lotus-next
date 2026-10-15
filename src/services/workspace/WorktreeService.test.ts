@@ -1,5 +1,5 @@
 import { expect, it, vi } from "vitest"
-const api = vi.hoisted(() => ({ get: vi.fn(), put: vi.fn(), post: vi.fn() }))
+const api = vi.hoisted(() => ({ get: vi.fn(), putOnce: vi.fn(), postOnce: vi.fn() }))
 vi.mock("../api", () => ({ apiClient: api }))
 import { worktreeService } from "./WorktreeService"
 it("uses the authenticated API and keeps explicit locations in create requests", async () => {
@@ -10,8 +10,8 @@ it("uses the authenticated API and keeps explicit locations in create requests",
   const request = { repository: "/repo", root: "/Volumes/External/worktrees", name: "task", branch: "feature/task" }
   await worktreeService.create("project/a", request)
   expect(api.get).toHaveBeenCalledWith("worktrees/preferences")
-  expect(api.put).toHaveBeenCalledWith("worktrees/preferences", { root: "/Volumes/External/worktrees" })
-  expect(api.put).toHaveBeenCalledWith("worktrees/preferences", { root: null, project_id: "project-a" })
+  expect(api.putOnce).toHaveBeenCalledWith("worktrees/preferences", { root: "/Volumes/External/worktrees" })
+  expect(api.putOnce).toHaveBeenCalledWith("worktrees/preferences", { root: null, project_id: "project-a" })
   expect(api.get).toHaveBeenCalledWith("projects/project%2Fa/worktrees")
-  expect(api.post).toHaveBeenCalledWith("projects/project%2Fa/worktrees", request)
+  expect(api.postOnce).toHaveBeenCalledWith("projects/project%2Fa/worktrees", request)
 })

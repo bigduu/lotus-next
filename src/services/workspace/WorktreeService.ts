@@ -29,8 +29,8 @@ export interface ProjectWorktrees {
 export const worktreeService = {
   preferences: () => apiClient.get<WorktreePreferences>("worktrees/preferences"),
   saveRoot: (root: string | null, projectId?: string) =>
-    apiClient.put<WorktreePreferences>("worktrees/preferences", { root, ...(projectId ? { project_id: projectId } : {}) }),
+    apiClient.putOnce<WorktreePreferences>("worktrees/preferences", { root, ...(projectId ? { project_id: projectId } : {}) }),
   list: (projectId: string) => apiClient.get<ProjectWorktrees>(`projects/${encodeURIComponent(projectId)}/worktrees`),
   create: (projectId: string, request: { repository: string; root: string; name: string; branch: string }) =>
-    apiClient.post<{ path: string }>(`projects/${encodeURIComponent(projectId)}/worktrees`, request),
+    apiClient.postOnce<{ path: string }>(`projects/${encodeURIComponent(projectId)}/worktrees`, request),
 }

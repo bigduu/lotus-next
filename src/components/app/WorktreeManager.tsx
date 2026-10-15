@@ -70,7 +70,8 @@ export function WorktreeManager({ open, onClose, onOpen, onSession }: {
     if (selectedProjectId) setListing(await worktreeService.list(selectedProjectId))
   }
   const saveRoot = (scope?: string) => run(async () => {
-    const next = await worktreeService.saveRoot((scope ? projectRoot : globalRoot).trim() || null, scope)
+    const value = scope ? projectRoot : globalRoot
+    const next = await worktreeService.saveRoot(value.trim() ? value : null, scope)
     setPreferences(next)
     setGlobalRoot(next.default_root ?? "")
     setProjectRoot(next.project_roots?.[selectedProjectId] ?? "")
@@ -133,7 +134,7 @@ export function WorktreeManager({ open, onClose, onOpen, onSession }: {
             </article>)}
           </section>)}
           <form className="space-y-3 rounded-md border p-3" onSubmit={(event) => { event.preventDefault(); void run(async () => {
-            const result = await worktreeService.create(selectedProjectId, { repository, root: root.trim(), name: name.trim(), branch: branch.trim() })
+            const result = await worktreeService.create(selectedProjectId, { repository, root, name: name.trim(), branch: branch.trim() })
             setCreatedPath(result.path)
             setName("")
             setBranch("")
