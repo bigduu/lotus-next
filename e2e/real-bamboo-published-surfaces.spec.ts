@@ -15,7 +15,7 @@ import {
   type FrameObservation,
   type PageObservation,
 } from "./support/pageObservation.ts";
-import { navigateWithNetworkChangeRecovery } from "./support/transientNavigation.ts";
+import { preflightArtifactSurface } from "./support/transientNavigation.ts";
 import { closeSettings, settingsSurface } from "./support/settingsNavigation.ts";
 
 type JsonRecord = Record<string, unknown>;
@@ -117,26 +117,6 @@ const assertSuccessfulDocumentNavigation = (
     throw new Error(
       `${phase} navigation returned HTTP ${response.status()} from ${responseUrl.href}`,
     );
-  }
-};
-
-const preflightSecureSurface = async (
-  browser: Browser,
-  entryUrl: URL,
-): Promise<void> => {
-  const context = await browser.newContext({ ignoreHTTPSErrors: true });
-  try {
-    let page = await context.newPage();
-    const response = await navigateWithNetworkChangeRecovery(
-      () => page.goto(entryUrl.href, { waitUntil: "domcontentloaded" }),
-      async () => {
-        await page.close();
-        page = await context.newPage();
-      },
-    );
-    assertSuccessfulDocumentNavigation(response, entryUrl, "preflight");
-  } finally {
-    await context.close();
   }
 };
 
@@ -283,13 +263,9 @@ const exerciseSurface = async ({
     requiredEnvironment("LOTUS_REAL_ARTIFACT_IDENTITY"),
   ) as unknown;
   const currentSourceArtifact = asRecord(artifactIdentity)?.registry === "local-pack";
-  if (entryUrl.protocol === "https:") {
-    // Chromium can report one browser-global network-change transition when
-    // the secure fixture first comes online. Consume only that transition in
-    // a throwaway page so the acceptance page keeps one clean, fully observed
-    // document epoch (including StrictMode's cancellable bootstrap request).
-    await preflightSecureSurface(browser, entryUrl);
-  }
+  // Settle Chromium on readiness before HTTP as well as HTTPS. This does not
+  // load app assets; their first document is fully observed in a fresh context.
+  await preflightArtifactSurface(browser, entryUrl);
   const context = await browser.newContext({
     viewport: definition.viewport,
     isMobile: definition.mobile,
