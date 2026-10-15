@@ -139,3 +139,62 @@ for (const state of ["legacy-backend", "legacy-cli", "unknown", "windows", "linu
     expect(posts).toEqual([])
   })
 }
+
+
+test("explicit Nova start refreshes authority, preserves a rejected attempt, and never implies desktop readiness", async ({ page }, testInfo) => {
+  const observation = await installArtifactRuntime(page, standaloneScenario)
+  const report = setup(true)
+  report.start = { available: true, reason: null }
+  report.observation = {
+    schema_version: 1, observed_at: new Date().toISOString(), app_runtime: "not_verified", permissions: "not_verified",
+    mcp: { server_id: "nova", state: "stopped", tool_count: 0, configuration_applied: "not_verified" },
+  }
+  let reads = 0
+  const posts: { path: string; body: unknown; afterReads: number; observedAt: string }[] = []
+  await page.route("**/api/v1/plugins**", async (route) => {
+    const path = new URL(route.request().url()).pathname
+    if (path.endsWith("/nova/app") && route.request().method() === "GET") {
+      reads += 1
+      report.observation!.observed_at = new Date().toISOString()
+      return route.fulfill({ json: report })
+    }
+    if (path.endsWith("/jiandu/setup")) return route.fulfill({ status: 404, json: { error: "Not Found" } })
+    if (route.request().method() === "GET") return route.fulfill({ json: { plugins: [plugin] } })
+    posts.push({ path, body: route.request().postDataJSON(), afterReads: reads, observedAt: report.observation!.observed_at })
+    if (posts.length === 1) return route.fulfill({ status: 409, json: { error: { type: "official_nova_unavailable", reason: "observation_expired" } } })
+    return route.fulfill({ status: 202, json: { action: "start_requested", setup: report } })
+  })
+  const mcpPosts: string[] = []
+  await page.route("**/api/v1/mcp/servers**", async (route) => {
+    if (route.request().method() === "POST") mcpPosts.push(route.request().url())
+    return route.fulfill({ json: { servers: [server("nova", true), server("nova-chrome-devtools", false)] } })
+  })
+  await page.goto(standaloneScenario.entryUrl)
+  await expect(page.getByRole("textbox", { name: "消息", exact: true })).toBeVisible()
+  await openPlugins(page)
+  const card = page.getByRole("article", { name: "Nova", exact: true })
+  const start = card.getByRole("button", { name: "启动 Nova.app", exact: true })
+  await expect(start).toBeEnabled()
+  await expect(card).toContainText("应用运行与桌面权限尚未验证")
+  await expect(card).toContainText("MCP 最近观测：已停止。当前配置是否生效及桌面操作仍未验证")
+  const initialReads = reads
+  expect(posts).toEqual([])
+  await start.click()
+  await expect(page.getByRole("alert")).toContainText("尚未确认 Nova 启动结果")
+  await expect(start).toBeEnabled()
+  expect(posts).toHaveLength(1)
+  expect(posts[0].afterReads).toBeGreaterThan(initialReads)
+  await expect(card).not.toContainText("启动请求已发送")
+  await start.click()
+  await expect(card).toContainText("启动请求已发送。请在菜单栏确认 Nova")
+  await expect(card).toContainText("应用运行与桌面权限尚未验证")
+  await expect(card).toContainText("MCP 最近观测：已停止。当前配置是否生效及桌面操作仍未验证")
+  expect(posts).toHaveLength(2)
+  for (const post of posts) {
+    expect(post.path).toBe("/api/v1/plugins/nova/app/start")
+    expect(post.body).toEqual({ observed_at: post.observedAt, app_version: "0.3.1" })
+  }
+  expect(mcpPosts).toEqual([])
+  expect(observation.pageErrors).toEqual([])
+  await testInfo.attach(`nova-start-requested-${testInfo.project.name}`, { body: await page.screenshot({ animations: "disabled" }), contentType: "image/png" })
+})

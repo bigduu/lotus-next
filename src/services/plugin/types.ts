@@ -33,6 +33,20 @@ export interface NovaAppSetupReport {
   manual_guidance: string;
   desktop_server_id: string | null;
   desktop_readiness: "not_tested";
+  /** Additive v1 lifecycle support; absent on older setup-capable backends. */
+  start?: { available: boolean; reason: string | null };
+  observation?: {
+    schema_version: 1;
+    observed_at: string;
+    app_runtime: "not_verified";
+    permissions: "not_verified";
+    mcp: {
+      server_id: string | null;
+      state: "not_observed" | "connecting" | "ready" | "degraded" | "stopped" | "error";
+      tool_count: number;
+      configuration_applied: "not_verified";
+    };
+  };
 }
 
 /** Host-derived authority for the optional connector; built-in memory is separate. */

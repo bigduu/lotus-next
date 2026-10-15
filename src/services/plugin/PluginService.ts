@@ -142,12 +142,41 @@ const parseNovaAppSetup = (value: unknown): NovaAppSetupReport => {
   if (install.available && (host.os !== "macos" || !["aarch64", "x86_64"].includes(host.arch) || !host.supported ||
     connector.state !== "verified" || !capability.supported || !isRecord(app) || app.state !== "missing" || !app.success ||
     !isRecord(artifact) || connector.version !== artifact.version || install.reason !== null)) return invalid();
+  if (value.start !== undefined || value.observation !== undefined) {
+    const { start, observation } = value;
+    if (!isRecord(start) || typeof start.available !== "boolean" || !nullableString(start.reason) ||
+      !isRecord(observation) || observation.schema_version !== 1 || !nonemptyString(observation.observed_at) ||
+      !Number.isFinite(Date.parse(observation.observed_at)) || observation.app_runtime !== "not_verified" ||
+      observation.permissions !== "not_verified" || !isRecord(observation.mcp)) return invalid();
+    const mcp = observation.mcp;
+    if (!nullableString(mcp.server_id) || (mcp.server_id !== null && mcp.server_id !== desktopId) ||
+      typeof mcp.state !== "string" || !["not_observed", "connecting", "ready", "degraded", "stopped", "error"].includes(mcp.state) ||
+      typeof mcp.tool_count !== "number" || !Number.isSafeInteger(mcp.tool_count) || mcp.tool_count < 0 ||
+      mcp.configuration_applied !== "not_verified" || (mcp.server_id === null && mcp.state !== "not_observed")) return invalid();
+    if (start.available && (!host.supported || !capability.supported || connector.state !== "verified" ||
+      !isRecord(app) || app.state !== "installed" || !app.success || app.connector_compatible !== true ||
+      app.version !== connector.version || start.reason !== null)) return invalid();
+  }
   return value as unknown as NovaAppSetupReport;
 };
 
 export class PluginService {
   async getNovaAppSetup(): Promise<NovaAppSetupReport> {
     return parseNovaAppSetup(await apiClient.get<unknown>("plugins/nova/app"));
+  }
+
+  async startNovaApp(report: NovaAppSetupReport): Promise<void> {
+    if (!report.start?.available || !report.observation || !report.app?.version) {
+      throw new Error("Nova app start could not be verified.");
+    }
+    const result = await apiClient.post<unknown>("plugins/nova/app/start", {
+      observed_at: report.observation.observed_at,
+      app_version: report.app.version,
+    });
+    if (!isRecord(result) || result.action !== "start_requested") {
+      throw new Error("Nova app start could not be confirmed.");
+    }
+    parseNovaAppSetup(result.setup);
   }
 
   async installNovaApp(artifactId: string): Promise<void> {

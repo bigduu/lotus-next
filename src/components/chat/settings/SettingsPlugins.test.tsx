@@ -784,3 +784,91 @@ describe("official plugin center", () => {
     expect(document.body.textContent).not.toContain("ui.plugin_")
   })
 })
+
+
+const startableNovaApp = (): NovaAppSetupReport => ({
+  ...novaAppReport(true), start: { available: true, reason: null },
+  observation: {
+    schema_version: 1, observed_at: new Date().toISOString(), app_runtime: "not_verified", permissions: "not_verified",
+    mcp: { server_id: "nova", state: "not_observed", tool_count: 0, configuration_applied: "not_verified" },
+  },
+})
+
+describe("explicit Nova App startup", () => {
+  beforeEach(async () => { await changeLocale("zh-CN") })
+
+  it("offers an explicit action without starting or connecting on a status read", async () => {
+    novaAppSetup = startableNovaApp()
+    await mount()
+    expect(button("启动 Nova.app").disabled).toBe(false)
+    expect(document.body.textContent).toContain("应用运行与桌面权限尚未验证")
+    expect(document.body.textContent).toContain("桌面操作仍未验证")
+    expect(post).not.toHaveBeenCalled()
+  })
+
+  it("labels an existing ready snapshot without claiming adoption of current configuration", async () => {
+    novaAppSetup = startableNovaApp()
+    novaAppSetup.observation!.mcp.state = "ready"
+    await mount()
+    expect(document.body.textContent).toContain("MCP 最近观测：已连接。当前配置是否生效及桌面操作仍未验证")
+    expect(post).not.toHaveBeenCalled()
+  })
+
+  it("revalidates at click time, sends only the fresh observation, and never auto-reconnects", async () => {
+    novaAppSetup = startableNovaApp(); servers = [server(true)]
+    await mount()
+    const fresh = startableNovaApp(); novaAppSetup = fresh
+    post.mockResolvedValueOnce({ action: "start_requested", setup: fresh })
+    await click("启动 Nova.app")
+    expect(post).toHaveBeenCalledExactlyOnceWith("plugins/nova/app/start", {
+      observed_at: fresh.observation!.observed_at, app_version: "0.3.1",
+    })
+    expect(document.body.textContent).toContain("启动请求已发送")
+    expect(document.body.textContent).toContain("应用运行与桌面权限尚未验证")
+    expect(servers[0].runtime.status).toBe("stopped")
+    expect(document.querySelector('[role="alert"]')).toBeNull()
+  })
+
+  it("withholds startup when fresh status changes version or compatibility", async () => {
+    novaAppSetup = startableNovaApp(); await mount()
+    novaAppSetup = { ...startableNovaApp(), start: { available: false, reason: "app_version_mismatch" },
+      app: { ...novaAppReport(true).app!, version: "0.2.1", connector_compatible: false } }
+    await click("启动 Nova.app")
+    expect(post).not.toHaveBeenCalled()
+    expect(button("启动 Nova.app").disabled).toBe(true)
+    expect(document.body.textContent).toContain("尚未确认 Nova 启动结果")
+  })
+
+  it("preserves a lost or expired start failure despite installed status and retries only explicitly", async () => {
+    novaAppSetup = startableNovaApp()
+    post.mockRejectedValueOnce(new ApiError("observation_expired", 409, "Conflict"))
+    await mount(); await click("启动 Nova.app")
+    expect(document.body.textContent).toContain("尚未确认 Nova 启动结果")
+    expect(document.body.textContent).not.toContain("启动请求已发送")
+    expect(post).toHaveBeenCalledTimes(1)
+    const fresh = startableNovaApp(); novaAppSetup = fresh
+    post.mockResolvedValueOnce({ action: "start_requested", setup: fresh })
+    await click("启动 Nova.app")
+    expect(post).toHaveBeenCalledTimes(2)
+    expect(document.body.textContent).toContain("启动请求已发送")
+    expect(document.querySelector('[role="alert"]')).toBeNull()
+  })
+
+  it("cancels before POST if the panel unmounts during fresh verification", async () => {
+    novaAppSetup = startableNovaApp(); await mount()
+    const pending = deferred<unknown>()
+    const original = get.getMockImplementation()!
+    get.mockImplementation(async (path) => path === "plugins/nova/app" ? pending.promise : original(path))
+    await click("启动 Nova.app")
+    act(() => roots.pop()!.unmount())
+    await act(async () => { pending.resolve(startableNovaApp()) })
+    expect(post).not.toHaveBeenCalled()
+  })
+
+  it("keeps manual guidance on setup-capable backends without startup support", async () => {
+    novaAppSetup = novaAppReport(true)
+    await mount()
+    expect(button("启动 Nova.app")).toBeUndefined()
+    expect(post).not.toHaveBeenCalled()
+  })
+})

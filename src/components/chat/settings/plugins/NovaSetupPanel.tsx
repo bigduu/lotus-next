@@ -1,4 +1,4 @@
-import { Download, ExternalLink, RotateCw } from "lucide-react"
+import { Download, ExternalLink, Play, RotateCw } from "lucide-react"
 import type { NovaAppSetupReport } from "@services/plugin"
 import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { Button } from "@/components/ui/button"
@@ -18,15 +18,18 @@ const reasonKeys: Record<string, Parameters<typeof uiText>[0]> = {
   connector_version_mismatch: "plugin_nova_app_version_mismatch",
 }
 
-export function NovaSetupPanel({ report, error, disabled, installing, reconnecting, reconnectSent, canReconnect, onInstall, onReconnect }: {
+export function NovaSetupPanel({ report, error, disabled, installing, reconnecting, reconnectSent, starting, startSent, canReconnect, onInstall, onStart, onReconnect }: {
   report: NovaAppSetupReport | null
   error: NovaSetupError
   disabled: boolean
   installing: boolean
   reconnecting: boolean
   reconnectSent: boolean
+  starting: boolean
+  startSent: boolean
   canReconnect: boolean
   onInstall: () => void
+  onStart: () => void
   onReconnect: () => void
 }) {
   useUiLocale()
@@ -37,9 +40,18 @@ export function NovaSetupPanel({ report, error, disabled, installing, reconnecti
   const status = error === "loading" ? "loading_4927a53b" : error === "legacy" ? "plugin_nova_app_legacy_backend" : error
     ? "plugin_nova_app_unknown" : installed ? app.connector_compatible ? "plugin_nova_app_installed" : "plugin_nova_app_version_mismatch"
       : report?.install.available ? "plugin_nova_app_missing" : reasonKeys[reason ?? ""] ?? "plugin_nova_app_unknown"
+  const mcpLabels: Record<string, Parameters<typeof uiText>[0]> = {
+    ready: "plugin_connected", connecting: "connecting_a898478b", error: "error_0bc1fb72",
+    degraded: "plugin_degraded", stopped: "stopped_f006455e", not_observed: "plugin_connection_unknown",
+  }
   return <div className="space-y-3 rounded-lg border bg-muted/30 p-3 text-xs leading-relaxed text-muted-foreground">
     <p className="font-medium text-foreground">{uiText("plugin_nova_setup_title")}</p>
     <p role="status">{uiText(status)}</p>
+    {startSent ? <p role="status">{uiText("plugin_nova_app_start_sent")}</p> : null}
+    {report?.observation ? <>
+      <p>{uiText("plugin_nova_app_runtime_unverified")}</p>
+      <p>{uiText("plugin_nova_app_mcp_observation", { state: uiText(mcpLabels[report.observation.mcp.state] ?? "plugin_connection_unknown") })}</p>
+    </> : null}
     {reconnectSent ? <p role="status">{uiText("plugin_nova_app_reconnect_sent")}</p> : null}
     {report ? <p>{uiText("plugin_jiandu_host", { os: report.host.os, arch: report.host.arch })}
       {report.connector.version ? ` · v${report.connector.version}` : null}</p> : null}
@@ -50,6 +62,10 @@ export function NovaSetupPanel({ report, error, disabled, installing, reconnecti
       <p>{uiText("plugin_nova_setup_permissions")}</p>
       {installed && !canReconnect ? <p>{uiText("plugin_nova_app_reconnect_unavailable")}</p> : null}
       <div className="flex flex-wrap items-center justify-end gap-2">
+        {installed && report?.start ? <Button size="sm" variant="secondary"
+          disabled={disabled || error !== null || !report.start.available} onClick={onStart}>
+          <Play className="size-4" />{starting ? uiText("plugin_nova_app_starting") : uiText("plugin_nova_app_start")}
+        </Button> : null}
         {installed ? <Button size="sm" variant="secondary" disabled={disabled || !canReconnect} onClick={onReconnect}>
           <RotateCw className="size-4" />{reconnecting ? uiText("plugin_nova_app_reconnecting") : uiText("plugin_nova_app_reconnect")}
         </Button> : <Button size="sm" disabled={disabled || error !== null || !report?.install.available} onClick={onInstall}>
