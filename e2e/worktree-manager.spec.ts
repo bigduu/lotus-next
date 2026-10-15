@@ -23,7 +23,10 @@ test("configures a root, creates a checkout, and opens its explicit workspace", 
     const request = route.request()
     const path = new URL(request.url()).pathname
     if (path === "/api/v1/projects") return route.fulfill({ json: { projects: [project] } })
-    if (path === "/api/v1/projects/project-a") return route.fulfill({ json: project })
+    if (path === "/api/v1/projects/project-a") {
+      // Bamboo omits an empty workspace_bindings array in its real GET JSON.
+      return route.fulfill({ json: { ...project, workspace_bindings: project.workspace_bindings.length ? project.workspace_bindings : undefined } })
+    }
     if (path === "/api/v1/worktrees/preferences") {
       if (request.method() === "PUT") {
         const body = request.postDataJSON()

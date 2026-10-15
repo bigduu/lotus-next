@@ -82,7 +82,7 @@ export function WorktreeManager({ open, onClose, onOpen, onSession }: {
     // Binding grants the existing Project workspace authority; it is not a
     // worktree registry. Discovery always comes from Git, including CLI worktrees.
     const project = await projectService.getProject(selectedProjectId)
-    if (project.project_path !== path && !project.workspace_bindings.some((binding) => binding.path === path)) {
+    if (project.project_path !== path && !(project.workspace_bindings ?? []).some((binding) => binding.path === path)) {
       await useAppStore.getState().bindWorkspace(project.id, project.revision, { path })
     }
     onOpen(selectedProjectId, path)

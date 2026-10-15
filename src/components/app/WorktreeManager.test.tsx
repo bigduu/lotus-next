@@ -77,6 +77,15 @@ it("binds an existing native worktree with the current Project revision before o
   expect(onSession).toHaveBeenCalledWith("session-a")
 })
 
+it("opens a native worktree when Project GET omits empty workspace bindings", async () => {
+  const onOpen = vi.fn()
+  mocks.getProject.mockResolvedValueOnce({ ...project, workspace_bindings: undefined })
+  await mount(onOpen)
+  await act(async () => buttons("打开并新建会话")[0]!.click())
+  expect(useAppStore.getState().bindWorkspace).toHaveBeenCalledWith("project-a", 7, { path: "/Volumes/External/worktrees/existing" })
+  expect(onOpen).toHaveBeenCalledWith("project-a", "/Volumes/External/worktrees/existing")
+})
+
 it("reports an offline volume and preserves the user's path for retry without fallback", async () => {
   await mount()
   mocks.create.mockRejectedValueOnce(new Error("External volume is unavailable"))
