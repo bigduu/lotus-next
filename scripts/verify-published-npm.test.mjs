@@ -846,6 +846,15 @@ const integrationFixture = () => {
   const original = originalPublicationFixture()
   const record = original.record
   const source = JSON.parse(record.rawEvidence.sourceReceipt.utf8)
+  const historicalBamboo = JSON.parse(candidateBytes).candidates[record.version].bambooSha
+  // These git-show results belong to the recovered source, not today's checkout.
+  // Keep its source-bound pins stable when a later release changes the pairing.
+  const sourceFiles = new Map([
+    [".github/workflows/ci.yml", `BAMBOO_E2E_REVISION: ${historicalBamboo}`],
+    [".github/workflows/publish-npm.yml", readRepositoryBytes(".github/workflows/publish-npm.yml").toString()],
+    ["e2e/support/realBambooRuntime.ts", `export const REAL_BAMBOO_REVISION = "${historicalBamboo}";`],
+    ["scripts/published-real-bamboo-acceptance.test.mjs", `const expectedBambooRevision = "${historicalBamboo}"`],
+  ])
   const api = `https://api.github.com/repos/bigduu/lotus-next/actions/runs/${record.originalRun.id}`
   const metadataUrl = "https://registry.npmjs.org/@bigduu%2flotus-next/2026.10.12"
   const attestationUrl = "https://registry.npmjs.org/-/npm/v1/attestations/@bigduu%2flotus-next@2026.10.12"
@@ -857,7 +866,7 @@ const integrationFixture = () => {
     [metadataUrl, metadataFixture(record)],
     [attestationUrl, provenanceFixture(record)],
   ])
-  const sample = { root, environment, original, record, source, api, metadataUrl, attestationUrl, responses, gitOverrides: {}, responseOverrides: new Map() }
+  const sample = { root, environment, original, record, source, sourceFiles, api, metadataUrl, attestationUrl, responses, gitOverrides: {}, responseOverrides: new Map() }
   sample.fetchImpl = vi.fn(async (url, options) => {
     expect(options.method).toBe("GET")
     expect(options.redirect).toBe("error")
@@ -882,7 +891,12 @@ const integrationFixture = () => {
     if (key === "rev-parse FETCH_HEAD") return source.tagObjectSha
     if (key === "rev-parse FETCH_HEAD^{commit}") return source.sourceSha
     if (key === `rev-parse ${source.sourceSha}^{tree}` || key === `rev-parse ${source.productMergeSha}^{tree}`) return source.sourceTree
-    if (args[0] === "show") return readRepositoryBytes(args[1].split(":")[1]).toString()
+    if (args[0] === "show") {
+      const [revision, file] = args[1].split(":")
+      expect(revision).toBe(source.sourceSha)
+      expect(sourceFiles.has(file)).toBe(true)
+      return sourceFiles.get(file)
+    }
     if (key === `ls-remote --exit-code origin ${source.sourceRef} ${source.sourceRef}^{}`) {
       return `${source.tagObjectSha}\t${source.sourceRef}\n${source.sourceSha}\t${source.sourceRef}^{}`
     }
@@ -918,6 +932,20 @@ describe("fail-closed recovery orchestration", () => {
     sample.original.jobs.jobs[1].conclusion = "failure"
     await expect(sample.verify()).rejects.toThrow()
     expect(sample.fetchImpl).toHaveBeenCalledTimes(4)
+    expect(sample.exec.mock.calls.some(([command]) => command === "npm")).toBe(false)
+    expect(existsSync(sample.environment.RECOVERY_RECEIPT_PATH)).toBe(false)
+  })
+
+  it.each([
+    [".github/workflows/ci.yml", `BAMBOO_E2E_REVISION: ${"f".repeat(40)}`],
+    [".github/workflows/publish-npm.yml", `BAMBOO_E2E_REVISION: ${"f".repeat(40)}`],
+    ["e2e/support/realBambooRuntime.ts", `export const REAL_BAMBOO_REVISION = "${"f".repeat(40)}";`],
+    ["scripts/published-real-bamboo-acceptance.test.mjs", `const expectedBambooRevision = "${"f".repeat(40)}"`],
+  ])("rejects a different backend in recovered source %s before public evidence or npm", async (file, contents) => {
+    const sample = integrationFixture()
+    sample.sourceFiles.set(file, contents)
+    await expect(sample.verify()).rejects.toThrow()
+    expect(sample.fetchImpl).not.toHaveBeenCalled()
     expect(sample.exec.mock.calls.some(([command]) => command === "npm")).toBe(false)
     expect(existsSync(sample.environment.RECOVERY_RECEIPT_PATH)).toBe(false)
   })
