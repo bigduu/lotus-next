@@ -19,7 +19,7 @@ describe("npm publication workflow cache policy", () => {
     expect(stepEnd).toBeGreaterThan(stepStart)
     expect(workflow.slice(0, stepStart)).not.toContain("registry-roundtrip-cache")
     expect(registryRoundTripStep).toContain(
-      'REGISTRY_CACHE="${RUNNER_TEMP}/registry-roundtrip-cache"',
+      'REGISTRY_CACHE="${RUNNER_TEMP}/registry-roundtrip-cache-${READBACK_ATTEMPT}"',
     )
 
     const freshCacheCheck = registryRoundTripStep.indexOf(
@@ -37,7 +37,10 @@ describe("npm publication workflow cache policy", () => {
     (command) => {
       const commandLine = registryRoundTripStep
         .split("\n")
-        .find((line) => line.trimStart().startsWith(command))
+        .find((line) =>
+          line.trimStart().startsWith(`${command} `) ||
+          line.trimStart().startsWith(`if ${command} `),
+        )
 
       expect(commandLine).toBeDefined()
       expect(commandLine).toContain("--prefer-online")
