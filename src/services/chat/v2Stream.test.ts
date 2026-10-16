@@ -1577,7 +1577,7 @@ describe("v2Stream shared WebSocket client", () => {
     const socket = lastSocket()
     socket.open()
     expect(socket.parsedSent().filter((frame) => frame.ch === "actor.child")).toEqual([
-      { type: "subscribe", ch: "actor.child" },
+      { type: "subscribe", ch: "actor.child", actor_resume: { epoch: null } },
     ])
     socket.emit({ ch: "actor.child", seq: 5, control: {
       type: "actor_snapshot_required", reason: "initial", cursor: 5,
@@ -1604,7 +1604,7 @@ describe("v2Stream shared WebSocket client", () => {
     vi.advanceTimersByTime(500)
     const reconnected = lastSocket()
     reconnected.open()
-    expect(reconnected.parsedSent()).toContainEqual({ type: "subscribe", ch: "actor.child", since: 8 })
+    expect(reconnected.parsedSent()).toContainEqual({ type: "subscribe", ch: "actor.child", since: 8, actor_resume: { epoch: null } })
     second.close()
     expect(reconnected.parsedSent()).toContainEqual({ type: "unsubscribe", ch: "actor.child" })
   })
@@ -1754,7 +1754,7 @@ describe("v2Stream shared WebSocket client", () => {
     vi.advanceTimersByTime(500)
     const second = lastSocket()
     second.open()
-    expect(second.parsedSent()).toContainEqual({ type: "subscribe", ch: "actor.child", since: 6 })
+    expect(second.parsedSent()).toContainEqual({ type: "subscribe", ch: "actor.child", since: 6, actor_resume: { epoch: null } })
     expect(onGap).toHaveBeenCalledOnce()
 
     const lateGap = vi.fn()

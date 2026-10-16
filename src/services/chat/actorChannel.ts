@@ -16,9 +16,18 @@ export interface ActorSnapshotRequired {
   cursor: number
 }
 
+/** Body-free proof for this subscription's retained prefix, never execution authority. */
+export interface ActorReplayComplete {
+  type: "actor_replay_complete"
+  epoch: string
+  cursor: number
+  resumed_from: number | null
+}
+
 export type ActorChannelFrame =
   | { type: "event"; seq: number; event: ActorChangedEvent }
   | { type: "control"; seq: number; control: ActorSnapshotRequired }
+  | { type: "replay_complete"; seq: number; control: ActorReplayComplete }
 
 const encoder = new TextEncoder()
 const record = (value: unknown): value is Record<string, unknown> =>
@@ -49,6 +58,12 @@ export function parseActorChannelFrame(value: unknown, actorId: string): ActorCh
   if (!validActorId(actorId) || !record(value) || value.ch !== `actor.${actorId}` || !positiveSafeInteger(value.seq)) return null
   if (exact(value, ["ch", "seq", "control"]) && record(value.control)) {
     const control = value.control
+    if (exact(control, ["type", "epoch", "cursor", "resumed_from"]) && control.type === "actor_replay_complete" &&
+      typeof control.epoch === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(control.epoch) &&
+      control.cursor === value.seq && (control.resumed_from === null ||
+        positiveSafeInteger(control.resumed_from) && control.resumed_from <= value.seq)) {
+      return { type: "replay_complete", seq: value.seq, control: control as unknown as ActorReplayComplete }
+    }
     if (exact(control, ["type", "reason", "cursor"]) && control.type === "actor_snapshot_required" &&
       (control.reason === "initial" || control.reason === "gap") && control.cursor === value.seq) {
       return { type: "control", seq: value.seq, control: control as unknown as ActorSnapshotRequired }
