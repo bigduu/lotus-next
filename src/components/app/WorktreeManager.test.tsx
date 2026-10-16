@@ -102,8 +102,40 @@ it("reports an offline volume and preserves the user's path for retry without fa
 it("does not open a checkout when the Project binding is rejected", async () => {
   const onOpen = vi.fn()
   useAppStore.setState({ bindWorkspace: vi.fn().mockRejectedValue(new Error("Project revision changed")) })
+  const unknown = listing()
+  unknown.repositories[0]!.worktrees[0]!.dirty = null
+  unknown.repositories[0]!.worktrees[0]!.error = "Submodule working-copy changes were not inspected"
+  mocks.list.mockResolvedValueOnce(unknown)
   await mount(onOpen)
   await act(async () => buttons("打开并新建会话")[0]!.click())
   expect(onOpen).not.toHaveBeenCalled()
   expect(document.querySelector('[role="alert"]')?.textContent).toContain("Project revision changed")
+})
+
+it("opens a valid native path with unknown dirty state through Project binding validation", async () => {
+  const onOpen = vi.fn()
+  const unknown = listing()
+  unknown.repositories[0]!.worktrees[0]!.dirty = null
+  unknown.repositories[0]!.worktrees[0]!.error = "Submodule working-copy changes were not inspected"
+  mocks.list.mockResolvedValueOnce(unknown)
+  await mount(onOpen)
+  expect(document.body.textContent).toContain("Submodule working-copy changes were not inspected")
+  expect(buttons("打开并新建会话")[0]!.disabled).toBe(false)
+  await act(async () => buttons("打开并新建会话")[0]!.click())
+  expect(useAppStore.getState().bindWorkspace).toHaveBeenCalledWith("project-a", 7, { path: "/Volumes/External/worktrees/existing" })
+  expect(onOpen).toHaveBeenCalledWith("project-a", "/Volumes/External/worktrees/existing")
+})
+
+it("keeps a prunable unavailable worktree disabled even when status is unknown", async () => {
+  const onOpen = vi.fn()
+  const unavailable = listing()
+  unavailable.repositories[0]!.worktrees[0]!.dirty = null
+  unavailable.repositories[0]!.worktrees[0]!.error = "Worktree path is unavailable"
+  unavailable.repositories[0]!.worktrees[0]!.prunable = true
+  mocks.list.mockResolvedValueOnce(unavailable)
+  await mount(onOpen)
+  expect(buttons("打开并新建会话")[0]!.disabled).toBe(true)
+  await act(async () => buttons("打开并新建会话")[0]!.click())
+  expect(useAppStore.getState().bindWorkspace).not.toHaveBeenCalled()
+  expect(onOpen).not.toHaveBeenCalled()
 })
