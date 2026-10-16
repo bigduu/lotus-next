@@ -377,6 +377,7 @@ describe("ChatPane composer acknowledgement", () => {
       pickedWorkspace={null} onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()}
       splitOpen={false} onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false}
       workPanelTarget={target} onOpenWork={onOpen} onWorkReference={onReference} />))
+    await act(async () => { await vi.dynamicImportSettled() })
     expect(host.querySelector('[data-testid="ticket-work-overview"]')).toBeNull()
     expect(target.querySelector('[data-testid="ticket-work-overview"]')).not.toBeNull()
     act(() => host.querySelector<HTMLButtonElement>('[data-testid="ticket-work-status"]')!.click())
@@ -384,6 +385,10 @@ describe("ChatPane composer acknowledgement", () => {
     const all = [...document.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "查看全部工作")!
     act(() => all.click())
     expect(onOpen).toHaveBeenCalledOnce()
+    const field = host.querySelector<HTMLTextAreaElement>('textarea[aria-label="消息"]')!
+    field.focus()
+    await act(async () => { await new Promise<void>((resolve) => requestAnimationFrame(() => resolve())) })
+    expect(document.activeElement).toBe(field)
     const reference = [...target.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "在普通输入中引用此请求")!
     act(() => reference.click())
     expect(onReference).toHaveBeenCalledOnce()

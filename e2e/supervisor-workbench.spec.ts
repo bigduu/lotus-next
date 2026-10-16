@@ -1,3 +1,4 @@
+import { actorSnapshotFixture } from "../src/test/fixtures/actorSnapshot.js"
 import { expectComposerText } from "./support/composer.js"
 import { expect, test } from "@playwright/test"
 import { readFile } from "node:fs/promises"
@@ -46,19 +47,43 @@ test("Supervisor floating overview opens focused Work details and preserves draf
     localStorage.setItem("bodhi_onboarded_v1", "1")
     localStorage.setItem("lotus_next_last_session", id)
   }, supervisor)
-  await installArtifactRuntime(page, standaloneScenario)
+  const observation = await installArtifactRuntime(page, standaloneScenario, [], { bootstrapRequestState: "local_bypass" })
+  const childId = "supervisor-child"
+  const actor = actorSnapshotFixture(supervisor, 1, `at1-${"a".repeat(64)}-7`)
+  Object.assign(actor.nodes[1], { actor_id: childId, title: "核对证据", logical_state: "cold",
+    activation: { activation_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", attempt: 1, status: "succeeded" } })
+  const history = [
+    { id: "sup-user", role: "user", content: "核对交付证据", created_at: "2026-10-05T00:00:00Z" },
+    { id: "sup-create", role: "assistant", content: "", created_at: "2026-10-05T00:00:01Z", tool_calls: [
+      { id: "sup-create-call", function: { name: "sub_agent", arguments: JSON.stringify({ action: "create", title: "核对证据" }) } }] },
+    { id: "sup-created", role: "tool", tool_call_id: "sup-create-call", tool_success: true,
+      content: JSON.stringify({ child_session_id: childId, parent_session_id: supervisor }), created_at: "2026-10-05T00:00:02Z" },
+    { id: "sup-answer", role: "assistant", content: "已核对证据", created_at: "2026-10-05T00:00:03Z" },
+    { id: "sup-later", role: "user", content: "查看工作进展", created_at: "2026-10-05T00:00:04Z" },
+    { id: "sup-task-list", role: "assistant", content: "", created_at: "2026-10-05T00:00:05Z", tool_calls: [
+      { id: "task-list", function: { name: "TaskList", arguments: "{}" } }] },
+  ]
   const session = { id: supervisor, title: "Supervisor", title_version: 1, kind: "root", root_session_id: supervisor,
     parent_session_id: null, spawn_depth: 0, pinned: false, model: "fixture-model",
     model_ref: { provider: "fixture-provider", model: "fixture-model" },
     created_at: "2026-10-05T00:00:00Z", updated_at: "2026-10-05T00:00:00Z", message_count: 0, is_running: false,
     root_orchestration_only: true, thinking_mode: "ultra", root_tool_authority_revision: 1,
-    root_mode_transition_epoch: 1, root_mode_birth_token: "a".repeat(64) }
+    root_mode_transition_epoch: 1, root_mode_birth_token: "a".repeat(64), subagent_count: 1 }
+  const child = { id: childId, title: "核对证据", title_version: 1, kind: "child", parent_session_id: supervisor,
+    root_session_id: supervisor, spawn_depth: 1, pinned: false, subagent_count: 0, is_running: true, last_run_status: "completed",
+    model: "fixture-model", model_ref: session.model_ref, created_at: session.created_at, updated_at: session.updated_at, message_count: 0 }
   await page.route("**/api/v1/**", async (route) => {
     const request = route.request(), path = new URL(request.url()).pathname
     const envelope = (data: unknown) => ({ ...snapshot.scope.overview, data })
-    if (path === "/api/v1/sessions" && request.method() === "GET") await route.fulfill({ json: { sessions: [session], total: 1, limit: 200, offset: 0 } })
+    if (path === "/api/v1/sessions" && request.method() === "GET") {
+      const kind = new URL(request.url()).searchParams.get("kind")
+      const sessions = [session, child].filter((row) => !kind || row.kind === kind)
+      await route.fulfill({ json: { sessions, total: sessions.length, limit: 200, offset: 0 } })
+    }
+    else if (path === `/api/v1/actors/${supervisor}/snapshot`) await route.fulfill({ json: actor })
+    else if (path === `/api/v1/sessions/${childId}`) await route.fulfill({ json: { session: child } })
     else if (path === `/api/v1/sessions/${supervisor}`) await route.fulfill({ json: request.method() === "GET" ? { session } : {} })
-    else if (path === `/api/v1/history/${supervisor}`) await route.fulfill({ json: { session_id: supervisor, messages: [] } })
+    else if (path === `/api/v1/history/${supervisor}`) await route.fulfill({ json: { session_id: supervisor, messages: history } })
     else if (path === `/api/v1/respond/${supervisor}/pending`) await route.fulfill({ json: { has_pending_question: false } })
     else if (path === "/api/v1/tickets/scope") await route.fulfill({ json: snapshot.scope })
     else if (path === "/api/v1/tickets/search") await route.fulfill({ json: envelope(snapshot.views.map((v) => ({ id: v.ticket.id, kind: "work" }))) })
@@ -74,10 +99,15 @@ test("Supervisor floating overview opens focused Work details and preserves draf
     } else await route.fallback()
   })
   await page.goto(standaloneScenario.entryUrl)
+  const childCard = page.locator(`[data-subagent-id="${childId}"]`).first()
+  await expect(childCard).toHaveAttribute("data-subagent-status", "done")
+  const childOrigin = () => childCard.evaluate((node) => node.closest("[data-history-entry-key]")?.getAttribute("data-history-entry-key"))
+  await expect.poll(childOrigin).toBe("activity-sup-create")
   const status = page.getByTestId("ticket-work-status")
   await expect(status).toContainText("3 项工作")
   await expect(status).toContainText("2 项待处理")
   await expect(page.getByTestId("ticket-work-overview")).toHaveCount(0)
+  expect(observation.staticUrls.some((url) => /TicketWorkPanel-.*\.js/.test(url))).toBe(false)
   const popover = page.getByTestId("supervisor-overview")
   const openAll = async () => {
     await status.click()
@@ -106,6 +136,7 @@ test("Supervisor floating overview opens focused Work details and preserves draf
   const workbench = page.locator("#right-workbench")
   const overview = workbench.getByTestId("ticket-work-overview")
   await expect(overview).toBeVisible()
+  expect(observation.staticUrls.some((url) => /TicketWorkPanel-.*\.js/.test(url))).toBe(true)
   await expect(overview.getByText("代码交付", { exact: true })).toBeHidden()
   await expect(overview).toBeFocused()
   await expectComposerText(composer, "保留我的输入")
@@ -113,6 +144,8 @@ test("Supervisor floating overview opens focused Work details and preserves draf
   await expect(overview).toContainText("work-session-A")
   await expect(overview).toContainText("最近快照中的执行状态")
   await expect(overview).toContainText("跨会话长程控制暂不可用")
+  await expect(childCard).toHaveAttribute("data-subagent-status", "done")
+  await expect.poll(childOrigin).toBe("activity-sup-create")
   await expect(overview.getByRole("button", { name: /启动循环|修改循环|停止循环/ })).toHaveCount(0)
   await page.screenshot({ path: testInfo.outputPath("supervisor-managed-execution.png") })
   const text = await overview.innerText()

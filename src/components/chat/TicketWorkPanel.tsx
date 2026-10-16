@@ -1,5 +1,5 @@
 import { uiText, useUiLocale, uiLanguage } from "@shared/i18n/ui"
-import { useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { ticketClient } from "@services/tickets/client"
 import { artifactDownloadName } from "@services/tickets/artifactDownload"
 import { effectiveStatus, type TicketState } from "@services/tickets/state"
@@ -73,12 +73,16 @@ function ExecutionRecord({ view }: { view: WorkView }) {
   </dl>
 }
 
-export function TicketWorkPanel({ controller, onReference, selectedWorkId, onShowAll }: {
+export function TicketWorkPanel({ controller, onReference, selectedWorkId, onShowAll, onReady }: {
   controller: Controller; onReference?: (request: PendingRequest) => void
-  selectedWorkId?: string | null; onShowAll?: () => void
+  selectedWorkId?: string | null; onShowAll?: () => void; onReady?: () => void
 }) {
   useUiLocale()
   const state = controller.state
+  const ready = useRef(onReady)
+  ready.current = onReady
+  const hasState = !!state
+  useEffect(() => { if (hasState) ready.current?.() }, [hasState])
   const [artifactError, setArtifactError] = useState<string | null>(null)
   if (!state) return null
   const selected = selectedWorkId && !state.works[selectedWorkId]?.ticket.archived ? state.works[selectedWorkId]?.ticket : undefined

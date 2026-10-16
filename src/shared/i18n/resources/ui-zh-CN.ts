@@ -1,5 +1,6 @@
 // Application-owned UI copy.
 export const uiZhCn = {
+  "work_load_failed": "无法加载 Work 详情，对话仍可使用。",
   "subagent_origin_unknown": "无法确认发起轮次。",
   "subagent_refresh": "刷新代理状态",
 

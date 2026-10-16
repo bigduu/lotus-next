@@ -50,7 +50,7 @@ import { useGuidanceQueue } from "@/hooks/useGuidanceQueue"
 import { useTicketWork } from "@/hooks/useTicketWork"
 import { useTicketIngress } from "@/hooks/useTicketIngress"
 import { TicketWorkAvailability } from "@/components/chat/TicketWorkAvailability"
-import { TicketWorkPanel } from "@/components/chat/TicketWorkPanel"
+import { LazyTicketWorkPanel } from "@/components/chat/LazyTicketWorkPanel"
 import { SupervisorOverview } from "@/components/chat/SupervisorOverview"
 import { isDefaultSupervisor } from "@/lib/supervisor"
 import type { PendingRequest as TicketRequest } from "@services/tickets/types"
@@ -281,16 +281,27 @@ export function ChatPane({
   const [selectedWorkId, setSelectedWorkId] = useState<string | null>(null)
   const workPanelHost = useRef(workPanelTarget)
   workPanelHost.current = workPanelTarget
+  const pendingWorkFocus = useRef<string | null>(null)
+  const focusWorkPanel = () => {
+    if (!currentSessionId || pendingWorkFocus.current !== currentSessionId) return
+    const host = workPanelHost.current
+    const panel = host?.querySelector<HTMLElement>('[data-testid="ticket-work-overview"]')
+    if (!panel) return
+    pendingWorkFocus.current = null
+    const active = document.activeElement
+    if (active === document.body || active && host?.contains(active)) panel.focus()
+  }
   const openTicketWork = (workId: string | null) => {
     setSelectedWorkId(workId)
+    pendingWorkFocus.current = currentSessionId
     onOpenWork?.()
-    requestAnimationFrame(() => workPanelHost.current?.querySelector<HTMLElement>('[data-testid="ticket-work-overview"]')?.focus())
+    requestAnimationFrame(focusWorkPanel)
   }
   const replayReferences = ticketIngress.references(currentSessionId)
   const visibleTicketReference = pendingTicketMessage && replayReferences?.in_reply_to
     ? { work_id: replayReferences.thread_id ?? replayReferences.in_reply_to, id: replayReferences.in_reply_to }
     : ticketReference
-  useEffect(() => { setTicketReference(null); setSelectedWorkId(null) }, [currentSessionId])
+  useEffect(() => { pendingWorkFocus.current = null; setTicketReference(null); setSelectedWorkId(null) }, [currentSessionId])
   // The secondary chat hook remains mounted when its pane closes. Read state
   // follows the rendered pane, including the same breakpoint as its md:flex.
   const splitVisible = useMediaQuery("(min-width: 768px)")
@@ -1124,7 +1135,7 @@ export function ChatPane({
 
         {queue.error && <div role="alert" className="mx-auto mb-1 w-[calc(100%-1.5rem)] max-w-6xl rounded-lg border border-destructive/40 px-3 py-2 text-xs text-destructive">{queue.error}</div>}
         {workPanelTarget ? createPortal(ticketScope?.binding.supervisor_session_id === currentSessionId ? (
-          <TicketWorkPanel controller={tickets} selectedWorkId={selectedWorkId} onShowAll={() => openTicketWork(null)} onReference={tickets.canSendIngress && ticketScope.capabilities?.message_references_v1 === true && !pendingTicketMessage ? (request) => {
+          <LazyTicketWorkPanel key={currentSessionId} onReady={focusWorkPanel} controller={tickets} selectedWorkId={selectedWorkId} onShowAll={() => openTicketWork(null)} onReference={tickets.canSendIngress && ticketScope.capabilities?.message_references_v1 === true && !pendingTicketMessage ? (request) => {
             setTicketReference(request)
             onWorkReference?.()
             requestAnimationFrame(() => composerInputRef.current?.focus())

@@ -1,5 +1,6 @@
 // Application-owned UI copy.
 export const uiEnUs = {
+  "work_load_failed": "Work details could not load. Your conversation is still available.",
   "subagent_origin_unknown": "The originating turn is unavailable.",
   "subagent_refresh": "Refresh agent status",
 
