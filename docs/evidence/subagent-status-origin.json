@@ -1,0 +1,144 @@
+{
+  "issue": "https://github.com/bigduu/lotus-next/issues/331",
+  "recordedAt": "2026-10-16T07:23:26.112280+00:00",
+  "branch": "lotus-next/fix/331-subagent-status-origin",
+  "baseMain": "5c4f713f2b8624f881c6739ae28d7091f48f796e",
+  "mainRechecked": true,
+  "implementationCommits": [
+    "91a7b5726aca578450ac7e43b2bfddc12096af02",
+    "414120673b97d4fb849dd9b5668ef74161ac4cef"
+  ],
+  "productSourceRevision": "414120673b97d4fb849dd9b5668ef74161ac4cef",
+  "productSourceDirty": false,
+  "resourcesSha256": "6b49a11af046483db9f2f3958a98613f988f6e2cf99340bc1ac5d71b75405dbd",
+  "validation": {
+    "node": "24.21.0",
+    "verify": "passed",
+    "unitFiles": 152,
+    "unitTests": 3180,
+    "typeCheck": "passed",
+    "lint": "passed",
+    "i18n": "2074 matching keys",
+    "architecture": "passed",
+    "build": "passed",
+    "package": "passed",
+    "startupJsRaw": 1891800,
+    "startupJsBudget": 1900000,
+    "initialCssRaw": 108993,
+    "initialCssBudget": 109000,
+    "browser": {
+      "passed": 53,
+      "skipped": 13,
+      "unexpected": 0,
+      "flaky": 0,
+      "skips": "13 pre-existing device-specific conditions; no new subagent test skips",
+      "subagentCases": [
+        {
+          "file": "subagent-status-origin.spec.ts",
+          "title": "saved terminal states survive unordered legacy events and reconnect without completing a newer activation",
+          "project": "desktop-chromium",
+          "status": "expected"
+        },
+        {
+          "file": "subagent-status-origin.spec.ts",
+          "title": "new turns, status refreshes and reload keep old cards at their originating activity",
+          "project": "desktop-chromium",
+          "status": "expected"
+        },
+        {
+          "file": "subagent-status-origin.spec.ts",
+          "title": "a denied snapshot shows unconfirmed states and an explicit retry",
+          "project": "desktop-chromium",
+          "status": "expected"
+        },
+        {
+          "file": "subagent-status-origin.spec.ts",
+          "title": "saved terminal states survive unordered legacy events and reconnect without completing a newer activation",
+          "project": "tablet-chromium",
+          "status": "expected"
+        },
+        {
+          "file": "subagent-status-origin.spec.ts",
+          "title": "new turns, status refreshes and reload keep old cards at their originating activity",
+          "project": "tablet-chromium",
+          "status": "expected"
+        },
+        {
+          "file": "subagent-status-origin.spec.ts",
+          "title": "a denied snapshot shows unconfirmed states and an explicit retry",
+          "project": "tablet-chromium",
+          "status": "expected"
+        },
+        {
+          "file": "subagent-status-origin.spec.ts",
+          "title": "saved terminal states survive unordered legacy events and reconnect without completing a newer activation",
+          "project": "phone-chromium",
+          "status": "expected"
+        },
+        {
+          "file": "subagent-status-origin.spec.ts",
+          "title": "new turns, status refreshes and reload keep old cards at their originating activity",
+          "project": "phone-chromium",
+          "status": "expected"
+        },
+        {
+          "file": "subagent-status-origin.spec.ts",
+          "title": "a denied snapshot shows unconfirmed states and an explicit retry",
+          "project": "phone-chromium",
+          "status": "expected"
+        }
+      ],
+      "files": [
+        "subagent-status-origin.spec.ts",
+        "actor-snapshot-inspector.spec.ts",
+        "process-activity.spec.ts",
+        "secondary-session-projection.spec.ts"
+      ],
+      "execution": "built production frontend with strict local HTTP/WebSocket fixtures; no live model or Host execution",
+      "reportSha256": "eb57675fa801cf774f9c790e34f0ffc3b9532674e6ad4fe8632f50eea46d0982",
+      "archiveSha256": "b521b8579198cd5d200800eb024a45ee3e36775aa2a35dc666944379d3f5626f"
+    },
+    "verifyLogSha256": "f05e9455f29cf9697eb4676233a8ebcfea9fba6a4715fda0efb885f3001ca2e8",
+    "redLogSha256": "98b4bfd6e19a8bd747b6e754b32848e18f34518c7c57a97a744897e3434a87c7",
+    "sharedViewRedLogSha256": "b24215bd1a69e58b9ee3403690f90255d7a5731417fe62663964727ec2ba0381"
+  },
+  "backendContract": {
+    "sourceRevision": "bf6b20bab2832b45d4b0927e971cea64866f2c77",
+    "inspection": "read-only source, not a live execution",
+    "blobs": {
+      "crates/core/bamboo-domain/src/session/actor_snapshot.rs": "45dd871d191cfd857a4904e9f051a194e07c5f0a",
+      "crates/app/bamboo-server/src/handlers/agent/actor_snapshot.rs": "8c50fbb6887a9c9482fbc0665462fbf13a25bb74",
+      "crates/core/bamboo-agent-core/src/agent/events.rs": "496c009fbe64e957f8be0989e35783ded11e7b73",
+      "crates/app/bamboo-server-tools/src/sub_agent.rs": "34a4daa2782273b0e653ca76ce7937ae03129f4f"
+    },
+    "newFieldsOrEndpoints": false,
+    "newPersistentAuthority": false
+  },
+  "screenshots": {
+    "desktop": {
+      "path": "docs/screenshots/subagent-status-origin/desktop-terminal.png",
+      "sha256": "05ddc5ccdf3aa223b6d138cc149d832e7b70e84f3671c63e816e4091c0aa6895"
+    },
+    "phone": {
+      "path": "docs/screenshots/subagent-status-origin/phone-terminal.png",
+      "sha256": "a2d7e066c90f1596c9a1b96a32cede852b5546471a4c30e1411181de48874f72"
+    }
+  },
+  "preserved": {
+    "supervisorWork322": "7c928f898f3db09a246e3f611484f81c8821bd3b",
+    "nativeComposer": "eb2f015a050826c566ea08ee9b9f0ab2810251f5",
+    "accentTokens": "1fb93004f983181c3fc4bd5c99a8b3f423a34ffb",
+    "startupReadiness": "4c7c41c83a4794e8df2d737807cb414519b254c4"
+  },
+  "limits": [
+    "Local commits only; no push/PR/merge/release.",
+    "The photo does not identify actual child runs or establish backend event loss.",
+    "An actually active or unavailable canonical activation is never fabricated as completed.",
+    "Old/missing snapshot or origin evidence remains visibly unconfirmed.",
+    "Combining with frozen #322 remains a separate overlap/resource-budget/validation step."
+  ],
+  "rustBuilt": false,
+  "realModelsRun": false,
+  "dispatchRun": false,
+  "backendChanged": false
+}
