@@ -107,7 +107,11 @@ export function actorSnapshotRegresses(previous: ActorSubtreeSnapshot, next: Act
     if (priorDirectory !== null && nextDirectory !== null && nextDirectory < priorDirectory) return true
     if (prior.activation && node.activation && node.activation.attempt < prior.activation.attempt) return true
     if (prior.activation && node.activation && prior.activation.activation_id === node.activation.activation_id &&
-      prior.activation.attempt === node.activation.attempt && localTaskRegresses(prior.local_task, node.local_task)) return true
+      prior.activation.attempt === node.activation.attempt) {
+      if (["succeeded", "failed", "cancelled"].includes(prior.activation.status) &&
+        node.activation.status !== prior.activation.status) return true
+      if (localTaskRegresses(prior.local_task, node.local_task)) return true
+    }
     if (priorDirectory !== null && nextDirectory === priorDirectory && prior.activation && node.activation &&
       node.activation.attempt === prior.activation.attempt && node.activation.activation_id !== prior.activation.activation_id) return true
   }

@@ -69,6 +69,56 @@ const posted = () => {
   return Object.fromEntries(body.parameters.map(({ name, value }) => [name, JSON.parse(value)]))
 }
 
+const overviewPayload = {
+  scope: null, project_key: null, total_memories: 7, project_count: 2,
+  by_scope: { global: 3, project: 4 }, by_type: { user: 3, project: 4 },
+  by_status: { active: 5, archived: 2 },
+  last_reindex_at: "2026-10-15T03:00:00Z", last_dream_at: null,
+}
+
+describe("session-independent memory overview", () => {
+  it("requests aggregate inventory without any session or Project selector", async () => {
+    fetchMock.mockResolvedValueOnce(response(overviewPayload))
+    await expect(service.getOverview()).resolves.toEqual({
+      totalMemories: 7, globalMemories: 3, projectMemories: 4, projectCount: 2,
+      byType: { user: 3, feedback: 0, project: 4, reference: 0 },
+      byStatus: { active: 5, stale: 0, superseded: 0, contradicted: 0, archived: 2 },
+      lastReindexAt: overviewPayload.last_reindex_at, lastDreamAt: null,
+    })
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(fetchMock.mock.calls[0][0]).toBe(apiClient.resolveUrl("metrics/memory/summary"))
+    expect(fetchMock.mock.calls[0][1]?.method).toBe("GET")
+    expect(fetchMock.mock.calls[0][1]?.body).toBeUndefined()
+  })
+
+  it("accepts the server's empty inventory without inventing Session-note counts", async () => {
+    fetchMock.mockResolvedValueOnce(response({ total_memories: 0, project_count: 0,
+      by_scope: { global: 0 }, by_type: {}, by_status: {} }))
+    await expect(service.getOverview()).resolves.toMatchObject({
+      totalMemories: 0, globalMemories: 0, projectMemories: 0, projectCount: 0,
+      lastReindexAt: null, lastDreamAt: null,
+    })
+  })
+
+  it.each([
+    { scope: "project" }, { project_key: "selected-project" },
+    { total_memories: -1 }, { project_count: "2" }, { total_memories: Number.MAX_SAFE_INTEGER + 1 },
+    { by_scope: undefined }, { by_scope: { global: 7, session: 1 } },
+    { by_type: { user: 3 } }, { by_status: { active: 5, archived: "2" } },
+    { by_status: { active: 5, unknown: 2 } }, { last_dream_at: "invalid-date" },
+  ])("rejects partial, inconsistent or selected-scope inventory (%#)", async (overrides) => {
+    fetchMock.mockResolvedValueOnce(response({ ...overviewPayload, ...overrides }))
+    await expect(service.getOverview()).rejects.toMatchObject({ code: "malformed_response" })
+  })
+
+  it.each([401, 403, 404, 503])("keeps unavailable inventory distinct from zero for HTTP %s", async (status) => {
+    fetchMock.mockImplementation(async () => response({ error: "/private/runtime/secret" }, status))
+    await expect(service.getOverview()).rejects.toMatchObject({
+      code: status === 401 || status === 403 ? "access_denied" : status === 404 ? "context_unavailable" : "request_failed",
+    })
+  })
+})
+
 describe("server-confirmed Project context", () => {
   it("loads a real root summary before granting a Project context", async () => {
     fetchMock.mockResolvedValueOnce(response(session()))

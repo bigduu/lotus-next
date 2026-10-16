@@ -84,6 +84,31 @@ describe("authorized actor snapshot DTO", () => {
     expect(actorTreeCursorCovers(null, treeCursor(7))).toBe(false)
   })
 
+  it.each(["succeeded", "failed", "cancelled"] as const)(
+    "rejects a same-activation %s snapshot returning to Running after refresh", (status) => {
+      const prior = parseActorSnapshot(actorSnapshotFixture("root", 1, treeCursor(7)), "root")
+      prior.nodes[1].activation!.status = status
+      const next = structuredClone(prior)
+      next.stream_cursor = treeCursor(8)
+      next.nodes[1].revision.session_metadata_version += 1
+      next.nodes[1].revision.actor_directory_revision! += 1
+      next.nodes[1].activation!.status = "running"
+      expect(actorSnapshotRegresses(prior, next)).toBe(true)
+    },
+  )
+
+  it("accepts a genuinely newer activation after a confirmed terminal snapshot", () => {
+    const prior = parseActorSnapshot(actorSnapshotFixture("root", 1, treeCursor(7)), "root")
+    prior.nodes[1].activation!.status = "succeeded"
+    const next = structuredClone(prior)
+    next.stream_cursor = treeCursor(8)
+    next.nodes[1].revision.session_metadata_version += 1
+    next.nodes[1].revision.actor_directory_revision! += 1
+    next.nodes[1].activation = { activation_id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", attempt: 2, status: "running" }
+    expect(actorSnapshotRegresses(prior, next)).toBe(false)
+    expect(actorSnapshotRegresses(next, prior)).toBe(true)
+  })
+
   it.each(["at1-" + "a".repeat(64) + "-0", "at1-" + "a".repeat(64) + "-01",
     "at1-" + "A".repeat(64) + "-1", "at1-" + "a".repeat(64) + "-9007199254740992",
     "at1-" + "a".repeat(63) + "-1", "at2-" + "a".repeat(64) + "-1"])(
