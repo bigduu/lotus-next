@@ -1774,6 +1774,138 @@ describe("v2Stream shared WebSocket client", () => {
     subscription.close()
   })
 
+  const replayEpoch = "123e4567-e89b-42d3-a456-426614174001"
+  const actorMarker = {
+    type: "actor_changed", actor_id: "child", root_actor_id: "root", parent_actor_id: "root",
+    activation_id: "123e4567-e89b-42d3-a456-426614174000", attempt: 1,
+    event_id: `ae1-${"a".repeat(64)}`, class: "semantic",
+  }
+  const actorBaseline = (socket: MockWebSocket, epoch = replayEpoch) => {
+    const emit = socket.protocol ? socket.emitBinary.bind(socket) : socket.emit.bind(socket)
+    emit({ ch: "actor.child", seq: 5, control: { type: "actor_snapshot_required", reason: "initial", cursor: 5 } })
+    emit({ ch: "actor.child", seq: 5, control: { type: "actor_replay_complete", epoch, cursor: 5, resumed_from: null } })
+    emit({ ch: "actor.child", seq: 6, event: actorMarker })
+  }
+  const reconnectActor = (first: MockWebSocket) => {
+    first.drop()
+    vi.advanceTimersByTime(500)
+    const replacement = lastSocket()
+    replacement.open(first.protocol)
+    return replacement
+  }
+
+  it.each([false, true])("proves retained Actor replay after reconnect without a synthetic gap (msgpack=%s)", (binary) => {
+    vi.useFakeTimers()
+    msgpackEnabled = binary
+    const onEvent = vi.fn(), onControl = vi.fn(), onGap = vi.fn()
+    const subscription = subscribeActor("child", { onEvent, onControl, onGap })
+    const first = lastSocket()
+    first.open(binary ? "bamboo.v2.msgpack" : "")
+    actorBaseline(first)
+    expect(onGap).not.toHaveBeenCalled()
+    const replacement = reconnectActor(first)
+    const sent = binary ? replacement.msgpackSent() : replacement.parsedSent()
+    expect(sent).toEqual([
+      { type: "hello" },
+      { type: "subscribe", ch: "actor.child", since: 6, actor_resume: { epoch: replayEpoch } },
+    ])
+    expect(onGap).not.toHaveBeenCalled()
+    const emit = binary ? replacement.emitBinary.bind(replacement) : replacement.emit.bind(replacement)
+    emit({ ch: "actor.child", seq: 6, event: actorMarker })
+    emit({ ch: "actor.child", seq: 7, event: { ...actorMarker, event_id: `ae1-${"b".repeat(64)}` } })
+    emit({ ch: "actor.child", seq: 7, control: { type: "actor_replay_complete", epoch: replayEpoch, cursor: 7, resumed_from: 6 } })
+    emit({ ch: "actor.child", seq: 7, event: actorMarker })
+    vi.advanceTimersByTime(5_000)
+    expect(onEvent).toHaveBeenCalledTimes(2)
+    expect(onControl).toHaveBeenCalledTimes(1)
+    expect(onGap).not.toHaveBeenCalled()
+    subscription.close()
+  })
+
+  it("keeps a restart gap despite a fresh proof with a reused numeric cursor", () => {
+    vi.useFakeTimers()
+    const onEvent = vi.fn(), onControl = vi.fn(), onGap = vi.fn()
+    const subscription = subscribeActor("child", { onEvent, onControl, onGap })
+    const first = lastSocket()
+    first.open()
+    actorBaseline(first)
+    const replacement = reconnectActor(first)
+    const newEpoch = "123e4567-e89b-42d3-a456-426614174002"
+    replacement.emit({ ch: "actor.child", seq: 5, control: { type: "actor_snapshot_required", reason: "gap", cursor: 5 } })
+    replacement.emit({ ch: "actor.child", seq: 5, control: { type: "actor_replay_complete", epoch: newEpoch, cursor: 5, resumed_from: null } })
+    replacement.emit({ ch: "actor.child", seq: 6, event: actorMarker })
+    expect(onControl).toHaveBeenLastCalledWith({ type: "actor_snapshot_required", reason: "gap", cursor: 5 })
+    expect(onGap).toHaveBeenCalledOnce()
+    expect(onEvent).toHaveBeenCalledTimes(2)
+    const next = reconnectActor(replacement)
+    expect(next.parsedSent()).toContainEqual({ type: "subscribe", ch: "actor.child", since: 6, actor_resume: { epoch: newEpoch } })
+    next.emit({ ch: "actor.child", seq: 6, control: { type: "actor_replay_complete", epoch: newEpoch, cursor: 6, resumed_from: 6 } })
+    expect(onGap).toHaveBeenCalledOnce()
+    subscription.close()
+  })
+
+  it("requires a bounded completion proof and ignores a late acknowledgment", () => {
+    vi.useFakeTimers()
+    const onEvent = vi.fn(), onControl = vi.fn(), onGap = vi.fn()
+    const subscription = subscribeActor("child", { onEvent, onControl, onGap })
+    const first = lastSocket()
+    first.open()
+    actorBaseline(first)
+    const replacement = reconnectActor(first)
+    expect(onGap).not.toHaveBeenCalled()
+    vi.advanceTimersByTime(4_999)
+    expect(onGap).not.toHaveBeenCalled()
+    vi.advanceTimersByTime(1)
+    expect(onGap).toHaveBeenCalledOnce()
+    replacement.emit({ ch: "actor.child", seq: 6, control: { type: "actor_replay_complete", epoch: replayEpoch, cursor: 6, resumed_from: 6 } })
+    const next = reconnectActor(replacement)
+    expect(next.parsedSent()).toContainEqual({ type: "subscribe", ch: "actor.child", since: 6, actor_resume: { epoch: null } })
+    subscription.close()
+  })
+
+  it.each(["missing_event", "wrong_anchor", "wrong_epoch"])("does not let a replay acknowledgment cover %s", (fault) => {
+    vi.useFakeTimers()
+    const onEvent = vi.fn(), onControl = vi.fn(), onGap = vi.fn()
+    const subscription = subscribeActor("child", { onEvent, onControl, onGap })
+    const first = lastSocket()
+    first.open()
+    actorBaseline(first)
+    const replacement = reconnectActor(first)
+    const cursor = fault === "missing_event" ? 8 : 6
+    if (fault === "missing_event") replacement.emit({ ch: "actor.child", seq: cursor, event: actorMarker })
+    replacement.emit({ ch: "actor.child", seq: cursor, control: {
+      type: "actor_replay_complete", epoch: fault === "wrong_epoch" ? "123e4567-e89b-42d3-a456-426614174002" : replayEpoch,
+      cursor, resumed_from: fault === "wrong_anchor" ? 5 : 6,
+    } })
+    expect(onGap).toHaveBeenCalledOnce()
+    const next = reconnectActor(replacement)
+    expect(next.parsedSent()).toContainEqual({ type: "subscribe", ch: "actor.child", since: cursor, actor_resume: { epoch: null } })
+    subscription.close()
+  })
+
+  it("does not let an old socket or a closed subscription's timer disturb a replacement", () => {
+    vi.useFakeTimers()
+    const onEvent = vi.fn(), onControl = vi.fn(), onGap = vi.fn()
+    const subscription = subscribeActor("child", { onEvent, onControl, onGap })
+    const first = lastSocket()
+    first.open()
+    actorBaseline(first)
+    const replacement = reconnectActor(first)
+    const lateMessage = replacement.onmessage!
+    const next = reconnectActor(replacement)
+    lateMessage({ data: JSON.stringify({ ch: "actor.child", seq: 999, control: {
+      type: "actor_replay_complete", epoch: replayEpoch, cursor: 999, resumed_from: 6,
+    } }) } as MessageEvent)
+    next.emit({ ch: "actor.child", seq: 6, control: { type: "actor_replay_complete", epoch: replayEpoch, cursor: 6, resumed_from: 6 } })
+    vi.advanceTimersByTime(5_000)
+    expect(onGap).not.toHaveBeenCalled()
+    const pending = reconnectActor(next)
+    expect(pending.readyState).toBe(MockWebSocket.OPEN)
+    subscription.close()
+    vi.advanceTimersByTime(5_000)
+    expect(onGap).not.toHaveBeenCalled()
+  })
+
   it("re-subscribes message channels and validates MessagePack with the same schema", () => {
     vi.useFakeTimers()
     msgpackEnabled = true

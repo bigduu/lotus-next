@@ -36,3 +36,33 @@ describe("public Actor channel", () => {
     }
   })
 })
+
+
+describe("Actor replay completion proof", () => {
+  const proof = {
+    ch: "actor.child", seq: 9,
+    control: { type: "actor_replay_complete", epoch: activation, cursor: 9, resumed_from: 6 },
+  }
+
+  it("accepts an exact epoch-bound replay proof or a fresh snapshot baseline", () => {
+    expect(parseActorChannelFrame(proof, "child")).toEqual({ type: "replay_complete", seq: 9, control: proof.control })
+    const baseline = { ...proof, control: { ...proof.control, resumed_from: null } }
+    expect(parseActorChannelFrame(baseline, "child")).toEqual({ type: "replay_complete", seq: 9, control: baseline.control })
+  })
+
+  it.each([
+    { ...proof, ch: "actor.other" },
+    { ...proof, seq: 8 },
+    { ...proof, control: { ...proof.control, epoch: "not-an-epoch" } },
+    { ...proof, control: { ...proof.control, epoch: activation.replaceAll("-", "") } },
+    { ...proof, control: { ...proof.control, cursor: Number.MAX_SAFE_INTEGER + 1 } },
+    { ...proof, control: { ...proof.control, resumed_from: 10 } },
+    { ...proof, control: { ...proof.control, resumed_from: 0 } },
+    { ...proof, control: { ...proof.control, resumed_from: 1.5 } },
+    { ...proof, control: { ...proof.control, resumed_from: undefined } },
+    { ...proof, control: { ...proof.control, worker_token: "private" } },
+    { ...proof, event: {} },
+  ])("rejects malformed, private or out-of-scope proof %#", (frame) => {
+    expect(parseActorChannelFrame(frame, "child")).toBeNull()
+  })
+})
