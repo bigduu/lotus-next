@@ -1753,3 +1753,21 @@ describe("caret-driven workspace file lookup", () => {
     list.mockReset().mockResolvedValue([])
   })
 })
+
+
+it("uses the selected worktree instead of the Project primary directory when submitting a new session", async () => {
+  Object.assign(runtime.state, { projects: { "project-a": { project_path: "/repo/primary" } } })
+  const send = vi.fn<Send>().mockResolvedValue({ kind: "unconfirmed", operationId: 1 })
+  const container = document.body.appendChild(document.createElement("div"))
+  const root = createRoot(container); roots.push(root)
+  await act(async () => root.render(<ChatPane chat={createChat(send, null)} pickedWorkspace="/picked"
+    pendingProjectId="project-a" worktreePath="/Volumes/External/worktrees/task"
+    onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()} splitOpen={false}
+    onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false} />))
+  expect(composer().displayWorkspace).toBe("/Volumes/External/worktrees/task")
+  change(container.querySelector<HTMLTextAreaElement>("textarea")!, "Inspect this checkout")
+  act(() => composer().onSubmit()); await flush()
+  expect(send).toHaveBeenCalledWith("Inspect this checkout", expect.objectContaining({
+    projectId: "project-a", workspacePath: "/Volumes/External/worktrees/task",
+  }))
+})
