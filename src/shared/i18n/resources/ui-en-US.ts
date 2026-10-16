@@ -1,5 +1,8 @@
 // Application-owned UI copy.
 export const uiEnUs = {
+  "subagent_origin_unknown": "The originating turn is unavailable.",
+  "subagent_refresh": "Refresh agent status",
+
   "native_task_stop_unconfirmed": "Stop unconfirmed",
   "native_task_stopped_outcome_unconfirmed": "Task stopped; outcome unconfirmed",
 

@@ -30,6 +30,7 @@ import { AssistantMarkdown } from "@/components/chat/AssistantMarkdown"
 import { Reasoning } from "@/components/chat/Reasoning"
 import { ToolCalls } from "@/components/chat/ToolCalls"
 import { ProcessActivity } from "@/components/chat/ProcessActivity"
+import { groupSubAgents } from "./subAgentGroups"
 import { SubAgents } from "@/components/chat/SubAgents"
 import { cn } from "@/lib/utils"
 import type { Message } from "@shared/types/chatMessages"
@@ -56,8 +57,9 @@ function liveToolMessages(seg: Extract<LiveSegment, { kind: "tools" }>): Message
         role: "tool",
         type: "tool_result",
         toolCallId: c.toolCallId,
+        toolName: c.toolName,
         isError: c.status === "error",
-        result: { result: c.status === "error" ? c.error || c.output : c.output },
+        result: { tool_name: c.toolName, display_preference: "Default", result: c.status === "error" ? c.error || c.output : c.output },
         images: c.images?.map((image, index) => ({
           id: `${c.toolCallId}-image-${index}`,
           base64: image.data,
@@ -281,16 +283,6 @@ function renderItemKey(item: RenderItem, index: number): string {
   return item.key || `activity-${index}`
 }
 
-function findSpawnItemIndex(items: RenderItem[]): number {
-  return items.findLastIndex((item) => item.kind === "process" && item.parts.some((part) =>
-    part.kind === "tools" && part.items.some((message) =>
-      (message as { toolCalls?: { toolName?: string }[] }).toolCalls?.some((call) =>
-        /task|sub.?agent|spawn/i.test(call.toolName || ""),
-      ),
-    ),
-  ))
-}
-
 function buildHistoryEntries(items: RenderItem[]): HistoryEntry[] {
   return items.map((item, itemIndex) => ({ key: renderItemKey(item, itemIndex), item, itemIndex }))
 }
@@ -431,6 +423,8 @@ export function MessageList({
   onScroll,
   messages,
   mergedSubAgents,
+  subAgentError,
+  onRefreshSubAgents,
   sending,
   latestRunFinished,
   streaming,
@@ -454,6 +448,8 @@ export function MessageList({
   onScroll: () => void
   messages: Message[]
   mergedSubAgents: Record<string, ChildProgress>
+  subAgentError?: string | null
+  onRefreshSubAgents?: () => void
   sending: boolean
   /** The latest persisted run completed normally (`stop_reason = finished`). */
   latestRunFinished: boolean
@@ -565,14 +561,10 @@ export function MessageList({
     setOpenToolKeys((current) => withSetMembership(current, key, open))
   }, [])
 
-  // Anchor the sub-agent block after the tool-group that spawned them, so it
-  // scrolls up with the conversation instead of staying pinned at the bottom.
-  const spawnItemIdx = useMemo(() => {
-    if (Object.keys(mergedSubAgents).length === 0) return -1
-    return findSpawnItemIndex(renderItems)
-  }, [renderItems, mergedSubAgents])
-  const liveSpawnItemIdx = useMemo(() => Object.keys(mergedSubAgents).length
-    ? findSpawnItemIndex(liveItems) : -1, [liveItems, mergedSubAgents])
+  const subAgentGroups = useMemo(() => groupSubAgents([...renderItems, ...liveItems]
+    .flatMap((item) => item.kind === "process" ? [{ key: item.key,
+      messages: item.parts.flatMap((part) => part.kind === "tools" ? part.items : []),
+    }] : []), mergedSubAgents), [renderItems, liveItems, mergedSubAgents])
 
   const renderItem = (
     it: RenderItem,
@@ -648,14 +640,8 @@ export function MessageList({
           </ProcessActivity>
         </div>
       )
-      if (!options?.live && idx === spawnItemIdx) {
-        return (
-          <Fragment key={`spawn-${idx}`}>
-            {process}
-            <SubAgents agents={mergedSubAgents} onOpen={onSelectSubAgent} />
-          </Fragment>
-        )
-      }
+      const children = subAgentGroups.byOrigin.get(it.key)
+      if (children) return <Fragment key={it.key}>{process}<SubAgents agents={children} onOpen={onSelectSubAgent} /></Fragment>
       return process
     }
     const m = it.m
@@ -776,6 +762,10 @@ export function MessageList({
           transition: "left 200ms ease-out",
         }}
       >
+        {subAgentError ? <div role="status" className="text-xs text-muted-foreground" data-subagent-error>
+          {subAgentError}{onRefreshSubAgents ? <Button variant="ghost" size="sm" onClick={onRefreshSubAgents}>{uiText("subagent_refresh")}</Button> : null}
+        </div> : null}
+        <SubAgents agents={subAgentGroups.unplaced} originUnconfirmed onOpen={onSelectSubAgent} />
         {messages.length === 0 && !streaming && !pendingUserText && liveSegments.length === 0 && (
           <div className="flex flex-col items-center gap-2 py-20 text-center">
             <BrandMark className="size-10 text-primary" />
@@ -822,17 +812,10 @@ export function MessageList({
           </div>
         ) : null}
 
-        {spawnItemIdx === -1 && liveSpawnItemIdx === -1 ? (
-          <SubAgents agents={mergedSubAgents} onOpen={onSelectSubAgent} />
-        ) : null}
-
         {/* The live projection uses the same message-only activity boundaries. */}
         {liveItems.map((item, index) => (
           <Fragment key={renderItemKey(item, index)}>
             {renderItem(item, index, { live: true })}
-            {index === liveSpawnItemIdx && spawnItemIdx === -1 ? (
-              <SubAgents agents={mergedSubAgents} onOpen={onSelectSubAgent} />
-            ) : null}
           </Fragment>
         ))}
       </div>
