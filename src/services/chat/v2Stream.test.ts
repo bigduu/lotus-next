@@ -1883,6 +1883,26 @@ describe("v2Stream shared WebSocket client", () => {
     subscription.close()
   })
 
+  it("does not certify an earlier incomplete replay through a second reconnect", () => {
+    vi.useFakeTimers()
+    const onEvent = vi.fn(), onControl = vi.fn(), onGap = vi.fn()
+    const subscription = subscribeActor("child", { onEvent, onControl, onGap })
+    const first = lastSocket()
+    first.open()
+    actorBaseline(first)
+    const replacement = reconnectActor(first)
+    replacement.emit({ ch: "actor.child", seq: 7, event: actorMarker })
+    expect(onGap).not.toHaveBeenCalled()
+    const next = reconnectActor(replacement)
+    expect(onGap).toHaveBeenCalledOnce()
+    expect(next.parsedSent()).toContainEqual({ type: "subscribe", ch: "actor.child", since: 7, actor_resume: { epoch: null } })
+    next.emit({ ch: "actor.child", seq: 7, control: { type: "actor_snapshot_required", reason: "gap", cursor: 7 } })
+    next.emit({ ch: "actor.child", seq: 7, control: { type: "actor_replay_complete", epoch: replayEpoch, cursor: 7, resumed_from: null } })
+    expect(onGap).toHaveBeenCalledOnce()
+    expect(onControl).toHaveBeenLastCalledWith({ type: "actor_snapshot_required", reason: "gap", cursor: 7 })
+    subscription.close()
+  })
+
   it("does not let an old socket or a closed subscription's timer disturb a replacement", () => {
     vi.useFakeTimers()
     const onEvent = vi.fn(), onControl = vi.fn(), onGap = vi.fn()
