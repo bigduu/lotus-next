@@ -50,7 +50,9 @@ test("Supervisor floating overview opens focused Work details and preserves draf
   const session = { id: supervisor, title: "Supervisor", title_version: 1, kind: "root", root_session_id: supervisor,
     parent_session_id: null, spawn_depth: 0, pinned: false, model: "fixture-model",
     model_ref: { provider: "fixture-provider", model: "fixture-model" },
-    created_at: "2026-10-05T00:00:00Z", updated_at: "2026-10-05T00:00:00Z", message_count: 0, is_running: false }
+    created_at: "2026-10-05T00:00:00Z", updated_at: "2026-10-05T00:00:00Z", message_count: 0, is_running: false,
+    root_orchestration_only: true, thinking_mode: "ultra", root_tool_authority_revision: 1,
+    root_mode_transition_epoch: 1, root_mode_birth_token: "a".repeat(64) }
   await page.route("**/api/v1/**", async (route) => {
     const request = route.request(), path = new URL(request.url()).pathname
     const envelope = (data: unknown) => ({ ...snapshot.scope.overview, data })
@@ -112,6 +114,7 @@ test("Supervisor floating overview opens focused Work details and preserves draf
   await expect(overview).toContainText("最近快照中的执行状态")
   await expect(overview).toContainText("跨会话长程控制暂不可用")
   await expect(overview.getByRole("button", { name: /启动循环|修改循环|停止循环/ })).toHaveCount(0)
+  await page.screenshot({ path: testInfo.outputPath("supervisor-managed-execution.png") })
   const text = await overview.innerText()
   expect(text).not.toContain(opaque); expect(text).not.toContain(hash); expect(text).not.toContain("/private/internal")
   const input = overview.getByRole("textbox", { name: "回答 报告A" })
