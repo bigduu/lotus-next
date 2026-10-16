@@ -8,6 +8,7 @@ it.each([
   ["completed", "done_c0b3fbff"],
   ["error", "failed_28384d7a"],
   ["cancelled", "workflow_run_status_cancelled"],
+  ["retired", "exited_899df7e2"],
   ["unknown", "plugin_connection_unknown"],
 ] as const)("renders %s without an active spinner", (status, label) => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })

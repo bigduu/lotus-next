@@ -24,7 +24,7 @@ const LABEL = {
   get running() { return uiText("running_1f0eb99b") }, get done() { return uiText("done_c0b3fbff") },
   get error() { return uiText("failed_28384d7a") }, get cancelled() { return uiText("workflow_run_status_cancelled") },
   get queued() { return uiText("workflow_run_status_queued") }, get idle() { return uiText("idle_dae661d1") },
-  get retired() { return uiText("stopped_f006455e") }, get unknown() { return uiText("plugin_connection_unknown") },
+  get retired() { return uiText("exited_899df7e2") }, get unknown() { return uiText("plugin_connection_unknown") },
 }
 
 function SubAgentCard({ child, childId, onOpen }: { child: ChildProgress; childId: string; onOpen?: () => void }) {
