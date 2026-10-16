@@ -6,6 +6,8 @@ export interface WorktreePreferences {
 }
 export interface GitWorktree {
   path: string
+  /** Escaped labels are display-only and must never become filesystem targets. */
+  path_encoding?: "utf-8" | "escaped"
   branch: string | null
   head: string
   locked: boolean
