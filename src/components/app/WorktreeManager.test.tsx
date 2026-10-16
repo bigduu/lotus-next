@@ -139,3 +139,19 @@ it("keeps a prunable unavailable worktree disabled even when status is unknown",
   expect(useAppStore.getState().bindWorkspace).not.toHaveBeenCalled()
   expect(onOpen).not.toHaveBeenCalled()
 })
+
+
+it("shows an escaped raw-byte path as unavailable without opening its label", async () => {
+  const onOpen = vi.fn()
+  const unavailable = listing()
+  Object.assign(unavailable.repositories[0]!.worktrees[0]!, { path: '"/raw/invalid-\\xFF"', path_encoding: "escaped", dirty: null,
+    error: "Worktree path contains non-UTF-8 bytes and is displayed as an escaped label" })
+  mocks.list.mockResolvedValueOnce(unavailable)
+  await mount(onOpen)
+  expect(document.body.textContent).toContain("状态未知")
+  expect(document.body.textContent).toContain("non-UTF-8")
+  expect(buttons("打开并新建会话")[0]!.disabled).toBe(true)
+  await act(async () => buttons("打开并新建会话")[0]!.click())
+  expect(useAppStore.getState().bindWorkspace).not.toHaveBeenCalled()
+  expect(onOpen).not.toHaveBeenCalled()
+})
