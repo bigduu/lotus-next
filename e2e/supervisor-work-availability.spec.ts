@@ -79,21 +79,28 @@ async function fixture(page: Page, initial: string) {
       expect(command).toEqual({ supervisor_session_id: supervisor, incarnation_id: incarnation, binding_revision: bindingRevision })
       if (initializationHold) await initializationHold
       if (!ultra || command.binding_revision !== bindingRevision) return route.fulfill({ status: 409,
-        json: { error: "scope binding changed", code: "scope_binding_mismatch", scope: scopeV1() } })
+        json: { error: { type: "api_error", message: "scope binding changed" }, code: "scope_binding_mismatch", scope: scopeV1() } })
+      if (["mode-denied", "identity-denied"].includes(initializeOutcome)) {
+        const mode = initializeOutcome === "mode-denied"
+        if (mode) ultra = false
+        current = mode ? "v1-mode-required" : "v1-identity"
+        return route.fulfill({ status: 403, json: { error: { type: "api_error", message: "scope authority refused" },
+          code: mode ? "supervisor_mode_required" : "supervisor_identity_mismatch", scope: scopeV1() } })
+      }
       if (initializeOutcome === "denied") {
         current = "forbidden"
-        return route.fulfill({ status: 403, json: { error: "owner initialization denied" } })
+        return route.fulfill({ status: 403, json: { error: { type: "api_error", message: "owner initialization denied" } } })
       }
       if (["recovery", "stale", "disabled"].includes(initializeOutcome)) {
         current = "v1-" + initializeOutcome
         const code = initializeOutcome === "recovery" ? "scope_requires_recovery"
           : initializeOutcome === "stale" ? "scope_binding_mismatch" : "ticket_mutation_disabled"
         return route.fulfill({ status: initializeOutcome === "disabled" ? 503 : 409,
-          json: { error: "explicit initialization refusal", code, scope: scopeV1() } })
+          json: { error: { type: "api_error", message: "explicit initialization refusal" }, code, scope: scopeV1() } })
       }
       current = initializeOutcome === "conflict" ? "v1-read-only" : "v1-ready"; storedRevision = bindingRevision
       if (["conflict", "stale-readable"].includes(initializeOutcome)) return route.fulfill({ status: 409,
-        json: { error: "another owner initialized this scope", code: initializeOutcome === "conflict" ? "initialization_conflict" : "scope_binding_mismatch", scope: scopeV1() } })
+        json: { error: { type: "api_error", message: "another owner initialized this scope" }, code: initializeOutcome === "conflict" ? "initialization_conflict" : "scope_binding_mismatch", scope: scopeV1() } })
       if (initializeOutcome === "unknown") return route.abort("failed")
       return route.fulfill({ json: { created: initializeOutcome === "malformed" ? "yes" : initializeOutcome !== "existing", scope: scopeV1() } })
     }
@@ -233,6 +240,8 @@ for (const [outcome, message, readable] of [
   ["recovery", "已有工作存储需要审阅后恢复", false],
   ["stale", "已有工作绑定与当前身份或版本不匹配", false], ["disabled", "此服务尚未启用工作功能", false],
   ["denied", "查看工作需要已验证的所有者访问权限", false],
+  ["mode-denied", "此工作范围需要 Supervisor 使用 Ultra 模式", false],
+  ["identity-denied", "当前会话与服务确认的 Supervisor 身份不匹配", false],
   ["unknown", "无法确认初始化响应", true], ["malformed", "无法确认初始化响应", true],
 ] as const) {
   test(`v1 initialization ${outcome} preserves refusal and reads canonical state without replay`, async ({ page }) => {
@@ -240,6 +249,9 @@ for (const [outcome, message, readable] of [
     const workbench = await openWork(page)
     await workbench.getByRole("button", { name: "初始化空工作范围", exact: true }).click()
     await expect(workbench).toContainText(message)
+    await expect(workbench).not.toContainText("[object Object]")
+    if (["conflict", "stale-readable"].includes(outcome)) await expect(workbench).toContainText("another owner initialized this scope")
+    if (["recovery", "stale", "disabled"].includes(outcome)) await expect(workbench).toContainText("explicit initialization refusal")
     if (readable) {
       await expect(workbench).toContainText("此工作范围还没有记录工作")
       await expect(workbench).not.toContainText("离线恢复流程")

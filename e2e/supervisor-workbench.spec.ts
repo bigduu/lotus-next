@@ -15,7 +15,9 @@ test("Supervisor floating overview opens focused Work details and preserves draf
       blocked: { reason: "等待用户" }, active_assignment: "assignment-" + id, current_submission: null, accepted_submission: null },
     requests: [{ id: "q-" + id, work_id: id, assignment_id: "assignment-" + id, generation: 1,
       contract_revision: 1, prompt_revision: 1, updated_seq: 5, kind: { kind: "question" }, prompt: "颜色？", status: "open", answer: null }],
-    submissions: [],
+    submissions: [], sections: ["assignments", "requests", "submissions"],
+    assignments: [{ id: "assignment-" + id, work_id: id, generation: 1, contract_revision: 1,
+      state: "blocked", runtime: { session_id: "work-session-" + id, run_id: "run-" + id } }],
   }))
   const scopeOverview = { snapshot: stamp, index_seq: 10, coverage: "authoritative_scope", truncated: false, omitted_count: 0, next_cursor: null,
     data: { ticket_count: 3, work_count: 3, states: { blocked: 2, accepted: 1 }, open_questions: 1, open_approvals: 1, needs_acceptance: 0 } }
@@ -25,6 +27,7 @@ test("Supervisor floating overview opens focused Work details and preserves draf
     capabilities: { ticket_scope_v1: true, multi_pending_v1: true, precise_request_response_v1: true, message_references_v1: true, semantic_messages_v1: true },
   } }
   const [question, approval, completed] = snapshot.views
+  question.ticket.contract.objective = "核对报告结论并等待用户选择颜色"
   approval.requests[0].kind = { kind: "approval", fingerprint: "exact-fingerprint", action: {
     kind: "file_write", target: "README.md", amount: null, data_hash: "b".repeat(64), permissions: ["Write"], risk: "修改共享文档",
   } }
@@ -55,7 +58,10 @@ test("Supervisor floating overview opens focused Work details and preserves draf
     else if (path === `/api/v1/respond/${supervisor}/pending`) await route.fulfill({ json: { has_pending_question: false } })
     else if (path === "/api/v1/tickets/scope") await route.fulfill({ json: snapshot.scope })
     else if (path === "/api/v1/tickets/search") await route.fulfill({ json: envelope(snapshot.views.map((v) => ({ id: v.ticket.id, kind: "work" }))) })
-    else if (path === "/api/v1/tickets/inspect") await route.fulfill({ json: envelope(snapshot.views.filter((v) => request.postDataJSON().ids.includes(v.ticket.id))) })
+    else if (path === "/api/v1/tickets/inspect") {
+      expect(request.postDataJSON().sections).toEqual(["assignments", "requests", "submissions"])
+      await route.fulfill({ json: envelope(snapshot.views.filter((v) => request.postDataJSON().ids.includes(v.ticket.id))) })
+    }
     else if (path === "/api/v1/tickets/changes") await route.fulfill({ json: envelope([]) })
     else if (path === `/api/v1/tickets/artifacts/${hash}`) await route.fulfill({ body: "pub fn answer() -> u8 { 42 }\n", contentType: "text/plain" })
     else if (path === "/api/v1/tickets/requests/respond") {
@@ -99,6 +105,11 @@ test("Supervisor floating overview opens focused Work details and preserves draf
   await expect(overview.getByText("代码交付", { exact: true })).toBeHidden()
   await expect(overview).toBeFocused()
   await expectComposerText(composer, "保留我的输入")
+  await expect(overview).toContainText(question.ticket.contract.objective)
+  await expect(overview).toContainText("work-session-A")
+  await expect(overview).toContainText("最近快照中的执行状态")
+  await expect(overview).toContainText("跨会话长程控制暂不可用")
+  await expect(overview.getByRole("button", { name: /启动循环|修改循环|停止循环/ })).toHaveCount(0)
   const text = await overview.innerText()
   expect(text).not.toContain(opaque); expect(text).not.toContain(hash); expect(text).not.toContain("/private/internal")
   const input = overview.getByRole("textbox", { name: "回答 报告A" })

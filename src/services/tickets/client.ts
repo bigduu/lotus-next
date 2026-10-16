@@ -90,14 +90,17 @@ export const ticketClient = {
     // A complete contract is never silently cut to fit a batch budget.
     for (const row of summaries.filter((row) => row.kind !== "step")) {
       let result: ReadEnvelope<WorkView[]>
-      try {
-        result = await apiClient.post<ReadEnvelope<WorkView[]>>("tickets/inspect", {
-          ids: [row.id], sections: ["requests", "submissions"], depth: 0,
-          budget_bytes: 65536, fixed_commit: snapshot.commit,
-        }, { signal })
-      } catch (failure) {
-        if (!isApiError(failure) || failure.status !== 422 || failure.message !== "context_budget_exceeded") throw failure
-        complete = false; continue
+      const inspect = (sections: string[]) => apiClient.post<ReadEnvelope<WorkView[]>>("tickets/inspect", {
+        ids: [row.id], sections, depth: 0, budget_bytes: 65536, fixed_commit: snapshot.commit,
+      }, { signal })
+      const overBudget = (failure: unknown) => isApiError(failure) && failure.status === 422 && failure.message === "context_budget_exceeded"
+      try { result = await inspect(["assignments", "requests", "submissions"]) }
+      catch (failure) {
+        if (!overBudget(failure)) throw failure
+        // Long execution histories must not hide an otherwise complete Work or
+        // its exact decisions. Missing execution metadata stays explicitly unknown.
+        try { result = await inspect(["requests", "submissions"]) }
+        catch (fallback) { if (!overBudget(fallback)) throw fallback; complete = false; continue }
       }
       sameSnapshot(result, snapshot)
       if (result.truncated || result.omitted_count !== 0 || !completeCoverage(result.coverage)) complete = false

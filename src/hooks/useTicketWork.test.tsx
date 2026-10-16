@@ -315,15 +315,17 @@ it("switches ticket labels and plural counts without changing request data or th
   expect(container.querySelector("input")).toBe(input)
 })
 
-it("keeps opaque evidence and execution paths in closed diagnostics while results remain usable", async () => {
+it("shows the objective while keeping generated evidence and execution paths in closed diagnostics", async () => {
   const view = snapshot.views[0]
   view.ticket.state = "accepted"; view.ticket.accepted_submission = "opaque-submission"
-  view.ticket.contract.objective = "Read /private/internal/worktree/answer.rs"
+  view.ticket.contract.objective = "Deliver reviewed code with acceptance evidence"
   view.submissions = [{ id: "opaque-submission", work_id: "A", generation: 1, contract_revision: 1,
     stale: false, updated_seq: 10, artifacts: [{ uri: "managed:result", sha256: "a".repeat(64) }],
-    evidence: ["canonical Child 63f417ee-0828-41b6-a40d-21f0ac37cf96; run opaque-run; sha256 " + "b".repeat(64)] }]
+    evidence: ["Read /private/internal/worktree/answer.rs", "canonical Child 63f417ee-0828-41b6-a40d-21f0ac37cf96; run opaque-run; sha256 " + "b".repeat(64)] }]
   await mount()
-  for (const text of [view.ticket.contract.objective, view.submissions[0].id, view.submissions[0].evidence[0]]) {
+  const objective = [...container.querySelectorAll("p")].find((p) => p.textContent === view.ticket.contract.objective)!
+  expect(objective.closest("details")).toBeNull()
+  for (const text of [view.submissions[0].id, ...view.submissions[0].evidence]) {
     const node = [...container.querySelectorAll("p")].find((p) => p.textContent === text)!
     expect(node.closest("details")).not.toBeNull()
     expect(node.closest("details")!.open).toBe(false)
@@ -650,5 +652,75 @@ it("starts one scope read after initial identity metadata settles and keeps unch
   const previous = controller.state
   await mount("root", true, "birth:1:true")
   expect(controller.state).toEqual(previous)
+  expect(ticketClient.load).toHaveBeenCalledTimes(1)
+})
+
+
+it("shows the scoped execution session, objective and recorded status without cross-session Loop controls", async () => {
+  const work = snapshot.views[0]
+  work.ticket.contract.objective = "Compare the report with its acceptance evidence"
+  work.sections = ["assignments", "requests", "submissions"]
+  work.assignments = [{ id: work.ticket.active_assignment!, work_id: work.ticket.id, generation: 1, contract_revision: 1,
+    state: "running", runtime: { session_id: "worker-session-A", run_id: "run-A" } }]
+  await mount()
+  expect(container.textContent).toContain(work.ticket.contract.objective)
+  expect(container.textContent).toContain("worker-session-A")
+  expect(container.textContent).toContain("运行中")
+  expect(container.textContent).toContain("跨会话长程控制暂不可用")
+  expect([...container.querySelectorAll("button")].some((button) => /启动循环|修改循环|停止循环/.test(button.textContent ?? ""))).toBe(false)
+  vi.mocked(ticketClient.load).mockRejectedValueOnce(new TicketScopeUnavailableError("forbidden"))
+  await act(async () => controller.refresh())
+  expect(container.textContent).not.toContain("worker-session-A")
+})
+
+it.each(["work", "generation", "contract", "sections"])("does not present a %s mismatch as a managed execution", async (mismatch) => {
+  const work = snapshot.views[0]
+  work.sections = mismatch === "sections" ? ["requests", "submissions"] : ["assignments", "requests", "submissions"]
+  work.assignments = [{ id: work.ticket.active_assignment!, work_id: mismatch === "work" ? "other" : work.ticket.id,
+    generation: mismatch === "generation" ? 0 : 1, contract_revision: mismatch === "contract" ? 2 : 1,
+    state: "running", runtime: { session_id: "unrelated-session", run_id: "old-run" } }]
+  await mount()
+  expect(container.textContent).not.toContain("unrelated-session")
+  expect(container.textContent).toContain("执行会话信息尚未确认")
+})
+
+it("shows an accepted result's execution record after its active assignment has cleared", async () => {
+  const work = snapshot.views[0]
+  work.ticket.active_assignment = null; work.ticket.state = "accepted"; work.ticket.accepted_submission = "accepted-A"
+  work.sections = ["assignments", "requests", "submissions"]
+  work.assignments = [{ id: "assignment-A", work_id: work.ticket.id, generation: 1, contract_revision: 1,
+    state: "submitted", process_stopped: true, runtime: { session_id: "completed-session", run_id: "completed-run" } }]
+  work.submissions = [{ id: "accepted-A", assignment_id: "assignment-A", work_id: work.ticket.id, generation: 1,
+    contract_revision: 1, stale: false, artifacts: [], evidence: ["verified result"], updated_seq: 10 }]
+  await mount()
+  expect(container.textContent).toContain("completed-session")
+  expect(container.textContent).toContain("执行进程已确认结束")
+  expect(container.textContent).toContain("已验收成果")
+})
+
+
+it.each(["supervisor_mode_required", "supervisor_identity_mismatch"] as const)("keeps the owner-only canonical reason after initialization HTTP 403/%s", async (code) => {
+  offerInitialization(); await mount()
+  const scope = { ...initializableTicketScope(), availability: { kind: "forbidden" as const, reason_code: code },
+    reason: "Canonical scope refusal", can_initialize: false, initialization: null }
+  vi.mocked(ticketClient.initialize).mockRejectedValueOnce(new ApiError("Scope refusal", 403, "Forbidden",
+    JSON.stringify({ error: { type: "api_error", message: "Scope refusal" }, code, scope })))
+  await act(async () => { expect(await controller.initialize()).toBe(false) })
+  expect(controller.availability.reasonCode).toBe(code)
+  expect(controller.initializationError).toBe("Canonical scope refusal")
+  expect(controller.state).toBeNull()
+  expect(controller.canInitialize).toBe(false)
+  expect(ticketClient.load).toHaveBeenCalledTimes(1)
+})
+
+it("never promotes an HTTP 403 with a readable or contradictory scope", async () => {
+  offerInitialization(); await mount()
+  vi.mocked(ticketClient.initialize).mockRejectedValueOnce(new ApiError("Denied", 403, "Forbidden",
+    JSON.stringify({ error: { message: "Denied" }, code: "supervisor_mode_required", scope: readyTicketScopeV1() })))
+  await act(async () => { expect(await controller.initialize()).toBe(false) })
+  expect(controller.availability).toMatchObject({ kind: "forbidden" })
+  expect(controller.availability.reasonCode).toBeUndefined()
+  expect(controller.state).toBeNull()
+  expect(controller.canInitialize).toBe(false)
   expect(ticketClient.load).toHaveBeenCalledTimes(1)
 })

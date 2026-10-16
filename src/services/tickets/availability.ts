@@ -77,3 +77,16 @@ export function initializationRefusal(failure: unknown): "initialization_conflic
   } catch { /* Unknown write outcomes remain unconfirmed and are never replayed. */ }
   return undefined
 }
+
+
+/** A post-authentication scope refusal can explain 403 without granting reads. */
+export function initializationDenial(failure: unknown, sessionId: string): TicketAvailability | undefined {
+  if (!isApiError(failure) || failure.status !== 403 || !failure.body) return undefined
+  try {
+    const body = JSON.parse(failure.body) as { code?: unknown; scope?: TicketScope }
+    if (!["supervisor_mode_required", "supervisor_identity_mismatch"].includes(String(body.code)) || !body.scope) return undefined
+    const presentation = scopeAvailability(body.scope, sessionId)
+    if (presentation?.kind === "forbidden" && presentation.reasonCode === body.code && !presentation.initialization) return presentation
+  } catch { /* Malformed or contradictory denials never confer access. */ }
+  return undefined
+}

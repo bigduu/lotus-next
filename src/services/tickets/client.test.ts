@@ -28,6 +28,7 @@ it("pins every search page and selected inspector to one commit despite later wr
       return { ...value.scope.overview, data: [{ id: page === 1 ? "A" : "E", kind: "work" }], next_cursor: cursor }
     }
     const id = (body as { ids: string[] }).ids[0]
+    expect((body as { sections: string[] }).sections).toEqual(["assignments", "requests", "submissions"])
     return { ...value.scope.overview, data: value.views.filter((v) => v.ticket.id === id) }
   })
   const loaded = await ticketClient.load("root")
@@ -203,4 +204,27 @@ it("rejects a legacy-shaped initialization acknowledgement even if its old scope
   vi.mocked(apiClient.postOnce).mockResolvedValue({ created: true, scope: legacy })
   await expect(ticketClient.initialize(initialization)).rejects.toThrow("无法确认初始化响应")
   expect(apiClient.postOnce).toHaveBeenCalledTimes(1)
+})
+
+
+it.each([false, true])("bounds assignment inspection while preserving canonical Work decisions; mixed fallback=%s", async (mixed) => {
+  const value = ticketSnapshot()
+  vi.mocked(apiClient.get).mockResolvedValue(value.scope)
+  vi.mocked(apiClient.post).mockImplementation(async (path, body) => {
+    expect((body as { fixed_commit: string }).fixed_commit).toBe(value.snapshot.commit)
+    if (path === "tickets/search") return { ...value.scope.overview, data: [{ id: "A", kind: "work" }] }
+    const sections = (body as { sections: string[] }).sections
+    if (sections.includes("assignments")) throw new ApiError("context_budget_exceeded", 422, "Unprocessable Entity")
+    expect(sections).toEqual(["requests", "submissions"])
+    return { ...value.scope.overview, snapshot: mixed ? { ...value.snapshot, commit: "different" } : value.snapshot,
+      data: [{ ...value.views[0], assignments: [], sections }] }
+  })
+  if (mixed) await expect(ticketClient.load("root")).rejects.toThrow("快照不一致")
+  else {
+    const loaded = await ticketClient.load("root")
+    expect(loaded?.complete).toBe(true)
+    expect(loaded?.views[0].ticket.id).toBe("A")
+    expect(loaded?.views[0].sections).toEqual(["requests", "submissions"])
+  }
+  expect(apiClient.post).toHaveBeenCalledTimes(3)
 })

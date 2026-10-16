@@ -1,7 +1,7 @@
 import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { useCallback, useContext, useEffect, useRef, useState, useSyncExternalStore } from "react"
 import { getErrorMessage, isApiError } from "@services/api"
-import { initializationRefusal, ticketAvailabilityFailure, TicketScopeUnavailableError, type TicketAvailability } from "@services/tickets/availability"
+import { initializationDenial, initializationRefusal, ticketAvailabilityFailure, TicketScopeUnavailableError, type TicketAvailability } from "@services/tickets/availability"
 import { ticketClient } from "@services/tickets/client"
 import { OwnerAccessContext } from "./ownerAccessContext"
 import { applyTicketSnapshot, responseCommand, type TicketState } from "@services/tickets/state"
@@ -211,8 +211,9 @@ export function useTicketWork(sessionId: string | null | undefined, authorityKey
         if (!stillCurrent()) return false
         if (isApiError(failure) && [401, 403].includes(failure.status)) {
           current.current = null; connection.current = false; setState(null); setConnected(false)
-          setAvailability(ticketAvailabilityFailure(failure)); setSettledEpoch(capturedEpoch)
-          setError(null); setInitializationError(getErrorMessage(failure)); return false
+          const denial = initializationDenial(failure, capturedSession)
+          setAvailability(denial ?? ticketAvailabilityFailure(failure)); setSettledEpoch(capturedEpoch)
+          setError(null); setInitializationError(denial?.detail ?? getErrorMessage(failure)); return false
         }
         const code = initializationRefusal(failure)
         if (isApiError(failure) && failure.status === 409 && code) conflictDetail = getErrorMessage(failure)

@@ -35,11 +35,19 @@ export interface PendingRequest {
   kind: { kind: "question" } | { kind: "approval"; fingerprint: string; action: Action }
   prompt: string; status: RequestStatus; answer: string | null
 }
+export type AssignmentState = "planned" | "dispatch_pending" | "admitted" | "running" | "submitted" | "blocked" | "failed" | "cancelling" | "cancelled" | "outcome_unknown"
+export interface Assignment {
+  id: string; work_id: string; generation: number; contract_revision: number; state: AssignmentState
+  runtime: { session_id: string; run_id: string } | null; process_stopped?: boolean
+}
 export interface Submission {
-  id: string; work_id: string; generation: number; contract_revision: number; stale: boolean
+  id: string; work_id: string; assignment_id?: string; generation: number; contract_revision: number; stale: boolean
   artifacts: { uri: string; sha256: string }[]; evidence: string[]; updated_seq: number
 }
-export interface WorkView { ticket: Work; requests: PendingRequest[]; submissions: Submission[] }
+export interface WorkView {
+  ticket: Work; requests: PendingRequest[]; submissions: Submission[]
+  assignments?: Assignment[]; sections?: ("assignments" | "requests" | "submissions")[]
+}
 export interface TicketSnapshot {
   scope: TicketScope & { binding: ScopeBinding; overview: ReadEnvelope<Overview> }
   snapshot: SnapshotRef; views: WorkView[]; complete: boolean
