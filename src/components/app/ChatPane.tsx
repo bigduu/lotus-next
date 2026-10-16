@@ -49,6 +49,7 @@ import { MessageList } from "@/components/app/MessageList"
 import { useGuidanceQueue } from "@/hooks/useGuidanceQueue"
 import { useTicketWork } from "@/hooks/useTicketWork"
 import { useTicketIngress } from "@/hooks/useTicketIngress"
+import { TicketWorkAvailability } from "@/components/chat/TicketWorkAvailability"
 import { TicketWorkPanel } from "@/components/chat/TicketWorkPanel"
 import { SupervisorOverview } from "@/components/chat/SupervisorOverview"
 import { isDefaultSupervisor } from "@/lib/supervisor"
@@ -262,7 +263,14 @@ export function ChatPane({
       : null)
   const runFailureGuidance = generationFailed ? describeRunFailure(runErrorDetail) : null
   const queue = useGuidanceQueue(currentSessionId, currentlyRunning)
-  const tickets = useTicketWork(currentSessionId)
+  const rootAuthority = useRootOrchestrationMode(currentSessionId, currentChat?.kind)
+  // Invalidate cached Work eligibility on mode/lifecycle changes. This key is
+  // only a local read fence; initialization revision still comes from scope GET.
+  const workAuthorityKey = `${rootAuthority.authority?.birthToken ?? ""}:${rootAuthority.authority?.epoch ?? ""}:${rootAuthority.authority?.enabled ?? ""}`
+  // Settle the first identity read before starting a scoped read. Later
+  // unchanged metadata refreshes must not withdraw Work or cancel its reads.
+  const deferWorkRead = rootAuthority.loading && !rootAuthority.authority && !rootAuthority.unsafe
+  const tickets = useTicketWork(currentSessionId, workAuthorityKey, rootAuthority.unsafe, deferWorkRead)
   const ticketIngress = useTicketIngress(currentSessionId)
   const ticketScope = tickets.state?.current.scope
   const pendingTicketMessage = ticketIngress.hasPending(currentSessionId)
@@ -339,7 +347,6 @@ export function ChatPane({
   const [workflowPicker, setWorkflowPicker] = useState<"composer" | "environment" | null>(null)
   const [removedWorkflow, setRemovedWorkflow] = useState<{ draft: TypedWorkflowDraft; revision: number } | null>(null)
   const [workflowError, setWorkflowError] = useState<string | null>(null)
-  const rootAuthority = useRootOrchestrationMode(currentSessionId, currentChat?.kind)
   const [rootModeConflict, setRootModeConflict] = useState<string | null>(null)
   useEffect(() => { setRootModeConflict(null) }, [currentSessionId])
   const [attachments, setAttachments] = useState<Attachment[]>([])
@@ -1135,7 +1142,7 @@ export function ChatPane({
             onWorkReference?.()
             requestAnimationFrame(() => composerInputRef.current?.focus())
           } : undefined} />
-        ) : <p role="status" className="p-4 text-sm text-muted-foreground">{tickets.negotiated ? uiText("supervisor_work_unavailable") : uiText("loading_4927a53b")}</p>, workPanelTarget) : null}
+        ) : <TicketWorkAvailability availability={tickets.availability} refreshing={tickets.refreshing} canRefresh={tickets.canRefresh} onRefresh={() => void tickets.refresh()} canInitialize={tickets.canInitialize} initializing={tickets.initializing} initializationError={tickets.initializationError} onInitialize={() => void tickets.initialize()} />, workPanelTarget) : null}
         {semanticComposer && visibleTicketReference ? <div className="mx-4 mb-2 flex items-center gap-2 text-xs" data-testid="ticket-reference">
           <span>{uiText("ticket_reference", { title: tickets.state?.works[visibleTicketReference.work_id]?.ticket.contract.title ?? uiText("supervisor_work_tab") })}</span>
           <button type="button" className="underline" disabled={pendingTicketMessage} onClick={() => setTicketReference(null)}>{uiText("ticket_clear_reference_b2e538a2")}</button>

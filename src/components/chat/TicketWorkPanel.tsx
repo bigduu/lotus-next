@@ -57,17 +57,20 @@ export function TicketWorkPanel({ controller, onReference, selectedWorkId, onSho
   const selected = selectedWorkId && !state.works[selectedWorkId]?.ticket.archived ? state.works[selectedWorkId]?.ticket : undefined
   const overview = state.current.scope.overview.data
   const open = Object.values(state.requests).filter((q) => effectiveStatus(state, q) === "open")
+  const visibleWorks = Object.values(state.works).filter((view) => !view.ticket.archived)
   const history = Object.values(state.requests).filter((q) => effectiveStatus(state, q) !== "open")
   return <section aria-label={uiText("ticket_work_overview_223a6f34")} data-testid="ticket-work-overview" tabIndex={-1} className="p-4 outline-none">
     {selected && onShowAll ? <button type="button" onClick={onShowAll} className="mb-3 text-xs text-muted-foreground underline">{uiText("supervisor_work_back")}</button> : null}
-    <div className="flex items-center justify-between gap-3"><strong>{uiText("ticket_work_overview_223a6f34")}</strong><button type="button" className="text-xs underline" onClick={() => void controller.refresh()}>{uiText("refresh_aee88743")}</button></div>
+    <div className="flex items-center justify-between gap-3"><strong>{uiText("ticket_work_overview_223a6f34")}</strong><button type="button" className="text-xs underline" disabled={controller.refreshing} onClick={() => void controller.refresh()}>{uiText("refresh_aee88743")}</button></div>
     <p className="my-2 text-xs text-muted-foreground">{uiText("ticket_work_count", { count: overview.work_count })} · {uiText("ticket_question_count", { count: overview.open_questions })} · {uiText("ticket_approval_count", { count: overview.open_approvals })} · {uiText("ticket_acceptance_count", { count: overview.needs_acceptance })}</p>
     {!state.current.complete ? <p role="status" className="text-sm text-muted-foreground">{uiText("ticket_only_some_work_is_shown_other_work_may_still__ee267ea7")}</p> : null}
     {!controller.connected ? <p role="status" className="text-sm text-muted-foreground">{uiText("ticket_the_connection_is_not_confirmed_answers_and_a_aaac8c0d")}</p> : null}
-    {!state.current.scope.mutation_enabled || state.current.scope.health !== "writable" ? <p className="text-sm text-muted-foreground">{uiText("ticket_this_ticket_is_read_only__4b7b2251")}</p> : null}
+    {!state.current.scope.mutation_enabled || state.current.scope.health !== "writable" ? <p role="status" className="text-sm text-muted-foreground">{uiText(!state.current.scope.mutation_enabled ? "supervisor_work_mutation_disabled" : "ticket_this_ticket_is_read_only__4b7b2251")}</p> : null}
+    {!state.current.scope.dispatch_enabled ? <p role="status" className="text-sm text-muted-foreground">{uiText("supervisor_work_dispatch_disabled")}</p> : null}
+    {state.current.complete && controller.connected && overview.ticket_count === 0 && visibleWorks.length === 0 ? <p role="status" className="my-2 text-sm text-muted-foreground">{uiText("supervisor_work_empty")}</p> : null}
     {controller.error ? <p role="alert" className="my-2 text-sm text-destructive">{controller.error}</p> : null}
     <div className="grid gap-3">
-      {Object.values(state.works).filter((v) => !v.ticket.archived).map((view) => <section key={view.ticket.id} hidden={!!selected && selected.id !== view.ticket.id} className="rounded-xl border bg-background p-3 text-sm">
+      {visibleWorks.map((view) => <section key={view.ticket.id} hidden={!!selected && selected.id !== view.ticket.id} className="rounded-xl border bg-background p-3 text-sm">
         <div className="flex justify-between gap-2"><strong className="min-w-0 break-words">{view.ticket.contract.title}</strong><span className="shrink-0 text-xs text-muted-foreground">{ticketWorkLabels[view.ticket.state]}</span></div>
         {view.ticket.blocked ? <p className="mt-1 text-muted-foreground">{view.ticket.blocked.reason}</p> : null}
         {view.submissions.filter((s) => s.id === view.ticket.accepted_submission || s.id === view.ticket.current_submission).map((submission) => <div key={submission.id} className="mt-2">

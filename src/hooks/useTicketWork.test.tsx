@@ -3,21 +3,26 @@ import { createRoot, type Root } from "react-dom/client"
 import { afterEach, beforeEach, expect, it, vi } from "vitest"
 import { useTicketWork } from "./useTicketWork"
 import { OwnerAccessContext } from "./ownerAccessContext"
+import { TicketWorkAvailability } from "@/components/chat/TicketWorkAvailability"
 import { TicketWorkPanel } from "@/components/chat/TicketWorkPanel"
+import { scopeAvailability, TicketScopeUnavailableError } from "@services/tickets/availability"
 import { ticketClient } from "@services/tickets/client"
-import { ticketSnapshot } from "@services/tickets/testFixtures"
+import { initializableTicketScope, readyTicketScopeV1, ticketSnapshot } from "@services/tickets/testFixtures"
 import type { ResponseCommand, TicketSnapshot } from "@services/tickets/types"
 import { ApiError } from "@services/api"
 import { changeLocale } from "@shared/i18n"
 
-vi.mock("@services/tickets/client", () => ({ ticketClient: { load: vi.fn(), scope: vi.fn(), changes: vi.fn(), respond: vi.fn(), artifact: vi.fn() } }))
+vi.mock("@services/tickets/client", () => ({ ticketClient: { load: vi.fn(), scope: vi.fn(), changes: vi.fn(), respond: vi.fn(), initialize: vi.fn(), artifact: vi.fn() } }))
 let root: Root, container: HTMLDivElement, controller: ReturnType<typeof useTicketWork>
 let snapshot = ticketSnapshot()
 let loseAck = false
 const receipts = new Map<string, ResponseCommand>()
-function Harness({ session = "root" }: { session?: string }) {
-  controller = useTicketWork(session)
-  return <TicketWorkPanel controller={controller} onReference={() => {}} />
+function Harness({ session = "root", authorityKey = "", authorityBlocked = false, deferRead = false }: { session?: string; authorityKey?: string; authorityBlocked?: boolean; deferRead?: boolean }) {
+  controller = useTicketWork(session, authorityKey, authorityBlocked, deferRead)
+  return controller.state ? <TicketWorkPanel controller={controller} onReference={() => {}} />
+    : <TicketWorkAvailability availability={controller.availability} refreshing={controller.refreshing} canRefresh={controller.canRefresh}
+      onRefresh={() => void controller.refresh()} canInitialize={controller.canInitialize} initializing={controller.initializing}
+      initializationError={controller.initializationError} onInitialize={() => void controller.initialize()} />
 }
 beforeEach(() => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
@@ -47,8 +52,8 @@ beforeEach(() => {
   container = document.createElement("div"); document.body.append(container); root = createRoot(container)
 })
 afterEach(() => { act(() => root.unmount()); container.remove(); vi.resetAllMocks(); vi.useRealTimers() })
-const mount = async (session = "root", ownerAccess = true) => {
-  await act(async () => root.render(<OwnerAccessContext value={ownerAccess}><Harness session={session} /></OwnerAccessContext>))
+const mount = async (session = "root", ownerAccess = true, authorityKey = "", authorityBlocked = false, deferRead = false) => {
+  await act(async () => root.render(<OwnerAccessContext value={ownerAccess}><Harness session={session} authorityKey={authorityKey} authorityBlocked={authorityBlocked} deferRead={deferRead} /></OwnerAccessContext>))
 }
 
 it("rebases one known pre-commit question conflict only while its exact identity remains open", async () => {
@@ -341,6 +346,7 @@ it("denies owner-only requests when Root access is absent or explicitly denied",
     await controller.refresh()
     expect(await controller.respond(snapshot.views[0].requests[0], { kind: "question", answer: "denied" })).toBe(false)
   })
+  expect(controller.canRefresh).toBe(false)
   expect(ticketClient.load).not.toHaveBeenCalled()
   expect(ticketClient.scope).not.toHaveBeenCalled()
   expect(ticketClient.changes).not.toHaveBeenCalled()
@@ -396,4 +402,253 @@ it.each(["acknowledged", "conflict", "unknown"] as const)("ignores a late %s dec
   expect(controller.busy).toEqual({})
   expect(ticketClient.respond).toHaveBeenCalledTimes(1)
   expect(controller.canRespond).toBe(true)
+})
+
+
+it.each(["disabled", "uninitialized", "unbound", "unsupported", "error"] as const)("exposes initial %s with its reason and permits explicit re-read", async (kind) => {
+  vi.mocked(ticketClient.load).mockRejectedValueOnce(new TicketScopeUnavailableError(kind, "exact service reason"))
+  await mount()
+  expect(controller.availability).toEqual({ kind, detail: "exact service reason" })
+  expect(controller.state).toBeNull()
+  expect(controller.negotiated).toBe(true)
+  expect(controller.canRespond).toBe(false)
+  expect(controller.canSendIngress).toBe(false)
+  await act(async () => controller.refresh())
+  expect(controller.availability.kind).toBe("ready")
+  expect(controller.state).not.toBeNull()
+})
+
+it.each([401, 403, 503])("exposes initial HTTP %s instead of indefinite loading", async (status) => {
+  vi.mocked(ticketClient.load).mockRejectedValueOnce(new ApiError("service failure", status, "failure"))
+  await mount()
+  expect(controller.availability.kind).toBe(status === 503 ? "error" : "forbidden")
+  expect(controller.state).toBeNull()
+  expect(controller.canRespond).toBe(false)
+  await act(async () => controller.refresh())
+  expect(controller.availability.kind).toBe("ready")
+})
+
+it("shows ready empty Work and does not infer missing access from zero records", async () => {
+  snapshot.views = []
+  snapshot.scope.overview.data = { ticket_count: 0, work_count: 0, states: {}, open_questions: 0, open_approvals: 0, needs_acceptance: 0 }
+  await mount()
+  expect(controller.availability.kind).toBe("ready")
+  expect(controller.canRespond).toBe(true)
+  expect(container.textContent).toContain("此工作范围还没有记录工作")
+})
+
+it("clears revoked scope data but retains disconnected data through transient read failures", async () => {
+  await mount()
+  vi.mocked(ticketClient.load).mockRejectedValueOnce(new Error("network failure"))
+  await act(async () => controller.refresh())
+  expect(controller.availability).toEqual({ kind: "error", detail: "network failure" })
+  expect(controller.state).not.toBeNull()
+  expect(controller.canRespond).toBe(false)
+  vi.mocked(ticketClient.load).mockRejectedValueOnce(new ApiError("owner revoked", 403, "Forbidden"))
+  await act(async () => controller.refresh())
+  expect(controller.availability.kind).toBe("forbidden")
+  expect(controller.state).toBeNull()
+})
+
+it("does not start duplicate refreshes or accept a late status after navigation", async () => {
+  await mount()
+  let finish!: (value: TicketSnapshot) => void
+  vi.mocked(ticketClient.load).mockReturnValueOnce(new Promise((resolve) => { finish = resolve }))
+  let pending!: Promise<void>
+  act(() => { pending = controller.refresh() })
+  expect(controller.refreshing).toBe(true)
+  await act(async () => controller.refresh())
+  expect(ticketClient.load).toHaveBeenCalledTimes(2)
+  await mount("other")
+  await act(async () => { finish(structuredClone(snapshot)); await pending })
+  expect(controller.availability.kind).toBe("ready")
+  expect(controller.refreshing).toBe(false)
+})
+
+function offerInitialization() {
+  const scope = initializableTicketScope()
+  const presentation = scopeAvailability(scope, "root")!
+  vi.mocked(ticketClient.load).mockRejectedValueOnce(new TicketScopeUnavailableError("uninitialized", "", presentation))
+  snapshot.scope = readyTicketScopeV1(); snapshot.views = []
+  snapshot.scope.overview.data = { ticket_count: 0, work_count: 0, states: {}, open_questions: 0, open_approvals: 0, needs_acceptance: 0 }
+  return scope.initialization!
+}
+
+it.each([true, false])("initializes once, waits for a canonical read and accepts created=%s", async (created) => {
+  const confirmation = offerInitialization()
+  await mount()
+  expect(controller.canInitialize).toBe(true)
+  expect(container.textContent).toContain("初始化空工作范围")
+  let acknowledge!: () => void
+  vi.mocked(ticketClient.initialize).mockReturnValueOnce(new Promise((resolve) => {
+    acknowledge = () => resolve({ created, scope: readyTicketScopeV1() })
+  }))
+  let pending!: Promise<boolean>
+  act(() => { pending = controller.initialize() })
+  expect(controller.initializing).toBe(true)
+  await act(async () => {
+    expect(await controller.initialize()).toBe(false)
+    await controller.refresh(); window.dispatchEvent(new Event("focus")); window.dispatchEvent(new Event("online"))
+  })
+  expect(ticketClient.initialize).toHaveBeenCalledExactlyOnceWith(confirmation)
+  expect(ticketClient.load).toHaveBeenCalledTimes(1)
+  let read!: () => void
+  vi.mocked(ticketClient.load).mockReturnValueOnce(new Promise((resolve) => { read = () => resolve(structuredClone(snapshot)) }))
+  await act(async () => acknowledge())
+  expect(controller.state).toBeNull()
+  expect(controller.initializing).toBe(true)
+  expect(controller.canInitialize).toBe(false)
+  await act(async () => { read(); expect(await pending).toBe(true) })
+  expect(controller.state).not.toBeNull()
+  expect(controller.availability.kind).toBe("ready")
+  expect(controller.initializationError).toBeNull()
+  expect(controller.initializing).toBe(false)
+})
+
+it.each(["initialization_conflict", "scope_requires_recovery", "scope_binding_mismatch"])("re-reads a readable scope after 409/%s without replaying initialization", async (code) => {
+  offerInitialization(); await mount()
+  snapshot.scope.mutation_enabled = false; snapshot.scope.dispatch_enabled = false
+  vi.mocked(ticketClient.initialize).mockRejectedValueOnce(new ApiError("known refusal", 409, "Conflict", JSON.stringify({ error: "known refusal", code, scope: snapshot.scope })))
+  await act(async () => { expect(await controller.initialize()).toBe(false) })
+  expect(controller.state).not.toBeNull()
+  expect(controller.availability.kind).toBe("ready")
+  expect(controller.error).toContain("known refusal")
+  expect(controller.initializationError).toContain("初始化期间工作范围已变化")
+  expect(controller.initializationError).not.toContain("离线")
+  expect(controller.canInitialize).toBe(false)
+  expect(controller.canRespond).toBe(false)
+  expect(ticketClient.initialize).toHaveBeenCalledTimes(1)
+  expect(ticketClient.load).toHaveBeenCalledTimes(2)
+})
+
+it.each([new Error("lost acknowledgement"), new ApiError("unexpected server failure", 503, "Unavailable"), new Error("malformed acknowledgement")])("does not claim or replay an unconfirmed initialization: %s", async (failure) => {
+  offerInitialization(); await mount()
+  vi.mocked(ticketClient.initialize).mockRejectedValueOnce(failure)
+  await act(async () => { expect(await controller.initialize()).toBe(false) })
+  expect(controller.state).not.toBeNull()
+  expect(controller.initializationError).toContain("无法确认初始化响应")
+  expect(ticketClient.initialize).toHaveBeenCalledTimes(1)
+  expect(ticketClient.load).toHaveBeenCalledTimes(2)
+})
+
+it.each([401, 403])("revokes the initialization offer after owner denial HTTP %s", async (status) => {
+  offerInitialization(); await mount()
+  vi.mocked(ticketClient.initialize).mockRejectedValueOnce(new ApiError("denied", status, "Denied"))
+  await act(async () => { expect(await controller.initialize()).toBe(false) })
+  expect(controller.availability.kind).toBe("forbidden")
+  expect(controller.state).toBeNull()
+  expect(controller.canInitialize).toBe(false)
+  expect(controller.initializing).toBe(false)
+  expect(ticketClient.load).toHaveBeenCalledTimes(1)
+})
+
+it.each((["navigation", "mode", "owner"] as const).flatMap((change) => (["ack", "error"] as const).map((outcome) => [change, outcome] as const)))("ignores late initialization after %s changes / %s", async (change, outcome) => {
+  offerInitialization(); await mount()
+  let finish!: () => void
+  vi.mocked(ticketClient.initialize).mockReturnValueOnce(new Promise((resolve, reject) => {
+    finish = () => outcome === "ack" ? resolve({ created: true, scope: readyTicketScopeV1() }) : reject(new Error("late unconfirmed response"))
+  }))
+  let pending!: Promise<boolean>
+  act(() => { pending = controller.initialize() })
+  if (change === "navigation") {
+    const other = ticketSnapshot(); other.scope.binding.supervisor_session_id = "other"
+    vi.mocked(ticketClient.load).mockResolvedValueOnce(other)
+  }
+  await mount(change === "navigation" ? "other" : "root", change !== "owner", change === "mode" ? "standard:2" : "", change === "mode")
+  const nextState = controller.state, nextAvailability = controller.availability
+  const readsBeforeReceipt = vi.mocked(ticketClient.load).mock.calls.length
+  expect(controller.canInitialize).toBe(false)
+  await act(async () => { finish(); expect(await pending).toBe(false) })
+  expect(controller.state).toEqual(nextState)
+  expect(controller.availability).toEqual(nextAvailability)
+  expect(controller.initializationError).toBeNull()
+  expect(controller.initializing).toBe(false)
+  expect(ticketClient.load).toHaveBeenCalledTimes(readsBeforeReceipt)
+  expect(ticketClient.initialize).toHaveBeenCalledTimes(1)
+})
+
+it("keeps initialization unconfirmed when the matching success is followed by a failed canonical read", async () => {
+  offerInitialization(); await mount()
+  vi.mocked(ticketClient.initialize).mockResolvedValueOnce({ created: true, scope: readyTicketScopeV1() })
+  vi.mocked(ticketClient.load).mockRejectedValueOnce(new Error("canonical read failed"))
+  await act(async () => { expect(await controller.initialize()).toBe(false) })
+  expect(controller.state).toBeNull()
+  expect(controller.availability.kind).toBe("error")
+  expect(controller.initializationError).toContain("无法确认初始化响应")
+  expect(controller.error).toContain("canonical read failed")
+  expect(controller.canInitialize).toBe(false)
+})
+
+it("gets a fresh offer after a completed mode change and never substitutes its epoch for binding revision", async () => {
+  const confirmation = offerInitialization(); await mount()
+  await mount("root", true, "mode-changing", true)
+  expect(controller.canInitialize).toBe(false)
+  const scope = initializableTicketScope(); scope.initialization!.binding_revision = 91
+  const presentation = scopeAvailability(scope, "root")!
+  vi.mocked(ticketClient.load).mockRejectedValueOnce(new TicketScopeUnavailableError("uninitialized", "", presentation))
+  await mount("root", true, "ultra:3")
+  expect(controller.canInitialize).toBe(true)
+  vi.mocked(ticketClient.initialize).mockRejectedValueOnce(new ApiError("conflict", 409, "Conflict"))
+  await act(async () => controller.initialize())
+  expect(ticketClient.initialize).toHaveBeenCalledExactlyOnceWith({ ...confirmation, binding_revision: 91 })
+})
+
+it("admits only one initialization across two panels showing the same Supervisor", async () => {
+  offerInitialization()
+  const scope = initializableTicketScope()
+  const presentation = scopeAvailability(scope, "root")!
+  vi.mocked(ticketClient.load).mockRejectedValueOnce(new TicketScopeUnavailableError("uninitialized", "", presentation))
+  const panels: Record<string, ReturnType<typeof useTicketWork>> = {}
+  function SharedHarness({ name }: { name: string }) { panels[name] = useTicketWork("root"); return null }
+  await act(async () => root.render(<OwnerAccessContext value={true}><SharedHarness name="a" /><SharedHarness name="b" /></OwnerAccessContext>))
+  expect(panels.a.canInitialize).toBe(true); expect(panels.b.canInitialize).toBe(true)
+  let finish!: () => void
+  vi.mocked(ticketClient.initialize).mockReturnValueOnce(new Promise((resolve) => { finish = () => resolve({ created: true, scope: readyTicketScopeV1() }) }))
+  let pending!: Promise<boolean>
+  act(() => { pending = panels.a.initialize() })
+  expect(panels.b.initializing).toBe(true)
+  expect(panels.b.canInitialize).toBe(false)
+  await act(async () => { expect(await panels.b.initialize()).toBe(false); await panels.b.refresh() })
+  expect(ticketClient.initialize).toHaveBeenCalledTimes(1)
+  expect(ticketClient.load).toHaveBeenCalledTimes(2)
+  await act(async () => { finish(); expect(await pending).toBe(true) })
+  expect(panels.a.initializing).toBe(false); expect(panels.b.initializing).toBe(false)
+})
+
+it("keeps scope reads separate from a pending Root mode while denying initialization and writes", async () => {
+  offerInitialization(); await mount("root", true, "pending-mode", true)
+  expect(controller.availability.kind).toBe("uninitialized")
+  expect(controller.canRefresh).toBe(true)
+  expect(controller.canInitialize).toBe(false)
+  await act(async () => { expect(await controller.initialize()).toBe(false); await controller.refresh() })
+  expect(controller.state).not.toBeNull()
+  expect(controller.availability.kind).toBe("ready")
+  expect(controller.canRespond).toBe(false)
+  expect(controller.canSendIngress).toBe(false)
+  expect(ticketClient.initialize).not.toHaveBeenCalled()
+  expect(ticketClient.load).toHaveBeenCalledTimes(2)
+})
+
+it("shows an independent scope error even while Root mode recovery is pending", async () => {
+  vi.mocked(ticketClient.load).mockRejectedValueOnce(new TicketScopeUnavailableError("error", "storage failure",
+    { kind: "error", detail: "storage failure", reasonCode: "scope_io_error" }))
+  await mount("root", true, "pending-mode", true)
+  expect(controller.availability).toMatchObject({ kind: "error", reasonCode: "scope_io_error" })
+  expect(controller.canRefresh).toBe(true)
+  expect(container.textContent).toContain("无法读取工作存储")
+  expect(controller.canInitialize).toBe(false)
+})
+
+it("starts one scope read after initial identity metadata settles and keeps unchanged context readable", async () => {
+  await mount("root", true, "identity-pending", false, true)
+  expect(controller.availability.kind).toBe("loading")
+  expect(controller.canInitialize).toBe(false)
+  expect(ticketClient.load).not.toHaveBeenCalled()
+  await mount("root", true, "birth:1:true")
+  expect(controller.availability.kind).toBe("ready")
+  expect(ticketClient.load).toHaveBeenCalledTimes(1)
+  const previous = controller.state
+  await mount("root", true, "birth:1:true")
+  expect(controller.state).toEqual(previous)
+  expect(ticketClient.load).toHaveBeenCalledTimes(1)
 })
