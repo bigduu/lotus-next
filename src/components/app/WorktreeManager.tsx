@@ -122,7 +122,7 @@ export function WorktreeManager({ open, onClose, onOpen, onSession }: {
             {repo.error && <p role="alert" className="break-words text-sm text-destructive">{repo.error}</p>}
             {repo.worktrees.map((entry) => <article key={entry.path} aria-label={entry.path} className="space-y-2 border-t pt-2 text-sm">
               <div className="flex items-start justify-between gap-2"><div className="min-w-0"><div className="font-medium">{entry.branch ?? uiText("worktrees_detached")}</div><div className="break-all text-xs text-muted-foreground">{entry.path}</div></div>
-                <Button size="sm" variant="outline" disabled={busy || !!entry.error || entry.prunable} onClick={() => void openWorktree(entry.path)}>{uiText("worktrees_open")}</Button></div>
+                <Button size="sm" variant="outline" disabled={busy || entry.prunable} onClick={() => void openWorktree(entry.path)}>{uiText("worktrees_open")}</Button></div>
               <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
                 <span>{entry.dirty === null ? uiText("worktrees_unknown") : entry.dirty ? uiText("worktrees_dirty") : uiText("worktrees_clean")}</span>
                 <span>{entry.occupied ? uiText("worktrees_occupied") : uiText("worktrees_idle")}</span>
