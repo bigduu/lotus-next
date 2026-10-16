@@ -33,10 +33,12 @@ test("Supervisor floating overview opens focused Work details and preserves draf
   } }
   approval.requests[0].prompt = "允许更新 README 吗？"
   completed.requests = []; completed.ticket.state = "accepted"; completed.ticket.blocked = null
+  completed.ticket.active_assignment = null
+  completed.assignments![0].state = "submitted"; completed.assignments![0].process_stopped = true
   completed.ticket.accepted_submission = opaque
   completed.ticket.contract.title = "代码交付"
   completed.ticket.contract.objective = "Read /private/internal/worktree/answer.rs"
-  completed.submissions = [{ id: opaque, work_id: completed.ticket.id, generation: 1, contract_revision: 1,
+  completed.submissions = [{ id: opaque, assignment_id: "assignment-C", work_id: completed.ticket.id, generation: 1, contract_revision: 1,
     stale: false, updated_seq: 10, artifacts: [{ uri: "managed:result.rs", sha256: hash }], evidence: [`canonical Child ${opaque}; sha256 ${hash}`] }]
   Object.assign(snapshot.scope.overview.data, { work_count: 3, ticket_count: 3, open_questions: 1, open_approvals: 1, needs_acceptance: 0 })
   const decisions: unknown[] = []
@@ -119,6 +121,8 @@ test("Supervisor floating overview opens focused Work details and preserves draf
   await status.click()
   await popover.getByRole("button", { name: /代码交付.*读取成果 1/ }).click()
   await expect(overview.getByText("代码交付", { exact: true })).toBeVisible()
+  await expect(overview).toContainText("work-session-C")
+  await expect(overview).toContainText("执行进程已确认结束")
   await expect(input).toBeHidden()
   await overview.getByRole("button", { name: "所有工作", exact: true }).click()
   await expect(input).toHaveValue("蓝色")
