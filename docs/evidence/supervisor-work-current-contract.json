@@ -1,0 +1,58 @@
+{
+  "kind": "static source compatibility proof; no backend execution",
+  "accepted_backend": "bf6b20bab2832b45d4b0927e971cea64866f2c77",
+  "previous_live_backend": "56611128e09bc92fb8368c6d77badad2bbed60ca",
+  "sources": [
+    {
+      "file": "crates/app/bamboo-server/src/app_state/ticket_application/initialization.rs",
+      "previous_blob": "b1cac76c717d24ce8398473272ad7685450a7399",
+      "current_blob": "b1cac76c717d24ce8398473272ad7685450a7399",
+      "unchanged": true
+    },
+    {
+      "file": "crates/app/bamboo-server/src/app_state/ticket_application.rs",
+      "previous_blob": "c8bda6a312c57c2cbfb223185ce3ce5a88999081",
+      "current_blob": "c8bda6a312c57c2cbfb223185ce3ce5a88999081",
+      "unchanged": true
+    },
+    {
+      "file": "crates/infra/bamboo-tickets/src/model.rs",
+      "previous_blob": "da879cd031da03654801a1fe4e67874393b49f0f",
+      "current_blob": "da879cd031da03654801a1fe4e67874393b49f0f",
+      "unchanged": true
+    },
+    {
+      "file": "crates/infra/bamboo-tickets/src/query.rs",
+      "previous_blob": "24e3e076b80d6376d6f661b13be667f25bed3659",
+      "current_blob": "24e3e076b80d6376d6f661b13be667f25bed3659",
+      "unchanged": true
+    }
+  ],
+  "handler": {
+    "file": "crates/app/bamboo-server/src/handlers/agent/tickets.rs",
+    "only_production_change": "initialize error is now {error:{type,message},code,scope}",
+    "normalized_production_equal": true
+  },
+  "scoped_execution_projection": {
+    "source": "TicketView.assignments + sections; Assignment.runtime.session_id/run_id",
+    "sections": [
+      "assignments",
+      "requests",
+      "submissions"
+    ],
+    "bounded_bytes": 65536,
+    "fallback": "same fixed_commit; requests/submissions only; execution metadata remains unconfirmed"
+  },
+  "future_cross_session_loop": {
+    "issue": "https://github.com/bigduu/Bamboo-agent/issues/1976",
+    "accepted_tool_actions": [
+      "followup"
+    ],
+    "controls_delivered_by_this_frontend": false,
+    "interface_status": "start/status/update/stop contract pending actual backend delivery; no guessed endpoints or fields"
+  },
+  "no_cargo": true,
+  "no_backend_process": true,
+  "no_model": true,
+  "no_dispatch": true
+}

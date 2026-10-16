@@ -239,3 +239,109 @@ This validates the usable empty-scope setup and read path. It does not establish
 the original screenshot's configuration, live model-tool execution, dispatch,
 or the producer's later broker activation change. Producer review/merge and
 deployment remain separate dependencies. All frontend changes are local commits.
+
+
+## Current-main local integration (2026-10-16)
+
+The integration starts from Lotus main
+`5c4f713f2b8624f881c6739ae28d7091f48f796e` and retains the original
+`4c0d898230aac26158d4c37c5a8fdcd83d2775ff` branch and evidence unchanged.
+Merge `6c09aef9a9d88d475409a08cb47335f75cde7ba1` preserves both histories;
+only the two UI locale files overlapped, and main's accepted Project and Nova
+strings remain present. There is no manifest, lockfile, workflow or release-gate
+change in this slice.
+
+Product change `fb663875151c175ca077e491ddb1245f3eb1e181` now reads the already
+delivered `assignments` inspection section. The panel shows the Work objective,
+the exact execution session and recorded execution status, confirmed process
+termination when provided, and the current/accepted result. Generated evidence,
+paths and opaque submission diagnostics remain collapsed. The visible objective
+is user task data, rather than a generated diagnostic. Existing refresh,
+artifact read, exact answers/approvals and request references retain their gates.
+
+An execution record must match the explicit active assignment, or the selected
+non-stale result's assignment, plus Work ID, generation and contract revision.
+An omitted section or a mismatched record is unconfirmed, not an empty managed
+session list. These are records at a fixed snapshot, not proof that a process is
+currently alive. Denied scope/access and context changes still withdraw records.
+
+All read sections use the same `fixed_commit` and 65,536-byte limit. If a long
+assignment history exceeds that limit, one read-only fallback requests the
+original requests/submissions sections at the same commit. Work and exact
+decisions can remain complete, while execution metadata stays unconfirmed.
+A conflicting fallback snapshot is rejected. This never retries a write.
+
+### Accepted producer contract
+
+Source comparison uses accepted Bamboo dev
+`bf6b20bab2832b45d4b0927e971cea64866f2c77`. Its initialization/state code,
+Ticket model and query projections are byte-identical to the previous live
+candidate `56611128`. The only production change in the Ticket HTTP handler is
+the standard nested error value:
+`{error:{type:"api_error",message}, code, scope}`. Confirmation fields, eligibility,
+readability, operation flags, scope verification and refusal codes are retained.
+
+The existing transport parses both legacy string and nested messages. Browser
+fixtures now exercise the accepted nested form. A documented HTTP 403 with a
+strictly validated forbidden scope can explain a mode/identity refusal without
+claiming owner authentication failed. It still clears records and initialization
+eligibility, performs no denial-triggered read, and never promotes a readable or
+contradictory denial scope. Ordinary owner denials remain access denials.
+
+The [source proof](evidence/supervisor-work-current-contract.json) is static
+compatibility evidence, not a new HTTP/server run. The old actual HTTP receipt
+and screenshots retain their original frontend/backend identities.
+
+### Supervisor cross-session long-running boundary (#1976)
+
+The execution sessions above belong to the current Work scope. They do not
+enumerate all independent Roots attached to Supervisor or confer control over
+them. Accepted `session_control` still advertises only `followup`; admission is
+not proof of an objective update or task completion. No ordinary Root's own Loop
+entry is used as Supervisor control. The panel explicitly says cross-session
+long-running controls are unavailable, with no simulated start/update/stop buttons.
+
+[Bamboo #1976](https://github.com/bigduu/Bamboo-agent/issues/1976) remains a separate
+backend control slice. Before enabling a frontend control, its owner must deliver
+the actual routes/tool contract, negotiated support and scoped target readback.
+These are interface requirements, not invented wire fields:
+
+- Read only explicitly managed targets and return their current objective,
+  recorded state/result and permitted actions. A global session list is not a
+  substitute for that authority-scoped inventory.
+- Freeze start/status/update/stop requests and receipts, exact target lifetime,
+  Loop revision/generation, idempotency and bounded patch semantics.
+- Distinguish accepted, applied, running and terminal results, including deferred
+  changes at provider-safe boundaries. A followup receipt cannot confirm a goal
+  update. Keep last outcome, next wake and remaining limits truthful.
+- Revalidate Supervisor identity, target lifetime, attach/Project relation and
+  permissions on admission and future wakes. Denial/revocation, mode/navigation
+  changes and pending human questions must not leak records or start work.
+- Keep missing capability, empty inventory, paused/waiting, denied scope,
+  unknown acknowledgement and service errors distinct. Never attach historical
+  sessions, expand a gate or retry a control operation automatically.
+
+Current local frontend validation and remaining actual pairing work are recorded
+in the [integration receipt](evidence/supervisor-work-main-integration.json).
+New real HTTP coverage must use an owner-provided binary for the accepted dev:
+initialization/refusal, a nonempty execution/result scope, budget fallback,
+revocation and reload. Actual cross-session Loop control remains #1976 acceptance.
+No Cargo, backend process, model execution, dispatch, push or publication was run
+by this integration task.
+
+
+Validation: `npm run verify` passed on Node 24.21.0 at the product commit:
+149 files / 3,253 unit tests and all type/lint/i18n/architecture/build/package
+gates. The complete affected browser matrix passed 118 cases with 2 existing
+desktop-only drag skips. The final test-only metadata calibration reran its
+3 affected cases across all viewports; the other tests retain their original
+matrix receipts. Product resources are identical across those test-only commits.
+No historical result is relabelled as a new run. Startup JS is 1,899,985 bytes
+under the unchanged 1,900,000-byte limit; CSS is 108,993 under 109,000.
+
+Final fixture screenshots: [desktop execution/result](screenshots/supervisor-work-availability/integrated-execution-desktop.png),
+[phone execution/result](screenshots/supervisor-work-availability/integrated-execution-phone.png).
+These show exact scoped runtime records and existing decisions, not a real
+running-model result. The fixture does not advertise the unrelated typed
+permission capability; its separate unsupported-permission notice remains
+visible. It is not a diagnosis of the actual backend's permission support.
