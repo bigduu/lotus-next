@@ -107,7 +107,10 @@ export function actorSnapshotRegresses(previous: ActorSubtreeSnapshot, next: Act
     if (priorDirectory !== null && nextDirectory !== null && nextDirectory < priorDirectory) return true
     if (prior.activation && node.activation && node.activation.attempt < prior.activation.attempt) return true
     if (prior.activation && node.activation && prior.activation.activation_id === node.activation.activation_id &&
-      prior.activation.attempt === node.activation.attempt && localTaskRegresses(prior.local_task, node.local_task)) return true
+      prior.activation.attempt === node.activation.attempt) {
+      if (["succeeded", "failed", "cancelled"].includes(prior.activation.status) && node.activation.status !== prior.activation.status) return true
+      if (localTaskRegresses(prior.local_task, node.local_task)) return true
+    }
     if (priorDirectory !== null && nextDirectory === priorDirectory && prior.activation && node.activation &&
       node.activation.attempt === prior.activation.attempt && node.activation.activation_id !== prior.activation.activation_id) return true
   }
@@ -280,7 +283,7 @@ const sameTreeNode = (left: ActorTreeNode, right: ActorTreeNode): boolean =>
   left.waitingForCount === right.waitingForCount && left.pendingRequestCount === right.pendingRequestCount
 
 /** Show the last durable activation outcome when the logical actor is idle. */
-const snapshotLifecycle = (node: PublicActorSnapshotNode): ActorTreeNode["lifecycle"] => {
+export const actorSnapshotLifecycle = (node: PublicActorSnapshotNode): ActorTreeNode["lifecycle"] => {
   if (node.logical_state === "retired" || node.logical_state === "failed" || node.logical_state === null) {
     return node.logical_state ?? "unknown"
   }
@@ -310,7 +313,7 @@ export function actorSnapshotTree(
     const projected: ActorTreeNode = {
       actorId: node.actor_id, parentActorId: node.parent_actor_id, depth: node.depth,
       title: node.title, role: node.role === "root" ? uiText("root_agent_9cfcb9f9") : uiText("sub_agent_acd37b4c"),
-      lifecycle: snapshotLifecycle(node), placement: node.placement_class ?? "unknown",
+      lifecycle: actorSnapshotLifecycle(node), placement: node.placement_class ?? "unknown",
       health: node.local_task && node.local_task.state !== "running" ? "unknown" : null,
       localTaskDiagnostic: node.local_task && node.local_task.state !== "running" ? node.local_task.state : null,
       queuedCount: null, waitingForCount: null, pendingRequestCount: null,

@@ -1,5 +1,8 @@
 // Application-owned UI copy.
 export const uiZhCn = {
+  "subagent_origin_unknown": "无法确认发起轮次。",
+  "subagent_refresh": "刷新代理状态",
+
   "native_task_stop_unconfirmed": "停止未确认",
   "native_task_stopped_outcome_unconfirmed": "任务已停止，结果待确认",
 

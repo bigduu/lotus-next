@@ -33,7 +33,7 @@ import { agentClient } from "@services/chat/AgentService"
 import { commandService, type CommandItem } from "@services/command"
 import { prepareWorkflowSelection, workflowUnavailableReason, type TypedWorkflowDraft, type WorkflowSelection } from "@services/command/workflowCatalog"
 import { getErrorMessage } from "@services/api/errors"
-import type { ChildProgress } from "@shared/store/appStore/slices/executionStateSlice/types"
+import { useSubAgentView } from "@/hooks/useSubAgentView"
 import { useProviderStore } from "@shared/store/appStore/slices/providerSlice"
 import { getRuntimeModelIds, resolveNewChatModelRef } from "@shared/types/providerConfig"
 import type { ReasoningEffortSelection } from "@shared/utils/reasoningEffort"
@@ -402,23 +402,8 @@ export function ChatPane({
 
   const skills = useAppStore(useShallow((s) => s.skills))
   const subAgents = useAppStore(useShallow((s) => selectChildren(currentSessionId)(s)))
-  // Sub-agents to display: persistent child sessions from the index (survive
-  // reload, navigable) overlaid with live progress (status/preview during a run).
-  const mergedSubAgents = useMemo(() => {
-    const out: Record<string, ChildProgress> = {}
-    for (const c of chats) {
-      if (currentSessionId && c.parentSessionId === currentSessionId) {
-        out[c.id] = {
-          title: c.title || c.subagentType || undefined,
-          status: c.isRunning ? "running" : "completed",
-        }
-      }
-    }
-    for (const [id, p] of Object.entries(subAgents)) {
-      out[id] = { ...out[id], ...p }
-    }
-    return out
-  }, [chats, currentSessionId, subAgents])
+  const subAgentView = useSubAgentView(currentChat, chats, subAgents, pageVisible && (!secondary || splitVisible))
+  const mergedSubAgents = subAgentView.agents
   const providerSnapshot = useProviderStore((s) => s.providerSnapshot)
   const providerStatus = useProviderStore((s) => s.providerStatus)
   const modelProviderId = currentChat?.config?.model_ref?.provider
@@ -1041,6 +1026,8 @@ export function ChatPane({
           onScroll={handleScroll}
           messages={messages}
           mergedSubAgents={mergedSubAgents}
+          subAgentError={subAgentView.error}
+          onRefreshSubAgents={() => { void subAgentView.refresh() }}
           sending={currentlyRunning}
           latestRunFinished={
             !currentlyRunning &&

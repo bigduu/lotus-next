@@ -5,30 +5,40 @@ import { MachineTag } from "@/components/chat/MachineTag"
 import type { SessionPlacement } from "@services/chat/AgentService"
 import type { ChildProgress } from "@shared/store/appStore/slices/executionStateSlice/types"
 
-type Status = "running" | "done" | "error"
+type Status = "running" | "done" | "error" | "cancelled" | "queued" | "idle" | "retired" | "unknown"
 
 function statusOf(c: ChildProgress): Status {
-  const s = (c.status || "").toLowerCase()
-  if (c.error || s.includes("error") || s.includes("fail")) return "error"
-  if (s.includes("complet") || s.includes("done") || s.includes("success") || s.includes("finish"))
-    return "done"
-  return "running"
+  switch (c.status?.toLowerCase()) {
+    case "running": return "running"
+    case "completed": case "succeeded": case "done": return "done"
+    case "error": case "failed": return "error"
+    case "cancelled": return "cancelled"
+    case "queued": case "reserved": return "queued"
+    case "idle": case "cold": case "created": return "idle"
+    case "retired": return "retired"
+    default: return "unknown"
+  }
 }
 
-const LABEL: Record<Status, string> = { get running() { return uiText("running_1f0eb99b") }, get done() { return uiText("done_c0b3fbff") }, get error() { return uiText("failed_28384d7a") } }
+const LABEL = {
+  get running() { return uiText("running_1f0eb99b") }, get done() { return uiText("done_c0b3fbff") },
+  get error() { return uiText("failed_28384d7a") }, get cancelled() { return uiText("workflow_run_status_cancelled") },
+  get queued() { return uiText("workflow_run_status_queued") }, get idle() { return uiText("idle_dae661d1") },
+  get retired() { return uiText("stopped_f006455e") }, get unknown() { return uiText("plugin_connection_unknown") },
+}
 
-function SubAgentCard({ child, onOpen }: { child: ChildProgress; onOpen?: () => void }) {
+function SubAgentCard({ child, childId, onOpen }: { child: ChildProgress; childId: string; onOpen?: () => void }) {
   useUiLocale()
   const st = statusOf(child)
   const detail = child.error || child.outputPreview
-  // Which machine this child runs on. ChildProgress doesn't carry placement
-  // yet — read it defensively so remote children badge up as soon as the
-  // event pipeline forwards it, and nothing renders meanwhile.
+  // Placement comes from the session index; it grants no control authority.
   const placement =
     (child as ChildProgress & { placement?: SessionPlacement | null }).placement ?? null
 
   return (
     <button
+      data-subagent-id={childId}
+      data-subagent-status={st}
       onClick={onOpen}
       disabled={!onOpen}
       className={cn(
@@ -42,8 +52,10 @@ function SubAgentCard({ child, onOpen }: { child: ChildProgress; onOpen?: () => 
           <Loader2 className="size-3.5 shrink-0 animate-spin text-primary" />
         ) : st === "error" ? (
           <AlertCircle className="size-3.5 shrink-0 text-destructive" />
-        ) : (
+        ) : st === "done" ? (
           <Check className="size-3.5 shrink-0 text-emerald-500" />
+        ) : (
+          <AlertCircle className="size-3.5 shrink-0 text-muted-foreground" />
         )}
         <Bot className="size-3.5 shrink-0 text-muted-foreground" />
         <span className="min-w-0 flex-1 truncate text-sm font-medium">{child.title || uiText("sub_agent_acd37b4c")}</span>
@@ -72,8 +84,10 @@ function SubAgentCard({ child, onOpen }: { child: ChildProgress; onOpen?: () => 
 export function SubAgents({
   agents,
   onOpen,
+  originUnconfirmed = false,
 }: {
   agents: Record<string, ChildProgress>
+  originUnconfirmed?: boolean
   onOpen?: (childId: string) => void
 }) {
   useUiLocale()
@@ -81,11 +95,12 @@ export function SubAgents({
   if (entries.length === 0) return null
 
   return (
-    <div className="flex justify-start">
+    <div className="flex justify-start" data-subagent-group>
       <div className="ml-1 w-full max-w-[85%] space-y-1.5 border-l-2 border-border/60 pl-3">
         <div className="text-xs font-medium text-muted-foreground">{uiText("subagents_76d97a95")}{entries.length})</div>
+        {originUnconfirmed ? <p className="text-xs text-muted-foreground">{uiText("subagent_origin_unknown")}</p> : null}
         {entries.map(([id, c]) => (
-          <SubAgentCard key={id} child={c} onOpen={onOpen ? () => onOpen(id) : undefined} />
+          <SubAgentCard key={id} childId={id} child={c} onOpen={onOpen ? () => onOpen(id) : undefined} />
         ))}
       </div>
     </div>
