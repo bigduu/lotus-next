@@ -1,4 +1,4 @@
-import { act, useEffect, useState } from "react"
+import { act, lazy, StrictMode, Suspense, useEffect, useState } from "react"
 import { createPortal } from "react-dom"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { createRoot, type Root } from "react-dom/client"
@@ -6,7 +6,8 @@ import { afterAll, afterEach, beforeAll, expect, it, vi } from "vitest"
 import { CommandPalette } from "@/components/chat/CommandPalette"
 import { ResponsiveDialog, ResponsiveDialogContent, ResponsiveDialogTitle, ResponsiveDialogTrigger } from "@/components/ui/responsive-dialog"
 import { ModelEffortPicker } from "@/components/chat/ModelEffortPicker"
-import { RightWorkbench } from "./RightWorkbench"
+import { RightWorkbench, RightWorkbenchContent } from "./RightWorkbench"
+import { RightWorkbenchSurface } from "./RightWorkbenchSurface"
 
 const roots: Root[] = []
 const actEnvironment = globalThis as typeof globalThis & {
@@ -24,6 +25,9 @@ afterAll(() => {
 afterEach(() => {
   for (const root of roots.splice(0)) act(() => root.unmount())
   document.body.replaceChildren()
+  Reflect.deleteProperty(document, "getAnimations")
+  Reflect.deleteProperty(Element.prototype, "getAnimations")
+  vi.unstubAllGlobals()
 })
 
 it("switches tools in one docked panel and closes without navigation", () => {
@@ -739,4 +743,104 @@ it("gives global Radix overlays focus above a narrow workbench and restores thei
   await act(async () => globalInput.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })))
   await vi.waitFor(() => expect(document.activeElement).toBe(other))
   expect(closeWorkbench).not.toHaveBeenCalled()
+})
+
+it.each([
+  { docked: true, visible: true, pageVisible: true },
+  { docked: false, visible: false, pageVisible: true },
+  { docked: false, visible: true, pageVisible: false },
+])("keeps the eager surface below a global dialog while lazy content arrives (%j)", async (mode) => {
+  const host = document.body.appendChild(document.createElement("div")); const root = createRoot(host); roots.push(root)
+  const closeWorkbench = vi.fn()
+  let resolveContent!: (module: { default: typeof RightWorkbenchContent }) => void
+  const LazyContent = lazy(() => new Promise<{ default: typeof RightWorkbenchContent }>((resolve) => { resolveContent = resolve }))
+  function Harness({ mountWorkbench }: { mountWorkbench: boolean }) {
+    const [open, setOpen] = useState(true)
+    return <><button>Background</button>
+      <RightWorkbenchSurface {...mode} onClose={closeWorkbench}>
+        {mountWorkbench ? <Suspense fallback={<span>Loading workbench</span>}><LazyContent {...mode} activeTab="session" openToolTabs={["session"]}
+          onTabChange={vi.fn()} onToolClose={vi.fn()} onClose={closeWorkbench} inspector={null} review={null} browser={null}
+          session={<input aria-label="Inactive editor" />} /></Suspense> : null}
+      </RightWorkbenchSurface>
+      <ResponsiveDialog open={open} onOpenChange={setOpen}>
+        <ResponsiveDialogContent><ResponsiveDialogTitle>Rename Supervisor</ResponsiveDialogTitle><input aria-label="Rename title" /></ResponsiveDialogContent>
+      </ResponsiveDialog>
+    </>
+  }
+  await act(async () => root.render(<StrictMode><Harness mountWorkbench={false} /></StrictMode>))
+  const panel = document.getElementById("right-workbench")!
+  const rename = document.querySelector<HTMLInputElement>('input[aria-label="Rename title"]')!
+  expect(document.activeElement).toBe(rename)
+  await act(async () => root.render(<StrictMode><Harness mountWorkbench /></StrictMode>))
+  expect(host.textContent).toContain("Loading workbench")
+  await act(async () => resolveContent({ default: RightWorkbenchContent }))
+  expect(host.textContent).not.toContain("Loading workbench")
+  expect(document.getElementById("right-workbench")).toBe(panel)
+  act(() => host.querySelector<HTMLButtonElement>("button")!.focus())
+  expect(document.activeElement).toBe(rename)
+  await act(async () => rename.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })))
+  expect(document.querySelector('[role="dialog"]')).toBeNull()
+  expect(closeWorkbench).not.toHaveBeenCalled()
+})
+
+it.each([false, true])("cancels a keyboard tab drag before allowing Escape to dismiss the narrow pane (immediate: %s)", async (immediate) => {
+  const host = document.body.appendChild(document.createElement("div")); const root = createRoot(host); roots.push(root)
+  const closeWorkbench = vi.fn(); const reorder = vi.fn()
+  vi.stubGlobal("matchMedia", () => ({ matches: true, addEventListener() {}, removeEventListener() {} }))
+  vi.stubGlobal("IntersectionObserver", class { observe() {} unobserve() {} disconnect() {} })
+  Object.defineProperty(document, "getAnimations", { configurable: true, value: () => [] })
+  Object.defineProperty(Element.prototype, "getAnimations", { configurable: true, value: () => [] })
+  await act(async () => root.render(<RightWorkbench activeTab="review" openToolTabs={["review", "session"]}
+    onTabChange={vi.fn()} onToolClose={vi.fn()} onClose={closeWorkbench} onTabReorder={reorder}
+    inspector={null} review={<input aria-label="Review editor" />} browser={null} session={<input aria-label="Side draft" />} />))
+  const panel = document.getElementById("right-workbench")!
+  const handle = host.querySelector<HTMLButtonElement>('button[aria-keyshortcuts]')!
+  const before = [...host.querySelectorAll('[role="tab"]')]
+  await act(async () => {
+    handle.focus()
+    handle.dispatchEvent(new KeyboardEvent("keydown", { key: " ", code: "Space", bubbles: true, cancelable: true }))
+    if (immediate) handle.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", code: "Escape", bubbles: true, cancelable: true }))
+  })
+  if (!immediate) {
+    await vi.waitFor(() => expect(handle.parentElement!.style.opacity).toBe("0.6"))
+    await act(async () => handle.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", code: "Escape", bubbles: true, cancelable: true })))
+  }
+  expect(closeWorkbench).not.toHaveBeenCalled()
+  expect(reorder).not.toHaveBeenCalled()
+  expect(document.getElementById("right-workbench")).toBe(panel)
+  expect([...host.querySelectorAll('[role="tab"]')]).toEqual(before)
+  await act(async () => handle.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", code: "Escape", bubbles: true, cancelable: true })))
+  expect(closeWorkbench).toHaveBeenCalledTimes(1)
+})
+
+it.each(["unmount", "settings", "session"])("cancels a tab drag on %s without leaving Escape disabled", async (change) => {
+  const host = document.body.appendChild(document.createElement("div")); const root = createRoot(host); roots.push(root)
+  const close = vi.fn(); const reorder = vi.fn()
+  vi.stubGlobal("matchMedia", () => ({ matches: true, addEventListener() {}, removeEventListener() {} }))
+  vi.stubGlobal("IntersectionObserver", class { observe() {} unobserve() {} disconnect() {} })
+  Object.defineProperty(document, "getAnimations", { configurable: true, value: () => [] })
+  Object.defineProperty(Element.prototype, "getAnimations", { configurable: true, value: () => [] })
+  const render = (changed: boolean) => act(async () => root.render(
+    <RightWorkbenchSurface visible={!(changed && change === "unmount")} pageVisible={!(changed && change === "settings")}
+      focusScopeKey={changed && change === "session" ? "next" : "original"} onClose={close}>
+      {changed && change === "unmount" ? null : <RightWorkbenchContent activeTab="session" openToolTabs={["review", "session"]}
+        onTabChange={vi.fn()} onToolClose={vi.fn()} onClose={close} onTabReorder={reorder}
+        inspector={null} review={null} browser={null} session={<input aria-label="Draft" defaultValue="Retained" />} />}
+    </RightWorkbenchSurface>,
+  ))
+  await render(false)
+  const draft = host.querySelector<HTMLInputElement>('input[aria-label="Draft"]')!
+  const handle = host.querySelector<HTMLButtonElement>('button[aria-keyshortcuts]')!
+  await act(async () => {
+    handle.focus()
+    handle.dispatchEvent(new KeyboardEvent("keydown", { key: " ", code: "Space", bubbles: true, cancelable: true }))
+  })
+  await vi.waitFor(() => expect(handle.parentElement!.style.opacity).toBe("0.6"))
+  await render(true)
+  await render(false)
+  if (change !== "unmount") expect(host.querySelector('input[aria-label="Draft"]')).toBe(draft)
+  expect(host.querySelector<HTMLInputElement>('input[aria-label="Draft"]')!.value).toBe("Retained")
+  expect(reorder).not.toHaveBeenCalled()
+  await act(async () => document.getElementById("right-workbench")!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", code: "Escape", bubbles: true, cancelable: true })))
+  expect(close).toHaveBeenCalledTimes(1)
 })

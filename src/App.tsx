@@ -33,10 +33,11 @@ import { isPhoneDevice } from "@/lib/browserAvailability"
 import { DEFAULT_SUPERVISOR_SESSION_ID, isDefaultSupervisor } from "@/lib/supervisor"
 import { agentClient } from "@services/chat/AgentService"
 import { reorderVisibleWorkbenchTabIds, visibleWorkbenchTabIds } from "@/lib/workbenchTabs"
+import { RightWorkbenchSurface } from "@/components/app/RightWorkbenchSurface"
 import type { RightWorkbenchTab, WorkbenchToolTab } from "@/components/app/RightWorkbench"
 
 // The optional workbench need not add its tab/drag UI to ordinary-chat startup.
-const RightWorkbench = lazy(() => import("@/components/app/RightWorkbench").then((module) => ({ default: module.RightWorkbench })))
+const RightWorkbench = lazy(() => import("@/components/app/RightWorkbench").then((module) => ({ default: module.RightWorkbenchContent })))
 
 function App() {
   useUiLocale()
@@ -500,25 +501,22 @@ function App() {
         sidebarCollapsed={sidebarCollapsed}
       />
 
-      {workbenchOpen || (workEnabled && openToolTabs.includes("work")) ? (
-        <>
-          {isWide && workbenchOpen ? <ResizeHandle onPointerDown={workbenchResize.startResize} /> : null}
-          <Suspense fallback={(
-            <aside
-              aria-label={uiText("workbench_c2730bc7")}
-              aria-busy="true"
-              hidden={!workbenchOpen}
-              className={isWide ? "shrink-0 border-l bg-card" : "fixed inset-y-0 right-0 z-50 border-l bg-card"}
-              style={{ width: isWide ? workbenchResize.width : "min(92vw, 42rem)", display: workbenchOpen ? undefined : "none" }}
-            />
-          )}>
+      {isWide && workbenchOpen ? <ResizeHandle onPointerDown={workbenchResize.startResize} /> : null}
+      {/* Register the stable parent layer before any global dialogs. Lazy
+          tab content must never mount its own later, higher-priority layer. */}
+      <RightWorkbenchSurface
+        focusScopeKey={workbenchScope}
+        getCurrentFocusScope={getCurrentWorkbenchScope}
+        visible={workbenchOpen}
+        pageVisible={!settingsOpen}
+        docked={isWide}
+        width={workbenchResize.width}
+        onClose={() => setWorkbenchOpen(false)}
+      >
+        {workbenchOpen || (workEnabled && openToolTabs.includes("work")) ? (
+          <Suspense fallback={null}>
           <RightWorkbench
-            focusScopeKey={workbenchScope}
-            getCurrentFocusScope={getCurrentWorkbenchScope}
             visible={workbenchOpen}
-            pageVisible={!settingsOpen}
-            docked={isWide}
-            width={workbenchResize.width}
             activeTab={selectedWorkbenchTab}
             openToolTabs={visibleToolTabs}
             workEnabled={workEnabled}
@@ -615,8 +613,8 @@ function App() {
             )}
           />
           </Suspense>
-        </>
-      ) : null}
+        ) : null}
+      </RightWorkbenchSurface>
 
       <Onboarding />
 
