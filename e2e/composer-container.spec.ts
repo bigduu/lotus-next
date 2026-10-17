@@ -5,13 +5,20 @@ test("narrow composer uses its container and preserves drafts across More and re
   await page.setViewportSize({ width: 1440, height: 900 })
   await page.addInitScript(() => {
     localStorage.setItem("bodhi_onboarded_v1", "1")
+    localStorage.setItem("lotus_next_last_session", "all-surface-session")
     localStorage.setItem("lotus_ui_locale_v1", "en-US")
   })
   const observation = await installArtifactRuntime(page, standaloneScenario)
   await page.goto(standaloneScenario.entryUrl)
   const column = page.locator("[data-composer-column]")
   const editor = page.getByRole("textbox", { name: "Messages", exact: true })
+  // The initial new-chat editor is replaced when bootstrap restores the session.
+  // Type into the restored session, not its transient empty draft key.
+  await expect(page.getByRole("banner")).toContainText("All-surface acceptance")
+  await expect(column.locator('[data-variant="composer"]')
+    .getByRole("combobox", { name: "Permission mode", exact: true })).toBeEnabled()
   await editor.fill("Keep this unsent draft")
+  await expect(editor).toHaveText("Keep this unsent draft")
   await column.evaluate((element) => { (element as unknown as { style: { width: string } }).style.width = "440px" })
   await expect(column).toHaveAttribute("data-composer-compact", "true")
   const more = column.getByRole("button", { name: "More", exact: true })
