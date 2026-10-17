@@ -571,6 +571,7 @@ export const uiZhCn = {
   "open_another_session_28b8469c": "打开另一个会话",
   "reorder_tab_82ab6e1e": "调整{{v0}}标签页顺序",
   "drag_to_reorder_use_alt_left_right_to_move_bb4c333a": "拖动排序；按 Alt + 左右方向键移动",
+  "workbench_open_tabs": "已打开的标签页",
   "workbench_tabs_e5ddf68a": "工作面板标签页",
   "close_tab_547d17ad": "关闭{{v0}}标签页",
   "close_a70f6657": "关闭{{v0}}",

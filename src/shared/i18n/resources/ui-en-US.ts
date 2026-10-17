@@ -571,6 +571,7 @@ export const uiEnUs = {
   "open_another_session_28b8469c": "Open another session",
   "reorder_tab_82ab6e1e": "Reorder {{v0}} tab",
   "drag_to_reorder_use_alt_left_right_to_move_bb4c333a": "Drag to reorder; use Alt + Left/Right to move",
+  "workbench_open_tabs": "Open tabs",
   "workbench_tabs_e5ddf68a": "Workbench tabs",
   "close_tab_547d17ad": "Close {{v0}} tab",
   "close_a70f6657": "Close {{v0}}",
