@@ -667,14 +667,7 @@ function App() {
       <LazySettings open={settingsOpen} onClose={closeSettings} />
       <CommandPalette
         open={paletteOpen}
-        onClose={() => {
-          setPaletteOpen(false)
-          requestAnimationFrame(() => {
-            const opener = paletteReturnFocusRef.current
-            if (opener?.isConnected && opener.getClientRects().length > 0) opener.focus()
-            else if (chatShellRef.current?.getClientRects().length) chatShellRef.current.querySelector<HTMLTextAreaElement>("textarea")?.focus()
-          })
-        }}
+        onClose={() => setPaletteOpen(false)}
         chats={chats}
         onSelect={(id) => {
           setSettingsOpen(false)
