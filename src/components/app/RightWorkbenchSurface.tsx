@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, type ReactNode } from "react"
+import { useEffect, useLayoutEffect, useRef, type ReactNode, type RefObject } from "react"
 import { FocusScope } from "@radix-ui/react-focus-scope"
 import { DismissableLayer } from "@radix-ui/react-dismissable-layer"
 import { hideOthers } from "aria-hidden"
@@ -32,12 +32,13 @@ function workbenchSurfaces(panel: HTMLElement): HTMLElement[] {
 }
 
 export function RightWorkbenchSurface({ children, visible = true, pageVisible = true, docked = false, width,
-  onClose, focusScopeKey, getCurrentFocusScope, interactionSuspended = false,
+  onClose, focusScopeKey, getCurrentFocusScope, interactionSuspended = false, tabDragRef,
 }: {
   children: ReactNode
   visible?: boolean
   pageVisible?: boolean
   interactionSuspended?: boolean
+  tabDragRef?: RefObject<WorkbenchTabDrag | null>
   docked?: boolean
   width?: number
   onClose: () => void
@@ -45,11 +46,12 @@ export function RightWorkbenchSurface({ children, visible = true, pageVisible = 
   getCurrentFocusScope?: () => string | null
 }) {
   useUiLocale()
-  const draggingTab = useRef<WorkbenchTabDrag | null>(null)
-  useEffect(() => () => { draggingTab.current?.cancel() }, [visible, pageVisible, focusScopeKey])
+  const internalDrag = useRef<WorkbenchTabDrag | null>(null)
+  const draggingTab = tabDragRef ?? internalDrag
+  useLayoutEffect(() => () => { draggingTab.current?.cancel() }, [draggingTab, visible, pageVisible, focusScopeKey])
   useLayoutEffect(() => {
     if (interactionSuspended) draggingTab.current?.cancel()
-  }, [interactionSuspended])
+  }, [draggingTab, interactionSuspended])
   // Keep the real React ancestry stable across breakpoints. Moving a portal
   // under a newly mounted Dialog leaves nested Popover scopes outside that
   // Dialog's lifecycle and can create competing focus traps.
