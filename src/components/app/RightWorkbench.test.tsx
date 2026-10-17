@@ -1,4 +1,6 @@
 import { act, useEffect, useState } from "react"
+import { createPortal } from "react-dom"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { createRoot, type Root } from "react-dom/client"
 import { afterAll, afterEach, beforeAll, expect, it, vi } from "vitest"
 import { ModelEffortPicker } from "@/components/chat/ModelEffortPicker"
@@ -540,4 +542,45 @@ it("keeps the real model popover usable across breakpoint changes and repeated f
   render(true)
   await act(async () => picker.click())
   expect(document.querySelector('[data-slot="popover-content"]')).not.toBeNull()
+})
+
+
+it("treats sibling-owned work portals and their nested popovers as inside pointer targets", async () => {
+  const host = document.body.appendChild(document.createElement("div")); const root = createRoot(host); roots.push(root)
+  const close = vi.fn()
+  function Work() {
+    const [all, setAll] = useState(false)
+    return <><input aria-label="Portal draft" defaultValue="蓝色" hidden={!all} />
+      <button onClick={() => setAll(true)}>All work</button>
+      <Popover><PopoverTrigger asChild><button>Portal menu</button></PopoverTrigger>
+        <PopoverContent><button>Nested portal action</button></PopoverContent></Popover></>
+  }
+  function Harness() {
+    const [target, setTarget] = useState<HTMLDivElement | null>(null)
+    return <><RightWorkbench activeTab="work" openToolTabs={["work"]} workEnabled work={<div ref={setTarget} />}
+      onTabChange={vi.fn()} onToolClose={vi.fn()} onClose={close} inspector={null} review={null} session={null} browser={null} />
+      {target ? createPortal(<Work />, target) : null}</>
+  }
+  act(() => root.render(<Harness />))
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 10)) })
+  const clickPointer = async (target: HTMLElement) => act(async () => {
+    target.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, button: 0 }))
+    target.click()
+  })
+  await clickPointer([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "All work")!)
+  expect(close).not.toHaveBeenCalled()
+  const input = host.querySelector<HTMLInputElement>('input[aria-label="Portal draft"]')!
+  expect(input.hidden).toBe(false)
+  expect(input.value).toBe("蓝色")
+  await clickPointer([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Portal menu")!)
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 10)) })
+  const nested = document.querySelector<HTMLButtonElement>('[data-slot="popover-content"] button')!
+  expect(nested).not.toBeNull()
+  await clickPointer(nested)
+  expect(close).not.toHaveBeenCalled()
+  await act(async () => nested.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })))
+  expect(document.querySelector('[data-slot="popover-content"]')).toBeNull()
+  expect(close).not.toHaveBeenCalled()
+  await clickPointer(document.querySelector<HTMLElement>('[data-slot="dialog-overlay"]')!)
+  expect(close).toHaveBeenCalledTimes(1)
 })

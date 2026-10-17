@@ -31,6 +31,21 @@ function canRestoreFocus(target: HTMLElement | null): target is HTMLElement {
   return true
 }
 
+// Work content can be owned by ChatPane and portaled into this DOM subtree.
+// Include only explicitly controlled open surfaces, never unrelated body portals.
+function workbenchSurfaces(panel: HTMLElement): HTMLElement[] {
+  const surfaces = new Set<HTMLElement>([panel])
+  for (const surface of surfaces) {
+    for (const trigger of surface.querySelectorAll('[aria-expanded="true"][aria-controls]')) {
+      for (const id of trigger.getAttribute("aria-controls")!.split(/\s+/)) {
+        const controlled = panel.ownerDocument.getElementById(id)
+        if (controlled) surfaces.add(controlled)
+      }
+    }
+  }
+  return [...surfaces]
+}
+
 export type RightWorkbenchTab = "inspector" | "review" | "browser" | "session" | "work"
 export type WorkbenchToolTab = Exclude<RightWorkbenchTab, "browser">
 
@@ -386,11 +401,9 @@ export function RightWorkbench({
     const fallback = document.querySelector<HTMLElement>('[aria-controls="right-workbench"]')
     // A model/menu portal may already be open when the viewport narrows.
     // Keep that owned surface exposed to assistive technology as well.
-    const ownedSurfaces = [...panel.querySelectorAll('[aria-expanded="true"][aria-controls]')]
-      .map((trigger) => document.getElementById(trigger.getAttribute("aria-controls")!))
-      .filter((node): node is HTMLElement => node !== null)
-    const restoreBackground = hideOthers([panel, ...ownedSurfaces])
-    if (![panel, ...ownedSurfaces].some((surface) => surface.contains(document.activeElement))) {
+    const surfaces = workbenchSurfaces(panel)
+    const restoreBackground = hideOthers(surfaces)
+    if (!surfaces.some((surface) => surface.contains(document.activeElement))) {
       panel.focus({ preventScroll: true })
     }
     return () => {
@@ -413,6 +426,14 @@ export function RightWorkbench({
           onFocusOutside={(event) => event.preventDefault()}
           onPointerDownOutside={(event) => {
             const original = event.detail.originalEvent
+            // Radix's React capture flag cannot see a sibling-owned portal.
+            // Physical/explicitly owned inside targets must not dismiss the pane.
+            const panel = panelRef.current
+            const target = original.target
+            if (panel && target instanceof Node && workbenchSurfaces(panel).some((surface) => surface.contains(target))) {
+              event.preventDefault()
+              return
+            }
             if (original.button === 2 || (original.button === 0 && original.ctrlKey)) event.preventDefault()
           }}>
           <aside ref={panelRef} id="right-workbench" role={modal ? "dialog" : undefined}
