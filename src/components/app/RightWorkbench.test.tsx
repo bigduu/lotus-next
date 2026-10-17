@@ -85,6 +85,35 @@ it("switches tools in one docked panel and closes without navigation", () => {
   expect(onClose).toHaveBeenCalledTimes(1)
 })
 
+it("uses the supplied docked width without a percentage cap and retains the mobile overlay", () => {
+  const host = document.body.appendChild(document.createElement("div"))
+  const root = createRoot(host)
+  roots.push(root)
+  const renderWorkbench = (docked: boolean) => (
+    <RightWorkbench
+      docked={docked}
+      width={1200}
+      activeTab={null}
+      openToolTabs={[]}
+      onTabChange={vi.fn()}
+      onToolClose={vi.fn()}
+      onClose={vi.fn()}
+      inspector={null}
+      review={null}
+      browser={null}
+      session={null}
+    />
+  )
+
+  act(() => root.render(renderWorkbench(true)))
+  expect(host.querySelector("aside")!.style.width).toBe("1200px")
+  expect(host.querySelector("aside")!.style.maxWidth).toBe("")
+  act(() => root.render(renderWorkbench(false)))
+  expect(host.querySelector("aside")!.className).toContain("fixed")
+  expect(host.querySelector("aside")!.style.width).not.toBe("1200px")
+  expect(host.querySelector('button[aria-label="收起工作面板"]')).not.toBeNull()
+})
+
 it("keeps an open root session mounted while another workbench tab is selected", () => {
   const host = document.body.appendChild(document.createElement("div"))
   const root = createRoot(host)

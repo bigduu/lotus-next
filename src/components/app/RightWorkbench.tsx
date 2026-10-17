@@ -303,8 +303,8 @@ export function RightWorkbench({
       id="right-workbench"
       aria-label={uiText("workbench_c2730bc7")}
       hidden={!visible}
-      className={cn("flex min-h-0 flex-col bg-card", docked ? "shrink-0 border-l" : "fixed inset-y-0 right-0 z-50 border-l shadow-lg")}
-      style={{ ...(docked ? { width: width ?? 520, maxWidth: "46vw" } : { width: "min(92vw, 42rem)" }), display: visible ? undefined : "none" }}
+      className={cn("flex min-h-0 min-w-0 flex-col bg-card", docked ? "shrink-0 border-l" : "fixed inset-y-0 right-0 z-50 border-l shadow-lg")}
+      style={{ ...(docked ? { width: width ?? 520 } : { width: "min(92vw, 42rem)" }), display: visible ? undefined : "none" }}
     >{body}</aside>
   )
 

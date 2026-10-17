@@ -45,6 +45,15 @@ function paste(input: HTMLElement, text: string, files: File[] = []) {
 }
 
 describe("Tiptap composer integration", () => {
+  it("tolerates a destroyed editor during a restored pane remount", () => {
+    const focusSnapshot = { current: null as ComposerFocusSnapshot }
+    const view = mount({ value: "retained draft", focusSnapshot })
+    act(() => view.editor.destroy())
+    expect(() => view.ref.current!.focus()).not.toThrow()
+    expect(() => view.render({ busy: true, mentionScope: "/restored", label: "Restored messages" })).not.toThrow()
+    expect(view.host.querySelector('[data-composer-editor]')?.textContent).toBe("retained draft")
+    expect(view.props.onChange).not.toHaveBeenCalled()
+  })
   it("inserts a selected atomic reference at the caret and leaves the suffix intact", async () => {
     let suggestion: FileSuggestion | null = null
     const view = mount({ value: "before @do suffix", onSuggestionChange: (next) => { suggestion = next } })
