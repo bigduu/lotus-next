@@ -3,6 +3,7 @@ import { useEffect, useId, useRef, useState } from "react"
 import { Check, Copy, List, MoreHorizontal, Pencil, Pin, PinOff, Sparkles, Trash2 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { SIDEBAR_SESSION_DRAG_TYPE, type ProjectSidebarSection } from "@/lib/projectSidebarPreferences"
+import { useSidebarContextMenu } from "@/hooks/useSidebarContextMenu"
 import { agentClient } from "@services/chat/AgentService"
 import {
   DropdownMenu,
@@ -45,6 +46,7 @@ export function SessionRow({
   onMoveToSection?: (sectionId: string | null) => void
 }) {
   useUiLocale()
+  const menu = useSidebarContextMenu()
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(chat.title ?? "")
   const inputRef = useRef<HTMLInputElement>(null)
@@ -86,6 +88,7 @@ export function SessionRow({
 
   return (
     <div
+      {...menu.rowProps}
       data-sidebar-session={chat.id}
       data-session-project={projectId}
       draggable={!!projectId && !!onMoveToSection}
@@ -95,15 +98,17 @@ export function SessionRow({
         event.dataTransfer.effectAllowed = "move"
       }}
       className={cn(
-        "group/row relative mb-0.5 flex items-center rounded-md transition-colors hover:bg-sidebar-accent",
+        "group/row relative mb-0.5 flex select-none items-center rounded-md transition-colors hover:bg-sidebar-accent",
         active && "bg-sidebar-accent",
       )}
     >
       <button
+        type="button"
+        aria-current={active ? "page" : undefined}
         onClick={onSelect}
         aria-describedby={unread ? unreadDescriptionId : undefined}
         className={cn(
-          "flex min-w-0 flex-1 items-center gap-2 py-2 pl-2 pr-1 text-left text-sm",
+          "flex min-w-0 flex-1 items-center gap-2 py-2 pl-2 pr-1 text-left text-sm rounded-md outline-none focus-visible:ring-2 focus-visible:ring-ring",
           (active || unread) && "font-medium",
         )}
       >
@@ -118,7 +123,7 @@ export function SessionRow({
       </button>
       {unread && <span id={unreadDescriptionId} className="sr-only">{uiText("unread_messages_519491f4")}</span>}
 
-      <DropdownMenu>
+      <DropdownMenu open={menu.open} onOpenChange={menu.onOpenChange}>
         <DropdownMenuTrigger
           aria-label={uiText("session_actions_e6f6d875")}
           className={cn(
@@ -128,7 +133,7 @@ export function SessionRow({
         >
           <MoreHorizontal className="size-4" />
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" className="min-w-32 rounded-xl">
+        <DropdownMenuContent onCloseAutoFocus={menu.onCloseAutoFocus} align="end" className="min-w-32 rounded-xl">
           {projectId && onMoveToSection ? (
             <DropdownMenuSub>
               <DropdownMenuSubTrigger className="gap-2 rounded-lg px-2.5 py-1.5">
