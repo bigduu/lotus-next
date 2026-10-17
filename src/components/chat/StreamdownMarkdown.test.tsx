@@ -374,7 +374,7 @@ describe("StreamdownMarkdown security, layout and theme semantics", () => {
     expect(root?.className).toContain("min-w-0")
     expect(root?.className).toContain("max-w-none")
     expect(root?.className).toContain("[overflow-wrap:anywhere]")
-    expect(root?.className).toContain("dark:prose-invert")
+    expect((root as HTMLElement).style.getPropertyValue("--tw-prose-code")).toBe("var(--foreground)")
     expect(
       view.container.querySelector('[data-streamdown="table-wrapper"] > div')?.className,
     ).toContain("overflow-x-auto")

@@ -1,4 +1,6 @@
 import { PrismAsyncLight as SyntaxHighlighter } from "react-syntax-highlighter"
+import { useThemeStore } from "@shared/store/themeStore"
+import coldarkCold from "react-syntax-highlighter/dist/esm/styles/prism/coldark-cold"
 import oneDark from "react-syntax-highlighter/dist/esm/styles/prism/one-dark"
 
 /**
@@ -7,14 +9,16 @@ import oneDark from "react-syntax-highlighter/dist/esm/styles/prism/one-dark"
  * renders — most messages have none, so it stays out of first paint entirely.
  */
 export default function CodeBlock({ language, value }: { language: string; value: string }) {
+  const dark = useThemeStore((state) => state.themeMode === "dark")
+  const theme = dark ? oneDark : coldarkCold
   return (
     <SyntaxHighlighter
       language={language}
-      style={oneDark}
+      style={theme}
       PreTag="div"
       customStyle={{
         margin: 0,
-        background: "transparent",
+        background: "var(--card)",
         padding: "0.75rem",
         // Wrap long lines (file paths, signed URLs) instead of horizontal
         // scrolling — a scrollbar was overlapping/clipping the content.

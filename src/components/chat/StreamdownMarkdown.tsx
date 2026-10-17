@@ -12,6 +12,7 @@ import {
 import "streamdown/styles.css"
 import "./StreamdownLayout.css"
 
+import { markdownTheme } from "./markdownTheme"
 import { cn } from "@/lib/utils"
 import { InlineImage } from "./InlineImage"
 import { ExternalLinkDialog } from "./ExternalLinkDialog"
@@ -74,6 +75,9 @@ function useCompactCodeBlocks(
     const root = hostRef.current?.querySelector<HTMLElement>(".assistant-streamdown")
     if (!root) return
 
+    // Streamdown does not forward a style prop. Set the palette on its own prose
+    // root; an ancestor cannot override typography's locally declared variables.
+    for (const [name, value] of Object.entries(markdownTheme)) root.style.setProperty(name, String(value))
     applyCompactCodeBlockStyles(root)
     const observer = new MutationObserver(() => applyCompactCodeBlockStyles(root))
     observer.observe(root, { childList: true, subtree: true })
@@ -252,8 +256,8 @@ export function StreamdownMarkdown({
       <Streamdown
         animated={isStreaming ? STREAMDOWN_ANIMATION : false}
         className={cn(
-          "assistant-streamdown prose max-w-none min-w-0 space-y-0 font-normal text-foreground dark:prose-invert",
-          "[overflow-wrap:anywhere] prose-p:my-2 prose-headings:mt-3 prose-headings:mb-1.5",
+          "assistant-streamdown prose max-w-none min-w-0 space-y-0 font-normal text-foreground",
+          "[overflow-wrap:anywhere] prose-p:my-2 prose-headings:mt-4 prose-headings:mb-2",
           "prose-a:text-primary prose-li:my-0.5",
           className,
         )}
