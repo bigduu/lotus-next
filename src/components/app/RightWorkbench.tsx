@@ -118,6 +118,8 @@ export function RightWorkbench({
   tabOrder = [],
   onTabReorder,
   onClose,
+  focusScopeKey,
+  getCurrentFocusScope,
   inspector,
   review,
   browser,
@@ -144,6 +146,8 @@ export function RightWorkbench({
   tabOrder?: string[]
   onTabReorder?: (order: string[]) => void
   onClose: () => void
+  focusScopeKey?: string | null
+  getCurrentFocusScope?: () => string | null
   inspector: ReactNode
   review: ReactNode
   browser: ReactNode
@@ -391,12 +395,18 @@ export function RightWorkbench({
   // under a newly mounted Dialog leaves nested Popover scopes outside that
   // Dialog's lifecycle and can create competing focus traps.
   const panelRef = useRef<HTMLElement>(null)
+  const backdropRef = useRef<HTMLDivElement>(null)
+  const pointerDismiss = useRef<"backdrop" | "other" | null>(null)
+  const focusGeneration = useRef({ generation: 0 })
   const modal = visible && !docked
   const currentMode = useRef({ docked, visible })
   currentMode.current = { docked, visible }
   useEffect(() => {
     const panel = panelRef.current
     if (!modal || !panel) return
+    const lifecycle = focusGeneration.current
+    const generation = ++lifecycle.generation
+    pointerDismiss.current = null
     const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null
     const fallback = document.querySelector<HTMLElement>('[aria-controls="right-workbench"]')
     // A model/menu portal may already be open when the viewport narrows.
@@ -410,13 +420,28 @@ export function RightWorkbench({
       restoreBackground()
       // Resizing back to a docked surface must not move focus out of the editor.
       if (currentMode.current.docked && currentMode.current.visible) return
-      const target = [opener, fallback].find(canRestoreFocus)
-      target?.focus({ preventScroll: true })
+      const restore = () => {
+        if (generation !== lifecycle.generation || (getCurrentFocusScope && getCurrentFocusScope() !== focusScopeKey)) return
+        const active = document.activeElement
+        // Never steal focus from a new control chosen after the close gesture.
+        if (active instanceof HTMLElement && !panel.contains(active) && canRestoreFocus(active)) return
+        const target = [opener, fallback].find(canRestoreFocus)
+        target?.focus({ preventScroll: true })
+      }
+      if (pointerDismiss.current === "backdrop") {
+        // Native pointer default actions run after React's dismissal cleanup and
+        // can move focus to BODY. Restore after that turn, only if still vacant.
+        requestAnimationFrame(() => {
+          const currentPanel = document.getElementById("right-workbench")
+          if (currentPanel && canRestoreFocus(currentPanel)) return
+          restore()
+        })
+      } else if (pointerDismiss.current !== "other") restore()
     }
-  }, [modal])
+  }, [modal, focusScopeKey, getCurrentFocusScope])
 
   return <>
-    {modal ? <div data-slot="dialog-overlay" className="fixed inset-0 z-40 bg-black/50" style={{ pointerEvents: "auto" }} /> : null}
+    {modal ? <div ref={backdropRef} data-slot="dialog-overlay" className="fixed inset-0 z-40 bg-black/50" style={{ pointerEvents: "auto" }} /> : null}
     <RemoveScroll enabled={modal} forwardProps allowPinchZoom>
       <FocusScope asChild loop={modal} trapped={modal}
         onMountAutoFocus={(event) => event.preventDefault()}
@@ -434,7 +459,11 @@ export function RightWorkbench({
               event.preventDefault()
               return
             }
-            if (original.button === 2 || (original.button === 0 && original.ctrlKey)) event.preventDefault()
+            if (original.button === 2 || (original.button === 0 && original.ctrlKey)) {
+              event.preventDefault()
+              return
+            }
+            pointerDismiss.current = target instanceof Node && backdropRef.current?.contains(target) ? "backdrop" : "other"
           }}>
           <aside ref={panelRef} id="right-workbench" role={modal ? "dialog" : undefined}
             aria-modal={modal ? true : undefined} aria-label={uiText("workbench_c2730bc7")}
