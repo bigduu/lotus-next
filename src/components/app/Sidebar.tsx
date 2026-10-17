@@ -1,7 +1,7 @@
 import { useUiText } from "@shared/i18n/ui"
 import { isSessionUnread, useSessionReadState } from "@/lib/sessionReadState"
 import { useId, useMemo, useRef, useState, type DragEvent } from "react"
-import { ChevronRight, Plus, Search, X, Cog, PanelLeftClose, FolderClosed, CalendarDays, ChevronDown, GitBranch } from "lucide-react"
+import { ChevronRight, Plus, Search, X, Cog, PanelLeftClose, FolderClosed, CalendarDays, ChevronDown, GitBranch, GripVertical } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { BrandMark } from "@/components/ui/brand-mark"
 import { Input } from "@/components/ui/input"
@@ -16,7 +16,7 @@ import { groupChats, groupChatsByProject, type ChatGroup } from "@/lib/groupChat
 import {
   readPinnedProjectIds, writePinnedProjectIds,
   getProjectSections, getSessionSection, createProjectSection, removeProjectSection, setSessionSection,
-  SIDEBAR_SESSION_DRAG_TYPE,
+  SIDEBAR_SESSION_DRAG_TYPE, SIDEBAR_SECTION_DRAG_TYPE, LEGACY_PROJECT_SECTION_ID, reorderProjectSection,
 } from "@/lib/projectSidebarPreferences"
 import { useProjectSidebarSections } from "@/hooks/useProjectSidebarSections"
 import { useAppStore } from "@shared/store/appStore"
@@ -90,7 +90,15 @@ export function Sidebar({
   const [pinnedProjectIds, setPinnedProjectIds] = useState(readPinnedProjectIds)
   const [sectionDialogMode, setSectionDialogMode] = useState<"create" | "manage">("create")
   const [dragOverSection, setDragOverSection] = useState<string | null>(null)
-  const draggingProjectId = useRef<string | null>(null)
+  const draggingProjectId = useRef<string | null | undefined>(undefined)
+  const suppressSectionClick = useRef(false)
+  const [dragNotice, setDragNotice] = useState<string | null>(null)
+  const dragFeedbackTarget = useRef<HTMLElement | null>(null)
+  const clearDragFeedback = () => {
+    dragFeedbackTarget.current = null
+    setDragOverSection(null)
+    setDragNotice(null)
+  }
   const [editingProjectId, setEditingProjectId] = useState<string | null>(null)
   const [sectioningProjectId, setSectioningProjectId] = useState<string | null>(null)
   const [pendingArchiveProjectId, setPendingArchiveProjectId] = useState<string | null>(null)
@@ -262,18 +270,83 @@ export function Sidebar({
   const moveSessionToSection = (projectId: string, sessionId: string, sectionId: string | null) => {
     const chat = rootChats.find((candidate) => candidate.id === sessionId)
     // Canonical project identity is read from the session, never from the drag payload.
-    if (chat?.config?.projectId?.trim() !== projectId || !projects[projectId]) return
-    void updateSectionPreferences(projectId, (previous) => setSessionSection(previous, projectId, sessionId, sectionId, projects[projectId]?.section))
+    if (chat?.config?.projectId?.trim() !== projectId || !projects[projectId] || projects[projectId].status !== "active") return
+    if (getSessionSection(sectionPreferences, projectId, sessionId, projects[projectId].section) === sectionId) return
+    void updateSectionPreferences(projectId, (previous) => setSessionSection(previous, projectId, sessionId, sectionId, projects[projectId]?.section)).then((saved) => {
+      if (!saved) return
+      setDisclosures((previous) => {
+        const closedDates = new Set(previous.closedDates)
+        closedDates.delete(projectId)
+        const key = sectionDisclosureKey(projectId, sectionId)
+        const closedSections = new Set(previous.closedSections)
+        closedSections.delete(key)
+        const expandedProjectGroups = new Set(previous.expandedProjectGroups)
+        expandedProjectGroups.add(key)
+        return { ...previous, closedDates, closedSections, expandedProjectGroups }
+      })
+    })
   }
 
-  const readDraggedSession = (event: DragEvent<HTMLElement>): { projectId: string; sessionId: string } | null => {
+  const readDraggedSession = (event: DragEvent<HTMLElement>): { projectId: string | null; sessionId: string } | null => {
     try {
       const payload: unknown = JSON.parse(event.dataTransfer.getData(SIDEBAR_SESSION_DRAG_TYPE))
       if (!payload || typeof payload !== "object" || !("projectId" in payload) || !("sessionId" in payload)) return null
-      if (typeof payload.projectId !== "string" || typeof payload.sessionId !== "string") return null
+      if ((payload.projectId !== null && typeof payload.projectId !== "string") || typeof payload.sessionId !== "string") return null
       return { projectId: payload.projectId, sessionId: payload.sessionId }
     } catch { return null }
   }
+
+  const readDraggedSection = (event: DragEvent<HTMLElement>): { projectId: string; sectionId: string } | null => {
+    try {
+      const payload: unknown = JSON.parse(event.dataTransfer.getData(SIDEBAR_SECTION_DRAG_TYPE))
+      if (!payload || typeof payload !== "object" || !("projectId" in payload) || !("sectionId" in payload)) return null
+      return typeof payload.projectId === "string" && typeof payload.sectionId === "string"
+        ? { projectId: payload.projectId, sectionId: payload.sectionId } : null
+    } catch { return null }
+  }
+
+  const dropProps = (projectId: string, sectionId: string | null, key: string) => ({
+    onDragOver: (event: DragEvent<HTMLElement>) => {
+      event.stopPropagation()
+      dragFeedbackTarget.current = event.currentTarget
+      const project = projects[projectId]
+      const supported = event.dataTransfer.types.includes(SIDEBAR_SESSION_DRAG_TYPE) || event.dataTransfer.types.includes(SIDEBAR_SECTION_DRAG_TYPE)
+      if (supported && draggingProjectId.current !== undefined && draggingProjectId.current !== projectId) setDragNotice(uiText("sidebar_cross_project_drop_unavailable"))
+      else setDragNotice(null)
+      if (!supported || !project || project.status !== "active" || project.sidebar === undefined || sectionBusy.has(projectId) || draggingProjectId.current !== projectId) {
+        event.dataTransfer.dropEffect = "none"
+        setDragOverSection(null)
+        return
+      }
+      event.preventDefault()
+      event.dataTransfer.dropEffect = "move"
+      setDragOverSection(key)
+    },
+    onDragLeave: (event: DragEvent<HTMLElement>) => {
+      // A late leave from the old target must not clear the new target's feedback.
+      if (dragFeedbackTarget.current === event.currentTarget && !event.currentTarget.contains(event.relatedTarget as Node | null)) clearDragFeedback()
+    },
+    onDrop: (event: DragEvent<HTMLElement>) => {
+      event.preventDefault()
+      event.stopPropagation()
+      clearDragFeedback()
+      draggingProjectId.current = undefined
+      dragFeedbackTarget.current = event.currentTarget
+      const project = projects[projectId]
+      if (!project || project.status !== "active" || project.sidebar === undefined || sectionBusy.has(projectId)) return
+      const section = readDraggedSection(event)
+      if (section) {
+        if (section.projectId !== projectId) { setDragNotice(uiText("sidebar_cross_project_drop_unavailable")); return }
+        const bounds = (event.currentTarget.querySelector("button") ?? event.currentTarget).getBoundingClientRect()
+        const after = event.clientY > bounds.top + bounds.height / 2
+        void updateSectionPreferences(projectId, (previous) => reorderProjectSection(previous, projectId, section.sectionId, sectionId, after))
+        return
+      }
+      const session = readDraggedSession(event)
+      if (session && session.projectId !== projectId) setDragNotice(uiText("sidebar_cross_project_drop_unavailable"))
+      if (session?.projectId === projectId) moveSessionToSection(projectId, session.sessionId, sectionId)
+    },
+  })
 
   const renderSession = (chat: ChatItem) => {
     const projectId = chat.config?.projectId?.trim()
@@ -324,30 +397,26 @@ export function Sidebar({
       const expanded = !!query || !disclosures.closedSections.has(key)
       const contentId = `${disclosureId}-section-${encodeURIComponent(key)}`
       return <div key={key} data-project-section={section.name} data-section-id={section.id ?? "none"} data-section-project={project.id}
-        aria-disabled={project.sidebar === undefined || sectionBusy.has(project.id)}
-        style={{ marginInlineStart: 12 }} className={cn("mb-1 rounded-md", dragOverSection === key && "bg-sidebar-accent")}
-        onDragOver={(event) => {
-          if (project.sidebar === undefined || sectionBusy.has(project.id)) return
-          if (!event.dataTransfer.types.includes(SIDEBAR_SESSION_DRAG_TYPE) || (draggingProjectId.current && draggingProjectId.current !== project.id)) return
-          event.preventDefault()
-          event.dataTransfer.dropEffect = "move"
-          setDragOverSection(key)
-        }}
-        onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDragOverSection(null) }}
-        onDrop={(event) => {
-          event.preventDefault()
-          setDragOverSection(null)
-          draggingProjectId.current = null
-          if (project.sidebar === undefined || sectionBusy.has(project.id)) return
-          const payload = readDraggedSession(event)
-          if (payload?.projectId === project.id) moveSessionToSection(project.id, payload.sessionId, section.id)
-        }}>
+        aria-disabled={project.status !== "active" || project.sidebar === undefined || sectionBusy.has(project.id)}
+        data-drop-active={dragOverSection === key || undefined}
+        style={{ marginInlineStart: 12 }} className={cn("mb-1 rounded-md", dragOverSection === key && "bg-sidebar-accent ring-2 ring-ring")}
+        {...dropProps(project.id, section.id, key)}>
         <ProjectSectionHeader onManageSections={() => {
           setSectionDialogMode("manage")
           setSectioningProjectId(project.id)
         }}>
           <button type="button" aria-expanded={expanded} aria-controls={contentId} disabled={!!query}
-            className="flex min-w-0 flex-1 select-none items-center gap-1 rounded-md px-2 py-1.5 text-left text-xs font-medium text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default"
+            title={section.id && section.id !== LEGACY_PROJECT_SECTION_ID ? uiText("sidebar_section_drag_hint") : undefined}
+            draggable={section.id !== null && section.id !== LEGACY_PROJECT_SECTION_ID && project.status === "active" && project.sidebar !== undefined && !sectionBusy.has(project.id) && !query}
+            onPointerDown={() => { suppressSectionClick.current = false }}
+            onClickCapture={(event) => { if (suppressSectionClick.current && event.detail !== 0) { event.preventDefault(); event.stopPropagation() } }}
+            onDragStart={(event) => {
+              if (!section.id || section.id === LEGACY_PROJECT_SECTION_ID) { event.preventDefault(); return }
+              suppressSectionClick.current = true
+              event.dataTransfer.setData(SIDEBAR_SECTION_DRAG_TYPE, JSON.stringify({ projectId: project.id, sectionId: section.id }))
+              event.dataTransfer.effectAllowed = "move"
+            }}
+            className={cn("flex min-w-0 flex-1 select-none items-center gap-1 rounded-md px-2 py-1.5 text-left text-xs font-medium text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default", section.id && section.id !== LEGACY_PROJECT_SECTION_ID && "cursor-grab active:cursor-grabbing")}
             onClick={() => setDisclosures((previous) => {
               const closedSections = new Set(previous.closedSections)
               if (closedSections.has(key)) closedSections.delete(key)
@@ -355,6 +424,7 @@ export function Sidebar({
               return { ...previous, closedSections }
             })}>
             <ChevronRight aria-hidden="true" className={cn("size-3 shrink-0", expanded && "rotate-90")} />
+            {section.id && section.id !== LEGACY_PROJECT_SECTION_ID ? <GripVertical aria-hidden="true" className="size-3 shrink-0 text-muted-foreground" /> : null}
             <span className="truncate">{section.name}</span>
             <span className="ml-auto whitespace-nowrap pl-2 font-normal">{uiText("project_sessions", { count: bucket.chats.length })}</span>
           </button>
@@ -385,47 +455,51 @@ export function Sidebar({
             {group.label}
           </div>
         ) : project ? (
-          <ProjectGroupHeader
-            project={project}
-            label={group.label}
-            sessionCount={projectSessionCounts.get(group.key) ?? group.chats.length}
-            expanded={expanded}
-            contentId={contentId}
-            disabled={!!query}
-            pinned={pinnedProjectIds.has(project.id)}
-            onToggleExpanded={toggleExpanded}
-            onNewChat={() => {
-              onNewChat(project.id)
-              onClose()
-            }}
-            onEdit={() => {
-              setProjectActionError(null)
-              setEditingProjectId(project.id)
-            }}
-            onTogglePin={() => toggleProjectPin(project.id)}
-            onCreateSection={() => {
-              setProjectActionError(null)
-              setSectionDialogMode("create")
-              setSectioningProjectId(project.id)
-            }}
-            onManageSections={() => {
-              setSectionDialogMode("manage")
-              setSectioningProjectId(project.id)
-            }}
-            onReveal={() => {
-              setProjectActionError(null)
-              void openLocalFolder(project.project_path ?? "").catch((error) => {
-                setProjectActionError(error instanceof Error ? error.message : uiText("could_not_open_project_directory_b25cc8f5"))
-              })
-            }}
-            onArchive={() => {
-              if (project.status === "archived") void restoreProject(project.id)
-              else {
+          <div {...dropProps(project.id, null, `project:${project.id}`)} data-project-drop={project.id} title={uiText("sidebar_project_drop_hint")}
+            className={cn("rounded-md", dragOverSection === `project:${project.id}` && "bg-sidebar-accent ring-2 ring-ring")}
+            data-drop-active={dragOverSection === `project:${project.id}` || undefined}>
+            <ProjectGroupHeader
+              project={project}
+              label={group.label}
+              sessionCount={projectSessionCounts.get(group.key) ?? group.chats.length}
+              expanded={expanded}
+              contentId={contentId}
+              disabled={!!query}
+              pinned={pinnedProjectIds.has(project.id)}
+              onToggleExpanded={toggleExpanded}
+              onNewChat={() => {
+                onNewChat(project.id)
+                onClose()
+              }}
+              onEdit={() => {
                 setProjectActionError(null)
-                setPendingArchiveProjectId(project.id)
-              }
-            }}
-          />
+                setEditingProjectId(project.id)
+              }}
+              onTogglePin={() => toggleProjectPin(project.id)}
+              onCreateSection={() => {
+                setProjectActionError(null)
+                setSectionDialogMode("create")
+                setSectioningProjectId(project.id)
+              }}
+              onManageSections={() => {
+                setSectionDialogMode("manage")
+                setSectioningProjectId(project.id)
+              }}
+              onReveal={() => {
+                setProjectActionError(null)
+                void openLocalFolder(project.project_path ?? "").catch((error) => {
+                  setProjectActionError(error instanceof Error ? error.message : uiText("could_not_open_project_directory_b25cc8f5"))
+                })
+              }}
+              onArchive={() => {
+                if (project.status === "archived") void restoreProject(project.id)
+                else {
+                  setProjectActionError(null)
+                  setPendingArchiveProjectId(project.id)
+                }
+              }}
+            />
+          </div>
         ) : (
           <button
             type="button"
@@ -459,8 +533,12 @@ export function Sidebar({
       )}
 
       <aside
-        onDragStart={(event) => { draggingProjectId.current = readDraggedSession(event)?.projectId ?? null }}
-        onDragEnd={() => { draggingProjectId.current = null; setDragOverSection(null) }}
+        onDragStart={(event) => { clearDragFeedback(); draggingProjectId.current = (readDraggedSession(event) ?? readDraggedSection(event))?.projectId }}
+        onDragEnd={() => { draggingProjectId.current = undefined; clearDragFeedback() }}
+        onDragLeave={(event) => {
+          // ChatView and other non-sidebar drop surfaces own their own feedback.
+          if (event.target === event.currentTarget && !event.currentTarget.contains(event.relatedTarget as Node | null)) clearDragFeedback()
+        }}
         style={{
           ["--sidebar-w" as string]: `${width}px`,
           ["--text-xs" as string]: "13px",
@@ -551,6 +629,7 @@ export function Sidebar({
           </Button>
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-3">
+          {dragNotice ? <p role="status" className="px-3 py-2 text-xs text-muted-foreground">{dragNotice}</p> : null}
           {sectionBusy.size ? <p role="status" className="px-3 py-2 text-xs text-muted-foreground">{uiText("sidebar_sections_saving")}</p> : null}
           {isProjectMode && Object.values(projects).some((project) => project.sidebar === undefined && getProjectSections(sectionPreferences, project.id, project.section).length) ? <p role="status" className="px-3 py-2 text-xs text-muted-foreground">{uiText("sidebar_sections_unavailable")}</p> : null}
           {Object.entries(sectionErrors).filter(([id]) => projects[id] && id !== sectioningProjectId).map(([id, error]) => (

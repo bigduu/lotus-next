@@ -27,7 +27,7 @@ vi.mock("@/components/chat/SessionRow", () => ({
 
 import { Sidebar } from "./Sidebar"
 import { useAppStore } from "@shared/store/appStore"
-import { PINNED_PROJECTS_STORAGE_KEY, PROJECT_SECTIONS_STORAGE_KEY, SIDEBAR_SESSION_DRAG_TYPE } from "@/lib/projectSidebarPreferences"
+import { PINNED_PROJECTS_STORAGE_KEY, PROJECT_SECTIONS_STORAGE_KEY, SIDEBAR_SESSION_DRAG_TYPE, SIDEBAR_SECTION_DRAG_TYPE } from "@/lib/projectSidebarPreferences"
 import { DEFAULT_SUPERVISOR_SESSION_ID } from "@/lib/supervisor"
 
 type Props = ComponentProps<typeof Sidebar>
@@ -498,9 +498,9 @@ function installProjectBackend(initial: Record<string, ProjectManifest>) {
 function projectChat(id: string, projectId: string, extra: Partial<ChatItem> = {}) {
   return chat(id, 5, { config: { systemPromptId: "", baseSystemPrompt: "", lastUsedEnhancedPrompt: null, projectId }, ...extra })
 }
-async function drop(target: Element, payload: unknown) {
+async function drop(target: Element, payload: unknown, mime = SIDEBAR_SESSION_DRAG_TYPE) {
   const event = new Event("drop", { bubbles: true, cancelable: true })
-  Object.defineProperty(event, "dataTransfer", { value: { getData: (type: string) => type === SIDEBAR_SESSION_DRAG_TYPE ? JSON.stringify(payload) : "" } })
+  Object.defineProperty(event, "dataTransfer", { value: { getData: (type: string) => type === mime ? JSON.stringify(payload) : "" } })
   await act(async () => target.dispatchEvent(event))
 }
 
@@ -517,6 +517,132 @@ describe("Sidebar server sections", () => {
     click("项目")
     return backend
   }
+
+  it("drops sessions on their own project to clear sections without changing project identity", async () => {
+    const { snapshots, updateProject } = setup()
+    await clickAndSave("Move first to lotus")
+    const target = container.querySelector('[data-project-drop="p1"]')!
+    await drop(target, { projectId: "p1", sessionId: "first" })
+    expect(snapshots.p1.sidebar!.session_sections.first).toBeNull()
+    expect(props.chats[0].config.projectId).toBe("p1")
+    expect(updateProject).toHaveBeenCalledTimes(2)
+    await drop(target, { projectId: "p1", sessionId: "first" })
+    await drop(target, { projectId: "p1", sessionId: "foreign" })
+    await drop(target, { projectId: "p2", sessionId: "foreign" })
+    expect(updateProject).toHaveBeenCalledTimes(2)
+    expect(container.textContent).toContain("暂不支持跨项目移动")
+    expect(props.onSelect).not.toHaveBeenCalled()
+  })
+
+  it("reveals a folded drop destination only after a confirmed move", async () => {
+    setup()
+    const section = container.querySelector('[data-section-project="p1"][data-project-section="lotus"]')!
+    act(() => section.querySelector<HTMLButtonElement>("button")!.click())
+    expect(section.querySelector("button")!.getAttribute("aria-expanded")).toBe("false")
+    await drop(section, { projectId: "p1", sessionId: "second" })
+    expect(section.querySelector("button")!.getAttribute("aria-expanded")).toBe("true")
+    expect(section.contains(row("second"))).toBe(true)
+  })
+
+  it("rejects project-header drops for archived projects", async () => {
+    const { snapshots, updateProject } = setup()
+    snapshots.p1.status = "archived"
+    act(() => useAppStore.setState({ projects: structuredClone(snapshots) }))
+    await drop(container.querySelector('[data-project-drop="p1"]')!, { projectId: "p1", sessionId: "first" })
+    expect(updateProject).not.toHaveBeenCalled()
+  })
+
+  it("persists custom section drag order, rejects foreign sections, and keeps legacy fixed", async () => {
+    const { snapshots, updateProject } = setup()
+    const other = { id: "section:other", name: "Other" }
+    snapshots.p1.sidebar!.sections.push(other)
+    act(() => useAppStore.setState({ projects: structuredClone(snapshots) }))
+    const target = container.querySelector('[data-section-project="p1"][data-project-section="lotus"]')!
+    await drop(target, { projectId: "p1", sectionId: other.id }, SIDEBAR_SECTION_DRAG_TYPE)
+    expect(snapshots.p1.sidebar!.sections.map((section) => section.id)).toEqual([other.id, lotusA])
+    expect(updateProject).toHaveBeenCalledOnce()
+    await drop(target, { projectId: "p2", sectionId: lotusB }, SIDEBAR_SECTION_DRAG_TYPE)
+    await drop(target, { projectId: "p1", sectionId: "legacy" }, SIDEBAR_SECTION_DRAG_TYPE)
+    expect(updateProject).toHaveBeenCalledOnce()
+    await drop(container.querySelector('[data-project-drop="p1"]')!, { projectId: "p1", sectionId: other.id }, SIDEBAR_SECTION_DRAG_TYPE)
+    expect(snapshots.p1.sidebar!.sections.map((section) => section.id)).toEqual([lotusA, other.id])
+    expect(snapshots.p1.sidebar!.session_sections).toEqual({})
+    expect(props.onSelect).not.toHaveBeenCalled()
+  })
+
+  it("shows legal drop feedback and clears it on cancelled section drags without folding", async () => {
+    const { updateProject } = setup()
+    const source = container.querySelector<HTMLButtonElement>('[data-section-id="' + lotusA + '"] button')!
+    const target = container.querySelector('[data-project-drop="p1"]')!
+    const values = new Map<string, string>()
+    const dataTransfer = { types: [SIDEBAR_SECTION_DRAG_TYPE], setData: (type: string, value: string) => values.set(type, value), getData: (type: string) => values.get(type) ?? "", effectAllowed: "", dropEffect: "" }
+    const drag = (element: Element, type: string) => {
+      const event = new Event(type, { bubbles: true, cancelable: true })
+      Object.defineProperty(event, "dataTransfer", { value: dataTransfer })
+      act(() => element.dispatchEvent(event))
+      return event
+    }
+    expect(source.draggable).toBe(true)
+    drag(source, "dragstart")
+    expect(drag(target, "dragover").defaultPrevented).toBe(true)
+    expect(target.getAttribute("data-drop-active")).toBe("true")
+    expect(dataTransfer.dropEffect).toBe("move")
+    const foreign = container.querySelector('[data-project-drop="p2"]')!
+    expect(drag(foreign, "dragover").defaultPrevented).toBe(false)
+    expect(dataTransfer.dropEffect).toBe("none")
+    expect(container.textContent).toContain("暂不支持跨项目移动")
+    expect(target.getAttribute("data-drop-active")).toBeNull()
+    drag(source, "dragend")
+    expect(container.textContent).not.toContain("暂不支持跨项目移动")
+    expect(target.getAttribute("data-drop-active")).toBeNull()
+    act(() => source.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 1 })))
+    expect(source.getAttribute("aria-expanded")).toBe("true")
+    expect(updateProject).not.toHaveBeenCalled()
+    act(() => source.dispatchEvent(new Event("pointerdown", { bubbles: true })))
+    act(() => source.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 1 })))
+    expect(source.getAttribute("aria-expanded")).toBe("false")
+  })
+
+  it("clears rejection on target exit and preserves newer drop feedback", () => {
+    const { updateProject } = setup()
+    const source = container.querySelector<HTMLButtonElement>('[data-section-id="' + lotusA + '"] button')!
+    const own = container.querySelector('[data-project-drop="p1"]')!
+    const foreign = container.querySelector('[data-project-drop="p2"]')!
+    const values = new Map<string, string>()
+    const dataTransfer = { types: [SIDEBAR_SECTION_DRAG_TYPE], setData: (type: string, value: string) => values.set(type, value), getData: (type: string) => values.get(type) ?? "", effectAllowed: "", dropEffect: "" }
+    const drag = (element: Element, type: string, relatedTarget: EventTarget | null = null) => {
+      const event = new Event(type, { bubbles: true, cancelable: true })
+      Object.defineProperties(event, { dataTransfer: { value: dataTransfer }, relatedTarget: { value: relatedTarget } })
+      act(() => element.dispatchEvent(event))
+    }
+    const rejected = () => container.textContent!.includes("暂不支持跨项目移动")
+    drag(source, "dragstart")
+    drag(foreign, "dragover")
+    expect(rejected()).toBe(true)
+    // Moving across descendants is still inside the rejected target.
+    drag(foreign, "dragleave", foreign.querySelector("button"))
+    expect(rejected()).toBe(true)
+    // ChatView is outside this Sidebar: clear immediately, without waiting for dragend.
+    drag(foreign, "dragleave", document.body)
+    expect(rejected()).toBe(false)
+    drag(foreign, "dragover")
+    drag(own, "dragover")
+    expect(rejected()).toBe(false)
+    expect(own.getAttribute("data-drop-active")).toBe("true")
+    // A late leave with a missing relatedTarget must not erase the new highlight.
+    drag(foreign, "dragleave")
+    expect(own.getAttribute("data-drop-active")).toBe("true")
+    drag(own, "dragleave", container.querySelector("input"))
+    expect(own.getAttribute("data-drop-active")).toBeNull()
+    drag(foreign, "dragover")
+    drag(container.querySelector("aside")!, "dragleave", document.body)
+    expect(rejected()).toBe(false)
+    drag(foreign, "dragover")
+    drag(source, "dragend")
+    expect(rejected()).toBe(false)
+    expect(updateProject).not.toHaveBeenCalled()
+    expect(props.onSelect).not.toHaveBeenCalled()
+  })
 
   it("saves menu moves with the current Project revision and preserves canonical membership and pinned actions", async () => {
     const { updateProject, snapshots } = setup()

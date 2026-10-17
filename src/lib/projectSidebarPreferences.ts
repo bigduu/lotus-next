@@ -173,3 +173,18 @@ export function setSessionSection(preferences: ProjectSectionPreferences, projec
   const previous = getProjectPreference(preferences, projectId)
   return withProjectPreference(preferences, projectId, { ...previous, sessionSections: { ...previous.sessionSections, [sessionId]: sectionId } })
 }
+
+export const SIDEBAR_SECTION_DRAG_TYPE = "application/x-lotus-sidebar-section"
+
+/** Reorder durable custom sections; the synthetic legacy bucket remains first. */
+export function reorderProjectSection(preferences: ProjectSectionPreferences, projectId: string, sectionId: string, targetId: string | null, after = false): ProjectSectionPreferences {
+  const previous = getProjectPreference(preferences, projectId)
+  const source = previous.sections.find((section) => section.id === sectionId)
+  if (!source || sectionId === targetId) return preferences
+  const sections = previous.sections.filter((section) => section.id !== sectionId)
+  const target = targetId === LEGACY_PROJECT_SECTION_ID ? 0 : targetId === null ? sections.length : sections.findIndex((section) => section.id === targetId)
+  if (target < 0) return preferences
+  sections.splice(target + (after && targetId !== null && targetId !== LEGACY_PROJECT_SECTION_ID ? 1 : 0), 0, source)
+  if (sections.every((section, index) => section.id === previous.sections[index]?.id)) return preferences
+  return withProjectPreference(preferences, projectId, { ...previous, sections })
+}
