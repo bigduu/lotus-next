@@ -26,6 +26,7 @@ export function CommandPalette({
   onSelect,
   onNewChat,
   onSettings,
+  getReturnFocusTarget,
 }: {
   open: boolean
   onClose: () => void
@@ -33,6 +34,7 @@ export function CommandPalette({
   onSelect: (id: string) => void
   onNewChat: () => void
   onSettings: () => void
+  getReturnFocusTarget?: () => HTMLElement | null
 }) {
   const uiText = useUiText()
   const [q, setQ] = useState("")
@@ -107,10 +109,12 @@ export function CommandPalette({
         }}
         onCloseAutoFocus={(event) => {
           event.preventDefault()
+          const opener = getReturnFocusTarget ? getReturnFocusTarget() : returnFocusRef.current
           const active = document.activeElement
-          // Navigation or a later click may already have chosen a new target.
-          if (active instanceof HTMLElement && active !== document.body && !active.closest('[hidden], [inert], [aria-hidden="true"]')) return
-          const opener = returnFocusRef.current
+          // The parent trap can land on its ASIDE when a drag preview vanishes.
+          // Preserve real new control focus, but recover from that inert fallback.
+          const parentFallback = opener?.closest("#right-workbench")
+          if (active instanceof HTMLElement && active !== document.body && active !== parentFallback && !active.closest('[hidden], [inert], [aria-hidden="true"]')) return
           if (opener?.isConnected && opener !== document.body && !opener.matches(":disabled") && !opener.closest('[hidden], [inert], [aria-hidden="true"]')) opener.focus()
         }}
       >

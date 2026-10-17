@@ -69,6 +69,7 @@ function SortableWorkbenchTab({
         ref={handleRef}
         type="button"
         aria-label={uiText("reorder_tab_82ab6e1e", { v0: title })}
+        data-workbench-tab-handle={id}
         aria-keyshortcuts="Alt+ArrowLeft Alt+ArrowRight"
         title={uiText("drag_to_reorder_use_alt_left_right_to_move_bb4c333a")}
         className="flex size-5 shrink-0 items-center justify-center rounded-sm outline-none feedback-motion transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"

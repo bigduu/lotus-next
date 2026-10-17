@@ -1,8 +1,9 @@
-import { act, lazy, StrictMode, Suspense, useEffect, useState } from "react"
+import { act, lazy, StrictMode, Suspense, useEffect, useRef, useState } from "react"
 import { createPortal } from "react-dom"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { createRoot, type Root } from "react-dom/client"
 import { afterAll, afterEach, beforeAll, expect, it, vi } from "vitest"
+import { captureWorkbenchFocusReturn } from "@/lib/workbenchFocusReturn"
 import { CommandPalette } from "@/components/chat/CommandPalette"
 import { ResponsiveDialog, ResponsiveDialogContent, ResponsiveDialogTitle, ResponsiveDialogTrigger } from "@/components/ui/responsive-dialog"
 import { ModelEffortPicker } from "@/components/chat/ModelEffortPicker"
@@ -845,7 +846,8 @@ it.each(["unmount", "settings", "session"])("cancels a tab drag on %s without le
   expect(close).toHaveBeenCalledTimes(1)
 })
 
-it.each([false, true])("cancels the drag sensor when command search opens (initializing: %s)", async (immediate) => {
+it.each(["initializing", "dragging", "move-key"])("cancels the drag sensor when command search opens (%s)", async (mode) => {
+  const immediate = mode === "initializing"
   const host = document.body.appendChild(document.createElement("div")); const root = createRoot(host); roots.push(root)
   const close = vi.fn(); const reorder = vi.fn()
   vi.stubGlobal("matchMedia", () => ({ matches: true, addEventListener() {}, removeEventListener() {} }))
@@ -854,15 +856,16 @@ it.each([false, true])("cancels the drag sensor when command search opens (initi
   Object.defineProperty(Element.prototype, "getAnimations", { configurable: true, value: () => [] })
   function Harness() {
     const [palette, setPalette] = useState(false)
+    const returnTarget = useRef<() => HTMLElement | null>(() => null)
     useEffect(() => {
-      const key = (event: KeyboardEvent) => { if (event.ctrlKey && event.key === "k") { event.preventDefault(); setPalette(true) } }
+      const key = (event: KeyboardEvent) => { if (event.ctrlKey && event.key === "k") { event.preventDefault(); returnTarget.current = captureWorkbenchFocusReturn(document.activeElement as HTMLElement, "session", () => "session"); setPalette(true) } }
       window.addEventListener("keydown", key)
       return () => window.removeEventListener("keydown", key)
     }, [])
     return <><RightWorkbench interactionSuspended={palette} activeTab="session" openToolTabs={["review", "session"]}
       onTabChange={vi.fn()} onToolClose={vi.fn()} onClose={close} onTabReorder={reorder}
       inspector={null} review={null} browser={null} session={<input aria-label="Draft" defaultValue="Retained" />} />
-      <CommandPalette open={palette} chats={[]} onClose={() => setPalette(false)} onSelect={vi.fn()} onNewChat={vi.fn()} onSettings={vi.fn()} /></>
+      <CommandPalette getReturnFocusTarget={returnTarget.current} open={palette} chats={[]} onClose={() => setPalette(false)} onSelect={vi.fn()} onNewChat={vi.fn()} onSettings={vi.fn()} /></>
   }
   await act(async () => root.render(<StrictMode><Harness /></StrictMode>))
   const handle = host.querySelector<HTMLButtonElement>('button[aria-keyshortcuts]')!
@@ -875,6 +878,12 @@ it.each([false, true])("cancels the drag sensor when command search opens (initi
   })
   if (!immediate) {
     await vi.waitFor(() => expect(handle.parentElement!.style.opacity).toBe("0.6"))
+    if (mode === "move-key") {
+      await act(async () => { await new Promise((resolve) => requestAnimationFrame(resolve)) })
+      await act(async () => handle.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", code: "ArrowRight", bubbles: true, cancelable: true })))
+      await act(async () => { await new Promise((resolve) => requestAnimationFrame(resolve)) })
+      expect(document.querySelector("[data-dnd-placeholder]")).not.toBeNull()
+    }
     await act(async () => command())
   }
   const search = host.querySelector<HTMLInputElement>('input[placeholder="搜索会话或操作…"]')!
