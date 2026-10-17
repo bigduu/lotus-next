@@ -82,7 +82,9 @@ export function ComposerEditor(props: Props) {
               latest.current.onSuggestionChange({
                 query: suggestion.query,
                 pick: (path) => suggestion.command({ id: path, label: path }),
-                dismiss: () => exitSuggestion(suggestion.editor.view, fileSuggestionKey),
+                dismiss: () => {
+                  if (!suggestion.editor.isDestroyed) exitSuggestion(suggestion.editor.view, fileSuggestionKey)
+                },
               })
             }
             return { onStart: update, onUpdate: update, onExit: () => latest.current.onSuggestionChange(null) }
@@ -188,12 +190,12 @@ export function ComposerEditor(props: Props) {
   editorRef.current = editor
 
   useEffect(() => {
-    if (editor) exitSuggestion(editor.view, fileSuggestionKey)
+    if (editor && !editor.isDestroyed) exitSuggestion(editor.view, fileSuggestionKey)
   }, [editor, props.mentionScope])
 
   useLayoutEffect(() => {
     const snapshotRef = props.focusSnapshot
-    if (!editor || !snapshotRef) return
+    if (!editor || editor.isDestroyed || !snapshotRef) return
     const snapshot = snapshotRef.current
     if (snapshot) {
       if (snapshot.text === composerText(editor.state.doc)) {
@@ -216,6 +218,7 @@ export function ComposerEditor(props: Props) {
       snapshotRef.current = null
     }
     return () => {
+      if (editor.isDestroyed) return
       const { doc, selection } = editor.state
       snapshotRef.current = editor.view.hasFocus() ? {
         text: composerText(doc),
@@ -225,10 +228,12 @@ export function ComposerEditor(props: Props) {
     }
   }, [editor, props.focusSnapshot])
 
-  useImperativeHandle(props.inputRef, () => ({ focus: () => editor?.view.focus() }), [editor])
+  useImperativeHandle(props.inputRef, () => ({ focus: () => {
+    if (editor && !editor.isDestroyed) editor.view.focus()
+  } }), [editor])
 
   useEffect(() => {
-    if (!editor) return
+    if (!editor || editor.isDestroyed) return
     if (composerText(editor.state.doc) !== normalizedValue) {
       editor.commands.setContent(composerDocument(normalizedValue), { emitUpdate: false })
     }
@@ -236,7 +241,7 @@ export function ComposerEditor(props: Props) {
   }, [editor, normalizedValue])
 
   useEffect(() => {
-    if (!editor) return
+    if (!editor || editor.isDestroyed) return
     const element = editor.view.dom
     element.setAttribute("aria-label", props.label)
     element.setAttribute("aria-busy", String(props.busy))
