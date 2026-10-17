@@ -44,6 +44,7 @@ type State = {
 const runtime = vi.hoisted(() => ({
   state: {} as State, listeners: new Set<() => void>(), composer: null as ComposerProps | null,
   messageList: null as MessageListProps | null,
+  toastProps: null as ComponentProps<(typeof import("./Toasts"))["Toasts"]> | null,
   modelPicker: null as ModelPickerProps | null,
   reasoningPicker: null as ReasoningPickerProps | null,
   providerState: { providerSnapshot: null as ProviderInstancesConfig | null, providerStatus: "ready" },
@@ -126,7 +127,7 @@ vi.mock("@/components/app/MessageList", () => ({
     return null
   },
 }))
-vi.mock("@/components/app/Toasts", () => ({ Toasts: () => null }))
+vi.mock("@/components/app/Toasts", () => ({ Toasts: (props: ComponentProps<(typeof import("./Toasts"))["Toasts"]>) => { runtime.toastProps = props; return null } }))
 vi.mock("@/components/app/ImageLightbox", () => ({
   ImageLightbox: ({ src }: { src: string | null }) =>
     src ? <div data-image-lightbox data-src={src} /> : null,
@@ -1837,4 +1838,72 @@ it("home describe action only focuses the current draft and disappears on sessio
   act(() => document.querySelector<HTMLButtonElement>("[data-home-describe]")!.click())
   expect(document.activeElement).toBe(textarea)
   expect(send).not.toHaveBeenCalled()
+})
+
+describe("scoped notifications", () => {
+  it("does not deliver an old model failure after switching A to B to A", async () => {
+    let reject!: (error: Error) => void
+    const pending = new Promise<void>((_, fail) => { reject = fail })
+    runtime.state.changeSessionModel = vi.fn().mockReturnValue(pending)
+    await mount(vi.fn<Send>(), "session-1")
+    act(() => { void runtime.modelPicker!.onChange("different-model") })
+    const renderSession = async (id: string) => act(async () => roots.at(-1)!.render(
+      <ChatPane chat={createChat(vi.fn<Send>(), id)} pickedWorkspace="/picked"
+        onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()} splitOpen={false}
+        onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false} />))
+    await renderSession("session-2")
+    await renderSession("session-1")
+    await act(async () => reject(new Error("late model failure")))
+    expect(runtime.toastProps?.toast).toBeNull()
+  })
+
+  it("marks real workflow failures as persistent errors but drops stale selections", async () => {
+    runtime.getWorkflow.mockRejectedValueOnce(new Error("workflow diagnostic"))
+    await mount(vi.fn<Send>(), "session-1")
+    await pickWorkflow(workflowA)
+    expect(runtime.toastProps?.toast).toMatchObject({ kind: "error", details: "workflow diagnostic" })
+    act(() => runtime.toastProps!.onDismiss())
+    let reject!: (error: Error) => void
+    runtime.getWorkflow.mockReturnValueOnce(new Promise((_, fail) => { reject = fail }))
+    await pickWorkflow(workflowA)
+    await pickWorkflow(workflowB)
+    await act(async () => reject(new Error("old selection")))
+    expect(runtime.toastProps?.toast).toBeNull()
+  })
+
+  it("ends fork progress and shows a typed failure when a fork rejects", async () => {
+    const chat = createChat(vi.fn<Send>(), "session-1")
+    chat.fork = vi.fn().mockRejectedValue(new Error("fork unavailable"))
+    await mount(vi.fn<Send>(), "session-1")
+    await act(async () => roots.at(-1)!.render(
+      <ChatPane chat={chat} pickedWorkspace="/picked"
+        onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()} splitOpen={false}
+        onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false} />))
+    await act(async () => runtime.messageList!.onFork("message-1"))
+    expect(runtime.toastProps?.forking).toBe(false)
+    expect(runtime.toastProps?.toast).toMatchObject({ kind: "error", details: "fork unavailable" })
+  })
+})
+
+
+it.each([false, true])("handles intentional fork navigation without replacing a destination notice (%s)", async (raiseDestinationError) => {
+  const pending = deferred<string>()
+  const original = createChat(vi.fn<Send>(), "session-1")
+  original.fork = vi.fn().mockReturnValue(pending.promise)
+  await mount(vi.fn<Send>(), "session-1")
+  const renderChat = async (chat: ChatPaneProps["chat"]) => act(async () => roots.at(-1)!.render(
+    <ChatPane chat={chat} pickedWorkspace="/picked"
+      onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()} splitOpen={false}
+      onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false} />))
+  await renderChat(original)
+  act(() => runtime.messageList!.onFork("message-1"))
+  await renderChat(createChat(vi.fn<Send>(), "fork-session"))
+  if (raiseDestinationError) {
+    runtime.getWorkflow.mockRejectedValueOnce(new Error("destination diagnostic"))
+    await pickWorkflow(workflowA)
+  }
+  await act(async () => pending.resolve("fork-session"))
+  expect(runtime.toastProps?.forking).toBe(false)
+  expect(runtime.toastProps?.toast?.kind).toBe(raiseDestinationError ? "error" : "info")
+  if (raiseDestinationError) expect(runtime.toastProps?.toast?.details).toBe("destination diagnostic")
 })

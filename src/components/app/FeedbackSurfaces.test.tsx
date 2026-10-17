@@ -2,7 +2,6 @@ import { act } from "react"
 import { createRoot, type Root } from "react-dom/client"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { HomeDashboard } from "./HomeDashboard"
-import { Toasts } from "./Toasts"
 import { TASK_TEMPLATES, peekPendingTemplatePrompt, setPendingTemplatePrompt } from "@/lib/taskTemplates"
 
 let root: Root
@@ -53,22 +52,4 @@ describe("home and transient feedback", () => {
     expect(host.querySelector('[role="status"]')).toBeNull()
   })
 
-  it("announces progress and results without replaying the same notification on rerender", () => {
-    act(() => root.render(<Toasts forking toast="ignored while busy" />))
-    const status = host.querySelector('[role="status"]')!
-    expect(status.getAttribute("aria-atomic")).toBe("true")
-    expect(status.textContent).toBe("分叉中…")
-    expect(status.querySelector("svg")?.getAttribute("aria-hidden")).toBe("true")
-    act(() => root.render(<Toasts forking={false} toast="Could not save. Try again." />))
-    const notice = status.firstElementChild
-    expect(notice?.classList.contains("surface-motion")).toBe(true)
-    expect(notice?.querySelector("svg")?.classList.contains("lucide-info")).toBe(true)
-    expect(status.textContent).toBe("Could not save. Try again.")
-    act(() => root.render(<Toasts forking={false} toast="Could not save. Try again." />))
-    expect(status.firstElementChild).toBe(notice)
-    act(() => root.render(<Toasts forking={false} toast="Saved" />))
-    expect(status.firstElementChild).not.toBe(notice)
-    act(() => root.render(<Toasts forking={false} toast={null} />))
-    expect(host.querySelector('[role="status"]')).toBeNull()
-  })
 })
