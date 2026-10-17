@@ -116,7 +116,10 @@ vi.mock("@/components/chat/Dialogs", () => ({ QuestionDialog: () => null, Approv
 vi.mock("@/components/app/ChatHeader", () => ({
   ChatHeader: ({ environment, supervisorControl }: { environment?: ReactNode; supervisorControl?: ReactNode }) => <div>{environment}{supervisorControl}</div>,
 }))
-vi.mock("@/components/app/HomeDashboard", () => ({ HomeDashboard: () => null }))
+vi.mock("@/components/app/HomeDashboard", () => ({
+  HomeDashboard: ({ onDescribeTask }: { onDescribeTask: () => void }) =>
+    <button type="button" data-home-describe onClick={onDescribeTask}>Describe task</button>,
+}))
 vi.mock("@/components/app/MessageList", () => ({
   MessageList: (props: MessageListProps) => {
     runtime.messageList = props
@@ -1842,4 +1845,29 @@ it.each([false, true])("routes a dropped session to the correct pane (secondary=
   act(() => container.querySelector("[data-session-drop-target]")!.dispatchEvent(event))
   expect(secondary ? pick : chat.select).toHaveBeenCalledWith("dropped")
   expect(secondary ? chat.select : pick).not.toHaveBeenCalled()
+})
+
+it("home describe action only focuses the current draft and disappears on session navigation", async () => {
+  const send = vi.fn<Send>()
+  const textarea = await mount(send, null)
+  change(textarea, "  keep this draft\nexactly  ")
+  const homeDraft = composer().draft
+  const action = document.querySelector<HTMLButtonElement>("[data-home-describe]")!
+  act(() => { action.focus(); action.click(); action.click() })
+  expect(document.activeElement).toBe(textarea)
+  expect(composer().draft).toBe(homeDraft)
+  expect(send).not.toHaveBeenCalled()
+  expect(runtime.queueSend).not.toHaveBeenCalled()
+  const root = roots.at(-1)!
+  const renderSession = async (id: string | null) => act(async () => root.render(<ChatPane chat={createChat(send, id)} pickedWorkspace="/picked"
+    onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()} splitOpen={false}
+    onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false} />))
+  await renderSession("other-session")
+  expect(document.querySelector("[data-home-describe]")).toBeNull()
+  change(textarea, "other session draft")
+  await renderSession(null)
+  expect(composer().draft).toBe(homeDraft)
+  act(() => document.querySelector<HTMLButtonElement>("[data-home-describe]")!.click())
+  expect(document.activeElement).toBe(textarea)
+  expect(send).not.toHaveBeenCalled()
 })

@@ -1,5 +1,6 @@
 // Application-owned UI copy.
 export const uiEnUs = {
+  "home_describe_task": "Describe your task",
   "message_action_interject": "Interject",
   "message_action_send": "Send message",
   "message_delivery_failed": "Message failed",
