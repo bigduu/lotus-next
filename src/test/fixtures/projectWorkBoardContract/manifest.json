@@ -1,0 +1,50 @@
+{
+  "kind": "synthetic-real-http-serde-contract",
+  "limitations": [
+    "No real provider or worker execution",
+    "No browser or cross-repository E2E",
+    "Synthetic temporary workspace paths only"
+  ],
+  "project_id": "12d3da36-6dc1-4078-9c84-68381936ccfa",
+  "requests": {
+    "first": {
+      "limit": 1,
+      "project_id": "12d3da36-6dc1-4078-9c84-68381936ccfa"
+    },
+    "inspect": {
+      "budget_bytes": 65536,
+      "depth": 0,
+      "fixed_commit": "53aa82492b473748f2765f671e3544a25428bc501d138121051525ddaf61c8f6",
+      "ids": [
+        "068ea844-1d40-47c3-a14f-f9ddb9e97786"
+      ],
+      "sections": [
+        "assignments",
+        "requests",
+        "submissions"
+      ]
+    },
+    "second": {
+      "cursor": {
+        "commit": "53aa82492b473748f2765f671e3544a25428bc501d138121051525ddaf61c8f6",
+        "offset": 1,
+        "query_hash": "734a33f6140bd31127d8c9471c1d6654ba5afc9b8496b2506bae68e7b93e1db5"
+      },
+      "fixed_commit": "53aa82492b473748f2765f671e3544a25428bc501d138121051525ddaf61c8f6",
+      "limit": 1,
+      "project_id": "12d3da36-6dc1-4078-9c84-68381936ccfa"
+    }
+  },
+  "sha256": {
+    "board-first.json": "30d86486309281d69778dd87d6e2cec77e69b9c2ab7682a853a9f21f7f779246",
+    "board-second.json": "1ec239fc41a4130316107e25923f8716344a697c7335fdb76cc5f2a00dc3bbc0",
+    "inspect.json": "528f1c6481dc81c8f00d34f111775ed3f6ef25fa335c618c5ccbfbd92f64f76b"
+  },
+  "snapshot": {
+    "authority_epoch": 1,
+    "commit": "53aa82492b473748f2765f671e3544a25428bc501d138121051525ddaf61c8f6",
+    "seq": 5
+  },
+  "source_commit": "41a56acaec2ebc27aa8961a4f6d6023a2c695268",
+  "source_tree": "9fcc45c520572ca8fbb3edac403288962b2f635b"
+}

@@ -36,6 +36,7 @@ export function ProjectGroupHeader({
   onToggleExpanded,
   onNewChat,
   onEdit,
+  onWork,
   onTogglePin,
   onCreateSection,
   onManageSections,
@@ -52,6 +53,7 @@ export function ProjectGroupHeader({
   onToggleExpanded: () => void
   onNewChat: () => void
   onEdit: () => void
+  onWork?: () => void
   onTogglePin: () => void
   onCreateSection: () => void
   onManageSections: () => void
@@ -115,6 +117,7 @@ export function ProjectGroupHeader({
           <DropdownMenuContent onCloseAutoFocus={menu.onCloseAutoFocus} align="start" side="right" className="min-w-48 rounded-xl">
             <DropdownMenuItem disabled={project.status === "archived"} onClick={onNewChat}>
               <MessageSquarePlus />{uiText("new_session_58e21b87")}</DropdownMenuItem>
+            {onWork ? <DropdownMenuItem onClick={onWork}><List />{uiText("project_work_title")}</DropdownMenuItem> : null}
             <DropdownMenuItem onClick={onTogglePin}>
               {pinned ? <PinOff /> : <Pin />} {pinned ? uiText("unpin_c92179b7") : uiText("pin_173f88d2")}
             </DropdownMenuItem>
