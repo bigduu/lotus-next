@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test"
+import { expect, test, type Locator, type Page } from "@playwright/test"
 import { installArtifactRuntime, standaloneScenario } from "./support/artifactRuntime.js"
 
 const sessionA = "all-surface-session"
@@ -50,6 +50,18 @@ async function installSessions(page: Page) {
   return observation
 }
 
+async function expectCollapsedWorkbench(panel: Locator) {
+  // The eager overlay boundary stays mounted; collapsed content must remain
+  // hidden and unavailable to accessible interaction until explicitly opened.
+  await expect(panel).toHaveCount(1)
+  await expect(panel).toHaveAttribute("hidden", "")
+  await expect(panel).toBeHidden()
+  await expect(panel).toHaveCSS("display", "none")
+  await expect(panel.getByRole("button")).toHaveCount(0)
+  await expect(panel.getByRole("tablist")).toHaveCount(0)
+  await expect.poll(() => panel.evaluate((element) => element.contains(element.ownerDocument.activeElement))).toBe(false)
+}
+
 async function openTool(page: Page, label: string) {
   await page.locator("#right-workbench").getByRole("button", { name: "打开工作面板标签页" }).click()
   await page.getByRole("menuitem", { name: label, exact: true }).click()
@@ -72,7 +84,7 @@ test("workbench restores each session's tools, order, selected tab, side session
   await expect.poll(order).toEqual(["Review", "检查器", "Session B"])
 
   await page.getByRole("button", { name: "Session B", exact: true }).click()
-  await expect(panel).toHaveCount(0)
+  await expectCollapsedWorkbench(panel)
   await page.getByRole("button", { name: "打开侧边面板" }).click()
   await expect(panel.getByText("还没有打开内容")).toBeVisible()
   await openTool(page, "Review")
@@ -89,10 +101,10 @@ test("workbench restores each session's tools, order, selected tab, side session
   await expect(panel.getByRole("textbox", { name: "消息", exact: true })).toBeVisible()
 
   await page.getByRole("button", { name: "Session B", exact: true }).click()
-  await expect(panel).toHaveCount(0)
+  await expectCollapsedWorkbench(panel)
   await page.reload({ waitUntil: "domcontentloaded" })
   await expect(page.getByRole("button", { name: "Session B", exact: true })).toBeVisible()
-  await expect(panel).toHaveCount(0)
+  await expectCollapsedWorkbench(panel)
   await page.getByRole("button", { name: "打开侧边面板" }).click()
   await expect.poll(order).toEqual(["Review"])
   await expect(panel.getByRole("tab", { name: "Review", exact: true })).toHaveAttribute("aria-selected", "true")

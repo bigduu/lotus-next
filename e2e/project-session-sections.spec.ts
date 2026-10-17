@@ -555,7 +555,7 @@ test("search reveals folded project sections and selecting a result reveals its 
   await expect(target).toHaveCount(0)
   await disclosure(alpha).click()
   await expect(disclosure(alpha)).toHaveAttribute("aria-expanded", "false")
-  const search = page.locator("aside").getByPlaceholder("搜索会话")
+  const search = page.locator("aside").filter({ has: page.getByPlaceholder("搜索会话", { exact: true }) }).getByPlaceholder("搜索会话")
   await search.fill("Alpha searchable")
   await expect(target).toBeVisible()
   await search.fill("")
