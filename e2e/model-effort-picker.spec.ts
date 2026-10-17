@@ -354,3 +354,46 @@ for (const target of ["main", "side"] as const) {
     expect(observation.pageErrors).toEqual([])
   })
 }
+
+test("model failures remain readable with keyboard details and dismissal", async ({ page }, info) => {
+  const { observation } = await setup(page)
+  await page.emulateMedia({ reducedMotion: "reduce" })
+  const input = page.getByRole("textbox", { name: "消息", exact: true })
+  const before = await input.boundingBox()
+  const diagnostic = `Fixture diagnostic: ${"long-unbroken-diagnostic-".repeat(80)}`
+  await page.route(`**/api/v1/sessions/${mainId}`, async (route) => {
+    if (route.request().method() === "PATCH") {
+      return route.fulfill({ status: 500, json: { message: diagnostic } })
+    }
+    return route.fallback()
+  })
+  await modelEffortPicker(page).click()
+  await page.getByTestId("model-picker-model").click()
+  await page.getByRole("searchbox", { name: "搜索模型", exact: true }).fill("LOCAL-ANALYSIS")
+  await page.locator("[data-model-option]").click()
+  const alert = page.getByRole("alert").filter({ hasText: "模型保存失败" })
+  await expect(alert).toBeVisible()
+  await expect(alert.locator("strong")).toHaveText("操作失败")
+  const card = alert.locator("../..")
+  await expect(card).toHaveCSS("animation-name", "none")
+  // Past both the old 2.5s timeout and the new informational timeout.
+  await page.waitForTimeout(5500)
+  await expect(alert).toBeVisible()
+  const summary = card.locator("summary")
+  await input.focus()
+  await summary.focus()
+  await summary.press("Enter")
+  await expect(card.locator("details")).toHaveAttribute("open", "")
+  await expect(card).toContainText(diagnostic)
+  expect(await input.boundingBox()).toEqual(before)
+  expect(await page.locator("html").evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1)
+  const box = await card.boundingBox()
+  expect(box!.x).toBeGreaterThanOrEqual(0)
+  expect(box!.y).toBeGreaterThanOrEqual(0)
+  await screenshot(page, info, "persistent-model-error-details")
+  await card.getByRole("button", { name: "关闭", exact: true }).focus()
+  await page.keyboard.press("Enter")
+  await expect(alert).toHaveCount(0)
+  await expect(input).toBeFocused()
+  expect(observation.pageErrors).toEqual([])
+})

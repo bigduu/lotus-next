@@ -56,7 +56,7 @@ import { isDefaultSupervisor } from "@/lib/supervisor"
 import type { PendingRequest as TicketRequest } from "@services/tickets/types"
 import { SessionGuidance } from "@/components/app/SessionGuidance"
 import { Composer } from "@/components/app/Composer"
-import { Toasts } from "@/components/app/Toasts"
+import { Toasts, type ToastNotice } from "@/components/app/Toasts"
 import { ImageLightbox } from "@/components/app/ImageLightbox"
 import { peekPendingTemplatePrompt } from "@/lib/taskTemplates"
 import { ContextUsageRing } from "@/components/app/ContextUsageRing"
@@ -403,13 +403,16 @@ export function ChatPane({
     setTypedWorkflow(null); setWorkflowError(null); setWorkflowPicker(null); setRemovedWorkflow(null)
   }, [currentSessionId])
   const [preview, setPreview] = useState<string | null>(null)
-  const [toast, setToast] = useState<string | null>(null)
+  const [toast, setToast] = useState<ToastNotice | null>(null)
   const [forking, setForking] = useState(false)
-  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const showToast = (msg: string) => {
-    setToast(msg)
-    if (toastTimer.current) clearTimeout(toastTimer.current)
-    toastTimer.current = setTimeout(() => setToast(null), 2500)
+  // Identity changes even for A → B → A, so old async failures stay in their scope.
+  const toastScope = useMemo(() => ({ sessionId: currentSessionId }), [currentSessionId])
+  const toastScopeRef = useRef(toastScope)
+  toastScopeRef.current = toastScope
+  useEffect(() => { setToast(null); setForking(false) }, [currentSessionId])
+  const toastId = useRef(0)
+  const showToast = (message: string, kind: ToastNotice["kind"] = "info", details?: string) => {
+    if (toastScopeRef.current === toastScope) setToast({ id: ++toastId.current, message, kind, details })
   }
 
   // NOTE: the background-shell completion NOTIFICATION is no longer fired here.
@@ -503,9 +506,9 @@ export function ChatPane({
     setModelSaving(true)
     try {
       await changeSessionModel(currentSessionId, model)
-    } catch {
+    } catch (error) {
       if (currentDraftKeyRef.current === currentSessionId) {
-        showToast(uiText("could_not_save_the_model_please_try_again_631991a6"))
+        showToast(uiText("could_not_save_the_model_please_try_again_631991a6"), "error", getErrorMessage(error))
       }
     } finally {
       setModelSaving(false)
@@ -659,7 +662,7 @@ export function ChatPane({
   const submit = () => {
     // Keep an in-flight admission from capturing or clearing a second draft.
     if (submissionPending || modelSaving || queue.busy || ticketIngress.busy || rootMode.busy || goalRequestActive.current) return
-    if (semanticComposer && !tickets.canSendIngress) { showToast(uiText("ticket_the_ticket_connection_or_write_permission_is__c3da124f")); return }
+    if (semanticComposer && !tickets.canSendIngress) { showToast(uiText("ticket_the_ticket_connection_or_write_permission_is__c3da124f"), "error"); return }
     if (rootSessionUnsafe()) {
       setRootModeConflict(uiText("the_root_permission_change_is_unconfirmed_sending_and_e_a75a6b4f"))
       return
@@ -698,14 +701,14 @@ export function ChatPane({
         // The run may finish while the Goal command is being acknowledged.
         if (response.goal_command.should_execute) {
           if (getRootModeFenceState(sessionId) !== "clear") {
-            if (currentDraftKeyRef.current === draftKey) showToast(uiText("root_permissions_are_unconfirmed_the_goal_was_saved_but_bd40481a"))
+            if (currentDraftKeyRef.current === draftKey) showToast(uiText("root_permissions_are_unconfirmed_the_goal_was_saved_but_bd40481a"), "error")
             return
           }
           try { await agentClient.execute(sessionId, currentChat?.config?.model) }
-          catch { if (currentDraftKeyRef.current === draftKey) showToast(uiText("goal_saved_send_a_message_to_continue_ba844fbc")) }
+          catch (error) { if (currentDraftKeyRef.current === draftKey) showToast(uiText("goal_saved_send_a_message_to_continue_ba844fbc"), "error", getErrorMessage(error)) }
         }
-      }).catch(() => {
-        if (currentDraftKeyRef.current === draftKey) showToast(uiText("could_not_save_the_goal_your_command_is_preserved_pleas_ac375306"))
+      }).catch((error) => {
+        if (currentDraftKeyRef.current === draftKey) showToast(uiText("could_not_save_the_goal_your_command_is_preserved_pleas_ac375306"), "error", getErrorMessage(error))
       }).finally(() => { goalRequestActive.current = false; setGoalSaving(false) })
       return
     }
@@ -877,16 +880,29 @@ export function ChatPane({
           content: detail.content,
         })
       })
-      .catch(() => showToast(uiText("could_not_load_workflow_ed648068", { v0: command.name })))
+      .catch((error) => {
+        if (workflowRevisionRef.current === revision) showToast(uiText("could_not_load_workflow_ed648068", { v0: command.name }), "error", getErrorMessage(error))
+      })
   }
 
   const handleFork = (id: string) => {
     if (rootSessionUnsafe()) { setRootModeConflict(uiText("the_root_permission_change_is_unconfirmed_forking_is_un_ca51f044")); return }
+    const draftKey = currentDraftKeyRef.current
     setForking(true)
     void fork(id).then((nid) => {
-      setForking(false)
-      if (nid) showToast(uiText("forked_into_a_new_session_from_here_b0abc6b8"))
-      else showToast(uiText("could_not_fork_this_backend_does_not_support_session_fo_006caf5c"))
+      if (toastScopeRef.current === toastScope) setForking(false)
+      if (nid) {
+        if (toastScopeRef.current === toastScope) showToast(uiText("forked_into_a_new_session_from_here_b0abc6b8"))
+        else if (currentDraftKeyRef.current === nid) {
+          // Fork intentionally navigates to its new session. Do not replace a
+          // notification already raised there, or notify an unrelated session.
+          setToast((current) => current ?? { id: ++toastId.current, kind: "info", message: uiText("forked_into_a_new_session_from_here_b0abc6b8") })
+        }
+      }
+      else if (currentDraftKeyRef.current === draftKey) showToast(uiText("could_not_fork_this_backend_does_not_support_session_fo_006caf5c"), "error")
+    }).catch((error) => {
+      if (toastScopeRef.current === toastScope) setForking(false)
+      showToast(uiText("operation_failed_0c3b4cf7"), "error", getErrorMessage(error))
     })
   }
 
@@ -1339,7 +1355,7 @@ export function ChatPane({
         </div>
       </div>
 
-      <Toasts forking={forking} toast={toast} />
+      <Toasts forking={forking} toast={toast} onDismiss={() => setToast(null)} onRestoreFocus={() => { if (pageVisible !== false) composerInputRef.current?.focus() }} />
       {workflowRunsOpen && currentSessionId && pageVisible !== false ? <WorkflowRunsDialog key={currentSessionId}
         sessionId={currentSessionId} sessionTitle={currentChat?.title || currentSessionId} onClose={() => setWorkflowRunsOpen(false)} /> : null}
 
