@@ -129,6 +129,7 @@ export function RightWorkbench({
   sessionTitle,
   docked = false,
   visible = true,
+  pageVisible = true,
   browserEnabled = true,
   browserSessionAvailable = true,
   browserEntryOpen = false,
@@ -157,6 +158,7 @@ export function RightWorkbench({
   sessionTitle?: string | null
   docked?: boolean
   visible?: boolean
+  pageVisible?: boolean
   browserEnabled?: boolean
   browserSessionAvailable?: boolean
   browserEntryOpen?: boolean
@@ -398,9 +400,9 @@ export function RightWorkbench({
   const backdropRef = useRef<HTMLDivElement>(null)
   const pointerDismiss = useRef<"backdrop" | "other" | null>(null)
   const focusGeneration = useRef({ generation: 0 })
-  const modal = visible && !docked
-  const currentMode = useRef({ docked, visible })
-  currentMode.current = { docked, visible }
+  const modal = visible && pageVisible && !docked
+  const currentMode = useRef({ docked, visible, pageVisible })
+  currentMode.current = { docked, visible, pageVisible }
   useEffect(() => {
     const panel = panelRef.current
     if (!modal || !panel) return
@@ -418,6 +420,9 @@ export function RightWorkbench({
     }
     return () => {
       restoreBackground()
+      // Settings owns focus while the chat shell is hidden. Keep the panel
+      // mounted, but release its modal effects without focusing hidden controls.
+      if (!currentMode.current.pageVisible) return
       // Resizing back to a docked surface must not move focus out of the editor.
       if (currentMode.current.docked && currentMode.current.visible) return
       const restore = () => {

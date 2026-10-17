@@ -516,6 +516,7 @@ function App() {
             focusScopeKey={workbenchScope}
             getCurrentFocusScope={getCurrentWorkbenchScope}
             visible={workbenchOpen}
+            pageVisible={!settingsOpen}
             docked={isWide}
             width={workbenchResize.width}
             activeTab={selectedWorkbenchTab}
