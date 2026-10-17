@@ -51,6 +51,9 @@ jobs:
       - name: Verify the all-surface browser contract
         run: npm run test:e2e:built
 
+      - name: Verify controlled Project Work component fixtures
+        run: node node_modules/@playwright/test/cli.js test --config=playwright.planning-controls.config.ts
+
       - name: Upload browser evidence
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v5

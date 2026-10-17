@@ -1,0 +1,35 @@
+--- a/src/components/app/ProjectWorkBoard.tsx
++++ b/src/components/app/ProjectWorkBoard.tsx
+@@ -1,4 +1,7 @@
+ import { useEffect, useState } from "react"
++import { ProjectWorkPlanningControls, type ProjectWorkPlanningControlsProps } from "./project-work/ProjectWorkPlanningControls"
++import { ProjectWorkOwnerControls, type ProjectWorkOwnerControlsProps } from "./project-work/ProjectWorkOwnerControls"
++import { projectWorkControlsCopy } from "./project-work/projectWorkControlsCopy"
+ import { uiText, useUiLocale } from "@shared/i18n/ui"
+ import type { ProjectManifest } from "@services/project"
+ import { getErrorMessage } from "@services/api"
+@@ -58,7 +61,11 @@
+     </>}
+   </section>
+ }
+-export function ProjectWorkBoard({ project }: { project: ProjectManifest }) {
++export interface ProjectWorkBoardControls {
++  planning?: Omit<ProjectWorkPlanningControlsProps, "copy"> | null
++  owner?: Omit<ProjectWorkOwnerControlsProps, "copy"> | null
++}
++export function ProjectWorkBoard({ project, controls }: { project: ProjectManifest; controls?: ProjectWorkBoardControls }) {
+   useUiLocale()
+   const [mode, setMode] = useState<"list" | "board">("list")
+   const [cancelled, setCancelled] = useState(false)
+@@ -97,7 +104,10 @@
+     {page && !rows.length ? <p className="py-4 text-sm text-muted-foreground">{uiText("project_work_empty")}</p> : null}
+     {busy ? <p role="status" className="mt-3 text-sm">{uiText("project_work_loading")}</p> : null}
+     {page?.next_cursor ? <Button className="mt-3" variant="outline" disabled={busy} onClick={() => void loadMore()}>{uiText("project_work_more")}</Button> : null}
+-    {selected && page ? <div className="mt-4"><WorkDetails key={`${page.snapshot.commit}:${selected.ticket.id}`} row={selected} snapshot={page.snapshot} onClose={() => setSelectedId(null)} /></div> : null}
++    {selected && page ? <div className="mt-4 space-y-3"><WorkDetails key={`${page.snapshot.commit}:${selected.ticket.id}`} row={selected} snapshot={page.snapshot} onClose={() => setSelectedId(null)} />
++      {controls?.planning?.work.id === selected.ticket.id ? <ProjectWorkPlanningControls key={`planning:${selected.ticket.id}:${selected.ticket.generation}`} {...controls.planning} copy={projectWorkControlsCopy()} /> : null}
++      {controls?.owner?.work.id === selected.ticket.id ? <ProjectWorkOwnerControls key={`owner:${selected.ticket.id}:${selected.ticket.generation}`} {...controls.owner} copy={projectWorkControlsCopy()} /> : null}
++    </div> : null}
+   </div>
+ }
+ export function ProjectWorkDialog({ project, onClose, metadataError }: { project: ProjectManifest | null; onClose: () => void; metadataError?: string | null }) {
