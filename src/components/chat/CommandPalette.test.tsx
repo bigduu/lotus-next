@@ -103,30 +103,37 @@ it.each([false, true])("dismisses on the backdrop and preserves a newer focus ta
 })
 
 it.each(["return", "new-focus", "new-scope", "removed", "hidden"])("resolves a vanished drag preview without stealing navigation focus: %s", async (outcome) => {
-  let scope = "original"
-  let resolveTarget: () => HTMLElement | null = () => null
-  const render = (open: boolean) => act(async () => root.render(<>
-    <aside id="right-workbench" tabIndex={-1}><button data-workbench-tab-handle="tool:session">Duplicate title</button></aside>
-    <input aria-label="New destination" />
-    <CommandPalette open={open} getReturnFocusTarget={resolveTarget} onClose={vi.fn()} chats={[]} onSelect={vi.fn()} onNewChat={vi.fn()} onSettings={vi.fn()} />
-  </>))
-  await render(false)
-  const panel = container.querySelector<HTMLElement>("aside")!
-  const handle = panel.querySelector<HTMLButtonElement>("button")!
-  const next = container.querySelector<HTMLInputElement>('input[aria-label="New destination"]')!
-  const preview = handle.cloneNode(true) as HTMLButtonElement
-  container.appendChild(preview)
-  preview.focus()
-  resolveTarget = captureWorkbenchFocusReturn(preview, scope, () => scope)
-  preview.remove()
-  panel.focus()
-  await render(true)
-  await render(false)
-  if (outcome === "new-scope") scope = "new-session"
-  if (outcome === "removed") handle.remove()
-  if (outcome === "hidden") panel.hidden = true
-  if (outcome === "new-focus") next.focus()
-  else panel.focus()
-  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 10)) })
-  expect(document.activeElement).toBe(outcome === "return" ? handle : outcome === "new-focus" ? next : panel)
+  vi.useFakeTimers()
+  try {
+    let scope = "original"
+    let resolveTarget: () => HTMLElement | null = () => null
+    const render = (open: boolean) => act(() => root.render(<>
+      <aside id="right-workbench" tabIndex={-1}><button data-workbench-tab-handle="tool:session">Duplicate title</button></aside>
+      <input aria-label="New destination" />
+      <CommandPalette open={open} getReturnFocusTarget={resolveTarget} onClose={vi.fn()} chats={[]} onSelect={vi.fn()} onNewChat={vi.fn()} onSettings={vi.fn()} />
+    </>))
+    render(false)
+    const panel = container.querySelector<HTMLElement>("aside")!
+    const handle = panel.querySelector<HTMLButtonElement>("button")!
+    const next = container.querySelector<HTMLInputElement>('input[aria-label="New destination"]')!
+    const preview = handle.cloneNode(true) as HTMLButtonElement
+    container.appendChild(preview)
+    preview.focus()
+    resolveTarget = captureWorkbenchFocusReturn(preview, scope, () => scope)
+    preview.remove()
+    panel.focus()
+    render(true)
+    render(false)
+    // Model the fallback/navigation focus before Radix's deferred close autofocus.
+    // An async act here can already finish autofocus before this setup runs.
+    if (outcome === "new-scope") scope = "new-session"
+    if (outcome === "removed") handle.remove()
+    if (outcome === "hidden") panel.hidden = true
+    if (outcome === "new-focus") next.focus()
+    else panel.focus()
+    await act(async () => { await vi.runAllTimersAsync() })
+    expect(document.activeElement).toBe(outcome === "return" ? handle : outcome === "new-focus" ? next : panel)
+  } finally {
+    vi.useRealTimers()
+  }
 })
