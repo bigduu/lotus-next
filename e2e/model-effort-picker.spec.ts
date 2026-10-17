@@ -481,6 +481,9 @@ for (const width of [1024, 390]) {
     await handle.focus()
     await handle.press("Space")
     await expect(handle.locator("..")).toHaveCSS("opacity", "0.6")
+    const dragX = (await page.locator(":focus").boundingBox())!.x
+    await page.keyboard.press("ArrowRight")
+    await expect.poll(async () => (await page.locator(":focus").boundingBox())?.x ?? -Infinity).toBeGreaterThan(dragX + 1)
     await page.keyboard.press("Control+k")
     await expect(search).toBeFocused()
     await page.keyboard.type("Alpha movable")
