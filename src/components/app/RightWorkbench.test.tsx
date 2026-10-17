@@ -844,3 +844,61 @@ it.each(["unmount", "settings", "session"])("cancels a tab drag on %s without le
   await act(async () => document.getElementById("right-workbench")!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", code: "Escape", bubbles: true, cancelable: true })))
   expect(close).toHaveBeenCalledTimes(1)
 })
+
+it.each([false, true])("cancels the drag sensor when command search opens (initializing: %s)", async (immediate) => {
+  const host = document.body.appendChild(document.createElement("div")); const root = createRoot(host); roots.push(root)
+  const close = vi.fn(); const reorder = vi.fn()
+  vi.stubGlobal("matchMedia", () => ({ matches: true, addEventListener() {}, removeEventListener() {} }))
+  vi.stubGlobal("IntersectionObserver", class { observe() {} unobserve() {} disconnect() {} })
+  Object.defineProperty(document, "getAnimations", { configurable: true, value: () => [] })
+  Object.defineProperty(Element.prototype, "getAnimations", { configurable: true, value: () => [] })
+  function Harness() {
+    const [palette, setPalette] = useState(false)
+    useEffect(() => {
+      const key = (event: KeyboardEvent) => { if (event.ctrlKey && event.key === "k") { event.preventDefault(); setPalette(true) } }
+      window.addEventListener("keydown", key)
+      return () => window.removeEventListener("keydown", key)
+    }, [])
+    return <><RightWorkbench interactionSuspended={palette} activeTab="session" openToolTabs={["review", "session"]}
+      onTabChange={vi.fn()} onToolClose={vi.fn()} onClose={close} onTabReorder={reorder}
+      inspector={null} review={null} browser={null} session={<input aria-label="Draft" defaultValue="Retained" />} />
+      <CommandPalette open={palette} chats={[]} onClose={() => setPalette(false)} onSelect={vi.fn()} onNewChat={vi.fn()} onSettings={vi.fn()} /></>
+  }
+  await act(async () => root.render(<StrictMode><Harness /></StrictMode>))
+  const handle = host.querySelector<HTMLButtonElement>('button[aria-keyshortcuts]')!
+  const draft = host.querySelector<HTMLInputElement>('input[aria-label="Draft"]')!
+  const command = () => handle.dispatchEvent(new KeyboardEvent("keydown", { key: "k", code: "KeyK", ctrlKey: true, bubbles: true, cancelable: true }))
+  await act(async () => {
+    handle.focus()
+    handle.dispatchEvent(new KeyboardEvent("keydown", { key: " ", code: "Space", bubbles: true, cancelable: true }))
+    if (immediate) command()
+  })
+  if (!immediate) {
+    await vi.waitFor(() => expect(handle.parentElement!.style.opacity).toBe("0.6"))
+    await act(async () => command())
+  }
+  const search = host.querySelector<HTMLInputElement>('input[placeholder="搜索会话或操作…"]')!
+  await vi.waitFor(() => expect(document.activeElement).toBe(search))
+  for (const character of "Alpha movable") {
+    await act(async () => {
+      const focused = document.activeElement as HTMLInputElement
+      const key = new KeyboardEvent("keydown", { key: character, code: character === " " ? "Space" : `Key${character.toUpperCase()}`, bubbles: true, cancelable: true })
+      focused.dispatchEvent(key)
+      expect(key.defaultPrevented).toBe(false)
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(focused, focused.value + character)
+      focused.dispatchEvent(new Event("input", { bubbles: true }))
+    })
+  }
+  expect(search.value).toBe("Alpha movable")
+  expect(host.querySelector('input[aria-label="Draft"]')).toBe(draft)
+  expect(draft.value).toBe("Retained")
+  expect(reorder).not.toHaveBeenCalled()
+  await act(async () => search.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", code: "Escape", bubbles: true, cancelable: true })))
+  await vi.waitFor(() => expect(document.activeElement).toBe(handle))
+  // Cancellation must not permanently disable the keyboard sensor.
+  await act(async () => handle.dispatchEvent(new KeyboardEvent("keydown", { key: " ", code: "Space", bubbles: true, cancelable: true })))
+  await vi.waitFor(() => expect(handle.parentElement!.style.opacity).toBe("0.6"))
+  await act(async () => handle.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", code: "Escape", bubbles: true, cancelable: true })))
+  expect(close).not.toHaveBeenCalled()
+  expect(reorder).not.toHaveBeenCalled()
+})

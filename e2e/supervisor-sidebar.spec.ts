@@ -3,7 +3,7 @@ import { installArtifactRuntime, standaloneScenario } from "./support/artifactRu
 
 test("Supervisor explains its role and supports persistent renaming with retry and cancellation", async ({ page }, testInfo) => {
   await page.addInitScript(() => localStorage.setItem("bodhi_onboarded_v1", "1"))
-  await installArtifactRuntime(page, standaloneScenario)
+  const observation = await installArtifactRuntime(page, standaloneScenario)
   const ids = ["bamboo-default-supervisor", "all-surface-session"]
   const sessions = ids.map((id) => ({
     id, title: id === ids[0] ? "Supervisor" : "普通工作", title_version: 1,
@@ -45,12 +45,16 @@ test("Supervisor explains its role and supports persistent renaming with retry a
   })
   // Force the workbench's lazy module to resolve beneath an already-open
   // rename dialog. This reproduces the old late-layer registration race.
+  let workbenchRequested = false
   let releaseWorkbench!: () => void
   const workbenchGate = new Promise<void>((resolve) => { releaseWorkbench = resolve })
   if (testInfo.project.name === "desktop-chromium") {
     await page.route("**/RightWorkbench-*.js", async (route) => {
+      workbenchRequested = true
       await workbenchGate
-      await route.continue()
+      // The artifact runtime serves JS from dist via an earlier route. Continue
+      // would bypass it and request a nonexistent network preview server.
+      await route.fallback()
     })
   }
   await page.goto(standaloneScenario.entryUrl)
@@ -84,8 +88,12 @@ test("Supervisor explains its role and supports persistent renaming with retry a
   await expect(dialog.getByRole("button", { name: "保存", exact: true })).toBeDisabled()
   await name.fill("取消的名字")
   if (testInfo.project.name === "desktop-chromium") {
+    await expect.poll(() => workbenchRequested).toBe(true)
+    await expect(page.locator("#right-workbench [role=tablist]")).toHaveCount(0)
     releaseWorkbench()
     await expect(page.locator("#right-workbench [role=tablist]")).toHaveCount(1)
+    expect(observation.failedRequests).toEqual([])
+    expect(observation.pageErrors).toEqual([])
     await expect(name).toBeFocused()
   }
   await name.press("Escape")

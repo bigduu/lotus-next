@@ -505,6 +505,7 @@ function App() {
       {/* Register the stable parent layer before any global dialogs. Lazy
           tab content must never mount its own later, higher-priority layer. */}
       <RightWorkbenchSurface
+        interactionSuspended={paletteOpen}
         focusScopeKey={workbenchScope}
         getCurrentFocusScope={getCurrentWorkbenchScope}
         visible={workbenchOpen}

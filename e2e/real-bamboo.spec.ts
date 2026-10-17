@@ -171,7 +171,7 @@ const openSidebar = async (page: Page, phone: boolean): Promise<Locator> => {
   if (phone) {
     await page.getByRole("button", { name: "菜单", exact: true }).click();
   }
-  const sidebar = page.locator("aside");
+  const sidebar = page.locator("aside").filter({ has: page.getByPlaceholder("搜索会话", { exact: true }) });
   await expect(sidebar).toBeVisible();
   return sidebar;
 };
