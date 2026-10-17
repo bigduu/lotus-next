@@ -277,13 +277,36 @@ export function ChatPane({
     && ticketScope.binding.supervisor_session_id === currentSessionId
   const [ticketReference, setTicketReference] = useState<TicketRequest | null>(null)
   const [selectedWorkId, setSelectedWorkId] = useState<string | null>(null)
-  const workPanelHost = useRef(workPanelTarget)
-  workPanelHost.current = workPanelTarget
+  const workFocusScope = useMemo(() => ({ currentSessionId }), [currentSessionId])
+  const [workFocusRequest, setWorkFocusRequest] = useState<{ scope: object } | null>(null)
   const openTicketWork = (workId: string | null) => {
     setSelectedWorkId(workId)
     onOpenWork?.()
-    requestAnimationFrame(() => workPanelHost.current?.querySelector<HTMLElement>('[data-testid="ticket-work-overview"]')?.focus())
+    setWorkFocusRequest({ scope: workFocusScope })
   }
+  useEffect(() => {
+    if (!workFocusRequest) return
+    if (workFocusRequest.scope !== workFocusScope || pageVisible === false) {
+      setWorkFocusRequest(null)
+      return
+    }
+    // The optional Workbench can arrive after the first animation frame.
+    // Retry when its portal target is committed, but honor newer user intent.
+    const cancel = () => setWorkFocusRequest(null)
+    document.addEventListener("pointerdown", cancel, true)
+    document.addEventListener("keydown", cancel, true)
+    const frame = requestAnimationFrame(() => {
+      const overview = workPanelTarget?.querySelector<HTMLElement>('[data-testid="ticket-work-overview"]')
+      if (!overview) return
+      overview.focus()
+      setWorkFocusRequest(null)
+    })
+    return () => {
+      cancelAnimationFrame(frame)
+      document.removeEventListener("pointerdown", cancel, true)
+      document.removeEventListener("keydown", cancel, true)
+    }
+  }, [workFocusRequest, workFocusScope, workPanelTarget, pageVisible, ticketScope?.binding.supervisor_session_id])
   const replayReferences = ticketIngress.references(currentSessionId)
   const visibleTicketReference = pendingTicketMessage && replayReferences?.in_reply_to
     ? { work_id: replayReferences.thread_id ?? replayReferences.in_reply_to, id: replayReferences.in_reply_to }
