@@ -1,8 +1,9 @@
 import { uiText, useUiLocale } from "@shared/i18n/ui"
-import { forwardRef, useCallback, useEffect, useRef, useState, type ComponentPropsWithoutRef, type MutableRefObject, type ReactNode } from "react"
-import { createPortal } from "react-dom"
-import * as DialogPrimitive from "@radix-ui/react-dialog"
-import { Dialog, DialogOverlay, DialogPortal, DialogTitle } from "@/components/ui/dialog"
+import { useEffect, useRef, useState, type ReactNode } from "react"
+import { FocusScope } from "@radix-ui/react-focus-scope"
+import { DismissableLayer } from "@radix-ui/react-dismissable-layer"
+import { hideOthers } from "aria-hidden"
+import { RemoveScroll } from "react-remove-scroll"
 import { DragDropProvider } from "@dnd-kit/react"
 import { isSortable, useSortable } from "@dnd-kit/react/sortable"
 import { ArrowLeft, Bot, FileDiff, Globe2, GripVertical, Plus, SlidersHorizontal, X, ListChecks, ChevronDown } from "lucide-react"
@@ -22,23 +23,13 @@ import { cn } from "@/lib/utils"
 import type { BrowserTabSummary } from "@services/browser/types"
 
 function canRestoreFocus(target: HTMLElement | null): target is HTMLElement {
-  if (!target?.isConnected || target.matches(":disabled") || target.closest('[hidden], [inert], [aria-hidden="true"]')) return false
+  if (!target?.isConnected || target === document.body || target.matches(":disabled") || target.closest('[hidden], [inert], [aria-hidden="true"]')) return false
   for (let node: HTMLElement | null = target; node; node = node.parentElement) {
     const style = getComputedStyle(node)
     if (style.display === "none" || style.visibility === "hidden") return false
   }
   return true
 }
-
-type SurfaceEvents = Pick<ComponentPropsWithoutRef<"aside">, "onKeyDown" | "onPointerDownCapture" | "onFocusCapture" | "onBlurCapture">
-
-// The persistent portal is physically inside this surface, but React portals
-// bubble through their logical parent. Forward Radix's capture/Tab handlers to
-// that parent so inside clicks, nested layers and keyboard looping stay native.
-const WorkbenchSurface = forwardRef<HTMLElement, ComponentPropsWithoutRef<"aside"> & { events: MutableRefObject<SurfaceEvents> }>(function WorkbenchSurface({ events, ...props }, ref) {
-  events.current = { onKeyDown: props.onKeyDown, onPointerDownCapture: props.onPointerDownCapture, onFocusCapture: props.onFocusCapture, onBlurCapture: props.onBlurCapture }
-  return <aside {...props} ref={ref} />
-})
 
 export type RightWorkbenchTab = "inspector" | "review" | "browser" | "session" | "work"
 export type WorkbenchToolTab = Exclude<RightWorkbenchTab, "browser">
@@ -381,70 +372,58 @@ export function RightWorkbench({
     </Tabs>
   )
 
-  // Keep the subtree mounted while its physical surface changes on resize.
-  // Switching Dialog.Content and a desktop aside directly would reset drafts.
-  const [contentHost] = useState(() => {
-    const node = document.createElement("div")
-    node.className = "flex min-h-0 min-w-0 flex-1 flex-col"
-    return node
-  })
-  const surfaceEvents = useRef<SurfaceEvents>({})
-  const focusBeforeModal = useRef<HTMLElement | null>(null)
-  const panelFocus = useRef<HTMLElement | null>(null)
-  const focusFallback = useRef<HTMLElement | null>(null)
+  // Keep the real React ancestry stable across breakpoints. Moving a portal
+  // under a newly mounted Dialog leaves nested Popover scopes outside that
+  // Dialog's lifecycle and can create competing focus traps.
+  const panelRef = useRef<HTMLElement>(null)
+  const modal = visible && !docked
   const currentMode = useRef({ docked, visible })
   currentMode.current = { docked, visible }
-  const attachPanel = useCallback((node: HTMLElement | null) => {
-    if (!node) {
-      const active = document.activeElement
-      if (active instanceof HTMLElement && contentHost.contains(active)) panelFocus.current = active
-      return
+  useEffect(() => {
+    const panel = panelRef.current
+    if (!modal || !panel) return
+    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    const fallback = document.querySelector<HTMLElement>('[aria-controls="right-workbench"]')
+    // A model/menu portal may already be open when the viewport narrows.
+    // Keep that owned surface exposed to assistive technology as well.
+    const ownedSurfaces = [...panel.querySelectorAll('[aria-expanded="true"][aria-controls]')]
+      .map((trigger) => document.getElementById(trigger.getAttribute("aria-controls")!))
+      .filter((node): node is HTMLElement => node !== null)
+    const restoreBackground = hideOthers([panel, ...ownedSurfaces])
+    if (![panel, ...ownedSurfaces].some((surface) => surface.contains(document.activeElement))) {
+      panel.focus({ preventScroll: true })
     }
-    node.appendChild(contentHost)
-    if (panelFocus.current?.isConnected && contentHost.contains(panelFocus.current)) panelFocus.current.focus()
-  }, [contentHost])
-  const panel = (
-    <WorkbenchSurface
-      events={surfaceEvents}
-      ref={attachPanel}
-      id="right-workbench"
-      aria-label={uiText("workbench_c2730bc7")}
-      hidden={!visible}
-      className={cn("flex min-h-0 min-w-0 flex-col bg-card", docked ? "shrink-0 border-l" : "fixed inset-y-0 right-0 z-50 border-l shadow-lg")}
-      style={{ ...(docked ? { width: width ?? 520 } : { width: "min(92vw, 42rem)" }), display: visible ? undefined : "none" }}
-    >{!docked && visible ? <DialogTitle className="sr-only">{uiText("workbench_c2730bc7")}</DialogTitle> : null}</WorkbenchSurface>
-  )
+    return () => {
+      restoreBackground()
+      // Resizing back to a docked surface must not move focus out of the editor.
+      if (currentMode.current.docked && currentMode.current.visible) return
+      const target = [opener, fallback].find(canRestoreFocus)
+      target?.focus({ preventScroll: true })
+    }
+  }, [modal])
 
   return <>
-    {createPortal(<div className="flex min-h-0 min-w-0 flex-1 flex-col"
-      onKeyDown={(event) => surfaceEvents.current.onKeyDown?.(event)}
-      onPointerDownCapture={(event) => surfaceEvents.current.onPointerDownCapture?.(event)}
-      onFocusCapture={(event) => surfaceEvents.current.onFocusCapture?.(event)}
-      onBlurCapture={(event) => surfaceEvents.current.onBlurCapture?.(event)}>{body}</div>, contentHost)}
-    <Dialog open={!docked && visible} onOpenChange={(open) => { if (!open) onClose() }}>
-      {docked || !visible ? panel : (
-        <DialogPortal>
-          <DialogOverlay />
-          <DialogPrimitive.Content asChild aria-modal="true" aria-describedby={undefined}
-            onOpenAutoFocus={(event) => {
-              const active = document.activeElement
-              if (active instanceof HTMLElement && active !== document.body && !contentHost.contains(active)) focusBeforeModal.current = active
-              focusFallback.current = document.querySelector<HTMLElement>('[aria-controls="right-workbench"]')
-              if (panelFocus.current?.isConnected && contentHost.contains(panelFocus.current)) {
-                event.preventDefault()
-                panelFocus.current.focus()
-              }
-            }}
-            onCloseAutoFocus={(event) => {
-              event.preventDefault()
-              if (currentMode.current.docked && currentMode.current.visible) return
-              const target = [focusBeforeModal.current, focusFallback.current].find(canRestoreFocus)
-              target?.focus()
-            }}>
-            {panel}
-          </DialogPrimitive.Content>
-        </DialogPortal>
-      )}
-    </Dialog>
+    {modal ? <div data-slot="dialog-overlay" className="fixed inset-0 z-40 bg-black/50" style={{ pointerEvents: "auto" }} /> : null}
+    <RemoveScroll enabled={modal} forwardProps allowPinchZoom>
+      <FocusScope asChild loop={modal} trapped={modal}
+        onMountAutoFocus={(event) => event.preventDefault()}
+        onUnmountAutoFocus={(event) => event.preventDefault()}>
+        <DismissableLayer asChild disableOutsidePointerEvents={modal}
+          onDismiss={modal ? onClose : undefined}
+          onFocusOutside={(event) => event.preventDefault()}
+          onPointerDownOutside={(event) => {
+            const original = event.detail.originalEvent
+            if (original.button === 2 || (original.button === 0 && original.ctrlKey)) event.preventDefault()
+          }}>
+          <aside ref={panelRef} id="right-workbench" role={modal ? "dialog" : undefined}
+            aria-modal={modal ? true : undefined} aria-label={uiText("workbench_c2730bc7")}
+            hidden={!visible}
+            className={cn("flex min-h-0 min-w-0 flex-col bg-card", docked ? "shrink-0 border-l" : "fixed inset-y-0 right-0 z-50 border-l shadow-lg")}
+            style={{ ...(docked ? { width: width ?? 520 } : { width: "92vw", maxWidth: "42rem" }), display: visible ? undefined : "none" }}>
+            {body}
+          </aside>
+        </DismissableLayer>
+      </FocusScope>
+    </RemoveScroll>
   </>
 }

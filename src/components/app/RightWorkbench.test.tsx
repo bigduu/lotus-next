@@ -1,6 +1,7 @@
 import { act, useEffect, useState } from "react"
 import { createRoot, type Root } from "react-dom/client"
 import { afterAll, afterEach, beforeAll, expect, it, vi } from "vitest"
+import { ModelEffortPicker } from "@/components/chat/ModelEffortPicker"
 import { RightWorkbench } from "./RightWorkbench"
 
 const roots: Root[] = []
@@ -388,7 +389,7 @@ it("traps narrow-workbench focus, dismisses the topmost menu first, and restores
   await act(async () => { opener.focus(); opener.click() })
   const dialog = document.querySelector<HTMLElement>('[role="dialog"]')!
   expect(dialog).not.toBeNull()
-  expect(dialog.getAttribute("aria-labelledby")).toBeTruthy()
+  expect(dialog.getAttribute("aria-label")).toBeTruthy()
   expect(dialog.contains(document.activeElement)).toBe(true)
   const background = [...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Background action")!
   act(() => background.focus())
@@ -500,4 +501,43 @@ it("returns to an available launcher when the original opener becomes hidden", a
   opener.hidden = true
   await act(async () => document.querySelector<HTMLButtonElement>('[role="dialog"] button[aria-label="收起工作面板"]')!.click())
   await vi.waitFor(() => expect(document.activeElement).toBe(fallback))
+})
+
+
+it("keeps the real model popover usable across breakpoint changes and repeated focus cycles", async () => {
+  const host = document.body.appendChild(document.createElement("div")); const root = createRoot(host); roots.push(root)
+  const close = vi.fn()
+  const render = (docked: boolean) => act(() => root.render(<RightWorkbench docked={docked}
+    activeTab="session" openToolTabs={["session"]} onTabChange={vi.fn()} onToolClose={vi.fn()} onClose={close}
+    inspector={null} review={null} browser={null} session={<ModelEffortPicker models={["Model A", "Model B"]}
+      model="Model A" onModelChange={vi.fn()} value="medium" onChange={vi.fn()} />} />))
+  render(true)
+  const picker = host.querySelector<HTMLButtonElement>('[data-testid="model-effort-picker"]')!
+  await act(async () => picker.click())
+  const popover = document.querySelector<HTMLElement>('[data-slot="popover-content"]')!
+  expect(popover).not.toBeNull()
+  render(false)
+  expect(document.querySelector('[data-slot="popover-content"]')).toBe(popover)
+  expect(popover.closest('[aria-hidden="true"]')).toBeNull()
+  const slider = popover.querySelector<HTMLInputElement>('input[type="range"]')!
+  act(() => slider.focus())
+  expect(document.activeElement).toBe(slider)
+  await act(async () => slider.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })))
+  expect(document.querySelector('[data-slot="popover-content"]')).toBeNull()
+  expect(close).not.toHaveBeenCalled()
+  for (let i = 0; i < 30; i++) {
+    const panel = document.getElementById("right-workbench")!
+    const buttons = [...panel.querySelectorAll<HTMLButtonElement>('button:not(:disabled)')]
+    act(() => buttons.at(-1)!.focus())
+    const event = new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true })
+    act(() => document.activeElement!.dispatchEvent(event))
+    expect(panel.contains(document.activeElement)).toBe(true)
+    await act(async () => picker.click())
+    expect(document.querySelector('[data-slot="popover-content"]')).not.toBeNull()
+    await act(async () => document.activeElement!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })))
+    expect(close).not.toHaveBeenCalled()
+  }
+  render(true)
+  await act(async () => picker.click())
+  expect(document.querySelector('[data-slot="popover-content"]')).not.toBeNull()
 })
