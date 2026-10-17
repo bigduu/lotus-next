@@ -1,3 +1,6 @@
+import { Feedback } from "@dnd-kit/dom"
+import type { DragDropManager } from "@dnd-kit/react"
+import * as cancellationModule from "./workbenchDragCancellation"
 import type { WorkbenchTabDrag } from "./workbenchSurfaceContext"
 import { act, lazy, StrictMode, Suspense, useEffect, useRef, useState } from "react"
 import { createPortal } from "react-dom"
@@ -30,6 +33,7 @@ afterEach(() => {
   Reflect.deleteProperty(document, "getAnimations")
   Reflect.deleteProperty(Element.prototype, "getAnimations")
   vi.unstubAllGlobals()
+  vi.restoreAllMocks()
 })
 
 it("switches tools in one docked panel and closes without navigation", () => {
@@ -852,6 +856,12 @@ it.each(["unmount", "settings", "session"])("cancels a tab drag on %s without le
 })
 
 it.each(["initializing", "dragging", "move-key"])("cancels the drag sensor when command search opens (%s)", async (mode) => {
+  let manager: DragDropManager | undefined
+  const originalCancellation = cancellationModule.workbenchDragCancellation
+  vi.spyOn(cancellationModule, "workbenchDragCancellation").mockImplementation((instance, active) => {
+    manager = instance
+    return originalCancellation(instance, active)
+  })
   const immediate = mode === "initializing"
   const host = document.body.appendChild(document.createElement("div")); const root = createRoot(host); roots.push(root)
   const close = vi.fn(); const reorder = vi.fn()
@@ -896,6 +906,9 @@ it.each(["initializing", "dragging", "move-key"])("cancels the drag sensor when 
   }
   const search = host.querySelector<HTMLInputElement>('input[placeholder="搜索会话或操作…"]')!
   await vi.waitFor(() => expect(document.activeElement).toBe(search))
+  const feedback = manager!.plugins.find((plugin) => plugin instanceof Feedback)!
+  expect(feedback.dropAnimation).toBeNull()
+  const lateFocus = vi.spyOn(handle, "focus")
   for (const character of "Alpha movable") {
     await act(async () => {
       const focused = document.activeElement as HTMLInputElement
@@ -907,6 +920,11 @@ it.each(["initializing", "dragging", "move-key"])("cancels the drag sensor when 
     })
   }
   expect(search.value).toBe("Alpha movable")
+  await vi.waitFor(() => expect(document.querySelector("[data-dnd-placeholder]")).toBeNull())
+  await act(async () => { await new Promise((resolve) => requestAnimationFrame(resolve)) })
+  expect(lateFocus).not.toHaveBeenCalled()
+  expect(document.activeElement).toBe(search)
+  lateFocus.mockRestore()
   expect(host.querySelector('input[aria-label="Draft"]')).toBe(draft)
   expect(draft.value).toBe("Retained")
   expect(reorder).not.toHaveBeenCalled()
@@ -915,6 +933,7 @@ it.each(["initializing", "dragging", "move-key"])("cancels the drag sensor when 
   // Cancellation must not permanently disable the keyboard sensor.
   await act(async () => handle.dispatchEvent(new KeyboardEvent("keydown", { key: " ", code: "Space", bubbles: true, cancelable: true })))
   await vi.waitFor(() => expect(handle.parentElement!.style.opacity).toBe("0.6"))
+  expect(feedback.dropAnimation).toBeUndefined()
   await act(async () => handle.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", code: "Escape", bubbles: true, cancelable: true })))
   expect(close).not.toHaveBeenCalled()
   expect(reorder).not.toHaveBeenCalled()
