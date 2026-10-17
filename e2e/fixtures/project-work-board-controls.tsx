@@ -3,12 +3,14 @@ import { createRoot } from "react-dom/client"
 import "../../src/index.css"
 import { changeLocale } from "../../src/shared/i18n"
 import { OwnerAccessContext } from "../../src/hooks/ownerAccessContext"
-import { ProjectWorkBoard } from "../../src/components/app/ProjectWorkBoard"
+import { createRuntimeConfig, installRuntimeConfig } from "../../src/runtime/runtimeConfig"
 import type { ProjectManifest } from "../../src/services/project"
 import type { WorkCommandContext, WorkPlanningDraft, WorkRequestStatus } from "../../src/components/app/project-work/projectWorkControls"
 
 const parameters = new URLSearchParams(location.search)
 document.documentElement.classList.toggle("dark", parameters.get("theme") === "dark")
+installRuntimeConfig(createRuntimeConfig({ host: { kind: "browser", capabilities: { nativeFileSystem: false, nativeNotifications: false, externalShell: false, sidecarBackend: false } }, endpointSource: "page-origin", backendBaseUrl: location.origin, mode: "test", development: false }))
+const { ProjectWorkBoard } = await import("../../src/components/app/ProjectWorkBoard")
 await changeLocale("zh-CN")
 const project = { id: "synthetic-project", name: "Controlled host fixture", revision: 1, resource_revision: 1, workspace_bindings: [] } as unknown as ProjectManifest
 const command = (operationId: string): WorkCommandContext => ({ operationId, workId: "synthetic-work-1", generation: 3, recordRevision: 8,

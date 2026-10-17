@@ -12,7 +12,7 @@ for (const [theme, width] of [["light", 1440], ["dark", 390]] as const) {
     const unexpected: string[] = []
     const pageErrors: string[] = []
     page.on("pageerror", (error) => pageErrors.push(error.message))
-    await page.route("**/api/**", async (route) => {
+    await page.route("**/api/v1/**", async (route) => {
       const request = route.request()
       const path = new URL(request.url()).pathname
       if (request.method() === "POST" && path.endsWith("/tickets/project-board")) {
