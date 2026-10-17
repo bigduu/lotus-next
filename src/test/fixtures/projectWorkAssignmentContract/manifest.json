@@ -1,0 +1,15 @@
+{
+  "kind": "actual-http-synthetic-record-replay",
+  "backend_source": "f7c274cd284098d02f09420bad44ecab2a107181",
+  "backend_tree": "87114e0da89b5717693c5b60cb362083eeedea8f",
+  "mock_http_during_capture": false,
+  "synthetic_runtime": true,
+  "provider_execution": false,
+  "session_access_proven": false,
+  "sha256": {
+    "active-board.json": "0fb92afe0ffa0cc9001081b7220cb5bc0c8aa0fa1d66f6535e5b0649f0ef17b2",
+    "active-inspect.json": "d87e06f12099d4366ea41c70e6d1089fe7b9062eb8c98f2b2b72b94cceced220",
+    "stopped-board.json": "4aaea55bac265d76e6cac4184195832e85f361070332c993f00c20b0fec56c5c",
+    "stopped-inspect.json": "1f18f9afa39d2e71cc94a9fc2dfc3b806f556c22c9064ffc72bbd9ff937d53c5"
+  }
+}

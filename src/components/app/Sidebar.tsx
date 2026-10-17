@@ -57,6 +57,7 @@ export function Sidebar({
   currentSessionId,
   onNewChat,
   onSelect,
+  onOpenExistingSession,
   onRename,
   onDelete,
   onTogglePin,
@@ -77,6 +78,7 @@ export function Sidebar({
   currentSessionId: string | null | undefined
   onNewChat: (projectId?: string | null) => void
   onSelect: (id: string) => void | Promise<void>
+  onOpenExistingSession?: (id: string) => void | Promise<void>
   onRename: (id: string, title: string) => void | Promise<void>
   onDelete: (chat: ChatItem) => void
   onTogglePin: (chat: ChatItem) => void
@@ -697,7 +699,7 @@ export function Sidebar({
         </div>
       </aside>
 
-      <ProjectWorkDialog metadataError={projectActionError} project={workProjectId ? projects[workProjectId] ?? null : null} onClose={() => setWorkProjectId(null)} />
+      <ProjectWorkDialog metadataError={projectActionError} project={workProjectId ? projects[workProjectId] ?? null : null} onClose={() => setWorkProjectId(null)} onOpenSession={onOpenExistingSession ? async (id) => { await onOpenExistingSession(id); setWorkProjectId(null); onClose() } : undefined} />
 
       <ProjectEditDialog projectId={editingProjectId} onClose={() => setEditingProjectId(null)} />
 

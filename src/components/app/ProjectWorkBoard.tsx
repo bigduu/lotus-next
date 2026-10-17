@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { ProjectWorkPlanningControls, type ProjectWorkPlanningControlsProps } from "./project-work/ProjectWorkPlanningControls"
 import { ProjectWorkOwnerControls, type ProjectWorkOwnerControlsProps } from "./project-work/ProjectWorkOwnerControls"
 import { projectWorkControlsCopy } from "./project-work/projectWorkControlsCopy"
@@ -9,9 +9,13 @@ import { getErrorMessage } from "@services/api"
 import { boardCountsKnown, projectBoardClient, type BoardStage, type BoardWorkView, type ProjectBoardRow, type ProjectContext } from "@services/tickets/projectBoard"
 import type { SnapshotRef } from "@services/tickets/types"
 import { useProjectWorkBoard } from "@/hooks/useProjectWorkBoard"
+import { useAssignmentSessions } from "@/hooks/useAssignmentSessions"
 import { ticketWorkLabels } from "@/components/chat/ticketWorkLabels"
 import { Button } from "@/components/ui/button"
 import { ResponsiveDialog, ResponsiveDialogContent, ResponsiveDialogDescription, ResponsiveDialogTitle } from "@/components/ui/responsive-dialog"
+
+import { AssignmentHealthPanel } from "./project-work/AssignmentHealthPanel"
+import { makeAssignmentHealthCopy } from "./project-work/assignmentHealthCopy"
 
 const stages: BoardStage[] = ["todo", "doing", "testing", "done"]
 const stageLabel = (stage: BoardStage) => uiText(({ todo: "project_work_todo", doing: "project_work_doing", testing: "project_work_testing", done: "project_work_done" } as const)[stage])
@@ -24,9 +28,23 @@ function ContextDetails({ context, label, name }: { context: ProjectContext | nu
     <dd data-testid={`project-work-context-${name}`}><ContextRevision context={context} />{context ? <><span className="block">{uiText("project_work_contract_revision", { revision: context.contract_revision })}</span><span className="block break-all">{context.workspace_binding.path}</span></> : null}</dd>
   </>
 }
-function WorkDetails({ row, snapshot, onClose }: { row: ProjectBoardRow; snapshot: SnapshotRef; onClose: () => void }) {
+function WorkDetails({ row, snapshot, projectId, onClose, onOpenSession }: { row: ProjectBoardRow; snapshot: SnapshotRef; projectId: string; onClose: () => void; onOpenSession?: (id: string) => void | Promise<void> }) {
+  const locale = useUiLocale()
   const [view, setView] = useState<BoardWorkView | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [navigationError, setNavigationError] = useState<string | null>(null)
+  const [opening, setOpening] = useState(false)
+  const navigationBusy = useRef(false)
+  const alive = useRef(true)
+  const sessions = useAssignmentSessions(view?.assignments, row.ticket.id, projectId, !!onOpenSession)
+  useEffect(() => { alive.current = true; return () => { alive.current = false } }, [])
+  const openSession = async (id: string) => {
+    if (!onOpenSession || navigationBusy.current) return
+    navigationBusy.current = true; setOpening(true); setNavigationError(null)
+    try { if (await sessions.recheck(id) && alive.current) await onOpenSession(id) }
+    catch (failure) { if (alive.current) setNavigationError(getErrorMessage(failure)) }
+    finally { navigationBusy.current = false; if (alive.current) setOpening(false) }
+  }
   useEffect(() => {
     const controller = new AbortController()
     void projectBoardClient.inspect(row.ticket.id, snapshot, controller.signal)
@@ -45,11 +63,18 @@ function WorkDetails({ row, snapshot, onClose }: { row: ProjectBoardRow; snapsho
       <ContextDetails context={row.context} label={uiText("project_work_candidate")} name="candidate" />
       {row.pending_context ? <><ContextDetails context={row.pending_context} label={uiText("project_work_pending")} name="pending" /><dd className="text-xs text-muted-foreground">{uiText("project_work_pending_hint")}</dd></> : null}
       <ContextDetails context={row.adopted_context} label={uiText("project_work_adopted")} name="adopted" />
-      <dt className="font-medium">{uiText("project_work_assignment")}</dt><dd>{row.ticket.active_assignment ?? uiText("project_work_unknown")}</dd>
-      {assignment ? <><dt>{uiText("project_work_session")}</dt><dd>{assignment.runtime?.session_id ?? uiText("project_work_unknown")}</dd><dt>{uiText("project_work_run")}</dt><dd>{assignment.runtime?.run_id ?? uiText("project_work_unknown")}</dd>
-        {assignment.awaiting_request ? <dd>{uiText("project_work_waiting")}</dd> : null}
-        {assignment.workspace ? <><dt>{uiText("project_work_repos")}</dt><dd className="break-all">{assignment.workspace.repo}<br />{assignment.workspace.branch}<br />{assignment.workspace.worktree}</dd></> : null}</> : null}
+      {assignment?.workspace ? <><dt>{uiText("project_work_repos")}</dt><dd className="break-all">{assignment.workspace.repo}<br />{assignment.workspace.branch}<br />{assignment.workspace.worktree}</dd></> : null}
     </dl>
+    <div className="mt-4"><AssignmentHealthPanel
+      workId={row.ticket.id} generation={row.ticket.generation} authorityEpoch={snapshot.authority_epoch}
+      currentAssignmentId={row.ticket.active_assignment}
+      attempts={view && sessions.online ? { status: "available", value: view.assignments, updatedAt: null } : { status: "unknown", reason: error ?? (sessions.online ? uiText("project_work_loading") : uiText("assignment_health_stale_hint")) }}
+      observations={{ status: "unsupported" }} incidents={{ status: "unsupported" }} sessions={sessions.sessions}
+      blockReason={row.ticket.blocked?.reason} nowMs={Date.now()} locale={locale} copy={makeAssignmentHealthCopy()}
+      onOpenSession={onOpenSession && sessions.online ? (id) => void openSession(id) : undefined}
+    /></div>
+    {opening ? <p role="status" className="mt-2 text-xs">{uiText("assignment_health_opening_session")}</p> : null}
+    {navigationError ? <p role="alert" className="mt-2 text-destructive">{navigationError}</p> : null}
     {error ? <p role="alert" className="mt-2 text-destructive">{error}</p> : !view ? <p role="status">{uiText("project_work_loading")}</p> : <>
       {view.requests.some((request) => request.status === "open") ? <p className="mt-2">{uiText("project_work_waiting")}</p> : null}
       <h4 className="mt-3 font-medium">{uiText("project_work_evidence")}</h4>
@@ -74,7 +99,7 @@ function commandAtSnapshot(command: WorkCommandContext | null | undefined, row: 
   return command?.binding?.scope_id === row.ticket.scope_id && command.expectedSeq === snapshot.seq
     && command.expectedEpoch === snapshot.authority_epoch ? command : null
 }
-export function ProjectWorkBoard({ project, controls }: { project: ProjectManifest; controls?: ProjectWorkBoardControls }) {
+export function ProjectWorkBoard({ project, controls, onOpenSession }: { project: ProjectManifest; controls?: ProjectWorkBoardControls; onOpenSession?: (id: string) => void | Promise<void> }) {
   useUiLocale()
   const [mode, setMode] = useState<"list" | "board">("list")
   const [cancelled, setCancelled] = useState(false)
@@ -121,18 +146,18 @@ export function ProjectWorkBoard({ project, controls }: { project: ProjectManife
     {page && !rows.length ? <p className="py-4 text-sm text-muted-foreground">{uiText("project_work_empty")}</p> : null}
     {busy ? <p role="status" className="mt-3 text-sm">{uiText("project_work_loading")}</p> : null}
     {page?.next_cursor ? <Button className="mt-3" variant="outline" disabled={busy} onClick={() => void loadMore()}>{uiText("project_work_more")}</Button> : null}
-    {selected && page ? <div className="mt-4 space-y-3"><WorkDetails key={`${page.snapshot.commit}:${selected.ticket.id}`} row={selected} snapshot={page.snapshot} onClose={() => setSelectedId(null)} />
+    {selected && page ? <div className="mt-4 space-y-3"><WorkDetails key={`${page.snapshot.commit}:${selected.ticket.id}`} row={selected} snapshot={page.snapshot} projectId={project.id} onOpenSession={onOpenSession} onClose={() => setSelectedId(null)} />
       {staleControls ? <p role="status" className="text-sm text-muted-foreground">{uiText("project_work_controls_unavailable_context")}</p> : null}
       {planning ? <ProjectWorkPlanningControls key={`planning:${selected.ticket.id}:${selected.ticket.generation}`} {...planning} owner={owner && planning.owner} command={commandAtSnapshot(planning.command, selected, page.snapshot)} copy={projectWorkControlsCopy()} /> : null}
       {ownerControls ? <ProjectWorkOwnerControls key={`owner:${selected.ticket.id}:${selected.ticket.generation}`} {...ownerControls} owner={owner && ownerControls.owner} commands={ownerCommands} copy={projectWorkControlsCopy()} /> : null}
     </div> : null}
   </div>
 }
-export function ProjectWorkDialog({ project, onClose, metadataError, controls }: { project: ProjectManifest | null; onClose: () => void; metadataError?: string | null; controls?: ProjectWorkBoardControls }) {
+export function ProjectWorkDialog({ project, onClose, metadataError, controls, onOpenSession }: { project: ProjectManifest | null; onClose: () => void; metadataError?: string | null; controls?: ProjectWorkBoardControls; onOpenSession?: (id: string) => void | Promise<void> }) {
   useUiLocale()
   return <ResponsiveDialog open={!!project} onOpenChange={(open) => { if (!open) onClose() }}><ResponsiveDialogContent className="sm:max-w-5xl" aria-describedby={undefined}>
     <div className="border-b p-4 pr-12"><ResponsiveDialogTitle>{uiText("project_work_title")}{project ? ` · ${project.name}` : ""}</ResponsiveDialogTitle><ResponsiveDialogDescription className="sr-only">{uiText("project_work_readonly")}</ResponsiveDialogDescription></div>
     {metadataError ? <p role="alert" className="px-4 pt-3 text-sm text-destructive">{metadataError}</p> : null}
-    {project ? <ProjectWorkBoard key={project.id} project={project} controls={controls} /> : null}
+    {project ? <ProjectWorkBoard key={project.id} project={project} controls={controls} onOpenSession={onOpenSession} /> : null}
   </ResponsiveDialogContent></ResponsiveDialog>
 }

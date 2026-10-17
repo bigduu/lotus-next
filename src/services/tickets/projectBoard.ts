@@ -35,6 +35,11 @@ export type ProjectBoardPage = ReadEnvelope<ProjectBoardData>
 export interface BoardAssignment {
   id: string
   state: string
+  // Existing inspector facts. Legacy backends may omit them; do not infer.
+  work_id?: string
+  generation?: number
+  authority_epoch?: number
+  process_stopped?: boolean
   runtime: { session_id: string; run_id: string } | null
   awaiting_request?: string | null
   workspace: { repo: string; branch: string; worktree: string; base_commit: string } | null
