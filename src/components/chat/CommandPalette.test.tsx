@@ -1,4 +1,4 @@
-import { act, useLayoutEffect } from "react"
+import { act, useLayoutEffect, useState } from "react"
 import { createRoot, type Root } from "react-dom/client"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { CommandPalette } from "./CommandPalette"
@@ -76,4 +76,27 @@ describe("CommandPalette session scope", () => {
     act(() => rootButton!.click())
     expect(onSelect).toHaveBeenCalledExactlyOnceWith("root")
   })
+})
+
+
+it.each([false, true])("dismisses on the backdrop and preserves a newer focus target: %s", async (newFocus) => {
+  function Harness() {
+    const [open, setOpen] = useState(false)
+    return <><button onClick={() => setOpen(true)}>Open commands</button><button>Next target</button>
+      <CommandPalette open={open} onClose={() => setOpen(false)} chats={[]} onSelect={vi.fn()} onNewChat={vi.fn()} onSettings={vi.fn()} /></>
+  }
+  act(() => root.render(<Harness />))
+  const [opener, next] = container.querySelectorAll<HTMLButtonElement>("button")
+  await act(async () => { opener.focus(); opener.click() })
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 10)) })
+  const overlay = container.querySelector('[role="dialog"]')!.parentElement!
+  await act(async () => {
+    overlay.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, button: 0 }))
+    overlay.click()
+  })
+  expect(container.querySelector('[role="dialog"]')).toBeNull()
+  if (newFocus) act(() => next.focus())
+  await vi.waitFor(() => expect(document.activeElement).toBe(newFocus ? next : opener))
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 10)) })
+  expect(document.activeElement).toBe(newFocus ? next : opener)
 })
