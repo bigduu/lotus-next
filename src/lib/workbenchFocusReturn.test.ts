@@ -25,3 +25,15 @@ it("also invalidates a regular editor opener when its session changes", () => {
   scope = "b"
   expect(resolve()).toBeNull()
 })
+
+it("uses the active drag source after movement already left focus on the panel", () => {
+  document.body.innerHTML = '<aside id="right-workbench" tabindex="-1"><div inert><button data-workbench-tab-handle="tool:review">Review</button></div><button data-workbench-tab-handle="tool:review">Review</button></aside>'
+  const panel = document.querySelector<HTMLElement>("aside")!
+  const handle = panel.querySelectorAll<HTMLButtonElement>("button")[1]!
+  panel.focus()
+  let scope = "original"
+  const resolve = captureWorkbenchFocusReturn(panel, scope, () => scope, "tool:review")
+  expect(resolve()).toBe(handle)
+  scope = "next"
+  expect(resolve()).toBeNull()
+})

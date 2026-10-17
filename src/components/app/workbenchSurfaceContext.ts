@@ -2,6 +2,7 @@ import { createContext, useContext } from "react"
 
 export interface WorkbenchTabDrag {
   isActive: () => boolean
+  getSourceId: () => string | null
   cancel: () => void
 }
 

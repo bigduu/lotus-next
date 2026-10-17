@@ -34,6 +34,7 @@ import { DEFAULT_SUPERVISOR_SESSION_ID, isDefaultSupervisor } from "@/lib/superv
 import { agentClient } from "@services/chat/AgentService"
 import { reorderVisibleWorkbenchTabIds, visibleWorkbenchTabIds } from "@/lib/workbenchTabs"
 import { captureWorkbenchFocusReturn } from "@/lib/workbenchFocusReturn"
+import type { WorkbenchTabDrag } from "@/components/app/workbenchSurfaceContext"
 import { RightWorkbenchSurface } from "@/components/app/RightWorkbenchSurface"
 import type { RightWorkbenchTab, WorkbenchToolTab } from "@/components/app/RightWorkbench"
 
@@ -84,6 +85,7 @@ function App() {
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [paletteOpen, setPaletteOpen] = useState(false)
+  const workbenchTabDragRef = useRef<WorkbenchTabDrag | null>(null)
   const paletteReturnFocusRef = useRef<() => HTMLElement | null>(() => null)
 
   useEffect(() => {
@@ -93,7 +95,7 @@ function App() {
         if (!paletteOpen) {
           paletteReturnFocusRef.current = captureWorkbenchFocusReturn(
             document.activeElement instanceof HTMLElement ? document.activeElement : null,
-            getCurrentWorkbenchScope(), getCurrentWorkbenchScope,
+            getCurrentWorkbenchScope(), getCurrentWorkbenchScope, workbenchTabDragRef.current?.getSourceId(),
           )
         }
         setPaletteOpen((v) => !v)
@@ -222,7 +224,7 @@ function App() {
         ? paletteReturnFocusRef.current
         : captureWorkbenchFocusReturn(
           document.activeElement instanceof HTMLElement ? document.activeElement : null,
-          getCurrentWorkbenchScope(), getCurrentWorkbenchScope,
+          getCurrentWorkbenchScope(), getCurrentWorkbenchScope, workbenchTabDragRef.current?.getSourceId(),
         )
     }
     setSidebarOpen(false)
@@ -510,6 +512,7 @@ function App() {
       {/* Register the stable parent layer before any global dialogs. Lazy
           tab content must never mount its own later, higher-priority layer. */}
       <RightWorkbenchSurface
+        tabDragRef={workbenchTabDragRef}
         interactionSuspended={paletteOpen}
         focusScopeKey={workbenchScope}
         getCurrentFocusScope={getCurrentWorkbenchScope}
