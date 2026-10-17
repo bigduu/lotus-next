@@ -9,6 +9,7 @@ import { SupervisorEntry } from "@/components/app/SupervisorEntry"
 import { SessionRow } from "@/components/chat/SessionRow"
 import { ProjectArchiveDialog } from "@/components/app/ProjectArchiveDialog"
 import { ProjectEditDialog } from "@/components/app/ProjectEditDialog"
+import { ProjectSectionHeader } from "@/components/app/ProjectSectionHeader"
 import { ProjectGroupHeader } from "@/components/app/ProjectGroupHeader"
 import { ProjectSectionDialog } from "@/components/app/ProjectSectionDialog"
 import { groupChats, groupChatsByProject, type ChatGroup } from "@/lib/groupChats"
@@ -297,7 +298,7 @@ export function Sidebar({
     return <>
       {expanded ? shown.map(renderSession) : null}
       {expanded && fold ? (
-        <button type="button" className="flex w-full items-center gap-1 rounded-md px-2 py-1.5 text-left text-xs text-muted-foreground outline-none hover:bg-sidebar-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+        <button type="button" className="flex select-none w-full items-center gap-1 rounded-md px-2 py-1.5 text-left text-xs text-muted-foreground outline-none hover:bg-sidebar-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
           onClick={() => setDisclosures((previous) => {
             const expandedProjectGroups = new Set(previous.expandedProjectGroups)
             if (expandedProjectGroups.has(previewKey)) expandedProjectGroups.delete(previewKey)
@@ -341,18 +342,23 @@ export function Sidebar({
           const payload = readDraggedSession(event)
           if (payload?.projectId === project.id) moveSessionToSection(project.id, payload.sessionId, section.id)
         }}>
-        <button type="button" aria-expanded={expanded} aria-controls={contentId} disabled={!!query}
-          className="flex w-full items-center gap-1 rounded-md px-2 py-1.5 text-left text-xs font-medium text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default"
-          onClick={() => setDisclosures((previous) => {
-            const closedSections = new Set(previous.closedSections)
-            if (closedSections.has(key)) closedSections.delete(key)
-            else closedSections.add(key)
-            return { ...previous, closedSections }
-          })}>
-          <ChevronRight aria-hidden="true" className={cn("size-3 shrink-0", expanded && "rotate-90")} />
-          <span className="truncate">{section.name}</span>
-          <span className="ml-auto whitespace-nowrap pl-2 font-normal">{uiText("project_sessions", { count: bucket.chats.length })}</span>
-        </button>
+        <ProjectSectionHeader onManageSections={() => {
+          setSectionDialogMode("manage")
+          setSectioningProjectId(project.id)
+        }}>
+          <button type="button" aria-expanded={expanded} aria-controls={contentId} disabled={!!query}
+            className="flex min-w-0 flex-1 select-none items-center gap-1 rounded-md px-2 py-1.5 text-left text-xs font-medium text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default"
+            onClick={() => setDisclosures((previous) => {
+              const closedSections = new Set(previous.closedSections)
+              if (closedSections.has(key)) closedSections.delete(key)
+              else closedSections.add(key)
+              return { ...previous, closedSections }
+            })}>
+            <ChevronRight aria-hidden="true" className={cn("size-3 shrink-0", expanded && "rotate-90")} />
+            <span className="truncate">{section.name}</span>
+            <span className="ml-auto whitespace-nowrap pl-2 font-normal">{uiText("project_sessions", { count: bucket.chats.length })}</span>
+          </button>
+        </ProjectSectionHeader>
         <div id={contentId} hidden={!expanded}>
           {renderSessionBucket(bucket, expanded, key)}
           {expanded && !bucket.chats.length ? <p className="px-2 py-2 text-xs text-muted-foreground">{uiText("sidebar_section_empty")}</p> : null}
@@ -426,7 +432,7 @@ export function Sidebar({
             aria-expanded={expanded}
             aria-controls={contentId}
             disabled={!!query}
-            className="flex w-full items-center gap-1 rounded-md px-2 pt-3 pb-1 text-left text-xs font-medium text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default"
+            className="flex select-none w-full items-center gap-1 rounded-md px-2 pt-3 pb-1 text-left text-xs font-medium text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default"
             onClick={toggleExpanded}
           >
             <ChevronRight aria-hidden="true" className={cn("size-3 shrink-0", expanded && "rotate-90")} />
@@ -571,7 +577,7 @@ export function Sidebar({
                 type="button"
                 aria-expanded={disclosures.olderExpanded}
                 aria-controls={`${disclosureId}-older`}
-                className="mt-2 flex w-full items-center gap-1 rounded-md px-2 py-2 text-left text-xs font-medium text-muted-foreground outline-none hover:bg-sidebar-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+                className="mt-2 flex select-none w-full items-center gap-1 rounded-md px-2 py-2 text-left text-xs font-medium text-muted-foreground outline-none hover:bg-sidebar-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
                 onClick={() => setDisclosures((previous) => ({
                   ...previous,
                   olderExpanded: !previous.olderExpanded,

@@ -1,10 +1,12 @@
 import { useId, useState } from "react"
-import { CircleDot, Pencil } from "lucide-react"
+import { CircleDot, MoreHorizontal, Pencil } from "lucide-react"
 import { useUiText } from "@shared/i18n/ui"
 import type { ChatItem } from "@shared/types/chatMessages"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
+import { useSidebarContextMenu } from "@/hooks/useSidebarContextMenu"
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { cn } from "@/lib/utils"
 
 export function SupervisorEntry({ chat, active, unread, busy, disabled, onSelect, onRename }: {
@@ -17,6 +19,7 @@ export function SupervisorEntry({ chat, active, unread, busy, disabled, onSelect
   onRename: (id: string, title: string) => void | Promise<void>
 }) {
   const uiText = useUiText()
+  const menu = useSidebarContextMenu(disabled)
   const descriptionId = useId()
   const statusId = useId()
   const nameId = useId()
@@ -44,7 +47,7 @@ export function SupervisorEntry({ chat, active, unread, busy, disabled, onSelect
 
   return <Dialog open={open} onOpenChange={(value) => { if (!saving) setOpen(value) }}>
     <div className="mb-2">
-      <div className={cn("flex items-center rounded-md", active && "bg-sidebar-accent")}>
+      <div {...menu.rowProps} className={cn("flex select-none items-center rounded-md", active && "bg-sidebar-accent")}>
         <Button variant="ghost" aria-current={active ? "page" : undefined}
           aria-describedby={`${descriptionId} ${statusId}`} aria-busy={busy || undefined} disabled={disabled}
           className={cn("min-w-0 flex-1 justify-start gap-2", unread && "font-semibold")}
@@ -61,6 +64,17 @@ export function SupervisorEntry({ chat, active, unread, busy, disabled, onSelect
             <Pencil className="size-3.5" aria-hidden="true" />
           </Button>
         </DialogTrigger>
+        <DropdownMenu open={menu.open} onOpenChange={menu.onOpenChange}>
+          <DropdownMenuTrigger aria-label={uiText("session_actions_e6f6d875")} disabled={disabled}
+            className="mr-1 rounded p-1 text-muted-foreground outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring">
+            <MoreHorizontal className="size-4" />
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" onCloseAutoFocus={open ? (event) => event.preventDefault() : menu.onCloseAutoFocus}>
+            <DropdownMenuItem disabled={!chat} onSelect={() => { setDraft(title); setError(false); setOpen(true) }}>
+              <Pencil />{uiText("supervisor_rename")}
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
       <p id={descriptionId} className="px-3 pb-1 text-xs leading-relaxed text-muted-foreground">{uiText("supervisor_entry_description")}</p>
       <DialogContent showCloseButton={!saving}>
