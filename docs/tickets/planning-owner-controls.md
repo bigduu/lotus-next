@@ -9,7 +9,7 @@ Local component slice for Lotus [#375](https://github.com/bigduu/lotus-next/issu
 - `projectWorkControls.ts`: presentation types, exact Work/CAS context checks and bounded RFC3339 deadline parsing. Offset text is preserved; comparison includes nanoseconds, independent of the browser timezone or current clock. Unknown offset `-00:00`, invalid dates and leap-second values unsupported by the editor are rejected. Missing, null and invalid deadlines remain distinct. Cancelled/Accepted Work has no active overdue warning.
 - `useWorkRequestGuard.ts` / `WorkRequestFeedback.tsx`: immediate duplicate/conflicting-event guard, receipt identity checking, visible uncertain outcome and read-only reconciliation. No API client, scheduler, clock polling or durable authority is introduced.
 
-Only new component/helper/test/fixture/document files are written. `ProjectWorkBoard.tsx`, `useProjectWorkBoard.ts`, `services/tickets/projectBoard.ts`, public i18n catalogs, release files and backend code are unchanged.
+The frozen component commit `2aa970c8` only adds component/helper/test/fixture/document files. This follow-up applies the parent and public i18n seams in a second integration commit. The board hook, API client, release files and backend code remain unchanged; the ordinary production caller supplies no controls.
 
 ## Producer boundary
 
@@ -53,13 +53,15 @@ Until a producer capability is confirmed, use `current: null`, `editCapability: 
 
 Current producer gap: existing Accept does not yet enforce `Assignment.process_stopped`, and Submit may clear `active_assignment` while a process still awaits stop confirmation. Manual acceptance must remain unavailable until the separate backend/runtime slice closes that gap. Pause/Resume/Cancel/query controls also remain unavailable without their corresponding frozen capabilities.
 
-## Unapplied handoff patches
+## Parent integration and retained handoff patches
 
 - `patches/planning-controls-i18n.patch`: 71 paired English/Chinese keys plus a copy mapper; public catalogs are not edited by this slice.
 - `patches/planning-controls-parent.patch`: optional controlled props and matching-selected-Work slots in the parent board. Defaults show no controls. It deliberately adds no HTTP adapter or fabricated capabilities.
 - `patches/planning-controls.zh-CN.json`: reviewable Chinese copy mapping; English copy is in `e2e/fixtures/project-work-controls-copy.json`.
 
-Both patches pass `git apply --check` on the stated base. Applying them and implementing the real producer/query adapters is reserved for the integration owner. They have not been applied or claimed as product integration.
+Both patches passed `git apply --check` on the stated base and are retained as the original component handoff. This follow-up applies them and hardens the slots: Work ID, generation, record revision and actual state must match the canonical selected row; owner controls also match the contract/current submission. Commands outside the row scope or page sequence/authority epoch are removed. Stale controls cannot submit, and the externally controlled draft is retained. Verified owner access also gates mounting. `ProjectWorkDialog` forwards the optional controls without enabling them in its ordinary production caller.
+
+Eleven parent integration cases pass alongside the original board and 38 component cases (59 relevant tests). Two new Chinese 1440px/390px browser host cases exercise these real parent slots with explicit mock HTTP and synthetic callback receipts. They do not establish a production producer adapter or safe runtime controls. Save/query/owner capabilities remain unavailable until the corresponding producer DTO and capability have actually been verified.
 
 ## Verification scope
 
@@ -77,3 +79,5 @@ Final checks on the frozen component source (Mac, Node 26.11.1):
 - Both unapplied handoff patches passed `git apply --check`; final staged source passed `git diff --check`. Shared parent/API/i18n/release files are byte-identical to the base.
 
 These results do not establish production adapter integration, real owner authorization/CAS behavior, durable runtime ACK, provider execution or safe manual completion. Those remain separate backend/integration gates.
+
+Producer update received after component freeze: Bamboo #2054 reports a planning Draft at `268bb40dc2819b573d2202ae9158ec9497ae54ca`; its real HTTP test is not yet compiled. A separate proposed optional inspector `controls.accept_requires_stopped_assignment` is not consumed here. A future adapter may set `stopGuardEnforced=true` only for explicit implemented support, and `processStopped` only after an exact current Submission → Assignment/generation/contract join. Missing controls or an incomplete join stay unsupported/null. No Draft or service-test result alone enables manual acceptance.
