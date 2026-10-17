@@ -486,7 +486,9 @@ test("native stop evidence survives reload and a successor clears only its own d
   await page.screenshot({ path: testInfo.outputPath("native-stop-unconfirmed.png") })
   await page.reload()
   panel = page.locator("[data-actor-snapshot-panel]")
-  if (!await panel.isVisible()) panel = await openInspector(page)
+  // An open Inspector is restored for this session; wait for lazy hydration
+  // rather than clicking the now-renamed close-panel toggle during startup.
+  await expect(panel).toBeVisible()
   await expect(row()).toHaveAttribute("aria-label", /停止未确认/)
 
   current = actorSnapshotV2Fixture("stopped", rootId)
