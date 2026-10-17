@@ -53,7 +53,7 @@ export function AssignmentHealthPanel(props: AssignmentHealthPanelProps) {
     const reason = access === "denied" ? copy.sessionDenied : access === "missing" ? copy.sessionMissing : access === "accessible" ? copy.navigationUnavailable : copy.sessionUnknown
     return <div className="min-w-0 space-y-1">
       {identifier(attempt.runtime?.session_id)}
-      {canOpen ? <Button type="button" size="sm" variant="outline" className="ml-0 h-auto max-w-full whitespace-normal text-left sm:ml-2" onClick={() => props.onOpenSession!(attempt.runtime!.session_id)}>{copy.openSession}</Button>
+      {canOpen ? <Button type="button" size="sm" variant="outline" className="ml-2 h-auto max-w-full whitespace-normal text-left" onClick={() => props.onOpenSession!(attempt.runtime!.session_id)}>{copy.openSession}</Button>
         : <p className="text-xs text-muted-foreground">{reason}</p>}
     </div>
   }
@@ -76,7 +76,7 @@ export function AssignmentHealthPanel(props: AssignmentHealthPanelProps) {
     execution = observation.terminal ? "terminal_observed" : observation.execution === "running" && owner.attempt.state !== "running" ? "unknown" : observation.execution
   }
 
-  return <section aria-labelledby={titleId} className="min-w-0 rounded-xl border bg-background p-3 text-sm sm:p-4" data-testid="assignment-health-panel">
+  return <section aria-labelledby={titleId} className="min-w-0 rounded-xl border bg-background p-4 text-sm" data-testid="assignment-health-panel">
     <div className="flex flex-wrap items-start justify-between gap-2">
       <h4 id={titleId} className="font-semibold">{copy.title}</h4>
       <span className="rounded-md border px-2 py-0.5 text-xs" data-testid="assignment-source-status">{copy[status]}</span>
@@ -111,7 +111,7 @@ export function AssignmentHealthPanel(props: AssignmentHealthPanelProps) {
         : <p className="mt-2 text-muted-foreground">{status === "available" ? copy.emptyHistory : copy[status]}</p>}
     </details>
 
-    <div className="mt-4 min-w-0 border-t pt-4" data-testid="assignment-patrol">
+    <div className="mt-4 min-w-0 border-t pt-3" data-testid="assignment-patrol">
       <div className="flex flex-wrap items-center gap-2"><h5 className="font-medium">{copy.patrol}</h5><span className="rounded-md border px-2 py-0.5 text-xs">{copy[incidentStatus]}</span></div>
       <p className="mt-1 text-xs text-muted-foreground">{copy.updatedAt}: {time(props.incidents?.updatedAt)}</p>
       {incidentStatus === "unsupported" ? <p className="mt-2">{copy.patrolUnsupported}</p> : incidentStatus === "unknown" ? <p className="mt-2">{copy.staleHint}</p> : !incidents.length ? <p className="mt-2">{copy.noIncidents}</p> : null}
