@@ -88,6 +88,10 @@ export interface ChatSlice {
       retries?: number;
       retryDelayMs?: number;
       waitForAssistant?: boolean;
+      /** Opt-in read UI must distinguish failure from empty history. */
+      throwOnError?: boolean;
+      /** Fence abandoned read results; does not cancel backend execution. */
+      signal?: AbortSignal;
     },
   ) => Promise<void>;
   /**

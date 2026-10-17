@@ -32,35 +32,32 @@ function InteractiveSecondaryPane({
   pageVisible = true,
 }: InteractiveProps) {
   useUiLocale()
-  const [loadState, setLoadState] = useState<"idle" | "loading" | "error">("idle")
+  const [loadState, setLoadState] = useState<{ sessionId: string | null; status: "loading" | "ready" | "error" }>({ sessionId: null, status: "ready" })
+  const [readAttempt, setReadAttempt] = useState(0)
   const chat = useChat(sessionId, onSessionCreated)
+  const status = !sessionId ? "ready" : loadState.sessionId === sessionId ? loadState.status : "loading"
 
   useEffect(() => {
     if (!sessionId) return
-    let active = true
-    setLoadState("loading")
-    void useAppStore.getState().loadChatHistory(sessionId)
-      .then(() => { if (active) setLoadState("idle") })
-      .catch(() => { if (active) setLoadState("error") })
-    return () => { active = false }
-  }, [sessionId])
+    const controller = new AbortController()
+    setLoadState({ sessionId, status: "loading" })
+    void useAppStore.getState().loadChatHistory(sessionId, { throwOnError: true, signal: controller.signal })
+      .then(() => { if (!controller.signal.aborted) setLoadState({ sessionId, status: "ready" }) })
+      .catch(() => { if (!controller.signal.aborted) setLoadState({ sessionId, status: "error" }) })
+    return () => controller.abort()
+  }, [sessionId, readAttempt])
 
   return (
     <div className="relative flex min-h-0 flex-1">
-      {loadState === "loading" ? (
-        <div
-          className="absolute inset-x-0 top-0 z-30 h-0.5 animate-pulse bg-primary"
-          aria-label={uiText("loading_side_by_side_session_f5d66e68")}
-        />
-      ) : null}
-      {loadState === "error" ? (
-        <div role="alert" className="absolute inset-x-0 top-2 z-30 rounded-lg border border-destructive/40 bg-card px-3 py-2 text-xs text-destructive shadow">
-          {uiText("this_session_cannot_be_loaded_right_now_please_try_agai_502f5a61")}</div>
-      ) : null}
       <ChatPane
         chat={chat}
         pageVisible={pageVisible && active}
-        secondary={{ sessionId, chats, onPickSession, onClose, hideClose: true }}
+        secondary={{ sessionId, chats, onPickSession: (id) => {
+          if (id === sessionId && status === "error") setReadAttempt((attempt) => attempt + 1)
+          else onPickSession(id)
+        }, onClose, hideClose: true,
+          historyRead: { status, retry: () => { if (status === "error") setReadAttempt((attempt) => attempt + 1) } },
+        }}
         pickedWorkspace={null}
         onOpenWorkspacePicker={() => {}}
         onOpenInspector={onOpenInspector}
