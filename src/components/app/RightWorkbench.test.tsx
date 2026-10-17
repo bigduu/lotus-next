@@ -626,3 +626,52 @@ it.each(["restore", "kept-mounted", "new-control", "hidden-opener", "changed-ses
     if (scenario === "reopened") expect(document.getElementById("right-workbench")!.contains(document.activeElement)).toBe(true)
   },
 )
+
+it("releases hidden-page modal effects for Settings without remounting the workbench draft", async () => {
+  const host = document.body.appendChild(document.createElement("div")); const root = createRoot(host); roots.push(root)
+  const mounted = vi.fn(); const unmounted = vi.fn(); const close = vi.fn(); const changeTheme = vi.fn()
+  function SessionDraft() {
+    const [draft, setDraft] = useState("retained side draft")
+    useEffect(() => { mounted(); return unmounted }, [])
+    return <input aria-label="Session draft" value={draft} onChange={(event) => setDraft(event.target.value)} />
+  }
+  function Harness({ pageVisible }: { pageVisible: boolean }) {
+    return <><div data-testid="chat-shell" hidden={!pageVisible} inert={!pageVisible} aria-hidden={!pageVisible || undefined}>
+      <button aria-controls="right-workbench">Launcher</button>
+      <RightWorkbench pageVisible={pageVisible} activeTab="session" openToolTabs={["session"]}
+        onTabChange={vi.fn()} onToolClose={vi.fn()} onClose={close} inspector={null} review={null} browser={null}
+        session={<SessionDraft />} />
+    </div><section data-testid="settings"><button onClick={changeTheme}>Light theme</button></section></>
+  }
+  const render = (pageVisible: boolean) => act(() => root.render(<Harness pageVisible={pageVisible} />))
+  render(true)
+  const panel = document.getElementById("right-workbench")!
+  const input = host.querySelector<HTMLInputElement>('input[aria-label="Session draft"]')!
+  expect(document.body.style.pointerEvents).toBe("none")
+  expect(document.body.hasAttribute("data-scroll-locked")).toBe(true)
+  const settings = host.querySelector<HTMLElement>('[data-testid="settings"]')!
+  expect(settings.getAttribute("aria-hidden")).toBe("true")
+  render(false)
+  expect(document.body.style.pointerEvents).not.toBe("none")
+  expect(document.body.hasAttribute("data-scroll-locked")).toBe(false)
+  expect(settings.closest('[aria-hidden="true"]')).toBeNull()
+  expect(panel.hasAttribute("aria-modal")).toBe(false)
+  expect(document.querySelector('[data-slot="dialog-overlay"]')).toBeNull()
+  const theme = settings.querySelector<HTMLButtonElement>("button")!
+  await act(async () => { theme.focus(); theme.click() })
+  expect(document.activeElement).toBe(theme)
+  expect(changeTheme).toHaveBeenCalledTimes(1)
+  expect(close).not.toHaveBeenCalled()
+  expect(host.querySelector('input[aria-label="Session draft"]')).toBe(input)
+  expect(input.value).toBe("retained side draft")
+  render(true)
+  expect(document.getElementById("right-workbench")).toBe(panel)
+  expect(host.querySelector('input[aria-label="Session draft"]')).toBe(input)
+  expect(input.value).toBe("retained side draft")
+  expect(mounted).toHaveBeenCalledTimes(1)
+  expect(unmounted).not.toHaveBeenCalled()
+  expect(document.body.style.pointerEvents).toBe("none")
+  expect(document.body.hasAttribute("data-scroll-locked")).toBe(true)
+  act(() => theme.focus())
+  expect(panel.contains(document.activeElement)).toBe(true)
+})

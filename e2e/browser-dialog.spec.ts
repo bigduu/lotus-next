@@ -1,3 +1,4 @@
+import { workbenchPanel } from "./support/workbench.js"
 import { expectComposerText } from "./support/composer.js"
 import { expect, test } from "@playwright/test"
 import { installArtifactRuntime, standaloneScenario } from "./support/artifactRuntime.js"
@@ -126,7 +127,7 @@ test("desktop and tablet keep the shared browser frame while a person answers Ja
 
   await page.goto(standaloneScenario.entryUrl, { waitUntil: "domcontentloaded" })
   await page.getByRole("button", { name: "打开侧边面板" }).click()
-  const panel = page.getByRole("complementary", { name: "工作面板" })
+  const panel = workbenchPanel(page)
   await panel.getByRole("button", { name: /浏览器.*输入网址后打开/ }).click()
   await panel.getByRole("tab", { name: "浏览器标签页 1：Example" }).click()
   const browser = panel.getByRole("region", { name: "内置浏览器" })

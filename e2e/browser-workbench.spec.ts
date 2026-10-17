@@ -1,3 +1,4 @@
+import { workbenchPanel } from "./support/workbench.js"
 import { devices, expect, test } from "@playwright/test"
 import { readFile } from "node:fs/promises"
 import { installArtifactRuntime, standaloneScenario } from "./support/artifactRuntime.js"
@@ -125,7 +126,7 @@ test("browser workbench shares one session across human input, DOM, screenshot, 
 
   await page.goto(standaloneScenario.entryUrl, { waitUntil: "domcontentloaded" })
   await page.getByRole("button", { name: "打开侧边面板" }).click()
-  const panel = page.getByRole("complementary", { name: "工作面板" })
+  const panel = workbenchPanel(page)
   await expect(panel.getByText("还没有打开内容")).toBeVisible()
   await expect(panel.getByRole("tab")).toHaveCount(0)
   const emptyScreenshot = testInfo.outputPath(`empty-workbench-${testInfo.project.name}.png`)
@@ -240,7 +241,7 @@ test("legacy browser resumes an existing page on its first workbench open", asyn
 
   await page.goto(standaloneScenario.entryUrl, { waitUntil: "domcontentloaded" })
   await page.getByRole("button", { name: "打开侧边面板" }).click()
-  const panel = page.getByRole("complementary", { name: "工作面板" })
+  const panel = workbenchPanel(page)
   await panel.getByRole("button", { name: /浏览器.*输入网址后打开/ }).click()
   const browser = panel.getByRole("region", { name: "内置浏览器" })
   await expect(browser.getByRole("button", { name: "刷新网页" })).toBeVisible()
@@ -302,7 +303,7 @@ test("legacy tabless browser opens its page and keeps a URL draft during model n
 
   await page.goto(standaloneScenario.entryUrl, { waitUntil: "domcontentloaded" })
   await page.getByRole("button", { name: "打开侧边面板" }).click()
-  const panel = page.getByRole("complementary", { name: "工作面板" })
+  const panel = workbenchPanel(page)
   await panel.getByRole("button", { name: /浏览器.*输入网址后打开/ }).click()
   const browser = panel.getByRole("region", { name: "内置浏览器" })
   const address = browser.getByRole("textbox", { name: "网页地址" })
@@ -440,7 +441,7 @@ test("workbench tabs follow human commands and an agent-opened popup on desktop 
 
   await page.goto(standaloneScenario.entryUrl, { waitUntil: "domcontentloaded" })
   await page.getByRole("button", { name: "打开侧边面板" }).click()
-  const panel = page.getByRole("complementary", { name: "工作面板" })
+  const panel = workbenchPanel(page)
   await panel.getByRole("button", { name: /浏览器.*输入网址后打开/ }).click()
   await panel.getByRole("tab", { name: "浏览器标签页 1：Alpha" }).click()
   const browser = panel.getByRole("region", { name: "内置浏览器" })
@@ -621,7 +622,7 @@ test("phone workbench has no browser entry or browser session requests", async (
 
   await page.goto(standaloneScenario.entryUrl, { waitUntil: "domcontentloaded" })
   await page.getByRole("button", { name: "打开侧边面板" }).click()
-  const panel = page.getByRole("complementary", { name: "工作面板" })
+  const panel = workbenchPanel(page)
   await expect(panel.getByRole("tab", { name: "浏览器" })).toHaveCount(0)
   await expect(panel.getByRole("region", { name: "内置浏览器" })).toHaveCount(0)
   expect(browserRequests).toBe(0)
@@ -673,7 +674,7 @@ test("iPhone landscape workbench has no browser entry or browser session request
 
     await page.goto(standaloneScenario.entryUrl, { waitUntil: "domcontentloaded" })
     await page.getByRole("button", { name: "打开侧边面板" }).click()
-    const panel = page.getByRole("complementary", { name: "工作面板" })
+    const panel = workbenchPanel(page)
     await expect(panel.getByRole("tab", { name: "浏览器" })).toHaveCount(0)
     await expect(panel.getByRole("region", { name: "内置浏览器" })).toHaveCount(0)
     await page.waitForTimeout(200)
