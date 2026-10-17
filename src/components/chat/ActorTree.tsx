@@ -33,7 +33,7 @@ const PLACEMENT_LABEL: Record<ActorTreeNode["placement"], string> = {
   get remote() { return uiText("remote_edca84b9") },
   get container() { return uiText("container_6d23f04b") },
   get scheduled() { return uiText("pending_scheduling_d8eb0fb8") },
-  get unknown() { return uiText("unknown_location_b9ac919c") },
+  get unknown() { return uiText("actor_placement_not_reported") },
 }
 
 const HEALTH_LABEL: Record<ActorHealth, string> = {
@@ -276,6 +276,11 @@ export function ActorTree({
                 : LIFECYCLE_LABEL[node.lifecycle]
               const stopWarning = node.localTaskDiagnostic === "stop_unconfirmed" && node.lifecycle !== "unknown"
                 ? uiText("native_task_stop_unconfirmed") : null
+              const placementDescription = node.placement === "unknown"
+                ? uiText(node.placementUnavailableReason === "no_activation" ? "actor_placement_no_activation"
+                  : node.placementUnavailableReason === "native_task" ? "actor_placement_native_task"
+                  : "actor_placement_missing")
+                : undefined
               const health = node.health === null ? uiText("health_unknown_d7b6f7ae") : HEALTH_LABEL[node.health]
               return (
                 <div
@@ -293,6 +298,7 @@ export function ActorTree({
                     lifecycle, stopWarning, PLACEMENT_LABEL[node.placement], health, ...counts,
                     unread ? uiText("has_unread_messages") : null,
                   ].filter(Boolean).join(uiText("list_separator"))}
+                  aria-description={placementDescription}
                   data-actor-id={node.actorId}
                   className={cn(
                     "absolute left-0 top-0 flex h-16 w-full cursor-pointer items-center gap-2 overflow-hidden border-b px-2 text-left text-sm hover:bg-accent/50",
@@ -316,7 +322,7 @@ export function ActorTree({
                       {unread ? <span className="size-1.5 shrink-0 rounded-full bg-primary" aria-hidden="true" /> : null}
                     </span>
                     <span className="block truncate text-xs text-muted-foreground">
-                      {node.role || uiText("agent_5e84ea61")} · {lifecycle}{stopWarning ? ` · ${stopWarning}` : ""} · {PLACEMENT_LABEL[node.placement]} · {health}
+                      {node.role || uiText("agent_5e84ea61")} · {lifecycle}{stopWarning ? ` · ${stopWarning}` : ""} · <span data-actor-placement title={placementDescription}>{PLACEMENT_LABEL[node.placement]}</span> · {health}
                       {counts.length ? ` · ${counts.join(" · ")}` : ""}
                     </span>
                   </span>

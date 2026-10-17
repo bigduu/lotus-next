@@ -129,3 +129,17 @@ it("renders truthful Environment details without a popup portal", async () => {
   expect(previewImage).toHaveBeenCalledExactlyOnceWith(previewUrl)
   expect(document.querySelector("[data-radix-popper-content-wrapper]")).toBeNull()
 })
+
+it("keeps workspace paths separate from an unreported execution location", async () => {
+  const host = document.body.appendChild(document.createElement("div"))
+  const root = createRoot(host)
+  roots.push(root)
+  await act(async () => root.render(
+    <EnvironmentCard id="missing-placement" workspace="/Users/example/project"
+      changedFiles={0} addedLines={0} removedLines={0} sources={[]}
+      onOpenReview={vi.fn()} onPreviewImage={vi.fn()} />,
+  ))
+  expect(host.textContent).toContain("/Users/example/project")
+  expect(host.textContent).toContain("运行位置未确认")
+  expect(host.textContent).not.toContain("Local")
+})

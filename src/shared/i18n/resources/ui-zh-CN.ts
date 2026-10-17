@@ -2121,5 +2121,9 @@ export const uiZhCn = {
   "context_cache_detail": "{{context}}；{{cache}}",
   "enable_action": "启用",
   "pinned_section": "置顶",
-  "root_session_label": "根会话"
+  "root_session_label": "根会话",
+  "actor_placement_not_reported": "运行位置未报告",
+  "actor_placement_no_activation": "此快照没有执行激活记录。工作目录路径或会话主机不能证明此代理的执行位置。",
+  "actor_placement_native_task": "已观察到原生任务活动，但后端尚未报告其执行位置，不能据此确定具体计算机。",
+  "actor_placement_missing": "后端尚未报告此次执行的位置。会话主机和工作目录是独立信息。"
 } as const

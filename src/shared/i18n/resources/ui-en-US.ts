@@ -2121,5 +2121,9 @@ export const uiEnUs = {
   "context_cache_detail": "{{context}}; {{cache}}",
   "enable_action": "Enable",
   "pinned_section": "Pinned",
-  "root_session_label": "Root session"
+  "root_session_label": "Root session",
+  "actor_placement_not_reported": "Location not reported",
+  "actor_placement_no_activation": "This snapshot has no execution activation record. A workspace path or session host does not establish where this actor executes.",
+  "actor_placement_native_task": "Native task activity was observed, but the backend has not reported its execution placement. This does not identify a physical computer.",
+  "actor_placement_missing": "The backend has not reported placement for this execution. The session host and workspace are separate information."
 } as const

@@ -3,6 +3,8 @@ import { createRoot, type Root } from "react-dom/client"
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest"
 
 import { applyActorTopologySnapshot, emptyActorTopology, type ActorTopologyRow, type ActorTopologyState } from "@/services/chat/actorTopology"
+import { actorSnapshotFixture, actorSnapshotV2Fixture } from "@/test/fixtures/actorSnapshot"
+import { actorSnapshotTree, parseActorSnapshot } from "@/services/chat/actorSnapshot"
 import { ActorTree, type ActorTreeProps } from "./ActorTree"
 
 const roots: Root[] = []
@@ -67,6 +69,24 @@ function key(container: HTMLElement, value: string) {
 }
 
 describe("ActorTree", () => {
+  it("explains missing execution placement without treating native tasks or session identity as Local", () => {
+    const source = actorSnapshotV2Fixture()
+    const { container, rerender } = renderTree({ topology: actorSnapshotTree(parseActorSnapshot(source, "root")) })
+    const root = treeItem(container, "root")!
+    const child = treeItem(container, "actor-0")!
+    expect(root.textContent).toContain("运行位置未报告")
+    expect(root.getAttribute("aria-description")).toContain("没有执行激活记录")
+    expect(child.textContent).toContain("运行位置未报告")
+    expect(child.getAttribute("aria-description")).toContain("已观察到原生任务活动")
+    expect(child.querySelector("[data-actor-placement]")?.getAttribute("title")).toBe(child.getAttribute("aria-description"))
+    expect(child.querySelector("[data-actor-placement]")?.textContent).not.toContain("本地")
+
+    const reported = actorSnapshotFixture("root", 1)
+    rerender({ topology: actorSnapshotTree(parseActorSnapshot(reported, "root")) })
+    expect(treeItem(container, "actor-0")?.querySelector("[data-actor-placement]")?.textContent).toBe("远端")
+    expect(treeItem(container, "actor-0")?.hasAttribute("aria-description")).toBe(false)
+  })
+
   it("expands a depth-four hierarchy with tree keyboard semantics and retains controlled selection after a snapshot", () => {
     const actors = [row("root", null), row("a", "root"), row("b", "a"), row("c", "b")]
     const first = snapshot(actors)
