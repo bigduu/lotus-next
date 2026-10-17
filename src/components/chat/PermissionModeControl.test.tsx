@@ -5,8 +5,9 @@ import { agentClient, SessionPermissionContractError, type SessionPermissionSnap
 import { ApiError, NetworkRequestError, RequestTimeoutError } from "@services/api"
 import { useAppStore } from "@shared/store/appStore"
 import { sessionSummaryToChatItem } from "@shared/store/appStore/slices/chatSessionSlice/messageMapping"
+import { useNewSessionPermission } from "@shared/store/newSessionPermission"
 import i18n, { changeLocale, i18nReady } from "@shared/i18n"
-import { PermissionModeControl } from "./PermissionModeControl"
+import { NewSessionPermissionControl, PermissionModeControl } from "./PermissionModeControl"
 
 const read = vi.fn<typeof agentClient.getSessionPermissionMode>()
 const patch = vi.fn<typeof agentClient.patchSessionPermissionMode>()
@@ -29,7 +30,7 @@ const deferred = <T,>() => {
   return { promise, resolve, reject }
 }
 const selector = () => {
-  const select = document.querySelector<HTMLSelectElement>("select")
+  const select = document.querySelector<HTMLButtonElement>('[role="combobox"]')
   if (!select) throw new Error("Permission mode selector is missing")
   return select
 }
@@ -38,10 +39,23 @@ const button = (name: string) => {
   if (!found) throw new Error(`Button ${name} is missing`)
   return found
 }
-const choose = (mode: string) => act(() => {
-  selector().value = mode
-  selector().dispatchEvent(new Event("change", { bubbles: true }))
+const openOptions = () => act(() => {
+  selector().dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }))
 })
+const choose = (mode: string) => {
+  if (selector().disabled) return
+  openOptions()
+  act(() => {
+    const option = [...document.querySelectorAll<HTMLElement>('[role="option"]')]
+      .find((item) => item.textContent?.toLowerCase() === mode)
+    if (!option) throw new Error(`Permission option ${mode} is missing`)
+    option.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }))
+  })
+}
+const selectedMode = () => {
+  const text = selector().textContent?.toLowerCase() ?? ""
+  return ["default", "bypass", "auto"].includes(text) ? text : ""
+}
 const click = (name: string) => act(() => button(name).click())
 const flush = () => act(async () => { await Promise.resolve(); await Promise.resolve() })
 async function mount(id = "a", compact = false) {
@@ -55,6 +69,7 @@ async function mount(id = "a", compact = false) {
 }
 
 beforeEach(async () => {
+  Object.defineProperty(HTMLElement.prototype, "scrollIntoView", { configurable: true, value: vi.fn() })
   await i18nReady; await changeLocale("en-US")
   useAppStore.getState().resetSessionPermissionModes()
   useAppStore.setState({ chats: [summary("a"), summary("b")].map(sessionSummaryToChatItem), currentSessionId: "a" })
@@ -74,13 +89,13 @@ describe("PermissionModeControl", () => {
     useAppStore.setState({ chats: [] })
     await mount("a", true)
     expect(read).not.toHaveBeenCalled()
-    expect(selector().selectedOptions[0].text).not.toContain("Checking")
+    expect(selector().textContent).not.toContain("Checking")
     await act(async () => {
       useAppStore.setState({ chats: [sessionSummaryToChatItem(summary("a"))] })
     })
     await flush()
     expect(read).toHaveBeenCalledExactlyOnceWith("a")
-    expect(selector().value).toBe("default")
+    expect(selectedMode()).toBe("default")
     expect(selector().disabled).toBe(false)
   })
 
@@ -93,10 +108,50 @@ describe("PermissionModeControl", () => {
     expect(section?.dataset.variant).toBe("composer")
     expect(help?.className).toContain("sr-only")
     expect(section?.getAttribute("title")).toBe(help?.textContent)
-    expect(selector().className).toContain("appearance-none")
-    expect(selector().className).toContain("[text-align-last:center]")
+    expect(selector().tagName).toBe("BUTTON")
+    expect(selector().dataset.slot).toBe("select-trigger")
     expect(selector().className).toContain("w-[4.5rem]")
-    expect(section?.querySelector("[data-permission-chevron]")).not.toBeNull()
+    expect(selector().querySelector("svg")).not.toBeNull()
+  })
+
+  it("opens themed options with the keyboard and cancels without changing permissions", async () => {
+    await mount("a", true)
+    act(() => selector().focus())
+    openOptions()
+    const list = document.querySelector<HTMLElement>('[role="listbox"]')!
+    expect(list.dataset.slot).toBe("select-content")
+    expect(list.className).toContain("bg-popover")
+    expect(list.className).toContain("text-popover-foreground")
+    expect([...list.querySelectorAll('[role="option"]')].map((item) => item.textContent)).toEqual(["Default", "Bypass", "Auto"])
+    expect(list.querySelector('[data-state="checked"]')?.textContent).toBe("Default")
+    act(() => list.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })))
+    await flush()
+    expect(document.querySelector('[role="listbox"]')).toBeNull()
+    await vi.waitFor(() => expect(document.activeElement).toBe(selector()))
+    expect(selectedMode()).toBe("default")
+    expect(patch).not.toHaveBeenCalled()
+  })
+
+  it("uses the same themed choices for the next session without mutating existing sessions", async () => {
+    const refresh = vi.fn(async () => {})
+    const originalRefresh = useNewSessionPermission.getState().refresh
+    useNewSessionPermission.setState({ mode: "bypass", refresh })
+    const container = document.body.appendChild(document.createElement("div"))
+    const root = createRoot(container); roots.push(root)
+    try {
+      await act(async () => root.render(<NewSessionPermissionControl />))
+      expect(selectedMode()).toBe("bypass")
+      expect(refresh).toHaveBeenCalledOnce()
+      choose("default")
+      expect(useNewSessionPermission.getState().mode).toBe("default")
+      choose("auto")
+      expect(selectedMode()).toBe("auto")
+      expect(useNewSessionPermission.getState().mode).toBe("auto")
+      expect(patch).not.toHaveBeenCalled()
+      expect(read).not.toHaveBeenCalled()
+    } finally {
+      useNewSessionPermission.setState({ mode: "default", refresh: originalRefresh })
+    }
   })
 
   it.each(["en-US", "zh-CN"] as const)("registers all permission copy in the actual %s chat namespace", async (locale) => {
@@ -112,18 +167,17 @@ describe("PermissionModeControl", () => {
     const pending = deferred<SessionPermissionSnapshot>(); read.mockReturnValueOnce(pending.promise)
     await mount()
     expect(selector().getAttribute("aria-label")).toBe("Permission mode")
-    expect(selector().disabled).toBe(true); expect(selector().value).toBe("")
-    expect([...selector().options].slice(1).map((option) => option.text)).toEqual(["Default", "Bypass", "Auto"])
+    expect(selector().disabled).toBe(true); expect(selectedMode()).toBe("")
     expect(patch).not.toHaveBeenCalled()
     await act(async () => { pending.resolve(snapshot()); await pending.promise })
-    expect(selector().disabled).toBe(false); expect(selector().value).toBe("default")
+    expect(selector().disabled).toBe(false); expect(selectedMode()).toBe("default")
   })
 
   it("makes missing/unknown typed support visibly unavailable instead of inferring Auto", async () => {
     read.mockRejectedValueOnce(new SessionPermissionContractError())
     await mount()
-    expect(selector().disabled).toBe(true); expect(selector().value).toBe("")
-    expect(selector().selectedOptions[0].text).toBe("Unavailable")
+    expect(selector().disabled).toBe(true); expect(selectedMode()).toBe("")
+    expect(selector().textContent).toBe("Unavailable")
     expect(document.querySelector('[role="alert"]')?.textContent).toContain("never interpreted as Auto")
     expect(patch).not.toHaveBeenCalled()
   })
@@ -139,7 +193,7 @@ describe("PermissionModeControl", () => {
     expect(selector().disabled).toBe(true)
     read.mockResolvedValueOnce(snapshot())
     await click("Refresh mode"); await flush()
-    expect(selector().value).toBe("default")
+    expect(selectedMode()).toBe("default")
     expect(error.isConnected).toBe(false)
   })
 
@@ -155,13 +209,12 @@ describe("PermissionModeControl", () => {
   it("keeps the confirmed mode selected while saving and retains forced-confirmation Bypass copy", async () => {
     const pending = deferred<SessionPermissionSnapshot>(); patch.mockReturnValueOnce(pending.promise)
     await mount(); choose("bypass")
-    expect(patch).not.toHaveBeenCalled()
     await flush()
     expect(patch).toHaveBeenCalledExactlyOnceWith("a", "bypass", '"7"')
-    expect(selector().value).toBe("default"); expect(selector().disabled).toBe(true)
+    expect(selectedMode()).toBe("default"); expect(selector().disabled).toBe(true)
     expect(document.querySelector('[role="status"]')?.textContent).toBe("Saving mode…")
     await act(async () => { pending.resolve(snapshot("bypass", '"8"')); await pending.promise })
-    expect(selector().value).toBe("bypass"); expect(selector().disabled).toBe(false)
+    expect(selectedMode()).toBe("bypass"); expect(selector().disabled).toBe(false)
     expect(document.body.textContent).toContain("forced confirmations still ask")
   })
 
@@ -172,7 +225,7 @@ describe("PermissionModeControl", () => {
     expect(dialog?.textContent).toContain("Session a")
     expect(dialog?.textContent).toContain("Plan/Guardian")
     expect(document.activeElement).toBe(button("Cancel"))
-    expect(patch).not.toHaveBeenCalled(); expect(selector().value).toBe("default")
+    expect(patch).not.toHaveBeenCalled(); expect(selectedMode()).toBe("default")
     click("Cancel"); await flush()
     expect(document.querySelector('[role="dialog"]')).toBeNull()
     await vi.waitFor(() => expect(document.activeElement).toBe(selector())); expect(patch).not.toHaveBeenCalled()
@@ -185,7 +238,7 @@ describe("PermissionModeControl", () => {
     expect(patch).toHaveBeenCalledExactlyOnceWith("a", "auto", '"7"')
     expect(selector().disabled).toBe(true)
     await act(async () => { pending.resolve(snapshot("auto", '"8"')); await pending.promise })
-    expect(selector().value).toBe("auto")
+    expect(selectedMode()).toBe("auto")
     expect(document.body.textContent).toContain("no approval prompts, including forced confirmations")
     expect(document.body.textContent).toContain("OS/sandbox limits still apply")
   })
@@ -205,7 +258,7 @@ describe("PermissionModeControl", () => {
     choose("auto"); click("Enable Auto"); await flush()
     expect(patch).toHaveBeenCalledExactlyOnceWith("a", "auto", '"8"')
     expect(read).toHaveBeenCalledTimes(2)
-    expect(selector().value).toBe("auto"); expect(selector().disabled).toBe(false)
+    expect(selectedMode()).toBe("auto"); expect(selector().disabled).toBe(false)
     expect(document.querySelector('[role="dialog"]')).toBeNull()
   })
 
@@ -214,7 +267,7 @@ describe("PermissionModeControl", () => {
     read.mockResolvedValueOnce(snapshot("bypass", '"8"'))
     choose("auto"); click("Enable Auto"); await flush()
     expect(patch).not.toHaveBeenCalled()
-    expect(selector().value).toBe("bypass"); expect(selector().disabled).toBe(false)
+    expect(selectedMode()).toBe("bypass"); expect(selector().disabled).toBe(false)
     expect(document.querySelector('[role="alert"]')?.textContent).toContain("changed while you were choosing")
     expect(document.querySelector('[role="dialog"]')).toBeNull()
   })
@@ -224,7 +277,7 @@ describe("PermissionModeControl", () => {
     patch.mockRejectedValueOnce(new ApiError("Conflict", 412, "Precondition Failed"))
     read.mockResolvedValueOnce(snapshot()).mockResolvedValueOnce(snapshot("auto", '"9"'))
     choose("bypass"); await flush()
-    expect(selector().value).toBe("auto"); expect(selector().disabled).toBe(false)
+    expect(selectedMode()).toBe("auto"); expect(selector().disabled).toBe(false)
     expect(document.querySelector('[role="alert"]')?.textContent).toContain("session changed elsewhere")
     expect(patch).toHaveBeenCalledTimes(1)
   })
@@ -234,12 +287,12 @@ describe("PermissionModeControl", () => {
     patch.mockRejectedValueOnce(new NetworkRequestError())
     read.mockResolvedValueOnce(snapshot()).mockRejectedValueOnce(new NetworkRequestError())
     choose("auto"); click("Enable Auto"); await flush()
-    expect(selector().disabled).toBe(true); expect(selector().value).toBe("")
-    expect(selector().selectedOptions[0].text).toBe("Unconfirmed")
+    expect(selector().disabled).toBe(true); expect(selectedMode()).toBe("")
+    expect(selector().textContent).toBe("Unconfirmed")
     expect(document.querySelector('[role="alert"]')?.textContent).toContain("current permission mode could not be confirmed")
     read.mockResolvedValueOnce(snapshot("auto", '"8"'))
     click("Refresh mode"); await flush()
-    expect(selector().disabled).toBe(false); expect(selector().value).toBe("auto")
+    expect(selector().disabled).toBe(false); expect(selectedMode()).toBe("auto")
     expect(patch).toHaveBeenCalledTimes(1)
   })
 
@@ -247,9 +300,9 @@ describe("PermissionModeControl", () => {
     const pending = deferred<SessionPermissionSnapshot>(); patch.mockReturnValueOnce(pending.promise)
     const { render } = await mount(); choose("auto"); click("Enable Auto")
     await render("b")
-    expect(selector().value).toBe("default"); expect(selector().disabled).toBe(false)
+    expect(selectedMode()).toBe("default"); expect(selector().disabled).toBe(false)
     await act(async () => { pending.resolve(snapshot("auto", '"8"')); await pending.promise })
-    expect(selector().value).toBe("default")
+    expect(selectedMode()).toBe("default")
     expect(useAppStore.getState().chats.find((chat) => chat.id === "a")?.config.permissionMode).toBe("auto")
     expect(patch.mock.calls).toEqual([["a", "auto", '"7"']])
   })
@@ -259,7 +312,7 @@ describe("PermissionModeControl", () => {
     expect(document.querySelector('[role="dialog"]')).not.toBeNull()
     await render("b"); await render("a")
     expect(document.querySelector('[role="dialog"]')).toBeNull()
-    expect(selector().value).toBe("default"); expect(patch).not.toHaveBeenCalled()
+    expect(selectedMode()).toBe("default"); expect(patch).not.toHaveBeenCalled()
   })
 
   it("invalidates the Auto dialog if the authoritative ETag changes before confirmation", async () => {
@@ -267,7 +320,7 @@ describe("PermissionModeControl", () => {
     read.mockResolvedValueOnce(snapshot("bypass", '"8"'))
     await act(async () => { await useAppStore.getState().refreshSessionPermissionMode("a") })
     expect(document.querySelector('[role="dialog"]')).toBeNull()
-    expect(selector().value).toBe("bypass"); expect(patch).not.toHaveBeenCalled()
+    expect(selectedMode()).toBe("bypass"); expect(patch).not.toHaveBeenCalled()
   })
 
   it("localizes risk and error text while keeping all three explicit mode names", async () => {
@@ -276,6 +329,5 @@ describe("PermissionModeControl", () => {
     expect(selector().getAttribute("aria-label")).toBe("权限模式")
     expect(document.querySelector('[role="dialog"]')?.textContent).toContain("为当前会话启用 Auto？")
     expect(button("启用 Auto")).toBeTruthy(); expect(button("取消")).toBeTruthy()
-    expect([...selector().options].slice(1).map((option) => option.text)).toEqual(["Default", "Bypass", "Auto"])
   })
 })

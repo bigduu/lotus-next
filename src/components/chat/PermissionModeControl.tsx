@@ -1,25 +1,26 @@
 import { useEffect, useId, useRef, useState } from "react"
 import { useTranslation } from "react-i18next"
-import { ChevronDown, ShieldAlert } from "lucide-react"
+import { ShieldAlert } from "lucide-react"
 import { useAppStore } from "@shared/store/appStore"
 import { parseSessionPermissionMode, sessionPermissionRevision } from "@services/chat/AgentService"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { cn } from "@/lib/utils"
 import { useNewSessionPermission } from "@shared/store/newSessionPermission"
 
 type Props = { sessionId: string; title: string; compact?: boolean }
 
 const compactPermissionSelectClassName =
-  "h-8 w-[4.5rem] appearance-none rounded-md border-0 bg-transparent py-0 pl-1 pr-4 text-center text-xs font-medium [text-align-last:center] outline-none focus-visible:ring-2 focus-visible:ring-ring"
+  "h-8 w-[4.5rem] gap-0.5 rounded-md border-0 bg-transparent px-1 py-0 text-xs font-medium shadow-none dark:bg-transparent dark:hover:bg-transparent [&_svg]:size-3"
 
-function CompactPermissionChevron() {
+function PermissionModeOptions() {
   return (
-    <ChevronDown
-      data-permission-chevron
-      aria-hidden
-      className="pointer-events-none absolute right-1 top-1/2 size-3 -translate-y-1/2 text-muted-foreground"
-    />
+    <SelectContent side="top" align="start">
+      <SelectItem value="default">Default</SelectItem>
+      <SelectItem value="bypass">Bypass</SelectItem>
+      <SelectItem value="auto">Auto</SelectItem>
+    </SelectContent>
   )
 }
 
@@ -39,7 +40,7 @@ function SessionPermissionControl({ sessionId, title, compact = false }: Props) 
   const change = useAppStore((state) => state.changeSessionPermissionMode)
   const needsRead = !request
   const [confirmation, setConfirmation] = useState<{ etag: string } | null>(null)
-  const selectRef = useRef<HTMLSelectElement>(null)
+  const selectRef = useRef<HTMLButtonElement>(null)
   const cancelRef = useRef<HTMLButtonElement>(null)
 
   useEffect(() => {
@@ -67,34 +68,32 @@ function SessionPermissionControl({ sessionId, title, compact = false }: Props) 
       <div className={cn("flex flex-wrap items-center", compact ? "gap-1 rounded-md px-1 transition-colors hover:bg-accent" : "gap-x-3 gap-y-1.5")}>
         {compact ? <ShieldAlert className={cn("size-3.5 shrink-0", confirmed && mode === "auto" ? "text-amber-500" : "text-muted-foreground")} aria-hidden /> : null}
         <label htmlFor={labelId} className={compact ? "sr-only" : "text-xs font-medium"}>{t("chat.permissionMode.label")}</label>
-        <div className={compact ? "relative shrink-0" : "contents"}>
-          <select
+        <Select
+          disabled={!ready}
+          value={confirmed ? mode! : ""}
+          onValueChange={(value) => {
+            const nextMode = parseSessionPermissionMode(value)
+            if (!ready || !etag || !nextMode || nextMode === mode) return
+            if (nextMode === "auto") setConfirmation({ etag })
+            else void change(sessionId, nextMode, etag)
+          }}
+        >
+          <SelectTrigger
             ref={selectRef}
             id={labelId}
             aria-label={t("chat.permissionMode.label")}
             aria-describedby={`${labelId}-help${request?.error ? ` ${labelId}-error` : ""}`}
-            disabled={!ready}
-            value={confirmed ? mode! : ""}
+            size={compact ? "sm" : "default"}
             className={cn(
-              compact
-                ? `${compactPermissionSelectClassName} disabled:cursor-not-allowed disabled:opacity-70`
-                : "h-9 max-w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-70",
+              compact ? compactPermissionSelectClassName : "max-w-full bg-background",
+              "disabled:opacity-70",
               confirmed && mode === "auto" && (compact ? "text-amber-700 dark:text-amber-400" : "border-amber-500 text-amber-700 dark:text-amber-400"),
             )}
-            onChange={(event) => {
-              const nextMode = parseSessionPermissionMode(event.currentTarget.value)
-              if (!ready || !etag || !nextMode || nextMode === mode) return
-              if (nextMode === "auto") setConfirmation({ etag })
-              else void change(sessionId, nextMode, etag)
-            }}
           >
-            <option value="" disabled>{unavailableLabel}</option>
-            <option value="default">Default</option>
-            <option value="bypass">Bypass</option>
-            <option value="auto">Auto</option>
-          </select>
-          {compact ? <CompactPermissionChevron /> : null}
-        </div>
+            <SelectValue placeholder={unavailableLabel} />
+          </SelectTrigger>
+          <PermissionModeOptions />
+        </Select>
         <span role="status" className={compact ? "sr-only" : "text-xs text-muted-foreground"}>
           {saving ? t("chat.permissionMode.saving") : busy ? t("chat.permissionMode.loading") : null}
         </span>
@@ -154,32 +153,32 @@ export function NewSessionPermissionControl() {
   }, [refresh])
 
   return (
-    <label
+    <div
       className="flex min-w-0 items-center gap-1 rounded-md px-1 transition-colors hover:bg-accent"
       data-permission-scope="new-session"
       title={t(`chat.permissionMode.help.${mode}`)}
     >
       <ShieldAlert className={cn("size-3.5 shrink-0", mode === "auto" ? "text-amber-500" : "text-muted-foreground")} aria-hidden />
       <span className="sr-only">{t("chat.permissionMode.label")}</span>
-      <span className="relative shrink-0">
-        <select
+      <Select
+        value={mode}
+        onValueChange={(value) => {
+          const nextMode = parseSessionPermissionMode(value)
+          if (nextMode) setMode(nextMode)
+        }}
+      >
+        <SelectTrigger
           aria-label={t("chat.permissionMode.label")}
-          value={mode}
-          onChange={(event) => {
-            const nextMode = parseSessionPermissionMode(event.currentTarget.value)
-            if (nextMode) setMode(nextMode)
-          }}
+          size="sm"
           className={cn(
             compactPermissionSelectClassName,
             mode === "auto" && "text-amber-700 dark:text-amber-400",
           )}
         >
-          <option value="default">Default</option>
-          <option value="bypass">Bypass</option>
-          <option value="auto">Auto</option>
-        </select>
-        <CompactPermissionChevron />
-      </span>
-    </label>
+          <SelectValue />
+        </SelectTrigger>
+        <PermissionModeOptions />
+      </Select>
+    </div>
   )
 }
