@@ -1,3 +1,4 @@
+import type { WorkbenchTabDrag } from "./workbenchSurfaceContext"
 import { act, lazy, StrictMode, Suspense, useEffect, useRef, useState } from "react"
 import { createPortal } from "react-dom"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
@@ -817,12 +818,13 @@ it.each([false, true])("cancels a keyboard tab drag before allowing Escape to di
 it.each(["unmount", "settings", "session"])("cancels a tab drag on %s without leaving Escape disabled", async (change) => {
   const host = document.body.appendChild(document.createElement("div")); const root = createRoot(host); roots.push(root)
   const close = vi.fn(); const reorder = vi.fn()
+  const dragRef = { current: null as WorkbenchTabDrag | null }
   vi.stubGlobal("matchMedia", () => ({ matches: true, addEventListener() {}, removeEventListener() {} }))
   vi.stubGlobal("IntersectionObserver", class { observe() {} unobserve() {} disconnect() {} })
   Object.defineProperty(document, "getAnimations", { configurable: true, value: () => [] })
   Object.defineProperty(Element.prototype, "getAnimations", { configurable: true, value: () => [] })
   const render = (changed: boolean) => act(async () => root.render(
-    <RightWorkbenchSurface visible={!(changed && change === "unmount")} pageVisible={!(changed && change === "settings")}
+    <RightWorkbenchSurface tabDragRef={dragRef} visible={!(changed && change === "unmount")} pageVisible={!(changed && change === "settings")}
       focusScopeKey={changed && change === "session" ? "next" : "original"} onClose={close}>
       {changed && change === "unmount" ? null : <RightWorkbenchContent activeTab="session" openToolTabs={["review", "session"]}
         onTabChange={vi.fn()} onToolClose={vi.fn()} onClose={close} onTabReorder={reorder}
@@ -837,8 +839,11 @@ it.each(["unmount", "settings", "session"])("cancels a tab drag on %s without le
     handle.dispatchEvent(new KeyboardEvent("keydown", { key: " ", code: "Space", bubbles: true, cancelable: true }))
   })
   await vi.waitFor(() => expect(handle.parentElement!.style.opacity).toBe("0.6"))
+  expect(dragRef.current?.getSourceId()).toBe(handle.dataset.workbenchTabHandle)
   await render(true)
+  expect(dragRef.current?.getSourceId() ?? null).toBeNull()
   await render(false)
+  expect(dragRef.current?.getSourceId() ?? null).toBeNull()
   if (change !== "unmount") expect(host.querySelector('input[aria-label="Draft"]')).toBe(draft)
   expect(host.querySelector<HTMLInputElement>('input[aria-label="Draft"]')!.value).toBe("Retained")
   expect(reorder).not.toHaveBeenCalled()
@@ -856,13 +861,14 @@ it.each(["initializing", "dragging", "move-key"])("cancels the drag sensor when 
   Object.defineProperty(Element.prototype, "getAnimations", { configurable: true, value: () => [] })
   function Harness() {
     const [palette, setPalette] = useState(false)
+    const dragRef = useRef<WorkbenchTabDrag | null>(null)
     const returnTarget = useRef<() => HTMLElement | null>(() => null)
     useEffect(() => {
-      const key = (event: KeyboardEvent) => { if (event.ctrlKey && event.key === "k") { event.preventDefault(); returnTarget.current = captureWorkbenchFocusReturn(document.activeElement as HTMLElement, "session", () => "session"); setPalette(true) } }
+      const key = (event: KeyboardEvent) => { if (event.ctrlKey && event.key === "k") { event.preventDefault(); returnTarget.current = captureWorkbenchFocusReturn(document.activeElement as HTMLElement, "session", () => "session", dragRef.current?.getSourceId()); setPalette(true) } }
       window.addEventListener("keydown", key)
       return () => window.removeEventListener("keydown", key)
     }, [])
-    return <><RightWorkbench interactionSuspended={palette} activeTab="session" openToolTabs={["review", "session"]}
+    return <><RightWorkbench tabDragRef={dragRef} interactionSuspended={palette} activeTab="session" openToolTabs={["review", "session"]}
       onTabChange={vi.fn()} onToolClose={vi.fn()} onClose={close} onTabReorder={reorder}
       inspector={null} review={null} browser={null} session={<input aria-label="Draft" defaultValue="Retained" />} />
       <CommandPalette getReturnFocusTarget={returnTarget.current} open={palette} chats={[]} onClose={() => setPalette(false)} onSelect={vi.fn()} onNewChat={vi.fn()} onSettings={vi.fn()} /></>
@@ -870,7 +876,7 @@ it.each(["initializing", "dragging", "move-key"])("cancels the drag sensor when 
   await act(async () => root.render(<StrictMode><Harness /></StrictMode>))
   const handle = host.querySelector<HTMLButtonElement>('button[aria-keyshortcuts]')!
   const draft = host.querySelector<HTMLInputElement>('input[aria-label="Draft"]')!
-  const command = () => handle.dispatchEvent(new KeyboardEvent("keydown", { key: "k", code: "KeyK", ctrlKey: true, bubbles: true, cancelable: true }))
+  const command = () => document.activeElement!.dispatchEvent(new KeyboardEvent("keydown", { key: "k", code: "KeyK", ctrlKey: true, bubbles: true, cancelable: true }))
   await act(async () => {
     handle.focus()
     handle.dispatchEvent(new KeyboardEvent("keydown", { key: " ", code: "Space", bubbles: true, cancelable: true }))
@@ -883,6 +889,8 @@ it.each(["initializing", "dragging", "move-key"])("cancels the drag sensor when 
       await act(async () => handle.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", code: "ArrowRight", bubbles: true, cancelable: true })))
       await act(async () => { await new Promise((resolve) => requestAnimationFrame(resolve)) })
       expect(document.querySelector("[data-dnd-placeholder]")).not.toBeNull()
+      // Real Chromium loses handle focus after moving the drag preview.
+      act(() => host.querySelector<HTMLElement>("#right-workbench")!.focus())
     }
     await act(async () => command())
   }

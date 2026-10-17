@@ -1,5 +1,5 @@
 import { uiText, useUiLocale } from "@shared/i18n/ui"
-import { useEffect, useLayoutEffect, useRef, useState, type ComponentProps, type ReactNode } from "react"
+import { useEffect, useLayoutEffect, useRef, useState, type ComponentProps, type ReactNode, type RefObject } from "react"
 import { DragDropProvider, useDragDropManager } from "@dnd-kit/react"
 import { isSortable, useSortable } from "@dnd-kit/react/sortable"
 import { ArrowLeft, Bot, FileDiff, Globe2, GripVertical, Plus, SlidersHorizontal, X, ListChecks, ChevronDown } from "lucide-react"
@@ -18,7 +18,7 @@ import { visibleWorkbenchTabIds } from "@/lib/workbenchTabs"
 import { cn } from "@/lib/utils"
 import { RightWorkbenchSurface } from "./RightWorkbenchSurface"
 import { workbenchSensors } from "./workbenchSensors"
-import { useWorkbenchTabDrag } from "./workbenchSurfaceContext"
+import { type WorkbenchTabDrag, useWorkbenchTabDrag } from "./workbenchSurfaceContext"
 import type { BrowserTabSummary } from "@services/browser/types"
 
 export type RightWorkbenchTab = "inspector" | "review" | "browser" | "session" | "work"
@@ -93,9 +93,13 @@ function WorkbenchTabDragLifecycle() {
   const drag = useWorkbenchTabDrag()
   useLayoutEffect(() => {
     if (!manager) return
+    const isActive = () => !manager.dragOperation.controller?.signal.aborted
+      && (manager.dragOperation.status.initializing || manager.dragOperation.status.dragging)
     const registration = {
-      isActive: () => !manager.dragOperation.controller?.signal.aborted
-        && (manager.dragOperation.status.initializing || manager.dragOperation.status.dragging),
+      isActive,
+      // The manager records this identity at pickup, before previews can move focus.
+      getSourceId: () => isActive() && manager.dragOperation.sourceIdentifier != null
+        ? String(manager.dragOperation.sourceIdentifier) : null,
       cancel: () => { manager.actions.stop({ canceled: true }) },
     }
     drag.current = registration
@@ -152,6 +156,7 @@ export function RightWorkbenchContent({
   visible?: boolean
   pageVisible?: boolean
   interactionSuspended?: boolean
+  tabDragRef?: RefObject<WorkbenchTabDrag | null>
   browserEnabled?: boolean
   browserSessionAvailable?: boolean
   browserEntryOpen?: boolean
