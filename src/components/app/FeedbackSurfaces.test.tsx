@@ -30,7 +30,7 @@ function search(value: string) {
 describe("home and transient feedback", () => {
   it("uses the shared press and keyboard-focus feedback without changing template selection", () => {
     const pick = vi.fn()
-    act(() => root.render(<HomeDashboard chats={[]} onOpenSession={vi.fn()} onPickTemplate={pick} />))
+    act(() => root.render(<HomeDashboard chats={[]} onOpenSession={vi.fn()} onPickTemplate={pick} onDescribeTask={vi.fn()} />))
     const card = host.querySelector("button")!
     expect(card.classList.contains("button-interaction")).toBe(true)
     expect(card.classList.contains("focus-visible:ring-2")).toBe(true)
@@ -41,7 +41,7 @@ describe("home and transient feedback", () => {
   })
 
   it("announces the empty search once without remounting its entrance on further typing", () => {
-    act(() => root.render(<HomeDashboard chats={[]} onOpenSession={vi.fn()} onPickTemplate={vi.fn()} />))
+    act(() => root.render(<HomeDashboard chats={[]} onOpenSession={vi.fn()} onPickTemplate={vi.fn()} onDescribeTask={vi.fn()} />))
     search("no-matching-template-xyz")
     const empty = host.querySelector('[role="status"]')!
     expect(empty.textContent).toContain("没有匹配的模板")

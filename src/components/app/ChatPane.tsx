@@ -1042,6 +1042,7 @@ export function ChatPane({
             chats={chats}
             onOpenSession={select}
             onPickTemplate={(prefill) => setDraft(prefill)}
+            onDescribeTask={() => composerInputRef.current?.focus()}
           />
         ) : (
         <MessageList

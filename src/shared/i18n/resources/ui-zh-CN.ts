@@ -1,5 +1,6 @@
 // Application-owned UI copy.
 export const uiZhCn = {
+  "home_describe_task": "直接描述任务",
   "message_action_interject": "插话",
   "message_action_send": "发送消息",
   "message_delivery_failed": "发送失败",

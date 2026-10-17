@@ -1,5 +1,5 @@
 import { uiLanguage, uiText, useUiLocale } from "@shared/i18n/ui"
-import { useMemo, useState, type ReactNode } from "react"
+import { useMemo, useRef, useState, type ReactNode } from "react"
 import {
   Plus,
   Code,
@@ -18,6 +18,7 @@ import {
   Loader2,
   MessageSquare,
 } from "lucide-react"
+import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { BrandMark } from "@/components/ui/brand-mark"
 import { surfaceMotion } from "@/components/ui/motion"
@@ -93,14 +94,22 @@ export function HomeDashboard({
   chats,
   onOpenSession,
   onPickTemplate,
+  onDescribeTask,
 }: {
   chats: ChatItem[]
   onOpenSession: (id: string) => void
   /** Receives the template's prefill text for the composer draft. */
   onPickTemplate: (prefill: string) => void
+  /** Focus the existing composer without changing its draft or sending it. */
+  onDescribeTask: () => void
 }) {
   useUiLocale()
   const [query, setQuery] = useState("")
+  const searchRef = useRef<HTMLInputElement>(null)
+  const clearSearch = () => {
+    setQuery("")
+    searchRef.current?.focus()
+  }
 
   const running = useMemo(() => chats.filter((c) => c.isRunning).slice(0, 5), [chats])
   const pinned = useMemo(
@@ -164,6 +173,15 @@ export function HomeDashboard({
 
         <div className="mb-3">
           <Input
+            ref={searchRef}
+            aria-label={uiText("search_templates_28062b4d")}
+            onKeyDown={(event) => {
+              if (event.key === "Escape" && query && !event.nativeEvent.isComposing && event.nativeEvent.keyCode !== 229) {
+                event.preventDefault()
+                event.stopPropagation()
+                clearSearch()
+              }
+            }}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder={uiText("search_templates_28062b4d")}
@@ -203,6 +221,10 @@ export function HomeDashboard({
           <div role="status" className={cn(surfaceMotion, "surface-fade rounded-xl border bg-card px-4 py-8 text-center")}>
             <Search className="mx-auto mb-3 size-5 text-primary" aria-hidden />
             <p className="text-sm text-muted-foreground">{uiText("no_matching_templates_0f5e1c5f")}</p>
+            <div className="mt-4 flex flex-wrap justify-center gap-2">
+              <Button type="button" variant="outline" size="sm" onClick={clearSearch}>{uiText("clear_search_b6f00afa")}</Button>
+              <Button type="button" size="sm" onClick={onDescribeTask}>{uiText("home_describe_task")}</Button>
+            </div>
           </div>
         ) : null}
       </div>
