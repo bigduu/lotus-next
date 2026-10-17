@@ -43,6 +43,16 @@ test("Supervisor explains its role and supports persistent renaming with retry a
       await route.fulfill({ json: {} })
     } else await route.fallback()
   })
+  // Force the workbench's lazy module to resolve beneath an already-open
+  // rename dialog. This reproduces the old late-layer registration race.
+  let releaseWorkbench!: () => void
+  const workbenchGate = new Promise<void>((resolve) => { releaseWorkbench = resolve })
+  if (testInfo.project.name === "desktop-chromium") {
+    await page.route("**/RightWorkbench-*.js", async (route) => {
+      await workbenchGate
+      await route.continue()
+    })
+  }
   await page.goto(standaloneScenario.entryUrl)
   await expect(page.getByRole("textbox", { name: "消息", exact: true })).toBeVisible()
   const phone = testInfo.project.name === "phone-chromium"
@@ -73,6 +83,11 @@ test("Supervisor explains its role and supports persistent renaming with retry a
   await name.fill("   ")
   await expect(dialog.getByRole("button", { name: "保存", exact: true })).toBeDisabled()
   await name.fill("取消的名字")
+  if (testInfo.project.name === "desktop-chromium") {
+    releaseWorkbench()
+    await expect(page.locator("#right-workbench [role=tablist]")).toHaveCount(1)
+    await expect(name).toBeFocused()
+  }
   await name.press("Escape")
   await expect(dialog).toHaveCount(0)
   await expect(sidebar.getByRole("button", { name: "重命名统筹助手", exact: true })).toBeFocused()
