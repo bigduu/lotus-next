@@ -265,7 +265,7 @@ it("offers queue submission and Stop together while generating", () => {
   expect(container.querySelector('button[aria-label="停止生成"]')).not.toBeNull()
   const timing = container.querySelector<HTMLSelectElement>('select[aria-label="发送时机"]')
   expect(timing?.title).toBe("当前工具调用完成后、下一次模型调用前发送")
-  expect(timing?.selectedOptions[0]?.textContent).toBe("工具调用后")
+  expect(timing?.selectedOptions[0]?.textContent).toBe("插话")
   dispatchSubmitShortcut(textarea)
   expect(props.onSubmit).toHaveBeenCalledOnce()
 })

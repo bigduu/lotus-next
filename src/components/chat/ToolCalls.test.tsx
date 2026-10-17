@@ -1268,3 +1268,54 @@ it("uses English list punctuation after changing language without translating ra
   expect(toggle.textContent).toContain("Run command")
   expect(toggle.title).toBe("Bash, view_image, apply_patch")
 })
+
+it("shows queue receipts as message actions in collapsed and expanded tool cards", () => {
+  const messages = mapHistoryMessagesToUi("queue", [
+    { id: "call", role: "assistant", content: "", created_at: "now", tool_calls: [
+      { id: "q", type: "function", function: { name: "SubAgent", arguments: JSON.stringify({ action: "send_message", child_session_id: "child", message: "follow up", interrupt_running: true }) } },
+    ] },
+    { id: "result", role: "tool", content: '{"status":"message_queued"}', tool_call_id: "q", created_at: "now" },
+  ])
+  const host = renderOpenTools(messages)
+  expect(host.querySelector("[data-tool-call-toggle]")?.textContent).toContain("插话")
+  expect(host.querySelector("[data-tool-call-toggle]")?.textContent).toContain("队列中")
+  expect(host.querySelector("[data-tool-call-entry-heading], [data-tool-call-entry-toggle]")?.textContent).not.toContain("已送达")
+})
+it("preserves complete long text, secondary parameters and results after disclosure", () => {
+  const message = "多行消息\n".repeat(120) + "消息完整末尾"
+  const note = "secondary".repeat(40) + "PARAM_END"
+  const output = "result".repeat(400) + "RESULT_END"
+  const messages = mapHistoryMessagesToUi("long", [
+    { id: "call", role: "assistant", content: "", created_at: "now", tool_calls: [
+      { id: "q", type: "function", function: { name: "SubAgent", arguments: JSON.stringify({ action: "send_message", message, note }) } },
+    ] },
+    { id: "result", role: "tool", content: output, tool_call_id: "q", created_at: "now" },
+  ])
+  const host = renderOpenTools(messages)
+  const detail = host.querySelector("[data-tool-call-entry-detail]")!
+  expect(detail.textContent).toContain(message)
+  expect(detail.textContent).toContain(note)
+  expect(detail.querySelector("pre")?.textContent).toBe(output)
+  expect(detail.querySelector('[class*="line-clamp"]')).toBeNull()
+})
+
+it("updates a live message preview from pending to queued to explicitly delivered", () => {
+  const host = document.createElement("div")
+  document.body.append(host)
+  const root = createRoot(host); mountedRoots.push(root)
+  const call = { id: "call", role: "assistant" as const, content: "", created_at: "now", tool_calls: [
+    { id: "q", type: "function", function: { name: "SubAgent", arguments: JSON.stringify({ action: "send_message", interrupt_running: true }) } },
+  ] }
+  const renderStatus = (status?: string) => act(() => root.render(<ToolCalls presentation="preview" active items={mapHistoryMessagesToUi("live", [call, ...(status ? [
+    { id: "result", role: "tool" as const, content: JSON.stringify({ status }), tool_call_id: "q", created_at: "now" },
+  ] : [])])} />))
+  renderStatus()
+  expect(host.textContent).toContain("插话")
+  expect(host.textContent).toContain("等待确认")
+  expect(host.textContent).not.toContain("已送达")
+  renderStatus("message_queued")
+  expect(host.textContent).toContain("队列中")
+  expect(host.textContent).not.toContain("已送达")
+  renderStatus("message_delivered_live")
+  expect(host.textContent).toContain("已送达，已通知当前会话")
+})
