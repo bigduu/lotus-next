@@ -251,3 +251,30 @@ it("shows a launcher instead of an about:blank tab when no content is open", () 
   act(() => browserLauncher?.click())
   expect(onTabChange).toHaveBeenCalledWith("browser")
 })
+
+it("uses the same stable selection surface for tool and browser tabs", () => {
+  const host = document.body.appendChild(document.createElement("div"))
+  const root = createRoot(host)
+  roots.push(root)
+  const onTabReorder = vi.fn()
+  const render = (activeTab: "inspector" | "browser") => act(() => root.render(
+    <RightWorkbench docked activeTab={activeTab} openToolTabs={["inspector"]}
+      onTabChange={vi.fn()} onToolClose={vi.fn()} onClose={vi.fn()} onTabReorder={onTabReorder}
+      inspector={null} review={null} session={null} browser={null}
+      browserTabs={[{ tab_id: "alpha", title: "Alpha", url: "https://a.test", active: true }]} activeBrowserTabId="alpha" />,
+  ))
+  render("inspector")
+  const [tool, browser] = [...host.querySelectorAll<HTMLElement>('[role="tab"]')]
+  expect(tool.className).toBe(browser.className)
+  const selectedStyle = tool.parentElement!.className
+  const inactiveStyle = browser.parentElement!.className
+  expect(selectedStyle).toContain("feedback-motion")
+  expect(selectedStyle).toContain("shadow-sm")
+  expect(selectedStyle).toContain("select-none")
+  expect(inactiveStyle).toContain("hover:bg-accent")
+  render("browser")
+  expect(browser.parentElement!.className).toBe(selectedStyle)
+  expect(tool.parentElement!.className).toBe(inactiveStyle)
+  expect([...host.querySelectorAll('[role="tab"]')]).toEqual([tool, browser])
+  expect(onTabReorder).not.toHaveBeenCalled()
+})

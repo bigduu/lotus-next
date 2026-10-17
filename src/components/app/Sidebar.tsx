@@ -399,7 +399,7 @@ export function Sidebar({
       return <div key={key} data-project-section={section.name} data-section-id={section.id ?? "none"} data-section-project={project.id}
         aria-disabled={project.status !== "active" || project.sidebar === undefined || sectionBusy.has(project.id)}
         data-drop-active={dragOverSection === key || undefined}
-        style={{ marginInlineStart: 12 }} className={cn("mb-1 rounded-md", dragOverSection === key && "bg-sidebar-accent ring-2 ring-ring")}
+        style={{ marginInlineStart: 12 }} className={cn("mb-1 rounded-md feedback-motion switch-feedback", dragOverSection === key && "bg-primary/5 ring-2 ring-ring")}
         {...dropProps(project.id, section.id, key)}>
         <ProjectSectionHeader onManageSections={() => {
           setSectionDialogMode("manage")
@@ -423,7 +423,7 @@ export function Sidebar({
               else closedSections.add(key)
               return { ...previous, closedSections }
             })}>
-            <ChevronRight aria-hidden="true" className={cn("size-3 shrink-0", expanded && "rotate-90")} />
+            <ChevronRight aria-hidden="true" className={cn("size-3 shrink-0 feedback-motion transition-transform", expanded && "rotate-90")} />
             {section.id && section.id !== LEGACY_PROJECT_SECTION_ID ? <GripVertical aria-hidden="true" className="size-3 shrink-0 text-muted-foreground" /> : null}
             <span className="truncate">{section.name}</span>
             <span className="ml-auto whitespace-nowrap pl-2 font-normal">{uiText("project_sessions", { count: bucket.chats.length })}</span>
@@ -456,7 +456,7 @@ export function Sidebar({
           </div>
         ) : project ? (
           <div {...dropProps(project.id, null, `project:${project.id}`)} data-project-drop={project.id} title={uiText("sidebar_project_drop_hint")}
-            className={cn("rounded-md", dragOverSection === `project:${project.id}` && "bg-sidebar-accent ring-2 ring-ring")}
+            className={cn("rounded-md feedback-motion switch-feedback", dragOverSection === `project:${project.id}` && "bg-primary/5 ring-2 ring-ring")}
             data-drop-active={dragOverSection === `project:${project.id}` || undefined}>
             <ProjectGroupHeader
               project={project}
@@ -509,7 +509,7 @@ export function Sidebar({
             className="flex select-none w-full items-center gap-1 rounded-md px-2 pt-3 pb-1 text-left text-xs font-medium text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default"
             onClick={toggleExpanded}
           >
-            <ChevronRight aria-hidden="true" className={cn("size-3 shrink-0", expanded && "rotate-90")} />
+            <ChevronRight aria-hidden="true" className={cn("size-3 shrink-0 feedback-motion transition-transform", expanded && "rotate-90")} />
             <span>{group.label}</span>
             <span className="ml-auto whitespace-nowrap pl-2 font-normal">{uiText("project_sessions", { count: group.chats.length })}</span>
           </button>
@@ -662,7 +662,7 @@ export function Sidebar({
                   olderExpanded: !previous.olderExpanded,
                 }))}
               >
-                <ChevronRight aria-hidden="true" className={cn("size-3 shrink-0", disclosures.olderExpanded && "rotate-90")} />
+                <ChevronRight aria-hidden="true" className={cn("size-3 shrink-0 feedback-motion transition-transform", disclosures.olderExpanded && "rotate-90")} />
                 <span>{uiText("earlier_c56a5bb6")}</span>
                 <span className="ml-auto whitespace-nowrap pl-2 font-normal">{uiText("count_days", { count: olderGroups.length })} · {uiText("project_sessions", { count: olderCount })}</span>
               </button>

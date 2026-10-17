@@ -30,6 +30,11 @@ type VisibleTab =
   | { key: string; kind: "tool"; tool: WorkbenchToolTab }
   | { key: string; kind: "browser"; tab: BrowserTabSummary }
 
+// The outer sortable shell owns selection for both tool and browser tabs.
+const workbenchTabTriggerClass = "h-full min-w-0 flex-1 justify-start bg-transparent px-2 feedback-motion"
+const workbenchTabTriggerStyle = { backgroundColor: "transparent", borderColor: "transparent", boxShadow: "none", outlineWidth: 2 }
+
+
 function SortableWorkbenchTab({
   id,
   index,
@@ -50,7 +55,7 @@ function SortableWorkbenchTab({
   return (
     <div
       ref={ref}
-      className={cn("flex h-9 min-w-0 flex-none items-center rounded-md border text-muted-foreground", selected ? "border-border bg-card text-foreground" : "border-transparent bg-transparent")}
+      className={cn("flex h-9 min-w-0 flex-none select-none items-center rounded-md border text-muted-foreground feedback-motion switch-feedback", selected ? "border-border bg-background text-foreground shadow-sm" : "border-transparent bg-transparent hover:bg-accent")}
       style={{ maxWidth: 208, opacity: isDragging ? 0.6 : 1 }}
     >
       <button
@@ -59,7 +64,7 @@ function SortableWorkbenchTab({
         aria-label={uiText("reorder_tab_82ab6e1e", { v0: title })}
         aria-keyshortcuts="Alt+ArrowLeft Alt+ArrowRight"
         title={uiText("drag_to_reorder_use_alt_left_right_to_move_bb4c333a")}
-        className="flex size-5 shrink-0 items-center justify-center rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        className="flex size-5 shrink-0 items-center justify-center rounded-sm outline-none feedback-motion transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
         style={{ marginLeft: 4, touchAction: "none", cursor: "grab" }}
         onKeyDown={(event) => {
           if (!event.altKey || (event.key !== "ArrowLeft" && event.key !== "ArrowRight")) return
@@ -192,7 +197,7 @@ export function RightWorkbench({
                   const title = item.tool === "session" ? sessionTitle || entry.label : entry.label
                   return (
                     <SortableWorkbenchTab key={item.key} id={item.key} index={index} title={title} selected={activeTab === item.tool} onMove={moveTab}>
-                      <TabsTrigger value={item.tool} title={title} style={{ maxWidth: 176 }} className="h-full min-w-0 justify-start bg-transparent px-2">
+                      <TabsTrigger value={item.tool} title={title} style={{ ...workbenchTabTriggerStyle, maxWidth: 176 }} className={workbenchTabTriggerClass}>
                         <Icon className="size-4" />
                         <span className="truncate">{title}</span>
                       </TabsTrigger>
@@ -200,7 +205,7 @@ export function RightWorkbench({
                         type="button"
                         aria-label={uiText("close_tab_547d17ad", { v0: entry.label })}
                         title={uiText("close_a70f6657", { v0: entry.label })}
-                        className="mr-1 flex size-6 shrink-0 items-center justify-center rounded-sm outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring"
+                        className="mr-1 flex size-6 shrink-0 items-center justify-center rounded-sm outline-none feedback-motion transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
                         onClick={() => onToolClose(item.tool)}
                       ><X className="size-3.5" aria-hidden="true" /></button>
                     </SortableWorkbenchTab>
@@ -215,9 +220,10 @@ export function RightWorkbench({
                       value={item.key}
                       aria-label={uiText("browser_tab_bc1120de", { v0: browserIndex, v1: title })}
                       title={title}
-                      className="h-full min-w-0 flex-1 justify-start bg-transparent px-2 text-xs"
+                      className={workbenchTabTriggerClass}
+                      style={workbenchTabTriggerStyle}
                     >
-                      <Globe2 className="size-3.5" />
+                      <Globe2 className="size-4" />
                       <span className="truncate">{title}</span>
                     </TabsTrigger>
                     <button
@@ -225,7 +231,7 @@ export function RightWorkbench({
                       aria-label={uiText("close_browser_tab_df26cd49", { v0: browserIndex, v1: title })}
                       title={uiText("close_29f8e760", { v0: title })}
                       disabled={browserBusy}
-                      className="mr-1 flex size-6 shrink-0 items-center justify-center rounded-sm outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
+                      className="mr-1 flex size-6 shrink-0 items-center justify-center rounded-sm outline-none feedback-motion transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
                       onClick={() => onBrowserClose?.(item.tab.tab_id)}
                     ><X className="size-3.5" aria-hidden="true" /></button>
                   </SortableWorkbenchTab>

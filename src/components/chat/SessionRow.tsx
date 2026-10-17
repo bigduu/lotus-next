@@ -99,8 +99,9 @@ export function SessionRow({
         event.dataTransfer.setData(SIDEBAR_SESSION_DRAG_TYPE, JSON.stringify({ projectId: projectId ?? null, sessionId: chat.id }))
         event.dataTransfer.effectAllowed = "copyMove"
       }}
+      style={active ? { boxShadow: "inset 0 0 0 1px var(--border)" } : undefined}
       className={cn(
-        "group/row relative mb-0.5 flex select-none items-center rounded-md transition-colors hover:bg-sidebar-accent",
+        "group/row relative mb-0.5 flex select-none items-center rounded-md feedback-motion switch-feedback hover:bg-sidebar-accent",
         active && "bg-sidebar-accent",
       )}
     >
@@ -131,9 +132,10 @@ export function SessionRow({
       <DropdownMenu open={menu.open} onOpenChange={menu.onOpenChange}>
         <DropdownMenuTrigger
           aria-label={uiText("session_actions_e6f6d875")}
+          style={active ? { opacity: 1 } : undefined}
           className={cn(
-            "mr-1 shrink-0 rounded p-1 text-muted-foreground outline-none transition-opacity hover:bg-accent hover:text-foreground",
-            "opacity-100 data-[state=open]:opacity-100 focus-within:opacity-100 md:opacity-0 md:group-hover/row:opacity-100",
+            "mr-1 shrink-0 rounded p-1 text-muted-foreground outline-none feedback-motion transition-opacity hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring hover:text-foreground",
+            "opacity-100 data-[state=open]:opacity-100 focus-within:opacity-100 md:opacity-0 md:group-hover/row:opacity-100 md:group-focus-within/row:opacity-100",
           )}
         >
           <MoreHorizontal className="size-4" />
