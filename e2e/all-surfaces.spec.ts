@@ -1,3 +1,4 @@
+import { workbenchPanel } from "./support/workbench.js"
 import { expectComposerText } from "./support/composer.js"
 import {
   expect,
@@ -311,7 +312,7 @@ test("settings page preserves the chat draft, workbench and keyboard return path
   await composer.evaluate((element) => element.setAttribute("data-navigation-marker", "same-composer"))
   const launcher = surface.getByRole("button", { name: "打开侧边面板", exact: true })
   await launcher.click()
-  const workbench = surface.getByRole("complementary", { name: "工作面板", exact: true })
+  const workbench = workbenchPanel(surface)
   await expect(workbench).toBeVisible()
 
   await page.keyboard.press("Control+k")
@@ -355,7 +356,13 @@ test("settings page preserves the chat draft, workbench and keyboard return path
   await expect(workbench).toBeVisible()
   await expectComposerText(composer, "draft retained across settings navigation")
   await expect(composer).toHaveAttribute("data-navigation-marker", "same-composer")
-  await expect(surface.getByRole("button", { name: "收起侧边面板", exact: true })).toBeFocused()
+  if (await workbench.getAttribute("aria-modal") === "true") {
+    // Reopening a narrow modal must restore focus inside its trap, not to the
+    // chat header behind the modal. Desktop retains its original return target.
+    await expect.poll(() => workbench.evaluate((panel) => panel.contains(panel.ownerDocument.activeElement))).toBe(true)
+  } else {
+    await expect(surface.getByRole("button", { name: "收起侧边面板", exact: true })).toBeFocused()
+  }
 
   await page.keyboard.press("Control+k")
   await paletteSearch.fill("系统设置")
