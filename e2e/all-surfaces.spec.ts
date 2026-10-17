@@ -310,6 +310,9 @@ test("settings page preserves the chat draft, workbench and keyboard return path
   await expect(composer).toBeVisible()
   await composer.fill("draft retained across settings navigation")
   await composer.evaluate((element) => element.setAttribute("data-navigation-marker", "same-composer"))
+  // The open narrow modal correctly removes the background editor from the
+  // accessibility tree. Its retained DOM still owns this unsent draft.
+  const retainedComposer = surface.locator('[data-navigation-marker="same-composer"]')
   const launcher = surface.getByRole("button", { name: "打开侧边面板", exact: true })
   await launcher.click()
   const workbench = workbenchPanel(surface)
@@ -323,7 +326,7 @@ test("settings page preserves the chat draft, workbench and keyboard return path
   const title = settings.getByRole("heading", { name: "系统设置", exact: true })
   await expect(title).toBeVisible()
   await expect(title).toBeFocused()
-  await expect(composer).toBeHidden()
+  await expect(retainedComposer).toBeHidden()
   await expect(workbench).toBeHidden()
   await expect(surface.locator('[data-slot="chat-shell"]')).toHaveAttribute("inert", "")
   const bounds = await settings.boundingBox()
@@ -354,8 +357,8 @@ test("settings page preserves the chat draft, workbench and keyboard return path
   await settings.getByRole("button", { name: "返回聊天", exact: true }).click()
   await expect(settings).toBeHidden()
   await expect(workbench).toBeVisible()
-  await expectComposerText(composer, "draft retained across settings navigation")
-  await expect(composer).toHaveAttribute("data-navigation-marker", "same-composer")
+  await expectComposerText(retainedComposer, "draft retained across settings navigation")
+  await expect(retainedComposer).toHaveAttribute("data-navigation-marker", "same-composer")
   if (await workbench.getAttribute("aria-modal") === "true") {
     // Reopening a narrow modal must restore focus inside its trap, not to the
     // chat header behind the modal. Desktop retains its original return target.
@@ -371,7 +374,7 @@ test("settings page preserves the chat draft, workbench and keyboard return path
   await expect(title).toBeFocused()
   await title.press("Escape")
   await expect(settings).toBeHidden()
-  await expectComposerText(composer, "draft retained across settings navigation")
+  await expectComposerText(retainedComposer, "draft retained across settings navigation")
 })
 
 test("message bubble presets and custom colors preview immediately and survive reload", async ({

@@ -3,6 +3,8 @@ import { createPortal } from "react-dom"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { createRoot, type Root } from "react-dom/client"
 import { afterAll, afterEach, beforeAll, expect, it, vi } from "vitest"
+import { CommandPalette } from "@/components/chat/CommandPalette"
+import { ResponsiveDialog, ResponsiveDialogContent, ResponsiveDialogTitle, ResponsiveDialogTrigger } from "@/components/ui/responsive-dialog"
 import { ModelEffortPicker } from "@/components/chat/ModelEffortPicker"
 import { RightWorkbench } from "./RightWorkbench"
 
@@ -674,4 +676,67 @@ it("releases hidden-page modal effects for Settings without remounting the workb
   expect(document.body.hasAttribute("data-scroll-locked")).toBe(true)
   act(() => theme.focus())
   expect(panel.contains(document.activeElement)).toBe(true)
+})
+
+
+it("gives global Radix overlays focus above a narrow workbench and restores their launchers", async () => {
+  const host = document.body.appendChild(document.createElement("div")); const root = createRoot(host); roots.push(root)
+  const closeWorkbench = vi.fn()
+  function Harness() {
+    const [palette, setPalette] = useState(false)
+    const [settings, setSettings] = useState(false)
+    useEffect(() => {
+      const key = (event: KeyboardEvent) => { if (event.ctrlKey && event.key === "k") { event.preventDefault(); setPalette(true) } }
+      window.addEventListener("keydown", key)
+      return () => window.removeEventListener("keydown", key)
+    }, [])
+    return <><ResponsiveDialog>
+      <div hidden={settings} inert={settings}><RightWorkbench pageVisible={!settings} activeTab="session" openToolTabs={["session"]}
+        onTabChange={vi.fn()} onToolClose={vi.fn()} onClose={closeWorkbench} inspector={null} review={null} browser={null}
+        session={<><input aria-label="Side editor" defaultValue="Side draft" />
+          <ResponsiveDialogTrigger asChild><button>Other global dialog</button></ResponsiveDialogTrigger></>} /></div>
+      <ResponsiveDialogContent><ResponsiveDialogTitle>Global settings</ResponsiveDialogTitle><input aria-label="Global input" /></ResponsiveDialogContent>
+    </ResponsiveDialog>
+    {settings ? <button onClick={() => setSettings(false)}>Return from Settings</button> : null}
+    <CommandPalette open={palette} chats={[]} onClose={() => setPalette(false)} onSelect={vi.fn()} onNewChat={vi.fn()} onSettings={() => setSettings(true)} /></>
+  }
+  act(() => root.render(<Harness />))
+  const side = host.querySelector<HTMLInputElement>('input[aria-label="Side editor"]')!
+  const openCommand = async () => {
+    await act(async () => { side.focus(); side.dispatchEvent(new KeyboardEvent("keydown", { key: "k", ctrlKey: true, bubbles: true })) })
+    const search = host.querySelector<HTMLInputElement>('input[placeholder="搜索会话或操作…"]')!
+    await vi.waitFor(() => expect(document.activeElement).toBe(search))
+    return search
+  }
+  let search = await openCommand()
+  await act(async () => search.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })))
+  await vi.waitFor(() => expect(document.activeElement).toBe(side))
+  expect(closeWorkbench).not.toHaveBeenCalled()
+  search = await openCommand()
+  // Write to the actually focused input, not a selector that could mask a trap.
+  act(() => {
+    const focused = document.activeElement as HTMLInputElement
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(focused, "系统设置")
+    focused.dispatchEvent(new Event("input", { bubbles: true }))
+  })
+  expect(search.value).toBe("系统设置")
+  expect(side.value).toBe("Side draft")
+  await act(async () => search.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })))
+  const back = [...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Return from Settings")!
+  act(() => back.focus())
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 10)) })
+  expect(document.activeElement).toBe(back)
+  expect(document.body.style.pointerEvents).not.toBe("none")
+  await act(async () => back.click())
+  expect(host.querySelector('input[aria-label="Side editor"]')).toBe(side)
+  expect(side.value).toBe("Side draft")
+  const other = [...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Other global dialog")!
+  await act(async () => other.click())
+  const globalInput = document.querySelector<HTMLInputElement>('input[aria-label="Global input"]')!
+  expect(document.activeElement).toBe(globalInput)
+  act(() => side.focus())
+  expect(document.activeElement).toBe(globalInput)
+  await act(async () => globalInput.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })))
+  await vi.waitFor(() => expect(document.activeElement).toBe(other))
+  expect(closeWorkbench).not.toHaveBeenCalled()
 })
