@@ -584,3 +584,45 @@ it("treats sibling-owned work portals and their nested popovers as inside pointe
   await clickPointer(document.querySelector<HTMLElement>('[data-slot="dialog-overlay"]')!)
   expect(close).toHaveBeenCalledTimes(1)
 })
+
+it.each(["restore", "kept-mounted", "new-control", "hidden-opener", "changed-session", "reopened"] as const)(
+  "settles backdrop default focus safely after dismissal: %s", async (scenario) => {
+    const host = document.body.appendChild(document.createElement("div")); const root = createRoot(host); roots.push(root)
+    let currentScope = "session-a"
+    const getScope = () => currentScope
+    function Harness() {
+      const [visible, setVisible] = useState(false)
+      return <><button aria-controls="right-workbench">Fallback launcher</button>
+        <button onClick={() => setVisible(true)}>Original opener</button><button>New focus</button>
+        {visible || scenario === "kept-mounted" ? <RightWorkbench visible={visible} focusScopeKey="session-a" getCurrentFocusScope={getScope}
+          activeTab="inspector" openToolTabs={["inspector"]} onTabChange={vi.fn()}
+          onToolClose={vi.fn()} onClose={() => setVisible(false)} inspector={<button>Panel action</button>}
+          review={null} session={null} browser={null} /> : null}</>
+    }
+    act(() => root.render(<Harness />))
+    const [fallback, opener, next] = host.querySelectorAll<HTMLButtonElement>("button")
+    await act(async () => { opener.focus(); opener.click() })
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 10)) })
+    const backdrop = document.querySelector<HTMLElement>('[data-slot="dialog-overlay"]')!
+    await act(async () => backdrop.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, button: 0 })))
+    expect(document.querySelector('[aria-modal="true"]')).toBeNull()
+    // Browsers apply the non-focusable backdrop's default focus action after
+    // React has synchronously unmounted the pane in its pointerdown handler.
+    act(() => { (document.activeElement as HTMLElement).blur() })
+    expect(document.activeElement).toBe(document.body)
+    await act(async () => {
+      document.body.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, button: 0 }))
+      document.body.click()
+      if (scenario === "new-control") next.focus()
+      if (scenario === "hidden-opener") opener.hidden = true
+      if (scenario === "changed-session") currentScope = "session-b"
+      if (scenario === "reopened") opener.click()
+      await new Promise((resolve) => setTimeout(resolve, 40))
+    })
+    if (scenario === "restore" || scenario === "kept-mounted") expect(document.activeElement).toBe(opener)
+    if (scenario === "new-control") expect(document.activeElement).toBe(next)
+    if (scenario === "hidden-opener") expect(document.activeElement).toBe(fallback)
+    if (scenario === "changed-session") expect(document.activeElement).toBe(document.body)
+    if (scenario === "reopened") expect(document.getElementById("right-workbench")!.contains(document.activeElement)).toBe(true)
+  },
+)

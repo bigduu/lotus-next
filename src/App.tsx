@@ -58,6 +58,9 @@ function App() {
   // Only a confirmed root mounts the interactive side chat; unknown and child
   // sessions use the message-only projection until summary metadata resolves.
   const { state: workbenchState, setField: setWorkbenchField, scope: workbenchScope, openToolForSession } = useWorkbenchState(currentSessionId)
+  const currentWorkbenchScope = useRef(workbenchScope)
+  currentWorkbenchScope.current = workbenchScope
+  const getCurrentWorkbenchScope = useCallback(() => currentWorkbenchScope.current, [])
   const { secondSid, open: workbenchOpen, tab: workbenchTab, tools: openToolTabs,
     reviewTarget: reviewTargetFilePath } = workbenchState
   const setSecondSid = (value: string | null) => setWorkbenchField("secondSid", value)
@@ -510,6 +513,8 @@ function App() {
             />
           )}>
           <RightWorkbench
+            focusScopeKey={workbenchScope}
+            getCurrentFocusScope={getCurrentWorkbenchScope}
             visible={workbenchOpen}
             docked={isWide}
             width={workbenchResize.width}
