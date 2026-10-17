@@ -46,7 +46,7 @@ type Surface = Page | FrameLocator
 
 async function openSidebar(surface: Surface, phone: boolean) {
   if (phone) await surface.getByRole("button", { name: "菜单", exact: true }).click()
-  return surface.locator("aside")
+  return surface.locator("aside").filter({ has: surface.getByPlaceholder("搜索会话", { exact: true }) })
 }
 
 test.use({ timezoneId: "Asia/Shanghai" })

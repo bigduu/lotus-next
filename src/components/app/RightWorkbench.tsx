@@ -17,6 +17,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { visibleWorkbenchTabIds } from "@/lib/workbenchTabs"
 import { cn } from "@/lib/utils"
 import { RightWorkbenchSurface } from "./RightWorkbenchSurface"
+import { workbenchSensors } from "./workbenchSensors"
 import { useWorkbenchTabDrag } from "./workbenchSurfaceContext"
 import type { BrowserTabSummary } from "@services/browser/types"
 
@@ -149,6 +150,7 @@ export function RightWorkbenchContent({
   docked?: boolean
   visible?: boolean
   pageVisible?: boolean
+  interactionSuspended?: boolean
   browserEnabled?: boolean
   browserSessionAvailable?: boolean
   browserEntryOpen?: boolean
@@ -219,7 +221,7 @@ export function RightWorkbenchContent({
     >
       <div className="flex shrink-0 items-center gap-1 border-b bg-muted/50 px-2 pt-1">
         {hasTabs ? (
-          <DragDropProvider onDragEnd={(event) => {
+          <DragDropProvider sensors={workbenchSensors} onDragEnd={(event) => {
             if (event.canceled || !isSortable(event.operation.source)) return
             const { initialIndex, index } = event.operation.source
             if (initialIndex === index || initialIndex < 0 || index < 0 || index >= visibleTabIds.length) return
