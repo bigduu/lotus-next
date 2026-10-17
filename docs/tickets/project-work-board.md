@@ -8,6 +8,8 @@ Open **Project Work** from a project's sidebar action menu. The default list and
 
 Project workspace paths are metadata, not new execution permissions. Selecting Work shows the immutable adopted context, contract, dependencies, active assignment, owner session/run, and current/accepted submission evidence. Historical stale evidence is labelled as such. The project context summary is current project metadata; adopted context comes from the ticket backend snapshot and may be older.
 
+Work details distinguish the candidate `context`, optional server-authorized `pending_context`, and the last assignment's `adopted_context`. A pending update is adopted only at the next eligible Start; it does not change a running assignment. The last adopted version remains visible after stopping. Candidate/adopted differences alone never imply that an update is eligible for pending adoption. Older backends may omit `pending_context`; the UI continues to show their candidate and adopted references without inventing a pending state.
+
 ## API contract
 
 - `POST tickets/project-board`: explicit `project_id`, `include_cancelled`, `include_archived: false`, page limit 100, cursor and fixed commit. Counts cover the backend snapshot rather than just loaded cards. `total` includes cancelled; cancelled count is retained even while rows are hidden.

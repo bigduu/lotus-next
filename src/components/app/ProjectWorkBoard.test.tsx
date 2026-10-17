@@ -4,13 +4,18 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest"
 import { changeLocale } from "@shared/i18n"
 import { ApiError } from "@services/api"
 import type { ProjectManifest } from "@services/project"
-import { projectBoardClient, type ProjectBoardPage } from "@services/tickets/projectBoard"
+import { projectBoardClient, type ProjectBoardPage, type ProjectContext } from "@services/tickets/projectBoard"
 import { ticketSnapshot } from "@services/tickets/testFixtures"
 import { OwnerAccessContext } from "@/hooks/ownerAccessContext"
 import { ProjectWorkBoard } from "./ProjectWorkBoard"
 vi.mock("@services/tickets/projectBoard", async (original) => ({ ...await original<typeof import("@services/tickets/projectBoard")>(), projectBoardClient: { page: vi.fn(), inspect: vi.fn() } }))
 let root: Root
 const project = { id: "project", name: "Project", revision: 3, resource_revision: 2, workspace_bindings: [{ path: "/repo/a" }, { path: "/repo/b" }] } as ProjectManifest
+const context = (revision: number, path = "/repo/a"): ProjectContext => ({
+  project_id: project.id, project_revision: revision, resource_revision: 2,
+  workspace_binding: { path }, contract_revision: 1,
+  contract: { title: "Work", objective: "Objective", constraints: [], acceptance: [] }, sources: {},
+})
 const page = (): ProjectBoardPage => ({ ...ticketSnapshot().scope.overview, data: {
   project_id: "project", counts: { todo: 1, doing: 1, testing: 1, done: 1, blocked: 1, cancelled: 1, total: 5 },
   rows: (["ready", "blocked", "submitted", "accepted", "cancelled"] as const).map((state, index) => ({
@@ -90,4 +95,57 @@ it("keeps a visible selected view button after focus moves while preserving aria
   expect(find("Board").classList.contains("bg-primary")).toBe(true)
   expect(find("List").getAttribute("aria-pressed")).toBe("false")
   expect(find("List").classList.contains("bg-primary")).toBe(false)
+})
+
+it("shows server-authorized pending context separately from the running assignment's adopted version", async () => {
+  const value = page()
+  const row = value.data.rows[0]
+  row.ticket.state = "active"
+  row.context = context(2)
+  row.pending_context = context(2)
+  row.adopted_context = context(1)
+  vi.mocked(projectBoardClient.page).mockResolvedValueOnce(value)
+  await render()
+  const card = document.querySelector('[data-testid="project-work-work-0"]') as HTMLButtonElement
+  expect(card.textContent).toContain("Pending context for the next eligible start")
+  await act(async () => card.click())
+  expect(document.querySelector('[data-testid="project-work-context-candidate"]')?.textContent).toContain("Project revision 2")
+  expect(document.querySelector('[data-testid="project-work-context-pending"]')?.textContent).toContain("Project revision 2")
+  expect(document.querySelector('[data-testid="project-work-context-adopted"]')?.textContent).toContain("Project revision 1")
+  expect(document.querySelector('[data-testid="project-work-details"]')?.textContent).toContain("The current assignment keeps its adopted context")
+  expect(row.adopted_context.project_revision).toBe(1)
+})
+
+it.each([null, undefined])("does not infer pending adoption from candidate differences when pending_context is %s", async (pending) => {
+  const value = page()
+  const row = value.data.rows[0]
+  row.context = context(2, "/repo/new-source")
+  row.adopted_context = context(1, "/repo/old-source")
+  if (pending === null) row.pending_context = null
+  vi.mocked(projectBoardClient.page).mockResolvedValueOnce(value)
+  await render()
+  const card = document.querySelector('[data-testid="project-work-work-0"]') as HTMLButtonElement
+  expect(card.textContent).not.toContain("Pending context")
+  await act(async () => card.click())
+  expect(document.querySelector('[data-testid="project-work-context-pending"]')).toBeNull()
+  expect(document.querySelector('[data-testid="project-work-context-candidate"]')?.textContent).toContain("/repo/new-source")
+  expect(document.querySelector('[data-testid="project-work-context-adopted"]')?.textContent).toContain("/repo/old-source")
+})
+
+it("retains the last adopted context after an assignment stops without presenting it as a new adoption", async () => {
+  const value = page()
+  const row = value.data.rows[0]
+  row.ticket.active_assignment = null
+  row.adopted_context = context(1)
+  row.context = context(2)
+  row.pending_context = context(2)
+  vi.mocked(projectBoardClient.page).mockResolvedValueOnce(value)
+  vi.mocked(projectBoardClient.inspect).mockResolvedValueOnce({ ...ticketSnapshot().views[0], ticket: row.ticket, assignments: [] })
+  await render()
+  await act(async () => (document.querySelector('[data-testid="project-work-work-0"]') as HTMLButtonElement).click())
+  const adopted = document.querySelector('[data-testid="project-work-context-adopted"]')
+  expect(adopted?.textContent).toContain("Project revision 1")
+  expect(adopted?.previousElementSibling?.textContent).toBe("Last adopted context")
+  expect(document.querySelector('[data-testid="project-work-context-pending"]')?.textContent).toContain("Project revision 2")
+  expect(document.querySelector('[data-testid="project-work-details"]')?.textContent).not.toContain("owner-session")
 })

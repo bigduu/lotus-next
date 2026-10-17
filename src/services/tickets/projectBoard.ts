@@ -13,6 +13,8 @@ export interface ProjectBoardRow {
   ticket: ProjectBoardTicket
   stage: BoardStage | null
   context: ProjectContext | null
+  // Absent on older backends. Only the server can authorize pending adoption.
+  pending_context?: ProjectContext | null
   adopted_context: ProjectContext | null
 }
 export interface ProjectContext {

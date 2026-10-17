@@ -14,6 +14,12 @@ const stageLabel = (stage: BoardStage) => uiText(({ todo: "project_work_todo", d
 function ContextRevision({ context }: { context: Pick<ProjectContext, "project_id" | "project_revision" | "resource_revision"> | null }) {
   return <span>{context ? uiText("project_work_revision", { project: context.project_revision, resources: context.resource_revision }) : uiText("project_work_unknown")}</span>
 }
+function ContextDetails({ context, label, name }: { context: ProjectContext | null; label: string; name: string }) {
+  return <>
+    <dt className="font-medium">{label}</dt>
+    <dd data-testid={`project-work-context-${name}`}><ContextRevision context={context} />{context ? <><span className="block">{uiText("project_work_contract_revision", { revision: context.contract_revision })}</span><span className="block break-all">{context.workspace_binding.path}</span></> : null}</dd>
+  </>
+}
 function WorkDetails({ row, snapshot, onClose }: { row: ProjectBoardRow; snapshot: SnapshotRef; onClose: () => void }) {
   const [view, setView] = useState<BoardWorkView | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -32,8 +38,9 @@ function WorkDetails({ row, snapshot, onClose }: { row: ProjectBoardRow; snapsho
     <ul className="list-inside list-disc break-words">{[...row.ticket.contract.constraints, ...row.ticket.contract.acceptance].map((line, i) => <li key={i}>{line}</li>)}</ul>
     <dl className="mt-3 grid gap-1 break-words">
       <dt className="font-medium">{uiText("project_work_dependencies")}</dt><dd>{row.ticket.depends_on.join(", ") || "—"}</dd>
-      <dt className="font-medium">{uiText("project_work_adopted")}</dt><dd><ContextRevision context={row.adopted_context} /></dd>
-      {row.adopted_context ? <dd className="break-all">{row.adopted_context.workspace_binding.path}</dd> : null}
+      <ContextDetails context={row.context} label={uiText("project_work_candidate")} name="candidate" />
+      {row.pending_context ? <><ContextDetails context={row.pending_context} label={uiText("project_work_pending")} name="pending" /><dd className="text-xs text-muted-foreground">{uiText("project_work_pending_hint")}</dd></> : null}
+      <ContextDetails context={row.adopted_context} label={uiText("project_work_adopted")} name="adopted" />
       <dt className="font-medium">{uiText("project_work_assignment")}</dt><dd>{row.ticket.active_assignment ?? uiText("project_work_unknown")}</dd>
       {assignment ? <><dt>{uiText("project_work_session")}</dt><dd>{assignment.runtime?.session_id ?? uiText("project_work_unknown")}</dd><dt>{uiText("project_work_run")}</dt><dd>{assignment.runtime?.run_id ?? uiText("project_work_unknown")}</dd>
         {assignment.awaiting_request ? <dd>{uiText("project_work_waiting")}</dd> : null}
@@ -66,7 +73,7 @@ export function ProjectWorkBoard({ project }: { project: ProjectManifest }) {
     {row.ticket.blocked ? <span className="mt-1 block break-words">{uiText("ticket_blocked_9059acb4")}: {row.ticket.blocked.reason}</span> : null}
     {row.ticket.paused ? <span className="block">{uiText("project_work_paused")}</span> : null}
     <span className="mt-2 block text-xs text-muted-foreground">{row.ticket.current_submission || row.ticket.accepted_submission ? uiText("project_work_evidence_pending") : uiText("project_work_evidence_none")}</span>
-    {row.context && row.adopted_context && (row.context.project_revision !== row.adopted_context.project_revision || row.context.resource_revision !== row.adopted_context.resource_revision || row.context.contract_revision !== row.adopted_context.contract_revision || row.context.workspace_binding.path !== row.adopted_context.workspace_binding.path) ? <span className="block text-xs">{uiText("project_work_pending")}</span> : null}
+    {row.pending_context ? <span className="block text-xs">{uiText("project_work_pending")}</span> : null}
   </button>
   return <div className="min-h-0 overflow-y-auto p-4" data-testid="project-work-board">
     <p className="mb-3 text-xs text-muted-foreground">{uiText("project_work_readonly")}</p>
