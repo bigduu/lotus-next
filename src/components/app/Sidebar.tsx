@@ -10,7 +10,7 @@ import { SessionRow } from "@/components/chat/SessionRow"
 import { ProjectArchiveDialog } from "@/components/app/ProjectArchiveDialog"
 import { ProjectEditDialog } from "@/components/app/ProjectEditDialog"
 import { ProjectSectionHeader } from "@/components/app/ProjectSectionHeader"
-import { ProjectWorkDialog } from "@/components/app/ProjectWorkBoard"
+import { ProjectWorkDialog, type OpenWorkSession } from "@/components/app/ProjectWorkBoard"
 import { ProjectGroupHeader } from "@/components/app/ProjectGroupHeader"
 import { ProjectSectionDialog } from "@/components/app/ProjectSectionDialog"
 import { groupChats, groupChatsByProject, type ChatGroup } from "@/lib/groupChats"
@@ -57,6 +57,7 @@ export function Sidebar({
   currentSessionId,
   onNewChat,
   onSelect,
+  onOpenExistingSession,
   onRename,
   onDelete,
   onTogglePin,
@@ -77,6 +78,7 @@ export function Sidebar({
   currentSessionId: string | null | undefined
   onNewChat: (projectId?: string | null) => void
   onSelect: (id: string) => void | Promise<void>
+  onOpenExistingSession?: OpenWorkSession
   onRename: (id: string, title: string) => void | Promise<void>
   onDelete: (chat: ChatItem) => void
   onTogglePin: (chat: ChatItem) => void
@@ -697,7 +699,7 @@ export function Sidebar({
         </div>
       </aside>
 
-      <ProjectWorkDialog metadataError={projectActionError} project={workProjectId ? projects[workProjectId] ?? null : null} onClose={() => setWorkProjectId(null)} />
+      <ProjectWorkDialog metadataError={projectActionError} project={workProjectId ? projects[workProjectId] ?? null : null} onClose={() => setWorkProjectId(null)} onOpenSession={onOpenExistingSession ? async (id, verifyAccess) => { const opened = await onOpenExistingSession(id, verifyAccess); if (opened) { setWorkProjectId(null); onClose() } return opened } : undefined} />
 
       <ProjectEditDialog projectId={editingProjectId} onClose={() => setEditingProjectId(null)} />
 
