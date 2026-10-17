@@ -1,3 +1,4 @@
+import { revealComposerSettings } from "./support/composer.js"
 import { expect, test } from "@playwright/test"
 import { installArtifactRuntime, standaloneScenario } from "./support/artifactRuntime.js"
 import type { ProjectManifest } from "../src/services/project/types.js"
@@ -82,6 +83,7 @@ test("configures a root, creates a checkout, and opens its explicit workspace", 
   await checkout.getByRole("button", { name: "打开并新建会话", exact: true }).click()
   await expect(dialog).not.toBeVisible()
   expect(bindings).toEqual([{ path: target }])
+  await revealComposerSettings(page)
   await expect(page.getByTitle(target, { exact: true })).toBeVisible()
   expect(observation.pageErrors).toEqual([])
 })
