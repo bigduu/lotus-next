@@ -80,7 +80,55 @@
   transition-property: color, background-color, border-color, box-shadow, transform, opacity;
 }
 
-.button-interaction:active:not(:disabled) { transform: scale(0.98); }
+/* Keep press feedback out of reduced-motion mode entirely. A later, less
+   specific :active override cannot beat the enabled-state selector. */
+@media (prefers-reduced-motion: no-preference) {
+  .button-interaction:active:not(:disabled):not([aria-disabled="true"]):not([data-disabled]) {
+    transform: scale(0.98);
+  }
+}
+
+/* Motion classes share existing tokens without generating per-state utilities. */
+@layer components {
+  @keyframes surface-exit {
+    to {
+      opacity: var(--tw-exit-opacity, 1);
+      transform: translate3d(var(--tw-exit-translate-x, 0), var(--tw-exit-translate-y, 0), 0)
+        scale3d(var(--tw-exit-scale, 1), var(--tw-exit-scale, 1), var(--tw-exit-scale, 1));
+    }
+  }
+  .surface-motion {
+    animation: enter var(--motion-normal) var(--motion-ease);
+    --tw-enter-opacity: 0;
+    --tw-enter-scale: 0.95;
+    --tw-exit-opacity: 0;
+    --tw-exit-scale: 0.95;
+  }
+  .surface-motion[data-state="closed"] {
+    animation: surface-exit var(--motion-fast) var(--motion-ease);
+  }
+  .surface-fade { --tw-enter-scale: 1; --tw-exit-scale: 1; }
+  .surface-slide { --tw-enter-opacity: 1; --tw-exit-opacity: 1; }
+  .surface-responsive {
+    --tw-enter-scale: 1;
+    --tw-exit-scale: 1;
+    --tw-enter-translate-y: 1rem;
+    --tw-exit-translate-y: 1rem;
+  }
+  @media (width >= 40rem) {
+    .surface-responsive {
+      --tw-enter-scale: 0.95;
+      --tw-exit-scale: 0.95;
+      --tw-enter-translate-y: 0;
+      --tw-exit-translate-y: 0;
+    }
+  }
+  .feedback-motion {
+    transition-duration: var(--motion-fast);
+    transition-timing-function: var(--motion-ease);
+  }
+  .switch-feedback { transition-property: background-color, border-color, box-shadow, opacity; }
+}
 
 @theme inline {
   --radius-sm: calc(var(--radius) - 4px);
@@ -183,7 +231,8 @@ body[data-vdi-safe="true"] .motion-page-enter {
 
 
 @media (prefers-reduced-motion: reduce) {
-  .button-interaction:active { transform: none; }
+  .surface-motion { animation: none !important; }
+  .feedback-motion { transition: none !important; }
   *,
   *::before,
   *::after {
