@@ -744,16 +744,20 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
     });
 
     for (let attempt = 0; attempt <= retries; attempt += 1) {
+      if (options?.signal?.aborted) return;
       try {
         // Avoid spurious backend calls when the UI layout references a stale session id.
         // (e.g. after backend reset or manual data cleanup)
         const chat = get().chats.find((c) => c.id === sessionId);
         if (!chat) {
           debugLog("[ChatSlice]", "loadChatHistory.skipMissingChat", { sessionId, attempt });
+          if (options?.throwOnError) throw new Error("Session is unavailable");
           return;
         }
 
         const history = await agentClient.getHistory(sessionId);
+        if (options?.signal?.aborted) return;
+        if (options?.throwOnError && history.session_id !== sessionId) throw new Error("History session mismatch");
         debugLog("[ChatSlice]", "loadChatHistory.response", {
           sessionId,
           attempt,
@@ -872,6 +876,7 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
         });
         return;
       } catch (error) {
+        if (options?.signal?.aborted) return;
         if (attempt >= retries) {
           console.warn(`[ChatSlice] Failed to load history for ${sessionId}:`, error);
           debugLog("[ChatSlice]", "loadChatHistory.error.final", {
@@ -880,6 +885,7 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
             retries,
             error,
           });
+          if (options?.throwOnError) throw error;
           return;
         }
         const delay = retryDelayMs > 0 ? retryDelayMs * (attempt + 1) : 200 * (attempt + 1);

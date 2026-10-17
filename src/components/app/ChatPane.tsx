@@ -91,6 +91,7 @@ type SecondaryConfig = {
   onPickSession: (id: string | null) => void
   onClose: () => void
   hideClose?: boolean
+  historyRead?: { status: "loading" | "ready" | "error"; retry: () => void }
 }
 
 type Attachment = { id: string; base64: string; name: string; type: string; size: number; url: string }
@@ -213,6 +214,7 @@ export function ChatPane({
   pageVisible?: boolean
 }) {
   useUiLocale()
+  const historyBlocked = !!secondary?.historyRead && secondary.historyRead.status !== "ready"
   const {
     chats,
     currentSessionId,
@@ -661,7 +663,7 @@ export function ChatPane({
 
   const submit = () => {
     // Keep an in-flight admission from capturing or clearing a second draft.
-    if (submissionPending || modelSaving || queue.busy || ticketIngress.busy || rootMode.busy || goalRequestActive.current) return
+    if (historyBlocked || submissionPending || modelSaving || queue.busy || ticketIngress.busy || rootMode.busy || goalRequestActive.current) return
     if (semanticComposer && !tickets.canSendIngress) { showToast(uiText("ticket_the_ticket_connection_or_write_permission_is__c3da124f"), "error"); return }
     if (rootSessionUnsafe()) {
       setRootModeConflict(uiText("the_root_permission_change_is_unconfirmed_sending_and_e_a75a6b4f"))
@@ -1074,7 +1076,18 @@ export function ChatPane({
             <ChevronLeft className="size-3.5" />{uiText("subagent_back_to_parent_session_5f5fc758")}</button>
         ) : null}
 
-        {!currentSessionId && !secondary && !sending && !pendingUserText ? (
+        {historyBlocked ? (
+          <div role={secondary?.historyRead?.status === "error" ? "alert" : "status"}
+            className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 px-6 text-center text-sm text-muted-foreground">
+            <p>{uiText(secondary?.historyRead?.status === "error"
+              ? "this_session_cannot_be_loaded_right_now_please_try_agai_502f5a61"
+              : "loading_side_by_side_session_f5d66e68")}</p>
+            {secondary?.historyRead?.status === "error" ? (
+              <Button variant="outline" size="sm" onClick={secondary.historyRead.retry}>{uiText("retry_b8784c8d")}</Button>
+            ) : null}
+            {currentlyRunning ? <Button variant="outline" size="sm" onClick={stop}>{uiText("stop_generation_9ad0aac3")}</Button> : null}
+          </div>
+        ) : !currentSessionId && !secondary && !sending && !pendingUserText ? (
           // Main-pane home view: session shortcuts + quick-start templates.
           // The composer below stays live — a template only prefills it.
           <HomeDashboard
@@ -1210,6 +1223,7 @@ export function ChatPane({
               </button>
             </div>
           )}
+          <div className="shrink-0" hidden={historyBlocked} inert={historyBlocked} data-history-composer-blocked={historyBlocked}>
           <Composer
           draft={draft}
           draftKey={draftKey}
@@ -1329,6 +1343,7 @@ export function ChatPane({
           onSelectProject={(projectId) => onSelectProject?.(projectId)}
           onDismissMenus={() => setMenusDismissed(true)}
         />
+          </div>
         </div>
           </div>
 
@@ -1355,7 +1370,7 @@ export function ChatPane({
         </div>
       </div>
 
-      <Toasts forking={forking} toast={toast} onDismiss={() => setToast(null)} onRestoreFocus={() => { if (pageVisible !== false) composerInputRef.current?.focus() }} />
+      <Toasts forking={forking} toast={toast} onDismiss={() => setToast(null)} onRestoreFocus={() => { if (pageVisible !== false && !historyBlocked) composerInputRef.current?.focus() }} />
       {workflowRunsOpen && currentSessionId && pageVisible !== false ? <WorkflowRunsDialog key={currentSessionId}
         sessionId={currentSessionId} sessionTitle={currentChat?.title || currentSessionId} onClose={() => setWorkflowRunsOpen(false)} /> : null}
 

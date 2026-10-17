@@ -34,6 +34,9 @@ test("split root remains interactive while child uses only projected history and
   test.skip(testInfo.project.name !== "desktop-chromium", "desktop split-pane acceptance")
   await page.addInitScript(() => localStorage.setItem("bodhi_onboarded_v1", "1"))
   const observation = await installArtifactRuntime(page, standaloneScenario)
+  let historyAvailable = false
+  let historyReads = 0
+  const expectedHistoryFailures: string[] = []
   const requests: string[] = []
   page.on("request", (request) => requests.push(request.url()))
   await page.route("**/api/v1/**", async (route) => {
@@ -51,6 +54,13 @@ test("split root remains interactive while child uses only projected history and
     } else if (request.method() === "GET" && path === `/api/v1/sessions/${childId}`) {
       await route.fulfill({ json: { session: sessions[2] }, headers: { ETag: '"1"' } })
     } else if (request.method() === "GET" && path === `/api/v1/history/${otherRootId}`) {
+      historyReads += 1
+      if (!historyAvailable) {
+        // Only this fixture's intentional GET failure is permitted below.
+        expectedHistoryFailures.push(`503 ${request.url()}`)
+        await route.fulfill({ status: 503, json: { error: "history temporarily unavailable" } })
+        return
+      }
       await route.fulfill({ json: { session_id: otherRootId, messages: [
         { id: "root-message", role: "user", content: "root history", created_at: at },
       ] } })
@@ -90,6 +100,14 @@ test("split root remains interactive while child uses only projected history and
   await workbench.getByRole("tab", { name: "并排会话" }).click()
   await workbench.getByRole("combobox").filter({ hasText: "选择会话并排" }).click()
   await page.getByRole("option", { name: "Other root" }).click()
+  await expect(workbench.getByRole("alert").filter({ hasText: "并排会话暂时无法加载" })).toBeVisible()
+  await expect(workbench.getByRole("textbox", { name: "消息", exact: true })).not.toBeVisible()
+  const failedReads = historyReads
+  expect(failedReads).toBe(3)
+  historyAvailable = true
+  await workbench.getByRole("button", { name: "重试", exact: true }).click()
+  await expect(workbench.getByRole("alert").filter({ hasText: "并排会话暂时无法加载" })).toHaveCount(0)
+  await expect.poll(() => historyReads).toBe(failedReads + 1)
   await expect(workbench.getByRole("textbox", { name: "消息", exact: true })).toBeVisible()
   await expect(workbench.getByText("root history")).toBeVisible()
   expect(requests.some((url) => new URL(url).pathname === `/api/v1/history/${otherRootId}`)).toBe(true)
@@ -140,6 +158,7 @@ test("split root remains interactive while child uses only projected history and
     return frame?.type === "unsubscribe" && frame.ch === `message.${childId}`
   })).toBe(true)
   expect(observation.pageErrors).toEqual([])
-  expect(observation.errorResponses).toEqual([])
+  expect(expectedHistoryFailures).toHaveLength(3)
+  expect(observation.errorResponses).toEqual(expectedHistoryFailures)
   expect(observation.protocolErrors).toEqual([])
 })

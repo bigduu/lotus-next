@@ -1940,3 +1940,45 @@ it.each([false, true])("handles intentional fork navigation without replacing a 
   expect(runtime.toastProps?.toast?.kind).toBe(raiseDestinationError ? "error" : "info")
   if (raiseDestinationError) expect(runtime.toastProps?.toast?.details).toBe("destination diagnostic")
 })
+
+
+it("keeps a failed secondary history distinct from empty content and retains its draft during read-only recovery", async () => {
+  const send = vi.fn<Send>()
+  const textarea = await mount(send, "session-1")
+  change(textarea, "Unsent draft survives history recovery")
+  const retryRead = vi.fn()
+  const renderRead = async (status: "loading" | "ready" | "error") => {
+    runtime.messageList = null
+    await act(async () => roots.at(-1)!.render(
+      <ChatPane chat={createChat(send, "session-1")} pickedWorkspace="/picked"
+        onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()} splitOpen
+        onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false}
+        secondary={{ sessionId: "session-1", chats: [], onPickSession: vi.fn(), onClose: vi.fn(),
+          historyRead: { status, retry: retryRead } }} />,
+    ))
+  }
+  await renderRead("error")
+  expect(document.querySelector('[role="alert"]')?.textContent).toContain("并排会话暂时无法加载")
+  expect(runtime.messageList).toBeNull()
+  expect(document.querySelector<HTMLElement>("[data-history-composer-blocked]")?.hidden).toBe(true)
+  const focusInput = vi.spyOn(textarea, "focus")
+  act(() => runtime.toastProps?.onRestoreFocus?.())
+  expect(focusInput).not.toHaveBeenCalled()
+  expect(document.querySelector("textarea")).toBe(textarea)
+  expect(composer().draft).toBe("Unsent draft survives history recovery")
+  act(() => composer().onSubmit())
+  expect(send).not.toHaveBeenCalled()
+  act(() => [...document.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "重试")!.click())
+  expect(retryRead).toHaveBeenCalledOnce()
+  await renderRead("loading")
+  expect(document.querySelector('[role="alert"]')).toBeNull()
+  expect(runtime.messageList).toBeNull()
+  await renderRead("ready")
+  expect(document.querySelector<HTMLElement>("[data-history-composer-blocked]")?.hidden).toBe(false)
+  act(() => runtime.toastProps?.onRestoreFocus?.())
+  expect(focusInput).toHaveBeenCalledOnce()
+  expect(runtime.messageList).not.toBeNull()
+  expect(document.querySelector("textarea")).toBe(textarea)
+  expect(composer().draft).toBe("Unsent draft survives history recovery")
+  expect(send).not.toHaveBeenCalled()
+})
