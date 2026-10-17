@@ -134,3 +134,12 @@ it("keeps root chat mounted but suspends child projection on other workbench tab
   await render("child-1", { ...props, active: true })
   expect(container?.querySelector("[data-projected-pane]")).not.toBeNull()
 })
+
+it("allows a root drop to replace a projected child without selecting the main session", async () => {
+  await render("child-1")
+  const event = new Event("drop", { bubbles: true, cancelable: true })
+  Object.defineProperty(event, "dataTransfer", { value: { types: ["application/x-lotus-sidebar-session"], getData: () => JSON.stringify({ sessionId: "root-2", projectId: null }) } })
+  act(() => container!.querySelector("[data-projected-pane]")!.dispatchEvent(event))
+  expect(onPickSession).toHaveBeenCalledExactlyOnceWith("root-2")
+  expect(mocks.useChat).not.toHaveBeenCalled()
+})

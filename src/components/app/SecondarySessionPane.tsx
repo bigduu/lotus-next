@@ -1,3 +1,4 @@
+import { useSessionDrop } from "@/hooks/useSessionDrop"
 import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { useEffect, useState } from "react"
 import { ChatPane } from "@/components/app/ChatPane"
@@ -77,6 +78,7 @@ function InteractiveSecondaryPane({
 export function SecondarySessionPane(props: Props) {
   useUiLocale()
   const [createdRootId, setCreatedRootId] = useState<string | null>(null)
+  const sessionDrop = useSessionDrop(props.chats, props.onPickSession)
   const selected = props.chats.find((chat) => chat.id === props.sessionId)
   // An arbitrary unknown id may be a newly-created child missing from the lazy
   // index. Only a root created by this interactive pane itself is trusted before
@@ -95,10 +97,13 @@ export function SecondarySessionPane(props: Props) {
       }}
     />
   ) : props.active === false ? null : (
-    <SubagentTranscriptPane
-      sessionId={props.sessionId}
-      chats={props.chats}
-      onPickSession={props.onPickSession}
-    />
+    <div className="relative flex min-h-0 flex-1" data-session-drop-target="secondary" {...sessionDrop.handlers}>
+      {sessionDrop.active ? <div className="pointer-events-none absolute inset-0 z-[60] m-3 flex items-center justify-center rounded-2xl border-2 border-dashed border-primary bg-primary/10 text-sm font-medium text-primary">{uiText("drop_to_open_session")}</div> : null}
+      <SubagentTranscriptPane
+        sessionId={props.sessionId}
+        chats={props.chats}
+        onPickSession={props.onPickSession}
+      />
+    </div>
   )
 }

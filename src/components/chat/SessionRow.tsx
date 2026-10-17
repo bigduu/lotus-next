@@ -47,6 +47,7 @@ export function SessionRow({
 }) {
   useUiLocale()
   const menu = useSidebarContextMenu()
+  const dragged = useRef(false)
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(chat.title ?? "")
   const inputRef = useRef<HTMLInputElement>(null)
@@ -91,11 +92,12 @@ export function SessionRow({
       {...menu.rowProps}
       data-sidebar-session={chat.id}
       data-session-project={projectId}
-      draggable={!!projectId && !!onMoveToSection}
+      draggable
+      onPointerDownCapture={() => { dragged.current = false }}
       onDragStart={(event) => {
-        if (!projectId || !onMoveToSection) return
-        event.dataTransfer.setData(SIDEBAR_SESSION_DRAG_TYPE, JSON.stringify({ projectId, sessionId: chat.id }))
-        event.dataTransfer.effectAllowed = "move"
+        dragged.current = true
+        event.dataTransfer.setData(SIDEBAR_SESSION_DRAG_TYPE, JSON.stringify({ projectId: projectId ?? null, sessionId: chat.id }))
+        event.dataTransfer.effectAllowed = "copyMove"
       }}
       className={cn(
         "group/row relative mb-0.5 flex select-none items-center rounded-md transition-colors hover:bg-sidebar-accent",
@@ -105,7 +107,10 @@ export function SessionRow({
       <button
         type="button"
         aria-current={active ? "page" : undefined}
-        onClick={onSelect}
+        onClick={(event) => {
+          if (dragged.current && event.detail !== 0) { event.preventDefault(); return }
+          onSelect()
+        }}
         aria-describedby={unread ? unreadDescriptionId : undefined}
         className={cn(
           "flex min-w-0 flex-1 items-center gap-2 py-2 pl-2 pr-1 text-left text-sm rounded-md outline-none focus-visible:ring-2 focus-visible:ring-ring",

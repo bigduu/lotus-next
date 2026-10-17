@@ -1,3 +1,4 @@
+import { useSessionDrop } from "@/hooks/useSessionDrop"
 import type { ComposerInputHandle } from "@/components/chat/ComposerEditor"
 import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { useMarkSessionRead } from "@/lib/sessionReadState"
@@ -353,6 +354,7 @@ export function ChatPane({
     const prev = store.inputStates[draftKey]?.content ?? ""
     store.setInputContent(draftKey, typeof value === "function" ? value(prev) : value)
   }
+  const sessionDrop = useSessionDrop(secondary?.chats ?? chats, secondary?.onPickSession ?? select)
   const [dragOver, setDragOver] = useState(false)
   const [goalSaving, setGoalSaving] = useState(false)
   const goalRequestActive = useRef(false)
@@ -945,6 +947,8 @@ export function ChatPane({
     <>
       <div
         className="relative flex min-w-0 flex-1 flex-col"
+        data-session-drop-target={secondary ? "secondary" : "main"}
+        {...sessionDrop.handlers}
         onDragOver={(e) => {
           if (e.dataTransfer.types.includes("Files")) {
             e.preventDefault()
@@ -960,9 +964,9 @@ export function ChatPane({
           if (e.dataTransfer.files.length) void addFiles(e.dataTransfer.files)
         }}
       >
-        {dragOver ? (
+        {dragOver || sessionDrop.active ? (
           <div className="pointer-events-none absolute inset-0 z-[60] m-3 flex items-center justify-center rounded-2xl border-2 border-dashed border-primary bg-primary/10 text-sm font-medium text-primary">
-            {uiText("drop_to_add_images_6ccb05f2")}</div>
+            {uiText(sessionDrop.active ? "drop_to_open_session" : "drop_to_add_images_6ccb05f2")}</div>
         ) : null}
 
         {secondary ? (
@@ -1031,6 +1035,8 @@ export function ChatPane({
           <div
             data-chat-body
             className="relative flex min-w-0 flex-1 flex-col"
+        data-session-drop-target={secondary ? "secondary" : "main"}
+        {...sessionDrop.handlers}
           >
         {currentChat?.planMode ? (
           <div className="border-b bg-primary/10 px-3 py-1.5 text-center text-xs font-medium text-primary">

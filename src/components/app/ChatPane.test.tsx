@@ -1804,3 +1804,19 @@ it("uses the selected worktree instead of the Project primary directory when sub
     projectId: "project-a", workspacePath: "/Volumes/External/worktrees/task",
   }))
 })
+
+it.each([false, true])("routes a dropped session to the correct pane (secondary=%s)", async (secondary) => {
+  const chat = createChat(vi.fn(), "current")
+  chat.chats = [{ id: "dropped", kind: "root", config: { projectId: "p" } }] as typeof chat.chats
+  const pick = vi.fn()
+  const container = document.body.appendChild(document.createElement("div")); const root = createRoot(container); roots.push(root)
+  await act(async () => root.render(<ChatPane chat={chat} pickedWorkspace={null}
+    onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()} splitOpen={secondary}
+    onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false}
+    secondary={secondary ? { sessionId: "current", chats: chat.chats, onPickSession: pick, onClose: vi.fn() } : undefined} />))
+  const event = new Event("drop", { bubbles: true, cancelable: true })
+  Object.defineProperty(event, "dataTransfer", { value: { types: ["application/x-lotus-sidebar-session"], getData: () => JSON.stringify({ sessionId: "dropped", projectId: "p" }) } })
+  act(() => container.querySelector("[data-session-drop-target]")!.dispatchEvent(event))
+  expect(secondary ? pick : chat.select).toHaveBeenCalledWith("dropped")
+  expect(secondary ? chat.select : pick).not.toHaveBeenCalled()
+})

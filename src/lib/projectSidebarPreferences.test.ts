@@ -4,7 +4,7 @@ import {
   readPinnedProjectIds,
   writePinnedProjectIds,
   PROJECT_SECTIONS_STORAGE_KEY, readProjectSectionPreferences, writeProjectSectionPreferences,
-  getProjectSections, getSessionSection, createProjectSection, removeProjectSection, setSessionSection,
+  getProjectSections, getSessionSection, createProjectSection, removeProjectSection, setSessionSection, reorderProjectSection,
 } from "./projectSidebarPreferences"
 
 describe("project sidebar pin preference", () => {
@@ -113,5 +113,25 @@ describe("device project section preference", () => {
     preferences = setSessionSection(preferences, "a", "session", section.id, "Development")
     expect(() => writeProjectSectionPreferences(preferences)).not.toThrow()
     expect(getSessionSection(preferences, "a", "session", "Development")).toBe(section.id)
+  })
+})
+
+
+describe("durable section ordering", () => {
+  it("reorders only custom sections while retaining membership and legacy placement", () => {
+    let original = readProjectSectionPreferences()
+    for (const id of ["a", "b", "c"]) original = createProjectSection(original, "p", id, "Legacy", id)
+    original = setSessionSection(original, "p", "session", "b", "Legacy")
+    const moved = reorderProjectSection(original, "p", "c", "a")
+    expect(getProjectSections(moved, "p", "Legacy").map((section) => section.id)).toEqual(["legacy", "c", "a", "b"])
+    expect(moved.projects.p.sessionSections).toEqual({ session: "b" })
+    expect(reorderProjectSection(moved, "p", "c", null).projects.p.sections.map((section) => section.id)).toEqual(["a", "b", "c"])
+    expect(reorderProjectSection(original, "p", "a", "b", true).projects.p.sections.map((section) => section.id)).toEqual(["b", "a", "c"])
+    expect(reorderProjectSection(original, "p", "c", "legacy").projects.p.sections.map((section) => section.id)).toEqual(["c", "a", "b"])
+    for (const [source, target] of [["legacy", "a"], ["missing", "a"], ["a", "missing"], ["a", "a"]]) {
+      expect(reorderProjectSection(original, "p", source, target)).toBe(original)
+    }
+    expect(reorderProjectSection(original, "foreign", "a", null)).toBe(original)
+    expect(reorderProjectSection(original, "p", "c", null)).toBe(original)
   })
 })
