@@ -73,7 +73,7 @@ function mountComposer(overrides: Partial<ComponentProps<typeof Composer>> = {})
 
   const textarea = container.querySelector<HTMLDivElement>('[data-composer-editor][aria-label="消息"]')
   expect(textarea).not.toBeNull()
-  return { container, inputRef, props, textarea: textarea! }
+  return { container, inputRef, props, textarea: textarea!, rerender: (next: Partial<ComponentProps<typeof Composer>>) => act(() => root.render(<Composer {...props} {...next} />)) }
 }
 
 function dispatchSubmitShortcut(
@@ -363,4 +363,87 @@ it("routes @file Enter only to the owning composer in split panes", async () => 
   expect(second.container.querySelector('[data-type="mention"]')?.textContent).toBe("@README.md")
   expect(first.props.onSubmit).not.toHaveBeenCalled()
   expect(second.props.onSubmit).not.toHaveBeenCalled()
+})
+
+
+describe("container-aware composer toolbar", () => {
+  function observeWidth(initial: number) {
+    let width = initial
+    vi.stubGlobal("ResizeObserver", undefined)
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+      return { x: 0, y: 0, width: this.hasAttribute("data-composer-column") ? width : 0, height: 100,
+        top: 0, right: width, bottom: 100, left: 0, toJSON: () => ({}) }
+    })
+    return (next: number) => act(() => { width = next; window.dispatchEvent(new Event("resize")) })
+  }
+
+  it("uses pane width, preserves the editor across resize, and keeps primary controls visible", async () => {
+    const resize = observeWidth(440)
+    const { container, textarea, props } = mountComposer({
+      permissionControl: <button data-permission>Default</button>,
+      runtimeControls: <button data-model>Model · Ultra</button>,
+    })
+    expect(container.querySelector("[data-composer-column]")?.getAttribute("data-composer-compact")).toBe("true")
+    expect(container.querySelector("[data-permission]")).not.toBeNull()
+    expect(container.querySelector("[data-model]")).not.toBeNull()
+    expect(container.querySelector('[aria-label="发送消息"]')).not.toBeNull()
+    expect(container.querySelector('[aria-label="添加图片"]')).toBeNull()
+    const more = container.querySelector<HTMLButtonElement>('[aria-label="更多"]')!
+    act(() => more.click())
+    expect(document.querySelector('[role="dialog"] [aria-label="添加图片"]')).not.toBeNull()
+    resize(900)
+    await act(async () => {})
+    expect(document.querySelector('[role="dialog"]')).toBeNull()
+    expect(container.querySelector('[aria-label="添加图片"]')).not.toBeNull()
+    await vi.waitFor(() => expect(document.activeElement).toBe(textarea))
+    expect(container.querySelector("[data-composer-editor]")).toBe(textarea)
+    expect(textarea.textContent).toBe("保留这条消息")
+    expect(props.onDraftChange).not.toHaveBeenCalled()
+    expect(props.onSubmit).not.toHaveBeenCalled()
+  })
+
+  it("returns focus on Escape and closes controls on session changes without sending", async () => {
+    observeWidth(420)
+    const { container, props, rerender } = mountComposer({ draftKey: "session-a" })
+    const more = container.querySelector<HTMLButtonElement>('[aria-label="更多"]')!
+    act(() => more.click())
+    act(() => document.activeElement?.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })))
+    await vi.waitFor(() => expect(document.activeElement).toBe(more))
+    expect(document.querySelector('[role="dialog"]')).toBeNull()
+    act(() => more.click())
+    rerender({ draftKey: "session-b", draft: "另一个草稿" })
+    await act(async () => {})
+    expect(document.querySelector('[role="dialog"]')).toBeNull()
+    expect(container.querySelector("[data-composer-editor]")?.textContent).toBe("另一个草稿")
+    expect(props.onSubmit).not.toHaveBeenCalled()
+  })
+
+  it("keeps More open while a nested preset menu is cancelled", async () => {
+    observeWidth(420)
+    useAppStore.setState({ systemPrompts: [{ id: "preset", name: "Bodhi", content: "Existing preset", isDefault: true }] })
+    const { container, props } = mountComposer({ hasSession: false })
+    act(() => container.querySelector<HTMLButtonElement>('[aria-label="更多"]')!.click())
+    const preset = document.querySelector<HTMLButtonElement>('button[title="系统提示词:Bodhi"]')!
+    act(() => preset.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })))
+    expect(document.querySelector('[role="menuitem"]')?.textContent).toContain("Bodhi")
+    act(() => document.activeElement?.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })))
+    await vi.waitFor(() => expect(document.querySelector('[role="menu"]')).toBeNull())
+    expect(document.querySelector('[role="dialog"]')).not.toBeNull()
+    await vi.waitFor(() => expect(document.activeElement).toBe(preset))
+    expect(props.onDraftChange).not.toHaveBeenCalled()
+    expect(props.onSubmit).not.toHaveBeenCalled()
+  })
+
+  it("dismisses More before opening the workspace picker", async () => {
+    observeWidth(420)
+    const { container, props } = mountComposer({ hasSession: false })
+    act(() => container.querySelector<HTMLButtonElement>('[aria-label="更多"]')!.click())
+    const workspace = [...document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')]
+      .find((button) => button.title === "默认工作目录")!
+    act(() => workspace.click())
+    await act(async () => {})
+    expect(props.onOpenWorkspacePicker).toHaveBeenCalledOnce()
+    expect(document.querySelector('[role="dialog"]')).toBeNull()
+    expect(props.onSubmit).not.toHaveBeenCalled()
+  })
 })
