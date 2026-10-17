@@ -18,9 +18,11 @@ Going offline invalidates the current association/access display. Reconnect uses
 
 The parent reads the existing `GET sessions/{encoded-id}` for unique, scoped canonical Assignment/RuntimeReceipt targets, with four bounded concurrent reads and cancellation when details change. Successful matching responses permit a Session button. HTTP 403 and 404 preserve the recorded IDs with distinct denied/missing explanations; transport failures and inconsistent identity/Project metadata stay unknown.
 
-Opening rechecks that exact Session access. An older response cannot overwrite a newer access read, and an aborted/stale read cannot navigate. The existing app navigation restores the already-persisted root/child Session and preserves the main-navigation intent guard. This path never calls Supervisor initialization, creates a Session, sends a message or starts execution. Opening a Session does not claim that its recorded historical run is currently running.
+Opening rechecks that exact Session access. An older response cannot overwrite a newer access read, and an aborted/stale read cannot navigate. The navigation port receives the access-check callback so the app records the navigation intent before awaiting that check; another selection, including returning to the same Session, supersedes the old intent. The existing app navigation then restores the already-persisted root/child Session. This path never calls Supervisor initialization, creates a Session, sends a message or starts execution. Opening a Session does not claim that its recorded historical run is currently running.
 
 The real-HTTP fixture's `synthetic-worker` is not a proven persisted Session. The adapter and callback tests use explicitly controlled GET responses. A real persisted Session navigation round remains an integration gate; it is not claimed from the synthetic fixture.
+
+`OpenWorkSession` returns whether navigation completed. The dialog closes only for a completed navigation; a newly denied/missing Session leaves its updated explanation visible. The six navigation-port tests cover late access, late restoration, an unchanged Session ID with a newer intent, and a deleted Session without replacement.
 
 ## Verification provenance
 

@@ -20,6 +20,7 @@ import { useIsMobile, useIsWide } from "@shared/hooks/useMediaQuery"
 import { useAppStore } from "@shared/store/appStore"
 import { isVdiSafeModeEnabled, onVdiSafeModeChange } from "@shared/utils/vdiSafeMode"
 import { Sidebar } from "@/components/app/Sidebar"
+import { navigateRecordedSession } from "@/lib/recordedSessionNavigation"
 import { WorktreeManager } from "@/components/app/WorktreeManager"
 import { ProjectManagerModal } from "@/components/app/ProjectManagerModal"
 import { DeleteSessionDialog } from "@/components/app/DeleteSessionDialog"
@@ -468,12 +469,14 @@ function App() {
           if (isWide && id === DEFAULT_SUPERVISOR_SESSION_ID) openToolForSession(id, "work")
           select(id)
         }}
-        onOpenExistingSession={async (id) => {
+        onOpenExistingSession={async (id, verifyAccess) => {
           const version = ++mainNavigationVersion.current
           const previousSessionId = useAppStore.getState().currentSessionId
-          if (!await useAppStore.getState().restoreSession(id)) throw new Error(uiText("workflow_run_not_found"))
-          if (version !== mainNavigationVersion.current || previousSessionId !== useAppStore.getState().currentSessionId) return
-          select(id)
+          return navigateRecordedSession(id, verifyAccess, {
+            isCurrent: () => version === mainNavigationVersion.current && previousSessionId === useAppStore.getState().currentSessionId,
+            restore: (sessionId) => useAppStore.getState().restoreSession(sessionId), select,
+            notFound: () => new Error(uiText("workflow_run_not_found")),
+          })
         }}
         onRename={(id, title) => persistSessionTitle(id, title)}
         onDelete={(c) => setPendingDelete({ id: c.id, title: c.title || uiText("new_session_c57c30bc") })}

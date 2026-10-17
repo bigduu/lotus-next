@@ -18,6 +18,7 @@ import { AssignmentHealthPanel } from "./project-work/AssignmentHealthPanel"
 import { makeAssignmentHealthCopy } from "./project-work/assignmentHealthCopy"
 
 const stages: BoardStage[] = ["todo", "doing", "testing", "done"]
+export type OpenWorkSession = (id: string, verifyAccess: () => Promise<boolean>) => Promise<boolean>
 const stageLabel = (stage: BoardStage) => uiText(({ todo: "project_work_todo", doing: "project_work_doing", testing: "project_work_testing", done: "project_work_done" } as const)[stage])
 function ContextRevision({ context }: { context: Pick<ProjectContext, "project_id" | "project_revision" | "resource_revision"> | null }) {
   return <span>{context ? uiText("project_work_revision", { project: context.project_revision, resources: context.resource_revision }) : uiText("project_work_unknown")}</span>
@@ -28,7 +29,7 @@ function ContextDetails({ context, label, name }: { context: ProjectContext | nu
     <dd data-testid={`project-work-context-${name}`}><ContextRevision context={context} />{context ? <><span className="block">{uiText("project_work_contract_revision", { revision: context.contract_revision })}</span><span className="block break-all">{context.workspace_binding.path}</span></> : null}</dd>
   </>
 }
-function WorkDetails({ row, snapshot, projectId, onClose, onOpenSession }: { row: ProjectBoardRow; snapshot: SnapshotRef; projectId: string; onClose: () => void; onOpenSession?: (id: string) => void | Promise<void> }) {
+function WorkDetails({ row, snapshot, projectId, onClose, onOpenSession }: { row: ProjectBoardRow; snapshot: SnapshotRef; projectId: string; onClose: () => void; onOpenSession?: OpenWorkSession }) {
   const locale = useUiLocale()
   const [view, setView] = useState<BoardWorkView | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -41,7 +42,7 @@ function WorkDetails({ row, snapshot, projectId, onClose, onOpenSession }: { row
   const openSession = async (id: string) => {
     if (!onOpenSession || navigationBusy.current) return
     navigationBusy.current = true; setOpening(true); setNavigationError(null)
-    try { if (await sessions.recheck(id) && alive.current) await onOpenSession(id) }
+    try { await onOpenSession(id, () => sessions.recheck(id)) }
     catch (failure) { if (alive.current) setNavigationError(getErrorMessage(failure)) }
     finally { navigationBusy.current = false; if (alive.current) setOpening(false) }
   }
@@ -99,7 +100,7 @@ function commandAtSnapshot(command: WorkCommandContext | null | undefined, row: 
   return command?.binding?.scope_id === row.ticket.scope_id && command.expectedSeq === snapshot.seq
     && command.expectedEpoch === snapshot.authority_epoch ? command : null
 }
-export function ProjectWorkBoard({ project, controls, onOpenSession }: { project: ProjectManifest; controls?: ProjectWorkBoardControls; onOpenSession?: (id: string) => void | Promise<void> }) {
+export function ProjectWorkBoard({ project, controls, onOpenSession }: { project: ProjectManifest; controls?: ProjectWorkBoardControls; onOpenSession?: OpenWorkSession }) {
   useUiLocale()
   const [mode, setMode] = useState<"list" | "board">("list")
   const [cancelled, setCancelled] = useState(false)
@@ -153,7 +154,7 @@ export function ProjectWorkBoard({ project, controls, onOpenSession }: { project
     </div> : null}
   </div>
 }
-export function ProjectWorkDialog({ project, onClose, metadataError, controls, onOpenSession }: { project: ProjectManifest | null; onClose: () => void; metadataError?: string | null; controls?: ProjectWorkBoardControls; onOpenSession?: (id: string) => void | Promise<void> }) {
+export function ProjectWorkDialog({ project, onClose, metadataError, controls, onOpenSession }: { project: ProjectManifest | null; onClose: () => void; metadataError?: string | null; controls?: ProjectWorkBoardControls; onOpenSession?: OpenWorkSession }) {
   useUiLocale()
   return <ResponsiveDialog open={!!project} onOpenChange={(open) => { if (!open) onClose() }}><ResponsiveDialogContent className="sm:max-w-5xl" aria-describedby={undefined}>
     <div className="border-b p-4 pr-12"><ResponsiveDialogTitle>{uiText("project_work_title")}{project ? ` · ${project.name}` : ""}</ResponsiveDialogTitle><ResponsiveDialogDescription className="sr-only">{uiText("project_work_readonly")}</ResponsiveDialogDescription></div>

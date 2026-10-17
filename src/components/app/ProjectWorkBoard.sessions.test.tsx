@@ -34,7 +34,7 @@ beforeEach(async () => {
 })
 afterEach(() => { act(() => root.unmount()); vi.restoreAllMocks() })
 async function render(onOpenSession?: (id: string) => void | Promise<void>) {
-  await act(async () => root.render(<OwnerAccessContext.Provider value={true}><ProjectWorkBoard project={project} onOpenSession={onOpenSession} /></OwnerAccessContext.Provider>))
+  await act(async () => root.render(<OwnerAccessContext.Provider value={true}><ProjectWorkBoard project={project} onOpenSession={onOpenSession ? async (id, verifyAccess) => { if (!await verifyAccess()) return false; await onOpenSession(id); return true } : undefined} /></OwnerAccessContext.Provider>))
   await act(async () => (document.querySelector(`[data-testid="project-work-${activeView.ticket.id}"]`) as HTMLButtonElement).click())
 }
 const openButton = () => [...document.querySelectorAll("button")].find((button) => button.textContent === "Open verified session")

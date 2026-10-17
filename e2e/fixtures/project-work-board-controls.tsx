@@ -22,7 +22,7 @@ export function Fixture() {
   return <main style={{ maxWidth: 1100, margin: "0 auto", padding: 12 }}>
     <header style={{ padding: 16 }}><h1 style={{ fontSize: 20, fontWeight: 600 }}>Controlled Project Work board host</h1>
       <p style={{ marginTop: 8, fontSize: 13 }}>Mock HTTP + synthetic controlled callbacks. No Bamboo mutation, runtime or provider execution.</p></header>
-    <OwnerAccessContext.Provider value={true}><ProjectWorkBoard project={project} onOpenSession={(sessionId) => setLog((items) => [...items, { kind: "open_session", sessionId }])} controls={{
+    <OwnerAccessContext.Provider value={true}><ProjectWorkBoard project={project} onOpenSession={async (sessionId, verifyAccess) => { if (!await verifyAccess()) return false; setLog((items) => [...items, { kind: "open_session", sessionId }]); return true }} controls={{
       planning: { work: { id: "synthetic-work-1", generation: 3, recordRevision: 8, state: "active" },
         current: { priority: "medium", expectedCompletionAt: "2026-10-18T00:00:00+08:00" }, draft,
         query: { order: "updated", priority: null, deadline: "any", asOf: "2026-10-17T17:00:00Z" },
