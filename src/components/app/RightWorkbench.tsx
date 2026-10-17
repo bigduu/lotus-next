@@ -1,10 +1,6 @@
 import { uiText, useUiLocale } from "@shared/i18n/ui"
-import { useEffect, useRef, useState, type ReactNode } from "react"
-import { FocusScope } from "@radix-ui/react-focus-scope"
-import { DismissableLayer } from "@radix-ui/react-dismissable-layer"
-import { hideOthers } from "aria-hidden"
-import { RemoveScroll } from "react-remove-scroll"
-import { DragDropProvider } from "@dnd-kit/react"
+import { useEffect, useLayoutEffect, useRef, useState, type ComponentProps, type ReactNode } from "react"
+import { DragDropProvider, useDragDropManager } from "@dnd-kit/react"
 import { isSortable, useSortable } from "@dnd-kit/react/sortable"
 import { ArrowLeft, Bot, FileDiff, Globe2, GripVertical, Plus, SlidersHorizontal, X, ListChecks, ChevronDown } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -20,31 +16,9 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { visibleWorkbenchTabIds } from "@/lib/workbenchTabs"
 import { cn } from "@/lib/utils"
+import { RightWorkbenchSurface } from "./RightWorkbenchSurface"
+import { useWorkbenchTabDrag } from "./workbenchSurfaceContext"
 import type { BrowserTabSummary } from "@services/browser/types"
-
-function canRestoreFocus(target: HTMLElement | null): target is HTMLElement {
-  if (!target?.isConnected || target === document.body || target.matches(":disabled") || target.closest('[hidden], [inert], [aria-hidden="true"]')) return false
-  for (let node: HTMLElement | null = target; node; node = node.parentElement) {
-    const style = getComputedStyle(node)
-    if (style.display === "none" || style.visibility === "hidden") return false
-  }
-  return true
-}
-
-// Work content can be owned by ChatPane and portaled into this DOM subtree.
-// Include only explicitly controlled open surfaces, never unrelated body portals.
-function workbenchSurfaces(panel: HTMLElement): HTMLElement[] {
-  const surfaces = new Set<HTMLElement>([panel])
-  for (const surface of surfaces) {
-    for (const trigger of surface.querySelectorAll('[aria-expanded="true"][aria-controls]')) {
-      for (const id of trigger.getAttribute("aria-controls")!.split(/\s+/)) {
-        const controlled = panel.ownerDocument.getElementById(id)
-        if (controlled) surfaces.add(controlled)
-      }
-    }
-  }
-  return [...surfaces]
-}
 
 export type RightWorkbenchTab = "inspector" | "review" | "browser" | "session" | "work"
 export type WorkbenchToolTab = Exclude<RightWorkbenchTab, "browser">
@@ -110,7 +84,28 @@ function SortableWorkbenchTab({
   )
 }
 
-export function RightWorkbench({
+// Read the sensor's actual synchronous lifecycle, including initialization.
+// onDragStart is asynchronous and can arrive after a quick Space -> Escape.
+function WorkbenchTabDragLifecycle() {
+  const manager = useDragDropManager()
+  const drag = useWorkbenchTabDrag()
+  useLayoutEffect(() => {
+    if (!manager) return
+    const registration = {
+      isActive: () => !manager.dragOperation.controller?.signal.aborted
+        && (manager.dragOperation.status.initializing || manager.dragOperation.status.dragging),
+      cancel: () => { manager.actions.stop({ canceled: true }) },
+    }
+    drag.current = registration
+    return () => {
+      registration.cancel()
+      if (drag.current === registration) drag.current = null
+    }
+  }, [manager, drag])
+  return null
+}
+
+export function RightWorkbenchContent({
   activeTab,
   openToolTabs,
   onTabChange,
@@ -118,8 +113,6 @@ export function RightWorkbench({
   tabOrder = [],
   onTabReorder,
   onClose,
-  focusScopeKey,
-  getCurrentFocusScope,
   inspector,
   review,
   browser,
@@ -127,9 +120,7 @@ export function RightWorkbench({
   work,
   workEnabled = false,
   sessionTitle,
-  docked = false,
   visible = true,
-  pageVisible = true,
   browserEnabled = true,
   browserSessionAvailable = true,
   browserEntryOpen = false,
@@ -138,7 +129,6 @@ export function RightWorkbench({
   browserBusy = false,
   onBrowserActivate,
   onBrowserClose,
-  width,
 }: {
   activeTab: RightWorkbenchTab | null
   openToolTabs: WorkbenchToolTab[]
@@ -238,6 +228,7 @@ export function RightWorkbench({
             next.splice(index, 0, moved)
             onTabReorder?.(next)
           }}>
+            <WorkbenchTabDragLifecycle />
             <TabsList ref={tabListRef} aria-label={uiText("workbench_tabs_e5ddf68a")} className="min-w-0 flex-1 justify-start overflow-x-auto rounded-none bg-transparent p-0">
               {orderedTabs.map((item, index) => {
                 if (item.kind === "tool") {
@@ -393,92 +384,11 @@ export function RightWorkbench({
     </Tabs>
   )
 
-  // Keep the real React ancestry stable across breakpoints. Moving a portal
-  // under a newly mounted Dialog leaves nested Popover scopes outside that
-  // Dialog's lifecycle and can create competing focus traps.
-  const panelRef = useRef<HTMLElement>(null)
-  const backdropRef = useRef<HTMLDivElement>(null)
-  const pointerDismiss = useRef<"backdrop" | "other" | null>(null)
-  const focusGeneration = useRef({ generation: 0 })
-  const modal = visible && pageVisible && !docked
-  const currentMode = useRef({ docked, visible, pageVisible })
-  currentMode.current = { docked, visible, pageVisible }
-  useEffect(() => {
-    const panel = panelRef.current
-    if (!modal || !panel) return
-    const lifecycle = focusGeneration.current
-    const generation = ++lifecycle.generation
-    pointerDismiss.current = null
-    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null
-    const fallback = document.querySelector<HTMLElement>('[aria-controls="right-workbench"]')
-    // A model/menu portal may already be open when the viewport narrows.
-    // Keep that owned surface exposed to assistive technology as well.
-    const surfaces = workbenchSurfaces(panel)
-    const restoreBackground = hideOthers(surfaces)
-    if (!surfaces.some((surface) => surface.contains(document.activeElement))) {
-      panel.focus({ preventScroll: true })
-    }
-    return () => {
-      restoreBackground()
-      // Settings owns focus while the chat shell is hidden. Keep the panel
-      // mounted, but release its modal effects without focusing hidden controls.
-      if (!currentMode.current.pageVisible) return
-      // Resizing back to a docked surface must not move focus out of the editor.
-      if (currentMode.current.docked && currentMode.current.visible) return
-      const restore = () => {
-        if (generation !== lifecycle.generation || (getCurrentFocusScope && getCurrentFocusScope() !== focusScopeKey)) return
-        const active = document.activeElement
-        // Never steal focus from a new control chosen after the close gesture.
-        if (active instanceof HTMLElement && !panel.contains(active) && canRestoreFocus(active)) return
-        const target = [opener, fallback].find(canRestoreFocus)
-        target?.focus({ preventScroll: true })
-      }
-      if (pointerDismiss.current === "backdrop") {
-        // Native pointer default actions run after React's dismissal cleanup and
-        // can move focus to BODY. Restore after that turn, only if still vacant.
-        requestAnimationFrame(() => {
-          const currentPanel = document.getElementById("right-workbench")
-          if (currentPanel && canRestoreFocus(currentPanel)) return
-          restore()
-        })
-      } else if (pointerDismiss.current !== "other") restore()
-    }
-  }, [modal, focusScopeKey, getCurrentFocusScope])
+  return body
+}
 
-  return <>
-    {modal ? <div ref={backdropRef} data-slot="dialog-overlay" className="fixed inset-0 z-40 bg-black/50" style={{ pointerEvents: "auto" }} /> : null}
-    <RemoveScroll enabled={modal} forwardProps allowPinchZoom>
-      <FocusScope asChild loop={modal} trapped={modal}
-        onMountAutoFocus={(event) => event.preventDefault()}
-        onUnmountAutoFocus={(event) => event.preventDefault()}>
-        <DismissableLayer asChild disableOutsidePointerEvents={modal}
-          onDismiss={modal ? onClose : undefined}
-          onFocusOutside={(event) => event.preventDefault()}
-          onPointerDownOutside={(event) => {
-            const original = event.detail.originalEvent
-            // Radix's React capture flag cannot see a sibling-owned portal.
-            // Physical/explicitly owned inside targets must not dismiss the pane.
-            const panel = panelRef.current
-            const target = original.target
-            if (panel && target instanceof Node && workbenchSurfaces(panel).some((surface) => surface.contains(target))) {
-              event.preventDefault()
-              return
-            }
-            if (original.button === 2 || (original.button === 0 && original.ctrlKey)) {
-              event.preventDefault()
-              return
-            }
-            pointerDismiss.current = target instanceof Node && backdropRef.current?.contains(target) ? "backdrop" : "other"
-          }}>
-          <aside ref={panelRef} id="right-workbench" role={modal ? "dialog" : undefined}
-            aria-modal={modal ? true : undefined} aria-label={uiText("workbench_c2730bc7")}
-            hidden={!visible}
-            className={cn("flex min-h-0 min-w-0 flex-col bg-card", docked ? "shrink-0 border-l" : "fixed inset-y-0 right-0 z-50 border-l shadow-lg")}
-            style={{ ...(docked ? { width: width ?? 520 } : { width: "92vw", maxWidth: "42rem" }), display: visible ? undefined : "none" }}>
-            {body}
-          </aside>
-        </DismissableLayer>
-      </FocusScope>
-    </RemoveScroll>
-  </>
+// Standalone consumers retain the same surface; App mounts it eagerly around
+// lazy content so async loading can never register a layer over an open dialog.
+export function RightWorkbench(props: ComponentProps<typeof RightWorkbenchContent>) {
+  return <RightWorkbenchSurface {...props}><RightWorkbenchContent {...props} /></RightWorkbenchSurface>
 }
