@@ -281,6 +281,11 @@ export function useRootOrchestrationMode(sessionId: string | null, kind?: Sessio
     isRoot: !sessionId || !child && (kind === "root" || detail?.kind === "root"),
     recovering: recoveringId === sessionId,
     recoverable: fence.kind === "pending",
+    // A fresh durable marker is an expected safety fence, not evidence of a
+    // failed request. Consumers may present it as progress while they own an
+    // active selection; abandoned markers and real recovery failures stay errors.
+    errorIsPendingNotice: unsafe && fence.kind === "pending"
+      && recoveryFailure?.sessionId !== sessionId,
     error: unsafe ? pendingError : recoveryFailure?.sessionId === sessionId
       ? recoveryFailure.message : detail?.error ?? null,
     change, refresh, retry,

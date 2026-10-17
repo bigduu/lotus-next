@@ -9,6 +9,14 @@ import { Input } from "@/components/ui/input"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import "./ModelEffortPicker.css"
 
+const LABEL_CELL = { gridArea: "1 / 1" }
+
+const METEORS = [
+  { top: "22%", animationDuration: "1.6s", animationDelay: "-0.4s", "--meteor-rest": "-25%" },
+  { top: "48%", animationDuration: "2.7s", animationDelay: "-1.8s", "--meteor-rest": "8%" },
+  { top: "76%", animationDuration: "2.1s", animationDelay: "-0.9s", "--meteor-rest": "30%" },
+] as const
+
 const ORDINARY: ReasoningEffortSelection[] = ["auto", "none", "low", "medium", "high", "xhigh", "max"]
 const labels = () => ({
   auto: uiText("auto_7eb336e4"), none: uiText("reasoning_none"),
@@ -92,7 +100,13 @@ export function ModelEffortPicker({
           disabled={triggerDisabled}
           className="model-effort-trigger inline-flex min-w-0 max-w-[70vw] items-center gap-1.5 rounded-full border bg-card px-3 py-1.5 text-xs font-medium outline-none transition-colors hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50 md:max-w-xs">
           <span id={`${pickerId}-model`} className="truncate">{model || uiText("select_a_model_1afed6a8")}</span>
-          <span id={`${pickerId}-effort`} className="shrink-0" style={{ color: accents[selected] }}>{currentLabel}</span>
+          <span className="effort-trigger-label grid shrink-0" style={{ color: accents[selected] }}>
+            <span className="effort-label-reserve invisible grid" style={LABEL_CELL} aria-hidden>
+              {[...efforts.map((effort) => text[effort]), uiText("unconfirmed_c098e854")].map((label) =>
+                <span key={label} data-label={label} style={LABEL_CELL} />)}
+            </span>
+            <span id={`${pickerId}-effort`} style={LABEL_CELL}>{currentLabel}</span>
+          </span>
           <ChevronDown className="size-3 shrink-0 text-muted-foreground" aria-hidden />
         </button>
       </PopoverTrigger>
@@ -129,7 +143,14 @@ export function ModelEffortPicker({
             </div>
             <div className={cn("effort-slider mt-3", displayed === "ultra" && "effort-slider-ultra", effortDisabled && "opacity-40")}
               style={{ "--effort-accent": accent, "--effort-progress": displayIndex / (efforts.length - 1) } as CSSProperties}>
-              <div className="effort-slider-fill" aria-hidden />
+              <div className="effort-slider-fill" aria-hidden>
+                {displayed === "ultra" && <span className="effort-meteors pointer-events-none absolute inset-0 overflow-hidden rounded-full">
+                  {METEORS.map((style) => <i key={style.top} className="absolute h-0.5 w-full opacity-70" style={{
+                    ...style, transform: "translateX(var(--meteor-rest))",
+                    background: "linear-gradient(90deg, #fff, transparent) center / 26px 2px no-repeat",
+                  } as CSSProperties} />)}
+                </span>}
+              </div>
               <div className="effort-slider-ticks" aria-hidden>
                 {efforts.map((effort) => <span key={effort} />)}
               </div>
@@ -157,7 +178,7 @@ export function ModelEffortPicker({
             <div className="mt-1.5 flex justify-between px-1 text-[10px] text-muted-foreground" aria-hidden>
               <span>{text.auto}</span><span>{text[efforts[efforts.length - 1]!]}</span>
             </div>
-            {displayed === "ultra" ? <p className="mt-2 border-t pt-2 text-xs leading-relaxed text-muted-foreground">{uiText("ultra_picker_description")}</p> : null}
+            {allowUltra && <p aria-hidden={displayed !== "ultra"} className={cn("mt-2 border-t pt-2 text-xs leading-relaxed text-muted-foreground", displayed !== "ultra" && "invisible")}>{uiText("ultra_picker_description")}</p>}
           </>
         ) : (
           <>

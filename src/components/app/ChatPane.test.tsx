@@ -971,6 +971,28 @@ describe("Root orchestration-only control", () => {
     expect(agentClient.getSession).toHaveBeenCalledTimes(2)
   })
 
+  it("announces a pending Root selection without a transient alert and retains real failure", async () => {
+    const response = deferred<void>()
+    vi.mocked(agentClient.selectRootMode).mockImplementationOnce(async () => {
+      await response.promise
+      throw new RequestTimeoutError()
+    })
+    const send = vi.fn<Send>()
+    await mount(send, "root-session")
+    await act(async () => { thinkingPicker().click(); await Promise.resolve() })
+    expect(getRootModeFenceState("root-session")).toBe("uncertain")
+    expect(thinkingPicker().disabled).toBe(true)
+    expect(document.querySelector('[role="status"]')?.textContent).toContain("等待服务器确认")
+    expect(document.querySelector('[role="alert"]')).toBeNull()
+    expect(send).not.toHaveBeenCalled()
+    // A terminal rejection/recovery failure must still be visible afterward.
+    await act(async () => { response.resolve(); await Promise.resolve() })
+    await flush()
+    expect(document.querySelector('[role="alert"]')).not.toBeNull()
+    expect(document.body.textContent).toContain("恢复切换")
+    expect(getRootModeFenceState("root-session")).toBe("uncertain")
+  })
+
   it("switches an existing Root without chat and omits mode on the next message", async () => {
     let durable = true
     vi.mocked(agentClient.getSession).mockImplementation(async (sessionId) => ({
@@ -1398,7 +1420,8 @@ describe("Root orchestration-only control", () => {
     expect(agentClient.sendMessage).not.toHaveBeenCalled()
     expect(send).not.toHaveBeenCalled()
     expect(textarea.value).toBe("/goal complete the task")
-    expect(document.querySelector('[role="alert"]')?.textContent).toContain("请恢复该请求")
+    expect(document.querySelector('[role="alert"]')).toBeNull()
+    expect(document.querySelector('[role="status"]')?.textContent).toContain("等待服务器确认")
     const operation = vi.mocked(agentClient.selectRootMode).mock.calls[0][1]
     await act(async () => {
       terminal.resolve({ status: "committed", operation_id: operation.operationId, expected_epoch: operation.expectedEpoch,

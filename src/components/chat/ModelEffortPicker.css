@@ -13,11 +13,7 @@
 }
 .effort-slider-ultra .effort-slider-fill {
   width: 100%;
-  background: radial-gradient(circle at 12% 35%, #ffffffa0 1px, transparent 2px),
-    radial-gradient(circle at 40% 65%, #ffffffb0 1px, transparent 2px),
-    radial-gradient(circle at 70% 30%, #ffffff90 1px, transparent 2px),
-    linear-gradient(100deg, #4458e8, #9064ef 55%, #c494f6);
-  background-size: 79px 32px, 97px 32px, 113px 32px, 100% 100%;
+  background: linear-gradient(100deg, #4458e8, #9064ef 55%, #c494f6);
 }
 .effort-slider-ticks {
   position: absolute;
@@ -70,4 +66,16 @@
   border: 1px solid #00000012;
   background: #fff;
   box-shadow: 0 1px 3px #00000020;
+}
+
+/* Intrinsic, localized reservation keeps the Popper anchor fixed on selection. */
+.effort-label-reserve > span::before { content: attr(data-label); }
+/* Clip decoration only; the range and its keyboard focus ring stay unclipped. */
+@media (prefers-reduced-motion: no-preference) {
+  .effort-meteors i { animation: effort-meteor linear infinite; }
+}
+@keyframes effort-meteor {
+  from { transform: translateX(70%); opacity: 0; }
+  15%, 80% { opacity: 0.9; }
+  to { transform: translateX(-70%); opacity: 0; }
 }

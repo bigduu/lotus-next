@@ -82,6 +82,34 @@ beforeEach(() => {
 afterEach(() => { act(() => renderer.unmount()); host.remove() })
 
 describe("Root product Ultra composition", () => {
+  it("reports active selection as progress in both panes without weakening the safety fence", async () => {
+    const response = deferred<RootModeOperationResponse>()
+    let operation!: RootModeOperationInput
+    vi.mocked(agentClient.selectRootMode).mockImplementationOnce((_id, op) => {
+      operation = op
+      return response.promise
+    })
+    await mount(<><Harness /><Harness name="two" /></>)
+    let selection!: Promise<void>
+    await act(async () => { selection = value().choose("ultra") })
+    expect(readRootModeFence(id).kind).toBe("pending")
+    for (const name of ["one", "two"]) {
+      expect(value(name)).toMatchObject({ busy: true, unsafe: true, controlDisabled: true, error: null })
+    }
+    // A second click cannot bypass the shared lock or create another request.
+    await act(async () => { await value("two").choose("low") })
+    expect(agentClient.selectRootMode).toHaveBeenCalledTimes(1)
+    await act(async () => {
+      enabled = true; epoch = operation.expectedEpoch + 1
+      response.resolve(terminal(operation))
+      await selection
+    })
+    expect(readRootModeFence(id).kind).toBe("clear")
+    for (const name of ["one", "two"]) {
+      expect(value(name)).toMatchObject({ busy: false, unsafe: false, thinkingMode: "ultra", error: null })
+    }
+  })
+
   it("enables Ultra without upgrading the independent High effort to Max", async () => {
     await mount()
     await act(async () => { await value().choose("ultra") })

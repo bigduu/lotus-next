@@ -10,6 +10,16 @@ const mainTitle = "Main model and effort"
 const birth = "a".repeat(64)
 const at = "2026-10-06T00:00:00.000Z"
 
+function expectCloseBounds(actual: { x: number; y: number; width: number; height: number } | null,
+  expected: { x: number; y: number; width: number; height: number } | null) {
+  expect(actual).not.toBeNull()
+  expect(expected).not.toBeNull()
+  for (const key of ["x", "y", "width", "height"] as const) {
+    // DOMRect frame sampling can differ by a few millionths of a CSS pixel.
+    expect(actual![key]).toBeCloseTo(expected![key], 2)
+  }
+}
+
 async function screenshot(page: Page, info: TestInfo, name: string) {
   const file = info.outputPath(`${name}.png`)
   await page.screenshot({ path: file, animations: "disabled" })
@@ -35,7 +45,7 @@ async function screenshot(page: Page, info: TestInfo, name: string) {
   await info.attach(detailName, { path: detailFile, contentType: "image/png" })
 }
 
-async function setup(page: Page, beforeSessionRestoration?: () => Promise<void>) {
+async function setup(page: Page, beforeSessionRestoration?: () => Promise<void>, beforeModeCommit?: () => Promise<void>) {
   await page.addInitScript((id) => {
     localStorage.setItem("bodhi_onboarded_v1", "1")
     localStorage.setItem("lotus_next_last_session", id)
@@ -107,9 +117,10 @@ async function setup(page: Page, beforeSessionRestoration?: () => Promise<void>)
       route.fulfill({ json: { session_id: current.id, items: [] } }))
     await page.route(`**/api/v1/respond/${current.id}/pending`, (route) =>
       route.fulfill({ json: { has_pending_question: false } }))
-    await page.route(`**/api/v1/sessions/${current.id}/root-mode-operations/*`, (route) => {
+    await page.route(`**/api/v1/sessions/${current.id}/root-mode-operations/*`, async (route) => {
       const body = route.request().postDataJSON() as Record<string, unknown>
       operations.push(body)
+      await beforeModeCommit?.()
       expect(body.birth_token).toBe(birth)
       expect(body.expected_epoch).toBe(current.root_mode_transition_epoch)
       const expected = current.root_mode_transition_epoch++
@@ -193,6 +204,19 @@ test("the combined picker persists effort and model, supports keyboard, and fits
   const slider = page.getByRole("slider", { name: "推理强度", exact: true })
   await expect(slider).toHaveValue("4")
   await screenshot(page, info, "combined-picker-high")
+  const panelBeforeUltra = await page.locator(".model-effort-panel").boundingBox()
+  const triggerBeforeUltra = await picker.boundingBox()
+  const sliderBeforeUltra = await slider.boundingBox()
+  const duringUltra = page.locator(".model-effort-panel").evaluate(async (panel) => {
+    const view = panel.ownerDocument.defaultView!
+    const samples: number[][] = []
+    for (let frame = 0; frame < 24; frame++) {
+      await new Promise<void>((resolve) => view.requestAnimationFrame(() => resolve()))
+      const { x, y, width, height } = panel.getBoundingClientRect()
+      samples.push([x, y, width, height])
+    }
+    return samples
+  })
   const operationsBeforeUltra = operations.length
   await slider.focus()
   await slider.press("End")
@@ -200,6 +224,18 @@ test("the combined picker persists effort and model, supports keyboard, and fits
   await expect.poll(() => operations.length).toBe(operationsBeforeUltra + 1)
   expect(main.reasoning_effort).toBe("high")
   expect(patches).toHaveLength(1)
+  for (const sample of await duringUltra) {
+    const expected = [panelBeforeUltra!.x, panelBeforeUltra!.y, panelBeforeUltra!.width, panelBeforeUltra!.height]
+    sample.forEach((value, index) => expect(value).toBeCloseTo(expected[index]!, 2))
+  }
+  expect(await page.locator(".model-effort-panel").boundingBox()).toEqual(panelBeforeUltra)
+  expect(await picker.boundingBox()).toEqual(triggerBeforeUltra)
+  expect(await slider.boundingBox()).toEqual(sliderBeforeUltra)
+  await expect(page.locator(".effort-meteors i")).toHaveCount(3)
+  await page.emulateMedia({ reducedMotion: "reduce" })
+  await expect(page.locator(".effort-meteors i").first()).toHaveCSS("animation-name", "none")
+  await page.emulateMedia({ reducedMotion: "no-preference" })
+  await expect(page.locator(".effort-meteors i").first()).toHaveCSS("animation-name", "effort-meteor")
   await screenshot(page, info, "combined-picker-ultra")
   await page.keyboard.press("Escape")
 
@@ -264,3 +300,57 @@ test("the side composer updates only its own model and effort", async ({ page },
   expect(observation.pageErrors).toEqual([])
   expect(observation.errorResponses).toEqual([])
 })
+
+for (const target of ["main", "side"] as const) {
+  test(`a pending Ultra selection keeps the ${target} composer geometry stable`, async ({ page }, info) => {
+    test.skip(target === "side" && info.project.name !== "desktop-chromium", "desktop side composer acceptance")
+    let release!: () => void
+    const confirmation = new Promise<void>((resolve) => { release = resolve })
+    const { operations, observation } = await setup(page, undefined, () => confirmation)
+    if (target === "side") {
+      await page.getByRole("button", { name: "打开侧边面板", exact: true }).click()
+      const workbench = page.locator("#right-workbench")
+      await workbench.getByRole("button", { name: "打开工作面板标签页" }).click()
+      await page.getByRole("menuitem", { name: "并排会话", exact: true }).click()
+      await workbench.getByRole("combobox").filter({ hasText: "选择会话并排" }).click()
+      await page.getByRole("option", { name: "Side model and effort", exact: true }).click()
+      await expect(workbench.getByTestId("model-effort-picker")).toBeEnabled()
+    }
+    const picker = target === "side" ? page.locator("#right-workbench").getByTestId("model-effort-picker") : modelEffortPicker(page)
+    const surfaces = page.locator("[data-composer-surface]")
+    const before = await surfaces.evaluateAll((elements) => elements.map((element) => {
+      const { x, y, width, height } = element.getBoundingClientRect()
+      return { x, y, width, height }
+    }))
+    await picker.click()
+    try {
+      await page.getByRole("slider", { name: "推理强度", exact: true }).press("End")
+      await expect.poll(() => operations.length).toBe(1)
+      await expect(surfaces.getByRole("alert")).toHaveCount(0)
+      await expect(surfaces.getByRole("status").filter({ hasText: "等待服务器确认" })).toHaveCount(1)
+      const pendingSamples = await surfaces.evaluateAll(async (elements) => {
+        const view = elements[0]!.ownerDocument.defaultView!
+        const samples = []
+        for (let frame = 0; frame < 24; frame++) {
+          await new Promise<void>((resolve) => view.requestAnimationFrame(() => resolve()))
+          samples.push(elements.map((element) => {
+            const { x, y, width, height } = element.getBoundingClientRect()
+            return { x, y, width, height }
+          }))
+        }
+        return samples
+      })
+      for (const sample of pendingSamples) {
+        sample.forEach((bounds, index) => expectCloseBounds(bounds, before[index]!))
+      }
+    } finally {
+      release()
+    }
+    await expect(picker).toContainText("Ultra")
+    await expect(surfaces.getByRole("alert")).toHaveCount(0)
+    for (let index = 0; index < before.length; index++) {
+      expect(await surfaces.nth(index).boundingBox()).toEqual(before[index]!)
+    }
+    expect(observation.pageErrors).toEqual([])
+  })
+}
