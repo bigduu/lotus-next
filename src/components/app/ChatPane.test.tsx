@@ -393,6 +393,39 @@ describe("ChatPane composer acknowledgement", () => {
     expect(onReference).toHaveBeenCalledOnce()
     expect(host.querySelector('[data-testid="ticket-reference"]')?.textContent).toContain("报告A")
   })
+  it.each(["ready", "new pointer intent", "session navigation", "hidden page"] as const)("waits for a lazy Work target and respects %s", async (outcome) => {
+    const value = ticketSnapshot()
+    const supervisor = "bamboo-default-supervisor"
+    value.scope.binding.supervisor_session_id = supervisor
+    runtime.ticketWork = { state: applyTicketSnapshot(null, value), connected: true, negotiated: true,
+      error: null, busy: {}, uncertain: {}, respond: async () => false, refresh: async () => {}, canRespond: true, canSendIngress: true }
+    let nextFrame = 0
+    const frames = new Map<number, FrameRequestCallback>()
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => { frames.set(++nextFrame, callback); return nextFrame })
+    vi.stubGlobal("cancelAnimationFrame", (id: number) => frames.delete(id))
+    const flushFrame = () => act(() => { const pending = [...frames.values()]; frames.clear(); pending.forEach((callback) => callback(0)) })
+    const host = document.body.appendChild(document.createElement("div"))
+    const target = document.body.appendChild(document.createElement("div"))
+    const root = createRoot(host); roots.push(root)
+    const render = (panel: HTMLElement | null, sessionId = supervisor, pageVisible = true) => act(() => root.render(
+      <ChatPane chat={createChat(vi.fn<Send>(), sessionId)} pickedWorkspace={null}
+        onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()} splitOpen={false}
+        onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false}
+        workPanelTarget={panel} onOpenWork={vi.fn()} pageVisible={pageVisible} />))
+    render(null)
+    act(() => host.querySelector<HTMLButtonElement>('[data-testid="ticket-work-status"]')!.click())
+    const all = [...document.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "查看全部工作")!
+    act(() => all.click())
+    flushFrame() // The import has not resolved in the first frame.
+    if (outcome === "new pointer intent") act(() => document.dispatchEvent(new Event("pointerdown", { bubbles: true })))
+    if (outcome === "session navigation") render(null, "another-session")
+    if (outcome === "hidden page") render(null, supervisor, false)
+    render(target, supervisor, outcome !== "hidden page")
+    flushFrame()
+    const overview = target.querySelector<HTMLElement>('[data-testid="ticket-work-overview"]')!
+    expect(overview).not.toBeNull()
+    expect(document.activeElement === overview).toBe(outcome === "ready")
+  })
   it.each([
     ["ordinary titled Supervisor", "ordinary-root", "root", undefined],
     ["builtin ID marked child", "bamboo-default-supervisor", "child", undefined],
