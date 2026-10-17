@@ -33,10 +33,13 @@ import { isPhoneDevice } from "@/lib/browserAvailability"
 import { DEFAULT_SUPERVISOR_SESSION_ID, isDefaultSupervisor } from "@/lib/supervisor"
 import { agentClient } from "@services/chat/AgentService"
 import { reorderVisibleWorkbenchTabIds, visibleWorkbenchTabIds } from "@/lib/workbenchTabs"
+import { captureWorkbenchFocusReturn } from "@/lib/workbenchFocusReturn"
+import type { WorkbenchTabDrag } from "@/components/app/workbenchSurfaceContext"
+import { RightWorkbenchSurface } from "@/components/app/RightWorkbenchSurface"
 import type { RightWorkbenchTab, WorkbenchToolTab } from "@/components/app/RightWorkbench"
 
 // The optional workbench need not add its tab/drag UI to ordinary-chat startup.
-const RightWorkbench = lazy(() => import("@/components/app/RightWorkbench").then((module) => ({ default: module.RightWorkbench })))
+const RightWorkbench = lazy(() => import("@/components/app/RightWorkbench").then((module) => ({ default: module.RightWorkbenchContent })))
 
 function App() {
   useUiLocale()
@@ -58,6 +61,9 @@ function App() {
   // Only a confirmed root mounts the interactive side chat; unknown and child
   // sessions use the message-only projection until summary metadata resolves.
   const { state: workbenchState, setField: setWorkbenchField, scope: workbenchScope, openToolForSession } = useWorkbenchState(currentSessionId)
+  const currentWorkbenchScope = useRef(workbenchScope)
+  currentWorkbenchScope.current = workbenchScope
+  const getCurrentWorkbenchScope = useCallback(() => currentWorkbenchScope.current, [])
   const { secondSid, open: workbenchOpen, tab: workbenchTab, tools: openToolTabs,
     reviewTarget: reviewTargetFilePath } = workbenchState
   const setSecondSid = (value: string | null) => setWorkbenchField("secondSid", value)
@@ -79,23 +85,25 @@ function App() {
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [paletteOpen, setPaletteOpen] = useState(false)
-  const paletteReturnFocusRef = useRef<HTMLElement | null>(null)
+  const workbenchTabDragRef = useRef<WorkbenchTabDrag | null>(null)
+  const paletteReturnFocusRef = useRef<() => HTMLElement | null>(() => null)
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && (e.key === "k" || e.key === "K")) {
         e.preventDefault()
         if (!paletteOpen) {
-          paletteReturnFocusRef.current = document.activeElement instanceof HTMLElement
-            ? document.activeElement
-            : null
+          paletteReturnFocusRef.current = captureWorkbenchFocusReturn(
+            document.activeElement instanceof HTMLElement ? document.activeElement : null,
+            getCurrentWorkbenchScope(), getCurrentWorkbenchScope, workbenchTabDragRef.current?.getSourceId(),
+          )
         }
         setPaletteOpen((v) => !v)
       }
     }
     window.addEventListener("keydown", onKey)
     return () => window.removeEventListener("keydown", onKey)
-  }, [paletteOpen])
+  }, [paletteOpen, getCurrentWorkbenchScope])
 
   const workbenchSelectionVersionRef = useRef(0)
   const [workPanelTarget, setWorkPanelTarget] = useState<HTMLDivElement | null>(null)
@@ -209,12 +217,15 @@ function App() {
   const workbenchResize = useWorkbenchWidth(sidebarCollapsed ? 0 : sidebarResize.width)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const chatShellRef = useRef<HTMLDivElement>(null)
-  const settingsReturnFocusRef = useRef<HTMLElement | null>(null)
+  const settingsReturnFocusRef = useRef<() => HTMLElement | null>(() => null)
   const openSettings = () => {
     if (!settingsOpen) {
       settingsReturnFocusRef.current = paletteOpen
         ? paletteReturnFocusRef.current
-        : document.activeElement instanceof HTMLElement ? document.activeElement : null
+        : captureWorkbenchFocusReturn(
+          document.activeElement instanceof HTMLElement ? document.activeElement : null,
+          getCurrentWorkbenchScope(), getCurrentWorkbenchScope, workbenchTabDragRef.current?.getSourceId(),
+        )
     }
     setSidebarOpen(false)
     setPaletteOpen(false)
@@ -223,7 +234,7 @@ function App() {
   const closeSettings = () => {
     setSettingsOpen(false)
     requestAnimationFrame(() => {
-      const opener = settingsReturnFocusRef.current
+      const opener = settingsReturnFocusRef.current()
       if (opener?.isConnected && opener.getClientRects().length > 0) opener.focus()
       else chatShellRef.current?.querySelector<HTMLTextAreaElement>("textarea")?.focus()
     })
@@ -497,22 +508,24 @@ function App() {
         sidebarCollapsed={sidebarCollapsed}
       />
 
-      {workbenchOpen || (workEnabled && openToolTabs.includes("work")) ? (
-        <>
-          {isWide && workbenchOpen ? <ResizeHandle onPointerDown={workbenchResize.startResize} /> : null}
-          <Suspense fallback={(
-            <aside
-              aria-label={uiText("workbench_c2730bc7")}
-              aria-busy="true"
-              hidden={!workbenchOpen}
-              className={isWide ? "shrink-0 border-l bg-card" : "fixed inset-y-0 right-0 z-50 border-l bg-card"}
-              style={{ width: isWide ? workbenchResize.width : "min(92vw, 42rem)", display: workbenchOpen ? undefined : "none" }}
-            />
-          )}>
+      {isWide && workbenchOpen ? <ResizeHandle onPointerDown={workbenchResize.startResize} /> : null}
+      {/* Register the stable parent layer before any global dialogs. Lazy
+          tab content must never mount its own later, higher-priority layer. */}
+      <RightWorkbenchSurface
+        tabDragRef={workbenchTabDragRef}
+        interactionSuspended={paletteOpen}
+        focusScopeKey={workbenchScope}
+        getCurrentFocusScope={getCurrentWorkbenchScope}
+        visible={workbenchOpen}
+        pageVisible={!settingsOpen}
+        docked={isWide}
+        width={workbenchResize.width}
+        onClose={() => setWorkbenchOpen(false)}
+      >
+        {workbenchOpen || (workEnabled && openToolTabs.includes("work")) ? (
+          <Suspense fallback={null}>
           <RightWorkbench
             visible={workbenchOpen}
-            docked={isWide}
-            width={workbenchResize.width}
             activeTab={selectedWorkbenchTab}
             openToolTabs={visibleToolTabs}
             workEnabled={workEnabled}
@@ -609,8 +622,8 @@ function App() {
             )}
           />
           </Suspense>
-        </>
-      ) : null}
+        ) : null}
+      </RightWorkbenchSurface>
 
       <Onboarding />
 
@@ -660,15 +673,9 @@ function App() {
     </div>
       <LazySettings open={settingsOpen} onClose={closeSettings} />
       <CommandPalette
+        getReturnFocusTarget={paletteReturnFocusRef.current}
         open={paletteOpen}
-        onClose={() => {
-          setPaletteOpen(false)
-          requestAnimationFrame(() => {
-            const opener = paletteReturnFocusRef.current
-            if (opener?.isConnected && opener.getClientRects().length > 0) opener.focus()
-            else if (chatShellRef.current?.getClientRects().length) chatShellRef.current.querySelector<HTMLTextAreaElement>("textarea")?.focus()
-          })
-        }}
+        onClose={() => setPaletteOpen(false)}
         chats={chats}
         onSelect={(id) => {
           setSettingsOpen(false)

@@ -34,7 +34,7 @@ test("unread sessions retain their title name and expose a separate read-state d
   await expect(page.getByRole("textbox", { name: "消息", exact: true })).toBeVisible()
   const phone = testInfo.project.name === "phone-chromium"
   if (phone) await page.getByRole("button", { name: "菜单", exact: true }).click()
-  const session = page.locator("aside").getByRole("button", { name: "Unread session acceptance", exact: true })
+  const session = page.locator("aside").filter({ has: page.getByPlaceholder("搜索会话", { exact: true }) }).getByRole("button", { name: "Unread session acceptance", exact: true })
   await expect(session).toBeVisible()
   await expect(session).toHaveAccessibleName("Unread session acceptance")
   await expect(session).toHaveAccessibleDescription("未读消息")
@@ -45,7 +45,7 @@ test("unread sessions retain their title name and expose a separate read-state d
   await expect(session).toHaveAccessibleDescription("")
   await expect(session).not.toHaveAttribute("aria-describedby")
   // Move away again: the read marker must persist beyond the active-row override.
-  await page.locator("aside").getByRole("button", { name: "Current session", exact: true }).click()
+  await page.locator("aside").filter({ has: page.getByPlaceholder("搜索会话", { exact: true }) }).getByRole("button", { name: "Current session", exact: true }).click()
   if (phone) await page.getByRole("button", { name: "菜单", exact: true }).click()
   await expect(session).toHaveAccessibleName("Unread session acceptance")
   await expect(session).toHaveAccessibleDescription("")
@@ -121,7 +121,7 @@ test("background feed updates remain unread while Settings hides the conversatio
   // Both history reconciliation and the debounced summary refresh must finish
   // before checking the marker; a disconnected feed cannot make this pass.
   await expect(transcript).toContainText("Arrived while Settings was open.")
-  await expect(page.locator("aside")).toContainText("Updated behind Settings")
+  await expect(page.locator("aside").filter({ has: page.getByPlaceholder("搜索会话", { exact: true }) })).toContainText("Updated behind Settings")
   await transcript.evaluate((element) => new Promise<void>((resolve) => {
     const browser = element.ownerDocument.defaultView!
     browser.requestAnimationFrame(() => browser.requestAnimationFrame(() => resolve()))

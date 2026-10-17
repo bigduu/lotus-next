@@ -1,18 +1,25 @@
 import { uiText, useUiLocale } from "@shared/i18n/ui"
-import { useEffect, useRef, type ReactNode } from "react"
-import { DragDropProvider } from "@dnd-kit/react"
+import { useEffect, useLayoutEffect, useRef, useState, type ComponentProps, type ReactNode, type RefObject } from "react"
+import { DragDropProvider, useDragDropManager } from "@dnd-kit/react"
 import { isSortable, useSortable } from "@dnd-kit/react/sortable"
-import { ArrowLeft, Bot, FileDiff, Globe2, GripVertical, Plus, SlidersHorizontal, X, ListChecks } from "lucide-react"
+import { ArrowLeft, Bot, FileDiff, Globe2, GripVertical, Plus, SlidersHorizontal, X, ListChecks, ChevronDown } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { visibleWorkbenchTabIds } from "@/lib/workbenchTabs"
 import { cn } from "@/lib/utils"
+import { RightWorkbenchSurface } from "./RightWorkbenchSurface"
+import { workbenchDragCancellation } from "./workbenchDragCancellation"
+import { workbenchSensors } from "./workbenchSensors"
+import { type WorkbenchTabDrag, useWorkbenchTabDrag } from "./workbenchSurfaceContext"
 import type { BrowserTabSummary } from "@services/browser/types"
 
 export type RightWorkbenchTab = "inspector" | "review" | "browser" | "session" | "work"
@@ -31,6 +38,7 @@ type VisibleTab =
   | { key: string; kind: "browser"; tab: BrowserTabSummary }
 
 // The outer sortable shell owns selection for both tool and browser tabs.
+// Explicit tab data-state below prevents TooltipTrigger from replacing it with open/closed.
 const workbenchTabTriggerClass = "h-full min-w-0 flex-1 justify-start bg-transparent px-2 feedback-motion"
 const workbenchTabTriggerStyle = { backgroundColor: "transparent", borderColor: "transparent", boxShadow: "none", outlineWidth: 2 }
 
@@ -62,6 +70,7 @@ function SortableWorkbenchTab({
         ref={handleRef}
         type="button"
         aria-label={uiText("reorder_tab_82ab6e1e", { v0: title })}
+        data-workbench-tab-handle={id}
         aria-keyshortcuts="Alt+ArrowLeft Alt+ArrowRight"
         title={uiText("drag_to_reorder_use_alt_left_right_to_move_bb4c333a")}
         className="flex size-5 shrink-0 items-center justify-center rounded-sm outline-none feedback-motion transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
@@ -78,7 +87,34 @@ function SortableWorkbenchTab({
   )
 }
 
-export function RightWorkbench({
+// Read the sensor's actual synchronous lifecycle, including initialization.
+// onDragStart is asynchronous and can arrive after a quick Space -> Escape.
+function WorkbenchTabDragLifecycle() {
+  const manager = useDragDropManager()
+  const drag = useWorkbenchTabDrag()
+  useLayoutEffect(() => {
+    if (!manager) return
+    const isActive = () => !manager.dragOperation.controller?.signal.aborted
+      && (manager.dragOperation.status.initializing || manager.dragOperation.status.dragging)
+    const cancellation = workbenchDragCancellation(manager, isActive)
+    const registration = {
+      isActive,
+      // The manager records this identity at pickup, before previews can move focus.
+      getSourceId: () => isActive() && manager.dragOperation.sourceIdentifier != null
+        ? String(manager.dragOperation.sourceIdentifier) : null,
+      cancel: cancellation.cancel,
+    }
+    drag.current = registration
+    return () => {
+      registration.cancel()
+      cancellation.dispose()
+      if (drag.current === registration) drag.current = null
+    }
+  }, [manager, drag])
+  return null
+}
+
+export function RightWorkbenchContent({
   activeTab,
   openToolTabs,
   onTabChange,
@@ -93,7 +129,6 @@ export function RightWorkbench({
   work,
   workEnabled = false,
   sessionTitle,
-  docked = false,
   visible = true,
   browserEnabled = true,
   browserSessionAvailable = true,
@@ -103,7 +138,6 @@ export function RightWorkbench({
   browserBusy = false,
   onBrowserActivate,
   onBrowserClose,
-  width,
 }: {
   activeTab: RightWorkbenchTab | null
   openToolTabs: WorkbenchToolTab[]
@@ -112,6 +146,8 @@ export function RightWorkbench({
   tabOrder?: string[]
   onTabReorder?: (order: string[]) => void
   onClose: () => void
+  focusScopeKey?: string | null
+  getCurrentFocusScope?: () => string | null
   inspector: ReactNode
   review: ReactNode
   browser: ReactNode
@@ -121,6 +157,9 @@ export function RightWorkbench({
   sessionTitle?: string | null
   docked?: boolean
   visible?: boolean
+  pageVisible?: boolean
+  interactionSuspended?: boolean
+  tabDragRef?: RefObject<WorkbenchTabDrag | null>
   browserEnabled?: boolean
   browserSessionAvailable?: boolean
   browserEntryOpen?: boolean
@@ -145,12 +184,26 @@ export function RightWorkbench({
     .map((key) => tabByKey.get(key)!)
   const visibleTabIds = orderedTabs.map((tab) => tab.key)
   const tabListRef = useRef<HTMLDivElement>(null)
+  const tabMenuTriggerRef = useRef<HTMLButtonElement>(null)
+  const addTabTriggerRef = useRef<HTMLButtonElement>(null)
+  const closingTab = useRef<string | null>(null)
   const visibleOrderKey = visibleTabIds.join("|")
   useEffect(() => {
     tabListRef.current?.querySelector<HTMLElement>('[role="tab"][data-state="active"]')
       ?.scrollIntoView?.({ block: "nearest", inline: "nearest" })
   }, [selectedValue, visibleOrderKey])
+  useEffect(() => {
+    if (!closingTab.current || visibleTabIds.includes(closingTab.current)) return
+    closingTab.current = null
+    // Async closes must not steal focus if the user already moved elsewhere.
+    if (document.activeElement !== document.body) return
+    const next = tabListRef.current?.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]')
+      ?? tabListRef.current?.querySelector<HTMLElement>('[role="tab"]') ?? addTabTriggerRef.current
+    next?.focus()
+  }, [visibleOrderKey, visibleTabIds])
   const hasTabs = orderedTabs.length > 0
+  const [tabMenuOpen, setTabMenuOpen] = useState(false)
+  useEffect(() => { if (!hasTabs) setTabMenuOpen(false) }, [hasTabs])
   const moveTab = (id: string, direction: -1 | 1) => {
     const from = visibleTabIds.indexOf(id)
     const to = from + direction
@@ -165,22 +218,19 @@ export function RightWorkbench({
     onTabChange(entry)
   }
   const enabledEntries = toolEntries.filter((entry) => (browserEnabled || entry.id !== "browser") && (workEnabled || entry.id !== "work"))
+  const selectValue = (value: string) => {
+    if (value.startsWith("browser:")) onBrowserActivate?.(value.slice("browser:".length))
+    else if (value !== "launcher" && value !== "browser-entry") onTabChange(value as WorkbenchToolTab)
+  }
   const body = (
     <Tabs
       value={selectedValue}
-      onValueChange={(value) => {
-        if (value.startsWith("browser:")) {
-          const tabId = value.slice("browser:".length)
-          onBrowserActivate?.(tabId)
-        } else if (value !== "launcher" && value !== "browser-entry") {
-          onTabChange(value as WorkbenchToolTab)
-        }
-      }}
+      onValueChange={selectValue}
       className="min-h-0 flex-1 gap-0"
     >
       <div className="flex shrink-0 items-center gap-1 border-b bg-muted/50 px-2 pt-1">
         {hasTabs ? (
-          <DragDropProvider onDragEnd={(event) => {
+          <DragDropProvider sensors={workbenchSensors} onDragEnd={(event) => {
             if (event.canceled || !isSortable(event.operation.source)) return
             const { initialIndex, index } = event.operation.source
             if (initialIndex === index || initialIndex < 0 || index < 0 || index >= visibleTabIds.length) return
@@ -189,6 +239,7 @@ export function RightWorkbench({
             next.splice(index, 0, moved)
             onTabReorder?.(next)
           }}>
+            <WorkbenchTabDragLifecycle />
             <TabsList ref={tabListRef} aria-label={uiText("workbench_tabs_e5ddf68a")} className="min-w-0 flex-1 justify-start overflow-x-auto rounded-none bg-transparent p-0">
               {orderedTabs.map((item, index) => {
                 if (item.kind === "tool") {
@@ -197,16 +248,21 @@ export function RightWorkbench({
                   const title = item.tool === "session" ? sessionTitle || entry.label : entry.label
                   return (
                     <SortableWorkbenchTab key={item.key} id={item.key} index={index} title={title} selected={activeTab === item.tool} onMove={moveTab}>
-                      <TabsTrigger value={item.tool} title={title} style={{ ...workbenchTabTriggerStyle, maxWidth: 176 }} className={workbenchTabTriggerClass}>
+                      <Tooltip>
+                      <TooltipTrigger asChild>
+                      <TabsTrigger data-slot="tabs-trigger" value={item.tool} data-state={activeTab === item.tool ? "active" : "inactive"} style={{ ...workbenchTabTriggerStyle, maxWidth: 176 }} className={workbenchTabTriggerClass}>
                         <Icon className="size-4" />
                         <span className="truncate">{title}</span>
                       </TabsTrigger>
+                      </TooltipTrigger>
+                      <TooltipContent side="bottom" style={{ maxWidth: "min(24rem, calc(100vw - 2rem))", overflowWrap: "anywhere" }}>{title}</TooltipContent>
+                      </Tooltip>
                       <button
                         type="button"
                         aria-label={uiText("close_tab_547d17ad", { v0: entry.label })}
                         title={uiText("close_a70f6657", { v0: entry.label })}
                         className="mr-1 flex size-6 shrink-0 items-center justify-center rounded-sm outline-none feedback-motion transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
-                        onClick={() => onToolClose(item.tool)}
+                        onClick={() => { closingTab.current = item.key; onToolClose(item.tool) }}
                       ><X className="size-3.5" aria-hidden="true" /></button>
                     </SortableWorkbenchTab>
                   )
@@ -216,23 +272,29 @@ export function RightWorkbench({
                 const isActive = activeTab === "browser" && !browserEntryOpen && item.tab.tab_id === activeBrowserTabId
                 return (
                   <SortableWorkbenchTab key={item.key} id={item.key} index={index} title={title} selected={isActive} onMove={moveTab}>
+                    <Tooltip>
+                    <TooltipTrigger asChild>
                     <TabsTrigger
+                      data-slot="tabs-trigger"
                       value={item.key}
+                      data-state={isActive ? "active" : "inactive"}
                       aria-label={uiText("browser_tab_bc1120de", { v0: browserIndex, v1: title })}
-                      title={title}
                       className={workbenchTabTriggerClass}
                       style={workbenchTabTriggerStyle}
                     >
                       <Globe2 className="size-4" />
                       <span className="truncate">{title}</span>
                     </TabsTrigger>
+                    </TooltipTrigger>
+                    <TooltipContent side="bottom" style={{ maxWidth: "min(24rem, calc(100vw - 2rem))", overflowWrap: "anywhere" }}>{title}</TooltipContent>
+                    </Tooltip>
                     <button
                       type="button"
                       aria-label={uiText("close_browser_tab_df26cd49", { v0: browserIndex, v1: title })}
                       title={uiText("close_29f8e760", { v0: title })}
                       disabled={browserBusy}
                       className="mr-1 flex size-6 shrink-0 items-center justify-center rounded-sm outline-none feedback-motion transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
-                      onClick={() => onBrowserClose?.(item.tab.tab_id)}
+                      onClick={() => { closingTab.current = item.key; onBrowserClose?.(item.tab.tab_id) }}
                     ><X className="size-3.5" aria-hidden="true" /></button>
                   </SortableWorkbenchTab>
                 )
@@ -245,9 +307,38 @@ export function RightWorkbench({
         ) : (
           <span className="min-w-0 flex-1 px-2 text-sm text-muted-foreground">{uiText("workbench_c2730bc7")}</span>
         )}
+        <DropdownMenu open={tabMenuOpen} onOpenChange={setTabMenuOpen}>
+          <DropdownMenuTrigger asChild>
+            <Button ref={tabMenuTriggerRef} size="icon" variant="ghost" className="size-8 shrink-0" disabled={!hasTabs}
+              aria-label={uiText("workbench_open_tabs")}>
+              <ChevronDown className="size-4" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" aria-label={uiText("workbench_open_tabs")}
+            style={{ width: "min(24rem, calc(100vw - 2rem))" }}
+            onCloseAutoFocus={(event) => {
+              if (tabMenuTriggerRef.current?.disabled) {
+                event.preventDefault()
+                addTabTriggerRef.current?.focus()
+              }
+            }}>
+            <DropdownMenuRadioGroup value={selectedValue} onValueChange={selectValue}>
+              {orderedTabs.map((item, index) => {
+                const entry = item.kind === "tool" ? toolEntries.find((candidate) => candidate.id === item.tool)! : null
+                const title = item.kind === "browser" ? item.tab.title || item.tab.url || uiText("new_tab_9c5d3416")
+                  : item.tool === "session" ? sessionTitle || entry!.label : entry!.label
+                return <DropdownMenuRadioItem key={item.key} value={item.kind === "tool" ? item.tool : item.key}
+                  aria-label={item.kind === "browser" ? uiText("browser_tab_bc1120de", { v0: orderedTabs.slice(0, index).filter((candidate) => candidate.kind === "browser").length + 1, v1: title }) : undefined}
+                  style={{ whiteSpace: "normal", overflowWrap: "anywhere" }}>
+                  <span className="min-w-0">{title}</span>
+                </DropdownMenuRadioItem>
+              })}
+            </DropdownMenuRadioGroup>
+          </DropdownMenuContent>
+        </DropdownMenu>
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button size="icon" variant="ghost" className="size-8 shrink-0" aria-label={uiText("open_workbench_tab_424b2095")}>
+            <Button ref={addTabTriggerRef} size="icon" variant="ghost" className="size-8 shrink-0" aria-label={uiText("open_workbench_tab_424b2095")}>
               <Plus className="size-4" />
             </Button>
           </DropdownMenuTrigger>
@@ -304,19 +395,11 @@ export function RightWorkbench({
     </Tabs>
   )
 
-  const panel = (
-    <aside
-      id="right-workbench"
-      aria-label={uiText("workbench_c2730bc7")}
-      hidden={!visible}
-      className={cn("flex min-h-0 min-w-0 flex-col bg-card", docked ? "shrink-0 border-l" : "fixed inset-y-0 right-0 z-50 border-l shadow-lg")}
-      style={{ ...(docked ? { width: width ?? 520 } : { width: "min(92vw, 42rem)" }), display: visible ? undefined : "none" }}
-    >{body}</aside>
-  )
+  return body
+}
 
-  if (docked) return panel
-  return <>
-    <button hidden={!visible} style={{ display: visible ? undefined : "none" }} className="fixed inset-0 z-40 bg-black/50" aria-label={uiText("collapse_workbench_739b282d")} onClick={onClose} />
-    {panel}
-  </>
+// Standalone consumers retain the same surface; App mounts it eagerly around
+// lazy content so async loading can never register a layer over an open dialog.
+export function RightWorkbench(props: ComponentProps<typeof RightWorkbenchContent>) {
+  return <RightWorkbenchSurface {...props}><RightWorkbenchContent {...props} /></RightWorkbenchSurface>
 }

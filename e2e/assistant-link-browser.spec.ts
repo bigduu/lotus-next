@@ -1,3 +1,4 @@
+import { workbenchPanel } from "./support/workbench.js"
 import { expect, test } from "@playwright/test"
 import { installArtifactRuntime, standaloneScenario } from "./support/artifactRuntime.js"
 
@@ -120,7 +121,7 @@ test("assistant link can be copied or opened as a new top-level browser tab", as
   await inAppOption.click()
   await expect(dialog).toHaveCount(0)
 
-  const panel = page.getByRole("complementary", { name: "工作面板" })
+  const panel = workbenchPanel(page)
   await expect(panel).toBeVisible()
   await expect(panel.getByRole("tab", { name: "浏览器标签页 1：Linked issue" })).toHaveAttribute("aria-selected", "true")
   await expect(panel.getByRole("tab", { name: /浏览器标签页/ })).toHaveCount(1)

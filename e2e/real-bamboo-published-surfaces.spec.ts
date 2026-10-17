@@ -1,3 +1,4 @@
+import { workbenchPanel } from "./support/workbench.js"
 import { expectComposerText } from "./support/composer.js"
 import {
   devices,
@@ -333,7 +334,7 @@ const exerciseSurface = async ({
       ).toHaveCount(0);
     } else if (currentSourceArtifact) {
       await page.getByRole("button", { name: "打开侧边面板" }).click();
-      const panel = page.getByRole("complementary", { name: "工作面板" });
+      const panel = workbenchPanel(page);
       await panel.getByRole("button", { name: /浏览器.*输入网址后打开/ }).click();
       const pane = panel.getByRole("region", { name: "内置浏览器" });
       const address = pane.getByRole("textbox", { name: "网页地址" });
