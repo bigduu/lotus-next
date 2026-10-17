@@ -71,6 +71,8 @@ The component tests cover offset/day boundaries, null/invalid/unknown dates, nan
 
 Screenshot files are under `assets/planning-controls/`. Raw check receipts and original failed attempts are retained in the task's sibling `evidence/` directory. Earlier attempts preserve a default-sandbox loopback EPERM, browser-fixture page-height correction, Node-only browser-test typing corrections, fixture fast-refresh lint correction, default npm-cache EPERM and a 130-byte startup-CSS budget overrun. Existing focus/width/grid utilities replace the added CSS selectors; budgets are unchanged. Packaging uses the task's own npm cache without changing global permissions. Final counts are recorded in the handoff receipt after checks complete.
 
+The Vite-only component cases use `.pw.ts` filenames and an explicit dedicated config; the ordinary built-artifact suite retains its pinned configuration and original test set. Frontend CI runs the dedicated config after installing Chromium, so these cases are still required. CI screenshots go to ignored `test-results/` rather than modifying the committed Mac review PNGs. No publication workflow or pinned release-browser config is changed.
+
 Final checks on the frozen component source (Mac, Node 26.11.1):
 
 - `npm run verify` with task-scoped `npm_config_cache`: passed, 173 files / 3457 unit tests; type-check, lint, i18n, architecture, build and package-content/bundle-budget checks passed. The validated source-file hashes remained unchanged throughout.

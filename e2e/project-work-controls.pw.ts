@@ -16,8 +16,9 @@ for (const theme of ["light", "dark"]) {
       const body = await page.locator("body").boundingBox()
       const last = await page.getByRole("complementary", { name: "Fixture controls" }).boundingBox()
       expect(body!.y + body!.height).toBeGreaterThanOrEqual(last!.y + last!.height)
-      await mkdir("docs/tickets/assets/planning-controls", { recursive: true })
-      await page.screenshot({ path: `docs/tickets/assets/planning-controls/${theme}-${width}.png`, fullPage: true, animations: "disabled" })
+      const screenshots = process.env.CI ? "test-results/planning-controls-screenshots" : "docs/tickets/assets/planning-controls"
+      await mkdir(screenshots, { recursive: true })
+      await page.screenshot({ path: `${screenshots}/${theme}-${width}.png`, fullPage: true, animations: "disabled" })
     })
   }
 }
