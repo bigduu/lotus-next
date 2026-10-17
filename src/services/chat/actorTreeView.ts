@@ -9,6 +9,8 @@ export interface ActorTreeNode {
   role: string | null
   lifecycle: ActorLifecycle | "active" | "unknown"
   placement: ActorPlacement | "docker" | "ssh" | "schedulable"
+  /** Why the snapshot cannot report execution placement; never a guessed host. */
+  placementUnavailableReason?: "no_activation" | "native_task" | "not_reported" | null
   health: ActorHealth | null
   /** Native execution evidence does not replace the canonical business outcome. */
   localTaskDiagnostic?: "stopped" | "stop_unconfirmed" | null

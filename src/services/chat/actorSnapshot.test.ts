@@ -23,6 +23,25 @@ describe("authorized actor snapshot DTO", () => {
     expect(tree.byId["actor-0"]).toMatchObject({ lifecycle: "running", placement: "remote", health: null })
   })
 
+  it("keeps absent activation, native evidence and missing placement distinct", () => {
+    const source = actorSnapshotFixture("root", 1)
+    source.nodes[1].placement_class = null
+    const first = actorSnapshotTree(parseActorSnapshot(source, "root"))
+    expect(first.byId.root).toMatchObject({ placement: "unknown", placementUnavailableReason: "no_activation" })
+    expect(first.byId["actor-0"]).toMatchObject({ placement: "unknown", placementUnavailableReason: "not_reported" })
+    const native = actorSnapshotTree(parseActorSnapshot(actorSnapshotV2Fixture(), "root"), false, first)
+    expect(native.byId["actor-0"]).toMatchObject({ placement: "unknown", placementUnavailableReason: "native_task" })
+    expect(native.byId["actor-0"]).not.toBe(first.byId["actor-0"])
+  })
+
+  it.each(["local", "docker", "ssh", "remote", "schedulable"] as const)("preserves reported %s placement without inferring a host", (placement) => {
+    const source = actorSnapshotFixture("root", 1)
+    source.nodes[1].placement_class = placement
+    const node = actorSnapshotTree(parseActorSnapshot(source, "root")).byId["actor-0"]
+    expect(node).toMatchObject({ placement, placementUnavailableReason: null })
+    expect(node).not.toHaveProperty("host")
+  })
+
   it.each([
     ["active", "reserved", "queued"],
     ["active", "running", "running"],
