@@ -34,7 +34,9 @@ export function RootOrchestrationControl({
   if (child) return null
   const changed = sessionId && typeof selected === "boolean" && typeof confirmed === "boolean"
     && selected !== confirmed
-  const status = unsafe
+  const status = unsafe && pending && !error && !conflict
+    ? uiText("waiting_for_server_confirmation_71efb37a")
+    : unsafe
     ? recovering ? uiText("recovering_permission_result_7a4a9813") : uiText("permission_result_unknown_37e663a7")
     : child
     ? uiText("only_root_can_configure_this_33c9ea08")

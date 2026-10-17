@@ -205,6 +205,37 @@ describe("ModelEffortPicker effort", () => {
     expect(range().value).toBe("0")
   })
 
+  it("reserves the Ultra description and localized trigger label through preview and confirmation", () => {
+    const picker = renderPicker({ value: "max", allowUltra: true, thinkingMode: "standard" })
+    const reserve = picker.trigger().querySelector(".effort-label-reserve")!
+    expect(reserve.getAttribute("aria-hidden")).toBe("true")
+    expect(reserve.querySelector('[data-label="Ultra · 编排"]')).not.toBeNull()
+    expect(reserve.textContent).toBe("")
+    open(picker.trigger())
+    const description = document.querySelector('.model-effort-panel p[aria-hidden]')!
+    expect(description.getAttribute("aria-hidden")).toBe("true")
+    expect(description.classList.contains("invisible")).toBe(true)
+    pointerEvent(range(), "pointerdown")
+    changeInput(range(), "7")
+    expect(picker.props.onChange).not.toHaveBeenCalled()
+    expect(document.querySelector('.model-effort-panel p[aria-hidden]')).toBe(description)
+    expect(description.getAttribute("aria-hidden")).toBe("false")
+    expect(description.classList.contains("invisible")).toBe(false)
+    const meteors = [...document.querySelectorAll<HTMLElement>(".effort-meteors i")]
+    expect(meteors).toHaveLength(3)
+    expect(new Set(meteors.map((item) => item.style.animationDuration)).size).toBe(3)
+    expect(new Set(meteors.map((item) => item.style.animationDelay)).size).toBe(3)
+    expect(meteors[0]!.closest('[aria-hidden="true"]')).not.toBeNull()
+    pointerEvent(range(), "pointerup")
+    expect(picker.props.onChange).toHaveBeenCalledExactlyOnceWith("ultra")
+    picker.rerender({ thinkingMode: "ultra" })
+    expect(picker.trigger().querySelector(".effort-label-reserve")).toBe(reserve)
+    picker.rerender({ thinkingMode: "standard" })
+    expect(document.querySelector('.model-effort-panel p[aria-hidden]')).toBe(description)
+    expect(description.getAttribute("aria-hidden")).toBe("true")
+    expect(document.querySelector(".effort-meteors")).toBeNull()
+  })
+
   it("exposes product Ultra only to the root and preserves its separate ordinary effort", () => {
     const picker = renderPicker({ value: "max", allowUltra: true, thinkingMode: "standard" })
     open(picker.trigger())
