@@ -1,4 +1,4 @@
-import { expect, type Locator } from "@playwright/test"
+import { expect, type Locator, type Page } from "@playwright/test"
 
 /** Read the user's plain text, retaining whitespace and hard breaks exactly. */
 export async function composerText(editor: Locator): Promise<string> {
@@ -22,4 +22,20 @@ export async function composerText(editor: Locator): Promise<string> {
 
 export async function expectComposerText(editor: Locator, expected: string): Promise<void> {
   await expect.poll(() => composerText(editor)).toBe(expected)
+}
+
+/** Reveal low-frequency controls using the measured pane layout, not viewport breakpoints. */
+export async function revealComposerSettings(page: Page): Promise<void> {
+  const column = page.locator("[data-composer-column]").first()
+  await expect(column).toBeVisible()
+  // ResizeObserver has to measure the real pane before the responsive branch settles.
+  await expect.poll(() => column.evaluate((element) => {
+    const width = element.getBoundingClientRect().width
+    return width > 0 && element.getAttribute("data-composer-compact") === String(width < 600)
+  })).toBe(true)
+  if (await column.getAttribute("data-composer-compact") === "true") {
+    const more = column.getByRole("button", { name: /^(More|更多)$/ })
+    if (await more.getAttribute("aria-expanded") !== "true") await more.click()
+    await expect(page.getByRole("dialog", { name: /^(More|更多)$/ })).toBeVisible()
+  }
 }
