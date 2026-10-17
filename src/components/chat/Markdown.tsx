@@ -3,6 +3,7 @@ import ReactMarkdown, { type Components } from "react-markdown"
 import remarkGfm from "remark-gfm"
 import rehypeSanitize from "rehype-sanitize"
 
+import { markdownTheme } from "./markdownTheme"
 import { cn } from "@/lib/utils"
 
 // Heavy deps — loaded only when the relevant block renders.
@@ -39,7 +40,7 @@ const components: Components = {
       )
     }
     return (
-      <code className="rounded bg-background/70 px-1 py-0.5 text-[0.85em] [overflow-wrap:anywhere]">
+      <code className="rounded bg-muted px-1 py-0.5 text-[0.85em] [overflow-wrap:anywhere]">
         {children}
       </code>
     )
@@ -72,9 +73,10 @@ const components: Components = {
 function MarkdownImpl({ children, className }: { children: string; className?: string }) {
   return (
     <div
+      style={markdownTheme}
       className={cn(
-        "prose prose-sm dark:prose-invert max-w-none [overflow-wrap:anywhere]",
-        "prose-p:my-2 prose-headings:mt-3 prose-headings:mb-1.5",
+        "prose prose-sm max-w-none [overflow-wrap:anywhere]",
+        "prose-p:my-2 prose-headings:mt-4 prose-headings:mb-2",
         "prose-pre:my-0 prose-pre:bg-transparent prose-pre:p-0",
         "prose-a:text-primary prose-li:my-0.5",
         className,
