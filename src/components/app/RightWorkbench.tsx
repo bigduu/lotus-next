@@ -17,6 +17,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { visibleWorkbenchTabIds } from "@/lib/workbenchTabs"
 import { cn } from "@/lib/utils"
 import { RightWorkbenchSurface } from "./RightWorkbenchSurface"
+import { workbenchDragCancellation } from "./workbenchDragCancellation"
 import { workbenchSensors } from "./workbenchSensors"
 import { type WorkbenchTabDrag, useWorkbenchTabDrag } from "./workbenchSurfaceContext"
 import type { BrowserTabSummary } from "@services/browser/types"
@@ -95,16 +96,18 @@ function WorkbenchTabDragLifecycle() {
     if (!manager) return
     const isActive = () => !manager.dragOperation.controller?.signal.aborted
       && (manager.dragOperation.status.initializing || manager.dragOperation.status.dragging)
+    const cancellation = workbenchDragCancellation(manager, isActive)
     const registration = {
       isActive,
       // The manager records this identity at pickup, before previews can move focus.
       getSourceId: () => isActive() && manager.dragOperation.sourceIdentifier != null
         ? String(manager.dragOperation.sourceIdentifier) : null,
-      cancel: () => { manager.actions.stop({ canceled: true }) },
+      cancel: cancellation.cancel,
     }
     drag.current = registration
     return () => {
       registration.cancel()
+      cancellation.dispose()
       if (drag.current === registration) drag.current = null
     }
   }, [manager, drag])
