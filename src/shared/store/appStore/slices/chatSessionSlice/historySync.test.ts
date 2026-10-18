@@ -146,3 +146,43 @@ describe("terminal history synchronization", () => {
     });
   });
 });
+
+
+describe("explicit history read outcomes", () => {
+  it("rejects opted-in failures without changing messages, and supports a later read-only retry", async () => {
+    const store = harness()
+    const before = store.getState().chats[0]
+    const failure = new Error("503 unavailable")
+    vi.spyOn(console, "warn").mockImplementation(() => {})
+    const read = vi.spyOn(agentClient, "getHistory").mockRejectedValueOnce(failure).mockResolvedValueOnce(committedHistory)
+    await expect(store.getState().loadChatHistory("session-1", { throwOnError: true })).rejects.toBe(failure)
+    expect(store.getState().chats[0]).toBe(before)
+    expect(read).toHaveBeenCalledTimes(1)
+    await store.getState().loadChatHistory("session-1", { throwOnError: true })
+    expect(store.getState().chats[0].messages.at(-1)?.id).toBe("assistant-final")
+  })
+
+  it("does not apply an aborted old read over a newer read for the same session", async () => {
+    const store = harness()
+    let resolve!: (value: HistoryResponse) => void
+    vi.spyOn(agentClient, "getHistory").mockImplementationOnce(() => new Promise((done) => { resolve = done }))
+      .mockResolvedValueOnce(committedHistory)
+    const controller = new AbortController()
+    const abandoned = store.getState().loadChatHistory("session-1", { throwOnError: true, signal: controller.signal })
+    controller.abort()
+    await store.getState().loadChatHistory("session-1", { throwOnError: true })
+    resolve({ session_id: "session-1", messages: [] })
+    await abandoned
+    expect(store.getState().chats[0].messages.at(-1)?.id).toBe("assistant-final")
+  })
+
+  it("keeps legacy best-effort callers compatible and rejects foreign history for explicit reads", async () => {
+    const store = harness()
+    vi.spyOn(console, "warn").mockImplementation(() => {})
+    vi.spyOn(agentClient, "getHistory").mockRejectedValueOnce(new Error("503"))
+      .mockResolvedValueOnce({ session_id: "another-session", messages: [] })
+    await expect(store.getState().loadChatHistory("session-1")).resolves.toBeUndefined()
+    await expect(store.getState().loadChatHistory("session-1", { throwOnError: true })).rejects.toThrow("History session mismatch")
+    expect(store.getState().chats[0].messageCount).toBe(3)
+  })
+})

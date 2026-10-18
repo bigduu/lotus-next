@@ -1,6 +1,8 @@
 import { useUiText } from "@shared/i18n/ui"
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
 import { Search, Plus, Settings as SettingsIcon, MessageSquare } from "lucide-react"
+import * as DialogPrimitive from "@radix-ui/react-dialog"
+import { Dialog } from "@/components/ui/dialog"
 import { cn } from "@/lib/utils"
 
 type Chat = {
@@ -24,6 +26,7 @@ export function CommandPalette({
   onSelect,
   onNewChat,
   onSettings,
+  getReturnFocusTarget,
 }: {
   open: boolean
   onClose: () => void
@@ -31,11 +34,12 @@ export function CommandPalette({
   onSelect: (id: string) => void
   onNewChat: () => void
   onSettings: () => void
+  getReturnFocusTarget?: () => HTMLElement | null
 }) {
   const uiText = useUiText()
   const [q, setQ] = useState("")
   const [active, setActive] = useState(0)
-  const inputRef = useRef<HTMLInputElement>(null)
+  const returnFocusRef = useRef<HTMLElement | null>(null)
 
   useLayoutEffect(() => {
     if (open) {
@@ -43,7 +47,6 @@ export function CommandPalette({
       // A passive effect can otherwise erase a quickly entered new query.
       setQ("")
       setActive(0)
-      requestAnimationFrame(() => inputRef.current?.focus())
     }
   }, [open])
 
@@ -96,18 +99,29 @@ export function CommandPalette({
   }
 
   return (
-    <div
-      className="fixed inset-0 z-[130] flex items-start justify-center bg-black/50 p-4 pt-[12vh]"
-      onClick={onClose}
-    >
-      <div
+    <Dialog open={open} onOpenChange={(next) => { if (!next) onClose() }}>
+    <DialogPrimitive.Overlay className="fixed inset-0 z-[130] flex items-start justify-center bg-black/50 p-4 pt-[12vh]">
+      <DialogPrimitive.Content
+        aria-describedby={undefined}
         className="w-full max-w-lg overflow-hidden rounded-2xl border bg-popover shadow-2xl"
-        onClick={(e) => e.stopPropagation()}
+        onOpenAutoFocus={() => {
+          returnFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null
+        }}
+        onCloseAutoFocus={(event) => {
+          event.preventDefault()
+          const opener = getReturnFocusTarget ? getReturnFocusTarget() : returnFocusRef.current
+          const active = document.activeElement
+          // The parent trap can land on its ASIDE when a drag preview vanishes.
+          // Preserve real new control focus, but recover from that inert fallback.
+          const parentFallback = opener?.closest("#right-workbench")
+          if (active instanceof HTMLElement && active !== document.body && active !== parentFallback && !active.closest('[hidden], [inert], [aria-hidden="true"]')) return
+          if (opener?.isConnected && opener !== document.body && !opener.matches(":disabled") && !opener.closest('[hidden], [inert], [aria-hidden="true"]')) opener.focus()
+        }}
       >
+        <DialogPrimitive.Title className="sr-only">{uiText("search_sessions_or_actions_b2a0f9e8")}</DialogPrimitive.Title>
         <div className="flex items-center gap-2 border-b px-3">
           <Search className="size-4 shrink-0 text-muted-foreground" />
           <input
-            ref={inputRef}
             value={q}
             onChange={(e) => setQ(e.target.value)}
             onKeyDown={(e) => {
@@ -121,8 +135,6 @@ export function CommandPalette({
                 e.preventDefault()
                 const it = items[active]
                 if (it) choose(it)
-              } else if (e.key === "Escape") {
-                onClose()
               }
             }}
             placeholder={uiText("search_sessions_or_actions_b2a0f9e8")}
@@ -153,7 +165,8 @@ export function CommandPalette({
             ))
           )}
         </div>
-      </div>
-    </div>
+      </DialogPrimitive.Content>
+    </DialogPrimitive.Overlay>
+    </Dialog>
   )
 }

@@ -1,3 +1,4 @@
+import { workbenchPanel } from "./support/workbench.js"
 import { expectComposerText } from "./support/composer.js"
 import { expect, test } from "@playwright/test"
 import { installArtifactRuntime, standaloneScenario, embeddedScenario, secureRemoteScenario } from "./support/artifactRuntime.js"
@@ -63,7 +64,7 @@ for (const scenario of [standaloneScenario, embeddedScenario, secureRemoteScenar
     expect(queue[0]?.mode).toBe("after_run")
     expect(queuedImages[0]?.base64).toBe(pixel.toString("base64"))
     await expect(surface.getByAltText("queued.png", { exact: true })).toHaveCount(0)
-    await surface.getByText("待发 1", { exact: true }).click()
+    await pending.locator("summary").click()
     await expect(surface.getByText("保留已有内容，并补充验证结果。", { exact: true })).toBeVisible()
     await expect(surface.getByAltText("待发图片 1")).toBeVisible()
     const pendingBox = await pending.boundingBox()
@@ -75,7 +76,7 @@ for (const scenario of [standaloneScenario, embeddedScenario, secureRemoteScenar
     expect(messageBox!.y + messageBox!.height).toBeLessThanOrEqual(pendingBox!.y)
     await testInfo.attach("pending-above-composer", { body: await page.screenshot(), contentType: "image/png" })
     await page.reload({ waitUntil: "domcontentloaded" })
-    await surface.getByText("待发 1", { exact: true }).click()
+    await pending.locator("summary").click()
     await expect(surface.getByText("保留已有内容，并补充验证结果。", { exact: true })).toBeVisible()
     await expect(surface.getByAltText("待发图片 1")).toBeVisible()
     await surface.getByRole("button", { name: "撤回", exact: true }).click()
@@ -88,13 +89,13 @@ for (const scenario of [standaloneScenario, embeddedScenario, secureRemoteScenar
     await expect.poll(() => queue.length).toBe(1)
     expect(queue[0].text).toBe("")
     expect(queue[0].mode).toBe("after_round")
-    await surface.getByText("待发 1", { exact: true }).click()
+    await pending.locator("summary").click()
     await expect(surface.getByAltText("待发图片 1")).toBeVisible()
     await surface.getByRole("button", { name: "撤回", exact: true }).click()
     await expect(pending).toHaveCount(0)
     await expect(surface.getByText("未能撤回，消息可能已经开始应用。", { exact: true })).toHaveCount(0)
     await surface.getByRole("button", { name: "打开侧边面板", exact: true }).click()
-    await surface.getByRole("complementary", { name: "工作面板" }).getByRole("button", { name: /检查器.*查看当前会话/ }).click()
+    await workbenchPanel(surface).getByRole("button", { name: /检查器.*查看当前会话/ }).click()
     const goal = surface.locator("section").filter({ has: surface.getByText("目标", { exact: true }) })
     await goal.getByRole("button", { name: "编辑", exact: true }).click()
     await goal.getByRole("checkbox", { name: "无输出超时后尝试恢复" }).check()

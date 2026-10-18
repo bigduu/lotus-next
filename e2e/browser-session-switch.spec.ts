@@ -1,10 +1,11 @@
+import { workbenchPanel } from "./support/workbench.js"
 import { expect, test } from "@playwright/test"
 import { installArtifactRuntime, standaloneScenario } from "./support/artifactRuntime.js"
 
 const sessionA = "all-surface-session"
 const sessionB = "browser-session-b"
 
-test("selected browser follows a chat switch and remains live under other workbench tabs", async ({ page }, testInfo) => {
+test("each chat restores its own browser and workbench tab order while keeping the selected browser live", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "desktop-chromium", "Desktop session-switch regression")
 
   await page.addInitScript(() => {
@@ -105,7 +106,7 @@ test("selected browser follows a chat switch and remains live under other workbe
 
   await page.goto(standaloneScenario.entryUrl, { waitUntil: "domcontentloaded" })
   await page.getByRole("button", { name: "打开侧边面板" }).click()
-  const panel = page.getByRole("complementary", { name: "工作面板" })
+  const panel = workbenchPanel(page)
   await panel.getByRole("button", { name: /浏览器.*输入网址后打开/ }).click()
   await panel.getByRole("tab", { name: "浏览器标签页 1：Page A" }).click()
   const browser = panel.getByRole("region", { name: "内置浏览器" })
@@ -118,6 +119,10 @@ test("selected browser follows a chat switch and remains live under other workbe
   await address.fill("https://a.test/draft")
 
   await page.getByRole("button", { name: "Session B", exact: true }).click()
+  await expect(panel).toHaveCount(0)
+  await page.getByRole("button", { name: "打开侧边面板" }).click()
+  await expect(panel.getByText("还没有打开内容")).toBeVisible()
+  await panel.getByRole("button", { name: /浏览器.*输入网址后打开/ }).click()
   await expect(address).toHaveValue("https://b.test/")
   await expect(browser.getByRole("button", { name: "刷新网页" })).toBeVisible()
   await expect(panel.getByRole("tab", { name: "浏览器标签页 1：Page B" })).toHaveAttribute("aria-selected", "true")
@@ -144,13 +149,14 @@ test("selected browser follows a chat switch and remains live under other workbe
   await expect.poll(order).toEqual(["检查器", "Page B"])
   await page.getByRole("button", { name: "Session A", exact: true }).click()
   await expect(panel.getByRole("tab", { name: "浏览器标签页 1：Page A" })).toBeVisible()
-  await panel.getByRole("button", { name: "关闭检查器标签页" }).click()
+  await expect(panel.getByRole("tab", { name: "检查器", exact: true })).toHaveCount(0)
   await panel.getByRole("button", { name: "打开工作面板标签页" }).click()
   await page.getByRole("menuitem", { name: "检查器" }).click()
+  await expect.poll(order).toEqual(["Page A", "检查器"])
   await page.getByRole("button", { name: "Session B", exact: true }).click()
-  await panel.getByRole("button", { name: "打开工作面板标签页" }).click()
-  await page.getByRole("menuitem", { name: "浏览器" }).click()
   await expect(panel.getByRole("tab", { name: "浏览器标签页 1：Page B" })).toBeVisible()
-  await expect.poll(order).toEqual(["Page B", "检查器"])
+  await expect.poll(order).toEqual(["检查器", "Page B"])
+  await expect(panel.getByRole("tab", { name: "浏览器标签页 1：Page B" })).toHaveAttribute("aria-selected", "true")
+  await expect(address).toHaveValue("https://b.test/next")
   expect(observation.pageErrors).toEqual([])
 })

@@ -44,6 +44,7 @@ type State = {
 const runtime = vi.hoisted(() => ({
   state: {} as State, listeners: new Set<() => void>(), composer: null as ComposerProps | null,
   messageList: null as MessageListProps | null,
+  toastProps: null as ComponentProps<(typeof import("./Toasts"))["Toasts"]> | null,
   modelPicker: null as ModelPickerProps | null,
   reasoningPicker: null as ReasoningPickerProps | null,
   providerState: { providerSnapshot: null as ProviderInstancesConfig | null, providerStatus: "ready" },
@@ -116,14 +117,17 @@ vi.mock("@/components/chat/Dialogs", () => ({ QuestionDialog: () => null, Approv
 vi.mock("@/components/app/ChatHeader", () => ({
   ChatHeader: ({ environment, supervisorControl }: { environment?: ReactNode; supervisorControl?: ReactNode }) => <div>{environment}{supervisorControl}</div>,
 }))
-vi.mock("@/components/app/HomeDashboard", () => ({ HomeDashboard: () => null }))
+vi.mock("@/components/app/HomeDashboard", () => ({
+  HomeDashboard: ({ onDescribeTask }: { onDescribeTask: () => void }) =>
+    <button type="button" data-home-describe onClick={onDescribeTask}>Describe task</button>,
+}))
 vi.mock("@/components/app/MessageList", () => ({
   MessageList: (props: MessageListProps) => {
     runtime.messageList = props
     return null
   },
 }))
-vi.mock("@/components/app/Toasts", () => ({ Toasts: () => null }))
+vi.mock("@/components/app/Toasts", () => ({ Toasts: (props: ComponentProps<(typeof import("./Toasts"))["Toasts"]>) => { runtime.toastProps = props; return null } }))
 vi.mock("@/components/app/ImageLightbox", () => ({
   ImageLightbox: ({ src }: { src: string | null }) =>
     src ? <div data-image-lightbox data-src={src} /> : null,
@@ -393,6 +397,42 @@ describe("ChatPane composer acknowledgement", () => {
     act(() => reference.click())
     expect(onReference).toHaveBeenCalledOnce()
     expect(host.querySelector('[data-testid="ticket-reference"]')?.textContent).toContain("报告A")
+  })
+  it.each(["ready", "new pointer intent", "session navigation", "hidden page"] as const)("waits for a lazy Work target and respects %s", async (outcome) => {
+    const value = ticketSnapshot()
+    const supervisor = "bamboo-default-supervisor"
+    value.scope.binding.supervisor_session_id = supervisor
+    runtime.ticketWork = { state: applyTicketSnapshot(null, value), connected: true, negotiated: true,
+      availability: { kind: "ready" }, refreshing: false, canRefresh: true, initializing: false,
+      initializationError: null, canInitialize: false, initialize: async () => false,
+      error: null, busy: {}, uncertain: {}, respond: async () => false, refresh: async () => {}, canRespond: true, canSendIngress: true }
+    let nextFrame = 0
+    const frames = new Map<number, FrameRequestCallback>()
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => { frames.set(++nextFrame, callback); return nextFrame })
+    vi.stubGlobal("cancelAnimationFrame", (id: number) => frames.delete(id))
+    const flushFrame = () => act(() => { const pending = [...frames.values()]; frames.clear(); pending.forEach((callback) => callback(0)) })
+    const host = document.body.appendChild(document.createElement("div"))
+    const target = document.body.appendChild(document.createElement("div"))
+    const root = createRoot(host); roots.push(root)
+    const render = (panel: HTMLElement | null, sessionId = supervisor, pageVisible = true) => act(() => root.render(
+      <ChatPane chat={createChat(vi.fn<Send>(), sessionId)} pickedWorkspace={null}
+        onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()} splitOpen={false}
+        onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false}
+        workPanelTarget={panel} onOpenWork={vi.fn()} pageVisible={pageVisible} />))
+    render(null)
+    act(() => host.querySelector<HTMLButtonElement>('[data-testid="ticket-work-status"]')!.click())
+    const all = [...document.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "查看全部工作")!
+    act(() => all.click())
+    flushFrame() // The import has not resolved in the first frame.
+    if (outcome === "new pointer intent") act(() => document.dispatchEvent(new Event("pointerdown", { bubbles: true })))
+    if (outcome === "session navigation") render(null, "another-session")
+    if (outcome === "hidden page") render(null, supervisor, false)
+    render(target, supervisor, outcome !== "hidden page")
+    await act(async () => { await vi.dynamicImportSettled() })
+    flushFrame()
+    const overview = target.querySelector<HTMLElement>('[data-testid="ticket-work-overview"]')!
+    expect(overview).not.toBeNull()
+    expect(document.activeElement === overview).toBe(outcome === "ready")
   })
   it.each([
     ["ordinary titled Supervisor", "ordinary-root", "root", undefined],
@@ -964,6 +1004,28 @@ describe("Root orchestration-only control", () => {
     expect(agentClient.getSession).toHaveBeenCalledTimes(2)
   })
 
+  it("announces a pending Root selection without a transient alert and retains real failure", async () => {
+    const response = deferred<void>()
+    vi.mocked(agentClient.selectRootMode).mockImplementationOnce(async () => {
+      await response.promise
+      throw new RequestTimeoutError()
+    })
+    const send = vi.fn<Send>()
+    await mount(send, "root-session")
+    await act(async () => { thinkingPicker().click(); await Promise.resolve() })
+    expect(getRootModeFenceState("root-session")).toBe("uncertain")
+    expect(thinkingPicker().disabled).toBe(true)
+    expect(document.querySelector('[role="status"]')?.textContent).toContain("等待服务器确认")
+    expect(document.querySelector('[role="alert"]')).toBeNull()
+    expect(send).not.toHaveBeenCalled()
+    // A terminal rejection/recovery failure must still be visible afterward.
+    await act(async () => { response.resolve(); await Promise.resolve() })
+    await flush()
+    expect(document.querySelector('[role="alert"]')).not.toBeNull()
+    expect(document.body.textContent).toContain("恢复切换")
+    expect(getRootModeFenceState("root-session")).toBe("uncertain")
+  })
+
   it("switches an existing Root without chat and omits mode on the next message", async () => {
     let durable = true
     vi.mocked(agentClient.getSession).mockImplementation(async (sessionId) => ({
@@ -1391,7 +1453,8 @@ describe("Root orchestration-only control", () => {
     expect(agentClient.sendMessage).not.toHaveBeenCalled()
     expect(send).not.toHaveBeenCalled()
     expect(textarea.value).toBe("/goal complete the task")
-    expect(document.querySelector('[role="alert"]')?.textContent).toContain("请恢复该请求")
+    expect(document.querySelector('[role="alert"]')).toBeNull()
+    expect(document.querySelector('[role="status"]')?.textContent).toContain("等待服务器确认")
     const operation = vi.mocked(agentClient.selectRootMode).mock.calls[0][1]
     await act(async () => {
       terminal.resolve({ status: "committed", operation_id: operation.operationId, expected_epoch: operation.expectedEpoch,
@@ -1778,4 +1841,173 @@ describe("caret-driven workspace file lookup", () => {
     expect(composer().workspaceFiles).toEqual([selected])
     list.mockReset().mockResolvedValue([])
   })
+})
+
+
+it("uses the selected worktree instead of the Project primary directory when submitting a new session", async () => {
+  Object.assign(runtime.state, { projects: { "project-a": { project_path: "/repo/primary" } } })
+  const send = vi.fn<Send>().mockResolvedValue({ kind: "unconfirmed", operationId: 1 })
+  const container = document.body.appendChild(document.createElement("div"))
+  const root = createRoot(container); roots.push(root)
+  await act(async () => root.render(<ChatPane chat={createChat(send, null)} pickedWorkspace="/picked"
+    pendingProjectId="project-a" worktreePath="/Volumes/External/worktrees/task"
+    onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()} splitOpen={false}
+    onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false} />))
+  expect(composer().displayWorkspace).toBe("/Volumes/External/worktrees/task")
+  change(container.querySelector<HTMLTextAreaElement>("textarea")!, "Inspect this checkout")
+  act(() => composer().onSubmit()); await flush()
+  expect(send).toHaveBeenCalledWith("Inspect this checkout", expect.objectContaining({
+    projectId: "project-a", workspacePath: "/Volumes/External/worktrees/task",
+  }))
+})
+
+it.each([false, true])("routes a dropped session to the correct pane (secondary=%s)", async (secondary) => {
+  const chat = createChat(vi.fn(), "current")
+  chat.chats = [{ id: "dropped", kind: "root", config: { projectId: "p" } }] as typeof chat.chats
+  const pick = vi.fn()
+  const container = document.body.appendChild(document.createElement("div")); const root = createRoot(container); roots.push(root)
+  await act(async () => root.render(<ChatPane chat={chat} pickedWorkspace={null}
+    onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()} splitOpen={secondary}
+    onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false}
+    secondary={secondary ? { sessionId: "current", chats: chat.chats, onPickSession: pick, onClose: vi.fn() } : undefined} />))
+  const event = new Event("drop", { bubbles: true, cancelable: true })
+  Object.defineProperty(event, "dataTransfer", { value: { types: ["application/x-lotus-sidebar-session"], getData: () => JSON.stringify({ sessionId: "dropped", projectId: "p" }) } })
+  act(() => container.querySelector("[data-session-drop-target]")!.dispatchEvent(event))
+  expect(secondary ? pick : chat.select).toHaveBeenCalledWith("dropped")
+  expect(secondary ? chat.select : pick).not.toHaveBeenCalled()
+})
+
+it("home describe action only focuses the current draft and disappears on session navigation", async () => {
+  const send = vi.fn<Send>()
+  const textarea = await mount(send, null)
+  change(textarea, "  keep this draft\nexactly  ")
+  const homeDraft = composer().draft
+  const action = document.querySelector<HTMLButtonElement>("[data-home-describe]")!
+  act(() => { action.focus(); action.click(); action.click() })
+  expect(document.activeElement).toBe(textarea)
+  expect(composer().draft).toBe(homeDraft)
+  expect(send).not.toHaveBeenCalled()
+  expect(runtime.queueSend).not.toHaveBeenCalled()
+  const root = roots.at(-1)!
+  const renderSession = async (id: string | null) => act(async () => root.render(<ChatPane chat={createChat(send, id)} pickedWorkspace="/picked"
+    onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()} splitOpen={false}
+    onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false} />))
+  await renderSession("other-session")
+  expect(document.querySelector("[data-home-describe]")).toBeNull()
+  change(textarea, "other session draft")
+  await renderSession(null)
+  expect(composer().draft).toBe(homeDraft)
+  act(() => document.querySelector<HTMLButtonElement>("[data-home-describe]")!.click())
+  expect(document.activeElement).toBe(textarea)
+  expect(send).not.toHaveBeenCalled()
+})
+
+describe("scoped notifications", () => {
+  it("does not deliver an old model failure after switching A to B to A", async () => {
+    let reject!: (error: Error) => void
+    const pending = new Promise<void>((_, fail) => { reject = fail })
+    runtime.state.changeSessionModel = vi.fn().mockReturnValue(pending)
+    await mount(vi.fn<Send>(), "session-1")
+    act(() => { void runtime.modelPicker!.onChange("different-model") })
+    const renderSession = async (id: string) => act(async () => roots.at(-1)!.render(
+      <ChatPane chat={createChat(vi.fn<Send>(), id)} pickedWorkspace="/picked"
+        onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()} splitOpen={false}
+        onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false} />))
+    await renderSession("session-2")
+    await renderSession("session-1")
+    await act(async () => reject(new Error("late model failure")))
+    expect(runtime.toastProps?.toast).toBeNull()
+  })
+
+  it("marks real workflow failures as persistent errors but drops stale selections", async () => {
+    runtime.getWorkflow.mockRejectedValueOnce(new Error("workflow diagnostic"))
+    await mount(vi.fn<Send>(), "session-1")
+    await pickWorkflow(workflowA)
+    expect(runtime.toastProps?.toast).toMatchObject({ kind: "error", details: "workflow diagnostic" })
+    act(() => runtime.toastProps!.onDismiss())
+    let reject!: (error: Error) => void
+    runtime.getWorkflow.mockReturnValueOnce(new Promise((_, fail) => { reject = fail }))
+    await pickWorkflow(workflowA)
+    await pickWorkflow(workflowB)
+    await act(async () => reject(new Error("old selection")))
+    expect(runtime.toastProps?.toast).toBeNull()
+  })
+
+  it("ends fork progress and shows a typed failure when a fork rejects", async () => {
+    const chat = createChat(vi.fn<Send>(), "session-1")
+    chat.fork = vi.fn().mockRejectedValue(new Error("fork unavailable"))
+    await mount(vi.fn<Send>(), "session-1")
+    await act(async () => roots.at(-1)!.render(
+      <ChatPane chat={chat} pickedWorkspace="/picked"
+        onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()} splitOpen={false}
+        onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false} />))
+    await act(async () => runtime.messageList!.onFork("message-1"))
+    expect(runtime.toastProps?.forking).toBe(false)
+    expect(runtime.toastProps?.toast).toMatchObject({ kind: "error", details: "fork unavailable" })
+  })
+})
+
+
+it.each([false, true])("handles intentional fork navigation without replacing a destination notice (%s)", async (raiseDestinationError) => {
+  const pending = deferred<string>()
+  const original = createChat(vi.fn<Send>(), "session-1")
+  original.fork = vi.fn().mockReturnValue(pending.promise)
+  await mount(vi.fn<Send>(), "session-1")
+  const renderChat = async (chat: ChatPaneProps["chat"]) => act(async () => roots.at(-1)!.render(
+    <ChatPane chat={chat} pickedWorkspace="/picked"
+      onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()} splitOpen={false}
+      onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false} />))
+  await renderChat(original)
+  act(() => runtime.messageList!.onFork("message-1"))
+  await renderChat(createChat(vi.fn<Send>(), "fork-session"))
+  if (raiseDestinationError) {
+    runtime.getWorkflow.mockRejectedValueOnce(new Error("destination diagnostic"))
+    await pickWorkflow(workflowA)
+  }
+  await act(async () => pending.resolve("fork-session"))
+  expect(runtime.toastProps?.forking).toBe(false)
+  expect(runtime.toastProps?.toast?.kind).toBe(raiseDestinationError ? "error" : "info")
+  if (raiseDestinationError) expect(runtime.toastProps?.toast?.details).toBe("destination diagnostic")
+})
+
+
+it("keeps a failed secondary history distinct from empty content and retains its draft during read-only recovery", async () => {
+  const send = vi.fn<Send>()
+  const textarea = await mount(send, "session-1")
+  change(textarea, "Unsent draft survives history recovery")
+  const retryRead = vi.fn()
+  const renderRead = async (status: "loading" | "ready" | "error") => {
+    runtime.messageList = null
+    await act(async () => roots.at(-1)!.render(
+      <ChatPane chat={createChat(send, "session-1")} pickedWorkspace="/picked"
+        onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()} splitOpen
+        onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false}
+        secondary={{ sessionId: "session-1", chats: [], onPickSession: vi.fn(), onClose: vi.fn(),
+          historyRead: { status, retry: retryRead } }} />,
+    ))
+  }
+  await renderRead("error")
+  expect(document.querySelector('[role="alert"]')?.textContent).toContain("并排会话暂时无法加载")
+  expect(runtime.messageList).toBeNull()
+  expect(document.querySelector<HTMLElement>("[data-history-composer-blocked]")?.hidden).toBe(true)
+  const focusInput = vi.spyOn(textarea, "focus")
+  act(() => runtime.toastProps?.onRestoreFocus?.())
+  expect(focusInput).not.toHaveBeenCalled()
+  expect(document.querySelector("textarea")).toBe(textarea)
+  expect(composer().draft).toBe("Unsent draft survives history recovery")
+  act(() => composer().onSubmit())
+  expect(send).not.toHaveBeenCalled()
+  act(() => [...document.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "重试")!.click())
+  expect(retryRead).toHaveBeenCalledOnce()
+  await renderRead("loading")
+  expect(document.querySelector('[role="alert"]')).toBeNull()
+  expect(runtime.messageList).toBeNull()
+  await renderRead("ready")
+  expect(document.querySelector<HTMLElement>("[data-history-composer-blocked]")?.hidden).toBe(false)
+  act(() => runtime.toastProps?.onRestoreFocus?.())
+  expect(focusInput).toHaveBeenCalledOnce()
+  expect(runtime.messageList).not.toBeNull()
+  expect(document.querySelector("textarea")).toBe(textarea)
+  expect(composer().draft).toBe("Unsent draft survives history recovery")
+  expect(send).not.toHaveBeenCalled()
 })

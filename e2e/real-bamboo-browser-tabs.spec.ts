@@ -1,3 +1,4 @@
+import { workbenchPanel } from "./support/workbench.js"
 import { execFile } from "node:child_process"
 import { createHash } from "node:crypto"
 import { promisify } from "node:util"
@@ -184,7 +185,7 @@ const exerciseSurface = async (
     await page.goto(baseUrl, { waitUntil: "domcontentloaded" })
     await expect(page.getByRole("textbox", { name: "消息", exact: true })).toBeVisible()
     await page.getByRole("button", { name: "打开侧边面板" }).click()
-    const panel = page.getByRole("complementary", { name: "工作面板" })
+    const panel = workbenchPanel(page)
     await panel.getByRole("button", { name: /浏览器.*输入网址后打开/ }).click()
     const pane = panel.getByRole("region", { name: "内置浏览器" })
     const address = pane.getByRole("textbox", { name: "网页地址" })

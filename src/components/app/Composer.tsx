@@ -12,6 +12,7 @@ import {
   Check,
   LoaderCircle,
   Clock3,
+  Ellipsis,
 } from "lucide-react"
 import { useShallow } from "zustand/react/shallow"
 import { Button } from "@/components/ui/button"
@@ -22,6 +23,8 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { useContainerWidth } from "@/hooks/useContainerWidth"
 import { SlashMenu } from "@/components/chat/SlashMenu"
 import { FileMenu } from "@/components/chat/FileMenu"
 import { useAppStore } from "@shared/store/appStore"
@@ -160,6 +163,7 @@ export function Composer({
   slashQuery,
   onMentionQueryChange,
   displayWorkspace,
+  showProjectWorkspace = false,
   workspaceFiles,
   hasSession,
   onOpenWorkspacePicker,
@@ -211,6 +215,8 @@ export function Composer({
   slashQuery: string | null
   onMentionQueryChange: (query: string | null) => void
   displayWorkspace: string | null | undefined
+  /** Keep an explicitly selected worktree visible beside its Project. */
+  showProjectWorkspace?: boolean
   workspaceFiles: WorkspaceFileEntry[]
   hasSession: boolean
   onOpenWorkspacePicker: () => void
@@ -221,6 +227,14 @@ export function Composer({
 }) {
   useUiLocale()
   const inputId = useId()
+  const [columnRef, columnWidth] = useContainerWidth<HTMLDivElement>()
+  const compactToolbar = columnWidth > 0 && columnWidth < 600
+  const compactToolbarRef = useRef(compactToolbar)
+  compactToolbarRef.current = compactToolbar
+  const [moreOpen, setMoreOpen] = useState(false)
+  const openingExternalControl = useRef(false)
+  useEffect(() => { setMoreOpen(false) }, [compactToolbar, draftKey])
+
   const focusSnapshot = useRef<ComposerFocusSnapshot>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [fileSuggestion, setFileSuggestion] = useState<FileSuggestion | null>(null)
@@ -231,10 +245,57 @@ export function Composer({
   const canSubmit = !sending || canQueue || sendWhileRunning
   const hasContent = !!draft.trim() || attachments.length > 0 || !!selectedWorkflow
 
+  const openSecondaryDialog = (open: () => void) => {
+    if (moreOpen) {
+      openingExternalControl.current = true
+      setMoreOpen(false)
+    }
+    open()
+  }
+  const secondaryControls = (
+    <div className="flex min-w-0 max-w-full flex-wrap items-center gap-1" data-composer-secondary-controls>
+      <Button
+        size="icon"
+        variant="ghost"
+        className="size-8 shrink-0 text-muted-foreground"
+        aria-label={uiText("add_images_9f0d4e46")}
+        onClick={() => fileInputRef.current?.click()}
+      >
+        <Paperclip className="size-4" />
+      </Button>
+      {onPickCatalog && <Button size="icon" variant="ghost" className="size-8 shrink-0 text-muted-foreground"
+        aria-label={uiText("open_workflow_catalog_1bd98d37")} title={uiText("catalog_workflow_this_message_4bad8776")} onClick={() => openSecondaryDialog(onOpenCatalog ?? onPickCatalog)}><BookText className="size-4" /></Button>}
+      {!hasSession ? (
+        <>
+          <ProjectChip
+            selectedProjectId={selectedProjectId}
+            onSelect={onSelectProject}
+          />
+          <button
+            onClick={() => openSecondaryDialog(onOpenWorkspacePicker)}
+            className={selectedProjectId && !showProjectWorkspace ? "hidden" : "flex max-w-full items-center gap-1.5 rounded-full border bg-card px-2.5 py-1 text-xs text-muted-foreground hover:text-foreground"}
+            title={displayWorkspace || uiText("default_working_directory_3d80c40d")}
+          >
+            <FolderGit2 className="size-3.5 shrink-0" />
+            <span className="truncate">
+              {displayWorkspace
+                ? displayWorkspace.split("/").filter(Boolean).pop() || displayWorkspace
+                : uiText("select_working_directory_18240aa3")}
+            </span>
+            <ChevronDown className="size-3 shrink-0 opacity-60" />
+          </button>
+          <PromptChip />
+        </>
+      ) : null}
+    </div>
+  )
+
   return (
     <div className="shrink-0 border-t px-3 py-3">
       <div
+        ref={columnRef}
         data-composer-column
+        data-composer-compact={compactToolbar}
         className="relative mx-auto w-full max-w-6xl"
         style={{ left: contentShiftX, transition: "left 200ms ease-out" }}
       >
@@ -355,50 +416,42 @@ export function Composer({
             )}
           </div>
           <div className="flex flex-wrap items-end gap-1.5">
-            <div className="flex min-w-0 basis-full flex-wrap items-center gap-1 sm:basis-auto sm:flex-1">
-              <Button
-                size="icon"
-                variant="ghost"
-                className="size-8 shrink-0 text-muted-foreground"
-                aria-label={uiText("add_images_9f0d4e46")}
-                onClick={() => fileInputRef.current?.click()}
-              >
-                <Paperclip className="size-4" />
-              </Button>
-              {onPickCatalog && <Button size="icon" variant="ghost" className="size-8 shrink-0 text-muted-foreground"
-                aria-label={uiText("open_workflow_catalog_1bd98d37")} title={uiText("catalog_workflow_this_message_4bad8776")} onClick={onOpenCatalog ?? onPickCatalog}><BookText className="size-4" /></Button>}
+            <div className="flex min-w-0 flex-wrap items-center gap-1"
+              style={{ flex: compactToolbar ? "0 1 auto" : "1 1 auto" }}>
               {permissionControl}
-              {!hasSession ? (
-                <>
-                  <ProjectChip
-                    selectedProjectId={selectedProjectId}
-                    onSelect={onSelectProject}
-                  />
-                  <button
-                    onClick={onOpenWorkspacePicker}
-                    className={selectedProjectId ? "hidden" : "flex max-w-full items-center gap-1.5 rounded-full border bg-card px-2.5 py-1 text-xs text-muted-foreground hover:text-foreground"}
-                    title={displayWorkspace || uiText("default_working_directory_3d80c40d")}
-                  >
-                    <FolderGit2 className="size-3.5 shrink-0" />
-                    <span className="truncate">
-                      {displayWorkspace
-                        ? displayWorkspace.split("/").filter(Boolean).pop() || displayWorkspace
-                        : uiText("select_working_directory_18240aa3")}
-                    </span>
-                    <ChevronDown className="size-3 shrink-0 opacity-60" />
-                  </button>
-                  <PromptChip />
-                </>
-              ) : null}
+              {compactToolbar ? (
+                <Popover open={moreOpen} onOpenChange={setMoreOpen}>
+                  <PopoverTrigger asChild>
+                    <Button size="icon" variant="ghost" className="size-8 shrink-0 text-muted-foreground"
+                      aria-label={uiText("more_38844b13")} title={uiText("more_38844b13")}>
+                      <Ellipsis className="size-4" />
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent side="top" align="start" aria-label={uiText("more_38844b13")}
+                    style={{ maxWidth: "calc(100vw - 24px)" }}
+                    onCloseAutoFocus={(event) => {
+                      if (openingExternalControl.current) {
+                        openingExternalControl.current = false
+                        event.preventDefault()
+                      } else if (!compactToolbarRef.current) {
+                        event.preventDefault()
+                        columnRef.current?.querySelector<HTMLElement>("[data-composer-editor]")?.focus()
+                      }
+                    }}>
+                    {secondaryControls}
+                  </PopoverContent>
+                </Popover>
+              ) : secondaryControls}
             </div>
-            <div className="ml-auto flex w-full max-w-full flex-wrap items-center justify-end gap-1 sm:w-auto">
+            <div className="ml-auto flex max-w-full flex-wrap items-center justify-end gap-1">
               {canQueue ? (
-                <div className="relative h-8 w-8 shrink-0 sm:w-24">
-                  <Clock3 aria-hidden="true" className="pointer-events-none absolute left-2 top-2 size-4 text-muted-foreground sm:hidden" />
+                <div className="relative h-8 shrink-0" style={{ width: compactToolbar ? 32 : 96 }}>
+                  <Clock3 aria-hidden="true" className="pointer-events-none absolute left-2 top-2 size-4 text-muted-foreground" style={{ display: compactToolbar ? undefined : "none" }} />
                   <select aria-label={uiText("send_timing_22388dde")} value={queueMode ?? "after_round"} disabled={submissionPending}
                     onChange={(event) => onQueueModeChange?.(event.target.value as GuidanceMode)}
                     title={queueMode === "after_run" ? uiText("send_when_the_run_finishes_1525b79a") : uiText("send_after_the_current_tool_call_before_the_next_model__ce3a9c75")}
-                    className="h-full w-full appearance-none rounded border-0 bg-transparent text-xs text-transparent sm:appearance-auto sm:text-foreground">
+                    className="h-full w-full rounded border-0 bg-transparent text-xs"
+                    style={{ appearance: compactToolbar ? "none" : "auto", color: compactToolbar ? "transparent" : undefined }}>
                     <option className="text-foreground" value="after_round">{uiText("after_tool_call_252b019e")}</option>
                     <option className="text-foreground" value="after_run">{uiText("after_run_81638e07")}</option>
                   </select>

@@ -4,6 +4,7 @@ import * as DialogPrimitive from "@radix-ui/react-dialog"
 import { X } from "lucide-react"
 
 import { cn } from "@/lib/utils"
+import { surfaceMotion } from "./motion"
 
 /**
  * A modal that is a bottom-sheet on mobile and a centered card on desktop —
@@ -50,7 +51,7 @@ function ResponsiveDialogContent({
   return (
     <DialogPrimitive.Portal>
       <DialogPrimitive.Overlay
-        className="data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 fixed inset-0 z-[120] bg-black/50"
+        className={cn(surfaceMotion, "surface-fade fixed inset-0 z-[120] bg-black/50")}
       />
       <DialogPrimitive.Content
         data-slot="responsive-dialog-content"
@@ -70,11 +71,12 @@ function ResponsiveDialogContent({
           onEscapeKeyDown?.(event)
         }}
         className={cn(
-          "bg-card text-card-foreground data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 fixed z-[130] flex flex-col border shadow-xl outline-none duration-200",
+          surfaceMotion,
+          "surface-responsive bg-card text-card-foreground fixed z-[130] flex flex-col border shadow-xl outline-none",
           // Mobile: bottom sheet
-          "inset-x-0 bottom-0 max-h-[90dvh] rounded-t-2xl pb-[env(safe-area-inset-bottom)] data-[state=open]:slide-in-from-bottom-4 data-[state=closed]:slide-out-to-bottom-4",
+          "inset-x-0 bottom-0 max-h-[90dvh] rounded-t-2xl pb-[env(safe-area-inset-bottom)]",
           // Desktop: centered card
-          "sm:inset-x-auto sm:bottom-auto sm:top-1/2 sm:left-1/2 sm:max-h-[85vh] sm:w-full sm:max-w-md sm:-translate-x-1/2 sm:-translate-y-1/2 sm:rounded-2xl sm:pb-0 sm:data-[state=open]:slide-in-from-bottom-0 sm:data-[state=open]:zoom-in-95 sm:data-[state=closed]:zoom-out-95",
+          "sm:inset-x-auto sm:bottom-auto sm:top-1/2 sm:left-1/2 sm:max-h-[85vh] sm:w-full sm:max-w-md sm:-translate-x-1/2 sm:-translate-y-1/2 sm:rounded-2xl sm:pb-0",
           className
         )}
         {...props}

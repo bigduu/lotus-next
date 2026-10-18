@@ -1,4 +1,4 @@
-import { expectComposerText } from "./support/composer.js"
+import { expectComposerText, revealComposerSettings } from "./support/composer.js"
 import { expect, test, type Page, type TestInfo } from "@playwright/test"
 import { installArtifactRuntime, standaloneScenario } from "./support/artifactRuntime.js"
 import { modelEffortPicker, selectEffort } from "./support/modelEffortPicker.js"
@@ -24,6 +24,7 @@ async function ready(page: Page) {
   await expect(page.locator('[data-variant="composer"][aria-label="会话权限"]').first()).toBeVisible()
 }
 async function openCatalog(page: Page) {
+  await revealComposerSettings(page)
   await page.getByRole("button", { name: "打开目录工作流", exact: true }).first().click()
   await expect(picker(page).getByLabel("目录中的 Workflow")).toBeVisible()
 }

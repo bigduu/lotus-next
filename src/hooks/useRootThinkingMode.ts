@@ -134,7 +134,7 @@ export function useRootThinkingMode({
     ...root, selected: syncing ? null : selected, thinkingMode: syncing ? null : thinkingMode,
     ordinaryValue, busy, blocked: blocked || syncing,
     controlDisabled, choose, retry,
-    error: localError ?? root.error,
+    error: localError ?? (busy && root.errorIsPendingNotice ? null : root.error),
     requestValue: sessionId ? undefined : draftMode === "ultra",
   }
 }

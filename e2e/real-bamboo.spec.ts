@@ -171,7 +171,7 @@ const openSidebar = async (page: Page, phone: boolean): Promise<Locator> => {
   if (phone) {
     await page.getByRole("button", { name: "菜单", exact: true }).click();
   }
-  const sidebar = page.locator("aside");
+  const sidebar = page.locator("aside").filter({ has: page.getByPlaceholder("搜索会话", { exact: true }) });
   await expect(sidebar).toBeVisible();
   return sidebar;
 };
@@ -1774,7 +1774,7 @@ test("production session modes keep Bypass confirmation distinct from Auto execu
           await expect(modeControl).toBeEnabled();
           const modeLabel = session.mode === "auto" ? "Auto" : "Bypass";
           if (surface.label === "desktop") {
-            await expect(modeControl).toHaveValue("default");
+            await expect(modeControl).toHaveText("Default");
             const detailResponse = await fetch(sessionUrl(session.id), {
               signal: AbortSignal.timeout(5_000),
             });
@@ -1786,7 +1786,8 @@ test("production session modes keep Bypass confirmation distinct from Auto execu
               new URL(response.url()).pathname === sessionUrl(session.id).pathname &&
               asRecord(response.request().postDataJSON())?.permission_mode === session.mode,
             );
-            await modeControl.selectOption(session.mode);
+            await modeControl.click();
+            await page.getByRole("option", { name: modeLabel, exact: true }).click();
             if (session.mode === "auto") {
               const confirmation = page.getByRole("dialog", { name: "为当前会话启用 Auto？", exact: true });
               await expect(confirmation).toBeVisible();
@@ -1799,24 +1800,27 @@ test("production session modes keep Bypass confirmation distinct from Auto execu
             expect(patchResponse.request().postDataJSON()).toEqual({ permission_mode: session.mode });
             expect(patchResponse.request().headers()["if-match"]).toBe(expectedEtag);
           }
-          await expect(modeControl).toHaveValue(session.mode);
+          await expect(modeControl).toHaveText(modeLabel);
           expect(await currentMode(session.id)).toBe(session.mode);
 
           if (surface.phone && session.mode === "auto") {
-            await modeControl.selectOption("default");
+            await modeControl.click();
+            await page.getByRole("option", { name: "Default", exact: true }).click();
             await expect.poll(() => currentMode(session.id)).toBe("default");
             await expect(modeControl).toBeEnabled();
-            await modeControl.selectOption("auto");
+            await modeControl.click();
+            await page.getByRole("option", { name: "Auto", exact: true }).click();
             let confirmation = page.getByRole("dialog", { name: "为当前会话启用 Auto？", exact: true });
             await expect(confirmation).toBeVisible();
             await confirmation.getByRole("button", { name: "取消", exact: true }).press("Enter");
             await expect(confirmation).toHaveCount(0);
-            await expect(modeControl).toHaveValue("default");
+            await expect(modeControl).toHaveText("Default");
             expect(await currentMode(session.id)).toBe("default");
-            await modeControl.selectOption("auto");
+            await modeControl.click();
+            await page.getByRole("option", { name: "Auto", exact: true }).click();
             confirmation = page.getByRole("dialog", { name: "为当前会话启用 Auto？", exact: true });
             await confirmation.getByRole("button", { name: "启用 Auto", exact: true }).click();
-            await expect(modeControl).toHaveValue("auto");
+            await expect(modeControl).toHaveText("Auto");
             await expect.poll(() => currentMode(session.id)).toBe("auto");
           }
 
@@ -1894,7 +1898,7 @@ test("production session modes keep Bypass confirmation distinct from Auto execu
             ).toBe(false);
             expect(executedSafeCommand(await historyMessages(session.id))).toBe(false);
             await reloadPermissionPage("after-fixture-denial");
-            await expect(modeControl).toHaveValue("bypass");
+            await expect(modeControl).toHaveText("Bypass");
             await expect(page.getByRole("dialog", { name: "需要你确认", exact: true })).toHaveCount(0);
           }
         }
@@ -1904,9 +1908,9 @@ test("production session modes keep Bypass confirmation distinct from Auto execu
         // session restoration itself is a separate contract. Each mode must
         // still match authoritative detail, never browser-persisted mode data.
         await selectRootSession(page, surface.phone, sessions[1]!.title);
-        await expect(modeControl).toHaveValue("auto");
+        await expect(modeControl).toHaveText("Auto");
         await selectRootSession(page, surface.phone, sessions[0]!.title);
-        await expect(modeControl).toHaveValue("bypass");
+        await expect(modeControl).toHaveText("Bypass");
         expect(await currentMode(sessions[0]!.id)).toBe("bypass");
         expect(await currentMode(sessions[1]!.id)).toBe("auto");
         await page.waitForLoadState("networkidle");

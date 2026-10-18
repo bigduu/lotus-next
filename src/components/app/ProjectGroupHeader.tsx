@@ -22,6 +22,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
+import { useSidebarContextMenu } from "@/hooks/useSidebarContextMenu"
 import { cn } from "@/lib/utils"
 
 export function ProjectGroupHeader({
@@ -58,6 +59,7 @@ export function ProjectGroupHeader({
   onArchive: () => void
 }) {
   useUiLocale()
+  const menu = useSidebarContextMenu()
   if (!project) {
     return (
       <button
@@ -65,10 +67,10 @@ export function ProjectGroupHeader({
         aria-expanded={expanded}
         aria-controls={contentId}
         disabled={disabled}
-        className="flex w-full items-center gap-1 rounded-md px-2 pb-1 pt-3 text-left text-xs font-medium text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default"
+        className="flex select-none w-full items-center gap-1 rounded-md px-2 pb-1 pt-3 text-left text-xs font-medium text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default"
         onClick={onToggleExpanded}
       >
-        <ChevronRight aria-hidden="true" className={cn("size-3 shrink-0", expanded && "rotate-90")} />
+        <ChevronRight aria-hidden="true" className={cn("size-3 shrink-0 feedback-motion transition-transform", expanded && "rotate-90")} />
         <span className="truncate">{label}</span>
         <span className="ml-auto whitespace-nowrap pl-2 font-normal">{uiText("project_sessions", { count: sessionCount })}</span>
       </button>
@@ -76,7 +78,7 @@ export function ProjectGroupHeader({
   }
 
   return (
-    <div className="flex items-center rounded-md px-1 pb-1 pt-2 hover:bg-sidebar-accent">
+    <div {...menu.rowProps} className="flex select-none items-center rounded-md px-1 pb-1 pt-2 feedback-motion transition-colors hover:bg-sidebar-accent">
       <button
         type="button"
         aria-expanded={expanded}
@@ -85,7 +87,7 @@ export function ProjectGroupHeader({
         className="flex min-w-0 flex-1 items-center gap-1 rounded px-1 py-1 text-left text-xs font-medium text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default"
         onClick={onToggleExpanded}
       >
-        <ChevronRight aria-hidden="true" className={cn("size-3 shrink-0", expanded && "rotate-90")} />
+        <ChevronRight aria-hidden="true" className={cn("size-3 shrink-0 feedback-motion transition-transform", expanded && "rotate-90")} />
         <FolderClosed aria-hidden="true" className="size-3.5 shrink-0" />
         <span className="truncate">{label}</span>
         {pinned ? <Pin aria-label={uiText("pinned_fb47db5e")} className="size-3 shrink-0" /> : null}
@@ -103,14 +105,14 @@ export function ProjectGroupHeader({
           <SquarePen className="size-3.5" />
         </button>
 
-        <DropdownMenu>
+        <DropdownMenu open={menu.open} onOpenChange={menu.onOpenChange}>
           <DropdownMenuTrigger
             aria-label={uiText("project_actions_4bc7fa27", { v0: project.name })}
             className="rounded p-1 text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring data-[state=open]:bg-accent"
           >
             <MoreHorizontal className="size-3.5" />
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="start" side="right" className="min-w-48 rounded-xl">
+          <DropdownMenuContent onCloseAutoFocus={menu.onCloseAutoFocus} align="start" side="right" className="min-w-48 rounded-xl">
             <DropdownMenuItem disabled={project.status === "archived"} onClick={onNewChat}>
               <MessageSquarePlus />{uiText("new_session_58e21b87")}</DropdownMenuItem>
             <DropdownMenuItem onClick={onTogglePin}>

@@ -108,7 +108,8 @@ export function actorSnapshotRegresses(previous: ActorSubtreeSnapshot, next: Act
     if (prior.activation && node.activation && node.activation.attempt < prior.activation.attempt) return true
     if (prior.activation && node.activation && prior.activation.activation_id === node.activation.activation_id &&
       prior.activation.attempt === node.activation.attempt) {
-      if (["succeeded", "failed", "cancelled"].includes(prior.activation.status) && node.activation.status !== prior.activation.status) return true
+      if (["succeeded", "failed", "cancelled"].includes(prior.activation.status) &&
+        node.activation.status !== prior.activation.status) return true
       if (localTaskRegresses(prior.local_task, node.local_task)) return true
     }
     if (priorDirectory !== null && nextDirectory === priorDirectory && prior.activation && node.activation &&
@@ -279,6 +280,7 @@ const sameTreeNode = (left: ActorTreeNode, right: ActorTreeNode): boolean =>
   left.actorId === right.actorId && left.parentActorId === right.parentActorId &&
   left.depth === right.depth && left.title === right.title && left.role === right.role &&
   left.lifecycle === right.lifecycle && left.placement === right.placement &&
+  left.placementUnavailableReason === right.placementUnavailableReason &&
   left.health === right.health && left.localTaskDiagnostic === right.localTaskDiagnostic && left.queuedCount === right.queuedCount &&
   left.waitingForCount === right.waitingForCount && left.pendingRequestCount === right.pendingRequestCount
 
@@ -314,6 +316,8 @@ export function actorSnapshotTree(
       actorId: node.actor_id, parentActorId: node.parent_actor_id, depth: node.depth,
       title: node.title, role: node.role === "root" ? uiText("root_agent_9cfcb9f9") : uiText("sub_agent_acd37b4c"),
       lifecycle: actorSnapshotLifecycle(node), placement: node.placement_class ?? "unknown",
+      placementUnavailableReason: node.placement_class !== null ? null
+        : node.local_task ? "native_task" : node.activation === null ? "no_activation" : "not_reported",
       health: node.local_task && node.local_task.state !== "running" ? "unknown" : null,
       localTaskDiagnostic: node.local_task && node.local_task.state !== "running" ? node.local_task.state : null,
       queuedCount: null, waitingForCount: null, pendingRequestCount: null,

@@ -16,7 +16,7 @@ it("collapses queued text and images without adding another input", async () => 
   await act(async () => root.render(<SessionGuidance sessionId="s" messages={[{ id: "m", text: "结合这张图", images: ["image-id"], created_at: "now", mode: "after_run" }]} busy={false} onCancel={cancel} onPreview={preview} />))
   expect(container.querySelector("details")!.open).toBe(false)
   expect(container.querySelector("input, textarea")).toBeNull()
-  expect(container.querySelector("summary")!.textContent).toBe("待发 1")
+  expect(container.querySelector("summary")!.textContent).toBe("队列中 1")
   expect(container.querySelector("img")!.getAttribute("src")).toBe("/images/image-id")
   await act(async () => container.querySelector('button[aria-label="查看待发图片 1"]')!.dispatchEvent(new MouseEvent("click", { bubbles: true })))
   expect(preview).toHaveBeenCalledWith("/images/image-id")
@@ -26,4 +26,17 @@ it("collapses queued text and images without adding another input", async () => 
 it("shows no queue control when there is no pending message", async () => {
   await act(async () => root.render(<SessionGuidance sessionId="s" messages={[]} busy={false} onCancel={vi.fn()} onPreview={vi.fn()} />))
   expect(container.innerHTML).toBe("")
+})
+
+it("keeps long pending text complete and distinguishes interjection from after-run queueing", async () => {
+  const text = "长消息".repeat(1200) + "完整末尾"
+  await act(async () => root.render(<SessionGuidance sessionId="s" messages={[
+    { id: "a", text, created_at: "now", mode: "after_round" },
+    { id: "b", text: "later", created_at: "now", mode: "after_run" },
+  ]} busy={false} onCancel={vi.fn()} onPreview={vi.fn()} />))
+  expect(container.textContent).toContain(text)
+  expect(container.textContent).toContain("插话 · 队列中，下一次模型回复前发送")
+  expect(container.textContent).toContain("队列中 · 本次运行结束后发送")
+  expect(container.textContent).not.toContain("已送达")
+  expect(container.querySelector(".\\[overflow-wrap\\:anywhere\\]")).not.toBeNull()
 })

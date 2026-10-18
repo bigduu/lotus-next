@@ -14,7 +14,10 @@ export function useStickyScroll(currentSessionId: string | null | undefined) {
   const followBottom = useCallback(() => {
     if (!scrollElement || !stickRef.current) return
     // Instant scrolling cannot unpin itself through intermediate smooth-scroll events.
-    scrollElement.scrollTo({ top: scrollElement.scrollHeight, behavior: "instant" })
+    const bottom = Math.max(0, scrollElement.scrollHeight - scrollElement.clientHeight)
+    if (scrollElement.scrollTop !== bottom) {
+      scrollElement.scrollTo({ top: bottom, behavior: "instant" })
+    }
     lastScrollTop.current = scrollElement.scrollTop
     setAtBottom(true)
   }, [scrollElement])
@@ -53,8 +56,24 @@ export function useStickyScroll(currentSessionId: string | null | undefined) {
     observer.observe(scrollElement)
     // Virtualized row measurements and browser anchoring can move scrollTop
     // upward too. Only reader input may release an existing bottom pin.
-    const readerInput = () => { readerScrollUntil.current = Date.now() + 500 }
-    const wheel = (event: WheelEvent) => { if (event.deltaY < 0) readerInput() }
+    const readerInput = (event: Event) => {
+      if (event.defaultPrevented) return
+      // Tool output/reasoning may have its own scrolling region. Let it consume
+      // upward input while it has room, without releasing the transcript pin.
+      for (let target = event.target instanceof Element ? event.target : null;
+        target && target !== scrollElement; target = target.parentElement) {
+        if (target.scrollTop > 0 && /^(auto|scroll)$/.test(getComputedStyle(target).overflowY)) return
+      }
+      readerScrollUntil.current = Date.now() + 500
+      // Release on intent, before the browser delivers its scroll event. A
+      // streaming/image resize can arrive first and otherwise pull the reader
+      // straight back to the bottom while overwriting lastScrollTop.
+      if (scrollElement.scrollTop > 0) {
+        stickRef.current = false
+        setAtBottom(false)
+      }
+    }
+    const wheel = (event: WheelEvent) => { if (event.deltaY < 0) readerInput(event) }
     const pointerDown = (event: PointerEvent) => {
       const right = scrollElement.getBoundingClientRect().right
       if (event.button === 0 && event.target === scrollElement && event.clientX >= right - 16 && event.clientX <= right) {
@@ -62,19 +81,19 @@ export function useStickyScroll(currentSessionId: string | null | undefined) {
       }
     }
     const pointerUp = () => {
-      if (pointerActive.current) readerInput()
+      if (pointerActive.current) readerScrollUntil.current = Date.now() + 500
       pointerActive.current = false
     }
     let touchY: number | null = null
     const touchStart = (event: TouchEvent) => { touchY = event.touches[0]?.clientY ?? null }
     const touchMove = (event: TouchEvent) => {
       const next = event.touches[0]?.clientY ?? null
-      if (next !== null && touchY !== null && next > touchY) readerInput()
+      if (next !== null && touchY !== null && next > touchY) readerInput(event)
       touchY = next
     }
     const keyDown = (event: KeyboardEvent) => {
       if (event.target instanceof Element && event.target.closest("input, textarea, select, [contenteditable=true]")) return
-      if (["ArrowUp", "PageUp", "Home"].includes(event.key) || (event.key === " " && event.shiftKey)) readerInput()
+      if (["ArrowUp", "PageUp", "Home"].includes(event.key) || (event.key === " " && event.shiftKey)) readerInput(event)
     }
     scrollElement.addEventListener("wheel", wheel, { passive: true })
     scrollElement.addEventListener("pointerdown", pointerDown, { passive: true })

@@ -6,6 +6,7 @@ import {
   Globe,
   Image,
   Loader2,
+  MessageSquare,
   Pencil,
   Search,
   Terminal,
@@ -19,6 +20,7 @@ import { useBackgroundBash } from "@shared/store/appStore"
 import i18n from "@shared/i18n"
 import { parseFileChangeResultPayload } from "@shared/utils/resultFormatters"
 import { FileChangeView } from "./FileChangeView"
+import { sessionMessagePresentation } from "./sessionMessagePresentation"
 import { isViewImageTool, safeViewImageSource } from "./viewImageSources"
 
 type Entry = {
@@ -98,6 +100,8 @@ const PRIMARY_KEYS = [
   "pattern",
   "url",
   "content",
+  "message",
+  "text",
   "prompt",
   "description",
   "action",
@@ -318,6 +322,8 @@ const readableToolName = (toolName: string) =>
     .trim() || uiText("tool_calls_a8ca3c13")
 
 function presentTool(entry: Entry): ToolPresentation {
+  const message = sessionMessagePresentation(entry.toolName, entry.params, entry.result)
+  if (message) return { label: message.label, detail: message.status, icon: MessageSquare }
   if (entry.browserEvalTool) return { label: uiText("execute_web_script_f9a5ccf3"), icon: Globe }
   if (entry.browserDialogResponse) return { label: uiText("respond_to_web_dialog_e0f2f248"), icon: Globe }
   if (entry.browserDialogStatus) return { label: uiText("view_web_dialog_b07d2b63"), icon: Globe }
@@ -461,7 +467,7 @@ function cleanParams(params?: Record<string, unknown>): {
   for (const [k, v] of Object.entries(params)) {
     if (k === primaryKey || NOISE_KEYS.has(k) || v == null || v === "" || v === false) continue
     const val = typeof v === "string" ? v : JSON.stringify(v)
-    rest.push([k, val.length > 60 ? val.slice(0, 60) + "…" : val])
+    rest.push([k, val])
   }
   return { primary, rest }
 }
@@ -578,7 +584,7 @@ function BackgroundBadge({ bashId }: { bashId: string }) {
   )
 }
 
-const ENTRY_HEADING_CLASS = "flex min-w-0 items-center gap-1.5 rounded-sm py-1 text-sm text-muted-foreground"
+const ENTRY_HEADING_CLASS = "flex min-w-0 flex-wrap items-center gap-1.5 rounded-sm py-1 text-sm text-muted-foreground"
 
 function EntryHeading({ e, presentation, running, open }: {
   e: Entry
@@ -589,13 +595,13 @@ function EntryHeading({ e, presentation, running, open }: {
   const SummaryIcon = presentation.icon
   return <>
     <SummaryIcon className="size-3.5 shrink-0" />
-    <span className="shrink-0">{presentation.label}</span>
+    <span className="min-w-0 break-words [overflow-wrap:anywhere]">{presentation.label}</span>
     {presentation.detail ? (
-      <span className="min-w-0 truncate font-mono text-xs opacity-70">{presentation.detail}</span>
+      <span title={presentation.detail} className="min-w-0 break-words text-xs opacity-70 [overflow-wrap:anywhere]">{presentation.detail}</span>
     ) : null}
     {e.result?.isError ? <span className="shrink-0 text-destructive">{uiText("errors_01ad2bc5")}</span> : null}
     {e.background ? <BackgroundBadge bashId={e.background.bashId} /> : null}
-    {running ? <span className="shrink-0">{uiText("running_14d9f2d8")}</span> : null}
+    {running && !sessionMessagePresentation(e.toolName, e.params, e.result) ? <span className="shrink-0">{uiText("running_14d9f2d8")}</span> : null}
     {open !== undefined ? <ChevronRight className={cn("size-3 shrink-0 transition-transform", open && "rotate-90")} /> : null}
   </>
 }
@@ -618,7 +624,7 @@ function EntryRow({ e, running, expanded = false, onPreviewImage }: {
   const detail = open ? (
           <div data-tool-call-entry-detail className="mt-1 border-l border-border pl-4 text-[11px]">
             {presentation.label !== e.toolName ? (
-              <div className="text-muted-foreground opacity-70">{e.toolName}</div>
+              <div className="break-all text-muted-foreground opacity-70">{e.toolName}</div>
             ) : null}
             {images?.length ? (
               <div className="mt-1.5 flex flex-wrap gap-1.5">
@@ -630,14 +636,14 @@ function EntryRow({ e, running, expanded = false, onPreviewImage }: {
               </div>
             ) : null}
             {primary ? (
-              <div className="mt-1 line-clamp-3 break-all font-mono text-foreground [overflow-wrap:anywhere]">
+              <div className="mt-1 max-h-64 overflow-auto whitespace-pre-wrap break-words font-mono text-foreground [overflow-wrap:anywhere]">
                 {primary}
               </div>
             ) : null}
             {rest.length > 0 ? (
               <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-muted-foreground">
                 {rest.map(([k, v]) => (
-                  <span key={k}>
+                  <span key={k} className="min-w-0 whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
                     <span className="opacity-60">{k}:</span> {v}
                   </span>
                 ))}
@@ -649,7 +655,7 @@ function EntryRow({ e, running, expanded = false, onPreviewImage }: {
               </div>
             ) : result ? (
               <pre className="mt-1.5 max-h-44 overflow-auto whitespace-pre-wrap break-all text-muted-foreground">
-                {result.length > 1000 ? result.slice(0, 1000) + "…" : result}
+                {result}
               </pre>
             ) : null}
           </div>
@@ -760,12 +766,12 @@ export function ToolCalls({
           aria-expanded={open}
           data-tool-call-toggle
           title={uiList(uniqueNames) || undefined}
-          className="inline-flex max-w-full items-center gap-1.5 rounded-sm py-1 text-xs text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="inline-flex max-w-full flex-wrap items-center gap-1.5 rounded-sm py-1 text-xs text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
           <SummaryIcon className={cn("size-3.5 shrink-0", active && "animate-spin")} />
-          <span className="truncate">{summary.label}</span>
+          <span className="min-w-0 break-words [overflow-wrap:anywhere]">{summary.label}</span>
           {summary.detail ? (
-            <span className="min-w-0 truncate font-mono text-[11px] text-muted-foreground opacity-70">
+            <span title={summary.detail} className="min-w-0 break-words text-[11px] text-muted-foreground opacity-70 [overflow-wrap:anywhere]">
               {summary.detail}
             </span>
           ) : null}

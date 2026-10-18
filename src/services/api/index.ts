@@ -17,6 +17,9 @@ export const apiClient = new ApiClient({
   transport: httpTransport,
 });
 
+/** Backend-scoped persistence identity; UI code need not consume runtime endpoints. */
+export const getBackendStorageScope = (): string => apiClient.resolveUrl("").replace(/\/+$/, "");
+
 export {
   ApiError,
   NetworkRequestError,

@@ -1,6 +1,7 @@
-import { act, useLayoutEffect } from "react"
+import { act, useLayoutEffect, useState } from "react"
 import { createRoot, type Root } from "react-dom/client"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
+import { captureWorkbenchFocusReturn } from "@/lib/workbenchFocusReturn"
 import { CommandPalette } from "./CommandPalette"
 import { uiText } from "@shared/i18n/ui"
 
@@ -76,4 +77,63 @@ describe("CommandPalette session scope", () => {
     act(() => rootButton!.click())
     expect(onSelect).toHaveBeenCalledExactlyOnceWith("root")
   })
+})
+
+
+it.each([false, true])("dismisses on the backdrop and preserves a newer focus target: %s", async (newFocus) => {
+  function Harness() {
+    const [open, setOpen] = useState(false)
+    return <><button onClick={() => setOpen(true)}>Open commands</button><button>Next target</button>
+      <CommandPalette open={open} onClose={() => setOpen(false)} chats={[]} onSelect={vi.fn()} onNewChat={vi.fn()} onSettings={vi.fn()} /></>
+  }
+  act(() => root.render(<Harness />))
+  const [opener, next] = container.querySelectorAll<HTMLButtonElement>("button")
+  await act(async () => { opener.focus(); opener.click() })
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 10)) })
+  const overlay = container.querySelector('[role="dialog"]')!.parentElement!
+  await act(async () => {
+    overlay.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, button: 0 }))
+    overlay.click()
+  })
+  expect(container.querySelector('[role="dialog"]')).toBeNull()
+  if (newFocus) act(() => next.focus())
+  await vi.waitFor(() => expect(document.activeElement).toBe(newFocus ? next : opener))
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 10)) })
+  expect(document.activeElement).toBe(newFocus ? next : opener)
+})
+
+it.each(["return", "new-focus", "new-scope", "removed", "hidden"])("resolves a vanished drag preview without stealing navigation focus: %s", async (outcome) => {
+  vi.useFakeTimers()
+  try {
+    let scope = "original"
+    let resolveTarget: () => HTMLElement | null = () => null
+    const render = (open: boolean) => act(() => root.render(<>
+      <aside id="right-workbench" tabIndex={-1}><button data-workbench-tab-handle="tool:session">Duplicate title</button></aside>
+      <input aria-label="New destination" />
+      <CommandPalette open={open} getReturnFocusTarget={resolveTarget} onClose={vi.fn()} chats={[]} onSelect={vi.fn()} onNewChat={vi.fn()} onSettings={vi.fn()} />
+    </>))
+    render(false)
+    const panel = container.querySelector<HTMLElement>("aside")!
+    const handle = panel.querySelector<HTMLButtonElement>("button")!
+    const next = container.querySelector<HTMLInputElement>('input[aria-label="New destination"]')!
+    const preview = handle.cloneNode(true) as HTMLButtonElement
+    container.appendChild(preview)
+    preview.focus()
+    resolveTarget = captureWorkbenchFocusReturn(preview, scope, () => scope)
+    preview.remove()
+    panel.focus()
+    render(true)
+    render(false)
+    // Model the fallback/navigation focus before Radix's deferred close autofocus.
+    // An async act here can already finish autofocus before this setup runs.
+    if (outcome === "new-scope") scope = "new-session"
+    if (outcome === "removed") handle.remove()
+    if (outcome === "hidden") panel.hidden = true
+    if (outcome === "new-focus") next.focus()
+    else panel.focus()
+    await act(async () => { await vi.runAllTimersAsync() })
+    expect(document.activeElement).toBe(outcome === "return" ? handle : outcome === "new-focus" ? next : panel)
+  } finally {
+    vi.useRealTimers()
+  }
 })

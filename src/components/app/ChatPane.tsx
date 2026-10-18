@@ -1,8 +1,9 @@
+import { useSessionDrop } from "@/hooks/useSessionDrop"
 import type { ComposerInputHandle } from "@/components/chat/ComposerEditor"
 import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { useMarkSessionRead } from "@/lib/sessionReadState"
 import { useMediaQuery } from "@shared/hooks/useMediaQuery"
-import { useEffect, useId, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react"
 import { createPortal } from "react-dom"
 import {
   ChevronDown,
@@ -56,7 +57,7 @@ import { isDefaultSupervisor } from "@/lib/supervisor"
 import type { PendingRequest as TicketRequest } from "@services/tickets/types"
 import { SessionGuidance } from "@/components/app/SessionGuidance"
 import { Composer } from "@/components/app/Composer"
-import { Toasts } from "@/components/app/Toasts"
+import { Toasts, type ToastNotice } from "@/components/app/Toasts"
 import { ImageLightbox } from "@/components/app/ImageLightbox"
 import { peekPendingTemplatePrompt } from "@/lib/taskTemplates"
 import { ContextUsageRing } from "@/components/app/ContextUsageRing"
@@ -91,6 +92,7 @@ type SecondaryConfig = {
   onPickSession: (id: string | null) => void
   onClose: () => void
   hideClose?: boolean
+  historyRead?: { status: "loading" | "ready" | "error"; retry: () => void }
 }
 
 type Attachment = { id: string; base64: string; name: string; type: string; size: number; url: string }
@@ -166,6 +168,7 @@ type ChatState = ReturnType<typeof useChat>
 export function ChatPane({
   chat,
   pickedWorkspace,
+  worktreePath,
   pendingProjectId,
   onSelectProject,
   onOpenWorkspacePicker,
@@ -186,6 +189,8 @@ export function ChatPane({
 }: {
   chat: ChatState
   pickedWorkspace: string | null
+  /** Explicit checkout selected in the worktree manager for this Project. */
+  worktreePath?: string | null
   /** Project preselected for the next NEW session (project-grouped sidebar). */
   pendingProjectId?: string | null
   /** Chip-driven project selection for the next NEW session. */
@@ -210,6 +215,7 @@ export function ChatPane({
   pageVisible?: boolean
 }) {
   useUiLocale()
+  const historyBlocked = !!secondary?.historyRead && secondary.historyRead.status !== "ready"
   const {
     chats,
     currentSessionId,
@@ -279,29 +285,45 @@ export function ChatPane({
     && ticketScope.binding.supervisor_session_id === currentSessionId
   const [ticketReference, setTicketReference] = useState<TicketRequest | null>(null)
   const [selectedWorkId, setSelectedWorkId] = useState<string | null>(null)
-  const workPanelHost = useRef(workPanelTarget)
-  workPanelHost.current = workPanelTarget
-  const pendingWorkFocus = useRef<string | null>(null)
-  const focusWorkPanel = () => {
-    if (!currentSessionId || pendingWorkFocus.current !== currentSessionId) return
-    const host = workPanelHost.current
-    const panel = host?.querySelector<HTMLElement>('[data-testid="ticket-work-overview"]')
-    if (!panel) return
-    pendingWorkFocus.current = null
+  const workFocusScope = useMemo(() => ({ currentSessionId }), [currentSessionId])
+  const [workFocusRequest, setWorkFocusRequest] = useState<{ scope: object } | null>(null)
+  const focusWorkPanel = useCallback(() => {
+    if (!workFocusRequest || workFocusRequest.scope !== workFocusScope || pageVisible === false) return
+    const overview = workPanelTarget?.querySelector<HTMLElement>('[data-testid="ticket-work-overview"]')
+    if (!overview) return
     const active = document.activeElement
-    if (active === document.body || active && host?.contains(active)) panel.focus()
-  }
+    // Preserve a newer composer focus even when it was set programmatically.
+    if (!active?.matches('input, textarea, [contenteditable="true"]') || workPanelTarget?.contains(active)) overview.focus()
+    setWorkFocusRequest(null)
+  }, [workFocusRequest, workFocusScope, workPanelTarget, pageVisible])
   const openTicketWork = (workId: string | null) => {
     setSelectedWorkId(workId)
-    pendingWorkFocus.current = currentSessionId
     onOpenWork?.()
-    requestAnimationFrame(focusWorkPanel)
+    setWorkFocusRequest({ scope: workFocusScope })
   }
+  useEffect(() => {
+    if (!workFocusRequest) return
+    if (workFocusRequest.scope !== workFocusScope || pageVisible === false) {
+      setWorkFocusRequest(null)
+      return
+    }
+    // Retain main's late portal/cancellation behavior; lazy details also call
+    // this same focus handler once their canonical overview is mounted.
+    const cancel = () => setWorkFocusRequest(null)
+    document.addEventListener("pointerdown", cancel, true)
+    document.addEventListener("keydown", cancel, true)
+    const frame = requestAnimationFrame(focusWorkPanel)
+    return () => {
+      cancelAnimationFrame(frame)
+      document.removeEventListener("pointerdown", cancel, true)
+      document.removeEventListener("keydown", cancel, true)
+    }
+  }, [workFocusRequest, workFocusScope, workPanelTarget, pageVisible, ticketScope?.binding.supervisor_session_id, focusWorkPanel])
   const replayReferences = ticketIngress.references(currentSessionId)
   const visibleTicketReference = pendingTicketMessage && replayReferences?.in_reply_to
     ? { work_id: replayReferences.thread_id ?? replayReferences.in_reply_to, id: replayReferences.in_reply_to }
     : ticketReference
-  useEffect(() => { pendingWorkFocus.current = null; setTicketReference(null); setSelectedWorkId(null) }, [currentSessionId])
+  useEffect(() => { setWorkFocusRequest(null); setTicketReference(null); setSelectedWorkId(null) }, [currentSessionId])
   // The secondary chat hook remains mounted when its pane closes. Read state
   // follows the rendered pane, including the same breakpoint as its md:flex.
   const splitVisible = useMediaQuery("(min-width: 768px)")
@@ -346,6 +368,7 @@ export function ChatPane({
     const prev = store.inputStates[draftKey]?.content ?? ""
     store.setInputContent(draftKey, typeof value === "function" ? value(prev) : value)
   }
+  const sessionDrop = useSessionDrop(secondary?.chats ?? chats, secondary?.onPickSession ?? select)
   const [dragOver, setDragOver] = useState(false)
   const [goalSaving, setGoalSaving] = useState(false)
   const goalRequestActive = useRef(false)
@@ -393,13 +416,16 @@ export function ChatPane({
     setTypedWorkflow(null); setWorkflowError(null); setWorkflowPicker(null); setRemovedWorkflow(null)
   }, [currentSessionId])
   const [preview, setPreview] = useState<string | null>(null)
-  const [toast, setToast] = useState<string | null>(null)
+  const [toast, setToast] = useState<ToastNotice | null>(null)
   const [forking, setForking] = useState(false)
-  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const showToast = (msg: string) => {
-    setToast(msg)
-    if (toastTimer.current) clearTimeout(toastTimer.current)
-    toastTimer.current = setTimeout(() => setToast(null), 2500)
+  // Identity changes even for A → B → A, so old async failures stay in their scope.
+  const toastScope = useMemo(() => ({ sessionId: currentSessionId }), [currentSessionId])
+  const toastScopeRef = useRef(toastScope)
+  toastScopeRef.current = toastScope
+  useEffect(() => { setToast(null); setForking(false) }, [currentSessionId])
+  const toastId = useRef(0)
+  const showToast = (message: string, kind: ToastNotice["kind"] = "info", details?: string) => {
+    if (toastScopeRef.current === toastScope) setToast({ id: ++toastId.current, message, kind, details })
   }
 
   // NOTE: the background-shell completion NOTIFICATION is no longer fired here.
@@ -478,9 +504,9 @@ export function ChatPane({
     setModelSaving(true)
     try {
       await changeSessionModel(currentSessionId, model)
-    } catch {
+    } catch (error) {
       if (currentDraftKeyRef.current === currentSessionId) {
-        showToast(uiText("could_not_save_the_model_please_try_again_631991a6"))
+        showToast(uiText("could_not_save_the_model_please_try_again_631991a6"), "error", getErrorMessage(error))
       }
     } finally {
       setModelSaving(false)
@@ -521,12 +547,13 @@ export function ChatPane({
   // Tiptap reports the active @query at the caret, including mid-message edits.
   const [atQuery, setAtQuery] = useState<string | null>(null)
   const workspacePath = currentChat?.config?.workspacePath
-  // For a NEW session, a selected Project owns the workspace: its primary
-  // path overrides a manually-picked one, and @-file completion follows it.
+  // A new session uses its explicitly selected worktree, then the Project
+  // primary path. Existing sessions retain their stored workspace.
   const selectedProjectPath = useAppStore((state) =>
     pendingProjectId ? state.projects[pendingProjectId]?.project_path : undefined,
   )
-  const displayWorkspace = workspacePath ?? selectedProjectPath ?? pickedWorkspace
+  const selectedWorktreePath = !currentSessionId ? worktreePath : null
+  const displayWorkspace = workspacePath ?? selectedWorktreePath ?? selectedProjectPath ?? pickedWorkspace
   const currentProjectName = useAppStore((state) => {
     const projectId = currentChat?.config?.projectId
     return projectId ? state.projects[projectId]?.name : undefined
@@ -632,8 +659,8 @@ export function ChatPane({
 
   const submit = () => {
     // Keep an in-flight admission from capturing or clearing a second draft.
-    if (submissionPending || modelSaving || queue.busy || ticketIngress.busy || rootMode.busy || goalRequestActive.current) return
-    if (semanticComposer && !tickets.canSendIngress) { showToast(uiText("ticket_the_ticket_connection_or_write_permission_is__c3da124f")); return }
+    if (historyBlocked || submissionPending || modelSaving || queue.busy || ticketIngress.busy || rootMode.busy || goalRequestActive.current) return
+    if (semanticComposer && !tickets.canSendIngress) { showToast(uiText("ticket_the_ticket_connection_or_write_permission_is__c3da124f"), "error"); return }
     if (rootSessionUnsafe()) {
       setRootModeConflict(uiText("the_root_permission_change_is_unconfirmed_sending_and_e_a75a6b4f"))
       return
@@ -672,14 +699,14 @@ export function ChatPane({
         // The run may finish while the Goal command is being acknowledged.
         if (response.goal_command.should_execute) {
           if (getRootModeFenceState(sessionId) !== "clear") {
-            if (currentDraftKeyRef.current === draftKey) showToast(uiText("root_permissions_are_unconfirmed_the_goal_was_saved_but_bd40481a"))
+            if (currentDraftKeyRef.current === draftKey) showToast(uiText("root_permissions_are_unconfirmed_the_goal_was_saved_but_bd40481a"), "error")
             return
           }
           try { await agentClient.execute(sessionId, currentChat?.config?.model) }
-          catch { if (currentDraftKeyRef.current === draftKey) showToast(uiText("goal_saved_send_a_message_to_continue_ba844fbc")) }
+          catch (error) { if (currentDraftKeyRef.current === draftKey) showToast(uiText("goal_saved_send_a_message_to_continue_ba844fbc"), "error", getErrorMessage(error)) }
         }
-      }).catch(() => {
-        if (currentDraftKeyRef.current === draftKey) showToast(uiText("could_not_save_the_goal_your_command_is_preserved_pleas_ac375306"))
+      }).catch((error) => {
+        if (currentDraftKeyRef.current === draftKey) showToast(uiText("could_not_save_the_goal_your_command_is_preserved_pleas_ac375306"), "error", getErrorMessage(error))
       }).finally(() => { goalRequestActive.current = false; setGoalSaving(false) })
       return
     }
@@ -716,7 +743,7 @@ export function ChatPane({
         : null,
       selectedWorkflow: selectedWorkflow ? Object.freeze({ ...selectedWorkflow }) : null,
       typedWorkflow: workflowSelection ? Object.freeze(workflowSelection) : null,
-      workspacePath: selectedProjectPath ?? pickedWorkspace,
+      workspacePath: selectedWorktreePath ?? selectedProjectPath ?? pickedWorkspace,
       projectId: pendingProjectId ?? null,
       templatePrompt: !currentSessionId && !secondary ? peekPendingTemplatePrompt() : null,
       // The home picker's selection only applies when this send creates a new
@@ -851,16 +878,29 @@ export function ChatPane({
           content: detail.content,
         })
       })
-      .catch(() => showToast(uiText("could_not_load_workflow_ed648068", { v0: command.name })))
+      .catch((error) => {
+        if (workflowRevisionRef.current === revision) showToast(uiText("could_not_load_workflow_ed648068", { v0: command.name }), "error", getErrorMessage(error))
+      })
   }
 
   const handleFork = (id: string) => {
     if (rootSessionUnsafe()) { setRootModeConflict(uiText("the_root_permission_change_is_unconfirmed_forking_is_un_ca51f044")); return }
+    const draftKey = currentDraftKeyRef.current
     setForking(true)
     void fork(id).then((nid) => {
-      setForking(false)
-      if (nid) showToast(uiText("forked_into_a_new_session_from_here_b0abc6b8"))
-      else showToast(uiText("could_not_fork_this_backend_does_not_support_session_fo_006caf5c"))
+      if (toastScopeRef.current === toastScope) setForking(false)
+      if (nid) {
+        if (toastScopeRef.current === toastScope) showToast(uiText("forked_into_a_new_session_from_here_b0abc6b8"))
+        else if (currentDraftKeyRef.current === nid) {
+          // Fork intentionally navigates to its new session. Do not replace a
+          // notification already raised there, or notify an unrelated session.
+          setToast((current) => current ?? { id: ++toastId.current, kind: "info", message: uiText("forked_into_a_new_session_from_here_b0abc6b8") })
+        }
+      }
+      else if (currentDraftKeyRef.current === draftKey) showToast(uiText("could_not_fork_this_backend_does_not_support_session_fo_006caf5c"), "error")
+    }).catch((error) => {
+      if (toastScopeRef.current === toastScope) setForking(false)
+      showToast(uiText("operation_failed_0c3b4cf7"), "error", getErrorMessage(error))
     })
   }
 
@@ -921,6 +961,8 @@ export function ChatPane({
     <>
       <div
         className="relative flex min-w-0 flex-1 flex-col"
+        data-session-drop-target={secondary ? "secondary" : "main"}
+        {...sessionDrop.handlers}
         onDragOver={(e) => {
           if (e.dataTransfer.types.includes("Files")) {
             e.preventDefault()
@@ -936,9 +978,9 @@ export function ChatPane({
           if (e.dataTransfer.files.length) void addFiles(e.dataTransfer.files)
         }}
       >
-        {dragOver ? (
+        {dragOver || sessionDrop.active ? (
           <div className="pointer-events-none absolute inset-0 z-[60] m-3 flex items-center justify-center rounded-2xl border-2 border-dashed border-primary bg-primary/10 text-sm font-medium text-primary">
-            {uiText("drop_to_add_images_6ccb05f2")}</div>
+            {uiText(sessionDrop.active ? "drop_to_open_session" : "drop_to_add_images_6ccb05f2")}</div>
         ) : null}
 
         {secondary ? (
@@ -1007,6 +1049,8 @@ export function ChatPane({
           <div
             data-chat-body
             className="relative flex min-w-0 flex-1 flex-col"
+        data-session-drop-target={secondary ? "secondary" : "main"}
+        {...sessionDrop.handlers}
           >
         {currentChat?.planMode ? (
           <div className="border-b bg-primary/10 px-3 py-1.5 text-center text-xs font-medium text-primary">
@@ -1028,13 +1072,25 @@ export function ChatPane({
             <ChevronLeft className="size-3.5" />{uiText("subagent_back_to_parent_session_5f5fc758")}</button>
         ) : null}
 
-        {!currentSessionId && !secondary && !sending && !pendingUserText ? (
+        {historyBlocked ? (
+          <div role={secondary?.historyRead?.status === "error" ? "alert" : "status"}
+            className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 px-6 text-center text-sm text-muted-foreground">
+            <p>{uiText(secondary?.historyRead?.status === "error"
+              ? "this_session_cannot_be_loaded_right_now_please_try_agai_502f5a61"
+              : "loading_side_by_side_session_f5d66e68")}</p>
+            {secondary?.historyRead?.status === "error" ? (
+              <Button variant="outline" size="sm" onClick={secondary.historyRead.retry}>{uiText("retry_b8784c8d")}</Button>
+            ) : null}
+            {currentlyRunning ? <Button variant="outline" size="sm" onClick={stop}>{uiText("stop_generation_9ad0aac3")}</Button> : null}
+          </div>
+        ) : !currentSessionId && !secondary && !sending && !pendingUserText ? (
           // Main-pane home view: session shortcuts + quick-start templates.
           // The composer below stays live — a template only prefills it.
           <HomeDashboard
             chats={chats}
             onOpenSession={select}
             onPickTemplate={(prefill) => setDraft(prefill)}
+            onDescribeTask={() => composerInputRef.current?.focus()}
           />
         ) : (
         <MessageList
@@ -1165,6 +1221,7 @@ export function ChatPane({
               </button>
             </div>
           )}
+          <div className="shrink-0" hidden={historyBlocked} inert={historyBlocked} data-history-composer-blocked={historyBlocked}>
           <Composer
           draft={draft}
           draftKey={draftKey}
@@ -1276,6 +1333,7 @@ export function ChatPane({
           slashQuery={slashQuery}
           onMentionQueryChange={setAtQuery}
           displayWorkspace={displayWorkspace}
+          showProjectWorkspace={!!selectedWorktreePath}
           workspaceFiles={workspaceFiles}
           hasSession={!!currentSessionId}
           onOpenWorkspacePicker={onOpenWorkspacePicker}
@@ -1283,6 +1341,7 @@ export function ChatPane({
           onSelectProject={(projectId) => onSelectProject?.(projectId)}
           onDismissMenus={() => setMenusDismissed(true)}
         />
+          </div>
         </div>
           </div>
 
@@ -1309,7 +1368,7 @@ export function ChatPane({
         </div>
       </div>
 
-      <Toasts forking={forking} toast={toast} />
+      <Toasts forking={forking} toast={toast} onDismiss={() => setToast(null)} onRestoreFocus={() => { if (pageVisible !== false && !historyBlocked) composerInputRef.current?.focus() }} />
       {workflowRunsOpen && currentSessionId && pageVisible !== false ? <WorkflowRunsDialog key={currentSessionId}
         sessionId={currentSessionId} sessionTitle={currentChat?.title || currentSessionId} onClose={() => setWorkflowRunsOpen(false)} /> : null}
 

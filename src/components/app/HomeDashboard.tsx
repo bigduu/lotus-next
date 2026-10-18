@@ -1,5 +1,5 @@
 import { uiLanguage, uiText, useUiLocale } from "@shared/i18n/ui"
-import { useMemo, useState, type ReactNode } from "react"
+import { useMemo, useRef, useState, type ReactNode } from "react"
 import {
   Plus,
   Code,
@@ -18,8 +18,10 @@ import {
   Loader2,
   MessageSquare,
 } from "lucide-react"
+import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { BrandMark } from "@/components/ui/brand-mark"
+import { surfaceMotion } from "@/components/ui/motion"
 import { cn } from "@/lib/utils"
 import {
   TASK_TEMPLATES,
@@ -29,6 +31,8 @@ import {
   type TaskTemplate,
 } from "@/lib/taskTemplates"
 import type { ChatItem } from "@shared/types/chatMessages"
+
+const cardInteraction = "button-interaction outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
 
 const ICONS: Record<string, ReactNode> = {
   plus: <Plus className="size-4" />,
@@ -63,7 +67,7 @@ function SessionMiniRow({ chat, onOpen }: { chat: ChatItem; onOpen: () => void }
   return (
     <button
       onClick={onOpen}
-      className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm transition-colors hover:bg-accent"
+      className={cn(cardInteraction, "flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm hover:bg-accent")}
     >
       {chat.isRunning ? (
         <Loader2 className="size-3.5 shrink-0 animate-spin text-primary" />
@@ -90,14 +94,22 @@ export function HomeDashboard({
   chats,
   onOpenSession,
   onPickTemplate,
+  onDescribeTask,
 }: {
   chats: ChatItem[]
   onOpenSession: (id: string) => void
   /** Receives the template's prefill text for the composer draft. */
   onPickTemplate: (prefill: string) => void
+  /** Focus the existing composer without changing its draft or sending it. */
+  onDescribeTask: () => void
 }) {
   useUiLocale()
   const [query, setQuery] = useState("")
+  const searchRef = useRef<HTMLInputElement>(null)
+  const clearSearch = () => {
+    setQuery("")
+    searchRef.current?.focus()
+  }
 
   const running = useMemo(() => chats.filter((c) => c.isRunning).slice(0, 5), [chats])
   const pinned = useMemo(
@@ -136,7 +148,7 @@ export function HomeDashboard({
   ].filter((s) => s.items.length > 0)
 
   return (
-    <div className="min-h-0 flex-1 overflow-y-auto">
+    <div data-testid="home-dashboard" className="min-h-0 flex-1 overflow-y-auto">
       <div className="mx-auto w-full max-w-6xl px-4 py-6">
         <div className="mb-5 flex items-center gap-3">
           <BrandMark className="size-9" />
@@ -161,6 +173,15 @@ export function HomeDashboard({
 
         <div className="mb-3">
           <Input
+            ref={searchRef}
+            aria-label={uiText("search_templates_28062b4d")}
+            onKeyDown={(event) => {
+              if (event.key === "Escape" && query && !event.nativeEvent.isComposing && event.nativeEvent.keyCode !== 229) {
+                event.preventDefault()
+                event.stopPropagation()
+                clearSearch()
+              }
+            }}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder={uiText("search_templates_28062b4d")}
@@ -179,10 +200,11 @@ export function HomeDashboard({
                   key={tpl.id}
                   onClick={() => pick(tpl)}
                   className={cn(
-                    "flex items-start gap-2.5 rounded-lg border bg-card p-3 text-left transition-colors hover:bg-accent",
+                    cardInteraction,
+                    "flex items-start gap-2.5 rounded-xl border bg-card p-3 text-left shadow-xs hover:bg-accent",
                   )}
                 >
-                  <span className="mt-0.5 shrink-0 text-primary">{ICONS[tpl.icon] ?? ICONS.plus}</span>
+                  <span aria-hidden className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-accent text-primary">{ICONS[tpl.icon] ?? ICONS.plus}</span>
                   <span className="min-w-0">
                     <span className="block text-sm font-medium">{tpl.title}</span>
                     <span className="mt-0.5 line-clamp-2 block text-xs leading-relaxed text-muted-foreground">
@@ -196,7 +218,14 @@ export function HomeDashboard({
         ))}
 
         {grouped.length === 0 ? (
-          <p className="py-8 text-center text-xs text-muted-foreground">{uiText("no_matching_templates_0f5e1c5f")}</p>
+          <div role="status" className={cn(surfaceMotion, "surface-fade rounded-xl border bg-card px-4 py-8 text-center")}>
+            <Search className="mx-auto mb-3 size-5 text-primary" aria-hidden />
+            <p className="text-sm text-muted-foreground">{uiText("no_matching_templates_0f5e1c5f")}</p>
+            <div className="mt-4 flex flex-wrap justify-center gap-2">
+              <Button type="button" variant="outline" size="sm" onClick={clearSearch}>{uiText("clear_search_b6f00afa")}</Button>
+              <Button type="button" size="sm" onClick={onDescribeTask}>{uiText("home_describe_task")}</Button>
+            </div>
+          </div>
         ) : null}
       </div>
     </div>

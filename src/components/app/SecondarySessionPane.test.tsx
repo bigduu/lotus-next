@@ -4,7 +4,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest"
 
 const mocks = vi.hoisted(() => ({
   useChat: vi.fn((_sessionId?: string | null, _onCreated?: (id: string) => void) => ({})),
-  loadChatHistory: vi.fn(async (_id: string) => {}),
+  loadChatHistory: vi.fn(async (_id: string, _options?: { throwOnError?: boolean; signal?: AbortSignal }) => {}),
   chatPane: vi.fn(),
   safePane: vi.fn(),
 }))
@@ -55,6 +55,7 @@ async function render(sessionId: string | null, options: typeof props & { active
 beforeEach(() => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
   vi.clearAllMocks()
+  mocks.loadChatHistory.mockReset().mockResolvedValue(undefined)
   container = document.createElement("div")
   document.body.appendChild(container)
   root = createRoot(container)
@@ -71,10 +72,10 @@ it("retains the interactive pane for roots and loads their generic history", asy
   await render("root-1")
   expect(container?.querySelector("[data-interactive-pane]")).not.toBeNull()
   expect(mocks.useChat).toHaveBeenCalledWith("root-1", expect.any(Function))
-  expect(mocks.loadChatHistory).toHaveBeenCalledWith("root-1")
+  expect(mocks.loadChatHistory).toHaveBeenCalledWith("root-1", { throwOnError: true, signal: expect.any(AbortSignal) })
   expect(mocks.safePane).not.toHaveBeenCalled()
   expect(mocks.chatPane.mock.lastCall?.[0].secondary).toMatchObject({
-    sessionId: "root-1", onPickSession, chats,
+    sessionId: "root-1", onPickSession: expect.any(Function), chats,
   })
 
   // An unbound split pane must also stay interactive, as before.
@@ -100,7 +101,7 @@ it("unmounts full chat when switching to children or unknown IDs, then restores 
   await render("root-2")
   expect(container?.querySelector("[data-interactive-pane]")).not.toBeNull()
   expect(mocks.useChat).toHaveBeenCalledWith("root-2", expect.any(Function))
-  expect(mocks.loadChatHistory).toHaveBeenCalledWith("root-2")
+  expect(mocks.loadChatHistory).toHaveBeenCalledWith("root-2", { throwOnError: true, signal: expect.any(AbortSignal) })
 })
 
 it("waits for a verified root before upgrading a missing session to interactive mode", async () => {
@@ -133,4 +134,51 @@ it("keeps root chat mounted but suspends child projection on other workbench tab
   expect(mocks.useChat).not.toHaveBeenCalledWith("child-1", expect.any(Function))
   await render("child-1", { ...props, active: true })
   expect(container?.querySelector("[data-projected-pane]")).not.toBeNull()
+})
+
+it("allows a root drop to replace a projected child without selecting the main session", async () => {
+  await render("child-1")
+  const event = new Event("drop", { bubbles: true, cancelable: true })
+  Object.defineProperty(event, "dataTransfer", { value: { types: ["application/x-lotus-sidebar-session"], getData: () => JSON.stringify({ sessionId: "root-2", projectId: null }) } })
+  act(() => container!.querySelector("[data-projected-pane]")!.dispatchEvent(event))
+  expect(onPickSession).toHaveBeenCalledExactlyOnceWith("root-2")
+  expect(mocks.useChat).not.toHaveBeenCalled()
+})
+
+
+it("surfaces failed reads and retries the same session explicitly", async () => {
+  mocks.loadChatHistory.mockRejectedValueOnce(new Error("503")).mockResolvedValueOnce(undefined)
+  await render("root-1")
+  expect(mocks.chatPane.mock.lastCall?.[0].secondary.historyRead.status).toBe("error")
+  expect(mocks.loadChatHistory).toHaveBeenCalledTimes(1)
+  await act(async () => mocks.chatPane.mock.lastCall?.[0].secondary.historyRead.retry())
+  expect(mocks.loadChatHistory).toHaveBeenCalledTimes(2)
+  expect(mocks.loadChatHistory.mock.lastCall?.[0]).toBe("root-1")
+  expect(mocks.chatPane.mock.lastCall?.[0].secondary.historyRead.status).toBe("ready")
+  expect(onPickSession).not.toHaveBeenCalled()
+})
+
+it("fences an abandoned session read and clears failure when entering a new draft", async () => {
+  let reject!: (error: Error) => void
+  mocks.loadChatHistory.mockImplementationOnce(() => new Promise((_resolve, fail) => { reject = fail }))
+  await render("root-1")
+  const signal = mocks.loadChatHistory.mock.calls[0][1]?.signal
+  expect(mocks.chatPane.mock.lastCall?.[0].secondary.historyRead.status).toBe("loading")
+  await render("root-2")
+  expect(signal?.aborted).toBe(true)
+  await act(async () => reject(new Error("late 503")))
+  expect(mocks.chatPane.mock.lastCall?.[0].secondary.historyRead.status).toBe("ready")
+  await render(null)
+  expect(mocks.chatPane.mock.lastCall?.[0].secondary.historyRead.status).toBe("ready")
+})
+
+it("allows reselecting a failed session to retry and aborts on close", async () => {
+  mocks.loadChatHistory.mockRejectedValue(new Error("503"))
+  await render("root-1")
+  await act(async () => mocks.chatPane.mock.lastCall?.[0].secondary.onPickSession("root-1"))
+  expect(mocks.loadChatHistory).toHaveBeenCalledTimes(2)
+  const signal = mocks.loadChatHistory.mock.lastCall?.[1]?.signal
+  act(() => root?.unmount())
+  root = null
+  expect(signal?.aborted).toBe(true)
 })

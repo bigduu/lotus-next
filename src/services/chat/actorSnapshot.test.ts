@@ -23,6 +23,25 @@ describe("authorized actor snapshot DTO", () => {
     expect(tree.byId["actor-0"]).toMatchObject({ lifecycle: "running", placement: "remote", health: null })
   })
 
+  it("keeps absent activation, native evidence and missing placement distinct", () => {
+    const source = actorSnapshotFixture("root", 1)
+    source.nodes[1].placement_class = null
+    const first = actorSnapshotTree(parseActorSnapshot(source, "root"))
+    expect(first.byId.root).toMatchObject({ placement: "unknown", placementUnavailableReason: "no_activation" })
+    expect(first.byId["actor-0"]).toMatchObject({ placement: "unknown", placementUnavailableReason: "not_reported" })
+    const native = actorSnapshotTree(parseActorSnapshot(actorSnapshotV2Fixture(), "root"), false, first)
+    expect(native.byId["actor-0"]).toMatchObject({ placement: "unknown", placementUnavailableReason: "native_task" })
+    expect(native.byId["actor-0"]).not.toBe(first.byId["actor-0"])
+  })
+
+  it.each(["local", "docker", "ssh", "remote", "schedulable"] as const)("preserves reported %s placement without inferring a host", (placement) => {
+    const source = actorSnapshotFixture("root", 1)
+    source.nodes[1].placement_class = placement
+    const node = actorSnapshotTree(parseActorSnapshot(source, "root")).byId["actor-0"]
+    expect(node).toMatchObject({ placement, placementUnavailableReason: null })
+    expect(node).not.toHaveProperty("host")
+  })
+
   it.each([
     ["active", "reserved", "queued"],
     ["active", "running", "running"],
@@ -82,6 +101,31 @@ describe("authorized actor snapshot DTO", () => {
     expect(actorTreeCursorCovers(treeCursor(7), treeCursor(8))).toBe(false)
     expect(actorTreeCursorCovers(treeCursor(8, "b".repeat(64)), treeCursor(7))).toBe(false)
     expect(actorTreeCursorCovers(null, treeCursor(7))).toBe(false)
+  })
+
+  it.each(["succeeded", "failed", "cancelled"] as const)(
+    "rejects a same-activation %s snapshot returning to Running after refresh", (status) => {
+      const prior = parseActorSnapshot(actorSnapshotFixture("root", 1, treeCursor(7)), "root")
+      prior.nodes[1].activation!.status = status
+      const next = structuredClone(prior)
+      next.stream_cursor = treeCursor(8)
+      next.nodes[1].revision.session_metadata_version += 1
+      next.nodes[1].revision.actor_directory_revision! += 1
+      next.nodes[1].activation!.status = "running"
+      expect(actorSnapshotRegresses(prior, next)).toBe(true)
+    },
+  )
+
+  it("accepts a genuinely newer activation after a confirmed terminal snapshot", () => {
+    const prior = parseActorSnapshot(actorSnapshotFixture("root", 1, treeCursor(7)), "root")
+    prior.nodes[1].activation!.status = "succeeded"
+    const next = structuredClone(prior)
+    next.stream_cursor = treeCursor(8)
+    next.nodes[1].revision.session_metadata_version += 1
+    next.nodes[1].revision.actor_directory_revision! += 1
+    next.nodes[1].activation = { activation_id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", attempt: 2, status: "running" }
+    expect(actorSnapshotRegresses(prior, next)).toBe(false)
+    expect(actorSnapshotRegresses(next, prior)).toBe(true)
   })
 
   it.each(["at1-" + "a".repeat(64) + "-0", "at1-" + "a".repeat(64) + "-01",

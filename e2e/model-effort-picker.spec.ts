@@ -10,6 +10,16 @@ const mainTitle = "Main model and effort"
 const birth = "a".repeat(64)
 const at = "2026-10-06T00:00:00.000Z"
 
+function expectCloseBounds(actual: { x: number; y: number; width: number; height: number } | null,
+  expected: { x: number; y: number; width: number; height: number } | null) {
+  expect(actual).not.toBeNull()
+  expect(expected).not.toBeNull()
+  for (const key of ["x", "y", "width", "height"] as const) {
+    // DOMRect frame sampling can differ by a few millionths of a CSS pixel.
+    expect(actual![key]).toBeCloseTo(expected![key], 2)
+  }
+}
+
 async function screenshot(page: Page, info: TestInfo, name: string) {
   const file = info.outputPath(`${name}.png`)
   await page.screenshot({ path: file, animations: "disabled" })
@@ -35,7 +45,7 @@ async function screenshot(page: Page, info: TestInfo, name: string) {
   await info.attach(detailName, { path: detailFile, contentType: "image/png" })
 }
 
-async function setup(page: Page, beforeSessionRestoration?: () => Promise<void>) {
+async function setup(page: Page, beforeSessionRestoration?: () => Promise<void>, beforeModeCommit?: () => Promise<void>) {
   await page.addInitScript((id) => {
     localStorage.setItem("bodhi_onboarded_v1", "1")
     localStorage.setItem("lotus_next_last_session", id)
@@ -107,9 +117,10 @@ async function setup(page: Page, beforeSessionRestoration?: () => Promise<void>)
       route.fulfill({ json: { session_id: current.id, items: [] } }))
     await page.route(`**/api/v1/respond/${current.id}/pending`, (route) =>
       route.fulfill({ json: { has_pending_question: false } }))
-    await page.route(`**/api/v1/sessions/${current.id}/root-mode-operations/*`, (route) => {
+    await page.route(`**/api/v1/sessions/${current.id}/root-mode-operations/*`, async (route) => {
       const body = route.request().postDataJSON() as Record<string, unknown>
       operations.push(body)
+      await beforeModeCommit?.()
       expect(body.birth_token).toBe(birth)
       expect(body.expected_epoch).toBe(current.root_mode_transition_epoch)
       const expected = current.root_mode_transition_epoch++
@@ -193,6 +204,19 @@ test("the combined picker persists effort and model, supports keyboard, and fits
   const slider = page.getByRole("slider", { name: "推理强度", exact: true })
   await expect(slider).toHaveValue("4")
   await screenshot(page, info, "combined-picker-high")
+  const panelBeforeUltra = await page.locator(".model-effort-panel").boundingBox()
+  const triggerBeforeUltra = await picker.boundingBox()
+  const sliderBeforeUltra = await slider.boundingBox()
+  const duringUltra = page.locator(".model-effort-panel").evaluate(async (panel) => {
+    const view = panel.ownerDocument.defaultView!
+    const samples: number[][] = []
+    for (let frame = 0; frame < 24; frame++) {
+      await new Promise<void>((resolve) => view.requestAnimationFrame(() => resolve()))
+      const { x, y, width, height } = panel.getBoundingClientRect()
+      samples.push([x, y, width, height])
+    }
+    return samples
+  })
   const operationsBeforeUltra = operations.length
   await slider.focus()
   await slider.press("End")
@@ -200,6 +224,18 @@ test("the combined picker persists effort and model, supports keyboard, and fits
   await expect.poll(() => operations.length).toBe(operationsBeforeUltra + 1)
   expect(main.reasoning_effort).toBe("high")
   expect(patches).toHaveLength(1)
+  for (const sample of await duringUltra) {
+    const expected = [panelBeforeUltra!.x, panelBeforeUltra!.y, panelBeforeUltra!.width, panelBeforeUltra!.height]
+    sample.forEach((value, index) => expect(value).toBeCloseTo(expected[index]!, 2))
+  }
+  expect(await page.locator(".model-effort-panel").boundingBox()).toEqual(panelBeforeUltra)
+  expect(await picker.boundingBox()).toEqual(triggerBeforeUltra)
+  expect(await slider.boundingBox()).toEqual(sliderBeforeUltra)
+  await expect(page.locator(".effort-meteors i")).toHaveCount(3)
+  await page.emulateMedia({ reducedMotion: "reduce" })
+  await expect(page.locator(".effort-meteors i").first()).toHaveCSS("animation-name", "none")
+  await page.emulateMedia({ reducedMotion: "no-preference" })
+  await expect(page.locator(".effort-meteors i").first()).toHaveCSS("animation-name", "effort-meteor")
   await screenshot(page, info, "combined-picker-ultra")
   await page.keyboard.press("Escape")
 
@@ -264,3 +300,233 @@ test("the side composer updates only its own model and effort", async ({ page },
   expect(observation.pageErrors).toEqual([])
   expect(observation.errorResponses).toEqual([])
 })
+
+for (const target of ["main", "side"] as const) {
+  test(`a pending Ultra selection keeps the ${target} composer geometry stable`, async ({ page }, info) => {
+    test.skip(target === "side" && info.project.name !== "desktop-chromium", "desktop side composer acceptance")
+    let release!: () => void
+    const confirmation = new Promise<void>((resolve) => { release = resolve })
+    const { operations, observation } = await setup(page, undefined, () => confirmation)
+    if (target === "side") {
+      await page.getByRole("button", { name: "打开侧边面板", exact: true }).click()
+      const workbench = page.locator("#right-workbench")
+      await workbench.getByRole("button", { name: "打开工作面板标签页" }).click()
+      await page.getByRole("menuitem", { name: "并排会话", exact: true }).click()
+      await workbench.getByRole("combobox").filter({ hasText: "选择会话并排" }).click()
+      await page.getByRole("option", { name: "Side model and effort", exact: true }).click()
+      await expect(workbench.getByTestId("model-effort-picker")).toBeEnabled()
+    }
+    const picker = target === "side" ? page.locator("#right-workbench").getByTestId("model-effort-picker") : modelEffortPicker(page)
+    const surfaces = page.locator("[data-composer-surface]")
+    const before = await surfaces.evaluateAll((elements) => elements.map((element) => {
+      const { x, y, width, height } = element.getBoundingClientRect()
+      return { x, y, width, height }
+    }))
+    await picker.click()
+    try {
+      await page.getByRole("slider", { name: "推理强度", exact: true }).press("End")
+      await expect.poll(() => operations.length).toBe(1)
+      await expect(surfaces.getByRole("alert")).toHaveCount(0)
+      await expect(surfaces.getByRole("status").filter({ hasText: "等待服务器确认" })).toHaveCount(1)
+      const pendingSamples = await surfaces.evaluateAll(async (elements) => {
+        const view = elements[0]!.ownerDocument.defaultView!
+        const samples = []
+        for (let frame = 0; frame < 24; frame++) {
+          await new Promise<void>((resolve) => view.requestAnimationFrame(() => resolve()))
+          samples.push(elements.map((element) => {
+            const { x, y, width, height } = element.getBoundingClientRect()
+            return { x, y, width, height }
+          }))
+        }
+        return samples
+      })
+      for (const sample of pendingSamples) {
+        sample.forEach((bounds, index) => expectCloseBounds(bounds, before[index]!))
+      }
+    } finally {
+      release()
+    }
+    await expect(picker).toContainText("Ultra")
+    await expect(surfaces.getByRole("alert")).toHaveCount(0)
+    for (let index = 0; index < before.length; index++) {
+      expect(await surfaces.nth(index).boundingBox()).toEqual(before[index]!)
+    }
+    expect(observation.pageErrors).toEqual([])
+  })
+}
+
+test("model failures remain readable with keyboard details and dismissal", async ({ page }, info) => {
+  const { observation } = await setup(page)
+  await page.emulateMedia({ reducedMotion: "reduce" })
+  const input = page.getByRole("textbox", { name: "消息", exact: true })
+  const before = await input.boundingBox()
+  const diagnostic = `Fixture diagnostic: ${"long-unbroken-diagnostic-".repeat(80)}`
+  await page.route(`**/api/v1/sessions/${mainId}`, async (route) => {
+    if (route.request().method() === "PATCH") {
+      return route.fulfill({ status: 500, json: { message: diagnostic } })
+    }
+    return route.fallback()
+  })
+  await modelEffortPicker(page).click()
+  await page.getByTestId("model-picker-model").click()
+  await page.getByRole("searchbox", { name: "搜索模型", exact: true }).fill("LOCAL-ANALYSIS")
+  await page.locator("[data-model-option]").click()
+  const alert = page.getByRole("alert").filter({ hasText: "模型保存失败" })
+  await expect(alert).toBeVisible()
+  await expect(alert.locator("strong")).toHaveText("操作失败")
+  const card = alert.locator("../..")
+  await expect(card).toHaveCSS("animation-name", "none")
+  // Past both the old 2.5s timeout and the new informational timeout.
+  await page.waitForTimeout(5500)
+  await expect(alert).toBeVisible()
+  const summary = card.locator("summary")
+  await input.focus()
+  await summary.focus()
+  await summary.press("Enter")
+  await expect(card.locator("details")).toHaveAttribute("open", "")
+  await expect(card).toContainText(diagnostic)
+  expect(await input.boundingBox()).toEqual(before)
+  expect(await page.locator("html").evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1)
+  const box = await card.boundingBox()
+  expect(box!.x).toBeGreaterThanOrEqual(0)
+  expect(box!.y).toBeGreaterThanOrEqual(0)
+  await screenshot(page, info, "persistent-model-error-details")
+  await card.getByRole("button", { name: "关闭", exact: true }).focus()
+  await page.keyboard.press("Enter")
+  await expect(alert).toHaveCount(0)
+  await expect(input).toBeFocused()
+  expect(observation.pageErrors).toEqual([])
+})
+
+test("narrow workbench survives repeated Tab and keeps nested model popovers usable across resizing", async ({ page }, info) => {
+  test.skip(info.project.name !== "desktop-chromium", "Explicit narrow and wide breakpoint acceptance")
+  await page.setViewportSize({ width: 1024, height: 900 })
+  const { observation } = await setup(page)
+  const launcher = page.getByRole("button", { name: "打开侧边面板", exact: true })
+  await launcher.click()
+  const workbench = page.locator("#right-workbench")
+  await expect(workbench).toHaveAttribute("aria-modal", "true")
+  const close = workbench.getByRole("button", { name: "收起工作面板", exact: true })
+  await close.focus()
+  for (const key of ["Tab", "Shift+Tab"]) {
+    for (let i = 0; i < 40; i++) {
+      await page.keyboard.press(key)
+      expect(observation.pageErrors).toEqual([])
+      await expect(workbench).toBeVisible()
+      expect(await workbench.evaluate((node) => node.contains(node.ownerDocument.activeElement))).toBe(true)
+    }
+  }
+  await workbench.getByRole("button", { name: "打开工作面板标签页" }).click()
+  await page.getByRole("menuitem", { name: "并排会话", exact: true }).click()
+  await workbench.getByRole("combobox").filter({ hasText: "选择会话并排" }).click()
+  await page.getByRole("option", { name: "Side model and effort", exact: true }).click()
+  const sidePicker = workbench.getByTestId("model-effort-picker")
+  const popover = page.locator('[data-slot="popover-content"]')
+  await sidePicker.click()
+  await expect(popover).toBeVisible()
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await expect(popover).toBeVisible()
+  await page.setViewportSize({ width: 1024, height: 900 })
+  await expect(popover).toBeVisible()
+  await page.getByTestId("model-picker-model").click()
+  const search = page.getByRole("searchbox", { name: "搜索模型", exact: true })
+  await search.fill("local-analysis")
+  await expect(search).toHaveValue("local-analysis")
+  await page.keyboard.press("Escape")
+  await expect(popover).not.toBeVisible()
+  await expect(workbench).toBeVisible()
+  await expect(sidePicker).toBeFocused()
+  await page.keyboard.press("Escape")
+  await expect(workbench).not.toBeVisible()
+  await expect(launcher).toBeFocused()
+  expect(observation.pageErrors).toEqual([])
+  await screenshot(page, info, "workbench-modal-focus-return")
+})
+
+for (const width of [1024, 390]) {
+  test(`global command search owns keyboard focus over a ${width}px workbench`, async ({ page }, info) => {
+    test.skip(info.project.name !== "desktop-chromium", "Explicit tablet and phone viewport acceptance")
+    await page.setViewportSize({ width, height: 900 })
+    const { observation } = await setup(page)
+    await page.getByRole("button", { name: "打开侧边面板", exact: true }).click()
+    const workbench = page.locator("#right-workbench")
+    // Keep two sortable targets: one tab alone cannot move with ArrowRight.
+    await workbench.getByRole("button", { name: "打开工作面板标签页" }).click()
+    await page.getByRole("menuitem", { name: "Review", exact: true }).click()
+    await workbench.getByRole("button", { name: "打开工作面板标签页" }).click()
+    await page.getByRole("menuitem", { name: "并排会话", exact: true }).click()
+    await workbench.getByRole("combobox").filter({ hasText: "选择会话并排" }).click()
+    await page.getByRole("option", { name: "Side model and effort", exact: true }).click()
+    const sideEditor = workbench.locator('[contenteditable="true"][role="textbox"]')
+    await sideEditor.click()
+    await page.keyboard.type("Retained side draft")
+    await page.keyboard.press("Control+k")
+    const search = page.getByPlaceholder("搜索会话或操作…")
+    await expect(search).toBeFocused()
+    await page.keyboard.type("系统设置")
+    await expect(search).toHaveValue("系统设置")
+    await expectComposerText(sideEditor, "Retained side draft")
+    await page.keyboard.press("Escape")
+    await expect(search).toBeHidden()
+    await expect(sideEditor).toBeFocused()
+    await page.keyboard.press("Control+k")
+    await expect(search).toBeFocused()
+    await page.keyboard.type("系统设置")
+    await page.keyboard.press("Enter")
+    const settings = page.locator('[data-slot="settings-page"]')
+    await expect(settings.getByRole("heading", { name: "系统设置", exact: true })).toBeFocused()
+    await expectComposerText(sideEditor, "Retained side draft")
+    await settings.getByRole("button", { name: "返回聊天", exact: true }).click()
+    await expect(sideEditor).toBeFocused()
+    await expectComposerText(sideEditor, "Retained side draft")
+    await expect(workbench.getByRole("tab")).toHaveCount(2)
+    const handle = workbench.locator("button[aria-keyshortcuts]").first()
+    const tabOrder = await workbench.getByRole("tab").allTextContents()
+    await handle.focus()
+    await handle.press("Space")
+    await expect(handle.locator("..")).toHaveCSS("opacity", "0.6")
+    const sourceId = await handle.getAttribute("data-workbench-tab-handle")
+    const movingSource = page.locator("[data-dnd-dragging]").filter({ has: page.locator(`[data-workbench-tab-handle=${JSON.stringify(sourceId)}]`) })
+    await expect(movingSource).toHaveCount(1)
+    const dragX = (await movingSource.boundingBox())!.x
+    await page.keyboard.press("ArrowRight")
+    await expect.poll(async () => (await movingSource.boundingBox())?.x ?? -Infinity).toBeGreaterThan(dragX + 1)
+    await page.keyboard.press("Control+k")
+    await expect(search).toBeFocused()
+    await page.keyboard.type("Alpha movable")
+    await expect(search).toHaveValue("Alpha movable")
+    await expect(page.locator("[data-dnd-placeholder]")).toHaveCount(0)
+    await page.keyboard.type(" tail")
+    await expect(search).toHaveValue("Alpha movable tail")
+    await expectComposerText(sideEditor, "Retained side draft")
+    await page.keyboard.press("Escape")
+    await expect(handle).toBeFocused()
+    await expect(workbench.getByRole("tab")).toHaveText(tabOrder)
+    // Settings must retain the same pickup identity after focus leaves the preview.
+    await handle.press("Space")
+    await expect(movingSource).toHaveCount(1)
+    const settingsDragX = (await movingSource.boundingBox())!.x
+    await page.keyboard.press("ArrowRight")
+    await expect.poll(async () => (await movingSource.boundingBox())?.x ?? -Infinity).toBeGreaterThan(settingsDragX + 1)
+    await page.keyboard.press("Control+k")
+    await expect(search).toBeFocused()
+    await page.keyboard.type("系统设置")
+    await page.keyboard.press("Enter")
+    await expect(settings.getByRole("heading", { name: "系统设置", exact: true })).toBeFocused()
+    await settings.getByRole("button", { name: "返回聊天", exact: true }).click()
+    await expect(handle).toBeFocused()
+    await expectComposerText(sideEditor, "Retained side draft")
+    await expect(workbench.getByRole("tab")).toHaveText(tabOrder)
+    await handle.press("Space")
+    await expect(handle.locator("..")).toHaveCSS("opacity", "0.6")
+    await handle.press("Escape")
+    await expect(workbench).toBeVisible()
+    await expect(workbench.getByRole("tab")).toHaveText(tabOrder)
+    await workbench.getByTestId("model-effort-picker").click()
+    await expect(page.locator('[data-slot="popover-content"]')).toBeVisible()
+    await page.keyboard.press("Escape")
+    await expect(page.locator('[data-slot="popover-content"]')).toBeHidden()
+    await expect(workbench).toBeVisible()
+    expect(observation.pageErrors).toEqual([])
+  })
+}

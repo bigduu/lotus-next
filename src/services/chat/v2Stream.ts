@@ -124,6 +124,8 @@ const HEARTBEAT_STALE_MS = 40_000;
 const WATCHDOG_TICK_MS = 1_000;
 /** Fail closed before Bamboo's longer authorization deadline can strand UI. */
 const WELCOME_TIMEOUT_MS = 5_000;
+/** A retained Actor replay must prove its prefix within this bounded interval. */
+const ACTOR_REPLAY_TIMEOUT_MS = 5_000;
 
 /**
  * The MessagePack subprotocol token offered via `Sec-WebSocket-Protocol` when
@@ -160,6 +162,16 @@ interface MessageChannel {
   handlers: MessageChannelHandlers;
 }
 
+interface ActorResume {
+  socket: WebSocket;
+  anchorEpoch: string | null;
+  anchorCursor: number | null;
+  awaitingReset: boolean;
+  resetCursor: number | null;
+  failed: boolean;
+  timer: ReturnType<typeof setTimeout> | null;
+}
+
 interface ActorChannel {
   actorId: string;
   subscribers: Set<ActorChannelHandlers>;
@@ -167,6 +179,8 @@ interface ActorChannel {
   cursor: number | null;
   gapNotified: boolean;
   lastControl: ActorSnapshotRequired | null;
+  epoch: string | null;
+  resume: ActorResume | null;
 }
 
 interface ActorTreeChannel {
@@ -558,6 +572,48 @@ const failFeedDelivery = (
   closeIfIdle();
 };
 
+const clearActorResume = (channel: ActorChannel): void => {
+  if (channel.resume?.timer !== null && channel.resume?.timer !== undefined) {
+    clearTimeout(channel.resume.timer);
+  }
+  channel.resume = null;
+};
+
+const notifyActorGap = (channel: ActorChannel): void => {
+  if (channel.resume) channel.resume.failed = true;
+  channel.epoch = null;
+  if (channel.gapNotified) return;
+  channel.gapNotified = true;
+  for (const handlers of [...channel.subscribers]) {
+    try {
+      handlers.onGap();
+    } catch (error) {
+      debugLog("[v2Stream]", "actor.gap_listener_error", { error });
+    }
+  }
+};
+
+const sendActorSubscribe = (channel: ActorChannel, ch: string, ws: WebSocket): boolean => {
+  clearActorResume(channel);
+  const pending: ActorResume = {
+    socket: ws, anchorEpoch: channel.epoch, anchorCursor: channel.cursor,
+    awaitingReset: true, resetCursor: null, failed: false, timer: null,
+  };
+  channel.resume = pending;
+  if (pending.anchorEpoch !== null && pending.anchorCursor !== null) {
+    pending.timer = setTimeout(() => {
+      if (socket !== ws || actorChannels.get(ch) !== channel || channel.resume !== pending) return;
+      clearActorResume(channel);
+      notifyActorGap(channel);
+    }, ACTOR_REPLAY_TIMEOUT_MS);
+  }
+  return sendOnSocket(ws, {
+    type: "subscribe", ch,
+    ...(channel.cursor === null ? {} : { since: channel.cursor }),
+    actor_resume: { epoch: channel.epoch },
+  });
+};
+
 /** Subscribe every current registry entry for one exact acknowledged socket. */
 const subscribeAll = (ws: WebSocket): boolean => {
   if (feedChannel && !feedChannel.deliveryFailed) {
@@ -570,9 +626,7 @@ const subscribeAll = (ws: WebSocket): boolean => {
     if (!sendOnSocket(ws, { type: "subscribe", ch })) return false;
   }
   for (const [ch, channel] of actorChannels) {
-    if (!sendOnSocket(ws, channel.cursor === null
-      ? { type: "subscribe", ch }
-      : { type: "subscribe", ch, since: channel.cursor })) return false;
+    if (!sendActorSubscribe(channel, ch, ws)) return false;
   }
   for (const [ch, channel] of actorTreeChannels) {
     if (!sendOnSocket(ws, channel.cursor === null
@@ -620,6 +674,14 @@ const clearSocketLiveness = (expectedSocket?: WebSocket): void => {
   if (liveness.visibilityListener && typeof document !== "undefined") {
     document.removeEventListener("visibilitychange", liveness.visibilityListener);
     liveness.visibilityListener = null;
+  }
+  for (const channel of [...actorChannels.values()]) {
+    const pending = channel.resume;
+    if (pending?.socket !== liveness.socket) continue;
+    // An interrupted, partially received prefix has not proved its producer.
+    // Preserve the visible hints, but never claim this interval was recovered.
+    if (pending.anchorEpoch !== null && channel.cursor !== pending.anchorCursor) notifyActorGap(channel);
+    clearActorResume(channel);
   }
   if (socketLiveness === liveness) socketLiveness = null;
 };
@@ -886,20 +948,13 @@ const acknowledgeWelcome = (liveness: SocketLiveness): void => {
   debugLog("[v2Stream]", "ready", { afterDrop: wasDropped });
 
   if (wasDropped) {
-    // `since` was sent above for replay, but a restarted producer can reuse its
-    // numeric cursor. Require a fresh snapshot and accept the new epoch's first
-    // event even when its sequence is equal to the previous one.
+    // A known producer epoch can prove its complete retained interval below.
+    // Older servers and unproven numeric cursors retain the snapshot fallback.
     for (const channel of [...actorChannels.values()]) {
+      if (channel.resume?.anchorEpoch && channel.resume.anchorCursor !== null) continue;
       channel.cursor = null;
       channel.lastControl = null;
-      channel.gapNotified = true;
-      for (const handlers of [...channel.subscribers]) {
-        try {
-          handlers.onGap();
-        } catch (error) {
-          debugLog("[v2Stream]", "actor.gap_listener_error", { error });
-        }
-      }
+      notifyActorGap(channel);
     }
     // The tree token remains durable across socket epochs. A new REST read
     // can cover the interrupted interval, while subscribe_tree resumes from
@@ -1076,28 +1131,44 @@ const handleFrame = (
     if (!channel) return;
     const parsed = parseActorChannelFrame(frame, channel.actorId);
     if (!parsed) {
-      if (!channel.gapNotified) {
-        channel.gapNotified = true;
-        for (const handlers of [...channel.subscribers]) handlers.onGap();
-      }
+      notifyActorGap(channel);
+      return;
+    }
+    const pending = channel.resume;
+    if (parsed.type === "replay_complete") {
+      // An acknowledgment has meaning only in the exact subscription that
+      // requested it. Late/duplicate controls never move a cursor or clear a gap.
+      if (!pending || pending.socket !== socket) return;
+      const proof = parsed.control;
+      const continuous = !pending.failed && pending.anchorEpoch !== null &&
+        proof.epoch === pending.anchorEpoch && proof.resumed_from === pending.anchorCursor &&
+        pending.resetCursor === null && proof.cursor === channel.cursor;
+      const baseline = proof.resumed_from === null && pending.resetCursor !== null &&
+        proof.cursor === pending.resetCursor && proof.cursor === channel.cursor;
+      clearActorResume(channel);
+      if (continuous || baseline) channel.epoch = proof.epoch;
+      else notifyActorGap(channel);
       return;
     }
     if (parsed.type === "control") {
-      // A delayed snapshot directive belongs to an older position in this
-      // socket epoch. Letting it move the cursor backwards would admit a
-      // duplicate actor_changed event that was already delivered.
-      if (channel.cursor !== null && parsed.seq <= channel.cursor) return;
+      // A producer reset is accepted once at the start of a subscription;
+      // delayed controls cannot rewind an already observed prefix.
+      if (channel.cursor !== null && parsed.seq <= channel.cursor && !pending?.awaitingReset) return;
+      const interrupted = pending?.anchorEpoch !== null && pending?.anchorEpoch !== undefined;
+      if (pending) {
+        pending.awaitingReset = false;
+        pending.resetCursor = parsed.seq;
+      }
+      if (interrupted) notifyActorGap(channel);
       channel.cursor = parsed.seq;
-      channel.gapNotified = false;
+      if (!interrupted) channel.gapNotified = false;
       channel.lastControl = parsed.control;
       for (const handlers of [...channel.subscribers]) handlers.onControl(parsed.control);
       return;
     }
+    if (pending) pending.awaitingReset = false;
     if (channel.cursor === null || parsed.seq > channel.cursor + 1) {
-      if (!channel.gapNotified) {
-        channel.gapNotified = true;
-        for (const handlers of [...channel.subscribers]) handlers.onGap();
-      }
+      notifyActorGap(channel);
     } else if (parsed.seq <= channel.cursor) {
       return;
     }
@@ -1392,13 +1463,13 @@ export const subscribeActor = (
   let channel = actorChannels.get(ch);
   const first = !channel;
   if (!channel) {
-    channel = { actorId, subscribers: new Set(), cursor: null, gapNotified: false, lastControl: null };
+    channel = { actorId, subscribers: new Set(), cursor: null, gapNotified: false, lastControl: null, epoch: null, resume: null };
     actorChannels.set(ch, channel);
   }
   const currentChannel = channel;
   currentChannel.subscribers.add(handlers);
   if (socket && isSocketReady(socket)) {
-    if (first && !sendOnSocket(socket, { type: "subscribe", ch })) {
+    if (first && !sendActorSubscribe(currentChannel, ch, socket)) {
       const liveness = socketLiveness;
       if (liveness) failSocketEpoch(liveness, "actor-subscribe-send-failed");
     }
@@ -1415,6 +1486,7 @@ export const subscribeActor = (
       closed = true;
       currentChannel.subscribers.delete(handlers);
       if (currentChannel.subscribers.size === 0 && actorChannels.get(ch) === currentChannel) {
+        clearActorResume(currentChannel);
         actorChannels.delete(ch);
         if (isSocketReady()) send({ type: "unsubscribe", ch });
         closeIfIdle();

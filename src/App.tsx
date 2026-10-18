@@ -1,5 +1,5 @@
 import { uiText, useUiLocale } from "@shared/i18n/ui"
-import { useCallback, useEffect, useRef, useState } from "react"
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react"
 import { copyText } from "@shared/utils/clipboard"
 import { Inspector } from "@/components/chat/Inspector"
 import { CommandPalette } from "@/components/chat/CommandPalette"
@@ -11,12 +11,16 @@ import { useThemeStore } from "@shared/store/themeStore"
 import { getUserMessageColors } from "@shared/theme/userMessageColors"
 import { applyGlobalAccentToDocument, getGlobalAccentColors } from "@shared/theme/globalAccentColors"
 import { useChat } from "@/hooks/useChat"
+import { useWorkbenchBrowserSelection } from "@/hooks/useWorkbenchBrowserSelection"
+import { useWorkbenchState } from "@/hooks/useWorkbenchState"
+import { useWorkbenchWidth } from "@/hooks/useWorkbenchWidth"
 import { useResizableWidth } from "@/hooks/useResizableWidth"
 import { ResizeHandle } from "@/components/ui/resize-handle"
 import { useIsMobile, useIsWide } from "@shared/hooks/useMediaQuery"
 import { useAppStore } from "@shared/store/appStore"
 import { isVdiSafeModeEnabled, onVdiSafeModeChange } from "@shared/utils/vdiSafeMode"
 import { Sidebar } from "@/components/app/Sidebar"
+import { WorktreeManager } from "@/components/app/WorktreeManager"
 import { ProjectManagerModal } from "@/components/app/ProjectManagerModal"
 import { DeleteSessionDialog } from "@/components/app/DeleteSessionDialog"
 import { ChatPane } from "@/components/app/ChatPane"
@@ -29,11 +33,13 @@ import { isPhoneDevice } from "@/lib/browserAvailability"
 import { DEFAULT_SUPERVISOR_SESSION_ID, isDefaultSupervisor } from "@/lib/supervisor"
 import { agentClient } from "@services/chat/AgentService"
 import { reorderVisibleWorkbenchTabIds, visibleWorkbenchTabIds } from "@/lib/workbenchTabs"
-import {
-  RightWorkbench,
-  type RightWorkbenchTab,
-  type WorkbenchToolTab,
-} from "@/components/app/RightWorkbench"
+import { captureWorkbenchFocusReturn } from "@/lib/workbenchFocusReturn"
+import type { WorkbenchTabDrag } from "@/components/app/workbenchSurfaceContext"
+import { RightWorkbenchSurface } from "@/components/app/RightWorkbenchSurface"
+import type { RightWorkbenchTab, WorkbenchToolTab } from "@/components/app/RightWorkbench"
+
+// The optional workbench need not add its tab/drag UI to ordinary-chat startup.
+const RightWorkbench = lazy(() => import("@/components/app/RightWorkbench").then((module) => ({ default: module.RightWorkbenchContent })))
 
 function App() {
   useUiLocale()
@@ -54,48 +60,56 @@ function App() {
 
   // Only a confirmed root mounts the interactive side chat; unknown and child
   // sessions use the message-only projection until summary metadata resolves.
-  const [secondSid, setSecondSid] = useState<string | null>(null)
-  const pickSecond = (id: string | null) => {
-    setSecondSid(id)
-    if (!id) return
-
-    // Restore summary metadata only. Transcript bodies are loaded by the
-    // selected pane after classification, never via generic child history.
+  const { state: workbenchState, setField: setWorkbenchField, scope: workbenchScope, openToolForSession } = useWorkbenchState(currentSessionId)
+  const currentWorkbenchScope = useRef(workbenchScope)
+  currentWorkbenchScope.current = workbenchScope
+  const getCurrentWorkbenchScope = useCallback(() => currentWorkbenchScope.current, [])
+  const { secondSid, open: workbenchOpen, tab: workbenchTab, tools: openToolTabs,
+    reviewTarget: reviewTargetFilePath } = workbenchState
+  const setSecondSid = (value: string | null) => setWorkbenchField("secondSid", value)
+  const setWorkbenchOpen = (value: React.SetStateAction<boolean>) => setWorkbenchField("open", value)
+  const setWorkbenchTab = useCallback((value: React.SetStateAction<RightWorkbenchTab | null>) => setWorkbenchField("tab", value), [setWorkbenchField])
+  const setOpenToolTabs = (value: React.SetStateAction<WorkbenchToolTab[]>) => setWorkbenchField("tools", value)
+  const setReviewTargetFilePath = (value: string | null) => setWorkbenchField("reviewTarget", value)
+  const pickSecond = (id: string | null) => setSecondSid(id)
+  useEffect(() => {
+    if (!secondSid) return
+    // Restore summary metadata only; an absent/deleted target retains the
+    // message-only fallback and never starts a run or creates a replacement.
     const store = useAppStore.getState()
-    if (!store.chats.some((item) => item.id === id)) {
-      void store.restoreSession(id).catch(() => false)
+    if (!store.chats.some((item) => item.id === secondSid)) {
+      void store.restoreSession(secondSid).catch(() => false)
     }
-  }
+  }, [secondSid, workbenchScope])
 
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [paletteOpen, setPaletteOpen] = useState(false)
-  const paletteReturnFocusRef = useRef<HTMLElement | null>(null)
+  const workbenchTabDragRef = useRef<WorkbenchTabDrag | null>(null)
+  const paletteReturnFocusRef = useRef<() => HTMLElement | null>(() => null)
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && (e.key === "k" || e.key === "K")) {
         e.preventDefault()
         if (!paletteOpen) {
-          paletteReturnFocusRef.current = document.activeElement instanceof HTMLElement
-            ? document.activeElement
-            : null
+          paletteReturnFocusRef.current = captureWorkbenchFocusReturn(
+            document.activeElement instanceof HTMLElement ? document.activeElement : null,
+            getCurrentWorkbenchScope(), getCurrentWorkbenchScope, workbenchTabDragRef.current?.getSourceId(),
+          )
         }
         setPaletteOpen((v) => !v)
       }
     }
     window.addEventListener("keydown", onKey)
     return () => window.removeEventListener("keydown", onKey)
-  }, [paletteOpen])
+  }, [paletteOpen, getCurrentWorkbenchScope])
 
-  const [workbenchOpen, setWorkbenchOpen] = useState(false)
-  const [workbenchTab, setWorkbenchTab] = useState<RightWorkbenchTab | null>(null)
   const workbenchSelectionVersionRef = useRef(0)
-  const [openToolTabs, setOpenToolTabs] = useState<WorkbenchToolTab[]>([])
   const [workPanelTarget, setWorkPanelTarget] = useState<HTMLDivElement | null>(null)
   const workEnabled = !!currentChat && isDefaultSupervisor(currentChat)
   const visibleToolTabs = openToolTabs.filter((tab) => tab !== "work" || workEnabled)
-  const [workbenchOrderBySession, setWorkbenchOrderBySession] = useState<Record<string, string[]>>({})
+
   const [browserEntryOpen, setBrowserEntryOpen] = useState(false)
   const [browserEntryDraft, setBrowserEntryDraft] = useState("")
   const [browserEntryTouched, setBrowserEntryTouched] = useState(false)
@@ -103,31 +117,37 @@ function App() {
   const [browserStartedSessionId, setBrowserStartedSessionId] = useState<string | null>(null)
   const [pendingBrowserNavigation, setPendingBrowserNavigation] = useState<{ sessionId: string; url: string } | null>(null)
   const pendingBrowserNavigationAttemptRef = useRef<typeof pendingBrowserNavigation>(null)
-  const [reviewTargetFilePath, setReviewTargetFilePath] = useState<string | null>(null)
   const isMobile = useIsMobile()
   const isWide = useIsWide()
   const browserEnabled = !isMobile && !isPhoneDevice()
-  const workbenchOrderScope = currentSessionId ?? "__no_session__"
   const browser = useBrowserSession(
     currentSessionId,
     browserEnabled && workbenchOpen && (
-      workbenchTab === "browser" || browserStartedSessionId === currentSessionId
+      workbenchTab === "browser" || workbenchState.browserPresent || browserStartedSessionId === currentSessionId
     ),
   )
-  const { readySessionId: browserReadySessionId, state: browserState, openUrlInNewTab, hasPendingDialog } = browser
+  const { readySessionId: browserReadySessionId, state: browserState, openUrlInNewTab, hasPendingDialog, activateTab } = browser
   const browserTabsForWorkbench = browserReadySessionId === currentSessionId ? browserState?.tabs : null
   const selectedWorkbenchTab = (!browserEnabled && workbenchTab === "browser") || (!workEnabled && workbenchTab === "work") ? null : workbenchTab
 
   useEffect(() => {
-    if (browserReadySessionId !== currentSessionId) return
-    setWorkbenchOrderBySession((current) => {
-      const saved = current[workbenchOrderScope] ?? []
-      const next = visibleWorkbenchTabIds(openToolTabs, browserTabsForWorkbench, saved)
-      return next.length === saved.length && next.every((key, index) => key === saved[index])
-        ? current
-        : { ...current, [workbenchOrderScope]: next }
+    if (browserReadySessionId !== currentSessionId || !browserState?.tabs) return
+    setWorkbenchField("order", (saved) => {
+      const next = visibleWorkbenchTabIds(openToolTabs, browserState.tabs, saved)
+      return next.length === saved.length && next.every((key, index) => key === saved[index]) ? saved : next
     })
-  }, [workbenchOrderScope, openToolTabs, browserTabsForWorkbench, browserReadySessionId, currentSessionId])
+    setWorkbenchField("browserPresent", browserState.tabs.length > 0)
+  }, [openToolTabs, browserState?.tabs, browserReadySessionId, currentSessionId, setWorkbenchField])
+
+  const saveBrowserSelection = useCallback((id: string | null) => setWorkbenchField("browserActiveId", id), [setWorkbenchField])
+  useWorkbenchBrowserSelection({
+    scope: workbenchScope,
+    state: browserReadySessionId === currentSessionId ? browserState : null,
+    savedId: workbenchState.browserActiveId,
+    selectionVersion: workbenchSelectionVersionRef,
+    activateTab,
+    save: saveBrowserSelection,
+  })
 
   useEffect(() => {
     if (browserEntrySessionRef.current?.sessionId !== currentSessionId) {
@@ -187,26 +207,25 @@ function App() {
     } else if (workbenchTab === "browser" && !browserEntryOpen && !pendingBrowserNavigation) {
       setWorkbenchTab(openToolTabs.at(-1) ?? null)
     }
-  }, [browserReadySessionId, currentSessionId, browserState?.tabs, workbenchOpen, workbenchTab, openToolTabs, browserEntryOpen, pendingBrowserNavigation])
+  }, [browserReadySessionId, currentSessionId, browserState?.tabs, workbenchOpen, workbenchTab, openToolTabs, browserEntryOpen, pendingBrowserNavigation, setWorkbenchTab])
   // Draggable, persisted widths for the resizable side panels (desktop).
   const sidebarResize = useResizableWidth("lotus_next_sidebar_w", 288, {
     min: 220,
     max: 420,
     edge: "right",
   })
-  const workbenchResize = useResizableWidth("lotus_next_inspector_w", 520, {
-    min: 360,
-    max: 840,
-    edge: "left",
-  })
+  const workbenchResize = useWorkbenchWidth(sidebarCollapsed ? 0 : sidebarResize.width)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const chatShellRef = useRef<HTMLDivElement>(null)
-  const settingsReturnFocusRef = useRef<HTMLElement | null>(null)
+  const settingsReturnFocusRef = useRef<() => HTMLElement | null>(() => null)
   const openSettings = () => {
     if (!settingsOpen) {
       settingsReturnFocusRef.current = paletteOpen
         ? paletteReturnFocusRef.current
-        : document.activeElement instanceof HTMLElement ? document.activeElement : null
+        : captureWorkbenchFocusReturn(
+          document.activeElement instanceof HTMLElement ? document.activeElement : null,
+          getCurrentWorkbenchScope(), getCurrentWorkbenchScope, workbenchTabDragRef.current?.getSourceId(),
+        )
     }
     setSidebarOpen(false)
     setPaletteOpen(false)
@@ -215,7 +234,7 @@ function App() {
   const closeSettings = () => {
     setSettingsOpen(false)
     requestAnimationFrame(() => {
-      const opener = settingsReturnFocusRef.current
+      const opener = settingsReturnFocusRef.current()
       if (opener?.isConnected && opener.getClientRects().length > 0) opener.focus()
       else chatShellRef.current?.querySelector<HTMLTextAreaElement>("textarea")?.focus()
     })
@@ -228,6 +247,8 @@ function App() {
   // Project selected for the NEXT new chat (project-grouped sidebar "新建").
   const [pendingProjectId, setPendingProjectId] = useState<string | null>(null)
   const [projectManagerOpen, setProjectManagerOpen] = useState(false)
+  const [worktreesOpen, setWorktreesOpen] = useState(false)
+  const [pickedWorktree, setPickedWorktree] = useState<{ projectId: string; path: string } | null>(null)
   const [copyFeedback, setCopyFeedback] = useState<{ message: string; failed: boolean } | null>(null)
 
   useEffect(() => {
@@ -303,24 +324,15 @@ function App() {
   const visibleTabIds = visibleWorkbenchTabIds(
     visibleToolTabs,
     browserTabsForWorkbench,
-    workbenchOrderBySession[workbenchOrderScope],
+    workbenchState.order,
   )
   const closeSuccessor = (key: string) => {
     const index = visibleTabIds.indexOf(key)
     const remaining = visibleTabIds.filter((item) => item !== key)
     return remaining[index] ?? remaining[index - 1] ?? null
   }
-  const pruneSavedTab = (key: string, everySession = false) => {
-    setWorkbenchOrderBySession((current) => {
-      let next = current
-      for (const scope of everySession ? Object.keys(current) : [workbenchOrderScope]) {
-        const saved = current[scope]
-        if (!saved?.includes(key)) continue
-        if (next === current) next = { ...current }
-        next[scope] = saved.filter((item) => item !== key)
-      }
-      return next
-    })
+  const pruneSavedTab = (key: string) => {
+    setWorkbenchField("order", (current) => current.filter((item) => item !== key))
   }
   const selectCloseSuccessor = (key: string | null, activeBrowserTabId = browserState?.active_tab_id) => {
     workbenchSelectionVersionRef.current += 1
@@ -365,7 +377,7 @@ function App() {
     const key = `tool:${tab}`
     const successor = closeSuccessor(key)
     setOpenToolTabs((current) => current.filter((item) => item !== tab))
-    pruneSavedTab(key, true)
+    pruneSavedTab(key)
     if (workbenchTab === tab) selectCloseSuccessor(successor)
   }
   const closeBrowserTab = (tabId: string) => {
@@ -437,6 +449,7 @@ function App() {
         booted={booted}
         currentSessionId={currentSessionId}
         onNewChat={(projectId) => {
+          setPickedWorktree(null)
           setPendingProjectId(projectId ?? null)
           // The project (or its default workspace) owns the next session's cwd.
           if (projectId) setPickedWorkspace(null)
@@ -452,8 +465,8 @@ function App() {
             }
             if (version !== mainNavigationVersion.current || previousSessionId !== useAppStore.getState().currentSessionId) return
           }
+          if (isWide && id === DEFAULT_SUPERVISOR_SESSION_ID) openToolForSession(id, "work")
           select(id)
-          if (isWide && id === DEFAULT_SUPERVISOR_SESSION_ID) openWorkbench("work")
         }}
         onRename={(id, title) => persistSessionTitle(id, title)}
         onDelete={(c) => setPendingDelete({ id: c.id, title: c.title || uiText("new_session_c57c30bc") })}
@@ -461,6 +474,7 @@ function App() {
         onCopySessionId={copySessionId}
         onOpenSettings={openSettings}
         onOpenProjectManager={() => setProjectManagerOpen(true)}
+        onOpenWorktrees={() => setWorktreesOpen(true)}
       />
       {!sidebarCollapsed ? <ResizeHandle onPointerDown={sidebarResize.startResize} /> : null}
 
@@ -468,9 +482,11 @@ function App() {
         chat={{ ...chat, select, newChat }}
         pageVisible={!settingsOpen}
         pickedWorkspace={pickedWorkspace}
+        worktreePath={pickedWorktree?.projectId === pendingProjectId ? pickedWorktree.path : null}
         pendingProjectId={pendingProjectId}
         onSelectProject={(projectId) => {
           setPendingProjectId(projectId)
+          setPickedWorktree(null)
           // A manual project pick owns the workspace; drop a manual choice.
           if (projectId) setPickedWorkspace(null)
         }}
@@ -492,24 +508,32 @@ function App() {
         sidebarCollapsed={sidebarCollapsed}
       />
 
-      {workbenchOpen || (workEnabled && openToolTabs.includes("work")) ? (
-        <>
-          {isWide && workbenchOpen ? <ResizeHandle onPointerDown={workbenchResize.startResize} /> : null}
+      {isWide && workbenchOpen ? <ResizeHandle onPointerDown={workbenchResize.startResize} /> : null}
+      {/* Register the stable parent layer before any global dialogs. Lazy
+          tab content must never mount its own later, higher-priority layer. */}
+      <RightWorkbenchSurface
+        tabDragRef={workbenchTabDragRef}
+        interactionSuspended={paletteOpen}
+        focusScopeKey={workbenchScope}
+        getCurrentFocusScope={getCurrentWorkbenchScope}
+        visible={workbenchOpen}
+        pageVisible={!settingsOpen}
+        docked={isWide}
+        width={workbenchResize.width}
+        onClose={() => setWorkbenchOpen(false)}
+      >
+        {workbenchOpen || (workEnabled && openToolTabs.includes("work")) ? (
+          <Suspense fallback={null}>
           <RightWorkbench
             visible={workbenchOpen}
-            docked={isWide}
-            width={workbenchResize.width}
             activeTab={selectedWorkbenchTab}
             openToolTabs={visibleToolTabs}
             workEnabled={workEnabled}
             work={<div ref={setWorkPanelTarget} className="min-h-0 flex-1 overflow-y-auto" />}
-            tabOrder={workbenchOrderBySession[workbenchOrderScope]}
+            tabOrder={workbenchState.order}
             onTabReorder={(order) => {
               workbenchSelectionVersionRef.current += 1
-              setWorkbenchOrderBySession((current) => ({
-                ...current,
-                [workbenchOrderScope]: reorderVisibleWorkbenchTabIds(current[workbenchOrderScope] ?? [], order),
-              }))
+              setWorkbenchField("order", (current) => reorderVisibleWorkbenchTabIds(current, order))
             }}
             onToolClose={closeToolTab}
             browserEnabled={browserEnabled}
@@ -552,8 +576,8 @@ function App() {
                   const rootId = currentChat?.kind === "root" ? currentSessionId : currentChat?.rootSessionId
                   if (actorId === rootId) {
                     pickSecond(null)
+                    openToolForSession(actorId, "inspector")
                     select(actorId)
-                    openWorkbench("inspector")
                   } else openSubagentPreview(actorId)
                 }}
               />
@@ -597,8 +621,9 @@ function App() {
               />
             )}
           />
-        </>
-      ) : null}
+          </Suspense>
+        ) : null}
+      </RightWorkbenchSurface>
 
       <Onboarding />
 
@@ -609,11 +634,22 @@ function App() {
         onClose={() => setWsPickerOpen(false)}
         onSelect={(p) => {
           setPickedWorkspace(p)
+          setPickedWorktree(null)
           // Manual workspace choice overrides a project pick for the next chat.
           if (p) setPendingProjectId(null)
         }}
       />
 
+      <WorktreeManager open={worktreesOpen} onClose={() => setWorktreesOpen(false)}
+        onOpen={(projectId, path) => {
+          newChat()
+          setPendingProjectId(projectId)
+          setPickedWorkspace(path)
+          setPickedWorktree({ projectId, path })
+          setWorktreesOpen(false)
+        }}
+        onSession={(id) => { select(id); setWorktreesOpen(false) }}
+      />
       <ProjectManagerModal open={projectManagerOpen} onClose={() => setProjectManagerOpen(false)} />
 
       <DeleteSessionDialog
@@ -637,15 +673,9 @@ function App() {
     </div>
       <LazySettings open={settingsOpen} onClose={closeSettings} />
       <CommandPalette
+        getReturnFocusTarget={paletteReturnFocusRef.current}
         open={paletteOpen}
-        onClose={() => {
-          setPaletteOpen(false)
-          requestAnimationFrame(() => {
-            const opener = paletteReturnFocusRef.current
-            if (opener?.isConnected && opener.getClientRects().length > 0) opener.focus()
-            else if (chatShellRef.current?.getClientRects().length) chatShellRef.current.querySelector<HTMLTextAreaElement>("textarea")?.focus()
-          })
-        }}
+        onClose={() => setPaletteOpen(false)}
         chats={chats}
         onSelect={(id) => {
           setSettingsOpen(false)
