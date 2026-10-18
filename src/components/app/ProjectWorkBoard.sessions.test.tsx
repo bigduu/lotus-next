@@ -15,6 +15,13 @@ import { OwnerAccessContext } from "@/hooks/ownerAccessContext"
 import { ProjectWorkBoard } from "./ProjectWorkBoard"
 vi.mock("@services/api", async (original) => ({ ...await original<typeof import("@services/api")>(), apiClient: { get: vi.fn(), post: vi.fn() } }))
 vi.mock("@services/tickets/projectBoard", async (original) => ({ ...await original<typeof import("@services/tickets/projectBoard")>(), projectBoardClient: { page: vi.fn(), inspect: vi.fn() } }))
+vi.mock("@services/tickets/sprints", async (original) => {
+  const actual = await original<typeof import("@services/tickets/sprints")>()
+  const { ApiError: ErrorType } = await import("@services/api")
+  // The captured f7 producer has no Sprint routes. Keep its explicit unsupported
+  // port separate from the precise Session GET sequence under test here.
+  return { ...actual, sprintClient: { list: vi.fn().mockRejectedValue(new ErrorType("Sprint planning unavailable in the f7 fixture", 404, "Not Found")), scope: vi.fn().mockResolvedValue({ available: false, mutation_enabled: false }), inspect: vi.fn(), command: vi.fn() } }
+})
 const directory = resolve(process.cwd(), "src/test/fixtures/projectWorkAssignmentContract")
 const read = (name: string) => readFileSync(resolve(directory, name))
 const capture = (name: string) => JSON.parse(read(name).toString())
