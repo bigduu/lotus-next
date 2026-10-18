@@ -30,6 +30,7 @@ for (const colorScheme of ["light", "dark"] as const) {
       assignments: [{ id: "assignment", state: "running", runtime: { session_id: "owner-session", run_id: "run-1" }, workspace: null }],
       submissions: [{ id: "submission", work_id: "work-2", generation: 1, contract_revision: 1, stale: false, artifacts: [], evidence: ["All checks passed"], updated_seq: 10 }],
     }] } }))
+    await page.route("**/api/v1/tickets/sprints/list", (route) => route.fulfill({ status: 404, json: { error: "Sprint planning is unsupported by this legacy fixture" } }))
     await page.goto(standaloneScenario.entryUrl)
     if (info.project.name === "phone-chromium") await page.getByRole("button", { name: "菜单", exact: true }).click()
     await page.getByRole("button", { name: "Project Board 项目操作", exact: true }).click()
@@ -58,6 +59,6 @@ for (const colorScheme of ["light", "dark"] as const) {
     await page.keyboard.press("Escape")
     await expect(dialog).not.toBeVisible()
     expect(observation.pageErrors).toEqual([])
-    expect(observation.httpRequests.filter((request) => request.method === "POST" && /tickets\//.test(request.url)).every((request) => /tickets\/(project-board|inspect)$/.test(request.url))).toBe(true)
+    expect(observation.httpRequests.filter((request) => request.method === "POST" && /tickets\//.test(request.url)).every((request) => /tickets\/(project-board|inspect|sprints\/list)$/.test(request.url))).toBe(true)
   })
 }
