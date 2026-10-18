@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import { decodeProjectScopeReceipt, sameProjects, sameSupervisor, scopeProblem, supervisorScopeClient } from "@services/supervisorScope/client"
-import { decodeProjectScopeOwnerAvailability, isNativeConfirmationUnavailableCode, isNativeScopeCancellation, nativeConfirmationReady, unavailableProjectScopeOwnerBridge, type NativeConfirmationUnavailableCode, type ProjectScopeOwnerBridge, type ProjectScopeOwnerNoticeCode, type ProjectScopeOwnerOutcome } from "@services/supervisorScope/ownerBridge"
+import { decodeProjectScopeOwnerAvailability, isNativeConfirmationUnavailableCode, isNativeScopeCancellation, nativeConfirmationReady, type NativeConfirmationUnavailableCode, type ProjectScopeOwnerBridge, type ProjectScopeOwnerNoticeCode, type ProjectScopeOwnerOutcome } from "@services/supervisorScope/ownerBridge"
+import { nativeProjectScopeOwnerBridge } from "@services/supervisorScope/nativeOwnerBridge"
 import type { ProjectOption, ProjectScopeIntent, ProjectScopeResponse, ScopeProblem } from "@services/supervisorScope/types"
 
 export interface ProjectScopeDependencies {
@@ -8,7 +9,7 @@ export interface ProjectScopeDependencies {
   projects(): Promise<readonly ProjectOption[]>
   bridge: ProjectScopeOwnerBridge
 }
-export const defaultProjectScopeDependencies: ProjectScopeDependencies = { ...supervisorScopeClient, bridge: unavailableProjectScopeOwnerBridge }
+export const defaultProjectScopeDependencies: ProjectScopeDependencies = { ...supervisorScopeClient, bridge: nativeProjectScopeOwnerBridge }
 type Notice = { kind: "cancelled" | "saved" | "conflict" | "rejected" | "unavailable" | "unknown"; code?: ProjectScopeOwnerNoticeCode }
 function refused(outcome: Extract<ProjectScopeOwnerOutcome, { kind: "rejected" }>): Notice {
   const { status, code } = outcome
