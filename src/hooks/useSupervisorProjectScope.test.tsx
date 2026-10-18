@@ -111,3 +111,12 @@ it.each([[500, "scope_unavailable"], [503, undefined], [409, "host_owner_authori
   await h.confirm(); expect(h.value.notice?.kind).toBe("unknown")
   expect(h.read).toHaveBeenCalledTimes(2); expect(h.apply).toHaveBeenCalledTimes(1)
 })
+
+it("keeps an unknown submission unconfirmed when its canonical read also fails", async () => {
+  const h = await mount(); h.review(); h.apply.mockResolvedValue({ kind: "unknown" })
+  h.read.mockRejectedValueOnce(new ApiError("unavailable", 503, ""))
+  await h.confirm(); expect(h.value.notice?.kind).toBe("unknown")
+  expect(h.value.observation).toBeNull(); expect(h.value.problem?.kind).toBe("unavailable")
+  expect(h.value.canConfirm).toBe(false); expect(h.value.review).toBeNull()
+  expect(h.read).toHaveBeenCalledTimes(2); expect(h.apply).toHaveBeenCalledTimes(1)
+})

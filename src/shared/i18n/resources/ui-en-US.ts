@@ -32,7 +32,7 @@ export const uiEnUs = {
   "supervisor_scope_saved": "The receipt and current scope confirm the selected set.",
   "supervisor_scope_conflict": "The scope changed. Review the refreshed state and confirm the complete set again; nothing is replayed automatically.",
   "supervisor_scope_rejected": "Native owner consent was refused. No permission fallback is available.",
-  "supervisor_scope_unknown": "This submission’s outcome is unconfirmed. Current scope was read again; a matching set alone does not confirm this submission.",
+  "supervisor_scope_unknown": "This submission’s outcome is unconfirmed. Check the current scope; a matching set alone does not confirm this submission.",
   "supervisor_scope_unsupported": "This service does not expose the Project scope interface.",
   "supervisor_scope_missing": "The canonical Supervisor is missing. Open Supervisor explicitly before reading again.",
   "supervisor_scope_forbidden": "Project scope access was refused. Check the owner channel and Supervisor identity.",

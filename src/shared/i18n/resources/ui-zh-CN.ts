@@ -32,7 +32,7 @@ export const uiZhCn = {
   "supervisor_scope_saved": "回执与当前范围已确认所选集合。",
   "supervisor_scope_conflict": "范围已变化。请审阅重新读取的状态，再次明确确认完整集合；不会自动重发。",
   "supervisor_scope_rejected": "原生所有者确认被拒绝，不能使用其他权限方式替代。",
-  "supervisor_scope_unknown": "本次提交结果未确认。已重新读取当前范围；集合相同也不能证明本次提交成功。",
+  "supervisor_scope_unknown": "本次提交结果未确认。请核对当前范围；即使集合相同，也不能证明本次提交成功。",
   "supervisor_scope_unsupported": "此服务未提供 Project 范围接口。",
   "supervisor_scope_missing": "可信 Supervisor 身份尚不存在。请明确打开 Supervisor 后再重新读取。",
   "supervisor_scope_forbidden": "Project 范围访问被拒绝，请核对所有者通道与 Supervisor 身份。",
