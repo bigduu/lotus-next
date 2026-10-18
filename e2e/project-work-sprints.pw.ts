@@ -254,6 +254,11 @@ for (const width of [1440, 390]) for (const theme of ["light", "dark"]) {
     const mock = await installMock(page)
     await page.setViewportSize({ width, height: 1000 })
     await open(page, theme)
+    // Native picker controls follow the explicit page theme, independently of
+    // the operating system theme; dark calendars must retain visible icons.
+    const startDate = controls(page).locator('input[type="datetime-local"]').first()
+    await expect(startDate).toBeVisible()
+    await expect(startDate).toHaveCSS("color-scheme", theme)
     await selectSprint(page, "c")
     await expect(page.getByTestId("project-sprint-current-counts")).toContainText("已验收 1")
     await expect(page.getByTestId("project-sprint-closure-counts")).toContainText("已验收 0")
