@@ -42,14 +42,14 @@ async function open(page: Page, phone: boolean) {
 for (const available of [false, true]) {
   test(`Project scope verifier=${available} remains blocked and offers only complete-set review`, async ({ page }, info) => {
     const f = await fixture(page, available), { dialog, trigger } = await open(page, info.project.name === "phone-chromium")
-    await expect(dialog).toContainText(available ? "当前前端尚未接入原生所有者确认通道" : "可信原生所有者通道不可用")
+    await expect(dialog).toContainText("当前应用尚未连接 Bamboo 的逐次原生确认通道")
     await expect(dialog.getByRole("checkbox", { name: /Project p1/ })).toBeChecked()
     await dialog.getByRole("checkbox", { name: /Project p2/ }).check()
     await dialog.getByRole("button", { name: "预览完整集合", exact: true }).click()
     const review = dialog.getByTestId("project-scope-review")
     await expect(review).toContainText("p1"); await expect(review).toContainText("p2")
-    await expect(review).toContainText("此预览不构成所有者同意")
-    await expect(dialog.getByRole("button", { name: "在 Bodhi 原生窗口中确认", exact: true })).toBeDisabled()
+    await expect(review).toContainText("此预览不构成同意")
+    await expect(dialog.getByRole("button", { name: "请求 Bamboo 原生确认", exact: true })).toBeDisabled()
     await expect(dialog).toContainText(incarnation)
     const bounds = await dialog.boundingBox()
     expect(bounds!.x).toBeGreaterThanOrEqual(0); expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(page.viewportSize()!.width)
@@ -78,7 +78,7 @@ for (const [status, code, message] of [[404, "supervisor_missing", "可信 Super
     const f = await fixture(page, false); f.setFailure({ status, json: { code, error: { message: "fixture refusal" } } })
     const { dialog } = await open(page, info.project.name === "phone-chromium")
     await expect(dialog).toContainText(message)
-    await expect(dialog.getByRole("button", { name: "在 Bodhi 原生窗口中确认", exact: true })).toHaveCount(0)
+    await expect(dialog.getByRole("button", { name: "请求 Bamboo 原生确认", exact: true })).toHaveCount(0)
     // Existing transport may retry a safe 503 read within its bounded budget.
     const reads = f.requests.filter((r) => r.path === "/api/v1/supervisor/default/scope")
     expect(reads.length).toBeGreaterThan(0); expect(reads.length).toBeLessThanOrEqual(3)

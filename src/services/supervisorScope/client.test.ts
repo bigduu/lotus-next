@@ -21,7 +21,7 @@ describe("Supervisor Project scope read contract", () => {
     expect(Object.keys(supervisorScopeClient)).toEqual(["read", "projects"])
     expect(apiClient.put).not.toHaveBeenCalled(); expect(apiClient.putOnce).not.toHaveBeenCalled()
     const invoke = vi.fn(); vi.stubGlobal("__TAURI_INTERNALS__", { invoke })
-    expect(await unavailableProjectScopeOwnerBridge.inspectAvailability(scopeFixture())).toBe(false)
+    expect(await unavailableProjectScopeOwnerBridge.inspectAvailability(scopeFixture())).toEqual({ transport_ready: false, authority_profile: null })
     expect(await unavailableProjectScopeOwnerBridge.confirmAndApply(intent)).toEqual({ kind: "unavailable" })
     expect(invoke).not.toHaveBeenCalled()
   })

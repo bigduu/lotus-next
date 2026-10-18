@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import { decodeProjectScopeReceipt, sameProjects, sameSupervisor, scopeProblem, supervisorScopeClient } from "@services/supervisorScope/client"
-import { unavailableProjectScopeOwnerBridge, type ProjectScopeOwnerBridge, type ProjectScopeOwnerOutcome } from "@services/supervisorScope/ownerBridge"
-import type { ProjectOption, ProjectScopeIntent, ProjectScopeResponse, ScopeErrorCode, ScopeProblem } from "@services/supervisorScope/types"
+import { decodeProjectScopeOwnerAvailability, isNativeConfirmationUnavailableCode, isNativeScopeCancellation, nativeConfirmationReady, unavailableProjectScopeOwnerBridge, type NativeConfirmationUnavailableCode, type ProjectScopeOwnerBridge, type ProjectScopeOwnerNoticeCode, type ProjectScopeOwnerOutcome } from "@services/supervisorScope/ownerBridge"
+import type { ProjectOption, ProjectScopeIntent, ProjectScopeResponse, ScopeProblem } from "@services/supervisorScope/types"
 
 export interface ProjectScopeDependencies {
   read(signal?: AbortSignal): Promise<ProjectScopeResponse>
@@ -9,9 +9,10 @@ export interface ProjectScopeDependencies {
   bridge: ProjectScopeOwnerBridge
 }
 export const defaultProjectScopeDependencies: ProjectScopeDependencies = { ...supervisorScopeClient, bridge: unavailableProjectScopeOwnerBridge }
-type Notice = { kind: "cancelled" | "saved" | "conflict" | "rejected" | "unavailable" | "unknown"; code?: ScopeErrorCode }
+type Notice = { kind: "cancelled" | "saved" | "conflict" | "rejected" | "unavailable" | "unknown"; code?: ProjectScopeOwnerNoticeCode }
 function refused(outcome: Extract<ProjectScopeOwnerOutcome, { kind: "rejected" }>): Notice {
   const { status, code } = outcome
+  if (status === 503 && isNativeConfirmationUnavailableCode(code)) return { kind: "unavailable", code }
   if ((status === 401 || status === 403) && (!code || ["host_owner_authorization_required", "supervisor_identity_mismatch"].includes(code))) return { kind: "rejected", code }
   if (status === 409 && (code === "scope_revision_conflict" || code === "project_archived")) return { kind: "conflict", code }
   if (status === 503 && code && ["host_owner_authorization_unavailable", "scope_authority_invalid", "scope_unavailable", "project_store_unavailable"].includes(code)) return { kind: "unavailable", code }
@@ -20,11 +21,11 @@ function refused(outcome: Extract<ProjectScopeOwnerOutcome, { kind: "rejected" }
 }
 interface View {
   observation: ProjectScopeResponse | null; projects: readonly ProjectOption[]; draft: readonly string[] | null
-  reading: boolean; catalogError: boolean; nativeAvailable: boolean; problem: ScopeProblem | null
+  reading: boolean; catalogError: boolean; nativeAvailable: boolean; nativeUnavailableCode: NativeConfirmationUnavailableCode | null; problem: ScopeProblem | null
   review: ProjectScopeIntent | null; notice: Notice | null; submitting: boolean
 }
 const initial = (): View => ({ observation: null, projects: [], draft: null, reading: true, catalogError: false,
-  nativeAvailable: false, problem: null, review: null, notice: null, submitting: false })
+  nativeAvailable: false, nativeUnavailableCode: null, problem: null, review: null, notice: null, submitting: false })
 
 export function useSupervisorProjectScope(open: boolean, dependencies = defaultProjectScopeDependencies) {
   const [view, setView] = useState<View>(initial)
@@ -36,22 +37,22 @@ export function useSupervisorProjectScope(open: boolean, dependencies = defaultP
   const load = useCallback(async (preserveDraft: boolean) => {
     const version = ++readVersion.current, generation = lifecycle.current
     controller.current?.abort(); const request = new AbortController(); controller.current = request
-    setView((s) => ({ ...s, reading: true, nativeAvailable: false, review: null, problem: null }))
+    setView((s) => ({ ...s, reading: true, nativeAvailable: false, nativeUnavailableCode: null, review: null, problem: null }))
     const current = () => visible.current && lifecycle.current === generation && readVersion.current === version
     const [scope, catalog] = await Promise.allSettled([dependencies.read(request.signal), dependencies.projects()])
     if (!current()) return null
     if (scope.status === "rejected") {
-      setView((s) => ({ ...s, observation: null, reading: false, nativeAvailable: false, review: null, problem: scopeProblem(scope.reason) }))
+      setView((s) => ({ ...s, observation: null, reading: false, nativeAvailable: false, nativeUnavailableCode: null, review: null, problem: scopeProblem(scope.reason) }))
       return null
     }
-    let nativeAvailable = false
-    if (scope.value.owner_authorization.available) {
-      try { nativeAvailable = await dependencies.bridge.inspectAvailability(scope.value) === true } catch { /* Remain blocked. */ }
-    }
+    let availability = null
+    try { availability = decodeProjectScopeOwnerAvailability(await dependencies.bridge.inspectAvailability(scope.value)) } catch { /* Remain blocked. */ }
+    const nativeAvailable = nativeConfirmationReady(availability)
+    const nativeUnavailableCode = availability?.authority_profile?.unavailable_code ?? null
     if (!current()) return null
     setView((s) => ({ ...s, observation: scope.value, projects: catalog.status === "fulfilled" ? catalog.value : [],
       draft: preserveDraft && s.draft !== null ? s.draft : [...scope.value.scope.allowed_projects],
-      reading: false, catalogError: catalog.status === "rejected", nativeAvailable, problem: null, review: null }))
+      reading: false, catalogError: catalog.status === "rejected", nativeAvailable, nativeUnavailableCode, problem: null, review: null }))
     return scope.value
   }, [dependencies])
 
@@ -85,7 +86,7 @@ export function useSupervisorProjectScope(open: boolean, dependencies = defaultP
   const confirm = useCallback(async () => {
     const s = latest.current, intent = s.review
     if (!visible.current || flight.current || !intent || !s.observation || s.reading || s.catalogError
-      || !s.nativeAvailable || !s.observation.owner_authorization.available
+      || !s.nativeAvailable
       || s.draft?.some((id) => s.projects.find((p) => p.id === id)?.status !== "active")
       || !sameSupervisor(intent.supervisor, s.observation.scope.supervisor) || intent.expected_state_revision !== s.observation.scope.state_revision
       || !sameProjects(intent.mutation.allowed_projects, s.draft ?? [])) return
@@ -97,8 +98,8 @@ export function useSupervisorProjectScope(open: boolean, dependencies = defaultP
       let outcome: ProjectScopeOwnerOutcome
       try { outcome = await dependencies.bridge.confirmAndApply(intent) } catch { outcome = { kind: "unknown" } }
       if (!current()) return
-      if (outcome?.kind === "cancelled") {
-        setView((v) => ({ ...v, review: null, notice: { kind: "cancelled" } })); return
+      if (isNativeScopeCancellation(outcome)) {
+        setView((v) => ({ ...v, review: null, notice: { kind: "cancelled", code: outcome.code } })); return
       }
       let notice: Notice = { kind: "unknown" }
       let receipt: ReturnType<typeof decodeProjectScopeReceipt> | null = null
@@ -110,7 +111,8 @@ export function useSupervisorProjectScope(open: boolean, dependencies = defaultP
       if (!current()) return
       if (receipt && fresh && sameSupervisor(receipt.supervisor, fresh.scope.supervisor)
         && receipt.state_revision === fresh.scope.state_revision && sameProjects(intent.mutation.allowed_projects, fresh.scope.allowed_projects)) notice = { kind: "saved" }
-      setView((v) => ({ ...v, review: null, notice, nativeAvailable: notice.kind === "unavailable" ? false : v.nativeAvailable }))
+      setView((v) => ({ ...v, review: null, notice, nativeAvailable: notice.kind === "unavailable" ? false : v.nativeAvailable,
+        nativeUnavailableCode: notice.kind === "unavailable" && isNativeConfirmationUnavailableCode(notice.code) ? notice.code : v.nativeUnavailableCode }))
     } finally {
       if (current()) { flight.current = null; setView((v) => ({ ...v, submitting: false })) }
     }
@@ -120,5 +122,5 @@ export function useSupervisorProjectScope(open: boolean, dependencies = defaultP
   return { ...view, invalidSelection, edit, reviewDraft: review, confirm, refresh,
     backToEdit: () => setView((s) => ({ ...s, review: null, notice: null })),
     canEdit: !!view.observation && !view.reading && !view.submitting && !view.catalogError,
-    canConfirm: !invalidSelection && !!view.review && !view.reading && !view.submitting && !view.catalogError && view.nativeAvailable && view.observation?.owner_authorization.available === true }
+    canConfirm: !invalidSelection && !!view.review && !view.reading && !view.submitting && !view.catalogError && view.nativeAvailable && !!view.observation }
 }

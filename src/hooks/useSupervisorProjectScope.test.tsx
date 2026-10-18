@@ -2,8 +2,8 @@ import { act } from "react"
 import { createRoot, type Root } from "react-dom/client"
 import { afterEach, expect, it, vi } from "vitest"
 import { ApiError } from "@services/api"
-import { scopeFixture } from "@services/supervisorScope/testFixtures"
-import { unavailableProjectScopeOwnerBridge, type ProjectScopeOwnerBridge, type ProjectScopeOwnerOutcome } from "@services/supervisorScope/ownerBridge"
+import { nativeAvailabilityFixture, nativeCancellationFixture, scopeFixture } from "@services/supervisorScope/testFixtures"
+import { nativeConfirmationUnavailableCodes, nativeCancellationCodes, unavailableProjectScopeOwnerBridge, type ProjectScopeOwnerBridge, type ProjectScopeOwnerOutcome } from "@services/supervisorScope/ownerBridge"
 import type { ProjectOption, ProjectScopeIntent, ProjectScopeResponse } from "@services/supervisorScope/types"
 import { useSupervisorProjectScope, type ProjectScopeDependencies } from "./useSupervisorProjectScope"
 
@@ -14,7 +14,7 @@ const deferred = <T,>() => { let resolve!: (value: T) => void; const promise = n
 async function mount(options: { bridge?: ProjectScopeOwnerBridge; scope?: ProjectScopeResponse; projects?: readonly ProjectOption[] } = {}) {
   let canonical = options.scope ?? scopeFixture()
   const apply = vi.fn<(intent: ProjectScopeIntent) => Promise<ProjectScopeOwnerOutcome>>().mockResolvedValue({ kind: "unknown" })
-  const inspect = vi.fn(async () => true)
+  const inspect = vi.fn(async () => nativeAvailabilityFixture())
   const read = vi.fn(async () => structuredClone(canonical))
   const deps: ProjectScopeDependencies = { read, projects: vi.fn(async () => options.projects ?? [{ id: "p1", name: "One", status: "active" as const }, { id: "p2", name: "Two", status: "active" as const }]),
     bridge: options.bridge ?? { inspectAvailability: inspect, confirmAndApply: apply } }
@@ -36,9 +36,11 @@ it("keeps the default production bridge blocked despite backend verifier presenc
   h.edit("p2", true); h.review(); expect(h.value.review?.mutation.allowed_projects).toEqual(["p1", "p2"])
   await h.confirm(); expect(h.read).toHaveBeenCalledTimes(1); expect(h.apply).not.toHaveBeenCalled()
 })
-it("does not ask native to confirm availability when the server has no verifier", async () => {
-  const scope = scopeFixture(); const h = await mount({ scope: { ...scope, owner_authorization: { ...scope.owner_authorization, available: false } } })
-  h.review(); await h.confirm(); expect(h.inspect).not.toHaveBeenCalled(); expect(h.apply).not.toHaveBeenCalled()
+it("does not infer native confirmation readiness from transport or HTTP verifier presence", async () => {
+  const h = await mount(); h.inspect.mockResolvedValue({ transport_ready: true, authority_profile: null })
+  await h.refresh(); h.review(); await h.confirm()
+  expect(h.value.nativeAvailable).toBe(false); expect(h.value.canConfirm).toBe(false)
+  expect(h.inspect).toHaveBeenCalledTimes(2); expect(h.apply).not.toHaveBeenCalled()
 })
 it("submits the immutable exact full-set intent once and waits for canonical confirmation", async () => {
   const h = await mount(), pending = deferred<ProjectScopeOwnerOutcome>()
@@ -55,7 +57,7 @@ it("submits the immutable exact full-set intent once and waits for canonical con
   expect(h.value.review).toBeNull(); expect(h.value.submitting).toBe(false)
 })
 it("native cancellation before submission does not re-read or discard the user's set", async () => {
-  const h = await mount(); h.apply.mockResolvedValue({ kind: "cancelled" }); h.edit("p2", true); h.review(); await h.confirm()
+  const h = await mount(); h.apply.mockResolvedValue(nativeCancellationFixture()); h.edit("p2", true); h.review(); await h.confirm()
   expect(h.value.notice?.kind).toBe("cancelled"); expect(h.value.draft).toEqual(["p1", "p2"])
   expect(h.read).toHaveBeenCalledTimes(1); expect(h.value.review).toBeNull()
 })
@@ -119,4 +121,53 @@ it("keeps an unknown submission unconfirmed when its canonical read also fails",
   expect(h.value.observation).toBeNull(); expect(h.value.problem?.kind).toBe("unavailable")
   expect(h.value.canConfirm).toBe(false); expect(h.value.review).toBeNull()
   expect(h.read).toHaveBeenCalledTimes(2); expect(h.apply).toHaveBeenCalledTimes(1)
+})
+
+it("allows Bamboo per-request confirmation independently of the HTTP verifier", async () => {
+  const scope = scopeFixture()
+  const h = await mount({ scope: { ...scope, owner_authorization: { ...scope.owner_authorization, available: false } } })
+  h.inspect.mockResolvedValue({ transport_ready: true, authority_profile: {
+    kind: "bamboo_native_confirmation_v1", confirmation_available: true,
+    confirmation_required_per_request: true, unavailable_code: null,
+  } })
+  await h.refresh(); h.review()
+  expect(h.inspect).toHaveBeenCalled(); expect(h.value.nativeAvailable).toBe(true)
+  expect(h.value.canConfirm).toBe(true); expect(h.apply).not.toHaveBeenCalled()
+})
+it("does not treat an unqualified cancellation as proof that CAS was never submitted", async () => {
+  const h = await mount(); h.review(); h.apply.mockResolvedValue({ kind: "cancelled" } as ProjectScopeOwnerOutcome)
+  await h.confirm(); expect(h.value.notice?.kind).toBe("unknown")
+  expect(h.read).toHaveBeenCalledTimes(2); expect(h.apply).toHaveBeenCalledTimes(1)
+})
+
+it.each(nativeCancellationCodes)("preserves explicit pre-CAS %s without readback or replay", async (code) => {
+  const h = await mount(); h.edit("p2", true); h.review(); h.apply.mockResolvedValue(nativeCancellationFixture(code))
+  await h.confirm(); expect(h.value.notice).toEqual({ kind: "cancelled", code })
+  expect(h.value.draft).toEqual(["p1", "p2"]); expect(h.value.review).toBeNull()
+  expect(h.read).toHaveBeenCalledTimes(1); expect(h.apply).toHaveBeenCalledTimes(1)
+})
+it.each(nativeConfirmationUnavailableCodes)("blocks request-time refusal %s without another prompt", async (code) => {
+  const h = await mount(); h.review(); h.apply.mockResolvedValue({ kind: "rejected", status: 503, code })
+  await h.confirm(); expect(h.value.notice).toEqual({ kind: "unavailable", code })
+  expect(h.value.nativeAvailable).toBe(false); expect(h.value.nativeUnavailableCode).toBe(code)
+  expect(h.read).toHaveBeenCalledTimes(2); expect(h.apply).toHaveBeenCalledTimes(1)
+  h.review(); await h.confirm(); expect(h.apply).toHaveBeenCalledTimes(1)
+})
+it.each([
+  { kind: "cancelled", code: "native_confirmation_cancelled", status_code: 409, not_submitted: false },
+  { kind: "cancelled", code: "native_confirmation_cancelled", status_code: 503, not_submitted: true },
+  { kind: "cancelled", code: "future_cancel", status_code: 409, not_submitted: true },
+  { ...nativeCancellationFixture(), receipt: {} },
+])("leaves ambiguous cancellation %j unknown even after a matching GET", async (outcome) => {
+  const h = await mount(); h.review(); h.apply.mockResolvedValue(outcome as ProjectScopeOwnerOutcome)
+  await h.confirm(); expect(h.value.notice?.kind).toBe("unknown")
+  expect(h.read).toHaveBeenCalledTimes(2); expect(h.apply).toHaveBeenCalledTimes(1)
+})
+it("ignores the old in-flight acknowledgement after close/reopen and never replays it", async () => {
+  const h = await mount(), pending = deferred<ProjectScopeOwnerOutcome>(); h.review(); h.apply.mockReturnValueOnce(pending.promise)
+  let command!: Promise<void>; act(() => { command = h.value.confirm() })
+  await h.render(false); h.setCanonical({ ...scopeFixture(), scope: { ...scopeFixture().scope, state_revision: 7 } }); await h.render(true)
+  await act(async () => { pending.resolve({ kind: "applied", receipt: { supervisor: scopeFixture().scope.supervisor, state_revision: 1, changed: true, link_revision: null } }); await command })
+  expect(h.value.observation?.scope.state_revision).toBe(7); expect(h.value.notice).toBeNull()
+  expect(h.value.review).toBeNull(); expect(h.read).toHaveBeenCalledTimes(2); expect(h.apply).toHaveBeenCalledTimes(1)
 })

@@ -3,7 +3,7 @@ import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { useSupervisorProjectScope, type ProjectScopeDependencies } from "@/hooks/useSupervisorProjectScope"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
-import type { ScopeErrorCode } from "@services/supervisorScope/types"
+import type { ProjectScopeOwnerNoticeCode } from "@services/supervisorScope/ownerBridge"
 
 const noticeKeys = {
   cancelled: "supervisor_scope_cancelled", saved: "supervisor_scope_saved", conflict: "supervisor_scope_conflict",
@@ -11,7 +11,11 @@ const noticeKeys = {
 } as const
 const problemKeys = { unsupported: "supervisor_scope_unsupported", missing: "supervisor_scope_missing", forbidden: "supervisor_scope_forbidden",
   conflict: "supervisor_scope_conflict", unavailable: "supervisor_scope_storage", invalid: "supervisor_scope_invalid", error: "supervisor_scope_error" } as const
-const codeKeys: Record<ScopeErrorCode, Parameters<typeof uiText>[0]> = {
+const codeKeys: Record<ProjectScopeOwnerNoticeCode, Parameters<typeof uiText>[0]> = {
+  native_confirmation_not_enabled: "supervisor_scope_confirmation_disabled", native_confirmation_unsupported_platform: "supervisor_scope_confirmation_unsupported",
+  native_confirmation_no_gui: "supervisor_scope_confirmation_no_gui", native_confirmation_thread_unavailable: "supervisor_scope_confirmation_thread",
+  native_confirmation_unavailable: "supervisor_scope_confirmation_unavailable", native_confirmation_cancelled: "supervisor_scope_cancelled",
+  native_confirmation_window_closed: "supervisor_scope_cancelled_closed", native_confirmation_timed_out: "supervisor_scope_cancelled_timeout",
   scope_revision_conflict: "supervisor_scope_conflict", project_scope_invalid: "supervisor_scope_invalid",
   host_owner_authorization_unavailable: "supervisor_scope_unavailable", host_owner_authorization_required: "supervisor_scope_rejected",
   scope_authority_invalid: "supervisor_scope_authority_invalid", supervisor_identity_mismatch: "supervisor_scope_identity",
@@ -51,8 +55,8 @@ export function SupervisorProjectScopeDialog({ open, onOpenChange, dependencies,
             <dt>{uiText("supervisor_scope_identity_label")}</dt><dd>{scope.supervisor.session_id} · {scope.supervisor.incarnation_id}</dd>
             <dt>{uiText("supervisor_scope_revision")}</dt><dd>{scope.state_revision}</dd>
           </dl>
-          {!state.observation?.owner_authorization.available ? <p role="status">{uiText("supervisor_scope_unavailable")}</p>
-            : !state.nativeAvailable && !state.reading ? <p role="status">{uiText("supervisor_scope_bridge_unavailable")}</p> : null}
+          {!state.reading ? <p role="status">{uiText(state.nativeAvailable ? "supervisor_scope_native_ready"
+            : state.nativeUnavailableCode ? codeKeys[state.nativeUnavailableCode] : "supervisor_scope_bridge_unavailable")}</p> : null}
           <p className="text-muted-foreground">{uiText("supervisor_scope_boundaries")}</p>
           {state.catalogError ? <p role="alert">{uiText("supervisor_scope_catalog_error")}</p> : null}
           {state.review ? <section data-testid="project-scope-review" className="space-y-2 [overflow-wrap:anywhere]">
