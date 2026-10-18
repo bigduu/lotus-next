@@ -2,6 +2,7 @@
 export const uiZhCn = {
   "work_load_failed": "无法加载 Work 详情，对话仍可使用。",
   "subagent_origin_unknown": "无法确认发起轮次。",
+  "subagent_open_conversation": "打开 {{title}} 的会话",
   "subagent_refresh": "刷新代理状态",
   "home_describe_task": "直接描述任务",
   "message_action_interject": "插话",

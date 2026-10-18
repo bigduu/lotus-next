@@ -2,6 +2,7 @@
 export const uiEnUs = {
   "work_load_failed": "Work details could not load. Your conversation is still available.",
   "subagent_origin_unknown": "The originating turn is unavailable.",
+  "subagent_open_conversation": "Open {{title}} conversation",
   "subagent_refresh": "Refresh agent status",
   "home_describe_task": "Describe your task",
   "message_action_interject": "Interject",

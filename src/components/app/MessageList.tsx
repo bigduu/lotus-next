@@ -486,6 +486,8 @@ export function MessageList({
   const historyEntries = useMemo(() => buildHistoryEntries(renderItems), [renderItems])
   const [openProcessKeys, setOpenProcessKeys] = useState<Set<string>>(() => new Set())
   const [openToolKeys, setOpenToolKeys] = useState<Set<string>>(() => new Set())
+  // Keep child choices above virtual rows and the live/history handoff.
+  const [openSubAgentIds, setOpenSubAgentIds] = useState<Set<string>>(() => new Set())
   const historyEntriesRef = useRef(historyEntries)
   const openProcessKeysRef = useRef(openProcessKeys)
   const openToolKeysRef = useRef(openToolKeys)
@@ -532,13 +534,17 @@ export function MessageList({
   const previousExpansionStateRef = useRef({
     openProcessKeys,
     openToolKeys,
+    openSubAgentIds,
   })
   useLayoutEffect(() => {
     const previous = previousExpansionStateRef.current
-    previousExpansionStateRef.current = { openProcessKeys, openToolKeys }
+    previousExpansionStateRef.current = { openProcessKeys, openToolKeys, openSubAgentIds }
     const changedKeys = new Set<string>()
     collectChangedKeys(previous.openProcessKeys, openProcessKeys, changedKeys)
     collectChangedKeys(previous.openToolKeys, openToolKeys, changedKeys)
+    const changedChildren = new Set<string>()
+    collectChangedKeys(previous.openSubAgentIds, openSubAgentIds, changedChildren)
+    for (const id of changedChildren) changedKeys.add(`subagent-${id}`)
     if (changedKeys.size === 0) return
 
     const rows = scrollElementRef.current?.querySelectorAll<HTMLDivElement>(
@@ -552,13 +558,17 @@ export function MessageList({
       const index = virtualizer.indexFromElement(row)
       virtualizer.resizeItem(index, row.offsetHeight || estimateSize(index))
     }
-  }, [estimateSize, openProcessKeys, openToolKeys, virtualizer])
+  }, [estimateSize, openProcessKeys, openToolKeys, openSubAgentIds, virtualizer])
 
   const setProcessOpen = useCallback((key: string, open: boolean) => {
     setOpenProcessKeys((current) => withSetMembership(current, key, open))
   }, [])
   const setToolOpen = useCallback((key: string, open: boolean) => {
     setOpenToolKeys((current) => withSetMembership(current, key, open))
+  }, [])
+
+  const setSubAgentExpanded = useCallback((id: string, open: boolean) => {
+    setOpenSubAgentIds((current) => withSetMembership(current, id, open))
   }, [])
 
   const subAgentGroups = useMemo(() => groupSubAgents([...renderItems, ...liveItems]
@@ -641,7 +651,7 @@ export function MessageList({
         </div>
       )
       const children = subAgentGroups.byOrigin.get(it.key)
-      if (children) return <Fragment key={it.key}>{process}<SubAgents agents={children} onOpen={onSelectSubAgent} /></Fragment>
+      if (children) return <Fragment key={it.key}>{process}<SubAgents agents={children} onOpen={onSelectSubAgent} expandedIds={openSubAgentIds} onExpandedChange={setSubAgentExpanded} /></Fragment>
       return process
     }
     const m = it.m
@@ -765,7 +775,7 @@ export function MessageList({
         {subAgentError ? <div role="status" className="text-xs text-muted-foreground" data-subagent-error>
           {subAgentError}{onRefreshSubAgents ? <Button variant="ghost" size="sm" onClick={onRefreshSubAgents}>{uiText("subagent_refresh")}</Button> : null}
         </div> : null}
-        <SubAgents agents={subAgentGroups.unplaced} originUnconfirmed onOpen={onSelectSubAgent} />
+        <SubAgents agents={subAgentGroups.unplaced} originUnconfirmed onOpen={onSelectSubAgent} expandedIds={openSubAgentIds} onExpandedChange={setSubAgentExpanded} />
         {messages.length === 0 && !streaming && !pendingUserText && liveSegments.length === 0 && (
           <div className="flex flex-col items-center gap-2 py-20 text-center">
             <BrandMark className="size-10 text-primary" />

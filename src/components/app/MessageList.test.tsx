@@ -20,8 +20,12 @@ vi.mock("@/components/chat/Reasoning", () => ({
 }))
 vi.mock("@/components/chat/StreamingReasoning", () => ({ StreamingReasoning: () => null }))
 vi.mock("@/components/chat/SubAgents", () => ({
-  SubAgents: ({ agents }: { agents: Record<string, unknown> }) => Object.keys(agents).length
-    ? <div data-subagent-group>{Object.keys(agents).map((id) => <div key={id} data-subagent-id={id} />)}</div> : null,
+  SubAgents: ({ agents, expandedIds, onExpandedChange }: { agents: Record<string, unknown>
+    expandedIds?: ReadonlySet<string>; onExpandedChange?: (id: string, expanded: boolean) => void }) => Object.keys(agents).length
+    ? <div data-subagent-group>{Object.keys(agents).map((id) => <div key={id} data-subagent-id={id}>
+      <button type="button" aria-expanded={expandedIds?.has(id) ?? false}
+        onClick={() => onExpandedChange?.(id, !expandedIds?.has(id))} />
+    </div>)}</div> : null,
 }))
 vi.mock("@/components/chat/ToolCalls", () => ({
   ToolCalls: ({
@@ -745,14 +749,21 @@ describe("subagent transcript provenance", () => {
     const render = (updates: Partial<typeof props>) => act(() => root.render(<MessageList {...props} {...updates} />))
     const card = () => host.querySelector('[data-subagent-id="child"]')!
     render({})
+    act(() => card().querySelector<HTMLButtonElement>("button")!.click())
+    expect(card().querySelector("button")!.getAttribute("aria-expanded")).toBe("true")
     const answer = host.querySelector('[data-assistant-content="Birth answer"]')!
     expect(card().compareDocumentPosition(answer) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     const messages = [user("turn-1"), ...spawn("live-create", "child"), { id: "answer", role: "assistant", type: "text", content: "Birth answer", createdAt: "" } as Message]
     render({ messages, liveSegments: [], sending: false })
     expect(card().closest("[data-history-entry-key]")?.getAttribute("data-history-entry-key")).toBe("activity-live-create")
+    expect(card().querySelector("button")!.getAttribute("aria-expanded")).toBe("true")
     const persistedCard = card()
     render({ messages: [...messages, user("new-turn")], liveSegments: [], sending: false, mergedSubAgents: { child: { status: "completed" } } })
     expect(card()).toBe(persistedCard)
+    expect(card().querySelector("button")!.getAttribute("aria-expanded")).toBe("true")
+    act(() => card().querySelector<HTMLButtonElement>("button")!.click())
+    render({ messages, liveSegments: [], sending: false, mergedSubAgents: { child: { status: "cancelled" } } })
+    expect(card().querySelector("button")!.getAttribute("aria-expanded")).toBe("false")
     expect(card().closest("[data-history-entry-key]")?.getAttribute("data-history-entry-key")).toBe("activity-live-create")
   })
 

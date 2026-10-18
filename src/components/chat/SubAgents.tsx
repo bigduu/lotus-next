@@ -1,3 +1,4 @@
+import { useId, useState } from "react"
 import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { Bot, Loader2, Check, AlertCircle, ChevronRight } from "lucide-react"
 import { cn } from "@/lib/utils"
@@ -27,8 +28,14 @@ const LABEL = {
   get retired() { return uiText("exited_899df7e2") }, get unknown() { return uiText("plugin_connection_unknown") },
 }
 
-function SubAgentCard({ child, childId, onOpen }: { child: ChildProgress; childId: string; onOpen?: () => void }) {
+function SubAgentCard({ child, childId, onOpen, expanded, onExpandedChange }: {
+  child: ChildProgress; childId: string; onOpen?: () => void
+  expanded?: boolean; onExpandedChange?: (expanded: boolean) => void
+}) {
   useUiLocale()
+  const [localExpanded, setLocalExpanded] = useState(false)
+  const open = expanded ?? localExpanded
+  const detailsId = useId()
   const st = statusOf(child)
   const detail = child.error || child.outputPreview
   // Placement comes from the session index; it grants no control authority.
@@ -36,18 +43,23 @@ function SubAgentCard({ child, childId, onOpen }: { child: ChildProgress; childI
     (child as ChildProgress & { placement?: SessionPlacement | null }).placement ?? null
 
   return (
-    <button
+    <article
       data-subagent-id={childId}
       data-subagent-status={st}
-      onClick={onOpen}
-      disabled={!onOpen}
+      data-expansion-key={`subagent-${childId}`}
       className={cn(
         "w-full overflow-hidden rounded-lg border text-left transition-colors",
-        onOpen && "hover:border-primary/50 hover:bg-accent/50",
         st === "running" ? "border-primary/40 bg-primary/5" : "bg-muted/30",
       )}
     >
-      <div className="flex items-center gap-2 px-3 py-2">
+      <button
+        type="button"
+        data-subagent-toggle
+        aria-expanded={open}
+        aria-controls={detailsId}
+        onClick={() => onExpandedChange ? onExpandedChange(!open) : setLocalExpanded(!open)}
+        className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left hover:bg-accent/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      >
         {st === "running" ? (
           <Loader2 className="size-3.5 shrink-0 animate-spin text-primary" />
         ) : st === "error" ? (
@@ -64,31 +76,40 @@ function SubAgentCard({ child, childId, onOpen }: { child: ChildProgress; childI
           {LABEL[st]}
           {typeof child.roundCount === "number" ? uiText("rounds_6ff24cb5", { v0: child.roundCount , count: child.roundCount }) : ""}
         </span>
-        {onOpen ? <ChevronRight className="size-4 shrink-0 text-muted-foreground" /> : null}
+        <ChevronRight aria-hidden="true" className={cn("size-4 shrink-0 text-muted-foreground transition-transform", open && "rotate-90")} />
+      </button>
+      <div id={detailsId} data-subagent-details hidden={!open} className="space-y-2 border-t px-3 py-2">
+        {detail ? (
+          <div
+            className={cn(
+              "whitespace-pre-wrap text-xs leading-relaxed [overflow-wrap:anywhere]",
+              st === "error" ? "text-destructive" : "text-muted-foreground",
+            )}
+          >
+            {detail}
+          </div>
+        ) : null}
+        {onOpen ? <button type="button" onClick={onOpen} className="text-xs underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+          {uiText("subagent_open_conversation", { title: child.title || uiText("sub_agent_acd37b4c") })}
+        </button> : null}
       </div>
-      {detail ? (
-        <div
-          className={cn(
-            "line-clamp-2 whitespace-pre-wrap border-t px-3 py-1.5 text-xs leading-relaxed [overflow-wrap:anywhere]",
-            child.error ? "text-destructive" : "text-muted-foreground",
-          )}
-        >
-          {detail}
-        </div>
-      ) : null}
-    </button>
+    </article>
   )
 }
 
-/** Claude-Code-style inline sub-agent blocks; click one to open its full transcript. */
+/** Compact child summaries; expansion is presentation state, never execution authority. */
 export function SubAgents({
   agents,
   onOpen,
   originUnconfirmed = false,
+  expandedIds,
+  onExpandedChange,
 }: {
   agents: Record<string, ChildProgress>
   originUnconfirmed?: boolean
   onOpen?: (childId: string) => void
+  expandedIds?: ReadonlySet<string>
+  onExpandedChange?: (childId: string, expanded: boolean) => void
 }) {
   useUiLocale()
   const entries = Object.entries(agents)
@@ -100,7 +121,8 @@ export function SubAgents({
         <div className="text-xs font-medium text-muted-foreground">{uiText("subagents_76d97a95")}{entries.length})</div>
         {originUnconfirmed ? <p className="text-xs text-muted-foreground">{uiText("subagent_origin_unknown")}</p> : null}
         {entries.map(([id, c]) => (
-          <SubAgentCard key={id} childId={id} child={c} onOpen={onOpen ? () => onOpen(id) : undefined} />
+          <SubAgentCard key={id} childId={id} child={c} onOpen={onOpen ? () => onOpen(id) : undefined}
+            expanded={expandedIds?.has(id)} onExpandedChange={onExpandedChange ? (open) => onExpandedChange(id, open) : undefined} />
         ))}
       </div>
     </div>
