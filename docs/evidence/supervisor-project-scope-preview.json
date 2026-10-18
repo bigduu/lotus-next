@@ -1,0 +1,519 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-10-18T20:54:44.899203+00:00",
+  "issues": [
+    "https://github.com/bigduu/Bamboo-agent/issues/2072",
+    "https://github.com/bigduu/lotus-next/issues/322",
+    "https://github.com/bigduu/lotus-next/issues/331",
+    "https://github.com/bigduu/lotus-next/issues/382"
+  ],
+  "worktree": "/Volumes/WD_BLACK/worktree/lotus-2072-project-scope-ui-20261019",
+  "branch": "lotus-next/feat/2072-project-scope-ui-mock-20261019",
+  "frozenBase": "8831769170784d85ea23c1ac9f834a48890de19c",
+  "productRevision": "1271832026d08d8c4c927d344ab0956262fd78d5",
+  "productTree": "85f44e894c1128548a041f7bcd6657d43021d468",
+  "productSourceDirty": false,
+  "productCommits": [
+    {
+      "revision": "faafd5db792c3c4c60f77ace3ee3133c1522f2c7",
+      "subject": "feat: review Supervisor Project scope with a blocked native bridge (Bamboo #2072)"
+    },
+    {
+      "revision": "2c8c3fadf14b7617d22655fc5e0c6ca7bd3d0c31",
+      "subject": "fix: keep unfamiliar scope outcomes unconfirmed (Bamboo #2072)"
+    },
+    {
+      "revision": "1271832026d08d8c4c927d344ab0956262fd78d5",
+      "subject": "fix: leave failed scope readback explicitly unconfirmed (Bamboo #2072)"
+    }
+  ],
+  "changedFiles": [
+    "e2e/supervisor-project-scope.spec.ts",
+    "src/components/app/SidebarContextMenus.test.tsx",
+    "src/components/app/SupervisorEntry.tsx",
+    "src/components/chat/SupervisorProjectScopeDialog.test.tsx",
+    "src/components/chat/SupervisorProjectScopeDialog.tsx",
+    "src/hooks/useSupervisorProjectScope.test.tsx",
+    "src/hooks/useSupervisorProjectScope.ts",
+    "src/services/supervisorScope/client.test.ts",
+    "src/services/supervisorScope/client.ts",
+    "src/services/supervisorScope/ownerBridge.ts",
+    "src/services/supervisorScope/testFixtures.ts",
+    "src/services/supervisorScope/types.ts",
+    "src/shared/i18n/resources/ui-en-US.ts",
+    "src/shared/i18n/resources/ui-zh-CN.ts"
+  ],
+  "changedBlobs": {
+    "e2e/supervisor-project-scope.spec.ts": "fb28bd9c5ba750f9a8a1ab025689109084c963a7",
+    "src/components/app/SidebarContextMenus.test.tsx": "b4bd8834dc66687968946c87875b10150628ad4b",
+    "src/components/app/SupervisorEntry.tsx": "46e2862cd18753dd205cc7ea1a465e26087f9aa4",
+    "src/components/chat/SupervisorProjectScopeDialog.test.tsx": "1e8eac4adf7a3809d8f9ea7485bde67ef68206ac",
+    "src/components/chat/SupervisorProjectScopeDialog.tsx": "00280a412f0aa42673e10fee891e87ad75abaa59",
+    "src/hooks/useSupervisorProjectScope.test.tsx": "1fdf66e59d006d883eb42e5bec186208418526ac",
+    "src/hooks/useSupervisorProjectScope.ts": "6d675e00b87f2b63d49cf6d6fac0da96c7cf1c21",
+    "src/services/supervisorScope/client.test.ts": "6f0b79ea9299d64c829399df4714b2ca90af6c0b",
+    "src/services/supervisorScope/client.ts": "e1c2bf3be22d7a6752099ecb4f919342c016512a",
+    "src/services/supervisorScope/ownerBridge.ts": "86191ea00d2d647140f00d79dd76015a2e45a66a",
+    "src/services/supervisorScope/testFixtures.ts": "651d408fdba88d43f7df8b0b90dad13aaf107ae4",
+    "src/services/supervisorScope/types.ts": "4feee4a4a2c08b87e661e3e395a2376bb98f4920",
+    "src/shared/i18n/resources/ui-en-US.ts": "b3e352fe08b88cb1915601e3f4d9ae6e977b02d3",
+    "src/shared/i18n/resources/ui-zh-CN.ts": "14368e5a052eff333482d99d52b5b6c57538af48"
+  },
+  "backend": {
+    "merge": "fd374b5a2067110275b955c174e29722835d4a80",
+    "tree": "9ea1e86ed4a2a04a04e9b49b47c0e62e3b5d3baa",
+    "sourceHead": "7d521cafe83431b072e5125ee1de6203e0a38582",
+    "contractPath": "/Users/bigduu/Documents/Codex/2026-10-15/task/handoff/2072-host-consent-contract-fd374b5a.json",
+    "contractSha256": "afb309ba1208fd072d18acc5cd02dc9348d35ddb7d8072745968a91673fd562f"
+  },
+  "bodhiAlignment": {
+    "designDoc": "/Users/bigduu/Documents/Codex/2026-10-18/task-8/bodhi-2072-native-consent/docs/supervisor-project-scope-host.md",
+    "designDocSha256AtRead": "897ae66160b130b9d2357fbb4e323fa8dd8fbf2ac180a581b8bef115b0949ea6",
+    "sourceReadOnly": true,
+    "productionNativeChannelImplemented": false,
+    "frozenProofOrIpcFormat": false,
+    "hostAdmissionAndStartupSeam": "Pending original owners; a transport handshake alone is not authorization."
+  },
+  "implemented": {
+    "productionHttp": "GET /api/v1/supervisor/default/scope and existing Project catalog only; no JS scope mutation transport.",
+    "entry": "Supervisor menu -> independent Project scope dialog; no background scope read before explicit opening.",
+    "observation": "Strict runtime decoder; canonical Supervisor/incarnation, nonnegative JS-safe management revision, exact capability/owner semantics and full unique <=64 Project set.",
+    "selection": "Explicit complete set; no automatic add/filter. Missing/archived selected IDs retained and prevent confirmation until explicitly resolved. Empty means no Project currently allowed, even at a later revision.",
+    "bridge": "inspectAvailability(observation), confirmAndApply(exactIntent), local typed port only; production default always unavailable, including when server available=true.",
+    "confirmation": "Exact frozen Supervisor incarnation/revision/full-set intent. Mock receipts require matching identity/revision and fresh canonical equality before saved.",
+    "concurrency": "One in-flight confirmation; close/reopen generations invalidate late results. Draft survives reread; review is withdrawn.",
+    "failure": "Pre-submission cancellation never applies. Known refusal/status pairs remain explicit. 409 rereads and needs a fresh review. 503 blocks. Unknown/timeout/bad receipt remain unconfirmed even if the set matches; failed readback stays visible."
+  },
+  "validation": {
+    "node": "24.21.0",
+    "typeCheck": "passed",
+    "lint": "passed",
+    "i18nKeys": 2215,
+    "architecture": "passed",
+    "diffCheck": "passed",
+    "units": {
+      "files": 7,
+      "passed": 197,
+      "source": "Pre-commit working tree with product and test inputs identical to productRevision.",
+      "selection": [
+        "src/services/supervisorScope/client.test.ts",
+        "src/hooks/useSupervisorProjectScope.test.tsx",
+        "src/components/chat/SupervisorProjectScopeDialog.test.tsx",
+        "src/components/app/Sidebar.test.tsx",
+        "src/components/app/SidebarContextMenus.test.tsx",
+        "src/components/chat/SubAgents.test.tsx",
+        "src/hooks/useTicketWork.test.tsx"
+      ]
+    },
+    "browser": {
+      "source": "1271832026d08d8c4c927d344ab0956262fd78d5",
+      "stats": {
+        "startTime": "2026-10-18T20:52:37.950Z",
+        "duration": 22685.517,
+        "expected": 33,
+        "skipped": 0,
+        "unexpected": 0,
+        "flaky": 0
+      },
+      "errors": [],
+      "cases": [
+        {
+          "file": "supervisor-project-scope.spec.ts",
+          "title": "Project scope verifier=false remains blocked and offers only complete-set review",
+          "project": "desktop-chromium",
+          "status": "expected"
+        },
+        {
+          "file": "supervisor-project-scope.spec.ts",
+          "title": "Project scope verifier=true remains blocked and offers only complete-set review",
+          "project": "desktop-chromium",
+          "status": "expected"
+        },
+        {
+          "file": "supervisor-project-scope.spec.ts",
+          "title": "canonical refresh preserves the explicit draft and withdraws the previous review",
+          "project": "desktop-chromium",
+          "status": "expected"
+        },
+        {
+          "file": "supervisor-project-scope.spec.ts",
+          "title": "Project scope supervisor_missing stays visible without bootstrap or repair",
+          "project": "desktop-chromium",
+          "status": "expected"
+        },
+        {
+          "file": "supervisor-project-scope.spec.ts",
+          "title": "Project scope scope_authority_invalid stays visible without bootstrap or repair",
+          "project": "desktop-chromium",
+          "status": "expected"
+        },
+        {
+          "file": "supervisor-project-scope.spec.ts",
+          "title": "Project scope verifier=false remains blocked and offers only complete-set review",
+          "project": "tablet-chromium",
+          "status": "expected"
+        },
+        {
+          "file": "supervisor-project-scope.spec.ts",
+          "title": "Project scope verifier=true remains blocked and offers only complete-set review",
+          "project": "tablet-chromium",
+          "status": "expected"
+        },
+        {
+          "file": "supervisor-project-scope.spec.ts",
+          "title": "canonical refresh preserves the explicit draft and withdraws the previous review",
+          "project": "tablet-chromium",
+          "status": "expected"
+        },
+        {
+          "file": "supervisor-project-scope.spec.ts",
+          "title": "Project scope supervisor_missing stays visible without bootstrap or repair",
+          "project": "tablet-chromium",
+          "status": "expected"
+        },
+        {
+          "file": "supervisor-project-scope.spec.ts",
+          "title": "Project scope scope_authority_invalid stays visible without bootstrap or repair",
+          "project": "tablet-chromium",
+          "status": "expected"
+        },
+        {
+          "file": "supervisor-project-scope.spec.ts",
+          "title": "Project scope verifier=false remains blocked and offers only complete-set review",
+          "project": "phone-chromium",
+          "status": "expected"
+        },
+        {
+          "file": "supervisor-project-scope.spec.ts",
+          "title": "Project scope verifier=true remains blocked and offers only complete-set review",
+          "project": "phone-chromium",
+          "status": "expected"
+        },
+        {
+          "file": "supervisor-project-scope.spec.ts",
+          "title": "canonical refresh preserves the explicit draft and withdraws the previous review",
+          "project": "phone-chromium",
+          "status": "expected"
+        },
+        {
+          "file": "supervisor-project-scope.spec.ts",
+          "title": "Project scope supervisor_missing stays visible without bootstrap or repair",
+          "project": "phone-chromium",
+          "status": "expected"
+        },
+        {
+          "file": "supervisor-project-scope.spec.ts",
+          "title": "Project scope scope_authority_invalid stays visible without bootstrap or repair",
+          "project": "phone-chromium",
+          "status": "expected"
+        },
+        {
+          "file": "supervisor-sidebar.spec.ts",
+          "title": "Supervisor explains its role and supports persistent renaming with retry and cancellation",
+          "project": "desktop-chromium",
+          "status": "expected"
+        },
+        {
+          "file": "supervisor-sidebar.spec.ts",
+          "title": "Supervisor opens from absent state and reuses its identity after reload",
+          "project": "desktop-chromium",
+          "status": "expected"
+        },
+        {
+          "file": "supervisor-sidebar.spec.ts",
+          "title": "Supervisor opens from empty state and reuses its identity after reload",
+          "project": "desktop-chromium",
+          "status": "expected"
+        },
+        {
+          "file": "supervisor-sidebar.spec.ts",
+          "title": "Supervisor opens from history state and reuses its identity after reload",
+          "project": "desktop-chromium",
+          "status": "expected"
+        },
+        {
+          "file": "supervisor-sidebar.spec.ts",
+          "title": "pending Supervisor opening respects newer palette navigation: return-to-session",
+          "project": "desktop-chromium",
+          "status": "expected"
+        },
+        {
+          "file": "supervisor-sidebar.spec.ts",
+          "title": "pending Supervisor opening respects newer palette navigation: new-conversation",
+          "project": "desktop-chromium",
+          "status": "expected"
+        },
+        {
+          "file": "supervisor-sidebar.spec.ts",
+          "title": "Supervisor explains its role and supports persistent renaming with retry and cancellation",
+          "project": "tablet-chromium",
+          "status": "expected"
+        },
+        {
+          "file": "supervisor-sidebar.spec.ts",
+          "title": "Supervisor opens from absent state and reuses its identity after reload",
+          "project": "tablet-chromium",
+          "status": "expected"
+        },
+        {
+          "file": "supervisor-sidebar.spec.ts",
+          "title": "Supervisor opens from empty state and reuses its identity after reload",
+          "project": "tablet-chromium",
+          "status": "expected"
+        },
+        {
+          "file": "supervisor-sidebar.spec.ts",
+          "title": "Supervisor opens from history state and reuses its identity after reload",
+          "project": "tablet-chromium",
+          "status": "expected"
+        },
+        {
+          "file": "supervisor-sidebar.spec.ts",
+          "title": "pending Supervisor opening respects newer palette navigation: return-to-session",
+          "project": "tablet-chromium",
+          "status": "expected"
+        },
+        {
+          "file": "supervisor-sidebar.spec.ts",
+          "title": "pending Supervisor opening respects newer palette navigation: new-conversation",
+          "project": "tablet-chromium",
+          "status": "expected"
+        },
+        {
+          "file": "supervisor-sidebar.spec.ts",
+          "title": "Supervisor explains its role and supports persistent renaming with retry and cancellation",
+          "project": "phone-chromium",
+          "status": "expected"
+        },
+        {
+          "file": "supervisor-sidebar.spec.ts",
+          "title": "Supervisor opens from absent state and reuses its identity after reload",
+          "project": "phone-chromium",
+          "status": "expected"
+        },
+        {
+          "file": "supervisor-sidebar.spec.ts",
+          "title": "Supervisor opens from empty state and reuses its identity after reload",
+          "project": "phone-chromium",
+          "status": "expected"
+        },
+        {
+          "file": "supervisor-sidebar.spec.ts",
+          "title": "Supervisor opens from history state and reuses its identity after reload",
+          "project": "phone-chromium",
+          "status": "expected"
+        },
+        {
+          "file": "supervisor-sidebar.spec.ts",
+          "title": "pending Supervisor opening respects newer palette navigation: return-to-session",
+          "project": "phone-chromium",
+          "status": "expected"
+        },
+        {
+          "file": "supervisor-sidebar.spec.ts",
+          "title": "pending Supervisor opening respects newer palette navigation: new-conversation",
+          "project": "phone-chromium",
+          "status": "expected"
+        }
+      ],
+      "selection": [
+        "e2e/supervisor-project-scope.spec.ts",
+        "e2e/supervisor-sidebar.spec.ts"
+      ],
+      "transport": "Strict local HTTP/browser fixtures; production blocked bridge. Hook/Dialog native outcomes are injected mocks. No actual native acceptance.",
+      "initialRun": {
+        "source": "faafd5db792c3c4c60f77ace3ee3133c1522f2c7",
+        "stats": {
+          "startTime": "2026-10-18T20:44:01.097Z",
+          "duration": 24279.078999999998,
+          "expected": 30,
+          "skipped": 0,
+          "unexpected": 3,
+          "flaky": 0
+        },
+        "failure": "Three device assertions expected exactly one GET on 503; existing bounded transport retries made three safe GETs. Observer confirmed no scope write. Assertion now accepts 1..3 GETs.",
+        "raw": "browser-first-faafd5d.{json,log,tar.gz}"
+      },
+      "previousVerifiedRun": {
+        "source": "2c8c3fadf14b7617d22655fc5e0c6ca7bd3d0c31",
+        "stats": {
+          "startTime": "2026-10-18T20:47:12.378Z",
+          "duration": 22477.730000000003,
+          "expected": 33,
+          "skipped": 0,
+          "unexpected": 0,
+          "flaky": 0
+        }
+      }
+    },
+    "buildAndPackage": {
+      "status": "passed",
+      "sourceRevision": "1271832026d08d8c4c927d344ab0956262fd78d5",
+      "sourceDirty": false,
+      "resourcesSha256": "6f713d1739ed432b9183dff5d7a8fe000cbea455da1a96c8d82e0cb1f213333e",
+      "resourceCount": 728,
+      "packageFiles": 733,
+      "unpackedBytes": 18153716,
+      "startupJsRaw": 1821715,
+      "startupJsGzip": 559701,
+      "initialCssRaw": 108423,
+      "initialCssGzip": 18413,
+      "budgetPolicyUnchanged": true
+    },
+    "fullRepoUnitSuite": "Not rerun in this focused slice; selected affected suites recorded above.",
+    "actualBodhiNativeIntegration": "UNRUN; unavailable production port is deliberate, not positive authorization evidence."
+  },
+  "preservedCoreBlobs": {
+    "src/services/tickets/client.ts": "d3ac63741d9a05dd7734ef94656dbca7ee866993",
+    "src/services/tickets/types.ts": "3d75e49ebb8764c9b0a5c37324ca77beae432ae6",
+    "src/services/tickets/availability.ts": "7fa807f0f2f380da4ff656761dab1669da850514",
+    "src/hooks/useTicketWork.ts": "d4c225bfb8a378c38bf7161c638df29d54785fba",
+    "src/hooks/useSubAgentView.ts": "74462ffc405ecc330afe1fbebd7621962c9d80f7",
+    "src/components/chat/SubAgents.tsx": "bc90954335244870ce0b67750965debb47190bad",
+    "src/components/app/MessageList.tsx": "e28a14a04d28b4850e5ef5d2c22c21af983cc348",
+    "package.json": "18c3dd0e6b112c61c1ca0bd6def450e6a7e37d7e",
+    "package-lock.json": "4569a605d0298feb88c0d41a563920a3f22d0c7d",
+    "scripts/bundle-budget.mjs": "0d3ddf9a900e05f4ea48e117569098ecedc05554"
+  },
+  "preservedPriorEvidenceBlobs": {
+    "docs/evidence/subagent-collapse-integration.json": "c09c6428f2d7abf4e2133e0644b2fecf57ba3420",
+    "docs/evidence/subagent-status-origin.json": "29091f8e1e0b110e1ee0eed8f0fac07c0c2ebed3",
+    "docs/evidence/supervisor-subagent-integration.json": "b4ec067f731cda4be5797147f5576dd34579c0ee",
+    "docs/evidence/supervisor-work-current-contract.json": "3a42da8a3f99f37a612959ee89119c329d723288",
+    "docs/evidence/supervisor-work-live-contract.json": "f6c6617a4884f7a204604b1dc8f10f3bc580cc87",
+    "docs/evidence/supervisor-work-main-integration.json": "3565542b16807ba93587c7e24971de8a621c45e6",
+    "docs/screenshots/subagent-collapse/desktop-compact.png": "5ec17e5b7f4b5b8ece3494f67b587f1bbc0110ce",
+    "docs/screenshots/subagent-collapse/phone-expanded.png": "258901247cb28523e9de7b8e4abadae97bbc8ae1",
+    "docs/screenshots/subagent-collapse/phone-unanchored.png": "ffe3686ea603f0188b2e46b891292f580b3b3081",
+    "docs/screenshots/subagent-status-origin/desktop-terminal.png": "63651a978243ca0ff1621a8cd5b5b678d122d089",
+    "docs/screenshots/subagent-status-origin/phone-terminal.png": "66f0aafcc5cb76cac10038646f900a7a73d3ddf6",
+    "docs/screenshots/supervisor-entry/README.md": "b47565c85f06dfc96e5557d32130f8e93ba7ca15",
+    "docs/screenshots/supervisor-entry/desktop.png": "eefe0b01462d7616016cec02af167a900832a693",
+    "docs/screenshots/supervisor-entry/phone.png": "1121b5c0df679ef88d3ecbd09fd6fc47019e1fe3",
+    "docs/screenshots/supervisor-entry/rename-dialog.png": "4c42a99e22b3f28139cc4f13e577848184ed76ce",
+    "docs/screenshots/supervisor-subagent-integration/desktop.png": "f823ce087487d1c877aaf688da577f2547a4ee25",
+    "docs/screenshots/supervisor-subagent-integration/phone.png": "d8f3ce8e35e897181221535aca1afa3581b7e5a5",
+    "docs/screenshots/supervisor-work-availability/disabled-phone.png": "68c41148bf6206cb6195afc327d8b9d659d55dbc",
+    "docs/screenshots/supervisor-work-availability/empty-desktop.png": "71cef7001777b38290f03414ee91617311d6996a",
+    "docs/screenshots/supervisor-work-availability/error-desktop.png": "3f352c0e529ace1944599a2940b2aed2af134c02",
+    "docs/screenshots/supervisor-work-availability/initialize-desktop.png": "3f61102e49f95091b967ef6f3ed2cdba9d0e5e24",
+    "docs/screenshots/supervisor-work-availability/initialize-phone.png": "5f0989b3cf9353c12fa710c00ab435db6c7f50d0",
+    "docs/screenshots/supervisor-work-availability/initialized-empty-desktop.png": "02d39c6579ac90115d57b43b57da456ab195b067",
+    "docs/screenshots/supervisor-work-availability/integrated-execution-desktop.png": "1505799d29f8dfd1125b9ebcd15bacb9a8edc2b2",
+    "docs/screenshots/supervisor-work-availability/integrated-execution-phone.png": "4f22b9f82d0da8b081417a6a7d4360b0e3f2a69b",
+    "docs/screenshots/supervisor-work-availability/live-initialize-desktop.png": "8ac177512da17883598d8287e5e3a909a26e0c98",
+    "docs/screenshots/supervisor-work-availability/live-old-binding-desktop.png": "a5873d40a93acc50040d111b912034fdcf3ef68d",
+    "docs/screenshots/supervisor-work-availability/live-readable-conflict-desktop.png": "1a314a128dd39353c87992ce87559e2a93499091",
+    "docs/screenshots/supervisor-work-availability/live-ready-empty-desktop.png": "7248cc22deff78ab021b3bc8ce2020fddc75b654",
+    "docs/screenshots/supervisor-work-availability/old-binding-desktop.png": "a7ecae1144bab187e6e54a51a2b599c2fae9aff4",
+    "docs/screenshots/supervisor-work-availability/uninitialized-desktop.png": "12b54f12874506c1868e3450c32dd37e03573a7d",
+    "docs/subagent-collapse-integration.md": "8874144d3fc07decdd84390a8022b8d10d35a35b",
+    "docs/subagent-status-origin.md": "10e3c1a6cb921a105bca9eaf70fca8d8e46ff188",
+    "docs/supervisor-subagent-integration.md": "105fd748207ca19e7095e397e9c9947068e7ee5d"
+  },
+  "screenshots": [
+    {
+      "path": "docs/screenshots/supervisor-project-scope-preview/desktop-blocked.png",
+      "sha256": "281c443825ae5043535064922e77df246b39d5beb21d038798d344b84eac968c",
+      "source": "1271832026d08d8c4c927d344ab0956262fd78d5",
+      "fixture": true
+    },
+    {
+      "path": "docs/screenshots/supervisor-project-scope-preview/phone-blocked.png",
+      "sha256": "6f386b401d345e76ba6a3b6a0dc24168a7dc2aa5d834b791f07ac3e226ffeadd",
+      "source": "1271832026d08d8c4c927d344ab0956262fd78d5",
+      "fixture": true
+    },
+    {
+      "path": "docs/screenshots/supervisor-project-scope-preview/phone-native-unwired.png",
+      "sha256": "20519a078101298b50d8abdb00db513d86bd3f647b350e2b2812dd31acb8d0b8",
+      "source": "1271832026d08d8c4c927d344ab0956262fd78d5",
+      "fixture": true
+    }
+  ],
+  "rawEvidence": {
+    "directory": "/Users/bigduu/Documents/Codex/2026-10-15/task-2/evidence/lotus-2072-project-scope-ui",
+    "files": {
+      "browser-12718320.json": {
+        "sha256": "ae3c8a1e9c55fb1b8fa89857fad2d0ea87a9ad9418aa7eab7c5fdb124d4e01f4",
+        "bytes": 40195
+      },
+      "browser-12718320.log": {
+        "sha256": "f5aff1f885fa2ade2a1774e08884045370b5aae562a9c3f2d298e316a0762a51",
+        "bytes": 6040
+      },
+      "browser-12718320.tar.gz": {
+        "sha256": "93a59fb079f67b12ad218cf211b48a9164a86b4b400e6e02c4725aa3209f9461",
+        "bytes": 2263294
+      },
+      "browser-2c8c3fa.json": {
+        "sha256": "7424c9af4d7f7689f20a2de8cf16b4bff7b89938a1c1efdb9d4104bd0cea9f88",
+        "bytes": 40204
+      },
+      "browser-2c8c3fa.log": {
+        "sha256": "5cf3b551db6cf56b49fcbf2e16f2b795ca6b9bef46da8fd8303c95cbe146d437",
+        "bytes": 6040
+      },
+      "browser-first-faafd5d.json": {
+        "sha256": "a89678133dcf6a587fd64997fb43aa2404d4c29a315db3c079d692a4e0de557c",
+        "bytes": 55346
+      },
+      "browser-first-faafd5d.log": {
+        "sha256": "4369a22ed2cde7db997a55e24b44d23b2635e0d25f4f249f0d2e79f7939a58c8",
+        "bytes": 16548
+      },
+      "browser-first-faafd5d.tar.gz": {
+        "sha256": "cec4f5177874988911916474ffc72c8fac1be251c94bbd850650ffdcf7242c3c",
+        "bytes": 24984130
+      },
+      "gates-12718320.log": {
+        "sha256": "05cd31249ec487137ec4bcb7d36249ba097dd3b4210aaf51d53761ff3c24e4b2",
+        "bytes": 1127
+      },
+      "gates-2c8c3fa.log": {
+        "sha256": "aa444d4ba28a7b5b9336aa376698aeea83cc47fb28267e8c8f0122623b64694b",
+        "bytes": 1127
+      },
+      "manifest-12718320.json": {
+        "sha256": "5b19f6f45dbda5408630e2f264e9975d52da7244ad909ae21bf2b165ba038a01",
+        "bytes": 116225
+      },
+      "manifest-2c8c3fa.json": {
+        "sha256": "1758ed8a15244fea597c0e80243aef0867f4d018b5f8fb0cbcd8cc33371cc2bc",
+        "bytes": 116225
+      },
+      "package-12718320.log": {
+        "sha256": "7afad387c80937fb369e05a5829a897889704dfeb1bbce6346bea30ca11eb96e",
+        "bytes": 66010
+      },
+      "package-2c8c3fa.log": {
+        "sha256": "5cb1dc758b5effe3d8e23e8c031d9a6e4f11b371066380549f15e0225e111e38",
+        "bytes": 65951
+      },
+      "preserved-blobs.json": {
+        "sha256": "fd8f37de2dd0c5d212aa4db8de63a0ae64527418d61e8e194044d11a2421263e",
+        "bytes": 4599
+      }
+    }
+  },
+  "remaining": [
+    "Original owners must freeze an independently verified Host admission/startup seam and native transport before any production adapter. No proof/IPC format is assumed here.",
+    "Actual candidate Bamboo + Bodhi native fixture and installed-consumer acceptance remain UNRUN; Rust requires a separately allocated owner window.",
+    "Review/integration and any remote push or release need a separate authorized step; no new Work v1 fields are requested."
+  ],
+  "boundaries": {
+    "localOnly": true,
+    "push": false,
+    "prCreated": false,
+    "releaseOrInstalledAppChanged": false,
+    "backendOrBodhiSourceEdited": false,
+    "rustOrModelsOrDispatchRun": false,
+    "actualUserProjectScopeOrSecurityChanged": false,
+    "historyAttachOrImport": false,
+    "featureOrModeChanges": false,
+    "workV1Changed": false,
+    "newTicketInitializer": false,
+    "otherOwnerProcessesStopped": false,
+    "projectScopeIsNot": "Work readiness/binding_revision, workspace binding, shell/build rights or historical session management."
+  }
+}
