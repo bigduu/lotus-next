@@ -16,20 +16,47 @@ export interface SprintOwnerControlsProps {
   onReviewLatest: () => void
 }
 
-interface DefinitionDraft { name: string; goal: string; startsAt: string; endsAt: string }
+interface DateDraft { value: string; original: number | null; edited: boolean; cleared: boolean; invalid: boolean }
+interface DefinitionDraft { name: string; goal: string; startsAt: DateDraft; endsAt: DateDraft }
 type DestinationDraft = { destination: "backlog" } | { destination: "sprint"; sprint_id: string; revision: number }
 const inputClass = "w-full min-w-0 rounded-md border bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+export function parseSprintUtcDateTime(value: string): number | undefined {
+  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2})(?:\.0{1,3})?)?$/.exec(value)
+  if (!match) return undefined
+  const [year, month, day, hour, minute, second] = [Number(match[1]), Number(match[2]), Number(match[3]), Number(match[4]), Number(match[5]), Number(match[6] ?? 0)]
+  if (year < 1) return undefined
+  // Set/get UTC fields explicitly, including years 1–99; never let local DST or
+  // Date's calendar normalization choose a different instant from the input.
+  const date = new Date(0)
+  date.setUTCFullYear(year, month - 1, day)
+  date.setUTCHours(hour, minute, second, 0)
+  if (date.getUTCFullYear() !== year || date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day
+    || date.getUTCHours() !== hour || date.getUTCMinutes() !== minute || date.getUTCSeconds() !== second) return undefined
+  const seconds = date.getTime() / 1000
+  return Number.isSafeInteger(seconds) ? seconds : undefined
+}
+export function formatSprintUtcDateTime(seconds: number | null): string | undefined {
+  if (seconds === null) return ""
+  if (!Number.isSafeInteger(seconds)) return undefined
+  const date = new Date(seconds * 1000)
+  const year = date.getUTCFullYear()
+  if (year < 1 || year > 9999 || date.getTime() / 1000 !== seconds) return undefined
+  const pad = (part: number) => part.toString().padStart(2, "0")
+  const value = `${year.toString().padStart(4, "0")}-${pad(date.getUTCMonth() + 1)}-${pad(date.getUTCDate())}T${pad(date.getUTCHours())}:${pad(date.getUTCMinutes())}:${pad(date.getUTCSeconds())}`
+  return parseSprintUtcDateTime(value) === seconds ? value : undefined
+}
+const dateDraft = (original: number | null): DateDraft => ({ value: formatSprintUtcDateTime(original) ?? "", original, edited: false, cleared: false, invalid: false })
 const definitionDraft = (view: SprintView | null): DefinitionDraft => ({
   name: view?.sprint.definition.name ?? "", goal: view?.sprint.definition.goal ?? "",
-  startsAt: view?.sprint.definition.starts_at?.toString() ?? "", endsAt: view?.sprint.definition.ends_at?.toString() ?? "",
+  startsAt: dateDraft(view?.sprint.definition.starts_at ?? null), endsAt: dateDraft(view?.sprint.definition.ends_at ?? null),
 })
-function unixSeconds(value: string): number | null | undefined {
-  if (value === "") return null
-  if (!/^-?\d+$/.test(value) || !Number.isSafeInteger(Number(value))) return undefined
-  return Number(value)
+function dateValue(draft: DateDraft): number | null | undefined {
+  if (!draft.edited) return draft.original
+  if (draft.cleared) return null
+  return draft.invalid ? undefined : parseSprintUtcDateTime(draft.value)
 }
 function definitionValue(draft: DefinitionDraft): SprintDefinition | null {
-  const starts_at = unixSeconds(draft.startsAt), ends_at = unixSeconds(draft.endsAt)
+  const starts_at = dateValue(draft.startsAt), ends_at = dateValue(draft.endsAt)
   const bytes = new TextEncoder()
   if (!draft.name.trim() || bytes.encode(draft.name).length > 256 || !draft.goal.trim() || bytes.encode(draft.goal).length > 4096
     || starts_at === undefined || ends_at === undefined || (starts_at !== null && ends_at !== null && ends_at < starts_at)) return null
@@ -147,11 +174,17 @@ function SprintOwnerEditor({ projectId, view, sprints, canWrite, busy, request, 
         <fieldset disabled={disabled} className="grid min-w-0 gap-3 sm:grid-cols-2">
           <label className="min-w-0 space-y-1"><span>{copy.name}</span><input className={inputClass} value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} /></label>
           <label className="min-w-0 space-y-1"><span>{copy.goal}</span><textarea className={inputClass} value={draft.goal} onChange={(event) => setDraft({ ...draft, goal: event.target.value })} /></label>
-          <label className="min-w-0 space-y-1"><span>{copy.startsAt}</span><input className={inputClass} type="text" inputMode="numeric" value={draft.startsAt} aria-describedby={`${id}-dates-help`} onChange={(event) => setDraft({ ...draft, startsAt: event.target.value })} /></label>
-          <label className="min-w-0 space-y-1"><span>{copy.endsAt}</span><input className={inputClass} type="text" inputMode="numeric" value={draft.endsAt} aria-describedby={`${id}-dates-help`} onChange={(event) => setDraft({ ...draft, endsAt: event.target.value })} /></label>
+          {(["startsAt", "endsAt"] as const).map((key) => <div key={key} className="min-w-0 space-y-1">
+            <label><span>{copy[key]}</span><input className={inputClass} type="datetime-local" step="1" min="0001-01-01T00:00:00" max="9999-12-31T23:59:59" value={draft[key].value} aria-invalid={dateValue(draft[key]) === undefined} aria-describedby={`${id}-dates-help`} onChange={(event) => {
+              const { value, validity } = event.currentTarget
+              setDraft({ ...draft, [key]: { ...draft[key], value, edited: true, cleared: false, invalid: !validity.valid } })
+            }} /></label>
+            <Button type="button" size="sm" variant="outline" disabled={draft[key].original === null && !draft[key].value && !draft[key].edited}
+              onClick={() => setDraft({ ...draft, [key]: { ...draft[key], value: "", edited: true, cleared: true, invalid: false } })}>{copy[key === "startsAt" ? "clearStart" : "clearEnd"]}</Button>
+          </div>)}
         </fieldset>
         <p id={`${id}-dates-help`} className="text-xs text-muted-foreground">{copy.datesHelp}</p>
-        {!definition && (draft.name || draft.goal || draft.startsAt || draft.endsAt) ? <p role="alert" className="text-destructive">{copy.invalidDefinition}</p> : null}
+        {!definition && (draft.name || draft.goal || draft.startsAt.edited || draft.endsAt.edited) ? <p role="alert" className="text-destructive">{copy.invalidDefinition}</p> : null}
         {idUnavailable ? <p role="alert" className="text-destructive">{copy.createIdUnavailable}</p> : null}
         <Button type="submit" size="sm" disabled={disabled || !definition || unchanged}>{sprint ? copy.save : copy.create}</Button>
       </form>

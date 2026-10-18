@@ -2,7 +2,7 @@ import { act } from "react"
 import { createRoot, type Root } from "react-dom/client"
 import { afterEach, beforeEach, expect, it, vi } from "vitest"
 import type { SprintSummary, SprintView, SprintWorkVersion } from "@services/tickets/sprints"
-import { SprintOwnerControls, type SprintOwnerControlsProps } from "./SprintOwnerControls"
+import { formatSprintUtcDateTime, parseSprintUtcDateTime, SprintOwnerControls, type SprintOwnerControlsProps } from "./SprintOwnerControls"
 import { sprintOwnerControlsEnglish as copy } from "./SprintOwnerControls.copy"
 import { sprintOwnerControlsChinese } from "@/test/fixtures/sprintOwnerCopy"
 
@@ -123,30 +123,130 @@ it("edits against the original displayed revision and leaves authoritative data 
   expect(current.view!.sprint.status).toBe("active")
 })
 
-it("accepts negative, zero and positive whole Unix seconds as planning metadata", async () => {
+it("uses native second-precision UTC dates and sends the exact selected instants", async () => {
   const current = props()
   await render(current)
-  await value(field(copy.startsAt), "-1")
-  await value(field(copy.endsAt), "0")
+  expect(field(copy.startsAt).type).toBe("datetime-local")
+  expect(field(copy.endsAt).step).toBe("1")
+  expect(copy.startsAt).toContain("UTC")
+  expect(copy.endsAt).toContain("UTC")
+  await value(field(copy.startsAt), "2026-10-18T09:10:11")
+  await value(field(copy.endsAt), "2026-10-19T10:11:12")
   await click(copy.save)
   expect(current.onCommand).toHaveBeenCalledExactlyOnceWith("sprint-a", {
     op: "edit", expected_revision: 3,
-    definition: { name: "Sprint A", goal: "Ship reviewed Work", starts_at: -1, ends_at: 0 },
+    definition: { name: "Sprint A", goal: "Ship reviewed Work", starts_at: 1792314611, ends_at: 1792404672 },
   })
   expect(document.body.textContent).toContain(copy.datesHelp)
 })
 
 it.each([
-  ["1.5", "2"], ["1e3", "2000"], ["9007199254740992", ""], ["100", "99"], ["2026-10-18", ""], [" 1", "2"],
-])("rejects invalid Unix seconds or reversed planning dates (%s, %s)", async (start, end) => {
+  -1, 0, 1, -62135596800, 1792314611, 253402300799,
+])("preserves exact prefilling and API values when editing an unrelated field at %s seconds", async (seconds) => {
   const current = props()
+  current.view!.sprint.definition.starts_at = seconds
   await render(current)
-  await value(field(copy.startsAt), start)
-  await value(field(copy.endsAt), end)
+  expect(parseSprintUtcDateTime(field(copy.startsAt).value)).toBe(seconds)
+  expect(formatSprintUtcDateTime(seconds)).toBeDefined()
+  expect(button(copy.save).disabled).toBe(true)
+  await value(field(copy.goal), "Only the goal changed")
+  await click(copy.save)
+  expect(current.onCommand).toHaveBeenCalledExactlyOnceWith("sprint-a", {
+    op: "edit", expected_revision: 3,
+    definition: { name: "Sprint A", goal: "Only the goal changed", starts_at: seconds, ends_at: null },
+  })
+})
+
+it("round-trips negative and zero timestamps through edited native date fields", async () => {
+  const current = props()
+  current.view!.sprint.definition.starts_at = -1
+  current.view!.sprint.definition.ends_at = 0
+  await render(current)
+  expect(parseSprintUtcDateTime(field(copy.startsAt).value)).toBe(-1)
+  expect(parseSprintUtcDateTime(field(copy.endsAt).value)).toBe(0)
+  await value(field(copy.startsAt), "1969-12-31T23:59:58")
+  await value(field(copy.startsAt), "1969-12-31T23:59:59")
+  await value(field(copy.goal), "Preserve both instants")
+  await click(copy.save)
+  expect(current.onCommand).toHaveBeenCalledExactlyOnceWith("sprint-a", expect.objectContaining({
+    definition: { name: "Sprint A", goal: "Preserve both instants", starts_at: -1, ends_at: 0 },
+  }))
+})
+
+it.each([Number.MAX_SAFE_INTEGER, Number.MIN_SAFE_INTEGER, -62167219200, 253402300800])("preserves an undisplayable backend time %s without silently clearing or rounding it", async (seconds) => {
+  const current = props()
+  current.view!.sprint.definition.starts_at = seconds
+  await render(current)
+  expect(formatSprintUtcDateTime(seconds)).toBeUndefined()
+  expect(field(copy.startsAt).value).toBe("")
+  await value(field(copy.goal), "Keep the original date")
+  await click(copy.save)
+  expect(current.onCommand).toHaveBeenCalledExactlyOnceWith("sprint-a", expect.objectContaining({
+    definition: { name: "Sprint A", goal: "Keep the original date", starts_at: seconds, ends_at: null },
+  }))
+})
+
+it.each([0, Number.MAX_SAFE_INTEGER])("clears an existing date %s only with the explicit clear action", async (seconds) => {
+  const current = props()
+  current.view!.sprint.definition.starts_at = seconds
+  await render(current)
+  expect(button(copy.clearStart).disabled).toBe(false)
+  await click(copy.clearStart)
+  await click(copy.save)
+  expect(current.onCommand).toHaveBeenCalledExactlyOnceWith("sprint-a", expect.objectContaining({
+    definition: { name: "Sprint A", goal: "Ship reviewed Work", starts_at: null, ends_at: null },
+  }))
+})
+
+it("does not turn a manually emptied or partial native field into null", async () => {
+  const current = props()
+  current.view!.sprint.definition.starts_at = 0
+  await render(current)
+  await value(field(copy.startsAt), "")
+  await act(async () => submit())
+  expect(field(copy.startsAt).getAttribute("aria-invalid")).toBe("true")
+  expect(button(copy.save).disabled).toBe(true)
+  expect(current.onCommand).not.toHaveBeenCalled()
+  await click(copy.clearStart)
+  await click(copy.save)
+  expect(current.onCommand).toHaveBeenCalledOnce()
+  expect(vi.mocked(current.onCommand).mock.calls[0][1]).toMatchObject({ definition: { starts_at: null } })
+})
+
+it.each(["2026-02-30T09:00:00", "2026-10-18T12:30:00.5", "2026-10-18T12", "2026-13-01T00:00:00"])("blocks native invalid/partial input %s without silently clearing the saved date", async (input) => {
+  const current = props()
+  current.view!.sprint.definition.starts_at = 0
+  await render(current)
+  await value(field(copy.startsAt), input)
   await act(async () => submit())
   expect(button(copy.save).disabled).toBe(true)
   expect(current.onCommand).not.toHaveBeenCalled()
   expect(document.querySelector('[role="alert"]')?.textContent).toBe(copy.invalidDefinition)
+})
+
+it("rejects reversed UTC dates while preserving the draft", async () => {
+  const current = props()
+  await render(current)
+  await value(field(copy.startsAt), "2026-10-19T10:00:01")
+  await value(field(copy.endsAt), "2026-10-19T10:00:00")
+  await act(async () => submit())
+  expect(button(copy.save).disabled).toBe(true)
+  expect(parseSprintUtcDateTime(field(copy.startsAt).value)).toBe(1792404001)
+  expect(current.onCommand).not.toHaveBeenCalled()
+})
+
+it.each(["", "2026-02-30T09:00:00", "1900-02-29T00:00:00", "2026-13-01T00:00:00", "2026-01-01T24:00:00",
+  "2026-01-01T00:00:60", "0000-01-01T00:00:00", "2026-10-18T00:00:00.5", "2026-10-18T00:00:00Z",
+  "2026-10-18", "2026-10-18T10:00:00+08:00"])("rejects calendar normalization or non-UTC-control input %s", (input) => {
+  expect(parseSprintUtcDateTime(input)).toBeUndefined()
+})
+
+it("interprets local DST gap/overlap labels as UTC and preserves early years without the 1900 shortcut", () => {
+  expect(formatSprintUtcDateTime(parseSprintUtcDateTime("2026-03-08T02:30:00")!)).toBe("2026-03-08T02:30:00")
+  expect(formatSprintUtcDateTime(parseSprintUtcDateTime("2026-11-01T01:30:00")!)).toBe("2026-11-01T01:30:00")
+  expect(formatSprintUtcDateTime(parseSprintUtcDateTime("0099-02-28T10:11:12")!)).toBe("0099-02-28T10:11:12")
+  expect(formatSprintUtcDateTime(parseSprintUtcDateTime("2000-02-29T10:11:12")!)).toBe("2000-02-29T10:11:12")
+  expect(parseSprintUtcDateTime("1970-01-01T00:00:01.000")).toBe(1)
 })
 
 it("validates UTF-8 byte bounds and nonblank definitions", async () => {

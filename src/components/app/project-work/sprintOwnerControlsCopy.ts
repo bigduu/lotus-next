@@ -11,6 +11,8 @@ export const sprintOwnerControlsCopy = (): SprintOwnerControlsCopy => ({
   startsAt: uiText("project_sprint_owner_starts_at"),
   endsAt: uiText("project_sprint_owner_ends_at"),
   datesHelp: uiText("project_sprint_owner_dates_help"),
+  clearStart: uiText("project_sprint_owner_clear_start"),
+  clearEnd: uiText("project_sprint_owner_clear_end"),
   create: uiText("project_sprint_owner_create"),
   save: uiText("project_sprint_owner_save"),
   start: uiText("project_sprint_owner_start"),
