@@ -232,7 +232,7 @@ async function recordEvidence(page: Page, mock: Mock, info: TestInfo, screenshot
   const unexpectedConsole = mock.consoles.filter((entry) => !/^Failed to load resource: the server responded with a status of (403|404|409|503)\b/.test(entry.text))
   const result = { case: info.title, mode: "controlled-mock-http-real-parent-components", source: initialSource,
     producer_source: payload.source_sha, producer_payload_sha256: sha256(readFileSync("src/test/fixtures/sprintContract/producer-http-payload.json")),
-    viewport: page.viewportSize(), device_scale_factor: await page.evaluate(() => window.devicePixelRatio), theme: await page.locator("html").evaluate((element) => element.classList.contains("dark") ? "dark" : "light"),
+    viewport: page.viewportSize(), device_scale_factor: await page.evaluate("window.devicePixelRatio"), theme: await page.locator("html").evaluate((element) => element.classList.contains("dark") ? "dark" : "light"),
     records: mock.records, blocked: mock.blocked, pageErrors: mock.pageErrors, consoleErrors: mock.consoles, unexpectedConsole }
   await writeFile(path.join(output, "cases", `${info.title.replace(/[^a-zA-Z0-9-]+/g, "-")}.json`), JSON.stringify(result, null, 2) + "\n")
   expect(mock.blocked).toEqual([])
