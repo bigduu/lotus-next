@@ -151,7 +151,7 @@ function SprintOwnerEditor({ projectId, view, sprints, canWrite, busy, request, 
           <label className="min-w-0 space-y-1"><span>{copy.name}</span><input className={inputClass} value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} /></label>
           <label className="min-w-0 space-y-1"><span>{copy.goal}</span><textarea className={inputClass} value={draft.goal} onChange={(event) => setDraft({ ...draft, goal: event.target.value })} /></label>
           {(["startsAt", "endsAt"] as const).map((key) => <div key={key} className="min-w-0 space-y-1">
-            <label><span>{copy[key]}</span><input className={`${inputClass} scheme-light dark:scheme-dark`} type="datetime-local" step="1" min="0001-01-01T00:00:00" max="9999-12-31T23:59:59" value={draft[key].value} aria-invalid={dateValue(draft[key]) === undefined} aria-describedby={`${id}-dates-help`} onChange={(event) => {
+            <label><span>{copy[key]}</span><input className={inputClass} style={{ colorScheme: "var(--native-scheme)" }} type="datetime-local" step="1" min="0001-01-01T00:00:00" max="9999-12-31T23:59:59" value={draft[key].value} aria-invalid={dateValue(draft[key]) === undefined} aria-describedby={`${id}-dates-help`} onChange={(event) => {
               const { value, validity } = event.currentTarget
               setDraft({ ...draft, [key]: { ...draft[key], value, edited: true, cleared: false, invalid: !validity.valid } })
             }} /></label>
