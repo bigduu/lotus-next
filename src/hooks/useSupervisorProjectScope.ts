@@ -10,6 +10,14 @@ export interface ProjectScopeDependencies {
 }
 export const defaultProjectScopeDependencies: ProjectScopeDependencies = { ...supervisorScopeClient, bridge: unavailableProjectScopeOwnerBridge }
 type Notice = { kind: "cancelled" | "saved" | "conflict" | "rejected" | "unavailable" | "unknown"; code?: ScopeErrorCode }
+function refused(outcome: Extract<ProjectScopeOwnerOutcome, { kind: "rejected" }>): Notice {
+  const { status, code } = outcome
+  if ((status === 401 || status === 403) && (!code || ["host_owner_authorization_required", "supervisor_identity_mismatch"].includes(code))) return { kind: "rejected", code }
+  if (status === 409 && (code === "scope_revision_conflict" || code === "project_archived")) return { kind: "conflict", code }
+  if (status === 503 && code && ["host_owner_authorization_unavailable", "scope_authority_invalid", "scope_unavailable", "project_store_unavailable"].includes(code)) return { kind: "unavailable", code }
+  if (status === 404 && (code === "supervisor_missing" || code === "project_unavailable") || status === 400 && code === "project_scope_invalid") return { kind: "rejected", code }
+  return { kind: "unknown" }
+}
 interface View {
   observation: ProjectScopeResponse | null; projects: readonly ProjectOption[]; draft: readonly string[] | null
   reading: boolean; catalogError: boolean; nativeAvailable: boolean; problem: ScopeProblem | null
@@ -97,7 +105,7 @@ export function useSupervisorProjectScope(open: boolean, dependencies = defaultP
       if (outcome?.kind === "applied") {
         try { receipt = decodeProjectScopeReceipt(outcome.receipt, intent) } catch { /* Do not claim success. */ }
       } else if (outcome?.kind === "unavailable") notice = { kind: "unavailable" }
-      else if (outcome?.kind === "rejected") notice = { kind: outcome.status === 409 ? "conflict" : outcome.status === 503 ? "unavailable" : "rejected", code: outcome.code }
+      else if (outcome?.kind === "rejected") notice = refused(outcome)
       const fresh = await load(true)
       if (!current()) return
       if (receipt && fresh && sameSupervisor(receipt.supervisor, fresh.scope.supervisor)

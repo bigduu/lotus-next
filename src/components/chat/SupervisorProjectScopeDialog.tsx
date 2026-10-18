@@ -7,7 +7,7 @@ import type { ScopeErrorCode } from "@services/supervisorScope/types"
 
 const noticeKeys = {
   cancelled: "supervisor_scope_cancelled", saved: "supervisor_scope_saved", conflict: "supervisor_scope_conflict",
-  rejected: "supervisor_scope_rejected", unavailable: "supervisor_scope_unavailable", unknown: "supervisor_scope_unknown",
+  rejected: "supervisor_scope_forbidden", unavailable: "supervisor_scope_unavailable", unknown: "supervisor_scope_unknown",
 } as const
 const problemKeys = { unsupported: "supervisor_scope_unsupported", missing: "supervisor_scope_missing", forbidden: "supervisor_scope_forbidden",
   conflict: "supervisor_scope_conflict", unavailable: "supervisor_scope_storage", invalid: "supervisor_scope_invalid", error: "supervisor_scope_error" } as const

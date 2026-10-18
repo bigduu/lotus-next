@@ -105,3 +105,9 @@ it("ignores a late observation across close/reopen", async () => {
   await act(async () => { pending.resolve(scopeFixture()); await read })
   expect(h.value.observation?.scope.state_revision).toBe(7); expect(h.value.review).toBeNull()
 })
+
+it.each([[500, "scope_unavailable"], [503, undefined], [409, "host_owner_authorization_required"]] as const)("keeps unexpected native refusal %i/%s unconfirmed", async (status, code) => {
+  const h = await mount(); h.review(); h.apply.mockResolvedValue({ kind: "rejected", status, code })
+  await h.confirm(); expect(h.value.notice?.kind).toBe("unknown")
+  expect(h.read).toHaveBeenCalledTimes(2); expect(h.apply).toHaveBeenCalledTimes(1)
+})

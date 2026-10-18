@@ -79,7 +79,10 @@ for (const [status, code, message] of [[404, "supervisor_missing", "可信 Super
     const { dialog } = await open(page, info.project.name === "phone-chromium")
     await expect(dialog).toContainText(message)
     await expect(dialog.getByRole("button", { name: "在 Bodhi 原生窗口中确认", exact: true })).toHaveCount(0)
-    expect(f.requests.filter((r) => r.path === "/api/v1/supervisor/default/scope").map((r) => r.method)).toEqual(["GET"])
+    // Existing transport may retry a safe 503 read within its bounded budget.
+    const reads = f.requests.filter((r) => r.path === "/api/v1/supervisor/default/scope")
+    expect(reads.length).toBeGreaterThan(0); expect(reads.length).toBeLessThanOrEqual(3)
+    expect(reads.every((r) => r.method === "GET")).toBe(true)
     expect(f.requests.filter((r) => r.method !== "GET" && /supervisor|tickets\/initialize/.test(r.path))).toEqual([])
   })
 }
