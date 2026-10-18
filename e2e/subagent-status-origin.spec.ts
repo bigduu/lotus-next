@@ -13,6 +13,9 @@ const spawn = (id: string, childId: string) => [{
 async function fixture(page: Page) {
   await page.addInitScript((id) => { localStorage.setItem("bodhi_onboarded_v1", "1"); localStorage.setItem("lotus_next_last_session", id) }, rootId)
   const observation = await installArtifactRuntime(page, standaloneScenario)
+  // Observe requests even when this fixture fulfills them before the fallback runtime.
+  const requests: string[] = []
+  page.on("request", (request) => requests.push(request.url()))
   const snapshot = actorSnapshotFixture(rootId, 3, cursor(1))
   for (const [index, status] of (["succeeded", "failed", "cancelled"] as const).entries()) {
     Object.assign(snapshot.nodes[index + 1], {
@@ -70,7 +73,7 @@ async function fixture(page: Page) {
     if (path === "/api/v1/runs/active") return route.fulfill({ json: { sessions: [{ session_id: rootId, run_id: "fixture-parent", started_at: at, round_count: 1, last_critical_events: [], running_child_session_ids: rows.slice(1).map((row) => row.id) }] } })
     return route.fallback()
   })
-  return { snapshot, history, observation, channels,
+  return { snapshot, history, observation, channels, requests,
     get reads() { return reads }, get sockets() { return sockets },
     setDenied(value: boolean) { denied = value },
     emit(event: object) { socket!.send(JSON.stringify({ ch: `agent.${rootId}`, seq: ++sequence, event })) },
@@ -165,7 +168,7 @@ test("child expansion survives virtual row removal and opens the original transc
   const toggle = card.locator("[data-subagent-toggle]")
   await toggle.click()
   await expect(toggle).toHaveAttribute("aria-expanded", "true")
-  const childReads = () => state.observation.httpRequests.filter(({ url }) => ["/api/v1/history/actor-0", "/api/v1/sessions/actor-0/history"].includes(new URL(url).pathname)).length
+  const childReads = () => state.requests.filter((url) => ["/api/v1/history/actor-0", "/api/v1/sessions/actor-0/history"].includes(new URL(url).pathname)).length
   expect(childReads()).toBe(0)
   state.history.push(...Array.from({ length: 100 }, (_, index) => user(`Later turn ${index}: keep independent child choices`)))
   await expect.poll(() => state.channels.has(`agent.${rootId}`)).toBe(true)
