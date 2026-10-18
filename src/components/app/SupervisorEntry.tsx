@@ -1,4 +1,4 @@
-import { useId, useState } from "react"
+import { useId, useRef, useState } from "react"
 import { CircleDot, MoreHorizontal, Pencil } from "lucide-react"
 import { useUiText } from "@shared/i18n/ui"
 import type { ChatItem } from "@shared/types/chatMessages"
@@ -8,6 +8,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { useSidebarContextMenu } from "@/hooks/useSidebarContextMenu"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { cn } from "@/lib/utils"
+import { SupervisorProjectScopeDialog } from "@/components/chat/SupervisorProjectScopeDialog"
 
 export function SupervisorEntry({ chat, active, unread, busy, disabled, onSelect, onRename }: {
   chat?: ChatItem
@@ -24,6 +25,8 @@ export function SupervisorEntry({ chat, active, unread, busy, disabled, onSelect
   const statusId = useId()
   const nameId = useId()
   const [open, setOpen] = useState(false)
+  const [scopeOpen, setScopeOpen] = useState(false)
+  const scopeTrigger = useRef<HTMLButtonElement>(null)
   const [draft, setDraft] = useState("")
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState(false)
@@ -45,7 +48,7 @@ export function SupervisorEntry({ chat, active, unread, busy, disabled, onSelect
     }
   }
 
-  return <Dialog open={open} onOpenChange={(value) => { if (!saving) setOpen(value) }}>
+  return <><Dialog open={open} onOpenChange={(value) => { if (!saving) setOpen(value) }}>
     <div className="mb-2">
       <div {...menu.rowProps} className={cn("flex select-none items-center rounded-md", active && "bg-sidebar-accent")}>
         <Button variant="ghost" aria-current={active ? "page" : undefined}
@@ -65,14 +68,15 @@ export function SupervisorEntry({ chat, active, unread, busy, disabled, onSelect
           </Button>
         </DialogTrigger>
         <DropdownMenu open={menu.open} onOpenChange={menu.onOpenChange}>
-          <DropdownMenuTrigger aria-label={uiText("session_actions_e6f6d875")} disabled={disabled}
+          <DropdownMenuTrigger ref={scopeTrigger} aria-label={uiText("session_actions_e6f6d875")} disabled={disabled}
             className="mr-1 rounded p-1 text-muted-foreground outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring">
             <MoreHorizontal className="size-4" />
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" onCloseAutoFocus={open ? (event) => event.preventDefault() : menu.onCloseAutoFocus}>
+          <DropdownMenuContent align="end" onCloseAutoFocus={open || scopeOpen ? (event) => event.preventDefault() : menu.onCloseAutoFocus}>
             <DropdownMenuItem disabled={!chat} onSelect={() => { setDraft(title); setError(false); setOpen(true) }}>
               <Pencil />{uiText("supervisor_rename")}
             </DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => setScopeOpen(true)}>{uiText("supervisor_scope_title")}</DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
@@ -95,4 +99,6 @@ export function SupervisorEntry({ chat, active, unread, busy, disabled, onSelect
       </DialogContent>
     </div>
   </Dialog>
+    {scopeOpen ? <SupervisorProjectScopeDialog open onOpenChange={setScopeOpen} returnFocus={() => scopeTrigger.current?.focus()} /> : null}
+  </>
 }
