@@ -16,6 +16,15 @@ it("uses explicit project identity and pins every following page to its original
   expect((await projectBoardClient.page("project", false, loaded)).data.rows.map((row) => row.ticket.id)).toEqual(["A", "B"])
   expect(apiClient.post).toHaveBeenLastCalledWith("tickets/project-board", { project_id: "project", include_cancelled: false, include_archived: false, limit: 100, cursor: first.next_cursor, fixed_commit: first.snapshot.commit }, { signal: undefined })
 })
+it.each([{ kind: "backlog" } as const, { kind: "sprint", sprint_id: "closed-sprint" } as const])("sends the additive %j filter without deriving membership or counts in the client", async (filter) => {
+  const result = page()
+  vi.mocked(apiClient.post).mockResolvedValue(result)
+  expect(await projectBoardClient.page("project", false, undefined, undefined, filter)).toEqual(result)
+  expect(apiClient.post).toHaveBeenCalledExactlyOnceWith("tickets/project-board", {
+    project_id: "project", include_cancelled: false, include_archived: false, limit: 100,
+    cursor: null, fixed_commit: null, sprint_filter: filter,
+  }, { signal: undefined })
+})
 it.each(["snapshot", "project", "duplicate", "cursor", "counts"])("rejects inconsistent %s instead of merging silently", async (kind) => {
   const first = page(); first.next_cursor = { commit: first.snapshot.commit, offset: 1, query_hash: "q" }
   const second = page(); second.data.rows[0].ticket.id = "B"

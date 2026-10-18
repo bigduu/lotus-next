@@ -34,6 +34,10 @@ for (const scenario of [
         await route.fulfill({ status: scenario.sessionStatus, json: scenario.sessionStatus === 200
           ? { session: { id: assignment.runtime.session_id, kind: "child", project_id: board.data.project_id } }
           : { error: "Synthetic access fixture" } })
+      } else if ((request.method() === "POST" && path.endsWith("/tickets/sprints/list")) || (request.method() === "GET" && path.endsWith("/tickets/scope"))) {
+        // This older fixture deliberately has no Sprint capability. New read
+        // probes must preserve its original All Work behavior.
+        await route.fulfill({ status: 404, json: { error: "Sprint planning unavailable in this legacy fixture" } })
       } else { unexpected.push(`${request.method()} ${path}`); await route.abort("blockedbyclient") }
     })
     await page.setViewportSize({ width: scenario.width, height: 900 })

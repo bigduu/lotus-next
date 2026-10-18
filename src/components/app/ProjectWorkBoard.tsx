@@ -16,6 +16,8 @@ import { ResponsiveDialog, ResponsiveDialogContent, ResponsiveDialogDescription,
 
 import { AssignmentHealthPanel } from "./project-work/AssignmentHealthPanel"
 import { makeAssignmentHealthCopy } from "./project-work/assignmentHealthCopy"
+import { ProjectSprintPanel } from "./project-work/ProjectSprintPanel"
+import type { SprintFilter } from "@services/tickets/sprints"
 
 const stages: BoardStage[] = ["todo", "doing", "testing", "done"]
 export type OpenWorkSession = (id: string, verifyAccess: () => Promise<boolean>) => Promise<boolean>
@@ -105,7 +107,8 @@ export function ProjectWorkBoard({ project, controls, onOpenSession }: { project
   const [mode, setMode] = useState<"list" | "board">("list")
   const [cancelled, setCancelled] = useState(false)
   const [selectedId, setSelectedId] = useState<string | null>(null)
-  const { page, error, busy, owner, refresh, loadMore } = useProjectWorkBoard(project.id, cancelled)
+  const [sprintFilter, setSprintFilter] = useState<SprintFilter | null>(null)
+  const { page, error, busy, owner, refresh, loadMore } = useProjectWorkBoard(project.id, cancelled, sprintFilter)
   const rows = page?.data.rows ?? []
   const selected = rows.find((row) => row.ticket.id === selectedId)
   const planning = selected && controls?.planning && matchesSelectedWork(controls.planning.work, selected) ? controls.planning : null
@@ -133,6 +136,8 @@ export function ProjectWorkBoard({ project, controls, onOpenSession }: { project
       <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={cancelled} onChange={(event) => { setSelectedId(null); setCancelled(event.target.checked) }} />{uiText("project_work_cancelled")}</label>
       <Button size="sm" variant="ghost" disabled={busy || !owner} onClick={refresh}>{uiText("refresh_aee88743")}</Button>
     </div>
+    <ProjectSprintPanel projectId={project.id} projectActive={project.status === "active"} snapshot={page?.snapshot ?? null} owner={owner} filter={sprintFilter} onRefresh={refresh}
+      onFilterChange={(filter) => { setSelectedId(null); setSprintFilter(filter) }} />
     <details className="mb-3 rounded-lg border p-3 text-xs"><summary className="cursor-pointer">{uiText("project_work_context")}</summary>
       <p className="mt-2"><ContextRevision context={{ project_id: project.id, project_revision: project.revision, resource_revision: project.resource_revision }} /></p>
       <p className="mt-2 font-medium">{uiText("project_work_repos")}</p>

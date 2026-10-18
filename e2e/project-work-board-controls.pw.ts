@@ -21,6 +21,10 @@ for (const [theme, width] of [["light", 1440], ["dark", 390]] as const) {
       } else if (request.method() === "POST" && path.endsWith("/tickets/inspect")) {
         expect(request.postDataJSON()).toMatchObject({ ids: [ticket.id], sections: ["assignments", "requests", "submissions"], fixed_commit: snapshot.commit })
         await route.fulfill({ json: { ...envelope, data: [{ ticket, assignments: [], requests: [], submissions: [] }] } })
+      } else if ((request.method() === "POST" && path.endsWith("/tickets/sprints/list")) || (request.method() === "GET" && path.endsWith("/tickets/scope"))) {
+        // This older fixture deliberately has no Sprint capability. New read
+        // probes must preserve its original All Work behavior.
+        await route.fulfill({ status: 404, json: { error: "Sprint planning unavailable in this legacy fixture" } })
       } else { unexpected.push(`${request.method()} ${path}`); await route.abort("blockedbyclient") }
     })
     await page.setViewportSize({ width, height: 900 })

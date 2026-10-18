@@ -1,10 +1,11 @@
-import { useCallback, useContext, useEffect, useRef, useState } from "react"
+import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react"
 import { getErrorMessage, isApiError } from "@services/api"
 import { projectBoardClient, type ProjectBoardPage } from "@services/tickets/projectBoard"
+import { sprintFilterKey, type SprintFilter } from "@services/tickets/sprints"
 import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { OwnerAccessContext } from "./ownerAccessContext"
 
-export function useProjectWorkBoard(projectId: string, includeCancelled: boolean) {
+export function useProjectWorkBoard(projectId: string, includeCancelled: boolean, sprintFilter?: SprintFilter | null) {
   useUiLocale()
   const owner = useContext(OwnerAccessContext)
   const [page, setPage] = useState<ProjectBoardPage | null>(null)
@@ -13,27 +14,33 @@ export function useProjectWorkBoard(projectId: string, includeCancelled: boolean
   const [revision, setRevision] = useState(0)
   const loadingMore = useRef(false)
   const active = useRef<AbortController | null>(null)
+  const filterKind = sprintFilter?.kind
+  const sprintId = sprintFilter?.kind === "sprint" ? sprintFilter.sprint_id : null
+  const filter = useMemo<SprintFilter | null>(() => filterKind === "backlog" ? { kind: "backlog" } : filterKind === "sprint" && sprintId ? { kind: "sprint", sprint_id: sprintId } : null, [filterKind, sprintId])
+  const queryKey = JSON.stringify([projectId, includeCancelled, sprintFilterKey(filter)])
+  const pageQuery = useRef(queryKey)
   const refresh = useCallback(() => { active.current?.abort(); setPage(null); setRevision((n) => n + 1) }, [])
   useEffect(() => {
     const controller = new AbortController()
     active.current = controller
+    pageQuery.current = queryKey
     loadingMore.current = false
     setPage(null); setError(null); setBusy(owner)
-    if (owner) void projectBoardClient.page(projectId, includeCancelled, undefined, controller.signal)
+    if (owner) void projectBoardClient.page(projectId, includeCancelled, undefined, controller.signal, filter)
       .then((result) => { if (!controller.signal.aborted) setPage(result) })
       .catch((failure) => {
         if (!controller.signal.aborted) setError(isApiError(failure) && failure.status === 404 ? uiText("project_work_unsupported") : getErrorMessage(failure))
       }).finally(() => { if (!controller.signal.aborted) setBusy(false) })
     window.addEventListener("online", refresh)
     return () => { controller.abort(); window.removeEventListener("online", refresh) }
-  }, [projectId, includeCancelled, owner, revision, refresh])
+  }, [projectId, includeCancelled, owner, revision, refresh, queryKey, filter])
   const loadMore = async () => {
     if (!page?.next_cursor || busy || loadingMore.current || !owner || active.current?.signal.aborted) return
     const controller = active.current!
     loadingMore.current = true
     setBusy(true)
     try {
-      const result = await projectBoardClient.page(projectId, includeCancelled, page, controller.signal)
+      const result = await projectBoardClient.page(projectId, includeCancelled, page, controller.signal, filter)
       if (!controller.signal.aborted) { setPage(result); setError(null) }
     } catch (failure) {
       if (controller.signal.aborted) return
@@ -42,5 +49,5 @@ export function useProjectWorkBoard(projectId: string, includeCancelled: boolean
       else setError(getErrorMessage(failure))
     } finally { if (!controller.signal.aborted) { loadingMore.current = false; setBusy(false) } }
   }
-  return { page: owner ? page : null, error, busy, refresh, loadMore, owner }
+  return { page: owner && pageQuery.current === queryKey ? page : null, error, busy, refresh, loadMore, owner }
 }

@@ -1,0 +1,108 @@
+{
+  "kind": "isolated-real-actix-router-http-contract",
+  "fixture": "producer-http-payload.json",
+  "source_commit": "b3a60a7f51b131b1f136ccb5fd78b2317f94a925",
+  "source_tree": "3bae5e25f941c82be73e63808ae3cdba269a0b72",
+  "producer_pr": "https://github.com/bigduu/Bamboo-agent/pull/2052",
+  "original_payload": "/Users/bigduu/Documents/Codex/2026-10-18/task-3/sprint-http-payload.json",
+  "original_payload_bytes": 9865,
+  "sha256": {
+    "producer-http-payload.json": "064adc49ed5fac7d5cd428522645e4f88e2f319a4b96d4b269561f49537de19e"
+  },
+  "producer_test_evidence": {
+    "receipt_path": "/Users/bigduu/Documents/Codex/2026-10-18/task-3/sprint-http-server-initial.json",
+    "receipt_sha256": "663411540c835370fb1122df3c309cd9c885e0d10cd91f99bc70fe087f046d6d",
+    "log_path": "/Users/bigduu/Documents/Codex/2026-10-18/task-3/sprint-http-server-initial.log",
+    "log_sha256": "e1e96498d79ebd308fab39606d6fb94105e864f70ce33812b5c7616b457c7fa7",
+    "exit_code": 0,
+    "source_unchanged": true,
+    "test_summaries": [
+      "test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.66s"
+    ],
+    "passed": 3,
+    "failed": 0,
+    "ignored": 0,
+    "filtered_out": 0
+  },
+  "project_id": "fa4c5a43-b6fb-479f-9cdf-c2391fe78889",
+  "work_id": "40fb8af1-b4cf-46dd-938a-6e765734c911",
+  "sprint_id": "a",
+  "captured_response_names": [
+    "create_response",
+    "list_response",
+    "close_response",
+    "inspect_response"
+  ],
+  "board_filter_examples_kind": "request-shape-examples-in-producer-capture-not-captured-board-responses",
+  "limitations": [
+    "Existing producer run used actual configure_routes with isolated temporary Jiandu and dispatch disabled.",
+    "No model or provider execution, TCP server, frontend browser or persisted Session navigation was exercised by this evidence.",
+    "Frontend contract tests read these captured bytes only; they do not re-run or prove backend persistence/restart behavior.",
+    "The producer capture has an active list response and a later closed inspect response, not a paginated list or board response.",
+    "Current and closing counts happen to be equal in this capture; later divergence is a source contract, not an observed HTTP scenario here.",
+    "Only create and close request/response bodies are captured; other Sprint actions are source-reviewed and must not be labelled actual response fixtures.",
+    "This Sprint result does not validate planning #2054 or Accept-stop-guard #2056 HTTP contracts."
+  ],
+  "source_files": [
+    {
+      "path": "crates/infra/bamboo-tickets/src/sprint.rs",
+      "git_blob": "dd11c1e1646adac8f767f6fbf84dffb308773f84",
+      "sha256": "7b1b1d0494f72b3991ee44518246d9ebb643ec92d92ba681630717d5047b5fcd"
+    },
+    {
+      "path": "crates/infra/bamboo-tickets/src/sprint_query.rs",
+      "git_blob": "54760173e92481c6125caa53d361dffcec21f43b",
+      "sha256": "693f2f234fc31361ca47c5327ef049311aeb415ef483077fbb6d438af84be30f"
+    },
+    {
+      "path": "crates/infra/bamboo-tickets/src/model.rs",
+      "git_blob": "7aa86fb5aa0dba2cb590e70a847168ccae9fa751",
+      "sha256": "afb6aeb43a462ac3148d33bc1a8864447cfa70753228af3756123f2c1ce4c263"
+    },
+    {
+      "path": "crates/infra/bamboo-tickets/src/query.rs",
+      "git_blob": "d51d0ea192a6a1adb171bce5866fb26e1bf86122",
+      "sha256": "6238bcc0a533a8bbd6663132e62b008c8ca56007fb15c8e494c646bcd53cf903"
+    },
+    {
+      "path": "crates/infra/bamboo-tickets/src/lib.rs",
+      "git_blob": "e902e7d02e7fbde6b2a7952045ef884adf73f966",
+      "sha256": "2b9a02eef2de42d27de390c44d109b4586245c50925aa2f65f941dca3115747a"
+    },
+    {
+      "path": "crates/infra/bamboo-tickets/src/project.rs",
+      "git_blob": "84b3ca505166bdaf0809c78645c5fff0bc29b4e6",
+      "sha256": "6b527acd93c0826298ac0b479b14fd10cb495cefd25419c4d30102794968f710"
+    },
+    {
+      "path": "crates/app/bamboo-server/src/handlers/agent/tickets/sprints.rs",
+      "git_blob": "c2b2798d7890a849f45f5f7131d4c433a13e32e5",
+      "sha256": "7623bc98855ab0ed1296ab3229e91fdcec76c8a33bbd9c8958c73c2b72405531"
+    },
+    {
+      "path": "crates/app/bamboo-server/src/app_state/ticket_application/sprints.rs",
+      "git_blob": "f1f2e871aa636a78b97b150345104a18433cd6de",
+      "sha256": "45231154e724465767d58b303c84eef628d1f494da9597f7d8f4c650599413cb"
+    },
+    {
+      "path": "crates/app/bamboo-server/tests/sprint_planning_http.rs",
+      "git_blob": "e03d596939f87779f416cfc2ee9d17fa6d5647f6",
+      "sha256": "da99d5208e92e5e5e655e8aff2764ee86c9b48f55eb11b7219582ac18a7dd6a6"
+    },
+    {
+      "path": "crates/core/bamboo-domain/src/project.rs",
+      "git_blob": "1b21f17a25798fda6d85023150c75fdfa7a3564e",
+      "sha256": "534e16a8b93237a26ca2c855c96403377eff5c013b84e3e1d5bf51255c66f0a2"
+    },
+    {
+      "path": "docs/guides/TICKET_SPRINT_HTTP.md",
+      "git_blob": "ebc32f83225483659f21dec7097de9b417acd77a",
+      "sha256": "4588ad386760d8eacd6e9b50d5221b3dcbe835c19fef57b5b3fe86469a91491c"
+    },
+    {
+      "path": "docs/guides/TICKET_SPRINTS.md",
+      "git_blob": "57536ea45c8576369c0b1e1209c15af491c5c548",
+      "sha256": "c1b6273ac0d208bbcdad310a55bf0c7649b6a3a5c2ed14489ff63405eef72e19"
+    }
+  ]
+}
