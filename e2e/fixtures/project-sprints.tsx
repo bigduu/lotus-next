@@ -26,7 +26,7 @@ export function Fixture() {
     <header style={{ padding: 16, overflowWrap: "anywhere" }}>
       <h1 style={{ fontSize: 20, fontWeight: 600 }}>Sprint 看板浏览器验收</h1>
       <p style={{ marginTop: 8, fontSize: 13 }}>MOCK HTTP · Real ProjectWorkBoard + ProjectSprintPanel + owner forms. Controlled variations of the frozen #2052 capture. No live Bamboo, model, worker, or provider execution.</p>
-      <p data-testid="fixture-source" style={{ marginTop: 8, fontSize: 12 }}>Unfrozen source: {parameters.get("source") ?? "working tree"} · {parameters.get("theme") ?? "light"} theme</p>
+      <p data-testid="fixture-source" style={{ marginTop: 8, fontSize: 12 }}>Source: {parameters.get("source") ?? "working tree"} · {parameters.get("theme") ?? "light"} theme</p>
       <button type="button" data-testid="fixture-toggle-board" onClick={() => setVisible((value) => !value)} style={{ marginTop: 12, border: "1px solid currentColor", borderRadius: 6, padding: "6px 10px" }}>{visible ? "关闭合成看板" : "重新打开合成看板"}</button>
     </header>
     <OwnerAccessContext.Provider value={parameters.get("owner") !== "denied"}>

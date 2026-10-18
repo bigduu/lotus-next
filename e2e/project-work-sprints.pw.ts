@@ -32,7 +32,7 @@ const sourceFiles = [
 const sourceProof = () => ({
   head: execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim(),
   status: execFileSync("git", ["status", "--short"], { encoding: "utf8" }),
-  frozen: false,
+  frozen: execFileSync("git", ["status", "--porcelain"], { encoding: "utf8" }).trim() === "",
   files: Object.fromEntries(sourceFiles.map((name) => [name, sha256(readFileSync(name))])),
 })
 const initialSource = sourceProof()
@@ -218,7 +218,7 @@ const board = (page: Page) => page.getByTestId("project-work-board")
 const controls = (page: Page) => page.getByTestId("sprint-owner-controls")
 const filter = (page: Page) => page.getByTestId("project-sprint-filter")
 async function open(page: Page, theme = "light", locale = "zh-CN") {
-  await page.goto(`/e2e/fixtures/project-sprints.html?theme=${theme}&locale=${locale}&source=${initialSource.head.slice(0, 12)}%2Buncommitted`)
+  await page.goto(`/e2e/fixtures/project-sprints.html?theme=${theme}&locale=${locale}&source=${initialSource.head.slice(0, 12)}${initialSource.frozen ? "" : "%2Buncommitted"}`)
   await expect(page.getByTestId(`project-work-${workId}`)).toBeVisible()
   await expect(filter(page).locator('option[value="sprint:a"]')).toHaveCount(1)
 }
@@ -266,7 +266,7 @@ for (const width of [1440, 390]) for (const theme of ["light", "dark"]) {
     await expect(controls(page).getByRole("button", { name: "关闭 Sprint", exact: true })).toHaveCount(0)
     expect(await page.locator("html").evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1)
     expect(commands(mock)).toHaveLength(0)
-    await recordEvidence(page, mock, info, `sprint-parent-unfrozen-${width}x1000-${theme}-mock.png`)
+    await recordEvidence(page, mock, info, `sprint-parent-${initialSource.head.slice(0, 8)}-${width}x1000-${theme}-mock.png`)
   })
 }
 
