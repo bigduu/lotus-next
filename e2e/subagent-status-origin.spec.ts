@@ -62,8 +62,11 @@ async function fixture(page: Page) {
     const row = rows.find((item) => path === `/api/v1/sessions/${item.id}`)
     if (row) return route.fulfill({ json: { session: row } })
     if (path === `/api/v1/history/${rootId}`) return route.fulfill({ json: { session_id: rootId, messages: history } })
-    const child = rows.slice(1).find((item) => path === `/api/v1/history/${item.id}`)
-    if (child) return route.fulfill({ json: { session_id: child.id, messages: [user("Child transcript")] } })
+    const child = rows.slice(1).find((item) => path === `/api/v1/history/${item.id}` || path === `/api/v1/sessions/${item.id}/history`)
+    if (child) return route.fulfill({ json: { session_id: child.id, projection: "messages", is_delta: false,
+      truncated: false, total_message_count: 1,
+      messages: [{ id: "child-transcript", role: "assistant", content: "Child transcript", created_at: at }],
+    } })
     if (path === "/api/v1/runs/active") return route.fulfill({ json: { sessions: [{ session_id: rootId, run_id: "fixture-parent", started_at: at, round_count: 1, last_critical_events: [], running_child_session_ids: rows.slice(1).map((row) => row.id) }] } })
     return route.fallback()
   })
@@ -162,7 +165,7 @@ test("child expansion survives virtual row removal and opens the original transc
   const toggle = card.locator("[data-subagent-toggle]")
   await toggle.click()
   await expect(toggle).toHaveAttribute("aria-expanded", "true")
-  const childReads = () => state.observation.httpRequests.filter(({ url }) => new URL(url).pathname === "/api/v1/history/actor-0").length
+  const childReads = () => state.observation.httpRequests.filter(({ url }) => ["/api/v1/history/actor-0", "/api/v1/sessions/actor-0/history"].includes(new URL(url).pathname)).length
   expect(childReads()).toBe(0)
   state.history.push(...Array.from({ length: 100 }, (_, index) => user(`Later turn ${index}: keep independent child choices`)))
   await expect.poll(() => state.channels.has(`agent.${rootId}`)).toBe(true)
