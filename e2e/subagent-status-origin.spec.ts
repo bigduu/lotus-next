@@ -171,7 +171,9 @@ test("child expansion survives virtual row removal and opens the original transc
   await expect(page.getByText("Later turn 99: keep independent child choices", { exact: true })).toBeAttached()
   await content.evaluate((node) => { node.parentElement!.scrollTop = node.parentElement!.scrollHeight })
   await expect(card).toHaveCount(0)
-  await content.evaluate((node) => { node.parentElement!.scrollTop = 0 })
+  // Release the existing bottom pin through actual reader input.
+  await content.locator("..").hover({ position: { x: 12, y: 12 } })
+  await page.mouse.wheel(0, -100000)
   await expect(toggle).toHaveAttribute("aria-expanded", "true")
   await expect(card.locator("[data-subagent-details]")).toBeVisible()
   expect(childReads()).toBe(0)
