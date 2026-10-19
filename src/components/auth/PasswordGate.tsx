@@ -10,6 +10,8 @@ export interface PasswordGateProps {
     signal: AbortSignal,
   ) => Promise<PasswordVerificationOutcome>
   onVerified: () => void
+  embedded?: boolean
+  description?: string
 }
 
 const passwordFailureMessage = (
@@ -27,7 +29,7 @@ const passwordFailureMessage = (
   }
 }
 
-export function PasswordGate({ verifyPassword, onVerified }: PasswordGateProps) {
+export function PasswordGate({ verifyPassword, onVerified, embedded = false, description }: PasswordGateProps) {
   useUiLocale()
   const [password, setPassword] = useState("")
   const [error, setError] = useState<string | null>(null)
@@ -76,13 +78,13 @@ export function PasswordGate({ verifyPassword, onVerified }: PasswordGateProps) 
   }
 
   return (
-    <div className="flex h-full items-center justify-center bg-background p-6">
+    <div className={embedded ? "flex justify-center py-2" : "flex h-full items-center justify-center bg-background p-6"}>
       <form
         className="w-full max-w-sm rounded-2xl border bg-card p-6 shadow-lg"
         onSubmit={(event) => void submit(event)}
       >
         <h1 className="text-xl font-semibold">{uiText("enter_access_password_c0052de1")}</h1>
-        <p className="mt-1 text-sm text-muted-foreground">{uiText("password_verification_is_required_before_entering_the_a_13035473")}</p>
+        <p className="mt-1 text-sm text-muted-foreground">{description ?? uiText("password_verification_is_required_before_entering_the_a_13035473")}</p>
 
         <label className="mt-5 block text-sm font-medium" htmlFor="access-password">
           {uiText("access_password_f4f712d5")}</label>

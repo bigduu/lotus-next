@@ -1,21 +1,23 @@
-import { useId } from "react"
+import { useId, useState } from "react"
 import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { useSupervisorProjectScope, type ProjectScopeDependencies } from "@/hooks/useSupervisorProjectScope"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
-import type { ProjectScopeOwnerNoticeCode } from "@services/supervisorScope/ownerBridge"
+import type { ScopeErrorCode } from "@services/supervisorScope/types"
+import { PasswordGate } from "@/components/auth/PasswordGate"
+import { verifyServerPassword } from "@services/bootstrap/serverBootstrap"
 
 const noticeKeys = {
-  cancelled: "supervisor_scope_cancelled", saved: "supervisor_scope_saved", conflict: "supervisor_scope_conflict",
+  authentication: "supervisor_scope_authentication_required", saved: "supervisor_scope_saved", conflict: "supervisor_scope_conflict",
   rejected: "supervisor_scope_forbidden", unavailable: "supervisor_scope_unavailable", unknown: "supervisor_scope_unknown",
 } as const
-const problemKeys = { unsupported: "supervisor_scope_unsupported", missing: "supervisor_scope_missing", forbidden: "supervisor_scope_forbidden",
+const problemKeys = { unsupported: "supervisor_scope_unsupported", missing: "supervisor_scope_missing", authentication: "supervisor_scope_authentication_required", forbidden: "supervisor_scope_forbidden",
   conflict: "supervisor_scope_conflict", unavailable: "supervisor_scope_storage", invalid: "supervisor_scope_invalid", error: "supervisor_scope_error" } as const
-const codeKeys: Record<ProjectScopeOwnerNoticeCode, Parameters<typeof uiText>[0]> = {
-  native_confirmation_not_enabled: "supervisor_scope_confirmation_disabled", native_confirmation_unsupported_platform: "supervisor_scope_confirmation_unsupported",
-  native_confirmation_no_gui: "supervisor_scope_confirmation_no_gui", native_confirmation_thread_unavailable: "supervisor_scope_confirmation_thread",
-  native_confirmation_unavailable: "supervisor_scope_confirmation_unavailable", native_confirmation_cancelled: "supervisor_scope_cancelled",
-  native_confirmation_window_closed: "supervisor_scope_cancelled_closed", native_confirmation_timed_out: "supervisor_scope_cancelled_timeout",
+const codeKeys: Record<ScopeErrorCode, Parameters<typeof uiText>[0]> = {
+  owner_authentication_required: "supervisor_scope_authentication_required",
+  owner_authentication_unconfigured: "supervisor_scope_authentication_unconfigured",
+  owner_authentication_unavailable: "supervisor_scope_authentication_unavailable",
+  owner_request_origin_invalid: "supervisor_scope_origin_invalid",
   scope_revision_conflict: "supervisor_scope_conflict", project_scope_invalid: "supervisor_scope_invalid",
   host_owner_authorization_unavailable: "supervisor_scope_unavailable", host_owner_authorization_required: "supervisor_scope_rejected",
   scope_authority_invalid: "supervisor_scope_authority_invalid", supervisor_identity_mismatch: "supervisor_scope_identity",
@@ -29,7 +31,10 @@ export function SupervisorProjectScopeDialog({ open, onOpenChange, dependencies,
 }) {
   useUiLocale()
   const state = useSupervisorProjectScope(open, dependencies)
+  const [passwordOpen, setPasswordOpen] = useState(false)
   const prefix = useId(), scope = state.observation?.scope
+  const authorization = state.observation?.owner_authorization
+  const authCode = state.notice?.code ?? state.problem?.code ?? (authorization?.kind === "authenticated_owner" ? authorization.code : null)
   const projects = new Map(state.projects.map((project) => [project.id, project]))
   const ids = [...new Set([...projects.keys(), ...(scope?.allowed_projects ?? []), ...(state.draft ?? [])])].sort()
   const added = state.draft?.filter((id) => !scope?.allowed_projects.includes(id)) ?? []
@@ -48,15 +53,20 @@ export function SupervisorProjectScopeDialog({ open, onOpenChange, dependencies,
       <div className="space-y-3 text-sm" data-testid="supervisor-project-scope">
         {state.reading ? <p role="status">{uiText("supervisor_scope_loading")}</p> : null}
         {problem ? <p role="alert">{problem}</p> : null}
-        {notice ? <p role={state.notice?.kind === "saved" || state.notice?.kind === "cancelled" ? "status" : "alert"}>{notice}</p> : null}
+        {notice ? <p role={state.notice?.kind === "saved" ? "status" : "alert"}>{notice}</p> : null}
+        {authCode === "owner_authentication_required" && !state.submitting ? <>
+          {passwordOpen ? <PasswordGate embedded description={uiText("supervisor_scope_password_description")} verifyPassword={verifyServerPassword}
+            onVerified={() => { setPasswordOpen(false); void state.refresh() }} />
+            : <Button variant="outline" onClick={() => setPasswordOpen(true)}>{uiText("supervisor_scope_password_verify")}</Button>}
+        </> : null}
         {scope ? <>
           <p data-testid="project-scope-current">{uiText(scope.allowed_projects.length ? "supervisor_scope_configured" : "supervisor_scope_empty", { count: scope.allowed_projects.length })}</p>
           <dl className="space-y-1 text-xs [overflow-wrap:anywhere]">
             <dt>{uiText("supervisor_scope_identity_label")}</dt><dd>{scope.supervisor.session_id} · {scope.supervisor.incarnation_id}</dd>
             <dt>{uiText("supervisor_scope_revision")}</dt><dd>{scope.state_revision}</dd>
           </dl>
-          {!state.reading ? <p role="status">{uiText(state.nativeAvailable ? "supervisor_scope_native_ready"
-            : state.nativeUnavailableCode ? codeKeys[state.nativeUnavailableCode] : "supervisor_scope_bridge_unavailable")}</p> : null}
+          {!state.reading ? <p role="status">{uiText(authorization?.kind !== "authenticated_owner" ? "supervisor_scope_http_unsupported"
+            : authorization.code ? codeKeys[authorization.code] : state.writeAvailable ? "supervisor_scope_http_ready" : "supervisor_scope_authentication_unavailable")}</p> : null}
           <p className="text-muted-foreground">{uiText("supervisor_scope_boundaries")}</p>
           {state.catalogError ? <p role="alert">{uiText("supervisor_scope_catalog_error")}</p> : null}
           {state.review ? <section data-testid="project-scope-review" className="space-y-2 [overflow-wrap:anywhere]">
@@ -66,7 +76,7 @@ export function SupervisorProjectScopeDialog({ open, onOpenChange, dependencies,
             <p>{uiText("supervisor_scope_added")}: {added.join(", ") || uiText("supervisor_scope_none")}</p>
             <p>{uiText("supervisor_scope_removed")}: {removed.join(", ") || uiText("supervisor_scope_none")}</p>
             <p>{uiText("supervisor_scope_removal_effect")}</p>
-            <p>{uiText("supervisor_scope_native_review")}</p>
+            <p>{uiText("supervisor_scope_http_review")}</p>
           </section> : <fieldset disabled={!state.canEdit} className="space-y-2">
             <legend className="mb-2 font-medium">{uiText("supervisor_scope_choose")}</legend>
             {!ids.length ? <p>{uiText("supervisor_scope_no_projects")}</p> : null}
@@ -83,7 +93,7 @@ export function SupervisorProjectScopeDialog({ open, onOpenChange, dependencies,
           {state.invalidSelection && !state.catalogError ? <p role="alert">{uiText("supervisor_scope_invalid_selection")}</p> : null}
           {state.review ? <div className="flex flex-wrap gap-2">
             <Button variant="outline" disabled={state.submitting || state.reading} onClick={state.backToEdit}>{uiText("supervisor_scope_edit")}</Button>
-            <Button disabled={!state.canConfirm} onClick={() => void state.confirm()}>{uiText(state.submitting ? "supervisor_scope_confirming" : "supervisor_scope_native_confirm")}</Button>
+            <Button disabled={!state.canConfirm} onClick={() => void state.confirm()}>{uiText(state.submitting ? "supervisor_scope_http_confirming" : "supervisor_scope_http_confirm")}</Button>
           </div> : <Button variant="outline" disabled={!state.canEdit} onClick={state.reviewDraft}>{uiText("supervisor_scope_preview")}</Button>}
         </> : null}
       </div>
