@@ -433,6 +433,7 @@ export function MessageList({
   liveSegments,
   streamStatus,
   pendingUserText,
+  pendingUserImages = [],
   contentShiftX = 0,
   readOnly = false,
   forking,
@@ -459,6 +460,7 @@ export function MessageList({
   liveSegments: LiveSegment[]
   streamStatus: string | null
   pendingUserText: string | null
+  pendingUserImages?: readonly { url?: string; base64?: string; type?: string }[]
   /** Horizontal transcript offset used while a floating panel occupies the end side. */
   contentShiftX?: number
   /** Suppress transcript actions for message-only child previews. */
@@ -474,6 +476,7 @@ export function MessageList({
   useUiLocale()
   const [editingMsg, setEditingMsg] = useState<{ id: string; text: string } | null>(null)
 
+  const hasPendingUser = Boolean(pendingUserText?.trim() || pendingUserImages.length)
   const renderItems = useMemo(() => buildRenderItems(messages), [messages])
   const liveItems = useMemo(
     () => buildLiveItems(liveSegments, streaming, streamingReasoning, sending || streamingActive, streamStatus),
@@ -576,13 +579,24 @@ export function MessageList({
       messages: item.parts.flatMap((part) => part.kind === "tools" ? part.items : []),
     }] : []), mergedSubAgents), [renderItems, liveItems, mergedSubAgents])
 
+  const renderImages = (imgs: readonly { url?: string; base64?: string; type?: string }[] | undefined) => imgs?.length ? (
+    <div className="mb-1.5 flex flex-wrap gap-1.5">
+      {imgs.map((im, i) => {
+        const src = im.url || `data:${im.type || "image/png"};base64,${im.base64}`
+        return <img key={i} src={src} alt=""
+          className="max-h-48 cursor-zoom-in rounded-xl transition-opacity hover:opacity-90"
+          onClick={() => onPreviewImage(src)} />
+      })}
+    </div>
+  ) : null
+
   const renderItem = (
     it: RenderItem,
     idx: number,
     options?: { live?: boolean },
   ) => {
     if (it.kind === "process") {
-      const active = options?.live ? it.active : idx === renderItems.length - 1 && sending && !pendingUserText && !latestRunFinished && liveItems.length === 0
+      const active = options?.live ? it.active : idx === renderItems.length - 1 && sending && !hasPendingUser && !latestRunFinished && liveItems.length === 0
       const reasoning = it.parts.findLast((part) => part.kind === "reasoning")
       const latestTool = it.parts.findLast((part) => part.kind === "tools" && part.runningCallIds?.size)
         ?? it.parts.findLast((part) => part.kind === "tools")
@@ -730,22 +744,7 @@ export function MessageList({
               : ASSISTANT_MESSAGE_SURFACE,
           )}
         >
-          {imgs?.length ? (
-            <div className="mb-1.5 flex flex-wrap gap-1.5">
-              {imgs.map((im, i) => {
-                const src = im.url || `data:${im.type || "image/png"};base64,${im.base64}`
-                return (
-                  <img
-                    key={i}
-                    src={src}
-                    alt=""
-                    className="max-h-48 cursor-zoom-in rounded-xl transition-opacity hover:opacity-90"
-                    onClick={() => onPreviewImage(src)}
-                  />
-                )
-              })}
-            </div>
-          ) : null}
+          {renderImages(imgs)}
           {isUser ? (
             <>{m.role === "user" && "inReplyTo" in m && m.inReplyTo ? <div className="mb-1 text-xs" data-testid="message-request-reference">{uiText("ticket_referenced_request__7209ca36")}{m.inReplyTo}</div> : null}{text}</>
           ) : text.trim() ? (
@@ -776,7 +775,7 @@ export function MessageList({
           {subAgentError}{onRefreshSubAgents ? <Button variant="ghost" size="sm" onClick={onRefreshSubAgents}>{uiText("subagent_refresh")}</Button> : null}
         </div> : null}
         <SubAgents agents={subAgentGroups.unplaced} originUnconfirmed onOpen={onSelectSubAgent} expandedIds={openSubAgentIds} onExpandedChange={setSubAgentExpanded} />
-        {messages.length === 0 && !streaming && !pendingUserText && liveSegments.length === 0 && (
+        {messages.length === 0 && !streaming && !hasPendingUser && liveSegments.length === 0 && (
           <div className="flex flex-col items-center gap-2 py-20 text-center">
             <BrandMark className="size-10 text-primary" />
             <p className="text-sm text-muted-foreground">{uiText("start_a_new_conversation_bab6ab18")}</p>
@@ -814,9 +813,10 @@ export function MessageList({
           </div>
         ) : null}
 
-        {pendingUserText ? (
+        {hasPendingUser ? (
           <div className="mt-2 flex justify-end">
             <div data-pending-user-message data-message-role="user" className="user-message-surface max-w-[85%] overflow-hidden whitespace-pre-wrap rounded-2xl px-3.5 py-2 text-base leading-7 [overflow-wrap:anywhere]">
+              {renderImages(pendingUserImages)}
               {pendingUserText}
             </div>
           </div>

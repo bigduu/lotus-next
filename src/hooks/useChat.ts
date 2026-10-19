@@ -31,7 +31,7 @@ import {
 import {
   getRootModeFenceState,
 } from "@/lib/rootModeTransitionFence"
-import type { Message } from "@shared/types/chat"
+import type { Message, MessageImage } from "@shared/types/chat"
 import { resolveNewChatModelRef } from "@shared/types/providerConfig"
 import type { ProviderModelRef } from "@shared/types/providerModelRef"
 import {
@@ -153,10 +153,13 @@ type RetainedTerminal = {
   baselineMessageId: string | null
 }
 
+const EMPTY_PENDING_IMAGES: readonly MessageImage[] = []
+
 type PendingUserMessage = {
   operationId: number
   sid: string
   text: string
+  images: readonly MessageImage[]
   acknowledgedMessageId: string | null
   baselineMessageIds: ReadonlySet<string>
 }
@@ -461,7 +464,9 @@ export function useChat(
   const pendingIsHydrated = !!pending && pending.sid === sid && hasPersistedUserMessage(messages, pending)
   // Swap to the persisted bubble in this render, before the cleanup effect,
   // so history arrival cannot produce a frame containing both copies.
-  const pendingUserText = pending?.sid === sid && !pendingIsHydrated ? pending.text : null
+  const visiblePending = pending?.sid === sid && !pendingIsHydrated ? pending : null
+  const pendingUserText = visiblePending?.text ?? null
+  const pendingUserImages = visiblePending?.images ?? EMPTY_PENDING_IMAGES
   const sendFailure = sendFailures.get(sid ?? null) ?? null
 
   const noteSessionOperation = useCallback((sessionId: string | null, operationId: number) => {
@@ -1593,6 +1598,7 @@ export function useChat(
     ): Promise<SendSubmissionResult> => {
       const body = text.trim()
       if (!body && !opts?.images?.length) return { kind: "ignored" }
+      const submittedImages = opts?.images?.map((image) => ({ ...image })) ?? []
       if (activeSendRef.current) return { kind: "busy" }
 
       const startSid = sid
@@ -1680,7 +1686,7 @@ export function useChat(
             ? submittedThinkingMode ?? (opts?.rootOrchestrationOnly === undefined
               ? undefined : opts.rootOrchestrationOnly ? "ultra" : "standard")
             : undefined,
-          images: opts?.images?.length ? opts.images : undefined,
+          images: submittedImages.length ? submittedImages : undefined,
           // Only meaningful when creating a NEW session; an existing session keeps
           // the cwd it was created with.
           workspace_path: !startSid && opts?.workspacePath ? opts.workspacePath : undefined,
@@ -1768,11 +1774,16 @@ export function useChat(
         }
       } else {
         setSubmissionPending(false)
-        if (body) {
+        if (body || submittedImages.length) {
           setPending({
             operationId: operation.id,
             sid: acknowledgedSessionId,
             text: body,
+            images: submittedImages.map((image, index) => ({
+              id: `pending-${operation.id}-${index}`, name: image.name ?? "image", size: image.size ?? 0,
+              type: image.type || "image/png", base64: image.base64,
+              url: image.base64.startsWith("data:") ? image.base64 : `data:${image.type || "image/png"};base64,${image.base64}`,
+            })),
             acknowledgedMessageId,
             baselineMessageIds,
           })
@@ -2053,6 +2064,7 @@ export function useChat(
     streamStatus,
     outputRate,
     pendingUserText,
+    pendingUserImages,
     sending,
     submissionPending,
     select,

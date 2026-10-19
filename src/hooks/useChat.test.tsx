@@ -2406,3 +2406,32 @@ describe("owned streams without a terminal frame", () => {
     expect(controller.signal.aborted).toBe(false)
   })
 })
+
+
+describe("image attachment visibility", () => {
+  it.each(["", "caption with image"])("retains acknowledged pending image metadata until exact history hydration (%s)", async (text) => {
+    const sid = "image-pending-session", history = deferred<void>()
+    const image = { base64: "R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7", name: "fixture.gif", size: 42, type: "image/gif" }
+    mocks.appState.chats = [{ id: sid, messages: [] }]
+    mocks.sendMessage.mockResolvedValueOnce({ session_id: sid, message_id: "accepted-image" })
+    mocks.appState.loadChatHistory.mockReturnValueOnce(history.promise)
+    mocks.subscribeToEvents.mockReturnValueOnce(pendingForever())
+    const hook = await mountUseChat({ mode: "bound", sessionId: sid })
+    await act(async () => { await hook.current.send(text, { images: [image] }) })
+    expect(mocks.sendMessage.mock.calls[0][0].images).toEqual([image])
+    expect(hook.current.pendingUserText).toBe(text)
+    expect(hook.current.pendingUserImages).toHaveLength(1)
+    expect(hook.current.pendingUserImages[0]).toMatchObject({ name: "fixture.gif", size: 42, type: "image/gif", url: `data:image/gif;base64,${image.base64}` })
+    await hook.rerender({ mode: "bound", sessionId: "other-session" })
+    expect(hook.current.pendingUserImages).toHaveLength(0)
+    await hook.rerender({ mode: "bound", sessionId: sid })
+    expect(hook.current.pendingUserImages).toHaveLength(1)
+    await act(async () => {
+      mocks.appState.chats[0].messages = [{ id: "accepted-image", role: "user", content: text,
+        images: [{ id: "persisted-image", url: "http://localhost:9563/api/v1/sessions/image-pending-session/attachments/image-1", name: "fixture.gif", type: "image/gif", size: 42 }], createdAt: "2026-10-19T00:00:00Z" }]
+      history.resolve(); await Promise.resolve(); await Promise.resolve()
+    })
+    expect(hook.current.pendingUserText).toBeNull()
+    expect(hook.current.pendingUserImages).toHaveLength(0)
+  })
+})

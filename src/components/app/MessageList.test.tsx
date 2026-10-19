@@ -53,8 +53,10 @@ vi.mock("@/components/chat/ToolCalls", () => ({
 }))
 
 import { MessageList } from "./MessageList"
+import { mapHistoryMessagesToUi } from "@shared/store/appStore/slices/chatSessionSlice/messageMapping"
+import { apiClient } from "@services/api"
 import { uiText } from "@shared/i18n/ui"
-import type { Message } from "@shared/types/chatMessages"
+import type { Message, MessageImage } from "@shared/types/chatMessages"
 import type { LiveSegment } from "@/hooks/useChat"
 
 const mountedRoots: Root[] = []
@@ -81,6 +83,7 @@ function renderMessageList(
   contentShiftX = 0,
   readOnly = false,
   liveSegments: LiveSegment[] = [],
+  pending?: { text: string; images: MessageImage[]; preview?: (src: string) => void },
 ) {
   const container = document.createElement("div")
   document.body.appendChild(container)
@@ -101,12 +104,13 @@ function renderMessageList(
         streamingReasoning={null}
         liveSegments={liveSegments}
         streamStatus={null}
-        pendingUserText={null}
+        pendingUserText={pending?.text ?? null}
+        pendingUserImages={pending?.images}
         contentShiftX={contentShiftX}
         readOnly={readOnly}
         forking={false}
         onSelectSubAgent={vi.fn()}
-        onPreviewImage={vi.fn()}
+        onPreviewImage={pending?.preview ?? vi.fn()}
         onRegenerate={vi.fn()}
         onFork={vi.fn()}
         onDelete={vi.fn()}
@@ -767,4 +771,29 @@ describe("subagent transcript provenance", () => {
     expect(card().closest("[data-history-entry-key]")?.getAttribute("data-history-entry-key")).toBe("activity-live-create")
   })
 
+})
+
+
+describe("image attachment visibility", () => {
+  it.each(["", "caption with image"])("renders and previews a pending image without hiding an image-only bubble (%s)", (text) => {
+    const url = "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7", preview = vi.fn()
+    const host = renderMessageList([], false, 0, false, [], { text, preview,
+      images: [{ id: "pending-image", url, name: "fixture.gif", type: "image/gif", size: 42 }] })
+    const bubble = host.querySelector("[data-pending-user-message]")
+    const image = bubble?.querySelector("img")
+    expect(image?.getAttribute("src")).toBe(url)
+    expect(bubble?.textContent).toBe(text)
+    act(() => image!.click()); expect(preview).toHaveBeenCalledWith(url)
+  })
+})
+
+
+it("restores a persisted image-only user message through the existing full history contract", () => {
+  const messages = mapHistoryMessagesToUi("fixture", [{ id: "persisted-image-only", role: "user", content: "",
+    content_parts: [{ type: "image_url", image_url: { url: "bamboo-attachment://fixture/asset-1" } }],
+    created_at: "2026-10-19T00:00:00Z" }])
+  const host = renderMessageList(messages, true)
+  expect(host.querySelector('[data-message-row="persisted-image-only"] img')?.getAttribute("src"))
+    .toBe(apiClient.resolveUrl("sessions/fixture/attachments/asset-1"))
+  expect(host.querySelector("[data-pending-user-message]")).toBeNull()
 })
