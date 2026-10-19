@@ -68,16 +68,19 @@ GET `/api/v1/tickets/scope` retains all legacy fields and adds:
   `{supervisor_session_id, incarnation_id, binding_revision}`.
 - `capabilities.scope_initialize_v1` to advertise the explicit setup endpoint.
 
-| Reason code | User guidance |
-| --- | --- |
-| scope_ready | Display the canonical Work snapshot, including a valid empty scope. |
-| scope_uninitialized | Offer empty initialization only when capability, permission and confirmation are all valid; otherwise explain missing eligibility. |
-| ticket_mutation_disabled | Ask the operator to review configuration; keep readable records when present. |
-| supervisor_mode_required | Use the existing mode menu to explicitly select Ultra, then re-read. |
-| supervisor_identity_mismatch | Open the fixed Supervisor entry and re-read; no authority derives from the title or Ultra. |
-| scope_binding_mismatch | Review the old binding through the offline recovery procedure; do not rebind automatically. |
-| scope_requires_recovery | Review occupied/incomplete storage and use the explicit offline recovery/attach/import procedure. |
-| scope_io_error | Check storage access and integrity, then re-read. |
+| Kind | Reason code | User guidance |
+| --- | --- | --- |
+| ready | scope_ready | Display the canonical Work snapshot, including a valid empty scope. |
+| uninitialized | scope_uninitialized | Offer empty initialization only when capability, permission and confirmation are all valid; otherwise explain missing eligibility. |
+| disabled | ticket_mutation_disabled | Ask the operator to review configuration; keep readable records when present. |
+| forbidden | supervisor_mode_required | Use the existing mode menu to explicitly select Ultra, then re-read. |
+| forbidden | supervisor_identity_mismatch | Open the fixed Supervisor entry and re-read; no authority derives from the title or Ultra. |
+| forbidden | scope_binding_mismatch | Review the old binding through the offline recovery procedure; do not rebind automatically. |
+| error | scope_requires_recovery | Review occupied/incomplete storage and use the explicit offline recovery/attach/import procedure. |
+| error | scope_io_error | Check storage access and integrity, then re-read. |
+
+Only these eight kind/reason pairs are valid. A different pairing of known values
+is an invalid capability response and offers no initialization action.
 
 The button requires verified owner access, a current read, an unblocked mode
 transition, `scope_initialize_v1=true`, `can_initialize=true`, a UUID confirmation

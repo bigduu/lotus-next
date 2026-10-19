@@ -179,6 +179,30 @@ it.each([
   expect(apiClient.postOnce).not.toHaveBeenCalled()
 })
 
+// Independent oracle from Bamboo a473 status_for_platform, not the client parser.
+const frozenScopePairs = [
+  ["ready", "scope_ready"], ["uninitialized", "scope_uninitialized"],
+  ["disabled", "ticket_mutation_disabled"], ["forbidden", "supervisor_mode_required"],
+  ["forbidden", "supervisor_identity_mismatch"], ["forbidden", "scope_binding_mismatch"],
+  ["error", "scope_requires_recovery"], ["error", "scope_io_error"],
+] as const
+const frozenScopeKinds = ["ready", "uninitialized", "disabled", "forbidden", "error"] as const
+const scopePairCases = frozenScopeKinds.flatMap((kind) => frozenScopePairs.map(([, reasonCode]) =>
+  [kind, reasonCode, frozenScopePairs.some(([expectedKind, expectedReason]) => kind === expectedKind && reasonCode === expectedReason)] as const))
+
+it.each(scopePairCases)("enforces the frozen v1 kind/reason contract: %s/%s", async (kind, reasonCode, valid) => {
+  const scope = { ...readyTicketScopeV1(), available: kind === "ready", readable: kind === "ready",
+    availability: { kind, reason_code: reasonCode }, can_initialize: false, initialization: null }
+  vi.mocked(apiClient.get).mockResolvedValue(scope)
+  const result = ticketClient.scope("root")
+  if (!valid) await expect(result).rejects.toThrow("能力响应不完整")
+  else if (kind === "ready") await expect(result).resolves.toEqual(scope)
+  else await expect(result).rejects.toMatchObject({ presentation: { kind, reasonCode } })
+  expect(apiClient.get).toHaveBeenCalledExactlyOnceWith("tickets/scope", { signal: undefined })
+  expect(apiClient.post).not.toHaveBeenCalled()
+  expect(apiClient.postOnce).not.toHaveBeenCalled()
+})
+
 it("keeps an existing v1 scope readable with both operation flags disabled", async () => {
   const scope = readyTicketScopeV1(); scope.mutation_enabled = false; scope.dispatch_enabled = false
   vi.mocked(apiClient.get).mockResolvedValue(scope)

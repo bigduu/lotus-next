@@ -37,7 +37,13 @@ export function isTicketInitialization(value: unknown, sessionId: string): value
     && typeof payload.binding_revision === "number" && Number.isSafeInteger(payload.binding_revision) && payload.binding_revision > 0
 }
 
-const scopeKinds = new Set(["ready", "uninitialized", "disabled", "forbidden", "error"])
+// Frozen #1971 pairs from the service; individually known values may still contradict.
+const scopeReasons = new Map<string, readonly TicketScopeReasonCode[]>([
+  ["ready", ["scope_ready"]], ["uninitialized", ["scope_uninitialized"]],
+  ["disabled", ["ticket_mutation_disabled"]],
+  ["forbidden", ["supervisor_mode_required", "supervisor_identity_mismatch", "scope_binding_mismatch"]],
+  ["error", ["scope_requires_recovery", "scope_io_error"]],
+])
 const reasonCodes = new Set<TicketScopeReasonCode>(["scope_ready", "scope_uninitialized", "ticket_mutation_disabled", "supervisor_mode_required", "supervisor_identity_mismatch", "scope_binding_mismatch", "scope_requires_recovery", "scope_io_error"])
 
 /** Undefined means the old service contract; malformed v1 never falls back. */
@@ -45,7 +51,7 @@ export function scopeAvailability(scope: TicketScope, sessionId: string): Ticket
   if (scope.availability === undefined && scope.readable === undefined && scope.can_initialize === undefined
     && scope.initialization === undefined && scope.capabilities?.scope_initialize_v1 !== true) return undefined
   const remote = scope.availability
-  if (!remote || !scopeKinds.has(remote.kind) || !reasonCodes.has(remote.reason_code)
+  if (!remote || !scopeReasons.get(remote.kind)?.includes(remote.reason_code)
     || scope.reason !== undefined && typeof scope.reason !== "string"
     || typeof scope.mutation_enabled !== "boolean" || typeof scope.dispatch_enabled !== "boolean"
     || typeof scope.available !== "boolean" || scope.readable !== scope.available || typeof scope.can_initialize !== "boolean"
