@@ -595,6 +595,69 @@ it("gets a fresh offer after a completed mode change and never substitutes its e
   expect(ticketClient.initialize).toHaveBeenCalledExactlyOnceWith({ ...confirmation, binding_revision: 91 })
 })
 
+it.each((["ack", "error"] as const).flatMap((outcome) => (["A-first", "B-first"] as const).map((order) => [outcome, order] as const)))("keeps initialization locks scoped across A/B navigation (%s, %s)", async (outcome, order) => {
+  const a = `initialization-A-${outcome}-${order}`, b = `initialization-B-${outcome}-${order}`
+  const incarnation = (id: string) => id === a ? "11111111-1111-4111-8111-111111111111" : "22222222-2222-4222-8222-222222222222"
+  const offer = (id: string) => {
+    const value = initializableTicketScope()
+    value.initialization = { ...value.initialization!, supervisor_session_id: id, incarnation_id: incarnation(id) }
+    return value
+  }
+  const ready = (id: string) => {
+    const value = ticketSnapshot()
+    value.views = []; value.scope = readyTicketScopeV1()
+    value.scope.binding = { ...value.scope.binding, supervisor_session_id: id, scope_id: "supervisor/" + incarnation(id) }
+    return value
+  }
+  const completed = new Set<string>()
+  vi.mocked(ticketClient.load).mockImplementation(async (id) => {
+    if (completed.has(id)) return ready(id)
+    throw new TicketScopeUnavailableError("uninitialized", "", scopeAvailability(offer(id), id)!)
+  })
+  let finishA!: () => void, finishB!: () => void
+  vi.mocked(ticketClient.initialize).mockReturnValueOnce(new Promise((resolve, reject) => {
+    finishA = () => {
+      if (outcome === "ack") { completed.add(a); resolve({ created: true, scope: ready(a).scope }) }
+      else reject(new Error("late A response unavailable"))
+    }
+  })).mockReturnValueOnce(new Promise((resolve) => {
+    finishB = () => { completed.add(b); resolve({ created: true, scope: ready(b).scope }) }
+  }))
+  await mount(a)
+  let pendingA!: Promise<boolean>, pendingB: Promise<boolean> | undefined
+  act(() => { pendingA = controller.initialize() })
+  try {
+    await mount(b)
+    expect(controller.canInitialize).toBe(true)
+    act(() => { pendingB = controller.initialize() })
+    expect(ticketClient.initialize).toHaveBeenCalledTimes(2)
+    expect(vi.mocked(ticketClient.initialize).mock.calls.map(([command]) => command)).toEqual([offer(a).initialization, offer(b).initialization])
+    expect(controller.initializing).toBe(true)
+    await act(async () => { expect(await controller.initialize()).toBe(false) })
+    if (order === "A-first") {
+      await act(async () => { finishA(); expect(await pendingA).toBe(false) })
+      expect(controller.initializing).toBe(true)
+      expect(controller.initializationError).toBeNull()
+      await act(async () => { expect(await controller.initialize()).toBe(false) })
+      await act(async () => { finishB(); expect(await pendingB).toBe(true) })
+    } else {
+      await act(async () => { finishB(); expect(await pendingB).toBe(true) })
+      const stateB = controller.state
+      await act(async () => { finishA(); expect(await pendingA).toBe(false) })
+      expect(controller.state).toEqual(stateB)
+    }
+    expect(controller.state?.current.scope.binding.supervisor_session_id).toBe(b)
+    expect(controller.initializing).toBe(false)
+    expect(controller.initializationError).toBeNull()
+    await mount(a)
+    expect(controller.initializing).toBe(false)
+    expect(controller.canInitialize).toBe(outcome === "error")
+    expect(ticketClient.initialize).toHaveBeenCalledTimes(2)
+  } finally {
+    await act(async () => { finishA(); finishB(); await Promise.allSettled([pendingA, pendingB]) })
+  }
+})
+
 it("admits only one initialization across two panels showing the same Supervisor", async () => {
   offerInitialization()
   const scope = initializableTicketScope()

@@ -33,7 +33,6 @@ export function useTicketWork(sessionId: string | null | undefined, authorityKey
   const [refreshing, setRefreshing] = useState(false)
   const initializing = useSyncExternalStore(subscribeInitialization, () => !!sessionId && initializingSessions.has(sessionId), () => false)
   const [initializationError, setInitializationError] = useState<string | null>(null)
-  const initializationFlight = useRef<object | null>(null)
   const [settledEpoch, setSettledEpoch] = useState(-1)
   const [state, setState] = useState<TicketState | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -196,8 +195,7 @@ export function useTicketWork(sessionId: string | null | undefined, authorityKey
     const capturedEpoch = epoch.current
     const capturedSession = sessionId
     if (!ownerAccess || !capturedSession || authorityBlocked || deferRead || settledEpoch !== capturedEpoch
-      || !confirmation || refreshing || initializationFlight.current || initializingSessions.has(capturedSession)) return false
-    const flight = {}; initializationFlight.current = flight
+      || !confirmation || refreshing || initializingSessions.has(capturedSession)) return false
     initializingSessions.add(capturedSession); notifyInitialization(); setInitializationError(null)
     const stillCurrent = () => scope.current === capturedSession && access.current && epoch.current === capturedEpoch
     let confirmed = false
@@ -243,7 +241,7 @@ export function useTicketWork(sessionId: string | null | undefined, authorityKey
       if (confirmed && !ready) setInitializationError(uiText("supervisor_work_initialization_unconfirmed"))
       return confirmed && ready
     } finally {
-      if (initializationFlight.current === flight) { initializationFlight.current = null; initializingSessions.delete(capturedSession); notifyInitialization() }
+      initializingSessions.delete(capturedSession); notifyInitialization()
     }
   }, [sessionId, ownerAccess, availability, refreshing, settledEpoch, authorityBlocked, deferRead])
 

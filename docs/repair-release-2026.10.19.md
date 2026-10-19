@@ -49,3 +49,5 @@ The complete CI browser run also checks older integration fixtures. Their assert
 Child approval requests remain visible until the backend confirms delivery. A typed compatibility refusal updates only that Child's conflict; older detail reads cannot erase it. Failed or unconfirmed submissions retain the request and show an error, in-flight choices cannot submit twice, and an older acknowledgement cannot clear a newer request. Recovery never sends a decision automatically.
 
 The request-only legacy Child approval adapter is not proof of compatibility with a473's separate durable approval CAS identity. The actual completed Child fixture uses the typed permission path. Failed legacy delivery is retained and reported; no attempt or version values are invented.
+
+Work initialization admission uses the shared lock for its captured Supervisor Session. Switching panes to a different Session does not leave an unrelated local flight blocking its action, and an older response releases only its own Session lock. The original request remains fenced across panes until it settles; canonical state and errors still obey the captured context.
