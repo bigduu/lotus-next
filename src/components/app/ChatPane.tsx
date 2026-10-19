@@ -1404,7 +1404,8 @@ export function ChatPane({
       ) : null}
 
       {pendingApproval && !chat.approvalCompatibility?.blocked ? (
-        <ApprovalDialog a={pendingApproval} onRespond={(ok) => void respondApproval(ok)} />
+        <ApprovalDialog a={pendingApproval} onRespond={(ok) => void respondApproval(ok)}
+          submitting={chat.approvalSubmitting} error={chat.approvalError} />
       ) : !executionBlocked && pendingQuestion ? (
         <QuestionDialog q={pendingQuestion} onAnswer={(t) => void answerQuestion(t)}
           loading={questionLoading} submitting={questionSubmitting} unavailable={questionUnavailable}

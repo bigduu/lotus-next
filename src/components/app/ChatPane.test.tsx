@@ -117,10 +117,11 @@ vi.mock("@/lib/exportPdf", () => ({ downloadPdf: vi.fn() }))
 vi.mock("@/components/chat/Dialogs", () => ({
   QuestionDialog: ({ q, onAnswer }: ComponentProps<(typeof import("@/components/chat/Dialogs"))["QuestionDialog"]>) =>
     <div data-parent-question>{q.question}<button onClick={() => onAnswer("main answer")}>Answer parent</button></div>,
-  ApprovalDialog: ({ a, onRespond }: ComponentProps<(typeof import("@/components/chat/Dialogs"))["ApprovalDialog"]>) =>
+  ApprovalDialog: ({ a, onRespond, submitting, error }: ComponentProps<(typeof import("@/components/chat/Dialogs"))["ApprovalDialog"]>) =>
     <div role="dialog" data-child-approval={a.childSessionId}>
-      <button onClick={() => onRespond(true)}>Approve child</button>
-      <button onClick={() => onRespond(false)}>Deny child</button>
+      {error ? <p role="alert">{error}</p> : null}
+      <button disabled={submitting} onClick={() => onRespond(true)}>Approve child</button>
+      <button disabled={submitting} onClick={() => onRespond(false)}>Deny child</button>
     </div>,
 }))
 vi.mock("@/components/app/ChatHeader", () => ({
@@ -2085,10 +2086,11 @@ describe("child approval compatibility", () => {
   })
   const pending = { childSessionId: "approval-child", requestId: "child-request-7", toolName: "Write", permission: "write" }
   async function renderApproval(parent: ReturnType<typeof view>, child: ReturnType<typeof view>, respond: (approved: boolean) => Promise<void>,
-    question?: { pending: NonNullable<ChatPaneProps["chat"]["pendingQuestion"]>; answer: (text: string) => Promise<void> }) {
+    question?: { pending: NonNullable<ChatPaneProps["chat"]["pendingQuestion"]>; answer: (text: string) => Promise<void> },
+    submission: { approvalSubmitting?: boolean; approvalError?: string | null } = {}) {
     if (!roots.length) await mount(vi.fn<Send>(), "approval-parent")
     await act(async () => roots.at(-1)!.render(<ChatPane chat={{ ...createChat(vi.fn<Send>(), "approval-parent"),
-      executionCompatibility: parent, approvalCompatibility: child, pendingApproval: pending, respondApproval: respond,
+      executionCompatibility: parent, approvalCompatibility: child, pendingApproval: pending, respondApproval: respond, ...submission,
       ...(question ? { pendingQuestion: question.pending, answerQuestion: question.answer } : {}) }} pickedWorkspace="/picked"
       onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()} splitOpen={false}
       onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false} />))
@@ -2112,6 +2114,17 @@ describe("child approval compatibility", () => {
     expect(respond).not.toHaveBeenCalled(); expect(answer).not.toHaveBeenCalled()
     act(() => [...document.querySelectorAll<HTMLButtonElement>("button")].find(b => b.textContent === "Answer parent")!.click())
     expect(answer).toHaveBeenCalledExactlyOnceWith("main answer"); expect(respond).not.toHaveBeenCalled()
+  })
+  it("forwards retained Child approval submission and error to the dialog", async () => {
+    const respond = vi.fn(async (_approved: boolean) => {})
+    await renderApproval(view("compatible"), view("compatible"), respond, undefined, { approvalSubmitting: true })
+    const approve = [...document.querySelectorAll<HTMLButtonElement>("button")].find(b => b.textContent === "Approve child")!
+    expect(approve.disabled).toBe(true)
+    act(() => approve.click())
+    expect(respond).not.toHaveBeenCalled()
+    await renderApproval(view("compatible"), view("compatible"), respond, undefined, { approvalError: "Child approval unconfirmed" })
+    expect(document.querySelector('[data-child-approval] [role="alert"]')?.textContent).toBe("Child approval unconfirmed")
+    expect(respond).not.toHaveBeenCalled()
   })
   it("blocks only the Child's explicit conflict and restores its dialog after a canonical recovery", async () => {
     const respond = vi.fn(async (_approved: boolean) => {})

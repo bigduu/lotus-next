@@ -45,3 +45,7 @@ A blocked Child's compatibility notice does not suppress a compatible parent's g
 The Child recovery notice stays inside the chat column and keeps the composer usable at desktop and phone widths.
 
 The complete CI browser run also checks older integration fixtures. Their assertions keep the current Root/Supervisor distinction, HTTP write capability negotiation, and separate Child expansion/open actions. No scope login/native requirement is restored; projected transcript, channel isolation, full-set review and no-mutation assertions remain in place.
+
+Child approval requests remain visible until the backend confirms delivery. A typed compatibility refusal updates only that Child's conflict; older detail reads cannot erase it. Failed or unconfirmed submissions retain the request and show an error, in-flight choices cannot submit twice, and an older acknowledgement cannot clear a newer request. Recovery never sends a decision automatically.
+
+The request-only legacy Child approval adapter is not proof of compatibility with a473's separate durable approval CAS identity. The actual completed Child fixture uses the typed permission path. Failed legacy delivery is retained and reported; no attempt or version values are invented.

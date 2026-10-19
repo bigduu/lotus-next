@@ -373,6 +373,10 @@ export function useChat(
     () => new Map(),
   )
   const [pendingApproval, setPendingApproval] = useState<PendingApproval | null>(null)
+  const [approvalSubmission, setApprovalSubmission] = useState<{
+    request: PendingApproval; submitting: boolean; error: string | null
+  } | null>(null)
+  const approvalSubmitRef = useRef<PendingApproval | null>(null)
   const approvalCompatibility = useSessionExecutionCompatibility(pendingApproval?.childSessionId ?? null)
   const abortRef = useRef<AbortController | null>(null)
   const mountedRef = useRef(false)
@@ -2101,12 +2105,24 @@ export function useChat(
   const respondApproval = useCallback(
     async (approved: boolean) => {
       const pa = pendingApproval
-      if (isSessionExecutionBlocked(pa?.childSessionId)) return
-      setPendingApproval(null)
-      if (!pa) return
-      await agentClient
-        .respondToChildApproval(pa.childSessionId, pa.requestId, approved)
-        .catch(() => {})
+      if (!pa || isSessionExecutionBlocked(pa.childSessionId) || approvalSubmitRef.current) return
+      approvalSubmitRef.current = pa
+      setApprovalSubmission({ request: pa, submitting: true, error: null })
+      try {
+        const result = await agentClient.respondToChildApproval(pa.childSessionId, pa.requestId, approved)
+        if (result.delivered !== true) throw new Error("Unconfirmed Child approval delivery")
+        // A late acknowledgement belongs only to the request the Human answered.
+        setPendingApproval((current) => current === pa ? null : current)
+      } catch (error) {
+        const incompatible = observeSessionExecutionConflict(pa.childSessionId, error)
+        const refused = isApiError(error) && error.status >= 400 && error.status < 500
+        setApprovalSubmission({ request: pa, submitting: false,
+          error: incompatible || refused ? uiText("the_request_or_permissions_have_changed_confirm_again_u_a1ebae48")
+            : uiText("submission_is_unconfirmed_refresh_or_retry_the_last_sub_f3127c94") })
+      } finally {
+        if (approvalSubmitRef.current === pa) approvalSubmitRef.current = null
+        setApprovalSubmission((current) => current?.request === pa ? { ...current, submitting: false } : current)
+      }
     },
     [pendingApproval],
   )
@@ -2149,6 +2165,8 @@ export function useChat(
     refreshQuestion,
     retryQuestion,
     pendingApproval,
+    approvalSubmitting: approvalSubmission?.submitting ?? false,
+    approvalError: approvalSubmission?.request === pendingApproval ? approvalSubmission?.error ?? null : null,
     approvalCompatibility,
     answerQuestion,
     respondApproval,
