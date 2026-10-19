@@ -41,3 +41,5 @@ Unfinished Tickets, independent spawn v2, selective continuation, and the unconf
 Child approvals use the target Child's detail-only compatibility report and refresh it on reconnect. A parent conflict still blocks parent execution and questions, but does not suppress a compatible Child's Human approval. Only an explicit Child conflict blocks that request; the Child notice provides a read-only refresh. No decision is submitted automatically, and the backend continues to validate the exact Child/request.
 
 A blocked Child's compatibility notice does not suppress a compatible parent's genuine pending question or typed permission request. The two targets retain their own Human decision and backend validation paths.
+
+The Child recovery notice stays inside the chat column and keeps the composer usable at desktop and phone widths.

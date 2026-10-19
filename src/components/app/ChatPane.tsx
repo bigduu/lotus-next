@@ -1060,6 +1060,12 @@ export function ChatPane({
         {...sessionDrop.handlers}
           >
         <SessionCompatibilityNotice state={chat.executionCompatibility} />
+        {pendingApproval && chat.approvalCompatibility?.blocked ? (
+          <section aria-label={uiText("subagent_approval_request_4321e83b")}>
+            <p className="px-3 pt-2 text-sm font-medium">{uiText("subagent_approval_request_4321e83b")}</p>
+            <SessionCompatibilityNotice state={chat.approvalCompatibility} />
+          </section>
+        ) : null}
         {currentChat?.planMode ? (
           <div className="border-b bg-primary/10 px-3 py-1.5 text-center text-xs font-medium text-primary">
             {uiText("plan_mode_7cbb85b7")} {(currentChat.planMode as { status?: string }).status
@@ -1397,11 +1403,6 @@ export function ChatPane({
         </div>
       ) : null}
 
-      {pendingApproval && chat.approvalCompatibility?.blocked ? (
-        <section aria-label={uiText("subagent_approval_request_4321e83b")}>
-          <SessionCompatibilityNotice state={chat.approvalCompatibility} />
-        </section>
-      ) : null}
       {pendingApproval && !chat.approvalCompatibility?.blocked ? (
         <ApprovalDialog a={pendingApproval} onRespond={(ok) => void respondApproval(ok)} />
       ) : !executionBlocked && pendingQuestion ? (
