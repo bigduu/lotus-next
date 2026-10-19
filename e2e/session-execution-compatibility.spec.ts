@@ -66,7 +66,7 @@ async function fixture(page: Page, initial: Mode) {
 }
 
 for (const [mode, copy] of [["compatible", "This session is compatible"], ["legacy", "Legacy session: compatible"],
-  ["missing", "Legacy session: no compatibility report"], ["read-error", "Compatibility could not be checked"]] as const) {
+  ["missing", "Legacy session: no compatibility report"]] as const) {
   test(`compatibility fixture: ${mode} stays usable without replacement or migration`, async ({ page }) => {
     const f = await fixture(page, mode)
     await expect(page.getByText(copy, { exact: false }).first()).toBeVisible()
@@ -80,6 +80,29 @@ for (const [mode, copy] of [["compatible", "This session is compatible"], ["lega
     expect(f.runtime.pageErrors).toEqual([])
   })
 }
+test("compatibility fixture: detail read error is distinct from a conflict and preserves existing Root admission", async ({ page }, info) => {
+  const f = await fixture(page, "read-error")
+  await expect(page.getByText("Compatibility could not be checked", { exact: false })).toBeVisible()
+  await expect(page.locator('[data-session-execution-blocked="true"]')).toHaveCount(0)
+  await expect(page.getByText("State unavailable", { exact: true })).toBeVisible()
+  await f.input.fill("Keep the instruction until Root state recovers")
+  await page.getByRole("button", { name: "Send message", exact: true }).click()
+  await expect(page.getByRole("alert").filter({ hasText: "The Root permission change is unconfirmed. Sending and execution are stopped for this session." })).toBeVisible()
+  await expect(f.input).toHaveText("Keep the instruction until Root state recovers")
+  expect(f.writes).toEqual([])
+  await page.screenshot({ path: info.outputPath("read-failure-distinct-from-version-conflict.png"), animations: "disabled" })
+  f.setMode("missing")
+  await page.getByRole("button", { name: "Reload state", exact: true }).click()
+  await expect(page.getByText("State unavailable", { exact: true })).toHaveCount(0)
+  await page.getByRole("button", { name: "Check compatibility again", exact: true }).click()
+  await expect(page.getByText("Legacy session: no compatibility report", { exact: false })).toBeVisible()
+  expect(f.writes).toEqual([])
+  await page.getByRole("button", { name: "Send message", exact: true }).click()
+  await expect.poll(() => f.count(`/api/v1/execute/${sid}`)).toBe(1)
+  expect(f.count("/api/v1/chat")).toBe(1)
+  expect(f.count("/api/v1/sessions")).toBe(0)
+  expect(f.runtime.pageErrors).toEqual([])
+})
 for (const mode of ["version-conflict", "state-conflict"] as const) {
   test(`compatibility fixture: ${mode} blocks execution while preserving history and draft`, async ({ page }, info) => {
     const f = await fixture(page, mode)
