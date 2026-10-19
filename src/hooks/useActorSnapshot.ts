@@ -193,7 +193,11 @@ export function useActorSnapshot(rootId: string | null, active: boolean, interes
     let live = true
     const requireTreeSnapshot = (cursor: string | null, gap: boolean) => {
       if (!live || scope.current.rootId !== rootId || !scope.current.active) return
+      // Another active read view can announce its confirmed cursor locally.
+      // A covered read or an already-pending proof needs no duplicate request.
+      if (!gap && actorTreeCursorCovers(snapshotRef.current?.stream_cursor ?? null, cursor)) return
       const prior = requiredTreeCursor.current
+      const alreadyReading = !gap && request.current !== null && prior !== undefined && actorTreeCursorCovers(prior, cursor)
       if (prior === undefined) requiredTreeCursor.current = cursor
       else if (prior === null || cursor === null) requiredTreeCursor.current = null
       else if (actorTreeCursorCovers(cursor, prior)) requiredTreeCursor.current = cursor
@@ -204,7 +208,7 @@ export function useActorSnapshot(rootId: string | null, active: boolean, interes
       if (gap) setState((previous) => previous.rootId === rootId ? {
         ...previous, gapReason: workerGap.current?.reason ?? "transport_gap", gapActorId: workerGap.current?.actorId ?? null,
       } : previous)
-      queueRefresh()
+      if (!alreadyReading) queueRefresh()
     }
     const subscription = subscribeActorTree(rootId, treeCursor, {
       onControl: (control) => requireTreeSnapshot(control.cursor, control.reason === "gap" || control.reason === "unavailable"),

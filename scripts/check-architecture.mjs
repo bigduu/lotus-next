@@ -39,7 +39,11 @@ const runtimeCompositionApiOwners = new Map([
   ["__resetRuntimeConfigForTests", new Set([runtimeContract])],
 ]);
 
+// #2072 adds one fixed-command native host adapter; prior concrete debts stay frozen.
+const projectScopeNativeAdapter = "src/services/supervisorScope/nativeOwnerBridge.ts";
+const projectScopeNativeCommands = new Set(["supervisor_scope_inspect_availability", "supervisor_scope_confirm_and_apply"]);
 const tauriDebtOwners = new Set([
+  projectScopeNativeAdapter,
   runtimeResolver,
   "src/services/notification/desktopNotification.ts",
   "src/shared/services/FileOperationsService.ts",
@@ -144,6 +148,7 @@ const expectedInventory = {
     "src/runtime/browserRuntime.ts": 30,
   },
   "tauri-runtime": {
+    [projectScopeNativeAdapter]: 1,
     "src/runtime/browserRuntime.ts": 4,
     "src/services/notification/desktopNotification.ts": 2,
     "src/shared/services/FileOperationsService.ts": 3,
@@ -1731,7 +1736,7 @@ const analyzeSource = (file, source) => {
       checkSourceDependencyBoundary(node, moduleName);
       if (moduleName.startsWith("@tauri-apps/")) {
         addCount(inventory, "tauri-runtime", file);
-        if (!tauriDebtOwners.has(file)) {
+        if (!tauriDebtOwners.has(file) || (file === projectScopeNativeAdapter && moduleName !== "@tauri-apps/api/core")) {
           report(node, "concrete Tauri import is outside the frozen host adapter debt list");
         }
       }
@@ -1751,6 +1756,14 @@ const analyzeSource = (file, source) => {
       checkSourceDependencyBoundary(node, moduleName);
       if (isAlternateHttpModule(moduleName)) {
         report(node, "alternate HTTP/SSE client bypasses the canonical API transport");
+      }
+    }
+
+    if (file === projectScopeNativeAdapter && ts.isCallExpression(node) &&
+      ((ts.isIdentifier(node.expression) && node.expression.text === "invoke") || accessedPropertyName(node.expression) === "invoke")) {
+      const command = node.arguments[0];
+      if (!command || !ts.isStringLiteralLike(command) || !projectScopeNativeCommands.has(command.text)) {
+        report(node, "Project scope native adapter may invoke only its two fixed commands");
       }
     }
 
@@ -1787,7 +1800,7 @@ const analyzeSource = (file, source) => {
     }
     if (calledModule?.startsWith("@tauri-apps/")) {
       addCount(inventory, "tauri-runtime", file);
-      if (!tauriDebtOwners.has(file)) {
+      if (!tauriDebtOwners.has(file) || (file === projectScopeNativeAdapter && calledModule !== "@tauri-apps/api/core")) {
         report(node, "concrete Tauri import is outside the frozen host adapter debt list");
       }
     }

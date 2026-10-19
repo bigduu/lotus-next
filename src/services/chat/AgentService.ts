@@ -688,6 +688,10 @@ export interface SessionSummary {
   kind: SessionKind;
   title: string;
   title_version: number;
+  /** Canonical behavior version; absence alone never means incompatible. */
+  session_version?: number | null;
+  /** Authoritative compatibility report on session detail only. */
+  execution_compatibility?: import("./sessionExecutionCompatibility").SessionExecutionCompatibility;
   pinned: boolean;
   parent_session_id?: string | null;
   root_session_id: string;

@@ -375,3 +375,14 @@ describe("same-activation native evidence ordering", () => {
     expect(actorSnapshotRegresses(old, prior)).toBe(false)
   })
 })
+
+it.each(["succeeded", "failed", "cancelled"] as const)("does not regress terminal %s within one activation, but accepts a new attempt", (status) => {
+  const prior = actorSnapshotFixture("root", 1)
+  prior.nodes[1].activation!.status = status
+  const delayed = structuredClone(prior)
+  delayed.nodes[1].activation!.status = "running"
+  expect(actorSnapshotRegresses(prior, delayed)).toBe(true)
+  delayed.nodes[1].activation!.attempt += 1
+  delayed.nodes[1].activation!.activation_id = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+  expect(actorSnapshotRegresses(prior, delayed)).toBe(false)
+})

@@ -1,11 +1,22 @@
 import { uiText, useUiLocale } from "@shared/i18n/ui"
-import { useCallback, useContext, useEffect, useRef, useState } from "react"
+import { useCallback, useContext, useEffect, useRef, useState, useSyncExternalStore } from "react"
 import { getErrorMessage, isApiError } from "@services/api"
+import { initializationDenial, initializationRefusal, ticketAvailabilityFailure, TicketScopeUnavailableError, type TicketAvailability } from "@services/tickets/availability"
 import { ticketClient } from "@services/tickets/client"
 import { OwnerAccessContext } from "./ownerAccessContext"
 import { applyTicketSnapshot, responseCommand, type TicketState } from "@services/tickets/state"
 import type { Decision, PendingRequest, ResponseCommand } from "@services/tickets/types"
 import { clearDecisionReceipt, readDecisionReceipts, saveDecisionReceipt } from "@services/tickets/decisionReceipts"
+
+// Both panes can show the same Supervisor. Share only a request admission lock,
+// never scope data, permission, or an initialization command.
+const initializingSessions = new Set<string>()
+const initializationListeners = new Set<() => void>()
+const subscribeInitialization = (listener: () => void) => {
+  initializationListeners.add(listener)
+  return () => { initializationListeners.delete(listener) }
+}
+const notifyInitialization = () => { for (const listener of initializationListeners) listener() }
 
 async function sendDecision(command: ResponseCommand) {
   const acknowledgement = await ticketClient.respond(command)
@@ -15,9 +26,14 @@ async function sendDecision(command: ResponseCommand) {
   }
 }
 
-export function useTicketWork(sessionId: string | null | undefined) {
+export function useTicketWork(sessionId: string | null | undefined, authorityKey = "", authorityBlocked = false, deferRead = false) {
   useUiLocale()
   const ownerAccess = useContext(OwnerAccessContext)
+  const [availability, setAvailability] = useState<TicketAvailability>({ kind: "loading" })
+  const [refreshing, setRefreshing] = useState(false)
+  const initializing = useSyncExternalStore(subscribeInitialization, () => !!sessionId && initializingSessions.has(sessionId), () => false)
+  const [initializationError, setInitializationError] = useState<string | null>(null)
+  const [settledEpoch, setSettledEpoch] = useState(-1)
   const [state, setState] = useState<TicketState | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [decisionError, setDecisionError] = useState<string | null>(null)
@@ -30,29 +46,37 @@ export function useTicketWork(sessionId: string | null | undefined) {
   const scope = useRef(sessionId)
   const access = useRef(ownerAccess)
   const epoch = useRef(0)
+  const authority = useRef({ key: authorityKey, blocked: authorityBlocked, deferRead })
   const activeRequests = useRef(new Set<string>())
-  if (scope.current !== sessionId || access.current !== ownerAccess) epoch.current += 1
+  if (scope.current !== sessionId || access.current !== ownerAccess
+    || authority.current.key !== authorityKey || authority.current.blocked !== authorityBlocked || authority.current.deferRead !== deferRead) epoch.current += 1
   scope.current = sessionId
   access.current = ownerAccess
-  const refreshRef = useRef<() => Promise<void>>(async () => {})
+  authority.current = { key: authorityKey, blocked: authorityBlocked, deferRead }
+  const refreshRef = useRef<(afterInitialization?: boolean) => Promise<void>>(async () => {})
 
   useEffect(() => {
     current.current = null; connection.current = false; setState(null); setConnected(false); setNegotiatedSession(null); setError(null); setBusy({}); setUncertain({})
-    setDecisionError(null)
+    const capturedEpoch = epoch.current
+    setInitializationError(null); setSettledEpoch(-1)
+    setDecisionError(null); setAvailability({ kind: "loading" }); setRefreshing(false)
     activeRequests.current.clear()
     refreshRef.current = async () => {}
     if (!sessionId || !ownerAccess) {
-      setNegotiatedSession(sessionId ?? null)
+      setSettledEpoch(capturedEpoch); setNegotiatedSession(sessionId ?? null)
+      setAvailability({ kind: !ownerAccess ? "forbidden" : "unbound" })
       return
     }
+    if (deferRead) return
     try { setUncertain(readDecisionReceipts(sessionId)) }
     catch (failure) { setDecisionError(getErrorMessage(failure)) }
     const controller = new AbortController()
     let timer: ReturnType<typeof setTimeout> | undefined
     let refreshing = false
-    const refresh = async (full = true) => {
-      if (refreshing || controller.signal.aborted) return
-      refreshing = true
+    const refresh = async (full = true, afterInitialization = false) => {
+      if (refreshing || controller.signal.aborted || epoch.current !== capturedEpoch
+        || initializingSessions.has(sessionId) && !afterInitialization) return
+      refreshing = true; setRefreshing(true)
       try {
         if (!full && current.current) {
           try {
@@ -60,9 +84,9 @@ export function useTicketWork(sessionId: string | null | undefined) {
             if (changes.snapshot.seq === current.current.current.snapshot.seq
               && changes.snapshot.authority_epoch === current.current.current.snapshot.authority_epoch) {
               const negotiated = await ticketClient.scope(sessionId, controller.signal)
-              if (controller.signal.aborted) return
+              if (controller.signal.aborted || epoch.current !== capturedEpoch) return
               if (!negotiated) {
-                current.current = null; connection.current = true; setState(null); setConnected(true); setNegotiatedSession(sessionId); setError(null); return
+                current.current = null; connection.current = true; setState(null); setConnected(true); setNegotiatedSession(sessionId); setError(null); setAvailability({ kind: "unbound" }); setSettledEpoch(capturedEpoch); return
               }
               const previous = current.current.current
               if (negotiated.binding.scope_id === previous.scope.binding.scope_id
@@ -71,21 +95,29 @@ export function useTicketWork(sessionId: string | null | undefined) {
                 && negotiated.overview.snapshot.seq === previous.snapshot.seq
                 && negotiated.overview.snapshot.authority_epoch === previous.snapshot.authority_epoch) {
                 current.current = { ...current.current, current: { ...previous, scope: negotiated } }
-                connection.current = true; setState(current.current); setConnected(true); setNegotiatedSession(sessionId); setError(null); return
+                connection.current = true; setState(current.current); setConnected(true); setNegotiatedSession(sessionId); setError(null); setAvailability({ kind: "ready" }); setSettledEpoch(capturedEpoch); return
               }
             }
           } catch (failure) { if (!isApiError(failure) || ![409, 410].includes(failure.status)) throw failure }
         }
         const result = await ticketClient.load(sessionId, controller.signal)
-        if (controller.signal.aborted) return
+        if (controller.signal.aborted || epoch.current !== capturedEpoch) return
         current.current = result ? applyTicketSnapshot(current.current, result) : null
         setUncertain(readDecisionReceipts(sessionId))
-        connection.current = true; setState(current.current); setConnected(true); setNegotiatedSession(sessionId); setError(null)
+        connection.current = true; setState(current.current); setConnected(true); setNegotiatedSession(sessionId); setError(null); setAvailability({ kind: result ? "ready" : "unbound" }); setSettledEpoch(capturedEpoch)
       } catch (failure) {
-        if (!controller.signal.aborted) { connection.current = false; setConnected(false); setError(getErrorMessage(failure)) }
-      } finally { refreshing = false }
+        if (!controller.signal.aborted && epoch.current === capturedEpoch) {
+          setSettledEpoch(capturedEpoch)
+          const next = ticketAvailabilityFailure(failure)
+          connection.current = false; setConnected(false); setAvailability(next); setError(getErrorMessage(failure))
+          if (failure instanceof TicketScopeUnavailableError || next.kind === "forbidden") {
+            current.current = null; setState(null)
+          }
+          if (failure instanceof TicketScopeUnavailableError) setNegotiatedSession(sessionId)
+        }
+      } finally { refreshing = false; if (!controller.signal.aborted && epoch.current === capturedEpoch) setRefreshing(false) }
     }
-    refreshRef.current = () => refresh()
+    refreshRef.current = (afterInitialization) => refresh(true, afterInitialization)
     const poll = async () => {
       if (!document.hidden) await refresh(false)
       if (!controller.signal.aborted) timer = setTimeout(() => void poll(), 2500)
@@ -94,12 +126,12 @@ export function useTicketWork(sessionId: string | null | undefined) {
     window.addEventListener("online", reconnect); window.addEventListener("focus", reconnect)
     void poll()
     return () => { controller.abort(); clearTimeout(timer); window.removeEventListener("online", reconnect); window.removeEventListener("focus", reconnect) }
-  }, [sessionId, ownerAccess])
+  }, [sessionId, ownerAccess, authorityKey, authorityBlocked, deferRead])
 
   const respond = useCallback(async (request: PendingRequest, decision: Decision) => {
     const captured = sessionId
     const capturedEpoch = epoch.current
-    if (!ownerAccess || !current.current || current.current.current.scope.binding.supervisor_session_id !== captured
+    if (settledEpoch !== capturedEpoch || authorityBlocked || deferRead || !ownerAccess || !current.current || current.current.current.scope.binding.supervisor_session_id !== captured
       || !connection.current || !current.current.current.complete || !current.current.current.scope.mutation_enabled || current.current.current.scope.health !== "writable"
       || activeRequests.current.has(request.id)) return false
     let retry: ResponseCommand | undefined
@@ -156,13 +188,75 @@ export function useTicketWork(sessionId: string | null | undefined) {
       }
       return false
     } finally { if (scope.current === captured && epoch.current === capturedEpoch) { activeRequests.current.delete(request.id); setBusy((old) => ({ ...old, [request.id]: false })) } }
-  }, [sessionId, ownerAccess])
+  }, [sessionId, ownerAccess, settledEpoch, authorityBlocked, deferRead])
 
-  return { state, error: decisionError ?? error, connected, negotiated: !sessionId || !ownerAccess || negotiatedSession === sessionId,
+  const initialize = useCallback(async () => {
+    const confirmation = availability.initialization
+    const capturedEpoch = epoch.current
+    const capturedSession = sessionId
+    if (!ownerAccess || !capturedSession || authorityBlocked || deferRead || settledEpoch !== capturedEpoch
+      || !confirmation || refreshing || initializingSessions.has(capturedSession)) return false
+    initializingSessions.add(capturedSession); notifyInitialization(); setInitializationError(null)
+    const stillCurrent = () => scope.current === capturedSession && access.current && epoch.current === capturedEpoch
+    let confirmed = false
+    let conflictDetail: string | undefined
+    try {
+      try {
+        await ticketClient.initialize(confirmation)
+        if (!stillCurrent()) return false
+        confirmed = true
+      } catch (failure) {
+        if (!stillCurrent()) return false
+        if (isApiError(failure) && [401, 403].includes(failure.status)) {
+          current.current = null; connection.current = false; setState(null); setConnected(false)
+          const denial = initializationDenial(failure, capturedSession)
+          setAvailability(denial ?? ticketAvailabilityFailure(failure)); setSettledEpoch(capturedEpoch)
+          setError(null); setInitializationError(denial?.detail ?? getErrorMessage(failure)); return false
+        }
+        const code = initializationRefusal(failure)
+        if (isApiError(failure) && failure.status === 409 && code) conflictDetail = getErrorMessage(failure)
+        const message = code === "scope_requires_recovery" ? uiText("supervisor_work_recovery_guidance")
+          : code === "scope_binding_mismatch" ? uiText("supervisor_work_binding_guidance")
+          : code === "ticket_mutation_disabled" ? uiText("supervisor_work_disabled_guidance")
+          : code === "supervisor_mode_required" ? uiText("supervisor_work_mode_guidance")
+          : code === "supervisor_identity_mismatch" ? uiText("supervisor_work_identity_guidance")
+          : code === "scope_io_error" ? uiText("supervisor_work_storage_guidance")
+          : code === "initialization_conflict" ? uiText("supervisor_work_initialization_conflict")
+          : uiText("supervisor_work_initialization_unconfirmed")
+        setInitializationError(message + " " + getErrorMessage(failure))
+      }
+      // Every non-denial outcome needs a fresh canonical read, including a 409
+      // whose owner-only scope is already readable. Never replay the POST.
+      if (!stillCurrent()) return false
+      await refreshRef.current(true)
+      if (!stillCurrent()) return false
+      const binding = current.current?.current.scope.binding
+      const ready = connection.current && binding?.supervisor_session_id === confirmation.supervisor_session_id
+        && binding.scope_id === "supervisor/" + confirmation.incarnation_id && binding.binding_revision === confirmation.binding_revision
+      // A known refused write does not make a freshly readable canonical scope
+      // an offline recovery case. Keep the refusal visible without stale advice.
+      if (conflictDetail && connection.current && current.current) {
+        setInitializationError(uiText("supervisor_work_initialization_conflict") + " " + conflictDetail)
+      }
+      if (confirmed && !ready) setInitializationError(uiText("supervisor_work_initialization_unconfirmed"))
+      return confirmed && ready
+    } finally {
+      initializingSessions.delete(capturedSession); notifyInitialization()
+    }
+  }, [sessionId, ownerAccess, availability, refreshing, settledEpoch, authorityBlocked, deferRead])
+
+  const visible = settledEpoch === epoch.current
+  const readableState = ownerAccess && visible && state?.current.scope.binding.supervisor_session_id === sessionId ? state : null
+  return { state: readableState,
+    availability: !ownerAccess ? { kind: "forbidden" as const } : visible ? availability : { kind: "loading" as const },
+    refreshing, initializing, initializationError: visible ? initializationError : null,
+    canInitialize: ownerAccess && visible && !authorityBlocked && !deferRead && !!availability.initialization && !initializing && !refreshing,
+    initialize, canRefresh: ownerAccess && !!sessionId && !deferRead && !initializing,
+    error: decisionError ?? (initializationError ? initializationError + (error ? " " + error : "") : error), connected: ownerAccess && visible && connected, negotiated: !sessionId || !ownerAccess || visible && negotiatedSession === sessionId,
     busy, uncertain, respond, refresh: () => refreshRef.current(),
-    canSendIngress: ownerAccess && connected && state !== null && state.current.scope.binding.supervisor_session_id === sessionId
+    canSendIngress: ownerAccess && visible && !authorityBlocked && !deferRead && connected && state !== null && state.current.scope.binding.supervisor_session_id === sessionId
       && state.current.scope.health === "writable" && state.current.scope.mutation_enabled === true
       && state.current.scope.capabilities?.semantic_messages_v1 === true,
-    canRespond: ownerAccess && connected && state !== null && state.current.scope.binding.supervisor_session_id === sessionId
+    canRespond: ownerAccess && visible && !authorityBlocked && !deferRead && connected && state !== null && state.current.scope.binding.supervisor_session_id === sessionId
       && state.current.complete && state.current.scope.health === "writable" && state.current.scope.mutation_enabled === true }
 }

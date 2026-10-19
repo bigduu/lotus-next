@@ -447,3 +447,20 @@ describe("container-aware composer toolbar", () => {
     expect(props.onSubmit).not.toHaveBeenCalled()
   })
 })
+
+describe("explicit execution compatibility conflict", () => {
+  it("preserves editing while disabling both button and keyboard submit, then recovers explicitly", () => {
+    const h = mountComposer({ executionBlocked: true })
+    expect(h.container.querySelector<HTMLButtonElement>('[aria-label="发送消息"]')?.disabled).toBe(true)
+    dispatchSubmitShortcut(h.textarea); expect(h.props.onSubmit).not.toHaveBeenCalled()
+    expect(h.textarea.textContent).toContain("保留这条消息")
+    h.rerender({ executionBlocked: false }); dispatchSubmitShortcut(h.textarea)
+    expect(h.props.onSubmit).toHaveBeenCalledTimes(1)
+  })
+  it("keeps Stop available for an existing run while blocking new execution", () => {
+    const h = mountComposer({ executionBlocked: true, sending: true, sendWhileRunning: true })
+    const stop = h.container.querySelector<HTMLButtonElement>('[aria-label="停止生成"]')!
+    expect(stop.disabled).toBe(false); act(() => stop.click())
+    expect(h.props.onStop).toHaveBeenCalledTimes(1); expect(h.props.onSubmit).not.toHaveBeenCalled()
+  })
+})

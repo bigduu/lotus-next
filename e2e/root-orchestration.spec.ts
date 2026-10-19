@@ -94,7 +94,7 @@ test("creation and message-free Root switches survive reload and typed rejection
   const menuScreenshot = testInfo.outputPath("ultra-thinking-picker-menu.png")
   await page.screenshot({ path: menuScreenshot, animations: "disabled" }); await testInfo.attach("ultra-thinking-picker-menu", { path: menuScreenshot, contentType: "image/png" })
   await page.keyboard.press("Escape")
-  await expectExplanation(page, /Root 委派规划和执行任务，管理子代理进度、纠偏/)
+  await expectExplanation(page, /Ultra 是 Root.*执行模式。Supervisor 是独立的可信角色，访问已有会话需要明确授权/)
   await composer.fill("delegate bounded work")
   await page.getByRole("button", { name: "发送消息", exact: true }).click()
   await expect.poll(() => chats.length).toBe(1)

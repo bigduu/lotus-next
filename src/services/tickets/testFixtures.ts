@@ -1,4 +1,4 @@
-import type { TicketSnapshot, WorkView } from "./types"
+import type { TicketScope, TicketSnapshot, WorkView } from "./types"
 
 export function ticketSnapshot(seq = 10): TicketSnapshot {
   const stamp = { seq, authority_epoch: 1, commit: "commit-" + seq }
@@ -15,4 +15,19 @@ export function ticketSnapshot(seq = 10): TicketSnapshot {
   return { snapshot: stamp, views, complete: true, scope: { available: true, mutation_enabled: true, dispatch_enabled: true, health: "writable",
     binding: { scope_id: "scope", supervisor_session_id: "root", binding_revision: 1 }, overview,
     capabilities: { ticket_scope_v1: true, multi_pending_v1: true, precise_request_response_v1: true, message_references_v1: true, semantic_messages_v1: true } } }
+}
+
+export function initializableTicketScope(): TicketScope {
+  return { available: false, readable: false, mutation_enabled: true, dispatch_enabled: false,
+    availability: { kind: "uninitialized", reason_code: "scope_uninitialized" }, can_initialize: true,
+    capabilities: { scope_initialize_v1: true },
+    initialization: { supervisor_session_id: "root", incarnation_id: "11111111-1111-4111-8111-111111111111", binding_revision: 1 } }
+}
+
+export function readyTicketScopeV1(): TicketSnapshot["scope"] {
+  const scope = ticketSnapshot().scope
+  const confirmation = initializableTicketScope().initialization!
+  return { ...scope, readable: true, availability: { kind: "ready", reason_code: "scope_ready" },
+    can_initialize: false, initialization: null, capabilities: { ...scope.capabilities, scope_initialize_v1: true },
+    binding: { ...scope.binding, scope_id: "supervisor/" + confirmation.incarnation_id } }
 }

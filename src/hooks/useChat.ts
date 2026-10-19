@@ -1,5 +1,7 @@
 import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { useOutputRate } from "./useOutputRate"
+import { useSessionExecutionCompatibility } from "./useSessionExecutionCompatibility"
+import { isSessionExecutionBlocked, observeSessionExecutionConflict } from "@services/chat/sessionExecutionCompatibility"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useShallow } from "zustand/react/shallow"
 import {
@@ -31,7 +33,7 @@ import {
 import {
   getRootModeFenceState,
 } from "@/lib/rootModeTransitionFence"
-import type { Message } from "@shared/types/chat"
+import type { Message, MessageImage } from "@shared/types/chat"
 import { resolveNewChatModelRef } from "@shared/types/providerConfig"
 import type { ProviderModelRef } from "@shared/types/providerModelRef"
 import {
@@ -153,20 +155,46 @@ type RetainedTerminal = {
   baselineMessageId: string | null
 }
 
+const EMPTY_PENDING_IMAGES: readonly MessageImage[] = []
+
 type PendingUserMessage = {
   operationId: number
   sid: string
   text: string
+  images: readonly MessageImage[]
   acknowledgedMessageId: string | null
   baselineMessageIds: ReadonlySet<string>
 }
 
-const hasPersistedUserMessage = (messages: Message[], pending: PendingUserMessage): boolean =>
-  messages.some((message) => message.role === "user" && (
-    pending.acknowledgedMessageId !== null
-      ? message.id === pending.acknowledgedMessageId
-      : !pending.baselineMessageIds.has(message.id) && "content" in message && message.content.trim() === pending.text
-  ))
+export type PendingUserMessageView = Pick<PendingUserMessage, "operationId" | "text" | "images">
+
+type PendingUserState = {
+  entries: ReadonlyMap<number, PendingUserMessage>
+  claimed: ReadonlyMap<string, ReadonlySet<string>>
+}
+
+const matchPendingUserMessages = (
+  messages: Message[], pending: readonly PendingUserMessage[], claimed: ReadonlySet<string> = new Set(),
+): ReadonlyMap<number, string> => {
+  const matches = new Map<number, string>(), used = new Set(claimed)
+  // Explicit ACK IDs take precedence over the legacy text/baseline fallback.
+  for (const entry of pending) {
+    if (entry.acknowledgedMessageId !== null
+      && messages.some((message) => message.role === "user" && message.id === entry.acknowledgedMessageId)) {
+      matches.set(entry.operationId, entry.acknowledgedMessageId)
+      used.add(entry.acknowledgedMessageId)
+    }
+  }
+  // Legacy ACKs omit message IDs: consume new canonical IDs in history order
+  // at most once, including after an earlier operation has retired.
+  for (const entry of pending) {
+    if (entry.acknowledgedMessageId !== null) continue
+    const message = messages.find((message) => message.role === "user" && !used.has(message.id)
+      && !entry.baselineMessageIds.has(message.id) && "content" in message && message.content.trim() === entry.text)
+    if (message) { matches.set(entry.operationId, message.id); used.add(message.id) }
+  }
+  return matches
+}
 
 const hasPersistedTerminalText = (
   messages: Message[],
@@ -256,6 +284,7 @@ export function useChat(
   // The session this hook instance drives: a bound pane uses its own id; the
   // main pane follows the global current. Everything below keys off `sid`.
   const sid = isBound ? boundSessionId : globalCurrentSessionId
+  const executionCompatibility = useSessionExecutionCompatibility(sid)
   const currentChat = useAppStore(selectSessionById(sid))
   const messages = useAppStore(useShallow((s) => selectSessionById(sid)(s)?.messages ?? []))
   const selectedModel = useAppStore((s) => s.selectedModel)
@@ -335,8 +364,8 @@ export function useChat(
   // The session the live stream belongs to — so streaming only renders in ITS
   // conversation, never leaking into another session the user switched to.
   const [streamSid, setStreamSid] = useState<string | null>(null)
-  // Optimistic just-sent user message (shows instantly before history reloads).
-  const [pending, setPending] = useState<PendingUserMessage | null>(null)
+  // Retain every acknowledged send until its own canonical user message arrives.
+  const [pendingState, setPendingState] = useState<PendingUserState>(() => ({ entries: new Map(), claimed: new Map() }))
   const [sending, setSending] = useState(false)
   const { rate: outputRate, record: recordOutput, reset: resetOutputRate } = useOutputRate(sid, (sending || currentChat?.isRunning === true) && streamSid === sid)
   const [submissionPending, setSubmissionPending] = useState(false)
@@ -344,6 +373,11 @@ export function useChat(
     () => new Map(),
   )
   const [pendingApproval, setPendingApproval] = useState<PendingApproval | null>(null)
+  const [approvalSubmission, setApprovalSubmission] = useState<{
+    request: PendingApproval; submitting: boolean; error: string | null
+  } | null>(null)
+  const approvalSubmitRef = useRef<PendingApproval | null>(null)
+  const approvalCompatibility = useSessionExecutionCompatibility(pendingApproval?.childSessionId ?? null)
   const abortRef = useRef<AbortController | null>(null)
   const mountedRef = useRef(false)
   const operationSequenceRef = useRef(0)
@@ -458,10 +492,16 @@ export function useChat(
   const liveSegments = streamSid === sid ? liveSegmentsState : EMPTY_SEGMENTS
   const streamStatus = streamSid === sid ? streamStatusState : null
   const streamPhase = streamSid === sid ? streamPhaseState : null
-  const pendingIsHydrated = !!pending && pending.sid === sid && hasPersistedUserMessage(messages, pending)
-  // Swap to the persisted bubble in this render, before the cleanup effect,
-  // so history arrival cannot produce a frame containing both copies.
-  const pendingUserText = pending?.sid === sid && !pendingIsHydrated ? pending.text : null
+  const sessionPending = useMemo(() => [...pendingState.entries.values()].filter((entry) => entry.sid === sid), [pendingState.entries, sid])
+  const hydratedPending = useMemo(() => matchPendingUserMessages(messages, sessionPending, pendingState.claimed.get(sid ?? "")), [messages, pendingState.claimed, sessionPending, sid])
+  // Swap each exact ACK to history in this render, before cleanup, without
+  // hiding another send that is still absent from the canonical snapshot.
+  const pendingUserMessages: readonly PendingUserMessageView[] = useMemo(() => sessionPending
+    .filter((entry) => !hydratedPending.has(entry.operationId))
+    .map(({ operationId, text, images }) => ({ operationId, text, images })), [hydratedPending, sessionPending])
+  const visiblePending = pendingUserMessages.at(-1) ?? null
+  const pendingUserText = visiblePending?.text ?? null
+  const pendingUserImages = visiblePending?.images ?? EMPTY_PENDING_IMAGES
   const sendFailure = sendFailures.get(sid ?? null) ?? null
 
   const noteSessionOperation = useCallback((sessionId: string | null, operationId: number) => {
@@ -504,18 +544,26 @@ export function useChat(
 
   const clearPendingOperation = useCallback((operationId: number) => {
     if (!mountedRef.current) return
-    setPending((current) => {
-      if (current?.operationId !== operationId) return current
-      const persisted = selectSessionById(current.sid)(useAppStore.getState())?.messages ?? []
-      // History readers may resolve with an old snapshot, skip a missing chat,
-      // or finish before persistence. Only the submitted user message retires it.
-      return hasPersistedUserMessage(persisted, current) ? null : current
+    const submitting = activeSendRef.current?.phase === "submitting" ? activeSendRef.current.originSessionId : null
+    setPendingState((current) => {
+      const target = current.entries.get(operationId)
+      if (!target) return current
+      const persisted = selectSessionById(target.sid)(useAppStore.getState())?.messages ?? []
+      const pending = [...current.entries.values()].filter((entry) => entry.sid === target.sid)
+      const matched = matchPendingUserMessages(persisted, pending, current.claimed.get(target.sid)).get(operationId)
+      if (!matched) return current
+      const entries = new Map(current.entries), claimed = new Map(current.claimed)
+      entries.delete(operationId)
+      // A later POST can still be awaiting its ACK when this history arrives.
+      if (pending.length > 1 || submitting === target.sid) claimed.set(target.sid, new Set([...(claimed.get(target.sid) ?? []), matched]))
+      else claimed.delete(target.sid)
+      return { entries, claimed }
     })
   }, [])
 
   useEffect(() => {
-    if (pending && pendingIsHydrated) clearPendingOperation(pending.operationId)
-  }, [clearPendingOperation, pending, pendingIsHydrated])
+    for (const operationId of hydratedPending.keys()) clearPendingOperation(operationId)
+  }, [clearPendingOperation, hydratedPending])
 
   const setStreamStatus = useCallback((status: string | null) => {
     if (streamStatusRef.current === status) return
@@ -723,6 +771,7 @@ export function useChat(
         modelSelection?: { model: string; modelRef?: ProviderModelRef }
       },
     ) => {
+      if (!opts?.resume && isSessionExecutionBlocked(runSid)) throw new Error(uiText("session_compatibility_execution_blocked"))
       const operationId = opts?.operationId ?? operationSequenceRef.current + 1
       operationSequenceRef.current = Math.max(operationSequenceRef.current, operationId)
       noteSessionOperation(runSid, operationId)
@@ -779,6 +828,7 @@ export function useChat(
           executeAcknowledged = true
         }).catch((err) => {
           if (!ownsStream()) return
+          observeSessionExecutionConflict(runSid, err)
           // The run never started, so no terminal will ever arrive — settle
           // the subscription instead of leaving it (and the UI) hanging.
           publishSendFailure({
@@ -1378,7 +1428,7 @@ export function useChat(
         preserveFailureOnPrepareError?: boolean
       },
     ): Promise<boolean> => {
-      if (activeSendRef.current) return false
+      if (activeSendRef.current || isSessionExecutionBlocked(runSid)) return false
       if (getRootModeFenceState(runSid) !== "clear") return false
       if (
         opts?.expectedFailureOperationId !== undefined &&
@@ -1415,7 +1465,7 @@ export function useChat(
       try {
         await opts?.prepare?.()
         if (activeSendRef.current?.id !== operation.id) return false
-        if (getRootModeFenceState(runSid) !== "clear") return false
+        if (getRootModeFenceState(runSid) !== "clear" || isSessionExecutionBlocked(runSid)) return false
         if (
           opts?.expectedFailureOperationId !== undefined &&
           getSendFailure(runSid)?.operationId !== opts.expectedFailureOperationId
@@ -1452,6 +1502,7 @@ export function useChat(
             }
             return true
           } catch (err) {
+            observeSessionExecutionConflict(runSid, err)
             console.warn("[useChat] detached rerun start failed", err)
             publishSendFailure({
               kind: "generation-failed",
@@ -1482,6 +1533,7 @@ export function useChat(
         await stream
         return true
       } catch (err) {
+        observeSessionExecutionConflict(runSid, err)
         console.error("[useChat] rerun failed", err)
         if (streamStarted || !opts?.preserveFailureOnPrepareError) {
           publishSendFailure({
@@ -1591,8 +1643,10 @@ export function useChat(
         reasoningSelection?: ReasoningEffortSelection
       },
     ): Promise<SendSubmissionResult> => {
+      if (isSessionExecutionBlocked(sid)) return { kind: "blocked" }
       const body = text.trim()
       if (!body && !opts?.images?.length) return { kind: "ignored" }
+      const submittedImages = opts?.images?.map((image) => ({ ...image })) ?? []
       if (activeSendRef.current) return { kind: "busy" }
 
       const startSid = sid
@@ -1680,7 +1734,7 @@ export function useChat(
             ? submittedThinkingMode ?? (opts?.rootOrchestrationOnly === undefined
               ? undefined : opts.rootOrchestrationOnly ? "ultra" : "standard")
             : undefined,
-          images: opts?.images?.length ? opts.images : undefined,
+          images: submittedImages.length ? submittedImages : undefined,
           // Only meaningful when creating a NEW session; an existing session keeps
           // the cwd it was created with.
           workspace_path: !startSid && opts?.workspacePath ? opts.workspacePath : undefined,
@@ -1700,12 +1754,19 @@ export function useChat(
         recordUsedModel(submittedModel)
       } catch (err) {
         console.error("[useChat] message submission was not acknowledged", err)
+        const compatibilityConflict = observeSessionExecutionConflict(startSid, err)
         const rejectionCode = rootModeRejectionCode(err)
         if (activeSendRef.current?.id === operation.id) activeSendRef.current = null
         if (mountedRef.current) {
           setSubmissionPending(false)
           setSending(false)
-          publishSendFailure({
+          setPendingState((current) => {
+            if (!startSid || !current.claimed.has(startSid) || [...current.entries.values()].some((entry) => entry.sid === startSid)) return current
+            const claimed = new Map(current.claimed)
+            claimed.delete(startSid)
+            return { ...current, claimed }
+          })
+          if (!compatibilityConflict) publishSendFailure({
             kind: "submission-unconfirmed",
             operationId: operation.id,
             sessionId: startSid,
@@ -1716,6 +1777,7 @@ export function useChat(
             } : {}),
           })
         }
+        if (compatibilityConflict) return { kind: "blocked" }
         const workflowError = opts?.workflowSelection ? workflowSubmissionError(err) : null
         return { kind: "unconfirmed", operationId: operation.id, ...(rejectionCode ? { rejectionCode } : {}), ...(workflowError ? { workflowError } : {}) }
       }
@@ -1725,6 +1787,23 @@ export function useChat(
       operation.pendingOperationId = operation.id
       noteSessionOperation(acknowledgedSessionId, operation.id)
       if (templatePrompt) acknowledgePendingTemplatePrompt(templatePrompt)
+
+      // A valid ACK retains its submitted content even after navigation.
+      // Navigation and stream ownership below still belong to the viewed pane.
+      if (mountedRef.current && (body || submittedImages.length)) {
+        setPendingState((current) => ({ ...current, entries: new Map(current.entries).set(operation.id, {
+          operationId: operation.id,
+          sid: acknowledgedSessionId,
+          text: body,
+          images: submittedImages.map((image, index) => ({
+            id: `pending-${operation.id}-${index}`, name: image.name ?? "image", size: image.size ?? 0,
+            type: image.type || "image/png", base64: image.base64,
+            url: image.base64.startsWith("data:") ? image.base64 : `data:${image.type || "image/png"};base64,${image.base64}`,
+          })),
+          acknowledgedMessageId,
+          baselineMessageIds,
+        }) }))
+      }
 
       let navigated = false
       const stillAtOrigin =
@@ -1740,7 +1819,10 @@ export function useChat(
           setSending(false)
         }
         if (activeSendRef.current?.id === operation.id) activeSendRef.current = null
-        if (getRootModeFenceState(acknowledgedSessionId) !== "clear") {
+        if (isSessionExecutionBlocked(acknowledgedSessionId)) {
+          publishSendFailure({ kind: "generation-failed", operationId: operation.id, sessionId: acknowledgedSessionId,
+            message: uiText("session_compatibility_execution_blocked") })
+        } else if (getRootModeFenceState(acknowledgedSessionId) !== "clear") {
           publishSendFailure({
             kind: "generation-failed",
             operationId: operation.id,
@@ -1751,6 +1833,7 @@ export function useChat(
           void agentClient
             .execute(acknowledgedSessionId, submittedModel || undefined, submittedReasoningEffort, undefined, submittedModelRef)
             .catch((err) => {
+              observeSessionExecutionConflict(acknowledgedSessionId, err)
               console.warn("[useChat] detached generation start failed", err)
               publishSendFailure({
                 kind: "generation-failed",
@@ -1768,16 +1851,6 @@ export function useChat(
         }
       } else {
         setSubmissionPending(false)
-        if (body) {
-          setPending({
-            operationId: operation.id,
-            sid: acknowledgedSessionId,
-            text: body,
-            acknowledgedMessageId,
-            baselineMessageIds,
-          })
-        }
-
         if (acknowledgedSessionId !== startSid) {
           if (isBound) {
             if (onSessionCreated) {
@@ -1945,7 +2018,7 @@ export function useChat(
   ) => {
     const current = questionStateRef.current
     const { scope, question } = current
-    if (!scope.sessionId || !ownsQuestionScope(scope) || !question
+    if (!scope.sessionId || isSessionExecutionBlocked(scope.sessionId) || !ownsQuestionScope(scope) || !question
         || questionSubmitRef.current || current.loading || current.submitting) return
     const key = questionKey(question)
     if (!displayedScope || !sameQuestionScope(displayedScope, scope) || displayedKey !== key) return
@@ -2001,6 +2074,7 @@ export function useChat(
         void runStream(scope.sessionId, { resume: true })
       }
     } catch (error) {
+      observeSessionExecutionConflict(scope.sessionId, error)
       token.awaitingResponse = false
       if (!ownsSubmission()) return
       const rejected = isApiError(error) && error.status >= 400 && error.status < 500
@@ -2031,11 +2105,24 @@ export function useChat(
   const respondApproval = useCallback(
     async (approved: boolean) => {
       const pa = pendingApproval
-      setPendingApproval(null)
-      if (!pa) return
-      await agentClient
-        .respondToChildApproval(pa.childSessionId, pa.requestId, approved)
-        .catch(() => {})
+      if (!pa || isSessionExecutionBlocked(pa.childSessionId) || approvalSubmitRef.current) return
+      approvalSubmitRef.current = pa
+      setApprovalSubmission({ request: pa, submitting: true, error: null })
+      try {
+        const result = await agentClient.respondToChildApproval(pa.childSessionId, pa.requestId, approved)
+        if (result.delivered !== true) throw new Error("Unconfirmed Child approval delivery")
+        // A late acknowledgement belongs only to the request the Human answered.
+        setPendingApproval((current) => current === pa ? null : current)
+      } catch (error) {
+        const incompatible = observeSessionExecutionConflict(pa.childSessionId, error)
+        const refused = isApiError(error) && error.status >= 400 && error.status < 500
+        setApprovalSubmission({ request: pa, submitting: false,
+          error: incompatible || refused ? uiText("the_request_or_permissions_have_changed_confirm_again_u_a1ebae48")
+            : uiText("submission_is_unconfirmed_refresh_or_retry_the_last_sub_f3127c94") })
+      } finally {
+        if (approvalSubmitRef.current === pa) approvalSubmitRef.current = null
+        setApprovalSubmission((current) => current?.request === pa ? { ...current, submitting: false } : current)
+      }
     },
     [pendingApproval],
   )
@@ -2053,6 +2140,9 @@ export function useChat(
     streamStatus,
     outputRate,
     pendingUserText,
+    pendingUserImages,
+    pendingUserMessages,
+    executionCompatibility,
     sending,
     submissionPending,
     select,
@@ -2075,6 +2165,9 @@ export function useChat(
     refreshQuestion,
     retryQuestion,
     pendingApproval,
+    approvalSubmitting: approvalSubmission?.submitting ?? false,
+    approvalError: approvalSubmission?.request === pendingApproval ? approvalSubmission?.error ?? null : null,
+    approvalCompatibility,
     answerQuestion,
     respondApproval,
   }

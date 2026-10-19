@@ -1972,4 +1972,23 @@ describe("v2Stream shared WebSocket client", () => {
       { type: "subscribe", ch: "message.child-1" },
     ])
   })
+it("keeps a second active tree view fresh when another view advances the shared cursor", () => {
+  const cursor = (revision: number) => `at1-${"a".repeat(64)}-${revision}`
+  const inline = { onControl: vi.fn(), onGap: vi.fn() }
+  const inspector = { onControl: vi.fn(), onGap: vi.fn() }
+  const first = subscribeActorTree("root", cursor(7), inline)
+  const socket = lastSocket(); socket.open()
+  const second = subscribeActorTree("root", cursor(8), inspector)
+  expect(inline.onControl).toHaveBeenCalledExactlyOnceWith({ type: "actor_snapshot_required", reason: "changed", cursor: cursor(8) })
+  expect(inspector.onControl).not.toHaveBeenCalled()
+  expect(inline.onGap).not.toHaveBeenCalled()
+  const third = subscribeActorTree("root", cursor(8), { onControl: vi.fn(), onGap: vi.fn() })
+  expect(inline.onControl).toHaveBeenCalledOnce()
+  expect(sockets).toHaveLength(1)
+  second.close(); third.close()
+  expect(socket.parsedSent()).not.toContainEqual({ type: "unsubscribe", ch: "tree.root" })
+  first.close()
+  expect(socket.parsedSent()).toContainEqual({ type: "unsubscribe", ch: "tree.root" })
+})
+
 })

@@ -19,7 +19,14 @@ vi.mock("@/components/chat/Reasoning", () => ({
   Reasoning: ({ text }: { text: string }) => <div data-reasoning={text}>{text}</div>,
 }))
 vi.mock("@/components/chat/StreamingReasoning", () => ({ StreamingReasoning: () => null }))
-vi.mock("@/components/chat/SubAgents", () => ({ SubAgents: () => null }))
+vi.mock("@/components/chat/SubAgents", () => ({
+  SubAgents: ({ agents, expandedIds, onExpandedChange }: { agents: Record<string, unknown>
+    expandedIds?: ReadonlySet<string>; onExpandedChange?: (id: string, expanded: boolean) => void }) => Object.keys(agents).length
+    ? <div data-subagent-group>{Object.keys(agents).map((id) => <div key={id} data-subagent-id={id}>
+      <button type="button" aria-expanded={expandedIds?.has(id) ?? false}
+        onClick={() => onExpandedChange?.(id, !expandedIds?.has(id))} />
+    </div>)}</div> : null,
+}))
 vi.mock("@/components/chat/ToolCalls", () => ({
   ToolCalls: ({
     active,
@@ -46,8 +53,10 @@ vi.mock("@/components/chat/ToolCalls", () => ({
 }))
 
 import { MessageList } from "./MessageList"
+import { mapHistoryMessagesToUi } from "@shared/store/appStore/slices/chatSessionSlice/messageMapping"
+import { apiClient } from "@services/api"
 import { uiText } from "@shared/i18n/ui"
-import type { Message } from "@shared/types/chatMessages"
+import type { Message, MessageImage } from "@shared/types/chatMessages"
 import type { LiveSegment } from "@/hooks/useChat"
 
 const mountedRoots: Root[] = []
@@ -74,6 +83,7 @@ function renderMessageList(
   contentShiftX = 0,
   readOnly = false,
   liveSegments: LiveSegment[] = [],
+  pending?: { text: string; images: MessageImage[]; messages?: Parameters<typeof MessageList>[0]["pendingUserMessages"]; preview?: (src: string) => void },
 ) {
   const container = document.createElement("div")
   document.body.appendChild(container)
@@ -94,12 +104,14 @@ function renderMessageList(
         streamingReasoning={null}
         liveSegments={liveSegments}
         streamStatus={null}
-        pendingUserText={null}
+        pendingUserText={pending?.text ?? null}
+        pendingUserImages={pending?.images}
+        pendingUserMessages={pending?.messages}
         contentShiftX={contentShiftX}
         readOnly={readOnly}
         forking={false}
         onSelectSubAgent={vi.fn()}
-        onPreviewImage={vi.fn()}
+        onPreviewImage={pending?.preview ?? vi.fn()}
         onRegenerate={vi.fn()}
         onFork={vi.fn()}
         onDelete={vi.fn()}
@@ -688,4 +700,119 @@ describe("MessageList history virtualization", () => {
     expect(process?.querySelector("[data-process-toggle]")?.getAttribute("aria-expanded")).toBe("true")
     expect(process?.querySelector('[data-reasoning="virtual final reasoning"]')).not.toBeNull()
   })
+})
+
+describe("subagent transcript provenance", () => {
+  const spawn = (id: string, childId: string, compact = false): Message[] => [{
+    id, role: "assistant", type: "tool_call", createdAt: "2026-10-16T00:00:00Z",
+    toolCalls: [{ toolCallId: id, toolName: "sub_agent", parameters: compact ? { intent: "chat", message: "bounded assignment" } : { action: "create" } }],
+  }, {
+    id: `${id}-result`, role: "assistant", type: "tool_result", createdAt: "2026-10-16T00:00:01Z",
+    toolName: "sub_agent", toolCallId: id, isError: false,
+    result: { tool_name: "sub_agent", result: JSON.stringify(compact ? { actor_id: childId } : { child_session_id: childId }), display_preference: "Default" },
+  }]
+  const user = (id: string): Message => ({ id, role: "user", content: id, createdAt: "2026-10-16T00:00:00Z" })
+  it.each([false, true])("keeps each child at its creation group when a newer turn spawns another child (compact=%s)", (compact) => {
+    const host = document.createElement("div"); document.body.appendChild(host)
+    const root = createRoot(host); mountedRoots.push(root)
+    const props: Parameters<typeof MessageList>[0] = {
+      scrollRef: createRef(), contentRef: createRef(), onScroll: vi.fn(),
+      messages: [user("turn-1"), ...spawn("create-1", "child-1", compact)],
+      mergedSubAgents: { "child-1": { status: "running" } }, sending: false,
+      latestRunFinished: false, streaming: null, streamingActive: false,
+      streamingReasoning: null, liveSegments: [], streamStatus: null, pendingUserText: null,
+      forking: false, onSelectSubAgent: vi.fn(), onPreviewImage: vi.fn(), onRegenerate: vi.fn(),
+      onFork: vi.fn(), onDelete: vi.fn(), onEditMessage: vi.fn(),
+    }
+    const render = (updates: Partial<typeof props>) => act(() => root.render(<MessageList {...props} {...updates} />))
+    const row = (id: string) => host.querySelector(`[data-subagent-id="${id}"]`)?.closest("[data-history-entry-key]")?.getAttribute("data-history-entry-key")
+    render({})
+    expect(row("child-1")).toBe("activity-create-1")
+    const messages = [...props.messages, user("turn-2"), ...spawn("create-2", "child-2", compact)]
+    render({ messages, mergedSubAgents: { "child-2": { status: "running" }, "child-1": { status: "completed" } } })
+    expect(row("child-1")).toBe("activity-create-1")
+    expect(row("child-2")).toBe("activity-create-2")
+    render({ messages: [...messages, user("turn-3"), { id: "tasks", role: "assistant", type: "tool_call",
+      createdAt: "", toolCalls: [{ toolCallId: "tasks", toolName: "TaskList", parameters: {} }] }],
+      mergedSubAgents: { "child-1": { status: "error" }, "child-2": { status: "cancelled" } } })
+    expect(row("child-1")).toBe("activity-create-1")
+    expect(row("child-2")).toBe("activity-create-2")
+  })
+  it("preserves birth placement through the live-to-history handoff and later status updates", () => {
+    const host = document.createElement("div"); document.body.appendChild(host)
+    const root = createRoot(host); mountedRoots.push(root)
+    const props: Parameters<typeof MessageList>[0] = {
+      scrollRef: createRef(), contentRef: createRef(), onScroll: vi.fn(), messages: [user("turn-1")],
+      mergedSubAgents: { child: { status: "running" } }, sending: true,
+      latestRunFinished: false, streaming: null, streamingActive: false,
+      streamingReasoning: null, liveSegments: [{ kind: "tools", calls: [{ toolCallId: "live-create", toolName: "sub_agent",
+        args: { action: "create" }, status: "completed", output: JSON.stringify({ child_session_id: "child" }) }] },
+        { kind: "text", text: "Birth answer", reasoning: null }], streamStatus: null, pendingUserText: null,
+      forking: false, onSelectSubAgent: vi.fn(), onPreviewImage: vi.fn(), onRegenerate: vi.fn(),
+      onFork: vi.fn(), onDelete: vi.fn(), onEditMessage: vi.fn(),
+    }
+    const render = (updates: Partial<typeof props>) => act(() => root.render(<MessageList {...props} {...updates} />))
+    const card = () => host.querySelector('[data-subagent-id="child"]')!
+    render({})
+    act(() => card().querySelector<HTMLButtonElement>("button")!.click())
+    expect(card().querySelector("button")!.getAttribute("aria-expanded")).toBe("true")
+    const answer = host.querySelector('[data-assistant-content="Birth answer"]')!
+    expect(card().compareDocumentPosition(answer) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    const messages = [user("turn-1"), ...spawn("live-create", "child"), { id: "answer", role: "assistant", type: "text", content: "Birth answer", createdAt: "" } as Message]
+    render({ messages, liveSegments: [], sending: false })
+    expect(card().closest("[data-history-entry-key]")?.getAttribute("data-history-entry-key")).toBe("activity-live-create")
+    expect(card().querySelector("button")!.getAttribute("aria-expanded")).toBe("true")
+    const persistedCard = card()
+    render({ messages: [...messages, user("new-turn")], liveSegments: [], sending: false, mergedSubAgents: { child: { status: "completed" } } })
+    expect(card()).toBe(persistedCard)
+    expect(card().querySelector("button")!.getAttribute("aria-expanded")).toBe("true")
+    act(() => card().querySelector<HTMLButtonElement>("button")!.click())
+    render({ messages, liveSegments: [], sending: false, mergedSubAgents: { child: { status: "cancelled" } } })
+    expect(card().querySelector("button")!.getAttribute("aria-expanded")).toBe("false")
+    expect(card().closest("[data-history-entry-key]")?.getAttribute("data-history-entry-key")).toBe("activity-live-create")
+  })
+
+})
+
+
+describe("image attachment visibility", () => {
+  it("renders each retained acknowledgement as its own image bubble and preview", () => {
+    const image = (name: string) => ({ id: name, url: `data:image/png;base64,${name}`, name, size: 1, type: "image/png" })
+    const first = image("first"), second = image("second"), preview = vi.fn()
+    const host = renderMessageList([], false, 0, false, [], { text: "second caption", images: [second], preview, messages: [
+      { operationId: 1, text: "first caption", images: [first] },
+      { operationId: 2, text: "second caption", images: [second] },
+    ] })
+    const bubbles = host.querySelectorAll("[data-pending-user-message]")
+    expect([...bubbles].map((node) => node.textContent)).toEqual(["first caption", "second caption"])
+    expect([...bubbles].map((node) => node.getAttribute("data-pending-operation"))).toEqual(["1", "2"])
+    act(() => bubbles[0].querySelector("img")!.click())
+    act(() => bubbles[1].querySelector("img")!.click())
+    expect(preview.mock.calls).toEqual([[first.url], [second.url]])
+  })
+  it("an authoritative empty pending list cannot fall back to a retired legacy bubble", () => {
+    const host = renderMessageList([], false, 0, false, [], { text: "retired ACK", images: [], messages: [] })
+    expect(host.querySelector("[data-pending-user-message]")).toBeNull()
+  })
+  it.each(["", "caption with image"])("renders and previews a pending image without hiding an image-only bubble (%s)", (text) => {
+    const url = "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7", preview = vi.fn()
+    const host = renderMessageList([], false, 0, false, [], { text, preview,
+      images: [{ id: "pending-image", url, name: "fixture.gif", type: "image/gif", size: 42 }] })
+    const bubble = host.querySelector("[data-pending-user-message]")
+    const image = bubble?.querySelector("img")
+    expect(image?.getAttribute("src")).toBe(url)
+    expect(bubble?.textContent).toBe(text)
+    act(() => image!.click()); expect(preview).toHaveBeenCalledWith(url)
+  })
+})
+
+
+it("restores a persisted image-only user message through the existing full history contract", () => {
+  const messages = mapHistoryMessagesToUi("fixture", [{ id: "persisted-image-only", role: "user", content: "",
+    content_parts: [{ type: "image_url", image_url: { url: "bamboo-attachment://fixture/asset-1" } }],
+    created_at: "2026-10-19T00:00:00Z" }])
+  const host = renderMessageList(messages, true)
+  expect(host.querySelector('[data-message-row="persisted-image-only"] img')?.getAttribute("src"))
+    .toBe(apiClient.resolveUrl("sessions/fixture/attachments/asset-1"))
+  expect(host.querySelector("[data-pending-user-message]")).toBeNull()
 })
