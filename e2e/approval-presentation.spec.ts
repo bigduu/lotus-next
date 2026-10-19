@@ -16,7 +16,7 @@ const session = (id: string) => ({
 })
 
 async function prepare(page: Page, target: string, childApproval = false,
-  compatibility?: { parentBlocked?: boolean; childBlocked?: boolean }) {
+  compatibility?: { parentBlocked?: boolean; childBlocked?: boolean; parentQuestion?: boolean }) {
   let childBlocked = compatibility?.childBlocked === true
   const report = (blocked: boolean) => ({ session_version: blocked ? 99 : 1, current_session_version: 1,
     status: blocked ? "conflict" : "compatible", history_readable: true, execution_allowed: !blocked,
@@ -69,7 +69,7 @@ async function prepare(page: Page, target: string, childApproval = false,
       if (path === `/api/v1/task/${id}`) return route.fulfill({ json: { items: [] } })
       if (path === `/api/v1/actors/${id}/snapshot`) return route.fulfill({ json: actorSnapshotFixture(id, 0) })
       if (path === `/api/v1/respond/${id}/pending`) return route.fulfill({
-        json: id === target && generation <= 2 && !childApproval ? pending() : { has_pending_question: false },
+        json: id === target && generation <= 2 && (!childApproval || compatibility?.parentQuestion === true) ? pending() : { has_pending_question: false },
       })
     }
     if (path === `/api/v1/sessions/${target}/permission-decisions`) {
@@ -193,5 +193,23 @@ test("approval compatibility waits for the Child's explicit conflict recovery wi
   await card.getByRole("button", { name: "批准", exact: true }).click()
   await expect.poll(() => fixture.childDecisions).toEqual([{ request_id: "child-own-conflict", approved: true }])
   expect(fixture.decisions).toEqual([])
+  expect(fixture.observation.pageErrors).toEqual([])
+})
+
+
+test("approval compatibility retains a genuine parent question during a Child conflict", async ({ page }, testInfo) => {
+  const fixture = await prepare(page, mainId, true, { childBlocked: true, parentQuestion: true })
+  await expect.poll(() => fixture.channels.has(`agent.${mainId}`)).toBe(true)
+  fixture.sendChildRequest("child-blocked-parent-still-pending", 1)
+  // The live parent modal aria-hides the background Child notice.
+  await expect(page.locator('section[aria-label="子代理请求授权"] [data-session-execution-blocked="true"]')).toHaveCount(1)
+  const card = page.locator("[data-approval-presentation]")
+  await expect(card).toContainText("Fixture approval 1")
+  expect(fixture.childDecisions).toEqual([]); expect(fixture.decisions).toEqual([])
+  await page.screenshot({ path: testInfo.outputPath(`parent-question-child-conflict-${testInfo.project.name}.png`), animations: "disabled" })
+  await card.getByRole("button", { name: "仅本次拒绝", exact: true }).click()
+  await expect.poll(() => fixture.decisions).toEqual([{ request_id: "approval-1", request_generation: "generation-1",
+    expected_policy_revision: 7, decision: "deny_once" }])
+  expect(fixture.childDecisions).toEqual([])
   expect(fixture.observation.pageErrors).toEqual([])
 })

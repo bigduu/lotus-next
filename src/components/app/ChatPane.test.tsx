@@ -115,7 +115,8 @@ vi.mock("@/lib/taskTemplates", () => ({ peekPendingTemplatePrompt: runtime.peekT
 vi.mock("@/lib/exportMarkdown", () => ({ downloadMarkdown: vi.fn() }))
 vi.mock("@/lib/exportPdf", () => ({ downloadPdf: vi.fn() }))
 vi.mock("@/components/chat/Dialogs", () => ({
-  QuestionDialog: () => null,
+  QuestionDialog: ({ q, onAnswer }: ComponentProps<(typeof import("@/components/chat/Dialogs"))["QuestionDialog"]>) =>
+    <div data-parent-question>{q.question}<button onClick={() => onAnswer("main answer")}>Answer parent</button></div>,
   ApprovalDialog: ({ a, onRespond }: ComponentProps<(typeof import("@/components/chat/Dialogs"))["ApprovalDialog"]>) =>
     <div role="dialog" data-child-approval={a.childSessionId}>
       <button onClick={() => onRespond(true)}>Approve child</button>
@@ -2083,10 +2084,12 @@ describe("child approval compatibility", () => {
     blocked: status === "conflict", observed: true, legacy: status === null, loading: false, readError: false, refresh: vi.fn(async () => {}),
   })
   const pending = { childSessionId: "approval-child", requestId: "child-request-7", toolName: "Write", permission: "write" }
-  async function renderApproval(parent: ReturnType<typeof view>, child: ReturnType<typeof view>, respond: (approved: boolean) => Promise<void>) {
+  async function renderApproval(parent: ReturnType<typeof view>, child: ReturnType<typeof view>, respond: (approved: boolean) => Promise<void>,
+    question?: { pending: NonNullable<ChatPaneProps["chat"]["pendingQuestion"]>; answer: (text: string) => Promise<void> }) {
     if (!roots.length) await mount(vi.fn<Send>(), "approval-parent")
     await act(async () => roots.at(-1)!.render(<ChatPane chat={{ ...createChat(vi.fn<Send>(), "approval-parent"),
-      executionCompatibility: parent, approvalCompatibility: child, pendingApproval: pending, respondApproval: respond }} pickedWorkspace="/picked"
+      executionCompatibility: parent, approvalCompatibility: child, pendingApproval: pending, respondApproval: respond,
+      ...(question ? { pendingQuestion: question.pending, answerQuestion: question.answer } : {}) }} pickedWorkspace="/picked"
       onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()} splitOpen={false}
       onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false} />))
   }
@@ -2098,6 +2101,17 @@ describe("child approval compatibility", () => {
     expect(respond).not.toHaveBeenCalled()
     act(() => [...document.querySelectorAll<HTMLButtonElement>("button")].find(b => b.textContent === "Approve child")!.click())
     expect(respond).toHaveBeenCalledExactlyOnceWith(true)
+  })
+  it("keeps the genuine parent question available while only the Child conflicts", async () => {
+    const respond = vi.fn(async (_approved: boolean) => {}), answer = vi.fn(async (_text: string) => {})
+    await renderApproval(view("compatible"), view("conflict"), respond, { answer,
+      pending: { has_pending_question: true, interaction_kind: "clarification", question: "Parent still needs Human input",
+        options: ["main answer"], allow_custom: false, tool_call_id: "parent-question" } })
+    expect(document.querySelector("[data-parent-question]")?.textContent).toContain("Parent still needs Human input")
+    expect(document.querySelector('[data-session-execution-blocked="true"]')).not.toBeNull()
+    expect(respond).not.toHaveBeenCalled(); expect(answer).not.toHaveBeenCalled()
+    act(() => [...document.querySelectorAll<HTMLButtonElement>("button")].find(b => b.textContent === "Answer parent")!.click())
+    expect(answer).toHaveBeenCalledExactlyOnceWith("main answer"); expect(respond).not.toHaveBeenCalled()
   })
   it("blocks only the Child's explicit conflict and restores its dialog after a canonical recovery", async () => {
     const respond = vi.fn(async (_approved: boolean) => {})
