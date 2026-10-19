@@ -65,6 +65,7 @@ async function prepare(page: Page, initial: Phase) {
   await expect(page.getByRole("textbox", { name: "Messages", exact: true })).toBeAttached()
   return { observation, writes, channels, get connections() { return connections }, get pendingReads() { return pendingReads },
     setPhase(value: Phase) { phase = value; if (value === "permission") history = exhaustedHistory() },
+    disconnect() { return socket!.close({ code: 1012, reason: "fixture in-place websocket reconnect" }) },
     emit(event: unknown) { socket!.send(JSON.stringify({ ch: `agent.${sid}`, seq: ++seq, event })) },
     exhaust() { phase = "exhausted"; history = exhaustedHistory() },
     terminal() { socket!.send(JSON.stringify({ ch: `agent.${sid}`, seq: ++seq, control: { type: "terminal" } })) },
@@ -148,4 +149,34 @@ test("#2016 reconnect reads canonical generation and exhaustion metadata cannot 
   await expect(page.getByRole("dialog")).toHaveCount(0)
   expect(f.writes).toHaveLength(1)
   expect(f.observation.pageErrors).toEqual([])
+})
+
+
+test("#2016 in-place socket reconnect replaces stale progress with canonical permission then absence", async ({ page }, info) => {
+  let navigations = 0
+  page.on("framenavigated", (frame) => { if (frame === page.mainFrame()) navigations += 1 })
+  const f = await prepare(page, "legacy")
+  await expect(page.getByRole("dialog")).toContainText(legacyQuestionText)
+  const before = f.pendingReads
+  f.setPhase("permission")
+  await f.disconnect()
+  await expect.poll(() => f.connections).toBeGreaterThanOrEqual(2)
+  const approval = page.locator("[data-approval-presentation]")
+  await expect(approval).toContainText("Canonical permission generation 2")
+  expect(f.pendingReads).toBeGreaterThan(before)
+  expect(f.writes).toEqual([])
+  await expect(approval.getByRole("button", { name: "Continue", exact: true })).toHaveCount(0)
+  await expect(approval.locator("textarea")).toHaveCount(0)
+  await page.screenshot({ path: info.outputPath("permission-after-in-place-reconnect.png"), animations: "disabled" })
+  const confirmedReads = f.pendingReads
+  f.setPhase("exhausted")
+  await f.disconnect()
+  await expect.poll(() => f.connections).toBeGreaterThanOrEqual(3)
+  await expect.poll(() => f.pendingReads).toBeGreaterThan(confirmedReads)
+  await expect(page.getByRole("dialog")).toHaveCount(0)
+  await expect(page.getByText(unfinishedSummary, { exact: true })).toBeVisible()
+  expect(f.writes).toEqual([])
+  expect(navigations).toBe(1)
+  expect(f.observation.pageErrors).toEqual([])
+  await page.screenshot({ path: info.outputPath("canonical-none-after-second-in-place-reconnect.png"), animations: "disabled" })
 })
