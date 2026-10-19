@@ -40,9 +40,9 @@ async function open(page: Page, phone: boolean) {
   return { dialog, trigger }
 }
 for (const available of [false, true]) {
-  test(`Project scope verifier=${available} remains blocked and offers only complete-set review`, async ({ page }, info) => {
+  test(`Project scope without HTTP write v1 stays blocked despite legacy verifier=${available}`, async ({ page }, info) => {
     const f = await fixture(page, available), { dialog, trigger } = await open(page, info.project.name === "phone-chromium")
-    await expect(dialog).toContainText("此服务尚未提供已认证的网页范围更新")
+    await expect(dialog).toContainText("此服务尚未提供网页范围更新")
     await expect(dialog.getByRole("checkbox", { name: /Project p1/ })).toBeChecked()
     await dialog.getByRole("checkbox", { name: /Project p2/ }).check()
     await dialog.getByRole("button", { name: "预览完整集合", exact: true }).click()

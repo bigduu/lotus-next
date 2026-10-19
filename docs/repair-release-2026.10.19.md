@@ -43,3 +43,5 @@ Child approvals use the target Child's detail-only compatibility report and refr
 A blocked Child's compatibility notice does not suppress a compatible parent's genuine pending question or typed permission request. The two targets retain their own Human decision and backend validation paths.
 
 The Child recovery notice stays inside the chat column and keeps the composer usable at desktop and phone widths.
+
+The complete CI browser run also checks older integration fixtures. Their assertions keep the current Root/Supervisor distinction, HTTP write capability negotiation, and separate Child expansion/open actions. No scope login/native requirement is restored; projected transcript, channel isolation, full-set review and no-mutation assertions remain in place.
