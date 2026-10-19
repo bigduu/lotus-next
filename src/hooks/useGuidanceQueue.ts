@@ -1,3 +1,4 @@
+import { isSessionExecutionBlocked, observeSessionExecutionConflict } from "@services/chat/sessionExecutionCompatibility"
 import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { useEffect, useRef, useState } from "react"
 import { guidanceService, type GuidanceImage, type GuidanceMode, type PendingGuidance } from "@services/chat/guidance"
@@ -57,19 +58,21 @@ export function useGuidanceQueue(sessionId: string | null, running: boolean) {
 
   const send = async (text: string, images: GuidanceImage[] = []): Promise<SendSubmissionResult> => {
     if (!sessionId || (!text.trim() && !images.length)) return { kind: "ignored" }
-    if (getRootModeFenceState(sessionId) !== "clear") return { kind: "blocked" }
+    if (getRootModeFenceState(sessionId) !== "clear" || isSessionExecutionBlocked(sessionId)) return { kind: "blocked" }
     if (active.current) return { kind: "busy" }
     active.current = true
     const target = sessionId
     setBusy(target); setFailure(null)
+    let createdReceiptId: string | null = null
     try {
       const bytes = new TextEncoder().encode(JSON.stringify({ text, images, mode }))
       const fingerprint = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)), (byte) => byte.toString(16).padStart(2, "0")).join("")
       const previous = receipts.current.get(target) ?? readReceipt(target)
       const receipt = previous?.fingerprint === fingerprint ? previous : { id: crypto.randomUUID(), fingerprint }
+      if (!previous) createdReceiptId = receipt.id
       receipts.current.set(target, receipt)
       try { sessionStorage.setItem(receiptKey(target), JSON.stringify(receipt)) } catch { /* No image bytes are stored in browser receipts. */ }
-      if (getRootModeFenceState(target) !== "clear") {
+      if (getRootModeFenceState(target) !== "clear" || isSessionExecutionBlocked(target)) {
         if (receipt !== previous) {
           if (previous) receipts.current.set(target, previous)
           else receipts.current.delete(target)
@@ -89,7 +92,16 @@ export function useGuidanceQueue(sessionId: string | null, running: boolean) {
         try { await refresh(target) } catch { /* Accepted delivery will appear on the next poll. */ }
       }
       return { kind: "accepted", operationId: 0, sessionId: target, navigated: false }
-    } catch {
+    } catch (failure) {
+      if (observeSessionExecutionConflict(target, failure)) {
+        // This refusal did not admit the new request. Retain a receipt that
+        // predates this attempt: its earlier delivery may still be unknown.
+        if (createdReceiptId !== null) {
+          if (receipts.current.get(target)?.id === createdReceiptId) receipts.current.delete(target)
+          try { if (readReceipt(target)?.id === createdReceiptId) sessionStorage.removeItem(receiptKey(target)) } catch { /* Preserve an unreadable receipt. */ }
+        }
+        return { kind: "blocked" }
+      }
       if (mounted.current && currentSession.current === target) {
         setUncertain(target)
         setFailure({ sessionId: target, text: uiText("sending_could_not_be_confirmed_text_and_images_are_pres_65db5d72") })

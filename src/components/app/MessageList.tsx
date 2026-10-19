@@ -330,6 +330,7 @@ function MessageActions({
   sending,
   forking,
   onEdit,
+  executionBlocked,
   onRegenerate,
   onFork,
   onDelete,
@@ -340,6 +341,7 @@ function MessageActions({
   sending: boolean
   forking: boolean
   onEdit: () => void
+  executionBlocked: boolean
   onRegenerate: () => void
   onFork: () => void
   onDelete: () => void
@@ -399,11 +401,11 @@ function MessageActions({
             {uiText("fork_from_here_28321cb9")}</DropdownMenuItem>
           <DropdownMenuSeparator className="md:hidden" />
           {isUser ? (
-            <DropdownMenuItem onClick={onEdit}>
+            <DropdownMenuItem disabled={executionBlocked} onClick={onEdit}>
               <Pencil />
               {uiText("edit_and_resend_f857c444")}</DropdownMenuItem>
           ) : (
-            <DropdownMenuItem disabled={sending} onClick={onRegenerate}>
+            <DropdownMenuItem disabled={sending || executionBlocked} onClick={onRegenerate}>
               <RotateCcw />
               {uiText("regenerate_3221a042")}</DropdownMenuItem>
           )}
@@ -436,6 +438,7 @@ export function MessageList({
   pendingUserImages = [],
   contentShiftX = 0,
   readOnly = false,
+  executionBlocked = false,
   forking,
   onSelectSubAgent,
   onPreviewImage,
@@ -465,6 +468,7 @@ export function MessageList({
   contentShiftX?: number
   /** Suppress transcript actions for message-only child previews. */
   readOnly?: boolean
+  executionBlocked?: boolean
   forking: boolean
   onSelectSubAgent: (id: string) => void
   onPreviewImage: (src: string) => void
@@ -687,7 +691,7 @@ export function MessageList({
               onChange={(e) => setEditingMsg({ id: m.id, text: e.target.value })}
               onKeyDown={(e) => {
                 if (e.key === "Escape") setEditingMsg(null)
-                if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+                if (!executionBlocked && e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
                   onEditMessage(m.id, editingMsg.text)
                   setEditingMsg(null)
                 }
@@ -700,6 +704,7 @@ export function MessageList({
                 {uiText("cancel_2cd0f3be")}</Button>
               <Button
                 size="sm"
+                disabled={executionBlocked}
                 onClick={() => {
                   onEditMessage(m.id, editingMsg.text)
                   setEditingMsg(null)
@@ -720,6 +725,7 @@ export function MessageList({
         forking={forking}
         onEdit={() => setEditingMsg({ id: m.id, text })}
         onRegenerate={onRegenerate}
+        executionBlocked={executionBlocked}
         onFork={() => onFork(m.id)}
         onDelete={() => onDelete(m.id)}
       />

@@ -2296,6 +2296,10 @@ describe("owned streams without a terminal frame", () => {
     })
     mocks.getSession.mockResolvedValue({ session: { id: sessionId, is_running: false, last_run_status: "completed" } })
     const hook = await mountUseChat({ mode: "bound", sessionId })
+    // The detail-only compatibility observation is independent of run liveness.
+    // The assertions below count only status polls after this initial read.
+    expect(mocks.getSession).toHaveBeenCalledExactlyOnceWith(sessionId)
+    mocks.getSession.mockClear()
     await act(async () => { await hook.current.send("inspect the worktree") })
     return { hook, controller: mocks.subscribeToEvents.mock.calls[0][2] as AbortController, closeSubscription: subscription.resolve }
   }
@@ -2434,4 +2438,77 @@ describe("image attachment visibility", () => {
     expect(hook.current.pendingUserText).toBeNull()
     expect(hook.current.pendingUserImages).toHaveLength(0)
   })
+})
+
+
+describe("session execution compatibility v1", () => {
+  const report = (status: "compatible" | "legacy_compatible" | "conflict") => ({
+    session_version: status === "legacy_compatible" ? null : status === "conflict" ? 99 : 1,
+    current_session_version: 1, status, history_readable: true, execution_allowed: status !== "conflict",
+    conflicts: status === "conflict" ? [{ code: "unsupported_session_version", message: "Declared execution version is unsupported." }] : [],
+  })
+  it("blocks sending and destructive rerun only after explicit detail conflict", async () => {
+    const sid = "compatibility-conflict-session"
+    mocks.appState.chats = [{ id: sid, messages: [{ id: "original-user", role: "user", content: "old history" }] }]
+    mocks.getSession.mockResolvedValue({ session: { id: sid, execution_compatibility: report("conflict") } })
+    const hook = await mountUseChat({ mode: "bound", sessionId: sid })
+    await flushMicrotasks()
+    await act(async () => { expect((await hook.current.send("preserve this draft")).kind).toBe("blocked") })
+    await act(async () => { await hook.current.regenerate(); await hook.current.editMessage("original-user", "edited draft") })
+    expect(mocks.sendMessage).not.toHaveBeenCalled(); expect(mocks.execute).not.toHaveBeenCalled()
+    expect(mocks.truncateSessionMessages).not.toHaveBeenCalled(); expect(mocks.restoreSessionState).not.toHaveBeenCalled()
+    expect(mocks.appState.chats[0].messages).toHaveLength(1)
+  })
+  it.each([undefined, "compatible", "legacy_compatible"] as const)("keeps normal send available when report is %s", async (status) => {
+    const sid = `compatibility-open-${status ?? "missing"}`
+    mocks.appState.chats = [{ id: sid, messages: [] }]
+    mocks.getSession.mockResolvedValue({ session: { id: sid, ...(status ? { execution_compatibility: report(status) } : {}) } })
+    mocks.sendMessage.mockResolvedValueOnce({ session_id: sid, message_id: "accepted-compatibility" })
+    mocks.subscribeToEvents.mockReturnValueOnce(pendingForever())
+    const hook = await mountUseChat({ mode: "bound", sessionId: sid })
+    await flushMicrotasks()
+    await act(async () => { expect((await hook.current.send("continue normally")).kind).toBe("accepted") })
+    expect(mocks.sendMessage).toHaveBeenCalledTimes(1)
+  })
+  it("records a typed submit refusal once and recovers only after a fresh compatible detail", async () => {
+    const sid = "compatibility-submit-refusal"
+    mocks.appState.chats = [{ id: sid, messages: [] }]
+    mocks.getSession.mockResolvedValue({ session: { id: sid } })
+    mocks.sendMessage.mockRejectedValueOnce(new ApiError("incompatible", 409, "", JSON.stringify({
+      session_id: sid, error: { type: "conflict", code: "session_execution_incompatible", message: "incompatible" }, compatibility: report("conflict"),
+    })))
+    const hook = await mountUseChat({ mode: "bound", sessionId: sid })
+    await act(async () => { expect((await hook.current.send("keep my content")).kind).toBe("blocked") })
+    expect(hook.current.executionCompatibility.blocked).toBe(true)
+    expect(hook.current.sendFailure).toBeNull()
+    await act(async () => { expect((await hook.current.send("keep my content")).kind).toBe("blocked") })
+    expect(mocks.sendMessage).toHaveBeenCalledTimes(1); expect(mocks.execute).not.toHaveBeenCalled()
+    mocks.getSession.mockResolvedValue({ session: { id: sid, execution_compatibility: report("legacy_compatible") } })
+    await act(async () => { await hook.current.executionCompatibility.refresh() })
+    expect(hook.current.executionCompatibility.blocked).toBe(false)
+    mocks.sendMessage.mockResolvedValueOnce({ session_id: sid, message_id: "accepted-after-review" })
+    mocks.subscribeToEvents.mockReturnValueOnce(pendingForever())
+    await act(async () => { expect((await hook.current.send("keep my content")).kind).toBe("accepted") })
+    expect(mocks.sendMessage).toHaveBeenCalledTimes(2)
+  })
+  it("keeps an acknowledged message when execute returns typed conflict and prevents retry", async () => {
+    const sid = "compatibility-execute-refusal"
+    mocks.appState.chats = [{ id: sid, messages: [] }]
+    mocks.getSession.mockResolvedValue({ session: { id: sid, execution_compatibility: report("compatible") } })
+    mocks.sendMessage.mockResolvedValueOnce({ session_id: sid, message_id: "accepted-before-conflict" })
+    mocks.execute.mockRejectedValueOnce(new ApiError("incompatible", 409, "", JSON.stringify({
+      session_id: sid, error: { type: "conflict", code: "session_execution_incompatible", message: "incompatible" }, compatibility: report("conflict"),
+    })))
+    mocks.subscribeToEvents.mockReturnValueOnce(pendingForever())
+    const hook = await mountUseChat({ mode: "bound", sessionId: sid })
+    await act(async () => { expect((await hook.current.send("already saved")).kind).toBe("accepted") })
+    await flushMicrotasks()
+    expect(hook.current.executionCompatibility.blocked).toBe(true)
+    expect(hook.current.pendingUserText).toBe("already saved")
+    expect(hook.current.sendFailure?.kind).toBe("generation-failed")
+    await act(async () => { await hook.current.retry() })
+    expect(mocks.execute).toHaveBeenCalledTimes(1); expect(mocks.sendMessage).toHaveBeenCalledTimes(1)
+    expect(mocks.truncateSessionMessages).not.toHaveBeenCalled()
+  })
+
 })

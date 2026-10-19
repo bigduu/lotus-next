@@ -1,5 +1,23 @@
 // Application-owned UI copy.
 export const uiEnUs = {
+  "session_compatibility_label": "Session execution compatibility",
+  "session_compatibility_execution_blocked": "Bamboo reported an execution compatibility conflict for this session.",
+  "session_compatibility_compatible": "This session is compatible with the current service.",
+  "session_compatibility_legacy_compatible": "Legacy session: compatible and ready to continue.",
+  "session_compatibility_legacy_unassessed": "Legacy session: no compatibility report is available. Existing access and execution behavior are retained.",
+  "session_compatibility_unassessed": "No compatibility report is available. Existing access and execution behavior are retained.",
+  "session_compatibility_versions": "Session behavior version: {{session}} · Current behavior version: {{current}}",
+  "session_compatibility_unmarked": "unmarked",
+  "session_compatibility_recovery": "History remains readable. Check the service and session versions, or start a new session and explicitly choose its workspace to continue.",
+  "session_compatibility_version_conflict": "The session declares an unsupported execution version.",
+  "session_compatibility_observation_conflict": "The saved session and runtime observations declare incompatible execution contracts.",
+  "session_compatibility_runtime_conflict": "The retained runtime-state format is unsupported.",
+  "session_compatibility_context_conflict": "The retained model-context format is unsupported.",
+  "session_compatibility_other_conflict": "The service reported an execution compatibility conflict.",
+  "session_compatibility_diagnostic": "Service diagnostic",
+  "session_compatibility_read_error": "Compatibility could not be checked. A read failure does not establish a version conflict; any previously confirmed conflict is retained.",
+  "session_compatibility_refresh": "Check compatibility again",
+
   "supervisor_scope_access_required": "This request requires access to the current Bamboo service. Restore access through the existing application entry and read again.",
   "supervisor_scope_http_ready": "This entry can update Project scope. Review the complete set before confirming.",
   "supervisor_scope_http_unsupported": "This service does not provide web scope updates. You can review the set; update Bamboo to enable this path.",

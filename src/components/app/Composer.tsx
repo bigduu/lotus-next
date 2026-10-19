@@ -130,6 +130,7 @@ export function Composer({
   outputRate,
   onDraftChange,
   onSubmit,
+  executionBlocked = false,
   onStop,
   sending,
   queueMode,
@@ -179,6 +180,7 @@ export function Composer({
   outputRate?: number | null
   onDraftChange: (v: string) => void
   onSubmit: () => void
+  executionBlocked?: boolean
   onStop: () => void
   sending: boolean
   queueMode?: GuidanceMode
@@ -398,7 +400,7 @@ export function Composer({
               busy={submissionPending}
               onChange={onDraftChange}
               onAddFiles={onAddFiles}
-              onSubmit={() => { if (!submissionPending && hasContent && canSubmit) onSubmit() }}
+              onSubmit={() => { if (!executionBlocked && !submissionPending && hasContent && canSubmit) onSubmit() }}
               mentionScope={displayWorkspace}
               mentionsEnabled={slashQuery === null && !!displayWorkspace}
               onSuggestionChange={setFileSuggestion}
@@ -463,7 +465,7 @@ export function Composer({
                   <LoaderCircle className="animate-spin" />
                 </Button>
               ) : canSubmit ? (
-                <Button size="icon" onClick={onSubmit} disabled={!hasContent} className="rounded-full"
+                <Button size="icon" onClick={onSubmit} disabled={!hasContent || executionBlocked} className="rounded-full"
                   aria-label={canQueue ? uiText("add_to_queue_bc3b684c") : uiText("send_message_00881483")} title={canQueue ? uiText("add_to_queue_bc3b684c") : uiText("send_message_00881483")}><ArrowUp /></Button>
               ) : null}
               {sending && (!submissionPending || canQueue) ? (

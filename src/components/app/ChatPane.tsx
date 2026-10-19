@@ -84,6 +84,8 @@ import {
 } from "@/lib/sessionFileChanges"
 import { getFileChangePayloadDiffStats } from "@shared/utils/resultFormatters"
 import { describeRunFailure } from "@/lib/runFailureGuidance"
+import { SessionCompatibilityNotice } from "./SessionCompatibilityNotice"
+import { isSessionExecutionBlocked, observeSessionExecutionConflict } from "@services/chat/sessionExecutionCompatibility"
 
 /** Secondary (split) pane config — a slim header with its own session picker. */
 type SecondaryConfig = {
@@ -255,6 +257,7 @@ export function ChatPane({
   // `sending` belongs to this hook instance, while `streaming` is already
   // scoped to the session rendered by this pane.  Do not let a run from the
   // session we just left turn a blank/new conversation into a Stop button.
+  const executionBlocked = chat.executionCompatibility?.blocked === true
   const currentlyRunning = currentChat?.isRunning === true || (sending && streaming !== null)
   const visibleSendFailure = sendFailure?.sessionId === currentSessionId ? sendFailure : null
   const persistedRunError = !visibleSendFailure
@@ -660,7 +663,7 @@ export function ChatPane({
 
   const submit = () => {
     // Keep an in-flight admission from capturing or clearing a second draft.
-    if (historyBlocked || submissionPending || modelSaving || queue.busy || ticketIngress.busy || rootMode.busy || goalRequestActive.current) return
+    if (executionBlocked || isSessionExecutionBlocked(currentSessionId) || historyBlocked || submissionPending || modelSaving || queue.busy || ticketIngress.busy || rootMode.busy || goalRequestActive.current) return
     if (semanticComposer && !tickets.canSendIngress) { showToast(uiText("ticket_the_ticket_connection_or_write_permission_is__c3da124f"), "error"); return }
     if (rootSessionUnsafe()) {
       setRootModeConflict(uiText("the_root_permission_change_is_unconfirmed_sending_and_e_a75a6b4f"))
@@ -703,10 +706,12 @@ export function ChatPane({
             if (currentDraftKeyRef.current === draftKey) showToast(uiText("root_permissions_are_unconfirmed_the_goal_was_saved_but_bd40481a"), "error")
             return
           }
+          if (isSessionExecutionBlocked(sessionId)) return
           try { await agentClient.execute(sessionId, currentChat?.config?.model) }
-          catch (error) { if (currentDraftKeyRef.current === draftKey) showToast(uiText("goal_saved_send_a_message_to_continue_ba844fbc"), "error", getErrorMessage(error)) }
+          catch (error) { observeSessionExecutionConflict(sessionId, error); if (currentDraftKeyRef.current === draftKey) showToast(uiText("goal_saved_send_a_message_to_continue_ba844fbc"), "error", getErrorMessage(error)) }
         }
       }).catch((error) => {
+        observeSessionExecutionConflict(sessionId, error)
         if (currentDraftKeyRef.current === draftKey) showToast(uiText("could_not_save_the_goal_your_command_is_preserved_pleas_ac375306"), "error", getErrorMessage(error))
       }).finally(() => { goalRequestActive.current = false; setGoalSaving(false) })
       return
@@ -1053,6 +1058,7 @@ export function ChatPane({
         data-session-drop-target={secondary ? "secondary" : "main"}
         {...sessionDrop.handlers}
           >
+        <SessionCompatibilityNotice state={chat.executionCompatibility} />
         {currentChat?.planMode ? (
           <div className="border-b bg-primary/10 px-3 py-1.5 text-center text-xs font-medium text-primary">
             {uiText("plan_mode_7cbb85b7")} {(currentChat.planMode as { status?: string }).status
@@ -1118,11 +1124,13 @@ export function ChatPane({
           pendingUserImages={pendingUserImages}
           contentShiftX={messageContentShift}
           forking={forking}
+          executionBlocked={executionBlocked}
           onSelectSubAgent={(childId) => {
             selectSubAgentInPane(childId)
           }}
           onPreviewImage={setPreview}
           onRegenerate={() => {
+            if (executionBlocked) return
             if (rootSessionUnsafe()) { setRootModeConflict(uiText("the_root_permission_change_is_unconfirmed_regeneration__134c0a98")); return }
             if (modelSaving) { showToast(uiText("saving_model_please_wait_04e35c5e")); return }
             void regenerate()
@@ -1130,6 +1138,7 @@ export function ChatPane({
           onFork={handleFork}
           onDelete={(id) => void deleteMessage(id)}
           onEditMessage={(id, text) => {
+            if (executionBlocked) return
             if (rootSessionUnsafe()) { setRootModeConflict(uiText("the_root_permission_change_is_unconfirmed_editing_and_r_45b99ff9")); return }
             if (modelSaving) { showToast(uiText("saving_model_please_wait_04e35c5e")); return }
             void editMessage(id, text)
@@ -1173,7 +1182,7 @@ export function ChatPane({
               <Button
                 size="sm"
                 variant="secondary"
-                disabled={sending || modelSaving}
+                disabled={sending || modelSaving || executionBlocked}
                 onClick={() => {
                   if (rootSessionUnsafe()) { setRootModeConflict(uiText("the_root_permission_change_is_unconfirmed_generation_re_bdcf3a6c")); return }
                   if (visibleSendFailure?.kind === "generation-failed") {
@@ -1230,6 +1239,7 @@ export function ChatPane({
           contentShiftX={messageContentShift}
           outputRate={outputRate}
           onDraftChange={setDraft}
+          executionBlocked={executionBlocked}
           onSubmit={submit}
           onStop={stop}
           sending={currentlyRunning}
@@ -1385,9 +1395,9 @@ export function ChatPane({
         </div>
       ) : null}
 
-      {pendingApproval ? (
+      {!executionBlocked && pendingApproval ? (
         <ApprovalDialog a={pendingApproval} onRespond={(ok) => void respondApproval(ok)} />
-      ) : pendingQuestion ? (
+      ) : !executionBlocked && pendingQuestion ? (
         <QuestionDialog q={pendingQuestion} onAnswer={(t) => void answerQuestion(t)}
           loading={questionLoading} submitting={questionSubmitting} unavailable={questionUnavailable}
           error={questionError} canRetry={questionCanRetry}

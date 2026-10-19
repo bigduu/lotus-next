@@ -1,5 +1,7 @@
 import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { useOutputRate } from "./useOutputRate"
+import { useSessionExecutionCompatibility } from "./useSessionExecutionCompatibility"
+import { isSessionExecutionBlocked, observeSessionExecutionConflict } from "@services/chat/sessionExecutionCompatibility"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useShallow } from "zustand/react/shallow"
 import {
@@ -259,6 +261,7 @@ export function useChat(
   // The session this hook instance drives: a bound pane uses its own id; the
   // main pane follows the global current. Everything below keys off `sid`.
   const sid = isBound ? boundSessionId : globalCurrentSessionId
+  const executionCompatibility = useSessionExecutionCompatibility(sid)
   const currentChat = useAppStore(selectSessionById(sid))
   const messages = useAppStore(useShallow((s) => selectSessionById(sid)(s)?.messages ?? []))
   const selectedModel = useAppStore((s) => s.selectedModel)
@@ -728,6 +731,7 @@ export function useChat(
         modelSelection?: { model: string; modelRef?: ProviderModelRef }
       },
     ) => {
+      if (!opts?.resume && isSessionExecutionBlocked(runSid)) throw new Error(uiText("session_compatibility_execution_blocked"))
       const operationId = opts?.operationId ?? operationSequenceRef.current + 1
       operationSequenceRef.current = Math.max(operationSequenceRef.current, operationId)
       noteSessionOperation(runSid, operationId)
@@ -784,6 +788,7 @@ export function useChat(
           executeAcknowledged = true
         }).catch((err) => {
           if (!ownsStream()) return
+          observeSessionExecutionConflict(runSid, err)
           // The run never started, so no terminal will ever arrive — settle
           // the subscription instead of leaving it (and the UI) hanging.
           publishSendFailure({
@@ -1383,7 +1388,7 @@ export function useChat(
         preserveFailureOnPrepareError?: boolean
       },
     ): Promise<boolean> => {
-      if (activeSendRef.current) return false
+      if (activeSendRef.current || isSessionExecutionBlocked(runSid)) return false
       if (getRootModeFenceState(runSid) !== "clear") return false
       if (
         opts?.expectedFailureOperationId !== undefined &&
@@ -1420,7 +1425,7 @@ export function useChat(
       try {
         await opts?.prepare?.()
         if (activeSendRef.current?.id !== operation.id) return false
-        if (getRootModeFenceState(runSid) !== "clear") return false
+        if (getRootModeFenceState(runSid) !== "clear" || isSessionExecutionBlocked(runSid)) return false
         if (
           opts?.expectedFailureOperationId !== undefined &&
           getSendFailure(runSid)?.operationId !== opts.expectedFailureOperationId
@@ -1457,6 +1462,7 @@ export function useChat(
             }
             return true
           } catch (err) {
+            observeSessionExecutionConflict(runSid, err)
             console.warn("[useChat] detached rerun start failed", err)
             publishSendFailure({
               kind: "generation-failed",
@@ -1487,6 +1493,7 @@ export function useChat(
         await stream
         return true
       } catch (err) {
+        observeSessionExecutionConflict(runSid, err)
         console.error("[useChat] rerun failed", err)
         if (streamStarted || !opts?.preserveFailureOnPrepareError) {
           publishSendFailure({
@@ -1596,6 +1603,7 @@ export function useChat(
         reasoningSelection?: ReasoningEffortSelection
       },
     ): Promise<SendSubmissionResult> => {
+      if (isSessionExecutionBlocked(sid)) return { kind: "blocked" }
       const body = text.trim()
       if (!body && !opts?.images?.length) return { kind: "ignored" }
       const submittedImages = opts?.images?.map((image) => ({ ...image })) ?? []
@@ -1706,12 +1714,13 @@ export function useChat(
         recordUsedModel(submittedModel)
       } catch (err) {
         console.error("[useChat] message submission was not acknowledged", err)
+        const compatibilityConflict = observeSessionExecutionConflict(startSid, err)
         const rejectionCode = rootModeRejectionCode(err)
         if (activeSendRef.current?.id === operation.id) activeSendRef.current = null
         if (mountedRef.current) {
           setSubmissionPending(false)
           setSending(false)
-          publishSendFailure({
+          if (!compatibilityConflict) publishSendFailure({
             kind: "submission-unconfirmed",
             operationId: operation.id,
             sessionId: startSid,
@@ -1722,6 +1731,7 @@ export function useChat(
             } : {}),
           })
         }
+        if (compatibilityConflict) return { kind: "blocked" }
         const workflowError = opts?.workflowSelection ? workflowSubmissionError(err) : null
         return { kind: "unconfirmed", operationId: operation.id, ...(rejectionCode ? { rejectionCode } : {}), ...(workflowError ? { workflowError } : {}) }
       }
@@ -1746,7 +1756,10 @@ export function useChat(
           setSending(false)
         }
         if (activeSendRef.current?.id === operation.id) activeSendRef.current = null
-        if (getRootModeFenceState(acknowledgedSessionId) !== "clear") {
+        if (isSessionExecutionBlocked(acknowledgedSessionId)) {
+          publishSendFailure({ kind: "generation-failed", operationId: operation.id, sessionId: acknowledgedSessionId,
+            message: uiText("session_compatibility_execution_blocked") })
+        } else if (getRootModeFenceState(acknowledgedSessionId) !== "clear") {
           publishSendFailure({
             kind: "generation-failed",
             operationId: operation.id,
@@ -1757,6 +1770,7 @@ export function useChat(
           void agentClient
             .execute(acknowledgedSessionId, submittedModel || undefined, submittedReasoningEffort, undefined, submittedModelRef)
             .catch((err) => {
+              observeSessionExecutionConflict(acknowledgedSessionId, err)
               console.warn("[useChat] detached generation start failed", err)
               publishSendFailure({
                 kind: "generation-failed",
@@ -1956,7 +1970,7 @@ export function useChat(
   ) => {
     const current = questionStateRef.current
     const { scope, question } = current
-    if (!scope.sessionId || !ownsQuestionScope(scope) || !question
+    if (!scope.sessionId || isSessionExecutionBlocked(scope.sessionId) || !ownsQuestionScope(scope) || !question
         || questionSubmitRef.current || current.loading || current.submitting) return
     const key = questionKey(question)
     if (!displayedScope || !sameQuestionScope(displayedScope, scope) || displayedKey !== key) return
@@ -2012,6 +2026,7 @@ export function useChat(
         void runStream(scope.sessionId, { resume: true })
       }
     } catch (error) {
+      observeSessionExecutionConflict(scope.sessionId, error)
       token.awaitingResponse = false
       if (!ownsSubmission()) return
       const rejected = isApiError(error) && error.status >= 400 && error.status < 500
@@ -2042,13 +2057,14 @@ export function useChat(
   const respondApproval = useCallback(
     async (approved: boolean) => {
       const pa = pendingApproval
+      if (isSessionExecutionBlocked(sid) || isSessionExecutionBlocked(pa?.childSessionId)) return
       setPendingApproval(null)
       if (!pa) return
       await agentClient
         .respondToChildApproval(pa.childSessionId, pa.requestId, approved)
         .catch(() => {})
     },
-    [pendingApproval],
+    [pendingApproval, sid],
   )
 
   return {
@@ -2065,6 +2081,7 @@ export function useChat(
     outputRate,
     pendingUserText,
     pendingUserImages,
+    executionCompatibility,
     sending,
     submissionPending,
     select,

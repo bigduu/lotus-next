@@ -1,3 +1,4 @@
+import { observeSessionExecutionConflict } from "@services/chat/sessionExecutionCompatibility"
 import { act, type ComponentProps, type ReactElement, type ReactNode } from "react"
 import { createRoot, type Root } from "react-dom/client"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
@@ -230,10 +231,11 @@ async function mount(
   running = false,
   streaming: string | null = id ? "" : null,
   lastRunStatus: string | null = null,
+  compatibility?: ChatPaneProps["chat"]["executionCompatibility"],
 ) {
   const container = document.body.appendChild(document.createElement("div")); const root = createRoot(container); roots.push(root)
   await act(async () => {
-    root.render(<ChatPane chat={{ ...createChat(send, id, lastRunStatus), sending: running, streaming }} pickedWorkspace="/picked"
+    root.render(<ChatPane chat={{ ...createChat(send, id, lastRunStatus), sending: running, streaming, ...(compatibility ? { executionCompatibility: compatibility } : {}) }} pickedWorkspace="/picked"
       onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()} splitOpen={false}
       onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false} />)
   })
@@ -2010,4 +2012,43 @@ it("keeps a failed secondary history distinct from empty content and retains its
   expect(document.querySelector("textarea")).toBe(textarea)
   expect(composer().draft).toBe("Unsent draft survives history recovery")
   expect(send).not.toHaveBeenCalled()
+})
+
+describe("session compatibility presentation and submit guard", () => {
+  const compatibility = (conflict: boolean): ChatPaneProps["chat"]["executionCompatibility"] => ({
+    report: { session_version: null, current_session_version: 1, status: conflict ? "conflict" : "legacy_compatible",
+      history_readable: true, execution_allowed: !conflict,
+      conflicts: conflict ? [{ code: "unsupported_runtime_state_version", message: "Unsupported runtime format" }] : [] },
+    blocked: conflict, observed: true, legacy: false, loading: false, readError: false, refresh: vi.fn(async () => {}),
+  })
+  it("keeps the composer draft and report visible while refusing a conflict callback", async () => {
+    const send = vi.fn<Send>(), id = "compatibility-pane-blocked"
+    const textarea = await mount(send, id, false, "", null, compatibility(true))
+    change(textarea, "keep my original draft")
+    await act(async () => composer().onSubmit()); await flush()
+    expect(send).not.toHaveBeenCalled(); expect(composer().executionBlocked).toBe(true)
+    expect(textarea.value).toBe("keep my original draft")
+    expect(document.querySelector('[data-session-execution-blocked="true"]')).not.toBeNull()
+    expect(document.querySelector('[data-testid="composer-shell"]')).not.toBeNull()
+  })
+  it("lets a compatible legacy session continue without creating a replacement", async () => {
+    const send = vi.fn<Send>().mockResolvedValue({ kind: "accepted", operationId: 1, sessionId: "compatibility-pane-open", navigated: false })
+    const textarea = await mount(send, "compatibility-pane-open", false, "", null, compatibility(false))
+    change(textarea, "continue old work")
+    await act(async () => composer().onSubmit()); await flush()
+    expect(send).toHaveBeenCalledTimes(1); expect(composer().executionBlocked).toBe(false)
+    expect(document.querySelector('[data-session-execution-blocked="true"]')).toBeNull()
+  })
+  it("a cached Goal submit callback cannot bypass a later explicit compatibility refusal", async () => {
+    const send = vi.fn<Send>(), id = "compatibility-stale-goal"
+    const textarea = await mount(send, id, false, "", null, compatibility(false))
+    change(textarea, "/goal preserve this objective")
+    const staleSubmit = composer().onSubmit
+    observeSessionExecutionConflict(id, new ApiError("incompatible", 409, "", JSON.stringify({ session_id: id,
+      error: { code: "session_execution_incompatible" }, compatibility: compatibility(true).report })))
+    await act(async () => staleSubmit()); await flush()
+    expect(agentClient.sendMessage).not.toHaveBeenCalled(); expect(agentClient.execute).not.toHaveBeenCalled()
+    expect(send).not.toHaveBeenCalled(); expect(textarea.value).toBe("/goal preserve this objective")
+  })
+
 })

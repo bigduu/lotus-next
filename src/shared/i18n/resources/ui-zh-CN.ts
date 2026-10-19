@@ -1,5 +1,23 @@
 // Application-owned UI copy.
 export const uiZhCn = {
+  "session_compatibility_label": "会话执行兼容性",
+  "session_compatibility_execution_blocked": "Bamboo 已报告此会话存在执行兼容性冲突。",
+  "session_compatibility_compatible": "此会话与当前服务兼容。",
+  "session_compatibility_legacy_compatible": "旧版会话：当前兼容，可以继续。",
+  "session_compatibility_legacy_unassessed": "旧版会话：尚无兼容性报告，沿用既有访问与执行方式。",
+  "session_compatibility_unassessed": "尚无兼容性报告，沿用既有访问与执行方式。",
+  "session_compatibility_versions": "会话执行版本：{{session}} · 当前执行版本：{{current}}",
+  "session_compatibility_unmarked": "未标记",
+  "session_compatibility_recovery": "历史仍可阅读。请核对服务与会话版本，或新建会话并明确选择工作目录后继续。",
+  "session_compatibility_version_conflict": "此会话声明的执行版本不受当前服务支持。",
+  "session_compatibility_observation_conflict": "已保存会话与运行时记录的执行契约存在冲突。",
+  "session_compatibility_runtime_conflict": "保留的运行状态格式不受当前服务支持。",
+  "session_compatibility_context_conflict": "保留的模型上下文格式不受当前服务支持。",
+  "session_compatibility_other_conflict": "服务报告了执行兼容性冲突。",
+  "session_compatibility_diagnostic": "服务诊断",
+  "session_compatibility_read_error": "暂时无法核对兼容性。读取失败不代表版本冲突；此前已确认的冲突仍会保留。",
+  "session_compatibility_refresh": "重新核对兼容性",
+
   "supervisor_scope_access_required": "本次请求需要通过当前 Bamboo 服务的访问验证。请通过既有应用入口恢复访问后重新读取。",
   "supervisor_scope_http_ready": "当前入口可更新 Project 范围。请先审阅完整集合，再明确确认。",
   "supervisor_scope_http_unsupported": "此服务尚未提供网页范围更新。可以审阅集合；请升级 Bamboo 后使用此入口。",

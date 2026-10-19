@@ -1,3 +1,4 @@
+import { isSessionExecutionBlocked, observeSessionExecutionConflict } from "@services/chat/sessionExecutionCompatibility"
 import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { useEffect, useRef, useState } from "react"
 import { apiClient, getErrorMessage, isApiError } from "@services/api"
@@ -88,6 +89,9 @@ export function useTicketIngress(sessionId?: string | null) {
     return true
   }
   const execute = async (sessionId: string, delivery: Delivery, captured: View) => {
+    if (isSessionExecutionBlocked(sessionId)) {
+      refreshReceipt(sessionId); updateError(captured, sessionId, uiText("session_compatibility_execution_blocked")); return false
+    }
     if (getRootModeFenceState(sessionId) !== "clear") {
       refreshReceipt(sessionId); updateError(captured, sessionId, uiText("ticket_message_saved_but_the_root_mode_change_is_not_12907d7e"))
       return false
@@ -98,13 +102,17 @@ export function useTicketIngress(sessionId?: string | null) {
       if (!clearOwnedReceipt(sessionId, delivery.id)) throw new Error(uiText("ticket_the_message_receipt_has_changed_refresh_and_c_5517657b"))
       void useAppStore.getState().loadChatHistory(sessionId).catch(() => {})
       return true
-    } catch { refreshReceipt(sessionId); updateError(captured, sessionId, uiText("ticket_message_saved_but_start_is_not_confirmed_you__c27c17c7")); return false }
+    } catch (failure) {
+      const conflict = observeSessionExecutionConflict(sessionId, failure)
+      refreshReceipt(sessionId); updateError(captured, sessionId, uiText(conflict ? "session_compatibility_execution_blocked" : "ticket_message_saved_but_start_is_not_confirmed_you__c27c17c7"))
+      return false
+    }
   }
   const send = async (request: ChatRequest): Promise<SendSubmissionResult> => {
     const sessionId = request.session_id
     if (!sessionId) return { kind: "blocked" }
     if (admittedSessions.has(sessionId)) return { kind: "busy" }
-    if (getRootModeFenceState(sessionId) !== "clear") return { kind: "blocked" }
+    if (getRootModeFenceState(sessionId) !== "clear" || isSessionExecutionBlocked(sessionId)) return { kind: "blocked" }
     const captured = view.current
     const operationId = ++sequence.current
     let replay = false
@@ -129,7 +137,7 @@ export function useTicketIngress(sessionId?: string | null) {
         updateError(captured, sessionId, uiText("ticket_the_previous_message_is_not_confirmed_retry_w_26be7bc7"))
         return { kind: "blocked" }
       }
-      if (getRootModeFenceState(sessionId) !== "clear") return { kind: "blocked" }
+      if (getRootModeFenceState(sessionId) !== "clear" || isSessionExecutionBlocked(sessionId)) return { kind: "blocked" }
       const saved = prior ?? { fingerprint, fingerprint_version: 2 as const, id: crypto.randomUUID(), references: {
         ...(request.thread_id ? { thread_id: request.thread_id } : {}),
         ...(request.in_reply_to ? { in_reply_to: request.in_reply_to } : {}),
@@ -148,16 +156,18 @@ export function useTicketIngress(sessionId?: string | null) {
       await execute(sessionId, acknowledged, captured)
       return { kind: "accepted", operationId, sessionId, navigated: false }
     } catch (failure) {
+      const compatibilityConflict = observeSessionExecutionConflict(sessionId, failure)
       if (!replay && deliveryId && isApiError(failure) && failure.status >= 400 && failure.status < 500) {
         try { clearOwnedReceipt(sessionId, deliveryId) } catch { /* Preserve an unreadable recovery receipt. */ }
       }
+      if (compatibilityConflict) return { kind: "blocked" }
       updateError(captured, sessionId, getErrorMessage(failure) + uiText("ticket__draft_preserved_retrying_will_use_the_same_m_0c9ddb59"))
       return { kind: "unconfirmed", operationId }
     } finally { admittedSessions.delete(sessionId); notifyAdmissions() }
   }
   const retryExecute = async () => {
     const target = executePending
-    if (!target || admittedSessions.has(target)) return false
+    if (!target || admittedSessions.has(target) || isSessionExecutionBlocked(target)) return false
     const captured = view.current
     admittedSessions.add(target); notifyAdmissions()
     try {
