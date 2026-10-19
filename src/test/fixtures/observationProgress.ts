@@ -1,9 +1,13 @@
 export const progressSessionId = "all-surface-session"
 export const progressAt = "2026-10-19T04:00:00Z"
-// Optional markers proposed in the #2016 producer handoff. The consumer does
+// Optional fields frozen at Bamboo 5af6c01c. The consumer does
 // not branch on them, count episodes, infer pending, or authorize continuation.
 export const exhaustedMarker = "observation_progress_exhausted"
-export const unfinishedSummary = "I could not complete this task. Repeated observations produced no new evidence within the recovery budget. The recorded tool results remain available; no additional operation was submitted."
+// Exact unchanged-file notice text from the frozen producer source, not a model capture.
+export const unfinishedSummary = "The task is not confirmed complete. Repeated file observations did not establish new progress. The finite diagnostic budget is exhausted, so this execution stopped before another recovery-model request or tool round. Review the collected evidence or provide new Human direction."
+// Synthetic opaque value used by the producer's own persistence fixture too;
+// it is not a captured provider packet and carries no decision authority.
+export const exhaustedNoticeMetadata = { runtime_kind: exhaustedMarker, source: "runtime", progress_feedback: "[runtime_progress_feedback_v1]\n{}" }
 export const legacyQuestionId = "fixture-persisted-progress-question"
 export const legacyQuestionText = "The run is paused. Continue, stop, or provide a different approach."
 export const legacyProgressQuestion = () => ({
@@ -38,5 +42,5 @@ export const pairedProgressHistory = (rounds = 6): ConsumerHistory => [
 export const exhaustedHistory = (): ConsumerHistory => [
   ...pairedProgressHistory(),
   { id: "runtime-unfinished-summary", role: "assistant", content: unfinishedSummary,
-    metadata: { runtime_kind: exhaustedMarker }, created_at: progressAt },
+    metadata: { ...exhaustedNoticeMetadata }, created_at: progressAt },
 ]

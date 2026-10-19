@@ -112,7 +112,11 @@ describe("#2016 progress feedback consumer contract", () => {
     vi.mocked(agentClient.getPendingQuestion).mockResolvedValue(currentPermission())
     await mount()
     const next = { ...summary(), metadata: { "runtime.completion_reason": exhaustedMarker } }
-    await act(async () => { useAppStore.getState().applySessionSummary(sid, next) })
+    await act(async () => {
+      useAppStore.setState((state) => ({ chats: state.chats.map((item) => item.id === sid
+        ? { ...item, messages: mapHistoryMessagesToUi(sid, exhaustedHistory()) } : item) }))
+      useAppStore.getState().applySessionSummary(sid, next)
+    })
     expect(chat.pendingQuestion).toEqual(currentPermission())
     expect(document.querySelector('[data-approval-presentation]')).not.toBeNull()
     await act(async () => { await chat.answerQuestion("Continue") })

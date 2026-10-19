@@ -64,7 +64,7 @@ async function prepare(page: Page, initial: Phase) {
   await page.goto(standaloneScenario.entryUrl)
   await expect(page.getByRole("textbox", { name: "Messages", exact: true })).toBeAttached()
   return { observation, writes, channels, get connections() { return connections }, get pendingReads() { return pendingReads },
-    setPhase(value: Phase) { phase = value },
+    setPhase(value: Phase) { phase = value; if (value === "permission") history = exhaustedHistory() },
     emit(event: unknown) { socket!.send(JSON.stringify({ ch: `agent.${sid}`, seq: ++seq, event })) },
     exhaust() { phase = "exhausted"; history = exhaustedHistory() },
     terminal() { socket!.send(JSON.stringify({ ch: `agent.${sid}`, seq: ++seq, control: { type: "terminal" } })) },
@@ -129,6 +129,7 @@ test("#2016 reconnect reads canonical generation and exhaustion metadata cannot 
   await page.reload()
   const approval = page.locator("[data-approval-presentation]")
   await expect(approval).toContainText("Canonical permission generation 2")
+  await expect(page.getByText(unfinishedSummary, { exact: true })).toHaveCount(1)
   await expect.poll(() => f.connections).toBeGreaterThanOrEqual(2)
   expect(f.pendingReads).toBeGreaterThan(before)
   await expect(approval.locator("textarea")).toHaveCount(0)
