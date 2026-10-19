@@ -119,3 +119,23 @@ it("preserves an earlier uncertain guidance receipt after a later compatibility 
   expect(queue.hasUnconfirmed).toBe(true)
   expect(guidanceService.send).toHaveBeenCalledTimes(2)
 })
+
+
+it.each([false, true])("restores a prior uncertain receipt when changed guidance is definitively incompatible (image=%s)", async (image) => {
+  await mount()
+  vi.mocked(guidanceService.send).mockRejectedValueOnce(new Error("lost acknowledgement"))
+  await act(async () => { expect((await queue.send("original uncertain draft")).kind).toBe("unconfirmed") })
+  const first = vi.mocked(guidanceService.send).mock.calls[0]
+  const previous = sessionStorage.getItem("lotus-next.guidance-submission.s/1")
+  vi.mocked(guidanceService.send).mockRejectedValueOnce(versionRefusal())
+  await act(async () => { expect((await queue.send(image ? "original uncertain draft" : "changed draft", image ? [{ base64: "new-image" }] : [])).kind).toBe("blocked") })
+  expect(vi.mocked(guidanceService.send).mock.calls[1][1]).not.toBe(first[1])
+  expect(sessionStorage.getItem("lotus-next.guidance-submission.s/1")).toBe(previous)
+  expect(queue.hasUnconfirmed).toBe(true)
+  expect(guidanceService.send).toHaveBeenCalledTimes(2)
+  clearSessionCompatibilityObservations()
+  if (image) { await act(async () => root.render(null)); await mount() }
+  await act(async () => { expect((await queue.send("original uncertain draft")).kind).toBe("accepted") })
+  expect(vi.mocked(guidanceService.send).mock.calls[2]).toEqual(first)
+  expect(sessionStorage.getItem("lotus-next.guidance-submission.s/1")).toBeNull()
+})

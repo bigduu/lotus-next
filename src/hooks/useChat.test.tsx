@@ -2413,6 +2413,39 @@ describe("owned streams without a terminal frame", () => {
 
 
 describe("image attachment visibility", () => {
+  it.each([
+    { nextImage: false, firstHydrated: 1 }, { nextImage: true, firstHydrated: 1 },
+    { nextImage: false, firstHydrated: 2 }, { nextImage: true, firstHydrated: 2 },
+  ])("retains consecutive image ACKs in one session until each is canonical (%j)", async ({ nextImage, firstHydrated }) => {
+    const sid = "consecutive-image-session", history = deferred<void>()
+    const image = { base64: "R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7", name: "first.gif", size: 42, type: "image/gif" }
+    mocks.appState.chats = [{ id: sid, messages: [] }]
+    mocks.sendMessage.mockResolvedValueOnce({ session_id: sid, message_id: "ack-1" })
+      .mockResolvedValueOnce({ session_id: sid, message_id: "ack-2" })
+    mocks.appState.loadChatHistory.mockImplementation((_id: string, options?: { mode?: string; waitForAssistant?: boolean }) =>
+      options?.mode === "monotonic" && !options.waitForAssistant ? history.promise : Promise.resolve())
+    mocks.subscribeToEvents.mockImplementation(async (_sid: string, handlers: SubscriptionHandlers) => { handlers.onComplete() })
+    const hook = await mountUseChat({ mode: "bound", sessionId: sid })
+    await act(async () => { await hook.current.send("first caption", { images: [image] }) })
+    await flushMicrotasks()
+    expect(hook.current.sending).toBe(false)
+    await act(async () => { await hook.current.send("second caption", { images: nextImage ? [{ ...image, name: "second.gif" }] : [] }) })
+    await flushMicrotasks()
+    const names = () => hook.current.pendingUserMessages?.flatMap((item) => item.images.map((entry) => entry.name))
+      ?? hook.current.pendingUserImages.map((entry) => entry.name)
+    expect(names()).toEqual(nextImage ? ["first.gif", "second.gif"] : ["first.gif"])
+    expect(hook.current.pendingUserMessages.map((item) => item.text)).toEqual(["first caption", "second caption"])
+    await act(async () => {
+      appendPersistedUser(sid, firstHydrated === 1 ? "first caption" : "second caption", `ack-${firstHydrated}`)
+      history.resolve()
+    })
+    await hook.rerender({ mode: "bound", sessionId: sid })
+    expect(hook.current.pendingUserMessages.map((item) => item.text)).toEqual([firstHydrated === 1 ? "second caption" : "first caption"])
+    appendPersistedUser(sid, firstHydrated === 1 ? "second caption" : "first caption", `ack-${firstHydrated === 1 ? 2 : 1}`)
+    await hook.rerender({ mode: "bound", sessionId: sid })
+    expect(hook.current.pendingUserMessages).toHaveLength(0)
+    expect(mocks.sendMessage).toHaveBeenCalledTimes(2); expect(mocks.execute).toHaveBeenCalledTimes(2)
+  })
   it.each([false, true])("keeps A's delayed image after B sends (B image=%s), retiring each exact acknowledgement independently", async (bHasImage) => {
     const a = "image-a", b = "image-b", firstRead = deferred<void>()
     const image = { base64: "R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7", name: "A.gif", size: 42, type: "image/gif" }

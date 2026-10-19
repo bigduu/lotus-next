@@ -4,9 +4,9 @@ This bounded release pairs Lotus Next with Bamboo `a473f69b856962dd3dbdbfb2051b4
 
 ## Included behavior
 
-- Keep acknowledged image thumbnails visible until the exact canonical message arrives, including image-only messages and execution refusal. Each session retains its own pending acknowledgement while the user switches sessions and sends elsewhere.
+- Keep acknowledged image thumbnails visible until the exact canonical message arrives, including image-only messages and execution refusal. Each acknowledged operation remains separately visible while the user sends again in the same session or switches sessions and sends elsewhere; only its own canonical message retires that operation.
 - Start child cards compact, preserve their expansion choice, and keep authoritative lifecycle and creation origin visible. Opening the original conversation remains explicit.
-- Show backend compatibility reports, allow compatible legacy sessions, and block only explicit execution conflicts while preserving history and drafts. Reconnect rereads the current session without sending or migrating anything.
+- Show backend compatibility reports, allow compatible legacy sessions, and block only explicit execution conflicts while preserving history and drafts. Reconnect rereads the current session without sending or migrating anything. If a changed queued input is definitively refused for compatibility, the earlier uncertain guidance receipt is restored for an explicit retry of that earlier input.
 - Preserve Work ready-empty, uninitialized, disabled, forbidden and error states. Initialization remains an explicit, capability-gated action. Project scope uses the same existing-access HTTP API in browser and desktop; it adds no login or native requirement.
 - Consume ordinary runtime progress-exhaustion summaries and canonical pending state. No new progress question means no dialog; genuine permissions and already persisted questions still require Human response.
 

@@ -64,12 +64,13 @@ export function useGuidanceQueue(sessionId: string | null, running: boolean) {
     const target = sessionId
     setBusy(target); setFailure(null)
     let createdReceiptId: string | null = null
+    let replacedReceipt: ReturnType<typeof readReceipt> = null
     try {
       const bytes = new TextEncoder().encode(JSON.stringify({ text, images, mode }))
       const fingerprint = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)), (byte) => byte.toString(16).padStart(2, "0")).join("")
       const previous = receipts.current.get(target) ?? readReceipt(target)
       const receipt = previous?.fingerprint === fingerprint ? previous : { id: crypto.randomUUID(), fingerprint }
-      if (!previous) createdReceiptId = receipt.id
+      if (receipt !== previous) { createdReceiptId = receipt.id; replacedReceipt = previous }
       receipts.current.set(target, receipt)
       try { sessionStorage.setItem(receiptKey(target), JSON.stringify(receipt)) } catch { /* No image bytes are stored in browser receipts. */ }
       if (getRootModeFenceState(target) !== "clear" || isSessionExecutionBlocked(target)) {
@@ -97,8 +98,16 @@ export function useGuidanceQueue(sessionId: string | null, running: boolean) {
         // This refusal did not admit the new request. Retain a receipt that
         // predates this attempt: its earlier delivery may still be unknown.
         if (createdReceiptId !== null) {
-          if (receipts.current.get(target)?.id === createdReceiptId) receipts.current.delete(target)
-          try { if (readReceipt(target)?.id === createdReceiptId) sessionStorage.removeItem(receiptKey(target)) } catch { /* Preserve an unreadable receipt. */ }
+          if (receipts.current.get(target)?.id === createdReceiptId) {
+            if (replacedReceipt) receipts.current.set(target, replacedReceipt)
+            else receipts.current.delete(target)
+          }
+          try {
+            if (readReceipt(target)?.id === createdReceiptId) {
+              if (replacedReceipt) sessionStorage.setItem(receiptKey(target), JSON.stringify(replacedReceipt))
+              else sessionStorage.removeItem(receiptKey(target))
+            }
+          } catch { /* Preserve an unreadable receipt. */ }
         }
         return { kind: "blocked" }
       }

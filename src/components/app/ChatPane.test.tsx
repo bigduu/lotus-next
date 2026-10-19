@@ -2052,3 +2052,15 @@ describe("session compatibility presentation and submit guard", () => {
   })
 
 })
+
+
+it("forwards every pending ACK to MessageList without another submission", async () => {
+  const send = vi.fn<Send>()
+  await mount(send, "pending-ack-session")
+  const pendingUserMessages = [{ operationId: 1, text: "first caption", images: [] }, { operationId: 2, text: "second caption", images: [] }]
+  await act(async () => roots.at(-1)!.render(<ChatPane chat={{ ...createChat(send, "pending-ack-session"), pendingUserMessages }} pickedWorkspace="/picked"
+    onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()} splitOpen={false}
+    onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false} />))
+  expect(runtime.messageList?.pendingUserMessages).toBe(pendingUserMessages)
+  expect(send).not.toHaveBeenCalled()
+})

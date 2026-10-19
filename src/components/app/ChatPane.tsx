@@ -231,6 +231,7 @@ export function ChatPane({
     outputRate,
     pendingUserText,
     pendingUserImages = [],
+    pendingUserMessages,
     sending,
     submissionPending,
     select,
@@ -1090,7 +1091,7 @@ export function ChatPane({
             ) : null}
             {currentlyRunning ? <Button variant="outline" size="sm" onClick={stop}>{uiText("stop_generation_9ad0aac3")}</Button> : null}
           </div>
-        ) : !currentSessionId && !secondary && !sending && !pendingUserText && pendingUserImages.length === 0 ? (
+        ) : !currentSessionId && !secondary && !sending && !pendingUserText && pendingUserImages.length === 0 && !pendingUserMessages?.length ? (
           // Main-pane home view: session shortcuts + quick-start templates.
           // The composer below stays live — a template only prefills it.
           <HomeDashboard
@@ -1122,6 +1123,7 @@ export function ChatPane({
           streamStatus={streamStatus}
           pendingUserText={pendingUserText}
           pendingUserImages={pendingUserImages}
+          pendingUserMessages={pendingUserMessages}
           contentShiftX={messageContentShift}
           forking={forking}
           executionBlocked={executionBlocked}

@@ -83,7 +83,7 @@ function renderMessageList(
   contentShiftX = 0,
   readOnly = false,
   liveSegments: LiveSegment[] = [],
-  pending?: { text: string; images: MessageImage[]; preview?: (src: string) => void },
+  pending?: { text: string; images: MessageImage[]; messages?: Parameters<typeof MessageList>[0]["pendingUserMessages"]; preview?: (src: string) => void },
 ) {
   const container = document.createElement("div")
   document.body.appendChild(container)
@@ -106,6 +106,7 @@ function renderMessageList(
         streamStatus={null}
         pendingUserText={pending?.text ?? null}
         pendingUserImages={pending?.images}
+        pendingUserMessages={pending?.messages}
         contentShiftX={contentShiftX}
         readOnly={readOnly}
         forking={false}
@@ -775,6 +776,24 @@ describe("subagent transcript provenance", () => {
 
 
 describe("image attachment visibility", () => {
+  it("renders each retained acknowledgement as its own image bubble and preview", () => {
+    const image = (name: string) => ({ id: name, url: `data:image/png;base64,${name}`, name, size: 1, type: "image/png" })
+    const first = image("first"), second = image("second"), preview = vi.fn()
+    const host = renderMessageList([], false, 0, false, [], { text: "second caption", images: [second], preview, messages: [
+      { operationId: 1, text: "first caption", images: [first] },
+      { operationId: 2, text: "second caption", images: [second] },
+    ] })
+    const bubbles = host.querySelectorAll("[data-pending-user-message]")
+    expect([...bubbles].map((node) => node.textContent)).toEqual(["first caption", "second caption"])
+    expect([...bubbles].map((node) => node.getAttribute("data-pending-operation"))).toEqual(["1", "2"])
+    act(() => bubbles[0].querySelector("img")!.click())
+    act(() => bubbles[1].querySelector("img")!.click())
+    expect(preview.mock.calls).toEqual([[first.url], [second.url]])
+  })
+  it("an authoritative empty pending list cannot fall back to a retired legacy bubble", () => {
+    const host = renderMessageList([], false, 0, false, [], { text: "retired ACK", images: [], messages: [] })
+    expect(host.querySelector("[data-pending-user-message]")).toBeNull()
+  })
   it.each(["", "caption with image"])("renders and previews a pending image without hiding an image-only bubble (%s)", (text) => {
     const url = "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7", preview = vi.fn()
     const host = renderMessageList([], false, 0, false, [], { text, preview,

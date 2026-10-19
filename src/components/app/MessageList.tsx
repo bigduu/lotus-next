@@ -35,7 +35,7 @@ import { SubAgents } from "@/components/chat/SubAgents"
 import { cn } from "@/lib/utils"
 import type { Message } from "@shared/types/chatMessages"
 import type { ChildProgress } from "@shared/store/appStore/slices/executionStateSlice/types"
-import type { LiveSegment } from "@/hooks/useChat"
+import type { LiveSegment, PendingUserMessageView } from "@/hooks/useChat"
 
 // Synthesize Message-shaped rows from a live tools segment so the in-run
 // display reuses the exact ToolCalls rendering (grouping/expansion) that
@@ -436,6 +436,7 @@ export function MessageList({
   streamStatus,
   pendingUserText,
   pendingUserImages = [],
+  pendingUserMessages,
   contentShiftX = 0,
   readOnly = false,
   executionBlocked = false,
@@ -464,6 +465,7 @@ export function MessageList({
   streamStatus: string | null
   pendingUserText: string | null
   pendingUserImages?: readonly { url?: string; base64?: string; type?: string }[]
+  pendingUserMessages?: readonly PendingUserMessageView[]
   /** Horizontal transcript offset used while a floating panel occupies the end side. */
   contentShiftX?: number
   /** Suppress transcript actions for message-only child previews. */
@@ -480,7 +482,9 @@ export function MessageList({
   useUiLocale()
   const [editingMsg, setEditingMsg] = useState<{ id: string; text: string } | null>(null)
 
-  const hasPendingUser = Boolean(pendingUserText?.trim() || pendingUserImages.length)
+  const pendingUsers = pendingUserMessages ?? (pendingUserText?.trim() || pendingUserImages.length
+    ? [{ operationId: 0, text: pendingUserText ?? "", images: pendingUserImages }] : [])
+  const hasPendingUser = pendingUsers.length > 0
   const renderItems = useMemo(() => buildRenderItems(messages), [messages])
   const liveItems = useMemo(
     () => buildLiveItems(liveSegments, streaming, streamingReasoning, sending || streamingActive, streamStatus),
@@ -819,14 +823,14 @@ export function MessageList({
           </div>
         ) : null}
 
-        {hasPendingUser ? (
-          <div className="mt-2 flex justify-end">
-            <div data-pending-user-message data-message-role="user" className="user-message-surface max-w-[85%] overflow-hidden whitespace-pre-wrap rounded-2xl px-3.5 py-2 text-base leading-7 [overflow-wrap:anywhere]">
-              {renderImages(pendingUserImages)}
-              {pendingUserText}
+        {pendingUsers.map((pending) => (
+          <div key={pending.operationId} className="mt-2 flex justify-end">
+            <div data-pending-user-message data-pending-operation={pending.operationId} data-message-role="user" className="user-message-surface max-w-[85%] overflow-hidden whitespace-pre-wrap rounded-2xl px-3.5 py-2 text-base leading-7 [overflow-wrap:anywhere]">
+              {renderImages(pending.images)}
+              {pending.text}
             </div>
           </div>
-        ) : null}
+        ))}
 
         {/* The live projection uses the same message-only activity boundaries. */}
         {liveItems.map((item, index) => (
