@@ -703,21 +703,21 @@ describe("MessageList history virtualization", () => {
 })
 
 describe("subagent transcript provenance", () => {
-  const spawn = (id: string, childId: string): Message[] => [{
+  const spawn = (id: string, childId: string, compact = false): Message[] => [{
     id, role: "assistant", type: "tool_call", createdAt: "2026-10-16T00:00:00Z",
-    toolCalls: [{ toolCallId: id, toolName: "sub_agent", parameters: { action: "create" } }],
+    toolCalls: [{ toolCallId: id, toolName: "sub_agent", parameters: compact ? { intent: "chat", message: "bounded assignment" } : { action: "create" } }],
   }, {
     id: `${id}-result`, role: "assistant", type: "tool_result", createdAt: "2026-10-16T00:00:01Z",
     toolName: "sub_agent", toolCallId: id, isError: false,
-    result: { tool_name: "sub_agent", result: JSON.stringify({ child_session_id: childId }), display_preference: "Default" },
+    result: { tool_name: "sub_agent", result: JSON.stringify(compact ? { actor_id: childId } : { child_session_id: childId }), display_preference: "Default" },
   }]
   const user = (id: string): Message => ({ id, role: "user", content: id, createdAt: "2026-10-16T00:00:00Z" })
-  it("keeps each child at its creation group when a newer turn spawns another child", () => {
+  it.each([false, true])("keeps each child at its creation group when a newer turn spawns another child (compact=%s)", (compact) => {
     const host = document.createElement("div"); document.body.appendChild(host)
     const root = createRoot(host); mountedRoots.push(root)
     const props: Parameters<typeof MessageList>[0] = {
       scrollRef: createRef(), contentRef: createRef(), onScroll: vi.fn(),
-      messages: [user("turn-1"), ...spawn("create-1", "child-1")],
+      messages: [user("turn-1"), ...spawn("create-1", "child-1", compact)],
       mergedSubAgents: { "child-1": { status: "running" } }, sending: false,
       latestRunFinished: false, streaming: null, streamingActive: false,
       streamingReasoning: null, liveSegments: [], streamStatus: null, pendingUserText: null,
@@ -728,7 +728,7 @@ describe("subagent transcript provenance", () => {
     const row = (id: string) => host.querySelector(`[data-subagent-id="${id}"]`)?.closest("[data-history-entry-key]")?.getAttribute("data-history-entry-key")
     render({})
     expect(row("child-1")).toBe("activity-create-1")
-    const messages = [...props.messages, user("turn-2"), ...spawn("create-2", "child-2")]
+    const messages = [...props.messages, user("turn-2"), ...spawn("create-2", "child-2", compact)]
     render({ messages, mergedSubAgents: { "child-2": { status: "running" }, "child-1": { status: "completed" } } })
     expect(row("child-1")).toBe("activity-create-1")
     expect(row("child-2")).toBe("activity-create-2")
