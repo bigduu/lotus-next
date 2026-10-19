@@ -2,7 +2,7 @@ import { expect, test, type WebSocketRoute } from "@playwright/test"
 import { actorSnapshotFixture } from "../src/test/fixtures/actorSnapshot.js"
 import { installArtifactRuntime, standaloneScenario } from "./support/artifactRuntime.js"
 
-test("#383 pending images survive another session's send and reconnect until each exact ACK arrives", async ({ page }, info) => {
+for (const ackWhileAway of [false, true]) test(`#383 pending images survive another session's send and reconnect (ACK while away=${ackWhileAway})`, async ({ page }, info) => {
   const a = "all-surface-session", b = "second-image-session", at = "2026-10-19T00:00:00Z"
   const pixel = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
   await page.addInitScript((id) => {
@@ -12,6 +12,8 @@ test("#383 pending images survive another session's send and reconnect until eac
   }, a)
   const runtime = await installArtifactRuntime(page, standaloneScenario)
   let socket: WebSocketRoute | undefined, connections = 0, navigations = 0
+  let releaseAck!: () => void
+  const delayedAck = new Promise<void>((resolve) => { releaseAck = resolve })
   const reads = new Map<string, number>(), persisted = new Set<string>()
   const chats: Array<{ session_id: string; message: string }> = [], executions: string[] = []
   const sessions = [a, b].map((id, index) => ({ id, title: `Pending image ${index ? "B" : "A"}`, kind: "root", title_version: 1,
@@ -36,6 +38,7 @@ test("#383 pending images survive another session's send and reconnect until eac
     if (path === "/api/v1/sessions") return route.fulfill({ json: { sessions: new URL(request.url()).searchParams.get("kind") === "child" ? [] : sessions, total: 2, limit: 200, offset: 0 } })
     if (path === "/api/v1/chat" && request.method() === "POST") {
       const body = request.postDataJSON(); chats.push(body)
+      if (ackWhileAway && body.session_id === a && chats.length === 1) await delayedAck
       return route.fulfill({ json: { session_id: body.session_id, message_id: `ack-${body.session_id}`, status: "success" } })
     }
     for (const session of sessions) {
@@ -74,6 +77,14 @@ test("#383 pending images survive another session's send and reconnect until eac
   await page.locator('input[type="file"]').setInputFiles({ name: "A.png", mimeType: "image/png", buffer: Buffer.from(pixel, "base64") })
   await input.fill("A caption")
   await page.getByRole("button", { name: "Send message", exact: true }).click()
+  if (ackWhileAway) {
+    await expect.poll(() => chats.length).toBe(1)
+    await select("Pending image B")
+    releaseAck()
+    await expect.poll(() => executions.length).toBe(1)
+    await expect(page.locator("[data-pending-user-message]")).toHaveCount(0)
+    await select("Pending image A")
+  }
   await expect.poll(() => executions.length).toBe(1)
   const pending = page.locator("[data-pending-user-message]")
   await expect(pending.locator("img")).toBeVisible()

@@ -1752,6 +1752,23 @@ export function useChat(
       noteSessionOperation(acknowledgedSessionId, operation.id)
       if (templatePrompt) acknowledgePendingTemplatePrompt(templatePrompt)
 
+      // A valid ACK retains its submitted content even after navigation.
+      // Navigation and stream ownership below still belong to the viewed pane.
+      if (mountedRef.current && (body || submittedImages.length)) {
+        setPendingByOperation((current) => new Map(current).set(operation.id, {
+          operationId: operation.id,
+          sid: acknowledgedSessionId,
+          text: body,
+          images: submittedImages.map((image, index) => ({
+            id: `pending-${operation.id}-${index}`, name: image.name ?? "image", size: image.size ?? 0,
+            type: image.type || "image/png", base64: image.base64,
+            url: image.base64.startsWith("data:") ? image.base64 : `data:${image.type || "image/png"};base64,${image.base64}`,
+          })),
+          acknowledgedMessageId,
+          baselineMessageIds,
+        }))
+      }
+
       let navigated = false
       const stillAtOrigin =
         mountedRef.current &&
@@ -1798,21 +1815,6 @@ export function useChat(
         }
       } else {
         setSubmissionPending(false)
-        if (body || submittedImages.length) {
-          setPendingByOperation((current) => new Map(current).set(operation.id, {
-            operationId: operation.id,
-            sid: acknowledgedSessionId,
-            text: body,
-            images: submittedImages.map((image, index) => ({
-              id: `pending-${operation.id}-${index}`, name: image.name ?? "image", size: image.size ?? 0,
-              type: image.type || "image/png", base64: image.base64,
-              url: image.base64.startsWith("data:") ? image.base64 : `data:${image.type || "image/png"};base64,${image.base64}`,
-            })),
-            acknowledgedMessageId,
-            baselineMessageIds,
-          }))
-        }
-
         if (acknowledgedSessionId !== startSid) {
           if (isBound) {
             if (onSessionCreated) {

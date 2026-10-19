@@ -2414,6 +2414,37 @@ describe("owned streams without a terminal frame", () => {
 
 describe("image attachment visibility", () => {
   it.each([
+    { newSession: false, caption: "" }, { newSession: false, caption: "late caption" },
+    { newSession: true, caption: "" }, { newSession: true, caption: "late caption" },
+  ])("retains a late image ACK after navigating away before POST resolves (%j)", async ({ newSession, caption }) => {
+    const a = "late-image-ack", b = "viewed-while-posting", acknowledgement = deferred<{ session_id: string; message_id: string }>()
+    const image = { base64: "R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7", name: "late.gif", size: 42, type: "image/gif" }
+    mocks.appState.chats = [{ id: a, messages: [] }, { id: b, messages: [] }]
+    mocks.sendMessage.mockReturnValueOnce(acknowledgement.promise)
+    const created = vi.fn()
+    const hook = await mountUseChat({ mode: "bound", sessionId: newSession ? null : a, onSessionCreated: created })
+    let sending!: Promise<SendSubmissionResult>
+    act(() => { sending = hook.current.send(caption, { images: [image] }) })
+    await hook.rerender({ mode: "bound", sessionId: b, onSessionCreated: created })
+    await act(async () => {
+      acknowledgement.resolve({ session_id: a, message_id: "late-exact-ack" })
+      expect(await sending).toMatchObject({ kind: "accepted", sessionId: a, navigated: false })
+    })
+    expect(hook.current.currentSessionId).toBe(b)
+    expect(hook.current.pendingUserMessages).toHaveLength(0)
+    expect(created).not.toHaveBeenCalled(); expect(mocks.appState.selectSession).not.toHaveBeenCalled()
+    expect(mocks.subscribeToEvents).not.toHaveBeenCalled()
+    expect(mocks.execute).toHaveBeenCalledTimes(1)
+    expect(mocks.execute.mock.calls[0][0]).toBe(a)
+    await hook.rerender({ mode: "bound", sessionId: a, onSessionCreated: created })
+    expect(hook.current.pendingUserMessages).toHaveLength(1)
+    expect(hook.current.pendingUserMessages[0]).toMatchObject({ text: caption, images: [{ name: "late.gif" }] })
+    appendPersistedUser(a, caption, "late-exact-ack")
+    await hook.rerender({ mode: "bound", sessionId: a, onSessionCreated: created })
+    expect(hook.current.pendingUserMessages).toHaveLength(0)
+    expect(mocks.sendMessage).toHaveBeenCalledTimes(1); expect(mocks.execute).toHaveBeenCalledTimes(1)
+  })
+  it.each([
     { nextImage: false, firstHydrated: 1 }, { nextImage: true, firstHydrated: 1 },
     { nextImage: false, firstHydrated: 2 }, { nextImage: true, firstHydrated: 2 },
   ])("retains consecutive image ACKs in one session until each is canonical (%j)", async ({ nextImage, firstHydrated }) => {
