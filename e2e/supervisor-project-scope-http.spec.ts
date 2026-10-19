@@ -12,7 +12,7 @@ const observation = (code: AuthCode | null = null, ids = ["p1"], revision = 4) =
 async function fixture(page: Page, code: AuthCode | null = null) {
   await page.addInitScript(() => localStorage.setItem("bodhi_onboarded_v1", "1"))
   // Framework-supplied HTTP owner, not a credential provisioned in a real Bamboo instance.
-  const runtime = await installArtifactRuntime(page, standaloneScenario, { bootstrapRequestState: "local_bypass" })
+  const runtime = await installArtifactRuntime(page, standaloneScenario, [], { bootstrapRequestState: "local_bypass" })
   let scope = observation(code), mode: "success" | "conflict" | "lost" | "unavailable" | "origin" = "success"
   const requests: { method: string; body: unknown; headers: Record<string, string> }[] = []
   let passwordVerifications = 0
@@ -72,7 +72,7 @@ async function review(dialog: ReturnType<Page["getByRole"]>) {
 
 test("HTTP fixture: plain browser explicitly confirms one exact set with receipt and fresh GET", async ({ page }, info) => {
   const f = await fixture(page), dialog = await open(page, info.project.name === "phone-chromium")
-  expect(await page.evaluate(() => typeof (window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__)).toBe("undefined")
+  expect(await page.evaluate(() => typeof (globalThis as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__)).toBe("undefined")
   await review(dialog); expect(f.writes()).toEqual([])
   await expect(dialog).toContainText(incarnation)
   await dialog.getByRole("button", { name: "确认更改 Project 范围", exact: true }).click()
