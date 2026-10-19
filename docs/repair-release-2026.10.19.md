@@ -4,7 +4,7 @@ This bounded release pairs Lotus Next with Bamboo `a473f69b856962dd3dbdbfb2051b4
 
 ## Included behavior
 
-- Keep acknowledged image thumbnails visible until the exact canonical message arrives, including image-only messages and execution refusal.
+- Keep acknowledged image thumbnails visible until the exact canonical message arrives, including image-only messages and execution refusal. Each session retains its own pending acknowledgement while the user switches sessions and sends elsewhere.
 - Start child cards compact, preserve their expansion choice, and keep authoritative lifecycle and creation origin visible. Opening the original conversation remains explicit.
 - Show backend compatibility reports, allow compatible legacy sessions, and block only explicit execution conflicts while preserving history and drafts. Reconnect rereads the current session without sending or migrating anything.
 - Preserve Work ready-empty, uninitialized, disabled, forbidden and error states. Initialization remains an explicit, capability-gated action. Project scope uses the same existing-access HTTP API in browser and desktop; it adds no login or native requirement.
@@ -14,7 +14,7 @@ The paired Bamboo commit includes PR2078 (compatibility), PR2085 (private model 
 
 ## Evidence and release identity
 
-Prior source-bound local unit and browser evidence is retained. The actual 1f/413 plain-browser acceptance passed eight desktop/phone cases with real WebSocket reconnects, zero writes and unchanged fixture bytes. It used System-only fixture history and does not prove a User/Assistant execution or the final a473 combination. Existing image and feedback browser cases use synthetic contracts; final combination acceptance is tracked separately.
+Prior source-bound local unit and browser evidence is retained. The actual 1f/413 plain-browser acceptance passed eight desktop/phone cases with real WebSocket reconnects, zero writes and unchanged fixture bytes. It used System-only fixture history and does not prove a User/Assistant execution or the final a473 combination. Existing image and feedback browser cases use synthetic contracts; final combination acceptance is tracked separately. PR383 review also reproduced a cross-session pending-image overwrite in two cases (the second session sends text or another image); the fix keeps separate pending entries and retires each only when its own exact acknowledgement reaches canonical history.
 
 The checked-in package version remains the repository's intentional `0.0.0` source placeholder. Formal publication must inject `2026.10.19` through the existing immutable accepted-source workflow, complete the exact-source Node22/24 and paired Real Bamboo checks, and verify the published registry artifact. A local placeholder manifest is not a released package.
 

@@ -2413,6 +2413,49 @@ describe("owned streams without a terminal frame", () => {
 
 
 describe("image attachment visibility", () => {
+  it.each([false, true])("keeps A's delayed image after B sends (B image=%s), retiring each exact acknowledgement independently", async (bHasImage) => {
+    const a = "image-a", b = "image-b", firstRead = deferred<void>()
+    const image = { base64: "R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7", name: "A.gif", size: 42, type: "image/gif" }
+    mocks.appState.chats = [{ id: a, messages: [] }, { id: b, messages: [] }]
+    mocks.sendMessage.mockResolvedValueOnce({ session_id: a, message_id: "ack-a" })
+      .mockResolvedValueOnce({ session_id: b, message_id: "ack-b" })
+    // Delay only ACK hydration; the completed run's separate canonical read
+    // resolves with old history so another session can submit normally.
+    mocks.appState.loadChatHistory.mockImplementation((id: string, options?: { mode?: string; waitForAssistant?: boolean }) =>
+      id === a && options?.mode === "monotonic" && !options.waitForAssistant ? firstRead.promise : Promise.resolve())
+    mocks.subscribeToEvents.mockImplementation(async (_sid: string, handlers: SubscriptionHandlers) => { handlers.onComplete() })
+    const hook = await mountUseChat({ mode: "bound", sessionId: a })
+    await act(async () => { await hook.current.send("A caption", { images: [image] }) })
+    await flushMicrotasks()
+    expect(hook.current.sending).toBe(false)
+    expect(hook.current.pendingUserImages[0]?.name).toBe("A.gif")
+
+    await hook.rerender({ mode: "bound", sessionId: b })
+    expect(hook.current.pendingUserImages).toHaveLength(0)
+    await act(async () => { await hook.current.send("B caption", { images: bHasImage ? [{ ...image, name: "B.gif" }] : [] }) })
+    await flushMicrotasks()
+    expect(hook.current.pendingUserText).toBe("B caption")
+    expect(hook.current.pendingUserImages).toHaveLength(bHasImage ? 1 : 0)
+
+    await hook.rerender({ mode: "bound", sessionId: a })
+    expect(hook.current.pendingUserText).toBe("A caption")
+    expect(hook.current.pendingUserImages[0]?.name).toBe("A.gif")
+    await act(async () => {
+      appendPersistedUser(a, "A caption", "ack-a")
+      firstRead.resolve()
+    })
+    await hook.rerender({ mode: "bound", sessionId: a })
+    expect(hook.current.pendingUserImages).toHaveLength(0)
+    await hook.rerender({ mode: "bound", sessionId: b })
+    expect(hook.current.pendingUserText).toBe("B caption")
+    expect(hook.current.pendingUserImages[0]?.name).toBe(bHasImage ? "B.gif" : undefined)
+    appendPersistedUser(b, "B caption", "ack-b")
+    await hook.rerender({ mode: "bound", sessionId: b })
+    expect(hook.current.pendingUserText).toBeNull()
+    expect(hook.current.pendingUserImages).toHaveLength(0)
+    expect(mocks.sendMessage).toHaveBeenCalledTimes(2)
+    expect(mocks.execute).toHaveBeenCalledTimes(2)
+  })
   it.each(["", "caption with image"])("retains acknowledged pending image metadata until exact history hydration (%s)", async (text) => {
     const sid = "image-pending-session", history = deferred<void>()
     const image = { base64: "R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7", name: "fixture.gif", size: 42, type: "image/gif" }

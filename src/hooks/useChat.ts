@@ -341,8 +341,8 @@ export function useChat(
   // The session the live stream belongs to — so streaming only renders in ITS
   // conversation, never leaking into another session the user switched to.
   const [streamSid, setStreamSid] = useState<string | null>(null)
-  // Optimistic just-sent user message (shows instantly before history reloads).
-  const [pending, setPending] = useState<PendingUserMessage | null>(null)
+  // A pane can submit in another session before an earlier ACK reaches history.
+  const [pendingBySession, setPendingBySession] = useState<ReadonlyMap<string, PendingUserMessage>>(() => new Map())
   const [sending, setSending] = useState(false)
   const { rate: outputRate, record: recordOutput, reset: resetOutputRate } = useOutputRate(sid, (sending || currentChat?.isRunning === true) && streamSid === sid)
   const [submissionPending, setSubmissionPending] = useState(false)
@@ -464,7 +464,8 @@ export function useChat(
   const liveSegments = streamSid === sid ? liveSegmentsState : EMPTY_SEGMENTS
   const streamStatus = streamSid === sid ? streamStatusState : null
   const streamPhase = streamSid === sid ? streamPhaseState : null
-  const pendingIsHydrated = !!pending && pending.sid === sid && hasPersistedUserMessage(messages, pending)
+  const pending = sid ? pendingBySession.get(sid) ?? null : null
+  const pendingIsHydrated = !!pending && hasPersistedUserMessage(messages, pending)
   // Swap to the persisted bubble in this render, before the cleanup effect,
   // so history arrival cannot produce a frame containing both copies.
   const visiblePending = pending?.sid === sid && !pendingIsHydrated ? pending : null
@@ -512,12 +513,15 @@ export function useChat(
 
   const clearPendingOperation = useCallback((operationId: number) => {
     if (!mountedRef.current) return
-    setPending((current) => {
-      if (current?.operationId !== operationId) return current
-      const persisted = selectSessionById(current.sid)(useAppStore.getState())?.messages ?? []
-      // History readers may resolve with an old snapshot, skip a missing chat,
-      // or finish before persistence. Only the submitted user message retires it.
-      return hasPersistedUserMessage(persisted, current) ? null : current
+    setPendingBySession((current) => {
+      const target = [...current.values()].find((entry) => entry.operationId === operationId)
+      if (!target) return current
+      const persisted = selectSessionById(target.sid)(useAppStore.getState())?.messages ?? []
+      // A delayed read retires only its exact ACK, never another session's entry.
+      if (!hasPersistedUserMessage(persisted, target)) return current
+      const next = new Map(current)
+      next.delete(target.sid)
+      return next
     })
   }, [])
 
@@ -1789,7 +1793,7 @@ export function useChat(
       } else {
         setSubmissionPending(false)
         if (body || submittedImages.length) {
-          setPending({
+          setPendingBySession((current) => new Map(current).set(acknowledgedSessionId, {
             operationId: operation.id,
             sid: acknowledgedSessionId,
             text: body,
@@ -1800,7 +1804,7 @@ export function useChat(
             })),
             acknowledgedMessageId,
             baselineMessageIds,
-          })
+          }))
         }
 
         if (acknowledgedSessionId !== startSid) {
