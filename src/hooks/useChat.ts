@@ -373,6 +373,7 @@ export function useChat(
     () => new Map(),
   )
   const [pendingApproval, setPendingApproval] = useState<PendingApproval | null>(null)
+  const approvalCompatibility = useSessionExecutionCompatibility(pendingApproval?.childSessionId ?? null)
   const abortRef = useRef<AbortController | null>(null)
   const mountedRef = useRef(false)
   const operationSequenceRef = useRef(0)
@@ -2100,14 +2101,14 @@ export function useChat(
   const respondApproval = useCallback(
     async (approved: boolean) => {
       const pa = pendingApproval
-      if (isSessionExecutionBlocked(sid) || isSessionExecutionBlocked(pa?.childSessionId)) return
+      if (isSessionExecutionBlocked(pa?.childSessionId)) return
       setPendingApproval(null)
       if (!pa) return
       await agentClient
         .respondToChildApproval(pa.childSessionId, pa.requestId, approved)
         .catch(() => {})
     },
-    [pendingApproval, sid],
+    [pendingApproval],
   )
 
   return {
@@ -2148,6 +2149,7 @@ export function useChat(
     refreshQuestion,
     retryQuestion,
     pendingApproval,
+    approvalCompatibility,
     answerQuestion,
     respondApproval,
   }

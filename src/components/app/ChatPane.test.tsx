@@ -114,7 +114,14 @@ vi.mock("@services/chat/AgentService", () => ({ isThinkingMode: (v: unknown) => 
 vi.mock("@/lib/taskTemplates", () => ({ peekPendingTemplatePrompt: runtime.peekTemplate }))
 vi.mock("@/lib/exportMarkdown", () => ({ downloadMarkdown: vi.fn() }))
 vi.mock("@/lib/exportPdf", () => ({ downloadPdf: vi.fn() }))
-vi.mock("@/components/chat/Dialogs", () => ({ QuestionDialog: () => null, ApprovalDialog: () => null }))
+vi.mock("@/components/chat/Dialogs", () => ({
+  QuestionDialog: () => null,
+  ApprovalDialog: ({ a, onRespond }: ComponentProps<(typeof import("@/components/chat/Dialogs"))["ApprovalDialog"]>) =>
+    <div role="dialog" data-child-approval={a.childSessionId}>
+      <button onClick={() => onRespond(true)}>Approve child</button>
+      <button onClick={() => onRespond(false)}>Deny child</button>
+    </div>,
+}))
 vi.mock("@/components/app/ChatHeader", () => ({
   ChatHeader: ({ environment, supervisorControl }: { environment?: ReactNode; supervisorControl?: ReactNode }) => <div>{environment}{supervisorControl}</div>,
 }))
@@ -2065,4 +2072,44 @@ it("forwards every pending ACK to MessageList without another submission", async
     onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false} />))
   expect(runtime.messageList?.pendingUserMessages).toBe(pendingUserMessages)
   expect(send).not.toHaveBeenCalled()
+})
+
+
+describe("child approval compatibility", () => {
+  const view = (status: "compatible" | "legacy_compatible" | "conflict" | null): NonNullable<ChatPaneProps["chat"]["executionCompatibility"]> => ({
+    report: status ? { session_version: status === "conflict" ? 99 : null, current_session_version: 1, status,
+      history_readable: true, execution_allowed: status !== "conflict",
+      conflicts: status === "conflict" ? [{ code: "unsupported_session_version", message: "Child version is incompatible" }] : [] } : null,
+    blocked: status === "conflict", observed: true, legacy: status === null, loading: false, readError: false, refresh: vi.fn(async () => {}),
+  })
+  const pending = { childSessionId: "approval-child", requestId: "child-request-7", toolName: "Write", permission: "write" }
+  async function renderApproval(parent: ReturnType<typeof view>, child: ReturnType<typeof view>, respond: (approved: boolean) => Promise<void>) {
+    if (!roots.length) await mount(vi.fn<Send>(), "approval-parent")
+    await act(async () => roots.at(-1)!.render(<ChatPane chat={{ ...createChat(vi.fn<Send>(), "approval-parent"),
+      executionCompatibility: parent, approvalCompatibility: child, pendingApproval: pending, respondApproval: respond }} pickedWorkspace="/picked"
+      onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()} splitOpen={false}
+      onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false} />))
+  }
+  it.each(["compatible", "legacy_compatible", null] as const)("keeps %s Child approval actionable when only its parent conflicts", async (status) => {
+    const respond = vi.fn(async (_approved: boolean) => {})
+    await renderApproval(view("conflict"), view(status), respond)
+    expect(document.querySelector('[data-child-approval="approval-child"]')).not.toBeNull()
+    expect(composer().executionBlocked).toBe(true)
+    expect(respond).not.toHaveBeenCalled()
+    act(() => [...document.querySelectorAll<HTMLButtonElement>("button")].find(b => b.textContent === "Approve child")!.click())
+    expect(respond).toHaveBeenCalledExactlyOnceWith(true)
+  })
+  it("blocks only the Child's explicit conflict and restores its dialog after a canonical recovery", async () => {
+    const respond = vi.fn(async (_approved: boolean) => {})
+    await renderApproval(view("compatible"), view("conflict"), respond)
+    expect(document.querySelector('[data-child-approval="approval-child"]')).toBeNull()
+    expect(document.querySelector('[data-session-execution-blocked="true"]')).not.toBeNull()
+    expect(composer().executionBlocked).toBe(false)
+    expect(respond).not.toHaveBeenCalled()
+    await renderApproval(view("compatible"), view("compatible"), respond)
+    expect(document.querySelector('[data-child-approval="approval-child"]')).not.toBeNull()
+    expect(respond).not.toHaveBeenCalled()
+    act(() => [...document.querySelectorAll<HTMLButtonElement>("button")].find(b => b.textContent === "Deny child")!.click())
+    expect(respond).toHaveBeenCalledExactlyOnceWith(false)
+  })
 })

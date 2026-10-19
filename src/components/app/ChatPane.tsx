@@ -1397,7 +1397,11 @@ export function ChatPane({
         </div>
       ) : null}
 
-      {!executionBlocked && pendingApproval ? (
+      {pendingApproval && chat.approvalCompatibility?.blocked ? (
+        <section aria-label={uiText("subagent_approval_request_4321e83b")}>
+          <SessionCompatibilityNotice state={chat.approvalCompatibility} />
+        </section>
+      ) : pendingApproval ? (
         <ApprovalDialog a={pendingApproval} onRespond={(ok) => void respondApproval(ok)} />
       ) : !executionBlocked && pendingQuestion ? (
         <QuestionDialog q={pendingQuestion} onAnswer={(t) => void answerQuestion(t)}

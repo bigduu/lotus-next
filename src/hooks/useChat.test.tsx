@@ -3,6 +3,7 @@ import { createRoot, type Root } from "react-dom/client"
 import type { ProviderInstancesConfig, ProviderKind } from "@shared/types/providerConfig"
 import type { PermissionDecisionResult, ReasoningEffort } from "@services/chat/AgentService"
 import { ApiError, NetworkRequestError } from "@services/api/errors"
+import { clearSessionCompatibilityObservations, observeSessionExecutionConflict } from "@services/chat/sessionExecutionCompatibility"
 import {
   afterAll,
   afterEach,
@@ -2710,4 +2711,58 @@ describe("session execution compatibility v1", () => {
     expect(mocks.truncateSessionMessages).not.toHaveBeenCalled()
   })
 
+})
+
+
+describe("child approval compatibility", () => {
+  beforeEach(() => clearSessionCompatibilityObservations())
+  afterEach(() => clearSessionCompatibilityObservations())
+  const parent = "approval-target-parent", child = "approval-target-child"
+  const report = (blocked: boolean) => ({ session_version: blocked ? 99 : 1, current_session_version: 1,
+    status: blocked ? "conflict" : "compatible", history_readable: true, execution_allowed: !blocked,
+    conflicts: blocked ? [{ code: "unsupported_session_version", message: "Future child" }] : [] })
+  const conflict = (id: string) => new ApiError("incompatible", 409, "", JSON.stringify({ session_id: id,
+    error: { code: "session_execution_incompatible" }, compatibility: report(true) }))
+  async function pending(childBlocked = false) {
+    mocks.appState.chats = [{ id: parent, messages: [], isRunning: true }]
+    mocks.shouldObserve = true
+    mocks.getSession.mockImplementation(async (id: string) => ({ session: { id, execution_compatibility: report(id === child && childBlocked) } }))
+    mocks.subscribeToEvents.mockReturnValue(pendingForever())
+    mocks.respondToChildApproval.mockResolvedValue({ delivered: true })
+    const hook = await mountUseChat({ mode: "bound", sessionId: parent })
+    const handlers = mocks.subscribeToEvents.mock.calls[0][1] as { onChildApprovalRequested(id: string, request: string, detail: { toolName: string; permission: string }): void }
+    await act(async () => handlers.onChildApprovalRequested(child, "request-7", { toolName: "Write", permission: "write" }))
+    await flushMicrotasks()
+    return hook
+  }
+  it.each([true, false])("submits the Human's %s decision to the compatible Child despite a parent conflict", async (approved) => {
+    const hook = await pending()
+    await act(async () => { observeSessionExecutionConflict(parent, conflict(parent)) })
+    expect(hook.current.pendingApproval?.childSessionId).toBe(child)
+    expect(mocks.respondToChildApproval).not.toHaveBeenCalled()
+    await act(async () => { await hook.current.respondApproval(approved) })
+    expect(mocks.respondToChildApproval).toHaveBeenCalledExactlyOnceWith(child, "request-7", approved)
+    expect(mocks.sendMessage).not.toHaveBeenCalled(); expect(mocks.execute).not.toHaveBeenCalled()
+  })
+  it("reads the Child's own report and retains its pending request through conflict and explicit recovery", async () => {
+    const hook = await pending(true)
+    expect(mocks.getSession).toHaveBeenCalledWith(child)
+    expect(hook.current.approvalCompatibility.blocked).toBe(true)
+    await act(async () => { await hook.current.respondApproval(true); await hook.current.respondApproval(false) })
+    expect(mocks.respondToChildApproval).not.toHaveBeenCalled()
+    expect(hook.current.pendingApproval?.requestId).toBe("request-7")
+    mocks.getSession.mockImplementation(async (id: string) => ({ session: { id, execution_compatibility: report(false) } }))
+    await act(async () => { await hook.current.approvalCompatibility.refresh() })
+    expect(hook.current.approvalCompatibility.blocked).toBe(false)
+    expect(mocks.respondToChildApproval).not.toHaveBeenCalled()
+    await act(async () => { await hook.current.respondApproval(false) })
+    expect(mocks.respondToChildApproval).toHaveBeenCalledExactlyOnceWith(child, "request-7", false)
+  })
+  it("a cached approval callback still respects a later conflict for that exact Child", async () => {
+    const hook = await pending(), cached = hook.current.respondApproval
+    await act(async () => { observeSessionExecutionConflict(child, conflict(child)) })
+    await act(async () => { await cached(true) })
+    expect(mocks.respondToChildApproval).not.toHaveBeenCalled()
+    expect(hook.current.pendingApproval?.requestId).toBe("request-7")
+  })
 })

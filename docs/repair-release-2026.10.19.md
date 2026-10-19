@@ -37,3 +37,5 @@ The checked-in package version remains the repository's intentional `0.0.0` sour
 ## Excluded work
 
 Unfinished Tickets, independent spawn v2, selective continuation, and the unconfirmed other-machine retry incident are not delivered here. This release does not change authentication or permission policy, attach historical sessions, expand Project scope, configure a real model, or add Bodhi business logic.
+
+Child approvals use the target Child's detail-only compatibility report and refresh it on reconnect. A parent conflict still blocks parent execution and questions, but does not suppress a compatible Child's Human approval. Only an explicit Child conflict blocks that request; the Child notice provides a read-only refresh. No decision is submitted automatically, and the backend continues to validate the exact Child/request.
