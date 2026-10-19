@@ -1,5 +1,5 @@
 import type { NativeCancellationCode, NativeConfirmationUnavailableCode, NativeScopeCancellation, ProjectScopeOwnerAvailability } from "./ownerBridge"
-import type { OwnerAuthenticationCode, ProjectScopeResponse } from "./types"
+import type { ProjectScopeResponse } from "./types"
 export const scopeFixture = (): ProjectScopeResponse => ({ code: "project_scope_configured",
   scope: { supervisor: { session_id: "bamboo-default-supervisor", incarnation_id: "11111111-1111-4111-8111-111111111111" }, state_revision: 0, allowed_projects: ["p1"] },
   capabilities: { project_scope_v1: true, supervised_root_create_v1: true },
@@ -11,6 +11,6 @@ export const nativeAvailabilityFixture = (available = true, transportReady = tru
 })
 export const nativeCancellationFixture = (code: NativeCancellationCode = "native_confirmation_cancelled"): NativeScopeCancellation => ({ kind: "cancelled", code, status_code: 409, not_submitted: true })
 
-export const httpScopeFixture = (code: OwnerAuthenticationCode | null = null): ProjectScopeResponse => ({ ...scopeFixture(),
+export const httpScopeFixture = (available = true): ProjectScopeResponse => ({ ...scopeFixture(),
   capabilities: { ...scopeFixture().capabilities, project_scope_http_write_v1: true },
-  owner_authorization: { available: code === null, required: true, kind: "authenticated_owner", http_registration: false, code } })
+  owner_authorization: { available, required: true, kind: "existing_access", http_registration: false, code: null } })

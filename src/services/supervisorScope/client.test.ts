@@ -62,20 +62,18 @@ describe("Supervisor Project scope read contract", () => {
 })
 
 
-describe("authenticated HTTP scope v1", () => {
-  it("preserves explicit request-specific owner eligibility and normalizes display metadata", () => {
+describe("HTTP scope v1 with existing access", () => {
+  it("preserves the existing access result and normalizes display metadata", () => {
     expect(decodeProjectScope({ ...httpScopeFixture(), note: "display metadata" })).toEqual(httpScopeFixture())
     expect(canWriteProjectScope(decodeProjectScope(httpScopeFixture()))).toBe(true)
     expect(canWriteProjectScope(scopeFixture())).toBe(false)
   })
-  it.each(["owner_authentication_required", "owner_authentication_unconfigured", "owner_authentication_unavailable"] as const)("preserves %s independently of a readable scope", (code) => {
-    const scope = decodeProjectScope(httpScopeFixture(code))
-    expect(scope.owner_authorization.code).toBe(code); expect(canWriteProjectScope(scope)).toBe(false)
+  it("keeps a readable unavailable observation blocked without adding authentication modes", () => {
+    const scope = decodeProjectScope(httpScopeFixture(false))
+    expect(scope.owner_authorization.code).toBeNull(); expect(canWriteProjectScope(scope)).toBe(false)
   })
   it.each([
     { ...httpScopeFixture(), capabilities: { ...scopeFixture().capabilities } },
-    { ...httpScopeFixture(), owner_authorization: { ...httpScopeFixture().owner_authorization, code: "owner_authentication_required" } },
-    { ...httpScopeFixture(), owner_authorization: { ...httpScopeFixture().owner_authorization, available: false } },
     { ...httpScopeFixture(), owner_authorization: { ...httpScopeFixture().owner_authorization, code: "future" } },
     { ...httpScopeFixture(), owner_authorization: { ...httpScopeFixture().owner_authorization, kind: "front_end_approved" } },
     { ...httpScopeFixture(), owner_authorization: { ...httpScopeFixture().owner_authorization, code: undefined } },
@@ -94,9 +92,17 @@ describe("authenticated HTTP scope v1", () => {
     await expect(supervisorScopeClient.update(intent)).rejects.toThrow(); expect(apiClient.putOnce).toHaveBeenCalledTimes(1)
   })
   it("leaves a failed PUT rejected after one call", async () => {
-    const error = new ApiError("denied", 503, "", JSON.stringify({ code: "owner_authentication_unavailable" }))
+    const error = new ApiError("denied", 503, "", JSON.stringify({ code: "project_store_unavailable" }))
     vi.mocked(apiClient.putOnce).mockRejectedValue(error)
     await expect(supervisorScopeClient.update(intent)).rejects.toBe(error)
     expect(apiClient.putOnce).toHaveBeenCalledTimes(1); expect(apiClient.put).not.toHaveBeenCalled()
   })
+})
+
+it("accepts existing access and ignores optional method without a separate login", () => {
+  const body = { ...httpScopeFixture(), owner_authorization: { available: true, required: true,
+    kind: "existing_access", http_registration: false, code: null, method: "local_loopback" } }
+  const decoded = decodeProjectScope(body)
+  expect(decoded.owner_authorization).toEqual({ available: true, required: true, kind: "existing_access", http_registration: false, code: null })
+  expect(canWriteProjectScope(decoded)).toBe(true)
 })

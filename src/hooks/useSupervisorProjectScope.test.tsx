@@ -4,7 +4,6 @@ import { afterEach, expect, it, vi } from "vitest"
 import { ApiError } from "@services/api"
 import { httpScopeFixture, scopeFixture } from "@services/supervisorScope/testFixtures"
 import type { ProjectOption, ProjectScopeIntent, ProjectScopeReceipt, ProjectScopeResponse } from "@services/supervisorScope/types"
-import { ownerAuthenticationCodes } from "@services/supervisorScope/types"
 import { useSupervisorProjectScope, type ProjectScopeDependencies } from "./useSupervisorProjectScope"
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
@@ -35,9 +34,9 @@ it("keeps legacy Host-only scope readable and previewable without a web write", 
   expect(h.value.canEdit).toBe(true); expect(h.value.canConfirm).toBe(false)
   expect(h.value.review?.mutation.allowed_projects).toEqual(["p1", "p2"]); expect(h.update).not.toHaveBeenCalled()
 })
-it.each(ownerAuthenticationCodes)("blocks %s without inferring owner from UI access or native presence", async (code) => {
+it("blocks unavailable access without inferring permission from UI or native presence", async () => {
   const invoke = vi.fn(); vi.stubGlobal("__TAURI_INTERNALS__", { invoke })
-  const h = await mount({ scope: httpScopeFixture(code) }); h.review(); await h.confirm()
+  const h = await mount({ scope: httpScopeFixture(false) }); h.review(); await h.confirm()
   expect(h.value.canConfirm).toBe(false); expect(h.update).not.toHaveBeenCalled(); expect(invoke).not.toHaveBeenCalled()
 })
 it("submits one immutable exact full-set intent and confirms receipt plus fresh state", async () => {
@@ -56,14 +55,14 @@ it("submits one immutable exact full-set intent and confirms receipt plus fresh 
   expect(h.value.review).toBeNull(); expect(h.value.submitting).toBe(false)
 })
 it.each([
-  [401, "owner_authentication_required", "authentication"], [403, "owner_request_origin_invalid", "rejected"],
+  [401, "", "authentication"], [403, "", "rejected"],
   [403, "host_owner_authorization_required", "rejected"], [409, "scope_revision_conflict", "conflict"],
-  [409, "project_archived", "conflict"], [503, "owner_authentication_unconfigured", "unavailable"],
-  [503, "owner_authentication_unavailable", "unavailable"], [503, "scope_authority_invalid", "unavailable"],
+  [409, "project_archived", "conflict"], [503, "project_store_unavailable", "unavailable"],
+  [503, "scope_authority_invalid", "unavailable"],
 ] as const)("preserves %i/%s and never replays after rereading", async (status, code, kind) => {
   const h = await mount(); h.edit("p1", false); h.edit("p2", true); h.review(); h.update.mockRejectedValue(error(status, code))
   h.setCanonical({ ...httpScopeFixture(), scope: { ...httpScopeFixture().scope, state_revision: 3, allowed_projects: ["p1", "p3"] } })
-  await h.confirm(); expect(h.value.notice).toEqual({ kind, code }); expect(h.read).toHaveBeenCalledTimes(2)
+  await h.confirm(); expect(h.value.notice).toEqual({ kind, code: code || undefined }); expect(h.read).toHaveBeenCalledTimes(2)
   expect(h.value.draft).toEqual(["p2"]); expect(h.value.observation?.scope.allowed_projects).toEqual(["p1", "p3"])
   expect(h.value.review).toBeNull(); expect(h.update).toHaveBeenCalledTimes(1)
   if (kind !== "conflict") { h.review(); await h.confirm(); expect(h.update).toHaveBeenCalledTimes(1) }
@@ -81,8 +80,8 @@ it("retains unknown after a failed readback without enabling another action", as
   expect(h.value.notice?.kind).toBe("unknown"); expect(h.value.problem?.kind).toBe("unavailable")
   expect(h.value.observation).toBeNull(); expect(h.value.canConfirm).toBe(false); expect(h.update).toHaveBeenCalledTimes(1)
 })
-it("refreshes after login without replaying or retaining the prior review", async () => {
-  const h = await mount({ scope: httpScopeFixture("owner_authentication_required") }); h.edit("p2", true); h.review()
+it("rereads existing access without replaying or retaining the prior review", async () => {
+  const h = await mount({ scope: httpScopeFixture(false) }); h.edit("p2", true); h.review()
   h.setCanonical(httpScopeFixture()); await h.refresh()
   expect(h.value.review).toBeNull(); expect(h.value.draft).toEqual(["p1", "p2"]); expect(h.value.canConfirm).toBe(false)
   expect(h.update).not.toHaveBeenCalled(); h.review(); expect(h.value.canConfirm).toBe(true)
@@ -110,6 +109,16 @@ it("enforces the 64-Project limit without silently filtering", async () => {
   h.edit("p0", false); h.edit("p64", true); h.review(); expect(h.value.review?.mutation.allowed_projects).toContain("p64")
 })
 it("withdraws review after a forbidden refresh", async () => {
-  const h = await mount(); h.review(); h.read.mockRejectedValue(error(403, "owner_request_origin_invalid")); await h.refresh(); await h.confirm()
-  expect(h.value.problem?.code).toBe("owner_request_origin_invalid"); expect(h.value.observation).toBeNull(); expect(h.update).not.toHaveBeenCalled()
+  const h = await mount(); h.review(); h.read.mockRejectedValue(error(403, "host_owner_authorization_required")); await h.refresh(); await h.confirm()
+  expect(h.value.problem?.code).toBe("host_owner_authorization_required"); expect(h.value.observation).toBeNull(); expect(h.update).not.toHaveBeenCalled()
+})
+
+it("keeps post-CAS outcome unconfirmed unknown despite a matching canonical GET", async () => {
+  const h = await mount(); h.edit("p1", false); h.edit("p2", true); h.review()
+  h.update.mockRejectedValue(error(503, "scope_outcome_unconfirmed"))
+  h.setCanonical({ ...httpScopeFixture(), scope: { ...httpScopeFixture().scope, state_revision: 1, allowed_projects: ["p2"] } })
+  await h.confirm(); expect(h.value.notice?.kind).toBe("unknown")
+  expect(h.update).toHaveBeenCalledTimes(1); expect(h.value.review).toBeNull()
+  await h.refresh(); expect(h.value.notice?.kind).toBe("unknown")
+  await h.confirm(); expect(h.update).toHaveBeenCalledTimes(1)
 })

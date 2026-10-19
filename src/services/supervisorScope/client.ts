@@ -1,6 +1,6 @@
 import { apiClient, isApiError } from "@services/api"
 import { projectService } from "@services/project"
-import { ownerAuthenticationCodes, scopeErrorCodes, type OwnerAuthenticationCode, type ProjectOption, type ProjectScopeIntent, type ProjectScopeReceipt, type ProjectScopeResponse, type ScopeErrorCode, type ScopeProblem, type SupervisorReference } from "./types"
+import { scopeErrorCodes, type ProjectOption, type ProjectScopeIntent, type ProjectScopeReceipt, type ProjectScopeResponse, type ScopeErrorCode, type ScopeProblem, type SupervisorReference } from "./types"
 
 const record = (value: unknown): Record<string, unknown> | null => value !== null && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null
 export const safeRevision = (value: unknown): value is number => typeof value === "number" && Number.isSafeInteger(value) && value >= 0
@@ -27,9 +27,9 @@ export function decodeProjectScope(value: unknown): ProjectScopeResponse {
     || caps?.project_scope_v1 !== true || typeof caps.supervised_root_create_v1 !== "boolean"
     || typeof owner?.available !== "boolean" || owner.required !== true || owner.http_registration !== false) return invalid()
   let authorization: ProjectScopeResponse["owner_authorization"]
-  if (owner.kind === "authenticated_owner") {
-    if (caps.project_scope_http_write_v1 !== true || (owner.available ? owner.code !== null : !ownerAuthenticationCodes.includes(owner.code as OwnerAuthenticationCode))) return invalid()
-    authorization = { available: owner.available, required: true, kind: "authenticated_owner", http_registration: false, code: owner.code as OwnerAuthenticationCode | null }
+  if (owner.kind === "existing_access") {
+    if (caps.project_scope_http_write_v1 !== true || owner.code !== null) return invalid()
+    authorization = { available: owner.available, required: true, kind: "existing_access", http_registration: false, code: null }
   } else if (owner.kind === "trusted_host_intent" && caps.project_scope_http_write_v1 === undefined && owner.code === undefined) {
     authorization = { available: owner.available, required: true, kind: "trusted_host_intent", http_registration: false }
   } else return invalid()
@@ -38,9 +38,9 @@ export function decodeProjectScope(value: unknown): ProjectScopeResponse {
       ...(caps.project_scope_http_write_v1 === true ? { project_scope_http_write_v1: true as const } : {}) },
     owner_authorization: authorization }
 }
-/** Server authorization is authoritative; UI access/locality/native presence are not proof. */
+/** Consume the server's existing access result; do not add local login or native gates. */
 export const canWriteProjectScope = (scope: ProjectScopeResponse | null) => scope?.capabilities.project_scope_http_write_v1 === true
-  && scope.owner_authorization.kind === "authenticated_owner" && scope.owner_authorization.available && scope.owner_authorization.code === null
+  && scope.owner_authorization.kind === "existing_access" && scope.owner_authorization.available && scope.owner_authorization.code === null
 export function decodeProjectScopeReceipt(value: unknown, intent: ProjectScopeIntent): ProjectScopeReceipt {
   const body = record(value)
   if (!body || !reference(body.supervisor) || !sameSupervisor(body.supervisor, intent.supervisor)

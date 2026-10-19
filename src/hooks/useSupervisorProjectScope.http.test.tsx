@@ -14,7 +14,7 @@ const observation = () => ({ code: "project_scope_uninitialized", scope: {
   supervisor: { session_id: "bamboo-default-supervisor", incarnation_id: "11111111-1111-4111-8111-111111111111" },
   state_revision: 0, allowed_projects: [] as string[] },
   capabilities: { project_scope_v1: true, supervised_root_create_v1: true, project_scope_http_write_v1: true },
-  owner_authorization: { available: true, required: true, kind: "authenticated_owner", http_registration: false, code: null } })
+  owner_authorization: { available: true, required: true, kind: "existing_access", http_registration: false, code: null } })
 
 it.each([false, true])("uses the same HTTP scope action with native globals=%s and no native readiness", async (native) => {
   const invoke = vi.fn(); if (native) vi.stubGlobal("__TAURI_INTERNALS__", { invoke })

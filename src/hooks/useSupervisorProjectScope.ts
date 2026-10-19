@@ -16,7 +16,7 @@ function refused(error: unknown): Notice {
   if (status === 401) return { kind: "authentication", code }
   if (status === 403) return { kind: "rejected", code }
   if (status === 409 && (code === "scope_revision_conflict" || code === "project_archived")) return { kind: "conflict", code }
-  if (status === 503 && code && ["owner_authentication_unconfigured", "owner_authentication_unavailable", "host_owner_authorization_unavailable", "scope_authority_invalid", "scope_unavailable", "project_store_unavailable"].includes(code)) return { kind: "unavailable", code }
+  if (status === 503 && code && ["host_owner_authorization_unavailable", "scope_authority_invalid", "scope_unavailable", "project_store_unavailable"].includes(code)) return { kind: "unavailable", code }
   if (status === 404 && (code === "supervisor_missing" || code === "project_unavailable") || status === 400 && code === "project_scope_invalid") return { kind: "rejected", code }
   return { kind: "unknown" }
 }

@@ -25,7 +25,7 @@ async function mount(initial: ProjectScopeResponse = httpScopeFixture(), missing
     preview() { act(() => button("supervisor_scope_preview").click()) },
     async confirm() { await act(async () => button("supervisor_scope_http_confirm").click()) } }
 }
-it("allows authenticated web confirmation without any native bridge", async () => {
+it("allows admitted web confirmation without any native bridge", async () => {
   const h = await mount(); h.check("p2"); h.preview()
   expect(h.dialog.textContent).toContain(uiText("supervisor_scope_http_ready"))
   expect([...h.dialog.querySelectorAll('[data-testid="project-scope-review"] code')].map((c) => c.textContent)).toEqual(["p1", "p2"])
@@ -34,20 +34,21 @@ it("allows authenticated web confirmation without any native bridge", async () =
 })
 it.each([
   [scopeFixture(), "supervisor_scope_http_unsupported"],
-  [httpScopeFixture("owner_authentication_required"), "supervisor_scope_authentication_required"],
-  [httpScopeFixture("owner_authentication_unconfigured"), "supervisor_scope_authentication_unconfigured"],
-  [httpScopeFixture("owner_authentication_unavailable"), "supervisor_scope_authentication_unavailable"],
+  [httpScopeFixture(false), "supervisor_scope_unavailable"],
 ] as const)("keeps precise blocking and full-set local review for %#", async (scope, key) => {
   const h = await mount(scope); h.preview(); expect(h.dialog.textContent).toContain(uiText(key))
   expect(button("supervisor_scope_http_confirm").disabled).toBe(true); await h.confirm(); expect(h.update).not.toHaveBeenCalled()
   expect(h.dialog.querySelector('[data-testid="project-scope-review"]')).not.toBeNull()
 })
-it("offers only existing-password verification for required authentication, without a scope write", async () => {
-  const h = await mount(httpScopeFixture("owner_authentication_required"))
-  act(() => button("supervisor_scope_password_verify").click())
-  expect(h.dialog.querySelector('input[type="password"]')).not.toBeNull()
-  expect(h.dialog.textContent).toContain(uiText("supervisor_scope_password_description"))
-  expect(h.update).not.toHaveBeenCalled()
+it("shows global access refusal without embedding a scope login", async () => {
+  const h = await mount(); h.preview()
+  h.update.mockRejectedValue(new ApiError("access denied", 401, "", "{}"))
+  await h.confirm()
+  expect(h.dialog.textContent).toContain(uiText("supervisor_scope_access_required"))
+  expect(h.dialog.querySelector('input[type="password"]')).toBeNull()
+  expect(h.dialog.querySelector("form")).toBeNull()
+  expect(h.dialog.textContent).not.toContain("验证已有访问密码")
+  expect(h.update).toHaveBeenCalledTimes(1)
 })
 it("keeps unavailable current IDs visible until explicitly removed", async () => {
   const h = await mount(httpScopeFixture(), true); h.preview()
@@ -57,11 +58,10 @@ it("keeps unavailable current IDs visible until explicitly removed", async () =>
   expect(h.dialog.textContent).toContain(uiText("supervisor_scope_removal_effect")); expect(h.update).not.toHaveBeenCalled()
 })
 it.each([
-  [401, "owner_authentication_required", "supervisor_scope_authentication_required"],
-  [403, "owner_request_origin_invalid", "supervisor_scope_origin_invalid"],
+  [401, "", "supervisor_scope_access_required"],
+  [403, "host_owner_authorization_required", "supervisor_scope_rejected"],
   [409, "scope_revision_conflict", "supervisor_scope_conflict"],
-  [503, "owner_authentication_unconfigured", "supervisor_scope_authentication_unconfigured"],
-  [503, "owner_authentication_unavailable", "supervisor_scope_authentication_unavailable"],
+  [503, "project_store_unavailable", "supervisor_scope_storage"],
 ] as const)("renders %i/%s without false success or retry", async (status, code, key) => {
   const h = await mount(); h.preview(); h.update.mockRejectedValue(new ApiError("private diagnostic", status, "", JSON.stringify({ code })))
   await h.confirm(); expect(h.dialog.textContent).toContain(uiText(key)); expect(h.update).toHaveBeenCalledTimes(1)
@@ -78,4 +78,14 @@ it("shows saved only after matching receipt and fresh GET", async () => {
 it("keeps a lost response unknown despite matching current state", async () => {
   const h = await mount(); h.preview(); await h.confirm()
   expect(h.dialog.textContent).toContain(uiText("supervisor_scope_unknown")); expect(h.dialog.textContent).not.toContain(uiText("supervisor_scope_saved"))
+})
+
+it("uses existing access for review without a scope password or native gate", async () => {
+  const h = await mount({ ...httpScopeFixture(), owner_authorization: { available: true, required: true,
+    kind: "existing_access", http_registration: false, code: null } })
+  h.check("p2"); h.preview()
+  expect(button("supervisor_scope_http_confirm").disabled).toBe(false)
+  expect(h.dialog.querySelector('input[type="password"]')).toBeNull()
+  expect(h.dialog.textContent).not.toContain("验证已有访问密码")
+  expect(h.update).not.toHaveBeenCalled()
 })
