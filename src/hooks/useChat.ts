@@ -168,12 +168,33 @@ type PendingUserMessage = {
 
 export type PendingUserMessageView = Pick<PendingUserMessage, "operationId" | "text" | "images">
 
-const hasPersistedUserMessage = (messages: Message[], pending: PendingUserMessage): boolean =>
-  messages.some((message) => message.role === "user" && (
-    pending.acknowledgedMessageId !== null
-      ? message.id === pending.acknowledgedMessageId
-      : !pending.baselineMessageIds.has(message.id) && "content" in message && message.content.trim() === pending.text
-  ))
+type PendingUserState = {
+  entries: ReadonlyMap<number, PendingUserMessage>
+  claimed: ReadonlyMap<string, ReadonlySet<string>>
+}
+
+const matchPendingUserMessages = (
+  messages: Message[], pending: readonly PendingUserMessage[], claimed: ReadonlySet<string> = new Set(),
+): ReadonlyMap<number, string> => {
+  const matches = new Map<number, string>(), used = new Set(claimed)
+  // Explicit ACK IDs take precedence over the legacy text/baseline fallback.
+  for (const entry of pending) {
+    if (entry.acknowledgedMessageId !== null
+      && messages.some((message) => message.role === "user" && message.id === entry.acknowledgedMessageId)) {
+      matches.set(entry.operationId, entry.acknowledgedMessageId)
+      used.add(entry.acknowledgedMessageId)
+    }
+  }
+  // Legacy ACKs omit message IDs: consume new canonical IDs in history order
+  // at most once, including after an earlier operation has retired.
+  for (const entry of pending) {
+    if (entry.acknowledgedMessageId !== null) continue
+    const message = messages.find((message) => message.role === "user" && !used.has(message.id)
+      && !entry.baselineMessageIds.has(message.id) && "content" in message && message.content.trim() === entry.text)
+    if (message) { matches.set(entry.operationId, message.id); used.add(message.id) }
+  }
+  return matches
+}
 
 const hasPersistedTerminalText = (
   messages: Message[],
@@ -344,7 +365,7 @@ export function useChat(
   // conversation, never leaking into another session the user switched to.
   const [streamSid, setStreamSid] = useState<string | null>(null)
   // Retain every acknowledged send until its own canonical user message arrives.
-  const [pendingByOperation, setPendingByOperation] = useState<ReadonlyMap<number, PendingUserMessage>>(() => new Map())
+  const [pendingState, setPendingState] = useState<PendingUserState>(() => ({ entries: new Map(), claimed: new Map() }))
   const [sending, setSending] = useState(false)
   const { rate: outputRate, record: recordOutput, reset: resetOutputRate } = useOutputRate(sid, (sending || currentChat?.isRunning === true) && streamSid === sid)
   const [submissionPending, setSubmissionPending] = useState(false)
@@ -466,12 +487,13 @@ export function useChat(
   const liveSegments = streamSid === sid ? liveSegmentsState : EMPTY_SEGMENTS
   const streamStatus = streamSid === sid ? streamStatusState : null
   const streamPhase = streamSid === sid ? streamPhaseState : null
-  const sessionPending = useMemo(() => [...pendingByOperation.values()].filter((entry) => entry.sid === sid), [pendingByOperation, sid])
+  const sessionPending = useMemo(() => [...pendingState.entries.values()].filter((entry) => entry.sid === sid), [pendingState.entries, sid])
+  const hydratedPending = useMemo(() => matchPendingUserMessages(messages, sessionPending, pendingState.claimed.get(sid ?? "")), [messages, pendingState.claimed, sessionPending, sid])
   // Swap each exact ACK to history in this render, before cleanup, without
   // hiding another send that is still absent from the canonical snapshot.
   const pendingUserMessages: readonly PendingUserMessageView[] = useMemo(() => sessionPending
-    .filter((entry) => !hasPersistedUserMessage(messages, entry))
-    .map(({ operationId, text, images }) => ({ operationId, text, images })), [messages, sessionPending])
+    .filter((entry) => !hydratedPending.has(entry.operationId))
+    .map(({ operationId, text, images }) => ({ operationId, text, images })), [hydratedPending, sessionPending])
   const visiblePending = pendingUserMessages.at(-1) ?? null
   const pendingUserText = visiblePending?.text ?? null
   const pendingUserImages = visiblePending?.images ?? EMPTY_PENDING_IMAGES
@@ -517,23 +539,26 @@ export function useChat(
 
   const clearPendingOperation = useCallback((operationId: number) => {
     if (!mountedRef.current) return
-    setPendingByOperation((current) => {
-      const target = current.get(operationId)
+    const submitting = activeSendRef.current?.phase === "submitting" ? activeSendRef.current.originSessionId : null
+    setPendingState((current) => {
+      const target = current.entries.get(operationId)
       if (!target) return current
       const persisted = selectSessionById(target.sid)(useAppStore.getState())?.messages ?? []
-      // A delayed read retires only its exact ACK, never another session's entry.
-      if (!hasPersistedUserMessage(persisted, target)) return current
-      const next = new Map(current)
-      next.delete(operationId)
-      return next
+      const pending = [...current.entries.values()].filter((entry) => entry.sid === target.sid)
+      const matched = matchPendingUserMessages(persisted, pending, current.claimed.get(target.sid)).get(operationId)
+      if (!matched) return current
+      const entries = new Map(current.entries), claimed = new Map(current.claimed)
+      entries.delete(operationId)
+      // A later POST can still be awaiting its ACK when this history arrives.
+      if (pending.length > 1 || submitting === target.sid) claimed.set(target.sid, new Set([...(claimed.get(target.sid) ?? []), matched]))
+      else claimed.delete(target.sid)
+      return { entries, claimed }
     })
   }, [])
 
   useEffect(() => {
-    for (const pending of sessionPending) {
-      if (hasPersistedUserMessage(messages, pending)) clearPendingOperation(pending.operationId)
-    }
-  }, [clearPendingOperation, messages, sessionPending])
+    for (const operationId of hydratedPending.keys()) clearPendingOperation(operationId)
+  }, [clearPendingOperation, hydratedPending])
 
   const setStreamStatus = useCallback((status: string | null) => {
     if (streamStatusRef.current === status) return
@@ -1730,6 +1755,12 @@ export function useChat(
         if (mountedRef.current) {
           setSubmissionPending(false)
           setSending(false)
+          setPendingState((current) => {
+            if (!startSid || !current.claimed.has(startSid) || [...current.entries.values()].some((entry) => entry.sid === startSid)) return current
+            const claimed = new Map(current.claimed)
+            claimed.delete(startSid)
+            return { ...current, claimed }
+          })
           if (!compatibilityConflict) publishSendFailure({
             kind: "submission-unconfirmed",
             operationId: operation.id,
@@ -1755,7 +1786,7 @@ export function useChat(
       // A valid ACK retains its submitted content even after navigation.
       // Navigation and stream ownership below still belong to the viewed pane.
       if (mountedRef.current && (body || submittedImages.length)) {
-        setPendingByOperation((current) => new Map(current).set(operation.id, {
+        setPendingState((current) => ({ ...current, entries: new Map(current.entries).set(operation.id, {
           operationId: operation.id,
           sid: acknowledgedSessionId,
           text: body,
@@ -1766,7 +1797,7 @@ export function useChat(
           })),
           acknowledgedMessageId,
           baselineMessageIds,
-        }))
+        }) }))
       }
 
       let navigated = false

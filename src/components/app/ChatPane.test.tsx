@@ -922,12 +922,14 @@ describe("ChatPane composer acknowledgement", () => {
     runtime.peekTemplate.mockReturnValue(templatePrompt)
     const send = vi.fn<Send>().mockResolvedValue({ kind: "unconfirmed", operationId: 1 })
     const textarea = await mount(send, null)
+    await addImage("pending.png")
     change(textarea, "  exact raw draft  ")
     document.body.tabIndex = -1; document.body.focus(); act(() => composer().onSubmit()); await flush()
     expect(send).toHaveBeenCalledWith("  exact raw draft  ", {
-      skillIds: undefined, images: undefined, workspacePath: "/picked", projectId: null, templatePrompt,
+      skillIds: undefined, images: [expect.objectContaining({ name: "pending.png" })], workspacePath: "/picked", projectId: null, templatePrompt,
       permissionMode: "default", rootOrchestrationOnly: false,
     })
+    expect(composer().attachments).toEqual([expect.objectContaining({ name: "pending.png" })])
     expect(runtime.state.inputStates[""]?.content).toBe("  exact raw draft  "); expect(runtime.peekTemplate).toHaveBeenCalledTimes(1); expect(document.activeElement).toBe(textarea)
   })
   it("clears all unchanged fields only after a valid ACK", async () => {

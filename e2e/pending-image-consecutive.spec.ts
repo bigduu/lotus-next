@@ -2,7 +2,9 @@ import { expect, test, type WebSocketRoute } from "@playwright/test"
 import { actorSnapshotFixture } from "../src/test/fixtures/actorSnapshot.js"
 import { installArtifactRuntime, standaloneScenario } from "./support/artifactRuntime.js"
 
-test("#383 consecutive image ACKs remain separate through reconnect and out-of-order canonical arrival", async ({ page }, info) => {
+for (const legacy of [false, true]) {
+test(`#383 consecutive ${legacy ? "legacy image-only ACKs" : "image ACKs"} remain separate through reconnect and canonical arrival`, async ({ page }, info) => {
+  const caption = (n: number) => legacy ? "" : `caption ${n}`
   const id = "all-surface-session", at = "2026-10-19T00:00:00Z"
   const pixel = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
   await page.addInitScript((sid) => {
@@ -33,15 +35,15 @@ test("#383 consecutive image ACKs remain separate through reconnect and out-of-o
     if (path === `/api/v1/sessions/${id}`) return route.fulfill({ json: { session }, headers: { ETag: '"1"' } })
     if (path === "/api/v1/chat" && request.method() === "POST") {
       chats += 1
-      return route.fulfill({ json: { session_id: id, message_id: `ack-${chats}`, status: "success" } })
+      return route.fulfill({ json: { session_id: id, ...(legacy ? {} : { message_id: `ack-${chats}` }), status: "success" } })
     }
     if (path === `/api/v1/execute/${id}`) {
       executions += 1
       return route.fulfill({ status: 400, json: { error: "Synthetic execution refusal; no model was called" } })
     }
     if (path === `/api/v1/history/${id}`) return route.fulfill({ json: { session_id: id, messages: [1, 2].filter((n) => persisted.has(n)).map((n) => ({
-      id: `ack-${n}`, role: "user", content: `caption ${n}`, created_at: at,
-      content_parts: [{ type: "text", text: `caption ${n}` }, { type: "image_url", image_url: { url: `bamboo-attachment://${id}/image-${n}` } }],
+      id: `ack-${n}`, role: "user", content: caption(n), created_at: at,
+      content_parts: [{ type: "text", text: caption(n) }, { type: "image_url", image_url: { url: `bamboo-attachment://${id}/image-${n}` } }],
     })) } })
     if (path.startsWith(`/api/v1/sessions/${id}/attachments/`)) return route.fulfill({ body: Buffer.from(pixel, "base64"), contentType: "image/png" })
     if (path === `/api/v1/actors/${id}/snapshot`) return route.fulfill({ json: actorSnapshotFixture(id, 0) })
@@ -53,29 +55,32 @@ test("#383 consecutive image ACKs remain separate through reconnect and out-of-o
   const textbox = page.getByRole("textbox", { name: "Messages", exact: true }).first()
   for (const n of [1, 2]) {
     await page.locator('input[type="file"]').setInputFiles({ name: `image-${n}.png`, mimeType: "image/png", buffer: Buffer.from(pixel, "base64") })
-    await textbox.fill(`caption ${n}`)
+    await textbox.fill(caption(n))
     await page.getByRole("button", { name: "Send message", exact: true }).click()
     await expect.poll(() => executions).toBe(n)
   }
   const pending = page.locator("[data-pending-user-message]")
   await expect(pending).toHaveCount(2)
-  await expect(pending.nth(0)).toContainText("caption 1"); await expect(pending.nth(1)).toContainText("caption 2")
+  if (!legacy) { await expect(pending.nth(0)).toContainText("caption 1"); await expect(pending.nth(1)).toContainText("caption 2") }
   await expect(pending.locator("img")).toHaveCount(2)
   await socket!.close({ code: 1012, reason: "synthetic reconnect before either ACK is canonical" })
   await expect.poll(() => connections).toBe(2)
   await expect(pending).toHaveCount(2)
   await page.screenshot({ path: info.outputPath("two-pending-images-after-reconnect.png"), animations: "disabled" })
-  persisted.add(2)
-  await socket!.close({ code: 1012, reason: "synthetic canonical ACK2 arrives first" })
+  const first = legacy ? 1 : 2, last = legacy ? 2 : 1
+  persisted.add(first)
+  await socket!.close({ code: 1012, reason: `synthetic canonical ACK${first} arrives first` })
   await expect.poll(() => connections).toBe(3)
-  await expect(page.locator('[data-message-row="ack-2"] img')).toBeVisible()
-  await expect(pending).toHaveCount(1); await expect(pending).toContainText("caption 1")
+  await expect(page.locator(`[data-message-row="ack-${first}"] img`)).toBeVisible()
+  await expect(pending).toHaveCount(1)
+  if (!legacy) await expect(pending).toContainText(caption(last))
   await expect(pending.locator("img")).toBeVisible()
-  persisted.add(1)
-  await socket!.close({ code: 1012, reason: "synthetic canonical ACK1 arrives later" })
+  persisted.add(last)
+  await socket!.close({ code: 1012, reason: `synthetic canonical ACK${last} arrives later` })
   await expect.poll(() => connections).toBe(4)
-  await expect(page.locator('[data-message-row="ack-1"] img')).toBeVisible()
+  await expect(page.locator(`[data-message-row="ack-${last}"] img`)).toBeVisible()
   await expect(pending).toHaveCount(0)
   expect(chats).toBe(2); expect(executions).toBe(2); expect(navigations).toBe(1)
   expect(runtime.pageErrors).toEqual([])
 })
+}

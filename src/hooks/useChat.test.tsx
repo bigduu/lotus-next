@@ -409,6 +409,7 @@ describe("useChat two-phase send lifecycle", () => {
   it.each(["main", "bound"] as const)("keeps the %s pane's user bubble until its acknowledged message is in history", async (mode) => {
     const sessionId = "delayed-user-history"
     const text = "repeat the same request"
+    const image = { base64: "R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7", name: "lifecycle.gif", size: 42, type: "image/gif" }
     const oldUser = { id: "old-user", role: "user", content: text, createdAt: "2026-10-06T10:00:00Z" }
     const oldAssistant = { id: "old-reply", role: "assistant", type: "text", content: "previous response", createdAt: "2026-10-06T10:00:01Z" }
     mocks.appState.chats = [{ id: sessionId, messages: [oldUser, oldAssistant], config: { model: "test-model" } }]
@@ -424,32 +425,38 @@ describe("useChat two-phase send lifecycle", () => {
     const props: HookProps = mode === "main" ? { mode } : { mode, sessionId }
     const renders: Array<{ pending: string | null; messages: HookValue["messages"] }> = []
     const hook = await mountUseChat(props, (value) => renders.push({ pending: value.pendingUserText, messages: value.messages }))
-    await act(async () => { await hook.current.send(text) })
+    await act(async () => { await hook.current.send(text, { images: [image] }) })
     expect(hook.current.pendingUserText).toBe(text)
+    expect(hook.current.pendingUserImages).toEqual([expect.objectContaining({ name: image.name })])
 
     // A successful GET can still contain only the previous turn. Run-started
     // summaries and the first assistant token are not durable user-message proof.
     await act(async () => { initialHistory.resolve(); await Promise.resolve() })
     expect(hook.current.pendingUserText).toBe(text)
+    expect(hook.current.pendingUserImages).toEqual([expect.objectContaining({ name: image.name })])
     mocks.appState.chats = [{ ...mocks.appState.chats[0], isRunning: true, messages: [oldUser, oldAssistant] }]
     await hook.rerender(props)
     expect(hook.current.pendingUserText).toBe(text)
+    expect(hook.current.pendingUserImages).toEqual([expect.objectContaining({ name: image.name })])
     await act(async () => {
       handlers.onToken("reply before user history")
       await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
     })
     expect(hook.current.streaming).toBe("reply before user history")
     expect(hook.current.pendingUserText).toBe(text)
+    expect(hook.current.pendingUserImages).toEqual([expect.objectContaining({ name: image.name })])
 
     const currentAssistant = { ...oldAssistant, id: "current-reply", content: "reply before user history" }
     mocks.appState.chats = [{ ...mocks.appState.chats[0], messages: [oldUser, oldAssistant, currentAssistant] }]
     await hook.rerender(props)
     expect(hook.current.pendingUserText).toBe(text)
+    expect(hook.current.pendingUserImages).toEqual([expect.objectContaining({ name: image.name })])
     const currentUser = { ...oldUser, id: "acknowledged-user" }
     mocks.appState.chats = [{ ...mocks.appState.chats[0], messages: [oldUser, oldAssistant, currentUser, currentAssistant] }]
     renders.length = 0
     await hook.rerender(props)
     expect(hook.current.pendingUserText).toBeNull()
+    expect(hook.current.pendingUserImages).toHaveLength(0)
     expect(renders.length).toBeGreaterThan(0)
     expect(renders.every((render) => render.pending === null)).toBe(true)
     expect(hook.current.messages.filter((message) => message.role === "user")).toHaveLength(2)
@@ -514,6 +521,7 @@ describe("useChat two-phase send lifecycle", () => {
   it.each(["complete", "error", "cancelled"] as const)("retains the user bubble when %s history resolves without the user message", async (terminal) => {
     const sessionId = "stale-terminal-user-history"
     const text = "accepted user message"
+    const image = { base64: "R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7", name: "lifecycle.gif", size: 42, type: "image/gif" }
     const initialHistory = deferred<void>()
     const terminalHistory = deferred<void>()
     const subscription = deferred<void>()
@@ -524,7 +532,7 @@ describe("useChat two-phase send lifecycle", () => {
     mocks.subscribeToEvents.mockImplementationOnce((_sessionId: string, nextHandlers: SubscriptionHandlers) => { handlers = nextHandlers; return subscription.promise })
     const props: HookProps = { mode: "bound", sessionId }
     const hook = await mountUseChat(props)
-    await act(async () => { await hook.current.send(text) })
+    await act(async () => { await hook.current.send(text, { images: [image] }) })
     await act(async () => {
       if (terminal === "complete") handlers.onComplete()
       else if (terminal === "error") handlers.onError("generation failed")
@@ -534,11 +542,14 @@ describe("useChat two-phase send lifecycle", () => {
     })
     expect(hook.current.sending).toBe(false)
     expect(hook.current.pendingUserText).toBe(text)
+    expect(hook.current.pendingUserImages[0]?.name).toBe(image.name)
     appendPersistedUser(sessionId, text, "accepted-user")
     await hook.rerender(props)
     expect(hook.current.pendingUserText).toBeNull()
+    expect(hook.current.pendingUserImages).toHaveLength(0)
     await act(async () => { initialHistory.resolve() })
     expect(hook.current.pendingUserText).toBeNull()
+    expect(hook.current.pendingUserImages).toHaveLength(0)
   })
 
   it.each(["workflow_revision_missing", "workflow_revision_mismatch", "workflow_source_mismatch", "root_orchestration_incompatible_mode"])("forwards exact typed selection without inline Root choice and returns %s", async (code) => {
@@ -1404,6 +1415,7 @@ describe("useChat two-phase send lifecycle", () => {
     "starts exact-session generation before resolving accepted when %s hydration fails",
     async (failurePoint) => {
       const milestones: string[] = []
+      const image = { base64: "R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7", name: "lifecycle.gif", size: 42, type: "image/gif" }
       mocks.sendMessage.mockResolvedValueOnce({ session_id: "ack-session" })
       mocks.execute.mockImplementationOnce(async (sessionId: string) => {
         milestones.push(`execute:${sessionId}`)
@@ -1423,7 +1435,7 @@ describe("useChat two-phase send lifecycle", () => {
         onSessionCreated: vi.fn(),
       })
       const result = await act(async () => {
-        const accepted = await hook.current.send("run after acknowledgement")
+        const accepted = await hook.current.send("run after acknowledgement", { images: [image] })
         milestones.push("accepted")
         return accepted
       })
@@ -1442,6 +1454,10 @@ describe("useChat two-phase send lifecycle", () => {
       expect(mocks.appState.refreshChatsNow).toHaveBeenCalledTimes(1)
       expect(mocks.appState.loadChatHistory).toHaveBeenCalledWith("ack-session", { mode: "monotonic" })
       expect(hook.current.sendFailure).toBeNull()
+      mocks.appState.chats = [{ id: "ack-session", messages: [] }]
+      await hook.rerender({ mode: "bound", sessionId: "ack-session" })
+      expect(hook.current.pendingUserImages[0]?.name).toBe(image.name)
+      expect(mocks.sendMessage).toHaveBeenCalledTimes(1)
     },
   )
   it("fences duplicate retry clicks before truncation and reruns only the owned session", async () => {
@@ -1690,6 +1706,7 @@ describe("useChat two-phase send lifecycle", () => {
     expect(consoleErrorSpy).not.toHaveBeenCalled()
   })
   it("clears the acknowledged optimistic payload after an immediate stop hydrates history", async () => {
+    const image = { base64: "R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7", name: "lifecycle.gif", size: 42, type: "image/gif" }
     const initialHistory = deferred<void>()
     const subscription = deferred<void>()
     let subscriptionController: AbortController | undefined
@@ -1708,10 +1725,11 @@ describe("useChat two-phase send lifecycle", () => {
     })
     const hook = await mountUseChat({ mode: "bound", sessionId: "stopped-session" })
     await act(async () => {
-      await hook.current.send("stop this acknowledged run")
+      await hook.current.send("stop this acknowledged run", { images: [image] })
     })
     expect(hook.current.sending).toBe(true)
     expect(hook.current.pendingUserText).toBe("stop this acknowledged run")
+    expect(hook.current.pendingUserImages[0]?.name).toBe(image.name)
     await act(async () => {
       hook.current.stop()
       subscription.resolve()
@@ -1732,6 +1750,7 @@ describe("useChat two-phase send lifecycle", () => {
     expect(hook.current.sending).toBe(false)
     expect(hook.current.streaming).toBeNull()
     expect(hook.current.pendingUserText).toBeNull()
+    expect(hook.current.pendingUserImages).toHaveLength(0)
   })
   it("reconciles the optimistic idle state when Stop dispatch fails", async () => {
     mocks.appState.chats = [{ id: "stop-failed", isRunning: true }]
@@ -2414,6 +2433,72 @@ describe("owned streams without a terminal frame", () => {
 
 describe("image attachment visibility", () => {
   it.each([
+    { known: "neither", lateSecondAck: false }, { known: "first", lateSecondAck: false }, { known: "second", lateSecondAck: false },
+    { known: "neither", lateSecondAck: true }, { known: "first", lateSecondAck: true }, { known: "second", lateSecondAck: true },
+  ])("uses distinct canonical messages for consecutive legacy image-only ACKs (%j)", async ({ known, lateSecondAck }) => {
+    const sid = "legacy-image-queue", history = deferred<void>()
+    const secondAck = deferred<{ session_id: string; message_id?: string }>()
+    const image = { base64: "R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7", name: "first.gif", size: 42, type: "image/gif" }
+    mocks.appState.chats = [{ id: sid, messages: [] }]
+    mocks.sendMessage.mockResolvedValueOnce({ session_id: sid, ...(known === "first" ? { message_id: "first-legacy-user" } : {}) })
+      .mockReturnValueOnce(secondAck.promise)
+    mocks.appState.loadChatHistory.mockImplementation((_id: string, options?: { mode?: string; waitForAssistant?: boolean }) =>
+      options?.mode === "monotonic" && !options.waitForAssistant ? history.promise : Promise.resolve())
+    mocks.subscribeToEvents.mockImplementation(async (_sid: string, handlers: SubscriptionHandlers) => { handlers.onComplete() })
+    const hook = await mountUseChat({ mode: "bound", sessionId: sid })
+    await act(async () => { await hook.current.send("", { images: [image] }) })
+    await flushMicrotasks()
+    let sending!: Promise<SendSubmissionResult>
+    act(() => { sending = hook.current.send("", { images: [{ ...image, name: "second.gif" }] }) })
+    const acknowledgeSecond = () => act(async () => {
+      secondAck.resolve({ session_id: sid, ...(known === "second" ? { message_id: "second-legacy-user" } : {}) })
+      expect((await sending).kind).toBe("accepted")
+    })
+    if (!lateSecondAck) await acknowledgeSecond()
+    expect(hook.current.pendingUserMessages).toHaveLength(lateSecondAck ? 1 : 2)
+    // Reserve a known ID before fallback matching. A pre-ACK canonical snapshot
+    // uses chronological order because old replies cannot identify message IDs.
+    const firstCanonical = !lateSecondAck && known === "second" ? "second" : "first"
+    appendPersistedUser(sid, "", `${firstCanonical}-legacy-user`)
+    await hook.rerender({ mode: "bound", sessionId: sid })
+    if (lateSecondAck) await acknowledgeSecond()
+    const remaining = firstCanonical === "first" ? "second" : "first"
+    expect(hook.current.pendingUserMessages).toHaveLength(1)
+    expect(hook.current.pendingUserMessages[0].images[0].name).toBe(`${remaining}.gif`)
+    await act(async () => { history.resolve() })
+    expect(hook.current.pendingUserMessages).toHaveLength(1)
+    appendPersistedUser(sid, "", `${remaining}-legacy-user`)
+    await hook.rerender({ mode: "bound", sessionId: sid })
+    expect(hook.current.pendingUserMessages).toHaveLength(0)
+    expect(mocks.sendMessage).toHaveBeenCalledTimes(2); expect(mocks.execute).toHaveBeenCalledTimes(2)
+  })
+  it("does not replay an unconfirmed image POST after an older legacy ACK becomes canonical", async () => {
+    const sid = "unconfirmed-legacy-image", secondAck = deferred<{ session_id: string }>()
+    const image = { base64: "R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7", name: "first.gif", size: 42, type: "image/gif" }
+    mocks.appState.chats = [{ id: sid, messages: [] }]
+    mocks.sendMessage.mockResolvedValueOnce({ session_id: sid }).mockReturnValueOnce(secondAck.promise)
+      .mockResolvedValueOnce({ session_id: sid })
+    mocks.subscribeToEvents.mockImplementation(async (_sid: string, handlers: SubscriptionHandlers) => { handlers.onComplete() })
+    const hook = await mountUseChat({ mode: "bound", sessionId: sid })
+    await act(async () => { await hook.current.send("", { images: [image] }) })
+    await flushMicrotasks()
+    let sending!: Promise<SendSubmissionResult>
+    act(() => { sending = hook.current.send("", { images: [{ ...image, name: "second.gif" }] }) })
+    appendPersistedUser(sid, "", "first-user")
+    await hook.rerender({ mode: "bound", sessionId: sid })
+    await act(async () => { secondAck.reject(new NetworkRequestError()); expect((await sending).kind).toBe("unconfirmed") })
+    expect(hook.current.pendingUserMessages).toHaveLength(0)
+    expect(mocks.sendMessage).toHaveBeenCalledTimes(2); expect(mocks.execute).toHaveBeenCalledTimes(1)
+    await act(async () => { await hook.current.send("", { images: [{ ...image, name: "second.gif" }] }) })
+    await flushMicrotasks()
+    expect(hook.current.pendingUserMessages).toHaveLength(1)
+    expect(hook.current.pendingUserImages[0]?.name).toBe("second.gif")
+    appendPersistedUser(sid, "", "explicit-retry-user")
+    await hook.rerender({ mode: "bound", sessionId: sid })
+    expect(hook.current.pendingUserMessages).toHaveLength(0)
+    expect(mocks.sendMessage).toHaveBeenCalledTimes(3); expect(mocks.execute).toHaveBeenCalledTimes(2)
+  })
+  it.each([
     { newSession: false, caption: "" }, { newSession: false, caption: "late caption" },
     { newSession: true, caption: "" }, { newSession: true, caption: "late caption" },
   ])("retains a late image ACK after navigating away before POST resolves (%j)", async ({ newSession, caption }) => {
@@ -2426,6 +2511,8 @@ describe("image attachment visibility", () => {
     let sending!: Promise<SendSubmissionResult>
     act(() => { sending = hook.current.send(caption, { images: [image] }) })
     await hook.rerender({ mode: "bound", sessionId: b, onSessionCreated: created })
+    await act(async () => { expect(await hook.current.send("B waits for A's ACK", { images: [image] })).toEqual({ kind: "busy" }) })
+    expect(mocks.sendMessage).toHaveBeenCalledTimes(1)
     await act(async () => {
       acknowledgement.resolve({ session_id: a, message_id: "late-exact-ack" })
       expect(await sending).toMatchObject({ kind: "accepted", sessionId: a, navigated: false })
@@ -2579,27 +2666,31 @@ describe("session execution compatibility v1", () => {
   })
   it("records a typed submit refusal once and recovers only after a fresh compatible detail", async () => {
     const sid = "compatibility-submit-refusal"
+    const image = { base64: "R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7", name: "lifecycle.gif", size: 42, type: "image/gif" }
     mocks.appState.chats = [{ id: sid, messages: [] }]
     mocks.getSession.mockResolvedValue({ session: { id: sid } })
     mocks.sendMessage.mockRejectedValueOnce(new ApiError("incompatible", 409, "", JSON.stringify({
       session_id: sid, error: { type: "conflict", code: "session_execution_incompatible", message: "incompatible" }, compatibility: report("conflict"),
     })))
     const hook = await mountUseChat({ mode: "bound", sessionId: sid })
-    await act(async () => { expect((await hook.current.send("keep my content")).kind).toBe("blocked") })
+    await act(async () => { expect((await hook.current.send("keep my content", { images: [image] })).kind).toBe("blocked") })
     expect(hook.current.executionCompatibility.blocked).toBe(true)
     expect(hook.current.sendFailure).toBeNull()
-    await act(async () => { expect((await hook.current.send("keep my content")).kind).toBe("blocked") })
+    expect(hook.current.pendingUserMessages).toHaveLength(0)
+    await act(async () => { expect((await hook.current.send("keep my content", { images: [image] })).kind).toBe("blocked") })
     expect(mocks.sendMessage).toHaveBeenCalledTimes(1); expect(mocks.execute).not.toHaveBeenCalled()
     mocks.getSession.mockResolvedValue({ session: { id: sid, execution_compatibility: report("legacy_compatible") } })
     await act(async () => { await hook.current.executionCompatibility.refresh() })
     expect(hook.current.executionCompatibility.blocked).toBe(false)
     mocks.sendMessage.mockResolvedValueOnce({ session_id: sid, message_id: "accepted-after-review" })
     mocks.subscribeToEvents.mockReturnValueOnce(pendingForever())
-    await act(async () => { expect((await hook.current.send("keep my content")).kind).toBe("accepted") })
+    await act(async () => { expect((await hook.current.send("keep my content", { images: [image] })).kind).toBe("accepted") })
     expect(mocks.sendMessage).toHaveBeenCalledTimes(2)
+    expect(hook.current.pendingUserImages[0]?.name).toBe(image.name)
   })
   it("keeps an acknowledged message when execute returns typed conflict and prevents retry", async () => {
     const sid = "compatibility-execute-refusal"
+    const image = { base64: "R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7", name: "lifecycle.gif", size: 42, type: "image/gif" }
     mocks.appState.chats = [{ id: sid, messages: [] }]
     mocks.getSession.mockResolvedValue({ session: { id: sid, execution_compatibility: report("compatible") } })
     mocks.sendMessage.mockResolvedValueOnce({ session_id: sid, message_id: "accepted-before-conflict" })
@@ -2608,10 +2699,11 @@ describe("session execution compatibility v1", () => {
     })))
     mocks.subscribeToEvents.mockReturnValueOnce(pendingForever())
     const hook = await mountUseChat({ mode: "bound", sessionId: sid })
-    await act(async () => { expect((await hook.current.send("already saved")).kind).toBe("accepted") })
+    await act(async () => { expect((await hook.current.send("already saved", { images: [image] })).kind).toBe("accepted") })
     await flushMicrotasks()
     expect(hook.current.executionCompatibility.blocked).toBe(true)
     expect(hook.current.pendingUserText).toBe("already saved")
+    expect(hook.current.pendingUserImages[0]?.name).toBe(image.name)
     expect(hook.current.sendFailure?.kind).toBe("generation-failed")
     await act(async () => { await hook.current.retry() })
     expect(mocks.execute).toHaveBeenCalledTimes(1); expect(mocks.sendMessage).toHaveBeenCalledTimes(1)
