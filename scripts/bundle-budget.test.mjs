@@ -14,6 +14,7 @@ import {
 const temporaryDirectories = []
 
 const featureEntries = [
+  ["src/components/app/ProjectWorkBoard.tsx", "ProjectWorkBoard"],
   ["src/components/chat/Settings.tsx", "Settings"],
   ["src/components/chat/StreamdownMarkdown.tsx", "StreamdownMarkdown"],
   ["src/components/chat/StreamdownMermaid.tsx", "StreamdownMermaid"],
@@ -33,6 +34,7 @@ const vendorFeatureNames = [
 
 const createFixture = async ({
   leakSettings = false,
+  leakProjectWork = false,
   leakedOwnedModule,
   leakedOwnedPackage,
   missingSettingsOwnedModule,
@@ -76,6 +78,7 @@ const createFixture = async ({
         "_react.js",
         "_vendor.js",
         ...(leakSettings ? ["src/components/chat/Settings.tsx"] : []),
+        ...(leakProjectWork ? ["src/components/app/ProjectWorkBoard.tsx"] : []),
       ],
       dynamicImports: ["src/components/chat/Settings.tsx"],
     },
@@ -190,7 +193,16 @@ describe("ordinary-chat production bundle budget", () => {
     expect(report.forbiddenStartupModules).toContain("src/components/chat/Settings.tsx")
   })
 
+  it("rejects an eager Project Work regression even when its optional chunk exists", async () => {
+    const report = analyzeBundleBudget(await createFixture({ leakProjectWork: true }))
+    expect(findBundleBudgetViolations(report)).toContain(
+      "ProjectWorkBoard leaked into the ordinary-chat startup closure.",
+    )
+  })
+
   it.each([
+    "src/components/app/ProjectWorkBoard.tsx",
+    "src/components/app/project-work/ProjectWorkPlanningControls.tsx",
     "src/services/plugin/PluginService.ts",
     "src/services/metrics/MetricsService.ts",
     "src/components/chat/streamdownConfig.ts",

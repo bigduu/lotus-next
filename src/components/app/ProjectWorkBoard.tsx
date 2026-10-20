@@ -12,7 +12,6 @@ import { useProjectWorkBoard } from "@/hooks/useProjectWorkBoard"
 import { useAssignmentSessions } from "@/hooks/useAssignmentSessions"
 import { ticketWorkLabels } from "@/components/chat/ticketWorkLabels"
 import { Button } from "@/components/ui/button"
-import { ResponsiveDialog, ResponsiveDialogContent, ResponsiveDialogDescription, ResponsiveDialogTitle } from "@/components/ui/responsive-dialog"
 
 import { AssignmentHealthPanel } from "./project-work/AssignmentHealthPanel"
 import { makeAssignmentHealthCopy } from "./project-work/assignmentHealthCopy"
@@ -159,11 +158,5 @@ export function ProjectWorkBoard({ project, controls, onOpenSession }: { project
     </div> : null}
   </div>
 }
-export function ProjectWorkDialog({ project, onClose, metadataError, controls, onOpenSession }: { project: ProjectManifest | null; onClose: () => void; metadataError?: string | null; controls?: ProjectWorkBoardControls; onOpenSession?: OpenWorkSession }) {
-  useUiLocale()
-  return <ResponsiveDialog open={!!project} onOpenChange={(open) => { if (!open) onClose() }}><ResponsiveDialogContent className="sm:max-w-5xl" aria-describedby={undefined}>
-    <div className="border-b p-4 pr-12"><ResponsiveDialogTitle>{uiText("project_work_title")}{project ? ` · ${project.name}` : ""}</ResponsiveDialogTitle><ResponsiveDialogDescription className="sr-only">{uiText("project_work_readonly")}</ResponsiveDialogDescription></div>
-    {metadataError ? <p role="alert" className="px-4 pt-3 text-sm text-destructive">{metadataError}</p> : null}
-    {project ? <ProjectWorkBoard key={project.id} project={project} controls={controls} onOpenSession={onOpenSession} /> : null}
-  </ResponsiveDialogContent></ResponsiveDialog>
-}
+// Preserve the existing import for consumers while Sidebar owns the eager shell.
+export { ProjectWorkDialog } from "./ProjectWorkDialog"

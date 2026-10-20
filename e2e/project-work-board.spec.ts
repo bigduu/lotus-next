@@ -1,5 +1,10 @@
+import { readFileSync } from "node:fs"
 import { expect, test } from "@playwright/test"
 import { installArtifactRuntime, standaloneScenario } from "./support/artifactRuntime.js"
+
+const artifact = JSON.parse(readFileSync("dist/lotus-next-manifest.json", "utf8"))
+const assets = JSON.parse(readFileSync("dist/asset-manifest.json", "utf8")) as Record<string, { src?: string; file: string; isDynamicEntry?: boolean }>
+const workChunk = Object.values(assets).find((entry) => entry.src === "src/components/app/ProjectWorkBoard.tsx")
 
 for (const colorScheme of ["light", "dark"] as const) {
   test(`project Work board remains read-only and responsive in ${colorScheme}`, async ({ page }, info) => {
@@ -31,12 +36,43 @@ for (const colorScheme of ["light", "dark"] as const) {
       submissions: [{ id: "submission", work_id: "work-2", generation: 1, contract_revision: 1, stale: false, artifacts: [], evidence: ["All checks passed"], updated_seq: 10 }],
     }] } }))
     await page.route("**/api/v1/tickets/sprints/list", (route) => route.fulfill({ status: 404, json: { error: "Sprint planning is unsupported by this legacy fixture" } }))
+    expect(workChunk?.isDynamicEntry).toBe(true)
+    let releaseWork!: () => void
+    const workGate = new Promise<void>((resolve) => { releaseWork = resolve })
+    const workLoads: string[] = []
+    await page.route(`**/${workChunk!.file}`, async (route) => {
+      workLoads.push(route.request().url())
+      await workGate
+      await route.fallback()
+    })
     await page.goto(standaloneScenario.entryUrl)
     if (info.project.name === "phone-chromium") await page.getByRole("button", { name: "菜单", exact: true }).click()
-    await page.getByRole("button", { name: "Project Board 项目操作", exact: true }).click()
-    await page.getByRole("menuitem", { name: "项目工作", exact: true }).click()
+    const openWork = async () => {
+      await page.getByRole("button", { name: "Project Board 项目操作", exact: true }).click()
+      await page.getByRole("menuitem", { name: "项目工作", exact: true }).click()
+    }
     const dialog = page.getByRole("dialog")
+    const workReads = () => observation.httpRequests.filter((request) => /tickets\/(project-board|inspect)(?:\?|$)/.test(request.url))
+    try {
+      await expect(page.getByRole("button", { name: "Project Board 项目操作", exact: true })).toBeVisible()
+      expect(workLoads).toEqual([])
+      expect(workReads()).toEqual([])
+      await openWork()
+      await expect(dialog.getByRole("heading")).toContainText("Project Board")
+      await expect(dialog.getByTestId("project-work-loading")).toBeVisible()
+      await expect.poll(() => workLoads.length).toBe(1)
+      expect(workReads()).toEqual([])
+      const loadedWork = page.waitForResponse((response) => response.url().endsWith(workChunk!.file))
+      await info.attach(`project-work-loading-${colorScheme}-mock`, { body: await page.screenshot(), contentType: "image/png" })
+      await page.keyboard.press("Escape")
+      await expect(dialog).not.toBeVisible()
+      releaseWork()
+      await (await loadedWork).finished()
+      expect(workReads()).toEqual([])
+    } finally { releaseWork() }
+    await openWork()
     await expect(dialog.getByText("Draft the shared contract", { exact: true })).toBeVisible()
+    expect(workLoads).toHaveLength(1)
     const listButton = dialog.getByRole("button", { name: "列表", exact: true })
     const boardButton = dialog.getByRole("button", { name: "看板", exact: true })
     await expect(listButton).toHaveAttribute("aria-pressed", "true")
@@ -60,5 +96,12 @@ for (const colorScheme of ["light", "dark"] as const) {
     await expect(dialog).not.toBeVisible()
     expect(observation.pageErrors).toEqual([])
     expect(observation.httpRequests.filter((request) => request.method === "POST" && /tickets\//.test(request.url)).every((request) => /tickets\/(project-board|inspect|sprints\/list)$/.test(request.url))).toBe(true)
+    await info.attach("project-work-lazy-boundary-mock-evidence", { body: Buffer.from(JSON.stringify({
+      source: artifact.sourceRevision, sourceDirty: artifact.sourceDirty,
+      mode: "controlled HTTP/WebSocket and locally fulfilled production assets; no Bamboo server",
+      mock: true, real_owner_acceptance: false, provider_execution: false,
+      viewport: page.viewportSize(), theme: colorScheme, chunk: workChunk!.file,
+      chunk_requests: workLoads, requests: observation.httpRequests, pageErrors: observation.pageErrors,
+    }, null, 2)), contentType: "application/json" })
   })
 }
