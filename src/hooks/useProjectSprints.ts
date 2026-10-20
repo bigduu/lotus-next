@@ -60,7 +60,7 @@ export function useProjectSprints(projectId: string, snapshot: SnapshotRef | nul
   const operation = outcomes.current.get(projectId)
   const request = operation?.result ?? null
   const scopeSnapshot = current?.scope?.overview?.snapshot
-  const canWrite = !!(current?.status === "available" && current.scope?.available && current.scope.capabilities?.ticket_scope_v1 && current.scope.mutation_enabled && current.scope.binding
+  const canWrite = !!(current?.status === "available" && current.scope?.available && current.scope.health === "writable" && current.scope.capabilities?.ticket_scope_v1 && current.scope.mutation_enabled && current.scope.binding
     && current.scope.overview && ["complete", "authoritative_scope"].includes(current.scope.overview.coverage)
     && !current.scope.overview.truncated && current.scope.overview.omitted_count === 0 && current.scope.overview.index_seq >= current.scope.overview.snapshot.seq
     && scopeSnapshot && scopeSnapshot.commit === snapshot?.commit && scopeSnapshot.seq === snapshot.seq && scopeSnapshot.authority_epoch === snapshot.authority_epoch

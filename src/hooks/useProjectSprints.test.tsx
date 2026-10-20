@@ -14,7 +14,7 @@ let latest: ReturnType<typeof useProjectSprints>
 let journal: NonNullable<Parameters<typeof useProjectSprints>[5]>
 const refresh = vi.fn()
 const snapshot = () => ({ ...sample.list_response.snapshot })
-const scope = (at = snapshot()): TicketScope => ({ available: true, mutation_enabled: true, dispatch_enabled: false, capabilities: { ticket_scope_v1: true }, binding: sample.create_request.binding,
+const scope = (at = snapshot()): TicketScope => ({ available: true, health: "writable", mutation_enabled: true, dispatch_enabled: false, capabilities: { ticket_scope_v1: true }, binding: sample.create_request.binding,
   overview: { ...sample.list_response, data: { ticket_count: 1, work_count: 1, states: {}, open_questions: 0, open_approvals: 0, needs_acceptance: 0 }, snapshot: at } })
 function Host({ id = projectId, at = snapshot(), owner = true, sprintId = null }: { id?: string; at?: SnapshotRef; owner?: boolean; sprintId?: string | null }) {
   latest = useProjectSprints(id, at, sprintId, owner, refresh, journal)
@@ -47,6 +47,25 @@ it("uses the board's exact snapshot and verified canonical binding for one expli
   expect(latest.request).toMatchObject({ status: "committed", committedSeq: 7 })
   expect(refresh).toHaveBeenCalledTimes(1)
 })
+it.each(["read_only", "missing"] as const)("keeps %s health readable without admitting a new command", async (health) => {
+  const value = scope()
+  if (health === "missing") delete value.health
+  else value.health = health
+  vi.mocked(sprintClient.scope).mockResolvedValue(value)
+  await render({ sprintId: "a" })
+  expect(latest.status).toBe("available")
+  expect(latest.list).toEqual(sample.list_response)
+  expect(latest.inspection).toEqual(sample.inspect_response)
+  expect(sprintClient.list).toHaveBeenCalledExactlyOnceWith(projectId, undefined, snapshot(), expect.any(AbortSignal))
+  expect(sprintClient.inspect).toHaveBeenCalledExactlyOnceWith(projectId, "a", snapshot(), expect.any(AbortSignal))
+  expect(latest.canWrite).toBe(false)
+  await act(async () => { await start() })
+  expect(sprintClient.command).not.toHaveBeenCalled()
+  expect(journal.size).toBe(0)
+  expect(refresh).not.toHaveBeenCalled()
+  expect(latest.status).toBe("available")
+  expect(latest.inspection).toEqual(sample.inspect_response)
+})
 it.each(["mutation", "binding", "epoch", "snapshot"])("keeps %s unavailable instead of granting authority from a supported route", async (kind) => {
   const value = scope()
   if (kind === "mutation") value.mutation_enabled = false
@@ -75,6 +94,38 @@ it("checks an uncertain result only on demand with the identical full original c
   expect(sprintClient.command).toHaveBeenCalledTimes(2)
   expect(vi.mocked(sprintClient.command).mock.calls[1][0]).toEqual(command)
   expect(latest.request?.status).toBe("committed")
+})
+it.each([403, 503])("keeps a read-only uncertain check at HTTP %s bound to the original operation and CAS", async (status) => {
+  vi.mocked(sprintClient.command).mockRejectedValueOnce(new TypeError("lost response"))
+    .mockRejectedValueOnce(new ApiError("read-only outcome check refused", status, status === 403 ? "Forbidden" : "Service Unavailable"))
+  await render(); await act(async () => { await start() })
+  const original = structuredClone(vi.mocked(sprintClient.command).mock.calls[0][0])
+  const nextSnapshot = { commit: "read-only-current-snapshot", seq: snapshot().seq + 5, authority_epoch: snapshot().authority_epoch + 1 }
+  const nextScope = { ...scope(nextSnapshot), health: "read_only" }
+  nextScope.overview!.index_seq = nextSnapshot.seq
+  vi.mocked(sprintClient.scope).mockResolvedValue(nextScope)
+  vi.mocked(sprintClient.list).mockResolvedValue({ ...structuredClone(sample.list_response), snapshot: nextSnapshot, index_seq: nextSnapshot.seq } as SprintPage)
+  await render({ at: nextSnapshot })
+  expect(latest.status).toBe("available")
+  expect(latest.list?.snapshot).toEqual(nextSnapshot)
+  expect(latest.canWrite).toBe(false)
+  expect(latest.request?.status).toBe("unknown")
+  expect(sprintClient.command).toHaveBeenCalledTimes(1)
+  await act(async () => { await start() })
+  expect(sprintClient.command).toHaveBeenCalledTimes(1)
+  await act(async () => { await latest.reconcile() })
+  expect(sprintClient.command).toHaveBeenCalledTimes(2)
+  const replayed = vi.mocked(sprintClient.command).mock.calls[1][0]
+  expect(replayed).toEqual(original)
+  expect(replayed.expected_seq).not.toBe(nextSnapshot.seq)
+  expect(replayed.expected_epoch).not.toBe(nextSnapshot.authority_epoch)
+  expect(latest.request?.status).toBe("unknown")
+  act(() => latest.reviewLatest())
+  await act(async () => { await start() })
+  expect(sprintClient.command).toHaveBeenCalledTimes(2)
+  expect(journal.get(projectId)?.command).toEqual(original)
+  expect(journal.get(projectId)?.result?.status).toBe("unknown")
+  expect(refresh).not.toHaveBeenCalled()
 })
 it("immediately fences duplicate clicks before React publishes a busy render", async () => {
   let finish!: (value: SprintReceipt) => void

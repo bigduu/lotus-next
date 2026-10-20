@@ -41,10 +41,12 @@ const definition = (name: string) => ({ name, goal: "保留同一 Work、Assignm
 const counts = (total: number, accepted = 0, unfinished = total - accepted, blocked = 0, cancelled = 0) => ({ total, accepted, pending_acceptance: 0, blocked, cancelled, unfinished })
 const envelope = (seq: number, data: unknown) => ({ snapshot: snapshot(seq), index_seq: seq, coverage: "authoritative_scope", truncated: false, omitted_count: 0, next_cursor: null, data })
 
-interface ApiRecord { method: string; path: string; body: any; rawBody: string | null; status?: number }
-interface MockOptions { pagination?: boolean; unavailable?: boolean; denyFilter?: boolean; conflictOnce?: boolean; unknownThenDenied?: boolean; keyboardNames?: boolean }
+interface ApiRecord { method: string; path: string; body: any; rawBody: string | null; status?: number; scopeResponse?: unknown }
+type MockScopeHealth = "writable" | "read_only" | "missing"
+interface MockOptions { pagination?: boolean; unavailable?: boolean; denyFilter?: boolean; conflictOnce?: boolean; unknownThenDenied?: boolean; keyboardNames?: boolean; scopeHealth?: MockScopeHealth }
 function createModel(options: MockOptions = {}) {
   let seq = 7
+  let scopeHealth: MockScopeHealth = options.scopeHealth ?? "writable"
   let commandAttempts = 0
   let savedReceipt: any = null
   const baseVersion = clone(producer.inspect_response.data.current_members[workId])
@@ -156,7 +158,10 @@ function createModel(options: MockOptions = {}) {
   return {
     board, inspect,
     list: () => envelope(seq, Object.values(sprints).map(summary)),
-    scope: () => ({ available: true, mutation_enabled: true, dispatch_enabled: false, capabilities: { ticket_scope_v1: true }, binding: clone(binding), overview: envelope(seq, {}) }),
+    scope: () => ({ available: true, readable: true, mutation_enabled: true, dispatch_enabled: false,
+      ...(scopeHealth === "missing" ? {} : { health: scopeHealth }),
+      capabilities: { ticket_scope_v1: true }, binding: clone(binding), overview: envelope(seq, {}) }),
+    setScopeHealth: (health: MockScopeHealth) => { scopeHealth = health },
     command: (body: any) => {
       commandAttempts++
       if (options.conflictOnce && commandAttempts === 1) { seq = 8; return { status: 409, json: { error: "revision_conflict" } } }
@@ -194,7 +199,11 @@ async function installMock(page: Page, options: MockOptions = {}) {
     const body = request.method() === "POST" ? request.postDataJSON() : null
     const record: ApiRecord = { method: request.method(), path: pathname, body, rawBody: request.postData() }
     records.push(record)
-    const respond = async (json: unknown, status = 200) => { record.status = status; await route.fulfill({ status, json }) }
+    const respond = async (json: unknown, status = 200) => {
+      record.status = status
+      if (pathname === "/api/v1/tickets/scope") record.scopeResponse = clone(json)
+      await route.fulfill({ status, json })
+    }
     if (request.method() === "POST" && pathname === "/api/v1/tickets/project-board") {
       if (body.project_id !== projectId || (options.denyFilter && body.sprint_filter?.kind === "sprint")) await respond({ error: "scope_denied: Sprint Project mismatch" }, 403)
       else await respond(model.board(body))
@@ -214,6 +223,7 @@ async function installMock(page: Page, options: MockOptions = {}) {
 type Mock = Awaited<ReturnType<typeof installMock>>
 const boardRequests = (mock: Mock) => mock.records.filter((record) => record.path.endsWith("/project-board"))
 const commands = (mock: Mock) => mock.records.filter((record) => record.path.endsWith("/sprints/command"))
+const scopeRequests = (mock: Mock) => mock.records.filter((record) => record.path === "/api/v1/tickets/scope")
 const board = (page: Page) => page.getByTestId("project-work-board")
 const controls = (page: Page) => page.getByTestId("sprint-owner-controls")
 const filter = (page: Page) => page.getByTestId("project-sprint-filter")
@@ -231,6 +241,7 @@ async function recordEvidence(page: Page, mock: Mock, info: TestInfo, screenshot
   await mkdir(path.join(output, "cases"), { recursive: true })
   const unexpectedConsole = mock.consoles.filter((entry) => !/^Failed to load resource: the server responded with a status of (403|404|409|503)\b/.test(entry.text))
   const result = { case: info.title, mode: "controlled-mock-http-real-parent-components", source: initialSource,
+    mock_http: true, real_owner_acceptance: false, provider_execution: false, product_websocket_policy: "blocked; only local fixture/Vite transport allowed",
     producer_source: payload.source_sha, producer_payload_sha256: sha256(readFileSync("src/test/fixtures/sprintContract/producer-http-payload.json")),
     viewport: page.viewportSize(), device_scale_factor: await page.evaluate("window.devicePixelRatio"), theme: await page.locator("html").evaluate((element) => element.classList.contains("dark") ? "dark" : "light"),
     records: mock.records, blocked: mock.blocked, pageErrors: mock.pageErrors, consoleErrors: mock.consoles, unexpectedConsole }
@@ -407,3 +418,90 @@ test("membership scope denial hides filtered Work and lets the owner explicitly 
   expect(boardRequests(mock).at(-1)?.body.sprint_filter).toBeUndefined()
   await recordEvidence(page, mock, info)
 })
+
+// These are controlled API/transport scenarios against the real parent components,
+// not actual Bamboo HTTP/WS, owner-command or provider acceptance.
+for (const profile of [
+  { name: "desktop-light-1440", width: 1440, theme: "light" },
+  { name: "phone-dark-390", width: 390, theme: "dark" },
+]) {
+  for (const health of ["read_only", "missing"] as const) {
+    test(`${profile.name} ${health} health keeps Sprint reads and filters while disabling new commands`, async ({ page }, info) => {
+      const mock = await installMock(page, { scopeHealth: health })
+      await page.setViewportSize({ width: profile.width, height: 1000 })
+      await open(page, profile.theme)
+      const scope = scopeRequests(mock).at(-1)?.scopeResponse
+      expect(scope).toMatchObject({ available: true, readable: true, mutation_enabled: true })
+      if (health === "missing") expect(scope).not.toHaveProperty("health")
+      else expect(scope).toHaveProperty("health", "read_only")
+      await expect(filter(page)).toBeEnabled()
+      await expect(controls(page).getByRole("textbox", { name: "Sprint 名称", exact: true })).toBeDisabled()
+      await expect(controls(page).getByRole("textbox", { name: "Sprint 目标", exact: true })).toBeDisabled()
+      await expect(controls(page).getByRole("button", { name: "创建 Sprint", exact: true })).toBeDisabled()
+      expect(commands(mock)).toHaveLength(0)
+
+      await filter(page).selectOption("backlog")
+      await expect(page.getByTestId(`project-work-${backlogId}`)).toBeVisible()
+      await expect(page.getByTestId(`project-work-${workId}`)).toHaveCount(0)
+      expect(boardRequests(mock).at(-1)?.body).toMatchObject({ cursor: null, fixed_commit: null, sprint_filter: { kind: "backlog" } })
+      await selectSprint(page, "a")
+      await expect(page.getByTestId(`project-work-${workId}`)).toBeVisible()
+      await expect(controls(page).getByRole("textbox", { name: "Sprint 名称", exact: true })).toBeDisabled()
+      await expect(controls(page).getByRole("button", { name: "保存 Sprint 定义", exact: true })).toBeDisabled()
+      expect(boardRequests(mock).at(-1)?.body).toMatchObject({ cursor: null, fixed_commit: null, sprint_filter: { kind: "sprint", sprint_id: "a" } })
+      await selectSprint(page, "c")
+      await expect(page.getByTestId("project-sprint-current-counts")).toContainText("已验收 1")
+      await expect(page.getByTestId("project-sprint-closure-counts")).toContainText("已验收 0")
+      await expect(page.getByTestId(`project-work-${historicalId}`)).toBeVisible()
+      await filter(page).selectOption("all")
+      await expect(page.getByTestId(`project-work-${workId}`)).toBeVisible()
+      await expect(controls(page).getByRole("button", { name: "创建 Sprint", exact: true })).toBeDisabled()
+      expect(boardRequests(mock).at(-1)?.body).toMatchObject({ cursor: null, fixed_commit: null })
+      expect(boardRequests(mock).at(-1)?.body.sprint_filter).toBeUndefined()
+      expect(commands(mock)).toHaveLength(0)
+      await recordEvidence(page, mock, info, health === "read_only" ? `sprint-health-${initialSource.head.slice(0, 8)}-${profile.name}-${health}-mock.png` : undefined)
+    })
+  }
+
+  test(`${profile.name} readonly refresh preserves an unknown command for one explicit exact check`, async ({ page }, info) => {
+    const mock = await installMock(page, { unknownThenDenied: true })
+    await page.setViewportSize({ width: profile.width, height: 1000 })
+    await open(page, profile.theme)
+    await selectSprint(page, "a")
+    expect(scopeRequests(mock).at(-1)?.scopeResponse).toHaveProperty("health", "writable")
+    const name = controls(page).getByRole("textbox", { name: "Sprint 名称", exact: true })
+    await expect(name).toBeEnabled()
+    await name.fill("只读后仍只能核查这一条未知命令")
+    await controls(page).getByRole("button", { name: "保存 Sprint 定义", exact: true }).click()
+    await expect(controls(page)).toContainText("命令结果未知")
+    expect(commands(mock)).toHaveLength(1)
+    const original = clone(commands(mock)[0])
+    expect(original).toMatchObject({ status: 503, body: { binding, expected_seq: 7, expected_epoch: 1, action: { op: "edit", expected_revision: 3 } } })
+
+    // The mock committed the first command but lost its response. A new read
+    // now reports seq8/read_only; this must not rewrite the journal's seq7 CAS.
+    mock.model.setScopeHealth("read_only")
+    await board(page).getByRole("button", { name: "刷新", exact: true }).click()
+    await expect(page.getByTestId("project-sprint-summary")).toContainText(snapshot(8).commit)
+    await expect.poll(() => scopeRequests(mock).at(-1)?.scopeResponse).toMatchObject({ health: "read_only", available: true, readable: true, mutation_enabled: true, overview: { snapshot: snapshot(8) } })
+    await expect(name).toHaveValue("只读后仍只能核查这一条未知命令")
+    await expect(name).toBeDisabled()
+    await expect(controls(page).getByRole("button", { name: "保存 Sprint 定义", exact: true })).toBeDisabled()
+    await expect(controls(page)).toContainText("命令结果未知")
+    expect(commands(mock)).toHaveLength(1)
+
+    const reconcile = controls(page).getByRole("button", { name: "核查原命令", exact: true })
+    await expect(reconcile).toBeEnabled()
+    await reconcile.click()
+    await expect.poll(() => commands(mock).at(-1)?.status).toBe(403)
+    await expect(reconcile).toBeEnabled()
+    await expect(controls(page)).toContainText("命令结果未知")
+    expect(commands(mock)).toHaveLength(2)
+    expect(commands(mock).map((record) => record.status)).toEqual([503, 403])
+    expect(commands(mock)[1].rawBody).toBe(original.rawBody)
+    expect(commands(mock)[1].body).toEqual(original.body)
+    expect(commands(mock)[1].body).toMatchObject({ operation_id: original.body.operation_id, binding, expected_seq: 7, expected_epoch: 1 })
+    await expect(controls(page).getByRole("button", { name: "重新核对最新 Sprint", exact: true })).toHaveCount(0)
+    await recordEvidence(page, mock, info, `sprint-health-${initialSource.head.slice(0, 8)}-${profile.name}-read_only-unknown-original-check-mock.png`)
+  })
+}
