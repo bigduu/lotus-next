@@ -14,6 +14,14 @@ for (const colorScheme of ["light", "dark"] as const) {
       localStorage.setItem("lotus.sidebar.grouping-mode.v1", "project")
     })
     const observation = await installArtifactRuntime(page, standaloneScenario)
+    // Observe requests before routing: endpoint-specific fulfills bypass the
+    // shared artifact helper's catch-all request log.
+    const ticketRequests: Array<{ method: string; url: string; body: string | null }> = []
+    page.on("request", (request) => {
+      if (new URL(request.url()).pathname.startsWith("/api/v1/tickets/")) {
+        ticketRequests.push({ method: request.method(), url: request.url(), body: request.postData() })
+      }
+    })
     const project = { id: "project-board", name: "Project Board", status: "active", revision: 3, resource_revision: 2, schema_version: 3,
       sidebar: { sections: [], session_sections: {}, hidden_legacy: false }, project_path: "/workspace/frontend", project_path_status: "configured", workspace_count: 2,
       workspace_bindings: [{ path: "/workspace/frontend", label: "Frontend" }, { path: "/workspace/backend", label: "Backend" }], created_at: "2026-10-17T00:00:00Z", updated_at: "2026-10-17T00:00:00Z" }
@@ -52,7 +60,7 @@ for (const colorScheme of ["light", "dark"] as const) {
       await page.getByRole("menuitem", { name: "项目工作", exact: true }).click()
     }
     const dialog = page.getByRole("dialog")
-    const workReads = () => observation.httpRequests.filter((request) => /tickets\/(project-board|inspect)(?:\?|$)/.test(request.url))
+    const workReads = () => ticketRequests.filter((request) => /tickets\/(project-board|inspect)(?:\?|$)/.test(request.url))
     try {
       await expect(page.getByRole("button", { name: "Project Board 项目操作", exact: true })).toBeVisible()
       expect(workLoads).toEqual([])
@@ -73,6 +81,7 @@ for (const colorScheme of ["light", "dark"] as const) {
     await openWork()
     await expect(dialog.getByText("Draft the shared contract", { exact: true })).toBeVisible()
     expect(workLoads).toHaveLength(1)
+    expect(workReads().some((request) => request.url.endsWith("/tickets/project-board"))).toBe(true)
     const listButton = dialog.getByRole("button", { name: "列表", exact: true })
     const boardButton = dialog.getByRole("button", { name: "看板", exact: true })
     await expect(listButton).toHaveAttribute("aria-pressed", "true")
@@ -95,13 +104,14 @@ for (const colorScheme of ["light", "dark"] as const) {
     await page.keyboard.press("Escape")
     await expect(dialog).not.toBeVisible()
     expect(observation.pageErrors).toEqual([])
-    expect(observation.httpRequests.filter((request) => request.method === "POST" && /tickets\//.test(request.url)).every((request) => /tickets\/(project-board|inspect|sprints\/list)$/.test(request.url))).toBe(true)
+    expect(workReads().some((request) => request.url.endsWith("/tickets/inspect"))).toBe(true)
+    expect(ticketRequests.filter((request) => request.method === "POST").every((request) => /tickets\/(project-board|inspect|sprints\/list)$/.test(request.url))).toBe(true)
     await info.attach("project-work-lazy-boundary-mock-evidence", { body: Buffer.from(JSON.stringify({
       source: artifact.sourceRevision, sourceDirty: artifact.sourceDirty,
       mode: "controlled HTTP/WebSocket and locally fulfilled production assets; no Bamboo server",
       mock: true, real_owner_acceptance: false, provider_execution: false,
       viewport: page.viewportSize(), theme: colorScheme, chunk: workChunk!.file,
-      chunk_requests: workLoads, requests: observation.httpRequests, pageErrors: observation.pageErrors,
+      chunk_requests: workLoads, ticket_requests: ticketRequests, requests: observation.httpRequests, pageErrors: observation.pageErrors,
     }, null, 2)), contentType: "application/json" })
   })
 }
