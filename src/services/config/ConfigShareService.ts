@@ -20,7 +20,9 @@ const options = (signal?: AbortSignal): RequestInit => ({
 })
 const utf8Size = (value: string): number => new TextEncoder().encode(value).length
 const validatePassphrase = (passphrase?: string) => {
-  if (passphrase !== undefined && (!passphrase.trim() || utf8Size(passphrase) > MAX_SHARE_PASSPHRASE_BYTES)) throw new ConfigShareError("invalid")
+  if (passphrase === undefined) return
+  const size = utf8Size(passphrase)
+  if (!passphrase.trim() || size < MIN_SHARE_PASSPHRASE_BYTES || size > MAX_SHARE_PASSPHRASE_BYTES) throw new ConfigShareError("invalid")
 }
 const validateInput = (input: ShareInput) => {
   if (!input.share_string.trim().startsWith("BAMBOO-SHARE:1:") || utf8Size(input.share_string) > MAX_SHARE_STRING_BYTES) {
@@ -151,7 +153,7 @@ export class ConfigShareService {
   async export(selection: ShareSelection, includeSecrets: boolean, passphrase?: string, signal?: AbortSignal): Promise<string> {
     validatePassphrase(passphrase)
     const hasSecrets = selection.provider_api_keys.length > 0 || Object.values(selection.env).some(Boolean)
-    if (hasSecrets && (!includeSecrets || !passphrase || utf8Size(passphrase) < MIN_SHARE_PASSPHRASE_BYTES)) throw new ConfigShareError("invalid")
+    if (hasSecrets && (!includeSecrets || !passphrase)) throw new ConfigShareError("invalid")
     try {
       const result = await apiClient.postOnce<{ share_string: string }>(`${route}/export`, {
         selection, include_secrets: includeSecrets, ...(passphrase ? { passphrase } : {}),

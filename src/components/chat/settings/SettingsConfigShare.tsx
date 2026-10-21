@@ -108,7 +108,8 @@ export function SettingsConfigShare() {
   const sensitiveSelection = selection.provider_api_keys.length > 0 || Object.values(selection.env).some(Boolean)
   const hasSelection = selection.providers.length + selection.scenarios.length + selection.subagent_models.length + Object.keys(selection.env).length > 0
   const locked = !!busy || !!pendingOperationId.current
-  const validExportPassphrase = !sensitiveSelection || (!!exportPassphrase.trim() && new TextEncoder().encode(exportPassphrase).length >= MIN_SHARE_PASSPHRASE_BYTES && new TextEncoder().encode(exportPassphrase).length <= MAX_SHARE_PASSPHRASE_BYTES)
+  const exportPassphraseBytes = new TextEncoder().encode(exportPassphrase).length
+  const validExportPassphrase = (!sensitiveSelection && !exportPassphrase) || (!!exportPassphrase.trim() && exportPassphraseBytes >= MIN_SHARE_PASSPHRASE_BYTES && exportPassphraseBytes <= MAX_SHARE_PASSPHRASE_BYTES)
 
   const exportSelection = async () => {
     if (!confirmed || !hasSelection || !validExportPassphrase || !start("export")) return

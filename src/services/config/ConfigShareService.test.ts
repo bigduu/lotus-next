@@ -45,6 +45,26 @@ describe("ConfigShareService", () => {
     }, expect.objectContaining({ cache: "no-store", headers: { "Cache-Control": "no-store" } }))
   })
 
+  it("rejects an invalid optional metadata passphrase before making a request", async () => {
+    const post = vi.spyOn(apiClient, "postOnce").mockResolvedValue({ share_string: shareString })
+    const selection = { ...emptyShareSelection(), providers: ["sample"] }
+    for (const value of ["short", "x".repeat(11), "界".repeat(3), " ".repeat(12), "x".repeat(1025), "界".repeat(342)]) {
+      await expect(service.export(selection, false, value)).rejects.toMatchObject({ kind: "invalid" })
+    }
+    expect(post).not.toHaveBeenCalled()
+    await expect(service.export(selection, false)).resolves.toBe(shareString)
+    expect(post).toHaveBeenLastCalledWith("/bamboo/config/share/export", {
+      selection, include_secrets: false,
+    }, expect.objectContaining({ cache: "no-store" }))
+    for (const value of ["x".repeat(12), "界".repeat(4), "x".repeat(1024), "界".repeat(341)]) {
+      await expect(service.export(selection, false, value)).resolves.toBe(shareString)
+      expect(post).toHaveBeenLastCalledWith("/bamboo/config/share/export", {
+        selection, include_secrets: false, passphrase: value,
+      }, expect.objectContaining({ cache: "no-store" }))
+    }
+    expect(post).toHaveBeenCalledTimes(5)
+  })
+
   it("bounds payload bytes and versions without decoding or making a request", async () => {
     const post = vi.spyOn(apiClient, "postOnce")
     for (const share_string of ["BAMBOO-SHARE:2:synthetic", shareString + "x".repeat(MAX_SHARE_STRING_BYTES), "BAMBOO-SHARE:1:" + "界".repeat(MAX_SHARE_STRING_BYTES / 2)]) {

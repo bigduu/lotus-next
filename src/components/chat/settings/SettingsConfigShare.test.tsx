@@ -83,7 +83,8 @@ describe("SettingsConfigShare", () => {
   it("starts with no secrets, URLs or values selected and preserves all nine scenario choices", async () => {
     await mount()
     expect(document.body.textContent).toContain("Base URLs with embedded credentials, query strings or fragments")
-    expect(document.body.textContent).toContain("runtime, loader or Git control environment variables (such as PATH, NODE_OPTIONS or GIT_ASKPASS)")
+    expect(document.body.textContent).toContain("Known environment controls for commands, plugins, startup scripts and tool configuration are blocked")
+    expect(document.body.textContent).toContain("Version-control tool environment namespaces are reserved")
     expect(document.body.textContent).toContain("Environment variable names that differ only in case count as conflicts.")
     expect(document.body.textContent).toContain("When importing role mappings into a setup without chat defaults, include the Chat mapping.")
     expect([...document.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')].every((input) => !input.checked)).toBe(true)
@@ -115,6 +116,24 @@ describe("SettingsConfigShare", () => {
     expect(clipboard.writeText).not.toHaveBeenCalled()
     await click("Copy sharing string")
     expect(clipboard.writeText).toHaveBeenCalledExactlyOnceWith(source)
+  })
+
+  it("checks an optional metadata passphrase before metadata-only export", async () => {
+    await mount()
+    await check("Sample (sample)")
+    expect(button("Generate sharing string").disabled).toBe(false)
+    for (const value of ["short", "界".repeat(3), " ".repeat(12), "界".repeat(342)]) {
+      await fill("Export passphrase (required for keys or values)", value)
+      expect(button("Generate sharing string").disabled).toBe(true)
+      await click("Generate sharing string")
+    }
+    expect(configShareService.export).not.toHaveBeenCalled()
+    await fill("Export passphrase (required for keys or values)", "界".repeat(4))
+    expect(button("Generate sharing string").disabled).toBe(false)
+    await click("Generate sharing string")
+    expect(configShareService.export).toHaveBeenCalledExactlyOnceWith({
+      providers: ["sample"], provider_base_urls: [], provider_api_keys: [], scenarios: [], subagent_models: [], env: {},
+    }, false, "界".repeat(4), expect.any(AbortSignal))
   })
 
   it("keeps Copilot sign-in credentials unavailable while permitting its non-secret configuration selection", async () => {
