@@ -23,7 +23,7 @@ const preview = (): SharePreviewResponse => ({
   preview_token: "fixture-token", expected_revisions: { providers: 7, env: 8, credentials: 9 },
   preview: {
     contains_secrets: true,
-    providers: [{ id: "sample", label: "Sample", provider_type: "openai", has_api_key: true, has_base_url: true, conflict: true }],
+    providers: [{ id: "sample", label: "Sample", provider_type: "openai", has_api_key: true, has_base_url: true, conflict: true, source_origin: "https://imported.example:8443", target_origin: "https://current.example:9443", retains_existing_api_key: false, credential_origin_risk: true }],
     scenarios: [{ scenario: "chat", provider: "sample", model: "fake-model", conflict: true }],
     subagent_models: [{ name: "helper", provider: "sample", model: "fake-model", conflict: false }],
     env: [{ name: "SAMPLE_TOKEN", has_value: true, secret: true, conflict: false }],
@@ -195,6 +195,82 @@ describe("SettingsConfigShare", () => {
     await fill("Import passphrase (if protected)", "changed-passphrase")
     expect(document.querySelector('[aria-label="Preview import"]')).toBeNull()
     expect(configShareService.apply).not.toHaveBeenCalled()
+  })
+
+  it("shows both provider origins and re-reviews retained-key risk even when a key was included", async () => {
+    const response = preview()
+    response.preview.providers[0] = { ...response.preview.providers[0], has_api_key: true, retains_existing_api_key: true, credential_origin_risk: true }
+    vi.mocked(configShareService.preview).mockResolvedValue(response)
+    await mount(); await preparedPreview()
+    const region = document.querySelector('[aria-label="Preview import"]')!
+    expect(region.textContent).toContain("Imported origin: https://imported.example:8443")
+    expect(region.textContent).toContain("Current origin: https://current.example:9443")
+    expect(region.querySelectorAll('a[href*="imported.example"]')).toHaveLength(0)
+    expect(region.textContent).not.toContain("Replacing changes the provider origin")
+    await check("I reviewed the entries and conflict choices")
+    await act(async () => {
+      const action = document.querySelector<HTMLSelectElement>('[aria-label="Import action providers:sample"]')!
+      action.value = "replace"; action.dispatchEvent(new Event("change", { bubbles: true }))
+    })
+    expect(region.querySelector('[role="alert"]')?.textContent).toContain("Future requests to https://imported.example:8443 may send retained credentials or request settings.")
+    expect(region.querySelector('[role="alert"]')?.textContent).toContain("An included key may not override existing request settings.")
+    expect(button("Save imported settings").disabled).toBe(true)
+    await check("I reviewed the entries and conflict choices")
+    await click("Save imported settings")
+    expect(vi.mocked(configShareService.apply).mock.calls[0][0].choices.providers).toEqual({ sample: { action: "replace" } })
+  })
+
+  it("does not imply retention of an existing provider key when choosing Skip or Rename", async () => {
+    const response = preview()
+    response.preview.providers[0] = { ...response.preview.providers[0], has_api_key: false, retains_existing_api_key: true, credential_origin_risk: true }
+    vi.mocked(configShareService.preview).mockResolvedValue(response)
+    await mount(); await preparedPreview()
+    expect(document.body.textContent).not.toContain("Replacing changes the provider origin")
+    for (const choice of ["replace", "rename", "skip"]) {
+      await act(async () => {
+        const action = document.querySelector<HTMLSelectElement>('[aria-label="Import action providers:sample"]')!
+        action.value = choice; action.dispatchEvent(new Event("change", { bubbles: true }))
+      })
+      expect(document.body.textContent?.includes("Replacing changes the provider origin")).toBe(choice === "replace")
+    }
+    expect(configShareService.apply).not.toHaveBeenCalled()
+  })
+
+  it.each([false, true])("warns on changed origin without reported retained-key metadata (included key=%s)", async (hasApiKey) => {
+    const response = preview()
+    response.preview.providers[0] = { ...response.preview.providers[0], has_api_key: hasApiKey, retains_existing_api_key: false, credential_origin_risk: true }
+    vi.mocked(configShareService.preview).mockResolvedValue(response)
+    await mount(); await preparedPreview()
+    await act(async () => {
+      const action = document.querySelector<HTMLSelectElement>('[aria-label="Import action providers:sample"]')!
+      action.value = "replace"; action.dispatchEvent(new Event("change", { bubbles: true }))
+    })
+    expect(document.querySelector('[role="alert"]')?.textContent).toContain("Future requests to https://imported.example:8443 may send retained credentials or request settings.")
+    expect(document.querySelector('[role="alert"]')?.textContent).toContain("An included key may not override existing request settings.")
+    expect(configShareService.apply).not.toHaveBeenCalled()
+  })
+
+  it("shows keep-current and default-or-unknown fallbacks when no provider origin was included", async () => {
+    const response = preview()
+    response.preview.providers[0] = { ...response.preview.providers[0], has_api_key: false, has_base_url: false, source_origin: undefined, target_origin: undefined, retains_existing_api_key: true, credential_origin_risk: false }
+    vi.mocked(configShareService.preview).mockResolvedValue(response)
+    await mount(); await preparedPreview()
+    expect(document.body.textContent).toContain("Imported origin: Not included; keep current")
+    expect(document.body.textContent).toContain("Current origin: Default or unknown")
+    expect(document.body.textContent).not.toContain("Replacing changes the provider origin")
+  })
+
+  it("warns about the imported origin on Replace even when the current origin is unknown", async () => {
+    const response = preview()
+    response.preview.providers[0] = { ...response.preview.providers[0], has_api_key: false, target_origin: undefined, retains_existing_api_key: true, credential_origin_risk: true }
+    vi.mocked(configShareService.preview).mockResolvedValue(response)
+    await mount(); await preparedPreview()
+    await act(async () => {
+      const action = document.querySelector<HTMLSelectElement>('[aria-label="Import action providers:sample"]')!
+      action.value = "replace"; action.dispatchEvent(new Event("change", { bubbles: true }))
+    })
+    expect(document.body.textContent).toContain("Current origin: Default or unknown")
+    expect(document.querySelector('[role="alert"]')?.textContent).toContain("Future requests to https://imported.example:8443 may send retained credentials or request settings.")
   })
 
   it("discards stale CAS previews and exposes only a safe message", async () => {

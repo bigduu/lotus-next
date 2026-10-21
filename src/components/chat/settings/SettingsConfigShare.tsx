@@ -3,7 +3,7 @@ import { configShareService, ConfigShareError } from "@services/config/ConfigSha
 import {
   emptyShareDecisions, emptyShareSelection, MAX_SHARE_PASSPHRASE_BYTES, MAX_SHARE_STRING_BYTES, MIN_SHARE_PASSPHRASE_BYTES,
   type ShareApplyRequest, type ShareChoice, type ShareDecisions, type ShareInventory,
-  type ShareOperation, type SharePreviewResponse, type ShareSelection,
+  type ShareOperation, type SharePreviewResponse, type ShareSelection, type ShareProviderPreview,
 } from "@shared/types/configShare"
 import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { Button } from "@/components/ui/button"
@@ -11,9 +11,9 @@ import { Input } from "@/components/ui/input"
 
 const emptyInventory = (): ShareInventory => ({ providers: [], scenarios: [], subagent_models: [], env: [] })
 type Group = keyof ShareDecisions
-interface PreviewRow { group: Group; id: string; label: string; conflict: boolean; secret: boolean }
+interface PreviewRow { group: Group; id: string; label: string; conflict: boolean; secret: boolean; provider?: ShareProviderPreview }
 const rowsFor = ({ preview: p }: SharePreviewResponse): PreviewRow[] => [
-  ...p.providers.map((row) => ({ group: "providers" as const, id: row.id, label: row.label ? `${row.label} (${row.id})` : row.id, conflict: row.conflict, secret: row.has_api_key })),
+  ...p.providers.map((row) => ({ group: "providers" as const, id: row.id, label: row.label ? `${row.label} (${row.id})` : row.id, conflict: row.conflict, secret: row.has_api_key, provider: row })),
   ...p.scenarios.map((row) => ({ group: "scenarios" as const, id: row.scenario, label: `${row.scenario}: ${row.provider} / ${row.model}`, conflict: row.conflict, secret: false })),
   ...p.subagent_models.map((row) => ({ group: "subagent_models" as const, id: row.name, label: `${row.name}: ${row.provider} / ${row.model}`, conflict: row.conflict, secret: false })),
   ...p.env.map((row) => ({ group: "env" as const, id: row.name, label: row.name, conflict: row.conflict, secret: row.has_value })),
@@ -258,6 +258,10 @@ export function SettingsConfigShare() {
           const updateChoice = (next: ShareChoice) => { if (!busyRef.current && !pendingOperationId.current) { setReviewed(false); setDecisions({ ...decisions, [row.group]: { ...decisions[row.group], [row.id]: next } }) } }
           return <div key={`${row.group}:${row.id}`} className="space-y-2 rounded border p-2">
             <div className="text-sm break-words">{row.label}{row.conflict ? ` · ${uiText("share_conflict")}` : ` · ${uiText("share_addition")}`}{row.secret ? ` · ${uiText("share_hidden_value")}` : ""}</div>
+            {row.provider && <dl className="space-y-1 text-xs text-muted-foreground">
+              <div><dt className="inline">{uiText("share_imported_origin")}: </dt><dd className="inline break-all font-mono">{row.provider.source_origin ?? uiText("share_origin_keep_current")}</dd></div>
+              <div><dt className="inline">{uiText("share_current_origin")}: </dt><dd className="inline break-all font-mono">{row.provider.target_origin ?? uiText("share_origin_unknown")}</dd></div>
+            </dl>}
             <label className="flex items-center gap-2 text-xs">{uiText("share_action")}
               <select aria-label={`${uiText("share_action")} ${row.group}:${row.id}`} className="settings-select" value={choice.action} disabled={locked} onChange={(event) => updateChoice(event.target.value === "rename" ? { action: "rename", target: "" } : { action: event.target.value as "skip" | "replace" })}>
                 <option value="skip">{uiText("share_skip")}</option>
@@ -265,6 +269,7 @@ export function SettingsConfigShare() {
                 {row.group !== "scenarios" && <option value="rename">{uiText("share_rename")}</option>}
               </select>
             </label>
+            {row.provider?.credential_origin_risk && choice.action === "replace" && <p role="alert" className="break-words text-xs text-destructive">{uiText("share_retained_key_origin_warning", { origin: row.provider.source_origin })}</p>}
             {choice.action === "rename" && <Input aria-label={`${uiText("share_new_name")} ${row.group}:${row.id}`} value={choice.target} disabled={locked} maxLength={128} onChange={(event) => updateChoice({ action: "rename", target: event.target.value })} />}
           </div>
         })}

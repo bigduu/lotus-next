@@ -34,6 +34,14 @@ const boundedString = (value: unknown): value is string => typeof value === "str
 const safeRevision = (value: unknown): value is number => Number.isSafeInteger(value) && (value as number) >= 0
 const validRevisions = (value: unknown) => isRecord(value) &&
   safeRevision(value.providers) && safeRevision(value.env) && safeRevision(value.credentials)
+const validOrigin = (value: unknown): value is string => {
+  if (!boundedString(value)) return false
+  try {
+    const parsed = new URL(value)
+    return (parsed.protocol === "http:" || parsed.protocol === "https:") &&
+      !parsed.username && !parsed.password && parsed.pathname === "/" && !parsed.search && !parsed.hash && value === parsed.origin
+  } catch { return false }
+}
 
 /** Validate metadata without ever decoding or rendering the original bundle. */
 const validatePreview = (value: unknown): SharePreviewResponse => {
@@ -49,7 +57,15 @@ const validatePreview = (value: unknown): SharePreviewResponse => {
   }
   for (const row of p.providers as Record<string, unknown>[]) {
     if (!boundedString(row.id) || !boundedString(row.provider_type) || (row.label !== undefined && !boundedString(row.label)) ||
-      typeof row.has_api_key !== "boolean" || typeof row.has_base_url !== "boolean") throw new ConfigShareError("unavailable")
+      typeof row.has_api_key !== "boolean" || typeof row.has_base_url !== "boolean" ||
+      typeof row.retains_existing_api_key !== "boolean" || typeof row.credential_origin_risk !== "boolean" ||
+      (row.source_origin !== undefined && !validOrigin(row.source_origin)) ||
+      (row.target_origin !== undefined && !validOrigin(row.target_origin)) ||
+      row.has_base_url !== (row.source_origin !== undefined) ||
+      (row.retains_existing_api_key && !row.conflict) ||
+      row.credential_origin_risk !== (row.conflict && row.has_base_url && row.source_origin !== row.target_origin)) {
+      throw new ConfigShareError("unavailable")
+    }
   }
   for (const row of [...p.scenarios as Record<string, unknown>[], ...p.subagent_models as Record<string, unknown>[]]) {
     if (!boundedString(row.provider) || !boundedString(row.model)) throw new ConfigShareError("unavailable")
@@ -73,7 +89,11 @@ const validatePreview = (value: unknown): SharePreviewResponse => {
     expected_revisions: { providers: typed.expected_revisions.providers, env: typed.expected_revisions.env, credentials: typed.expected_revisions.credentials },
     preview: {
       contains_secrets: typed.preview.contains_secrets,
-      providers: typed.preview.providers.map(({ id, provider_type, label, has_api_key, has_base_url, conflict }) => ({ id, provider_type, ...(label ? { label } : {}), has_api_key, has_base_url, conflict })),
+      providers: typed.preview.providers.map(({ id, provider_type, label, has_api_key, has_base_url, conflict, source_origin, target_origin, retains_existing_api_key, credential_origin_risk }) => ({
+        id, provider_type, ...(label ? { label } : {}), has_api_key, has_base_url, conflict,
+        ...(source_origin ? { source_origin } : {}), ...(target_origin ? { target_origin } : {}),
+        retains_existing_api_key, credential_origin_risk,
+      })),
       scenarios: typed.preview.scenarios.map(({ scenario, provider, model, conflict }) => ({ scenario, provider, model, conflict })),
       subagent_models: typed.preview.subagent_models.map(({ name, provider, model, conflict }) => ({ name, provider, model, conflict })),
       env: typed.preview.env.map(({ name, has_value, secret, conflict }) => ({ name, has_value, secret, conflict })),

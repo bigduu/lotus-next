@@ -28,8 +28,22 @@ export const emptyShareDecisions = (): ShareDecisions => ({
 })
 
 export interface ShareRevisions { providers: number; env: number; credentials: number }
+export interface ShareProviderPreview {
+  id: string
+  provider_type: string
+  label?: string
+  has_api_key: boolean
+  has_base_url: boolean
+  conflict: boolean
+  /** Canonical HTTP(S) origins only; never full URLs or secret-bearing values. */
+  source_origin?: string
+  target_origin?: string
+  retains_existing_api_key: boolean
+  /** A same-ID origin change can retain credentials or request overrides. */
+  credential_origin_risk: boolean
+}
 export interface SharePreview {
-  providers: { id: string; provider_type: string; label?: string; has_api_key: boolean; has_base_url: boolean; conflict: boolean }[]
+  providers: ShareProviderPreview[]
   scenarios: { scenario: ProviderDefaultModelRefKey; provider: string; model: string; conflict: boolean }[]
   subagent_models: { name: string; provider: string; model: string; conflict: boolean }[]
   env: { name: string; has_value: boolean; secret: boolean; conflict: boolean }[]

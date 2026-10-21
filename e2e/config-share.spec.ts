@@ -4,7 +4,8 @@ test("selective export and redacted import fit desktop and narrow viewports (syn
   const errors: string[] = []
   const unexpectedRequests: string[] = []
   const writes: string[] = []
-  const source = "BAMBOO-SHARE:1:synthetic-browser-fixture"
+  const exported = "BAMBOO-SHARE:1:synthetic-browser-fixture"
+  const source = "BAMBOO-SHARE:1:synthetic-import-origin-fixture"
   page.on("pageerror", (error) => errors.push(error.message))
   await page.route("**/*", async (route) => {
     const url = new URL(route.request().url())
@@ -16,14 +17,14 @@ test("selective export and redacted import fit desktop and narrow viewports (syn
   })
   await page.route("**/e2e/config-share.html", (route) => route.fulfill({ contentType: "text/html", body: '<!doctype html><html lang="en"><head><meta name="viewport" content="width=device-width,initial-scale=1"></head><body><div id="root"></div><script type="module">import RefreshRuntime from "/@react-refresh";RefreshRuntime.injectIntoGlobalHook(window);window.$RefreshReg$=()=>{};window.$RefreshSig$=()=>(type)=>type;window.__vite_plugin_react_preamble_installed__=true;await import("/e2e/support/configShareHarness.tsx")</script></body></html>' }))
   await page.route("**/api/v1/bamboo/settings/provider-instances", (route) => route.fulfill({ json: {
-    default_provider_instance_id: "sample", instances: [{ id: "sample", type: "openai", label: "Sample provider", enabled: true, config: { model: "sample-model" } }],
+    default_provider_instance_id: "sample", instances: [{ id: "sample", type: "openai", label: "Sample provider", enabled: true, config: { model: "sample-model", base_url: "https://current.example:9443/v1", api_key: "****...****" } }],
     defaults: { chat: { provider: "sample", model: "sample-model" }, fast: { provider: "sample", model: "sample-fast" }, subagent_models: { helper: { provider: "sample", model: "sample-model" } } },
   } }))
   await page.route("**/api/v1/bamboo/env-vars", (route) => route.fulfill({ json: { revision: 4, entries: [{ name: "SAMPLE_TOKEN", has_value: true, secret: true }] } }))
   await page.route("**/api/v1/bamboo/config/share/export", async (route) => {
     writes.push("export")
     expect(route.request().postDataJSON()).toEqual({ selection: { providers: ["sample"], provider_base_urls: [], provider_api_keys: [], scenarios: [], subagent_models: [], env: {} }, include_secrets: false })
-    return route.fulfill({ json: { share_string: source }, headers: { "Cache-Control": "no-store" } })
+    return route.fulfill({ json: { share_string: exported }, headers: { "Cache-Control": "no-store" } })
   })
   await page.route("**/api/v1/bamboo/config/share/preview", async (route) => {
     writes.push("preview")
@@ -31,7 +32,7 @@ test("selective export and redacted import fit desktop and narrow viewports (syn
     return route.fulfill({ json: {
       apply_blocked: false, warnings: [],
       preview_token: "synthetic-token", expected_revisions: { providers: 3, env: 4, credentials: 5 },
-      preview: { contains_secrets: false, providers: [{ id: "sample", provider_type: "openai", label: "Sample provider", has_api_key: false, has_base_url: false, conflict: true }], scenarios: [{ scenario: "chat", provider: "sample", model: "sample-model", conflict: true }], subagent_models: [], env: [] },
+      preview: { contains_secrets: false, providers: [{ id: "sample", provider_type: "openai", label: "Sample provider", has_api_key: false, has_base_url: true, conflict: true, source_origin: "https://imported.example:8443", target_origin: "https://current.example:9443", retains_existing_api_key: true, credential_origin_risk: true }], scenarios: [{ scenario: "chat", provider: "sample", model: "sample-model", conflict: true }], subagent_models: [], env: [] },
     }, headers: { "Cache-Control": "no-store" } })
   })
 
@@ -41,7 +42,7 @@ test("selective export and redacted import fit desktop and narrow viewports (syn
   await expect(page.getByRole("checkbox", { name: "Allow the selected API keys and environment values in this export" })).not.toBeChecked()
   await page.getByRole("checkbox", { name: "Sample provider (sample)", exact: true }).check()
   await page.getByRole("button", { name: "Generate sharing string", exact: true }).click()
-  await expect(page.getByRole("textbox", { name: "Sharing string", exact: true })).toHaveValue(source)
+  await expect(page.getByRole("textbox", { name: "Sharing string", exact: true })).toHaveValue(exported)
   await page.getByRole("button", { name: "Cancel and clear sharing data", exact: true }).click()
   await expect(page.getByRole("textbox", { name: "Sharing string", exact: true })).toHaveCount(0)
   await page.getByRole("heading", { name: "Export selected settings", exact: true }).scrollIntoViewIfNeeded()
@@ -54,6 +55,13 @@ test("selective export and redacted import fit desktop and narrow viewports (syn
   const preview = page.getByRole("region", { name: "Preview import", exact: true })
   await expect(preview).toBeVisible()
   await expect(preview.getByRole("combobox", { name: "Import action providers:sample", exact: true })).toHaveValue("skip")
+  await expect(preview).toContainText("Imported origin: https://imported.example:8443")
+  await expect(preview).toContainText("Current origin: https://current.example:9443")
+  await expect(preview.getByRole("alert")).toHaveCount(0)
+  await page.getByRole("checkbox", { name: "I reviewed the entries and conflict choices", exact: true }).check()
+  await preview.getByRole("combobox", { name: "Import action providers:sample", exact: true }).selectOption("replace")
+  await expect(page.getByRole("checkbox", { name: "I reviewed the entries and conflict choices", exact: true })).not.toBeChecked()
+  await expect(preview.getByRole("alert")).toContainText("Future requests to https://imported.example:8443 may send retained credentials or request settings.")
   await expect(page.getByRole("button", { name: "Save imported settings", exact: true })).toBeDisabled()
   await expect(preview).not.toContainText(source)
   await preview.scrollIntoViewIfNeeded()

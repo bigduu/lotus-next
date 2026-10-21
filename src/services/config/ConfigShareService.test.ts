@@ -10,7 +10,7 @@ const shareString = "BAMBOO-SHARE:1:synthetic"
 const preview = () => ({
   apply_blocked: false, warnings: [],
   preview_token: "fixture-token", expected_revisions: { providers: 3, env: 4, credentials: 5 },
-  preview: { contains_secrets: true, providers: [{ id: "sample", provider_type: "openai", has_api_key: true, has_base_url: true, conflict: true }], scenarios: [], subagent_models: [], env: [{ name: "SAMPLE_TOKEN", has_value: true, secret: true, conflict: false }] },
+  preview: { contains_secrets: true, providers: [{ id: "sample", provider_type: "openai", has_api_key: true, has_base_url: true, conflict: true, source_origin: "https://imported.example:8443", target_origin: "https://current.example:9443", retains_existing_api_key: false, credential_origin_risk: true }], scenarios: [], subagent_models: [], env: [{ name: "SAMPLE_TOKEN", has_value: true, secret: true, conflict: false }] },
 })
 const applyRequest = (): ShareApplyRequest => ({
   share_string: shareString, passphrase: "FAKE_TEST_PASSPHRASE", choices: emptyShareDecisions(),
@@ -84,6 +84,74 @@ describe("ConfigShareService", () => {
     expect(value.apply_blocked).toBe(true)
     expect(value.warnings).toEqual(["automatic_provider_authentication_blocked"])
     expect(JSON.stringify(value)).not.toContain("PRIVATE_")
+  })
+
+  it("projects canonical HTTP(S) origins, including ports, and retains the unknown-target risk", async () => {
+    const response = preview()
+    const provider = { ...response.preview.providers[0], has_api_key: false, source_origin: "http://127.0.0.1:8080", target_origin: undefined, retains_existing_api_key: true, credential_origin_risk: true }
+    const post = vi.spyOn(apiClient, "postOnce").mockResolvedValue({ ...response, preview: { ...response.preview, providers: [provider] } })
+    const result = await service.preview({ share_string: shareString })
+    expect(result.preview.providers[0]).toMatchObject({ source_origin: "http://127.0.0.1:8080", retains_existing_api_key: true, credential_origin_risk: true })
+    expect(Object.hasOwn(result.preview.providers[0], "target_origin")).toBe(false)
+    post.mockResolvedValue({ ...response, preview: { ...response.preview, providers: [{ ...provider, target_origin: "https://[::1]:9443" }] } })
+    expect((await service.preview({ share_string: shareString })).preview.providers[0].target_origin).toBe("https://[::1]:9443")
+  })
+
+  it.each([
+    { has_api_key: false, retains_existing_api_key: false },
+    { has_api_key: false, retains_existing_api_key: true },
+    { has_api_key: true, retains_existing_api_key: false },
+    { has_api_key: true, retains_existing_api_key: true },
+  ])("accepts conservative origin risk with credential metadata %j", async (fields) => {
+    const response = preview()
+    response.preview.providers[0] = { ...response.preview.providers[0], ...fields, credential_origin_risk: true }
+    vi.spyOn(apiClient, "postOnce").mockResolvedValue(response)
+    expect((await service.preview({ share_string: shareString })).preview.providers[0]).toMatchObject({
+      ...fields, credential_origin_risk: true,
+    })
+  })
+
+  it("rejects sensitive, non-HTTP(S) or noncanonical origin metadata without retaining it in errors", async () => {
+    const response = preview()
+    const post = vi.spyOn(apiClient, "postOnce")
+    const invalidOrigins = [
+      "https://user:FAKE_PRIVATE_KEY@safe.example", "https://safe.example/private", "https://safe.example?token=FAKE_PRIVATE_KEY",
+      "https://safe.example#FAKE_PRIVATE_KEY", "https://safe.example?", "https://safe.example/", "https://safe.example:443",
+      "https://SAFE.example", " https://safe.example", "https://safe.example\n", "file:///FAKE_PRIVATE_KEY", "javascript:void(0)", null,
+    ]
+    for (const origin of invalidOrigins) {
+      for (const field of ["source_origin", "target_origin"]) {
+        post.mockResolvedValue({ ...response, preview: { ...response.preview, providers: [{ ...response.preview.providers[0], [field]: origin }] } })
+        const result = await service.preview({ share_string: shareString }).catch((error) => error)
+        expect(result).toBeInstanceOf(ConfigShareError)
+        expect(result.kind).toBe("unavailable")
+        expect(result.message).not.toContain("FAKE_PRIVATE_KEY")
+        expect(result.cause).toBeUndefined()
+      }
+    }
+  })
+
+  it("rejects old backend fields and inconsistent credential retention or origin risk metadata", async () => {
+    const response = preview()
+    const post = vi.spyOn(apiClient, "postOnce")
+    const invalid = [
+      { retains_existing_api_key: undefined }, { credential_origin_risk: undefined }, { source_origin: undefined },
+      { has_base_url: false }, { conflict: false },
+      { conflict: false, has_api_key: false, retains_existing_api_key: true, credential_origin_risk: true },
+      { has_api_key: false, retains_existing_api_key: true, credential_origin_risk: false },
+      { credential_origin_risk: false },
+      { has_api_key: false, retains_existing_api_key: true, target_origin: "https://imported.example:8443", credential_origin_risk: true },
+    ]
+    for (const fields of invalid) {
+      post.mockResolvedValue({ ...response, preview: { ...response.preview, providers: [{ ...response.preview.providers[0], ...fields }] } })
+      await expect(service.preview({ share_string: shareString })).rejects.toMatchObject({ kind: "unavailable" })
+    }
+    const provider = { ...response.preview.providers[0], has_api_key: false, has_base_url: false, source_origin: undefined, target_origin: undefined, retains_existing_api_key: true, credential_origin_risk: false }
+    post.mockResolvedValue({ ...response, preview: { ...response.preview, providers: [provider] } })
+    const valid = await service.preview({ share_string: shareString })
+    expect(valid.preview.providers[0].retains_existing_api_key).toBe(true)
+    expect(valid.preview.providers[0].credential_origin_risk).toBe(false)
+    expect(Object.hasOwn(valid.preview.providers[0], "source_origin")).toBe(false)
   })
 
   it("sends one apply with CAS and receipt id, and reads its exact operation afterward", async () => {
