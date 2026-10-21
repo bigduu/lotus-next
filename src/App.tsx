@@ -2,7 +2,6 @@ import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react"
 import { copyText } from "@shared/utils/clipboard"
 import { Inspector } from "@/components/chat/Inspector"
-import { CommandPalette } from "@/components/chat/CommandPalette"
 import { ExternalLinkProvider } from "@/components/chat/ExternalLinkDialog"
 import { LazySettings } from "@/components/chat/LazySettings"
 import { Onboarding } from "@/components/chat/Onboarding"
@@ -40,6 +39,8 @@ import type { RightWorkbenchTab, WorkbenchToolTab } from "@/components/app/Right
 
 // The optional workbench need not add its tab/drag UI to ordinary-chat startup.
 const RightWorkbench = lazy(() => import("@/components/app/RightWorkbench").then((module) => ({ default: module.RightWorkbenchContent })))
+// Search navigation is optional; load its primitive only when the palette opens.
+const CommandPalette = lazy(() => import("@/components/chat/CommandPalette").then((module) => ({ default: module.CommandPalette })))
 
 function App() {
   useUiLocale()
@@ -672,22 +673,26 @@ function App() {
       ) : null}
     </div>
       <LazySettings open={settingsOpen} onClose={closeSettings} />
-      <CommandPalette
-        getReturnFocusTarget={paletteReturnFocusRef.current}
-        open={paletteOpen}
-        onClose={() => setPaletteOpen(false)}
-        chats={chats}
-        onSelect={(id) => {
-          setSettingsOpen(false)
-          select(id)
-          setSidebarOpen(false)
-        }}
-        onNewChat={() => {
-          setSettingsOpen(false)
-          newChat()
-        }}
-        onSettings={openSettings}
-      />
+      {paletteOpen ? (
+        <Suspense fallback={null}>
+          <CommandPalette
+            getReturnFocusTarget={paletteReturnFocusRef.current}
+            open={paletteOpen}
+            onClose={() => setPaletteOpen(false)}
+            chats={chats}
+            onSelect={(id) => {
+              setSettingsOpen(false)
+              select(id)
+              setSidebarOpen(false)
+            }}
+            onNewChat={() => {
+              setSettingsOpen(false)
+              newChat()
+            }}
+            onSettings={openSettings}
+          />
+        </Suspense>
+      ) : null}
     </div>
     </ExternalLinkProvider>
   )
