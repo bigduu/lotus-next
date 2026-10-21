@@ -128,12 +128,14 @@ test("touch resizing persists its completed width and mobile overlays keep edito
   const box = (await handle.boundingBox())!
   const session = await page.context().newCDPSession(page)
   const touch = (x: number) => [{ x, y: box.y + box.height / 2, id: 7 }]
-  await session.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: touch(box.x) })
-  await session.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: touch(box.x + 30) })
+  // The primitive's coarse hit expansion must work beyond the DOM hit area.
+  const startX = box.x + 12
+  await session.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: touch(startX) })
+  await session.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: touch(startX + 30) })
   // Unrelated pointer events must not finish the real CDP touch gesture.
   await handle.dispatchEvent("pointerup", { pointerId: 999, pointerType: "touch" })
   await handle.dispatchEvent("pointercancel", { pointerId: 999, pointerType: "touch" })
-  await session.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: touch(box.x + 65) })
+  await session.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: touch(startX + 65) })
   await session.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] })
   await expect.poll(() => panelWidth(page.locator("#sidebar-panel"))).toBeGreaterThan(330)
   const saved = Number(await preference(page, sidebarKey))

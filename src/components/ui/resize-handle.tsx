@@ -20,8 +20,8 @@ export function ResizeHandle({
         className,
       )}
     >
-      {/* Wider invisible hit-area so the 1px line is easy to grab. */}
-      <span className="absolute inset-y-0" style={{ left: -14, right: -14 }} />
+      {/* Keep the DOM target clear of nearby content. Group expands coarse-pointer hits. */}
+      <span className="absolute inset-y-0 -left-1.5 -right-1.5" />
       {/* Highlight on hover / active. */}
       <span className="absolute inset-y-0 -left-px -right-px bg-primary opacity-0 transition-opacity group-hover:opacity-100 group-active:opacity-100" />
     </Separator>
