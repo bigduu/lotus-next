@@ -20,9 +20,10 @@ export function useWorkbenchWidth(sidebarWidth: number) {
     return () => window.removeEventListener("resize", onResize)
   }, [])
 
-  return useResizableWidth("lotus_next_inspector_w", 520, {
+  const maxWidth = getWorkbenchMaxWidth(viewportWidth, sidebarWidth)
+  const preference = useResizableWidth("lotus_next_inspector_w", 520, {
     min: MIN_WORKBENCH_WIDTH,
-    max: getWorkbenchMaxWidth(viewportWidth, sidebarWidth),
-    edge: "left",
+    max: maxWidth,
   })
+  return { ...preference, maxWidth, viewportWidth }
 }

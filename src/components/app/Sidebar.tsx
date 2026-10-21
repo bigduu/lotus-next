@@ -69,8 +69,8 @@ export function Sidebar({
   /** Desktop: when true the persistent rail is hidden (mobile drawer unaffected). */
   collapsed: boolean
   onToggleCollapse: () => void
-  /** Desktop rail width in px (resizable); mobile drawer keeps its own width. */
-  width: number
+  /** Desktop rail width; mobile drawer keeps its own width. */
+  width: number | string
   chats: ChatItem[]
   booted: boolean
   currentSessionId: string | null | undefined
@@ -540,7 +540,7 @@ export function Sidebar({
           if (event.target === event.currentTarget && !event.currentTarget.contains(event.relatedTarget as Node | null)) clearDragFeedback()
         }}
         style={{
-          ["--sidebar-w" as string]: `${width}px`,
+          ["--sidebar-w" as string]: typeof width === "number" ? `${width}px` : width,
           ["--text-xs" as string]: "13px",
           ["--text-sm" as string]: "15px",
           fontFamily: '-apple-system, "PingFang SC", sans-serif',
