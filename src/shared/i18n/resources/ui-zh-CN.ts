@@ -8,7 +8,7 @@ export const uiZhCn = {
   "share_description": "分享选定的提供商、场景模型和应用环境变量，数据不会上传到分享服务。",
   "share_export_title": "导出选定配置",
   "share_selection_hint": "逐项选择配置。默认不包含 API 密钥、基础 URL 和环境变量值。选择场景时会同时选中其提供商，但不包含其密钥和基础 URL。",
-  "share_contract_limits": "暂不支持分享含内嵌凭据、查询参数或片段的基础 URL、运行时、加载器、Shell、Git、编译器、构建或包管理器控制环境变量（如 PATH、NODE_OPTIONS、GIT_ASKPASS 或 RUSTC），以及 Copilot 登录凭据。仅大小写不同的环境变量名将视为冲突。向尚未设置聊天默认模型的配置导入场景映射时，请同时包含 Chat 映射。",
+  "share_contract_limits": "暂不支持分享含内嵌凭据、查询参数或片段的基础 URL，以及 Copilot 登录凭据。已知用于选择命令、插件、启动脚本或工具配置的环境变量不可分享，涵盖运行时、加载器、Shell、构建工具、包管理器、实用工具、云服务、编排及基础设施即代码工具（如 PATH、GIT_ASKPASS 和 KUBECONFIG）。AWS 区域和密钥值、TF_VAR_* 值及 TF_TOKEN_* 值仍可显式选择并加密分享。仅大小写不同的环境变量名将视为冲突。向尚未设置聊天默认模型的配置导入场景映射时，请同时包含 Chat 映射。",
   "share_loading": "正在加载可用配置…",
   "share_providers": "提供商",
   "share_include_base_url": "包含基础 URL",
