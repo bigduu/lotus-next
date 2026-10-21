@@ -8,6 +8,7 @@ export const uiEnUs = {
   "share_description": "Share selected providers, model scenarios and app environment variables. Nothing is uploaded to a sharing service.",
   "share_export_title": "Export selected settings",
   "share_selection_hint": "Select individual entries. API keys, base URLs and environment values start excluded. Selecting a scenario also selects its provider without its key or base URL.",
+  "share_contract_limits": "Base URLs with embedded credentials, query strings or fragments, runtime or loader environment variables (such as PATH or NODE_OPTIONS), and Copilot sign-in credentials cannot be shared. When importing role mappings into a setup without chat defaults, include the Chat mapping.",
   "share_loading": "Loading available settings…",
   "share_providers": "Providers",
   "share_include_base_url": "Include base URL",

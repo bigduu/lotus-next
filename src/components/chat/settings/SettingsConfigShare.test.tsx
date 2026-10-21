@@ -82,6 +82,9 @@ afterEach(() => {
 describe("SettingsConfigShare", () => {
   it("starts with no secrets, URLs or values selected and preserves all nine scenario choices", async () => {
     await mount()
+    expect(document.body.textContent).toContain("Base URLs with embedded credentials, query strings or fragments")
+    expect(document.body.textContent).toContain("runtime or loader environment variables (such as PATH or NODE_OPTIONS)")
+    expect(document.body.textContent).toContain("When importing role mappings into a setup without chat defaults, include the Chat mapping.")
     expect([...document.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')].every((input) => !input.checked)).toBe(true)
     for (const name of PROVIDER_DEFAULT_MODEL_REF_KEYS) expect(document.body.textContent).toContain(`${name}: sample / fake-model`)
     await check("Sample (sample)")
@@ -111,6 +114,19 @@ describe("SettingsConfigShare", () => {
     expect(clipboard.writeText).not.toHaveBeenCalled()
     await click("Copy sharing string")
     expect(clipboard.writeText).toHaveBeenCalledExactlyOnceWith(source)
+  })
+
+  it("keeps Copilot sign-in credentials unavailable while permitting its non-secret configuration selection", async () => {
+    vi.mocked(configShareService.inventory).mockResolvedValue({ ...inventory(), providers: [{ id: "sample", label: "Sample", type: "copilot" }] })
+    await mount()
+    await check("Sample (sample)")
+    await check("Allow the selected API keys and environment values in this export")
+    const apiKey = [...document.querySelectorAll<HTMLLabelElement>("label")].find((item) => item.textContent?.trim() === "Include API key")!.querySelector<HTMLInputElement>('input[type="checkbox"]')!
+    expect(apiKey.disabled).toBe(true)
+    expect(apiKey.checked).toBe(false)
+    expect(document.body.textContent).toContain("Copilot sign-in credentials cannot be shared")
+    await click("Generate sharing string")
+    expect(configShareService.export).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ providers: ["sample"], provider_api_keys: [] }), true, undefined, expect.any(AbortSignal))
   })
 
   it("previews on explicit request, defaults conflicts to skip and submits one stable CAS operation on double click", async () => {

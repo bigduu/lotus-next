@@ -198,6 +198,7 @@ export function SettingsConfigShare() {
     <section className="space-y-3 rounded-lg border p-3" aria-labelledby={`${id}-export`}>
       <h3 id={`${id}-export`} className="font-medium">{uiText("share_export_title")}</h3>
       <p className="text-xs text-muted-foreground">{uiText("share_selection_hint")}</p>
+      <p className="text-xs text-muted-foreground">{uiText("share_contract_limits")}</p>
       {loading ? <p>{uiText("share_loading")}</p> : <>
         <fieldset disabled={locked || !confirmed} className="space-y-3">
           <legend className="mb-2 text-sm font-medium">{uiText("share_providers")}</legend>
@@ -205,7 +206,7 @@ export function SettingsConfigShare() {
             <Check label={`${provider.label} (${provider.id})`} checked={selection.providers.includes(provider.id)} onChange={(checked) => chooseProvider(provider.id, checked)} />
             <div className="ml-5 flex flex-wrap gap-4">
               <Check label={uiText("share_include_base_url")} checked={selection.provider_base_urls.includes(provider.id)} disabled={!selection.providers.includes(provider.id)} onChange={(checked) => choose({ ...selection, provider_base_urls: toggle(selection.provider_base_urls, provider.id, checked) })} />
-              <Check label={uiText("share_include_api_key")} checked={selection.provider_api_keys.includes(provider.id)} disabled={!selection.providers.includes(provider.id) || !includeSecrets} onChange={(checked) => choose({ ...selection, provider_api_keys: toggle(selection.provider_api_keys, provider.id, checked) })} />
+              <Check label={uiText("share_include_api_key")} checked={selection.provider_api_keys.includes(provider.id)} disabled={!selection.providers.includes(provider.id) || !includeSecrets || provider.type === "copilot"} onChange={(checked) => choose({ ...selection, provider_api_keys: toggle(selection.provider_api_keys, provider.id, checked) })} />
             </div>
           </div>)}
         </fieldset>
