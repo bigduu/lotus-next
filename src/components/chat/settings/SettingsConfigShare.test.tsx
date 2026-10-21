@@ -83,7 +83,8 @@ describe("SettingsConfigShare", () => {
   it("starts with no secrets, URLs or values selected and preserves all nine scenario choices", async () => {
     await mount()
     expect(document.body.textContent).toContain("Base URLs with embedded credentials, query strings or fragments")
-    expect(document.body.textContent).toContain("runtime or loader environment variables (such as PATH or NODE_OPTIONS)")
+    expect(document.body.textContent).toContain("runtime, loader or Git control environment variables (such as PATH, NODE_OPTIONS or GIT_ASKPASS)")
+    expect(document.body.textContent).toContain("Environment variable names that differ only in case count as conflicts.")
     expect(document.body.textContent).toContain("When importing role mappings into a setup without chat defaults, include the Chat mapping.")
     expect([...document.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')].every((input) => !input.checked)).toBe(true)
     for (const name of PROVIDER_DEFAULT_MODEL_REF_KEYS) expect(document.body.textContent).toContain(`${name}: sample / fake-model`)
