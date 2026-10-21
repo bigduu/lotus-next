@@ -1,5 +1,5 @@
 import { uiText, useUiLocale } from "@shared/i18n/ui"
-import { useEffect, useId, useRef, useState } from "react"
+import { useEffect, useId, useRef, useState, type ReactNode } from "react"
 import { Check, Copy, List, MoreHorizontal, Pencil, Pin, PinOff, Sparkles, Trash2 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { SIDEBAR_SESSION_DRAG_TYPE, type ProjectSidebarSection } from "@/lib/projectSidebarPreferences"
@@ -31,6 +31,7 @@ export function SessionRow({
   sections = [],
   sectionId = null,
   onMoveToSection,
+  dragHandle,
 }: {
   chat: Chat
   active: boolean
@@ -41,6 +42,7 @@ export function SessionRow({
   onTogglePin: () => void
   onCopySessionId: () => void
   projectId?: string
+  dragHandle?: ReactNode
   sections?: readonly ProjectSidebarSection[]
   sectionId?: string | null
   onMoveToSection?: (sectionId: string | null) => void
@@ -48,6 +50,7 @@ export function SessionRow({
   useUiLocale()
   const menu = useSidebarContextMenu()
   const dragged = useRef(false)
+  const internalPointer = useRef(false)
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(chat.title ?? "")
   const inputRef = useRef<HTMLInputElement>(null)
@@ -93,8 +96,12 @@ export function SessionRow({
       data-sidebar-session={chat.id}
       data-session-project={projectId}
       draggable
-      onPointerDownCapture={() => { dragged.current = false }}
+      onPointerDownCapture={(event) => {
+        dragged.current = false
+        internalPointer.current = event.target instanceof Element && !!event.target.closest("[data-sidebar-drag-handle]")
+      }}
       onDragStart={(event) => {
+        if (internalPointer.current) { event.preventDefault(); return }
         dragged.current = true
         event.dataTransfer.setData(SIDEBAR_SESSION_DRAG_TYPE, JSON.stringify({ projectId: projectId ?? null, sessionId: chat.id }))
         event.dataTransfer.effectAllowed = "copyMove"
@@ -127,6 +134,7 @@ export function SessionRow({
         )}
         <span className="truncate">{chat.title || uiText("new_session_c57c30bc")}</span>
       </button>
+      {dragHandle}
       {unread && <span id={unreadDescriptionId} className="sr-only">{uiText("unread_messages_519491f4")}</span>}
 
       <DropdownMenu open={menu.open} onOpenChange={menu.onOpenChange}>
