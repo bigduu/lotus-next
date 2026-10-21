@@ -99,6 +99,55 @@ test("Command palette keeps IME candidates local, switches the current root and 
   expect(observation.pageErrors).toEqual([])
 })
 
+for (const cancelKey of ["Escape", "Control+k", "navigation"]) test(`cold palette loading respects ${cancelKey} and existing key ownership`, async ({ page }, info) => {
+  test.skip(cancelKey === "navigation" && info.project.name !== "desktop-chromium", "Desktop pending-load navigation; keyboard cancellation covers every viewport")
+  const observation = await setup(page)
+  if (info.project.name === "phone-chromium") await page.keyboard.press("Escape")
+  const composer = page.getByRole("textbox", { name: "消息", exact: true }).first()
+  await composer.fill("Keep the pending-load owner")
+  let releaseChunk!: () => void
+  let requested = false
+  const gate = new Promise<void>((resolve) => { releaseChunk = resolve })
+  await page.route("**/assets/CommandPalette-*.js", async (route) => {
+    requested = true
+    await gate
+    await route.fallback()
+  })
+  await page.keyboard.press("Control+k")
+  await expect.poll(() => requested).toBe(true)
+  const loadingDialog = page.getByRole("dialog", { name: "搜索会话或操作…", exact: true })
+  await expect(loadingDialog).toBeFocused()
+  if (cancelKey === "Control+k") await loadingDialog.evaluate((element) => {
+    const browser = element.ownerDocument.defaultView!
+    for (const options of [{ isComposing: true }, { keyCode: 229 }]) {
+      element.dispatchEvent(new browser.KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true, ...options }))
+    }
+    const owned = new browser.KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })
+    owned.preventDefault()
+    element.dispatchEvent(owned)
+  })
+  await expect(loadingDialog).toBeFocused()
+  if (cancelKey === "navigation") {
+    // An external navigation intent can arrive while the modal's code loads.
+    await page.locator('[data-sidebar-session="command-chinese-a"]').getByRole("button", { name: "中文会话一", exact: true, includeHidden: true }).evaluate((element) => (element as unknown as { click(): void }).click())
+    await expect(page.getByRole("banner")).toContainText("中文会话一")
+  } else await page.keyboard.press(cancelKey)
+  const loaded = page.waitForResponse((response) => /\/assets\/CommandPalette-[^/]+\.js$/.test(new URL(response.url()).pathname))
+  releaseChunk()
+  await loaded
+  await expect(page.locator("[data-command-palette]")).toHaveCount(0)
+  await page.keyboard.press("Control+k")
+  const search = page.getByRole("combobox", { name: "搜索会话或操作…", exact: true })
+  await expect(search).toBeFocused()
+  await search.press("Escape")
+  await expect(search).toBeHidden()
+  if (cancelKey !== "navigation") {
+    await expect(composer).toBeFocused()
+    await expectComposerText(composer, "Keep the pending-load owner")
+  }
+  expect(observation.pageErrors).toEqual([])
+})
+
 test("Command palette handles empty results and repeated Escape without stealing navigation focus", async ({ page }, info) => {
   const observation = await setup(page)
   if (info.project.name === "phone-chromium") await page.keyboard.press("Escape")

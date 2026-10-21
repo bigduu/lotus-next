@@ -2,6 +2,7 @@ import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react"
 import { copyText } from "@shared/utils/clipboard"
 import { Inspector } from "@/components/chat/Inspector"
+import { LazyCommandPalette } from "@/components/chat/LazyCommandPalette"
 import { ExternalLinkProvider } from "@/components/chat/ExternalLinkDialog"
 import { LazySettings } from "@/components/chat/LazySettings"
 import { Onboarding } from "@/components/chat/Onboarding"
@@ -39,8 +40,6 @@ import type { RightWorkbenchTab, WorkbenchToolTab } from "@/components/app/Right
 
 // The optional workbench need not add its tab/drag UI to ordinary-chat startup.
 const RightWorkbench = lazy(() => import("@/components/app/RightWorkbench").then((module) => ({ default: module.RightWorkbenchContent })))
-// Search navigation is optional; load its primitive only when the palette opens.
-const CommandPalette = lazy(() => import("@/components/chat/CommandPalette").then((module) => ({ default: module.CommandPalette })))
 
 function App() {
   useUiLocale()
@@ -52,10 +51,12 @@ function App() {
   // starting another empty composer while Supervisor is still opening.
   const select = useCallback((id: string) => {
     mainNavigationVersion.current += 1
+    setPaletteOpen(false)
     selectSession(id)
   }, [selectSession])
   const newChat = useCallback(() => {
     mainNavigationVersion.current += 1
+    setPaletteOpen(false)
     createChat()
   }, [createChat])
 
@@ -673,26 +674,22 @@ function App() {
       ) : null}
     </div>
       <LazySettings open={settingsOpen} onClose={closeSettings} />
-      {paletteOpen ? (
-        <Suspense fallback={null}>
-          <CommandPalette
-            getReturnFocusTarget={paletteReturnFocusRef.current}
-            open={paletteOpen}
-            onClose={() => setPaletteOpen(false)}
-            chats={chats}
-            onSelect={(id) => {
-              setSettingsOpen(false)
-              select(id)
-              setSidebarOpen(false)
-            }}
-            onNewChat={() => {
-              setSettingsOpen(false)
-              newChat()
-            }}
-            onSettings={openSettings}
-          />
-        </Suspense>
-      ) : null}
+      <LazyCommandPalette
+        getReturnFocusTarget={paletteReturnFocusRef.current}
+        open={paletteOpen}
+        onClose={() => setPaletteOpen(false)}
+        chats={chats}
+        onSelect={(id) => {
+          setSettingsOpen(false)
+          select(id)
+          setSidebarOpen(false)
+        }}
+        onNewChat={() => {
+          setSettingsOpen(false)
+          newChat()
+        }}
+        onSettings={openSettings}
+      />
     </div>
     </ExternalLinkProvider>
   )
