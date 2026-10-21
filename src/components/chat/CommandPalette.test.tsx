@@ -21,6 +21,82 @@ afterEach(() => {
 })
 
 describe("CommandPalette session scope", () => {
+  it("keeps action-first ordering and the existing fifty-root limit", () => {
+    act(() => root.render(<CommandPalette open onClose={vi.fn()} onSelect={vi.fn()} onSettings={vi.fn()} onNewChat={vi.fn()}
+      chats={Array.from({ length: 55 }, (_, index) => ({ id: `session-${index}`, title: `Session ${index}` }))} />))
+    const options = [...container.querySelectorAll('[role="option"]')].map((option) => option.textContent)
+    expect(options).toHaveLength(52)
+    expect(options.slice(0, 3)).toEqual([uiText("new_conversation_6897a8ef"), uiText("system_settings_68ea5dd4"), "Session 0"])
+    expect(options.at(-1)).toBe("Session 49")
+  })
+
+  it("uses Command navigation without looping and picks the current live result", () => {
+    const onSelect = vi.fn()
+    const render = (chats: Array<{ id: string; title: string }>) => act(() => root.render(
+      <CommandPalette open chats={chats} onClose={vi.fn()} onSelect={onSelect} onSettings={vi.fn()} onNewChat={vi.fn()} />,
+    ))
+    render([{ id: "alpha", title: "Alpha" }, { id: "beta", title: "Beta" }])
+    const input = container.querySelector("input")!
+    const key = (value: string) => act(() => input.dispatchEvent(new KeyboardEvent("keydown", { key: value, bubbles: true, cancelable: true })))
+    const active = () => container.querySelector('[role="option"][aria-selected="true"]')?.textContent
+    key("ArrowUp")
+    expect(active()).toBe(uiText("new_conversation_6897a8ef"))
+    key("End")
+    expect(active()).toBe("Beta")
+    key("ArrowDown")
+    expect(active()).toBe("Beta")
+    render([{ id: "gamma", title: "Gamma" }])
+    key("End")
+    key("Enter")
+    expect(onSelect).toHaveBeenCalledExactlyOnceWith("gamma")
+  })
+
+  it("keeps IME navigation, confirmation and Escape out of the command list", () => {
+    const onSelect = vi.fn()
+    const onClose = vi.fn()
+    act(() => root.render(<CommandPalette open chats={[{ id: "a", title: "中文一" }, { id: "b", title: "中文二" }]}
+      onClose={onClose} onSelect={onSelect} onSettings={vi.fn()} onNewChat={vi.fn()} />))
+    const input = container.querySelector("input")!
+    act(() => {
+      input.focus()
+      input.dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true, data: "中" }))
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, "中文")
+      input.dispatchEvent(new Event("input", { bubbles: true }))
+    })
+    const active = input.getAttribute("aria-activedescendant")
+    for (const key of ["ArrowDown", "Enter", "Escape"]) {
+      act(() => input.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true })))
+    }
+    expect(input.getAttribute("aria-activedescendant")).toBe(active)
+    expect(onSelect).not.toHaveBeenCalled()
+    expect(onClose).not.toHaveBeenCalled()
+    act(() => input.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true, data: "中文" })))
+    act(() => input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", keyCode: 229, bubbles: true, cancelable: true })))
+    expect(onSelect).not.toHaveBeenCalled()
+    act(() => input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true })))
+    expect(onSelect).toHaveBeenCalledExactlyOnceWith("a")
+    expect(onClose).toHaveBeenCalledOnce()
+  })
+
+  it("keeps an empty search open and never confirms a previously highlighted item", () => {
+    const onSelect = vi.fn()
+    const onClose = vi.fn()
+    const onNewChat = vi.fn()
+    act(() => root.render(<CommandPalette open chats={[{ id: "a", title: "Alpha" }]}
+      onClose={onClose} onSelect={onSelect} onSettings={vi.fn()} onNewChat={onNewChat} />))
+    const input = container.querySelector("input")!
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, "no matching result")
+      input.dispatchEvent(new Event("input", { bubbles: true }))
+    })
+    expect(container.querySelector('[role="status"]')?.textContent).toBe(uiText("no_matches_7a54f3fc"))
+    expect(container.querySelectorAll('[role="option"]')).toHaveLength(0)
+    act(() => input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true })))
+    expect(onSelect).not.toHaveBeenCalled()
+    expect(onNewChat).not.toHaveBeenCalled()
+    expect(onClose).not.toHaveBeenCalled()
+  })
+
   it("preserves a new search entered immediately when the palette reopens", () => {
     const onSettings = vi.fn()
     const onNewChat = vi.fn()
@@ -45,7 +121,7 @@ describe("CommandPalette session scope", () => {
     render(false)
     render(true, true)
     expect(container.querySelector("input")?.value).toBe(query)
-    expect(container.querySelectorAll("button")).toHaveLength(1)
+    expect(container.querySelectorAll('[role="option"]')).toHaveLength(1)
     act(() => container.querySelector("input")!.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })))
     expect(onSettings).toHaveBeenCalledOnce()
     expect(onNewChat).not.toHaveBeenCalled()
@@ -71,7 +147,7 @@ describe("CommandPalette session scope", () => {
     expect(container.textContent).toContain("Root session")
     expect(container.textContent).not.toContain("Stale child")
     expect(container.textContent).not.toContain("Legacy child")
-    const rootButton = [...container.querySelectorAll("button")]
+    const rootButton = [...container.querySelectorAll<HTMLElement>('[role="option"]')]
       .find((button) => button.textContent?.includes("Root session"))
     expect(rootButton).toBeDefined()
     act(() => rootButton!.click())

@@ -1,4 +1,4 @@
-import { act } from "react"
+import { act, useState } from "react"
 import { createRoot, type Root } from "react-dom/client"
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest"
 
@@ -46,6 +46,108 @@ function visibleOptions(dataAttr = "data-searchable-option") {
 }
 
 describe("SearchableSelect generic behavior", () => {
+  it("closes and discards its query when disabled mid-search without reopening when enabled", async () => {
+    const container = document.body.appendChild(document.createElement("div"))
+    const root = createRoot(container)
+    roots.push(root)
+    const render = (disabled: boolean) => act(() => root.render(<SearchableSelect items={["Alpha", "Beta"]} value="Alpha" disabled={disabled}
+      onChange={vi.fn()} getKey={(item) => item} getValue={(item) => item} getLabel={(item) => item} />))
+    render(false)
+    const trigger = container.querySelector("button")!
+    await act(async () => trigger.click())
+    changeInput(document.querySelector("input")!, "beta")
+    expect(visibleOptions()).toEqual(["Beta"])
+    render(true)
+    expect(document.querySelector("input")).toBeNull()
+    render(false)
+    expect(document.querySelector("input")).toBeNull()
+    await act(async () => trigger.click())
+    expect(document.querySelector("input")?.value).toBe("")
+    expect(visibleOptions()).toEqual(["Alpha", "Beta"])
+  })
+
+  it("navigates from the selected value, cancels without a change and returns focus to its trigger", async () => {
+    const container = document.body.appendChild(document.createElement("div"))
+    const root = createRoot(container)
+    roots.push(root)
+    const onChange = vi.fn()
+    const items = [{ id: 1, name: "Alpha" }, { id: 2, name: "Beta" }, { id: 3, name: "Gamma" }]
+    act(() => root.render(<SearchableSelect items={items} value={2} onChange={onChange}
+      getKey={(item) => String(item.id)} getValue={(item) => item.id} getLabel={(item) => item.name} />))
+    const trigger = container.querySelector("button")!
+    await act(async () => { trigger.focus(); trigger.click() })
+    const input = document.querySelector("input")!
+    const active = () => document.querySelector('[role="option"][aria-selected="true"]')?.textContent
+    expect(active()).toBe("Beta")
+    act(() => input.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true, cancelable: true })))
+    expect(active()).toBe("Gamma")
+    expect(onChange).not.toHaveBeenCalled()
+    await act(async () => input.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })))
+    await vi.waitFor(() => expect(document.activeElement).toBe(trigger))
+    expect(onChange).not.toHaveBeenCalled()
+    await act(async () => trigger.click())
+    const reopenedInput = document.querySelector("input")!
+    expect(document.querySelector('[role="option"][aria-selected="true"]')?.textContent).toBe("Beta")
+    act(() => reopenedInput.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true })))
+    expect(onChange).toHaveBeenCalledExactlyOnceWith(2)
+  })
+
+  it("keeps composition confirmation and candidate Escape inside its own input", async () => {
+    const container = document.body.appendChild(document.createElement("div"))
+    const root = createRoot(container)
+    roots.push(root)
+    const onChange = vi.fn()
+    act(() => root.render(<SearchableSelect items={["中文一", "中文二"]} value="中文一" onChange={onChange}
+      getKey={(item) => item} getValue={(item) => item} getLabel={(item) => item} />))
+    await act(async () => container.querySelector("button")!.click())
+    const input = document.querySelector("input")!
+    act(() => input.dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true })))
+    changeInput(input, "中文")
+    const active = input.getAttribute("aria-activedescendant")
+    for (const key of ["ArrowDown", "Enter", "Escape"]) {
+      act(() => input.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true })))
+    }
+    expect(document.activeElement).toBe(input)
+    expect(input.getAttribute("aria-activedescendant")).toBe(active)
+    expect(onChange).not.toHaveBeenCalled()
+    act(() => input.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true, data: "中文" })))
+    act(() => input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", keyCode: 229, bubbles: true, cancelable: true })))
+    expect(onChange).not.toHaveBeenCalled()
+    act(() => input.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true, cancelable: true })))
+    act(() => input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true })))
+    expect(onChange).toHaveBeenCalledExactlyOnceWith("中文二")
+  })
+
+  it("keeps independent selectors' search and highlighted value scoped to their popover", async () => {
+    const container = document.body.appendChild(document.createElement("div"))
+    const root = createRoot(container)
+    roots.push(root)
+    function Harness() {
+      const [first, setFirst] = useState("Alpha")
+      const [second, setSecond] = useState("Gamma")
+      const props = { items: ["Alpha", "Beta", "Gamma"], getKey: (item: string) => item, getValue: (item: string) => item, getLabel: (item: string) => item }
+      return <><SearchableSelect {...props} value={first} onChange={setFirst} searchAriaLabel="First search" />
+        <SearchableSelect {...props} value={second} onChange={setSecond} searchAriaLabel="Second search" /></>
+    }
+    act(() => root.render(<Harness />))
+    const [first, second] = container.querySelectorAll("button")
+    await act(async () => first.click())
+    const firstInput = document.querySelector<HTMLInputElement>('[aria-label="First search"]')!
+    changeInput(firstInput, "beta")
+    act(() => firstInput.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true })))
+    expect(first.textContent).toBe("Beta")
+    await act(async () => second.click())
+    const secondInput = document.querySelector<HTMLInputElement>('[aria-label="Second search"]')!
+    expect(secondInput.value).toBe("")
+    expect(document.querySelector('[role="option"][aria-selected="true"]')?.textContent).toBe("Gamma")
+    expect(first.textContent).toBe("Beta")
+    await act(async () => secondInput.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })))
+    await act(async () => first.click())
+    const reopened = document.querySelector<HTMLInputElement>('[aria-label="First search"]')!
+    expect(reopened.value).toBe("")
+    expect(document.querySelector('[role="option"][aria-selected="true"]')?.textContent).toBe("Beta")
+  })
+
   it("focuses search, filters case-insensitively by label and extra terms, selects by non-string value, and resets query on reopen", async () => {
     const container = document.body.appendChild(document.createElement("div"))
     const root = createRoot(container)

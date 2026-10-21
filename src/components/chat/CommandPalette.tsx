@@ -1,9 +1,10 @@
 import { useUiText } from "@shared/i18n/ui"
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
+import { useLayoutEffect, useMemo, useRef, useState } from "react"
 import { Search, Plus, Settings as SettingsIcon, MessageSquare } from "lucide-react"
 import * as DialogPrimitive from "@radix-ui/react-dialog"
 import { Dialog } from "@/components/ui/dialog"
-import { cn } from "@/lib/utils"
+import { Command, CommandInput, CommandItem, CommandList } from "@/components/ui/command"
+import { isCommandComposing } from "@/lib/commandComposition"
 
 type Chat = {
   id: string
@@ -38,7 +39,6 @@ export function CommandPalette({
 }) {
   const uiText = useUiText()
   const [q, setQ] = useState("")
-  const [active, setActive] = useState(0)
   const returnFocusRef = useRef<HTMLElement | null>(null)
 
   useLayoutEffect(() => {
@@ -46,7 +46,6 @@ export function CommandPalette({
       // Clear the previous search before this input can be painted/edited.
       // A passive effect can otherwise erase a quickly entered new query.
       setQ("")
-      setActive(0)
     }
   }, [open])
 
@@ -87,10 +86,6 @@ export function CommandPalette({
     return [...acts, ...sessionItems]
   }, [q, chats, onNewChat, onSettings, onSelect, uiText])
 
-  useEffect(() => {
-    setActive((a) => Math.min(a, Math.max(0, items.length - 1)))
-  }, [items.length])
-
   if (!open) return null
 
   const choose = (item: Item) => {
@@ -104,6 +99,7 @@ export function CommandPalette({
       <DialogPrimitive.Content
         aria-describedby={undefined}
         className="w-full max-w-lg overflow-hidden rounded-2xl border bg-popover shadow-2xl"
+        onEscapeKeyDown={(event) => { if (isCommandComposing(event)) event.preventDefault() }}
         onOpenAutoFocus={() => {
           returnFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null
         }}
@@ -119,41 +115,24 @@ export function CommandPalette({
         }}
       >
         <DialogPrimitive.Title className="sr-only">{uiText("search_sessions_or_actions_b2a0f9e8")}</DialogPrimitive.Title>
+        <Command shouldFilter={false} label={uiText("search_sessions_or_actions_b2a0f9e8")}>
         <div className="flex items-center gap-2 border-b px-3">
           <Search className="size-4 shrink-0 text-muted-foreground" />
-          <input
+          <CommandInput
             value={q}
-            onChange={(e) => setQ(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "ArrowDown") {
-                e.preventDefault()
-                setActive((a) => Math.min(a + 1, items.length - 1))
-              } else if (e.key === "ArrowUp") {
-                e.preventDefault()
-                setActive((a) => Math.max(a - 1, 0))
-              } else if (e.key === "Enter") {
-                e.preventDefault()
-                const it = items[active]
-                if (it) choose(it)
-              }
-            }}
+            onValueChange={setQ}
             placeholder={uiText("search_sessions_or_actions_b2a0f9e8")}
             className="w-full bg-transparent py-3 text-sm outline-none placeholder:text-muted-foreground"
           />
         </div>
-        <div className="max-h-80 overflow-y-auto p-1">
-          {items.length === 0 ? (
-            <p className="px-3 py-6 text-center text-sm text-muted-foreground">{uiText("no_matches_7a54f3fc")}</p>
-          ) : (
-            items.map((it, i) => (
-              <button
+        <CommandList className="max-h-80 p-1">
+          {items.length === 0 ? <p role="status" className="px-3 py-6 text-center text-sm text-muted-foreground">{uiText("no_matches_7a54f3fc")}</p> : null}
+          {items.map((it) => (
+              <CommandItem
                 key={`${it.kind}-${it.id}`}
-                onMouseEnter={() => setActive(i)}
-                onClick={() => choose(it)}
-                className={cn(
-                  "flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-sm transition-colors",
-                  i === active ? "bg-accent" : "hover:bg-accent/60",
-                )}
+                value={JSON.stringify([it.kind, it.id])}
+                onSelect={() => choose(it)}
+                className="w-full gap-2.5 rounded-lg px-3 py-2 text-left text-sm transition-colors hover:bg-accent/60"
               >
                 {it.kind === "action" ? (
                   it.icon
@@ -161,10 +140,10 @@ export function CommandPalette({
                   <MessageSquare className="size-4 shrink-0 text-muted-foreground" />
                 )}
                 <span className="truncate">{it.label}</span>
-              </button>
-            ))
-          )}
-        </div>
+              </CommandItem>
+            ))}
+        </CommandList>
+        </Command>
       </DialogPrimitive.Content>
     </DialogPrimitive.Overlay>
     </Dialog>
