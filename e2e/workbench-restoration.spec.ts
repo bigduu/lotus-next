@@ -208,7 +208,7 @@ test("desktop workbench grows past 840px and 46vw while preserving chat space an
   await page.getByRole("button", { name: "打开侧边面板" }).click()
   const panel = page.locator("#right-workbench")
   const width = () => panel.evaluate((element) => element.getBoundingClientRect().width)
-  const divider = panel.locator("xpath=preceding-sibling::*[1]")
+  const divider = page.getByRole("separator", { name: "调整工作面板宽度" })
   const box = await divider.boundingBox()
   expect(box).not.toBeNull()
   await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2)

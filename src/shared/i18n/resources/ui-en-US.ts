@@ -781,6 +781,8 @@ export const uiEnUs = {
   "browser_tab_bc1120de": "Browser tab {{v0}}: {{v1}}",
   "close_browser_tab_df26cd49": "Close browser tab {{v0}}: {{v1}}",
   "close_29f8e760": "Close {{v0}}",
+  "resize_sidebar": "Resize sidebar",
+  "resize_workbench": "Resize workbench",
   "workbench_c2730bc7": "Workbench",
   "open_workbench_tab_424b2095": "Open workbench tab",
   "collapse_workbench_739b282d": "Collapse workbench",

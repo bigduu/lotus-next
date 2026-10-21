@@ -46,3 +46,28 @@ it("keeps selected-row emphasis and actions stable when a running session finish
   expect(selected.querySelector('[aria-current="page"]')).not.toBeNull()
   act(() => root.unmount()); host.remove()
 })
+
+it("keeps an internal grip gesture out of the native editor drag protocol", () => {
+  Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
+  const host = document.body.appendChild(document.createElement("div")); const root = createRoot(host)
+  const noop = () => {}
+  act(() => root.render(<SessionRow chat={{ id: "root", title: "Root" }} active={false} projectId="p1"
+    dragHandle={<button data-sidebar-drag-handle="session:root">Move</button>}
+    onSelect={noop} onRename={noop} onDelete={noop} onTogglePin={noop} onCopySessionId={noop} />))
+  const row = host.querySelector<HTMLElement>("[data-sidebar-session]")!
+  const handle = row.querySelector('[data-sidebar-drag-handle]')!
+  const setData = vi.fn()
+  act(() => handle.dispatchEvent(new Event("pointerdown", { bubbles: true })))
+  const native = new Event("dragstart", { bubbles: true, cancelable: true })
+  Object.defineProperty(native, "dataTransfer", { value: { setData } })
+  act(() => row.dispatchEvent(native))
+  expect(native.defaultPrevented).toBe(true)
+  expect(setData).not.toHaveBeenCalled()
+  act(() => row.querySelector('button:not([data-sidebar-drag-handle])')!.dispatchEvent(new Event("pointerdown", { bubbles: true })))
+  const external = new Event("dragstart", { bubbles: true, cancelable: true })
+  Object.defineProperty(external, "dataTransfer", { value: { setData } })
+  act(() => row.dispatchEvent(external))
+  expect(external.defaultPrevented).toBe(false)
+  expect(setData).toHaveBeenCalledWith(SIDEBAR_SESSION_DRAG_TYPE, JSON.stringify({ projectId: "p1", sessionId: "root" }))
+  act(() => root.unmount()); host.remove()
+})

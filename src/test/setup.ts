@@ -59,6 +59,11 @@ const bindStorage = (name: "localStorage" | "sessionStorage", storage: Storage) 
 
 bindStorage("localStorage", localStorageForTests)
 bindStorage("sessionStorage", sessionStorageForTests)
+// jsdom has no layout/scrolling implementation. Command navigation still
+// invokes the browser API; geometry and real scrolling are covered in e2e.
+if (typeof HTMLElement.prototype.scrollIntoView !== "function") {
+  HTMLElement.prototype.scrollIntoView = () => {}
+}
 if (typeof ResizeObserver === "undefined") {
   Object.defineProperty(globalThis, "ResizeObserver", {
     configurable: true,

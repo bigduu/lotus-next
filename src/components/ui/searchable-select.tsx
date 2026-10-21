@@ -1,5 +1,5 @@
 import { uiText, useUiLocale } from "@shared/i18n/ui"
-import { useMemo, useRef, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { Check, ChevronDown, Search, X } from "lucide-react"
 import { cn } from "@/lib/utils"
 import {
@@ -7,7 +7,8 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover"
-import { Input } from "@/components/ui/input"
+import { Command, CommandInput, CommandItem, CommandList } from "@/components/ui/command"
+import { isCommandComposing } from "@/lib/commandComposition"
 
 export interface SearchableSelectProps<T, V> {
   /** Full list of selectable items. */
@@ -79,6 +80,14 @@ export function SearchableSelect<T, V>({
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState("")
   const searchRef = useRef<HTMLInputElement>(null)
+  const triggerRef = useRef<HTMLButtonElement>(null)
+
+  useEffect(() => {
+    if (disabled) {
+      setOpen(false)
+      setQuery("")
+    }
+  }, [disabled])
 
   const normalizedQuery = query.trim().toLowerCase()
 
@@ -114,6 +123,7 @@ export function SearchableSelect<T, V>({
     <Popover open={open && !disabled} onOpenChange={changeOpen}>
       <PopoverTrigger asChild>
         <button
+          ref={triggerRef}
           type="button"
           disabled={disabled}
           title={title}
@@ -130,30 +140,44 @@ export function SearchableSelect<T, V>({
         side={menuPlacement === "up" ? "top" : "bottom"}
         align={menuAlign === "right" ? "end" : "start"}
         className="w-72 max-w-[90vw] rounded-2xl p-1"
+        onEscapeKeyDown={(event) => { if (isCommandComposing(event)) event.preventDefault() }}
         onOpenAutoFocus={(event) => {
           event.preventDefault()
           searchRef.current?.focus()
         }}
+        onCloseAutoFocus={(event) => {
+          event.preventDefault()
+          const active = document.activeElement
+          // Another selector or navigation destination may already own focus
+          // when Radix finishes this popover's deferred close autofocus.
+          if (active instanceof HTMLElement && active !== document.body && active.isConnected && !active.closest('[hidden], [inert], [aria-hidden="true"]')) return
+          const trigger = triggerRef.current
+          if (trigger?.isConnected && !trigger.disabled && !trigger.closest('[hidden], [inert], [aria-hidden="true"]')) trigger.focus()
+        }}
       >
+        <Command shouldFilter={false} label={searchAriaLabel}
+          defaultValue={selectedItem ? JSON.stringify(getKey(selectedItem)) : undefined}>
         <div className="relative m-1 mb-1.5">
           <Search
             className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground"
             aria-hidden
           />
-          <Input
+          <CommandInput
             ref={searchRef}
-            type="text"
-            role="searchbox"
             aria-label={searchAriaLabel}
             placeholder={searchPlaceholder}
             value={query}
-            onChange={(event) => setQuery(event.currentTarget.value)}
-            className="h-8 pl-8 pr-8 text-xs"
+            onValueChange={setQuery}
+            className="h-8 rounded-md border border-input bg-background pl-8 pr-8 text-xs shadow-xs focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px]"
           />
           {query ? (
             <button
               type="button"
               aria-label={clearLabel}
+              onKeyDown={(event) => {
+                // Preserve native button activation without selecting a Command option.
+                if (event.key === "Enter") event.stopPropagation()
+              }}
               onClick={() => {
                 setQuery("")
                 searchRef.current?.focus()
@@ -164,22 +188,18 @@ export function SearchableSelect<T, V>({
             </button>
           ) : null}
         </div>
-        <div
-          className="max-h-60 overflow-y-auto p-1"
-          aria-label={optionListAriaLabel}
-        >
-          {filteredItems.length > 0 ? (
-            filteredItems.map((item) => {
+        <CommandList className="max-h-60 p-1" label={optionListAriaLabel}>
+          {filteredItems.length === 0 ? <p role="status" className="px-3 py-6 text-center text-xs text-muted-foreground">{emptyText}</p> : null}
+          {filteredItems.map((item) => {
               const itemValue = getValue(item)
               const isSelected = itemValue === value
               return (
-                <button
+                <CommandItem
                   key={getKey(item)}
-                  type="button"
                   {...{ [optionDataAttr]: "" }}
-                  aria-pressed={isSelected}
-                  onClick={() => pickItem(item)}
-                  className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-sm outline-none hover:bg-accent focus-visible:bg-accent"
+                  value={JSON.stringify(getKey(item))}
+                  onSelect={() => pickItem(item)}
+                  className="w-full gap-2 rounded-xl px-3 py-2 text-left text-sm hover:bg-accent"
                 >
                   <Check
                     className={cn(
@@ -192,18 +212,11 @@ export function SearchableSelect<T, V>({
                   >
                     {getLabel(item)}
                   </span>
-                </button>
+                </CommandItem>
               )
-            })
-          ) : (
-            <p
-              role="status"
-              className="px-3 py-6 text-center text-xs text-muted-foreground"
-            >
-              {emptyText}
-            </p>
-          )}
-        </div>
+            })}
+        </CommandList>
+        </Command>
       </PopoverContent>
     </Popover>
   )

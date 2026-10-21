@@ -781,6 +781,8 @@ export const uiZhCn = {
   "browser_tab_bc1120de": "浏览器标签页 {{v0}}：{{v1}}",
   "close_browser_tab_df26cd49": "关闭浏览器标签页 {{v0}}：{{v1}}",
   "close_29f8e760": "关闭 {{v0}}",
+  "resize_sidebar": "调整侧栏宽度",
+  "resize_workbench": "调整工作面板宽度",
   "workbench_c2730bc7": "工作面板",
   "open_workbench_tab_424b2095": "打开工作面板标签页",
   "collapse_workbench_739b282d": "收起工作面板",

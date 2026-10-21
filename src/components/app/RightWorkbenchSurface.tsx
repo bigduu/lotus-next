@@ -40,7 +40,7 @@ export function RightWorkbenchSurface({ children, visible = true, pageVisible = 
   interactionSuspended?: boolean
   tabDragRef?: RefObject<WorkbenchTabDrag | null>
   docked?: boolean
-  width?: number
+  width?: number | string
   onClose: () => void
   focusScopeKey?: string | null
   getCurrentFocusScope?: () => string | null
