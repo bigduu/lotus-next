@@ -6,6 +6,8 @@ test("selective export and redacted import fit desktop and narrow viewports (syn
   const writes: string[] = []
   const exported = "BAMBOO-SHARE:1:synthetic-browser-fixture"
   const source = "BAMBOO-SHARE:1:synthetic-import-origin-fixture"
+  const mismatchSource = "BAMBOO-SHARE:1:synthetic-type-mismatch-fixture"
+  let previewRequests = 0
   page.on("pageerror", (error) => errors.push(error.message))
   await page.route("**/*", async (route) => {
     const url = new URL(route.request().url())
@@ -28,11 +30,15 @@ test("selective export and redacted import fit desktop and narrow viewports (syn
   })
   await page.route("**/api/v1/bamboo/config/share/preview", async (route) => {
     writes.push("preview")
-    expect(route.request().postDataJSON()).toEqual({ share_string: source })
+    const mismatch = previewRequests++ > 0
+    expect(route.request().postDataJSON()).toEqual({ share_string: mismatch ? mismatchSource : source })
+    const provider = mismatch
+      ? { id: "sample", provider_type: "anthropic", label: "Sample provider", has_api_key: false, has_base_url: false, conflict: true, replace_allowed: false, target_origin: "https://current.example:9443", retains_existing_api_key: true, credential_origin_risk: false }
+      : { id: "sample", provider_type: "openai", label: "Sample provider", has_api_key: false, has_base_url: true, conflict: true, replace_allowed: true, source_origin: "https://imported.example:8443", target_origin: "https://current.example:9443", retains_existing_api_key: true, credential_origin_risk: true }
     return route.fulfill({ json: {
       apply_blocked: false, warnings: [],
       preview_token: "synthetic-token", expected_revisions: { providers: 3, env: 4, credentials: 5 },
-      preview: { contains_secrets: false, providers: [{ id: "sample", provider_type: "openai", label: "Sample provider", has_api_key: false, has_base_url: true, conflict: true, source_origin: "https://imported.example:8443", target_origin: "https://current.example:9443", retains_existing_api_key: true, credential_origin_risk: true }], scenarios: [{ scenario: "chat", provider: "sample", model: "sample-model", conflict: true }], subagent_models: [], env: [] },
+      preview: { contains_secrets: false, providers: [provider], scenarios: [{ scenario: "chat", provider: "sample", model: "sample-model", conflict: true }], subagent_models: [], env: [] },
     }, headers: { "Cache-Control": "no-store" } })
   })
 
@@ -68,6 +74,29 @@ test("selective export and redacted import fit desktop and narrow viewports (syn
   const previewScreenshot = testInfo.outputPath(`config-share-preview-${testInfo.project.name}.png`)
   await page.screenshot({ path: previewScreenshot, animations: "disabled" })
   await testInfo.attach(`config-share-preview-${testInfo.project.name}`, { path: previewScreenshot, contentType: "image/png" })
+
+  await page.getByRole("button", { name: "Cancel and clear sharing data", exact: true }).click()
+  await page.getByRole("textbox", { name: "Paste sharing string", exact: true }).fill(mismatchSource)
+  await page.getByRole("button", { name: "Preview import", exact: true }).click()
+  await expect(preview).toContainText("Imported provider type: anthropic")
+  await expect(preview).toContainText("Provider types differ. Skip this entry or import it with a new name.")
+  const providerAction = preview.getByRole("combobox", { name: "Import action providers:sample", exact: true })
+  await expect(providerAction).toHaveValue("skip")
+  await expect(providerAction.locator('option[value="replace"]')).toHaveJSProperty("disabled", true)
+  await page.getByRole("checkbox", { name: "I reviewed the entries and conflict choices", exact: true }).check()
+  await expect(page.getByRole("button", { name: "Save imported settings", exact: true })).toBeEnabled()
+  await providerAction.selectOption("rename")
+  await expect(page.getByRole("checkbox", { name: "I reviewed the entries and conflict choices", exact: true })).not.toBeChecked()
+  await expect(preview).toContainText("Imported origin: Not included; provider default")
+  await page.getByRole("textbox", { name: "New name providers:sample", exact: true }).fill("anthropic-shared")
+  await expect(page.getByRole("button", { name: "Save imported settings", exact: true })).toBeDisabled()
+  await page.getByRole("checkbox", { name: "I reviewed the entries and conflict choices", exact: true }).check()
+  await expect(page.getByRole("button", { name: "Save imported settings", exact: true })).toBeEnabled()
+  await expect(preview.getByRole("alert")).toHaveCount(0)
+  await preview.scrollIntoViewIfNeeded()
+  const typeScreenshot = testInfo.outputPath(`config-share-type-mismatch-${testInfo.project.name}.png`)
+  await page.screenshot({ path: typeScreenshot, animations: "disabled" })
+  await testInfo.attach(`config-share-type-mismatch-${testInfo.project.name}`, { path: typeScreenshot, contentType: "image/png" })
   expect(await page.evaluate(() => {
     const browser = globalThis as unknown as { document: { documentElement: { scrollWidth: number } }; innerWidth: number }
     return browser.document.documentElement.scrollWidth <= browser.innerWidth + 1
@@ -75,7 +104,8 @@ test("selective export and redacted import fit desktop and narrow viewports (syn
   const previewOverflow = await preview.evaluate((element) => element.scrollWidth <= element.clientWidth + 1)
   expect(previewOverflow).toBe(true)
   expect(await page.evaluate(() => JSON.stringify({ ...localStorage, ...sessionStorage }))).not.toContain(source)
-  expect(writes).toEqual(["export", "preview"])
+  expect(await page.evaluate(() => JSON.stringify({ ...localStorage, ...sessionStorage }))).not.toContain(mismatchSource)
+  expect(writes).toEqual(["export", "preview", "preview"])
   expect(unexpectedRequests).toEqual([])
   expect(errors).toEqual([])
 })

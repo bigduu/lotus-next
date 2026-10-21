@@ -23,7 +23,7 @@ const preview = (): SharePreviewResponse => ({
   preview_token: "fixture-token", expected_revisions: { providers: 7, env: 8, credentials: 9 },
   preview: {
     contains_secrets: true,
-    providers: [{ id: "sample", label: "Sample", provider_type: "openai", has_api_key: true, has_base_url: true, conflict: true, source_origin: "https://imported.example:8443", target_origin: "https://current.example:9443", retains_existing_api_key: false, credential_origin_risk: true }],
+    providers: [{ id: "sample", label: "Sample", provider_type: "openai", has_api_key: true, has_base_url: true, conflict: true, replace_allowed: true, source_origin: "https://imported.example:8443", target_origin: "https://current.example:9443", retains_existing_api_key: false, credential_origin_risk: true }],
     scenarios: [{ scenario: "chat", provider: "sample", model: "fake-model", conflict: true }],
     subagent_models: [{ name: "helper", provider: "sample", model: "fake-model", conflict: false }],
     env: [{ name: "SAMPLE_TOKEN", has_value: true, secret: true, conflict: false }],
@@ -271,6 +271,63 @@ describe("SettingsConfigShare", () => {
     })
     expect(document.body.textContent).toContain("Current origin: Default or unknown")
     expect(document.querySelector('[role="alert"]')?.textContent).toContain("Future requests to https://imported.example:8443 may send retained credentials or request settings.")
+  })
+
+  it("disables type-mismatch Replace and guards apply even if that disabled choice is set programmatically", async () => {
+    const response = preview()
+    response.preview.providers[0] = { ...response.preview.providers[0], provider_type: "anthropic", replace_allowed: false, has_base_url: false, source_origin: undefined, credential_origin_risk: false }
+    vi.mocked(configShareService.preview).mockResolvedValue(response)
+    await mount(); await preparedPreview()
+    const action = document.querySelector<HTMLSelectElement>('[aria-label="Import action providers:sample"]')!
+    expect(action.querySelector<HTMLOptionElement>('option[value="replace"]')?.disabled).toBe(true)
+    expect(action.value).toBe("skip")
+    expect(document.body.textContent).toContain("Imported provider type: anthropic")
+    expect(document.body.textContent).toContain("Provider types differ. Skip this entry or import it with a new name.")
+    await check("I reviewed the entries and conflict choices")
+    await act(async () => { action.value = "replace"; action.dispatchEvent(new Event("change", { bubbles: true })) })
+    await check("I reviewed the entries and conflict choices")
+    expect(button("Save imported settings").disabled).toBe(true)
+    await click("Save imported settings")
+    expect(configShareService.apply).not.toHaveBeenCalled()
+    await act(async () => { action.value = "skip"; action.dispatchEvent(new Event("change", { bubbles: true })) })
+    expect(button("Save imported settings").disabled).toBe(true)
+    await check("I reviewed the entries and conflict choices")
+    await click("Save imported settings")
+    expect(vi.mocked(configShareService.apply).mock.calls[0][0].choices.providers).toEqual({ sample: { action: "skip" } })
+  })
+
+  it("allows type-mismatch Rename with a provider-default URL after renewed review", async () => {
+    const response = preview()
+    response.preview.providers[0] = { ...response.preview.providers[0], provider_type: "anthropic", replace_allowed: false, has_base_url: false, source_origin: undefined, credential_origin_risk: false }
+    vi.mocked(configShareService.preview).mockResolvedValue(response)
+    await mount(); await preparedPreview()
+    expect(document.body.textContent).toContain("Imported origin: Not included; keep current")
+    await check("I reviewed the entries and conflict choices")
+    await act(async () => {
+      const action = document.querySelector<HTMLSelectElement>('[aria-label="Import action providers:sample"]')!
+      expect(action.querySelector<HTMLOptionElement>('option[value="rename"]')?.disabled).toBe(false)
+      action.value = "rename"; action.dispatchEvent(new Event("change", { bubbles: true }))
+    })
+    expect(document.body.textContent).toContain("Imported origin: Not included; provider default")
+    await act(async () => {
+      const name = document.querySelector<HTMLInputElement>('[aria-label="New name providers:sample"]')!
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(name, "anthropic-shared")
+      name.dispatchEvent(new Event("input", { bubbles: true }))
+    })
+    expect(button("Save imported settings").disabled).toBe(true)
+    await check("I reviewed the entries and conflict choices")
+    await click("Save imported settings")
+    expect(vi.mocked(configShareService.apply).mock.calls[0][0].choices.providers).toEqual({ sample: { action: "rename", target: "anthropic-shared" } })
+  })
+
+  it("shows the provider-default URL fallback for a new provider with no imported origin", async () => {
+    const response = preview()
+    response.preview.providers[0] = { ...response.preview.providers[0], conflict: false, replace_allowed: true, has_base_url: false, source_origin: undefined, target_origin: undefined, credential_origin_risk: false }
+    vi.mocked(configShareService.preview).mockResolvedValue(response)
+    await mount(); await preparedPreview()
+    expect(document.body.textContent).toContain("Imported origin: Not included; provider default")
+    expect(document.body.textContent).not.toContain("Imported origin: Not included; keep current")
+    expect(document.body.textContent).not.toContain("Provider types differ.")
   })
 
   it("discards stale CAS previews and exposes only a safe message", async () => {

@@ -58,6 +58,7 @@ const validatePreview = (value: unknown): SharePreviewResponse => {
   for (const row of p.providers as Record<string, unknown>[]) {
     if (!boundedString(row.id) || !boundedString(row.provider_type) || (row.label !== undefined && !boundedString(row.label)) ||
       typeof row.has_api_key !== "boolean" || typeof row.has_base_url !== "boolean" ||
+      typeof row.replace_allowed !== "boolean" || (!row.conflict && !row.replace_allowed) ||
       typeof row.retains_existing_api_key !== "boolean" || typeof row.credential_origin_risk !== "boolean" ||
       (row.source_origin !== undefined && !validOrigin(row.source_origin)) ||
       (row.target_origin !== undefined && !validOrigin(row.target_origin)) ||
@@ -89,8 +90,8 @@ const validatePreview = (value: unknown): SharePreviewResponse => {
     expected_revisions: { providers: typed.expected_revisions.providers, env: typed.expected_revisions.env, credentials: typed.expected_revisions.credentials },
     preview: {
       contains_secrets: typed.preview.contains_secrets,
-      providers: typed.preview.providers.map(({ id, provider_type, label, has_api_key, has_base_url, conflict, source_origin, target_origin, retains_existing_api_key, credential_origin_risk }) => ({
-        id, provider_type, ...(label ? { label } : {}), has_api_key, has_base_url, conflict,
+      providers: typed.preview.providers.map(({ id, provider_type, label, has_api_key, has_base_url, conflict, replace_allowed, source_origin, target_origin, retains_existing_api_key, credential_origin_risk }) => ({
+        id, provider_type, ...(label ? { label } : {}), has_api_key, has_base_url, conflict, replace_allowed,
         ...(source_origin ? { source_origin } : {}), ...(target_origin ? { target_origin } : {}),
         retains_existing_api_key, credential_origin_risk,
       })),

@@ -35,6 +35,8 @@ export interface ShareProviderPreview {
   has_api_key: boolean
   has_base_url: boolean
   conflict: boolean
+  /** Same-ID providers of a different type can only be skipped or renamed. */
+  replace_allowed: boolean
   /** Canonical HTTP(S) origins only; never full URLs or secret-bearing values. */
   source_origin?: string
   target_origin?: string

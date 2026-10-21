@@ -149,8 +149,11 @@ export function SettingsConfigShare() {
       row.group === "env" ? asciiCaseFold(choice.target) === asciiCaseFold(row.id) : choice.target === row.id
     ))
   })
+  const invalidReplace = preview && rowsFor(preview).some((row) =>
+    row.provider?.replace_allowed === false && (rowChoice(decisions, row) ?? { action: "replace" }).action === "replace",
+  )
   const apply = async () => {
-    if (!preview || preview.apply_blocked || !reviewed || invalidRename || pendingOperationId.current || busyRef.current) return
+    if (!preview || preview.apply_blocked || !reviewed || invalidRename || invalidReplace || pendingOperationId.current || busyRef.current) return
     let operationId: string
     try { operationId = crypto.randomUUID() } catch { setError(uiText("share_apply_rejected")); return }
     if (!start("apply")) return
@@ -259,23 +262,25 @@ export function SettingsConfigShare() {
           return <div key={`${row.group}:${row.id}`} className="space-y-2 rounded border p-2">
             <div className="text-sm break-words">{row.label}{row.conflict ? ` · ${uiText("share_conflict")}` : ` · ${uiText("share_addition")}`}{row.secret ? ` · ${uiText("share_hidden_value")}` : ""}</div>
             {row.provider && <dl className="space-y-1 text-xs text-muted-foreground">
-              <div><dt className="inline">{uiText("share_imported_origin")}: </dt><dd className="inline break-all font-mono">{row.provider.source_origin ?? uiText("share_origin_keep_current")}</dd></div>
+              <div><dt className="inline">{uiText("share_imported_provider_type")}: </dt><dd className="inline break-all font-mono">{row.provider.provider_type}</dd></div>
+              <div><dt className="inline">{uiText("share_imported_origin")}: </dt><dd className="inline break-all font-mono">{row.provider.source_origin ?? uiText(choice.action === "rename" || !row.conflict ? "share_origin_provider_default" : "share_origin_keep_current")}</dd></div>
               <div><dt className="inline">{uiText("share_current_origin")}: </dt><dd className="inline break-all font-mono">{row.provider.target_origin ?? uiText("share_origin_unknown")}</dd></div>
             </dl>}
+            {row.provider?.replace_allowed === false && <p className="text-xs text-muted-foreground">{uiText("share_provider_type_mismatch")}</p>}
             <label className="flex items-center gap-2 text-xs">{uiText("share_action")}
               <select aria-label={`${uiText("share_action")} ${row.group}:${row.id}`} className="settings-select" value={choice.action} disabled={locked} onChange={(event) => updateChoice(event.target.value === "rename" ? { action: "rename", target: "" } : { action: event.target.value as "skip" | "replace" })}>
                 <option value="skip">{uiText("share_skip")}</option>
-                <option value="replace">{row.conflict ? uiText("share_replace") : uiText("share_import_item")}</option>
+                <option value="replace" disabled={row.provider?.replace_allowed === false}>{row.conflict ? uiText("share_replace") : uiText("share_import_item")}</option>
                 {row.group !== "scenarios" && <option value="rename">{uiText("share_rename")}</option>}
               </select>
             </label>
-            {row.provider?.credential_origin_risk && choice.action === "replace" && <p role="alert" className="break-words text-xs text-destructive">{uiText("share_retained_key_origin_warning", { origin: row.provider.source_origin })}</p>}
+            {row.provider?.replace_allowed && row.provider.credential_origin_risk && choice.action === "replace" && <p role="alert" className="break-words text-xs text-destructive">{uiText("share_retained_key_origin_warning", { origin: row.provider.source_origin })}</p>}
             {choice.action === "rename" && <Input aria-label={`${uiText("share_new_name")} ${row.group}:${row.id}`} value={choice.target} disabled={locked} maxLength={128} onChange={(event) => updateChoice({ action: "rename", target: event.target.value })} />}
           </div>
         })}
         <p className="text-xs text-muted-foreground">{uiText("share_reference_hint")}</p>
         <Check label={uiText("share_review_confirm")} checked={reviewed} disabled={locked} onChange={setReviewed} />
-        <Button type="button" disabled={locked || preview.apply_blocked || !reviewed || !!invalidRename} onClick={() => void apply()}>{busy === "apply" ? uiText("share_working") : uiText("share_apply")}</Button>
+        <Button type="button" disabled={locked || preview.apply_blocked || !reviewed || !!invalidRename || !!invalidReplace} onClick={() => void apply()}>{busy === "apply" ? uiText("share_working") : uiText("share_apply")}</Button>
       </div>}
       {pendingOperationId.current && <Button type="button" variant="outline" disabled={!!busy} onClick={() => void checkOperation()}>{uiText("share_check_result")}</Button>}
       {pendingOperationId.current && <p className="break-all text-xs text-muted-foreground">{uiText("share_receipt", { id: pendingOperationId.current })}</p>}

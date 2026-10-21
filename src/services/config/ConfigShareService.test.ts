@@ -10,7 +10,7 @@ const shareString = "BAMBOO-SHARE:1:synthetic"
 const preview = () => ({
   apply_blocked: false, warnings: [],
   preview_token: "fixture-token", expected_revisions: { providers: 3, env: 4, credentials: 5 },
-  preview: { contains_secrets: true, providers: [{ id: "sample", provider_type: "openai", has_api_key: true, has_base_url: true, conflict: true, source_origin: "https://imported.example:8443", target_origin: "https://current.example:9443", retains_existing_api_key: false, credential_origin_risk: true }], scenarios: [], subagent_models: [], env: [{ name: "SAMPLE_TOKEN", has_value: true, secret: true, conflict: false }] },
+  preview: { contains_secrets: true, providers: [{ id: "sample", provider_type: "openai", has_api_key: true, has_base_url: true, conflict: true, replace_allowed: true, source_origin: "https://imported.example:8443", target_origin: "https://current.example:9443", retains_existing_api_key: false, credential_origin_risk: true }], scenarios: [], subagent_models: [], env: [{ name: "SAMPLE_TOKEN", has_value: true, secret: true, conflict: false }] },
 })
 const applyRequest = (): ShareApplyRequest => ({
   share_string: shareString, passphrase: "FAKE_TEST_PASSPHRASE", choices: emptyShareDecisions(),
@@ -152,6 +152,20 @@ describe("ConfigShareService", () => {
     expect(valid.preview.providers[0].retains_existing_api_key).toBe(true)
     expect(valid.preview.providers[0].credential_origin_risk).toBe(false)
     expect(Object.hasOwn(valid.preview.providers[0], "source_origin")).toBe(false)
+  })
+
+  it("requires a consistent replacement permission and projects type-mismatch restrictions", async () => {
+    const response = preview()
+    const provider = response.preview.providers[0]
+    const post = vi.spyOn(apiClient, "postOnce")
+    for (const fields of [{ replace_allowed: undefined }, { replace_allowed: false, conflict: false, credential_origin_risk: false }]) {
+      post.mockResolvedValue({ ...response, preview: { ...response.preview, providers: [{ ...provider, ...fields }] } })
+      await expect(service.preview({ share_string: shareString })).rejects.toMatchObject({ kind: "unavailable" })
+    }
+    post.mockResolvedValue({ ...response, preview: { ...response.preview, providers: [{ ...provider, provider_type: "anthropic", replace_allowed: false }] } })
+    expect((await service.preview({ share_string: shareString })).preview.providers[0]).toMatchObject({ provider_type: "anthropic", conflict: true, replace_allowed: false })
+    post.mockResolvedValue({ ...response, preview: { ...response.preview, providers: [{ ...provider, conflict: false, replace_allowed: true, target_origin: undefined, credential_origin_risk: false }] } })
+    expect((await service.preview({ share_string: shareString })).preview.providers[0].replace_allowed).toBe(true)
   })
 
   it("sends one apply with CAS and receipt id, and reads its exact operation afterward", async () => {
