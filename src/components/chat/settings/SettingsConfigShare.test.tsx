@@ -187,7 +187,7 @@ describe("SettingsConfigShare", () => {
     expect(button("Save imported settings").disabled).toBe(true)
     await act(async () => {
       const input = document.querySelector<HTMLInputElement>('[aria-label="New name providers:sample"]')!
-      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, "sample-copy")
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, "SAMPLE")
       input.dispatchEvent(new Event("input", { bubbles: true }))
     })
     await check("I reviewed the entries and conflict choices")
@@ -215,6 +215,63 @@ describe("SettingsConfigShare", () => {
     expect(button("Save imported settings").disabled).toBe(true)
     expect(document.body.textContent).toContain("automatic sign-in")
     expect(document.body.textContent).toContain("credential storage has not been initialized")
+    expect(configShareService.apply).not.toHaveBeenCalled()
+  })
+
+  it("defaults a case-conflicting environment entry to Skip and preserves its source spelling in the decision key", async () => {
+    const response = preview()
+    response.preview.env = [{ name: "Token", has_value: true, secret: true, conflict: true }]
+    vi.mocked(configShareService.preview).mockResolvedValue(response)
+    await mount(); await preparedPreview()
+    expect(document.querySelector<HTMLSelectElement>('[aria-label="Import action env:Token"]')?.value).toBe("skip")
+    await check("I reviewed the entries and conflict choices")
+    await click("Save imported settings")
+    const choices = vi.mocked(configShareService.apply).mock.calls[0][0].choices
+    expect(choices.env).toEqual({ Token: { action: "skip" } })
+    expect(Object.hasOwn(choices.env, "TOKEN")).toBe(false)
+  })
+
+  it("rejects a case-only environment rename and permits a distinct name only after renewed review", async () => {
+    const response = preview()
+    response.preview.env = [{ name: "Token", has_value: true, secret: true, conflict: true }]
+    vi.mocked(configShareService.preview).mockResolvedValue(response)
+    await mount(); await preparedPreview()
+    await act(async () => {
+      const input = document.querySelector<HTMLSelectElement>('[aria-label="Import action env:Token"]')!
+      input.value = "rename"; input.dispatchEvent(new Event("change", { bubbles: true }))
+    })
+    const rename = async (target: string) => act(async () => {
+      const input = document.querySelector<HTMLInputElement>('[aria-label="New name env:Token"]')!
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, target)
+      input.dispatchEvent(new Event("input", { bubbles: true }))
+    })
+    await rename("TOKEN")
+    await check("I reviewed the entries and conflict choices")
+    expect(button("Save imported settings").disabled).toBe(true)
+    await click("Save imported settings")
+    expect(configShareService.apply).not.toHaveBeenCalled()
+    await rename("OtherToken")
+    expect(button("Save imported settings").disabled).toBe(true)
+    await check("I reviewed the entries and conflict choices")
+    expect(button("Save imported settings").disabled).toBe(false)
+    await click("Save imported settings")
+    expect(configShareService.apply).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(configShareService.apply).mock.calls[0][0].choices.env).toEqual({ Token: { action: "rename", target: "OtherToken" } })
+  })
+
+  it("blocks a case-conflicting environment import for an uninitialized credential key alone", async () => {
+    const response = preview()
+    response.apply_blocked = true
+    response.warnings = ["credential_key_uninitialized"]
+    response.preview.env = [{ name: "Token", has_value: true, secret: true, conflict: true }]
+    vi.mocked(configShareService.preview).mockResolvedValue(response)
+    await mount(); await preparedPreview()
+    expect(document.querySelector<HTMLSelectElement>('[aria-label="Import action env:Token"]')?.value).toBe("skip")
+    expect(document.body.textContent).toContain("credential storage has not been initialized")
+    expect(document.body.textContent).not.toContain("Import could trigger automatic sign-in for Copilot")
+    await check("I reviewed the entries and conflict choices")
+    expect(button("Save imported settings").disabled).toBe(true)
+    await click("Save imported settings")
     expect(configShareService.apply).not.toHaveBeenCalled()
   })
 

@@ -29,6 +29,7 @@ const checkedRows = (preview: SharePreviewResponse): ShareDecisions => {
 }
 const rowChoice = (decisions: ShareDecisions, row: PreviewRow): ShareChoice | undefined =>
   Object.hasOwn(decisions[row.group], row.id) ? (decisions[row.group] as Record<string, ShareChoice>)[row.id] : undefined
+const asciiCaseFold = (value: string): string => value.replace(/[A-Z]/g, (letter) => letter.toLowerCase())
 function Check({ label, checked, disabled, onChange }: { label: string; checked: boolean; disabled?: boolean; onChange: (value: boolean) => void }) {
   return <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={checked} disabled={disabled} onChange={(event) => onChange(event.target.checked)} />{label}</label>
 }
@@ -144,7 +145,9 @@ export function SettingsConfigShare() {
   }
   const invalidRename = preview && rowsFor(preview).some((row) => {
     const choice = rowChoice(decisions, row)
-    return choice?.action === "rename" && (!choice.target.trim() || choice.target === row.id)
+    return choice?.action === "rename" && (!choice.target.trim() || (
+      row.group === "env" ? asciiCaseFold(choice.target) === asciiCaseFold(row.id) : choice.target === row.id
+    ))
   })
   const apply = async () => {
     if (!preview || preview.apply_blocked || !reviewed || invalidRename || pendingOperationId.current || busyRef.current) return
