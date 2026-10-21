@@ -1,5 +1,17 @@
 // Application-owned UI copy.
 export const uiEnUs = {
+  "context_compression_notice_running": "Compressing earlier messages.",
+  "context_compression_notice_completed_waiting": "Context compression finished. Waiting for the next prompt estimate to update usage.",
+  "context_compression_notice_completed": "Context compression finished. Usage still includes instructions, tools, and recent messages.",
+  "context_compression_notice_failed_candidate": "Context compression could not safely select messages to summarize.",
+  "context_compression_notice_failed_postcondition": "The context summary failed its checks and was not used.",
+  "context_compression_notice_failed": "Context compression could not be completed.",
+  "context_compression_notice_deferred_tool": "Context compression is waiting for a safe point in the tool conversation.",
+  "context_compression_notice_deferred": "Context compression has been deferred.",
+  "context_compression_notice_skipped_no_model": "Context compression was skipped because no summary model is available.",
+  "context_compression_notice_skipped": "Context compression was skipped.",
+  "context_compression_notice_cancelled": "Context compression was cancelled.",
+  "context_compression_notice_unconfirmed": "The result of context compression is unconfirmed.",
   "session_compatibility_label": "Session execution compatibility",
   "session_compatibility_execution_blocked": "Bamboo reported an execution compatibility conflict for this session.",
   "session_compatibility_compatible": "This session is compatible with the current service.",

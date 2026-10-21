@@ -61,6 +61,7 @@ import { Toasts, type ToastNotice } from "@/components/app/Toasts"
 import { ImageLightbox } from "@/components/app/ImageLightbox"
 import { peekPendingTemplatePrompt } from "@/lib/taskTemplates"
 import { ContextUsageRing } from "@/components/app/ContextUsageRing"
+import { ContextCompressionNotice } from "@/components/app/ContextCompressionNotice"
 import { ModelEffortPicker } from "@/components/chat/ModelEffortPicker"
 import { NewSessionPermissionControl, PermissionModeControl } from "@/components/chat/PermissionModeControl"
 import { RootOrchestrationControl } from "@/components/chat/RootOrchestrationControl"
@@ -228,6 +229,7 @@ export function ChatPane({
     streamingReasoning,
     liveSegments,
     streamStatus,
+    contextCompression,
     outputRate,
     pendingUserText,
     pendingUserImages = [],
@@ -1241,6 +1243,7 @@ export function ChatPane({
             </div>
           )}
           <div className="shrink-0" hidden={historyBlocked} inert={historyBlocked} data-history-composer-blocked={historyBlocked}>
+          <ContextCompressionNotice feedback={contextCompression} />
           <Composer
           draft={draft}
           draftKey={draftKey}

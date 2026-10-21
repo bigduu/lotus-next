@@ -1,5 +1,17 @@
 // Application-owned UI copy.
 export const uiZhCn = {
+  "context_compression_notice_running": "正在压缩较早消息。",
+  "context_compression_notice_completed_waiting": "上下文压缩已完成，等待下一次提示词用量估算后更新用量。",
+  "context_compression_notice_completed": "上下文压缩已完成，用量仍包含指令、工具和近期消息。",
+  "context_compression_notice_failed_candidate": "上下文压缩未能安全选择可摘要的消息。",
+  "context_compression_notice_failed_postcondition": "上下文摘要未通过检查，未采用。",
+  "context_compression_notice_failed": "上下文压缩未能成功完成。",
+  "context_compression_notice_deferred_tool": "上下文压缩正在等待工具对话的安全时点。",
+  "context_compression_notice_deferred": "上下文压缩已暂缓。",
+  "context_compression_notice_skipped_no_model": "暂无可用的摘要模型，已跳过上下文压缩。",
+  "context_compression_notice_skipped": "已跳过上下文压缩。",
+  "context_compression_notice_cancelled": "上下文压缩已取消。",
+  "context_compression_notice_unconfirmed": "上下文压缩结果尚未确认。",
   "session_compatibility_label": "会话执行兼容性",
   "session_compatibility_execution_blocked": "Bamboo 已报告此会话存在执行兼容性冲突。",
   "session_compatibility_compatible": "此会话与当前服务兼容。",

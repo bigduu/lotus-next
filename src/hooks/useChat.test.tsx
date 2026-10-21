@@ -1,7 +1,9 @@
 import { act } from "react"
 import { createRoot, type Root } from "react-dom/client"
 import type { ProviderInstancesConfig, ProviderKind } from "@shared/types/providerConfig"
-import type { PermissionDecisionResult, ReasoningEffort } from "@services/chat/AgentService"
+import type { ContextSummaryInfo, PermissionDecisionResult, ReasoningEffort, TokenBudgetUsage } from "@services/chat/AgentService"
+import type { TokenUsage } from "@shared/types/tokenBudget"
+import type { ContextCompressionFeedback } from "@/lib/contextCompression"
 import { ApiError, NetworkRequestError } from "@services/api/errors"
 import { clearSessionCompatibilityObservations, observeSessionExecutionConflict } from "@services/chat/sessionExecutionCompatibility"
 import {
@@ -21,6 +23,7 @@ const mocks = vi.hoisted(() => {
       messages?: unknown[]
       isRunning?: boolean
       lastRunStatus?: string | null
+      tokenUsage?: TokenUsage
       config?: {
         model?: string
         model_ref?: { provider: string; model: string } | null
@@ -41,6 +44,8 @@ const mocks = vi.hoisted(() => {
     refreshChatsNow: vi.fn(),
     markCancel: vi.fn(),
     updateSession: vi.fn(),
+    updateTokenUsage: vi.fn(),
+    setTruncationInfo: vi.fn(),
   }
   return {
     appState,
@@ -142,6 +147,9 @@ type SubscriptionHandlers = {
   onComplete(): void
   onError(message: string): void
   onCancelled(): void
+  onContextCompressionStatus(phase: string, status: string): void
+  onContextSummarized(summary: ContextSummaryInfo): void
+  onTokenBudgetUpdated(usage: TokenBudgetUsage): void
   onNeedClarification(event: { question?: string; options?: string[]; allow_custom?: boolean }): void
 }
 type Deferred<T> = {
@@ -295,6 +303,8 @@ beforeEach(() => {
     mocks.appState.refreshChatsNow,
     mocks.appState.markCancel,
     mocks.appState.updateSession,
+    mocks.appState.updateTokenUsage,
+    mocks.appState.setTruncationInfo,
     mocks.initializeStore,
     mocks.sendMessage,
     mocks.execute,
@@ -317,6 +327,10 @@ beforeEach(() => {
   mocks.initializeStore.mockResolvedValue(undefined)
   mocks.appState.selectSession.mockImplementation((sessionId: string | null) => {
     mocks.appState.currentSessionId = sessionId
+  })
+  mocks.appState.updateTokenUsage.mockImplementation((sessionId: string, usage: TokenUsage) => {
+    const chat = mocks.appState.chats.find((candidate) => candidate.id === sessionId)
+    if (chat) chat.tokenUsage = usage
   })
   mocks.appState.loadSubagentSessions.mockResolvedValue(undefined)
   mocks.appState.restoreSession.mockResolvedValue(false)
@@ -2826,5 +2840,299 @@ describe("child approval compatibility", () => {
     await act(async () => { await cached(true) })
     expect(mocks.respondToChildApproval).not.toHaveBeenCalled()
     expect(hook.current.pendingApproval?.requestId).toBe("request-7")
+  })
+})
+
+describe("useChat context compression feedback", () => {
+  const summary: ContextSummaryInfo = {
+    summary: "Synthetic summary receipt; not a replacement token budget",
+    messages_summarized: 14,
+    tokens_saved: 270_000,
+  }
+  const budget = (totalTokens = 288_000): TokenBudgetUsage => ({
+    system_tokens: 8_000,
+    summary_tokens: 0,
+    window_tokens: totalTokens - 8_000,
+    total_tokens: totalTokens,
+    max_context_tokens: 320_000,
+    budget_limit: 300_000,
+    truncation_occurred: false,
+    segments_removed: 0,
+  })
+  const storedUsage = (sessionId: string) => mocks.appState.chats.find((chat) => chat.id === sessionId)?.tokenUsage
+  function queueRun(sessionId: string) {
+    const subscription = deferred<void>()
+    let capturedHandlers: SubscriptionHandlers | undefined
+    let capturedController: AbortController | undefined
+    mocks.sendMessage.mockResolvedValueOnce({ session_id: sessionId })
+    mocks.subscribeToEvents.mockImplementationOnce(
+      (_sessionId: string, handlers: SubscriptionHandlers, controller: AbortController) => {
+        capturedHandlers = handlers
+        capturedController = controller
+        controller.signal.addEventListener("abort", () => subscription.resolve(), { once: true })
+        return subscription.promise
+      },
+    )
+    return {
+      subscription,
+      get handlers() {
+        if (!capturedHandlers) throw new Error("synthetic compression stream did not subscribe")
+        return capturedHandlers
+      },
+      get controller() {
+        if (!capturedController) throw new Error("synthetic compression stream has no controller")
+        return capturedController
+      },
+    }
+  }
+  async function mountCompressionRun(onRender?: (value: HookValue) => void) {
+    const sessionId = "synthetic-compression-session"
+    mocks.appState.chats = [{ id: sessionId, messages: [], config: { model: "test-model" } }]
+    const stream = queueRun(sessionId)
+    const hook = await mountUseChat({ mode: "bound", sessionId }, onRender)
+    await act(async () => { await hook.current.send("synthetic compression lifecycle") })
+    return { hook, stream, sessionId }
+  }
+
+  it.each([
+    { status: "failed_candidate_plan:synthetic candidate diagnostic", expected: { status: "failed", reason: "candidate_plan" } },
+    { status: "deferred_tool_protocol", expected: { status: "deferred", reason: "tool_protocol" } },
+  ])("retains pre-start $status without claiming a running compressor", async ({ status, expected }) => {
+    const rendered: Array<ContextCompressionFeedback | null> = []
+    const { hook, stream } = await mountCompressionRun((value) => rendered.push(value.contextCompression))
+    expect(hook.current.contextCompression).toBeNull()
+    await act(async () => { stream.handlers.onContextCompressionStatus("preflight", status) })
+    expect(hook.current.contextCompression).toEqual(expected)
+    expect(hook.current.streamStatus).toBeNull()
+    await act(async () => {
+      stream.handlers.onContextCompressionStatus("preflight", "map:1/3 input=180000 output=4000 safe=200000 model_limit=320000")
+      stream.handlers.onToken("ordinary assistant text")
+    })
+    expect(hook.current.contextCompression).toEqual(expected)
+    expect(rendered.some((feedback) => feedback?.status === "running")).toBe(false)
+    expect(mocks.appState.updateTokenUsage).not.toHaveBeenCalled()
+    expect(mocks.appState.setTruncationInfo).not.toHaveBeenCalled()
+  })
+
+  it("retains a started compressor through map/reduce progress and ordinary tokens", async () => {
+    const { hook, stream } = await mountCompressionRun()
+    await act(async () => { stream.handlers.onContextCompressionStatus("preflight", "started") })
+    expect(hook.current.contextCompression).toEqual({ status: "running" })
+    for (const progress of [
+      "map:1/3 input=180000 output=4000 safe=200000 model_limit=320000",
+      "reduce:1/1 input=12000 output=4000 safe=200000 model_limit=320000",
+    ]) {
+      await act(async () => {
+        stream.handlers.onContextCompressionStatus("preflight", progress)
+        stream.handlers.onToken("more ordinary text")
+      })
+      expect(hook.current.contextCompression).toEqual({ status: "running" })
+    }
+    expect(mocks.appState.updateTokenUsage).not.toHaveBeenCalled()
+  })
+
+  it.each(["status", "summary"] as const)("waits for actual budget usage after a paired %s receipt without changing the meter", async (receipt) => {
+    const { hook, stream, sessionId } = await mountCompressionRun()
+    await act(async () => { stream.handlers.onTokenBudgetUpdated(budget()) })
+    expect(storedUsage(sessionId)).toMatchObject({ totalTokens: 288_000, maxContextTokens: 320_000, budgetLimit: 300_000 })
+    const originalUsage = structuredClone(storedUsage(sessionId))
+    await act(async () => {
+      stream.handlers.onContextCompressionStatus("preflight", "started")
+      if (receipt === "status") stream.handlers.onContextCompressionStatus("preflight", "completed")
+      else stream.handlers.onContextSummarized(summary)
+    })
+    expect(hook.current.contextCompression).toEqual({ status: "completed", awaitingUsage: true })
+    expect(storedUsage(sessionId)).toEqual(originalUsage)
+    expect(mocks.appState.updateTokenUsage).toHaveBeenCalledTimes(1)
+    expect(mocks.appState.setTruncationInfo).toHaveBeenCalledExactlyOnceWith(sessionId, false, 0)
+    await act(async () => { stream.handlers.onToken("the answer continues before a new budget") })
+    expect(hook.current.contextCompression).toEqual({ status: "completed", awaitingUsage: true })
+    await act(async () => { stream.handlers.onTokenBudgetUpdated(budget(256_000)) })
+    expect(hook.current.contextCompression).toEqual({ status: "completed", awaitingUsage: false })
+    expect(storedUsage(sessionId)).toMatchObject({ totalTokens: 256_000, maxContextTokens: 320_000, budgetLimit: 300_000 })
+    expect(mocks.appState.updateTokenUsage).toHaveBeenCalledTimes(2)
+    await act(async () => {
+      stream.handlers.onContextSummarized(summary)
+      stream.handlers.onContextCompressionStatus("preflight", "completed")
+    })
+    expect(hook.current.contextCompression).toEqual({ status: "completed", awaitingUsage: false })
+    expect(storedUsage(sessionId)).toMatchObject({ totalTokens: 256_000, maxContextTokens: 320_000, budgetLimit: 300_000 })
+    expect(mocks.appState.updateTokenUsage).toHaveBeenCalledTimes(2)
+  })
+
+  it.each(["status", "summary"] as const)("treats an unpaired %s receipt as unconfirmed rather than successful", async (receipt) => {
+    const { hook, stream, sessionId } = await mountCompressionRun()
+    await act(async () => { stream.handlers.onTokenBudgetUpdated(budget()) })
+    await act(async () => {
+      if (receipt === "status") stream.handlers.onContextCompressionStatus("preflight", "completed")
+      else stream.handlers.onContextSummarized(summary)
+    })
+    expect(hook.current.contextCompression).toEqual({ status: "unconfirmed" })
+    expect(storedUsage(sessionId)).toMatchObject({ totalTokens: 288_000, maxContextTokens: 320_000 })
+    expect(mocks.appState.updateTokenUsage).toHaveBeenCalledTimes(1)
+    await act(async () => { stream.handlers.onTokenBudgetUpdated(budget(256_000)) })
+    expect(hook.current.contextCompression).toEqual({ status: "unconfirmed" })
+  })
+
+  it.each(["local stop", "cancelled event"] as const)("distinguishes %s from confirmed summary cancellation and rejects queued callbacks", async (ending) => {
+    mocks.stopGeneration.mockResolvedValue(undefined)
+    const { hook, stream, sessionId } = await mountCompressionRun()
+    await act(async () => {
+      stream.handlers.onTokenBudgetUpdated(budget())
+      stream.handlers.onContextCompressionStatus("preflight", "started")
+    })
+    expect(hook.current.contextCompression).toEqual({ status: "running" })
+    await act(async () => {
+      if (ending === "local stop") hook.current.stop()
+      else { stream.handlers.onCancelled(); stream.subscription.resolve() }
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    const expected = { status: ending === "local stop" ? "unconfirmed" : "cancelled" }
+    expect(hook.current.contextCompression).toEqual(expected)
+    if (ending === "local stop") expect(stream.controller.signal.aborted).toBe(true)
+    await act(async () => {
+      stream.handlers.onContextCompressionStatus("preflight", "started")
+      stream.handlers.onContextCompressionStatus("preflight", "completed")
+      stream.handlers.onContextSummarized(summary)
+      stream.handlers.onTokenBudgetUpdated(budget(128_000))
+    })
+    expect(hook.current.contextCompression).toEqual(expected)
+    expect(storedUsage(sessionId)).toMatchObject({ totalTokens: 288_000, maxContextTokens: 320_000, budgetLimit: 300_000 })
+    expect(mocks.appState.updateTokenUsage).toHaveBeenCalledTimes(1)
+    expect(mocks.appState.setTruncationInfo).toHaveBeenCalledTimes(1)
+  })
+
+  it.each(["pending", "rejected"] as const)("does not confirm summary cancellation from a %s Stop request", async (outcome) => {
+    const request = deferred<void>()
+    mocks.stopGeneration.mockReturnValueOnce(request.promise)
+    const { hook, stream } = await mountCompressionRun()
+    await act(async () => {
+      stream.handlers.onContextCompressionStatus("preflight", "started")
+      hook.current.stop()
+    })
+    expect(hook.current.contextCompression).toEqual({ status: "unconfirmed" })
+    expect(stream.controller.signal.aborted).toBe(true)
+    expect(mocks.stopGeneration).toHaveBeenCalledOnce()
+    await act(async () => {
+      if (outcome === "rejected") request.reject(new Error("synthetic Stop transport failure"))
+      else request.resolve()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    expect(hook.current.contextCompression).toEqual({ status: "unconfirmed" })
+  })
+
+  it.each(["complete", "error"] as const)("does not infer compression success when the run ends by %s while compression is still running", async (ending) => {
+    const { hook, stream } = await mountCompressionRun()
+    await act(async () => { stream.handlers.onContextCompressionStatus("preflight", "started") })
+    const terminalHistory = deferred<void>()
+    mocks.appState.loadChatHistory.mockReturnValueOnce(terminalHistory.promise)
+    await act(async () => {
+      if (ending === "complete") stream.handlers.onComplete()
+      else stream.handlers.onError("synthetic generation error")
+      stream.subscription.resolve()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    expect(hook.current.contextCompression).toEqual({ status: "unconfirmed" })
+    expect(mocks.appState.updateTokenUsage).not.toHaveBeenCalled()
+    await act(async () => {
+      terminalHistory.resolve()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    expect(hook.current.contextCompression).toEqual({ status: "unconfirmed" })
+  })
+
+  it("cannot let an old operation overwrite the current feedback or token budget in the same Session", async () => {
+    mocks.stopGeneration.mockResolvedValue(undefined)
+    const { hook, stream, sessionId } = await mountCompressionRun()
+    await act(async () => {
+      stream.handlers.onTokenBudgetUpdated(budget())
+      stream.handlers.onContextCompressionStatus("preflight", "started")
+      hook.current.stop()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    const next = queueRun(sessionId)
+    await act(async () => { await hook.current.send("synthetic successor operation") })
+    await act(async () => {
+      next.handlers.onTokenBudgetUpdated(budget(160_000))
+      next.handlers.onContextCompressionStatus("preflight", "started")
+    })
+    expect(hook.current.contextCompression).toEqual({ status: "running" })
+    await act(async () => {
+      stream.handlers.onContextCompressionStatus("preflight", "failed_candidate_plan:old operation")
+      stream.handlers.onContextSummarized(summary)
+      stream.handlers.onTokenBudgetUpdated(budget(32_000))
+    })
+    expect(hook.current.contextCompression).toEqual({ status: "running" })
+    expect(storedUsage(sessionId)).toMatchObject({ totalTokens: 160_000, maxContextTokens: 320_000, budgetLimit: 300_000 })
+    expect(mocks.appState.updateTokenUsage).toHaveBeenCalledTimes(2)
+    expect(mocks.appState.setTruncationInfo).toHaveBeenCalledTimes(2)
+    await act(async () => {
+      next.handlers.onContextCompressionStatus("preflight", "completed")
+      next.handlers.onTokenBudgetUpdated(budget(144_000))
+    })
+    expect(hook.current.contextCompression).toEqual({ status: "completed", awaitingUsage: false })
+    expect(storedUsage(sessionId)).toMatchObject({ totalTokens: 144_000, maxContextTokens: 320_000 })
+  })
+
+  it("hides background feedback while preserving that Session's legitimate budget updates", async () => {
+    const { hook, stream, sessionId } = await mountCompressionRun()
+    await act(async () => {
+      stream.handlers.onTokenBudgetUpdated(budget())
+      stream.handlers.onContextCompressionStatus("preflight", "started")
+    })
+    const destination = "synthetic-other-session"
+    mocks.appState.chats.push({ id: destination, messages: [], config: { model: "test-model" } })
+    await hook.rerender({ mode: "bound", sessionId: destination })
+    // Rebinding a pane does not stop its background run or subscription.
+    // Its events may update A, while the new pane must show only B's data.
+    expect(stream.controller.signal.aborted).toBe(false)
+    expect(hook.current.currentSessionId).toBe(destination)
+    expect(hook.current.contextCompression).toBeNull()
+    await act(async () => {
+      stream.handlers.onContextCompressionStatus("preflight", "started")
+      stream.handlers.onContextSummarized(summary)
+      stream.handlers.onTokenBudgetUpdated(budget(64_000))
+    })
+    expect(hook.current.contextCompression).toBeNull()
+    expect(storedUsage(destination)).toBeUndefined()
+    expect(storedUsage(sessionId)).toMatchObject({ totalTokens: 64_000, maxContextTokens: 320_000 })
+    expect(mocks.appState.updateTokenUsage).toHaveBeenCalledTimes(2)
+    expect(mocks.appState.setTruncationInfo).toHaveBeenCalledTimes(2)
+    await hook.rerender({ mode: "bound", sessionId })
+    expect(hook.current.contextCompression).toEqual({ status: "completed", awaitingUsage: false })
+  })
+
+  it("accepts a newly acknowledged Session's budget before its pane finishes rebinding", async () => {
+    const sessionId = "synthetic-created-compression-session"
+    mocks.appState.chats = [{ id: sessionId, messages: [], config: { model: "test-model" } }]
+    const stream = queueRun(sessionId)
+    const hook = await mountUseChat({ mode: "bound", sessionId: null })
+    await act(async () => { await hook.current.send("create a synthetic compression session") })
+    await act(async () => {
+      stream.handlers.onTokenBudgetUpdated(budget())
+      stream.handlers.onContextCompressionStatus("preflight", "started")
+    })
+    expect(hook.current.contextCompression).toBeNull()
+    expect(storedUsage(sessionId)).toMatchObject({ totalTokens: 288_000, maxContextTokens: 320_000 })
+    await hook.rerender({ mode: "bound", sessionId })
+    expect(hook.current.contextCompression).toEqual({ status: "running" })
+    expect(mocks.appState.updateTokenUsage).toHaveBeenCalledTimes(1)
+  })
+
+  it("does not let another compression phase settle an observed running summary", async () => {
+    const { hook, stream } = await mountCompressionRun()
+    await act(async () => {
+      stream.handlers.onContextCompressionStatus("preflight", "started")
+      stream.handlers.onContextCompressionStatus("postflight", "completed")
+      stream.handlers.onContextCompressionStatus("postflight", "failed_postcondition:late")
+    })
+    expect(hook.current.contextCompression).toEqual({ status: "running" })
+    await act(async () => { stream.handlers.onContextCompressionStatus("preflight", "completed") })
+    expect(hook.current.contextCompression).toEqual({ status: "completed", awaitingUsage: true })
   })
 })
