@@ -179,6 +179,7 @@ import { ticketSnapshot } from "@services/tickets/testFixtures"
 import { applyTicketSnapshot } from "@services/tickets/state"
 import { ChatPane } from "./ChatPane"
 import { isSessionUnread, useSessionReadState } from "@/lib/sessionReadState"
+import { uiText } from "@shared/i18n/ui"
 const skill = (id: string): SkillDefinition => ({ id, name: id, description: id, prompt: id, tool_refs: [`tool-${id}`] })
 const workflow = (id: string): CommandItem => ({ id, name: id, display_name: id, description: id, type: "workflow", metadata: null })
 const skillA = skill("skill-a")
@@ -2023,6 +2024,48 @@ it("keeps a failed secondary history distinct from empty content and retains its
   expect(document.querySelector("textarea")).toBe(textarea)
   expect(composer().draft).toBe("Unsent draft survives history recovery")
   expect(send).not.toHaveBeenCalled()
+})
+
+describe("context compression presentation", () => {
+  it("keeps a pre-start failure visible during text streaming without a usage estimate", async () => {
+    const send = vi.fn<Send>()
+    await mount(send, "compression-pane", true, "reply tokens")
+    const chat = { ...createChat(send, "compression-pane"), sending: true, streaming: "reply tokens",
+      contextCompression: { status: "failed", reason: "candidate_plan" } as const }
+    const render = async (next: ChatPaneProps["chat"]) => act(async () => roots.at(-1)!.render(
+      <ChatPane chat={next} pickedWorkspace="/picked" onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()}
+        splitOpen={false} onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false} />,
+    ))
+    await render(chat)
+    const notice = document.querySelector('[data-testid="context-compression-notice"]')
+    expect(notice?.textContent).toBe(uiText("context_compression_notice_failed_candidate"))
+    expect(notice?.querySelector("svg")).toBeNull()
+    expect(document.querySelector('[data-testid="context-usage"]')).toBeNull()
+    await render({ ...chat, streaming: "more reply tokens" })
+    expect(document.querySelector('[data-testid="context-compression-notice"]')?.textContent).toBe(notice?.textContent)
+    await render(createChat(send, "another-pane-session"))
+    expect(document.querySelector('[data-testid="context-compression-notice"]')).toBeNull()
+    expect(send).not.toHaveBeenCalled()
+  })
+
+  it("keeps compression feedback inside the history visibility boundary", async () => {
+    const send = vi.fn<Send>()
+    await mount(send, "compression-child")
+    const chat = { ...createChat(send, "compression-child"), contextCompression: { status: "running" } as const }
+    const render = async (status: "loading" | "ready") => act(async () => roots.at(-1)!.render(
+      <ChatPane chat={chat} pickedWorkspace="/picked" onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()}
+        splitOpen onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false}
+        secondary={{ sessionId: "compression-child", chats: [], onPickSession: vi.fn(), onClose: vi.fn(),
+          historyRead: { status, retry: vi.fn() } }} />,
+    ))
+    await render("loading")
+    const notice = document.querySelector('[data-testid="context-compression-notice"]')!
+    expect((notice.closest("[data-history-composer-blocked]") as HTMLElement).hidden).toBe(true)
+    await render("ready")
+    expect((notice.closest("[data-history-composer-blocked]") as HTMLElement).hidden).toBe(false)
+    expect(notice.textContent).toBe(uiText("context_compression_notice_running"))
+    expect(send).not.toHaveBeenCalled()
+  })
 })
 
 describe("session compatibility presentation and submit guard", () => {

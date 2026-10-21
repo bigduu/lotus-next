@@ -1,5 +1,17 @@
 // Application-owned UI copy.
 export const uiEnUs = {
+  "context_compression_notice_running": "Compressing earlier messages.",
+  "context_compression_notice_completed_waiting": "Context compression finished. Waiting for the next prompt estimate to update usage.",
+  "context_compression_notice_completed": "Context compression finished. Usage still includes instructions, tools, and recent messages.",
+  "context_compression_notice_failed_candidate": "Context compression could not safely select messages to summarize.",
+  "context_compression_notice_failed_postcondition": "The context summary failed its checks and was not used.",
+  "context_compression_notice_failed": "Context compression could not be completed.",
+  "context_compression_notice_deferred_tool": "Context compression is waiting for a safe point in the tool conversation.",
+  "context_compression_notice_deferred": "Context compression has been deferred.",
+  "context_compression_notice_skipped_no_model": "Context compression was skipped because no summary model is available.",
+  "context_compression_notice_skipped": "Context compression was skipped.",
+  "context_compression_notice_cancelled": "Context compression was cancelled.",
+  "context_compression_notice_unconfirmed": "The result of context compression is unconfirmed.",
   "share_boundary_blocked": "Saving this import is unavailable for the current provider or credential state. Export and preview remain available.",
   "share_provider_auth_blocked": "Import could trigger automatic sign-in for Copilot. Use a target with explicit non-Copilot provider instances, and exclude Copilot from the bundle before trying again.",
   "share_key_uninitialized": "The server's credential storage has not been initialized. Set up credential storage through its normal settings before importing values.",
