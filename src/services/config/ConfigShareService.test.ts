@@ -18,6 +18,78 @@ const applyRequest = (): ShareApplyRequest => ({
 })
 
 describe("ConfigShareService", () => {
+  const revisions = { providers: 4, env: 5, credentials: 6 }
+  const health = () => ({
+    providers: { revision: 4, status: "healthy" },
+    application: {
+      sections: { providers: { revision: 4 }, env: { revision: 5 }, credentials: { revision: 6 } },
+      consumers: [{ id: "provider-runtime", state: "in_sync", applied_dependencies: { providers: 4, credentials: 6 }, credential_source: { status: "observed_inputs", revision: 6 } }],
+    },
+  })
+
+  it("waits for the committed provider generation using only bounded no-store health reads", async () => {
+    vi.useFakeTimers()
+    const stale = health()
+    stale.providers.revision = 3
+    const get = vi.spyOn(apiClient, "get").mockResolvedValueOnce(stale).mockResolvedValue(health())
+    const post = vi.spyOn(apiClient, "postOnce")
+    const waiting = service.waitForProviderRefresh(revisions)
+    await vi.advanceTimersByTimeAsync(200)
+    await waiting
+    expect(get).toHaveBeenCalledTimes(2)
+    expect(get).toHaveBeenLastCalledWith("/bamboo/config/live-health", expect.objectContaining({ cache: "no-store", signal: expect.any(AbortSignal) }))
+    expect(post).not.toHaveBeenCalled()
+  })
+
+  it.each(["section", "applied", "credential-source"])("fails closed on inconsistent %s revisions with a finite read budget", async (kind) => {
+    vi.useFakeTimers()
+    const value = health()
+    if (kind === "section") value.application.sections.env.revision = 4
+    if (kind === "applied") value.application.consumers[0].applied_dependencies.providers = 3
+    if (kind === "credential-source") value.application.consumers[0].credential_source.revision = 5
+    const get = vi.spyOn(apiClient, "get").mockResolvedValue(value)
+    const waiting = service.waitForProviderRefresh(revisions).catch((error) => error)
+    await vi.advanceTimersByTimeAsync(3_000)
+    expect(await waiting).toMatchObject({ kind: "unavailable" })
+    expect(get).toHaveBeenCalledTimes(15)
+  })
+
+  it("does not read without committed revisions and discards raw health errors", async () => {
+    const get = vi.spyOn(apiClient, "get")
+    await expect(service.waitForProviderRefresh()).rejects.toMatchObject({ kind: "unavailable" })
+    expect(get).not.toHaveBeenCalled()
+    get.mockRejectedValue(new Error("PRIVATE_HEALTH_DETAIL"))
+    const error = await service.waitForProviderRefresh(revisions).catch((value) => value)
+    expect(error).toMatchObject({ kind: "unavailable" })
+    expect(error.message).not.toContain("PRIVATE_HEALTH_DETAIL")
+    expect(error.cause).toBeUndefined()
+  })
+
+  it("accepts later committed generations and an explicitly unnecessary credential document", async () => {
+    const value = health()
+    value.providers.revision += 1
+    for (const section of Object.values(value.application.sections)) section.revision += 1
+    const consumer = value.application.consumers[0]
+    const get = vi.spyOn(apiClient, "get").mockResolvedValue({ ...value, application: { ...value.application, consumers: [{
+      ...consumer, applied_dependencies: { providers: 5 }, credential_source: { status: "not_required", revision: null },
+    }] } })
+    await expect(service.waitForProviderRefresh(revisions)).resolves.toBeUndefined()
+    expect(get).toHaveBeenCalledTimes(1)
+  })
+
+  it.each(["missing", "unknown"])("does not infer credential readiness from a %s applied dependency", async (kind) => {
+    vi.useFakeTimers()
+    const value = health()
+    const consumer = value.application.consumers[0]
+    const get = vi.spyOn(apiClient, "get").mockResolvedValue({ ...value, application: { ...value.application, consumers: [{
+      ...consumer, applied_dependencies: { providers: 4 }, credential_source: kind === "missing" ? undefined : { status: "unknown", revision: null },
+    }] } })
+    const waiting = service.waitForProviderRefresh(revisions).catch((error) => error)
+    await vi.advanceTimersByTimeAsync(3_000)
+    expect(await waiting).toMatchObject({ kind: "unavailable" })
+    expect(get).toHaveBeenCalledTimes(15)
+  })
+
   it("resolves legacy type aliases before scenario selection without retaining config values", async () => {
     vi.spyOn(settingsService, "getProviderInstances").mockResolvedValue({
       default_provider_instance_id: "openai-work", instances: [

@@ -4,7 +4,7 @@ import { parseProviderInstancesConfig, PROVIDER_DEFAULT_MODEL_REF_KEYS } from "@
 import {
   MAX_SHARE_PASSPHRASE_BYTES, MAX_SHARE_STRING_BYTES, MIN_SHARE_PASSPHRASE_BYTES,
   type ShareApplyRequest, type ShareInput, type ShareInventory, type ShareOperation,
-  type SharePreviewResponse, type ShareSelection,
+  type SharePreviewResponse, type ShareSelection, type ShareRevisions,
 } from "@shared/types/configShare"
 
 export class ConfigShareError extends Error {
@@ -34,7 +34,7 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
   !!value && typeof value === "object" && !Array.isArray(value)
 const boundedString = (value: unknown): value is string => typeof value === "string" && value.length > 0 && value.length <= 1_024
 const safeRevision = (value: unknown): value is number => Number.isSafeInteger(value) && (value as number) >= 0
-const validRevisions = (value: unknown) => isRecord(value) &&
+const validRevisions = (value: unknown): value is ShareRevisions => isRecord(value) &&
   safeRevision(value.providers) && safeRevision(value.env) && safeRevision(value.credentials)
 const validOrigin = (value: unknown): value is string => {
   if (!boundedString(value)) return false
@@ -123,6 +123,43 @@ const safeFailure = (error: unknown, fallback: "unavailable" | "unconfirmed"): C
 }
 
 export class ConfigShareService {
+  /** Wait only for the server-owned saved configuration; never query a provider catalog. */
+  async waitForProviderRefresh(revisions?: ShareRevisions): Promise<void> {
+    if (!validRevisions(revisions)) throw new ConfigShareError("unavailable")
+    const signal = AbortSignal.timeout(3_000)
+    try {
+      for (let attempt = 0; attempt < 15; attempt += 1) {
+        const value = await apiClient.get<unknown>("/bamboo/config/live-health", options(signal))
+        if (isRecord(value) && isRecord(value.providers) && value.providers.status === "healthy" &&
+          safeRevision(value.providers.revision) && value.providers.revision >= revisions.providers &&
+          isRecord(value.application) && isRecord(value.application.sections) && Array.isArray(value.application.consumers)) {
+          const sections = value.application.sections
+          const observed = Object.entries(revisions).every(([section, revision]) =>
+            isRecord(sections[section]) && safeRevision(sections[section].revision) && (sections[section].revision as number) >= revision,
+          )
+          const provider = value.application.consumers.find((consumer) => isRecord(consumer) && consumer.id === "provider-runtime")
+          if (observed && isRecord(provider) && provider.state === "in_sync" && isRecord(provider.applied_dependencies) &&
+            safeRevision(provider.applied_dependencies.providers) && provider.applied_dependencies.providers >= revisions.providers &&
+            isRecord(provider.credential_source) && (
+              (provider.applied_dependencies.credentials === undefined && provider.credential_source.status === "not_required") || (
+                safeRevision(provider.applied_dependencies.credentials) && provider.applied_dependencies.credentials >= revisions.credentials &&
+                provider.credential_source.status === "observed_inputs" &&
+                safeRevision(provider.credential_source.revision) && provider.credential_source.revision >= revisions.credentials
+              )
+            )) return
+        }
+        if (attempt < 14 && !signal.aborted) await new Promise<void>((resolve) => {
+          const finish = () => { clearTimeout(timer); signal.removeEventListener("abort", finish); resolve() }
+          const timer = setTimeout(finish, 200)
+          signal.addEventListener("abort", finish, { once: true })
+          if (signal.aborted) finish()
+        })
+        if (signal.aborted) break
+      }
+    } catch { throw new ConfigShareError("unavailable") }
+    throw new ConfigShareError("unavailable")
+  }
+
   async inventory(): Promise<ShareInventory> {
     try {
       const [rawProviders, env] = await Promise.all([settingsService.getProviderInstances(), settingsService.getEnvVars()])

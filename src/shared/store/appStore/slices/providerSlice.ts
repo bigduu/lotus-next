@@ -93,6 +93,8 @@ export interface ProviderState {
   discoveredModelsByProvider: Record<string, ProviderModelDescriptor[]>;
 
   loadProviderInstances: () => Promise<ProviderInstancesConfig>;
+  /** Revoke saved authority and all earlier supplementary reads after a configuration import. */
+  invalidateProviderState: () => void;
   createProviderInstance: (
     request: CreateProviderInstanceRequest,
   ) => Promise<CreateProviderInstanceResult>;
@@ -119,6 +121,7 @@ export interface ProviderState {
 let providerLoadRevision = 0;
 let catalogLoadRevision = 0;
 let catalogLoadPromise: Promise<void> | null = null;
+let discoveryGeneration = 0;
 
 const mutationFailure = (operation: string): Error =>
   new Error(`Failed to ${operation} provider instance`);
@@ -147,6 +150,18 @@ export const useProviderStore = create<ProviderState>((set, get) => {
     catalog: null,
     isCatalogFetching: false,
     discoveredModelsByProvider: {},
+
+    invalidateProviderState: () => {
+      providerLoadRevision += 1;
+      catalogLoadRevision += 1;
+      discoveryGeneration += 1;
+      catalogLoadPromise = null;
+      set({
+        providerSnapshot: null, providerRepairSnapshot: null, providerRepairIssues: [],
+        providerStatus: "loading", providerError: null,
+        catalog: null, discoveredModelsByProvider: {}, isCatalogFetching: false,
+      });
+    },
 
     loadProviderInstances: async () => {
       const revision = ++providerLoadRevision;
@@ -261,9 +276,11 @@ export const useProviderStore = create<ProviderState>((set, get) => {
     },
 
     fetchCatalogModels: async (provider) => {
+      const generation = discoveryGeneration;
       set({ isCatalogFetching: true });
       try {
         const response = await settingsService.fetchCatalogModels(provider);
+        if (generation !== discoveryGeneration) return response;
         if (!Array.isArray(response.fetched)) {
           throw new Error("Provider model refresh returned an invalid response");
         }
@@ -314,7 +331,7 @@ export const useProviderStore = create<ProviderState>((set, get) => {
         // details. Expose one stable category and retain no private message.
         throw modelDiscoveryFailure();
       } finally {
-        set({ isCatalogFetching: false });
+        if (generation === discoveryGeneration) set({ isCatalogFetching: false });
       }
     },
 

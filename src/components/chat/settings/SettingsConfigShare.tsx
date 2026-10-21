@@ -1,9 +1,12 @@
 import { useEffect, useId, useRef, useState } from "react"
 import { configShareService, ConfigShareError } from "@services/config/ConfigShareService"
+import { useAppStore } from "@shared/store/appStore"
+import { useProviderStore } from "@shared/store/appStore/slices/providerSlice"
+import { getRuntimeModelIds } from "@shared/types/providerConfig"
 import {
   emptyShareDecisions, emptyShareSelection, MAX_SHARE_PASSPHRASE_BYTES, MAX_SHARE_STRING_BYTES, MIN_SHARE_PASSPHRASE_BYTES,
   type ShareApplyRequest, type ShareChoice, type ShareDecisions, type ShareInventory,
-  type ShareOperation, type SharePreviewResponse, type ShareSelection, type ShareProviderPreview,
+  type ShareOperation, type SharePreviewResponse, type ShareSelection, type ShareProviderPreview, type ShareRevisions,
 } from "@shared/types/configShare"
 import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { Button } from "@/components/ui/button"
@@ -30,6 +33,21 @@ const checkedRows = (preview: SharePreviewResponse): ShareDecisions => {
 const rowChoice = (decisions: ShareDecisions, row: PreviewRow): ShareChoice | undefined =>
   Object.hasOwn(decisions[row.group], row.id) ? (decisions[row.group] as Record<string, ShareChoice>)[row.id] : undefined
 const asciiCaseFold = (value: string): string => value.replace(/[A-Z]/g, (letter) => letter.toLowerCase())
+const revokeClientAuthority = () => {
+  useProviderStore.getState().invalidateProviderState()
+  useAppStore.getState().setSavedModelOptions([])
+}
+const reloadClientAuthority = async (revisions?: ShareRevisions) => {
+  // Catalog enrichment may contact providers. Reload only saved authority and
+  // derive admitted model IDs locally; earlier reads cannot restore old state.
+  revokeClientAuthority()
+  await configShareService.waitForProviderRefresh(revisions)
+  const snapshot = await useProviderStore.getState().loadProviderInstances()
+  const current = useProviderStore.getState()
+  if (current.providerStatus !== "ready" || current.providerSnapshot !== snapshot) throw new ConfigShareError("unavailable")
+  useAppStore.getState().setSavedModelOptions(snapshot.instances.filter((instance) => instance.enabled)
+    .flatMap((instance) => getRuntimeModelIds(instance, snapshot.defaults)))
+}
 function Check({ label, checked, disabled, onChange }: { label: string; checked: boolean; disabled?: boolean; onChange: (value: boolean) => void }) {
   return <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={checked} disabled={disabled} onChange={(event) => onChange(event.target.checked)} />{label}</label>
 }
@@ -50,9 +68,11 @@ export function SettingsConfigShare() {
   const [decisions, setDecisions] = useState<ShareDecisions>(emptyShareDecisions)
   const [reviewed, setReviewed] = useState(false)
   const [operation, setOperation] = useState<ShareOperation | null>(null)
+  const [refreshRequired, setRefreshRequired] = useState(false)
+  const [recovery, setRecovery] = useState<{ revisions?: ShareRevisions; error: string } | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [status, setStatus] = useState<string | null>(null)
-  const [busy, setBusy] = useState<"export" | "preview" | "apply" | "check" | "copy" | null>(null)
+  const [busy, setBusy] = useState<"export" | "preview" | "apply" | "check" | "copy" | "refresh" | null>(null)
   const busyRef = useRef<typeof busy>(null)
   const generation = useRef(0)
   const request = useRef<AbortController | null>(null)
@@ -77,14 +97,21 @@ export function SettingsConfigShare() {
   const invalidate = () => {
     generation.current += 1
     setPreview(null); setDecisions(emptyShareDecisions()); setReviewed(false)
-    setOperation(null); pendingOperationId.current = null
-    setStatus(null); setError(null)
+    setOperation(null); pendingOperationId.current = null; setRefreshRequired(false)
+    setStatus(null); setError(recovery ? uiText("share_current_refresh_failed") : null)
   }
   const cancel = () => {
-    if (busyRef.current === "apply" || busyRef.current === "check" || pendingOperationId.current) return
+    if (busyRef.current === "apply" || busyRef.current === "check" || busyRef.current === "refresh" || pendingOperationId.current) return
     request.current?.abort(); request.current = null
     busyRef.current = null; setBusy(null)
-    invalidate(); setShareString(""); setImportPassphrase("")
+    if (operation?.state === "committed" && refreshRequired) {
+      // Clear sharing inputs while retaining the non-sensitive receipt needed
+      // to retry the saved authority read. Cancel never repeats the import.
+      generation.current += 1
+      setPreview(null); setDecisions(emptyShareDecisions()); setReviewed(false)
+      setStatus(uiText("share_saved")); setError(uiText("share_saved_refresh_failed"))
+    } else invalidate()
+    setShareString(""); setImportPassphrase("")
     setExportPassphrase(""); setExported(""); setIncludeSecrets(false)
     setSelection(emptyShareSelection())
   }
@@ -107,7 +134,7 @@ export function SettingsConfigShare() {
   })
   const sensitiveSelection = selection.provider_api_keys.length > 0 || Object.values(selection.env).some(Boolean)
   const hasSelection = selection.providers.length + selection.scenarios.length + selection.subagent_models.length + Object.keys(selection.env).length > 0
-  const locked = !!busy || !!pendingOperationId.current
+  const locked = !!busy || !!pendingOperationId.current || refreshRequired || !!recovery
   const exportPassphraseBytes = new TextEncoder().encode(exportPassphrase).length
   const validExportPassphrase = (!sensitiveSelection && !exportPassphrase) || (!!exportPassphrase.trim() && exportPassphraseBytes >= MIN_SHARE_PASSPHRASE_BYTES && exportPassphraseBytes <= MAX_SHARE_PASSPHRASE_BYTES)
 
@@ -134,15 +161,48 @@ export function SettingsConfigShare() {
       if (mounted.current && epoch === generation.current) setError(uiText("share_preview_failed"))
     } finally { finish(epoch) }
   }
-  const showOperation = (value: ShareOperation) => {
-    setOperation(value)
+  const refreshSavedState = async (value: ShareOperation, epoch: number) => {
+    try {
+      await reloadClientAuthority(value.revisions)
+      if (mounted.current && epoch === generation.current) {
+        setRefreshRequired(false); setError(null); setStatus(uiText("share_saved"))
+      }
+    } catch {
+      if (mounted.current && epoch === generation.current) {
+        setRefreshRequired(true); setStatus(uiText("share_saved")); setError(uiText("share_saved_refresh_failed"))
+      }
+    }
+  }
+  const recoverRejectedState = async (revisions: ShareRevisions | undefined, epoch: number, message: string) => {
+    try {
+      await reloadClientAuthority(revisions)
+      if (mounted.current && epoch === generation.current) {
+        setRecovery(null); setStatus(null); setError(message)
+      }
+    } catch {
+      if (mounted.current && epoch === generation.current) {
+        setRecovery({ revisions, error: message }); setStatus(null); setError(uiText("share_current_refresh_failed"))
+      }
+    }
+  }
+  const showOperation = async (value: ShareOperation, epoch: number, expected?: ShareRevisions) => {
+    if (mounted.current && epoch === generation.current) {
+      setOperation(value)
+      if (value.state === "committed") {
+        pendingOperationId.current = null
+        setShareString(""); setImportPassphrase(""); setPreview(null); setDecisions(emptyShareDecisions()); setReviewed(false)
+        setStatus(uiText("share_saved")); setRefreshRequired(true)
+      } else if (value.state === "rejected") {
+        pendingOperationId.current = null; setPreview(null); setReviewed(false); setError(uiText("share_apply_rejected"))
+      } else setError(uiText("share_apply_unconfirmed"))
+    }
     if (value.state === "committed") {
-      pendingOperationId.current = null
-      setShareString(""); setImportPassphrase(""); setPreview(null); setDecisions(emptyShareDecisions()); setReviewed(false)
-      setStatus(uiText("share_saved"))
+      // The write survives a tab switch. Adopt globally even if this component
+      // has unmounted; only its receipt and feedback are component-local.
+      await refreshSavedState(value, epoch)
     } else if (value.state === "rejected") {
-      pendingOperationId.current = null; setPreview(null); setReviewed(false); setError(uiText("share_apply_rejected"))
-    } else setError(uiText("share_apply_unconfirmed"))
+      await recoverRejectedState(expected, epoch, uiText("share_apply_rejected"))
+    }
   }
   const invalidRename = preview && rowsFor(preview).some((row) => {
     const choice = rowChoice(decisions, row)
@@ -165,28 +225,43 @@ export function SettingsConfigShare() {
       operation_id: operationId,
     }
     pendingOperationId.current = operationId
+    revokeClientAuthority()
     setShareString(""); setImportPassphrase(""); setExportPassphrase("")
     try {
       const result = await configShareService.apply(value)
-      if (mounted.current && epoch === generation.current) showOperation(result)
+      await showOperation(result, epoch, value.expected_revisions)
     } catch (failure) {
-      if (mounted.current && epoch === generation.current) {
-        if (failure instanceof ConfigShareError && ["stale", "invalid"].includes(failure.kind)) {
+      if (failure instanceof ConfigShareError && ["stale", "invalid"].includes(failure.kind)) {
+        const message = uiText(failure.kind === "stale" ? "share_stale" : "share_apply_rejected")
+        if (mounted.current && epoch === generation.current) {
           pendingOperationId.current = null; setPreview(null); setReviewed(false)
-          setError(uiText(failure.kind === "stale" ? "share_stale" : "share_apply_rejected"))
-        } else setError(uiText("share_apply_unconfirmed"))
-      }
+          setError(message)
+        }
+        // These errors guarantee that this attempt never committed. Read the
+        // current authority instead of restoring its pre-CAS snapshot.
+        await recoverRejectedState(value.expected_revisions, epoch, message)
+      } else if (mounted.current && epoch === generation.current) setError(uiText("share_apply_unconfirmed"))
     } finally { finish(epoch) }
   }
   const checkOperation = async () => {
     const pending = pendingOperationId.current
     if (!pending || !start("check")) return
     const epoch = generation.current
+    const expected = preview?.expected_revisions
     try {
       const result = await configShareService.operation(pending)
-      if (mounted.current && epoch === generation.current) showOperation(result)
+      await showOperation(result, epoch, expected)
     } catch {
       if (mounted.current && epoch === generation.current) setError(uiText("share_apply_unconfirmed"))
+    } finally { finish(epoch) }
+  }
+  const retryRefresh = async () => {
+    if (!recovery && (operation?.state !== "committed" || !refreshRequired)) return
+    if (!start("refresh")) return
+    const epoch = generation.current
+    try {
+      if (recovery) await recoverRejectedState(recovery.revisions, epoch, recovery.error)
+      else if (operation) await refreshSavedState(operation, epoch)
     } finally { finish(epoch) }
   }
   const copy = async () => {
@@ -286,8 +361,10 @@ export function SettingsConfigShare() {
       {pendingOperationId.current && <Button type="button" variant="outline" disabled={!!busy} onClick={() => void checkOperation()}>{uiText("share_check_result")}</Button>}
       {pendingOperationId.current && <p className="break-all text-xs text-muted-foreground">{uiText("share_receipt", { id: pendingOperationId.current })}</p>}
       {operation?.state === "committed" && <p className="text-xs text-muted-foreground">{uiText("share_receipt", { id: operation.operation_id })}</p>}
+      {operation?.state === "committed" && refreshRequired && <Button type="button" variant="outline" disabled={!!busy} onClick={() => void retryRefresh()}>{uiText("share_refresh_saved")}</Button>}
+      {recovery && <Button type="button" variant="outline" disabled={!!busy} onClick={() => void retryRefresh()}>{uiText("share_refresh_current")}</Button>}
     </section>
-    <Button type="button" variant="ghost" onClick={cancel} disabled={busy === "apply" || busy === "check" || !!pendingOperationId.current}>{uiText("share_cancel")}</Button>
+    <Button type="button" variant="ghost" onClick={cancel} disabled={busy === "apply" || busy === "check" || busy === "refresh" || !!pendingOperationId.current}>{uiText("share_cancel")}</Button>
     {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
     {status && <p role="status" className="text-sm">{status}</p>}
   </div>

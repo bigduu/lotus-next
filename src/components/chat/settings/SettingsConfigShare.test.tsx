@@ -3,6 +3,15 @@ import { createRoot, type Root } from "react-dom/client"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { changeLocale } from "@shared/i18n"
 import { configShareService, ConfigShareError } from "@services/config/ConfigShareService"
+import { apiClient } from "@services/api"
+import { settingsService } from "@services/config/SettingsService"
+import { AgentClient } from "@services/chat/AgentService"
+import { modelService } from "@services/chat/ModelService"
+import { serviceFactory } from "@services/common/ServiceFactory"
+import type { FetchModelsResponse } from "@services/config/SettingsService"
+import type { ProviderCatalog } from "@shared/types/providerModelRef"
+import { useAppStore } from "@shared/store/appStore"
+import { useProviderStore } from "@shared/store/appStore/slices/providerSlice"
 import { PROVIDER_DEFAULT_MODEL_REF_KEYS } from "@shared/types/providerConfig"
 import type { ShareInventory, SharePreviewResponse, ShareOperation } from "@shared/types/configShare"
 import { SettingsConfigShare } from "./SettingsConfigShare"
@@ -12,6 +21,20 @@ environment.IS_REACT_ACT_ENVIRONMENT = true
 const roots: Root[] = []
 const source = "BAMBOO-SHARE:1:PRIVATE_SYNTHETIC_BUNDLE"
 const passphrase = "PRIVATE_SYNTHETIC_PASSPHRASE"
+const initialProviderState = useProviderStore.getState()
+const savedSnapshot = (model = "imported-model", provider = "imported-provider") => ({
+  default_provider_instance_id: provider, features: { provider_model_ref: true },
+  instances: [{ id: provider, label: "Sample", type: "openai" as const, enabled: true, config: { runtime_models: [model, "custom-model"] } }],
+  defaults: { chat: { provider, model } },
+})
+const committedRevisions = { providers: 8, env: 9, credentials: 10 }
+const liveHealth = () => ({
+  providers: { status: "healthy", revision: 8 },
+  application: {
+    sections: { providers: { revision: 8 }, env: { revision: 9 }, credentials: { revision: 10 } },
+    consumers: [{ id: "provider-runtime", state: "in_sync", applied_dependencies: { providers: 8, credentials: 10 }, credential_source: { status: "observed_inputs", revision: 10 } }],
+  },
+})
 const inventory = (): ShareInventory => ({
   providers: [{ id: "sample", label: "Sample", type: "openai" }],
   scenarios: PROVIDER_DEFAULT_MODEL_REF_KEYS.map((name) => ({ name, provider: "sample", model: "fake-model" })),
@@ -31,8 +54,9 @@ const preview = (): SharePreviewResponse => ({
 })
 const deferred = <T,>() => {
   let resolve!: (value: T) => void
-  const promise = new Promise<T>((done) => { resolve = done })
-  return { promise, resolve }
+  let reject!: (reason: unknown) => void
+  const promise = new Promise<T>((done, fail) => { resolve = done; reject = fail })
+  return { promise, resolve, reject }
 }
 const button = (text: string) => {
   const found = [...document.querySelectorAll<HTMLButtonElement>("button")].find((item) => item.textContent === text)
@@ -71,8 +95,15 @@ beforeEach(async () => {
   vi.spyOn(configShareService, "inventory").mockResolvedValue(inventory())
   vi.spyOn(configShareService, "export").mockResolvedValue(source)
   vi.spyOn(configShareService, "preview").mockResolvedValue(preview())
-  vi.spyOn(configShareService, "apply").mockImplementation(async (request) => ({ operation_id: request.operation_id, state: "committed" }))
+  vi.spyOn(configShareService, "apply").mockImplementation(async (request) => ({ operation_id: request.operation_id, state: "committed", revisions: committedRevisions }))
   vi.spyOn(configShareService, "operation")
+  useProviderStore.setState({ ...initialProviderState, providerSnapshot: savedSnapshot("old-model", "old-provider"), providerStatus: "ready" }, true)
+  useAppStore.setState({ models: ["old-model"], selectedModel: "old-model", modelsError: null })
+  vi.spyOn(settingsService, "getProviderInstances").mockResolvedValue(savedSnapshot())
+  vi.spyOn(settingsService, "getProviderCatalog").mockResolvedValue({ providers: [], models: [] })
+  vi.spyOn(settingsService, "fetchCatalogModels")
+  vi.spyOn(useAppStore.getState(), "fetchModels")
+  vi.spyOn(apiClient, "get").mockResolvedValue(liveHealth())
 })
 afterEach(() => {
   for (const root of roots.splice(0)) act(() => root.unmount())
@@ -80,6 +111,254 @@ afterEach(() => {
 })
 
 describe("SettingsConfigShare", () => {
+  it.each(["direct", "receipt"])("adopts saved defaults and model options after %s Committed without provider discovery", async (path) => {
+    if (path === "receipt") vi.mocked(configShareService.apply).mockRejectedValue(new ConfigShareError("unconfirmed"))
+    vi.mocked(configShareService.operation).mockImplementation(async (operation_id) => ({ operation_id, state: "committed", revisions: committedRevisions }))
+    const create = vi.spyOn(AgentClient.prototype, "createSession").mockRejectedValue(new Error("synthetic-stop-before-session-write"))
+    const pinnedConfig = { systemPromptId: "", baseSystemPrompt: "", lastUsedEnhancedPrompt: null, model: "pinned-model", model_ref: { provider: "pinned-provider", model: "pinned-model" } }
+    useAppStore.setState({ chats: [{ id: "existing-chat", title: "Existing chat", messages: [], createdAt: 1, config: pinnedConfig }], currentSessionId: "existing-chat" })
+    const existing = useAppStore.getState().chats
+    await mount(); await preparedPreview()
+    await check("I reviewed the entries and conflict choices")
+    await click("Save imported settings")
+    if (path === "receipt") await click("Check import result")
+    expect(useProviderStore.getState().providerSnapshot?.defaults?.chat).toEqual({ provider: "imported-provider", model: "imported-model" })
+    expect(useAppStore.getState().models).toEqual(["custom-model", "imported-model"])
+    await expect(useAppStore.getState().addChat({ title: "Synthetic new chat", messages: [], createdAt: 2, config: { systemPromptId: "", baseSystemPrompt: "", lastUsedEnhancedPrompt: null } })).rejects.toThrow("synthetic-stop-before-session-write")
+    expect(create).toHaveBeenLastCalledWith(expect.objectContaining({ model: "imported-model", model_ref: { provider: "imported-provider", model: "imported-model" }, provider: "imported-provider" }))
+    expect(useAppStore.getState().chats).toBe(existing)
+    expect(useAppStore.getState().chats[0].config).toBe(pinnedConfig)
+    expect(settingsService.getProviderCatalog).not.toHaveBeenCalled()
+    expect(settingsService.fetchCatalogModels).not.toHaveBeenCalled()
+    expect(useAppStore.getState().fetchModels).not.toHaveBeenCalled()
+    expect(configShareService.apply).toHaveBeenCalledTimes(1)
+  })
+
+  it("retains a committed receipt when authority refresh fails and retries only reads", async () => {
+    vi.mocked(settingsService.getProviderInstances).mockRejectedValueOnce(new Error("PRIVATE_REFRESH_ERROR"))
+    await mount(); await preparedPreview()
+    await check("I reviewed the entries and conflict choices")
+    await click("Save imported settings")
+    const id = vi.mocked(configShareService.apply).mock.calls[0][0].operation_id
+    expect(document.body.textContent).toContain(`Import receipt: ${id}`)
+    expect(document.querySelector('[role="alert"]')?.textContent).toContain("saved, but the client settings could not be refreshed")
+    expect(document.body.textContent).not.toContain("PRIVATE_REFRESH_ERROR")
+    expect(useProviderStore.getState().providerSnapshot).toBeNull()
+    expect(useAppStore.getState().models).toEqual([])
+    await click("Cancel and clear sharing data")
+    expect(document.body.textContent).toContain(`Import receipt: ${id}`)
+    await act(async () => { button("Refresh saved settings").click(); button("Refresh saved settings").click() })
+    expect(settingsService.getProviderInstances).toHaveBeenCalledTimes(2)
+    expect(useProviderStore.getState().providerSnapshot?.defaults?.chat.model).toBe("imported-model")
+    expect(configShareService.apply).toHaveBeenCalledTimes(1)
+    expect(configShareService.operation).not.toHaveBeenCalled()
+    expect(document.body.textContent).toContain(`Import receipt: ${id}`)
+  })
+
+  it.each(["direct", "receipt"])("adopts a %s Committed result even after the sharing tab unmounts", async (path) => {
+    const committed = deferred<ShareOperation>()
+    if (path === "direct") vi.mocked(configShareService.apply).mockReturnValueOnce(committed.promise)
+    else {
+      vi.mocked(configShareService.apply).mockRejectedValueOnce(new ConfigShareError("unconfirmed"))
+      vi.mocked(configShareService.operation).mockReturnValueOnce(committed.promise)
+    }
+    const create = vi.spyOn(AgentClient.prototype, "createSession").mockRejectedValue(new Error("synthetic-stop-before-session-write"))
+    await mount(); await preparedPreview()
+    await check("I reviewed the entries and conflict choices")
+    await click("Save imported settings")
+    if (path === "receipt") await click("Check import result")
+    expect.soft(useProviderStore.getState().providerSnapshot).toBeNull()
+    expect.soft(useAppStore.getState().models).toEqual([])
+    act(() => { for (const root of roots.splice(0)) root.unmount() })
+    const id = vi.mocked(configShareService.apply).mock.calls[0][0].operation_id
+    await act(async () => committed.resolve({ operation_id: id, state: "committed", revisions: committedRevisions }))
+    await expect(useAppStore.getState().addChat({ title: "Synthetic new chat", messages: [], createdAt: 2, config: { systemPromptId: "", baseSystemPrompt: "", lastUsedEnhancedPrompt: null } })).rejects.toThrow("synthetic-stop-before-session-write")
+    expect(create).toHaveBeenLastCalledWith(expect.objectContaining({ model: "imported-model", model_ref: { provider: "imported-provider", model: "imported-model" }, provider: "imported-provider" }))
+    expect(useAppStore.getState().models).toEqual(["custom-model", "imported-model"])
+    expect(settingsService.getProviderCatalog).not.toHaveBeenCalled()
+    expect(settingsService.fetchCatalogModels).not.toHaveBeenCalled()
+    expect(configShareService.apply).toHaveBeenCalledTimes(1)
+  })
+
+  it("keeps uncertain authority revoked when the sharing tab leaves before a lost apply response", async () => {
+    const apply = deferred<ShareOperation>()
+    vi.mocked(configShareService.apply).mockReturnValueOnce(apply.promise)
+    await mount(); await preparedPreview()
+    await check("I reviewed the entries and conflict choices")
+    await click("Save imported settings")
+    act(() => { for (const root of roots.splice(0)) root.unmount() })
+    await act(async () => apply.reject(new ConfigShareError("unconfirmed")))
+    expect(useProviderStore.getState().providerSnapshot).toBeNull()
+    expect(useProviderStore.getState().providerStatus).not.toBe("ready")
+    expect(useAppStore.getState().models).toEqual([])
+    expect(settingsService.getProviderInstances).not.toHaveBeenCalled()
+    expect(apiClient.get).not.toHaveBeenCalled()
+    expect(configShareService.apply).toHaveBeenCalledTimes(1)
+  })
+
+  it.each(["pending", "not_found"] as const)("keeps authority revoked without refreshing providers for %s outcomes", async (state) => {
+    vi.mocked(configShareService.apply).mockImplementation(async (request) => ({ operation_id: request.operation_id, state }))
+    await mount(); await preparedPreview()
+    await check("I reviewed the entries and conflict choices")
+    await click("Save imported settings")
+    expect(settingsService.getProviderInstances).not.toHaveBeenCalled()
+    expect(apiClient.get).not.toHaveBeenCalled()
+    expect(useProviderStore.getState().providerSnapshot).toBeNull()
+    expect(useProviderStore.getState().providerStatus).not.toBe("ready")
+    expect(useAppStore.getState().models).toEqual([])
+  })
+
+  it.each(["invalid", "rejected", "receipt-rejected"])("recovers current authority through reads after a known unwritten %s result", async (kind) => {
+    vi.mocked(settingsService.getProviderInstances).mockResolvedValue(savedSnapshot("current-model", "current-provider"))
+    if (kind === "invalid") vi.mocked(configShareService.apply).mockRejectedValueOnce(new ConfigShareError("invalid"))
+    else if (kind === "rejected") vi.mocked(configShareService.apply).mockImplementationOnce(async ({ operation_id }) => ({ operation_id, state: "rejected" }))
+    else {
+      vi.mocked(configShareService.apply).mockRejectedValueOnce(new ConfigShareError("unconfirmed"))
+      vi.mocked(configShareService.operation).mockImplementationOnce(async (operation_id) => ({ operation_id, state: "rejected" }))
+    }
+    const create = vi.spyOn(AgentClient.prototype, "createSession").mockRejectedValue(new Error("synthetic-stop-before-session-write"))
+    await mount(); await preparedPreview()
+    await check("I reviewed the entries and conflict choices")
+    await click("Save imported settings")
+    if (kind === "receipt-rejected") await click("Check import result")
+    expect(useProviderStore.getState().providerStatus).toBe("ready")
+    expect(useProviderStore.getState().providerSnapshot?.defaults?.chat).toEqual({ provider: "current-provider", model: "current-model" })
+    expect(useAppStore.getState().models).toEqual(["current-model", "custom-model"])
+    await expect(useAppStore.getState().addChat({ title: "Synthetic new chat", messages: [], createdAt: 2, config: { systemPromptId: "", baseSystemPrompt: "", lastUsedEnhancedPrompt: null } })).rejects.toThrow("synthetic-stop-before-session-write")
+    expect(create).toHaveBeenLastCalledWith(expect.objectContaining({ model: "current-model", model_ref: { provider: "current-provider", model: "current-model" }, provider: "current-provider" }))
+    expect(document.body.textContent).not.toContain("Imported settings are saved")
+    expect(configShareService.apply).toHaveBeenCalledTimes(1)
+    expect(settingsService.getProviderCatalog).not.toHaveBeenCalled()
+    expect(settingsService.fetchCatalogModels).not.toHaveBeenCalled()
+  })
+
+  it.each(["stale", "rejected"])("offers readonly recovery retry after %s without claiming an import was saved", async (kind) => {
+    vi.mocked(settingsService.getProviderInstances).mockRejectedValueOnce(new Error("PRIVATE_RECOVERY_ERROR")).mockResolvedValue(savedSnapshot("current-model", "current-provider"))
+    const create = vi.spyOn(AgentClient.prototype, "createSession").mockRejectedValue(new Error("synthetic-stop-before-session-write"))
+    if (kind === "stale") vi.mocked(configShareService.apply).mockRejectedValueOnce(new ConfigShareError("stale"))
+    else vi.mocked(configShareService.apply).mockImplementationOnce(async ({ operation_id }) => ({ operation_id, state: "rejected" }))
+    await mount(); await preparedPreview()
+    await check("I reviewed the entries and conflict choices")
+    await click("Save imported settings")
+    expect(document.querySelector('[role="alert"]')?.textContent).toContain("The import was not saved, and the current client settings could not be refreshed")
+    expect(document.body.textContent).not.toContain("Imported settings are saved")
+    expect(document.body.textContent).not.toContain("PRIVATE_RECOVERY_ERROR")
+    expect(useProviderStore.getState().providerSnapshot).toBeNull()
+    await click("Cancel and clear sharing data")
+    expect(button("Refresh current settings").disabled).toBe(false)
+    await act(async () => { button("Refresh current settings").click(); button("Refresh current settings").click() })
+    expect(useProviderStore.getState().providerStatus).toBe("ready")
+    expect(useProviderStore.getState().providerSnapshot?.defaults?.chat.model).toBe("current-model")
+    expect(settingsService.getProviderInstances).toHaveBeenCalledTimes(2)
+    expect(configShareService.apply).toHaveBeenCalledTimes(1)
+    expect(configShareService.operation).not.toHaveBeenCalled()
+    expect(document.body.textContent).not.toContain("Imported settings are saved")
+    expect(document.querySelector('[role="alert"]')?.textContent).toContain(kind === "stale" ? "Settings changed after this preview" : "The import was rejected")
+    await expect(useAppStore.getState().addChat({ title: "Synthetic new chat", messages: [], createdAt: 2, config: { systemPromptId: "", baseSystemPrompt: "", lastUsedEnhancedPrompt: null } })).rejects.toThrow("synthetic-stop-before-session-write")
+    expect(create).toHaveBeenLastCalledWith(expect.objectContaining({ model: "current-model", model_ref: { provider: "current-provider", model: "current-model" }, provider: "current-provider" }))
+    expect(settingsService.getProviderCatalog).not.toHaveBeenCalled()
+    expect(settingsService.fetchCatalogModels).not.toHaveBeenCalled()
+  })
+
+  it.each(["stale", "rejected"])("recovers a known unwritten %s outcome globally after the sharing tab unmounts", async (kind) => {
+    const apply = deferred<ShareOperation>()
+    vi.mocked(configShareService.apply).mockReturnValueOnce(apply.promise)
+    vi.mocked(settingsService.getProviderInstances).mockResolvedValue(savedSnapshot("current-model", "current-provider"))
+    const create = vi.spyOn(AgentClient.prototype, "createSession").mockRejectedValue(new Error("synthetic-stop-before-session-write"))
+    await mount(); await preparedPreview()
+    await check("I reviewed the entries and conflict choices")
+    await click("Save imported settings")
+    act(() => { for (const root of roots.splice(0)) root.unmount() })
+    const id = vi.mocked(configShareService.apply).mock.calls[0][0].operation_id
+    await act(async () => {
+      if (kind === "stale") apply.reject(new ConfigShareError("stale"))
+      else apply.resolve({ operation_id: id, state: "rejected" })
+    })
+    expect(useProviderStore.getState().providerStatus).toBe("ready")
+    await expect(useAppStore.getState().addChat({ title: "Synthetic new chat", messages: [], createdAt: 2, config: { systemPromptId: "", baseSystemPrompt: "", lastUsedEnhancedPrompt: null } })).rejects.toThrow("synthetic-stop-before-session-write")
+    expect(create).toHaveBeenLastCalledWith(expect.objectContaining({ model: "current-model", model_ref: { provider: "current-provider", model: "current-model" }, provider: "current-provider" }))
+    expect(configShareService.apply).toHaveBeenCalledTimes(1)
+    expect(settingsService.getProviderCatalog).not.toHaveBeenCalled()
+  })
+
+  it("revokes old defaults while waiting for the committed generation and keeps the receipt visible", async () => {
+    const health = deferred<unknown>()
+    vi.mocked(apiClient.get).mockReturnValueOnce(health.promise)
+    await mount(); await preparedPreview()
+    await check("I reviewed the entries and conflict choices")
+    await click("Save imported settings")
+    expect(useProviderStore.getState().providerSnapshot).toBeNull()
+    expect(useAppStore.getState().models).toEqual([])
+    expect(settingsService.getProviderInstances).not.toHaveBeenCalled()
+    const id = vi.mocked(configShareService.apply).mock.calls[0][0].operation_id
+    expect(document.body.textContent).toContain(`Import receipt: ${id}`)
+    await act(async () => health.resolve(liveHealth()))
+    expect(useProviderStore.getState().providerSnapshot?.defaults?.chat.model).toBe("imported-model")
+  })
+
+  it("keeps a Committed receipt without revisions as saved but refresh-unconfirmed", async () => {
+    vi.mocked(configShareService.apply).mockImplementation(async ({ operation_id }) => ({ operation_id, state: "committed" }))
+    await mount(); await preparedPreview()
+    await check("I reviewed the entries and conflict choices")
+    await click("Save imported settings")
+    expect(document.body.textContent).toContain("Imported settings are saved")
+    expect(document.querySelector('[role="alert"]')?.textContent).toContain("saved, but the client settings could not be refreshed")
+    expect(apiClient.get).not.toHaveBeenCalled()
+    expect(settingsService.getProviderInstances).not.toHaveBeenCalled()
+    expect(useProviderStore.getState().providerSnapshot).toBeNull()
+    expect(configShareService.apply).toHaveBeenCalledTimes(1)
+  })
+
+  it("discards provider, catalog, discovery and model reads that started before the import", async () => {
+    const provider = deferred<unknown>()
+    const catalog = deferred<ProviderCatalog>()
+    const discovery = deferred<FetchModelsResponse>()
+    const models = deferred<string[]>()
+    vi.mocked(settingsService.getProviderInstances).mockReturnValueOnce(provider.promise)
+    vi.mocked(settingsService.getProviderCatalog).mockReturnValueOnce(catalog.promise)
+    vi.mocked(settingsService.fetchCatalogModels).mockReturnValueOnce(discovery.promise)
+    vi.spyOn(serviceFactory, "getSetupStatus").mockResolvedValue({ is_complete: true } as Awaited<ReturnType<typeof serviceFactory.getSetupStatus>>)
+    vi.spyOn(modelService, "getModels").mockReturnValueOnce(models.promise)
+    const oldProvider = useProviderStore.getState().loadProviderInstances()
+    const oldCatalog = useProviderStore.getState().loadCatalog()
+    const oldDiscovery = useProviderStore.getState().fetchCatalogModels("sample")
+    const oldModels = useAppStore.getState().fetchModels()
+    await Promise.resolve()
+    await mount(); await preparedPreview()
+    await check("I reviewed the entries and conflict choices")
+    await click("Save imported settings")
+    await act(async () => {
+      provider.resolve(savedSnapshot("late-old-model"))
+      catalog.resolve({ providers: [], models: [] })
+      discovery.resolve({ fetched: [{ provider: "sample", models: [] }] })
+      models.resolve(["late-old-model"])
+      await Promise.all([oldProvider, oldCatalog, oldDiscovery, oldModels])
+    })
+    expect.soft(useProviderStore.getState().providerSnapshot?.defaults?.chat.model).toBe("imported-model")
+    expect.soft(useProviderStore.getState().catalog).toBeNull()
+    expect.soft(useProviderStore.getState().discoveredModelsByProvider).toEqual({})
+    expect.soft(useAppStore.getState().models).toEqual(["custom-model", "imported-model"])
+    expect(modelService.getModels).toHaveBeenCalledTimes(1)
+    expect(settingsService.getProviderCatalog).toHaveBeenCalledTimes(1)
+    expect(settingsService.fetchCatalogModels).toHaveBeenCalledTimes(1)
+  })
+
+  it("does not confirm client adoption when another authority read supersedes its response", async () => {
+    const imported = deferred<unknown>()
+    vi.mocked(settingsService.getProviderInstances).mockReturnValueOnce(imported.promise).mockResolvedValueOnce(savedSnapshot("concurrent-model"))
+    await mount(); await preparedPreview()
+    await check("I reviewed the entries and conflict choices")
+    await click("Save imported settings")
+    await act(async () => { await useProviderStore.getState().loadProviderInstances() })
+    await act(async () => imported.resolve(savedSnapshot()))
+    expect(useProviderStore.getState().providerSnapshot?.defaults?.chat.model).toBe("concurrent-model")
+    expect(useAppStore.getState().models).toEqual([])
+    expect(document.querySelector('[role="alert"]')?.textContent).toContain("saved, but the client settings could not be refreshed")
+    expect(document.body.textContent).toContain("Import receipt:")
+    expect(configShareService.apply).toHaveBeenCalledTimes(1)
+    expect(settingsService.getProviderCatalog).not.toHaveBeenCalled()
+  })
+
   it("starts with no secrets, URLs or values selected and preserves all nine scenario choices", async () => {
     await mount()
     expect(document.body.textContent).toContain("Base URLs with embedded credentials, query strings or fragments")
@@ -351,6 +630,8 @@ describe("SettingsConfigShare", () => {
 
   it("discards stale CAS previews and exposes only a safe message", async () => {
     vi.mocked(configShareService.apply).mockRejectedValue(new ConfigShareError("stale"))
+    vi.mocked(settingsService.getProviderInstances).mockResolvedValue(savedSnapshot("current-model", "current-provider"))
+    const create = vi.spyOn(AgentClient.prototype, "createSession").mockRejectedValue(new Error("synthetic-stop-before-session-write"))
     await mount(); await preparedPreview()
     await check("I reviewed the entries and conflict choices")
     await click("Save imported settings")
@@ -358,6 +639,11 @@ describe("SettingsConfigShare", () => {
     expect(document.querySelector('[aria-label="Preview import"]')).toBeNull()
     expect(button("Preview import").disabled).toBe(true)
     expect(configShareService.apply).toHaveBeenCalledTimes(1)
+    expect(useProviderStore.getState().providerStatus).toBe("ready")
+    expect(useProviderStore.getState().providerSnapshot?.defaults?.chat.model).toBe("current-model")
+    await expect(useAppStore.getState().addChat({ title: "Synthetic new chat", messages: [], createdAt: 2, config: { systemPromptId: "", baseSystemPrompt: "", lastUsedEnhancedPrompt: null } })).rejects.toThrow("synthetic-stop-before-session-write")
+    expect(create).toHaveBeenLastCalledWith(expect.objectContaining({ model: "current-model", model_ref: { provider: "current-provider", model: "current-model" }, provider: "current-provider" }))
+    expect(document.body.textContent).not.toContain("Imported settings are saved")
   })
 
   it("blocks importing a target with automatic provider authentication or an uninitialized credential key", async () => {
