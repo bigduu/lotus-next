@@ -46,6 +46,27 @@ function visibleOptions(dataAttr = "data-searchable-option") {
 }
 
 describe("SearchableSelect generic behavior", () => {
+  it("updates the active descendant when an open list replaces its items without changing the count", async () => {
+    const container = document.body.appendChild(document.createElement("div"))
+    const root = createRoot(container)
+    roots.push(root)
+    const render = (items: string[]) => act(() => root.render(<SearchableSelect items={items} value="Alpha"
+      onChange={vi.fn()} getKey={(item) => item} getValue={(item) => item} getLabel={(item) => item} />))
+    render(["Alpha", "Beta"])
+    await act(async () => container.querySelector("button")!.click())
+    const input = document.querySelector("input")!
+    const previousId = input.getAttribute("aria-activedescendant")
+    expect(document.getElementById(previousId ?? "")?.textContent).toBe("Alpha")
+    render(["Gamma", "Delta"])
+    expect(document.querySelectorAll('[role="option"]')).toHaveLength(2)
+    expect(input.hasAttribute("aria-activedescendant")).toBe(false)
+    act(() => input.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true, cancelable: true })))
+    const selected = document.querySelector('[role="option"][aria-selected="true"]')!
+    expect(selected.textContent).toBe("Gamma")
+    expect(input.getAttribute("aria-activedescendant")).toBe(selected.id)
+    expect(document.getElementById(previousId ?? "")).toBeNull()
+  })
+
   it("closes and discards its query when disabled mid-search without reopening when enabled", async () => {
     const container = document.body.appendChild(document.createElement("div"))
     const root = createRoot(container)
@@ -79,6 +100,8 @@ describe("SearchableSelect generic behavior", () => {
     const input = document.querySelector("input")!
     const active = () => document.querySelector('[role="option"][aria-selected="true"]')?.textContent
     expect(active()).toBe("Beta")
+    expect(input.getAttribute("aria-activedescendant")).toBe(document.querySelector('[role="option"][aria-selected="true"]')?.id)
+    expect(document.getElementById(input.getAttribute("aria-labelledby") ?? "")?.textContent).toBe("搜索")
     act(() => input.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true, cancelable: true })))
     expect(active()).toBe("Gamma")
     expect(onChange).not.toHaveBeenCalled()
@@ -88,6 +111,7 @@ describe("SearchableSelect generic behavior", () => {
     await act(async () => trigger.click())
     const reopenedInput = document.querySelector("input")!
     expect(document.querySelector('[role="option"][aria-selected="true"]')?.textContent).toBe("Beta")
+    expect(reopenedInput.getAttribute("aria-activedescendant")).toBe(document.querySelector('[role="option"][aria-selected="true"]')?.id)
     act(() => reopenedInput.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true })))
     expect(onChange).toHaveBeenCalledExactlyOnceWith(2)
   })
@@ -197,6 +221,8 @@ describe("SearchableSelect generic behavior", () => {
     )
     expect(search).not.toBeNull()
     expect(document.activeElement).toBe(search)
+    expect(document.getElementById(search!.getAttribute("aria-labelledby") ?? "")?.textContent).toBe("搜索模型")
+    expect(document.querySelector('[role="listbox"]')?.getAttribute("aria-label")).toBe("模型列表")
     expect(visibleOptions("data-model-option")).toEqual([
       "codex-auto-review",
       "glm-5.3",

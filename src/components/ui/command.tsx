@@ -1,5 +1,5 @@
 import * as React from "react"
-import { Command as CommandPrimitive } from "cmdk"
+import { Command as CommandPrimitive, useCommandState } from "cmdk"
 
 import { cn } from "@/lib/utils"
 import { isCommandComposing } from "@/lib/commandComposition"
@@ -38,8 +38,23 @@ function Command({
   />
 }
 
-function CommandInput({ className, ...props }: React.ComponentProps<typeof CommandPrimitive.Input>) {
+function CommandInput({ className, ref, ...props }: React.ComponentProps<typeof CommandPrimitive.Input>) {
+  const inputRef = React.useRef<HTMLInputElement>(null)
+  useCommandState((state) => state.value)
+  useCommandState((state) => state.filtered.count)
+  useCommandState((state) => state.selectedItemId)
+  React.useImperativeHandle(ref, () => inputRef.current!, [])
+  React.useLayoutEffect(() => {
+    const input = inputRef.current
+    const selected = input?.closest("[cmdk-root]")?.querySelector<HTMLElement>('[cmdk-item][aria-selected="true"]')
+    // cmdk 1.1.1 can omit the initial active descendant while already
+    // highlighting an option. Derive ARIA from its actual selected DOM item;
+    // the library continues to own selection, navigation and item identity.
+    if (selected?.id) input?.setAttribute("aria-activedescendant", selected.id)
+    else input?.removeAttribute("aria-activedescendant")
+  })
   return <CommandPrimitive.Input data-slot="command-input"
+    ref={inputRef}
     className={cn("w-full bg-transparent text-sm outline-none placeholder:text-muted-foreground disabled:cursor-not-allowed disabled:opacity-50", className)}
     {...props} />
 }

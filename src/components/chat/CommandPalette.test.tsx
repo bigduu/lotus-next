@@ -39,6 +39,7 @@ describe("CommandPalette session scope", () => {
     const input = container.querySelector("input")!
     const key = (value: string) => act(() => input.dispatchEvent(new KeyboardEvent("keydown", { key: value, bubbles: true, cancelable: true })))
     const active = () => container.querySelector('[role="option"][aria-selected="true"]')?.textContent
+    expect(input.getAttribute("aria-activedescendant")).toBe(container.querySelector('[role="option"][aria-selected="true"]')?.id)
     key("ArrowUp")
     expect(active()).toBe(uiText("new_conversation_6897a8ef"))
     key("End")
@@ -91,6 +92,7 @@ describe("CommandPalette session scope", () => {
     })
     expect(container.querySelector('[role="status"]')?.textContent).toBe(uiText("no_matches_7a54f3fc"))
     expect(container.querySelectorAll('[role="option"]')).toHaveLength(0)
+    expect(input.hasAttribute("aria-activedescendant")).toBe(false)
     act(() => input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true })))
     expect(onSelect).not.toHaveBeenCalled()
     expect(onNewChat).not.toHaveBeenCalled()

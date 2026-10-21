@@ -155,7 +155,7 @@ export function SearchableSelect<T, V>({
           if (trigger?.isConnected && !trigger.disabled && !trigger.closest('[hidden], [inert], [aria-hidden="true"]')) trigger.focus()
         }}
       >
-        <Command shouldFilter={false} label={optionListAriaLabel}
+        <Command shouldFilter={false} label={searchAriaLabel}
           defaultValue={selectedItem ? JSON.stringify(getKey(selectedItem)) : undefined}>
         <div className="relative m-1 mb-1.5">
           <Search
