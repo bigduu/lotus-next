@@ -24,6 +24,10 @@ import { getErrorMessage, isApiError } from "@services/api/errors"
 import { workflowSubmissionError, type WorkflowSelection } from "@services/command/workflowCatalog"
 import { notify } from "@/lib/notify"
 import { mapTokenBudgetUsage } from "@shared/types/tokenBudget"
+import {
+  compressionBudgetReceived, compressionFeedbackFromStatus, compressionRunEnded,
+  summaryFeedback, type ContextCompressionFeedback,
+} from "@/lib/contextCompression"
 import { getSystemPromptEnhancementText } from "@shared/utils/systemPromptEnhancement"
 import { isCopilotConclusionWithOptionsEnhancementEnabled } from "@shared/utils/copilotConclusionWithOptionsEnhancementUtils"
 import {
@@ -147,6 +151,13 @@ export type LiveSegment =
   | { kind: "tools"; calls: LiveToolCall[] }
 
 export type StreamPhase = "streaming" | "finalizing" | null
+
+type ScopedCompressionFeedback = {
+  sessionId: string
+  operationId: number
+  phase: string
+  value: ContextCompressionFeedback
+}
 
 type RetainedTerminal = {
   sessionId: string
@@ -475,6 +486,8 @@ export function useChat(
   // shown while no text is streaming.
   const [streamStatusState, setStreamStatusState] = useState<string | null>(null)
   const streamStatusRef = useRef<string | null>(null)
+  const [compressionState, setCompressionState] = useState<ScopedCompressionFeedback | null>(null)
+  const compressionRef = useRef<ScopedCompressionFeedback | null>(null)
   // A completed live tail remains renderable until the WebSocket/SSE-triggered
   // history reconciliation contains that exact terminal assistant message.
   const retainedTerminalRef = useRef<RetainedTerminal | null>(null)
@@ -491,6 +504,7 @@ export function useChat(
   const streamingReasoning = streamSid === sid ? streamingReasoningText : null
   const liveSegments = streamSid === sid ? liveSegmentsState : EMPTY_SEGMENTS
   const streamStatus = streamSid === sid ? streamStatusState : null
+  const contextCompression = compressionState?.sessionId === sid ? compressionState.value : null
   const streamPhase = streamSid === sid ? streamPhaseState : null
   const sessionPending = useMemo(() => [...pendingState.entries.values()].filter((entry) => entry.sid === sid), [pendingState.entries, sid])
   const hydratedPending = useMemo(() => matchPendingUserMessages(messages, sessionPending, pendingState.claimed.get(sid ?? "")), [messages, pendingState.claimed, sessionPending, sid])
@@ -571,6 +585,11 @@ export function useChat(
     setStreamStatusState(status)
   }, [])
 
+  const publishCompression = useCallback((value: ScopedCompressionFeedback | null) => {
+    compressionRef.current = value
+    setCompressionState(value)
+  }, [])
+
   const flushSegments = useCallback(() => {
     if (segRafRef.current != null) return
     segRafRef.current = requestAnimationFrame(() => {
@@ -637,6 +656,11 @@ export function useChat(
   const stopStream = useCallback(
     (final: string | null, operationId?: number) => {
       if (operationId !== undefined && streamOperationRef.current !== operationId) return
+      const compression = compressionRef.current
+      if (compression && compression.operationId === streamOperationRef.current) {
+        const value = compressionRunEnded(compression.value)
+        if (value !== compression.value) publishCompression({ ...compression, value: value! })
+      }
       if (rafRef.current != null) {
         cancelAnimationFrame(rafRef.current)
         rafRef.current = null
@@ -669,7 +693,7 @@ export function useChat(
         setStreamPhaseState("finalizing")
       }
     },
-    [setStreamStatus],
+    [setStreamStatus, publishCompression],
   )
 
   // Account-feed WebSocket reconciliation updates `messages`. Retire a locally
@@ -787,6 +811,7 @@ export function useChat(
       // (possibly different) session. Abort synchronously removes the
       // subscriber from the shared WS channel.
       abortRef.current?.abort()
+      publishCompression(null)
       retainedTerminalRef.current = null
       setStreamSid(runSid)
       setStreamPhaseState("streaming")
@@ -806,6 +831,23 @@ export function useChat(
       const subscription = { operationId, sessionId: runSid }
       subscriptionRef.current = subscription
       subscribedSidRef.current = runSid
+      const ownsRunEvent = () => ownsStream() && !ac.signal.aborted && mountedRef.current && !terminal.settlement
+      const updateCompression = (
+        update: (previous: ContextCompressionFeedback | null) => ContextCompressionFeedback | null,
+        phase?: string,
+      ) => {
+        if (!ownsRunEvent()) return
+        const current = compressionRef.current
+        const scoped = current?.sessionId === runSid && current.operationId === operationId ? current : null
+        // A late result from another phase cannot settle an observed summary.
+        if (phase !== undefined && scoped?.value.status === "running" && scoped.phase !== phase) return
+        const previous = scoped?.value ?? null
+        const next = update(previous)
+        if (next !== previous) publishCompression(next ? {
+          sessionId: runSid, operationId, phase: phase ?? scoped?.phase ?? "", value: next,
+        } : null)
+        return { previous, next }
+      }
       let executeAcknowledged = false
       let reconcileTimer: ReturnType<typeof setTimeout> | undefined
       const clearReconcileTimer = () => clearTimeout(reconcileTimer)
@@ -845,6 +887,7 @@ export function useChat(
 
       const settleCompleted = (historyReady = false): void => {
         if (!ownsStream() || terminal.settlement) return
+        updateCompression(compressionRunEnded)
         setStreamPhaseState("finalizing")
         terminal.settlement = (async () => {
           // Freeze the fully-streamed text in place while persisted history
@@ -899,6 +942,7 @@ export function useChat(
 
       const settleFailed = (historyReady = false, error?: unknown): void => {
         if (!ownsStream() || terminal.settlement) return
+        updateCompression(compressionRunEnded)
         publishSendFailure({
           kind: "generation-failed",
           operationId,
@@ -926,6 +970,7 @@ export function useChat(
 
       const settleCancelled = (historyReady = false): void => {
         if (!ownsStream() || terminal.settlement) return
+        updateCompression((previous) => compressionRunEnded(previous, true))
         terminal.settlement = (async () => {
           let historyLoaded = historyReady
           if (!historyReady) {
@@ -1082,15 +1127,22 @@ export function useChat(
             })
           },
           onTokenBudgetUpdated: (usage) => {
+            if (!ownsRunEvent()) return
             const mapped = mapTokenBudgetUsage(usage)
             if (!mapped) return
             const store = useAppStore.getState()
             store.updateTokenUsage(runSid, mapped)
             store.setTruncationInfo(runSid, usage.truncation_occurred, usage.segments_removed)
+            updateCompression(compressionBudgetReceived)
           },
-          onContextCompressionStatus: (_phase, status) => {
-            if (status === "started") setStreamStatus(uiText("compressing_context_57b37811"))
-            else setStreamStatus(null)
+          onContextCompressionStatus: (phase, status) => {
+            const result = updateCompression((previous) => compressionFeedbackFromStatus(previous, status), phase)
+            if (result?.next?.status === "running") setStreamStatus(uiText("compressing_context_57b37811"))
+            else if (result?.previous?.status === "running") setStreamStatus(null)
+          },
+          onContextSummarized: () => {
+            const result = updateCompression(summaryFeedback)
+            if (result?.previous?.status === "running") setStreamStatus(null)
           },
           onSubAgentStarted: (parentSid, childId, title) => {
             useAppStore.getState().applyChildProgress(parentSid, childId, {
@@ -1297,6 +1349,7 @@ export function useChat(
       resetOutputRate,
       pushReasoning,
       setStreamStatus,
+      publishCompression,
       flushSegments,
       stopStream,
       clearPendingOperation,
@@ -1943,6 +1996,12 @@ export function useChat(
       store.markCancel(targetSessionId)
       store.updateSession(targetSessionId, { isRunning: false }, { skipBackendPatch: true })
     }
+    const compression = compressionRef.current
+    if (compression?.sessionId === targetSessionId && compression.operationId === operationId) {
+      // A local Stop ends observation; its request is not a confirmed summary cancellation.
+      const value = compressionRunEnded(compression.value)
+      if (value !== compression.value) publishCompression({ ...compression, value: value! })
+    }
     abortRef.current?.abort()
     stopStream(null, operationId)
     if (!targetSessionId || !stopRequest) return
@@ -1961,7 +2020,7 @@ export function useChat(
         console.warn("[useChat] stopped-generation history hydration failed", err)
       }
     })()
-  }, [clearPendingOperation, sid, stopStream])
+  }, [clearPendingOperation, sid, stopStream, publishCompression])
 
   const newChat = useCallback(() => {
     if (navigationRef.current.sessionId !== null) {
@@ -2138,6 +2197,7 @@ export function useChat(
     streamingReasoning,
     liveSegments,
     streamStatus,
+    contextCompression,
     outputRate,
     pendingUserText,
     pendingUserImages,

@@ -184,6 +184,25 @@ export interface ContextSummaryInfo {
   tokens_saved: number;
 }
 
+const readContextSummaryInfo = (value: unknown): ContextSummaryInfo | null => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const info = value as Record<string, unknown>;
+  if (
+    typeof info.summary !== "string" ||
+    typeof info.messages_summarized !== "number" ||
+    !Number.isSafeInteger(info.messages_summarized) || info.messages_summarized < 0 ||
+    typeof info.tokens_saved !== "number" ||
+    !Number.isSafeInteger(info.tokens_saved) || info.tokens_saved < 0
+  ) {
+    return null;
+  }
+  return {
+    summary: info.summary,
+    messages_summarized: info.messages_summarized,
+    tokens_saved: info.tokens_saved,
+  };
+};
+
 // TaskList Types
 export type TaskItemStatus = "pending" | "in_progress" | "completed" | "blocked";
 
@@ -248,6 +267,9 @@ export interface AgentEvent {
       }
     | TokenBudgetUsage;
   summary_info?: ContextSummaryInfo;
+  // Current context_summarized events carry these beside the existing summary field.
+  messages_summarized?: number;
+  tokens_saved?: number;
   // TaskList events
   task_list?: TaskList;
   // TaskList delta
@@ -1852,11 +1874,16 @@ export class AgentClient {
           event.error,
         );
         break;
-      case "context_summarized":
-        if (event.summary_info) {
-          handlers.onContextSummarized?.(event.summary_info);
+      case "context_summarized": {
+        // Keep the legacy nested payload authoritative when supplied.
+        const info = readContextSummaryInfo(
+          event.summary_info === undefined ? event : event.summary_info,
+        );
+        if (info) {
+          handlers.onContextSummarized?.(info);
         }
         break;
+      }
       case "context_pressure_notification":
         if (typeof event.percent === "number" && typeof event.level === "string") {
           handlers.onContextPressureNotification?.(event.percent, event.level, event.message || "");

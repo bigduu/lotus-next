@@ -1,5 +1,17 @@
 // Application-owned UI copy.
 export const uiZhCn = {
+  "context_compression_notice_running": "正在压缩较早消息。",
+  "context_compression_notice_completed_waiting": "上下文压缩已完成，等待下一次提示词用量估算后更新用量。",
+  "context_compression_notice_completed": "上下文压缩已完成，用量仍包含指令、工具和近期消息。",
+  "context_compression_notice_failed_candidate": "上下文压缩未能安全选择可摘要的消息。",
+  "context_compression_notice_failed_postcondition": "上下文摘要未通过检查，未采用。",
+  "context_compression_notice_failed": "上下文压缩未能成功完成。",
+  "context_compression_notice_deferred_tool": "上下文压缩正在等待工具对话的安全时点。",
+  "context_compression_notice_deferred": "上下文压缩已暂缓。",
+  "context_compression_notice_skipped_no_model": "暂无可用的摘要模型，已跳过上下文压缩。",
+  "context_compression_notice_skipped": "已跳过上下文压缩。",
+  "context_compression_notice_cancelled": "上下文压缩已取消。",
+  "context_compression_notice_unconfirmed": "上下文压缩结果尚未确认。",
   "share_boundary_blocked": "当前提供商或凭据状态暂不支持保存此导入，仍可导出和预览。",
   "share_provider_auth_blocked": "导入可能触发 Copilot 自动登录。请使用已明确配置非 Copilot 提供商实例的目标，并从配置包中排除 Copilot 后重试。",
   "share_key_uninitialized": "服务端的凭据存储尚未初始化，请先通过常规设置完成凭据存储设置，再导入变量值或密钥。",
