@@ -174,6 +174,10 @@ export function SearchableSelect<T, V>({
             <button
               type="button"
               aria-label={clearLabel}
+              onKeyDown={(event) => {
+                // Preserve native button activation without selecting a Command option.
+                if (event.key === "Enter") event.stopPropagation()
+              }}
               onClick={() => {
                 setQuery("")
                 searchRef.current?.focus()

@@ -46,6 +46,37 @@ function visibleOptions(dataAttr = "data-searchable-option") {
 }
 
 describe("SearchableSelect generic behavior", () => {
+  it.each(["Enter", " "])("clears a matching query with the focused clear button's %s without selecting an option", async (key) => {
+    const container = document.body.appendChild(document.createElement("div"))
+    const root = createRoot(container)
+    roots.push(root)
+    const onChange = vi.fn()
+    act(() => root.render(<SearchableSelect items={["Alpha", "Beta"]} value="Alpha" onChange={onChange}
+      getKey={(item) => item} getValue={(item) => item} getLabel={(item) => item} />))
+    await act(async () => container.querySelector("button")!.click())
+    const search = document.querySelector("input")!
+    changeInput(search, "beta")
+    expect(visibleOptions()).toEqual(["Beta"])
+    const clear = document.querySelector<HTMLButtonElement>('[aria-label="清空搜索"]')!
+    act(() => clear.focus())
+    const event = new KeyboardEvent("keydown", { key, code: key === "Enter" ? "Enter" : "Space", bubbles: true, cancelable: true })
+    act(() => clear.dispatchEvent(event))
+    expect(onChange).not.toHaveBeenCalled()
+    expect(event.defaultPrevented).toBe(false)
+    // jsdom does not synthesize a button's native keyboard click. Dispatch it
+    // only after checking that the real Command root left that default intact.
+    act(() => clear.click())
+    expect(search.isConnected).toBe(true)
+    expect(container.querySelector("button")?.getAttribute("aria-expanded")).toBe("true")
+    expect(search.value).toBe("")
+    expect(document.activeElement).toBe(search)
+    expect(visibleOptions()).toEqual(["Alpha", "Beta"])
+    expect(onChange).not.toHaveBeenCalled()
+    changeInput(search, "beta")
+    act(() => search.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true })))
+    expect(onChange).toHaveBeenCalledExactlyOnceWith("Beta")
+  })
+
   it("updates the active descendant when an open list replaces its items without changing the count", async () => {
     const container = document.body.appendChild(document.createElement("div"))
     const root = createRoot(container)
