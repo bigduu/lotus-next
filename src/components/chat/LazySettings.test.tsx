@@ -282,7 +282,15 @@ describe("Settings page controls", () => {
 
       const category = view.container.querySelector<HTMLSelectElement>("#settings-category")
       expect(category?.querySelectorAll("optgroup")).toHaveLength(4)
-      expect(category?.options).toHaveLength(17)
+      expect(category?.options).toHaveLength(18)
+      expect(category?.querySelector('option[value="config-share"]')?.textContent).toBe(uiText("share_title"))
+      await click([...nav?.querySelectorAll("button") ?? []].find((button) => button.textContent === uiText("share_title")) ?? null)
+      expect(onTabChange).toHaveBeenLastCalledWith("config-share")
+      await act(async () => {
+        if (category) category.value = "config-share"
+        category?.dispatchEvent(new Event("change", { bubbles: true }))
+      })
+      expect(onTabChange).toHaveBeenLastCalledWith("config-share")
       await act(async () => {
         if (category) category.value = "notifications"
         category?.dispatchEvent(new Event("change", { bubbles: true }))
