@@ -51,6 +51,9 @@ jobs:
       - name: Verify the all-surface browser contract
         run: npm run test:e2e:built
 
+      - name: Verify configuration sharing with the synthetic source harness
+        run: npx playwright test --config=playwright.config-share.config.ts
+
       - name: Upload browser evidence
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v5
