@@ -20,4 +20,4 @@ Affected hook, selector, service and transport tests cover canonical reads, expl
 
 These fixtures simulate HTTP responses. They do not establish that the Bamboo shared runtime is deployed, that real account cookies survive, or that backend chat page isolation works. Actual source-bound Bamboo HTTP/runtime validation remains required after its owner delivers the adapter. No real profiles or credentials are read or copied, and no backend, Rust, Bodhi, release pins or published artifacts are changed by this frontend work.
 
-A successfully opened scope may have zero tabs. The currently selected browser surface keeps its account controls and empty-page entry visible through profile close/reopen and canonical recovery. Closing a page explicitly still follows the existing tab-successor selection.
+When the person explicitly opens an account mode, the browser entry remains selected even if the returned scope has zero tabs. This keeps profile controls and the empty-page entry available after close/reopen. Existing missing-page restoration and explicit page-close successor selection keep their original behavior.
