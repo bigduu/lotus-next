@@ -14,9 +14,10 @@ const componentRules = layoutStyles.slice(
 
 describe("assistant Streamdown production styles", () => {
   it.each(["streamdown", "@streamdown/code", "@streamdown/mermaid", "@streamdown/cjk"])(
-    "includes the Tailwind v4 source for %s",
+    "keeps the Tailwind v4 source for %s in the lazy renderer stylesheet",
     (packageName) => {
-      expect(styles).toContain(`@source "../node_modules/${packageName}/dist/*.js"`)
+      expect(layoutStyles).toContain(`@source "../../../node_modules/${packageName}/dist/*.js"`)
+      expect(styles).not.toContain(`node_modules/${packageName}/dist/*.js`)
     },
   )
 
@@ -74,5 +75,6 @@ describe("assistant Streamdown production styles", () => {
 
   it("does not add the out-of-scope math plugin source", () => {
     expect(styles).not.toContain("@streamdown/math")
+    expect(layoutStyles).not.toContain("@streamdown/math")
   })
 })
