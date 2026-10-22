@@ -16,24 +16,13 @@ import { markdownTheme } from "./markdownTheme"
 import { cn } from "@/lib/utils"
 import { InlineImage } from "./InlineImage"
 import { ExternalLinkDialog } from "./ExternalLinkDialog"
+import { StreamingReveal, StreamingRevealBlock, StreamingRevealSpan } from "./StreamingReveal"
 import {
   lazyCodePlugin,
   remarkLocalRasterImages,
   safeAssistantUrlTransform,
   STREAMDOWN_THEMES,
 } from "./streamdownConfig"
-
-const STREAMDOWN_ANIMATION = {
-  animation: "fadeIn",
-  duration: 120,
-  maxBacklogMs: 240,
-  // Unspaced CJK prose is a single "word" to Streamdown, so word-level
-  // splitting only animates when a new Markdown block starts.
-  sep: "char",
-  stagger: 16,
-} as const
-
-const ANIMATED_TOKEN_SELECTOR = 'span[data-sd-animate="true"]'
 
 const COMPACT_CODE_BLOCK_STYLES = {
   block: { gap: "0.25rem", marginBlock: "0.5rem", padding: "0.375rem" },
@@ -68,7 +57,6 @@ function applyCompactCodeBlockStyles(root: HTMLElement): void {
 
 function useCompactCodeBlocks(
   hostRef: RefObject<HTMLDivElement | null>,
-  content: string,
 ): void {
   useUiLocale()
   useLayoutEffect(() => {
@@ -82,91 +70,7 @@ function useCompactCodeBlocks(
     const observer = new MutationObserver(() => applyCompactCodeBlockStyles(root))
     observer.observe(root, { childList: true, subtree: true })
     return () => observer.disconnect()
-  }, [content, hostRef])
-}
-
-function animationDurationMs(element: HTMLElement): number {
-  return Number.parseFloat(element.style.getPropertyValue("--sd-duration")) || 0
-}
-
-type TypewriterCaretTracker = {
-  positionAt: (target: HTMLElement | null) => void
-  root: HTMLElement
-}
-
-/**
- * Streamdown's built-in caret is attached to the final Markdown block, while
- * every animated token already occupies its final layout position. That makes
- * the caret jump to the completed text before the staggered characters become
- * visible. Follow each token's animationstart event instead, keeping the caret
- * beside the character the user can currently see.
- */
-function useTrackedTypewriterCaret(
-  hostRef: RefObject<HTMLDivElement | null>,
-  content: string,
-  isStreaming: boolean,
-): void {
-  useUiLocale()
-  const trackerRef = useRef<TypewriterCaretTracker | null>(null)
-
-  useLayoutEffect(() => {
-    if (!isStreaming) return
-
-    const root = hostRef.current?.querySelector<HTMLElement>(".assistant-streamdown")
-    if (!root) return
-
-    // CSS paints the caret on this glyph's ::after, outside React's text
-    // children but inside every clipping ancestor. Layout, scrolling and
-    // direction changes then follow the glyph without a body-level overlay.
-    let positionedTarget: HTMLElement | null = null
-    const positionAt = (target: HTMLElement | null) => {
-      if (positionedTarget === target) return
-      positionedTarget?.removeAttribute("data-assistant-typewriter-caret-target")
-      positionedTarget = target
-      target?.setAttribute("data-assistant-typewriter-caret-target", "true")
-    }
-
-    const handleAnimationStart = (event: Event) => {
-      const animationEvent = event as AnimationEvent
-      const target = event.target
-      if (!animationEvent.animationName.startsWith("sd-")) return
-      if (!(target instanceof HTMLElement) || !target.matches(ANIMATED_TOKEN_SELECTOR)) return
-      if (animationDurationMs(target) === 0) return
-      positionAt(target)
-    }
-
-    trackerRef.current = { positionAt, root }
-    root.addEventListener("animationstart", handleAnimationStart)
-    return () => {
-      root.removeEventListener("animationstart", handleAnimationStart)
-      positionedTarget?.removeAttribute("data-assistant-typewriter-caret-target")
-      trackerRef.current = null
-    }
-  }, [hostRef, isStreaming])
-
-  useLayoutEffect(() => {
-    if (!isStreaming) return
-    const tracker = trackerRef.current
-    if (!tracker) return
-
-    const tokens = [
-      ...tracker.root.querySelectorAll<HTMLElement>(ANIMATED_TOKEN_SELECTOR),
-    ]
-    const prefersReducedMotion =
-      typeof window.matchMedia === "function" &&
-      window.matchMedia("(prefers-reduced-motion: reduce)").matches
-
-    if (prefersReducedMotion) {
-      tracker.positionAt(tokens.at(-1) ?? null)
-      return
-    }
-
-    const settledTokens = tokens.filter((token) => animationDurationMs(token) === 0)
-    const animatingTokens = tokens.filter((token) => animationDurationMs(token) > 0)
-    // During a streaming update, remain at the last settled character until
-    // the first new character's animation actually begins.
-    tracker.positionAt(settledTokens.at(-1) ?? animatingTokens.at(0) ?? null)
-  }, [content, isStreaming])
+  }, [hostRef])
 }
 
 const LazyStreamdownMermaid = lazy(() => import("./StreamdownMermaid"))
@@ -244,42 +148,46 @@ export function StreamdownMarkdown({
   useUiLocale()
   const hostRef = useRef<HTMLDivElement>(null)
   const components = useMemo(() => ({
+    span: StreamingRevealSpan,
     img: ({ node: _node, ...props }: React.ComponentProps<"img"> & { node?: unknown }) => (
       <InlineImage {...props} onPreviewImage={onPreviewImage} />
     ),
   }), [onPreviewImage])
-  useCompactCodeBlocks(hostRef, children)
-  useTrackedTypewriterCaret(hostRef, children, isStreaming)
+  useCompactCodeBlocks(hostRef)
 
   return (
     <div ref={hostRef} style={{ display: "contents" }}>
-      <Streamdown
-        animated={isStreaming ? STREAMDOWN_ANIMATION : false}
-        className={cn(
-          "assistant-streamdown prose max-w-none min-w-0 space-y-0 font-normal text-foreground",
-          "[overflow-wrap:anywhere] prose-p:my-2 prose-headings:mt-4 prose-headings:mb-2",
-          "prose-a:text-primary prose-li:my-0.5",
-          className,
-        )}
-        codeBlockMaxHeight={Number.POSITIVE_INFINITY}
-        controls={false}
-        components={components}
-        dir="auto"
-        isAnimating={isStreaming}
-        lineNumbers={false}
-        linkSafety={LINK_SAFETY}
-        mode={isStreaming ? "streaming" : "static"}
-        parseIncompleteMarkdown={isStreaming}
-        plugins={STREAMDOWN_PLUGINS}
-        rehypePlugins={SAFE_REHYPE_PLUGINS}
-        remarkPlugins={SAFE_REMARK_PLUGINS}
-        remend={REMEND_OPTIONS}
-        shikiTheme={STREAMDOWN_THEMES}
-        tableMaxHeight={Number.POSITIVE_INFINITY}
-        urlTransform={safeAssistantUrlTransform}
-      >
-        {children}
-      </Streamdown>
+      <StreamingReveal isStreaming={isStreaming}>
+        <Streamdown
+          animated={false}
+          BlockComponent={StreamingRevealBlock}
+          className={cn(
+            "assistant-streamdown prose max-w-none min-w-0 space-y-0 font-normal text-foreground",
+            "[overflow-wrap:anywhere] prose-p:my-2 prose-headings:mt-4 prose-headings:mb-2",
+            "prose-a:text-primary prose-li:my-0.5",
+            isStreaming && "assistant-streamdown-streaming",
+            className,
+          )}
+          codeBlockMaxHeight={Number.POSITIVE_INFINITY}
+          controls={false}
+          components={components}
+          dir="auto"
+          isAnimating={isStreaming}
+          lineNumbers={false}
+          linkSafety={LINK_SAFETY}
+          mode={isStreaming ? "streaming" : "static"}
+          parseIncompleteMarkdown={isStreaming}
+          plugins={STREAMDOWN_PLUGINS}
+          rehypePlugins={SAFE_REHYPE_PLUGINS}
+          remarkPlugins={SAFE_REMARK_PLUGINS}
+          remend={REMEND_OPTIONS}
+          shikiTheme={STREAMDOWN_THEMES}
+          tableMaxHeight={Number.POSITIVE_INFINITY}
+          urlTransform={safeAssistantUrlTransform}
+        >
+          {children}
+        </Streamdown>
+      </StreamingReveal>
     </div>
   )
 }
