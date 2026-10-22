@@ -154,18 +154,37 @@ it("does not restore a transcript Range whose original nodes were removed", asyn
   expect(document.querySelector("textarea")).toBeNull()
 })
 
-it("does not replace a new selection made while restoring the control's focus", async () => {
+it.each(["range", "collapsed"])("does not replace a new %s selection made while restoring the control's focus", async (kind) => {
   const { button, selection } = selectedTranscript()
   const newer = document.body.appendChild(document.createElement("p"))
   newer.textContent = "new selection"
   vi.spyOn(button, "focus").mockImplementation(() => {
     HTMLElement.prototype.focus.call(button)
-    selection.setBaseAndExtent(newer.firstChild!, 0, newer.firstChild!, newer.textContent!.length)
+    selection.setBaseAndExtent(newer.firstChild!, 2, newer.firstChild!, kind === "collapsed" ? 2 : newer.textContent!.length)
   })
   fallback(() => true)
   await copyText("source")
-  expect(selection.toString()).toBe("new selection")
+  expect(selection.toString()).toBe(kind === "collapsed" ? "" : "w selection")
   expect(selection.anchorNode).toBe(newer.firstChild)
+  expect(selection.anchorOffset).toBe(2)
+  expect(selection.isCollapsed).toBe(kind === "collapsed")
+})
+
+it.each(["text", "control"])("does not replace an explicit caret in the restored %s at a new position", async (position) => {
+  const { button, selection } = selectedTranscript()
+  button.textContent = "copy"
+  const node = position === "control" ? button : button.firstChild!
+  const offset = position === "control" ? 1 : 2
+  vi.spyOn(button, "focus").mockImplementation(() => {
+    HTMLElement.prototype.focus.call(button)
+    selection.collapse(node, offset)
+  })
+  fallback(() => true)
+  await copyText("source")
+  expect(document.activeElement).toBe(button)
+  expect(selection.isCollapsed).toBe(true)
+  expect(selection.anchorNode).toBe(node)
+  expect(selection.anchorOffset).toBe(offset)
 })
 
 it("does not replace new focus chosen by the restored control's focus handler", async () => {

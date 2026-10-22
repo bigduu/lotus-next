@@ -53,8 +53,11 @@ const copyWithExecCommand = (text: string): void => {
     if (restoreFocus && previousFocus instanceof HTMLElement && previousFocus.isConnected) {
       previousFocus.focus({ preventScroll: true });
     }
+    // Native focus may collapse at the control's start; a caret at another
+    // owner or position belongs to the focus handler and must stay untouched.
+    const focusCollapse = selection?.isCollapsed && selection.anchorNode === previousFocus && selection.anchorOffset === 0;
     if (restoreSelection && selection && document.activeElement === previousFocus
-      && (selection.isCollapsed || selectionEnds().every((value, index) => value === releasedSelection[index]))
+      && (focusCollapse || selectionEnds().every((value, index) => value === releasedSelection[index]))
       && ranges.every((range) => range.startContainer.isConnected && range.endContainer.isConnected)) {
       selection.removeAllRanges();
       for (const range of ranges) selection.addRange(range);
