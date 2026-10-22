@@ -734,7 +734,15 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
   },
 
   loadChatHistory: async (sessionId, options) => {
-    if (options?.signal?.aborted) return;
+    let discarded: DOMException | undefined;
+    const discardRead = () => {
+      // Strict consumers may retire live evidence only after confirmation.
+      if (options?.throwOnError) {
+        discarded ??= new DOMException("History read was discarded before confirmation", "AbortError");
+        throw discarded;
+      }
+    };
+    if (options?.signal?.aborted) return discardRead();
     const reads = historyReads.get(get) ?? new Map<string, object>();
     historyReads.set(get, reads);
     const request = {};
@@ -754,7 +762,7 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
 
     try {
       for (let attempt = 0; attempt <= retries; attempt += 1) {
-        if (options?.signal?.aborted || !isCurrentRead()) return;
+        if (options?.signal?.aborted || !isCurrentRead()) return discardRead();
         try {
           // Avoid spurious backend calls when the UI layout references a stale session id.
           // (e.g. after backend reset or manual data cleanup)
@@ -766,11 +774,11 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
           }
 
           const history = await agentClient.getHistory(sessionId);
-          if (options?.signal?.aborted) return;
+          if (options?.signal?.aborted) return discardRead();
           if (options?.throwOnError && history.session_id !== sessionId) throw new Error("History session mismatch");
-          if (!isCurrentRead()) return;
+          if (!isCurrentRead()) return discardRead();
           const currentChat = get().chats.find((item) => item.id === sessionId);
-          if (!currentChat) return;
+          if (!currentChat) return discardRead();
           debugLog("[ChatSlice]", "loadChatHistory.response", {
             sessionId,
             attempt,
@@ -887,9 +895,8 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
           });
           return;
         } catch (error) {
-          if (options?.signal?.aborted) return;
           // Supersession removes write/retry authority, not opted-in errors.
-          if (!isCurrentRead()) {
+          if (options?.signal?.aborted || !isCurrentRead() || (discarded !== undefined && error === discarded)) {
             if (options?.throwOnError) throw error;
             return;
           }
@@ -912,8 +919,7 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
             error,
           });
           await new Promise((resolve) => setTimeout(resolve, delay));
-          if (options?.signal?.aborted) return;
-          if (!isCurrentRead()) {
+          if (options?.signal?.aborted || !isCurrentRead()) {
             if (options?.throwOnError) throw error;
             return;
           }

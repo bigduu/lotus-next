@@ -176,10 +176,11 @@ describe("explicit history read outcomes", () => {
       .mockResolvedValueOnce(committedHistory)
     const controller = new AbortController()
     const abandoned = store.getState().loadChatHistory("session-1", { throwOnError: true, signal: controller.signal })
+    const cancelled = expect(abandoned).rejects.toMatchObject({ name: "AbortError" })
     controller.abort()
     await store.getState().loadChatHistory("session-1", { throwOnError: true })
     resolve({ session_id: "session-1", messages: [] })
-    await abandoned
+    await cancelled
     expect(store.getState().chats[0].messages.at(-1)?.id).toBe("assistant-final")
   })
 
@@ -228,15 +229,15 @@ describe("concurrent history read authority", () => {
     expect(read).toHaveBeenCalledTimes(2);
   });
 
-  it("compares monotonic responses against the current store, including its message count", async () => {
+  it.each([false, true])("confirms a genuine current-store monotonic no-op with strict=%s", async (strict) => {
     const pending = deferred<HistoryResponse>();
     vi.spyOn(agentClient, "getHistory").mockReturnValueOnce(pending.promise);
     const store = harness();
-    const reading = store.getState().loadChatHistory("session-1", { mode: "monotonic" });
+    const reading = store.getState().loadChatHistory("session-1", { mode: "monotonic", throwOnError: strict });
     const messages = mapHistoryMessagesToUi("session-1", completedTool.messages);
     store.getState().updateSession("session-1", { messages, messageCount: 12 });
     pending.resolve(staleToolTail);
-    await reading;
+    await expect(reading).resolves.toBeUndefined();
     expect(store.getState().chats[0].messages).toBe(messages);
     expect(store.getState().chats[0].messageCount).toBe(12);
   });
@@ -255,16 +256,18 @@ describe("concurrent history read authority", () => {
     for (const chat of store.getState().chats) expect(chat.messages.at(-1)?.id).toBe("assistant-final");
   });
 
-  it("does not let an older settled read release the newer pending reader", async () => {
+  it.each([false, true])("does not let an older settled read release the newer pending reader with strict=%s", async (strict) => {
     const old = deferred<HistoryResponse>();
     const fresh = deferred<HistoryResponse>();
     vi.spyOn(agentClient, "getHistory").mockReturnValueOnce(old.promise).mockReturnValueOnce(fresh.promise);
     const store = harness();
     const published = store.getState().chats[0];
-    const older = store.getState().loadChatHistory("session-1");
+    const older = store.getState().loadChatHistory("session-1", { throwOnError: strict });
+    const outcome = older.then(() => null, (error: unknown) => error);
     const newer = store.getState().loadChatHistory("session-1");
     old.resolve(staleToolTail);
-    await older;
+    if (strict) expect(await outcome).toMatchObject({ name: "AbortError" });
+    else expect(await outcome).toBeNull();
     expect(store.getState().chats[0]).toBe(published);
     fresh.resolve(completedTool);
     await newer;
@@ -307,6 +310,35 @@ describe("concurrent history read authority", () => {
     expect(store.getState().chats[0].messages.at(-1)?.id).toBe("assistant-final");
   });
 
+  it("does not confirm discarded strict error hydration when a competing feed read fails", async () => {
+    const hydration = deferred<HistoryResponse>();
+    const feed = deferred<HistoryResponse>();
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const read = vi.spyOn(agentClient, "getHistory").mockReturnValueOnce(hydration.promise).mockReturnValueOnce(feed.promise);
+    const store = harness();
+    const published = store.getState().chats[0];
+    const completedEvidence = mapHistoryMessagesToUi("session-1", completedTool.messages);
+    let visibleEvidence = completedEvidence;
+    let historyLoaded = false;
+    // A strict consumer may retire live evidence only after a confirmed read.
+    // loadChatHistory itself is the real store action; only HTTP is deferred.
+    const settled = store.getState().loadChatHistory("session-1", { throwOnError: true }).then(() => {
+      historyLoaded = true;
+      visibleEvidence = [];
+      return null;
+    }, (error: unknown) => error);
+    const reconciling = store.getState().loadChatHistory("session-1", { mode: "monotonic" });
+    feed.reject(new Error("feed history unavailable"));
+    await reconciling;
+    hydration.resolve(completedTool);
+    expect(await settled).toMatchObject({ name: "AbortError" });
+    expect(historyLoaded).toBe(false);
+    expect(visibleEvidence).toBe(completedEvidence);
+    expect(visibleEvidence.find((message) => message.id === "tool-1")).toMatchObject({ isError: false, result: { result: '{"exit_code":0,"stdout":"done"}' } });
+    expect(store.getState().chats[0]).toBe(published);
+    expect(read).toHaveBeenCalledTimes(2);
+  });
+
   it("still rejects an opted-in old failure without issuing stale retries", async () => {
     const old = deferred<HistoryResponse>();
     const failure = new Error("old read unavailable");
@@ -323,62 +355,70 @@ describe("concurrent history read authority", () => {
     expect(store.getState().chats[0]).toBe(published);
   });
 
-  it("preserves an opted-in failure when a newer read supersedes its retry delay", async () => {
+  it.each(["superseded", "aborted"])("preserves an opted-in failure when its retry delay is %s", async (reason) => {
     vi.useFakeTimers();
     const failure = new Error("retrying read unavailable");
     vi.spyOn(console, "warn").mockImplementation(() => {});
     const read = vi.spyOn(agentClient, "getHistory").mockRejectedValueOnce(failure).mockResolvedValue(completedTool);
     const store = harness();
-    const older = store.getState().loadChatHistory("session-1", { throwOnError: true, retries: 1, retryDelayMs: 10 });
+    const controller = new AbortController();
+    const older = store.getState().loadChatHistory("session-1", { throwOnError: true, retries: 1, retryDelayMs: 10, signal: controller.signal });
     const outcome = older.then(() => ({ error: null }), (error: unknown) => ({ error }));
     await Promise.resolve();
     expect(vi.getTimerCount()).toBe(1);
-    await store.getState().loadChatHistory("session-1");
+    if (reason === "superseded") await store.getState().loadChatHistory("session-1");
+    else controller.abort();
     await vi.advanceTimersByTimeAsync(10);
     expect((await outcome).error).toBe(failure);
-    expect(read).toHaveBeenCalledTimes(2);
+    expect(read).toHaveBeenCalledTimes(reason === "superseded" ? 2 : 1);
   });
 
-  it("stops a superseded assistant-tail retry without reading again", async () => {
+  it.each([false, true])("stops a superseded assistant-tail retry without reading again with strict=%s", async (strict) => {
     vi.useFakeTimers();
     const read = vi.spyOn(agentClient, "getHistory").mockResolvedValueOnce(staleToolTail).mockResolvedValue(completedTool);
     const store = harness();
-    const older = store.getState().loadChatHistory("session-1", { waitForAssistant: true, retries: 1, retryDelayMs: 10 });
+    const older = store.getState().loadChatHistory("session-1", { waitForAssistant: true, retries: 1, retryDelayMs: 10, throwOnError: strict });
+    const outcome = older.then(() => null, (error: unknown) => error);
     await Promise.resolve();
     expect(vi.getTimerCount()).toBe(1);
     await store.getState().loadChatHistory("session-1");
     const published = store.getState().chats[0];
     await vi.advanceTimersByTimeAsync(10);
-    await older;
+    if (strict) expect(await outcome).toMatchObject({ name: "AbortError" });
+    else expect(await outcome).toBeNull();
     expect(read).toHaveBeenCalledTimes(2);
     expect(store.getState().chats[0]).toBe(published);
   });
 
-  it("does not let a pre-aborted invocation supersede an active read", async () => {
+  it.each([false, true])("does not let a pre-aborted invocation supersede an active read with strict=%s", async (strict) => {
     const pending = deferred<HistoryResponse>();
     const read = vi.spyOn(agentClient, "getHistory").mockReturnValueOnce(pending.promise);
     const store = harness();
     const older = store.getState().loadChatHistory("session-1");
     const controller = new AbortController();
     controller.abort();
-    await store.getState().loadChatHistory("session-1", { signal: controller.signal, throwOnError: true });
+    const abandoned = store.getState().loadChatHistory("session-1", { signal: controller.signal, throwOnError: strict });
+    if (strict) await expect(abandoned).rejects.toMatchObject({ name: "AbortError" });
+    else await expect(abandoned).resolves.toBeUndefined();
     pending.resolve(completedTool);
     await older;
     expect(read).toHaveBeenCalledTimes(1);
     expect(store.getState().chats[0].messages.at(-1)?.id).toBe("assistant-final");
   });
 
-  it("keeps an aborted old failure silent without releasing a newer pending reader", async () => {
+  it.each([false, true])("keeps an aborted failure's strict=%s error contract without releasing a newer reader", async (strict) => {
     const old = deferred<HistoryResponse>();
     const fresh = deferred<HistoryResponse>();
     vi.spyOn(agentClient, "getHistory").mockReturnValueOnce(old.promise).mockReturnValueOnce(fresh.promise);
     const store = harness();
     const controller = new AbortController();
-    const older = store.getState().loadChatHistory("session-1", { signal: controller.signal, throwOnError: true });
+    const older = store.getState().loadChatHistory("session-1", { signal: controller.signal, throwOnError: strict });
+    const outcome = older.then(() => null, (error: unknown) => error);
     const newer = store.getState().loadChatHistory("session-1");
     controller.abort();
-    old.reject(new Error("abandoned failure"));
-    await expect(older).resolves.toBeUndefined();
+    const failure = new Error("abandoned failure");
+    old.reject(failure);
+    expect(await outcome).toBe(strict ? failure : null);
     fresh.resolve(completedTool);
     await newer;
     expect(store.getState().chats[0].messages.at(-1)?.id).toBe("assistant-final");
@@ -393,9 +433,10 @@ describe("concurrent history read authority", () => {
     const older = store.getState().loadChatHistory("session-1");
     const controller = new AbortController();
     const newer = store.getState().loadChatHistory("session-1", { signal: controller.signal, throwOnError: true });
+    const cancelled = expect(newer).rejects.toMatchObject({ name: "AbortError" });
     controller.abort();
     fresh.resolve(completedTool);
-    await newer;
+    await cancelled;
     old.resolve(staleToolTail);
     await older;
     expect(store.getState().chats[0]).toBe(published);
@@ -414,5 +455,19 @@ describe("concurrent history read authority", () => {
     old.resolve({ session_id: "foreign-session", messages: [] });
     await outcome;
     expect(store.getState().chats[0]).toBe(published);
+  });
+
+  it.each([false, true])("reports a removed current chat as unconfirmed with strict=%s", async (strict) => {
+    const pending = deferred<HistoryResponse>();
+    const read = vi.spyOn(agentClient, "getHistory").mockReturnValueOnce(pending.promise);
+    const store = harness();
+    const reading = store.getState().loadChatHistory("session-1", { throwOnError: strict, retries: 2, retryDelayMs: 1 });
+    const outcome = reading.then(() => null, (error: unknown) => error);
+    store.setState({ chats: [] });
+    pending.resolve(completedTool);
+    if (strict) expect(await outcome).toMatchObject({ name: "AbortError" });
+    else expect(await outcome).toBeNull();
+    expect(read).toHaveBeenCalledTimes(1);
+    expect(store.getState().chats).toEqual([]);
   });
 });
