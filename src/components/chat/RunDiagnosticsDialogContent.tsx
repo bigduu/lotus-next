@@ -28,18 +28,23 @@ export function RunDiagnosticsDialogContent({ subject, isCurrent, onClose, downl
     diagnostic: subject.liveDiagnostic ?? null, source:"live_event", canonicalStatus:"not_checked", revision:0,
   }))
   const [outcome, setOutcome] = useState<"requested" | "failed" | null>(null)
-  const currentGuard = useRef(isCurrent), requestEpoch = useRef(0), revision = useRef(0), reading = useRef(false)
+  const currentGuard = useRef(isCurrent), requestEpoch = useRef(0), revision = useRef(0), reading = useRef(false), mounted = useRef(false)
   currentGuard.current = isCurrent
-  useEffect(() => () => { requestEpoch.current++; revision.current++ }, [])
+  useEffect(() => {
+    // Effect replay starts a new read lifetime, without invalidating the preview.
+    mounted.current = true
+    requestEpoch.current++
+    return () => { mounted.current = false }
+  }, [])
   const report = useMemo(() => createRunDiagnostics(subject, subject.sessionId, getRuntimeConfig(), collectedAt, evidence), [subject, collectedAt, evidence])
   const renderedRevision = evidence.revision
   const save = () => {
-    if (!report || !currentGuard.current() || revision.current !== renderedRevision) return
+    if (!report || !mounted.current || !currentGuard.current() || revision.current !== renderedRevision) return
     try { download(report); setOutcome("requested") }
     catch { setOutcome("failed") }
   }
   const refresh = async () => {
-    if (reading.current || !currentGuard.current() || subject.sessionId === null || !subject.errorBinding) return
+    if (reading.current || !mounted.current || !currentGuard.current() || subject.sessionId === null || !subject.errorBinding) return
     reading.current = true
     const request = ++requestEpoch.current
     const replace = (next: DiagnosticEvidence) => setEvidence({ ...next, revision:++revision.current })
@@ -48,11 +53,11 @@ export function RunDiagnosticsDialogContent({ subject, isCurrent, onClose, downl
     setOutcome(null)
     try {
       const response = await readSession(subject.sessionId)
-      if (request !== requestEpoch.current || !currentGuard.current()) return
+      if (request !== requestEpoch.current || !mounted.current || !currentGuard.current()) return
       const checked = inspectCanonicalDiagnostic(response.session, subject.sessionId, subject.errorBinding)
       replace({ diagnostic:checked.diagnostic, source:"canonical_read", canonicalStatus:checked.status })
     } catch {
-      if (request === requestEpoch.current && currentGuard.current()) replace({ diagnostic:null, source:"canonical_read", canonicalStatus:"unavailable" })
+      if (request === requestEpoch.current && mounted.current && currentGuard.current()) replace({ diagnostic:null, source:"canonical_read", canonicalStatus:"unavailable" })
     } finally {
       if (request === requestEpoch.current) reading.current = false
     }

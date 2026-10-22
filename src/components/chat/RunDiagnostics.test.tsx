@@ -1,4 +1,4 @@
-import { act } from "react"
+import { act, StrictMode } from "react"
 import { createRoot, type Root } from "react-dom/client"
 import { afterEach, describe, expect, it, vi } from "vitest"
 import { uiText } from "@shared/i18n/ui"
@@ -30,6 +30,14 @@ afterEach(() => {
 })
 
 describe("review and explicit local diagnostic download", () => {
+  it("downloads the initial preview under StrictMode without requiring a service read", async () => {
+    const download = vi.fn(), readSession = vi.fn()
+    mount(<StrictMode><RunDiagnosticsDialogContent subject={a} isCurrent={() => true} onClose={vi.fn()} download={download} readSession={readSession} /></StrictMode>)
+    const preview = JSON.parse(document.querySelector("pre")!.textContent!)
+    await click(uiText("run_diagnostics_download"))
+    expect(download).toHaveBeenCalledExactlyOnceWith(preview)
+    expect(readSession).not.toHaveBeenCalled()
+  })
   it("only previews on open; downloads only after explicit action, without network or generation", async () => {
     const download = vi.fn(), fetch = vi.fn(); vi.stubGlobal("fetch", fetch)
     mount(<RunDiagnosticsDialogContent subject={a} isCurrent={() => true} onClose={vi.fn()} download={download} />)
