@@ -3188,8 +3188,8 @@ describe("tool-stream terminal evidence", () => {
     })
     return { subscription, get handlers() { return handlers }, get controller() { return controller } }
   }
-  async function mountRun(sessionId = "synthetic-tool-session") {
-    mocks.appState.chats = [{ id: sessionId, messages: [], config: { model: "test-model" } }]
+  async function mountRun(sessionId = "synthetic-tool-session", messages: unknown[] = []) {
+    mocks.appState.chats = [{ id: sessionId, messages, config: { model: "test-model" } }]
     const stream = queueStream(sessionId)
     const hook = await mountUseChat({ mode: "bound", sessionId })
     await act(async () => { await hook.current.send("publish the synthetic fixture") })
@@ -3310,6 +3310,32 @@ describe("tool-stream terminal evidence", () => {
     await flushMicrotasks()
     expect(calls(hook)).toEqual([])
     expect(hook.current.pendingUserText).toBeNull()
+    expect(hook.current.sendFailure?.message).toBe(failure)
+    expectNoReplay()
+  })
+
+  it("does not acknowledge a reused tool id with a result that predates this operation", async () => {
+    const previousResult = { id: "previous-tool-result", role: "assistant", type: "tool_result",
+      toolCallId: "call-1", result: { result: "previous operation output" } }
+    const { hook, stream, sessionId } = await mountRun("synthetic-reused-tool-id", [previousResult])
+    await finishTool(stream)
+    mocks.appState.loadChatHistory.mockRejectedValueOnce(new Error("synthetic history unavailable"))
+    await act(async () => { stream.handlers.onError(failure); stream.subscription.resolve() })
+    await flushMicrotasks()
+    expect(calls(hook)).toHaveLength(1)
+    expect(calls(hook)[0]).toMatchObject({ toolCallId: "call-1", status: "completed", output: result })
+    expect(hook.current).toMatchObject({ sending: false, streaming: null, streamPhase: null,
+      sendFailure: { kind: "generation-failed", sessionId, message: failure } })
+    await hook.rerender({ mode: "bound", sessionId })
+    expect(calls(hook)[0]?.output).toBe(result)
+
+    mocks.appState.chats[0].messages = [previousResult,
+      { ...previousResult, id: "current-tool-result", result: { result } }]
+    await hook.rerender({ mode: "bound", sessionId })
+    expect(calls(hook)).toEqual([])
+    mocks.appState.chats[0].messages = [previousResult]
+    await hook.rerender({ mode: "bound", sessionId })
+    expect(calls(hook)).toEqual([])
     expect(hook.current.sendFailure?.message).toBe(failure)
     expectNoReplay()
   })

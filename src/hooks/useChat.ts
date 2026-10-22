@@ -398,6 +398,7 @@ export function useChat(
   const latestOperationBySessionRef = useRef<Map<string | null, number>>(new Map())
   const streamOperationRef = useRef<number | null>(null)
   const streamBaselineMessageIdRef = useRef<string | null>(null)
+  const streamBaselineToolResultIdsRef = useRef<ReadonlySet<string>>(new Set())
   const subscriptionRef = useRef<{ operationId: number; sessionId: string } | null>(null)
   const navigationRef = useRef({ sessionId: sid, epoch: 0 })
   if (navigationRef.current.sessionId !== sid) {
@@ -507,9 +508,11 @@ export function useChat(
     if (streamSid !== sid) return EMPTY_SEGMENTS
     if (streamPhaseState !== null) return liveSegmentsState
     // Failed history reads retain terminal tool evidence without keeping a run
-    // active. Canonical history replaces each retained result when it arrives.
+    // active. Only a new canonical result can acknowledge this operation;
+    // earlier operations may have used the same tool invocation id.
     const persistedToolIds = new Set(messages.flatMap((message) =>
-      "type" in message && message.type === "tool_result" ? [message.toolCallId] : []))
+      "type" in message && message.type === "tool_result" && !streamBaselineToolResultIdsRef.current.has(message.id)
+        ? [message.toolCallId] : []))
     let hydrated = false
     const remaining = liveSegmentsState.flatMap<LiveSegment>((segment) => {
       if (segment.kind !== "tools") return [segment]
@@ -829,10 +832,13 @@ export function useChat(
       operationSequenceRef.current = Math.max(operationSequenceRef.current, operationId)
       noteSessionOperation(runSid, operationId)
       streamOperationRef.current = operationId
-      streamBaselineMessageIdRef.current = useAppStore
+      const baselineMessages = useAppStore
         .getState()
         .chats.find((chat) => chat.id === runSid)
-        ?.messages?.findLast((message) => message.role !== "system")?.id ?? null
+        ?.messages ?? []
+      streamBaselineMessageIdRef.current = baselineMessages.findLast((message) => message.role !== "system")?.id ?? null
+      streamBaselineToolResultIdsRef.current = new Set(baselineMessages.flatMap((message) =>
+        "type" in message && message.type === "tool_result" ? [message.id] : []))
       const ownsStream = () => streamOperationRef.current === operationId
       const terminal = { settlement: null as Promise<void> | null, pendingRead: null as Promise<void> | null }
       // ONE live subscription per hook instance: sever the previous one FIRST
