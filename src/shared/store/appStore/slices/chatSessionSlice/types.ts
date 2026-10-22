@@ -1,5 +1,14 @@
 import { ChatItem, Message } from "@shared/types/chat";
 import type { ReasoningEffort } from "@services/chat/AgentService";
+import type { ConversationClearFailure } from "@services/chat/conversationClear";
+
+export interface ConversationClearState {
+  busy: boolean;
+  confirmed?: boolean;
+  error?: ConversationClearFailure;
+  readbackConfirmed?: boolean;
+  refreshFailed?: boolean;
+}
 
 export type DeleteMessageFailureReason =
   | "session_not_found"
@@ -30,6 +39,7 @@ export interface ChatSlice {
   latestActiveSessionId: string | null;
   /** Advances after each authoritative root-index refresh. */
   sessionIndexRevision: number;
+  conversationClears: Record<string, ConversationClearState>;
 
   // Actions
   addChat: (chat: Omit<ChatItem, "id">) => Promise<string>;
@@ -81,6 +91,12 @@ export interface ChatSlice {
   ) => Promise<void>;
   /** Restore a persisted session id that may refer to an unloaded child. */
   restoreSession: (sessionId: string) => Promise<boolean>;
+  clearConversation: (sessionId: string) => Promise<void>;
+  verifyConversationClear: (sessionId: string) => Promise<void>;
+  dismissConversationClear: (sessionId: string) => void;
+  refreshConversationClear: (sessionId: string) => Promise<void>;
+  /** Fence old reads immediately on a cross-client clear event, then refetch. */
+  reconcileClearedConversation: (sessionId: string) => void;
   loadChatHistory: (
     sessionId: string,
     options?: {

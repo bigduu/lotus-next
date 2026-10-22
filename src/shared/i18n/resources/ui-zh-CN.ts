@@ -2335,4 +2335,22 @@ export const uiZhCn = {
   "actor_placement_no_activation": "此快照没有执行激活记录。工作目录路径或会话主机不能证明此代理的执行位置。",
   "actor_placement_native_task": "已观察到原生任务活动，但后端尚未报告其执行位置，不能据此确定具体计算机。",
   "actor_placement_missing": "后端尚未报告此次执行的位置。会话主机和工作目录是独立信息。"
+  ,
+  "conversation_clear_refresh_failed": "无法刷新存储状态，此前的结果未改变。未发送清理请求。",
+  "conversation_clear_action": "清除会话消息",
+  "conversation_clear_load_failed": "无法打开确认框。请重新加载页面后再试。未发送清理请求。",
+  "conversation_clear_title": "清除这个会话的消息？",
+  "conversation_clear_impact": "将永久清除本会话的对话消息、附件、token 统计和存储的摘要。保留首条系统消息、会话身份、Project 范围、管理关系、独立会话和未完成任务。",
+  "conversation_clear_limits": "当前服务不确认原生/provider 上下文已完整重置。已激活的会话（包括 Supervisor）可能拒绝清理。不会自动停止运行中的工作或处理待审批请求。",
+  "conversation_clear_confirmed": "服务已确认清理，并已读回核对存储的消息和空 token 统计。尚未确认原生/provider 上下文已完整重置。",
+  "conversation_clear_active_run": "此会话正在运行。请等待运行结束后再清理。未发送停止或清理请求。",
+  "conversation_clear_pending_approval": "此会话有待回答的问题或审批。请先处理，再清理。未发送停止或清理请求。",
+  "conversation_clear_state_unavailable": "无法核实当前会话状态，未发送清理请求。请检查访问权限和连接后再试。",
+  "conversation_clear_authority_conflict": "服务因本会话存在执行授权、活动或状态变化而拒绝清理。当前清理接口不支持已激活的 Supervisor。请刷新并核对当前状态。",
+  "conversation_clear_incompatible": "此会话与当前服务的执行版本不兼容，清理已被拒绝。请刷新并核对兼容性后再继续。",
+  "conversation_clear_unsupported": "当前服务不提供所请求的会话清理操作。未尝试删除或重建会话。",
+  "conversation_clear_unknown": "清理请求的结果未知，存储数据可能已经变化。请勿重复发送；可刷新检查存储状态。未自动重试。",
+  "conversation_clear_readback_failed": "服务已确认收到清理，但无法核实存储结果，不能视为成功。请刷新验证，不会再次发送清理请求。",
+  "conversation_clear_refresh": "刷新存储状态",
+  "conversation_clear_readback_only": "已读回清理后的消息状态，但此前请求的结果仍未知。未发送新的清理请求。"
 } as const

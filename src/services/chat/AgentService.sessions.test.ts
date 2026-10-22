@@ -53,7 +53,7 @@ describe("session index transport", () => {
   it("encodes a persisted session id for detail-based restore", async () => {
     api.get.mockResolvedValueOnce({ session: { id: "child/a" } });
     await agentClient.getSession("child/a");
-    expect(api.get).toHaveBeenCalledExactlyOnceWith("sessions/child%2Fa");
+    expect(api.get).toHaveBeenCalledExactlyOnceWith("sessions/child%2Fa", { cache: "no-store" });
   });
 
   it("uses message-free mode operations and the same recovery identity", async () => {
