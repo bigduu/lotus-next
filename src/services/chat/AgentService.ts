@@ -1,3 +1,4 @@
+import type { PublicRunDiagnostic } from "./runDiagnostic"
 import { uiText } from "@shared/i18n/ui"
 import { debugLog } from "@shared/utils/debugFlags";
 /**
@@ -257,6 +258,7 @@ export interface AgentEvent {
     images?: Array<{ mime_type: string; data: string }>;
   };
   error?: string;
+  diagnostic?: unknown;
   message?: string; // For Error events
   // Union type because 'usage' field has different shapes for different events
   usage?:
@@ -736,6 +738,8 @@ export interface SessionSummary {
   is_running: boolean;
   last_run_status?: string;
   last_run_error?: string;
+  /** Detail only; index/list rows omit it. Validate before presentation. */
+  last_run_diagnostic?: unknown;
   /** Active plan mode runtime state mirrored from backend session summary. */
   plan_mode?: SessionPlanModeState | null;
   /** Authoritative only on GET /sessions/{id}; list rows omit this field. */
@@ -1136,7 +1140,7 @@ export interface AgentEventHandlers {
   onSessionHistoryCommitted?: (sessionId: string) => void;
   onComplete?: (usage: AgentEvent["usage"]) => void;
   onCancelled?: (message?: string) => void;
-  onError?: (message: string) => void;
+  onError?: (message: string, diagnostic?: Readonly<PublicRunDiagnostic>) => void;
   onSubAgentStarted?: (parentSessionId: string, childSessionId: string, title?: string) => void;
   onSubAgentEvent?: (parentSessionId: string, childSessionId: string, event: AgentEvent) => void;
   onSubAgentHeartbeat?: (
@@ -1725,8 +1729,14 @@ export class AgentClient {
       return;
     }
 
+    // Optional diagnostics stay outside the startup graph. Load before subscribing
+    // so an error keeps its order relative to the terminal control. Failure to
+    // load support details must not prevent ordinary stream observation.
+    const decode = await import("./runDiagnostic")
+      .then((module) => module.decodeRunDiagnostic).catch(() => undefined);
+    if (signal?.aborted) return;
     const { promise, close } = v2Stream.subscribeAgent(sessionId, handlers, (event, h) =>
-      this.handleEvent(event, h),
+      this.handleEvent(event, h, sessionId, decode),
     );
     const abortListener = () => {
       debugLog("[AgentClient]", "events.subscribe.ws.abort", { sessionId });
@@ -1762,7 +1772,7 @@ export class AgentClient {
   /**
    * Handle a single agent event
    */
-  private handleEvent(event: AgentEvent, handlers: AgentEventHandlers): void {
+  private handleEvent(event: AgentEvent, handlers: AgentEventHandlers, sessionId: string, decode?: typeof import("./runDiagnostic").decodeRunDiagnostic): void {
     switch (event.type) {
       case "token":
         handlers.onToken?.(event.content || "");
@@ -2013,7 +2023,13 @@ export class AgentClient {
       case "error":
         debugLog("[AgentClient]", "events.dispatch.error", summarizeStreamControlEvent(event));
         // Error event uses 'message' field, not 'error' field
-        handlers.onError?.(event.message || event.error || "Unknown error");
+        if (event.session_id && event.session_id !== sessionId) break;
+        {
+          const message = event.message || event.error || "Unknown error";
+          const diagnostic = decode?.(event.diagnostic, sessionId, message);
+          if (diagnostic) handlers.onError?.(message, diagnostic);
+          else handlers.onError?.(message);
+        }
         break;
       default:
         console.warn("Unknown event type:", event);

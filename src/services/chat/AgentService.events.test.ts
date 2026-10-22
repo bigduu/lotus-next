@@ -13,6 +13,7 @@ vi.mock("./v2Stream", () => ({
 }))
 
 import { AgentClient } from "./AgentService"
+import { diagnosticFixture, diagnosticFixtureError } from "./runDiagnostic.testFixtures"
 
 describe("AgentClient session event routing", () => {
   beforeEach(() => {
@@ -125,6 +126,27 @@ describe("AgentClient session event routing", () => {
     await new AgentClient().subscribeToEvents("session-1", { onContextSummarized, onError })
 
     expect(onContextSummarized).not.toHaveBeenCalled()
+    expect(onError).not.toHaveBeenCalled()
+  })
+})
+
+describe("public v2 error diagnostics", () => {
+  it("forwards exact scoped finite diagnostics while preserving the legacy one-argument callback", async () => {
+    const onError = vi.fn()
+    stream.event = { type:"error",message:diagnosticFixtureError,diagnostic:diagnosticFixture("session-1") }
+    await new AgentClient().subscribeToEvents("session-1",{ onError })
+    expect(onError).toHaveBeenLastCalledWith(diagnosticFixtureError,diagnosticFixture("session-1"))
+    onError.mockClear(); stream.event = { type:"error",message:"legacy upstream timeout" }
+    await new AgentClient().subscribeToEvents("session-1",{ onError })
+    expect(onError).toHaveBeenCalledExactlyOnceWith("legacy upstream timeout")
+  })
+  it("rejects a foreign diagnostic and never routes an explicitly foreign error", async () => {
+    const onError = vi.fn()
+    stream.event = { type:"error",message:diagnosticFixtureError,diagnostic:diagnosticFixture("foreign") }
+    await new AgentClient().subscribeToEvents("session-1",{ onError })
+    expect(onError).toHaveBeenCalledExactlyOnceWith(diagnosticFixtureError)
+    onError.mockClear(); stream.event = { type:"error",session_id:"foreign",message:diagnosticFixtureError,diagnostic:diagnosticFixture("foreign") }
+    await new AgentClient().subscribeToEvents("session-1",{ onError })
     expect(onError).not.toHaveBeenCalled()
   })
 })

@@ -2244,3 +2244,48 @@ describe("child approval compatibility", () => {
     expect(respond).toHaveBeenCalledExactlyOnceWith(false)
   })
 })
+
+describe("run diagnostics entry and canonical error isolation", () => {
+  const a = "11111111-1111-4111-8111-111111111111"
+  const b = "22222222-2222-4222-8222-222222222222"
+  const id = "9ab6cd70-bc43-4fed-9f10-50c2873fa287"
+  const otherId = "fa6aa794-30d4-4e8b-a222-46b35c8348d9"
+  const pane = (chat: ChatPaneProps["chat"]) => <ChatPane chat={chat} pickedWorkspace="/picked"
+    onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()} splitOpen={false}
+    onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false} />
+  const open = async () => {
+    const entry = [...document.querySelectorAll<HTMLButtonElement>("button")]
+      .find((button) => button.textContent?.trim() === uiText("run_diagnostics_open"))!
+    await act(async () => entry.click())
+    await act(async () => vi.dynamicImportSettled())
+  }
+  it("preserves legacy error detail and does not infer retry limit or invoke generation", async () => {
+    const send = vi.fn<Send>(), chat = createChat(send, a, "error", "legacy upstream error after 1 request(s).")
+    await mount(send, a)
+    await act(async () => roots.at(-1)!.render(pane(chat)))
+    expect(document.querySelector('details summary')?.textContent).toBe(uiText("technical_details_c26fb419"))
+    await open()
+    const report = JSON.parse(document.querySelector('[role="dialog"] pre')!.textContent!)
+    expect(report.diagnostic).toMatchObject({ diagnostic_id: null, attempt: null, attempt_limit: null })
+    expect(JSON.stringify(report)).not.toContain("legacy upstream")
+    expect(chat.retry).not.toHaveBeenCalled(); expect(send).not.toHaveBeenCalled(); expect(agentClient.execute).not.toHaveBeenCalled()
+  })
+  it("closes an old preview when navigation changes and ignores a foreign local failure", async () => {
+    const send = vi.fn<Send>()
+    await mount(send, a)
+    const root = roots.at(-1)!
+    const first = createChat(send, a, "error", "PRIVATE_OLD_ERROR. Diagnostic ID: " + id + ".")
+    await act(async () => root.render(pane(first)))
+    await open()
+    expect(JSON.parse(document.querySelector("pre")!.textContent!).diagnostic.diagnostic_id).toBe(id)
+    const next = { ...createChat(send, b, "error", "Diagnostic ID: " + otherId + "."),
+      sendFailure: { kind: "generation-failed" as const, operationId: 1, sessionId: a, message: "Diagnostic ID: " + id + "." } }
+    await act(async () => root.render(pane(next)))
+    expect(document.querySelector('[role="dialog"]')).toBeNull()
+    await open()
+    const preview = JSON.parse(document.querySelector("pre")!.textContent!)
+    expect(preview.context.session_id).toBe(b); expect(preview.diagnostic.diagnostic_id).toBe(otherId)
+    expect(document.querySelector('[role="dialog"]')?.textContent).not.toContain(id)
+    expect(agentClient.execute).not.toHaveBeenCalled(); expect(send).not.toHaveBeenCalled()
+  })
+})

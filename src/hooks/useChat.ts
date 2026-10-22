@@ -1,3 +1,4 @@
+import type { PublicRunDiagnostic } from "@services/chat/runDiagnostic"
 import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { useOutputRate } from "./useOutputRate"
 import { useSessionExecutionCompatibility } from "./useSessionExecutionCompatibility"
@@ -97,6 +98,7 @@ const submissionRejectionCode = (error: unknown): SubmissionRejectionCode | null
 }
 
 export type GenerationFailure = {
+  diagnostic?: Readonly<PublicRunDiagnostic>
   kind: "generation-failed"
   operationId: number
   sessionId: string
@@ -987,10 +989,11 @@ export function useChat(
         })()
       }
 
-      const settleFailed = (historyReady = false, error?: unknown): void => {
+      const settleFailed = (historyReady = false, error?: unknown, diagnostic?: Readonly<PublicRunDiagnostic> | null): void => {
         if (!ownsStream() || terminal.settlement) return
         updateCompression(compressionRunEnded)
         publishSendFailure({
+          ...(diagnostic ? { diagnostic } : {}),
           kind: "generation-failed",
           operationId,
           sessionId: runSid,
@@ -1094,7 +1097,12 @@ export function useChat(
             && tail.id !== streamBaselineMessageIdRef.current && tail.content.trim() === finalText
           if (session.last_run_status === "cancelled") settleCancelled(true)
           else if (session.last_run_status === "completed" && durableReply) settleCompleted(true)
-          else settleFailed(historyReady, session.last_run_error)
+          else {
+            const decoder = session.last_run_diagnostic == null ? null : await import("@services/chat/runDiagnostic").catch(() => null)
+            const message = toFailureMessage(session.last_run_error)
+            const diagnostic = decoder && message ? decoder.decodeRunDiagnostic(session.last_run_diagnostic, runSid, message) : null
+            settleFailed(historyReady, session.last_run_error, diagnostic)
+          }
           ac.abort()
         } catch (err) {
           observedIdle = false
@@ -1294,8 +1302,8 @@ export function useChat(
           onComplete: () => {
             settleCompleted()
           },
-          onError: (message) => {
-            settleFailed(false, message)
+          onError: (message, diagnostic) => {
+            settleFailed(false, message, diagnostic)
           },
           onCancelled: () => {
             settleCancelled()

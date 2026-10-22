@@ -86,6 +86,8 @@ import {
 } from "@/lib/sessionFileChanges"
 import { getFileChangePayloadDiffStats } from "@shared/utils/resultFormatters"
 import { describeRunFailure } from "@/lib/runFailureGuidance"
+import { extractDiagnosticId, type RunDiagnosticsSubject } from "@/lib/runDiagnosticId"
+import { RunDiagnosticsEntry } from "@/components/chat/RunDiagnosticsEntry"
 import { SessionCompatibilityNotice } from "./SessionCompatibilityNotice"
 import { isSessionExecutionBlocked, observeSessionExecutionConflict } from "@services/chat/sessionExecutionCompatibility"
 
@@ -276,6 +278,15 @@ export function ChatPane({
       ? currentChat.lastRunError?.trim() || persistedRunError
       : null)
   const runFailureGuidance = generationFailed ? describeRunFailure(runErrorDetail) : null
+  const runDiagnosticsSubject = useMemo<RunDiagnosticsSubject>(() => ({
+    sessionId: currentSessionId,
+    localOperationId: visibleSendFailure?.operationId ?? null,
+    failureKind: visibleSendFailure?.kind ?? "generation-failed",
+    diagnosticId: extractDiagnosticId(runErrorDetail),
+    errorBinding: runErrorDetail,
+    liveDiagnostic: visibleSendFailure?.kind === "generation-failed" ? visibleSendFailure.diagnostic : null,
+  }), [currentSessionId, visibleSendFailure, runErrorDetail])
+
   const queue = useGuidanceQueue(currentSessionId, currentlyRunning)
   const rootAuthority = useRootOrchestrationMode(currentSessionId, currentChat?.kind)
   // Invalidate cached Work eligibility on mode/lifecycle changes. This key is
@@ -1194,6 +1205,7 @@ export function ChatPane({
                 </details>
               ) : null}
             </div>
+            {!currentlyRunning ? <RunDiagnosticsEntry key={currentChat?.updatedAt} subject={runDiagnosticsSubject} /> : null}
             {rootMode.unsafe ? null : generationFailed ? (
               <Button
                 size="sm"
