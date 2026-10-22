@@ -10,8 +10,8 @@ async function fixture(page: Page, { legacy = false }: { legacy?: boolean } = {}
   const observation = await installArtifactRuntime(page, standaloneScenario)
   const scopes = new Map<string, Scope>()
   const writes: { id: string; method: string; body: unknown }[] = []
-  let generation = 0, refuseClose: string | null = null, conflictOpen = false
-  const create = (id: string, mode: Mode) => { const scope: Scope = { mode, generation: ++generation, tabs: [`${id}-${generation}`], epoch: 1, viewport: { width: 640, height: 480 } }; scopes.set(id, scope); return scope }
+  let generation = 0, refuseClose: string | null = null, conflictOpen = false, emptyOpens = false
+  const create = (id: string, mode: Mode) => { const scope: Scope = { mode, generation: ++generation, tabs: emptyOpens ? [] : [`${id}-${generation}`], epoch: 1, viewport: { width: 640, height: 480 } }; scopes.set(id, scope); return scope }
   const state = (scope: Scope) => ({ ...(legacy ? {} : { profile_mode: scope.mode, storage_shared: scope.mode === "shared" }), page_epoch: scope.epoch, frame_seq: 0,
     active_tab_id: scope.tabs[0] ?? null, tabs: scope.tabs.map((tab_id) => ({ tab_id, url: "about:blank", title: "Profile page", active: true })),
     url: scope.tabs.length ? "about:blank" : "", title: scope.tabs.length ? "Profile page" : "", viewport: scope.viewport, can_go_back: false, can_go_forward: false })
@@ -66,7 +66,7 @@ async function fixture(page: Page, { legacy = false }: { legacy?: boolean } = {}
   const panel = workbenchPanel(page)
   await panel.getByRole("button", { name: /浏览器.*输入网址后打开/ }).click()
   const browser = panel.getByRole("region", { name: "内置浏览器" })
-  return { observation, panel, browser, writes, scopes, refuseClose: (code = "browser_runtime_unavailable") => { refuseClose = code }, conflictOpen: () => { conflictOpen = true } }
+  return { observation, panel, browser, writes, scopes, refuseClose: (code = "browser_runtime_unavailable") => { refuseClose = code }, conflictOpen: () => { conflictOpen = true }, emptyOpens: () => { emptyOpens = true } }
 }
 
 test("synthetic profiles: explicit choices, chat-owned close, zero-tab scope and fresh clean reopen", async ({ page }, testInfo) => {
@@ -188,4 +188,31 @@ test("synthetic legacy404: only an explicit default open, no unsupported modes o
   expect(f.observation.pageErrors).toEqual([])
   await testInfo.attach("synthetic-legacy-default-requests", { body: JSON.stringify(f.writes, null, 2), contentType: "application/json" })
   await page.screenshot({ path: testInfo.outputPath("legacy-default-only.png") })
+})
+
+
+test("synthetic empty profile reopen keeps the selected browser recovery surface", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop-chromium", "Desktop profile recovery")
+  const f = await fixture(page)
+  await f.browser.getByRole("button", { name: "按当前服务默认设置打开", exact: true }).click()
+  await expect(f.browser.getByText("当前模式：共享账户")).toBeAttached()
+  if ((await f.browser.locator("details").getAttribute("open")) === null) await f.browser.locator("summary").click()
+  f.emptyOpens()
+  await f.browser.getByRole("combobox", { name: "下次打开的模式" }).selectOption("clean")
+  await f.browser.getByRole("button", { name: "关闭当前聊天浏览器", exact: true }).click()
+  await expect(f.browser.getByText("当前聊天浏览器已关闭", { exact: true })).toBeVisible()
+  await f.browser.getByRole("button", { name: "打开浏览器", exact: true }).click()
+  await expect(f.browser.getByText("还没有打开网页", { exact: true })).toBeVisible()
+  await expect(f.browser.getByText("当前模式：干净会话")).toBeAttached()
+  expect(f.scopes.get(a)?.tabs).toEqual([])
+  expect(f.writes).toEqual([{ id: a, method: "PUT", body: {} }, { id: a, method: "DELETE", body: undefined }, { id: a, method: "PUT", body: { profile_mode: "clean" } }])
+  if ((await f.browser.locator("details").getAttribute("open")) === null) await f.browser.locator("summary").click()
+  await f.browser.getByRole("combobox", { name: "下次打开的模式" }).selectOption("shared")
+  await f.browser.getByRole("button", { name: "关闭当前聊天浏览器", exact: true }).click()
+  await f.browser.getByRole("button", { name: "打开浏览器", exact: true }).click()
+  await expect(f.browser.getByText("还没有打开网页", { exact: true })).toBeVisible()
+  await expect(f.browser.getByText("当前模式：共享账户")).toBeAttached()
+  expect(f.writes).toHaveLength(5)
+  expect(f.observation.pageErrors).toEqual([])
+  await page.screenshot({ path: testInfo.outputPath("empty-profile-reopen.png") })
 })

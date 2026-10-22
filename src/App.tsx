@@ -585,7 +585,17 @@ function App() {
                       setBrowserEntryOpen(false)
                       setBrowserEntryDraft("")
                     }}
-                    browser={browser}
+                    browser={{
+                      ...browser,
+                      openDefault: (id) => {
+                        if (id === currentSessionId && browser.profilePhase === "closed") openWorkbench("browser")
+                        return browser.openDefault(id)
+                      },
+                      openProfile: (id, mode) => {
+                        if (id === currentSessionId && browser.profilePhase === "closed") openWorkbench("browser")
+                        return browser.openProfile(id, mode)
+                      },
+                    }}
                   />
                 ) : null}
                 session={(

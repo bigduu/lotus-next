@@ -226,3 +226,37 @@ it("does not automatically retry an empty-scope state read refused with browser_
     expect(browserService.open).not.toHaveBeenCalled()
   } finally { vi.useRealTimers() }
 })
+
+
+it("retains an ambiguous profile write warning when the canonical read also loses connection", async () => {
+  await render()
+  vi.mocked(browserService.close).mockRejectedValueOnce(new NetworkRequestError())
+  vi.mocked(browserService.get).mockRejectedValue(new NetworkRequestError())
+  await act(async () => browser.closeProfile("a"))
+  expect(browser.state).toBeNull()
+  expect(browser.profilePhase).toBe("unknown")
+  expect(browser.error).toContain("未确认")
+  expect(browser.error).toContain("暂时无法使用")
+  await act(async () => browser.retry())
+  expect(browser.error).toContain("未确认")
+  expect(browserService.close).toHaveBeenCalledTimes(1)
+  expect(browserService.open).not.toHaveBeenCalled()
+  expect(browserService.openProfile).not.toHaveBeenCalled()
+  vi.mocked(browserService.get).mockImplementation(async (id) => states[id]!)
+  await act(async () => browser.retry())
+  expect(browser.state?.profile_mode).toBe("shared")
+  expect(browserService.close).toHaveBeenCalledTimes(1)
+})
+
+
+it("keeps a known busy refusal distinct when its later canonical read fails", async () => {
+  await render()
+  vi.mocked(browserService.close).mockRejectedValueOnce(new ApiError("busy", 503, "Unavailable", JSON.stringify({ error: { code: "browser_busy", type: "browser_error" } })))
+  vi.mocked(browserService.get).mockRejectedValue(new NetworkRequestError())
+  await act(async () => browser.closeProfile("a"))
+  expect(browser.error).toContain("暂时无法使用")
+  expect(browser.error).not.toContain("未确认")
+  expect(browserService.close).toHaveBeenCalledTimes(1)
+  expect(browserService.open).not.toHaveBeenCalled()
+  expect(browserService.openProfile).not.toHaveBeenCalled()
+})
