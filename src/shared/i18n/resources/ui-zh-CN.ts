@@ -2145,6 +2145,7 @@ export const uiZhCn = {
   "browser_create_first_tab": "输入网址后创建第一个标签页",
   "browser_profile_outcome_unknown": "上次浏览器操作的结果未确认。请重新读取当前状态；不会自动重发打开或关闭操作。",
   "browser_profile_refresh": "重新读取状态",
+  "browser_view_load_failed": "浏览器面板加载失败，请重试。",
   "browser_request_busy": "浏览器当前繁忙，本次请求未执行。请稍后重试。",
   "browser_profile_open_default": "按当前服务默认设置打开",
   "browser_profile_default_help": "当前服务的账户模式尚未确认。可以先按默认设置打开；收到模式报告后才可选择共享账户或干净会话。",
