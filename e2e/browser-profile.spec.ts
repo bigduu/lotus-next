@@ -176,6 +176,10 @@ test("synthetic legacy404: only an explicit default open, no unsupported modes o
   expect(f.writes).toEqual([{ id: a, method: "PUT", body: {} }])
   // Simulate the old host closing an idle scope. Its existing typed404 is not a capability.
   f.scopes.delete(a)
+  // The raw frame reader does not decode a JSON error body. Confirm closure
+  // through a user-requested canonical GET instead of inferring it from JPEG failure.
+  await expect(f.browser.getByText("当前 Bamboo 尚未提供内置浏览器。", { exact: true })).toBeVisible()
+  await f.browser.getByRole("button", { name: "重试", exact: true }).click()
   await expect(f.browser.getByRole("button", { name: "按当前服务默认设置打开", exact: true })).toBeVisible()
   await f.browser.getByRole("button", { name: "重新读取状态", exact: true }).click()
   await expect(f.browser.getByRole("button", { name: "按当前服务默认设置打开", exact: true })).toBeVisible()
