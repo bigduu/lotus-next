@@ -12,6 +12,8 @@ Browser JSON state/DOM reads also use single-attempt transport. A typed `503 bro
 
 The hook fences actions by chat and request scope. After a write or ambiguous response it reads canonical state instead of applying a late ACK to another chat. Hiding the panel, selecting another chat, or retrying a read does not implicitly reopen a closed scope. A final-tab close returns an active, empty scope; the workbench may show its existing empty view until the browser entry is selected again.
 
+The optional browser view is loaded separately from ordinary-chat startup. App keeps the existing state hook and chat ownership; loading or retrying the view never opens or closes a browser. Loading has a visible status, and a failed view import is contained in the workbench with an explicit retry action. The original startup byte ceilings remain unchanged, with the BrowserPane view also forbidden from the eager import graph.
+
 ## Verification boundary
 
 Affected hook, selector, service and transport tests cover canonical reads, explicit defaults and modes, known refusals, single attempts, conflicts, unknown results, late ACKs and chat switches. Built-artifact Chromium fixtures simulate two chat scopes, empty tabs, clean reopen, conflict/busy/unknown recovery and the older host's typed404 with missing mode fields. Existing legacy pages/dialogs and the phone's absence of browser requests remain separate regressions.

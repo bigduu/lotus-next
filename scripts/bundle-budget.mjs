@@ -39,6 +39,7 @@ export const BUNDLE_BUDGET = Object.freeze({
 const immediateBootstrapNames = new Set(["ErrorBoundary", "Root"])
 
 const optionalFeatureEntries = Object.freeze([
+  { label: "BrowserPane", source: "src/components/app/BrowserPane.tsx" },
   { label: "Settings", source: "src/components/chat/Settings.tsx" },
   { label: "StreamdownMarkdown", source: "src/components/chat/StreamdownMarkdown.tsx" },
   { label: "StreamdownMermaid", source: "src/components/chat/StreamdownMermaid.tsx" },
@@ -54,6 +55,7 @@ const optionalFeatureEntries = Object.freeze([
 ])
 
 const forbiddenStartupModulePaths = Object.freeze([
+  "src/components/app/BrowserPane.tsx",
   "src/components/chat/Settings.tsx",
   "src/components/chat/StreamdownMarkdown.tsx",
   "src/components/chat/StreamdownMermaid.tsx",

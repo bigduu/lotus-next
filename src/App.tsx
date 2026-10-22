@@ -27,7 +27,7 @@ import { ChatPane } from "@/components/app/ChatPane"
 import { SecondarySessionPane } from "@/components/app/SecondarySessionPane"
 import { AvailabilityBanner } from "@/components/app/AvailabilityBanner"
 import { ReviewPane } from "@/components/app/ReviewPane"
-import { BrowserPaneView } from "@/components/app/BrowserPane"
+import { LazyBrowserPaneView } from "@/components/app/LazyBrowserPaneView"
 import { useBrowserSession } from "@/hooks/useBrowserSession"
 import { isPhoneDevice } from "@/lib/browserAvailability"
 import { DEFAULT_SUPERVISOR_SESSION_ID, isDefaultSupervisor } from "@/lib/supervisor"
@@ -571,7 +571,7 @@ function App() {
                   />
                 )}
                 browser={browserEnabled ? (
-                  <BrowserPaneView
+                  <LazyBrowserPaneView
                     key={currentSessionId ?? "no-session"}
                     sessionId={currentSessionId}
                     active={workbenchOpen && workbenchTab === "browser"}

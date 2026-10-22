@@ -2145,6 +2145,7 @@ export const uiEnUs = {
   "browser_create_first_tab": "Enter a URL to create your first tab",
   "browser_profile_outcome_unknown": "The last browser operation was not confirmed. Read the current state again; opening or closing will not be replayed.",
   "browser_profile_refresh": "Read current state",
+  "browser_view_load_failed": "The browser panel could not load. Try again.",
   "browser_request_busy": "The browser is busy. This request was not performed. Try again later.",
   "browser_profile_open_default": "Open using server defaults",
   "browser_profile_default_help": "Account mode is unconfirmed. You can open with the current server defaults; shared or clean choices require a reported mode.",
