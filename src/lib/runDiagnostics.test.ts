@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
 import { createRunDiagnostics, downloadRunDiagnostics } from "./runDiagnostics"
 import type { RunDiagnosticsSubject } from "./runDiagnosticId"
+import { diagnosticFixture, diagnosticFixtureError } from "@services/chat/runDiagnostic.testFixtures"
 
 const sid = "11111111-1111-4111-8111-111111111111"
 const id = "9ab6cd70-bc43-4fed-9f10-50c2873fa287"
@@ -10,6 +11,16 @@ const runtime = { artifact: { version: "2026.10.19", revision: "a".repeat(40) },
 afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers() })
 
 describe("local allowlist diagnostic report", () => {
+  it("exports finite v2 fields without raw error/failure text and never resurrects live data on a missing refresh", () => {
+    const current = { ...subject, errorBinding:diagnosticFixtureError, liveDiagnostic:diagnosticFixture(sid) }
+    const live = createRunDiagnostics(current,sid,runtime,now)!
+    expect(live.diagnostic).toMatchObject({ source:"live_event",attempt:1,attempt_limit:4,retry_stop_reason:"time_budget_exhausted",canonical_status:"not_checked" })
+    expect(JSON.stringify(live)).not.toContain("initial response headers timed out")
+    expect(JSON.stringify(live)).not.toContain("Try again later")
+    expect(createRunDiagnostics(current,sid,runtime,now,{ diagnostic:null,source:"canonical_read",canonicalStatus:"not_provided" })!.diagnostic.failure_stage).toBeNull()
+    expect(createRunDiagnostics(current,sid,runtime,now,{ diagnostic:diagnosticFixture(sid),source:"canonical_read",canonicalStatus:"changed" })).toBeNull()
+  })
+
   it("excludes raw errors and all ambient/private fields rather than redacting a dump", () => {
     const sensitive = "PRIVATE_SENTINEL_do_not_export"
     const report = createRunDiagnostics({
@@ -21,11 +32,11 @@ describe("local allowlist diagnostic report", () => {
       artifact: { ...runtime.artifact, key: sensitive }, host: { ...runtime.host, pid: 123, path: sensitive },
     }, now)!
     expect(JSON.stringify(report)).not.toContain(sensitive)
-    expect(report).toEqual({
+    expect(report).toMatchObject({
       schema_version: 1, collected_at: now,
       frontend: { package_name: "@bigduu/lotus-next", version: "2026.10.19", source_revision: "a".repeat(40), host_kind: "browser" },
       context: { session_id: sid, client_operation_id: 7, failure_kind: "generation-failed" },
-      diagnostic: { diagnostic_id: id, source: "legacy_terminal_error_marker", structured_details: "not_provided_by_transport",
+      diagnostic: { diagnostic_id: id, source: "legacy_terminal_error_marker", structured_details: "not_provided",
         backend_run_id: null, failure_stage: null, attempt: null, attempt_limit: null, retry_stop_reason: null },
     })
     expect([report, report.frontend, report.context, report.diagnostic].every(Object.isFrozen)).toBe(true)

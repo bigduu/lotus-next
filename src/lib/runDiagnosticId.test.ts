@@ -3,6 +3,10 @@ import { extractDiagnosticId, isDiagnosticId } from "./runDiagnosticId"
 
 const id = "9ab6cd70-bc43-4fed-9f10-50c2873fa287"
 describe("frozen legacy terminal diagnostic marker", () => {
+  it("accepts the actual fixed guidance suffix after the v2 marker", () => {
+    expect(extractDiagnosticId("Initial request failed. Diagnostic ID: " + id + ". Try again later or contact the upstream gateway administrator.")).toBe(id)
+  })
+
   it.each(["", "Initial request failed. ", "request deadline exceeded.\n"])("extracts only the bounded appended v4 ID after %j", (prefix) => {
     expect(extractDiagnosticId(prefix + "Diagnostic ID: " + id + ".\n")).toBe(id)
   })

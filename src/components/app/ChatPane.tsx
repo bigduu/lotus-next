@@ -283,6 +283,8 @@ export function ChatPane({
     localOperationId: visibleSendFailure?.operationId ?? null,
     failureKind: visibleSendFailure?.kind ?? "generation-failed",
     diagnosticId: extractDiagnosticId(runErrorDetail),
+    errorBinding: runErrorDetail,
+    liveDiagnostic: visibleSendFailure?.kind === "generation-failed" ? visibleSendFailure.diagnostic : null,
   }), [currentSessionId, visibleSendFailure, runErrorDetail])
 
   const queue = useGuidanceQueue(currentSessionId, currentlyRunning)
@@ -1203,7 +1205,7 @@ export function ChatPane({
                 </details>
               ) : null}
             </div>
-            <RunDiagnosticsEntry key={currentChat?.updatedAt} subject={runDiagnosticsSubject} />
+            {!currentlyRunning ? <RunDiagnosticsEntry key={currentChat?.updatedAt} subject={runDiagnosticsSubject} /> : null}
             {rootMode.unsafe ? null : generationFailed ? (
               <Button
                 size="sm"

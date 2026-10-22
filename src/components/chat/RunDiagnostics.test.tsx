@@ -5,6 +5,7 @@ import { uiText } from "@shared/i18n/ui"
 import type { RunDiagnosticsSubject } from "@/lib/runDiagnosticId"
 import { RunDiagnosticsEntry, type RunDiagnosticsContentProps } from "./RunDiagnosticsEntry"
 import { RunDiagnosticsDialogContent } from "./RunDiagnosticsDialogContent"
+import { diagnosticFixture, diagnosticFixtureError } from "@services/chat/runDiagnostic.testFixtures"
 
 const environment = globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
 environment.IS_REACT_ACT_ENVIRONMENT = true
@@ -40,7 +41,7 @@ describe("review and explicit local diagnostic download", () => {
     await click(uiText("run_diagnostics_download"))
     expect(download).toHaveBeenCalledTimes(1); expect(download.mock.calls[0]?.[0]).toEqual(preview)
     expect(fetch).not.toHaveBeenCalled()
-    expect(document.querySelector('[role="status"]')?.textContent).toBe(uiText("run_diagnostics_download_requested"))
+    expect([...document.querySelectorAll('[role="status"]')].some((item) => item.textContent === uiText("run_diagnostics_download_requested"))).toBe(true)
   })
   it("supports legacy missing details and closing without download", async () => {
     const close = vi.fn(), download = vi.fn()
@@ -55,7 +56,7 @@ describe("review and explicit local diagnostic download", () => {
     mount(<RunDiagnosticsDialogContent subject={a} isCurrent={() => current} onClose={vi.fn()} download={download} />)
     current = false
     await click(uiText("run_diagnostics_download"))
-    expect(download).not.toHaveBeenCalled(); expect(document.querySelector('[role="status"]')).toBeNull()
+    expect(download).not.toHaveBeenCalled(); expect(document.body.textContent).not.toContain(uiText("run_diagnostics_download_requested"))
   })
   it("does not echo private failure text when the local download throws", async () => {
     mount(<RunDiagnosticsDialogContent subject={a} isCurrent={() => true} onClose={vi.fn()}
@@ -134,5 +135,56 @@ describe("optional loading and session/failure isolation", () => {
     await click(uiText("run_diagnostics_open"))
     expect(document.querySelector('[role="dialog"]')?.textContent).toContain(uiText("run_diagnostics_load_failed"))
     await click(uiText("cancel_2cd0f3be")); expect(document.querySelector('[role="dialog"]')).toBeNull()
+  })
+})
+
+describe("v2 canonical diagnostic read and refresh", () => {
+  const subject = { ...a,errorBinding:diagnosticFixtureError,liveDiagnostic:diagnosticFixture(a.sessionId!) }
+  const receipt = () => ({ session:{ id:a.sessionId,is_running:false,last_run_status:"error",last_run_error:diagnosticFixtureError,last_run_diagnostic:diagnosticFixture(a.sessionId!) } })
+  it("shows scoped live evidence, reads explicitly, and labels a canonical receipt without uploading", async () => {
+    const readSession = vi.fn(async () => receipt()), download = vi.fn()
+    mount(<RunDiagnosticsDialogContent subject={subject} isCurrent={() => true} onClose={vi.fn()} readSession={readSession} download={download} />)
+    expect(readSession).not.toHaveBeenCalled()
+    expect(document.body.textContent).toContain(uiText("run_diagnostics_live"))
+    expect(JSON.parse(document.querySelector("pre")!.textContent!).diagnostic.attempt_limit).toBe(4)
+    await click(uiText("run_diagnostics_read"))
+    expect(readSession).toHaveBeenCalledExactlyOnceWith(a.sessionId)
+    expect(document.body.textContent).toContain(uiText("run_diagnostics_canonical"))
+    await click(uiText("run_diagnostics_download"))
+    expect(download.mock.calls[0]?.[0].diagnostic).toMatchObject({ source:"canonical_read",attempt:1,attempt_limit:4,canonical_status:"confirmed" })
+  })
+  it.each([undefined,null])("missing refreshed receipt clears previous live/canonical fields %s", async (missing) => {
+    let value: unknown = diagnosticFixture(a.sessionId!)
+    const readSession = vi.fn(async () => ({ session:{ ...receipt().session,last_run_diagnostic:value } }))
+    mount(<RunDiagnosticsDialogContent subject={subject} isCurrent={() => true} onClose={vi.fn()} readSession={readSession} />)
+    await click(uiText("run_diagnostics_read"))
+    value = missing
+    await click(uiText("run_diagnostics_read"))
+    const data = JSON.parse(document.querySelector("pre")!.textContent!).diagnostic
+    expect(data.canonical_status).toBe("not_provided"); expect(data.failure_stage).toBeNull(); expect(data.attempt).toBeNull()
+  })
+  it("withdraws details immediately during refresh and rejects a replaced active run", async () => {
+    const response = deferred<{ session: unknown }>(), download = vi.fn()
+    mount(<RunDiagnosticsDialogContent subject={subject} isCurrent={() => true} onClose={vi.fn()} readSession={() => response.promise} download={download} />)
+    await click(uiText("run_diagnostics_read"))
+    expect(JSON.parse(document.querySelector("pre")!.textContent!).diagnostic.failure_stage).toBeNull()
+    await act(async () => response.resolve({ session:{ ...receipt().session,is_running:true } }))
+    expect(document.querySelector("pre")!.textContent).toBe("null")
+    expect(button(uiText("run_diagnostics_download")).disabled).toBe(true)
+    expect(download).not.toHaveBeenCalled()
+  })
+  it("ignores a completed read after session/failure invalidation", async () => {
+    let current = true
+    const response = deferred<{ session: unknown }>()
+    mount(<RunDiagnosticsDialogContent subject={subject} isCurrent={() => current} onClose={vi.fn()} readSession={() => response.promise} />)
+    await click(uiText("run_diagnostics_read")); current = false
+    await act(async () => response.resolve(receipt()))
+    expect(document.body.textContent).not.toContain(uiText("run_diagnostics_canonical"))
+  })
+  it("a failed read clears old fields without echoing the transport error", async () => {
+    mount(<RunDiagnosticsDialogContent subject={subject} isCurrent={() => true} onClose={vi.fn()} readSession={async () => { throw new Error("PRIVATE_CANARY_key") }} />)
+    await click(uiText("run_diagnostics_read"))
+    expect(document.body.textContent).not.toContain("PRIVATE_CANARY")
+    expect(JSON.parse(document.querySelector("pre")!.textContent!).diagnostic).toMatchObject({ canonical_status:"unavailable",failure_stage:null,attempt:null })
   })
 })
