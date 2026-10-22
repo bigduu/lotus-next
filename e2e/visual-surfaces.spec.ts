@@ -108,12 +108,15 @@ for (const theme of ["light", "dark"] as const) {
         await info.attach(`actual-system-fonts-${theme}`, { body: JSON.stringify(fonts, null, 2), contentType: "application/json" })
         await session.detach()
         await modelPicker.press("Enter")
+        await page.getByTestId("model-picker-model").press("Enter")
         const modelSearch = page.getByRole("searchbox", { name: "搜索模型", exact: true })
         await modelSearch.focus()
         expect(await modelSearch.evaluate((element) => getComputedStyle(element).boxShadow)).toContain("4px")
-        const option = page.locator(".model-effort-panel button:enabled").first()
+        const option = page.locator(".model-effort-panel [data-model-option]:enabled").first()
         await option.focus()
         expect(await option.evaluate((element) => getComputedStyle(element).boxShadow)).toContain("4px")
+        await expect(option).toHaveCSS("outline-color", result.colors["--focus-ring"])
+        await expect(option).toHaveCSS("outline-offset", "-2px")
         await page.keyboard.press("Escape")
       }
 

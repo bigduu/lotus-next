@@ -39,6 +39,11 @@
 /* The shared contrast-safe focus rings also cover this trigger, its options,
    search field and range. Keep their shadows available rather than masking
    the shared cue with a translucent per-picker outline. */
+.model-effort-panel [data-model-option]:focus-visible {
+  /* Full-width options touch the scroll clip; keep their cue inside it. */
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
 .effort-slider input:disabled { cursor: not-allowed; }
 .effort-slider input::-webkit-slider-runnable-track { height: 32px; background: transparent; }
 .effort-slider input::-moz-range-track { height: 32px; background: transparent; }
