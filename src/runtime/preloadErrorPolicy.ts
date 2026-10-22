@@ -1,15 +1,15 @@
-const settingsChunkUrl = /(?:^|\/)Settings-[A-Za-z0-9_-]+\.(?:js|css)(?:[?#]|$)/
+const localFeatureChunkUrl = /(?:^|\/)(?:Settings|WorkflowRunsContent)-[A-Za-z0-9_-]+\.(?:js|css)(?:[?#]|$)/
 
 /**
- * Settings has a local Suspense/ErrorBoundary recovery surface. Let its import
- * rejection reach that boundary instead of applying the legacy whole-page
+ * These features have a local Suspense/ErrorBoundary recovery surface. Let an
+ * exact feature import rejection reach it instead of applying the whole-page
  * preload reload policy used by renderer/PDF chunks.
  */
-export const isSettingsFeaturePreloadError = (payload: unknown): boolean => {
+export const isLocalFeaturePreloadError = (payload: unknown): boolean => {
   if (payload instanceof Error) {
     return [payload.message, ...(payload.stack?.split("\n") ?? [])].some((line) =>
-      settingsChunkUrl.test(line.trim()),
+      localFeatureChunkUrl.test(line.trim()),
     )
   }
-  return typeof payload === "string" && settingsChunkUrl.test(payload)
+  return typeof payload === "string" && localFeatureChunkUrl.test(payload)
 }
