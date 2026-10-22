@@ -53,6 +53,7 @@ const createStore = () => ({
   refreshSessionsIndex: vi.fn(async () => {}),
   refreshChatsNow: vi.fn(async () => {}),
   reconcileOpenSession: vi.fn(),
+  reconcileClearedConversation: vi.fn(),
   applyServerTitle: vi.fn(),
   applyServerPinned: vi.fn(),
 });
@@ -74,6 +75,15 @@ const capturedHandlers = (): AccountStreamHandlers =>
 
 describe("accountFeed cursor and reset lifecycle", () => {
   let store: TestStore;
+
+  it("fences and refetches cleared content even for an inactive session", () => {
+    store.chats = [{ id: "session-1" }];
+    store.currentSessionId = "another-session";
+    startAccountFeed();
+    capturedHandlers().onChange(change(8, { type: "session_cleared" }));
+    expect(store.reconcileClearedConversation).toHaveBeenCalledExactlyOnceWith("session-1");
+    expect(store.reconcileOpenSession).not.toHaveBeenCalled();
+  });
 
   beforeEach(() => {
     vi.useFakeTimers();

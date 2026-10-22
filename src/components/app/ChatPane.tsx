@@ -68,6 +68,7 @@ import { RootOrchestrationControl } from "@/components/chat/RootOrchestrationCon
 import { useWorkflowCatalog } from "@/components/chat/useWorkflowCatalog"
 import { WorkflowSelectionControl } from "@/components/chat/WorkflowSelectionControl"
 import { WorkflowRunsDialog } from "@/components/chat/WorkflowRunsDialog"
+import { ConversationClearDialog } from "@/components/chat/ConversationClearDialog"
 import {
   Select,
   SelectContent,
@@ -534,6 +535,7 @@ export function ChatPane({
   const slashQuery = !menusDismissed && draft.startsWith("/") ? draft.slice(1) : null
   const catalogState = useWorkflowCatalog(currentSessionId, slashQuery !== null || workflowPicker !== null)
   const [workflowRunsOpen, setWorkflowRunsOpen] = useState(false)
+  const [clearTarget, setClearTarget] = useState<{ id: string; title: string } | null>(null)
   const workflowDisabled = submissionPending || currentlyRunning || queue.hasUnconfirmed || rootMode.unsafe
   // A hidden Environment must not strand its open editor (phone/workbench changes).
   useEffect(() => {
@@ -918,6 +920,8 @@ export function ChatPane({
   }
   const selectSubAgentInPane = onSelectSubAgent ?? secondary?.onPickSession ?? select
   const overflowItems = [
+    ...(currentSessionId ? [{ label: uiText("conversation_clear_action"), icon: <RotateCcw className="size-4" />,
+      onClick: () => setClearTarget({ id: currentSessionId, title: currentChat?.title || currentSessionId }) }] : []),
     ...(currentSessionId ? [{ label: uiText("workflow_run_title"), icon: <BookText className="size-4" />,
       onClick: () => setWorkflowRunsOpen(true) }] : []),
     ...(currentSessionId && messages.length > 0
@@ -1394,6 +1398,8 @@ export function ChatPane({
       </div>
 
       <Toasts forking={forking} toast={toast} onDismiss={() => setToast(null)} onRestoreFocus={() => { if (pageVisible !== false && !historyBlocked) composerInputRef.current?.focus() }} />
+      {clearTarget ? <ConversationClearDialog key={clearTarget.id} sessionId={clearTarget.id} title={clearTarget.title}
+        onClose={() => setClearTarget(null)} /> : null}
       {workflowRunsOpen && currentSessionId && pageVisible !== false ? <WorkflowRunsDialog key={currentSessionId}
         sessionId={currentSessionId} sessionTitle={currentChat?.title || currentSessionId} onClose={() => setWorkflowRunsOpen(false)} /> : null}
 

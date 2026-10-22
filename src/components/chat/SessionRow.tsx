@@ -1,6 +1,7 @@
 import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { useEffect, useId, useRef, useState, type ReactNode } from "react"
-import { Check, Copy, List, MoreHorizontal, Pencil, Pin, PinOff, Sparkles, Trash2 } from "lucide-react"
+import { Check, Copy, List, MoreHorizontal, Pencil, Pin, PinOff, RotateCcw, Sparkles, Trash2 } from "lucide-react"
+import { ConversationClearDialog } from "./ConversationClearDialog"
 import { cn } from "@/lib/utils"
 import { SIDEBAR_SESSION_DRAG_TYPE, type ProjectSidebarSection } from "@/lib/projectSidebarPreferences"
 import { useSidebarContextMenu } from "@/hooks/useSidebarContextMenu"
@@ -49,9 +50,11 @@ export function SessionRow({
 }) {
   useUiLocale()
   const menu = useSidebarContextMenu()
+  const clearTrigger = useRef<HTMLButtonElement>(null)
   const dragged = useRef(false)
   const internalPointer = useRef(false)
   const [editing, setEditing] = useState(false)
+  const [clearOpen, setClearOpen] = useState(false)
   const [draft, setDraft] = useState(chat.title ?? "")
   const inputRef = useRef<HTMLInputElement>(null)
   const unreadDescriptionId = useId()
@@ -91,7 +94,7 @@ export function SessionRow({
   }
 
   return (
-    <div
+    <><div
       {...menu.rowProps}
       data-sidebar-session={chat.id}
       data-session-project={projectId}
@@ -139,6 +142,7 @@ export function SessionRow({
 
       <DropdownMenu open={menu.open} onOpenChange={menu.onOpenChange}>
         <DropdownMenuTrigger
+          ref={clearTrigger}
           aria-label={uiText("session_actions_e6f6d875")}
           style={active ? { opacity: 1 } : undefined}
           className={cn(
@@ -148,7 +152,7 @@ export function SessionRow({
         >
           <MoreHorizontal className="size-4" />
         </DropdownMenuTrigger>
-        <DropdownMenuContent onCloseAutoFocus={menu.onCloseAutoFocus} align="end" className="min-w-32 rounded-xl">
+        <DropdownMenuContent onCloseAutoFocus={clearOpen ? (event) => event.preventDefault() : menu.onCloseAutoFocus} align="end" className="min-w-32 rounded-xl">
           {projectId && onMoveToSection ? (
             <DropdownMenuSub>
               <DropdownMenuSubTrigger className="gap-2 rounded-lg px-2.5 py-1.5">
@@ -199,6 +203,12 @@ export function SessionRow({
             <Copy className="size-3.5" />{uiText("copy_session_id_7df96a6b")}</DropdownMenuItem>
           <DropdownMenuItem
             variant="destructive"
+            onSelect={() => setClearOpen(true)}
+            className="gap-2 rounded-lg px-2.5 py-1.5"
+          >
+            <RotateCcw className="size-3.5" />{uiText("conversation_clear_action")}</DropdownMenuItem>
+          <DropdownMenuItem
+            variant="destructive"
             onClick={onDelete}
             className="gap-2 rounded-lg px-2.5 py-1.5"
           >
@@ -206,5 +216,10 @@ export function SessionRow({
         </DropdownMenuContent>
       </DropdownMenu>
     </div>
+      {clearOpen ? <ConversationClearDialog sessionId={chat.id} title={chat.title || chat.id} onClose={() => {
+        setClearOpen(false)
+        clearTrigger.current?.focus()
+      }} /> : null}
+    </>
   )
 }

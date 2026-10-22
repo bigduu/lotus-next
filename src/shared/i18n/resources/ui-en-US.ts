@@ -2335,4 +2335,21 @@ export const uiEnUs = {
   "actor_placement_no_activation": "This snapshot has no execution activation record. A workspace path or session host does not establish where this actor executes.",
   "actor_placement_native_task": "Native task activity was observed, but the backend has not reported its execution placement. This does not identify a physical computer.",
   "actor_placement_missing": "The backend has not reported placement for this execution. The session host and workspace are separate information."
+  ,
+  "conversation_clear_refresh_failed": "Refresh failed. The previous outcome is unchanged; no clear request was sent.",
+  "conversation_clear_action": "Clear conversation messages",
+  "conversation_clear_title": "Clear this conversation?",
+  "conversation_clear_impact": "Permanently removes this conversation’s messages, attachments, token usage and stored summary. Keeps the initial system message, session identity, Project scope, management links, independent sessions and unfinished tasks.",
+  "conversation_clear_limits": "A complete native/provider context reset is unconfirmed. Activated sessions, including Supervisor, may refuse clearing. Running work and pending approvals are never stopped automatically.",
+  "conversation_clear_confirmed": "Clearing acknowledged; stored messages and empty token usage verified. Complete native/provider context reset remains unconfirmed.",
+  "conversation_clear_active_run": "This conversation is running. Let the run finish before clearing. No stop or clear request was sent.",
+  "conversation_clear_pending_approval": "A question or approval is pending. Resolve it before clearing. No stop or clear request was sent.",
+  "conversation_clear_state_unavailable": "Cannot verify this conversation’s state. No clear request was sent. Check access and connection before retrying.",
+  "conversation_clear_authority_conflict": "Clearing blocked by execution authority, activity or changed state. This service cannot clear activated Supervisor sessions. Refresh and review the current state.",
+  "conversation_clear_incompatible": "Clearing refused: this session is incompatible with this service. Refresh and review compatibility.",
+  "conversation_clear_unsupported": "Conversation clearing is unavailable. No delete/recreate fallback was attempted.",
+  "conversation_clear_unknown": "Clear outcome unknown; stored data may have changed. Do not resend. Refresh to inspect. No automatic retry was attempted.",
+  "conversation_clear_readback_failed": "Clearing acknowledged, but readback failed. Success is unconfirmed. Refresh to verify without another clear request.",
+  "conversation_clear_refresh": "Refresh stored state",
+  "conversation_clear_readback_only": "Cleared message state verified. The earlier request’s outcome remains unknown; no new clear request was sent."
 } as const

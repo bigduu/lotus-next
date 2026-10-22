@@ -7,6 +7,7 @@ import {
   type HistoryResponse,
 } from "@services/chat/AgentService";
 import { ApiError } from "@services/api";
+import { ConversationClearError, readClearedConversation, requestConversationClear } from "@services/chat/conversationClear";
 import type { AppState } from "../";
 import { useProviderStore } from "./providerSlice";
 import { applyExecutionEvent } from "./executionStateSlice";
@@ -41,7 +42,7 @@ export type {
 } from "./chatSessionSlice/types";
 export { mapHistoryMessagesToUi } from "./chatSessionSlice/messageMapping";
 
-import type { ChatSlice } from "./chatSessionSlice/types";
+import type { ChatSlice, ConversationClearState } from "./chatSessionSlice/types";
 
 const agentClient = AgentClient.getInstance();
 
@@ -67,11 +68,16 @@ const RECONCILE_DEBOUNCE_MS = 300;
 // an older snapshot, even when that newer read failed or was abandoned.
 const historyReads = new WeakMap<() => AppState, Map<string, object>>();
 
-export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, get) => ({
+export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, get) => {
+  const clearState = (sessionId: string, value: ConversationClearState) => set((state) => ({
+    conversationClears: { ...state.conversationClears, [sessionId]: value },
+  }));
+  return ({
   chats: [],
   currentSessionId: null,
   latestActiveSessionId: null,
   sessionIndexRevision: 0,
+  conversationClears: {},
 
   addChat: async (chatData) => {
     const title = (chatData.title || i18n.t("chat.sidebar.newSession")).trim();
@@ -733,6 +739,104 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
     }
   },
 
+  dismissConversationClear: (sessionId) => {
+    const state = get().conversationClears[sessionId];
+    if (state?.busy || state?.error === "unknown" || state?.error === "readback_failed") return;
+    set((current) => {
+      const { [sessionId]: _, ...rest } = current.conversationClears;
+      return { conversationClears: rest };
+    });
+  },
+
+  refreshConversationClear: async (sessionId) => {
+    const prior = get().conversationClears[sessionId];
+    if (prior?.busy) return;
+    // Explicit GET-only refresh after a refusal; it cannot turn a refusal into
+    // a successful mutation. Keep the typed error visible.
+    try {
+      const read = get().loadChatHistory(sessionId, { mode: "replace", throwOnError: true });
+      clearState(sessionId, { ...prior, busy: true });
+      await read;
+      await get().refreshChatsNow();
+      clearState(sessionId, { ...prior, busy: false, refreshFailed: false });
+    } catch (error) {
+      clearState(sessionId, { ...prior, busy: false, refreshFailed: true });
+      throw error;
+    }
+  },
+
+  clearConversation: async (sessionId) => {
+    const prior = get().conversationClears[sessionId];
+    if (prior?.busy) return;
+    // C1 has no idempotent operation receipt. An uncertain write stays locked
+    // across dialog reopen; only explicit read-only verification is available.
+    if (prior?.error === "unknown" || prior?.error === "readback_failed") {
+      throw new ConversationClearError(prior.error);
+    }
+    clearState(sessionId, { busy: true });
+    historyReads.get(get)?.delete(sessionId);
+    try {
+      await requestConversationClear(sessionId, agentClient);
+      // Verification alone applies the canonical fields; never optimistically
+      // erase messages after POST, and never route through best-effort history.
+      await get().verifyConversationClear(sessionId);
+    } catch (cause) {
+      const error = cause instanceof ConversationClearError ? cause : new ConversationClearError("unknown", { cause });
+      clearState(sessionId, { busy: false, error: error.reason });
+      throw error;
+    }
+  },
+
+  verifyConversationClear: async (sessionId) => {
+    const prior = get().conversationClears[sessionId];
+    const reads = historyReads.get(get) ?? new Map<string, object>();
+    historyReads.set(get, reads);
+    const request = {};
+    reads.set(sessionId, request);
+    clearState(sessionId, { ...prior, busy: true });
+    try {
+      const { history, session } = await readClearedConversation(sessionId, agentClient);
+      if (reads.get(sessionId) !== request) throw new ConversationClearError("readback_failed");
+      const chat = get().chats.find((item) => item.id === sessionId);
+      if (!chat) throw new ConversationClearError("readback_failed");
+      get().updateSession(sessionId, {
+        messages: mapHistoryMessagesToUi(sessionId, history.messages),
+        messageCount: history.messages.length,
+        hasAttachments: session.has_attachments,
+        config: { ...chat.config, tokenUsage: undefined, truncationOccurred: undefined,
+          segmentsRemoved: undefined,
+          // C1 does not clear compression events. Preserve their readback.
+          compressionEvents: (history.compression_events ?? []).map((event) => ({
+            id: event.id, createdAt: event.created_at, messagesCompressed: event.messages_compressed, segmentsRemoved: event.segments_removed,
+          })),
+          syncCursor: { messageCount: history.messages.length, lastMessageId: history.messages.at(-1)?.id ?? null,
+            hasPendingQuestion: false, pendingQuestionToolCallId: null },
+        },
+      }, { skipBackendPatch: true });
+      get().clearTokenUsage(sessionId);
+      clearState(sessionId, prior?.error === "unknown"
+        ? { busy: false, error: "unknown", readbackConfirmed: true }
+        : { busy: false, confirmed: true });
+    } catch (cause) {
+      clearState(sessionId, { busy: false, error: prior?.error === "unknown" ? "unknown" : "readback_failed",
+        refreshFailed: prior?.error === "unknown" || prior?.error === "readback_failed" });
+      throw cause;
+    } finally {
+      if (reads.get(sessionId) === request) reads.delete(sessionId);
+    }
+  },
+
+  reconcileClearedConversation: (sessionId) => {
+    // The event has no revision. Fence reads already in flight on this client
+    // and replace from a fresh read, including loaded split/inactive sessions.
+    if (get().conversationClears[sessionId]?.busy) return;
+    historyReads.get(get)?.delete(sessionId);
+    const timer = reconcileTimers.get(sessionId);
+    if (timer) { clearTimeout(timer); reconcileTimers.delete(sessionId); }
+    if (!get().chats.some((chat) => chat.id === sessionId)) return;
+    void get().loadChatHistory(sessionId, { mode: "replace" });
+  },
+
   loadChatHistory: async (sessionId, options) => {
     let discarded: DOMException | undefined;
     const discardRead = () => {
@@ -743,6 +847,7 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
       }
     };
     if (options?.signal?.aborted) return discardRead();
+    if (get().conversationClears[sessionId]?.busy) return discardRead();
     const reads = historyReads.get(get) ?? new Map<string, object>();
     historyReads.set(get, reads);
     const request = {};
@@ -988,4 +1093,5 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
       }, RECONCILE_DEBOUNCE_MS),
     );
   },
-});
+  });
+};

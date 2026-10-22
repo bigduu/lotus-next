@@ -727,7 +727,7 @@ export interface SessionSummary {
   /** Session working directory mirrored from the session index. */
   workspace_path?: string | null;
   created_by_schedule_id?: string | null;
-  token_usage?: TokenBudgetUsage;
+  token_usage?: TokenBudgetUsage | null;
   created_at: string;
   updated_at: string;
   last_activity_at: string;
@@ -1390,7 +1390,7 @@ export class AgentClient {
 
   /** Get one session summary, including its root tree size. */
   async getSession(sessionId: string): Promise<GetSessionResponse> {
-    return apiClient.get<GetSessionResponse>(`sessions/${encodeURIComponent(sessionId)}`);
+    return apiClient.get<GetSessionResponse>(`sessions/${encodeURIComponent(sessionId)}`, { cache: "no-store" });
   }
 
   /** Open the canonical Supervisor without starting a run or enabling Tickets. */
@@ -1551,7 +1551,10 @@ export class AgentClient {
    */
   async clearSession(sessionId: string): Promise<void> {
     const encodedSessionId = encodeURIComponent(sessionId);
-    await apiClient.post(`sessions/${encodedSessionId}/clear`);
+    const receipt = await apiClient.post<{ success: boolean; session_id: string }>(`sessions/${encodedSessionId}/clear`);
+    if (receipt?.success !== true || receipt.session_id !== sessionId) {
+      throw new Error("Invalid conversation clear receipt");
+    }
   }
 
   /**
@@ -2046,9 +2049,9 @@ export class AgentClient {
     // appended after it (`is_delta: true`), so a client that already has most
     // of the history only transfers the tail.
     const path = sinceMessageId
-      ? `history/${sessionId}?since_message_id=${encodeURIComponent(sinceMessageId)}`
-      : `history/${sessionId}`;
-    const response = await apiClient.get<HistoryResponse>(path);
+      ? `history/${encodeURIComponent(sessionId)}?since_message_id=${encodeURIComponent(sinceMessageId)}`
+      : `history/${encodeURIComponent(sessionId)}`;
+    const response = await apiClient.get<HistoryResponse>(path, { cache: "no-store" });
     debugLog("[AgentClient]", "history.response", summarizeHistoryResponse(response));
     return response;
   }
