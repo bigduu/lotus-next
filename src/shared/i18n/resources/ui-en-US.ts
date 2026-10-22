@@ -2338,6 +2338,7 @@ export const uiEnUs = {
   ,
   "conversation_clear_refresh_failed": "Refresh failed. The previous outcome is unchanged; no clear request was sent.",
   "conversation_clear_action": "Clear conversation messages",
+  "conversation_clear_load_failed": "Unable to open confirmation. Reload this page and try again. No clear request was sent.",
   "conversation_clear_title": "Clear this conversation?",
   "conversation_clear_impact": "Permanently removes this conversation’s messages, attachments, token usage and stored summary. Keeps the initial system message, session identity, Project scope, management links, independent sessions and unfinished tasks.",
   "conversation_clear_limits": "A complete native/provider context reset is unconfirmed. Activated sessions, including Supervisor, may refuse clearing. Running work and pending approvals are never stopped automatically.",

@@ -17,7 +17,7 @@ with the frontend's synthetic HTTP fixtures. No backend code is included here.
 - One body-free `POST /api/v1/sessions/{id}/clear`; require exact
   `{success:true,session_id}` before checking the stored result.
 - Verify matching detail/history identities, idle state, no reported pending
-  question, `token_usage:null`, matching message count and only zero or one
+  question, empty token usage (omitted by C1 serde, or explicit `null`), matching message count and only zero or one
   retained System message. Readback is required; best-effort history loading
   cannot produce success.
 - Active work, pending questions/approvals and unverified preflight state send
@@ -28,8 +28,9 @@ with the frontend's synthetic HTTP fixtures. No backend code is included here.
   page lifetime. Explicit verification is read-only. A matching cleared
   snapshot after an unknown request does not retrospectively confirm that
   request. A full page reload does not retain this memory-only journal.
-- A `session_cleared` feed event invalidates older in-flight reads locally and
-  fetches replacement history for loaded active/inactive sessions. C1 exposes
+- A `session_cleared` feed event always invalidates older in-flight reads locally,
+  including held refreshes while busy; a read-only replacement is deferred until
+  busy work settles. It fetches history for loaded active/inactive sessions. C1 exposes
   no conversation revision; this is **not** a complete cross-client stale-read
   guarantee, a durable operation journal or a transaction protocol.
 
@@ -44,8 +45,9 @@ model-context reset. The future transaction/CAS protocol is a separate task.
 All images and browser HTTP responses use synthetic fixture data. No real
 history, account, profile, provider, Rust runtime or frozen release was touched.
 
-- Complete frontend unit suite: 195 files / 4,146 tests passed.
-- New clear browser suite: 24 cases across desktop, tablet and phone.
+- Complete frontend unit suite: 196 files / 4,151 tests passed.
+- New clear browser suite: 27 cases across desktop, tablet and phone, including
+  three held-refresh / observed-feed-clear regression cases.
 - Existing Supervisor/settings navigation regression: 24 cases passed.
 - TypeScript, lint, i18n, architecture, production build, artifact and package
   checks pass without relaxing bundle budgets.
@@ -54,6 +56,12 @@ The browser suites run with automatic retries disabled. The local task retains
 initial sandbox launch failures and the first fixture-selector/pending-state
 failures separately. They are not counted as successful acceptance. Backend
 Cargo/runtime and a real HTTP C1 round trip remain unrun.
+
+Independent source review found and corrected two C1 mismatches: empty token
+usage is omitted by the producer's serde, and feed-clear events must fence old
+reads even while an action is busy. The synthetic fixtures now use the actual
+omitted-field shape; null remains accepted for compatibility. Held-read tests
+cover the event fence and deferred GET-only reconciliation.
 
 ![Desktop confirmation using synthetic data](desktop-confirm.png)
 ![Desktop refusal using synthetic data](desktop-blocked.png)

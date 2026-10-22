@@ -69,9 +69,11 @@ const RECONCILE_DEBOUNCE_MS = 300;
 const historyReads = new WeakMap<() => AppState, Map<string, object>>();
 
 export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, get) => {
-  const clearState = (sessionId: string, value: ConversationClearState) => set((state) => ({
-    conversationClears: { ...state.conversationClears, [sessionId]: value },
-  }));
+  const deferredClears = new Set<string>();
+  const clearState = (sessionId: string, value: ConversationClearState) => {
+    set((state) => ({ conversationClears: { ...state.conversationClears, [sessionId]: value } }));
+    if (!value.busy && deferredClears.delete(sessionId)) get().reconcileClearedConversation(sessionId);
+  };
   return ({
   chats: [],
   currentSessionId: null,
@@ -829,10 +831,11 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
   reconcileClearedConversation: (sessionId) => {
     // The event has no revision. Fence reads already in flight on this client
     // and replace from a fresh read, including loaded split/inactive sessions.
-    if (get().conversationClears[sessionId]?.busy) return;
     historyReads.get(get)?.delete(sessionId);
     const timer = reconcileTimers.get(sessionId);
     if (timer) { clearTimeout(timer); reconcileTimers.delete(sessionId); }
+    if (get().conversationClears[sessionId]?.busy) { deferredClears.add(sessionId); return; }
+    deferredClears.delete(sessionId);
     if (!get().chats.some((chat) => chat.id === sessionId)) return;
     void get().loadChatHistory(sessionId, { mode: "replace" });
   },

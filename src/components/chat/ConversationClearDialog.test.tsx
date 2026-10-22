@@ -6,7 +6,7 @@ import { useAppStore } from "@shared/store/appStore"
 import { agentClient, type SessionSummary } from "@services/chat/AgentService"
 import { ApiError, NetworkRequestError } from "@services/api/errors"
 import { sessionSummaryToChatItem } from "@shared/store/appStore/slices/chatSessionSlice/messageMapping"
-import { ConversationClearDialog } from "./ConversationClearDialog"
+import { ConversationClearDialogContent as ConversationClearDialog } from "./ConversationClearDialogContent"
 import { SessionRow } from "./SessionRow"
 import { SupervisorEntry } from "@/components/app/SupervisorEntry"
 import { SectionSessions } from "./settings/system/SectionSessions"
@@ -18,7 +18,7 @@ const id = "fixture/a"
 const summary = { id, kind: "root", title: "Synthetic conversation", title_version: 1, pinned: false,
   root_session_id: id, spawn_depth: 0, model: "fixture", created_at: "2026-10-22T00:00:00Z",
   updated_at: "2026-10-22T00:00:00Z", last_activity_at: "2026-10-22T00:00:00Z",
-  is_running: false, message_count: 0, has_attachments: false, token_usage: null } as SessionSummary
+  is_running: false, message_count: 0, has_attachments: false } as SessionSummary
 let root: Root, container: HTMLDivElement
 const close = vi.fn()
 const render = (node: ReactNode) => act(() => root.render(node))

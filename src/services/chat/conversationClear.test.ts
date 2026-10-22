@@ -71,10 +71,19 @@ describe("C1 conversation clear boundary", () => {
     expect(client.clearSession).not.toHaveBeenCalled()
   })
 
+  it.each(["omitted", "null"])("accepts the C1 empty token usage representation: %s", async (shape) => {
+    const client = harness()
+    const { token_usage: _, ...omitted } = session
+    const detail = shape === "omitted" ? omitted : session
+    if (shape === "omitted") expect("token_usage" in detail).toBe(false)
+    client.getSession.mockResolvedValue({ session: detail })
+    await expect(readClearedConversation(session.id, client)).resolves.toMatchObject({ session: detail, history })
+    expect(client.clearSession).not.toHaveBeenCalled()
+  })
+
   it.each([
     { session: { ...session, id: "foreign" }, history },
     { session, history: { ...history, session_id: "foreign" } },
-    { session: { ...session, token_usage: undefined }, history },
     { session: { ...session, token_usage: {} }, history },
     { session: { ...session, is_running: true }, history },
     { session: { ...session, has_pending_question: true }, history },

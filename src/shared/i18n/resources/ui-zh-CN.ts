@@ -2338,6 +2338,7 @@ export const uiZhCn = {
   ,
   "conversation_clear_refresh_failed": "无法刷新存储状态，此前的结果未改变。未发送清理请求。",
   "conversation_clear_action": "清除会话消息",
+  "conversation_clear_load_failed": "无法打开确认框。请重新加载页面后再试。未发送清理请求。",
   "conversation_clear_title": "清除这个会话的消息？",
   "conversation_clear_impact": "将永久清除本会话的对话消息、附件、token 统计和存储的摘要。保留首条系统消息、会话身份、Project 范围、管理关系、独立会话和未完成任务。",
   "conversation_clear_limits": "当前服务不确认原生/provider 上下文已完整重置。已激活的会话（包括 Supervisor）可能拒绝清理。不会自动停止运行中的工作或处理待审批请求。",

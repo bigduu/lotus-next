@@ -11,7 +11,7 @@ const summary = (id = "fixture/a"): SessionSummary => ({
   id, kind: "root", title: id, title_version: 2, pinned: true, root_session_id: id, spawn_depth: 0,
   model: "fixture", created_at: "2026-10-22T00:00:00Z", updated_at: "2026-10-22T00:00:00Z",
   last_activity_at: "2026-10-22T00:00:00Z", message_count: 1, has_attachments: false, is_running: false,
-  token_usage: null, project_id: "project-retained",
+  project_id: "project-retained",
 })
 const old: HistoryResponse = { session_id: "fixture/a", messages: [
   { id: "old", role: "user", content: "synthetic previous conversation", created_at: "2026-10-22T00:00:00Z" },
@@ -122,5 +122,40 @@ describe("verified conversation clear state", () => {
     stale.resolve(old); await previous
     expect(store.getState().chats[0].messages.map((message) => message.id)).toEqual(["system"])
     expect(agentClient.clearSession).not.toHaveBeenCalled()
+  })
+
+  it("fences a held refusal-refresh GET immediately on feed clear and refetches when busy settles", async () => {
+    const store = harness(), stale = deferred<HistoryResponse>()
+    const applied: string[][] = [], update = store.getState().updateSession
+    vi.spyOn(store.getState(), "updateSession").mockImplementation((sid, next, options) => {
+      if (next.messages) applied.push(next.messages.map((message) => message.id))
+      update(sid, next, options)
+    })
+    store.setState({ conversationClears: { "fixture/a": { busy: false, error: "authority_conflict" } },
+      refreshChatsNow: vi.fn(async () => {}) })
+    vi.mocked(agentClient.getHistory).mockReturnValueOnce(stale.promise).mockResolvedValueOnce(cleared)
+    const refresh = store.getState().refreshConversationClear("fixture/a").catch((error: unknown) => error)
+    expect(store.getState().conversationClears["fixture/a"]?.busy).toBe(true)
+    store.getState().reconcileClearedConversation("fixture/a")
+    expect(agentClient.getHistory).toHaveBeenCalledTimes(1)
+    stale.resolve(old)
+    expect(await refresh).toMatchObject({ name: "AbortError" })
+    await vi.waitFor(() => expect(agentClient.getHistory).toHaveBeenCalledTimes(2))
+    expect(applied).toEqual([["system"]])
+    expect(store.getState().chats[0].messages.map((message) => message.id)).toEqual(["system"])
+    expect(agentClient.clearSession).not.toHaveBeenCalled()
+  })
+
+  it("defers a feed-clear read during an in-flight mutation and flushes it without another POST", async () => {
+    const store = harness(), write = deferred<void>()
+    vi.mocked(agentClient.clearSession).mockReturnValueOnce(write.promise)
+    const action = store.getState().clearConversation("fixture/a")
+    await vi.waitFor(() => expect(agentClient.clearSession).toHaveBeenCalledTimes(1))
+    store.getState().reconcileClearedConversation("fixture/a")
+    expect(agentClient.getHistory).not.toHaveBeenCalled()
+    write.resolve(); await action
+    await vi.waitFor(() => expect(agentClient.getHistory).toHaveBeenCalledTimes(2))
+    expect(store.getState().chats[0].messages.map((message) => message.id)).toEqual(["system"])
+    expect(agentClient.clearSession).toHaveBeenCalledTimes(1)
   })
 })

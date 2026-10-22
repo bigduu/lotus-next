@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test"
+import { expect, test, type Page, type WebSocketRoute } from "@playwright/test"
 import { installArtifactRuntime, standaloneScenario } from "./support/artifactRuntime.js"
 import { actorSnapshotFixture } from "../src/test/fixtures/actorSnapshot.js"
 import { selectSettingsCategory, settingsSurface } from "./support/settingsNavigation.js"
@@ -6,7 +6,7 @@ import { selectSettingsCategory, settingsSurface } from "./support/settingsNavig
 const ordinary = "all-surface-session", supervisor = "bamboo-default-supervisor"
 const stamp = "2026-10-22T00:00:00Z"
 type Failure = "blocked" | "unknown" | "readback" | "running" | "pending" | null
-async function fixture(page: Page, failure: Failure = null) {
+async function fixture(page: Page, failure: Failure = null, setup?: () => Promise<void>) {
   await page.addInitScript((id) => {
     localStorage.setItem("bodhi_onboarded_v1", "1")
     localStorage.setItem("lotus_next_last_session", id)
@@ -20,7 +20,7 @@ async function fixture(page: Page, failure: Failure = null) {
     title_version: 1, pinned: false, root_session_id: id, parent_session_id: null, spawn_depth: 0,
     model: "fixture-model", model_ref: { provider: "fixture-provider", model: "fixture-model" },
     created_at: stamp, updated_at: stamp, last_activity_at: stamp, message_count: cleared.has(id) ? 0 : 1,
-    token_usage: null, has_attachments: false, is_running: failure === "running", has_pending_question: pendingEnabled,
+    has_attachments: false, is_running: failure === "running", has_pending_question: pendingEnabled,
     root_orchestration_only: id === supervisor, thinking_mode: "standard", root_mode_transition_epoch: 0,
     root_mode_birth_token: "a".repeat(64), permission_mode: "default", bypass_permissions: false,
     subagent_count: 0, running_child_count: 0, placement: { kind: "local", host: "synthetic" } })
@@ -59,8 +59,10 @@ async function fixture(page: Page, failure: Failure = null) {
     }
     return route.fallback()
   })
+  await setup?.()
   await page.goto(standaloneScenario.entryUrl)
-  return { runtime, writes, allowReadback() { failReadback = false }, enablePending() { pendingEnabled = true } }
+  return { runtime, writes, allowReadback() { failReadback = false }, enablePending() { pendingEnabled = true },
+    clearFromOtherClient() { cleared.add(ordinary) } }
 }
 async function openHeader(page: Page) {
   await page.locator("header").getByRole("button", { name: "更多", exact: true }).click()
@@ -153,3 +155,45 @@ for (const reason of ["running", "pending"] as const) {
     expect(f.writes).toEqual([])
   })
 }
+
+test("an observed clear fences a held refusal-refresh GET while busy and defers a fresh GET", async ({ page }) => {
+  let socket: WebSocketRoute | undefined, subscribed = false
+  const f = await fixture(page, "blocked", async () => page.routeWebSocket(/.*/, (ws) => {
+    socket = ws
+    ws.onMessage((raw) => {
+      const frame = JSON.parse(String(raw)) as { type?: string; ch?: string }
+      if (frame.type === "hello") ws.send(JSON.stringify({ type: "welcome" }))
+      if (frame.type === "ping") ws.send(JSON.stringify({ type: "pong" }))
+      if (frame.type === "subscribe" && frame.ch === "feed") subscribed = true
+    })
+  }))
+  await expect.poll(() => subscribed).toBe(true)
+  const dialog = await openHeader(page)
+  await dialog.getByRole("button", { name: "清除会话消息", exact: true }).click()
+  await expect(dialog.getByRole("alert")).toContainText("服务因本会话存在执行授权")
+  let reads = 0, release!: () => void
+  const gate = new Promise<void>((done) => { release = done })
+  await page.route(`**/api/v1/history/${ordinary}`, async (route) => {
+    reads += 1
+    if (reads !== 1) return route.fallback()
+    await gate
+    return route.fulfill({ json: { session_id: ordinary, messages: [
+      { id: "stale-held", role: "user", content: "STALE HELD RESPONSE MUST NOT RETURN", created_at: stamp },
+    ] } })
+  })
+  await dialog.getByRole("button", { name: "刷新存储状态", exact: true }).click()
+  await expect.poll(() => reads).toBe(1)
+  f.clearFromOtherClient()
+  socket!.send(JSON.stringify({ ch: "feed", seq: 1, event: {
+    seq: 1, ts: stamp, session_id: ordinary, event: { type: "session_cleared", session_id: ordinary },
+  } }))
+  await expect.poll(() => page.evaluate(() => localStorage.getItem("lotus_account_feed_cursor_v1"))).toBe("1")
+  release()
+  await expect.poll(() => reads).toBeGreaterThanOrEqual(2)
+  await expect(dialog.getByText("无法刷新存储状态，此前的结果未改变。未发送清理请求。", { exact: true })).toBeVisible()
+  await dialog.getByRole("button", { name: "取消", exact: true }).click()
+  await expect(page.getByText("STALE HELD RESPONSE MUST NOT RETURN", { exact: true })).toHaveCount(0)
+  await expect(page.getByText(`Synthetic history ${ordinary}`, { exact: true })).toBeHidden()
+  expect(f.writes).toEqual([{ method: "POST", path: `/api/v1/sessions/${ordinary}/clear` }])
+  expect(f.runtime.pageErrors).toEqual([])
+})

@@ -61,7 +61,7 @@ export async function readClearedConversation(sessionId: string, client: ClearCl
     const history = await client.getHistory(sessionId)
     if (session.id !== sessionId || history.session_id !== sessionId || session.is_running !== false
         || session.has_pending_question === true
-        || session.token_usage !== null || !Array.isArray(history.messages)
+        || session.token_usage != null || !Array.isArray(history.messages)
         || history.messages.length > 1 || history.messages.some((message) => message.role !== "system")
         || session.message_count !== history.messages.length) {
       throw new Error("Unconfirmed clear readback")
