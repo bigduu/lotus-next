@@ -601,6 +601,7 @@ export const uiEnUs = {
   "message_sent_but_generation_was_interrupted_62a4d83d": "Message sent, but generation was interrupted",
   "session_source_changed": "Session source validation failed",
   "session_source_changed_action": "The Project or workspace changed during this run. Review the session source and completed actions before retrying.",
+  "session_source_conflict_action": "The Project or workspace cannot change during a run. Your draft and original source are preserved. Wait for the run to end, then review the source before sending.",
   "the_root_permission_change_is_unconfirmed_your_message__fd9a5b04": "The Root permission change is unconfirmed. Your message remains in the session. Resolve the mode change before continuing.",
   "technical_details_c26fb419": "Technical details",
   "the_root_permission_change_is_unconfirmed_generation_re_bdcf3a6c": "The Root permission change is unconfirmed. Generation retries are stopped until you resolve the mode change.",

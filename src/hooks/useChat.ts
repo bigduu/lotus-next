@@ -77,17 +77,18 @@ export type SubmissionUnconfirmedFailure = {
   operationId: number
   sessionId: string | null
   message?: string
-  rejectionCode?: RootModeRejectionCode
+  rejectionCode?: SubmissionRejectionCode
   rootModeSelectionSubmitted?: boolean
 }
 
-type RootModeRejectionCode = "root_orchestration_incompatible_mode" | "root_orchestration_requires_root"
+type SubmissionRejectionCode = "root_orchestration_incompatible_mode" | "root_orchestration_requires_root" | "session_project_running_conflict"
 
-const rootModeRejectionCode = (error: unknown): RootModeRejectionCode | null => {
+const submissionRejectionCode = (error: unknown): SubmissionRejectionCode | null => {
   if (!isApiError(error) || (error.status !== 400 && error.status !== 409) || !error.body) return null
   try {
     const parsed = JSON.parse(error.body) as { error?: { code?: unknown } }
     const code = parsed.error?.code
+    if (code === "session_project_running_conflict") return error.status === 409 ? code : null
     return code === "root_orchestration_incompatible_mode" || code === "root_orchestration_requires_root"
       ? code : null
   } catch {
@@ -113,7 +114,7 @@ const toFailureMessage = (error: unknown): string | undefined => {
 
 export type SendSubmissionResult =
   | { kind: "accepted"; operationId: number; sessionId: string; navigated: boolean }
-  | { kind: "unconfirmed"; operationId: number; rejectionCode?: RootModeRejectionCode; workflowError?: { code: string; message: string } }
+  | { kind: "unconfirmed"; operationId: number; rejectionCode?: SubmissionRejectionCode; workflowError?: { code: string; message: string } }
   | { kind: "blocked" }
   | { kind: "busy" }
   | { kind: "ignored" }
@@ -1852,7 +1853,7 @@ export function useChat(
       } catch (err) {
         console.error("[useChat] message submission was not acknowledged", err)
         const compatibilityConflict = observeSessionExecutionConflict(startSid, err)
-        const rejectionCode = rootModeRejectionCode(err)
+        const rejectionCode = submissionRejectionCode(err)
         if (activeSendRef.current?.id === operation.id) activeSendRef.current = null
         if (mountedRef.current) {
           setSubmissionPending(false)
@@ -1870,7 +1871,7 @@ export function useChat(
             message: toFailureMessage(err),
             ...(rejectionCode ? {
               rejectionCode,
-              rootModeSelectionSubmitted: typeof opts?.rootOrchestrationOnly === "boolean",
+              rootModeSelectionSubmitted: rejectionCode !== "session_project_running_conflict" && typeof opts?.rootOrchestrationOnly === "boolean",
             } : {}),
           })
         }

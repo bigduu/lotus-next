@@ -682,6 +682,32 @@ describe("useChat two-phase send lifecycle", () => {
     expect(getRootModeFenceState("root-session")).toBe("clear")
   })
 
+  it.each([409, 400, 500])("keeps a Source admission conflict unaccepted without changing the old source (HTTP %s)", async (status) => {
+    const config = { model: "test-model", workspacePath: "/synthetic/original", projectId: "original-project" }
+    mocks.appState.chats = [{ id: "old-source", messages: [], config }]
+    mocks.sendMessage.mockRejectedValueOnce(new ApiError(
+      "A running or starting session cannot change Project or Workspace", status, "Conflict",
+      JSON.stringify({ error: { type: "api_error", code: "session_project_running_conflict" }, session_id: "old-source" }),
+    ))
+    const hook = await mountUseChat({ mode: "bound", sessionId: "old-source" })
+    await act(async () => {
+      expect(await hook.current.send("Keep the unsent draft", { workspacePath: "/synthetic/other", projectId: "other-project" })).toMatchObject({ kind: "unconfirmed" })
+    })
+    expect(mocks.sendMessage).toHaveBeenCalledOnce()
+    expect(mocks.sendMessage.mock.calls[0][0]).toMatchObject({ session_id: "old-source", workspace_path: undefined, project_id: undefined })
+    const failure = hook.current.sendFailure
+    expect(failure?.kind === "submission-unconfirmed" ? failure.rejectionCode : undefined).toBe(status === 409 ? "session_project_running_conflict" : undefined)
+    if (status === 409) expect(hook.current.sendFailure).toMatchObject({ rootModeSelectionSubmitted: false })
+    expect(config).toEqual({ model: "test-model", workspacePath: "/synthetic/original", projectId: "original-project" })
+    expect(hook.current.submissionPending).toBe(false)
+    expect(hook.current.sending).toBe(false)
+    await act(async () => { await hook.current.retry() })
+    expect(mocks.execute).not.toHaveBeenCalled()
+    expect(mocks.appState.updateSession).not.toHaveBeenCalled()
+    expect(mocks.apiPost).not.toHaveBeenCalled()
+    expect(getRootModeFenceState("old-source")).toBe("clear")
+  })
+
   it("blocks omitted sends after a mode-only operation is fenced across remount", async () => {
     mocks.appState.chats = [{ id: "root-session", messages: [], config: { model: "test-model" } }]
     expect(fenceRoot(false)).not.toBeNull()

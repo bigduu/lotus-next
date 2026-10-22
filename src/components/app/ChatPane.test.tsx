@@ -941,6 +941,38 @@ describe("ChatPane composer acknowledgement", () => {
     expect(alert?.textContent).toContain("继续编辑")
   })
 
+  it("explains a rejected running Source change and keeps the complete unsent draft", async () => {
+    const send = vi.fn<Send>().mockResolvedValue({ kind: "unconfirmed", operationId: 1, rejectionCode: "session_project_running_conflict" })
+    const chat = {
+      ...createChat(send, "old-source"),
+      sendFailure: { kind: "submission-unconfirmed" as const, operationId: 1, sessionId: "old-source",
+        rejectionCode: "session_project_running_conflict" as const, rootModeSelectionSubmitted: false,
+        message: "A running or starting session cannot change Project or Workspace" },
+    }
+    const container = document.body.appendChild(document.createElement("div"))
+    const root = createRoot(container); roots.push(root)
+    await act(async () => root.render(<ChatPane chat={chat} pickedWorkspace="/synthetic/picked"
+      onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()} splitOpen={false}
+      onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false} />))
+    const textarea = container.querySelector<HTMLTextAreaElement>("textarea")!
+    await fill(textarea)
+    const draft = runtime.state.inputStates["old-source"]?.content
+    const attachments = composer().attachments
+    act(() => composer().onSubmit()); await flush()
+    expect(runtime.state.inputStates["old-source"]?.content).toBe(draft)
+    expect(composer().attachments).toEqual(attachments)
+    expect(composer().selectedSkill).toEqual(skillA)
+    expect(composer().selectedWorkflow?.name).toBe("workflow-a")
+    const alert = container.querySelector<HTMLElement>('[role="alert"]')
+    expect(alert?.textContent).toContain("Bamboo 已拒绝此请求，内容已保留")
+    expect(alert?.textContent).toContain("请等待当前运行结束后核对来源")
+    expect(alert?.textContent).toContain("A running or starting session cannot change Project or Workspace")
+    expect(alert?.textContent).not.toContain("消息已发送")
+    expect(alert?.textContent).not.toContain("重试生成")
+    expect(send).toHaveBeenCalledOnce()
+    expect(chat.retry).not.toHaveBeenCalled()
+  })
+
   it.each([
     ["completed", false, true],
     ["completed", true, false],

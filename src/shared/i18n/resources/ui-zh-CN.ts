@@ -601,6 +601,7 @@ export const uiZhCn = {
   "message_sent_but_generation_was_interrupted_62a4d83d": "消息已发送，但生成中断",
   "session_source_changed": "会话来源校验未通过",
   "session_source_changed_action": "本次执行绑定的项目或工作区已变化。请先核对会话来源和已完成的操作，再决定是否重试。",
+  "session_source_conflict_action": "运行中无法更改项目或工作区。草稿和原会话来源已保留，请等待当前运行结束后核对来源，再决定是否发送。",
   "the_root_permission_change_is_unconfirmed_your_message__fd9a5b04": "Root 权限切换结果未知。消息保留在会话中；请先处理模式切换后继续。",
   "technical_details_c26fb419": "技术详情",
   "the_root_permission_change_is_unconfirmed_generation_re_bdcf3a6c": "Root 权限切换结果未知，此会话已停止重试生成。请先处理模式切换。",
