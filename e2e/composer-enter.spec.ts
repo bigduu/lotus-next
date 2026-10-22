@@ -38,12 +38,15 @@ for (const running of [false, true]) {
         : { json: { session_id: session.id, status: "success" } })
     })
     await page.goto(standaloneScenario.entryUrl)
+    // Session restoration replaces the home composer and its draft key.
+    await expect(page.getByRole("banner")).toContainText(session.title)
     const input = page.getByRole("textbox", { name: "消息", exact: true })
     await expect(input).toBeVisible()
     if (running) await expect(page.getByRole("button", { name: "停止生成", exact: true })).toBeVisible()
 
     // Enter chooses the highlighted built-in slash command before the composer sees it.
     await input.fill("/goal")
+    await expectComposerText(input, "/goal")
     await expect(page.getByRole("button", { name: /\/goal 指令/ })).toBeVisible()
     await input.press("Enter")
     await expectComposerText(input, "")

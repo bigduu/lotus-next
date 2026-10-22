@@ -295,7 +295,11 @@ for (const theme of ["light", "dark"] as const) {
     } }))
     emit("complete")
     terminal()
+    // Canonical history and the streaming tail overlap during terminal handoff.
+    await expect(active).toHaveCount(0)
     const settled = page.locator(".assistant-streamdown").filter({ hasText: prefix })
+    await expect(settled).toHaveCount(1)
+    await expect(settled).toHaveText(source)
     await expect(settled).toBeVisible()
     await expect(settled.locator("[data-assistant-reveal-chunk]")).toHaveCount(0)
     expect(await settled.evaluate((node) => node.textContent!.includes("\u00a0"))).toBe(false)
