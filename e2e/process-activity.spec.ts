@@ -604,7 +604,7 @@ for (const motion of ["normal", "reduced", "VDI"] as const) {
     const observation = await openProcessFixture(page, history, true)
     await page.goto(standaloneScenario.entryUrl)
     await expectFixtureSessionReady(page)
-    if (motion === "VDI") await page.evaluate(() => { document.body.dataset.vdiSafe = "true" })
+    if (motion === "VDI") await page.locator("body").evaluate((body) => { body.setAttribute("data-vdi-safe", "true") })
     const process = page.locator("[data-message-list-content]").first().locator("[data-process-activity]")
     const toggle = process.locator("[data-process-toggle]")
     const content = process.locator("[data-process-content]")
@@ -613,7 +613,7 @@ for (const motion of ["normal", "reduced", "VDI"] as const) {
     await expect(content).toHaveAttribute("inert", "")
     await expect(content).toHaveCSS("visibility", "hidden")
     await expect(toggle).toHaveCSS("font-variant-numeric", "tabular-nums")
-    const transition = await content.evaluate((element) => getComputedStyle(element).transitionProperty)
+    const transition = await content.evaluate((element) => element.ownerDocument.defaultView!.getComputedStyle(element).transitionProperty)
     if (motion === "normal") expect(transition).toContain("grid-template-rows")
     else expect(transition).toBe("none")
 
@@ -634,22 +634,27 @@ for (const motion of ["normal", "reduced", "VDI"] as const) {
       element.scrollTop = 24
     })
     await region.focus()
+    await expect(region).toHaveCSS("outline-style", "solid")
+    await expect(region).toHaveCSS("outline-width", "2px")
+    await expect(region).toHaveCSS("outline-offset", "-2px")
     // A programmatic controlled close leaves focus inside until the panel
     // restores its trigger; pointer clicks would focus the trigger themselves.
-    await toggle.evaluate((button: HTMLButtonElement) => button.click())
+    await toggle.evaluate((element) => (element as unknown as { click(): void }).click())
     await expect(toggle).toBeFocused()
     await expect(content).toHaveAttribute("aria-hidden", "true")
     await expect(content).toHaveAttribute("inert", "")
     await expect(content).toHaveCSS("visibility", "hidden")
     await page.keyboard.press("Tab")
-    expect(await content.evaluate((element) => element.contains(document.activeElement))).toBe(false)
+    expect(await content.evaluate((element) => element.contains(element.ownerDocument.activeElement))).toBe(false)
 
     // Reverse before each preceding transition settles. The original region,
     // nested inspection choice and scroll position all survive the reversal.
-    await toggle.evaluate(async (button: HTMLButtonElement) => {
+    await toggle.evaluate(async (element) => {
+      const button = element as unknown as { click(): void }
+      const browser = element.ownerDocument.defaultView!
       for (let index = 0; index < 5; index += 1) {
         button.click()
-        await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+        await new Promise<void>((resolve) => browser.requestAnimationFrame(() => resolve()))
       }
     })
     await expect(toggle).toHaveAttribute("aria-expanded", "true")

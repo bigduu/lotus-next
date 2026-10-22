@@ -13,6 +13,13 @@
   transition-delay: 0s;
 }
 .disclosure-panel-clip { min-height: 0; overflow: hidden; }
+.disclosure-panel [role="region"]:focus-visible {
+  outline: 2px solid var(--focus-ring, var(--ring));
+  outline-offset: -2px;
+}
+@media (forced-colors: active) {
+  .disclosure-panel [role="region"]:focus-visible { outline-color: Highlight; }
+}
 
 /* Safe modes switch directly; shortening a transform still moves its target. */
 body[data-vdi-safe="true"] .disclosure-panel,
