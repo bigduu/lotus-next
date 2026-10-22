@@ -30,7 +30,10 @@ with the frontend's synthetic HTTP fixtures. No backend code is included here.
   request. A full page reload does not retain this memory-only journal.
 - A `session_cleared` feed event always invalidates older in-flight reads locally,
   including held refreshes while busy; a read-only replacement is deferred until
-  busy work settles. It fetches history for loaded active/inactive sessions. C1 exposes
+  busy work settles. Replacement intent survives superseding monotonic reads and
+  failed reads until a new history/detail snapshot applies. Live and persisted
+  token views are refreshed together; old prefix-cache statistics cannot carry
+  into the new conversation. It covers loaded active/inactive sessions. C1 exposes
   no conversation revision; this is **not** a complete cross-client stale-read
   guarantee, a durable operation journal or a transaction protocol.
 
@@ -45,9 +48,9 @@ model-context reset. The future transaction/CAS protocol is a separate task.
 All images and browser HTTP responses use synthetic fixture data. No real
 history, account, profile, provider, Rust runtime or frozen release was touched.
 
-- Complete frontend unit suite: 196 files / 4,151 tests passed.
-- New clear browser suite: 27 cases across desktop, tablet and phone, including
-  three held-refresh / observed-feed-clear regression cases.
+- Complete frontend unit suite: 196 files / 4,155 tests passed.
+- New clear browser suite: 33 cases across desktop, tablet and phone, including
+  nine held-refresh, superseding-read and live-token-cache regression cases.
 - Existing Supervisor/settings navigation regression: 24 cases passed.
 - TypeScript, lint, i18n, architecture, production build, artifact and package
   checks pass without relaxing bundle budgets.
@@ -57,9 +60,11 @@ initial sandbox launch failures and the first fixture-selector/pending-state
 failures separately. They are not counted as successful acceptance. Backend
 Cargo/runtime and a real HTTP C1 round trip remain unrun.
 
-Independent source review found and corrected two C1 mismatches: empty token
+Independent source review found and corrected four C1 mismatches: empty token
 usage is omitted by the producer's serde, and feed-clear events must fence old
-reads even while an action is busy. The synthetic fixtures now use the actual
+reads even while an action is busy. Subsequent monotonic reads must inherit a
+pending replacement, and authoritative reconciliation must reset live token
+and prefix-cache statistics. The synthetic fixtures now use the actual
 omitted-field shape; null remains accepted for compatibility. Held-read tests
 cover the event fence and deferred GET-only reconciliation.
 

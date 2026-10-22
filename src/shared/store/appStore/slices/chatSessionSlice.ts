@@ -70,6 +70,7 @@ const historyReads = new WeakMap<() => AppState, Map<string, object>>();
 
 export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, get) => {
   const deferredClears = new Set<string>();
+  const replacementRequired = new Set<string>();
   const clearState = (sessionId: string, value: ConversationClearState) => {
     set((state) => ({ conversationClears: { ...state.conversationClears, [sessionId]: value } }));
     if (!value.busy && deferredClears.delete(sessionId)) get().reconcileClearedConversation(sessionId);
@@ -834,9 +835,10 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
     historyReads.get(get)?.delete(sessionId);
     const timer = reconcileTimers.get(sessionId);
     if (timer) { clearTimeout(timer); reconcileTimers.delete(sessionId); }
+    if (!get().chats.some((chat) => chat.id === sessionId)) return;
+    replacementRequired.add(sessionId);
     if (get().conversationClears[sessionId]?.busy) { deferredClears.add(sessionId); return; }
     deferredClears.delete(sessionId);
-    if (!get().chats.some((chat) => chat.id === sessionId)) return;
     void get().loadChatHistory(sessionId, { mode: "replace" });
   },
 
@@ -885,6 +887,13 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
           if (options?.signal?.aborted) return discardRead();
           if (options?.throwOnError && history.session_id !== sessionId) throw new Error("History session mismatch");
           if (!isCurrentRead()) return discardRead();
+          // Clear replacement intent survives superseding monotonic reads and
+          // failures. Read token state too: the live cache outranks list config.
+          const afterClear = replacementRequired.has(sessionId);
+          const detail = afterClear ? (await agentClient.getSession(sessionId)).session : undefined;
+          if (options?.signal?.aborted || !isCurrentRead()) return discardRead();
+          if (afterClear && (history.session_id !== sessionId || detail?.id !== sessionId)) throw new Error("History session mismatch");
+          const tokenConfig = detail ? sessionSummaryToChatItem(detail).config : undefined;
           const currentChat = get().chats.find((item) => item.id === sessionId);
           if (!currentChat) return discardRead();
           debugLog("[ChatSlice]", "loadChatHistory.response", {
@@ -915,7 +924,7 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
 
           const nextMessages = mapHistoryMessagesToUi(sessionId, history.messages);
 
-          if (mode === "monotonic") {
+          if (mode === "monotonic" && !afterClear) {
             const prevMessages = currentChat.messages || [];
             const prevLen = prevMessages.length;
             const nextLen = nextMessages.length;
@@ -974,6 +983,8 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
             messageCount: history.messages.length,
             config: {
               ...currentChat.config,
+              ...(tokenConfig ? { tokenUsage: tokenConfig.tokenUsage, truncationOccurred: tokenConfig.truncationOccurred,
+                segmentsRemoved: tokenConfig.segmentsRemoved } : {}),
               ...(history.gold_config != null ? { goldConfig: history.gold_config } : {}),
               ...(history.goal_state != null ? { goalState: history.goal_state } : {}),
               compressionEvents: (history.compression_events || []).map((event) => ({
@@ -994,6 +1005,11 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
               },
             },
           }, { skipBackendPatch: true });
+          if (afterClear) {
+            replacementRequired.delete(sessionId);
+            get().clearTokenUsage(sessionId);
+            if (tokenConfig?.tokenUsage) get().updateTokenUsage(sessionId, tokenConfig.tokenUsage);
+          }
           debugLog("[ChatSlice]", "loadChatHistory.applied", {
             sessionId,
             attempt,

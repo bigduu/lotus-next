@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { createStore } from "zustand/vanilla"
-import { agentClient, type HistoryResponse, type SessionSummary } from "@services/chat/AgentService"
+import { agentClient, type HistoryResponse, type SessionSummary, type TokenBudgetUsage } from "@services/chat/AgentService"
 import { NetworkRequestError } from "@services/api/errors"
 import type { AppState } from "../.."
 import { createChatSlice } from "../chatSessionSlice"
@@ -43,7 +43,7 @@ beforeEach(() => {
   vi.spyOn(agentClient, "patchSession").mockResolvedValue(undefined)
   vi.spyOn(console, "warn").mockImplementation(() => {})
 })
-afterEach(() => vi.restoreAllMocks())
+afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers() })
 
 describe("verified conversation clear state", () => {
   it("keeps identity, scope, other sessions and unfinished tasks; success waits for canonical readback", async () => {
@@ -157,5 +157,60 @@ describe("verified conversation clear state", () => {
     await vi.waitFor(() => expect(agentClient.getHistory).toHaveBeenCalledTimes(2))
     expect(store.getState().chats[0].messages.map((message) => message.id)).toEqual(["system"])
     expect(agentClient.clearSession).toHaveBeenCalledTimes(1)
+  })
+
+  it("keeps replacement intent when the 300ms message-appended read supersedes a clear GET", async () => {
+    vi.useFakeTimers()
+    const store = harness(), held = deferred<HistoryResponse>()
+    const deleted = Array.from({ length: 5 }, (_, n) => ({ ...old.messages[0], id: `deleted-${n}` }))
+    store.setState({ chats: [{ ...store.getState().chats[0], messages: mapHistoryMessagesToUi("fixture/a", deleted) }],
+      clearPendingQuestion: vi.fn() })
+    const shorter = { ...cleared, messages: [...cleared.messages, { ...old.messages[0], id: "after-clear", content: "new conversation" }] }
+    vi.mocked(agentClient.getHistory).mockReturnValueOnce(held.promise).mockResolvedValueOnce(shorter)
+    store.getState().reconcileClearedConversation("fixture/a")
+    store.getState().reconcileOpenSession("fixture/a", "message_appended")
+    await vi.advanceTimersByTimeAsync(300)
+    expect(agentClient.getHistory).toHaveBeenCalledTimes(2)
+    expect(store.getState().chats[0].messages.map((message) => message.id)).toEqual(["system", "after-clear"])
+    held.resolve({ ...old, messages: deleted }); await Promise.resolve()
+    expect(store.getState().chats[0].messages.map((message) => message.id)).toEqual(["system", "after-clear"])
+    expect(agentClient.clearSession).not.toHaveBeenCalled()
+  })
+
+  it("retains replacement intent and token evidence when detail fails, until a fresh read succeeds", async () => {
+    const store = harness()
+    const usage = { systemTokens: 1, summaryTokens: 2, windowTokens: 3, totalTokens: 6, budgetLimit: 100 }
+    store.getState().updateTokenUsage("fixture/a", usage)
+    vi.mocked(agentClient.getSession).mockRejectedValueOnce(new Error("detail unavailable"))
+    store.getState().reconcileClearedConversation("fixture/a")
+    await vi.waitFor(() => expect(console.warn).toHaveBeenCalled())
+    expect(store.getState().chats[0].messages.map((message) => message.id)).toEqual(["old"])
+    expect(store.getState().tokenUsages["fixture/a"]).toBe(usage)
+    await store.getState().loadChatHistory("fixture/a", { mode: "monotonic", throwOnError: true })
+    expect(store.getState().chats[0].messages.map((message) => message.id)).toEqual(["system"])
+    expect(store.getState().tokenUsages["fixture/a"]).toBeUndefined()
+  })
+
+  it.each([false, true])("replaces both live/config token caches from authoritative detail, new usage=%s", async (newUsage) => {
+    const store = harness(), before = { systemTokens: 1, summaryTokens: 2, windowTokens: 3, totalTokens: 6, budgetLimit: 100,
+      cacheReadInputTokens: 99, prefixCache: { inputTokens: 1, cacheCreationInputTokens: 2, cacheReadInputTokens: 99 } }
+    store.getState().updateTokenUsage("fixture/a", before)
+    store.getState().updateTokenUsage("fixture/b", before)
+    const other = store.getState().tokenUsages["fixture/b"]
+    store.getState().setTruncationInfo("fixture/a", true, 9)
+    store.getState().updateSession("fixture/a", { config: { ...store.getState().chats[0].config, tokenUsage: before } }, { skipBackendPatch: true })
+    const usage: TokenBudgetUsage = { system_tokens: 1, summary_tokens: 0, window_tokens: 1, total_tokens: 2,
+      budget_limit: 100, truncation_occurred: false, segments_removed: 0 }
+    vi.mocked(agentClient.getSession).mockResolvedValue({ session: { ...summary(), ...(newUsage ? { token_usage: usage } : {}) } })
+    store.getState().reconcileClearedConversation("fixture/a")
+    await vi.waitFor(() => expect(store.getState().chats[0].messages.map((message) => message.id)).toEqual(["system"]))
+    expect(store.getState().chats[0].config.tokenUsage?.totalTokens).toBe(newUsage ? 2 : undefined)
+    expect(store.getState().tokenUsages["fixture/a"]?.totalTokens).toBe(newUsage ? 2 : undefined)
+    expect(store.getState().tokenUsages["fixture/a"]?.prefixCache).toBeUndefined()
+    expect(store.getState().tokenUsages["fixture/a"]?.cacheReadInputTokens ?? 0).toBe(0)
+    expect(store.getState().truncationOccurred["fixture/a"]).toBeUndefined()
+    expect(store.getState().segmentsRemoved["fixture/a"]).toBeUndefined()
+    expect(store.getState().tokenUsages["fixture/b"]).toBe(other)
+    expect(agentClient.clearSession).not.toHaveBeenCalled()
   })
 })
