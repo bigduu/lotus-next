@@ -130,8 +130,9 @@ for (const theme of ["light", "dark"] as const) {
       const newSession = page.getByRole("button", { name: "新建会话", exact: true })
       await page.keyboard.press("Tab")
       await newSession.focus()
+      await expect(newSession).toBeFocused()
       expect(await newSession.evaluate((element) => element.matches(":focus-visible"))).toBe(true)
-      expect(await newSession.evaluate((element) => element.ownerDocument.defaultView!.getComputedStyle(element).boxShadow)).toContain("4px")
+      await expect(newSession).toHaveCSS("box-shadow", /4px/)
     }
     await info.attach(`focus-contrast-${theme}`, { body: JSON.stringify(palette, null, 2), contentType: "application/json" })
     await page.emulateMedia({ forcedColors: "active" })

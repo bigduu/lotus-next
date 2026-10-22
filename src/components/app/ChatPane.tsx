@@ -1176,6 +1176,8 @@ export function ChatPane({
               </p>
               {rootMode.unsafe && generationFailed ? (
                 <p className="mt-1 text-xs">{uiText("the_root_permission_change_is_unconfirmed_your_message__fd9a5b04")}</p>
+              ) : visibleSendFailure?.kind === "submission-unconfirmed" && visibleSendFailure.rejectionCode === "session_project_running_conflict" ? (
+                <p className="mt-1 text-xs">{uiText("session_source_conflict_action")}</p>
               ) : runFailureGuidance ? (
                 <p className="mt-1 text-xs">{runFailureGuidance.action}</p>
               ) : null}

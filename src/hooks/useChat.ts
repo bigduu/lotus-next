@@ -77,17 +77,18 @@ export type SubmissionUnconfirmedFailure = {
   operationId: number
   sessionId: string | null
   message?: string
-  rejectionCode?: RootModeRejectionCode
+  rejectionCode?: SubmissionRejectionCode
   rootModeSelectionSubmitted?: boolean
 }
 
-type RootModeRejectionCode = "root_orchestration_incompatible_mode" | "root_orchestration_requires_root"
+type SubmissionRejectionCode = "root_orchestration_incompatible_mode" | "root_orchestration_requires_root" | "session_project_running_conflict"
 
-const rootModeRejectionCode = (error: unknown): RootModeRejectionCode | null => {
+const submissionRejectionCode = (error: unknown): SubmissionRejectionCode | null => {
   if (!isApiError(error) || (error.status !== 400 && error.status !== 409) || !error.body) return null
   try {
     const parsed = JSON.parse(error.body) as { error?: { code?: unknown } }
     const code = parsed.error?.code
+    if (code === "session_project_running_conflict") return error.status === 409 ? code : null
     return code === "root_orchestration_incompatible_mode" || code === "root_orchestration_requires_root"
       ? code : null
   } catch {
@@ -113,7 +114,7 @@ const toFailureMessage = (error: unknown): string | undefined => {
 
 export type SendSubmissionResult =
   | { kind: "accepted"; operationId: number; sessionId: string; navigated: boolean }
-  | { kind: "unconfirmed"; operationId: number; rejectionCode?: RootModeRejectionCode; workflowError?: { code: string; message: string } }
+  | { kind: "unconfirmed"; operationId: number; rejectionCode?: SubmissionRejectionCode; workflowError?: { code: string; message: string } }
   | { kind: "blocked" }
   | { kind: "busy" }
   | { kind: "ignored" }
@@ -397,6 +398,8 @@ export function useChat(
   const latestOperationBySessionRef = useRef<Map<string | null, number>>(new Map())
   const streamOperationRef = useRef<number | null>(null)
   const streamBaselineMessageIdRef = useRef<string | null>(null)
+  const streamBaselineToolResultIdsRef = useRef<ReadonlySet<string>>(new Set())
+  const streamAcknowledgedMessageIdRef = useRef<string | null>(null)
   const subscriptionRef = useRef<{ operationId: number; sessionId: string } | null>(null)
   const navigationRef = useRef({ sessionId: sid, epoch: 0 })
   if (navigationRef.current.sessionId !== sid) {
@@ -502,7 +505,32 @@ export function useChat(
     )
   const streaming = streamSid === sid && !retainedTerminalIsHydrated ? streamingText : null
   const streamingReasoning = streamSid === sid ? streamingReasoningText : null
-  const liveSegments = streamSid === sid ? liveSegmentsState : EMPTY_SEGMENTS
+  const liveSegments = useMemo(() => {
+    if (streamSid !== sid) return EMPTY_SEGMENTS
+    if (streamPhaseState !== null) return liveSegmentsState
+    // Failed history reads retain terminal tool evidence without keeping a run
+    // active. Only results after this operation's acknowledged user can confirm
+    // it. Earlier results may hydrate late or reuse the same tool invocation id.
+    // Legacy ACKs without a message id cannot prove that boundary.
+    const acknowledgedMessageId = streamAcknowledgedMessageIdRef.current
+    const userIndex = acknowledgedMessageId === null ? -1
+      : messages.findIndex((message) => message.role === "user" && message.id === acknowledgedMessageId)
+    // A later user may be another turn or queued guidance; neither confirms this result.
+    const nextUserIndex = userIndex < 0 ? -1
+      : messages.findIndex((message, index) => index > userIndex && message.role === "user")
+    const candidates = userIndex < 0 ? [] : messages.slice(userIndex + 1, nextUserIndex < 0 ? undefined : nextUserIndex)
+    const persistedToolIds = new Set(candidates.flatMap((message) =>
+      "type" in message && message.type === "tool_result" && !streamBaselineToolResultIdsRef.current.has(message.id)
+        ? [message.toolCallId] : []))
+    let hydrated = false
+    const remaining = liveSegmentsState.flatMap<LiveSegment>((segment) => {
+      if (segment.kind !== "tools") return [segment]
+      const calls = segment.calls.filter((call) => !persistedToolIds.has(call.toolCallId))
+      hydrated ||= calls.length !== segment.calls.length
+      return calls.length ? [{ ...segment, calls }] : []
+    })
+    return hydrated ? remaining : liveSegmentsState
+  }, [liveSegmentsState, messages, sid, streamPhaseState, streamSid])
   const streamStatus = streamSid === sid ? streamStatusState : null
   const contextCompression = compressionState?.sessionId === sid ? compressionState.value : null
   const streamPhase = streamSid === sid ? streamPhaseState : null
@@ -654,8 +682,13 @@ export function useChat(
   }, [recordOutput])
 
   const stopStream = useCallback(
-    (final: string | null, operationId?: number) => {
+    (final: string | null, operationId?: number, retainToolResults = false) => {
       if (operationId !== undefined && streamOperationRef.current !== operationId) return
+      const retainedSegments = retainToolResults ? liveSegRef.current.flatMap<LiveSegment>((segment) => {
+        if (segment.kind !== "tools") return []
+        const calls = segment.calls.filter((call) => call.status !== "running").map((call) => ({ ...call }))
+        return calls.length ? [{ ...segment, calls }] : []
+      }) : EMPTY_SEGMENTS
       const compression = compressionRef.current
       if (compression && compression.operationId === streamOperationRef.current) {
         const value = compressionRunEnded(compression.value)
@@ -675,20 +708,19 @@ export function useChat(
       }
       streamBufRef.current = ""
       reasonBufRef.current = ""
-      liveSegRef.current = []
+      liveSegRef.current = retainedSegments
       toolCallsByIdRef.current.clear()
       streamOperationRef.current = null
-      setLiveSegmentsState(EMPTY_SEGMENTS)
+      setLiveSegmentsState(retainedSegments)
       setStreamStatus(null)
       setStreamingText(final)
       setStreamingReasoningText(null)
-      // A null final means the live buffer has been fully retired.  Drop its
-      // ownership too, so a late callback cannot make a completed/left session
-      // look live again when the user returns to it.
+      // Release the run even when a failed history read keeps static tool
+      // evidence. A retained result never owns streaming or Stop controls.
       if (final === null) {
         retainedTerminalRef.current = null
         setStreamPhaseState(null)
-        setStreamSid(null)
+        if (!retainedSegments.length) setStreamSid(null)
       } else {
         setStreamPhaseState("finalizing")
       }
@@ -707,6 +739,15 @@ export function useChat(
     retainedTerminalRef.current = null
     stopStream(null)
   }, [messages, sid, stopStream])
+
+  useEffect(() => {
+    if (streamSid !== sid || streamPhaseState !== null || streamOperationRef.current !== null
+        || liveSegments === liveSegmentsState) return
+    // Retire hydrated tool snapshots permanently, including after history edits.
+    liveSegRef.current = liveSegments
+    setLiveSegmentsState(liveSegments)
+    if (!liveSegments.length) setStreamSid(null)
+  }, [liveSegments, liveSegmentsState, sid, streamPhaseState, streamSid])
 
   const LAST_SESSION_KEY = "lotus_next_last_session"
 
@@ -789,6 +830,8 @@ export function useChat(
         resume?: boolean
         operationId?: number
         pendingOperationId?: number
+        /** Exact chat ACK identity; missing ids leave failed tool evidence unconfirmed. */
+        acknowledgedMessageId?: string | null
         /** `null` explicitly omits an execute-time override (Auto). */
         reasoningEffort?: ReasoningEffort | null
         /** Keep a just-acknowledged new session on its submitted model. */
@@ -800,10 +843,14 @@ export function useChat(
       operationSequenceRef.current = Math.max(operationSequenceRef.current, operationId)
       noteSessionOperation(runSid, operationId)
       streamOperationRef.current = operationId
-      streamBaselineMessageIdRef.current = useAppStore
+      const baselineMessages = useAppStore
         .getState()
         .chats.find((chat) => chat.id === runSid)
-        ?.messages?.findLast((message) => message.role !== "system")?.id ?? null
+        ?.messages ?? []
+      streamBaselineMessageIdRef.current = baselineMessages.findLast((message) => message.role !== "system")?.id ?? null
+      streamBaselineToolResultIdsRef.current = new Set(baselineMessages.flatMap((message) =>
+        "type" in message && message.type === "tool_result" ? [message.id] : []))
+      streamAcknowledgedMessageIdRef.current = opts?.acknowledgedMessageId ?? null
       const ownsStream = () => streamOperationRef.current === operationId
       const terminal = { settlement: null as Promise<void> | null, pendingRead: null as Promise<void> | null }
       // ONE live subscription per hook instance: sever the previous one FIRST
@@ -954,7 +1001,7 @@ export function useChat(
           let historyLoaded = historyReady
           if (!historyReady) {
             try {
-              await useAppStore.getState().loadChatHistory(runSid)
+              await useAppStore.getState().loadChatHistory(runSid, { throwOnError: true })
               historyLoaded = true
             } catch (err) {
               console.warn("[useChat] failed-generation history hydration failed", err)
@@ -964,7 +1011,8 @@ export function useChat(
           if (historyLoaded && opts?.pendingOperationId !== undefined) {
             clearPendingOperation(opts.pendingOperationId)
           }
-          stopStream(null, operationId)
+          stopStream(null, operationId, !historyLoaded)
+          ac.abort()
         })()
       }
 
@@ -1020,7 +1068,13 @@ export function useChat(
             observedIdle = false
             return
           }
-          await useAppStore.getState().loadChatHistory(runSid, { mode: "monotonic" })
+          let historyReady = false
+          try {
+            await useAppStore.getState().loadChatHistory(runSid, { mode: "monotonic", throwOnError: true })
+            historyReady = true
+          } catch (err) {
+            console.warn("[useChat] owned-stream history reconciliation failed", err)
+          }
           if (!canReconcile()) return
           const currentQuestion = questionStateRef.current
           if (useAppStore.getState().chats.find((chat) => chat.id === runSid)?.isRunning
@@ -1028,6 +1082,9 @@ export function useChat(
             observedIdle = false
             return
           }
+          // A failed read cannot confirm completion. A canonical run error can
+          // still settle while its terminal tool evidence remains available.
+          if (!historyReady && session.last_run_status !== "error") return
           const tail = useAppStore.getState().chats.find((chat) => chat.id === runSid)
             ?.messages?.findLast((message) => message.role !== "system")
           // `last_run_status` can be left over from an earlier run when final
@@ -1037,7 +1094,7 @@ export function useChat(
             && tail.id !== streamBaselineMessageIdRef.current && tail.content.trim() === finalText
           if (session.last_run_status === "cancelled") settleCancelled(true)
           else if (session.last_run_status === "completed" && durableReply) settleCompleted(true)
-          else settleFailed(true, session.last_run_error)
+          else settleFailed(historyReady, session.last_run_error)
           ac.abort()
         } catch (err) {
           observedIdle = false
@@ -1055,9 +1112,12 @@ export function useChat(
       await agentClient.subscribeToEvents(
         runSid,
         {
-          onToken: pushToken,
-          onReasoningToken: pushReasoning,
+          onToken: (content) => { if (ownsRunEvent()) pushToken(content) },
+          onReasoningToken: (content) => { if (ownsRunEvent()) pushReasoning(content) },
           onToolStart: (toolCallId, toolName, args) => {
+            // A tool id identifies one invocation within this operation, even
+            // when critical events are replayed after a subscription reconnect.
+            if (!ownsRunEvent() || !toolCallId || toolCallsByIdRef.current.has(toolCallId)) return
             // Natural reading order: whatever text streamed before this tool
             // round freezes above it; the buffers restart afterwards.
             freezeTextSegment()
@@ -1076,24 +1136,26 @@ export function useChat(
             flushSegments()
           },
           onToolToken: (toolCallId, content) => {
+            if (!ownsRunEvent()) return
             const call = toolCallsByIdRef.current.get(toolCallId)
-            if (!call) return
+            if (!call || call.status !== "running") return
             call.output += content
             flushSegments()
           },
           onToolComplete: (toolCallId, result) => {
+            if (!ownsRunEvent() || !result) return
             const call = toolCallsByIdRef.current.get(toolCallId)
-            if (!call) return
-            call.status = result?.success === false ? "error" : "completed"
-            const r = result as { result?: unknown } | undefined
-            if (typeof r?.result === "string" && r.result) call.output = r.result
-            call.images = result?.images
+            if (!call || call.status !== "running") return
+            call.status = result.success === false ? "error" : "completed"
+            if (typeof result.result === "string") call.output = result.result
+            call.images = result.images
             setStreamStatus(null)
             flushSegments()
           },
           onToolError: (toolCallId, error) => {
+            if (!ownsRunEvent()) return
             const call = toolCallsByIdRef.current.get(toolCallId)
-            if (!call) return
+            if (!call || call.status !== "running") return
             call.status = "error"
             call.error = error
             setStreamStatus(null)
@@ -1301,6 +1363,7 @@ export function useChat(
           try {
             await useAppStore.getState().loadChatHistory(runSid, {
               mode: "monotonic",
+              throwOnError: true,
               waitForAssistant: Boolean(finalText.trim()),
               retries: finalText.trim() ? 8 : 0,
               retryDelayMs: 150,
@@ -1808,7 +1871,7 @@ export function useChat(
       } catch (err) {
         console.error("[useChat] message submission was not acknowledged", err)
         const compatibilityConflict = observeSessionExecutionConflict(startSid, err)
-        const rejectionCode = rootModeRejectionCode(err)
+        const rejectionCode = submissionRejectionCode(err)
         if (activeSendRef.current?.id === operation.id) activeSendRef.current = null
         if (mountedRef.current) {
           setSubmissionPending(false)
@@ -1826,7 +1889,7 @@ export function useChat(
             message: toFailureMessage(err),
             ...(rejectionCode ? {
               rejectionCode,
-              rootModeSelectionSubmitted: typeof opts?.rootOrchestrationOnly === "boolean",
+              rootModeSelectionSubmitted: rejectionCode !== "session_project_running_conflict" && typeof opts?.rootOrchestrationOnly === "boolean",
             } : {}),
           })
         }
@@ -1922,6 +1985,7 @@ export function useChat(
         void runStream(acknowledgedSessionId, {
           operationId: operation.id,
           pendingOperationId: operation.pendingOperationId,
+          acknowledgedMessageId,
           reasoningEffort: submittedReasoningEffort ?? null,
           modelSelection: { model: submittedModel, modelRef: submittedModelRef },
         })

@@ -848,7 +848,12 @@ describe("ChatPane composer acknowledgement", () => {
       "模型服务连接超时",
       "请检查提供商、代理和网络状态",
     ],
-  ])("explains a persisted bootstrap failure while keeping diagnostics available", async (detail, title, action) => {
+    [
+      "Tool error: Execution failed: Native canonical Session Source scope changed",
+      "会话来源校验未通过",
+      "请先核对会话来源和已完成的操作",
+    ],
+  ])("explains a persisted run failure while keeping diagnostics available", async (detail, title, action) => {
     const container = document.body.appendChild(document.createElement("div"))
     const root = createRoot(container); roots.push(root)
     const chat = createChat(vi.fn<Send>(), "failed-session", "error", detail)
@@ -864,6 +869,30 @@ describe("ChatPane composer acknowledgement", () => {
     expect(alert?.querySelector("details")?.textContent).toContain(detail)
     expect(alert?.querySelector("summary")?.textContent).toBe("技术详情")
     expect(alert?.textContent).toContain("重试生成")
+    expect(chat.retry).not.toHaveBeenCalled()
+  })
+
+  it("explains a live source rejection without replaying the saved submission", async () => {
+    const container = document.body.appendChild(document.createElement("div"))
+    const root = createRoot(container); roots.push(root)
+    const detail = "Tool error: Execution failed: Native canonical Session Source scope changed"
+    const retry = vi.fn()
+    const send = vi.fn<Send>()
+    const failure = { kind: "generation-failed" as const, operationId: 4, sessionId: "old-session", message: detail }
+    const chat = { ...createChat(send, "old-session"), retry, sendFailure: failure }
+    await act(async () => root.render(<ChatPane chat={chat} pickedWorkspace="/picked"
+      onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()} splitOpen={false}
+      onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false} />))
+    const alert = container.querySelector<HTMLElement>('[role="alert"]')
+    expect(alert?.textContent).toContain("会话来源校验未通过")
+    expect(alert?.textContent).toContain("请先核对会话来源和已完成的操作")
+    expect(alert?.querySelector("details")?.textContent).toContain(detail)
+    expect(send).not.toHaveBeenCalled()
+    expect(retry).not.toHaveBeenCalled()
+    const button = Array.from(alert?.querySelectorAll("button") ?? []).find((item) => item.textContent?.includes("重试生成"))
+    await act(async () => button?.click())
+    expect(retry).toHaveBeenCalledExactlyOnceWith(failure)
+    expect(send).not.toHaveBeenCalled()
   })
 
   it("explains a live HTTP 429 generation failure", async () => {
@@ -910,6 +939,38 @@ describe("ChatPane composer acknowledgement", () => {
     expect(alert?.textContent).toContain("发送状态未确认，内容已保留")
     expect(alert?.textContent).toContain("Project context error: workspace path does not exist")
     expect(alert?.textContent).toContain("继续编辑")
+  })
+
+  it("explains a rejected running Source change and keeps the complete unsent draft", async () => {
+    const send = vi.fn<Send>().mockResolvedValue({ kind: "unconfirmed", operationId: 1, rejectionCode: "session_project_running_conflict" })
+    const chat = {
+      ...createChat(send, "old-source"),
+      sendFailure: { kind: "submission-unconfirmed" as const, operationId: 1, sessionId: "old-source",
+        rejectionCode: "session_project_running_conflict" as const, rootModeSelectionSubmitted: false,
+        message: "A running or starting session cannot change Project or Workspace" },
+    }
+    const container = document.body.appendChild(document.createElement("div"))
+    const root = createRoot(container); roots.push(root)
+    await act(async () => root.render(<ChatPane chat={chat} pickedWorkspace="/synthetic/picked"
+      onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()} splitOpen={false}
+      onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false} />))
+    const textarea = container.querySelector<HTMLTextAreaElement>("textarea")!
+    await fill(textarea)
+    const draft = runtime.state.inputStates["old-source"]?.content
+    const attachments = composer().attachments
+    act(() => composer().onSubmit()); await flush()
+    expect(runtime.state.inputStates["old-source"]?.content).toBe(draft)
+    expect(composer().attachments).toEqual(attachments)
+    expect(composer().selectedSkill).toEqual(skillA)
+    expect(composer().selectedWorkflow?.name).toBe("workflow-a")
+    const alert = container.querySelector<HTMLElement>('[role="alert"]')
+    expect(alert?.textContent).toContain("Bamboo 已拒绝此请求，内容已保留")
+    expect(alert?.textContent).toContain("请等待当前运行结束后核对来源")
+    expect(alert?.textContent).toContain("A running or starting session cannot change Project or Workspace")
+    expect(alert?.textContent).not.toContain("消息已发送")
+    expect(alert?.textContent).not.toContain("重试生成")
+    expect(send).toHaveBeenCalledOnce()
+    expect(chat.retry).not.toHaveBeenCalled()
   })
 
   it.each([
