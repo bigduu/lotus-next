@@ -1,3 +1,11 @@
+.model-effort-trigger {
+  /* A bounded outer anchor stays fixed without reserving every mode label. */
+  inline-size: 12.5rem;
+  max-inline-size: min(45vw, 100%);
+  min-block-size: 2rem;
+}
+.effort-trigger-label { max-inline-size: 4.5em; }
+
 .effort-slider {
   position: relative;
   height: 32px;
@@ -68,8 +76,6 @@
   box-shadow: 0 1px 3px #00000020;
 }
 
-/* Intrinsic, localized reservation keeps the Popper anchor fixed on selection. */
-.effort-label-reserve > span::before { content: attr(data-label); }
 /* Clip decoration only; the range and its keyboard focus ring stay unclipped. */
 @media (prefers-reduced-motion: no-preference) {
   .effort-meteors i { animation: effort-meteor linear infinite; }
