@@ -93,6 +93,27 @@ it("binds every browser action to one encoded Bamboo session and epoch", async (
   )
 })
 
+it("keeps implicit opens mode-free and preserves a reported clean scope", async () => {
+  const state = {
+    page_epoch: 4,
+    frame_seq: 0,
+    url: "about:blank",
+    title: "",
+    viewport: { width: 640, height: 480 },
+    can_go_back: false,
+    can_go_forward: false,
+    profile_mode: "clean" as const,
+    storage_shared: false,
+  }
+  vi.mocked(apiClient.put).mockResolvedValue(state)
+  const signal = new AbortController().signal
+
+  expect(await service.open("chat/clean", signal)).toBe(state)
+  expect(apiClient.put).toHaveBeenCalledExactlyOnceWith("browser/sessions/chat%2Fclean", {}, { signal })
+  expect(apiClient.post).not.toHaveBeenCalled()
+  expect(apiClient.delete).not.toHaveBeenCalled()
+})
+
 it("creates and navigates a browser tab in one request", async () => {
   vi.mocked(apiClient.post).mockResolvedValue({})
 
