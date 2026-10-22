@@ -401,7 +401,7 @@ function MessageActions({
             aria-label={uiText("more_message_actions_cecaef80")}
             title={uiText("more_message_actions_cecaef80")}
           >
-            <MoreHorizontal aria-hidden="true" className="hidden size-3.5 md:block" />
+            <MoreHorizontal className="hidden size-3.5 md:block" />
             <ConfirmationIcon confirmed={copied} sequence={feedback.sequence} fallback={MoreHorizontal} className="size-3.5 md:hidden" />
           </button>
         </DropdownMenuTrigger>

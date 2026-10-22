@@ -22,7 +22,7 @@ export function useCopyFeedback(text: string, sourceId: string) {
     current.generation += 1
     current.text = text
     current.sourceId = sourceId
-    setFeedback((previous) => previous.status === "idle" ? previous : IDLE)
+    setFeedback(IDLE)
     return () => {
       current.active = false
       current.generation += 1
