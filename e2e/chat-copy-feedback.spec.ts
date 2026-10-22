@@ -118,3 +118,41 @@ test("chat copy preserves selection and focus through fallback failure and retry
   expect(observation.pageErrors).toEqual([])
   expect(observation.consoleErrors).toEqual([])
 })
+
+test("chat copy leaves a newer caret chosen by the restored control's focus handler", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop-chromium", "collapsed selection ownership during fallback")
+  await page.addInitScript(() => {
+    localStorage.setItem("bodhi_onboarded_v1", "1")
+    localStorage.setItem("lotus_next_last_session", "all-surface-session")
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: {
+      writeText: () => Promise.reject(new Error("fixture clipboard denied")),
+    } })
+  })
+  const observation = await installArtifactRuntime(page, standaloneScenario, [{
+    id: "copy-caret-source", role: "assistant", content: "原文 English", created_at: "2026-10-22T00:00:00Z",
+  }])
+  await page.goto(standaloneScenario.entryUrl)
+  const actions = page.locator('[data-message-actions="copy-caret-source"]')
+  const copy = actions.getByRole("button", { name: "复制", exact: true })
+  await copy.focus()
+  await copy.evaluate((button) => {
+    const document = button.ownerDocument
+    const text = document.querySelector(".assistant-streamdown p")!.firstChild!
+    const selection = document.getSelection()!
+    selection.setBaseAndExtent(text, 0, text, text.textContent!.length)
+    button.addEventListener("focus", () => selection.collapse(text, 2), { once: true })
+    Object.defineProperty(document, "execCommand", { configurable: true, value: () => true })
+  })
+  await copy.press("Enter")
+  await expect(actions).toHaveAttribute("data-copy-state", "copied")
+  await expect(copy).toBeFocused()
+  expect(await copy.evaluate((button) => {
+    const document = button.ownerDocument
+    const selection = document.getSelection()!
+    return { collapsed: selection.isCollapsed, offset: selection.anchorOffset,
+      originalNode: selection.anchorNode === document.querySelector(".assistant-streamdown p")!.firstChild }
+  })).toEqual({ collapsed: true, offset: 2, originalNode: true })
+  await expect(page.locator('textarea[readonly]')).toHaveCount(0)
+  expect(observation.pageErrors).toEqual([])
+  expect(observation.consoleErrors).toEqual([])
+})

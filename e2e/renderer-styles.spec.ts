@@ -10,7 +10,7 @@ const source = [
 ].join("\n\n")
 
 for (const theme of ["light", "dark"] as const) {
-  test(`lazy renderer utilities preserve code, links and diagrams in ${theme}`, async ({ page }, info) => {
+  test(`lazy Markdown renderer preserves code, links and diagrams in ${theme}`, async ({ page }, info) => {
     test.skip(info.project.name !== "desktop-chromium", "paired-theme optional renderer stylesheet regression")
     await page.emulateMedia({ colorScheme: theme, reducedMotion: "reduce" })
     await page.addInitScript((mode) => {

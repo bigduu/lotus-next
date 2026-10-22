@@ -1,12 +1,3 @@
-/* Renderer-only utilities travel with the existing lazy Markdown stylesheet.
-   Reference the app's theme without duplicating its base styles. */
-@import "tailwindcss/utilities.css" layer(utilities) source(none);
-@reference "../../index.css";
-@source "../../../node_modules/streamdown/dist/*.js";
-@source "../../../node_modules/@streamdown/code/dist/*.js";
-@source "../../../node_modules/@streamdown/mermaid/dist/*.js";
-@source "../../../node_modules/@streamdown/cjk/dist/*.js";
-
 @layer components {
   .assistant-streamdown {
     width: 100%;

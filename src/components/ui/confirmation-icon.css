@@ -5,17 +5,7 @@
 }
 
 @media (prefers-reduced-motion: no-preference) {
-  .confirmation-icon {
+  body:not([data-vdi-safe="true"]) .confirmation-icon {
     animation: confirmation-rebound 180ms var(--motion-ease, ease-out) both;
-    transform-origin: center;
   }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .confirmation-icon { animation: none !important; transform: none !important; }
-}
-
-body[data-vdi-safe="true"] .confirmation-icon {
-  animation: none !important;
-  transform: none !important;
 }

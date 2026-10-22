@@ -129,7 +129,7 @@ export function ModelEffortPicker({
                 </p>
                 <button ref={modelButtonRef} type="button" data-testid="model-picker-model" disabled={unavailableModels}
                   onClick={() => { if (!unavailableModels) { setPage("models"); setPreview(null) } }}
-                  className="mx-auto flex max-w-full items-center gap-0.5 rounded-md px-1 py-0.5 text-xs text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50">
+                  className="mx-auto flex max-w-full items-center gap-0.5 rounded-md px-1 py-0.5 text-xs text-muted-foreground outline-none hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50">
                   <span className="truncate">{model || uiText("select_a_model_1afed6a8")}</span>
                   <ChevronRight className="size-3 shrink-0" aria-hidden />
                 </button>
@@ -137,7 +137,7 @@ export function ModelEffortPicker({
               <button type="button" aria-label={uiText("restore_auto_reasoning")} title={uiText("restore_auto_reasoning")}
                 disabled={effortDisabled || selected === "auto"}
                 onClick={() => { if (!effortDisabled && selected !== "auto") onChange("auto") }}
-                className="flex size-8 items-center justify-center rounded-full text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-40">
+                className="flex size-8 items-center justify-center rounded-full text-muted-foreground outline-none hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40">
                 <RotateCcw className="size-4" aria-hidden />
               </button>
             </div>
@@ -185,7 +185,7 @@ export function ModelEffortPicker({
             <div className="mb-2 flex items-center gap-1 text-sm text-muted-foreground">
               <button type="button" aria-label={uiText("back_2d1d8c1e")}
                 onClick={() => { setPage("effort"); setQuery("") }}
-                className="flex size-7 items-center justify-center rounded-full outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring">
+                className="flex size-7 items-center justify-center rounded-full outline-none hover:bg-accent">
                 <ChevronLeft className="size-4" aria-hidden />
               </button>
               <span>{uiText("select_a_model_1afed6a8")}</span>
