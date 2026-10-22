@@ -231,6 +231,14 @@ export class ApiClient {
     return this.send<T>("DELETE", path, options);
   }
 
+  /** Close one user-selected scope once; never replay an ambiguous deletion. */
+  async deleteOnce<T>(path: string, options?: RequestInit): Promise<T> {
+    const url = this.resolveUrl(path);
+    logApiRequest("DELETE", url);
+    const response = await this.transport.requestOnce(url, this.createRequestInit("DELETE", options));
+    return this.handleResponse<T>(response);
+  }
+
   async request<T>(method: string, path: string, options?: RequestInit): Promise<T> {
     return this.send<T>(method, path, options);
   }

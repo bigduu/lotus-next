@@ -11,6 +11,7 @@ import {
   RefreshCw,
   X,
 } from "lucide-react"
+import { BrowserProfileSelector } from "./BrowserProfileSelector"
 import { Button } from "@/components/ui/button"
 import { useBrowserSession } from "@/hooks/useBrowserSession"
 import { matchesActiveBrowserPage, pointInBrowserFrame } from "@/lib/browserFrame"
@@ -303,12 +304,25 @@ export function BrowserPaneView({
     )
   }
 
+  const profileControls = (
+    <details className="w-full shrink-0 border-b p-2 text-sm" open={browser.profilePhase === "closed" ? true : undefined}>
+      <summary className="cursor-pointer text-muted-foreground">{uiText("browser_profile_label")}</summary>
+      <div className="pt-2"><BrowserProfileSelector
+        sessionId={sessionId} profile={browser.profile} phase={browser.profilePhase === "closed" ? "closed" : "active"}
+        pending={browser.busy || browser.loading || dialogBlocked}
+        allowUnreportedOpen={browser.profilePhase === "closed"}
+        actions={browser.profilePhase === "unknown" ? undefined : { open: (id, mode) => { void browser.openProfile(id, mode) }, close: (id) => { void browser.closeProfile(id) } }}
+      /></div>
+    </details>
+  )
+
   if (!browser.state) {
     return (
       <section className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 p-6 text-center text-sm text-muted-foreground" aria-label={uiText("built_in_browser_42d6809d")}>
-        {browser.loading ? <LoaderCircle className="size-5 animate-spin" aria-hidden="true" /> : <Globe2 className="size-5" aria-hidden="true" />}
-        <p role="status">{browser.loading ? uiText("starting_browser_30a20dd1") : browser.error || uiText("connecting_to_browser_01a12061")}</p>
-        {!browser.loading && browser.error ? <Button size="sm" variant="outline" onClick={browser.retry}>{uiText("retry_b8784c8d")}</Button> : null}
+        {profileControls}
+        {browser.profilePhase === "closed" ? null : browser.loading ? <LoaderCircle className="size-5 animate-spin" aria-hidden="true" /> : <Globe2 className="size-5" aria-hidden="true" />}
+        {browser.profilePhase !== "closed" ? <p role="status">{browser.loading ? uiText("starting_browser_30a20dd1") : browser.error || uiText("connecting_to_browser_01a12061")}</p> : browser.error ? <p role="alert">{browser.error}</p> : null}
+        {!browser.loading && (browser.error || browser.profilePhase === "closed") ? <Button size="sm" variant="outline" onClick={browser.retry}>{uiText("browser_profile_refresh")}</Button> : null}
       </section>
     )
   }
@@ -316,6 +330,7 @@ export function BrowserPaneView({
   if (newTabEntry || browser.state.tabs?.length === 0) {
     return (
       <section className="relative flex min-h-0 min-w-0 flex-1 flex-col items-center justify-center gap-4 p-6" aria-label={uiText("built_in_browser_42d6809d")} data-browser-empty>
+        {profileControls}
         <div className="flex size-10 items-center justify-center rounded-xl bg-muted text-muted-foreground"><Globe2 aria-hidden="true" /></div>
         <div className="text-center">
           <h2 className="text-base font-medium">{browser.state.tabs?.length ? uiText("open_a_new_page_1da8769a") : uiText("no_pages_open_yet_456d7ba7")}</h2>
@@ -353,6 +368,7 @@ export function BrowserPaneView({
 
   return (
     <section className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden" aria-label={uiText("built_in_browser_42d6809d")} data-browser-pane>
+      {profileControls}
       <div className="flex shrink-0 items-center gap-1 border-b p-2">
         <Button size="icon" variant="ghost" aria-label={uiText("back_2d1d8c1e")} disabled={!browser.state?.can_go_back || controlsBlocked} onClick={() => void browser.history("back")}>
           <ArrowLeft />

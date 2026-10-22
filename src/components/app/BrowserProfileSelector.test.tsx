@@ -141,3 +141,18 @@ it("preserves the selected mode while changing locale", async () => {
   expect(open).not.toHaveBeenCalled()
   expect(close).not.toHaveBeenCalled()
 })
+
+it("offers an explicit initial choice for typed browser_not_open without claiming an existing profile", async () => {
+  await render({ profile: { kind: "unreported" }, phase: "closed", allowUnreportedOpen: true })
+  expect(host.textContent).toContain("当前聊天浏览器已关闭")
+  expect(host.textContent).not.toContain("当前模式：")
+  await chooseClean()
+  await submit()
+  expect(open).toHaveBeenCalledExactlyOnceWith("chat-a", "clean")
+})
+
+it("still blocks a contradictory profile report even if initial opening is allowed", async () => {
+  await render({ profile: { kind: "invalid" }, phase: "closed", allowUnreportedOpen: true })
+  expect(host.querySelector("select")).toBeNull()
+  expect(open).not.toHaveBeenCalled()
+})

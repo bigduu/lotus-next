@@ -17,6 +17,7 @@ export function BrowserProfileSelector({
   pending = false,
   notice,
   actions,
+  allowUnreportedOpen = false,
 }: {
   sessionId: string
   profile: BrowserProfileReport
@@ -25,13 +26,14 @@ export function BrowserProfileSelector({
   pending?: boolean
   notice?: "mode_conflict"
   actions?: BrowserProfileActions
+  allowUnreportedOpen?: boolean
 }) {
   useUiLocale()
   const selectId = useId()
   const [draft, setDraft] = useState<{ sessionId: string; mode: BrowserProfileMode } | null>(null)
   const selected = draft?.sessionId === sessionId ? draft.mode : "shared"
 
-  if (profile.kind !== "reported") {
+  if (profile.kind !== "reported" && !(profile.kind === "unreported" && phase === "closed" && allowUnreportedOpen)) {
     return <p role="status" className="text-sm text-muted-foreground">
       {profile.kind === "invalid" ? uiText("browser_profile_invalid") : uiText("browser_profile_unreported")}
     </p>
@@ -41,7 +43,7 @@ export function BrowserProfileSelector({
     <section className="flex min-w-0 flex-col gap-3 text-sm" aria-label={uiText("browser_profile_label")} aria-busy={pending}>
       <p role="status">
         {phase === "closed" ? uiText("browser_profile_closed") : uiText("browser_profile_current", {
-          mode: profile.mode === "shared" ? uiText("browser_profile_shared") : uiText("browser_profile_clean"),
+          mode: profile.kind === "reported" && profile.mode === "shared" ? uiText("browser_profile_shared") : uiText("browser_profile_clean"),
         })}
       </p>
       <div className="space-y-1 text-xs text-muted-foreground">

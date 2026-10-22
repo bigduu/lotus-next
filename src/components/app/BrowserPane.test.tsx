@@ -164,6 +164,7 @@ it("focuses a pending prompt while letting app controls keep focus and keyboard 
   await act(async () => browserInput.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })))
   expect(browserService.input).not.toHaveBeenCalled()
 
+  vi.mocked(browserService.get).mockResolvedValueOnce({ ...pending, pending_dialog: undefined })
   await act(async () => root.render(<BrowserPane sessionId="another-chat" active />))
   expect(document.activeElement).toBe(outside)
   outside.remove()
@@ -189,6 +190,7 @@ it("clears the dialog overlay after a transient state failure when the model ans
   const modelResponse = new Promise<typeof current>((resolve) => { resolveModel = resolve })
   vi.mocked(browserService.open).mockResolvedValue(pending)
   vi.mocked(browserService.get)
+    .mockResolvedValueOnce(pending)
     .mockRejectedValueOnce(new ApiError("temporarily unavailable", 503, "Unavailable"))
     .mockImplementation(() => modelResponse)
 
@@ -196,7 +198,7 @@ it("clears the dialog overlay after a transient state failure when the model ans
   expect(host.querySelector("[data-browser-dialog]")).not.toBeNull()
 
   await act(async () => {
-    await vi.waitFor(() => expect(browserService.get).toHaveBeenCalledTimes(2), { timeout: 3000 })
+    await vi.waitFor(() => expect(browserService.get).toHaveBeenCalledTimes(4), { timeout: 3000 })
   })
   expect(host.querySelector("[data-browser-dialog]")).not.toBeNull()
   expect(host.querySelector('[role="alert"]')).toBeNull()
@@ -204,7 +206,7 @@ it("clears the dialog overlay after a transient state failure when the model ans
   await act(async () => resolveModel(current))
   expect(host.querySelector("[data-browser-dialog]")).toBeNull()
   expect(host.querySelector('[role="alert"]')).toBeNull()
-  expect(browserService.get).toHaveBeenCalledTimes(2)
+  expect(browserService.get).toHaveBeenCalledTimes(4)
 })
 
 it("keeps browser controls in one toolbar without a nested tab strip", () => {
@@ -214,7 +216,7 @@ it("keeps browser controls in one toolbar without a nested tab strip", () => {
 })
 
 it("shows a focused address entry instead of browser chrome when no page exists", async () => {
-  vi.mocked(browserService.open).mockResolvedValueOnce({
+  vi.mocked(browserService.get).mockResolvedValueOnce({
     page_epoch: 3, frame_seq: 0, active_tab_id: null, tabs: [],
     url: "", title: "", viewport: { width: 640, height: 480 },
     can_go_back: false, can_go_forward: false,

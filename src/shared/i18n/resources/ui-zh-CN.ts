@@ -2143,6 +2143,8 @@ export const uiZhCn = {
   "standard_unconfirmed": "所选强度未保存或尚未确认，当前模式请以服务器读回为准",
   "browser_create_tab": "输入网址后创建新标签页",
   "browser_create_first_tab": "输入网址后创建第一个标签页",
+  "browser_profile_outcome_unknown": "上次浏览器操作的结果未确认。请重新读取当前状态；不会自动重发打开或关闭操作。",
+  "browser_profile_refresh": "重新读取状态",
   "browser_profile_label": "浏览器账户模式",
   "browser_profile_shared": "共享账户",
   "browser_profile_clean": "干净会话",

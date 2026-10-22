@@ -83,7 +83,7 @@ beforeEach(() => {
   Object.defineProperty(URL, "createObjectURL", { configurable: true, value: vi.fn(() => "blob:frame-1") })
   Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: vi.fn() })
   vi.mocked(browserService.open).mockResolvedValue(state(1))
-  vi.mocked(browserService.get).mockResolvedValue(state(1))
+  vi.mocked(browserService.get).mockResolvedValue(state(1)).mockRejectedValueOnce(new ApiError("legacy", 404, "Not Found"))
   host = document.createElement("div")
   document.body.appendChild(host)
   root = createRoot(host)
@@ -539,14 +539,14 @@ it("keeps the cached frame and resumes when one pending state read fails before 
   expect(browser.frame?.frame_seq).toBe(4)
 
   await act(async () => {
-    await vi.waitFor(() => expect(browserService.get).toHaveBeenCalledTimes(3), { timeout: 3000 })
+    await vi.waitFor(() => expect(browserService.get).toHaveBeenCalledTimes(4), { timeout: 3000 })
   })
   expect(browser.state?.pending_dialog?.dialog_id).toBe("a".repeat(24))
   expect(browser.frame?.frame_seq).toBe(4)
   expect(browser.error).toBeNull()
 
   await act(async () => resolveModel(current))
-  expect(browserService.get).toHaveBeenCalledTimes(3)
+  expect(browserService.get).toHaveBeenCalledTimes(4)
   expect(browser.state?.pending_dialog).toBeUndefined()
   expect(browser.frame?.frame_seq).toBe(4)
   expect(browser.error).toBeNull()

@@ -2143,6 +2143,8 @@ export const uiEnUs = {
   "standard_unconfirmed": "The selected level was not saved or is unconfirmed. Use the mode read back from the server.",
   "browser_create_tab": "Enter a URL to create a new tab",
   "browser_create_first_tab": "Enter a URL to create your first tab",
+  "browser_profile_outcome_unknown": "The last browser operation was not confirmed. Read the current state again; opening or closing will not be replayed.",
+  "browser_profile_refresh": "Read current state",
   "browser_profile_label": "Browser account mode",
   "browser_profile_shared": "Shared account",
   "browser_profile_clean": "Clean session",

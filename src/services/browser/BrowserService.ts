@@ -5,10 +5,13 @@ import type {
   BrowserFrame,
   BrowserHistoryDirection,
   BrowserInput,
+  BrowserProfileMode,
   BrowserScreenshot,
   BrowserState,
   BrowserViewport,
 } from "./types"
+
+import { browserProfileOpenRequest } from "./profileMode"
 
 const sessionPath = (sessionId: string): string =>
   `browser/sessions/${encodeURIComponent(sessionId)}`
@@ -34,12 +37,16 @@ export class BrowserService {
     return apiClient.put<BrowserState>(sessionPath(sessionId), {}, { signal })
   }
 
+  openProfile(sessionId: string, mode: BrowserProfileMode, signal?: AbortSignal): Promise<BrowserState> {
+    return apiClient.putOnce<BrowserState>(sessionPath(sessionId), browserProfileOpenRequest(mode), { signal })
+  }
+
   get(sessionId: string, signal?: AbortSignal): Promise<BrowserState> {
     return apiClient.get<BrowserState>(sessionPath(sessionId), { signal })
   }
 
-  close(sessionId: string): Promise<void> {
-    return apiClient.delete<void>(sessionPath(sessionId))
+  close(sessionId: string, signal?: AbortSignal): Promise<void> {
+    return apiClient.deleteOnce<void>(sessionPath(sessionId), { signal })
   }
 
   navigate(sessionId: string, url: string, expectedEpoch: number): Promise<BrowserState> {
