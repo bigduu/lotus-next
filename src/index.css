@@ -1,5 +1,6 @@
 @import "tailwindcss" source("./");
 @import "tw-animate-css";
+@import "./shared/theme/themeColors.css";
 /* Shared controls load with Root; keep their startup styles in one sheet. */
 @import "./components/chat/ModelEffortPicker.css";
 @import "./components/chat/ProcessActivity.css";
@@ -27,64 +28,7 @@
   --motion-fast: 140ms;
   --motion-normal: 220ms;
   --motion-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
-  --background: #fafbfb;
-  --foreground: #1b221f;
-  --card: #f3f6f4;
-  --card-foreground: var(--foreground);
-  --popover: #ffffff;
-  --popover-foreground: var(--foreground);
-  /* Quiet jade: reserve the stronger tone for actions and focus. */
-  --primary: #396957;
-  --primary-foreground: #fafafa;
-  --secondary: #ecf0ee;
-  --secondary-foreground: var(--foreground);
-  --muted: #ecf0ee;
-  --muted-foreground: #5a635f;
-  --accent: #e2efe8;
-  --accent-foreground: #20392f;
-  --destructive: oklch(0.577 0.245 27.325);
-  --border: #dde2e0;
-  --input: #cdd4d1;
-  --ring: var(--primary);
-  /* Focus must remain visible even when a custom accent is white or black. */
-  --focus-ring: #396957;
-  --focus-halo: #3969572e;
   --focus-shadow: 0 0 0 2px var(--background), 0 0 0 4px var(--focus-ring), 0 0 0 7px var(--focus-halo);
-  --focus-surface: #eaf0ed;
-  --sidebar: #f1f5f3;
-  --sidebar-foreground: var(--foreground);
-  --sidebar-primary: var(--primary);
-  --sidebar-primary-foreground: #fafafa;
-  --sidebar-accent: var(--accent);
-  --sidebar-accent-foreground: var(--accent-foreground);
-  --sidebar-border: var(--border);
-  --sidebar-ring: var(--primary);
-  --user-message-background: #e4eee9;
-  --user-message-foreground: #24312c;
-}
-
-.dark {
-  --background: #101412;
-  --foreground: #eaeeec;
-  --card: #181d1b;
-  --focus-ring: #7db29d;
-  --focus-halo: #7db29d2e;
-  --focus-surface: #1e2621;
-  --popover: #1e2320;
-  --primary: #7db29d;
-  --primary-foreground: #0f1612;
-  --secondary: #242927;
-  --muted: #242927;
-  --muted-foreground: #a0a6a3;
-  --accent: #24312b;
-  --accent-foreground: #d0e4da;
-  --destructive: oklch(0.704 0.191 22.216);
-  --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 15%);
-  --sidebar: #151a18;
-  --sidebar-primary-foreground: var(--primary-foreground);
-  --user-message-background: #263e34;
-  --user-message-foreground: #e8eeea;
 }
 
 .user-message-surface {
