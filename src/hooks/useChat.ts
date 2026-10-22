@@ -399,6 +399,7 @@ export function useChat(
   const streamOperationRef = useRef<number | null>(null)
   const streamBaselineMessageIdRef = useRef<string | null>(null)
   const streamBaselineToolResultIdsRef = useRef<ReadonlySet<string>>(new Set())
+  const streamAcknowledgedMessageIdRef = useRef<string | null>(null)
   const subscriptionRef = useRef<{ operationId: number; sessionId: string } | null>(null)
   const navigationRef = useRef({ sessionId: sid, epoch: 0 })
   if (navigationRef.current.sessionId !== sid) {
@@ -508,9 +509,13 @@ export function useChat(
     if (streamSid !== sid) return EMPTY_SEGMENTS
     if (streamPhaseState !== null) return liveSegmentsState
     // Failed history reads retain terminal tool evidence without keeping a run
-    // active. Only a new canonical result can acknowledge this operation;
-    // earlier operations may have used the same tool invocation id.
-    const persistedToolIds = new Set(messages.flatMap((message) =>
+    // active. Only results after this operation's acknowledged user can confirm
+    // it. Earlier results may hydrate late or reuse the same tool invocation id.
+    // Legacy ACKs without a message id cannot prove that boundary.
+    const acknowledgedMessageId = streamAcknowledgedMessageIdRef.current
+    const userIndex = acknowledgedMessageId === null ? -1
+      : messages.findIndex((message) => message.role === "user" && message.id === acknowledgedMessageId)
+    const persistedToolIds = new Set((userIndex < 0 ? [] : messages.slice(userIndex + 1)).flatMap((message) =>
       "type" in message && message.type === "tool_result" && !streamBaselineToolResultIdsRef.current.has(message.id)
         ? [message.toolCallId] : []))
     let hydrated = false
@@ -821,6 +826,8 @@ export function useChat(
         resume?: boolean
         operationId?: number
         pendingOperationId?: number
+        /** Exact chat ACK identity; missing ids leave failed tool evidence unconfirmed. */
+        acknowledgedMessageId?: string | null
         /** `null` explicitly omits an execute-time override (Auto). */
         reasoningEffort?: ReasoningEffort | null
         /** Keep a just-acknowledged new session on its submitted model. */
@@ -839,6 +846,7 @@ export function useChat(
       streamBaselineMessageIdRef.current = baselineMessages.findLast((message) => message.role !== "system")?.id ?? null
       streamBaselineToolResultIdsRef.current = new Set(baselineMessages.flatMap((message) =>
         "type" in message && message.type === "tool_result" ? [message.id] : []))
+      streamAcknowledgedMessageIdRef.current = opts?.acknowledgedMessageId ?? null
       const ownsStream = () => streamOperationRef.current === operationId
       const terminal = { settlement: null as Promise<void> | null, pendingRead: null as Promise<void> | null }
       // ONE live subscription per hook instance: sever the previous one FIRST
@@ -1973,6 +1981,7 @@ export function useChat(
         void runStream(acknowledgedSessionId, {
           operationId: operation.id,
           pendingOperationId: operation.pendingOperationId,
+          acknowledgedMessageId,
           reasoningEffort: submittedReasoningEffort ?? null,
           modelSelection: { model: submittedModel, modelRef: submittedModelRef },
         })
