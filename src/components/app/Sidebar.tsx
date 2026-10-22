@@ -334,7 +334,7 @@ export function Sidebar({
     return <>
       {expanded ? shown.map((chat) => renderSession(chat, drag)) : null}
       {expanded && fold ? (
-        <button type="button" className="flex select-none w-full items-center gap-1 rounded-md px-2 py-1.5 text-left text-xs text-muted-foreground outline-none hover:bg-sidebar-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+        <button type="button" className="flex select-none w-full items-center gap-1 rounded-md px-2 py-1.5 text-left text-xs text-muted-foreground outline-none hover:bg-sidebar-accent hover:text-foreground"
           onClick={() => setDisclosures((previous) => {
             const expandedProjectGroups = new Set(previous.expandedProjectGroups)
             if (expandedProjectGroups.has(previewKey)) expandedProjectGroups.delete(previewKey)
@@ -370,7 +370,7 @@ export function Sidebar({
           setSectioningProjectId(project.id)
         }}>
           <button type="button" aria-expanded={expanded} aria-controls={contentId} disabled={!!query}
-            className="flex min-w-0 flex-1 select-none items-center gap-1 rounded-md px-2 py-1.5 text-left text-xs font-medium text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default"
+            className="flex min-w-0 flex-1 select-none items-center gap-1 rounded-md px-2 py-1.5 text-left text-xs font-medium text-muted-foreground outline-none hover:text-foreground disabled:cursor-default"
             data-sidebar-section-header
             onClick={() => setDisclosures((previous) => {
               const closedSections = new Set(previous.closedSections)
@@ -462,7 +462,7 @@ export function Sidebar({
             aria-expanded={expanded}
             aria-controls={contentId}
             disabled={!!query}
-            className="flex select-none w-full items-center gap-1 rounded-md px-2 pt-3 pb-1 text-left text-xs font-medium text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default"
+            className="flex select-none w-full items-center gap-1 rounded-md px-2 pt-3 pb-1 text-left text-xs font-medium text-muted-foreground outline-none hover:text-foreground disabled:cursor-default"
             onClick={toggleExpanded}
           >
             <ChevronRight aria-hidden="true" className={cn("size-3 shrink-0 feedback-motion transition-transform", expanded && "rotate-90")} />
@@ -613,7 +613,7 @@ export function Sidebar({
                 type="button"
                 aria-expanded={disclosures.olderExpanded}
                 aria-controls={`${disclosureId}-older`}
-                className="mt-2 flex select-none w-full items-center gap-1 rounded-md px-2 py-2 text-left text-xs font-medium text-muted-foreground outline-none hover:bg-sidebar-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+                className="mt-2 flex select-none w-full items-center gap-1 rounded-md px-2 py-2 text-left text-xs font-medium text-muted-foreground outline-none hover:bg-sidebar-accent hover:text-foreground"
                 onClick={() => setDisclosures((previous) => ({
                   ...previous,
                   olderExpanded: !previous.olderExpanded,

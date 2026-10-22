@@ -19,7 +19,7 @@ export function Reasoning({ text, active = false, spaced = false }: { text: stri
         aria-controls={contentId}
         data-reasoning-toggle
         onClick={() => setOpen((v) => !v)}
-        className="reasoning-toggle inline-flex items-center gap-1.5 rounded-sm text-xs text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        className="reasoning-toggle inline-flex items-center gap-1.5 rounded-sm text-xs text-muted-foreground transition-colors hover:text-foreground"
       >
         <Brain className={cn("reasoning-brain size-3.5 shrink-0", active && "animate-pulse")} />
         <span>{active ? uiText("thinking_64088d8c") : uiText("reasoning_a62acb18")}</span>

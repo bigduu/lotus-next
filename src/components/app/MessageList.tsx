@@ -323,7 +323,7 @@ function assignRef<T>(ref: Ref<T>, value: T | null): void {
 }
 
 const MESSAGE_ACTION_BUTTON =
-  "items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50"
+  "items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
 const MESSAGE_ACTION_SIZE = { width: 28, height: 28 }
 
 function MessageActions({
