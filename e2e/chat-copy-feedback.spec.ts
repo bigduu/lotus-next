@@ -65,7 +65,7 @@ for (const theme of ["light", "dark"] as const) {
   }
 }
 
-test("chat copy fallback failure keeps focus and permits retry", async ({ page }, testInfo) => {
+test("chat copy preserves selection and focus through fallback failure and retry", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "desktop-chromium", "fallback focus and retry acceptance")
   await page.addInitScript(() => {
     localStorage.setItem("bodhi_onboarded_v1", "1")
@@ -73,8 +73,6 @@ test("chat copy fallback failure keeps focus and permits retry", async ({ page }
     Object.defineProperty(navigator, "clipboard", { configurable: true, value: {
       writeText: () => Promise.reject(new Error("fixture clipboard denied")),
     } })
-    const { document } = globalThis as unknown as { document: object }
-    Object.defineProperty(document, "execCommand", { configurable: true, value: () => false })
   })
   const observation = await installArtifactRuntime(page, standaloneScenario, [{
     id: "copy-failure-source", role: "assistant", content: "原文 English", created_at: "2026-10-22T00:00:00Z",
@@ -82,21 +80,40 @@ test("chat copy fallback failure keeps focus and permits retry", async ({ page }
   await page.goto(standaloneScenario.entryUrl, { waitUntil: "domcontentloaded" })
   const actions = page.locator('[data-message-actions="copy-failure-source"]')
   const copy = actions.getByRole("button", { name: "复制", exact: true })
+  const transcript = page.getByText("原文 English", { exact: true })
+  await copy.evaluate((button) => {
+    Object.defineProperty(button.ownerDocument, "execCommand", { configurable: true, value: () => false })
+  })
   await copy.focus()
+  const selectedBefore = await transcript.evaluate((element) => {
+    const document = element.ownerDocument
+    const selection = document.getSelection()
+    const range = document.createRange()
+    range.selectNodeContents(element)
+    selection?.removeAllRanges()
+    selection?.addRange(range)
+    return selection?.toString() ?? ""
+  })
+  expect(selectedBefore).toBe("原文 English")
+  await expect(copy).toBeFocused()
+  const selectedText = () => transcript.evaluate((element) => element.ownerDocument.getSelection()?.toString() ?? "")
   await copy.press("Enter")
   await expect(actions.getByRole("alert")).toHaveText("复制失败")
   await expect(actions).toHaveAttribute("data-copy-state", "error")
   await expect(copy).toBeFocused()
+  expect(await selectedText()).toBe(selectedBefore)
+  await expect(transcript).toHaveText("原文 English")
   await expect(page.locator('textarea[readonly]')).toHaveCount(0)
   await expect(actions.locator('[data-copy-confirmation="true"]')).toHaveCount(0)
-  await page.evaluate(() => {
-    const { document } = globalThis as unknown as { document: object }
-    Object.defineProperty(document, "execCommand", { configurable: true, value: () => true })
+  await copy.evaluate((button) => {
+    Object.defineProperty(button.ownerDocument, "execCommand", { configurable: true, value: () => true })
   })
   await copy.press("Space")
   await expect(actions).toHaveAttribute("data-copy-state", "copied")
   await expect(actions.getByRole("alert")).toHaveCount(0)
   await expect(copy).toBeFocused()
+  expect(await selectedText()).toBe(selectedBefore)
+  await expect(transcript).toHaveText("原文 English")
   await expect(page.locator('textarea[readonly]')).toHaveCount(0)
   expect(observation.pageErrors).toEqual([])
   expect(observation.consoleErrors).toEqual([])
