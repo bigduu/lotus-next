@@ -12,7 +12,6 @@
   cursor: pointer;
   font-variant-numeric: tabular-nums;
 }
-.process-activity-toggle:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
 .process-activity-icon { width: 14px; height: 14px; flex: none; color: var(--muted-foreground); }
 .process-activity-toggle[aria-expanded="true"] .process-activity-icon { rotate: 90deg; }
 .process-activity-label, .process-activity-count { min-width: 0; max-width: 35%; flex: 0 1 auto; overflow: hidden; color: var(--muted-foreground); font-size: 12px; white-space: nowrap; text-overflow: ellipsis; }

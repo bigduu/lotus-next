@@ -7,7 +7,6 @@ import type { ThinkingPickerSelection } from "@/hooks/useRootThinkingMode"
 import { cn } from "@/lib/utils"
 import { Input } from "@/components/ui/input"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
-import "./ModelEffortPicker.css"
 
 const LABEL_CELL = { gridArea: "1 / 1" }
 

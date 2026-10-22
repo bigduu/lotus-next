@@ -1,5 +1,4 @@
 import { Check, Copy, type LucideIcon } from "lucide-react"
-import "./confirmation-icon.css"
 
 export function ConfirmationIcon({
   confirmed,

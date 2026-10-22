@@ -1,6 +1,5 @@
 import { useLayoutEffect, useRef, type ComponentProps, type RefObject } from "react"
 import { cn } from "@/lib/utils"
-import "./DisclosurePanel.css"
 
 type DisclosurePanelProps = Omit<ComponentProps<"div">, "hidden" | "inert" | "aria-hidden"> & {
   expanded: boolean

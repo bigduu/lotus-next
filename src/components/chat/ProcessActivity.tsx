@@ -2,7 +2,6 @@ import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { ChevronRight } from "lucide-react"
 import { useId, useLayoutEffect, useRef, useState, type ReactNode } from "react"
 import { DisclosurePanel } from "./DisclosurePanel"
-import "./ProcessActivity.css"
 
 export interface ProcessActivityProps {
   children: ReactNode
