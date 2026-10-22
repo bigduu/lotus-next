@@ -241,7 +241,7 @@ for (const theme of ["light", "dark"] as const) {
       const document = body.ownerDocument
       const state = { starts: 0 }
       Object.assign(globalThis, { __proseReveal: state })
-      document.addEventListener("animationstart", (event) => {
+      document.addEventListener("animationstart", (event: { animationName: string }) => {
         if (event.animationName === "assistant-prose-reveal") state.starts += 1
       })
     })
