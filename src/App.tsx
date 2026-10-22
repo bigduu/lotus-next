@@ -203,13 +203,9 @@ function App() {
     if (hasPage && !browserEntryTouched && !pendingBrowserNavigation) setBrowserEntryOpen(false)
   }, [browserEntryOpen, browserReadySessionId, currentSessionId, browserState, browserEntryTouched, pendingBrowserNavigation])
   useEffect(() => {
-    if (browserReadySessionId !== currentSessionId || !browserState?.tabs) return
-    if (browserState.tabs.length > 0) {
-      if (workbenchOpen && workbenchTab === null && openToolTabs.length === 0) setWorkbenchTab("browser")
-    } else if (workbenchTab === "browser" && !browserEntryOpen && !pendingBrowserNavigation) {
-      setWorkbenchTab(openToolTabs.at(-1) ?? null)
-    }
-  }, [browserReadySessionId, currentSessionId, browserState?.tabs, workbenchOpen, workbenchTab, openToolTabs, browserEntryOpen, pendingBrowserNavigation, setWorkbenchTab])
+    if (browserReadySessionId !== currentSessionId || !browserState?.tabs?.length) return
+    if (workbenchOpen && workbenchTab === null && openToolTabs.length === 0) setWorkbenchTab("browser")
+  }, [browserReadySessionId, currentSessionId, browserState?.tabs, workbenchOpen, workbenchTab, openToolTabs, setWorkbenchTab])
   // Draggable, persisted widths for the resizable side panels (desktop).
   const sidebarResize = useResizableWidth("lotus_next_sidebar_w", 288, {
     min: 220,
