@@ -1,4 +1,5 @@
 import { colorLuminance, isHexColor } from "./userMessageColors"
+import { DEFAULT_ACCENT_COLORS, THEME_COLORS } from "./colorTokens"
 
 export interface AccentColorPair {
   primary: string
@@ -10,18 +11,7 @@ export interface AccentColorPair {
 export const GLOBAL_ACCENT_PRESETS = [
   {
     id: "teal",
-    light: {
-      primary: "#396957",
-      primaryForeground: "#fafafa",
-      accent: "#e2efe8",
-      accentForeground: "#20392f",
-    },
-    dark: {
-      primary: "#7db29d",
-      primaryForeground: "#0f1612",
-      accent: "#24312b",
-      accentForeground: "#d0e4da",
-    },
+    ...DEFAULT_ACCENT_COLORS,
   },
   {
     id: "blue",
@@ -103,7 +93,7 @@ export const GLOBAL_ACCENT_PRESETS = [
 export type GlobalAccentPreset = (typeof GLOBAL_ACCENT_PRESETS)[number]["id"] | "custom"
 
 export const DEFAULT_GLOBAL_ACCENT_PRESET: GlobalAccentPreset = "teal"
-export const DEFAULT_CUSTOM_GLOBAL_ACCENT_COLOR = "#396957"
+export const DEFAULT_CUSTOM_GLOBAL_ACCENT_COLOR = DEFAULT_ACCENT_COLORS.light.primary
 
 export function isGlobalAccentPreset(value: unknown): value is GlobalAccentPreset {
   return value === "custom" || GLOBAL_ACCENT_PRESETS.some((preset) => preset.id === value)
@@ -122,10 +112,10 @@ export function getCustomAccentColors(
   const primaryForeground = contrastWithWhite >= contrastWithBlack ? "#ffffff" : "#000000"
 
   const accent = mode === "dark"
-    ? `color-mix(in oklab, ${primary} 22%, #181d1b)`
-    : `color-mix(in oklab, ${primary} 12%, #ffffff)`
+    ? `color-mix(in oklab, ${primary} 22%, ${THEME_COLORS.dark.card})`
+    : `color-mix(in oklab, ${primary} 12%, ${THEME_COLORS.light.popover})`
 
-  const accentForeground = mode === "dark" ? "#eaeeec" : "#1b221f"
+  const accentForeground = THEME_COLORS[mode].foreground
 
   return { primary, primaryForeground, accent, accentForeground }
 }
