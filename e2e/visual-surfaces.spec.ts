@@ -1,0 +1,116 @@
+import { expect, test } from "@playwright/test"
+import { installArtifactRuntime, standaloneScenario } from "./support/artifactRuntime.js"
+import { markdownThemeFixture } from "./support/markdownThemeFixture.js"
+
+const accents = ["teal", "blue", "purple", "green", "rose", "orange", "#ffffff", "#000000"]
+
+function luminance(color: string): number {
+  const values = color.match(/[\d.]+/g)!.slice(0, 3).map(Number)
+  const channels = values.map((value) => {
+    const channel = value / 255
+    return channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4
+  })
+  return channels[0] * 0.2126 + channels[1] * 0.7152 + channels[2] * 0.0722
+}
+
+function contrast(first: string, second: string): number {
+  const [light, dark] = [luminance(first), luminance(second)].sort((a, b) => b - a)
+  return (light + 0.05) / (dark + 0.05)
+}
+
+for (const theme of ["light", "dark"] as const) {
+  test(`subtle surfaces and keyboard focus remain readable in ${theme}`, async ({ page }, info) => {
+    test.skip(info.project.name !== "desktop-chromium", "one paired-theme viewport and accent regression")
+    test.setTimeout(120_000)
+    await page.emulateMedia({ colorScheme: theme, reducedMotion: "reduce" })
+    await page.addInitScript((mode) => {
+      localStorage.setItem("bodhi_onboarded_v1", "1")
+      localStorage.setItem("copilot_ui_theme_v1", mode)
+    }, theme)
+    const observation = await installArtifactRuntime(page, standaloneScenario, [{
+      role: "assistant", content: markdownThemeFixture, timestamp: "2026-09-03T00:00:00.000Z",
+    }])
+    await page.goto(standaloneScenario.entryUrl)
+
+    const palette = []
+    for (const accent of accents) {
+      await page.evaluate((value) => {
+        localStorage.setItem("lotus_global_accent_color_v1", JSON.stringify({
+          preset: value.startsWith("#") ? "custom" : value,
+          custom: value.startsWith("#") ? value : "#396957",
+        }))
+      }, accent)
+      await page.reload()
+      const composer = page.getByRole("textbox", { name: "消息", exact: true }).first()
+      await expect(composer).toBeVisible()
+      await page.keyboard.press("Tab")
+      await composer.focus()
+      await expect(composer).toBeFocused()
+
+      const result = await page.evaluate(() => {
+        const root = getComputedStyle(document.documentElement)
+        const probe = document.createElement("span")
+        document.body.append(probe)
+        const resolve = (token: string) => {
+          probe.style.color = root.getPropertyValue(token)
+          return getComputedStyle(probe).color
+        }
+        const colors = Object.fromEntries([
+          "--background", "--card", "--popover", "--sidebar", "--foreground",
+          "--muted-foreground", "--focus-ring", "--focus-surface",
+        ].map((token) => [token, resolve(token)]))
+        probe.remove()
+        const surface = document.querySelector<HTMLElement>("[data-composer-surface]")!
+        const surfaceStyle = getComputedStyle(surface)
+        return {
+          colors,
+          focusVisible: !!surface.querySelector(".composer-editor:focus-visible"),
+          shadow: surfaceStyle.boxShadow,
+          background: surfaceStyle.backgroundColor,
+          editorShadow: getComputedStyle(surface.querySelector(".composer-editor")!).boxShadow,
+          border: surfaceStyle.borderTopColor,
+        }
+      })
+      expect(result.focusVisible).toBe(true)
+      expect(result.shadow).toContain("4px")
+      expect(result.shadow).toContain("7px")
+      expect(result.editorShadow).toBe("none")
+      expect(result.background).toBe(result.colors["--focus-surface"])
+      expect(result.border).toBe("rgba(0, 0, 0, 0)")
+      for (const surface of ["--background", "--card", "--popover", "--sidebar", "--focus-surface"]) {
+        expect(contrast(result.colors["--focus-ring"], result.colors[surface]), `${accent} focus on ${surface}`).toBeGreaterThanOrEqual(3)
+        expect(contrast(result.colors["--foreground"], result.colors[surface]), `${accent} text on ${surface}`).toBeGreaterThanOrEqual(4.5)
+        expect(contrast(result.colors["--muted-foreground"], result.colors[surface]), `${accent} muted text on ${surface}`).toBeGreaterThanOrEqual(4.5)
+      }
+      palette.push({ accent, ...result })
+
+      if (accent === "teal") {
+        for (const width of [1440, 390]) {
+          await page.setViewportSize({ width, height: 1100 })
+          await expect(composer).toBeVisible()
+          await expect(page.locator(".assistant-streamdown")).toContainText("Markdown 主题检查")
+          expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(1)
+          await info.attach(`surfaces-${theme}-${width}`, { body: await page.screenshot({ fullPage: true }), contentType: "image/png" })
+        }
+        await page.setViewportSize({ width: 1440, height: 1100 })
+        const session = await page.context().newCDPSession(page)
+        await session.send("DOM.enable")
+        await session.send("CSS.enable")
+        const { root } = await session.send("DOM.getDocument")
+        const { nodeId } = await session.send("DOM.querySelector", { nodeId: root.nodeId, selector: ".assistant-streamdown p" })
+        const fonts = await session.send("CSS.getPlatformFontsForNode", { nodeId })
+        await info.attach(`actual-system-fonts-${theme}`, { body: JSON.stringify(fonts, null, 2), contentType: "application/json" })
+        await session.detach()
+      }
+
+      const newSession = page.getByRole("button", { name: "新建会话", exact: true })
+      await page.keyboard.press("Tab")
+      await newSession.focus()
+      expect(await newSession.evaluate((element) => element.matches(":focus-visible"))).toBe(true)
+      expect(await newSession.evaluate((element) => getComputedStyle(element).boxShadow)).toContain("4px")
+    }
+    await info.attach(`focus-contrast-${theme}`, { body: JSON.stringify(palette, null, 2), contentType: "application/json" })
+    expect(observation.consoleErrors).toEqual([])
+    expect(observation.pageErrors).toEqual([])
+  })
+}
