@@ -316,8 +316,8 @@ export function Sidebar({
       key={chat.id} chat={chat} active={chat.id === currentSessionId}
       unread={chat.id !== currentSessionId && isSessionUnread(chat, readState)}
       projectId={project?.id}
-      dragHandle={drag && project && project.status === "active" && project.sidebar !== undefined && !sectionBusy.has(project.id) && !query
-        ? <drag.Handle source={{ kind: "session", projectId: project.id, id: chat.id }} label={`${uiText("sidebar_move_to_section")} · ${chat.title || uiText("new_session_c57c30bc")}`} /> : undefined}
+      dragHandle={drag && project && project.status === "active" && project.sidebar !== undefined && !query
+        ? <drag.Handle source={{ kind: "session", projectId: project.id, id: chat.id }} label={`${uiText("sidebar_move_to_section")} · ${chat.title || uiText("new_session_c57c30bc")}`} disabled={sectionBusy.has(project.id)} /> : undefined}
       sections={project ? getProjectSections(sectionPreferences, project.id, project.section) : undefined}
       sectionId={project ? getSessionSection(sectionPreferences, project.id, chat.id, project.section) : undefined}
       onMoveToSection={project && project.sidebar !== undefined && !sectionBusy.has(project.id) ? (sectionId) => moveSessionToSection(project.id, chat.id, sectionId) : undefined}
@@ -504,7 +504,7 @@ export function Sidebar({
       >
         <div className="flex items-center gap-2 px-3 py-3">
           <BrandMark className="size-7" />
-          <span className="flex-1 text-sm font-semibold">Bodhi</span>
+          <span className="flex-1 text-sm font-semibold dark:font-medium">Bodhi</span>
           <Button
             size="icon"
             variant="ghost"
@@ -560,8 +560,11 @@ export function Sidebar({
           </div>
         </div>
         <div className="flex items-center gap-2 px-3">
-          <span className="flex-1 text-xs font-medium text-muted-foreground">
-            {isProjectMode ? uiText("project_79f326be") : uiText("recent_997a5e6e")}
+          <span className="relative min-w-0 flex-1 text-xs font-medium text-muted-foreground">
+            <span className={sectionBusy.size ? "invisible" : undefined}>
+              {isProjectMode ? uiText("project_79f326be") : uiText("recent_997a5e6e")}
+            </span>
+            {sectionBusy.size ? <span role="status" className="absolute inset-x-0 top-0 truncate">{uiText("sidebar_sections_saving")}</span> : null}
           </span>
           <Button
             size="sm"
@@ -579,7 +582,6 @@ export function Sidebar({
           </Button>
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-3">
-          {sectionBusy.size ? <p role="status" className="px-3 py-2 text-xs text-muted-foreground">{uiText("sidebar_sections_saving")}</p> : null}
           {isProjectMode && Object.values(projects).some((project) => project.sidebar === undefined && getProjectSections(sectionPreferences, project.id, project.section).length) ? <p role="status" className="px-3 py-2 text-xs text-muted-foreground">{uiText("sidebar_sections_unavailable")}</p> : null}
           {Object.entries(sectionErrors).filter(([id]) => projects[id] && id !== sectioningProjectId).map(([id, error]) => (
             <p key={id} role="alert" className="px-3 py-2 text-xs text-destructive">{projects[id]!.name} · {error}</p>
