@@ -77,8 +77,11 @@ export function useBrowserSession(sessionId: string | null, active: boolean) {
   const [busy, setBusy] = useState(false)
   const [domLoading, setDomLoading] = useState(false)
   const [screenshotLoading, setScreenshotLoading] = useState(false)
-  const [errorCause, setErrorCause] = useState<{ cause: unknown } | null>(null)
-  const error = errorCause === null ? null : userMessage(errorCause.cause)
+  const [errorCause, setErrorCause] = useState<{ cause: unknown; profileOutcomeUnknown?: boolean } | null>(null)
+  const error = errorCause === null ? null
+    : errorCause.profileOutcomeUnknown && !(errorCause.cause instanceof BrowserProfileOutcomeUnknown)
+      ? `${uiText("browser_profile_outcome_unknown")} ${userMessage(errorCause.cause)}`
+      : userMessage(errorCause.cause)
   const [retryVersion, setRetryVersion] = useState(0)
   const [profile, setProfile] = useState<BrowserProfileReport>({ kind: "unreported" })
   const [profilePhase, setProfilePhase] = useState<"active" | "closed" | "unknown">("unknown")
@@ -340,7 +343,7 @@ export function useBrowserSession(sessionId: string | null, active: boolean) {
     void run().catch((cause: unknown) => {
       if (!isCurrent() || cause instanceof RequestCancelledError) return
       if (isBrowserClosed(cause)) { publishClosed(sessionId); return }
-      setErrorCause({ cause })
+      setErrorCause({ cause, profileOutcomeUnknown: profileFailuresRef.current.get(sessionId) instanceof BrowserProfileOutcomeUnknown })
       setLoading(false)
     })
 
