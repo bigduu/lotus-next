@@ -13,3 +13,14 @@ Do not rename persisted preset IDs or local-storage keys. Existing CSS names rem
 Normal and muted text must retain at least 4.5:1 contrast on canvas, card, popover, sidebar and composer-focus surfaces. Activity-gradient stops need the same text contrast on the transcript canvas where they render; keyboard focus needs at least 3:1 on all five surfaces. Validate both modes and all presets/custom white/black in the browser. Native forced-colors, reduced motion and theme switching remain part of the existing acceptance path.
 
 This slice covers shared chat surfaces and activity colors. Fixed-alpha mobile scrims and opaque image controls retain their existing treatments. Syntax/diagram colors, unrelated settings, typography, interaction state protocols and backend behavior are outside this migration.
+
+## Visual acceptance
+
+Synthetic Chromium screenshots at implementation `b84794477699ea6703f5b1f6af603dc8682c6920` match the pre-migration main appearance byte-for-byte in all four pairs. This is a source consolidation, with no intended recoloring. The baseline artifact is `2b8015b12aa69c1f1719c90d26966f40a0eeb756`, whose production sources equal main `c521c6283fdcc22639e4932badafbf11f788aed6`; their difference is a browser-test readiness repair.
+
+| Theme | Desktop, 1440px | Narrow, 390px | Changed pixels in each pair |
+| --- | --- | --- | --- |
+| Light | [Screenshot](../screenshots/color-tokens-light-1440.png) | [Screenshot](../screenshots/color-tokens-light-390.png) | 0 |
+| Dark | [Screenshot](../screenshots/color-tokens-dark-1440.png) | [Screenshot](../screenshots/color-tokens-dark-390.png) | 0 |
+
+Local verification: 191 test files / 4098 units; full frontend verification and original package budgets pass. Affected built-browser matrix: 27 passed, 12 intentional scope skips, 0 failed/flaky with retries disabled. This includes cold CSS without application JavaScript, theme/custom-color persistence, focus/forced colors and thinking disclosure in normal/reduced-motion/VDI modes. Browser inputs are synthetic; physical IME/device and real Bamboo acceptance are not claimed.
