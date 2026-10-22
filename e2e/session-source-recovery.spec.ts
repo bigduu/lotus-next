@@ -30,7 +30,8 @@ const freshSession = { ...baseSession, id: freshId, root_session_id: freshId, ti
 
 async function chooseSession(page: Page, title: string) {
   const button = page.getByRole("button", { name: title, exact: true })
-  if (!await button.isVisible()) await page.getByRole("button", { name: "菜单", exact: true }).click()
+  const bounds = await button.boundingBox()
+  if (!bounds || bounds.x + bounds.width <= 0) await page.getByRole("button", { name: "菜单", exact: true }).click()
   await button.click()
   await expect(page.getByRole("banner")).toContainText(title)
 }
