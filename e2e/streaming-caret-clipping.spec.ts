@@ -237,7 +237,8 @@ for (const theme of ["light", "dark"] as const) {
     const prefix = "中文正文".repeat(8)
     emit("token", prefix)
     await expect(active).toHaveText(prefix)
-    await page.evaluate(() => {
+    await page.locator("body").evaluate((body) => {
+      const document = body.ownerDocument
       const state = { starts: 0 }
       Object.assign(globalThis, { __proseReveal: state })
       document.addEventListener("animationstart", (event) => {
@@ -250,6 +251,7 @@ for (const theme of ["light", "dark"] as const) {
     await expect.poll(() => page.evaluate(() =>
       (globalThis as unknown as { __proseReveal: { starts: number } }).__proseReveal.starts)).toBe(1)
     await tail.evaluate((element) => {
+      const document = element.ownerDocument
       const range = document.createRange()
       range.setStart(element.firstChild!, 0)
       range.setEnd(element.firstChild!, 2)
@@ -258,10 +260,10 @@ for (const theme of ["light", "dark"] as const) {
     })
     emit("token", "继续追加")
     await expect(tail).toHaveText("选中内容继续追加")
-    expect(await page.evaluate(() => document.getSelection()!.toString())).toBe("选中")
+    expect(await page.locator("body").evaluate((body) => body.ownerDocument.getSelection()!.toString())).toBe("选中")
     expect(await page.evaluate(() =>
       (globalThis as unknown as { __proseReveal: { starts: number } }).__proseReveal.starts)).toBe(1)
-    await page.evaluate(() => document.getSelection()!.removeAllRanges())
+    await page.locator("body").evaluate((body) => body.ownerDocument.getSelection()!.removeAllRanges())
 
     const additional = " English prose 最后一行不会添加不可见字符。".repeat(20)
     emit("token", additional)
@@ -273,9 +275,9 @@ for (const theme of ["light", "dark"] as const) {
     expect(await active.locator("[data-sd-animate]").count()).toBe(0)
     for (const mode of ["reduced", "vdi"] as const) {
       await page.emulateMedia({ reducedMotion: mode === "reduced" ? "reduce" : "no-preference" })
-      await page.evaluate((safe) => document.body.setAttribute("data-vdi-safe", String(safe)), mode === "vdi")
+      await page.locator("body").evaluate((body, safe) => body.setAttribute("data-vdi-safe", String(safe)), mode === "vdi")
       const paint = await active.locator("[data-assistant-reveal]").first().evaluate((node) => {
-        const style = getComputedStyle(node)
+        const style = node.ownerDocument.defaultView!.getComputedStyle(node)
         return { animation: style.animationName, filter: style.filter, transform: style.transform }
       })
       expect(paint).toEqual({ animation: "none", filter: "none", transform: "none" })
@@ -292,7 +294,7 @@ for (const theme of ["light", "dark"] as const) {
     await expect(settled).toBeVisible()
     await expect(settled.locator("[data-assistant-reveal-chunk]")).toHaveCount(0)
     expect(await settled.evaluate((node) => node.textContent!.includes("\u00a0"))).toBe(false)
-    expect(await settled.locator("p").evaluate((node) => getComputedStyle(node).textWrapStyle)).toBe("pretty")
+    expect(await settled.locator("p").evaluate((node) => node.ownerDocument.defaultView!.getComputedStyle(node).textWrapStyle)).toBe("pretty")
     await testInfo.attach(`stream-prose-${theme}-390`, {
       body: await page.screenshot({ fullPage: true }), contentType: "image/png",
     })
