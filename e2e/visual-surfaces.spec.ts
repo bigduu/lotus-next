@@ -52,6 +52,7 @@ for (const theme of ["light", "dark"] as const) {
         const browser = document.defaultView!
         const root = browser.getComputedStyle(document.documentElement)
         const probe = document.createElement("span")
+        probe.style.transitionProperty = "none"
         document.body.append(probe)
         const resolve = (token: string) => {
           probe.style.color = root.getPropertyValue(token)

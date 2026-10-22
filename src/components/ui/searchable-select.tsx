@@ -128,7 +128,7 @@ export function SearchableSelect<T, V>({
           disabled={disabled}
           title={title}
           className={cn(
-            "inline-flex max-w-[70vw] items-center gap-1 rounded-full border bg-card px-3 py-1 text-xs font-medium text-foreground outline-none transition-colors hover:bg-accent focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50 md:max-w-xs",
+            "inline-flex max-w-[70vw] items-center gap-1 rounded-full border bg-card px-3 py-1 text-xs font-medium text-foreground outline-none transition-colors hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50 md:max-w-xs",
             className,
           )}
         >
@@ -168,7 +168,7 @@ export function SearchableSelect<T, V>({
             placeholder={searchPlaceholder}
             value={query}
             onValueChange={setQuery}
-            className="h-8 rounded-md border border-input bg-background pl-8 pr-8 text-xs shadow-xs focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px]"
+            className="h-8 rounded-md border border-input bg-background pl-8 pr-8 text-xs shadow-xs"
           />
           {query ? (
             <button

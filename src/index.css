@@ -39,6 +39,8 @@
   --ring: var(--primary);
   /* Focus must remain visible even when a custom accent is white or black. */
   --focus-ring: #396957;
+  --focus-halo: #3969572e;
+  --focus-shadow: 0 0 0 2px var(--background), 0 0 0 4px var(--focus-ring), 0 0 0 7px var(--focus-halo);
   --focus-surface: #eaf0ed;
   --sidebar: #f1f5f3;
   --sidebar-foreground: var(--foreground);
@@ -57,6 +59,7 @@
   --foreground: #eaeeec;
   --card: #181d1b;
   --focus-ring: #7db29d;
+  --focus-halo: #7db29d2e;
   --focus-surface: #1e2621;
   --popover: #1e2320;
   --primary: #7db29d;
@@ -88,14 +91,10 @@
 /* Keep a clear inner ring and a quiet outer halo. This sits outside the
    utility layers so per-component ring/50 classes cannot weaken keyboard
    focus, including when an arbitrary accent updates --ring. */
-:where(button, a[href], input, textarea, select, summary, [role="switch"],
-  [role="checkbox"], [role="combobox"], [role="tab"], [role="slider"],
-  [role="separator"], [contenteditable="true"], [tabindex]:not([tabindex="-1"])):focus-visible {
+:focus-visible {
   outline: 2px solid transparent;
   outline-offset: 2px;
-  box-shadow: 0 0 0 2px var(--background),
-    0 0 0 4px var(--focus-ring),
-    0 0 0 7px color-mix(in srgb, var(--focus-ring) 18%, transparent);
+  box-shadow: var(--focus-shadow);
 }
 
 [data-composer-surface] {
@@ -108,9 +107,7 @@
     background: var(--focus-surface);
     outline: 2px solid transparent;
     outline-offset: 2px;
-    box-shadow: 0 0 0 2px var(--background),
-      0 0 0 4px var(--focus-ring),
-      0 0 0 7px color-mix(in srgb, var(--focus-ring) 18%, transparent);
+    box-shadow: var(--focus-shadow);
   }
 
   [data-composer-surface] .composer-editor:focus-visible {
@@ -121,8 +118,7 @@
 
 /* The installed system/CJK stacks have ordinary weight faces; do not assume
    a variable-font axis or thin the 400-weight body text in dark mode. */
-.dark :is([data-slot="dialog-title"], [data-slot="responsive-dialog-title"],
-  [data-slot="sheet-title"], [data-slot="card-title"]) {
+.dark [data-slot$="-title"] {
   font-weight: 500;
 }
 
