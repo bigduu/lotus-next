@@ -47,27 +47,29 @@ for (const theme of ["light", "dark"] as const) {
       await composer.focus()
       await expect(composer).toBeFocused()
 
-      const result = await page.evaluate(() => {
-        const root = getComputedStyle(document.documentElement)
+      const result = await page.locator("html").evaluate((rootNode) => {
+        const document = rootNode.ownerDocument
+        const browser = document.defaultView!
+        const root = browser.getComputedStyle(document.documentElement)
         const probe = document.createElement("span")
         document.body.append(probe)
         const resolve = (token: string) => {
           probe.style.color = root.getPropertyValue(token)
-          return getComputedStyle(probe).color
+          return browser.getComputedStyle(probe).color
         }
         const colors = Object.fromEntries([
           "--background", "--card", "--popover", "--sidebar", "--foreground",
           "--muted-foreground", "--focus-ring", "--focus-surface",
         ].map((token) => [token, resolve(token)]))
         probe.remove()
-        const surface = document.querySelector<HTMLElement>("[data-composer-surface]")!
-        const surfaceStyle = getComputedStyle(surface)
+        const surface = document.querySelector("[data-composer-surface]")!
+        const surfaceStyle = browser.getComputedStyle(surface)
         return {
           colors,
           focusVisible: !!surface.querySelector(".composer-editor:focus-visible"),
           shadow: surfaceStyle.boxShadow,
           background: surfaceStyle.backgroundColor,
-          editorShadow: getComputedStyle(surface.querySelector(".composer-editor")!).boxShadow,
+          editorShadow: browser.getComputedStyle(surface.querySelector(".composer-editor")!).boxShadow,
           border: surfaceStyle.borderTopColor,
         }
       })
@@ -87,7 +89,7 @@ for (const theme of ["light", "dark"] as const) {
       const modelPicker = page.getByTestId("model-effort-picker").first()
       await modelPicker.focus()
       expect(await modelPicker.evaluate((element) => element.matches(":focus-visible"))).toBe(true)
-      expect(await modelPicker.evaluate((element) => getComputedStyle(element).boxShadow)).toContain("4px")
+      expect(await modelPicker.evaluate((element) => element.ownerDocument.defaultView!.getComputedStyle(element).boxShadow)).toContain("4px")
 
       if (accent === "teal") {
         await composer.focus()
@@ -95,7 +97,7 @@ for (const theme of ["light", "dark"] as const) {
           await page.setViewportSize({ width, height: 1100 })
           await expect(composer).toBeVisible()
           await expect(page.locator(".assistant-streamdown")).toContainText("Markdown 主题检查")
-          expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(1)
+          expect(await page.locator("html").evaluate((element) => element.scrollWidth - element.ownerDocument.defaultView!.innerWidth)).toBeLessThanOrEqual(1)
           await info.attach(`surfaces-${theme}-${width}`, { body: await page.screenshot({ fullPage: true }), contentType: "image/png" })
         }
         await page.setViewportSize({ width: 1440, height: 1100 })
@@ -111,10 +113,10 @@ for (const theme of ["light", "dark"] as const) {
         await page.getByTestId("model-picker-model").press("Enter")
         const modelSearch = page.getByRole("searchbox", { name: "搜索模型", exact: true })
         await modelSearch.focus()
-        expect(await modelSearch.evaluate((element) => getComputedStyle(element).boxShadow)).toContain("4px")
+        expect(await modelSearch.evaluate((element) => element.ownerDocument.defaultView!.getComputedStyle(element).boxShadow)).toContain("4px")
         const option = page.locator(".model-effort-panel [data-model-option]:enabled").first()
         await option.focus()
-        expect(await option.evaluate((element) => getComputedStyle(element).boxShadow)).toContain("4px")
+        expect(await option.evaluate((element) => element.ownerDocument.defaultView!.getComputedStyle(element).boxShadow)).toContain("4px")
         await expect(option).toHaveCSS("outline-color", result.colors["--focus-ring"])
         await expect(option).toHaveCSS("outline-offset", "-2px")
         await page.keyboard.press("Escape")
@@ -124,22 +126,22 @@ for (const theme of ["light", "dark"] as const) {
       await page.keyboard.press("Tab")
       await newSession.focus()
       expect(await newSession.evaluate((element) => element.matches(":focus-visible"))).toBe(true)
-      expect(await newSession.evaluate((element) => getComputedStyle(element).boxShadow)).toContain("4px")
+      expect(await newSession.evaluate((element) => element.ownerDocument.defaultView!.getComputedStyle(element).boxShadow)).toContain("4px")
     }
     await info.attach(`focus-contrast-${theme}`, { body: JSON.stringify(palette, null, 2), contentType: "application/json" })
     await page.emulateMedia({ forcedColors: "active" })
     const composer = page.getByRole("textbox", { name: "消息", exact: true }).first()
     await composer.focus()
     const forcedSurface = await page.locator("[data-composer-surface]").first().evaluate((surface) => {
-      const style = getComputedStyle(surface)
+      const style = surface.ownerDocument.defaultView!.getComputedStyle(surface)
       return { outlineStyle: style.outlineStyle, outlineWidth: parseFloat(style.outlineWidth) }
     })
     expect(forcedSurface).toEqual({ outlineStyle: "solid", outlineWidth: 2 })
     const newSession = page.getByRole("button", { name: "新建会话", exact: true })
     await page.keyboard.press("Tab")
     await newSession.focus()
-    expect(await newSession.evaluate((element) => getComputedStyle(element).outlineStyle)).toBe("solid")
-    expect(await newSession.evaluate((element) => parseFloat(getComputedStyle(element).outlineWidth))).toBeGreaterThanOrEqual(2)
+    expect(await newSession.evaluate((element) => element.ownerDocument.defaultView!.getComputedStyle(element).outlineStyle)).toBe("solid")
+    expect(await newSession.evaluate((element) => parseFloat(element.ownerDocument.defaultView!.getComputedStyle(element).outlineWidth))).toBeGreaterThanOrEqual(2)
     expect(observation.consoleErrors).toEqual([])
     expect(observation.pageErrors).toEqual([])
   })

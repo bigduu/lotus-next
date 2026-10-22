@@ -44,6 +44,9 @@
   outline: 2px solid var(--focus-ring);
   outline-offset: -2px;
 }
+@media (forced-colors: active) {
+  .model-effort-panel [data-model-option]:focus-visible { outline-color: Highlight; }
+}
 .effort-slider input:disabled { cursor: not-allowed; }
 .effort-slider input::-webkit-slider-runnable-track { height: 32px; background: transparent; }
 .effort-slider input::-moz-range-track { height: 32px; background: transparent; }
