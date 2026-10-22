@@ -1126,12 +1126,16 @@ it("shows a Process's only tool result after opening only the Process disclosure
   </ProcessActivity>))
   const processToggle = host.querySelector<HTMLButtonElement>("[data-process-toggle]")!
   const content = host.querySelector<HTMLElement>("[data-process-content]")!
-  expect(content.hidden).toBe(true)
+  expect(content.getAttribute("aria-hidden")).toBe("true")
+  expect(content.hasAttribute("inert")).toBe(true)
+  expect(content.hasAttribute("hidden")).toBe(false)
   expect(host.querySelector("[data-tool-call-toggle]")).toBeNull()
   expect(host.querySelector("[data-tool-call-entry-toggle]")).toBeNull()
   expect(host.querySelector("details")).toBeNull()
   act(() => processToggle.click())
-  expect(content.hidden).toBe(false)
+  expect(host.querySelector("[data-process-content]")).toBe(content)
+  expect(content.getAttribute("aria-hidden")).toBe("false")
+  expect(content.hasAttribute("inert")).toBe(false)
   expect(host.querySelector("[data-tool-call-entry-heading]")?.textContent).toContain("读取文件")
   expect(host.querySelector("[data-tool-call-entry-detail]")?.textContent).toContain("/tmp/example.ts")
   expect(host.querySelector("[data-tool-call-entry-detail] pre")?.textContent).toBe("done")

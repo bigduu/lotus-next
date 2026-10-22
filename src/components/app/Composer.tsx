@@ -385,7 +385,7 @@ export function Composer({
       <div className="relative mx-auto w-full max-w-6xl">
         <div
           data-composer-surface
-          className="rounded-2xl border bg-card p-1.5 shadow-sm focus-within:ring-2 focus-within:ring-ring/40"
+          className="rounded-2xl border border-transparent bg-card p-1.5"
         >
           {workflowControl}
           {workflowUndoControl}

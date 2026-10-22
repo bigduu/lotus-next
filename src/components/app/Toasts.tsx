@@ -44,7 +44,7 @@ function Notice({ notice, onDismiss, onRestoreFocus }: { notice: ToastNotice; on
       <div className="min-w-0 flex-1" style={{ overflowWrap: "anywhere" }}>
         <div role={notice.kind === "error" ? "alert" : "status"} aria-atomic="true">{notice.kind === "error" && <strong className="block text-destructive">{uiText("operation_failed_0c3b4cf7")}</strong>}{summary}</div>
         {details && <details className="mt-2" onToggle={(event) => setExpanded(event.currentTarget.open)}>
-          <summary className="cursor-pointer rounded outline-none focus-visible:ring-2 focus-visible:ring-ring/50">{uiText(expanded ? "hide_details_2e1b7da4" : "show_details_448d5d38")}</summary>
+          <summary className="cursor-pointer rounded outline-none focus-visible:ring-2">{uiText(expanded ? "hide_details_2e1b7da4" : "show_details_448d5d38")}</summary>
           <div className="mt-2 overflow-auto whitespace-pre-wrap text-xs text-muted-foreground" style={{ maxHeight: "min(40vh, 20rem)" }}>{details}</div>
         </details>}
       </div>

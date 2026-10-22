@@ -9,26 +9,17 @@ async function expectCaretPaint(page: Page, target: Locator, painted: boolean) {
     const browser = element.ownerDocument.defaultView!
     const rect = element.getBoundingClientRect()
     const style = browser.getComputedStyle(element)
-    const caret = browser.getComputedStyle(element, "::after")
-    const gap = Math.max(1, Number.parseFloat(style.fontSize) * 0.08)
-    const width = Number.parseFloat(caret.width)
-    const height = Number.parseFloat(caret.height)
     return {
       fragments: element.getClientRects().length,
-      content: caret.content,
-      position: caret.position,
-      x: style.direction === "rtl" ? rect.left - gap - width : rect.right + gap,
-      y: rect.top + (rect.height - height) / 2,
-      width,
-      height,
+      display: style.display,
+      x: rect.x, y: rect.y, width: rect.width, height: rect.height,
     }
   })
   await expect(async () => {
     const geometry = await measure()
     expect(geometry.fragments).toBe(1)
-    expect(geometry.content).toBe('""')
-    expect(geometry.position).toBe("absolute")
-    // Compare the exact glyph-adjacent pixels with the pseudo-element disabled.
+    expect(geometry.display).toBe("inline-block")
+    // Compare the exact caret pixels with the inline box hidden.
     // Bounding boxes alone cannot prove that overflow or clip-path clipped paint.
     const viewport = page.viewportSize()!
     const x = Math.max(0, Math.floor(geometry.x))
@@ -40,16 +31,16 @@ async function expectCaretPaint(page: Page, target: Locator, painted: boolean) {
     }
     expect(clip.width).toBeGreaterThan(0)
     expect(clip.height).toBeGreaterThan(0)
-    const before = await page.screenshot({ clip, animations: "disabled" })
-    const hidden = await page.addStyleTag({ content: '[data-assistant-typewriter-caret-target="true"]::after { visibility: hidden !important; }' })
+    const before = await page.screenshot({ clip, animations: "disabled", caret: "initial" })
+    const hidden = await page.addStyleTag({ content: '[data-assistant-streaming-caret] { visibility: hidden !important; }' })
     let withoutCaret: Buffer
     try {
-      withoutCaret = await page.screenshot({ clip, animations: "disabled" })
+      withoutCaret = await page.screenshot({ clip, animations: "disabled", caret: "initial" })
     } finally {
       await hidden.evaluate((element) => element.remove())
     }
     // ResizeObserver and sticky following can settle after a layout mutation.
-    // Only compare paint when both captures used the glyph's actual coordinates.
+    // Only compare paint when both captures used the caret's actual coordinates.
     expect(await measure()).toEqual(geometry)
     expect(before.equals(withoutCaret)).toBe(!painted)
   }).toPass({ timeout: 8_000 })
@@ -115,9 +106,9 @@ test("streaming caret obeys transcript clipping and follows local layout in a br
     })))
   const content = "Streaming paragraph with enough text to wrap in narrow panes.\n\n".repeat(30) + "最后一行"
   emit("token", content)
-  const target = page.locator('[data-assistant-typewriter-caret-target="true"]')
+  const target = page.locator('.assistant-streamdown > [data-assistant-reveal-block]:last-child [data-assistant-streaming-caret]')
   const area = page.locator("[data-message-list-content]").locator("..")
-  await expect(target).toHaveText("行")
+  await expect(target).toBeVisible()
   await expectCaretPaint(page, target, true)
 
   // Pause following with a real reader gesture. The last glyph moves behind
@@ -132,10 +123,15 @@ test("streaming caret obeys transcript clipping and follows local layout in a br
     return glyph!.y >= viewport!.y + viewport!.height
   }).toBe(true)
   await expectCaretPaint(page, target, false)
+  const readerScrollTop = await area.evaluate((element) => element.scrollTop)
   await testInfo.attach("caret-clipped-above-composer-fixture", {
-    body: await page.screenshot({ path: testInfo.outputPath("caret-clipped-above-composer-fixture.png") }),
+    // Screenshot's default caret hiding mutates the focused contenteditable.
+    // Preserve editor DOM while observing a reader's deliberately unpinned view.
+    body: await page.screenshot({ path: testInfo.outputPath("caret-clipped-above-composer-fixture.png"), caret: "initial" }),
     contentType: "image/png",
   })
+  await expect.poll(() => area.evaluate((element) => element.scrollTop)).toBe(readerScrollTop)
+  await expect(jump).toBeVisible()
   await jump.click()
   await expectCaretPaint(page, target, true)
 
@@ -144,7 +140,7 @@ test("streaming caret obeys transcript clipping and follows local layout in a br
     insideTranscript: !!element.closest("[data-message-list-content]"),
     insideMessageSurface: !!element.closest('[data-message-role="assistant"]'),
     children: element.childNodes.length,
-  }))).toEqual({ insideTranscript: true, insideMessageSurface: true, children: 1 })
+  }))).toEqual({ insideTranscript: true, insideMessageSurface: true, children: 0 })
 
   // A taller composer resizes the transcript without a window resize.
   await input.fill("A taller composer line\n".repeat(8))
@@ -182,7 +178,7 @@ test("streaming caret obeys transcript clipping and follows local layout in a br
   await page.setViewportSize({ width: Math.max(360, initialViewport.width - 140), height: initialViewport.height })
   await expectCaretPaint(page, target, true)
   await testInfo.attach("caret-restored-after-layout-fixture", {
-    body: await page.screenshot({ path: testInfo.outputPath("caret-restored-after-layout-fixture.png") }),
+    body: await page.screenshot({ path: testInfo.outputPath("caret-restored-after-layout-fixture.png"), caret: "initial" }),
     contentType: "image/png",
   })
 
@@ -198,32 +194,32 @@ test("streaming caret obeys transcript clipping and follows local layout in a br
 })
 
 
-test("animated caret follows a single character when narrow lines wrap", async ({ page }, testInfo) => {
+test("inline caret wraps with CJK and Latin chunks at narrow widths", async ({ page }, testInfo) => {
   await page.emulateMedia({ reducedMotion: "no-preference" })
   const { observation, emit, terminal } = await startCaretFixture(page)
-  const target = page.locator('[data-assistant-typewriter-caret-target="true"]')
+  const target = page.locator('.assistant-streamdown > [data-assistant-reveal-block]:last-child [data-assistant-streaming-caret]')
   emit("token", "你好")
-  await expect(target).toHaveText("好")
+  await expect(target).toBeVisible()
   emit("token", "世界")
-  await expect(target).toHaveText("界")
+  await expect(target).toBeVisible()
   await target.evaluate((element) => {
     const paragraph = element.closest("p")! as typeof element
     paragraph.style.maxWidth = "19px"
   })
   await expectCaretPaint(page, target, true)
-  // Streamdown may retain trailing spaces in a character token. They must
-  // still leave a single fragment at a narrow Latin line's trailing edge.
+  // Chunk boundaries do not become no-wrap boxes. The empty caret box may
+  // move to the next line naturally, while remaining inside the paragraph.
   emit("token", "\n\nwrap text ")
-  const finalCharacter = page.locator(".assistant-streamdown [data-sd-animate]").last()
-  await expect(finalCharacter).toHaveText("t")
-  await expect(finalCharacter).toHaveAttribute("data-assistant-typewriter-caret-target", "true")
+  const finalChunk = page.locator(".assistant-streamdown [data-assistant-reveal-chunk]").last()
+  await expect(finalChunk).toHaveText("wrap text")
+  await expect(target).toBeVisible()
   await target.evaluate((element) => {
     const paragraph = element.closest("p")! as typeof element
     paragraph.style.maxWidth = "9px"
   })
   await expectCaretPaint(page, target, true)
   await testInfo.attach("caret-animated-narrow-lines-fixture", {
-    body: await page.screenshot({ animations: "disabled", path: testInfo.outputPath("caret-animated-narrow-lines-fixture.png") }),
+    body: await page.screenshot({ animations: "disabled", caret: "initial", path: testInfo.outputPath("caret-animated-narrow-lines-fixture.png") }),
     contentType: "image/png",
   })
   await page.route(`**/api/v1/history/${SESSION_ID}`, (route) => route.fulfill({ json: {
@@ -235,3 +231,79 @@ test("animated caret follows a single character when narrow lines wrap", async (
   await expect(target).toHaveCount(0)
   expect(observation.pageErrors).toEqual([])
 })
+
+for (const theme of ["light", "dark"] as const) {
+  test(`CJK chunk reveal preserves selection and settles prose in ${theme}`, async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name !== "desktop-chromium", "paired-theme stream and prose evidence")
+    await page.emulateMedia({ reducedMotion: "no-preference", colorScheme: theme })
+    await page.addInitScript((mode) => localStorage.setItem("copilot_ui_theme_v1", mode), theme)
+    const { observation, emit, terminal } = await startCaretFixture(page)
+    const active = page.locator(".assistant-streamdown-streaming")
+    const prefix = "中文正文".repeat(8)
+    emit("token", prefix)
+    await expect(active).toHaveText(prefix)
+    await page.locator("body").evaluate((body) => {
+      const document = body.ownerDocument
+      const state = { starts: 0 }
+      Object.assign(globalThis, { __proseReveal: state })
+      document.addEventListener("animationstart", (event: { animationName: string }) => {
+        if (event.animationName === "assistant-prose-reveal") state.starts += 1
+      })
+    })
+    emit("token", "选中内容")
+    const tail = active.locator("[data-assistant-reveal-chunk]").last()
+    await expect(tail).toHaveText("选中内容")
+    await expect.poll(() => page.evaluate(() =>
+      (globalThis as unknown as { __proseReveal: { starts: number } }).__proseReveal.starts)).toBe(1)
+    await tail.evaluate((element) => {
+      const document = element.ownerDocument
+      const range = document.createRange()
+      range.setStart(element.firstChild!, 0)
+      range.setEnd(element.firstChild!, 2)
+      document.getSelection()!.removeAllRanges()
+      document.getSelection()!.addRange(range)
+    })
+    emit("token", "继续追加")
+    await expect(tail).toHaveText("选中内容继续追加")
+    expect(await page.locator("body").evaluate((body) => body.ownerDocument.getSelection()!.toString())).toBe("选中")
+    expect(await page.evaluate(() =>
+      (globalThis as unknown as { __proseReveal: { starts: number } }).__proseReveal.starts)).toBe(1)
+    await page.locator("body").evaluate((body) => body.ownerDocument.getSelection()!.removeAllRanges())
+
+    const additional = " English prose 最后一行不会添加不可见字符。".repeat(20)
+    emit("token", additional)
+    const source = prefix + "选中内容继续追加" + additional
+    await expect(active).toHaveText(source)
+    expect(await active.locator("[data-assistant-reveal-chunk]").count()).toBeLessThanOrEqual(
+      Math.ceil(Array.from(source).length / 32),
+    )
+    expect(await active.locator("[data-sd-animate]").count()).toBe(0)
+    for (const mode of ["reduced", "vdi"] as const) {
+      await page.emulateMedia({ reducedMotion: mode === "reduced" ? "reduce" : "no-preference" })
+      await page.locator("body").evaluate((body, safe) => body.setAttribute("data-vdi-safe", String(safe)), mode === "vdi")
+      const paint = await active.locator("[data-assistant-reveal]").first().evaluate((node) => {
+        const style = node.ownerDocument.defaultView!.getComputedStyle(node)
+        return { animation: style.animationName, filter: style.filter, transform: style.transform }
+      })
+      expect(paint).toEqual({ animation: "none", filter: "none", transform: "none" })
+    }
+    await page.setViewportSize({ width: 390, height: 900 })
+    expect(await active.evaluate((node) => node.scrollWidth - node.clientWidth)).toBeLessThanOrEqual(1)
+    await page.route(`**/api/v1/history/${SESSION_ID}`, (route) => route.fulfill({ json: {
+      session_id: SESSION_ID,
+      messages: [{ id: "completed", role: "assistant", content: source, created_at: "2026-10-09T00:00:00Z" }],
+    } }))
+    emit("complete")
+    terminal()
+    const settled = page.locator(".assistant-streamdown").filter({ hasText: prefix })
+    await expect(settled).toBeVisible()
+    await expect(settled.locator("[data-assistant-reveal-chunk]")).toHaveCount(0)
+    expect(await settled.evaluate((node) => node.textContent!.includes("\u00a0"))).toBe(false)
+    expect(await settled.locator("p").evaluate((node) => node.ownerDocument.defaultView!.getComputedStyle(node).textWrapStyle)).toBe("pretty")
+    await testInfo.attach(`stream-prose-${theme}-390`, {
+      body: await page.screenshot({ fullPage: true, caret: "initial" }), contentType: "image/png",
+    })
+    expect(observation.pageErrors).toEqual([])
+    expect(observation.consoleErrors).toEqual([])
+  })
+}

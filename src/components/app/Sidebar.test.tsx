@@ -676,15 +676,29 @@ describe("Sidebar server sections", () => {
     expect(container.querySelector('[role="alert"]')?.textContent).toContain("Zenith · 分区未保存")
   })
 
-  it("temporarily disables same-Project moves and drops while a save awaits confirmation", async () => {
+  it("keeps busy drag handles mounted and saving feedback outside the session list while awaiting confirmation", async () => {
     const { updateProject } = setup()
     const persist = updateProject.getMockImplementation()!
     let confirm!: () => Promise<void>
     updateProject.mockImplementationOnce((...args) => new Promise<ProjectManifest>((resolve) => {
       confirm = async () => { resolve(await persist(...args)) }
     }))
+    const firstHandle = row("first")!.querySelector<HTMLButtonElement>("[data-sidebar-drag-handle]")!
+    const secondHandle = row("second")!.querySelector<HTMLButtonElement>("[data-sidebar-drag-handle]")!
+    const foreignHandle = row("foreign")!.querySelector<HTMLButtonElement>("[data-sidebar-drag-handle]")!
+    const projectGroup = container.querySelector('[data-sidebar-project="p1"]')!
+    const sessionList = projectGroup.closest(".overflow-y-auto")!
     click("Move first to lotus")
-    expect(container.querySelector('[role="status"]')?.textContent).toContain("正在保存分区")
+    const saving = container.querySelector('[role="status"]')!
+    expect(saving.textContent).toContain("正在保存分区")
+    expect(sessionList.contains(saving)).toBe(false)
+    expect(projectGroup.getAttribute("aria-busy")).toBe("true")
+    expect(row("first")!.querySelector("[data-sidebar-drag-handle]")).toBe(firstHandle)
+    expect(firstHandle.isConnected).toBe(true)
+    expect(firstHandle.disabled).toBe(true)
+    expect(row("second")!.querySelector("[data-sidebar-drag-handle]")).toBe(secondHandle)
+    expect(secondHandle.disabled).toBe(true)
+    expect(foreignHandle.disabled).toBe(false)
     expect([...container.querySelectorAll("button")].some((item) => item.textContent === "Move second to lotus")).toBe(false)
     const target = container.querySelector('[data-section-project="p1"][data-project-section="lotus"]')!
     expect(target.getAttribute("aria-disabled")).toBe("true")
@@ -693,6 +707,9 @@ describe("Sidebar server sections", () => {
     await act(async () => { await confirm() })
     expect(target.contains(row("first"))).toBe(true)
     expect(target.getAttribute("aria-disabled")).toBe("false")
+    expect(projectGroup.getAttribute("aria-busy")).toBe("false")
+    expect(row("second")!.querySelector("[data-sidebar-drag-handle]")).toBe(secondHandle)
+    expect(secondHandle.disabled).toBe(false)
     expect(container.querySelector('[role="status"]')).toBeNull()
     expect(button("Move second to lotus")).toBeDefined()
   })

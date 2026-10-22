@@ -24,16 +24,45 @@ const copyWithExecCommand = (text: string): void => {
   textarea.style.top = "-9999px";
   textarea.style.left = "-9999px";
   textarea.style.opacity = "0";
+  const previousFocus = document.activeElement;
+  const selection = document.getSelection();
+  const ranges = Array.from({ length: selection?.rangeCount ?? 0 }, (_, index) => selection!.getRangeAt(index).cloneRange());
+  const anchor = selection?.anchorNode;
+  const focus = selection?.focusNode;
+  const backwards = ranges.length === 1 && anchor === ranges[0].endContainer && selection?.anchorOffset === ranges[0].endOffset;
+  const selectionEnds = () => [selection?.anchorNode, selection?.anchorOffset, selection?.focusNode, selection?.focusOffset];
+  let ownedSelection: ReturnType<typeof selectionEnds> | undefined;
   document.body.appendChild(textarea);
 
-  textarea.focus();
-  textarea.select();
-
-  const success = document.execCommand("copy");
-  document.body.removeChild(textarea);
-
-  if (!success) {
-    throw new Error("document.execCommand('copy') returned false");
+  try {
+    textarea.focus();
+    textarea.select();
+    ownedSelection = selectionEnds();
+    if (!document.execCommand("copy")) {
+      throw new Error("document.execCommand('copy') returned false");
+    }
+  } finally {
+    // Only undo this synchronous fallback's focus change, never a newer one.
+    const currentSelection = selectionEnds();
+    const selectionUntouched = ownedSelection?.every((value, index) => value === currentSelection[index]) ?? true;
+    const restoreFocus = document.activeElement === textarea && selectionUntouched;
+    const restoreSelection = restoreFocus && ownedSelection
+      && anchor?.isConnected && focus?.isConnected && anchor.ownerDocument === document && focus.ownerDocument === document;
+    textarea.remove();
+    const releasedSelection = selectionEnds();
+    if (restoreFocus && previousFocus instanceof HTMLElement && previousFocus.isConnected) {
+      previousFocus.focus({ preventScroll: true });
+    }
+    // Native focus may collapse at the control's start; a caret at another
+    // owner or position belongs to the focus handler and must stay untouched.
+    const focusCollapse = selection?.isCollapsed && selection.anchorNode === previousFocus && selection.anchorOffset === 0;
+    if (restoreSelection && selection && document.activeElement === previousFocus
+      && (focusCollapse || selectionEnds().every((value, index) => value === releasedSelection[index]))
+      && ranges.every((range) => range.startContainer.isConnected && range.endContainer.isConnected)) {
+      selection.removeAllRanges();
+      for (const range of ranges) selection.addRange(range);
+      if (backwards) selection.setBaseAndExtent(ranges[0].endContainer, ranges[0].endOffset, ranges[0].startContainer, ranges[0].startOffset);
+    }
   }
 };
 

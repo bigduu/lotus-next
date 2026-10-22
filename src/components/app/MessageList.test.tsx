@@ -2,6 +2,9 @@ import { act, createRef } from "react"
 import { createRoot, type Root } from "react-dom/client"
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest"
 
+const clipboard = vi.hoisted(() => ({ copyText: vi.fn() }))
+vi.mock("@shared/utils/clipboard", () => clipboard)
+
 vi.mock("@/components/chat/AssistantMarkdown", () => ({
   AssistantMarkdown: ({
     children,
@@ -75,6 +78,8 @@ afterAll(() => {
 afterEach(() => {
   for (const root of mountedRoots.splice(0)) act(() => root.unmount())
   document.body.replaceChildren()
+  clipboard.copyText.mockReset()
+  vi.useRealTimers()
 })
 
 function renderMessageList(
@@ -401,6 +406,45 @@ describe("MessageList assistant streaming ownership", () => {
 })
 
 describe("MessageList compact message actions", () => {
+  it("confirms exact-source copying without replacing the focused button or message", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] })
+    clipboard.copyText.mockResolvedValue(undefined)
+    const source = " **中文 English**\n\n末尾  "
+    const host = renderMessageList([{ id: "copy-source", role: "assistant", type: "text", content: source, createdAt: "2026-10-22T00:00:00Z" }], true)
+    const actions = host.querySelector<HTMLElement>('[data-message-actions="copy-source"]')!
+    const button = actions.querySelector<HTMLButtonElement>('[aria-label="复制"]')!
+    const content = host.querySelector("[data-assistant-content]")
+    button.focus()
+    await act(async () => button.click())
+    expect(clipboard.copyText).toHaveBeenCalledExactlyOnceWith(source)
+    expect(actions.dataset.copyState).toBe("copied")
+    expect(actions.querySelector('[role="status"]')?.textContent).toBe(uiText("copied_8f6f8d97"))
+    expect(button.querySelector('[data-copy-confirmation="true"]')).not.toBeNull()
+    expect(document.activeElement).toBe(button)
+    expect(actions.querySelector('[aria-label="复制"]')).toBe(button)
+    expect(host.querySelector("[data-assistant-content]")).toBe(content)
+    act(() => vi.advanceTimersByTime(2500))
+    expect(actions.dataset.copyState).toBe("idle")
+    expect(button.querySelector('[data-copy-confirmation]')).toBeNull()
+    expect(document.activeElement).toBe(button)
+  })
+
+  it("keeps Copy available and announces a localized failure", async () => {
+    clipboard.copyText.mockRejectedValue(new Error("denied"))
+    const host = renderMessageList([{ id: "copy-error", role: "user", content: "原文", createdAt: "2026-10-22T00:00:00Z" }], true)
+    const actions = host.querySelector<HTMLElement>('[data-message-actions="copy-error"]')!
+    const button = actions.querySelector<HTMLButtonElement>('[aria-label="复制"]')!
+    await act(async () => button.click())
+    expect(actions.dataset.copyState).toBe("error")
+    expect(actions.querySelector('[role="alert"]')?.textContent).toBe("复制失败")
+    expect(button.disabled).toBe(false)
+    expect(button.querySelector('[data-copy-confirmation]')).toBeNull()
+    clipboard.copyText.mockResolvedValue(undefined)
+    await act(async () => button.click())
+    expect(actions.querySelector('[role="alert"]')).toBeNull()
+    expect(actions.dataset.copyState).toBe("copied")
+  })
+
   it("keeps controls beside messages and only shows them for the final assistant response", () => {
     const messages: Message[] = [
       {
@@ -523,7 +567,8 @@ describe("MessageList activity grouping", () => {
     expect(container.querySelectorAll('[data-reasoning="latest final reasoning"]')).toHaveLength(1)
     expect(process.querySelector('[data-reasoning="latest final reasoning"]')).not.toBeNull()
     act(() => toggle.click())
-    expect(process.querySelector<HTMLElement>("[data-process-content]")?.hidden).toBe(false)
+    expect(process.querySelector("[data-process-content]")?.getAttribute("aria-hidden")).toBe("false")
+    expect(process.querySelector("[data-process-content]")?.hasAttribute("inert")).toBe(false)
   })
 
   it("merges tools and reasoning through empty messages and splits only at visible messages", () => {
