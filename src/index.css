@@ -3,6 +3,9 @@
 @plugin "@tailwindcss/typography";
 /* Translation prose is not a source of utility classes. */
 @source not "./shared/i18n";
+/* Unit fixtures and assertions are not application class sources. */
+@source not "./**/*.test.ts";
+@source not "./**/*.test.tsx";
 /* Browser assertions and fixtures do not contribute application utilities. */
 @source not "../e2e";
 @source not inline("paused");
