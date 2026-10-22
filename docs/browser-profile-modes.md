@@ -4,7 +4,7 @@ The browser workbench reads `GET /api/v1/browser/sessions/{session_id}` before o
 
 An explicit open sends one `PUT` with only `{profile_mode: "shared" | "clean"}`. An explicit close sends one `DELETE` for the current chat. Both use the single-attempt transport. Selection alone sends nothing. A mode change requires separate close and open actions; a 409 never triggers an automatic close, reopen, or replay.
 
-Every current state reports a coherent pair: `shared/true` or `clean/false`. Missing metadata remains unreported; contradictory metadata disables the new profile controls. Existing navigation and page dialogs remain available on older hosts without claiming shared storage. Shared Cookie/site storage is not a security boundary between chats. Clean sessions inherit neither shared state nor a previous clean session.
+Every current state reports a coherent pair: `shared/true` or `clean/false`. Failed or pending canonical reads do not present a cached mode as current. Missing metadata remains unreported; contradictory metadata disables the new profile controls. Existing navigation and page dialogs remain available on older hosts without claiming shared storage. Shared Cookie/site storage is not a security boundary between chats. Clean sessions inherit neither shared state nor a previous clean session.
 
 The hook fences actions by chat and request scope. After a write or an ambiguous response it reads canonical state instead of applying a late ACK to another chat. Hiding the panel, selecting another chat, or retrying a read does not implicitly reopen a closed scope. A final-tab close returns an active, empty scope; the workbench may show its existing empty view until the browser entry is selected again.
 

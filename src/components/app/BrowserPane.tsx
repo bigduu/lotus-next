@@ -308,7 +308,7 @@ export function BrowserPaneView({
     <details className="w-full shrink-0 border-b p-2 text-sm" open={browser.profilePhase === "closed" ? true : undefined}>
       <summary className="cursor-pointer text-muted-foreground">{uiText("browser_profile_label")}</summary>
       <div className="pt-2"><BrowserProfileSelector
-        sessionId={sessionId} profile={browser.profile} phase={browser.profilePhase === "closed" ? "closed" : "active"}
+        sessionId={sessionId} profile={browser.profilePhase === "unknown" ? { kind: "unreported" } : browser.profile} phase={browser.profilePhase === "closed" ? "closed" : "active"}
         pending={browser.busy || browser.loading || dialogBlocked}
         allowUnreportedOpen={browser.profilePhase === "closed"}
         actions={browser.profilePhase === "unknown" ? undefined : { open: (id, mode) => { void browser.openProfile(id, mode) }, close: (id) => { void browser.closeProfile(id) } }}

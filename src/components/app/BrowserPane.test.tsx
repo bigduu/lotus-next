@@ -228,3 +228,19 @@ it("shows a focused address entry instead of browser chrome when no page exists"
   expect(host.querySelector('button[aria-label="后退"]')).toBeNull()
   expect(host.querySelector("[data-browser-viewport]")).toBeNull()
 })
+
+it("does not present a cached mode as current when the canonical reread fails", async () => {
+  vi.mocked(browserService.get).mockResolvedValueOnce({
+    page_epoch: 3, frame_seq: 0, active_tab_id: null, tabs: [], url: "", title: "",
+    viewport: { width: 640, height: 480 }, can_go_back: false, can_go_forward: false,
+    profile_mode: "shared", storage_shared: true,
+  })
+  await act(async () => root.render(<BrowserPane sessionId="profile-read" active />))
+  expect(host.textContent).toContain("当前模式：共享账户")
+  await act(async () => root.render(<BrowserPane sessionId="profile-read" active={false} />))
+  vi.mocked(browserService.get).mockRejectedValueOnce(new ApiError("unavailable", 503, "Unavailable"))
+  await act(async () => root.render(<BrowserPane sessionId="profile-read" active />))
+  expect(host.textContent).not.toContain("当前模式：")
+  expect(host.querySelector("select")).toBeNull()
+  expect(host.textContent).toContain("暂不能选择")
+})
