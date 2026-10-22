@@ -134,6 +134,7 @@ test("chat copy leaves a newer caret chosen by the restored control's focus hand
   await page.goto(standaloneScenario.entryUrl)
   const actions = page.locator('[data-message-actions="copy-caret-source"]')
   const copy = actions.getByRole("button", { name: "复制", exact: true })
+  await expect(page.locator(".assistant-streamdown")).toContainText("原文 English")
   await copy.focus()
   await copy.evaluate((button) => {
     const document = button.ownerDocument
