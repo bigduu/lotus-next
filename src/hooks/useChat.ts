@@ -515,7 +515,11 @@ export function useChat(
     const acknowledgedMessageId = streamAcknowledgedMessageIdRef.current
     const userIndex = acknowledgedMessageId === null ? -1
       : messages.findIndex((message) => message.role === "user" && message.id === acknowledgedMessageId)
-    const persistedToolIds = new Set((userIndex < 0 ? [] : messages.slice(userIndex + 1)).flatMap((message) =>
+    // A later user may be another turn or queued guidance; neither confirms this result.
+    const nextUserIndex = userIndex < 0 ? -1
+      : messages.findIndex((message, index) => index > userIndex && message.role === "user")
+    const candidates = userIndex < 0 ? [] : messages.slice(userIndex + 1, nextUserIndex < 0 ? undefined : nextUserIndex)
+    const persistedToolIds = new Set(candidates.flatMap((message) =>
       "type" in message && message.type === "tool_result" && !streamBaselineToolResultIdsRef.current.has(message.id)
         ? [message.toolCallId] : []))
     let hydrated = false

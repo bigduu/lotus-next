@@ -3376,6 +3376,54 @@ describe("tool-stream terminal evidence", () => {
     expectNoReplay()
   })
 
+  it.each(["later-turn", "current-window", "legacy"] as const)("bounds retained tool acknowledgement to its user window: %s", async (scenario) => {
+    const sessionId = `synthetic-user-window-${scenario}`
+    const user = { id: `${sessionId}-user`, role: "user", content: "publish the synthetic fixture" }
+    const nextUser = { id: `${sessionId}-next-user`, role: "user", content: "next turn fixture" }
+    const currentResult = { id: "current-result", role: "assistant", type: "tool_result", toolCallId: "call-1", result: { result } }
+    const nextResult = { ...currentResult, id: "next-result", result: { result: "next turn output" } }
+    const { hook, stream } = await mountRun(sessionId, [], scenario === "legacy" ? null : user.id)
+    await finishTool(stream)
+    mocks.appState.loadChatHistory.mockRejectedValueOnce(new Error("synthetic history unavailable"))
+    await act(async () => { stream.handlers.onError(failure); stream.subscription.resolve() })
+    await flushMicrotasks()
+    expect(calls(hook)[0]?.output).toBe(result)
+
+    // A second pane starts the next turn before its busy summary reaches A.
+    // Its canonical history update must not retire A's unconfirmed tool result.
+    const next = queueStream(sessionId, nextUser.id)
+    const otherPane = await mountUseChat({ mode: "bound", sessionId })
+    await act(async () => { await otherPane.current.send(nextUser.content) })
+    const canonical = [user, ...(scenario === "later-turn" ? [] : [currentResult]), nextUser, nextResult,
+      { id: "next-final", role: "assistant", type: "text", content: "next turn answer" }]
+    mocks.appState.loadChatHistory.mockImplementationOnce(async () => { mocks.appState.chats[0].messages = canonical })
+    await act(async () => {
+      next.handlers.onToolStart("call-1", "exec_command", { cmd: "next turn fixture" })
+      next.handlers.onToolComplete("call-1", { success: true, result: "next turn output" })
+      next.handlers.onToken("next turn answer")
+      next.handlers.onComplete()
+      next.subscription.resolve()
+    })
+    await flushMicrotasks()
+    await hook.rerender({ mode: "bound", sessionId })
+    if (scenario === "current-window") expect(calls(hook)).toEqual([])
+    else expect(calls(hook)[0]).toMatchObject({ status: "completed", output: result })
+    expect(hook.current).toMatchObject({ sending: false, streaming: null, streamPhase: null,
+      sendFailure: { kind: "generation-failed", sessionId, message: failure } })
+    expect(otherPane.current).toMatchObject({ sending: false, streaming: null, streamPhase: null, sendFailure: null })
+
+    mocks.appState.chats[0].messages = canonical.filter((message) => message.id !== currentResult.id)
+    await hook.rerender({ mode: "bound", sessionId })
+    if (scenario === "current-window") expect(calls(hook)).toEqual([])
+    else expect(calls(hook)[0]?.output).toBe(result)
+    expect(mocks.sendMessage).toHaveBeenCalledTimes(2)
+    expect(mocks.execute).toHaveBeenCalledTimes(2)
+    expect(mocks.subscribeToEvents).toHaveBeenCalledTimes(2)
+    expect(mocks.apiPost).not.toHaveBeenCalled()
+    expect(mocks.truncateSessionMessages).not.toHaveBeenCalled()
+    expect(mocks.stopGeneration).not.toHaveBeenCalled()
+  })
+
   it.each(["control-only terminal", "idle reconciliation"] as const)("retains tool evidence when %s cannot confirm history", async (ending) => {
     if (ending === "idle reconciliation") vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] })
     const { hook, stream, sessionId } = await mountRun()
