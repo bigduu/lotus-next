@@ -1,10 +1,12 @@
 import { act, StrictMode } from "react"
 import { createRoot, type Root } from "react-dom/client"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
+import { uiText } from "@shared/i18n/ui"
 import { ApiError } from "@services/api/errors"
 import type { WorkflowCatalogEntry } from "@services/command/workflowCatalog"
 import type { WorkflowRunSnapshot } from "@services/workflow/workflowRuns"
-import { WorkflowRunsDialog } from "./WorkflowRunsDialog"
+import { WorkflowRunsDialog, type WorkflowRunsContentLoader } from "./WorkflowRunsDialog"
+import RunSession from "./WorkflowRunsContent"
 
 const mocks = vi.hoisted(() => ({ catalog: vi.fn(), list: vi.fn(), detail: vi.fn(), events: vi.fn(), start: vi.fn(), cancel: vi.fn() }))
 vi.mock("@services/command/workflowCatalog", async (original) => ({
@@ -39,12 +41,12 @@ beforeEach(() => {
   mocks.detail.mockImplementation(async (sessionId: string) => snapshot(sessionId))
   mocks.events.mockResolvedValue([])
 })
-afterEach(() => { roots.splice(0).forEach((root) => act(() => root.unmount())); document.body.replaceChildren() })
-async function mount(sessionId = "primary", strict = false) {
+afterEach(() => { roots.splice(0).forEach((root) => act(() => root.unmount())); document.body.replaceChildren(); vi.useRealTimers() })
+async function mount(sessionId = "primary", strict = false, loadContent?: WorkflowRunsContentLoader) {
   const root = createRoot(document.body.appendChild(document.createElement("div"))); roots.push(root)
   const close = vi.fn()
   const render = async (id: string) => act(async () => {
-    const content = <WorkflowRunsDialog sessionId={id} sessionTitle={`${id} chat`} onClose={close} />
+    const content = <WorkflowRunsDialog sessionId={id} sessionTitle={`${id} chat`} onClose={close} loadContent={loadContent} />
     root.render(strict ? <StrictMode>{content}</StrictMode> : content)
   })
   await render(sessionId)
@@ -68,6 +70,66 @@ async function args(value: string) {
     field.dispatchEvent(new Event("input", { bubbles: true }))
   })
 }
+
+describe("Workflow Run loading boundary", () => {
+  it("shows the focused, dismissable shell during loading and never mounts content after close", async () => {
+    const pending = deferred<Awaited<ReturnType<WorkflowRunsContentLoader>>>()
+    const loadContent = vi.fn(() => pending.promise)
+    const { root, close } = await mount("primary", false, loadContent)
+    expect(loadContent).toHaveBeenCalledTimes(1)
+    expect(body().textContent).toContain("primary chat")
+    expect(body().querySelector('[role="status"]')?.textContent).toBe(uiText("workflow_run_loading"))
+    expect(mocks.catalog).not.toHaveBeenCalled()
+    expect(mocks.list).not.toHaveBeenCalled()
+    const dismiss = button(uiText("close_3fd47edc"))
+    expect(document.activeElement).toBe(dismiss)
+    await act(async () => dismiss.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })))
+    expect(close).toHaveBeenCalledTimes(1)
+    await click(dismiss)
+    expect(close).toHaveBeenCalledTimes(2)
+    act(() => root.unmount()); roots.splice(roots.indexOf(root), 1)
+    await act(async () => pending.resolve({ default: RunSession }))
+    expect(document.querySelector('[role="dialog"]')).toBeNull()
+    expect(mocks.catalog).not.toHaveBeenCalled()
+    expect(mocks.list).not.toHaveBeenCalled()
+  })
+
+  it("loads only the current session when the pane changes before the chunk resolves", async () => {
+    const pending = deferred<Awaited<ReturnType<WorkflowRunsContentLoader>>>()
+    const loadContent = vi.fn(() => pending.promise)
+    mocks.list.mockImplementation(async (id: string) => [snapshot(id)])
+    const { render } = await mount("primary", false, loadContent)
+    const shell = body()
+    await render("side")
+    expect(body()).toBe(shell)
+    expect(body().textContent).toContain("side chat")
+    expect(mocks.catalog).not.toHaveBeenCalled()
+    await act(async () => pending.resolve({ default: RunSession }))
+    expect(loadContent).toHaveBeenCalledTimes(1)
+    expect(mocks.catalog).toHaveBeenCalledExactlyOnceWith("side", expect.any(AbortSignal))
+    expect(mocks.list).toHaveBeenCalledExactlyOnceWith("side", expect.any(AbortSignal))
+    expect(body().textContent).toContain("side-run")
+    expect(body().textContent).not.toContain("primary-run")
+  })
+
+  it("contains a failed chunk in a private alert while close and Escape remain available", async () => {
+    const pending = deferred<Awaited<ReturnType<WorkflowRunsContentLoader>>>()
+    vi.spyOn(console, "error").mockImplementation(() => undefined)
+    const { close } = await mount("primary", false, () => pending.promise)
+    const shell = body()
+    const dismiss = button(uiText("close_3fd47edc"))
+    await act(async () => pending.reject(new Error("PRIVATE_CHUNK_URL")))
+    expect(body()).toBe(shell)
+    expect(body().querySelector('[role="alert"]')?.textContent).toContain(uiText("this_section_could_not_render_try_again_or_reload_the_p_e644d5da"))
+    expect(body().textContent).not.toContain("PRIVATE_CHUNK_URL")
+    expect(document.activeElement).toBe(dismiss)
+    expect(mocks.list).not.toHaveBeenCalled()
+    await act(async () => dismiss.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })))
+    expect(close).toHaveBeenCalledTimes(1)
+    await click(dismiss)
+    expect(close).toHaveBeenCalledTimes(2)
+  })
+})
 
 describe("Workflow Run dialog", () => {
   it("admits only orchestration, validates args and fences duplicate start intent", async () => {
