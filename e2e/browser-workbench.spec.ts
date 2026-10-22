@@ -62,7 +62,7 @@ test("browser workbench shares one session across human input, DOM, screenshot, 
     }
     if (path === browserPath && method === "GET") {
       stateReads += 1
-      if (!hasTab && stateReads === 1) return route.fulfill({ status: 503 })
+      if (!hasTab && stateReads === 2) return route.fulfill({ status: 503 })
       await route.fulfill({ json: currentState() })
       return
     }
@@ -198,7 +198,7 @@ test("browser workbench shares one session across human input, DOM, screenshot, 
   await page.getByRole("button", { name: "打开侧边面板" }).click()
   await panel.getByRole("tab", { name: "浏览器标签页 1：Browser fixture" }).click()
   await expect(browser.getByRole("textbox", { name: "网页地址" })).toHaveValue("https://example.test/fixture")
-  expect(openCount).toBeGreaterThanOrEqual(2)
+  expect(openCount).toBe(0)
   expect(closeCount).toBe(0)
   const overflow = await page.locator("html").evaluate((element) => element.scrollWidth - element.clientWidth)
   expect(overflow).toBeLessThanOrEqual(1)
