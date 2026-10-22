@@ -848,7 +848,12 @@ describe("ChatPane composer acknowledgement", () => {
       "模型服务连接超时",
       "请检查提供商、代理和网络状态",
     ],
-  ])("explains a persisted bootstrap failure while keeping diagnostics available", async (detail, title, action) => {
+    [
+      "Tool error: Execution failed: Native canonical Session Source scope changed",
+      "会话来源校验未通过",
+      "请先核对会话来源和已完成的操作",
+    ],
+  ])("explains a persisted run failure while keeping diagnostics available", async (detail, title, action) => {
     const container = document.body.appendChild(document.createElement("div"))
     const root = createRoot(container); roots.push(root)
     const chat = createChat(vi.fn<Send>(), "failed-session", "error", detail)
@@ -864,6 +869,30 @@ describe("ChatPane composer acknowledgement", () => {
     expect(alert?.querySelector("details")?.textContent).toContain(detail)
     expect(alert?.querySelector("summary")?.textContent).toBe("技术详情")
     expect(alert?.textContent).toContain("重试生成")
+    expect(chat.retry).not.toHaveBeenCalled()
+  })
+
+  it("explains a live source rejection without replaying the saved submission", async () => {
+    const container = document.body.appendChild(document.createElement("div"))
+    const root = createRoot(container); roots.push(root)
+    const detail = "Tool error: Execution failed: Native canonical Session Source scope changed"
+    const retry = vi.fn()
+    const send = vi.fn<Send>()
+    const failure = { kind: "generation-failed" as const, operationId: 4, sessionId: "old-session", message: detail }
+    const chat = { ...createChat(send, "old-session"), retry, sendFailure: failure }
+    await act(async () => root.render(<ChatPane chat={chat} pickedWorkspace="/picked"
+      onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()} splitOpen={false}
+      onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false} />))
+    const alert = container.querySelector<HTMLElement>('[role="alert"]')
+    expect(alert?.textContent).toContain("会话来源校验未通过")
+    expect(alert?.textContent).toContain("请先核对会话来源和已完成的操作")
+    expect(alert?.querySelector("details")?.textContent).toContain(detail)
+    expect(send).not.toHaveBeenCalled()
+    expect(retry).not.toHaveBeenCalled()
+    const button = Array.from(alert?.querySelectorAll("button") ?? []).find((item) => item.textContent?.includes("重试生成"))
+    await act(async () => button?.click())
+    expect(retry).toHaveBeenCalledExactlyOnceWith(failure)
+    expect(send).not.toHaveBeenCalled()
   })
 
   it("explains a live HTTP 429 generation failure", async () => {
