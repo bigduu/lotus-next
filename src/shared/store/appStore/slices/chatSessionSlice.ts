@@ -63,6 +63,9 @@ export const hasTerminalAssistantTail = (
 // events) into a single history+pending reload.
 const reconcileTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const RECONCILE_DEBOUNCE_MS = 300;
+// Each store/session has one current reader; a settled newer read never revives
+// an older snapshot, even when that newer read failed or was abandoned.
+const historyReads = new WeakMap<() => AppState, Map<string, object>>();
 
 export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, get) => ({
   chats: [],
@@ -731,6 +734,12 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
   },
 
   loadChatHistory: async (sessionId, options) => {
+    if (options?.signal?.aborted) return;
+    const reads = historyReads.get(get) ?? new Map<string, object>();
+    historyReads.set(get, reads);
+    const request = {};
+    reads.set(sessionId, request);
+    const isCurrentRead = () => reads.get(sessionId) === request;
     const mode = options?.mode ?? "replace";
     const retries = Math.max(0, options?.retries ?? 0);
     const retryDelayMs = Math.max(0, options?.retryDelayMs ?? 0);
@@ -743,160 +752,175 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
       waitForAssistant: options?.waitForAssistant ?? false,
     });
 
-    for (let attempt = 0; attempt <= retries; attempt += 1) {
-      if (options?.signal?.aborted) return;
-      try {
-        // Avoid spurious backend calls when the UI layout references a stale session id.
-        // (e.g. after backend reset or manual data cleanup)
-        const chat = get().chats.find((c) => c.id === sessionId);
-        if (!chat) {
-          debugLog("[ChatSlice]", "loadChatHistory.skipMissingChat", { sessionId, attempt });
-          if (options?.throwOnError) throw new Error("Session is unavailable");
+    try {
+      for (let attempt = 0; attempt <= retries; attempt += 1) {
+        if (options?.signal?.aborted || !isCurrentRead()) return;
+        try {
+          // Avoid spurious backend calls when the UI layout references a stale session id.
+          // (e.g. after backend reset or manual data cleanup)
+          const chat = get().chats.find((c) => c.id === sessionId);
+          if (!chat) {
+            debugLog("[ChatSlice]", "loadChatHistory.skipMissingChat", { sessionId, attempt });
+            if (options?.throwOnError) throw new Error("Session is unavailable");
+            return;
+          }
+
+          const history = await agentClient.getHistory(sessionId);
+          if (options?.signal?.aborted) return;
+          if (options?.throwOnError && history.session_id !== sessionId) throw new Error("History session mismatch");
+          if (!isCurrentRead()) return;
+          const currentChat = get().chats.find((item) => item.id === sessionId);
+          if (!currentChat) return;
+          debugLog("[ChatSlice]", "loadChatHistory.response", {
+            sessionId,
+            attempt,
+            historyMessageCount: history.messages.length,
+            localMessageCount: currentChat.messages.length,
+            localStoredMessageCount: currentChat.messageCount ?? null,
+            lastMessageId: history.messages[history.messages.length - 1]?.id ?? null,
+            lastRole: history.messages[history.messages.length - 1]?.role ?? null,
+          });
+
+          const terminalAssistantReady = hasTerminalAssistantTail(history.messages);
+          if (options?.waitForAssistant && !terminalAssistantReady && attempt < retries) {
+            // A live terminal event may precede the final history checkpoint. A
+            // tool tail is just as incomplete as a user tail, so keep waiting for
+            // the durable, non-tool assistant message before applying history.
+            const delay = retryDelayMs > 0 ? retryDelayMs * (attempt + 1) : 200 * (attempt + 1);
+            debugLog("[ChatSlice]", "loadChatHistory.waitForAssistant.retry", {
+              sessionId,
+              attempt,
+              delay,
+              lastRole: history.messages[history.messages.length - 1]?.role ?? null,
+            });
+            await new Promise((resolve) => setTimeout(resolve, delay));
+            continue;
+          }
+
+          const nextMessages = mapHistoryMessagesToUi(sessionId, history.messages);
+
+          if (mode === "monotonic") {
+            const prevMessages = currentChat.messages || [];
+            const prevLen = prevMessages.length;
+            const nextLen = nextMessages.length;
+            const nextLastRole = nextMessages[nextMessages.length - 1]?.role;
+            const prevLastRole = prevMessages[prevMessages.length - 1]?.role;
+            const prevLastMessage = prevMessages[prevMessages.length - 1] as Message | undefined;
+            const nextLastMessage = nextMessages[nextMessages.length - 1] as Message | undefined;
+            const prevLastId = prevLastMessage?.id;
+            const nextLastId = nextLastMessage?.id;
+
+            // Avoid wiping newer in-memory UI state with shorter backend snapshots.
+            // Only replace when backend is strictly longer, or when lengths are equal
+            // but backend clearly progressed from a user tail / changed terminal item.
+            let shouldReplace = false;
+            if (nextLen > prevLen) {
+              shouldReplace = true;
+            } else if (nextLen === prevLen) {
+              const resolvedUserTail = prevLastRole === "user" && nextLastRole !== "user";
+              const terminalChanged =
+                typeof prevLastId === "string" &&
+                typeof nextLastId === "string" &&
+                prevLastId !== nextLastId;
+              shouldReplace = resolvedUserTail || terminalChanged;
+            }
+
+            debugLog("[ChatSlice]", "loadChatHistory.monotonicDecision", {
+              sessionId,
+              attempt,
+              prevLen,
+              nextLen,
+              prevLastRole: prevLastRole ?? null,
+              nextLastRole: nextLastRole ?? null,
+              prevLastId: prevLastId ?? null,
+              nextLastId: nextLastId ?? null,
+              shouldReplace,
+            });
+
+            if (!shouldReplace) {
+              get().updateSession(sessionId, {
+                messageCount: Math.max(currentChat.messageCount ?? 0, history.messages.length),
+              });
+              debugLog("[ChatSlice]", "loadChatHistory.monotonicSkip", {
+                sessionId,
+                attempt,
+                localMessageCount: currentChat.messages.length,
+                serverMessageCount: history.messages.length,
+              });
+              return;
+            }
+          }
+
+          // History owns only its hydrated fields. A permission read/write may
+          // have confirmed a newer mode/ETag while getHistory was in flight.
+          get().updateSession(sessionId, {
+            messages: nextMessages,
+            messageCount: history.messages.length,
+            config: {
+              ...currentChat.config,
+              ...(history.gold_config != null ? { goldConfig: history.gold_config } : {}),
+              ...(history.goal_state != null ? { goalState: history.goal_state } : {}),
+              compressionEvents: (history.compression_events || []).map((event) => ({
+                id: event.id,
+                createdAt: event.created_at,
+                messagesCompressed: event.messages_compressed,
+                segmentsRemoved: event.segments_removed,
+              })),
+              syncCursor: {
+                messageCount: history.messages.length,
+                lastMessageId: history.messages[history.messages.length - 1]?.id ?? null,
+                hasPendingQuestion: Boolean(
+                  get().executionBySession?.[sessionId]?.interaction.pendingQuestion,
+                ),
+                pendingQuestionToolCallId:
+                  get().executionBySession?.[sessionId]?.interaction.pendingQuestion?.toolCallId ??
+                  null,
+              },
+            },
+          }, { skipBackendPatch: true });
+          debugLog("[ChatSlice]", "loadChatHistory.applied", {
+            sessionId,
+            attempt,
+            mode,
+            messageCount: history.messages.length,
+            lastMessageId: history.messages[history.messages.length - 1]?.id ?? null,
+          });
           return;
-        }
-
-        const history = await agentClient.getHistory(sessionId);
-        if (options?.signal?.aborted) return;
-        if (options?.throwOnError && history.session_id !== sessionId) throw new Error("History session mismatch");
-        debugLog("[ChatSlice]", "loadChatHistory.response", {
-          sessionId,
-          attempt,
-          historyMessageCount: history.messages.length,
-          localMessageCount: chat.messages.length,
-          localStoredMessageCount: chat.messageCount ?? null,
-          lastMessageId: history.messages[history.messages.length - 1]?.id ?? null,
-          lastRole: history.messages[history.messages.length - 1]?.role ?? null,
-        });
-
-        const terminalAssistantReady = hasTerminalAssistantTail(history.messages);
-        if (options?.waitForAssistant && !terminalAssistantReady && attempt < retries) {
-          // A live terminal event may precede the final history checkpoint. A
-          // tool tail is just as incomplete as a user tail, so keep waiting for
-          // the durable, non-tool assistant message before applying history.
+        } catch (error) {
+          if (options?.signal?.aborted) return;
+          // Supersession removes write/retry authority, not opted-in errors.
+          if (!isCurrentRead()) {
+            if (options?.throwOnError) throw error;
+            return;
+          }
+          if (attempt >= retries) {
+            console.warn(`[ChatSlice] Failed to load history for ${sessionId}:`, error);
+            debugLog("[ChatSlice]", "loadChatHistory.error.final", {
+              sessionId,
+              attempt,
+              retries,
+              error,
+            });
+            if (options?.throwOnError) throw error;
+            return;
+          }
           const delay = retryDelayMs > 0 ? retryDelayMs * (attempt + 1) : 200 * (attempt + 1);
-          debugLog("[ChatSlice]", "loadChatHistory.waitForAssistant.retry", {
+          debugLog("[ChatSlice]", "loadChatHistory.error.retry", {
             sessionId,
             attempt,
             delay,
-            lastRole: history.messages[history.messages.length - 1]?.role ?? null,
+            error,
           });
           await new Promise((resolve) => setTimeout(resolve, delay));
-          continue;
-        }
-
-        const nextMessages = mapHistoryMessagesToUi(sessionId, history.messages);
-
-        if (mode === "monotonic") {
-          const prevMessages = chat.messages || [];
-          const prevLen = prevMessages.length;
-          const nextLen = nextMessages.length;
-          const nextLastRole = nextMessages[nextMessages.length - 1]?.role;
-          const prevLastRole = prevMessages[prevMessages.length - 1]?.role;
-          const prevLastMessage = prevMessages[prevMessages.length - 1] as Message | undefined;
-          const nextLastMessage = nextMessages[nextMessages.length - 1] as Message | undefined;
-          const prevLastId = prevLastMessage?.id;
-          const nextLastId = nextLastMessage?.id;
-
-          // Avoid wiping newer in-memory UI state with shorter backend snapshots.
-          // Only replace when backend is strictly longer, or when lengths are equal
-          // but backend clearly progressed from a user tail / changed terminal item.
-          let shouldReplace = false;
-          if (nextLen > prevLen) {
-            shouldReplace = true;
-          } else if (nextLen === prevLen) {
-            const resolvedUserTail = prevLastRole === "user" && nextLastRole !== "user";
-            const terminalChanged =
-              typeof prevLastId === "string" &&
-              typeof nextLastId === "string" &&
-              prevLastId !== nextLastId;
-            shouldReplace = resolvedUserTail || terminalChanged;
-          }
-
-          debugLog("[ChatSlice]", "loadChatHistory.monotonicDecision", {
-            sessionId,
-            attempt,
-            prevLen,
-            nextLen,
-            prevLastRole: prevLastRole ?? null,
-            nextLastRole: nextLastRole ?? null,
-            prevLastId: prevLastId ?? null,
-            nextLastId: nextLastId ?? null,
-            shouldReplace,
-          });
-
-          if (!shouldReplace) {
-            get().updateSession(sessionId, {
-              messageCount: Math.max(chat.messageCount ?? 0, history.messages.length),
-            });
-            debugLog("[ChatSlice]", "loadChatHistory.monotonicSkip", {
-              sessionId,
-              attempt,
-              localMessageCount: chat.messages.length,
-              serverMessageCount: history.messages.length,
-            });
+          if (options?.signal?.aborted) return;
+          if (!isCurrentRead()) {
+            if (options?.throwOnError) throw error;
             return;
           }
         }
-
-        // History owns only its hydrated fields. A permission read/write may
-        // have confirmed a newer mode/ETag while getHistory was in flight.
-        const currentChat = get().chats.find((item) => item.id === sessionId);
-        if (!currentChat) return;
-        get().updateSession(sessionId, {
-          messages: nextMessages,
-          messageCount: history.messages.length,
-          config: {
-            ...currentChat.config,
-            ...(history.gold_config != null ? { goldConfig: history.gold_config } : {}),
-            ...(history.goal_state != null ? { goalState: history.goal_state } : {}),
-            compressionEvents: (history.compression_events || []).map((event) => ({
-              id: event.id,
-              createdAt: event.created_at,
-              messagesCompressed: event.messages_compressed,
-              segmentsRemoved: event.segments_removed,
-            })),
-            syncCursor: {
-              messageCount: history.messages.length,
-              lastMessageId: history.messages[history.messages.length - 1]?.id ?? null,
-              hasPendingQuestion: Boolean(
-                get().executionBySession?.[sessionId]?.interaction.pendingQuestion,
-              ),
-              pendingQuestionToolCallId:
-                get().executionBySession?.[sessionId]?.interaction.pendingQuestion?.toolCallId ??
-                null,
-            },
-          },
-        }, { skipBackendPatch: true });
-        debugLog("[ChatSlice]", "loadChatHistory.applied", {
-          sessionId,
-          attempt,
-          mode,
-          messageCount: history.messages.length,
-          lastMessageId: history.messages[history.messages.length - 1]?.id ?? null,
-        });
-        return;
-      } catch (error) {
-        if (options?.signal?.aborted) return;
-        if (attempt >= retries) {
-          console.warn(`[ChatSlice] Failed to load history for ${sessionId}:`, error);
-          debugLog("[ChatSlice]", "loadChatHistory.error.final", {
-            sessionId,
-            attempt,
-            retries,
-            error,
-          });
-          if (options?.throwOnError) throw error;
-          return;
-        }
-        const delay = retryDelayMs > 0 ? retryDelayMs * (attempt + 1) : 200 * (attempt + 1);
-        debugLog("[ChatSlice]", "loadChatHistory.error.retry", {
-          sessionId,
-          attempt,
-          delay,
-          error,
-        });
-        await new Promise((resolve) => setTimeout(resolve, delay));
       }
+    } finally {
+      if (isCurrentRead()) reads.delete(sessionId);
     }
   },
 
