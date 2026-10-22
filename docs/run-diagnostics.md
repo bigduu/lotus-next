@@ -14,7 +14,7 @@ Legacy terminal errors may carry one exact lowercase UUID-v4 marker, optionally 
 
 A live error receipt is labelled as a live observation, not proof of a saved checkpoint. An explicit read uses the existing no-store session-detail request and validates the same-read status, session and complete error. It withdraws old structured fields immediately. Missing, invalid or failed reads cannot revive the old live receipt. A changed session, running state or failure invalidates the preview and disables its download. Canonical confirmation means the matching receipt was observed in that read; it does not authorize a later retry.
 
-New runs, switched sessions, closed dialogs and subsequent failures invalidate pending imports, reads and download handlers. Reopening even the same failure creates a new preview identity. The owned stream guards reject late errors from an earlier operation. These fields do not alter pending approvals, workspace selection or execution admission.
+New runs, switched sessions, closed dialogs and subsequent failures invalidate pending imports, reads and download handlers. Reopening even the same failure creates a new preview identity. The owned stream guards reject late errors from an earlier operation. The optional decoder loads before a stream subscription, preserving error/terminal order; its load failure leaves ordinary legacy error observation available. An aborted subscription does not connect after that load. These fields do not alter pending approvals, workspace selection or execution admission.
 
 ## Export boundary
 

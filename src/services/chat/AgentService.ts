@@ -1,4 +1,4 @@
-import { decodeRunDiagnostic, type PublicRunDiagnostic } from "./runDiagnostic"
+import type { PublicRunDiagnostic } from "./runDiagnostic"
 import { uiText } from "@shared/i18n/ui"
 import { debugLog } from "@shared/utils/debugFlags";
 /**
@@ -1729,8 +1729,14 @@ export class AgentClient {
       return;
     }
 
+    // Optional diagnostics stay outside the startup graph. Load before subscribing
+    // so an error keeps its order relative to the terminal control. Failure to
+    // load support details must not prevent ordinary stream observation.
+    const decode = await import("./runDiagnostic")
+      .then((module) => module.decodeRunDiagnostic).catch(() => undefined);
+    if (signal?.aborted) return;
     const { promise, close } = v2Stream.subscribeAgent(sessionId, handlers, (event, h) =>
-      this.handleEvent(event, h, sessionId),
+      this.handleEvent(event, h, sessionId, decode),
     );
     const abortListener = () => {
       debugLog("[AgentClient]", "events.subscribe.ws.abort", { sessionId });
@@ -1766,7 +1772,7 @@ export class AgentClient {
   /**
    * Handle a single agent event
    */
-  private handleEvent(event: AgentEvent, handlers: AgentEventHandlers, sessionId: string): void {
+  private handleEvent(event: AgentEvent, handlers: AgentEventHandlers, sessionId: string, decode?: typeof import("./runDiagnostic").decodeRunDiagnostic): void {
     switch (event.type) {
       case "token":
         handlers.onToken?.(event.content || "");
@@ -2020,7 +2026,7 @@ export class AgentClient {
         if (event.session_id && event.session_id !== sessionId) break;
         {
           const message = event.message || event.error || "Unknown error";
-          const diagnostic = decodeRunDiagnostic(event.diagnostic, sessionId, message);
+          const diagnostic = decode?.(event.diagnostic, sessionId, message);
           if (diagnostic) handlers.onError?.(message, diagnostic);
           else handlers.onError?.(message);
         }
