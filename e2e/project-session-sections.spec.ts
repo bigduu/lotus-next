@@ -394,15 +394,16 @@ async function keyboardDrop(page: Page, source: Locator, target: Locator, before
 
 async function sidebarGeometryFrames(scope: Locator, sessionId: string, count: number) {
   return scope.evaluate(async (projectElement, { sessionId, count }) => {
+    const browser = projectElement.ownerDocument.defaultView!
     const sidebar = projectElement.closest("aside")!
-    const list = projectElement.closest<HTMLElement>(".overflow-y-auto")!
-    const measure = (element: Element) => {
+    const list = projectElement.closest(".overflow-y-auto")!
+    const measure = (element: { getBoundingClientRect(): { x: number; y: number; width: number; height: number } }) => {
       const { x, y, width, height } = element.getBoundingClientRect()
       return { x, y, width, height }
     }
     const samples = []
     for (let frame = 0; frame < count; frame += 1) {
-      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+      await new Promise<void>((resolve) => browser.requestAnimationFrame(() => resolve()))
       const source = projectElement.querySelector(`[data-sidebar-session="${sessionId}"]`)!
       samples.push({
         rects: {
