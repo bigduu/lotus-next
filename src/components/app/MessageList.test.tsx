@@ -567,7 +567,8 @@ describe("MessageList activity grouping", () => {
     expect(container.querySelectorAll('[data-reasoning="latest final reasoning"]')).toHaveLength(1)
     expect(process.querySelector('[data-reasoning="latest final reasoning"]')).not.toBeNull()
     act(() => toggle.click())
-    expect(process.querySelector<HTMLElement>("[data-process-content]")?.hidden).toBe(false)
+    expect(process.querySelector("[data-process-content]")?.getAttribute("aria-hidden")).toBe("false")
+    expect(process.querySelector("[data-process-content]")?.hasAttribute("inert")).toBe(false)
   })
 
   it("merges tools and reasoning through empty messages and splits only at visible messages", () => {
