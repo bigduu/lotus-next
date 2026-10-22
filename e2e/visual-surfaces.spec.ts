@@ -114,7 +114,9 @@ for (const theme of ["light", "dark"] as const) {
         await page.getByTestId("model-picker-model").press("Enter")
         const modelSearch = page.getByRole("searchbox", { name: "搜索模型", exact: true })
         await modelSearch.focus()
-        expect(await modelSearch.evaluate((element) => element.ownerDocument.defaultView!.getComputedStyle(element).boxShadow)).toContain("4px")
+        await expect(modelSearch).toBeFocused()
+        // Input transitions its shadow; assert the settled visible cue.
+        await expect(modelSearch).toHaveCSS("box-shadow", /4px/)
         const option = page.locator(".model-effort-panel [data-model-option]:enabled").first()
         await option.focus()
         await expect(option).toBeFocused()

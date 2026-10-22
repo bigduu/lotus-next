@@ -81,6 +81,10 @@ test("chat copy preserves selection and focus through fallback failure and retry
   const actions = page.locator('[data-message-actions="copy-failure-source"]')
   const copy = actions.getByRole("button", { name: "复制", exact: true })
   const transcript = page.getByText("原文 English", { exact: true })
+  // Select the settled renderer, rather than the lazy plain-text placeholder
+  // that is replaced independently of the clipboard fallback.
+  await expect(page.locator(".assistant-streamdown")).toContainText("原文 English")
+  await expect(page.locator("[data-assistant-markdown-fallback]")).toHaveCount(0)
   await copy.evaluate((button) => {
     Object.defineProperty(button.ownerDocument, "execCommand", { configurable: true, value: () => false })
   })
