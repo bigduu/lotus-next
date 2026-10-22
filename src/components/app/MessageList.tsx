@@ -1,4 +1,5 @@
 import { uiText, useUiLocale } from "@shared/i18n/ui"
+import i18n from "@shared/i18n"
 import {
   Fragment,
   useCallback,
@@ -26,6 +27,8 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { Textarea } from "@/components/ui/textarea"
+import { ConfirmationIcon } from "@/components/ui/confirmation-icon"
+import { useCopyFeedback } from "@/hooks/useCopyFeedback"
 import { AssistantMarkdown } from "@/components/chat/AssistantMarkdown"
 import { Reasoning } from "@/components/chat/Reasoning"
 import { ToolCalls } from "@/components/chat/ToolCalls"
@@ -347,22 +350,36 @@ function MessageActions({
   onDelete: () => void
 }) {
   useUiLocale()
-  const copy = () => void navigator.clipboard?.writeText(text)
+  const feedback = useCopyFeedback(text, messageId)
+  const copied = feedback.status === "copied"
+  const copy = () => void feedback.copy()
 
   return (
     <div
       data-message-actions={messageId}
-      className="flex shrink-0 items-center gap-0.5 opacity-100 transition-opacity focus-within:opacity-100 group-hover:opacity-100 md:opacity-0"
+      data-copy-state={feedback.status}
+      className={cn(
+        "relative flex shrink-0 items-center gap-0.5 opacity-100 transition-opacity focus-within:opacity-100 group-hover:opacity-100",
+        feedback.status === "idle" && "md:opacity-0",
+      )}
     >
+      <span role="status" className="sr-only">
+        {copied ? <span key={feedback.sequence}>{uiText("copied_8f6f8d97")}</span> : null}
+      </span>
+      {feedback.status === "error" ? (
+        <span role="alert" className="absolute bottom-full end-0 z-10 mb-1 w-max max-w-48 rounded-md bg-popover px-2 py-1 text-xs text-popover-foreground shadow-sm">
+          {String(i18n.t("components.markdown.copyFailed"))}
+        </span>
+      ) : null}
       <button
         type="button"
         onClick={copy}
         className={`${MESSAGE_ACTION_BUTTON} hidden md:inline-flex`}
         style={MESSAGE_ACTION_SIZE}
         aria-label={uiText("copy_63d90d97")}
-        title={uiText("copy_63d90d97")}
+        title={copied ? uiText("copied_8f6f8d97") : uiText("copy_63d90d97")}
       >
-        <Copy className="size-3.5" />
+        <ConfirmationIcon confirmed={copied} sequence={feedback.sequence} className="size-3.5" />
       </button>
       <button
         type="button"
@@ -384,7 +401,8 @@ function MessageActions({
             aria-label={uiText("more_message_actions_cecaef80")}
             title={uiText("more_message_actions_cecaef80")}
           >
-            <MoreHorizontal className="size-3.5" />
+            <MoreHorizontal aria-hidden="true" className="hidden size-3.5 md:block" />
+            <ConfirmationIcon confirmed={copied} sequence={feedback.sequence} fallback={MoreHorizontal} className="size-3.5 md:hidden" />
           </button>
         </DropdownMenuTrigger>
         <DropdownMenuContent

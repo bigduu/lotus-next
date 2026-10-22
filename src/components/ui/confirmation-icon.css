@@ -1,0 +1,21 @@
+@keyframes confirmation-rebound {
+  0% { opacity: 0.6; transform: scale(0.88); }
+  65% { opacity: 1; transform: scale(1.06); }
+  100% { opacity: 1; transform: scale(1); }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .confirmation-icon {
+    animation: confirmation-rebound 180ms var(--motion-ease, ease-out) both;
+    transform-origin: center;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .confirmation-icon { animation: none !important; transform: none !important; }
+}
+
+body[data-vdi-safe="true"] .confirmation-icon {
+  animation: none !important;
+  transform: none !important;
+}

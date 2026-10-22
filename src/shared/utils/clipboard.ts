@@ -24,16 +24,22 @@ const copyWithExecCommand = (text: string): void => {
   textarea.style.top = "-9999px";
   textarea.style.left = "-9999px";
   textarea.style.opacity = "0";
+  const previousFocus = document.activeElement;
   document.body.appendChild(textarea);
 
-  textarea.focus();
-  textarea.select();
-
-  const success = document.execCommand("copy");
-  document.body.removeChild(textarea);
-
-  if (!success) {
-    throw new Error("document.execCommand('copy') returned false");
+  try {
+    textarea.focus();
+    textarea.select();
+    if (!document.execCommand("copy")) {
+      throw new Error("document.execCommand('copy') returned false");
+    }
+  } finally {
+    // Only undo this synchronous fallback's focus change, never a newer one.
+    const restoreFocus = document.activeElement === textarea;
+    textarea.remove();
+    if (restoreFocus && previousFocus instanceof HTMLElement && previousFocus.isConnected) {
+      previousFocus.focus({ preventScroll: true });
+    }
   }
 };
 
