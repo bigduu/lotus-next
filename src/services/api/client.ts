@@ -196,6 +196,14 @@ export class ApiClient {
     return this.send<T>("GET", path, options);
   }
 
+  /** Read once when a service's known refusal must not be retried by transport. */
+  async getOnce<T>(path: string, options?: RequestInit): Promise<T> {
+    const url = this.resolveUrl(path);
+    logApiRequest("GET", url);
+    const response = await this.transport.requestOnce(url, this.createRequestInit("GET", options));
+    return this.handleResponse<T>(response);
+  }
+
   async post<T>(path: string, data?: unknown, options?: RequestInit): Promise<T> {
     return this.send<T>("POST", path, options, { value: data });
   }

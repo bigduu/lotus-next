@@ -82,8 +82,7 @@ beforeEach(() => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
   Object.defineProperty(URL, "createObjectURL", { configurable: true, value: vi.fn(() => "blob:frame-1") })
   Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: vi.fn() })
-  vi.mocked(browserService.open).mockResolvedValue(state(1))
-  vi.mocked(browserService.get).mockResolvedValue(state(1)).mockRejectedValueOnce(new ApiError("legacy", 404, "Not Found"))
+  vi.mocked(browserService.get).mockResolvedValue(state(1))
   host = document.createElement("div")
   document.body.appendChild(host)
   root = createRoot(host)
@@ -100,6 +99,7 @@ afterEach(() => {
 })
 
 it("stops polling and frees the frame when the tab hides without deleting the Bamboo page", async () => {
+  vi.mocked(browserService.get).mockResolvedValueOnce(state(1))
   vi.mocked(browserService.frame)
     .mockResolvedValueOnce({
       blob: new Blob(["frame"], { type: "image/jpeg" }),
@@ -118,11 +118,11 @@ it("stops polling and frees the frame when the tab hides without deleting the Ba
   expect(signal?.aborted).toBe(true)
   expect(browser.frame).toBeNull()
   expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:frame-1")
-  expect(browserService.open).toHaveBeenCalledTimes(1)
+  expect(browserService.get).toHaveBeenCalledTimes(1)
 })
 
 it("opens the first URL in one tab request without leaving a blank page", async () => {
-  vi.mocked(browserService.open).mockResolvedValue(emptyState(7))
+  vi.mocked(browserService.get).mockResolvedValueOnce(emptyState(7))
   vi.mocked(browserService.frame).mockImplementation(() => new Promise(() => {}))
   vi.mocked(browserService.createTab).mockResolvedValue({
     ...tabbedState(8, "tab-a"),
@@ -140,6 +140,7 @@ it("opens the first URL in one tab request without leaving a blank page", async 
 })
 
 it("restarts frame polling from zero after navigation changes the page epoch", async () => {
+  vi.mocked(browserService.get).mockResolvedValueOnce(state(1))
   let releaseSecond!: (value: null) => void
   const secondFrame = new Promise<null>((resolve) => { releaseSecond = resolve })
   vi.mocked(browserService.frame)
@@ -164,6 +165,7 @@ it("restarts frame polling from zero after navigation changes the page epoch", a
 })
 
 it("clears an open DOM snapshot when the agent navigates the shared page", async () => {
+  vi.mocked(browserService.get).mockResolvedValueOnce(state(1))
   let releaseRemoteFrame!: (value: {
     blob: Blob
     frame_seq: number
@@ -228,7 +230,7 @@ it("discards an in-flight old-tab frame and DOM after a human tab switch", async
   const delayedDom = new Promise<Awaited<ReturnType<typeof browserService.dom>>>((resolve) => {
     releaseDom = resolve
   })
-  vi.mocked(browserService.open).mockResolvedValue(tabbedState(1, "tab-a"))
+  vi.mocked(browserService.get).mockResolvedValueOnce(tabbedState(1, "tab-a"))
   vi.mocked(browserService.get).mockResolvedValue(tabbedState(2, "tab-b"))
   vi.mocked(browserService.frame)
     .mockResolvedValueOnce({
@@ -271,7 +273,7 @@ it("rejects a delayed screenshot after a popup becomes the active tab", async ()
   const delayedScreenshot = new Promise<Awaited<ReturnType<typeof browserService.screenshot>>>((resolve) => {
     releaseScreenshot = resolve
   })
-  vi.mocked(browserService.open).mockResolvedValue(tabbedState(1, "tab-a"))
+  vi.mocked(browserService.get).mockResolvedValueOnce(tabbedState(1, "tab-a"))
   vi.mocked(browserService.frame).mockImplementation(() => new Promise(() => {}))
   vi.mocked(browserService.screenshot).mockImplementation(() => delayedScreenshot)
   vi.mocked(browserService.get).mockResolvedValue(tabbedState(2, "tab-b"))
@@ -295,7 +297,7 @@ it("keeps the old frame hidden when its poll returns before tab activation compl
     releaseOldFrame = resolve
   })
   const activation = new Promise<BrowserState>((resolve) => { releaseActivation = resolve })
-  vi.mocked(browserService.open).mockResolvedValue(tabbedState(1, "tab-a"))
+  vi.mocked(browserService.get).mockResolvedValueOnce(tabbedState(1, "tab-a"))
   vi.mocked(browserService.frame)
     .mockResolvedValueOnce({
       blob: new Blob(["first frame"], { type: "image/jpeg" }),
@@ -330,7 +332,7 @@ it("keeps the old frame hidden when its poll returns before tab activation compl
 })
 
 it("adopts a lower epoch and reset frame sequence after browser host recovery", async () => {
-  vi.mocked(browserService.open).mockResolvedValue(tabbedState(90, "tab-a"))
+  vi.mocked(browserService.get).mockResolvedValueOnce(tabbedState(90, "tab-a"))
   vi.mocked(browserService.get).mockResolvedValue(tabbedState(4, "tab-b"))
   vi.mocked(browserService.frame)
     .mockResolvedValueOnce({
@@ -361,7 +363,7 @@ it("restarts at zero when a state read sees a recovered host before an old frame
   const oldFrame = new Promise<Awaited<ReturnType<typeof browserService.frame>>>((resolve) => {
     releaseOldFrame = resolve
   })
-  vi.mocked(browserService.open).mockResolvedValue(tabbedState(90, "tab-a"))
+  vi.mocked(browserService.get).mockResolvedValueOnce(tabbedState(90, "tab-a"))
   vi.mocked(browserService.get).mockResolvedValue(tabbedState(4, "tab-b"))
   vi.mocked(browserService.dom).mockResolvedValue({
     page_epoch: 4, active_tab_id: "tab-b", url: "https://example.test/tab-b",
@@ -401,7 +403,7 @@ it("restarts at zero when a state read sees a recovered host before an old frame
 })
 
 it("advances past a stale frame on the same page without a hot poll loop", async () => {
-  vi.mocked(browserService.open).mockResolvedValue(tabbedState(90, "tab-a"))
+  vi.mocked(browserService.get).mockResolvedValueOnce(tabbedState(90, "tab-a"))
   vi.mocked(browserService.get).mockResolvedValue(tabbedState(90, "tab-a"))
   vi.mocked(browserService.frame)
     .mockResolvedValueOnce({
@@ -424,7 +426,7 @@ it("advances past a stale frame on the same page without a hot poll loop", async
 it("does not let an older state request overwrite a completed tab switch", async () => {
   let releaseGet!: (value: BrowserState) => void
   const staleGet = new Promise<BrowserState>((resolve) => { releaseGet = resolve })
-  vi.mocked(browserService.open).mockResolvedValue(tabbedState(90, "tab-a"))
+  vi.mocked(browserService.get).mockResolvedValueOnce(tabbedState(90, "tab-a"))
   vi.mocked(browserService.frame).mockImplementation(() => new Promise(() => {}))
   vi.mocked(browserService.dom).mockResolvedValue({
     page_epoch: 90, active_tab_id: "tab-a", url: "https://example.test/tab-a",
@@ -452,7 +454,7 @@ it("fences frames when a queued close becomes an active-tab close", async () => 
   const oldFrame = new Promise<Awaited<ReturnType<typeof browserService.frame>>>((resolve) => { releaseOldFrame = resolve })
   const activation = new Promise<BrowserState>((resolve) => { releaseActivation = resolve })
   const close = new Promise<BrowserState>((resolve) => { releaseClose = resolve })
-  vi.mocked(browserService.open).mockResolvedValue(tabbedState(1, "tab-a"))
+  vi.mocked(browserService.get).mockResolvedValueOnce(tabbedState(1, "tab-a"))
   vi.mocked(browserService.frame)
     .mockResolvedValueOnce({
       blob: new Blob(["first frame"], { type: "image/jpeg" }),
@@ -489,7 +491,7 @@ it("fences frames when a queued close becomes an active-tab close", async () => 
 
 it("keeps a cached JPEG and stops incompatible reads while a dialog is pending", async () => {
   const current = tabbedState(17, "tab-a")
-  vi.mocked(browserService.open).mockResolvedValue(current)
+  vi.mocked(browserService.get).mockResolvedValueOnce(current)
   vi.mocked(browserService.frame)
     .mockResolvedValueOnce({
       blob: new Blob(["cached"], { type: "image/jpeg" }), frame_seq: 4,
@@ -521,7 +523,7 @@ it("keeps the cached frame and resumes when one pending state read fails before 
   const current = tabbedState(17, "tab-a")
   let resolveModel!: (next: BrowserState) => void
   const modelResponse = new Promise<BrowserState>((resolve) => { resolveModel = resolve })
-  vi.mocked(browserService.open).mockResolvedValue(current)
+  vi.mocked(browserService.get).mockResolvedValueOnce(current)
   vi.mocked(browserService.frame)
     .mockResolvedValueOnce({
       blob: new Blob(["cached"], { type: "image/jpeg" }), frame_seq: 4,
@@ -553,7 +555,7 @@ it("keeps the cached frame and resumes when one pending state read fails before 
 })
 
 it("answers an exact dialog without prompt text when untouched and refreshes a stale 409", async () => {
-  vi.mocked(browserService.open).mockResolvedValue(pendingState())
+  vi.mocked(browserService.get).mockResolvedValueOnce(pendingState())
   vi.mocked(browserService.frame).mockImplementation(() => new Promise(() => {}))
   vi.mocked(browserService.respondDialog).mockRejectedValue(new ApiError(
     "stale dialog", 409, "Conflict", JSON.stringify({ error: { code: "stale_dialog" } }),
@@ -574,7 +576,7 @@ it("answers a background tab dialog using that dialog's identity while another t
   const pending = pendingState("confirm")
   pending.pending_dialog!.tab_id = "tab-b"
   pending.pending_dialog!.url = "https://background.test/question"
-  vi.mocked(browserService.open).mockResolvedValue(pending)
+  vi.mocked(browserService.get).mockResolvedValueOnce(pending)
   vi.mocked(browserService.frame).mockImplementation(() => new Promise(() => {}))
   vi.mocked(browserService.respondDialog).mockResolvedValue(tabbedState(17, "tab-a"))
 
@@ -593,7 +595,7 @@ it("discards a late background tab response after the active tab changes", async
   pending.pending_dialog!.url = "https://background.test/question"
   let releaseResponse!: (value: BrowserState) => void
   const response = new Promise<BrowserState>((resolve) => { releaseResponse = resolve })
-  vi.mocked(browserService.open).mockResolvedValue(pending)
+  vi.mocked(browserService.get).mockResolvedValueOnce(pending)
   vi.mocked(browserService.frame).mockImplementation(() => new Promise(() => {}))
   vi.mocked(browserService.respondDialog).mockImplementation(() => response)
   vi.mocked(browserService.get).mockResolvedValue({
@@ -614,7 +616,7 @@ it("discards a late background tab response after the active tab changes", async
 it("sends an explicitly empty prompt and discards a late result after model tab change", async () => {
   let releaseResponse!: (value: BrowserState) => void
   const response = new Promise<BrowserState>((resolve) => { releaseResponse = resolve })
-  vi.mocked(browserService.open).mockResolvedValue(pendingState())
+  vi.mocked(browserService.get).mockResolvedValueOnce(pendingState())
   vi.mocked(browserService.frame).mockImplementation(() => new Promise(() => {}))
   vi.mocked(browserService.respondDialog).mockImplementation(() => response)
   vi.mocked(browserService.get).mockResolvedValue(tabbedState(18, "tab-b"))
@@ -634,11 +636,11 @@ it("sends an explicitly empty prompt and discards a late result after model tab 
 
 it("updates an existing browser error after switching language without restarting the browser", async () => {
   const cause = new ApiError("raw 后端诊断", 404, "Not Found")
-  vi.mocked(browserService.open).mockRejectedValueOnce(cause)
+  vi.mocked(browserService.get).mockRejectedValueOnce(cause)
   await act(async () => root.render(<Harness />))
   expect(browser.error).toBe("当前 Bamboo 尚未提供内置浏览器。")
   await act(async () => { await changeLocale("en-US") })
   expect(browser.error).toBe("This Bamboo version does not provide a built-in browser yet.")
-  expect(browserService.open).toHaveBeenCalledTimes(1)
+  expect(browserService.get).toHaveBeenCalledTimes(1)
   expect(cause.message).toContain("raw 后端诊断")
 })

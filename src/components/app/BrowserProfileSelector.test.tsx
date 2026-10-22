@@ -142,17 +142,26 @@ it("preserves the selected mode while changing locale", async () => {
   expect(close).not.toHaveBeenCalled()
 })
 
-it("offers an explicit initial choice for typed browser_not_open without claiming an existing profile", async () => {
-  await render({ profile: { kind: "unreported" }, phase: "closed", allowUnreportedOpen: true })
+it("offers only an explicit mode-free default open for an unreported closed scope", async () => {
+  const openDefault = vi.fn()
+  await render({ profile: { kind: "unreported" }, phase: "closed", actions: { open, close, openDefault } })
+  expect(host.querySelector("select")).toBeNull()
   expect(host.textContent).toContain("当前聊天浏览器已关闭")
   expect(host.textContent).not.toContain("当前模式：")
-  await chooseClean()
-  await submit()
-  expect(open).toHaveBeenCalledExactlyOnceWith("chat-a", "clean")
+  await act(async () => host.querySelector("button")!.click())
+  expect(openDefault).toHaveBeenCalledExactlyOnceWith("chat-a")
+  expect(open).not.toHaveBeenCalled()
 })
 
 it("still blocks a contradictory profile report even if initial opening is allowed", async () => {
-  await render({ profile: { kind: "invalid" }, phase: "closed", allowUnreportedOpen: true })
+  await render({ profile: { kind: "invalid" }, phase: "closed", actions: { open, close, openDefault: vi.fn() } })
   expect(host.querySelector("select")).toBeNull()
+  expect(open).not.toHaveBeenCalled()
+})
+
+it("does not expose mode choices for a legacy closed scope with no positive profile report", async () => {
+  await render({ profile: { kind: "unreported" }, phase: "closed", actions: { open, close, openDefault: vi.fn() } })
+  expect(host.querySelector("select")).toBeNull()
+  expect(host.textContent).not.toContain("当前模式：")
   expect(open).not.toHaveBeenCalled()
 })

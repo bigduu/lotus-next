@@ -8,6 +8,8 @@ import type { BrowserProfileReport } from "@services/browser/profileMode"
 export interface BrowserProfileActions {
   open: (sessionId: string, mode: BrowserProfileMode) => void
   close: (sessionId: string) => void
+  /** Existing API default; never promises profile isolation or sharing. */
+  openDefault?: (sessionId: string) => void
 }
 
 export function BrowserProfileSelector({
@@ -17,7 +19,6 @@ export function BrowserProfileSelector({
   pending = false,
   notice,
   actions,
-  allowUnreportedOpen = false,
 }: {
   sessionId: string
   profile: BrowserProfileReport
@@ -26,17 +27,25 @@ export function BrowserProfileSelector({
   pending?: boolean
   notice?: "mode_conflict"
   actions?: BrowserProfileActions
-  allowUnreportedOpen?: boolean
 }) {
   useUiLocale()
   const selectId = useId()
   const [draft, setDraft] = useState<{ sessionId: string; mode: BrowserProfileMode } | null>(null)
   const selected = draft?.sessionId === sessionId ? draft.mode : "shared"
 
-  if (profile.kind !== "reported" && !(profile.kind === "unreported" && phase === "closed" && allowUnreportedOpen)) {
-    return <p role="status" className="text-sm text-muted-foreground">
-      {profile.kind === "invalid" ? uiText("browser_profile_invalid") : uiText("browser_profile_unreported")}
-    </p>
+  if (profile.kind !== "reported") {
+    return <section className="flex flex-col gap-3 text-sm" aria-label={uiText("browser_profile_label")} aria-busy={pending}>
+      {phase === "closed" ? <p role="status">{uiText("browser_profile_closed")}</p> : null}
+      <p role="status" className="text-muted-foreground">
+        {profile.kind === "invalid" ? uiText("browser_profile_invalid") : uiText("browser_profile_unreported")}
+      </p>
+      {profile.kind === "unreported" && phase === "closed" && actions?.openDefault ? <>
+        <p className="text-xs text-muted-foreground">{uiText("browser_profile_default_help")}</p>
+        <Button type="button" variant="outline" disabled={pending} onClick={() => {
+          if (!pending) actions.openDefault?.(sessionId)
+        }}>{uiText("browser_profile_open_default")}</Button>
+      </> : null}
+    </section>
   }
 
   return (

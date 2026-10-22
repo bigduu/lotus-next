@@ -34,7 +34,7 @@ const tabIdHeader = (response: Response): string | undefined => {
 
 export class BrowserService {
   open(sessionId: string, signal?: AbortSignal): Promise<BrowserState> {
-    return apiClient.put<BrowserState>(sessionPath(sessionId), {}, { signal })
+    return apiClient.putOnce<BrowserState>(sessionPath(sessionId), {}, { signal })
   }
 
   openProfile(sessionId: string, mode: BrowserProfileMode, signal?: AbortSignal): Promise<BrowserState> {
@@ -42,7 +42,7 @@ export class BrowserService {
   }
 
   get(sessionId: string, signal?: AbortSignal): Promise<BrowserState> {
-    return apiClient.get<BrowserState>(sessionPath(sessionId), { signal })
+    return apiClient.getOnce<BrowserState>(sessionPath(sessionId), { signal })
   }
 
   close(sessionId: string, signal?: AbortSignal): Promise<void> {
@@ -116,7 +116,7 @@ export class BrowserService {
   }
 
   dom(sessionId: string, signal?: AbortSignal): Promise<BrowserDomSnapshot> {
-    return apiClient.get<BrowserDomSnapshot>(`${sessionPath(sessionId)}/dom`, { signal })
+    return apiClient.getOnce<BrowserDomSnapshot>(`${sessionPath(sessionId)}/dom`, { signal })
   }
 
   async frame(

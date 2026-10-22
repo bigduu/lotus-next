@@ -28,10 +28,6 @@ type Invalidation = boolean | ((state: BrowserState) => boolean)
 
 const TRANSIENT_STATE_READ_NOTICE_THRESHOLD = 3
 
-const isTransientStateReadError = (error: unknown): boolean =>
-  (isApiError(error) && error.status >= 500 && error.status < 600) ||
-  error instanceof NetworkRequestError || error instanceof RequestTimeoutError
-
 const browserErrorCode = (error: unknown): string | null => {
   if (!isApiError(error) || !error.body) return null
   try {
@@ -42,6 +38,13 @@ const browserErrorCode = (error: unknown): string | null => {
   }
 }
 
+const isBrowserBusy = (error: unknown): boolean =>
+  isApiError(error) && error.status === 503 && browserErrorCode(error) === "browser_busy"
+
+const isTransientStateReadError = (error: unknown): boolean =>
+  (isApiError(error) && error.status >= 500 && error.status < 600 && !isBrowserBusy(error)) ||
+  error instanceof NetworkRequestError || error instanceof RequestTimeoutError
+
 const conflictCode = (error: unknown): string | null =>
   isApiError(error) && error.status === 409 ? browserErrorCode(error) : null
 const isBrowserClosed = (error: unknown): boolean =>
@@ -51,6 +54,7 @@ class BrowserProfileOutcomeUnknown extends Error {}
 const userMessage = (error: unknown): string => {
   if (error instanceof BrowserProfileOutcomeUnknown) return uiText("browser_profile_outcome_unknown")
   if (isApiError(error)) {
+    if (isBrowserBusy(error)) return uiText("browser_request_busy")
     if (conflictCode(error) === "browser_profile_mode_conflict") return uiText("browser_profile_conflict")
     if (error.status === 404) return uiText("this_bamboo_version_does_not_provide_a_built_in_browser_625d56e1")
     if (error.status === 409) {
@@ -80,7 +84,6 @@ export function useBrowserSession(sessionId: string | null, active: boolean) {
   const [profilePhase, setProfilePhase] = useState<"active" | "closed" | "unknown">("unknown")
   const profilePhaseRef = useRef(profilePhase)
   const profileReportsRef = useRef(new Map<string, BrowserProfileReport>())
-  const profileAwareSessionsRef = useRef(new Set<string>())
   const profileFlightsRef = useRef(new Map<string, Promise<void>>())
   const profileFailuresRef = useRef(new Map<string, unknown>())
   const scopeRef = useRef<Scope | null>(null)
@@ -113,15 +116,14 @@ export function useBrowserSession(sessionId: string | null, active: boolean) {
     setState(next)
     const report = readBrowserProfileReport(next)
     const id = scopeRef.current?.sessionId
-    if (id && report.kind !== "unreported") profileAwareSessionsRef.current.add(id)
     if (id && report.kind === "reported") profileReportsRef.current.set(id, report)
+    else if (id) profileReportsRef.current.delete(id)
     setProfile(report)
     profilePhaseRef.current = "active"
     setProfilePhase("active")
   }, [])
 
   const publishClosed = useCallback((id: string) => {
-    profileAwareSessionsRef.current.add(id)
     stateRef.current = null
     stateVersionRef.current += 1
     mutationVersionRef.current += 1
@@ -169,18 +171,9 @@ export function useBrowserSession(sessionId: string | null, active: boolean) {
     const isCurrent = () => scopeRef.current === scope && !controller.signal.aborted
 
     const run = async () => {
-      let initial: BrowserState
-      try {
-        initial = await browserService.get(sessionId, controller.signal)
-      } catch (cause) {
-        if (!isCurrent()) return
-        // Older hosts did not expose browser_not_open. Preserve their mode-free
-        // entry, but never use it after this chat has negotiated the new contract.
-        if (isApiError(cause) && cause.status === 404 && browserErrorCode(cause) === null &&
-          !profileAwareSessionsRef.current.has(sessionId) && !profileFlightsRef.current.has(sessionId)) {
-          initial = await browserService.open(sessionId, controller.signal)
-        } else throw cause
-      }
+      // browser_not_open already exists on older hosts. A read never proves
+      // support for mode-bearing writes and must never bootstrap a browser.
+      const initial = await browserService.get(sessionId, controller.signal)
       if (!isCurrent()) return
       publishState(initial)
       setReadySessionId(sessionId)
@@ -581,15 +574,19 @@ export function useBrowserSession(sessionId: string | null, active: boolean) {
     [],
   )
 
-  const changeProfile = useCallback((id: string, mode?: BrowserProfileMode): Promise<void> => {
+  const changeProfile = useCallback((id: string, operation: "open" | "close", mode?: BrowserProfileMode): Promise<void> => {
     const previousScope = scopeRef.current
     if (!previousScope || previousScope.sessionId !== id || previousScope.controller.signal.aborted ||
       profileFlightsRef.current.has(id) || stateRef.current?.pending_dialog || busy) return Promise.resolve()
-    if (mode === undefined) {
+    if (operation === "close") {
       if (profilePhaseRef.current !== "active" || readBrowserProfileReport(stateRef.current).kind !== "reported") return Promise.resolve()
-    } else if (profilePhaseRef.current !== "closed" || (mode !== "shared" && mode !== "clean")) return Promise.resolve()
+    } else {
+      if (profilePhaseRef.current !== "closed") return Promise.resolve()
+      // A legacy404 is not a profile capability. Until this chat has a coherent
+      // report, offer only a user-explicit mode-free default open.
+      if (mode !== undefined && ((mode !== "shared" && mode !== "clean") || !profileReportsRef.current.has(id))) return Promise.resolve()
+    }
 
-    profileAwareSessionsRef.current.add(id)
     profileFailuresRef.current.delete(id)
     const scope: Scope = { sessionId: id, controller: new AbortController() }
     scopeRef.current = scope
@@ -603,14 +600,18 @@ export function useBrowserSession(sessionId: string | null, active: boolean) {
     // Install the flight before yielding; a second intent must not queue another write.
     const task = Promise.resolve().then(async () => {
       try {
-        if (mode === undefined) await browserService.close(id, scope.controller.signal)
+        if (operation === "close") await browserService.close(id, scope.controller.signal)
         else {
-          const next = await browserService.openProfile(id, mode, scope.controller.signal)
+          const next = mode === undefined
+            ? await browserService.open(id, scope.controller.signal)
+            : await browserService.openProfile(id, mode, scope.controller.signal)
           const report = readBrowserProfileReport(next)
-          if (report.kind !== "reported" || report.mode !== mode) throw new Error("Unconfirmed browser profile response")
+          if (report.kind === "invalid" || (mode !== undefined && (report.kind !== "reported" || report.mode !== mode))) {
+            throw new Error("Unconfirmed browser profile response")
+          }
         }
       } catch (cause) {
-        const failure = !isApiError(cause) || cause.status >= 500
+        const failure = !isApiError(cause) || (cause.status >= 500 && !isBrowserBusy(cause))
           ? new BrowserProfileOutcomeUnknown("Browser operation outcome unconfirmed", { cause }) : cause
         profileFailuresRef.current.set(id, failure)
       } finally {
@@ -623,8 +624,9 @@ export function useBrowserSession(sessionId: string | null, active: boolean) {
     profileFlightsRef.current.set(id, task)
     return task
   }, [busy])
-  const openProfile = useCallback((id: string, mode: BrowserProfileMode) => changeProfile(id, mode), [changeProfile])
-  const closeProfile = useCallback((id: string) => changeProfile(id), [changeProfile])
+  const openProfile = useCallback((id: string, mode: BrowserProfileMode) => changeProfile(id, "open", mode), [changeProfile])
+  const openDefault = useCallback((id: string) => changeProfile(id, "open"), [changeProfile])
+  const closeProfile = useCallback((id: string) => changeProfile(id, "close"), [changeProfile])
 
   const retry = useCallback(() => setRetryVersion((version) => version + 1), [])
   const hasPendingDialog = useCallback(() => Boolean(stateRef.current?.pending_dialog), [])
@@ -635,6 +637,7 @@ export function useBrowserSession(sessionId: string | null, active: boolean) {
     profile,
     profilePhase,
     openProfile,
+    openDefault,
     closeProfile,
     frame,
     dom,
