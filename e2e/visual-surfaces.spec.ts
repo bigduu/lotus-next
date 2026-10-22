@@ -84,7 +84,13 @@ for (const theme of ["light", "dark"] as const) {
       }
       palette.push({ accent, ...result })
 
+      const modelPicker = page.getByTestId("model-effort-picker").first()
+      await modelPicker.focus()
+      expect(await modelPicker.evaluate((element) => element.matches(":focus-visible"))).toBe(true)
+      expect(await modelPicker.evaluate((element) => getComputedStyle(element).boxShadow)).toContain("4px")
+
       if (accent === "teal") {
+        await composer.focus()
         for (const width of [1440, 390]) {
           await page.setViewportSize({ width, height: 1100 })
           await expect(composer).toBeVisible()
@@ -101,6 +107,14 @@ for (const theme of ["light", "dark"] as const) {
         const fonts = await session.send("CSS.getPlatformFontsForNode", { nodeId })
         await info.attach(`actual-system-fonts-${theme}`, { body: JSON.stringify(fonts, null, 2), contentType: "application/json" })
         await session.detach()
+        await modelPicker.press("Enter")
+        const modelSearch = page.getByRole("searchbox", { name: "搜索模型", exact: true })
+        await modelSearch.focus()
+        expect(await modelSearch.evaluate((element) => getComputedStyle(element).boxShadow)).toContain("4px")
+        const option = page.locator(".model-effort-panel button:enabled").first()
+        await option.focus()
+        expect(await option.evaluate((element) => getComputedStyle(element).boxShadow)).toContain("4px")
+        await page.keyboard.press("Escape")
       }
 
       const newSession = page.getByRole("button", { name: "新建会话", exact: true })
@@ -110,6 +124,19 @@ for (const theme of ["light", "dark"] as const) {
       expect(await newSession.evaluate((element) => getComputedStyle(element).boxShadow)).toContain("4px")
     }
     await info.attach(`focus-contrast-${theme}`, { body: JSON.stringify(palette, null, 2), contentType: "application/json" })
+    await page.emulateMedia({ forcedColors: "active" })
+    const composer = page.getByRole("textbox", { name: "消息", exact: true }).first()
+    await composer.focus()
+    const forcedSurface = await page.locator("[data-composer-surface]").first().evaluate((surface) => {
+      const style = getComputedStyle(surface)
+      return { outlineStyle: style.outlineStyle, outlineWidth: parseFloat(style.outlineWidth) }
+    })
+    expect(forcedSurface).toEqual({ outlineStyle: "solid", outlineWidth: 2 })
+    const newSession = page.getByRole("button", { name: "新建会话", exact: true })
+    await page.keyboard.press("Tab")
+    await newSession.focus()
+    expect(await newSession.evaluate((element) => getComputedStyle(element).outlineStyle)).toBe("solid")
+    expect(await newSession.evaluate((element) => parseFloat(getComputedStyle(element).outlineWidth))).toBeGreaterThanOrEqual(2)
     expect(observation.consoleErrors).toEqual([])
     expect(observation.pageErrors).toEqual([])
   })

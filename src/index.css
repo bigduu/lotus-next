@@ -88,7 +88,7 @@
 /* Keep a clear inner ring and a quiet outer halo. This sits outside the
    utility layers so per-component ring/50 classes cannot weaken keyboard
    focus, including when an arbitrary accent updates --ring. */
-:where(button, a[href], input, textarea, select, [role="switch"],
+:where(button, a[href], input, textarea, select, summary, [role="switch"],
   [role="checkbox"], [role="combobox"], [role="tab"], [role="slider"],
   [role="separator"], [contenteditable="true"], [tabindex]:not([tabindex="-1"])):focus-visible {
   outline: 2px solid transparent;

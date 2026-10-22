@@ -36,17 +36,9 @@
   touch-action: none;
   border-radius: inherit;
 }
-.model-effort-trigger:focus-visible,
-.model-effort-panel button:focus-visible,
-.effort-slider input:focus-visible {
-  outline: 1px solid color-mix(in srgb, var(--foreground) 35%, transparent);
-  outline-offset: 3px;
-  box-shadow: none;
-}
-.model-effort-panel .model-effort-search:focus-visible {
-  border-color: color-mix(in srgb, var(--foreground) 35%, transparent);
-  box-shadow: none;
-}
+/* The shared contrast-safe focus rings also cover this trigger, its options,
+   search field and range. Keep their shadows available rather than masking
+   the shared cue with a translucent per-picker outline. */
 .effort-slider input:disabled { cursor: not-allowed; }
 .effort-slider input::-webkit-slider-runnable-track { height: 32px; background: transparent; }
 .effort-slider input::-moz-range-track { height: 32px; background: transparent; }
