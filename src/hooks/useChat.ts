@@ -502,7 +502,22 @@ export function useChat(
     )
   const streaming = streamSid === sid && !retainedTerminalIsHydrated ? streamingText : null
   const streamingReasoning = streamSid === sid ? streamingReasoningText : null
-  const liveSegments = streamSid === sid ? liveSegmentsState : EMPTY_SEGMENTS
+  const liveSegments = useMemo(() => {
+    if (streamSid !== sid) return EMPTY_SEGMENTS
+    if (streamPhaseState !== null) return liveSegmentsState
+    // Failed history reads retain terminal tool evidence without keeping a run
+    // active. Canonical history replaces each retained result when it arrives.
+    const persistedToolIds = new Set(messages.flatMap((message) =>
+      "type" in message && message.type === "tool_result" ? [message.toolCallId] : []))
+    let hydrated = false
+    const remaining = liveSegmentsState.flatMap<LiveSegment>((segment) => {
+      if (segment.kind !== "tools") return [segment]
+      const calls = segment.calls.filter((call) => !persistedToolIds.has(call.toolCallId))
+      hydrated ||= calls.length !== segment.calls.length
+      return calls.length ? [{ ...segment, calls }] : []
+    })
+    return hydrated ? remaining : liveSegmentsState
+  }, [liveSegmentsState, messages, sid, streamPhaseState, streamSid])
   const streamStatus = streamSid === sid ? streamStatusState : null
   const contextCompression = compressionState?.sessionId === sid ? compressionState.value : null
   const streamPhase = streamSid === sid ? streamPhaseState : null
@@ -654,8 +669,13 @@ export function useChat(
   }, [recordOutput])
 
   const stopStream = useCallback(
-    (final: string | null, operationId?: number) => {
+    (final: string | null, operationId?: number, retainToolResults = false) => {
       if (operationId !== undefined && streamOperationRef.current !== operationId) return
+      const retainedSegments = retainToolResults ? liveSegRef.current.flatMap<LiveSegment>((segment) => {
+        if (segment.kind !== "tools") return []
+        const calls = segment.calls.filter((call) => call.status !== "running").map((call) => ({ ...call }))
+        return calls.length ? [{ ...segment, calls }] : []
+      }) : EMPTY_SEGMENTS
       const compression = compressionRef.current
       if (compression && compression.operationId === streamOperationRef.current) {
         const value = compressionRunEnded(compression.value)
@@ -675,20 +695,19 @@ export function useChat(
       }
       streamBufRef.current = ""
       reasonBufRef.current = ""
-      liveSegRef.current = []
+      liveSegRef.current = retainedSegments
       toolCallsByIdRef.current.clear()
       streamOperationRef.current = null
-      setLiveSegmentsState(EMPTY_SEGMENTS)
+      setLiveSegmentsState(retainedSegments)
       setStreamStatus(null)
       setStreamingText(final)
       setStreamingReasoningText(null)
-      // A null final means the live buffer has been fully retired.  Drop its
-      // ownership too, so a late callback cannot make a completed/left session
-      // look live again when the user returns to it.
+      // Release the run even when a failed history read keeps static tool
+      // evidence. A retained result never owns streaming or Stop controls.
       if (final === null) {
         retainedTerminalRef.current = null
         setStreamPhaseState(null)
-        setStreamSid(null)
+        if (!retainedSegments.length) setStreamSid(null)
       } else {
         setStreamPhaseState("finalizing")
       }
@@ -707,6 +726,15 @@ export function useChat(
     retainedTerminalRef.current = null
     stopStream(null)
   }, [messages, sid, stopStream])
+
+  useEffect(() => {
+    if (streamSid !== sid || streamPhaseState !== null || streamOperationRef.current !== null
+        || liveSegments === liveSegmentsState) return
+    // Retire hydrated tool snapshots permanently, including after history edits.
+    liveSegRef.current = liveSegments
+    setLiveSegmentsState(liveSegments)
+    if (!liveSegments.length) setStreamSid(null)
+  }, [liveSegments, liveSegmentsState, sid, streamPhaseState, streamSid])
 
   const LAST_SESSION_KEY = "lotus_next_last_session"
 
@@ -954,7 +982,7 @@ export function useChat(
           let historyLoaded = historyReady
           if (!historyReady) {
             try {
-              await useAppStore.getState().loadChatHistory(runSid)
+              await useAppStore.getState().loadChatHistory(runSid, { throwOnError: true })
               historyLoaded = true
             } catch (err) {
               console.warn("[useChat] failed-generation history hydration failed", err)
@@ -964,7 +992,8 @@ export function useChat(
           if (historyLoaded && opts?.pendingOperationId !== undefined) {
             clearPendingOperation(opts.pendingOperationId)
           }
-          stopStream(null, operationId)
+          stopStream(null, operationId, !historyLoaded)
+          ac.abort()
         })()
       }
 
@@ -1020,7 +1049,13 @@ export function useChat(
             observedIdle = false
             return
           }
-          await useAppStore.getState().loadChatHistory(runSid, { mode: "monotonic" })
+          let historyReady = false
+          try {
+            await useAppStore.getState().loadChatHistory(runSid, { mode: "monotonic", throwOnError: true })
+            historyReady = true
+          } catch (err) {
+            console.warn("[useChat] owned-stream history reconciliation failed", err)
+          }
           if (!canReconcile()) return
           const currentQuestion = questionStateRef.current
           if (useAppStore.getState().chats.find((chat) => chat.id === runSid)?.isRunning
@@ -1028,6 +1063,9 @@ export function useChat(
             observedIdle = false
             return
           }
+          // A failed read cannot confirm completion. A canonical run error can
+          // still settle while its terminal tool evidence remains available.
+          if (!historyReady && session.last_run_status !== "error") return
           const tail = useAppStore.getState().chats.find((chat) => chat.id === runSid)
             ?.messages?.findLast((message) => message.role !== "system")
           // `last_run_status` can be left over from an earlier run when final
@@ -1037,7 +1075,7 @@ export function useChat(
             && tail.id !== streamBaselineMessageIdRef.current && tail.content.trim() === finalText
           if (session.last_run_status === "cancelled") settleCancelled(true)
           else if (session.last_run_status === "completed" && durableReply) settleCompleted(true)
-          else settleFailed(true, session.last_run_error)
+          else settleFailed(historyReady, session.last_run_error)
           ac.abort()
         } catch (err) {
           observedIdle = false
@@ -1055,9 +1093,12 @@ export function useChat(
       await agentClient.subscribeToEvents(
         runSid,
         {
-          onToken: pushToken,
-          onReasoningToken: pushReasoning,
+          onToken: (content) => { if (ownsRunEvent()) pushToken(content) },
+          onReasoningToken: (content) => { if (ownsRunEvent()) pushReasoning(content) },
           onToolStart: (toolCallId, toolName, args) => {
+            // A tool id identifies one invocation within this operation, even
+            // when critical events are replayed after a subscription reconnect.
+            if (!ownsRunEvent() || !toolCallId || toolCallsByIdRef.current.has(toolCallId)) return
             // Natural reading order: whatever text streamed before this tool
             // round freezes above it; the buffers restart afterwards.
             freezeTextSegment()
@@ -1076,24 +1117,26 @@ export function useChat(
             flushSegments()
           },
           onToolToken: (toolCallId, content) => {
+            if (!ownsRunEvent()) return
             const call = toolCallsByIdRef.current.get(toolCallId)
-            if (!call) return
+            if (!call || call.status !== "running") return
             call.output += content
             flushSegments()
           },
           onToolComplete: (toolCallId, result) => {
+            if (!ownsRunEvent() || !result) return
             const call = toolCallsByIdRef.current.get(toolCallId)
-            if (!call) return
-            call.status = result?.success === false ? "error" : "completed"
-            const r = result as { result?: unknown } | undefined
-            if (typeof r?.result === "string" && r.result) call.output = r.result
-            call.images = result?.images
+            if (!call || call.status !== "running") return
+            call.status = result.success === false ? "error" : "completed"
+            if (typeof result.result === "string") call.output = result.result
+            call.images = result.images
             setStreamStatus(null)
             flushSegments()
           },
           onToolError: (toolCallId, error) => {
+            if (!ownsRunEvent()) return
             const call = toolCallsByIdRef.current.get(toolCallId)
-            if (!call) return
+            if (!call || call.status !== "running") return
             call.status = "error"
             call.error = error
             setStreamStatus(null)
@@ -1301,6 +1344,7 @@ export function useChat(
           try {
             await useAppStore.getState().loadChatHistory(runSid, {
               mode: "monotonic",
+              throwOnError: true,
               waitForAssistant: Boolean(finalText.trim()),
               retries: finalText.trim() ? 8 : 0,
               retryDelayMs: 150,

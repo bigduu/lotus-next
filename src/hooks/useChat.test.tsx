@@ -1,7 +1,7 @@
 import { act } from "react"
 import { createRoot, type Root } from "react-dom/client"
 import type { ProviderInstancesConfig, ProviderKind } from "@shared/types/providerConfig"
-import type { ContextSummaryInfo, PermissionDecisionResult, ReasoningEffort, TokenBudgetUsage } from "@services/chat/AgentService"
+import type { AgentEvent, ContextSummaryInfo, PermissionDecisionResult, ReasoningEffort, TokenBudgetUsage } from "@services/chat/AgentService"
 import type { TokenUsage } from "@shared/types/tokenBudget"
 import type { ContextCompressionFeedback } from "@/lib/contextCompression"
 import { ApiError, NetworkRequestError } from "@services/api/errors"
@@ -142,6 +142,10 @@ type HookProps =
     }
 type SubscriptionHandlers = {
   onToken(content: string): void
+  onToolStart(toolCallId: string, toolName: string, args: Record<string, unknown>): void
+  onToolToken(toolCallId: string, content: string): void
+  onToolComplete(toolCallId: string, result: AgentEvent["result"]): void
+  onToolError(toolCallId: string, error: string): void
   onMessageAppended(sessionId: string, messageId?: string): void
   onSessionHistoryCommitted(sessionId: string): void
   onComplete(): void
@@ -1274,7 +1278,7 @@ describe("useChat two-phase send lifecycle", () => {
           pendingOperationId: 1,
           message: "generation failed",
         })
-        expect(mocks.appState.loadChatHistory).toHaveBeenNthCalledWith(2, "terminal-session")
+        expect(mocks.appState.loadChatHistory).toHaveBeenNthCalledWith(2, "terminal-session", { throwOnError: true })
       }
       await act(async () => {
         appendPersistedUser("terminal-session", "optimistic terminal payload")
@@ -2352,7 +2356,7 @@ describe("owned streams without a terminal frame", () => {
     expect(hook.current.sending).toBe(false)
     expect(hook.current.streaming).toBeNull()
     expect(hook.current.sendFailure).toMatchObject({ kind: "generation-failed", sessionId })
-    expect(mocks.appState.loadChatHistory).toHaveBeenLastCalledWith(sessionId, { mode: "monotonic" })
+    expect(mocks.appState.loadChatHistory).toHaveBeenLastCalledWith(sessionId, { mode: "monotonic", throwOnError: true })
     const readCount = mocks.getSession.mock.calls.length
     await advance(20_000)
     expect(mocks.getSession).toHaveBeenCalledTimes(readCount)
@@ -3134,5 +3138,222 @@ describe("useChat context compression feedback", () => {
     expect(hook.current.contextCompression).toEqual({ status: "running" })
     await act(async () => { stream.handlers.onContextCompressionStatus("preflight", "completed") })
     expect(hook.current.contextCompression).toEqual({ status: "completed", awaitingUsage: true })
+  })
+})
+
+describe("tool-stream terminal evidence", () => {
+  const failure = "Tool error: Execution failed: Native canonical Session Source scope changed"
+  const result = "Process exited with code 0\nPosted comment: https://example.invalid/comment/fixture"
+  const calls = (hook: Awaited<ReturnType<typeof mountUseChat>>) => hook.current.liveSegments
+    .flatMap((segment) => segment.kind === "tools" ? segment.calls : [])
+  async function frame() {
+    await act(async () => { await new Promise<void>((resolve) => requestAnimationFrame(() => resolve())) })
+  }
+  function queueStream(sessionId: string) {
+    const subscription = deferred<void>()
+    let handlers!: SubscriptionHandlers
+    let controller!: AbortController
+    mocks.sendMessage.mockResolvedValueOnce({ session_id: sessionId, message_id: `${sessionId}-user` })
+    mocks.subscribeToEvents.mockImplementationOnce((_sid: string, next: SubscriptionHandlers, ac: AbortController) => {
+      handlers = next
+      controller = ac
+      ac.signal.addEventListener("abort", () => subscription.resolve(), { once: true })
+      return subscription.promise
+    })
+    return { subscription, get handlers() { return handlers }, get controller() { return controller } }
+  }
+  async function mountRun(sessionId = "synthetic-tool-session") {
+    mocks.appState.chats = [{ id: sessionId, messages: [], config: { model: "test-model" } }]
+    const stream = queueStream(sessionId)
+    const hook = await mountUseChat({ mode: "bound", sessionId })
+    await act(async () => { await hook.current.send("publish the synthetic fixture") })
+    return { hook, stream, sessionId }
+  }
+  async function finishTool(stream: ReturnType<typeof queueStream>) {
+    await act(async () => {
+      stream.handlers.onToolStart("call-1", "exec_command", { cmd: "synthetic fixture" })
+      stream.handlers.onToolToken("call-1", "preview")
+      stream.handlers.onToolComplete("call-1", { success: true, result })
+    })
+    await frame()
+  }
+  function expectNoReplay() {
+    expect(mocks.sendMessage).toHaveBeenCalledTimes(1)
+    expect(mocks.execute).toHaveBeenCalledTimes(1)
+    expect(mocks.apiPost).not.toHaveBeenCalled()
+    expect(mocks.truncateSessionMessages).not.toHaveBeenCalled()
+  }
+
+  it("keeps one tool per run and preserves the first completion through duplicate and late events", async () => {
+    const { hook, stream } = await mountRun()
+    await act(async () => {
+      stream.handlers.onToolStart("call-1", "exec_command", { cmd: "original" })
+      stream.handlers.onToolToken("call-1", "preview")
+      stream.handlers.onToolStart("call-1", "exec_command", { cmd: "duplicate" })
+    })
+    await frame()
+    expect(calls(hook)).toEqual([{ toolCallId: "call-1", toolName: "exec_command", args: { cmd: "original" }, output: "preview", status: "running" }])
+    await act(async () => {
+      stream.handlers.onToolComplete("call-1", { success: true, result })
+      stream.handlers.onToolToken("call-1", "late output")
+      stream.handlers.onToolStart("call-1", "exec_command", { cmd: "replayed start" })
+      stream.handlers.onToolComplete("call-1", { success: false, result: "late failure" })
+      stream.handlers.onToolError("call-1", "late error")
+    })
+    await frame()
+    expect(calls(hook)).toEqual([{ toolCallId: "call-1", toolName: "exec_command", args: { cmd: "original" }, output: result, status: "completed", images: undefined }])
+    expectNoReplay()
+  })
+
+  it("does not replace a terminal tool error with a late completion", async () => {
+    const { hook, stream } = await mountRun()
+    await act(async () => {
+      stream.handlers.onToolStart("call-1", "exec_command", {})
+      stream.handlers.onToolError("call-1", "first error")
+      stream.handlers.onToolToken("call-1", "late output")
+      stream.handlers.onToolComplete("call-1", { success: true, result })
+      stream.handlers.onToolError("call-1", "duplicate error")
+    })
+    await frame()
+    expect(calls(hook)).toEqual([{ toolCallId: "call-1", toolName: "exec_command", args: {}, output: "", status: "error", error: "first error" }])
+    expectNoReplay()
+  })
+
+  it("uses an empty final result instead of retaining a streamed preview", async () => {
+    const { hook, stream } = await mountRun()
+    await act(async () => {
+      stream.handlers.onToolStart("call-1", "exec_command", {})
+      stream.handlers.onToolToken("call-1", "preview")
+      stream.handlers.onToolComplete("call-1", { success: true, result: "" })
+    })
+    await frame()
+    expect(calls(hook)[0]).toMatchObject({ status: "completed", output: "" })
+    expectNoReplay()
+  })
+
+  it("retains completed tool evidence after a scope error and failed history read without replay", async () => {
+    const { hook, stream, sessionId } = await mountRun()
+    await finishTool(stream)
+    mocks.appState.loadChatHistory.mockImplementationOnce((_sid, options) => options?.throwOnError
+      ? Promise.reject(new Error("synthetic history unavailable")) : Promise.resolve())
+    await act(async () => {
+      stream.handlers.onError(failure)
+      stream.subscription.resolve()
+    })
+    await flushMicrotasks()
+    expect(mocks.appState.loadChatHistory).toHaveBeenLastCalledWith(sessionId, { throwOnError: true })
+    expect(calls(hook)).toHaveLength(1)
+    expect(calls(hook)[0]).toMatchObject({ status: "completed", output: result })
+    expect(hook.current).toMatchObject({ sending: false, streaming: null, streamPhase: null, streamStatus: null,
+      pendingUserText: "publish the synthetic fixture", sendFailure: { kind: "generation-failed", sessionId, message: failure } })
+    expect(stream.controller.signal.aborted).toBe(true)
+    expect(mocks.stopGeneration).not.toHaveBeenCalled()
+    await act(async () => {
+      stream.handlers.onToolStart("call-1", "exec_command", {})
+      stream.handlers.onToolToken("call-1", "late output")
+      stream.handlers.onToolError("call-1", "late error")
+      stream.handlers.onToken("late assistant token")
+    })
+    await frame()
+    expect(calls(hook)).toHaveLength(1)
+    expect(calls(hook)[0]).toMatchObject({ status: "completed", output: result })
+    expect(hook.current.streaming).toBeNull()
+    expectNoReplay()
+
+    mocks.appState.chats[0].messages = [
+      { id: `${sessionId}-user`, role: "user", content: "publish the synthetic fixture" },
+      { id: "persisted-tool", role: "assistant", type: "tool_result", toolCallId: "call-1", result: { result } },
+    ]
+    await hook.rerender({ mode: "bound", sessionId })
+    expect(calls(hook)).toEqual([])
+    expect(hook.current.pendingUserText).toBeNull()
+    expect(hook.current.sendFailure?.message).toBe(failure)
+    expectNoReplay()
+    // Once acknowledged by history, a later explicit history edit cannot
+    // resurrect an obsolete in-memory result.
+    mocks.appState.chats[0].messages = mocks.appState.chats[0].messages.slice(0, 1)
+    await hook.rerender({ mode: "bound", sessionId })
+    expect(calls(hook)).toEqual([])
+  })
+
+  it("retires live evidence and the exact pending message after confirmed failure-history hydration", async () => {
+    const { hook, stream, sessionId } = await mountRun()
+    await finishTool(stream)
+    mocks.appState.loadChatHistory.mockImplementationOnce(async () => { appendPersistedUser(sessionId, "publish the synthetic fixture", `${sessionId}-user`) })
+    await act(async () => { stream.handlers.onError(failure); stream.subscription.resolve() })
+    await flushMicrotasks()
+    expect(calls(hook)).toEqual([])
+    expect(hook.current.pendingUserText).toBeNull()
+    expect(hook.current.sendFailure?.message).toBe(failure)
+    expectNoReplay()
+  })
+
+  it.each(["control-only terminal", "idle reconciliation"] as const)("retains tool evidence when %s cannot confirm history", async (ending) => {
+    if (ending === "idle reconciliation") vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] })
+    const { hook, stream, sessionId } = await mountRun()
+    await finishTool(stream)
+    mocks.appState.loadChatHistory.mockImplementation((_sid, options) => options?.throwOnError
+      ? Promise.reject(new Error("synthetic history unavailable")) : Promise.resolve())
+    if (ending === "control-only terminal") {
+      await act(async () => { stream.subscription.resolve() })
+    } else {
+      mocks.getSession.mockResolvedValue({ session: { id: sessionId, is_running: false,
+        last_run_status: "error", last_run_error: failure } })
+      await act(async () => { await vi.advanceTimersByTimeAsync(7_000) })
+    }
+    await flushMicrotasks()
+    expect(mocks.appState.loadChatHistory).toHaveBeenCalledWith(sessionId, expect.objectContaining({
+      mode: "monotonic", throwOnError: true,
+    }))
+    expect(calls(hook)[0]).toMatchObject({ status: "completed", output: result })
+    expect(hook.current).toMatchObject({ sending: false, streaming: null, streamPhase: null,
+      sendFailure: { kind: "generation-failed", sessionId } })
+    expectNoReplay()
+  })
+
+  it("does not resurrect evidence after Stop supersedes an in-flight failed-history read", async () => {
+    const { hook, stream, sessionId } = await mountRun()
+    await finishTool(stream)
+    const history = deferred<void>()
+    mocks.appState.loadChatHistory.mockReturnValueOnce(history.promise)
+    mocks.stopGeneration.mockResolvedValueOnce(undefined)
+    await act(async () => { stream.handlers.onError(failure); stream.subscription.resolve(); hook.current.stop() })
+    expect(mocks.stopGeneration).toHaveBeenCalledExactlyOnceWith(sessionId)
+    await act(async () => { history.reject(new Error("synthetic late read failure")) })
+    await flushMicrotasks()
+    expect(calls(hook)).toEqual([])
+    expect(hook.current.streaming).toBeNull()
+    expect(stream.controller.signal.aborted).toBe(true)
+    expect(hook.current.pendingUserText).toBe("publish the synthetic fixture")
+    expectNoReplay()
+  })
+
+  it("permits the same tool id in a successor run and keeps late callbacks away from its Stop control", async () => {
+    const { hook, stream, sessionId } = await mountRun()
+    await finishTool(stream)
+    mocks.appState.loadChatHistory.mockRejectedValueOnce(new Error("synthetic history unavailable"))
+    await act(async () => { stream.handlers.onError(failure); stream.subscription.resolve() })
+    await flushMicrotasks()
+    const next = queueStream(sessionId)
+    await act(async () => { await hook.current.send("successor fixture") })
+    await act(async () => {
+      next.handlers.onToolStart("call-1", "exec_command", { cmd: "successor" })
+      next.handlers.onToolToken("call-1", "new output")
+      stream.handlers.onToolComplete("call-1", { success: true, result: "old result" })
+      stream.handlers.onToolStart("call-2", "exec_command", {})
+    })
+    await frame()
+    expect(calls(hook)).toEqual([{ toolCallId: "call-1", toolName: "exec_command", args: { cmd: "successor" }, output: "new output", status: "running" }])
+    expect(hook.current.sending).toBe(true)
+    mocks.stopGeneration.mockResolvedValueOnce(undefined)
+    await act(async () => { hook.current.stop() })
+    await flushMicrotasks()
+    expect(mocks.stopGeneration).toHaveBeenCalledExactlyOnceWith(sessionId)
+    expect(next.controller.signal.aborted).toBe(true)
+    expect(calls(hook)).toEqual([])
+    expect(mocks.sendMessage).toHaveBeenCalledTimes(2)
+    expect(mocks.execute).toHaveBeenCalledTimes(2)
+    expect(mocks.apiPost).not.toHaveBeenCalled()
+    expect(mocks.truncateSessionMessages).not.toHaveBeenCalled()
   })
 })
