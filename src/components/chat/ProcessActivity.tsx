@@ -1,6 +1,7 @@
 import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { ChevronRight } from "lucide-react"
 import { useId, useLayoutEffect, useRef, useState, type ReactNode } from "react"
+import { DisclosurePanel } from "./DisclosurePanel"
 import "./ProcessActivity.css"
 
 export interface ProcessActivityProps {
@@ -123,6 +124,7 @@ export function ProcessActivity({
   useUiLocale()
   const [localOpen, setLocalOpen] = useState(false)
   const contentId = useId()
+  const triggerRef = useRef<HTMLButtonElement>(null)
   const expanded = open ?? localOpen
   const resolvedLabel = label ?? uiText(active && thinking ? "thinking_64088d8c" : "process_activity")
   const reasoningBrief = extractProcessBrief(reasoning)
@@ -157,6 +159,7 @@ export function ProcessActivity({
   return (
     <div data-process-activity className="process-activity">
       {hasDetails ? <button
+        ref={triggerRef}
         type="button"
         data-process-toggle
         aria-label={resolvedLabel}
@@ -168,16 +171,17 @@ export function ProcessActivity({
         {summary}
       </button> : <div data-process-status role="status" className="process-activity-toggle" style={{ cursor: "default" }}>{summary}</div>}
       <CurrentStep preview={preview ? { ...preview, running: active && preview.running } : undefined} expanded={expanded} />
-      {hasDetails ? <div
+      {hasDetails ? <DisclosurePanel
         id={contentId}
         data-process-content
         role="region"
         aria-label={resolvedLabel}
-        hidden={!expanded}
+        expanded={expanded}
+        triggerRef={triggerRef}
         className="process-activity-content"
       >
-        {children}
-      </div> : null}
+        <div className="process-activity-content-body">{children}</div>
+      </DisclosurePanel> : null}
     </div>
   )
 }

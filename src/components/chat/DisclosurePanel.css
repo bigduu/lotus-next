@@ -1,0 +1,25 @@
+.disclosure-panel {
+  display: grid;
+  min-width: 0;
+  grid-template-rows: 0fr;
+  visibility: hidden;
+  transition:
+    grid-template-rows var(--motion-normal, 220ms) var(--motion-ease, ease),
+    visibility 0s linear var(--motion-normal, 220ms);
+}
+.disclosure-panel[data-state="open"] {
+  grid-template-rows: 1fr;
+  visibility: visible;
+  transition-delay: 0s;
+}
+.disclosure-panel-clip { min-height: 0; overflow: hidden; }
+
+/* Safe modes switch directly; shortening a transform still moves its target. */
+body[data-vdi-safe="true"] .disclosure-panel,
+body[data-vdi-safe="true"] .reasoning-toggle,
+body[data-vdi-safe="true"] .reasoning-chevron { transition: none; }
+body[data-vdi-safe="true"] .reasoning-brain { animation: none; }
+@media (prefers-reduced-motion: reduce) {
+  .disclosure-panel, .reasoning-toggle, .reasoning-chevron { transition: none; }
+  .reasoning-brain { animation: none; }
+}
