@@ -31,11 +31,11 @@ async function expectCaretPaint(page: Page, target: Locator, painted: boolean) {
     }
     expect(clip.width).toBeGreaterThan(0)
     expect(clip.height).toBeGreaterThan(0)
-    const before = await page.screenshot({ clip, animations: "disabled" })
+    const before = await page.screenshot({ clip, animations: "disabled", caret: "initial" })
     const hidden = await page.addStyleTag({ content: '[data-assistant-streaming-caret] { visibility: hidden !important; }' })
     let withoutCaret: Buffer
     try {
-      withoutCaret = await page.screenshot({ clip, animations: "disabled" })
+      withoutCaret = await page.screenshot({ clip, animations: "disabled", caret: "initial" })
     } finally {
       await hidden.evaluate((element) => element.remove())
     }
@@ -123,10 +123,15 @@ test("streaming caret obeys transcript clipping and follows local layout in a br
     return glyph!.y >= viewport!.y + viewport!.height
   }).toBe(true)
   await expectCaretPaint(page, target, false)
+  const readerScrollTop = await area.evaluate((element) => element.scrollTop)
   await testInfo.attach("caret-clipped-above-composer-fixture", {
-    body: await page.screenshot({ path: testInfo.outputPath("caret-clipped-above-composer-fixture.png") }),
+    // Screenshot's default caret hiding mutates the focused contenteditable.
+    // Preserve editor DOM while observing a reader's deliberately unpinned view.
+    body: await page.screenshot({ path: testInfo.outputPath("caret-clipped-above-composer-fixture.png"), caret: "initial" }),
     contentType: "image/png",
   })
+  await expect.poll(() => area.evaluate((element) => element.scrollTop)).toBe(readerScrollTop)
+  await expect(jump).toBeVisible()
   await jump.click()
   await expectCaretPaint(page, target, true)
 
@@ -173,7 +178,7 @@ test("streaming caret obeys transcript clipping and follows local layout in a br
   await page.setViewportSize({ width: Math.max(360, initialViewport.width - 140), height: initialViewport.height })
   await expectCaretPaint(page, target, true)
   await testInfo.attach("caret-restored-after-layout-fixture", {
-    body: await page.screenshot({ path: testInfo.outputPath("caret-restored-after-layout-fixture.png") }),
+    body: await page.screenshot({ path: testInfo.outputPath("caret-restored-after-layout-fixture.png"), caret: "initial" }),
     contentType: "image/png",
   })
 
@@ -214,7 +219,7 @@ test("inline caret wraps with CJK and Latin chunks at narrow widths", async ({ p
   })
   await expectCaretPaint(page, target, true)
   await testInfo.attach("caret-animated-narrow-lines-fixture", {
-    body: await page.screenshot({ animations: "disabled", path: testInfo.outputPath("caret-animated-narrow-lines-fixture.png") }),
+    body: await page.screenshot({ animations: "disabled", caret: "initial", path: testInfo.outputPath("caret-animated-narrow-lines-fixture.png") }),
     contentType: "image/png",
   })
   await page.route(`**/api/v1/history/${SESSION_ID}`, (route) => route.fulfill({ json: {
@@ -296,7 +301,7 @@ for (const theme of ["light", "dark"] as const) {
     expect(await settled.evaluate((node) => node.textContent!.includes("\u00a0"))).toBe(false)
     expect(await settled.locator("p").evaluate((node) => node.ownerDocument.defaultView!.getComputedStyle(node).textWrapStyle)).toBe("pretty")
     await testInfo.attach(`stream-prose-${theme}-390`, {
-      body: await page.screenshot({ fullPage: true }), contentType: "image/png",
+      body: await page.screenshot({ fullPage: true, caret: "initial" }), contentType: "image/png",
     })
     expect(observation.pageErrors).toEqual([])
     expect(observation.consoleErrors).toEqual([])
