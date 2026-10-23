@@ -27,7 +27,8 @@ it("serves the published sanitizer with embedded, valid source coordinates", asy
   const server = await createServer({
     configFile: path.resolve("vite.config.ts"),
     customLogger: logger,
-    server: { middlewareMode: true },
+    // This one-shot transform needs no native host watcher or change events.
+    server: { middlewareMode: true, watch: { useFsEvents: false, usePolling: true, ignored: ["**"] } },
   })
   try {
     const file = path.resolve("node_modules/rehype-harden/dist/index.js")

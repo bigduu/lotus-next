@@ -39,6 +39,7 @@ export const BUNDLE_BUDGET = Object.freeze({
 const immediateBootstrapNames = new Set(["ErrorBoundary", "Root"])
 
 const optionalFeatureEntries = Object.freeze([
+  { label: "ProjectWorkBoard", source: "src/components/app/ProjectWorkBoard.tsx" },
   { label: "BrowserPane", source: "src/components/app/BrowserPane.tsx" },
   { label: "Settings", source: "src/components/chat/Settings.tsx" },
   { label: "StreamdownMarkdown", source: "src/components/chat/StreamdownMarkdown.tsx" },
@@ -55,6 +56,7 @@ const optionalFeatureEntries = Object.freeze([
 ])
 
 const forbiddenStartupModulePaths = Object.freeze([
+  "src/components/app/ProjectWorkBoard.tsx",
   "src/components/app/BrowserPane.tsx",
   "src/components/chat/Settings.tsx",
   "src/components/chat/StreamdownMarkdown.tsx",
@@ -67,6 +69,7 @@ const forbiddenStartupModulePaths = Object.freeze([
 ])
 
 const forbiddenStartupModulePrefixes = Object.freeze([
+  "src/components/app/project-work/",
   "src/components/chat/settings/",
   "src/lib/export/",
   "src/lib/mermaid/",
