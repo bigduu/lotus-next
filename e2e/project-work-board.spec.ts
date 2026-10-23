@@ -88,7 +88,7 @@ for (const colorScheme of ["light", "dark"] as const) {
     await expect(listButton).toHaveClass(/bg-primary/)
     await boardButton.click()
     const viewport = page.viewportSize()!
-    const columns = await dialog.locator(".project-work-stages").evaluate((element) => getComputedStyle(element).gridTemplateColumns.trim().split(/\s+/).length)
+    const columns = await dialog.locator(".project-work-stages").evaluate((element) => element.ownerDocument.defaultView!.getComputedStyle(element).gridTemplateColumns.trim().split(/\s+/).length)
     expect(columns).toBe(viewport.width >= 1280 ? 4 : viewport.width >= 768 ? 2 : 1)
     expect((await dialog.boundingBox())!.width).toBeCloseTo(Math.min(viewport.width, 1024), 0)
     await dialog.getByRole("checkbox", { name: "显示已取消" }).focus()
