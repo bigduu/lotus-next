@@ -9,7 +9,7 @@ import { Readable, Transform } from "node:stream"
 import { pipeline } from "node:stream/promises"
 import { fileURLToPath, pathToFileURL } from "node:url"
 
-export const ACCEPTED_SOURCE_SHA = "4eaec0e7b14243e453878d9ff82ec1efee49e012"
+export const ACCEPTED_SOURCE_SHA = "992fb8d3d346ebb3bb546239ccc9339b9380aa29"
 export const BROWSER_VERSION = "157.0.8090.0"
 export const BROWSER_PINS = Object.freeze(Object.fromEntries(Object.entries({
   linux64: {
