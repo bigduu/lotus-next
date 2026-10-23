@@ -14,6 +14,7 @@ import {
 const temporaryDirectories = []
 
 const featureEntries = [
+  ["src/components/app/ProjectWorkBoard.tsx", "ProjectWorkBoard"],
   ["src/components/app/BrowserPane.tsx", "BrowserPane"],
   ["src/components/chat/Settings.tsx", "Settings"],
   ["src/components/chat/StreamdownMarkdown.tsx", "StreamdownMarkdown"],
@@ -34,6 +35,8 @@ const vendorFeatureNames = [
 
 const createFixture = async ({
   leakSettings = false,
+  leakProjectWork = false,
+  projectWorkCss = false,
   leakBrowserPane = false,
   leakedOwnedModule,
   leakedOwnedPackage,
@@ -78,6 +81,7 @@ const createFixture = async ({
         "_react.js",
         "_vendor.js",
         ...(leakSettings ? ["src/components/chat/Settings.tsx"] : []),
+        ...(leakProjectWork ? ["src/components/app/ProjectWorkBoard.tsx"] : []),
         ...(leakBrowserPane ? ["src/components/app/BrowserPane.tsx"] : []),
       ],
       dynamicImports: ["src/components/chat/Settings.tsx"],
@@ -107,6 +111,7 @@ const createFixture = async ({
       imports: ["_runtime.js"],
     }
   }
+  if (projectWorkCss) manifest["src/components/app/ProjectWorkBoard.tsx"].css = ["assets/ProjectWorkBoard.css"]
 
   await writeFile(
     path.join(directory, "index.html"),
@@ -193,12 +198,30 @@ describe("ordinary-chat production bundle budget", () => {
     expect(report.forbiddenStartupModules).toContain("src/components/chat/Settings.tsx")
   })
 
+  it("rejects an eager Project Work regression even when its optional chunk exists", async () => {
+    const report = analyzeBundleBudget(await createFixture({ leakProjectWork: true }))
+    expect(findBundleBudgetViolations(report)).toContain(
+      "ProjectWorkBoard leaked into the ordinary-chat startup closure.",
+    )
+  })
+
+  it("keeps lazy board CSS out of startup and counts it if the board becomes eager", async () => {
+    const lazy = analyzeBundleBudget(await createFixture({ projectWorkCss: true }))
+    const eager = analyzeBundleBudget(await createFixture({ projectWorkCss: true, leakProjectWork: true }))
+    expect(lazy.cssFiles).toEqual(["assets/index.css"])
+    expect(eager.cssFiles).toContain("assets/ProjectWorkBoard.css")
+    expect(eager.css.rawBytes).toBeGreaterThan(lazy.css.rawBytes)
+    expect(findBundleBudgetViolations(eager)).toContain("ProjectWorkBoard leaked into the ordinary-chat startup closure.")
+  })
+
   it("rejects the optional BrowserPane view in the startup import graph", async () => {
     const report = analyzeBundleBudget(await createFixture({ leakBrowserPane: true }))
     expect(findBundleBudgetViolations(report)).toContain("BrowserPane leaked into the ordinary-chat startup closure.")
   })
 
   it.each([
+    "src/components/app/ProjectWorkBoard.tsx",
+    "src/components/app/project-work/ProjectWorkPlanningControls.tsx",
     "src/components/app/BrowserPane.tsx",
     "src/services/plugin/PluginService.ts",
     "src/services/metrics/MetricsService.ts",

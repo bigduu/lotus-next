@@ -10,6 +10,7 @@ import { SessionRow } from "@/components/chat/SessionRow"
 import { ProjectArchiveDialog } from "@/components/app/ProjectArchiveDialog"
 import { ProjectEditDialog } from "@/components/app/ProjectEditDialog"
 import { ProjectSectionHeader } from "@/components/app/ProjectSectionHeader"
+import { ProjectWorkDialog } from "@/components/app/ProjectWorkDialog"
 import { ProjectGroupHeader } from "@/components/app/ProjectGroupHeader"
 import { ProjectSectionDialog } from "@/components/app/ProjectSectionDialog"
 import { groupChats, groupChatsByProject, type ChatGroup } from "@/lib/groupChats"
@@ -98,6 +99,7 @@ export function Sidebar({
   const [groupingMode, setGroupingMode] = useState<SidebarGroupingMode>(readGroupingMode)
   const [pinnedProjectIds, setPinnedProjectIds] = useState(readPinnedProjectIds)
   const [sectionDialogMode, setSectionDialogMode] = useState<"create" | "manage">("create")
+  const [workProjectId, setWorkProjectId] = useState<string | null>(null)
   const [editingProjectId, setEditingProjectId] = useState<string | null>(null)
   const [sectioningProjectId, setSectioningProjectId] = useState<string | null>(null)
   const [pendingArchiveProjectId, setPendingArchiveProjectId] = useState<string | null>(null)
@@ -427,6 +429,13 @@ export function Sidebar({
                 onNewChat(project.id)
                 onClose()
               }}
+              onWork={() => {
+                setProjectActionError(null)
+                setWorkProjectId(project.id)
+                void useAppStore.getState().ensureProject(project.id).catch((error) => {
+                  setProjectActionError(getErrorMessage(error))
+                })
+              }}
               onEdit={() => {
                 setProjectActionError(null)
                 setEditingProjectId(project.id)
@@ -644,6 +653,8 @@ export function Sidebar({
             <Cog className="size-4" />{uiText("system_settings_68ea5dd4")}</Button>
         </div>
       </aside>
+
+      <ProjectWorkDialog metadataError={projectActionError} project={workProjectId ? projects[workProjectId] ?? null : null} onClose={() => setWorkProjectId(null)} />
 
       <ProjectEditDialog projectId={editingProjectId} onClose={() => setEditingProjectId(null)} />
 
