@@ -1,6 +1,7 @@
 import { apiClient } from "@services/api"
 import { uiText } from "@shared/i18n/ui"
 import type { Cursor, ReadEnvelope, SnapshotRef, Work, WorkView } from "./types"
+import type { SprintFilter } from "./sprints"
 
 export type BoardStage = "todo" | "doing" | "testing" | "done"
 export interface ProjectBoardTicket extends Work {
@@ -35,6 +36,11 @@ export type ProjectBoardPage = ReadEnvelope<ProjectBoardData>
 export interface BoardAssignment {
   id: string
   state: string
+  // Existing inspector facts. Legacy backends may omit them; do not infer.
+  work_id?: string
+  generation?: number
+  authority_epoch?: number
+  process_stopped?: boolean
   runtime: { session_id: string; run_id: string } | null
   awaiting_request?: string | null
   workspace: { repo: string; branch: string; worktree: string; base_commit: string } | null
@@ -57,10 +63,11 @@ export function boardCountsKnown(page: ProjectBoardPage) {
     && page.index_seq >= page.snapshot.seq
 }
 export const projectBoardClient = {
-  async page(projectId: string, includeCancelled: boolean, previous?: ProjectBoardPage, signal?: AbortSignal): Promise<ProjectBoardPage> {
+  async page(projectId: string, includeCancelled: boolean, previous?: ProjectBoardPage, signal?: AbortSignal, sprintFilter?: SprintFilter | null): Promise<ProjectBoardPage> {
     const result = await apiClient.post<ProjectBoardPage>("tickets/project-board", {
       project_id: projectId, include_cancelled: includeCancelled, include_archived: false,
       limit: 100, cursor: previous?.next_cursor ?? null, fixed_commit: previous?.snapshot.commit ?? null,
+      ...(sprintFilter ? { sprint_filter: sprintFilter } : {}),
     }, { signal })
     validateSnapshot(result.snapshot, previous?.snapshot ?? result.snapshot)
     if (["todo", "doing", "testing", "done", "blocked", "cancelled", "total"].some((key) => { const value = result.data.counts[key as keyof ProjectBoardData["counts"]]; return !Number.isSafeInteger(value) || value < 0 })

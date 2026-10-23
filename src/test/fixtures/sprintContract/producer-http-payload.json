@@ -1,0 +1,283 @@
+{
+  "source_sha": "b3a60a7f51b131b1f136ccb5fd78b2317f94a925",
+  "source_tree": "3bae5e25f941c82be73e63808ae3cdba269a0b72",
+  "test_receipt": "/Users/bigduu/Documents/Codex/2026-10-18/task-3/sprint-http-server-initial.json",
+  "log": "/Users/bigduu/Documents/Codex/2026-10-18/task-3/sprint-http-server-initial.log",
+  "log_sha256": "e1e96498d79ebd308fab39606d6fb94105e864f70ce33812b5c7616b457c7fa7",
+  "binary": "/Volumes/WD_BLACK/rust-cache/build/bamboo-2043-sprint-http-20261018/server/debug/deps/sprint_planning_http-af99c8bc2a59fbe6",
+  "binary_sha256": "d0b2d2882ff5d7abb29bd468c89a7f21a452e7c00594e6c207320d53ebb12517",
+  "binary_bytes": 426811048,
+  "environment": {
+    "CARGO_TARGET_DIR": "/Volumes/WD_BLACK/rust-cache/build/bamboo-2043-sprint-http-20261018/server",
+    "CARGO_BUILD_BUILD_DIR": "/Volumes/WD_BLACK/rust-cache/build/bamboo-2043-sprint-http-20261018/server",
+    "CARGO_BUILD_JOBS": "1",
+    "RUST_MIN_STACK": "8388608",
+    "BAMBOO_FRONTEND_BUILD_MODE": "api-only"
+  },
+  "scope": "Three actual Actix configure_routes owner HTTP tests with isolated temporary Jiandu and dispatch disabled; no model/provider execution",
+  "requests_and_actual_responses": {
+    "board_filter_examples": [
+      {
+        "kind": "backlog"
+      },
+      {
+        "kind": "sprint",
+        "sprint_id": "a"
+      }
+    ],
+    "close_request": {
+      "action": {
+        "dispositions": {
+          "40fb8af1-b4cf-46dd-938a-6e765734c911": {
+            "destination": "backlog"
+          }
+        },
+        "expected_revision": 3,
+        "op": "close",
+        "target_revisions": {}
+      },
+      "binding": {
+        "binding_revision": 1,
+        "scope_id": "supervisor/e9867fc0-7372-461b-bfed-1e7abeaa402c",
+        "supervisor_session_id": "bamboo-default-supervisor"
+      },
+      "expected_epoch": 1,
+      "expected_seq": 6,
+      "operation_id": "sprint-6",
+      "project_id": "fa4c5a43-b6fb-479f-9cdf-c2391fe78889",
+      "source": "explicit owner request",
+      "sprint_id": "a"
+    },
+    "close_response": {
+      "closure": {
+        "closed_seq": 7,
+        "counts": {
+          "accepted": 0,
+          "blocked": 0,
+          "cancelled": 0,
+          "pending_acceptance": 0,
+          "total": 1,
+          "unfinished": 1
+        },
+        "members": {
+          "40fb8af1-b4cf-46dd-938a-6e765734c911": {
+            "disposition": {
+              "disposition": "backlog"
+            },
+            "version": {
+              "accepted": false,
+              "accepted_submission": null,
+              "active_assignment": null,
+              "archived": false,
+              "blocked_resume_state": null,
+              "context_hash": null,
+              "contract_revision": 1,
+              "current_submission": null,
+              "generation": 0,
+              "paused": false,
+              "record_revision": 2,
+              "state": "draft"
+            }
+          }
+        },
+        "source_commit": "2e9e33c0915041fb55efe5883720008d3331e8f5301689b8aa4c6b590559ec95",
+        "source_seq": 6
+      },
+      "operation": {
+        "canonical_request": "[\"sprint\",{\"action\":{\"dispositions\":{\"40fb8af1-b4cf-46dd-938a-6e765734c911\":{\"destination\":\"backlog\"}},\"expected_revision\":3,\"op\":\"close\",\"target_revisions\":{}},\"binding\":{\"binding_revision\":1,\"scope_id\":\"supervisor/e9867fc0-7372-461b-bfed-1e7abeaa402c\",\"supervisor_session_id\":\"bamboo-default-supervisor\"},\"expected_epoch\":1,\"expected_seq\":6,\"operation_id\":\"sprint-6\",\"project_id\":\"fa4c5a43-b6fb-479f-9cdf-c2391fe78889\",\"source\":\"explicit owner request\",\"sprint_id\":\"a\"}]",
+        "committed_seq": 7,
+        "ids": {
+          "sprint": "a"
+        },
+        "operation_id": "sprint-6",
+        "principal": "user:host-owner",
+        "request_hash": "3ee3187542634a68a420e9636a2b97ff13cae932cc0304a4c27dea2e6b93658d"
+      }
+    },
+    "create_request": {
+      "action": {
+        "definition": {
+          "goal": "deliver verified Work",
+          "name": "a"
+        },
+        "op": "create"
+      },
+      "binding": {
+        "binding_revision": 1,
+        "scope_id": "supervisor/e9867fc0-7372-461b-bfed-1e7abeaa402c",
+        "supervisor_session_id": "bamboo-default-supervisor"
+      },
+      "expected_epoch": 1,
+      "expected_seq": 3,
+      "operation_id": "sprint-3",
+      "project_id": "fa4c5a43-b6fb-479f-9cdf-c2391fe78889",
+      "source": "explicit owner request",
+      "sprint_id": "a"
+    },
+    "create_response": {
+      "closure": null,
+      "operation": {
+        "canonical_request": "[\"sprint\",{\"action\":{\"definition\":{\"ends_at\":null,\"goal\":\"deliver verified Work\",\"name\":\"a\",\"starts_at\":null},\"op\":\"create\"},\"binding\":{\"binding_revision\":1,\"scope_id\":\"supervisor/e9867fc0-7372-461b-bfed-1e7abeaa402c\",\"supervisor_session_id\":\"bamboo-default-supervisor\"},\"expected_epoch\":1,\"expected_seq\":3,\"operation_id\":\"sprint-3\",\"project_id\":\"fa4c5a43-b6fb-479f-9cdf-c2391fe78889\",\"source\":\"explicit owner request\",\"sprint_id\":\"a\"}]",
+        "committed_seq": 4,
+        "ids": {
+          "sprint": "a"
+        },
+        "operation_id": "sprint-3",
+        "principal": "user:host-owner",
+        "request_hash": "f76ef026c2a40637e5b31f846f16ddda12839983ca63b41957f055da894c530b"
+      }
+    },
+    "inspect_request": {
+      "project_id": "fa4c5a43-b6fb-479f-9cdf-c2391fe78889",
+      "sprint_id": "a"
+    },
+    "inspect_response": {
+      "coverage": "authoritative_scope",
+      "data": {
+        "current_counts": {
+          "accepted": 0,
+          "blocked": 0,
+          "cancelled": 0,
+          "pending_acceptance": 0,
+          "total": 1,
+          "unfinished": 1
+        },
+        "current_members": {
+          "40fb8af1-b4cf-46dd-938a-6e765734c911": {
+            "accepted": false,
+            "accepted_submission": null,
+            "active_assignment": null,
+            "archived": false,
+            "blocked_resume_state": null,
+            "context_hash": null,
+            "contract_revision": 1,
+            "current_submission": null,
+            "generation": 0,
+            "paused": false,
+            "record_revision": 2,
+            "state": "draft"
+          }
+        },
+        "sprint": {
+          "closure": {
+            "closed_seq": 7,
+            "counts": {
+              "accepted": 0,
+              "blocked": 0,
+              "cancelled": 0,
+              "pending_acceptance": 0,
+              "total": 1,
+              "unfinished": 1
+            },
+            "members": {
+              "40fb8af1-b4cf-46dd-938a-6e765734c911": {
+                "disposition": {
+                  "disposition": "backlog"
+                },
+                "version": {
+                  "accepted": false,
+                  "accepted_submission": null,
+                  "active_assignment": null,
+                  "archived": false,
+                  "blocked_resume_state": null,
+                  "context_hash": null,
+                  "contract_revision": 1,
+                  "current_submission": null,
+                  "generation": 0,
+                  "paused": false,
+                  "record_revision": 2,
+                  "state": "draft"
+                }
+              }
+            },
+            "source_commit": "2e9e33c0915041fb55efe5883720008d3331e8f5301689b8aa4c6b590559ec95",
+            "source_seq": 6
+          },
+          "created_seq": 4,
+          "definition": {
+            "ends_at": null,
+            "goal": "deliver verified Work",
+            "name": "a",
+            "starts_at": null
+          },
+          "history": [
+            {
+              "change": {
+                "kind": "added"
+              },
+              "operation_id": "sprint-4",
+              "principal": "user:host-owner",
+              "seq": 5,
+              "source": "explicit owner request",
+              "work_id": "40fb8af1-b4cf-46dd-938a-6e765734c911",
+              "work_revision": 2
+            },
+            {
+              "change": {
+                "kind": "carried_out",
+                "to": null
+              },
+              "operation_id": "sprint-6",
+              "principal": "user:host-owner",
+              "seq": 7,
+              "source": "explicit owner request",
+              "work_id": "40fb8af1-b4cf-46dd-938a-6e765734c911",
+              "work_revision": 2
+            }
+          ],
+          "id": "a",
+          "members": [
+            "40fb8af1-b4cf-46dd-938a-6e765734c911"
+          ],
+          "project_id": "fa4c5a43-b6fb-479f-9cdf-c2391fe78889",
+          "revision": 4,
+          "status": "closed",
+          "updated_seq": 7
+        }
+      },
+      "index_seq": 7,
+      "next_cursor": null,
+      "omitted_count": 0,
+      "snapshot": {
+        "authority_epoch": 1,
+        "commit": "89fd388891adce2b6d13fc2ceb342c23e57a282bbbeb8c99f947a44cbca0da29",
+        "seq": 7
+      },
+      "truncated": false
+    },
+    "list_request": {
+      "limit": 10,
+      "project_id": "fa4c5a43-b6fb-479f-9cdf-c2391fe78889"
+    },
+    "list_response": {
+      "coverage": "authoritative_scope",
+      "data": [
+        {
+          "closure_counts": null,
+          "created_seq": 4,
+          "definition": {
+            "ends_at": null,
+            "goal": "deliver verified Work",
+            "name": "a",
+            "starts_at": null
+          },
+          "id": "a",
+          "member_count": 1,
+          "project_id": "fa4c5a43-b6fb-479f-9cdf-c2391fe78889",
+          "revision": 3,
+          "status": "active",
+          "updated_seq": 6
+        }
+      ],
+      "index_seq": 6,
+      "next_cursor": null,
+      "omitted_count": 0,
+      "snapshot": {
+        "authority_epoch": 1,
+        "commit": "2e9e33c0915041fb55efe5883720008d3331e8f5301689b8aa4c6b590559ec95",
+        "seq": 6
+      },
+      "truncated": false
+    }
+  }
+}

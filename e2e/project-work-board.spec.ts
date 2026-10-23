@@ -43,6 +43,7 @@ for (const colorScheme of ["light", "dark"] as const) {
       assignments: [{ id: "assignment", state: "running", runtime: { session_id: "owner-session", run_id: "run-1" }, workspace: null }],
       submissions: [{ id: "submission", work_id: "work-2", generation: 1, contract_revision: 1, stale: false, artifacts: [], evidence: ["All checks passed"], updated_seq: 10 }],
     }] } }))
+    await page.route("**/api/v1/tickets/sprints/list", (route) => route.fulfill({ status: 404, json: { error: "Sprint planning is unsupported by this legacy fixture" } }))
     expect(workChunk?.isDynamicEntry).toBe(true)
     let releaseWork!: () => void
     const workGate = new Promise<void>((resolve) => { releaseWork = resolve })
@@ -108,7 +109,7 @@ for (const colorScheme of ["light", "dark"] as const) {
     await expect(dialog).not.toBeVisible()
     expect(observation.pageErrors).toEqual([])
     expect(workReads().some((request) => request.url.endsWith("/tickets/inspect"))).toBe(true)
-    expect(ticketRequests.filter((request) => request.method === "POST").every((request) => /tickets\/(project-board|inspect)$/.test(request.url))).toBe(true)
+    expect(ticketRequests.filter((request) => request.method === "POST").every((request) => /tickets\/(project-board|inspect|sprints\/list)$/.test(request.url))).toBe(true)
     await info.attach("project-work-lazy-boundary-mock-evidence", { body: Buffer.from(JSON.stringify({
       source: artifact.sourceRevision, sourceDirty: artifact.sourceDirty,
       mode: "controlled HTTP/WebSocket and locally fulfilled production assets; no Bamboo server",

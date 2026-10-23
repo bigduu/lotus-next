@@ -12,7 +12,7 @@ document.documentElement.classList.toggle("dark", parameters.get("theme") === "d
 installRuntimeConfig(createRuntimeConfig({ host: { kind: "browser", capabilities: { nativeFileSystem: false, nativeNotifications: false, externalShell: false, sidecarBackend: false } }, endpointSource: "page-origin", backendBaseUrl: location.origin, mode: "test", development: false }))
 const { ProjectWorkBoard } = await import("../../src/components/app/ProjectWorkBoard")
 await changeLocale("zh-CN")
-const project = { id: "synthetic-project", name: "Controlled host fixture", revision: 1, resource_revision: 1, workspace_bindings: [] } as unknown as ProjectManifest
+const project = { id: parameters.get("project") ?? "synthetic-project", name: "Controlled host fixture", revision: 1, resource_revision: 1, workspace_bindings: [] } as unknown as ProjectManifest
 const command = (operationId: string): WorkCommandContext => ({ operationId, workId: "synthetic-work-1", generation: 3, recordRevision: 8,
   binding: { scope_id: "synthetic-scope", supervisor_session_id: "synthetic-owner", binding_revision: 2 }, expectedSeq: 19, expectedEpoch: 4 })
 export function Fixture() {
@@ -22,7 +22,7 @@ export function Fixture() {
   return <main style={{ maxWidth: 1100, margin: "0 auto", padding: 12 }}>
     <header style={{ padding: 16 }}><h1 style={{ fontSize: 20, fontWeight: 600 }}>Controlled Project Work board host</h1>
       <p style={{ marginTop: 8, fontSize: 13 }}>Mock HTTP + synthetic controlled callbacks. No Bamboo mutation, runtime or provider execution.</p></header>
-    <OwnerAccessContext.Provider value={true}><ProjectWorkBoard project={project} controls={{
+    <OwnerAccessContext.Provider value={true}><ProjectWorkBoard project={project} onOpenSession={async (sessionId, verifyAccess) => { if (!await verifyAccess()) return false; setLog((items) => [...items, { kind: "open_session", sessionId }]); return true }} controls={{
       planning: { work: { id: "synthetic-work-1", generation: 3, recordRevision: 8, state: "active" },
         current: { priority: "medium", expectedCompletionAt: "2026-10-18T00:00:00+08:00" }, draft,
         query: { order: "updated", priority: null, deadline: "any", asOf: "2026-10-17T17:00:00Z" },

@@ -5,6 +5,7 @@ import { ResponsiveDialog, ResponsiveDialogContent, ResponsiveDialogDescription,
 import { ErrorBoundary } from "./ErrorBoundary"
 import type { ProjectWorkBoard } from "./ProjectWorkBoard"
 
+export type { OpenWorkSession } from "./ProjectWorkBoard"
 type BoardProps = ComponentProps<typeof ProjectWorkBoard>
 type BoardModule = { ProjectWorkBoard: typeof ProjectWorkBoard }
 type BoardLoader = () => Promise<BoardModule>
@@ -12,11 +13,12 @@ const loadWork: BoardLoader = () => import("./ProjectWorkBoard")
 const feature = (load: BoardLoader) => lazy(async () => ({ default: (await load()).ProjectWorkBoard }))
 
 /** Keep modal focus/close available while optional Project Work code loads. */
-export function ProjectWorkDialog({ project, onClose, metadataError, controls, loadBoard = loadWork }: {
+export function ProjectWorkDialog({ project, onClose, metadataError, controls, onOpenSession, loadBoard = loadWork }: {
   project: BoardProps["project"] | null
   onClose: () => void
   metadataError?: string | null
   controls?: BoardProps["controls"]
+  onOpenSession?: BoardProps["onOpenSession"]
   /** Test seam; production uses the canonical Project Work module. */
   loadBoard?: BoardLoader
 }) {
@@ -30,7 +32,7 @@ export function ProjectWorkDialog({ project, onClose, metadataError, controls, l
       <Button className="mt-2" variant="outline" onClick={() => { setBoard(feature(loadBoard)); reset() }}>{uiText("retry_b8784c8d")}</Button>
     </div>}>
       <Suspense fallback={<p role="status" aria-live="polite" className="p-4 text-sm text-muted-foreground" data-testid="project-work-loading">{uiText("project_work_loading")}</p>}>
-        <Board key={project.id} project={project} controls={controls} />
+        <Board key={project.id} project={project} controls={controls} onOpenSession={onOpenSession} />
       </Suspense>
     </ErrorBoundary> : null}
   </ResponsiveDialogContent></ResponsiveDialog>

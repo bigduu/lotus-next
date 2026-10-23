@@ -1,19 +1,26 @@
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
+import "./project-work/ProjectWorkBoard.css"
 import { ProjectWorkPlanningControls, type ProjectWorkPlanningControlsProps } from "./project-work/ProjectWorkPlanningControls"
 import { ProjectWorkOwnerControls, type ProjectWorkOwnerControlsProps } from "./project-work/ProjectWorkOwnerControls"
 import { projectWorkControlsCopy } from "./project-work/projectWorkControlsCopy"
 import type { WorkCommandContext } from "./project-work/projectWorkControls"
-import "./project-work/ProjectWorkBoard.css"
 import { uiText, useUiLocale } from "@shared/i18n/ui"
 import type { ProjectManifest } from "@services/project"
 import { getErrorMessage } from "@services/api"
 import { boardCountsKnown, projectBoardClient, type BoardStage, type BoardWorkView, type ProjectBoardRow, type ProjectContext } from "@services/tickets/projectBoard"
 import type { SnapshotRef } from "@services/tickets/types"
 import { useProjectWorkBoard } from "@/hooks/useProjectWorkBoard"
+import { useAssignmentSessions } from "@/hooks/useAssignmentSessions"
 import { ticketWorkLabels } from "@/components/chat/ticketWorkLabels"
 import { Button } from "@/components/ui/button"
 
+import { AssignmentHealthPanel } from "./project-work/AssignmentHealthPanel"
+import { makeAssignmentHealthCopy } from "./project-work/assignmentHealthCopy"
+import { ProjectSprintPanel } from "./project-work/ProjectSprintPanel"
+import type { SprintFilter } from "@services/tickets/sprints"
+
 const stages: BoardStage[] = ["todo", "doing", "testing", "done"]
+export type OpenWorkSession = (id: string, verifyAccess: () => Promise<boolean>) => Promise<boolean>
 const stageLabel = (stage: BoardStage) => uiText(({ todo: "project_work_todo", doing: "project_work_doing", testing: "project_work_testing", done: "project_work_done" } as const)[stage])
 function ContextRevision({ context }: { context: Pick<ProjectContext, "project_id" | "project_revision" | "resource_revision"> | null }) {
   return <span>{context ? uiText("project_work_revision", { project: context.project_revision, resources: context.resource_revision }) : uiText("project_work_unknown")}</span>
@@ -24,9 +31,23 @@ function ContextDetails({ context, label, name }: { context: ProjectContext | nu
     <dd data-testid={`project-work-context-${name}`}><ContextRevision context={context} />{context ? <><span className="block">{uiText("project_work_contract_revision", { revision: context.contract_revision })}</span><span className="block break-all">{context.workspace_binding.path}</span></> : null}</dd>
   </>
 }
-function WorkDetails({ row, snapshot, onClose }: { row: ProjectBoardRow; snapshot: SnapshotRef; onClose: () => void }) {
+function WorkDetails({ row, snapshot, projectId, onClose, onOpenSession }: { row: ProjectBoardRow; snapshot: SnapshotRef; projectId: string; onClose: () => void; onOpenSession?: OpenWorkSession }) {
+  const locale = useUiLocale()
   const [view, setView] = useState<BoardWorkView | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [navigationError, setNavigationError] = useState<string | null>(null)
+  const [opening, setOpening] = useState(false)
+  const navigationBusy = useRef(false)
+  const alive = useRef(true)
+  const sessions = useAssignmentSessions(view?.assignments, row.ticket.id, projectId, !!onOpenSession)
+  useEffect(() => { alive.current = true; return () => { alive.current = false } }, [])
+  const openSession = async (id: string) => {
+    if (!onOpenSession || navigationBusy.current) return
+    navigationBusy.current = true; setOpening(true); setNavigationError(null)
+    try { await onOpenSession(id, () => sessions.recheck(id)) }
+    catch (failure) { if (alive.current) setNavigationError(getErrorMessage(failure)) }
+    finally { navigationBusy.current = false; if (alive.current) setOpening(false) }
+  }
   useEffect(() => {
     const controller = new AbortController()
     void projectBoardClient.inspect(row.ticket.id, snapshot, controller.signal)
@@ -45,11 +66,18 @@ function WorkDetails({ row, snapshot, onClose }: { row: ProjectBoardRow; snapsho
       <ContextDetails context={row.context} label={uiText("project_work_candidate")} name="candidate" />
       {row.pending_context ? <><ContextDetails context={row.pending_context} label={uiText("project_work_pending")} name="pending" /><dd className="text-xs text-muted-foreground">{uiText("project_work_pending_hint")}</dd></> : null}
       <ContextDetails context={row.adopted_context} label={uiText("project_work_adopted")} name="adopted" />
-      <dt className="font-medium">{uiText("project_work_assignment")}</dt><dd>{row.ticket.active_assignment ?? uiText("project_work_unknown")}</dd>
-      {assignment ? <><dt>{uiText("project_work_session")}</dt><dd>{assignment.runtime?.session_id ?? uiText("project_work_unknown")}</dd><dt>{uiText("project_work_run")}</dt><dd>{assignment.runtime?.run_id ?? uiText("project_work_unknown")}</dd>
-        {assignment.awaiting_request ? <dd>{uiText("project_work_waiting")}</dd> : null}
-        {assignment.workspace ? <><dt>{uiText("project_work_repos")}</dt><dd className="break-all">{assignment.workspace.repo}<br />{assignment.workspace.branch}<br />{assignment.workspace.worktree}</dd></> : null}</> : null}
+      {assignment?.workspace ? <><dt>{uiText("project_work_repos")}</dt><dd className="break-all">{assignment.workspace.repo}<br />{assignment.workspace.branch}<br />{assignment.workspace.worktree}</dd></> : null}
     </dl>
+    <div className="mt-4"><AssignmentHealthPanel
+      workId={row.ticket.id} generation={row.ticket.generation} authorityEpoch={snapshot.authority_epoch}
+      currentAssignmentId={row.ticket.active_assignment}
+      attempts={view && sessions.online ? { status: "available", value: view.assignments, updatedAt: null } : { status: "unknown", reason: error ?? (sessions.online ? uiText("project_work_loading") : uiText("assignment_health_stale_hint")) }}
+      observations={{ status: "unsupported" }} incidents={{ status: "unsupported" }} sessions={sessions.sessions}
+      blockReason={row.ticket.blocked?.reason} nowMs={Date.now()} locale={locale} copy={makeAssignmentHealthCopy()}
+      onOpenSession={onOpenSession && sessions.online ? (id) => void openSession(id) : undefined}
+    /></div>
+    {opening ? <p role="status" className="mt-2 text-xs">{uiText("assignment_health_opening_session")}</p> : null}
+    {navigationError ? <p role="alert" className="mt-2 text-destructive">{navigationError}</p> : null}
     {error ? <p role="alert" className="mt-2 text-destructive">{error}</p> : !view ? <p role="status">{uiText("project_work_loading")}</p> : <>
       {view.requests.some((request) => request.status === "open") ? <p className="mt-2">{uiText("project_work_waiting")}</p> : null}
       <h4 className="mt-3 font-medium">{uiText("project_work_evidence")}</h4>
@@ -74,12 +102,13 @@ function commandAtSnapshot(command: WorkCommandContext | null | undefined, row: 
   return command?.binding?.scope_id === row.ticket.scope_id && command.expectedSeq === snapshot.seq
     && command.expectedEpoch === snapshot.authority_epoch ? command : null
 }
-export function ProjectWorkBoard({ project, controls }: { project: ProjectManifest; controls?: ProjectWorkBoardControls }) {
+export function ProjectWorkBoard({ project, controls, onOpenSession }: { project: ProjectManifest; controls?: ProjectWorkBoardControls; onOpenSession?: OpenWorkSession }) {
   useUiLocale()
   const [mode, setMode] = useState<"list" | "board">("list")
   const [cancelled, setCancelled] = useState(false)
   const [selectedId, setSelectedId] = useState<string | null>(null)
-  const { page, error, busy, owner, refresh, loadMore } = useProjectWorkBoard(project.id, cancelled)
+  const [sprintFilter, setSprintFilter] = useState<SprintFilter | null>(null)
+  const { page, error, busy, owner, refresh, loadMore } = useProjectWorkBoard(project.id, cancelled, sprintFilter)
   const rows = page?.data.rows ?? []
   const selected = rows.find((row) => row.ticket.id === selectedId)
   const planning = selected && controls?.planning && matchesSelectedWork(controls.planning.work, selected) ? controls.planning : null
@@ -107,6 +136,8 @@ export function ProjectWorkBoard({ project, controls }: { project: ProjectManife
       <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={cancelled} onChange={(event) => { setSelectedId(null); setCancelled(event.target.checked) }} />{uiText("project_work_cancelled")}</label>
       <Button size="sm" variant="ghost" disabled={busy || !owner} onClick={refresh}>{uiText("refresh_aee88743")}</Button>
     </div>
+    <ProjectSprintPanel projectId={project.id} projectActive={project.status === "active"} snapshot={page?.snapshot ?? null} owner={owner} filter={sprintFilter} onRefresh={refresh}
+      onFilterChange={(filter) => { setSelectedId(null); setSprintFilter(filter) }} />
     <details className="mb-3 rounded-lg border p-3 text-xs"><summary className="cursor-pointer">{uiText("project_work_context")}</summary>
       <p className="mt-2"><ContextRevision context={{ project_id: project.id, project_revision: project.revision, resource_revision: project.resource_revision }} /></p>
       <p className="mt-2 font-medium">{uiText("project_work_repos")}</p>
@@ -121,7 +152,7 @@ export function ProjectWorkBoard({ project, controls }: { project: ProjectManife
     {page && !rows.length ? <p className="py-4 text-sm text-muted-foreground">{uiText("project_work_empty")}</p> : null}
     {busy ? <p role="status" className="mt-3 text-sm">{uiText("project_work_loading")}</p> : null}
     {page?.next_cursor ? <Button className="mt-3" variant="outline" disabled={busy} onClick={() => void loadMore()}>{uiText("project_work_more")}</Button> : null}
-    {selected && page ? <div className="mt-4 space-y-3"><WorkDetails key={`${page.snapshot.commit}:${selected.ticket.id}`} row={selected} snapshot={page.snapshot} onClose={() => setSelectedId(null)} />
+    {selected && page ? <div className="mt-4 space-y-3"><WorkDetails key={`${page.snapshot.commit}:${selected.ticket.id}`} row={selected} snapshot={page.snapshot} projectId={project.id} onOpenSession={onOpenSession} onClose={() => setSelectedId(null)} />
       {staleControls ? <p role="status" className="text-sm text-muted-foreground">{uiText("project_work_controls_unavailable_context")}</p> : null}
       {planning ? <ProjectWorkPlanningControls key={`planning:${selected.ticket.id}:${selected.ticket.generation}`} {...planning} owner={owner && planning.owner} command={commandAtSnapshot(planning.command, selected, page.snapshot)} copy={projectWorkControlsCopy()} /> : null}
       {ownerControls ? <ProjectWorkOwnerControls key={`owner:${selected.ticket.id}:${selected.ticket.generation}`} {...ownerControls} owner={owner && ownerControls.owner} commands={ownerCommands} copy={projectWorkControlsCopy()} /> : null}

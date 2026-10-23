@@ -51,11 +51,14 @@ jobs:
       - name: Verify the all-surface browser contract
         run: npm run test:e2e:built
 
-      - name: Verify configuration sharing with the synthetic source harness
-        run: npx playwright test --config=playwright.config-share.config.ts
-
       - name: Verify controlled Project Work component fixtures
         run: node node_modules/@playwright/test/cli.js test --config=playwright.planning-controls.config.ts
+
+      - name: Verify Sprint planning and fixed-snapshot browser contracts
+        run: node node_modules/@playwright/test/cli.js test --config=playwright.sprints.config.ts
+
+      - name: Verify configuration sharing with the synthetic source harness
+        run: npx playwright test --config=playwright.config-share.config.ts
 
       - name: Upload browser evidence
         if: ${{ !cancelled() }}

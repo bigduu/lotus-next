@@ -24,12 +24,15 @@
 @custom-variant dark (&:is(.dark *));
 
 :root {
+  --native-scheme: light;
   --radius: 0.75rem;
   --motion-fast: 140ms;
   --motion-normal: 220ms;
   --motion-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
   --focus-shadow: 0 0 0 2px var(--background), 0 0 0 4px var(--focus-ring), 0 0 0 7px var(--focus-halo);
 }
+
+.dark { --native-scheme: dark; }
 
 .user-message-surface {
   background: var(--user-message-background);
