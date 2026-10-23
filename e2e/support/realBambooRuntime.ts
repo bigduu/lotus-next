@@ -22,7 +22,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-export const REAL_BAMBOO_REVISION = "a473f69b856962dd3dbdbfb2051b4fa4aa6e3041";
+export const REAL_BAMBOO_REVISION = "80815125da51a5722935e99fda2ed4541aa67f98";
 
 const REAL_BAMBOO_MODEL = "gpt-4o-mini";
 const REAL_BAMBOO_PROVIDER = "e2e-openai";
