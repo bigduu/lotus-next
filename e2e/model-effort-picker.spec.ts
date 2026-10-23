@@ -169,6 +169,119 @@ test("saved-session restoration completes before the picker test edits its draft
   expect(observation.errorResponses).toEqual([])
 })
 
+for (const width of [390, 820, 1440]) {
+  test(`compact picker keeps long model names, modes, context and send usable at ${width}px`, async ({ page }, info) => {
+    test.skip(info.project.name !== "desktop-chromium", "explicit responsive viewport and localized geometry")
+    await page.setViewportSize({ width, height: 1000 })
+    const { observation, main, patches, operations } = await setup(page)
+    const english = width === 820
+    await page.locator("html").evaluate((element, locale) => {
+      element.ownerDocument.defaultView!.localStorage.setItem("lotus_ui_locale_v1", locale)
+    }, english ? "en-US" : "zh-CN")
+    Object.assign(main, {
+      model: alternateModel, model_ref: { provider: "fixture-provider", model: alternateModel }, reasoning_effort: "max",
+      token_usage: {
+        system_tokens: 10_000, summary_tokens: 0, window_tokens: 610_000, total_tokens: 620_000,
+        max_context_tokens: 1_000_000, budget_limit: 950_000, truncation_occurred: false, segments_removed: 0,
+        cache_read_input_tokens: 620_000,
+        provider_prompt_usage: { input_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 620_000 },
+      },
+    })
+    await page.reload()
+    const picker = modelEffortPicker(page)
+    const composer = page.locator("[data-composer-surface]").first()
+    const input = composer.getByRole("textbox").first()
+    const send = composer.getByRole("button", { name: english ? "Send message" : "发送消息", exact: true })
+    const usage = composer.locator("[data-prefix-cache]").locator("..")
+    const max = english ? "Max" : "最大"
+    const ultra = english ? "Ultra · Orchestration" : "Ultra · 编排"
+    await expect(picker).toHaveAttribute("title", `${alternateModel} · ${max}`)
+    await expect(picker).toHaveAccessibleDescription(`${alternateModel} ${max}`)
+    await expect(usage).toHaveAttribute("title", /62%/)
+    await expect(usage).toHaveAttribute("title", /100%/)
+    await input.fill("Synthetic compact picker draft")
+    await expect(send).toBeEnabled()
+    const triggerBefore = await picker.boundingBox()
+    expect(triggerBefore!.width).toBeLessThanOrEqual(200.5)
+    expect(triggerBefore!.width).toBeLessThanOrEqual(width * 0.45 + 0.5)
+    expect(triggerBefore!.height).toBeGreaterThanOrEqual(32)
+    const composerBounds = await composer.boundingBox()
+    const sendBefore = await send.boundingBox()
+    for (const box of [triggerBefore!, sendBefore!, (await usage.boundingBox())!]) {
+      expect(box.x).toBeGreaterThanOrEqual(composerBounds!.x - 0.5)
+      expect(box.x + box.width).toBeLessThanOrEqual(composerBounds!.x + composerBounds!.width + 0.5)
+      expect(box.y).toBeGreaterThanOrEqual(composerBounds!.y - 0.5)
+      expect(box.y + box.height).toBeLessThanOrEqual(composerBounds!.y + composerBounds!.height + 0.5)
+    }
+    await picker.focus()
+    await picker.press("Enter")
+    const panel = page.locator(".model-effort-panel")
+    const slider = page.getByRole("slider")
+    await expect(slider).toBeFocused()
+    await expect(slider).toHaveAttribute("aria-valuetext", max)
+    // Measure the settled control rather than the popover's opening scale.
+    await expect(panel).toHaveCSS("transform", "none")
+    const panelBefore = await panel.boundingBox()
+    const sliderBefore = await slider.boundingBox()
+    expect(panelBefore!.width).toBeLessThanOrEqual(256.5)
+    expect(panelBefore!.x).toBeGreaterThanOrEqual(0)
+    expect(panelBefore!.x + panelBefore!.width).toBeLessThanOrEqual(width)
+    expect(panelBefore!.y).toBeGreaterThanOrEqual(0)
+    expect(panelBefore!.y + panelBefore!.height).toBeLessThanOrEqual(1000)
+    expect(sliderBefore!.height).toBeGreaterThanOrEqual(32)
+    await expect(page.getByTestId("model-picker-model")).toHaveAttribute("title", alternateModel)
+    expect((await page.getByTestId("model-picker-model").boundingBox())!.height).toBeGreaterThanOrEqual(32)
+    await screenshot(page, info, `compact-picker-${width}-max`)
+    await slider.press("ArrowLeft")
+    await expect(slider).toHaveAttribute("aria-valuetext", english ? "Extra high" : "极高")
+    expectCloseBounds(await picker.boundingBox(), triggerBefore)
+    await slider.press("ArrowRight")
+    await expect(slider).toHaveAttribute("aria-valuetext", max)
+    const operationsBeforeUltra = operations.length
+    await slider.press("End")
+    await expect(picker).toHaveAttribute("title", `${alternateModel} · ${ultra}`)
+    await expect(picker).toHaveAccessibleDescription(`${alternateModel} ${ultra}`)
+    await expect(slider).toHaveAttribute("aria-valuetext", ultra)
+    expect(main.reasoning_effort).toBe("max")
+    expect(operations).toHaveLength(operationsBeforeUltra + 1)
+    expect(operations.at(-1)).toMatchObject({ enabled: true, thinking_mode: "ultra" })
+    expectCloseBounds(await picker.boundingBox(), triggerBefore)
+    expectCloseBounds(await panel.boundingBox(), panelBefore)
+    expectCloseBounds(await slider.boundingBox(), sliderBefore)
+    expectCloseBounds(await send.boundingBox(), sendBefore)
+    await screenshot(page, info, `compact-picker-${width}-ultra`)
+    await page.getByTestId("model-picker-model").focus()
+    await page.keyboard.press("Enter")
+    const search = page.getByRole("searchbox")
+    await expect(search).toBeFocused()
+    await search.fill("fixture")
+    const beforeComposition = patches.length
+    await search.dispatchEvent("compositionstart")
+    await search.dispatchEvent("keydown", { key: "Enter", code: "Enter", isComposing: true })
+    await expect(search).toBeFocused()
+    await expect(panel).toBeVisible()
+    expect(patches).toHaveLength(beforeComposition)
+    await search.dispatchEvent("compositionend")
+    await search.press("Tab")
+    await expect(search.locator("..").getByRole("button")).toBeFocused()
+    await page.keyboard.press("Tab")
+    const option = page.locator("[data-model-option]")
+    await expect(option).toBeFocused()
+    await expect(option).toHaveAttribute("title", "fixture-model")
+    await page.keyboard.press("Enter")
+    await expect(picker).toHaveAttribute("title", `fixture-model · ${ultra}`)
+    await expect(picker).toBeFocused()
+    expect(main.model).toBe("fixture-model")
+    expect(main.thinking_mode).toBe("ultra")
+    expectCloseBounds(await picker.boundingBox(), triggerBefore)
+    await expectComposerText(input, "Synthetic compact picker draft")
+    await send.click({ trial: true })
+    expect(await page.locator("html").evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1)
+    expect(observation.pageErrors).toEqual([])
+    expect(observation.errorResponses).toEqual([])
+  })
+}
+
 test("the combined picker persists effort and model, supports keyboard, and fits the viewport", async ({ page }, info) => {
   const { observation, main, patches, operations } = await setup(page)
   const picker = modelEffortPicker(page)

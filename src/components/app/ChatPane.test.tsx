@@ -179,6 +179,7 @@ import { ticketSnapshot } from "@services/tickets/testFixtures"
 import { applyTicketSnapshot } from "@services/tickets/state"
 import { ChatPane } from "./ChatPane"
 import { isSessionUnread, useSessionReadState } from "@/lib/sessionReadState"
+import { uiText } from "@shared/i18n/ui"
 const skill = (id: string): SkillDefinition => ({ id, name: id, description: id, prompt: id, tool_refs: [`tool-${id}`] })
 const workflow = (id: string): CommandItem => ({ id, name: id, display_name: id, description: id, type: "workflow", metadata: null })
 const skillA = skill("skill-a")
@@ -847,7 +848,12 @@ describe("ChatPane composer acknowledgement", () => {
       "模型服务连接超时",
       "请检查提供商、代理和网络状态",
     ],
-  ])("explains a persisted bootstrap failure while keeping diagnostics available", async (detail, title, action) => {
+    [
+      "Tool error: Execution failed: Native canonical Session Source scope changed",
+      "会话来源校验未通过",
+      "请先核对会话来源和已完成的操作",
+    ],
+  ])("explains a persisted run failure while keeping diagnostics available", async (detail, title, action) => {
     const container = document.body.appendChild(document.createElement("div"))
     const root = createRoot(container); roots.push(root)
     const chat = createChat(vi.fn<Send>(), "failed-session", "error", detail)
@@ -863,6 +869,30 @@ describe("ChatPane composer acknowledgement", () => {
     expect(alert?.querySelector("details")?.textContent).toContain(detail)
     expect(alert?.querySelector("summary")?.textContent).toBe("技术详情")
     expect(alert?.textContent).toContain("重试生成")
+    expect(chat.retry).not.toHaveBeenCalled()
+  })
+
+  it("explains a live source rejection without replaying the saved submission", async () => {
+    const container = document.body.appendChild(document.createElement("div"))
+    const root = createRoot(container); roots.push(root)
+    const detail = "Tool error: Execution failed: Native canonical Session Source scope changed"
+    const retry = vi.fn()
+    const send = vi.fn<Send>()
+    const failure = { kind: "generation-failed" as const, operationId: 4, sessionId: "old-session", message: detail }
+    const chat = { ...createChat(send, "old-session"), retry, sendFailure: failure }
+    await act(async () => root.render(<ChatPane chat={chat} pickedWorkspace="/picked"
+      onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()} splitOpen={false}
+      onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false} />))
+    const alert = container.querySelector<HTMLElement>('[role="alert"]')
+    expect(alert?.textContent).toContain("会话来源校验未通过")
+    expect(alert?.textContent).toContain("请先核对会话来源和已完成的操作")
+    expect(alert?.querySelector("details")?.textContent).toContain(detail)
+    expect(send).not.toHaveBeenCalled()
+    expect(retry).not.toHaveBeenCalled()
+    const button = Array.from(alert?.querySelectorAll("button") ?? []).find((item) => item.textContent?.includes("重试生成"))
+    await act(async () => button?.click())
+    expect(retry).toHaveBeenCalledExactlyOnceWith(failure)
+    expect(send).not.toHaveBeenCalled()
   })
 
   it("explains a live HTTP 429 generation failure", async () => {
@@ -909,6 +939,38 @@ describe("ChatPane composer acknowledgement", () => {
     expect(alert?.textContent).toContain("发送状态未确认，内容已保留")
     expect(alert?.textContent).toContain("Project context error: workspace path does not exist")
     expect(alert?.textContent).toContain("继续编辑")
+  })
+
+  it("explains a rejected running Source change and keeps the complete unsent draft", async () => {
+    const send = vi.fn<Send>().mockResolvedValue({ kind: "unconfirmed", operationId: 1, rejectionCode: "session_project_running_conflict" })
+    const chat = {
+      ...createChat(send, "old-source"),
+      sendFailure: { kind: "submission-unconfirmed" as const, operationId: 1, sessionId: "old-source",
+        rejectionCode: "session_project_running_conflict" as const, rootModeSelectionSubmitted: false,
+        message: "A running or starting session cannot change Project or Workspace" },
+    }
+    const container = document.body.appendChild(document.createElement("div"))
+    const root = createRoot(container); roots.push(root)
+    await act(async () => root.render(<ChatPane chat={chat} pickedWorkspace="/synthetic/picked"
+      onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()} splitOpen={false}
+      onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false} />))
+    const textarea = container.querySelector<HTMLTextAreaElement>("textarea")!
+    await fill(textarea)
+    const draft = runtime.state.inputStates["old-source"]?.content
+    const attachments = composer().attachments
+    act(() => composer().onSubmit()); await flush()
+    expect(runtime.state.inputStates["old-source"]?.content).toBe(draft)
+    expect(composer().attachments).toEqual(attachments)
+    expect(composer().selectedSkill).toEqual(skillA)
+    expect(composer().selectedWorkflow?.name).toBe("workflow-a")
+    const alert = container.querySelector<HTMLElement>('[role="alert"]')
+    expect(alert?.textContent).toContain("Bamboo 已拒绝此请求，内容已保留")
+    expect(alert?.textContent).toContain("请等待当前运行结束后核对来源")
+    expect(alert?.textContent).toContain("A running or starting session cannot change Project or Workspace")
+    expect(alert?.textContent).not.toContain("消息已发送")
+    expect(alert?.textContent).not.toContain("重试生成")
+    expect(send).toHaveBeenCalledOnce()
+    expect(chat.retry).not.toHaveBeenCalled()
   })
 
   it.each([
@@ -2025,6 +2087,48 @@ it("keeps a failed secondary history distinct from empty content and retains its
   expect(send).not.toHaveBeenCalled()
 })
 
+describe("context compression presentation", () => {
+  it("keeps a pre-start failure visible during text streaming without a usage estimate", async () => {
+    const send = vi.fn<Send>()
+    await mount(send, "compression-pane", true, "reply tokens")
+    const chat = { ...createChat(send, "compression-pane"), sending: true, streaming: "reply tokens",
+      contextCompression: { status: "failed", reason: "candidate_plan" } as const }
+    const render = async (next: ChatPaneProps["chat"]) => act(async () => roots.at(-1)!.render(
+      <ChatPane chat={next} pickedWorkspace="/picked" onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()}
+        splitOpen={false} onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false} />,
+    ))
+    await render(chat)
+    const notice = document.querySelector('[data-testid="context-compression-notice"]')
+    expect(notice?.textContent).toBe(uiText("context_compression_notice_failed_candidate"))
+    expect(notice?.querySelector("svg")).toBeNull()
+    expect(document.querySelector('[data-testid="context-usage"]')).toBeNull()
+    await render({ ...chat, streaming: "more reply tokens" })
+    expect(document.querySelector('[data-testid="context-compression-notice"]')?.textContent).toBe(notice?.textContent)
+    await render(createChat(send, "another-pane-session"))
+    expect(document.querySelector('[data-testid="context-compression-notice"]')).toBeNull()
+    expect(send).not.toHaveBeenCalled()
+  })
+
+  it("keeps compression feedback inside the history visibility boundary", async () => {
+    const send = vi.fn<Send>()
+    await mount(send, "compression-child")
+    const chat = { ...createChat(send, "compression-child"), contextCompression: { status: "running" } as const }
+    const render = async (status: "loading" | "ready") => act(async () => roots.at(-1)!.render(
+      <ChatPane chat={chat} pickedWorkspace="/picked" onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()}
+        splitOpen onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false}
+        secondary={{ sessionId: "compression-child", chats: [], onPickSession: vi.fn(), onClose: vi.fn(),
+          historyRead: { status, retry: vi.fn() } }} />,
+    ))
+    await render("loading")
+    const notice = document.querySelector('[data-testid="context-compression-notice"]')!
+    expect((notice.closest("[data-history-composer-blocked]") as HTMLElement).hidden).toBe(true)
+    await render("ready")
+    expect((notice.closest("[data-history-composer-blocked]") as HTMLElement).hidden).toBe(false)
+    expect(notice.textContent).toBe(uiText("context_compression_notice_running"))
+    expect(send).not.toHaveBeenCalled()
+  })
+})
+
 describe("session compatibility presentation and submit guard", () => {
   const compatibility = (conflict: boolean): ChatPaneProps["chat"]["executionCompatibility"] => ({
     report: { session_version: null, current_session_version: 1, status: conflict ? "conflict" : "legacy_compatible",
@@ -2138,5 +2242,50 @@ describe("child approval compatibility", () => {
     expect(respond).not.toHaveBeenCalled()
     act(() => [...document.querySelectorAll<HTMLButtonElement>("button")].find(b => b.textContent === "Deny child")!.click())
     expect(respond).toHaveBeenCalledExactlyOnceWith(false)
+  })
+})
+
+describe("run diagnostics entry and canonical error isolation", () => {
+  const a = "11111111-1111-4111-8111-111111111111"
+  const b = "22222222-2222-4222-8222-222222222222"
+  const id = "9ab6cd70-bc43-4fed-9f10-50c2873fa287"
+  const otherId = "fa6aa794-30d4-4e8b-a222-46b35c8348d9"
+  const pane = (chat: ChatPaneProps["chat"]) => <ChatPane chat={chat} pickedWorkspace="/picked"
+    onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()} splitOpen={false}
+    onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false} />
+  const open = async () => {
+    const entry = [...document.querySelectorAll<HTMLButtonElement>("button")]
+      .find((button) => button.textContent?.trim() === uiText("run_diagnostics_open"))!
+    await act(async () => entry.click())
+    await act(async () => vi.dynamicImportSettled())
+  }
+  it("preserves legacy error detail and does not infer retry limit or invoke generation", async () => {
+    const send = vi.fn<Send>(), chat = createChat(send, a, "error", "legacy upstream error after 1 request(s).")
+    await mount(send, a)
+    await act(async () => roots.at(-1)!.render(pane(chat)))
+    expect(document.querySelector('details summary')?.textContent).toBe(uiText("technical_details_c26fb419"))
+    await open()
+    const report = JSON.parse(document.querySelector('[role="dialog"] pre')!.textContent!)
+    expect(report.diagnostic).toMatchObject({ diagnostic_id: null, attempt: null, attempt_limit: null })
+    expect(JSON.stringify(report)).not.toContain("legacy upstream")
+    expect(chat.retry).not.toHaveBeenCalled(); expect(send).not.toHaveBeenCalled(); expect(agentClient.execute).not.toHaveBeenCalled()
+  })
+  it("closes an old preview when navigation changes and ignores a foreign local failure", async () => {
+    const send = vi.fn<Send>()
+    await mount(send, a)
+    const root = roots.at(-1)!
+    const first = createChat(send, a, "error", "PRIVATE_OLD_ERROR. Diagnostic ID: " + id + ".")
+    await act(async () => root.render(pane(first)))
+    await open()
+    expect(JSON.parse(document.querySelector("pre")!.textContent!).diagnostic.diagnostic_id).toBe(id)
+    const next = { ...createChat(send, b, "error", "Diagnostic ID: " + otherId + "."),
+      sendFailure: { kind: "generation-failed" as const, operationId: 1, sessionId: a, message: "Diagnostic ID: " + id + "." } }
+    await act(async () => root.render(pane(next)))
+    expect(document.querySelector('[role="dialog"]')).toBeNull()
+    await open()
+    const preview = JSON.parse(document.querySelector("pre")!.textContent!)
+    expect(preview.context.session_id).toBe(b); expect(preview.diagnostic.diagnostic_id).toBe(otherId)
+    expect(document.querySelector('[role="dialog"]')?.textContent).not.toContain(id)
+    expect(agentClient.execute).not.toHaveBeenCalled(); expect(send).not.toHaveBeenCalled()
   })
 })

@@ -173,7 +173,7 @@ jobs:
 
       - name: Verify architecture, behavior, build, and package contents
         run: |
-          npm run verify
+          VITE_APP_REVISION="${LOTUS_NEXT_EXPECTED_SOURCE_REVISION}" VITE_APP_VERSION="${LOTUS_NEXT_RELEASE_VERSION}" npm run verify
           git diff -- package.json package-lock.json | cmp - "${RUNNER_TEMP}/release-identity.patch"
           git diff --exit-code -- . ':(exclude)package.json' ':(exclude)package-lock.json'
           test -z "$(git ls-files --others --exclude-standard)"
@@ -236,7 +236,7 @@ jobs:
           test "$(git rev-parse HEAD)" = "${PUBLICATION_WORKFLOW_SHA}"
           test -z "$(git status --porcelain --untracked-files=all)"
           mkdir "${RUNNER_TEMP}/release-control"
-          cp scripts/release-browser.mjs scripts/published-real-bamboo-acceptance.mjs scripts/artifact-manifest.mjs scripts/release-acceptance-identity.mjs scripts/release-source.mjs "${RUNNER_TEMP}/release-control/"
+          cp scripts/release-browser.mjs scripts/published-real-bamboo-acceptance.mjs scripts/artifact-manifest.mjs scripts/release-acceptance-identity.mjs scripts/release-source.mjs scripts/verification-browser.mjs "${RUNNER_TEMP}/release-control/"
 
       - name: Download the run-bound release source receipt
         uses: actions/download-artifact@v8
@@ -294,7 +294,7 @@ jobs:
 
       - name: Build the release artifact
         run: |
-          npm run build
+          VITE_APP_REVISION="${LOTUS_NEXT_EXPECTED_SOURCE_REVISION}" VITE_APP_VERSION="${LOTUS_NEXT_RELEASE_VERSION}" npm run build
           git diff -- package.json package-lock.json | cmp - "${RUNNER_TEMP}/release-identity.patch"
           git diff --exit-code -- . ':(exclude)package.json' ':(exclude)package-lock.json'
           test -z "$(git ls-files --others --exclude-standard)"
@@ -431,7 +431,7 @@ jobs:
 
       - name: Build and verify the final package tree
         run: |
-          npm run verify
+          VITE_APP_REVISION="${LOTUS_NEXT_EXPECTED_SOURCE_REVISION}" VITE_APP_VERSION="${LOTUS_NEXT_RELEASE_VERSION}" npm run verify
           git diff -- package.json package-lock.json | cmp - "${RUNNER_TEMP}/release-identity.patch"
           git diff --exit-code -- . ':(exclude)package.json' ':(exclude)package-lock.json'
           test -z "$(git ls-files --others --exclude-standard)"

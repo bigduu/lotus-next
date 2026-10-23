@@ -2,7 +2,7 @@ import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react"
 import { copyText } from "@shared/utils/clipboard"
 import { Inspector } from "@/components/chat/Inspector"
-import { CommandPalette } from "@/components/chat/CommandPalette"
+import { LazyCommandPalette } from "@/components/chat/LazyCommandPalette"
 import { ExternalLinkProvider } from "@/components/chat/ExternalLinkDialog"
 import { LazySettings } from "@/components/chat/LazySettings"
 import { Onboarding } from "@/components/chat/Onboarding"
@@ -15,7 +15,7 @@ import { useWorkbenchBrowserSelection } from "@/hooks/useWorkbenchBrowserSelecti
 import { useWorkbenchState } from "@/hooks/useWorkbenchState"
 import { useWorkbenchWidth } from "@/hooks/useWorkbenchWidth"
 import { useResizableWidth } from "@/hooks/useResizableWidth"
-import { ResizeHandle } from "@/components/ui/resize-handle"
+import { ResizableLayout } from "@/components/ui/resizable-layout"
 import { useIsMobile, useIsWide } from "@shared/hooks/useMediaQuery"
 import { useAppStore } from "@shared/store/appStore"
 import { isVdiSafeModeEnabled, onVdiSafeModeChange } from "@shared/utils/vdiSafeMode"
@@ -28,7 +28,7 @@ import { ChatPane } from "@/components/app/ChatPane"
 import { SecondarySessionPane } from "@/components/app/SecondarySessionPane"
 import { AvailabilityBanner } from "@/components/app/AvailabilityBanner"
 import { ReviewPane } from "@/components/app/ReviewPane"
-import { BrowserPaneView } from "@/components/app/BrowserPane"
+import { LazyBrowserPaneView } from "@/components/app/LazyBrowserPaneView"
 import { useBrowserSession } from "@/hooks/useBrowserSession"
 import { isPhoneDevice } from "@/lib/browserAvailability"
 import { DEFAULT_SUPERVISOR_SESSION_ID, isDefaultSupervisor } from "@/lib/supervisor"
@@ -52,10 +52,12 @@ function App() {
   // starting another empty composer while Supervisor is still opening.
   const select = useCallback((id: string) => {
     mainNavigationVersion.current += 1
+    setPaletteOpen(false)
     selectSession(id)
   }, [selectSession])
   const newChat = useCallback(() => {
     mainNavigationVersion.current += 1
+    setPaletteOpen(false)
     createChat()
   }, [createChat])
 
@@ -213,7 +215,6 @@ function App() {
   const sidebarResize = useResizableWidth("lotus_next_sidebar_w", 288, {
     min: 220,
     max: 420,
-    edge: "right",
   })
   const workbenchResize = useWorkbenchWidth(sidebarCollapsed ? 0 : sidebarResize.width)
   const [settingsOpen, setSettingsOpen] = useState(false)
@@ -440,200 +441,221 @@ function App() {
           silently freezing. Renders nothing while the connection is healthy. */}
       <AvailabilityBanner />
 
-      <Sidebar
-        open={sidebarOpen}
-        onClose={() => setSidebarOpen(false)}
-        collapsed={sidebarCollapsed}
-        onToggleCollapse={() => setSidebarCollapsed((v) => !v)}
-        width={sidebarResize.width}
-        chats={chats}
-        booted={booted}
-        currentSessionId={currentSessionId}
-        onNewChat={(projectId) => {
-          setPickedWorktree(null)
-          setPendingProjectId(projectId ?? null)
-          // The project (or its default workspace) owns the next session's cwd.
-          if (projectId) setPickedWorkspace(null)
-          newChat()
-        }}
-        onSelect={async (id) => {
-          const version = ++mainNavigationVersion.current
-          const previousSessionId = useAppStore.getState().currentSessionId
-          if (id === DEFAULT_SUPERVISOR_SESSION_ID) {
-            await agentClient.ensureDefaultSupervisor()
-            if (!await useAppStore.getState().restoreSession(id)) {
-              throw new Error(uiText("workflow_run_not_found"))
-            }
-            if (version !== mainNavigationVersion.current || previousSessionId !== useAppStore.getState().currentSessionId) return
-          }
-          if (isWide && id === DEFAULT_SUPERVISOR_SESSION_ID) openToolForSession(id, "work")
-          select(id)
-        }}
-        onOpenExistingSession={async (id, verifyAccess) => {
-          const version = ++mainNavigationVersion.current
-          const previousSessionId = useAppStore.getState().currentSessionId
-          return navigateRecordedSession(id, verifyAccess, {
-            isCurrent: () => version === mainNavigationVersion.current && previousSessionId === useAppStore.getState().currentSessionId,
-            restore: (sessionId) => useAppStore.getState().restoreSession(sessionId), select,
-            notFound: () => new Error(uiText("workflow_run_not_found")),
-          })
-        }}
-        onRename={(id, title) => persistSessionTitle(id, title)}
-        onDelete={(c) => setPendingDelete({ id: c.id, title: c.title || uiText("new_session_c57c30bc") })}
-        onTogglePin={(c) => (c.pinned ? unpinSession(c.id) : pinSession(c.id))}
-        onCopySessionId={copySessionId}
-        onOpenSettings={openSettings}
-        onOpenProjectManager={() => setProjectManagerOpen(true)}
-        onOpenWorktrees={() => setWorktreesOpen(true)}
-      />
-      {!sidebarCollapsed ? <ResizeHandle onPointerDown={sidebarResize.startResize} /> : null}
-
-      <ChatPane
-        chat={{ ...chat, select, newChat }}
-        pageVisible={!settingsOpen}
-        pickedWorkspace={pickedWorkspace}
-        worktreePath={pickedWorktree?.projectId === pendingProjectId ? pickedWorktree.path : null}
-        pendingProjectId={pendingProjectId}
-        onSelectProject={(projectId) => {
-          setPendingProjectId(projectId)
-          setPickedWorktree(null)
-          // A manual project pick owns the workspace; drop a manual choice.
-          if (projectId) setPickedWorkspace(null)
-        }}
-        onOpenWorkspacePicker={() => setWsPickerOpen(true)}
-        onOpenInspector={() => openWorkbench("inspector")}
-        onOpenReview={() => openReview()}
-        workPanelTarget={workEnabled ? workPanelTarget : null}
-        onOpenWork={workEnabled ? () => openWorkbench("work") : undefined}
-        onWorkReference={() => { if (!isWide) setWorkbenchOpen(false) }}
-        sidePaneOpen={workbenchOpen}
-        onToggleSidePane={toggleWorkbench}
-        splitOpen={workbenchOpen && workbenchTab === "session"}
-        onToggleSplit={toggleSideSession}
-        onSelectSubAgent={openSubagentPreview}
-        onOpenSidebar={() => {
-          setSidebarOpen(true)
-          setSidebarCollapsed(false)
-        }}
-        sidebarCollapsed={sidebarCollapsed}
-      />
-
-      {isWide && workbenchOpen ? <ResizeHandle onPointerDown={workbenchResize.startResize} /> : null}
       {/* Register the stable parent layer before any global dialogs. Lazy
           tab content must never mount its own later, higher-priority layer. */}
-      <RightWorkbenchSurface
-        tabDragRef={workbenchTabDragRef}
-        interactionSuspended={paletteOpen}
-        focusScopeKey={workbenchScope}
-        getCurrentFocusScope={getCurrentWorkbenchScope}
-        visible={workbenchOpen}
-        pageVisible={!settingsOpen}
-        docked={isWide}
-        width={workbenchResize.width}
-        onClose={() => setWorkbenchOpen(false)}
-      >
-        {workbenchOpen || (workEnabled && openToolTabs.includes("work")) ? (
-          <Suspense fallback={null}>
-          <RightWorkbench
-            visible={workbenchOpen}
-            activeTab={selectedWorkbenchTab}
-            openToolTabs={visibleToolTabs}
-            workEnabled={workEnabled}
-            work={<div ref={setWorkPanelTarget} className="min-h-0 flex-1 overflow-y-auto" />}
-            tabOrder={workbenchState.order}
-            onTabReorder={(order) => {
-              workbenchSelectionVersionRef.current += 1
-              setWorkbenchField("order", (current) => reorderVisibleWorkbenchTabIds(current, order))
+      <ResizableLayout
+        sidebarCollapsed={sidebarCollapsed}
+        workbenchDocked={isWide && workbenchOpen}
+        sidebarWidth={sidebarResize}
+        workbenchWidth={workbenchResize}
+        workbenchMaxWidth={workbenchResize.maxWidth}
+        viewportWidth={workbenchResize.viewportWidth}
+        suspended={settingsOpen || paletteOpen}
+        scopeKey={workbenchScope}
+        sidebar={(
+          <Sidebar
+            open={sidebarOpen}
+            onClose={() => setSidebarOpen(false)}
+            collapsed={sidebarCollapsed}
+            onToggleCollapse={() => setSidebarCollapsed((v) => !v)}
+            width="100%"
+            chats={chats}
+            booted={booted}
+            currentSessionId={currentSessionId}
+            onNewChat={(projectId) => {
+              setPickedWorktree(null)
+              setPendingProjectId(projectId ?? null)
+              // The project (or its default workspace) owns the next session's cwd.
+              if (projectId) setPickedWorkspace(null)
+              newChat()
             }}
-            onToolClose={closeToolTab}
-            browserEnabled={browserEnabled}
-            browserSessionAvailable={Boolean(currentSessionId)}
-            browserEntryOpen={browserEntryOpen}
-            browserTabs={browserTabsForWorkbench}
-            activeBrowserTabId={browser.readySessionId === currentSessionId ? browser.state?.active_tab_id : null}
-            browserBusy={browser.busy || Boolean(browser.state?.pending_dialog)}
-            onBrowserActivate={(tabId) => {
-              workbenchSelectionVersionRef.current += 1
-              setWorkbenchTab("browser")
-              setBrowserEntryOpen(false)
-              if (tabId !== browser.state?.active_tab_id) void browser.activateTab(tabId)
-            }}
-            onBrowserClose={closeBrowserTab}
-            onTabChange={(tab) => {
-              if (tab === null) {
-                workbenchSelectionVersionRef.current += 1
-                setWorkbenchTab(null)
-                setBrowserEntryOpen(false)
-                return
+            onSelect={async (id) => {
+              const version = ++mainNavigationVersion.current
+              const previousSessionId = useAppStore.getState().currentSessionId
+              if (id === DEFAULT_SUPERVISOR_SESSION_ID) {
+                await agentClient.ensureDefaultSupervisor()
+                if (!await useAppStore.getState().restoreSession(id)) {
+                  throw new Error(uiText("workflow_run_not_found"))
+                }
+                if (version !== mainNavigationVersion.current || previousSessionId !== useAppStore.getState().currentSessionId) return
               }
-              if (tab === "review") setReviewTargetFilePath(null)
-              openWorkbench(tab)
+              if (isWide && id === DEFAULT_SUPERVISOR_SESSION_ID) openToolForSession(id, "work")
+              select(id)
             }}
-            onClose={() => setWorkbenchOpen(false)}
-            sessionTitle={secondSession?.title}
-            inspector={
-              <Inspector
-                embedded
-                sessionId={currentSessionId}
-                open={workbenchOpen && selectedWorkbenchTab === "inspector"}
-                onClose={() => setWorkbenchOpen(false)}
-                workspace={displayWorkspace}
-                onEditWorkspace={() => setWsPickerOpen(true)}
-                onOpenReview={openReview}
-                onCopySessionId={copySessionId}
-                selectedActorId={secondSid ?? currentSessionId ?? null}
-                onSelectActor={(actorId) => {
-                  const rootId = currentChat?.kind === "root" ? currentSessionId : currentChat?.rootSessionId
-                  if (actorId === rootId) {
-                    pickSecond(null)
-                    openToolForSession(actorId, "inspector")
-                    select(actorId)
-                  } else openSubagentPreview(actorId)
-                }}
-              />
-            }
-            review={(
-              <ReviewPane
-                sessionId={currentSessionId}
-                liveSegments={chat.liveSegments}
-                workspace={displayWorkspace}
-                targetFilePath={reviewTargetFilePath}
-              />
-            )}
-            browser={browserEnabled ? (
-              <BrowserPaneView
-                key={currentSessionId ?? "no-session"}
-                sessionId={currentSessionId}
-                active={workbenchOpen && workbenchTab === "browser"}
-                newTabEntry={browserEntryOpen}
-                entryDraft={browserEntryDraft}
-                onEntryDraftChange={(draft) => {
-                  setBrowserEntryDraft(draft)
-                  setBrowserEntryTouched(true)
-                }}
-                onNewTabOpened={() => {
-                  setBrowserEntryOpen(false)
-                  setBrowserEntryDraft("")
-                }}
-                browser={browser}
-              />
-            ) : null}
-            session={(
-              <SecondarySessionPane
-                sessionId={secondSid}
-                pageVisible={!settingsOpen}
-                active={workbenchOpen && selectedWorkbenchTab === "session"}
-                chats={chats}
-                onPickSession={pickSecond}
-                onClose={() => setWorkbenchOpen(false)}
-                onOpenInspector={() => setWorkbenchTab("inspector")}
-                onOpenReview={() => setWorkbenchTab("review")}
-              />
-            )}
+            onOpenExistingSession={async (id, verifyAccess) => {
+              const version = ++mainNavigationVersion.current
+              const previousSessionId = useAppStore.getState().currentSessionId
+              return navigateRecordedSession(id, verifyAccess, {
+                isCurrent: () => version === mainNavigationVersion.current && previousSessionId === useAppStore.getState().currentSessionId,
+                restore: (sessionId) => useAppStore.getState().restoreSession(sessionId), select,
+                notFound: () => new Error(uiText("workflow_run_not_found")),
+              })
+            }}
+            onRename={(id, title) => persistSessionTitle(id, title)}
+            onDelete={(c) => setPendingDelete({ id: c.id, title: c.title || uiText("new_session_c57c30bc") })}
+            onTogglePin={(c) => (c.pinned ? unpinSession(c.id) : pinSession(c.id))}
+            onCopySessionId={copySessionId}
+            onOpenSettings={openSettings}
+            onOpenProjectManager={() => setProjectManagerOpen(true)}
+            onOpenWorktrees={() => setWorktreesOpen(true)}
           />
-          </Suspense>
-        ) : null}
-      </RightWorkbenchSurface>
+        )}
+        workbench={(
+          <RightWorkbenchSurface
+            tabDragRef={workbenchTabDragRef}
+            interactionSuspended={paletteOpen}
+            focusScopeKey={workbenchScope}
+            getCurrentFocusScope={getCurrentWorkbenchScope}
+            visible={workbenchOpen}
+            pageVisible={!settingsOpen}
+            docked={isWide}
+            width="100%"
+            onClose={() => setWorkbenchOpen(false)}
+          >
+            {workbenchOpen || (workEnabled && openToolTabs.includes("work")) ? (
+              <Suspense fallback={null}>
+              <RightWorkbench
+                visible={workbenchOpen}
+                activeTab={selectedWorkbenchTab}
+                openToolTabs={visibleToolTabs}
+                workEnabled={workEnabled}
+                work={<div ref={setWorkPanelTarget} className="min-h-0 flex-1 overflow-y-auto" />}
+                tabOrder={workbenchState.order}
+                onTabReorder={(order) => {
+                  workbenchSelectionVersionRef.current += 1
+                  setWorkbenchField("order", (current) => reorderVisibleWorkbenchTabIds(current, order))
+                }}
+                onToolClose={closeToolTab}
+                browserEnabled={browserEnabled}
+                browserSessionAvailable={Boolean(currentSessionId)}
+                browserEntryOpen={browserEntryOpen}
+                browserTabs={browserTabsForWorkbench}
+                activeBrowserTabId={browser.readySessionId === currentSessionId ? browser.state?.active_tab_id : null}
+                browserBusy={browser.busy || Boolean(browser.state?.pending_dialog)}
+                onBrowserActivate={(tabId) => {
+                  workbenchSelectionVersionRef.current += 1
+                  setWorkbenchTab("browser")
+                  setBrowserEntryOpen(false)
+                  if (tabId !== browser.state?.active_tab_id) void browser.activateTab(tabId)
+                }}
+                onBrowserClose={closeBrowserTab}
+                onTabChange={(tab) => {
+                  if (tab === null) {
+                    workbenchSelectionVersionRef.current += 1
+                    setWorkbenchTab(null)
+                    setBrowserEntryOpen(false)
+                    return
+                  }
+                  if (tab === "review") setReviewTargetFilePath(null)
+                  openWorkbench(tab)
+                }}
+                onClose={() => setWorkbenchOpen(false)}
+                sessionTitle={secondSession?.title}
+                inspector={
+                  <Inspector
+                    embedded
+                    sessionId={currentSessionId}
+                    open={workbenchOpen && selectedWorkbenchTab === "inspector"}
+                    onClose={() => setWorkbenchOpen(false)}
+                    workspace={displayWorkspace}
+                    onEditWorkspace={() => setWsPickerOpen(true)}
+                    onOpenReview={openReview}
+                    onCopySessionId={copySessionId}
+                    selectedActorId={secondSid ?? currentSessionId ?? null}
+                    onSelectActor={(actorId) => {
+                      const rootId = currentChat?.kind === "root" ? currentSessionId : currentChat?.rootSessionId
+                      if (actorId === rootId) {
+                        pickSecond(null)
+                        openToolForSession(actorId, "inspector")
+                        select(actorId)
+                      } else openSubagentPreview(actorId)
+                    }}
+                  />
+                }
+                review={(
+                  <ReviewPane
+                    sessionId={currentSessionId}
+                    liveSegments={chat.liveSegments}
+                    workspace={displayWorkspace}
+                    targetFilePath={reviewTargetFilePath}
+                  />
+                )}
+                browser={browserEnabled ? (
+                  <LazyBrowserPaneView
+                    key={currentSessionId ?? "no-session"}
+                    sessionId={currentSessionId}
+                    active={workbenchOpen && workbenchTab === "browser"}
+                    newTabEntry={browserEntryOpen}
+                    entryDraft={browserEntryDraft}
+                    onEntryDraftChange={(draft) => {
+                      setBrowserEntryDraft(draft)
+                      setBrowserEntryTouched(true)
+                    }}
+                    onNewTabOpened={() => {
+                      setBrowserEntryOpen(false)
+                      setBrowserEntryDraft("")
+                    }}
+                    browser={{
+                      ...browser,
+                      openDefault: (id) => {
+                        if (id === currentSessionId && browser.profilePhase === "closed") openWorkbench("browser")
+                        return browser.openDefault(id)
+                      },
+                      openProfile: (id, mode) => {
+                        if (id === currentSessionId && browser.profilePhase === "closed") openWorkbench("browser")
+                        return browser.openProfile(id, mode)
+                      },
+                    }}
+                  />
+                ) : null}
+                session={(
+                  <SecondarySessionPane
+                    sessionId={secondSid}
+                    pageVisible={!settingsOpen}
+                    active={workbenchOpen && selectedWorkbenchTab === "session"}
+                    chats={chats}
+                    onPickSession={pickSecond}
+                    onClose={() => setWorkbenchOpen(false)}
+                    onOpenInspector={() => setWorkbenchTab("inspector")}
+                    onOpenReview={() => setWorkbenchTab("review")}
+                  />
+                )}
+              />
+              </Suspense>
+            ) : null}
+          </RightWorkbenchSurface>        )}
+      >
+        <ChatPane
+          chat={{ ...chat, select, newChat }}
+          pageVisible={!settingsOpen}
+          pickedWorkspace={pickedWorkspace}
+          worktreePath={pickedWorktree?.projectId === pendingProjectId ? pickedWorktree.path : null}
+          pendingProjectId={pendingProjectId}
+          onSelectProject={(projectId) => {
+            setPendingProjectId(projectId)
+            setPickedWorktree(null)
+            // A manual project pick owns the workspace; drop a manual choice.
+            if (projectId) setPickedWorkspace(null)
+          }}
+          onOpenWorkspacePicker={() => setWsPickerOpen(true)}
+          onOpenInspector={() => openWorkbench("inspector")}
+          onOpenReview={() => openReview()}
+          workPanelTarget={workEnabled ? workPanelTarget : null}
+          onOpenWork={workEnabled ? () => openWorkbench("work") : undefined}
+          onWorkReference={() => { if (!isWide) setWorkbenchOpen(false) }}
+          sidePaneOpen={workbenchOpen}
+          onToggleSidePane={toggleWorkbench}
+          splitOpen={workbenchOpen && workbenchTab === "session"}
+          onToggleSplit={toggleSideSession}
+          onSelectSubAgent={openSubagentPreview}
+          onOpenSidebar={() => {
+            setSidebarOpen(true)
+            setSidebarCollapsed(false)
+          }}
+          sidebarCollapsed={sidebarCollapsed}
+        />
+
+      </ResizableLayout>
 
       <Onboarding />
 
@@ -682,7 +704,7 @@ function App() {
       ) : null}
     </div>
       <LazySettings open={settingsOpen} onClose={closeSettings} />
-      <CommandPalette
+      <LazyCommandPalette
         getReturnFocusTarget={paletteReturnFocusRef.current}
         open={paletteOpen}
         onClose={() => setPaletteOpen(false)}

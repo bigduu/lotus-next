@@ -1,3 +1,11 @@
+.model-effort-trigger {
+  /* A bounded outer anchor stays fixed without reserving every mode label. */
+  inline-size: 12.5rem;
+  max-inline-size: min(45vw, 100%);
+  min-block-size: 2rem;
+}
+.effort-trigger-label { max-inline-size: 4.5em; }
+
 .effort-slider {
   position: relative;
   height: 32px;
@@ -36,16 +44,16 @@
   touch-action: none;
   border-radius: inherit;
 }
-.model-effort-trigger:focus-visible,
-.model-effort-panel button:focus-visible,
-.effort-slider input:focus-visible {
-  outline: 1px solid color-mix(in srgb, var(--foreground) 35%, transparent);
-  outline-offset: 3px;
-  box-shadow: none;
+/* The shared contrast-safe focus rings also cover this trigger, its options,
+   search field and range. Keep their shadows available rather than masking
+   the shared cue with a translucent per-picker outline. */
+.model-effort-panel [data-model-option]:focus-visible {
+  /* Full-width options touch the scroll clip; keep their cue inside it. */
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
 }
-.model-effort-panel .model-effort-search:focus-visible {
-  border-color: color-mix(in srgb, var(--foreground) 35%, transparent);
-  box-shadow: none;
+@media (forced-colors: active) {
+  .model-effort-panel [data-model-option]:focus-visible { outline-color: Highlight; }
 }
 .effort-slider input:disabled { cursor: not-allowed; }
 .effort-slider input::-webkit-slider-runnable-track { height: 32px; background: transparent; }
@@ -68,8 +76,6 @@
   box-shadow: 0 1px 3px #00000020;
 }
 
-/* Intrinsic, localized reservation keeps the Popper anchor fixed on selection. */
-.effort-label-reserve > span::before { content: attr(data-label); }
 /* Clip decoration only; the range and its keyboard focus ring stay unclipped. */
 @media (prefers-reduced-motion: no-preference) {
   .effort-meteors i { animation: effort-meteor linear infinite; }

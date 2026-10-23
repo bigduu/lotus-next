@@ -13,6 +13,7 @@ export type ExperienceMode = "simple" | "advanced";
 export const SIMPLE_MODE_SETTINGS_TABS = new Set([
   "general",
   "providers",
+  "config-share",
   "model-limits",
   "mcp",
   "permissions",

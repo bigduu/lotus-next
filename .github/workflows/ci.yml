@@ -57,6 +57,9 @@ jobs:
       - name: Verify Sprint planning and fixed-snapshot browser contracts
         run: node node_modules/@playwright/test/cli.js test --config=playwright.sprints.config.ts
 
+      - name: Verify configuration sharing with the synthetic source harness
+        run: npx playwright test --config=playwright.config-share.config.ts
+
       - name: Upload browser evidence
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v5
@@ -76,7 +79,7 @@ jobs:
     timeout-minutes: 60
 
     env:
-      BAMBOO_E2E_REVISION: a473f69b856962dd3dbdbfb2051b4fa4aa6e3041
+      BAMBOO_E2E_REVISION: 80815125da51a5722935e99fda2ed4541aa67f98
 
     steps:
       - name: Check out Lotus Next
@@ -106,15 +109,27 @@ jobs:
       - name: Install Chromium
         run: npx playwright install --with-deps chromium
 
+      - name: Prepare the fixed verification browser
+        run: node scripts/verification-browser.mjs prepare "${GITHUB_WORKSPACE}" "${RUNNER_TEMP}/verification-browser"
+
       - name: Build exact Bamboo and verify a real chat round trip
         env:
           BAMBOO_E2E_SOURCE_DIR: ${{ github.workspace }}/.e2e-bamboo
-        run: npm run test:e2e:real-bamboo:built
+        run: node node_modules/@playwright/test/cli.js test --config="${RUNNER_TEMP}/verification-browser/real-bamboo.config.mjs"
 
       - name: Verify the current source artifact on local and secure browser surfaces
         env:
           BAMBOO_E2E_SOURCE_DIR: ${{ github.workspace }}/.e2e-bamboo
-        run: node scripts/published-real-bamboo-acceptance.mjs --current-source
+        run: node scripts/published-real-bamboo-acceptance.mjs --current-source --verification-browser "${RUNNER_TEMP}/verification-browser"
+
+      - name: Upload the verification browser identity
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v5
+        with:
+          name: real-bamboo-verification-browser
+          path: ${{ runner.temp }}/verification-browser/browser-identity.json
+          if-no-files-found: error
+          retention-days: 14
 
       - name: Upload real Bamboo browser evidence
         if: ${{ always() }}

@@ -61,12 +61,14 @@ import { Toasts, type ToastNotice } from "@/components/app/Toasts"
 import { ImageLightbox } from "@/components/app/ImageLightbox"
 import { peekPendingTemplatePrompt } from "@/lib/taskTemplates"
 import { ContextUsageRing } from "@/components/app/ContextUsageRing"
+import { ContextCompressionNotice } from "@/components/app/ContextCompressionNotice"
 import { ModelEffortPicker } from "@/components/chat/ModelEffortPicker"
 import { NewSessionPermissionControl, PermissionModeControl } from "@/components/chat/PermissionModeControl"
 import { RootOrchestrationControl } from "@/components/chat/RootOrchestrationControl"
 import { useWorkflowCatalog } from "@/components/chat/useWorkflowCatalog"
 import { WorkflowSelectionControl } from "@/components/chat/WorkflowSelectionControl"
 import { WorkflowRunsDialog } from "@/components/chat/WorkflowRunsDialog"
+import { ConversationClearDialog } from "@/components/chat/ConversationClearDialog"
 import {
   Select,
   SelectContent,
@@ -84,6 +86,8 @@ import {
 } from "@/lib/sessionFileChanges"
 import { getFileChangePayloadDiffStats } from "@shared/utils/resultFormatters"
 import { describeRunFailure } from "@/lib/runFailureGuidance"
+import { extractDiagnosticId, type RunDiagnosticsSubject } from "@/lib/runDiagnosticId"
+import { RunDiagnosticsEntry } from "@/components/chat/RunDiagnosticsEntry"
 import { SessionCompatibilityNotice } from "./SessionCompatibilityNotice"
 import { isSessionExecutionBlocked, observeSessionExecutionConflict } from "@services/chat/sessionExecutionCompatibility"
 
@@ -228,6 +232,7 @@ export function ChatPane({
     streamingReasoning,
     liveSegments,
     streamStatus,
+    contextCompression,
     outputRate,
     pendingUserText,
     pendingUserImages = [],
@@ -273,6 +278,15 @@ export function ChatPane({
       ? currentChat.lastRunError?.trim() || persistedRunError
       : null)
   const runFailureGuidance = generationFailed ? describeRunFailure(runErrorDetail) : null
+  const runDiagnosticsSubject = useMemo<RunDiagnosticsSubject>(() => ({
+    sessionId: currentSessionId,
+    localOperationId: visibleSendFailure?.operationId ?? null,
+    failureKind: visibleSendFailure?.kind ?? "generation-failed",
+    diagnosticId: extractDiagnosticId(runErrorDetail),
+    errorBinding: runErrorDetail,
+    liveDiagnostic: visibleSendFailure?.kind === "generation-failed" ? visibleSendFailure.diagnostic : null,
+  }), [currentSessionId, visibleSendFailure, runErrorDetail])
+
   const queue = useGuidanceQueue(currentSessionId, currentlyRunning)
   const rootAuthority = useRootOrchestrationMode(currentSessionId, currentChat?.kind)
   // Invalidate cached Work eligibility on mode/lifecycle changes. This key is
@@ -532,6 +546,7 @@ export function ChatPane({
   const slashQuery = !menusDismissed && draft.startsWith("/") ? draft.slice(1) : null
   const catalogState = useWorkflowCatalog(currentSessionId, slashQuery !== null || workflowPicker !== null)
   const [workflowRunsOpen, setWorkflowRunsOpen] = useState(false)
+  const [clearTarget, setClearTarget] = useState<{ id: string; title: string } | null>(null)
   const workflowDisabled = submissionPending || currentlyRunning || queue.hasUnconfirmed || rootMode.unsafe
   // A hidden Environment must not strand its open editor (phone/workbench changes).
   useEffect(() => {
@@ -916,6 +931,8 @@ export function ChatPane({
   }
   const selectSubAgentInPane = onSelectSubAgent ?? secondary?.onPickSession ?? select
   const overflowItems = [
+    ...(currentSessionId ? [{ label: uiText("conversation_clear_action"), icon: <RotateCcw className="size-4" />,
+      onClick: () => setClearTarget({ id: currentSessionId, title: currentChat?.title || currentSessionId }) }] : []),
     ...(currentSessionId ? [{ label: uiText("workflow_run_title"), icon: <BookText className="size-4" />,
       onClick: () => setWorkflowRunsOpen(true) }] : []),
     ...(currentSessionId && messages.length > 0
@@ -1174,6 +1191,8 @@ export function ChatPane({
               </p>
               {rootMode.unsafe && generationFailed ? (
                 <p className="mt-1 text-xs">{uiText("the_root_permission_change_is_unconfirmed_your_message__fd9a5b04")}</p>
+              ) : visibleSendFailure?.kind === "submission-unconfirmed" && visibleSendFailure.rejectionCode === "session_project_running_conflict" ? (
+                <p className="mt-1 text-xs">{uiText("session_source_conflict_action")}</p>
               ) : runFailureGuidance ? (
                 <p className="mt-1 text-xs">{runFailureGuidance.action}</p>
               ) : null}
@@ -1186,6 +1205,7 @@ export function ChatPane({
                 </details>
               ) : null}
             </div>
+            {!currentlyRunning ? <RunDiagnosticsEntry key={currentChat?.updatedAt} subject={runDiagnosticsSubject} /> : null}
             {rootMode.unsafe ? null : generationFailed ? (
               <Button
                 size="sm"
@@ -1241,6 +1261,7 @@ export function ChatPane({
             </div>
           )}
           <div className="shrink-0" hidden={historyBlocked} inert={historyBlocked} data-history-composer-blocked={historyBlocked}>
+          <ContextCompressionNotice feedback={contextCompression} />
           <Composer
           draft={draft}
           draftKey={draftKey}
@@ -1389,6 +1410,8 @@ export function ChatPane({
       </div>
 
       <Toasts forking={forking} toast={toast} onDismiss={() => setToast(null)} onRestoreFocus={() => { if (pageVisible !== false && !historyBlocked) composerInputRef.current?.focus() }} />
+      {clearTarget ? <ConversationClearDialog key={clearTarget.id} sessionId={clearTarget.id} title={clearTarget.title}
+        onClose={() => setClearTarget(null)} /> : null}
       {workflowRunsOpen && currentSessionId && pageVisible !== false ? <WorkflowRunsDialog key={currentSessionId}
         sessionId={currentSessionId} sessionTitle={currentChat?.title || currentSessionId} onClose={() => setWorkflowRunsOpen(false)} /> : null}
 

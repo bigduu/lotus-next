@@ -15,6 +15,7 @@ const temporaryDirectories = []
 
 const featureEntries = [
   ["src/components/app/ProjectWorkBoard.tsx", "ProjectWorkBoard"],
+  ["src/components/app/BrowserPane.tsx", "BrowserPane"],
   ["src/components/chat/Settings.tsx", "Settings"],
   ["src/components/chat/StreamdownMarkdown.tsx", "StreamdownMarkdown"],
   ["src/components/chat/StreamdownMermaid.tsx", "StreamdownMermaid"],
@@ -35,6 +36,7 @@ const vendorFeatureNames = [
 const createFixture = async ({
   leakSettings = false,
   leakProjectWork = false,
+  leakBrowserPane = false,
   leakedOwnedModule,
   leakedOwnedPackage,
   missingSettingsOwnedModule,
@@ -79,6 +81,7 @@ const createFixture = async ({
         "_vendor.js",
         ...(leakSettings ? ["src/components/chat/Settings.tsx"] : []),
         ...(leakProjectWork ? ["src/components/app/ProjectWorkBoard.tsx"] : []),
+        ...(leakBrowserPane ? ["src/components/app/BrowserPane.tsx"] : []),
       ],
       dynamicImports: ["src/components/chat/Settings.tsx"],
     },
@@ -200,9 +203,15 @@ describe("ordinary-chat production bundle budget", () => {
     )
   })
 
+  it("rejects the optional BrowserPane view in the startup import graph", async () => {
+    const report = analyzeBundleBudget(await createFixture({ leakBrowserPane: true }))
+    expect(findBundleBudgetViolations(report)).toContain("BrowserPane leaked into the ordinary-chat startup closure.")
+  })
+
   it.each([
     "src/components/app/ProjectWorkBoard.tsx",
     "src/components/app/project-work/ProjectWorkPlanningControls.tsx",
+    "src/components/app/BrowserPane.tsx",
     "src/services/plugin/PluginService.ts",
     "src/services/metrics/MetricsService.ts",
     "src/components/chat/streamdownConfig.ts",
