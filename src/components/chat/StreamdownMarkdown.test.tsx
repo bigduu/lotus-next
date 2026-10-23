@@ -1,4 +1,4 @@
-import { act } from "react"
+import { act, StrictMode } from "react"
 import { createRoot, type Root } from "react-dom/client"
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest"
 
@@ -89,7 +89,7 @@ async function settle(): Promise<void> {
   })
 }
 
-async function mountMarkdown(source = "", isStreaming = false): Promise<MountedMarkdown> {
+async function mountMarkdown(source = "", isStreaming = false, strict = false): Promise<MountedMarkdown> {
   const container = document.createElement("div")
   document.body.appendChild(container)
   const root = createRoot(container)
@@ -97,9 +97,8 @@ async function mountMarkdown(source = "", isStreaming = false): Promise<MountedM
 
   const render = async (nextSource: string, nextIsStreaming: boolean) => {
     await act(async () => {
-      root.render(
-        <StreamdownMarkdown isStreaming={nextIsStreaming}>{nextSource}</StreamdownMarkdown>,
-      )
+      const markdown = <StreamdownMarkdown isStreaming={nextIsStreaming}>{nextSource}</StreamdownMarkdown>
+      root.render(strict ? <StrictMode>{markdown}</StrictMode> : markdown)
     })
     await settle()
   }
@@ -217,92 +216,107 @@ describe("StreamdownMarkdown streaming behavior", () => {
     )
   })
 
-  it("animates only the active form and converges to the same deterministic static DOM", async () => {
+  it("baselines existing text and converges to deterministic static DOM after stop", async () => {
     const finalSource = "一段 **final** text\n\n- one\n- two"
     const transitioning = await mountMarkdown(finalSource, true)
 
-    expect(transitioning.container.querySelector("[data-sd-animate]")).not.toBeNull()
-    expect(
-      transitioning.container.querySelector('[data-assistant-typewriter-caret-target="true"]'),
-    ).not.toBeNull()
-    expect(transitioning.container.innerHTML).not.toContain("--streamdown-caret")
+    expect(transitioning.container.querySelector("[data-assistant-reveal-chunk]")).not.toBeNull()
+    expect(transitioning.container.querySelector("[data-assistant-reveal]")).toBeNull()
+    expect(transitioning.container.querySelector("[data-sd-animate]")).toBeNull()
+    expect(transitioning.container.querySelector('[data-assistant-streaming-caret]')).not.toBeNull()
 
     await transitioning.render(finalSource, false)
-    expect(transitioning.container.querySelector("[data-sd-animate]")).toBeNull()
-    expect(
-      transitioning.container.querySelector('[data-assistant-typewriter-caret-target="true"]'),
-    ).toBeNull()
-    const transitionedStaticDom = semanticHtml(transitioning.container)
-
+    expect(transitioning.container.querySelector("[data-assistant-reveal-chunk]")).toBeNull()
+    expect(transitioning.container.querySelector('[data-assistant-streaming-caret]')).toBeNull()
     const persisted = await mountMarkdown(finalSource, false)
-    expect(semanticHtml(persisted.container)).toBe(transitionedStaticDom)
+    expect(semanticHtml(persisted.container)).toBe(semanticHtml(transitioning.container))
   })
 
-  it("animates newly appended CJK characters within the same line", async () => {
-    const view = await mountMarkdown("你好", true)
+  it("reveals new CJK groups without replaying a growing or completed chunk", async () => {
+    const prefix = "中".repeat(32)
+    const view = await mountMarkdown(prefix, true)
+    const first = view.container.querySelector('[data-assistant-reveal-chunk]')!
+    await view.render(prefix + "你好", true)
+    const chunks = [...view.container.querySelectorAll('[data-assistant-reveal-chunk]')]
+    expect(chunks).toHaveLength(2)
+    expect(chunks[0]).toBe(first)
+    expect(chunks[0].hasAttribute("data-assistant-reveal")).toBe(false)
+    expect(chunks[1].getAttribute("data-assistant-reveal")).toBe("true")
+    expect(chunks[1].textContent).toBe("你好")
 
-    await view.render("你好世界", true)
-
-    const animatedCharacters = [
-      ...view.container.querySelectorAll<HTMLElement>("[data-sd-animate]"),
-    ]
-    expect(animatedCharacters.map((node) => node.textContent)).toEqual(["你", "好", "世", "界"])
-    expect(
-      animatedCharacters.slice(-2).map((node) => node.style.getPropertyValue("--sd-duration")),
-    ).toEqual(["120ms", "120ms"])
+    await view.render(prefix + "你好世界", true)
+    const growing = view.container.querySelectorAll('[data-assistant-reveal-chunk]')[1]
+    expect(growing).toBe(chunks[1])
+    expect(growing.textContent).toBe("你好世界")
+    expect(growing.firstChild?.nodeType).toBe(Node.TEXT_NODE)
+    expect(view.container.querySelectorAll('[data-assistant-streaming-caret]')).toHaveLength(1)
+    expect(view.container.textContent).toBe(prefix + "你好世界")
   })
 
-  it("moves the caret with the character whose animation has started", async () => {
-    const view = await mountMarkdown("你好", true)
-    await view.render("你好世界", true)
+  it("commits the visible prefix consistently under StrictMode", async () => {
+    const source = "中".repeat(32)
+    const view = await mountMarkdown(source, true, true)
+    expect(view.container.querySelector("[data-assistant-reveal]")).toBeNull()
+    await view.render(source + "追加", true)
+    expect(view.container.querySelectorAll("[data-assistant-reveal]")).toHaveLength(1)
+    expect(view.container.textContent).toBe(source + "追加")
+    await view.render(source + "追加正文", true)
+    expect(view.container.querySelectorAll("[data-assistant-reveal]")).toHaveLength(1)
+    expect(view.container.textContent).toBe(source + "追加正文")
+  })
 
-    const animatedCharacters = [
-      ...view.container.querySelectorAll<HTMLElement>("[data-sd-animate]"),
-    ]
-    const token = (text: string) =>
-      animatedCharacters.find((node) => node.textContent === text) as HTMLElement
-    const activeCaretTarget = () =>
-      view.container.querySelector('[data-assistant-typewriter-caret-target="true"]')
-    const startAnimation = (target: HTMLElement) => {
-      const event = new Event("animationstart", { bubbles: true })
-      Object.defineProperty(event, "animationName", { value: "sd-fadeIn" })
-      target.dispatchEvent(event)
+  it("preserves selection inside the actively growing chunk and across completed chunks", async () => {
+    const prefix = "中".repeat(32)
+    const view = await mountMarkdown(prefix + "select me", true)
+    const chunks = view.container.querySelectorAll('[data-assistant-reveal-chunk]')
+    const tailText = chunks[1].firstChild!
+    const range = document.createRange()
+    range.setStart(tailText, 0)
+    range.setEnd(tailText, 6)
+    const selection = document.getSelection()!
+    selection.removeAllRanges()
+    selection.addRange(range)
+    await view.render(prefix + "select me now", true)
+    expect(selection.toString()).toBe("select")
+    expect(selection.anchorNode).toBe(tailText)
+
+    range.setStart(chunks[0].firstChild!, 30)
+    range.setEnd(tailText, 6)
+    selection.removeAllRanges()
+    selection.addRange(range)
+    const selected = selection.toString()
+    await view.render(prefix + "select me now" + "文".repeat(40), true)
+    expect(selection.toString()).toBe(selected)
+    expect(view.container.textContent).not.toContain("\u00a0")
+    selection.removeAllRanges()
+  })
+
+  it("settles old text after grammar reparenting and isolates concurrent streams", async () => {
+    const first = await mountMarkdown("A title", true)
+    const second = await mountMarkdown("中".repeat(32), true)
+    await first.render("A title\n-------", true)
+    expect(first.container.querySelector("h2")?.textContent).toBe("A title")
+    expect(first.container.querySelector("[data-assistant-reveal]")).toBeNull()
+    await second.render("中".repeat(32) + "追加", true)
+    expect(second.container.querySelector('[data-assistant-reveal]')?.textContent).toBe("追加")
+    await first.render("A title\n-------\n\nFresh paragraph", true)
+    expect(first.container.querySelector('[data-assistant-reveal]')?.textContent).toBe("Fresh paragraph")
+  })
+
+  it("keeps links, code, tables and Mermaid out of prose effects", async () => {
+    const view = await mountMarkdown("", true)
+    const source = "Safe **正文** [link](https://example.com) `inline`\n\n```text\nfenced\n```\n\n| A | B |\n| --- | --- |\n| x | y |"
+    await view.render(source, true)
+    expect(view.container.querySelector('[data-assistant-reveal]')).not.toBeNull()
+    for (const selector of ['[data-streamdown=link]', 'code', 'pre', 'table']) {
+      expect(view.container.querySelector(`${selector} [data-assistant-reveal-chunk]`)).toBeNull()
     }
-
-    // The newly appended characters already exist in final DOM order, but the
-    // caret remains beside the last settled character until their animation
-    // starts instead of jumping straight to the final character.
-    expect(activeCaretTarget()?.textContent).toBe("好")
-    act(() => startAnimation(token("世")))
-    expect(activeCaretTarget()?.textContent).toBe("世")
-    act(() => startAnimation(token("界")))
-    expect(activeCaretTarget()?.textContent).toBe("界")
+    expect(view.container.querySelector('[data-streamdown=link]')?.textContent).toBe("link")
+    expect(view.container.querySelector('[aria-live]')).toBeNull()
+    expect([...view.container.querySelectorAll('[data-assistant-streaming-caret]')]
+      .every((node) => node.getAttribute("aria-hidden") === "true" && node.textContent === "")).toBe(true)
   })
 
-  it("marks only the active token without adding nodes to React text children", async () => {
-    const view = await mountMarkdown("你好", true)
-    await view.render("你好世界", true)
-    const active = view.container.querySelector<HTMLElement>('[data-assistant-typewriter-caret-target="true"]')!
-    expect(active.textContent).toBe("好")
-    expect(active.childNodes).toHaveLength(1)
-    expect(active.firstChild?.nodeType).toBe(Node.TEXT_NODE)
-    expect(view.container.querySelectorAll('[data-assistant-typewriter-caret-target="true"]')).toHaveLength(1)
-    expect(document.querySelector('[data-assistant-typewriter-caret="true"]')).toBeNull()
-
-    const event = new Event("animationstart", { bubbles: true })
-    Object.defineProperty(event, "animationName", { value: "sd-fadeIn" })
-    const next = [...view.container.querySelectorAll<HTMLElement>("[data-sd-animate]")].find((node) => node.textContent === "世")!
-    act(() => next.dispatchEvent(event))
-    expect(active.hasAttribute("data-assistant-typewriter-caret-target")).toBe(false)
-    expect(next.hasAttribute("data-assistant-typewriter-caret-target")).toBe(true)
-    expect(next.childNodes).toHaveLength(1)
-
-    await view.render("你好世界", false)
-    expect(view.container.querySelector('[data-assistant-typewriter-caret-target="true"]')).toBeNull()
-    // A stale token event after cleanup must not restart the caret.
-    act(() => next.dispatchEvent(event))
-    expect(next.hasAttribute("data-assistant-typewriter-caret-target")).toBe(false)
-  })
 })
 
 describe("StreamdownMarkdown security, layout and theme semantics", () => {

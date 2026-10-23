@@ -7,6 +7,7 @@ import {
   type HistoryResponse,
 } from "@services/chat/AgentService";
 import { ApiError } from "@services/api";
+import { ConversationClearError, readClearedConversation, requestConversationClear } from "@services/chat/conversationClear";
 import type { AppState } from "../";
 import { useProviderStore } from "./providerSlice";
 import { applyExecutionEvent } from "./executionStateSlice";
@@ -41,7 +42,7 @@ export type {
 } from "./chatSessionSlice/types";
 export { mapHistoryMessagesToUi } from "./chatSessionSlice/messageMapping";
 
-import type { ChatSlice } from "./chatSessionSlice/types";
+import type { ChatSlice, ConversationClearState } from "./chatSessionSlice/types";
 
 const agentClient = AgentClient.getInstance();
 
@@ -63,12 +64,23 @@ export const hasTerminalAssistantTail = (
 // events) into a single history+pending reload.
 const reconcileTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const RECONCILE_DEBOUNCE_MS = 300;
+// Each store/session has one current reader; a settled newer read never revives
+// an older snapshot, even when that newer read failed or was abandoned.
+const historyReads = new WeakMap<() => AppState, Map<string, object>>();
 
-export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, get) => ({
+export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, get) => {
+  const deferredClears = new Set<string>();
+  const replacementRequired = new Set<string>();
+  const clearState = (sessionId: string, value: ConversationClearState) => {
+    set((state) => ({ conversationClears: { ...state.conversationClears, [sessionId]: value } }));
+    if (!value.busy && deferredClears.delete(sessionId)) get().reconcileClearedConversation(sessionId);
+  };
+  return ({
   chats: [],
   currentSessionId: null,
   latestActiveSessionId: null,
   sessionIndexRevision: 0,
+  conversationClears: {},
 
   addChat: async (chatData) => {
     const title = (chatData.title || i18n.t("chat.sidebar.newSession")).trim();
@@ -730,7 +742,122 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
     }
   },
 
+  dismissConversationClear: (sessionId) => {
+    const state = get().conversationClears[sessionId];
+    if (state?.busy || state?.error === "unknown" || state?.error === "readback_failed") return;
+    set((current) => {
+      const { [sessionId]: _, ...rest } = current.conversationClears;
+      return { conversationClears: rest };
+    });
+  },
+
+  refreshConversationClear: async (sessionId) => {
+    const prior = get().conversationClears[sessionId];
+    if (prior?.busy) return;
+    // Explicit GET-only refresh after a refusal; it cannot turn a refusal into
+    // a successful mutation. Keep the typed error visible.
+    try {
+      const read = get().loadChatHistory(sessionId, { mode: "replace", throwOnError: true });
+      clearState(sessionId, { ...prior, busy: true });
+      await read;
+      await get().refreshChatsNow();
+      clearState(sessionId, { ...prior, busy: false, refreshFailed: false });
+    } catch (error) {
+      clearState(sessionId, { ...prior, busy: false, refreshFailed: true });
+      throw error;
+    }
+  },
+
+  clearConversation: async (sessionId) => {
+    const prior = get().conversationClears[sessionId];
+    if (prior?.busy) return;
+    // C1 has no idempotent operation receipt. An uncertain write stays locked
+    // across dialog reopen; only explicit read-only verification is available.
+    if (prior?.error === "unknown" || prior?.error === "readback_failed") {
+      throw new ConversationClearError(prior.error);
+    }
+    clearState(sessionId, { busy: true });
+    historyReads.get(get)?.delete(sessionId);
+    try {
+      await requestConversationClear(sessionId, agentClient);
+      // Verification alone applies the canonical fields; never optimistically
+      // erase messages after POST, and never route through best-effort history.
+      await get().verifyConversationClear(sessionId);
+    } catch (cause) {
+      const error = cause instanceof ConversationClearError ? cause : new ConversationClearError("unknown", { cause });
+      clearState(sessionId, { busy: false, error: error.reason });
+      throw error;
+    }
+  },
+
+  verifyConversationClear: async (sessionId) => {
+    const prior = get().conversationClears[sessionId];
+    const reads = historyReads.get(get) ?? new Map<string, object>();
+    historyReads.set(get, reads);
+    const request = {};
+    reads.set(sessionId, request);
+    clearState(sessionId, { ...prior, busy: true });
+    try {
+      const { history, session } = await readClearedConversation(sessionId, agentClient);
+      if (reads.get(sessionId) !== request) throw new ConversationClearError("readback_failed");
+      const chat = get().chats.find((item) => item.id === sessionId);
+      if (!chat) throw new ConversationClearError("readback_failed");
+      get().updateSession(sessionId, {
+        messages: mapHistoryMessagesToUi(sessionId, history.messages),
+        messageCount: history.messages.length,
+        hasAttachments: session.has_attachments,
+        config: { ...chat.config, tokenUsage: undefined, truncationOccurred: undefined,
+          segmentsRemoved: undefined,
+          // C1 does not clear compression events. Preserve their readback.
+          compressionEvents: (history.compression_events ?? []).map((event) => ({
+            id: event.id, createdAt: event.created_at, messagesCompressed: event.messages_compressed, segmentsRemoved: event.segments_removed,
+          })),
+          syncCursor: { messageCount: history.messages.length, lastMessageId: history.messages.at(-1)?.id ?? null,
+            hasPendingQuestion: false, pendingQuestionToolCallId: null },
+        },
+      }, { skipBackendPatch: true });
+      get().clearTokenUsage(sessionId);
+      clearState(sessionId, prior?.error === "unknown"
+        ? { busy: false, error: "unknown", readbackConfirmed: true }
+        : { busy: false, confirmed: true });
+    } catch (cause) {
+      clearState(sessionId, { busy: false, error: prior?.error === "unknown" ? "unknown" : "readback_failed",
+        refreshFailed: prior?.error === "unknown" || prior?.error === "readback_failed" });
+      throw cause;
+    } finally {
+      if (reads.get(sessionId) === request) reads.delete(sessionId);
+    }
+  },
+
+  reconcileClearedConversation: (sessionId) => {
+    // The event has no revision. Fence reads already in flight on this client
+    // and replace from a fresh read, including loaded split/inactive sessions.
+    historyReads.get(get)?.delete(sessionId);
+    const timer = reconcileTimers.get(sessionId);
+    if (timer) { clearTimeout(timer); reconcileTimers.delete(sessionId); }
+    if (!get().chats.some((chat) => chat.id === sessionId)) return;
+    replacementRequired.add(sessionId);
+    if (get().conversationClears[sessionId]?.busy) { deferredClears.add(sessionId); return; }
+    deferredClears.delete(sessionId);
+    void get().loadChatHistory(sessionId, { mode: "replace" });
+  },
+
   loadChatHistory: async (sessionId, options) => {
+    let discarded: DOMException | undefined;
+    const discardRead = () => {
+      // Strict consumers may retire live evidence only after confirmation.
+      if (options?.throwOnError) {
+        discarded ??= new DOMException("History read was discarded before confirmation", "AbortError");
+        throw discarded;
+      }
+    };
+    if (options?.signal?.aborted) return discardRead();
+    if (get().conversationClears[sessionId]?.busy) return discardRead();
+    const reads = historyReads.get(get) ?? new Map<string, object>();
+    historyReads.set(get, reads);
+    const request = {};
+    reads.set(sessionId, request);
+    const isCurrentRead = () => reads.get(sessionId) === request;
     const mode = options?.mode ?? "replace";
     const retries = Math.max(0, options?.retries ?? 0);
     const retryDelayMs = Math.max(0, options?.retryDelayMs ?? 0);
@@ -743,160 +870,187 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
       waitForAssistant: options?.waitForAssistant ?? false,
     });
 
-    for (let attempt = 0; attempt <= retries; attempt += 1) {
-      if (options?.signal?.aborted) return;
-      try {
-        // Avoid spurious backend calls when the UI layout references a stale session id.
-        // (e.g. after backend reset or manual data cleanup)
-        const chat = get().chats.find((c) => c.id === sessionId);
-        if (!chat) {
-          debugLog("[ChatSlice]", "loadChatHistory.skipMissingChat", { sessionId, attempt });
-          if (options?.throwOnError) throw new Error("Session is unavailable");
+    try {
+      for (let attempt = 0; attempt <= retries; attempt += 1) {
+        if (options?.signal?.aborted || !isCurrentRead()) return discardRead();
+        try {
+          // Avoid spurious backend calls when the UI layout references a stale session id.
+          // (e.g. after backend reset or manual data cleanup)
+          const chat = get().chats.find((c) => c.id === sessionId);
+          if (!chat) {
+            debugLog("[ChatSlice]", "loadChatHistory.skipMissingChat", { sessionId, attempt });
+            if (options?.throwOnError) throw new Error("Session is unavailable");
+            return;
+          }
+
+          const history = await agentClient.getHistory(sessionId);
+          if (options?.signal?.aborted) return discardRead();
+          if (options?.throwOnError && history.session_id !== sessionId) throw new Error("History session mismatch");
+          if (!isCurrentRead()) return discardRead();
+          // Clear replacement intent survives superseding monotonic reads and
+          // failures. Read token state too: the live cache outranks list config.
+          const afterClear = replacementRequired.has(sessionId);
+          const detail = afterClear ? (await agentClient.getSession(sessionId)).session : undefined;
+          if (options?.signal?.aborted || !isCurrentRead()) return discardRead();
+          if (afterClear && (history.session_id !== sessionId || detail?.id !== sessionId)) throw new Error("History session mismatch");
+          const tokenConfig = detail ? sessionSummaryToChatItem(detail).config : undefined;
+          const currentChat = get().chats.find((item) => item.id === sessionId);
+          if (!currentChat) return discardRead();
+          debugLog("[ChatSlice]", "loadChatHistory.response", {
+            sessionId,
+            attempt,
+            historyMessageCount: history.messages.length,
+            localMessageCount: currentChat.messages.length,
+            localStoredMessageCount: currentChat.messageCount ?? null,
+            lastMessageId: history.messages[history.messages.length - 1]?.id ?? null,
+            lastRole: history.messages[history.messages.length - 1]?.role ?? null,
+          });
+
+          const terminalAssistantReady = hasTerminalAssistantTail(history.messages);
+          if (options?.waitForAssistant && !terminalAssistantReady && attempt < retries) {
+            // A live terminal event may precede the final history checkpoint. A
+            // tool tail is just as incomplete as a user tail, so keep waiting for
+            // the durable, non-tool assistant message before applying history.
+            const delay = retryDelayMs > 0 ? retryDelayMs * (attempt + 1) : 200 * (attempt + 1);
+            debugLog("[ChatSlice]", "loadChatHistory.waitForAssistant.retry", {
+              sessionId,
+              attempt,
+              delay,
+              lastRole: history.messages[history.messages.length - 1]?.role ?? null,
+            });
+            await new Promise((resolve) => setTimeout(resolve, delay));
+            continue;
+          }
+
+          const nextMessages = mapHistoryMessagesToUi(sessionId, history.messages);
+
+          if (mode === "monotonic" && !afterClear) {
+            const prevMessages = currentChat.messages || [];
+            const prevLen = prevMessages.length;
+            const nextLen = nextMessages.length;
+            const nextLastRole = nextMessages[nextMessages.length - 1]?.role;
+            const prevLastRole = prevMessages[prevMessages.length - 1]?.role;
+            const prevLastMessage = prevMessages[prevMessages.length - 1] as Message | undefined;
+            const nextLastMessage = nextMessages[nextMessages.length - 1] as Message | undefined;
+            const prevLastId = prevLastMessage?.id;
+            const nextLastId = nextLastMessage?.id;
+
+            // Avoid wiping newer in-memory UI state with shorter backend snapshots.
+            // Only replace when backend is strictly longer, or when lengths are equal
+            // but backend clearly progressed from a user tail / changed terminal item.
+            let shouldReplace = false;
+            if (nextLen > prevLen) {
+              shouldReplace = true;
+            } else if (nextLen === prevLen) {
+              const resolvedUserTail = prevLastRole === "user" && nextLastRole !== "user";
+              const terminalChanged =
+                typeof prevLastId === "string" &&
+                typeof nextLastId === "string" &&
+                prevLastId !== nextLastId;
+              shouldReplace = resolvedUserTail || terminalChanged;
+            }
+
+            debugLog("[ChatSlice]", "loadChatHistory.monotonicDecision", {
+              sessionId,
+              attempt,
+              prevLen,
+              nextLen,
+              prevLastRole: prevLastRole ?? null,
+              nextLastRole: nextLastRole ?? null,
+              prevLastId: prevLastId ?? null,
+              nextLastId: nextLastId ?? null,
+              shouldReplace,
+            });
+
+            if (!shouldReplace) {
+              get().updateSession(sessionId, {
+                messageCount: Math.max(currentChat.messageCount ?? 0, history.messages.length),
+              });
+              debugLog("[ChatSlice]", "loadChatHistory.monotonicSkip", {
+                sessionId,
+                attempt,
+                localMessageCount: currentChat.messages.length,
+                serverMessageCount: history.messages.length,
+              });
+              return;
+            }
+          }
+
+          // History owns only its hydrated fields. A permission read/write may
+          // have confirmed a newer mode/ETag while getHistory was in flight.
+          get().updateSession(sessionId, {
+            messages: nextMessages,
+            messageCount: history.messages.length,
+            config: {
+              ...currentChat.config,
+              ...(tokenConfig ? { tokenUsage: tokenConfig.tokenUsage, truncationOccurred: tokenConfig.truncationOccurred,
+                segmentsRemoved: tokenConfig.segmentsRemoved } : {}),
+              ...(history.gold_config != null ? { goldConfig: history.gold_config } : {}),
+              ...(history.goal_state != null ? { goalState: history.goal_state } : {}),
+              compressionEvents: (history.compression_events || []).map((event) => ({
+                id: event.id,
+                createdAt: event.created_at,
+                messagesCompressed: event.messages_compressed,
+                segmentsRemoved: event.segments_removed,
+              })),
+              syncCursor: {
+                messageCount: history.messages.length,
+                lastMessageId: history.messages[history.messages.length - 1]?.id ?? null,
+                hasPendingQuestion: Boolean(
+                  get().executionBySession?.[sessionId]?.interaction.pendingQuestion,
+                ),
+                pendingQuestionToolCallId:
+                  get().executionBySession?.[sessionId]?.interaction.pendingQuestion?.toolCallId ??
+                  null,
+              },
+            },
+          }, { skipBackendPatch: true });
+          if (afterClear) {
+            replacementRequired.delete(sessionId);
+            get().clearTokenUsage(sessionId);
+            if (tokenConfig?.tokenUsage) get().updateTokenUsage(sessionId, tokenConfig.tokenUsage);
+          }
+          debugLog("[ChatSlice]", "loadChatHistory.applied", {
+            sessionId,
+            attempt,
+            mode,
+            messageCount: history.messages.length,
+            lastMessageId: history.messages[history.messages.length - 1]?.id ?? null,
+          });
           return;
-        }
-
-        const history = await agentClient.getHistory(sessionId);
-        if (options?.signal?.aborted) return;
-        if (options?.throwOnError && history.session_id !== sessionId) throw new Error("History session mismatch");
-        debugLog("[ChatSlice]", "loadChatHistory.response", {
-          sessionId,
-          attempt,
-          historyMessageCount: history.messages.length,
-          localMessageCount: chat.messages.length,
-          localStoredMessageCount: chat.messageCount ?? null,
-          lastMessageId: history.messages[history.messages.length - 1]?.id ?? null,
-          lastRole: history.messages[history.messages.length - 1]?.role ?? null,
-        });
-
-        const terminalAssistantReady = hasTerminalAssistantTail(history.messages);
-        if (options?.waitForAssistant && !terminalAssistantReady && attempt < retries) {
-          // A live terminal event may precede the final history checkpoint. A
-          // tool tail is just as incomplete as a user tail, so keep waiting for
-          // the durable, non-tool assistant message before applying history.
+        } catch (error) {
+          // Supersession removes write/retry authority, not opted-in errors.
+          if (options?.signal?.aborted || !isCurrentRead() || (discarded !== undefined && error === discarded)) {
+            if (options?.throwOnError) throw error;
+            return;
+          }
+          if (attempt >= retries) {
+            console.warn(`[ChatSlice] Failed to load history for ${sessionId}:`, error);
+            debugLog("[ChatSlice]", "loadChatHistory.error.final", {
+              sessionId,
+              attempt,
+              retries,
+              error,
+            });
+            if (options?.throwOnError) throw error;
+            return;
+          }
           const delay = retryDelayMs > 0 ? retryDelayMs * (attempt + 1) : 200 * (attempt + 1);
-          debugLog("[ChatSlice]", "loadChatHistory.waitForAssistant.retry", {
+          debugLog("[ChatSlice]", "loadChatHistory.error.retry", {
             sessionId,
             attempt,
             delay,
-            lastRole: history.messages[history.messages.length - 1]?.role ?? null,
+            error,
           });
           await new Promise((resolve) => setTimeout(resolve, delay));
-          continue;
-        }
-
-        const nextMessages = mapHistoryMessagesToUi(sessionId, history.messages);
-
-        if (mode === "monotonic") {
-          const prevMessages = chat.messages || [];
-          const prevLen = prevMessages.length;
-          const nextLen = nextMessages.length;
-          const nextLastRole = nextMessages[nextMessages.length - 1]?.role;
-          const prevLastRole = prevMessages[prevMessages.length - 1]?.role;
-          const prevLastMessage = prevMessages[prevMessages.length - 1] as Message | undefined;
-          const nextLastMessage = nextMessages[nextMessages.length - 1] as Message | undefined;
-          const prevLastId = prevLastMessage?.id;
-          const nextLastId = nextLastMessage?.id;
-
-          // Avoid wiping newer in-memory UI state with shorter backend snapshots.
-          // Only replace when backend is strictly longer, or when lengths are equal
-          // but backend clearly progressed from a user tail / changed terminal item.
-          let shouldReplace = false;
-          if (nextLen > prevLen) {
-            shouldReplace = true;
-          } else if (nextLen === prevLen) {
-            const resolvedUserTail = prevLastRole === "user" && nextLastRole !== "user";
-            const terminalChanged =
-              typeof prevLastId === "string" &&
-              typeof nextLastId === "string" &&
-              prevLastId !== nextLastId;
-            shouldReplace = resolvedUserTail || terminalChanged;
-          }
-
-          debugLog("[ChatSlice]", "loadChatHistory.monotonicDecision", {
-            sessionId,
-            attempt,
-            prevLen,
-            nextLen,
-            prevLastRole: prevLastRole ?? null,
-            nextLastRole: nextLastRole ?? null,
-            prevLastId: prevLastId ?? null,
-            nextLastId: nextLastId ?? null,
-            shouldReplace,
-          });
-
-          if (!shouldReplace) {
-            get().updateSession(sessionId, {
-              messageCount: Math.max(chat.messageCount ?? 0, history.messages.length),
-            });
-            debugLog("[ChatSlice]", "loadChatHistory.monotonicSkip", {
-              sessionId,
-              attempt,
-              localMessageCount: chat.messages.length,
-              serverMessageCount: history.messages.length,
-            });
+          if (options?.signal?.aborted || !isCurrentRead()) {
+            if (options?.throwOnError) throw error;
             return;
           }
         }
-
-        // History owns only its hydrated fields. A permission read/write may
-        // have confirmed a newer mode/ETag while getHistory was in flight.
-        const currentChat = get().chats.find((item) => item.id === sessionId);
-        if (!currentChat) return;
-        get().updateSession(sessionId, {
-          messages: nextMessages,
-          messageCount: history.messages.length,
-          config: {
-            ...currentChat.config,
-            ...(history.gold_config != null ? { goldConfig: history.gold_config } : {}),
-            ...(history.goal_state != null ? { goalState: history.goal_state } : {}),
-            compressionEvents: (history.compression_events || []).map((event) => ({
-              id: event.id,
-              createdAt: event.created_at,
-              messagesCompressed: event.messages_compressed,
-              segmentsRemoved: event.segments_removed,
-            })),
-            syncCursor: {
-              messageCount: history.messages.length,
-              lastMessageId: history.messages[history.messages.length - 1]?.id ?? null,
-              hasPendingQuestion: Boolean(
-                get().executionBySession?.[sessionId]?.interaction.pendingQuestion,
-              ),
-              pendingQuestionToolCallId:
-                get().executionBySession?.[sessionId]?.interaction.pendingQuestion?.toolCallId ??
-                null,
-            },
-          },
-        }, { skipBackendPatch: true });
-        debugLog("[ChatSlice]", "loadChatHistory.applied", {
-          sessionId,
-          attempt,
-          mode,
-          messageCount: history.messages.length,
-          lastMessageId: history.messages[history.messages.length - 1]?.id ?? null,
-        });
-        return;
-      } catch (error) {
-        if (options?.signal?.aborted) return;
-        if (attempt >= retries) {
-          console.warn(`[ChatSlice] Failed to load history for ${sessionId}:`, error);
-          debugLog("[ChatSlice]", "loadChatHistory.error.final", {
-            sessionId,
-            attempt,
-            retries,
-            error,
-          });
-          if (options?.throwOnError) throw error;
-          return;
-        }
-        const delay = retryDelayMs > 0 ? retryDelayMs * (attempt + 1) : 200 * (attempt + 1);
-        debugLog("[ChatSlice]", "loadChatHistory.error.retry", {
-          sessionId,
-          attempt,
-          delay,
-          error,
-        });
-        await new Promise((resolve) => setTimeout(resolve, delay));
       }
+    } finally {
+      if (isCurrentRead()) reads.delete(sessionId);
     }
   },
 
@@ -958,4 +1112,5 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
       }, RECONCILE_DEBOUNCE_MS),
     );
   },
-});
+  });
+};

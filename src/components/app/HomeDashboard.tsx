@@ -32,7 +32,7 @@ import {
 } from "@/lib/taskTemplates"
 import type { ChatItem } from "@shared/types/chatMessages"
 
-const cardInteraction = "button-interaction outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+const cardInteraction = "button-interaction outline-none focus-visible:ring-2"
 
 const ICONS: Record<string, ReactNode> = {
   plus: <Plus className="size-4" />,

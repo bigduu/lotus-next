@@ -251,7 +251,7 @@ test("typed HTTP links stay editable and clicking never navigates away", async (
   await links.nth(0).click()
   expect(page.url()).toBe(originalUrl)
   expect(page.context().pages()).toHaveLength(originalPages)
-  await editor.press("Control+End")
+  await editor.press(process.platform === "darwin" ? "Meta+ArrowDown" : "Control+End")
   await editor.pressSequentially("then reply")
   await editor.press("Enter")
   await expect.poll(() => chats.length).toBe(1)
@@ -300,7 +300,7 @@ test("copying a file mention and multiline text exports literal plain text for p
   await editor.pressSequentially("https://example.test/guide")
   const expected = "Review @packages/@scope/a b.ts \nhttps://example.test/guide"
   await expectComposerText(editor, expected)
-  await editor.press("Control+a")
+  await editor.press("ControlOrMeta+a")
   const copied = await editor.evaluate((element) => {
     const browser = element.ownerDocument.defaultView!
     const clipboardData = new browser.DataTransfer()

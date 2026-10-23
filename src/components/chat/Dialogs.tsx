@@ -116,9 +116,13 @@ export function QuestionDialog({
 export function ApprovalDialog({
   a,
   onRespond,
+  submitting = false,
+  error = null,
 }: {
   a: PendingApproval
   onRespond: (approved: boolean) => void
+  submitting?: boolean
+  error?: string | null
 }) {
   useUiLocale()
   return (
@@ -126,6 +130,11 @@ export function ApprovalDialog({
       key={JSON.stringify([a.childSessionId, a.requestId])}
       title={uiText("subagent_approval_request_4321e83b")}
       description={uiText("a_subagent_requests_approval_for_an_operation_940aa95b")}
+      disabled={submitting}
+      footer={<>
+        {submitting ? <p role="status" className="mt-3 text-sm text-muted-foreground">{uiText("submitting_26ef00b7")}</p> : null}
+        {error ? <p role="alert" className="mt-3 text-sm text-destructive">{error}</p> : null}
+      </>}
       actions={[
         { id: "deny", label: uiText("deny_136de7a8"), onSelect: () => onRespond(false) },
         { id: "approve", label: uiText("approve_8cbe697b"), onSelect: () => onRespond(true) },

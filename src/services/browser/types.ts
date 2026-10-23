@@ -1,3 +1,5 @@
+export type BrowserProfileMode = "shared" | "clean"
+
 export interface BrowserViewport {
   width: number
   height: number
@@ -39,6 +41,9 @@ export interface BrowserState {
   tabs?: BrowserTabSummary[]
   /** Present on Bamboo versions with JavaScript dialog support. */
   pending_dialog?: BrowserPendingDialog | null
+  /** Optional until the server reports the shared/clean profile contract. */
+  profile_mode?: BrowserProfileMode
+  storage_shared?: boolean
 }
 
 export interface BrowserDialogResponse {

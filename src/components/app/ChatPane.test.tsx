@@ -1,3 +1,4 @@
+import { observeSessionExecutionConflict } from "@services/chat/sessionExecutionCompatibility"
 import { act, type ComponentProps, type ReactElement, type ReactNode } from "react"
 import { createRoot, type Root } from "react-dom/client"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
@@ -87,7 +88,7 @@ type ProviderState = typeof runtime.providerState
 vi.mock("@shared/store/appStore/slices/providerSlice", () => ({ useProviderStore: <T,>(selector: (state: ProviderState) => T) => selector(runtime.providerState) }))
 vi.mock("@/hooks/useGuidanceQueue", () => ({ useGuidanceQueue: () => ({ mode: "after_round", setMode: vi.fn(), send: runtime.queueSend, cancel: vi.fn(), pending: [], error: null, busy: false, hasUnconfirmed: false }) }))
 vi.mock("@/hooks/useTicketWork", () => ({ useTicketWork: () => runtime.ticketWork ?? {
-  state: null, connected: false, negotiated: true, error: null, busy: {}, uncertain: {},
+  state: null, connected: false, negotiated: true, availability: { kind: "ready" }, refreshing: false, canRefresh: true, initializing: false, initializationError: null, canInitialize: false, initialize: async () => false, error: null, busy: {}, uncertain: {},
   canRespond: false, canSendIngress: false, respond: vi.fn(), refresh: vi.fn(),
 } }))
 vi.mock("@/hooks/useStickyScroll", () => ({
@@ -113,7 +114,16 @@ vi.mock("@services/chat/AgentService", () => ({ isThinkingMode: (v: unknown) => 
 vi.mock("@/lib/taskTemplates", () => ({ peekPendingTemplatePrompt: runtime.peekTemplate }))
 vi.mock("@/lib/exportMarkdown", () => ({ downloadMarkdown: vi.fn() }))
 vi.mock("@/lib/exportPdf", () => ({ downloadPdf: vi.fn() }))
-vi.mock("@/components/chat/Dialogs", () => ({ QuestionDialog: () => null, ApprovalDialog: () => null }))
+vi.mock("@/components/chat/Dialogs", () => ({
+  QuestionDialog: ({ q, onAnswer }: ComponentProps<(typeof import("@/components/chat/Dialogs"))["QuestionDialog"]>) =>
+    <div data-parent-question>{q.question}<button onClick={() => onAnswer("main answer")}>Answer parent</button></div>,
+  ApprovalDialog: ({ a, onRespond, submitting, error }: ComponentProps<(typeof import("@/components/chat/Dialogs"))["ApprovalDialog"]>) =>
+    <div role="dialog" data-child-approval={a.childSessionId}>
+      {error ? <p role="alert">{error}</p> : null}
+      <button disabled={submitting} onClick={() => onRespond(true)}>Approve child</button>
+      <button disabled={submitting} onClick={() => onRespond(false)}>Deny child</button>
+    </div>,
+}))
 vi.mock("@/components/app/ChatHeader", () => ({
   ChatHeader: ({ environment, supervisorControl }: { environment?: ReactNode; supervisorControl?: ReactNode }) => <div>{environment}{supervisorControl}</div>,
 }))
@@ -169,6 +179,7 @@ import { ticketSnapshot } from "@services/tickets/testFixtures"
 import { applyTicketSnapshot } from "@services/tickets/state"
 import { ChatPane } from "./ChatPane"
 import { isSessionUnread, useSessionReadState } from "@/lib/sessionReadState"
+import { uiText } from "@shared/i18n/ui"
 const skill = (id: string): SkillDefinition => ({ id, name: id, description: id, prompt: id, tool_refs: [`tool-${id}`] })
 const workflow = (id: string): CommandItem => ({ id, name: id, display_name: id, description: id, type: "workflow", metadata: null })
 const skillA = skill("skill-a")
@@ -230,10 +241,11 @@ async function mount(
   running = false,
   streaming: string | null = id ? "" : null,
   lastRunStatus: string | null = null,
+  compatibility?: ChatPaneProps["chat"]["executionCompatibility"],
 ) {
   const container = document.body.appendChild(document.createElement("div")); const root = createRoot(container); roots.push(root)
   await act(async () => {
-    root.render(<ChatPane chat={{ ...createChat(send, id, lastRunStatus), sending: running, streaming }} pickedWorkspace="/picked"
+    root.render(<ChatPane chat={{ ...createChat(send, id, lastRunStatus), sending: running, streaming, ...(compatibility ? { executionCompatibility: compatibility } : {}) }} pickedWorkspace="/picked"
       onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()} splitOpen={false}
       onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false} />)
   })
@@ -371,7 +383,7 @@ describe("ChatPane composer acknowledgement", () => {
   it("opens the floating Supervisor overview in the header and keeps Work details in its existing target", async () => {
     const value = ticketSnapshot()
     value.scope.binding.supervisor_session_id = "bamboo-default-supervisor"
-    runtime.ticketWork = { state: applyTicketSnapshot(null, value), connected: true, negotiated: true,
+    runtime.ticketWork = { state: applyTicketSnapshot(null, value), connected: true, negotiated: true, availability: { kind: "ready" }, refreshing: false, canRefresh: true, initializing: false, initializationError: null, canInitialize: false, initialize: async () => false,
       error: null, busy: {}, uncertain: {}, respond: async () => false, refresh: async () => {}, canRespond: true, canSendIngress: true }
     const host = document.body.appendChild(document.createElement("div"))
     const target = document.body.appendChild(document.createElement("div"))
@@ -381,6 +393,7 @@ describe("ChatPane composer acknowledgement", () => {
       pickedWorkspace={null} onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()}
       splitOpen={false} onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false}
       workPanelTarget={target} onOpenWork={onOpen} onWorkReference={onReference} />))
+    await act(async () => { await vi.dynamicImportSettled() })
     expect(host.querySelector('[data-testid="ticket-work-overview"]')).toBeNull()
     expect(target.querySelector('[data-testid="ticket-work-overview"]')).not.toBeNull()
     act(() => host.querySelector<HTMLButtonElement>('[data-testid="ticket-work-status"]')!.click())
@@ -388,6 +401,10 @@ describe("ChatPane composer acknowledgement", () => {
     const all = [...document.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "查看全部工作")!
     act(() => all.click())
     expect(onOpen).toHaveBeenCalledOnce()
+    const field = host.querySelector<HTMLTextAreaElement>('textarea[aria-label="消息"]')!
+    field.focus()
+    await act(async () => { await new Promise<void>((resolve) => requestAnimationFrame(() => resolve())) })
+    expect(document.activeElement).toBe(field)
     const reference = [...target.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "在普通输入中引用此请求")!
     act(() => reference.click())
     expect(onReference).toHaveBeenCalledOnce()
@@ -398,6 +415,8 @@ describe("ChatPane composer acknowledgement", () => {
     const supervisor = "bamboo-default-supervisor"
     value.scope.binding.supervisor_session_id = supervisor
     runtime.ticketWork = { state: applyTicketSnapshot(null, value), connected: true, negotiated: true,
+      availability: { kind: "ready" }, refreshing: false, canRefresh: true, initializing: false,
+      initializationError: null, canInitialize: false, initialize: async () => false,
       error: null, busy: {}, uncertain: {}, respond: async () => false, refresh: async () => {}, canRespond: true, canSendIngress: true }
     let nextFrame = 0
     const frames = new Map<number, FrameRequestCallback>()
@@ -421,6 +440,7 @@ describe("ChatPane composer acknowledgement", () => {
     if (outcome === "session navigation") render(null, "another-session")
     if (outcome === "hidden page") render(null, supervisor, false)
     render(target, supervisor, outcome !== "hidden page")
+    await act(async () => { await vi.dynamicImportSettled() })
     flushFrame()
     const overview = target.querySelector<HTMLElement>('[data-testid="ticket-work-overview"]')!
     expect(overview).not.toBeNull()
@@ -432,7 +452,7 @@ describe("ChatPane composer acknowledgement", () => {
     ["builtin ID with a parent", "bamboo-default-supervisor", "root", "parent"],
   ] as const)("does not offer Supervisor overview for %s even if a scope binds to it", async (_name, id, kind, parent) => {
     const value = ticketSnapshot(); value.scope.binding.supervisor_session_id = id
-    runtime.ticketWork = { state: applyTicketSnapshot(null, value), connected: true, negotiated: true,
+    runtime.ticketWork = { state: applyTicketSnapshot(null, value), connected: true, negotiated: true, availability: { kind: "ready" }, refreshing: false, canRefresh: true, initializing: false, initializationError: null, canInitialize: false, initialize: async () => false,
       error: null, busy: {}, uncertain: {}, respond: async () => false, refresh: async () => {}, canRespond: true, canSendIngress: true }
     const chat = createChat(vi.fn<Send>(), id)
     chat.currentChat!.title = "Supervisor"; chat.currentChat!.kind = kind; chat.currentChat!.parentSessionId = parent
@@ -443,8 +463,29 @@ describe("ChatPane composer acknowledgement", () => {
       onOpenSidebar={vi.fn()} sidebarCollapsed={false} onOpenWork={vi.fn()} />))
     expect(host.querySelector('[data-testid="ticket-work-status"]')).toBeNull()
   })
+  it.each(["loading", "disabled", "uninitialized", "unbound", "unsupported", "forbidden", "error"] as const)("renders the %s Work fallback with an explicit status and recovery", async (kind) => {
+    const refresh = vi.fn(async () => {})
+    runtime.ticketWork = { state: null, connected: false, negotiated: kind !== "loading", error: "exact service reason",
+      availability: { kind, detail: "exact service reason" }, refreshing: kind === "loading", canRefresh: true, initializing: false, initializationError: null, canInitialize: false, initialize: async () => false,
+      busy: {}, uncertain: {}, respond: async () => false, refresh, canRespond: false, canSendIngress: false }
+    const host = document.body.appendChild(document.createElement("div"))
+    const target = document.body.appendChild(document.createElement("div"))
+    const root = createRoot(host); roots.push(root)
+    await act(async () => root.render(<ChatPane chat={createChat(vi.fn<Send>(), "bamboo-default-supervisor")}
+      pickedWorkspace={null} onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()} splitOpen={false}
+      onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false} workPanelTarget={target} />))
+    expect(target.querySelector('[data-testid="ticket-work-availability"]')).not.toBeNull()
+    expect(target.querySelector(kind === "error" || kind === "forbidden" ? '[role="alert"]' : '[role="status"]')).not.toBeNull()
+    expect(target.textContent).toContain("exact service reason")
+    expect(target.querySelector("details")!.open).toBe(false)
+    if (kind !== "loading") {
+      act(() => target.querySelector<HTMLButtonElement>("button")!.click())
+      expect(refresh).toHaveBeenCalledOnce()
+    } else expect(target.querySelector("button")).toBeNull()
+    expect(target.textContent).not.toContain("当前 Supervisor 暂不支持工作面板")
+  })
   it("holds the draft and does not choose legacy routing while a running Supervisor negotiates tickets", async () => {
-    runtime.ticketWork = { state: null, connected: false, negotiated: false, error: null,
+    runtime.ticketWork = { state: null, connected: false, negotiated: false, availability: { kind: "loading" }, refreshing: false, canRefresh: true, initializing: false, initializationError: null, canInitialize: false, initialize: async () => false, error: null,
       busy: {}, uncertain: {}, respond: async () => false, refresh: async () => {}, canRespond: false, canSendIngress: false }
     const send = vi.fn<Send>()
     const textarea = await mount(send, "negotiating-root", true)
@@ -463,7 +504,7 @@ describe("ChatPane composer acknowledgement", () => {
     const value = ticketSnapshot()
     value.scope.binding.supervisor_session_id = id
     const ready = (): TicketController => ({
-      state: applyTicketSnapshot(null, value), connected: true, negotiated: true, error: null,
+      state: applyTicketSnapshot(null, value), connected: true, negotiated: true, availability: { kind: "ready" }, refreshing: false, canRefresh: true, initializing: false, initializationError: null, canInitialize: false, initialize: async () => false, error: null,
       busy: {}, uncertain: {}, respond: async () => false, refresh: async () => {},
       canRespond: value.complete, canSendIngress: true,
     })
@@ -807,7 +848,12 @@ describe("ChatPane composer acknowledgement", () => {
       "模型服务连接超时",
       "请检查提供商、代理和网络状态",
     ],
-  ])("explains a persisted bootstrap failure while keeping diagnostics available", async (detail, title, action) => {
+    [
+      "Tool error: Execution failed: Native canonical Session Source scope changed",
+      "会话来源校验未通过",
+      "请先核对会话来源和已完成的操作",
+    ],
+  ])("explains a persisted run failure while keeping diagnostics available", async (detail, title, action) => {
     const container = document.body.appendChild(document.createElement("div"))
     const root = createRoot(container); roots.push(root)
     const chat = createChat(vi.fn<Send>(), "failed-session", "error", detail)
@@ -823,6 +869,30 @@ describe("ChatPane composer acknowledgement", () => {
     expect(alert?.querySelector("details")?.textContent).toContain(detail)
     expect(alert?.querySelector("summary")?.textContent).toBe("技术详情")
     expect(alert?.textContent).toContain("重试生成")
+    expect(chat.retry).not.toHaveBeenCalled()
+  })
+
+  it("explains a live source rejection without replaying the saved submission", async () => {
+    const container = document.body.appendChild(document.createElement("div"))
+    const root = createRoot(container); roots.push(root)
+    const detail = "Tool error: Execution failed: Native canonical Session Source scope changed"
+    const retry = vi.fn()
+    const send = vi.fn<Send>()
+    const failure = { kind: "generation-failed" as const, operationId: 4, sessionId: "old-session", message: detail }
+    const chat = { ...createChat(send, "old-session"), retry, sendFailure: failure }
+    await act(async () => root.render(<ChatPane chat={chat} pickedWorkspace="/picked"
+      onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()} splitOpen={false}
+      onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false} />))
+    const alert = container.querySelector<HTMLElement>('[role="alert"]')
+    expect(alert?.textContent).toContain("会话来源校验未通过")
+    expect(alert?.textContent).toContain("请先核对会话来源和已完成的操作")
+    expect(alert?.querySelector("details")?.textContent).toContain(detail)
+    expect(send).not.toHaveBeenCalled()
+    expect(retry).not.toHaveBeenCalled()
+    const button = Array.from(alert?.querySelectorAll("button") ?? []).find((item) => item.textContent?.includes("重试生成"))
+    await act(async () => button?.click())
+    expect(retry).toHaveBeenCalledExactlyOnceWith(failure)
+    expect(send).not.toHaveBeenCalled()
   })
 
   it("explains a live HTTP 429 generation failure", async () => {
@@ -871,6 +941,38 @@ describe("ChatPane composer acknowledgement", () => {
     expect(alert?.textContent).toContain("继续编辑")
   })
 
+  it("explains a rejected running Source change and keeps the complete unsent draft", async () => {
+    const send = vi.fn<Send>().mockResolvedValue({ kind: "unconfirmed", operationId: 1, rejectionCode: "session_project_running_conflict" })
+    const chat = {
+      ...createChat(send, "old-source"),
+      sendFailure: { kind: "submission-unconfirmed" as const, operationId: 1, sessionId: "old-source",
+        rejectionCode: "session_project_running_conflict" as const, rootModeSelectionSubmitted: false,
+        message: "A running or starting session cannot change Project or Workspace" },
+    }
+    const container = document.body.appendChild(document.createElement("div"))
+    const root = createRoot(container); roots.push(root)
+    await act(async () => root.render(<ChatPane chat={chat} pickedWorkspace="/synthetic/picked"
+      onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()} splitOpen={false}
+      onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false} />))
+    const textarea = container.querySelector<HTMLTextAreaElement>("textarea")!
+    await fill(textarea)
+    const draft = runtime.state.inputStates["old-source"]?.content
+    const attachments = composer().attachments
+    act(() => composer().onSubmit()); await flush()
+    expect(runtime.state.inputStates["old-source"]?.content).toBe(draft)
+    expect(composer().attachments).toEqual(attachments)
+    expect(composer().selectedSkill).toEqual(skillA)
+    expect(composer().selectedWorkflow?.name).toBe("workflow-a")
+    const alert = container.querySelector<HTMLElement>('[role="alert"]')
+    expect(alert?.textContent).toContain("Bamboo 已拒绝此请求，内容已保留")
+    expect(alert?.textContent).toContain("请等待当前运行结束后核对来源")
+    expect(alert?.textContent).toContain("A running or starting session cannot change Project or Workspace")
+    expect(alert?.textContent).not.toContain("消息已发送")
+    expect(alert?.textContent).not.toContain("重试生成")
+    expect(send).toHaveBeenCalledOnce()
+    expect(chat.retry).not.toHaveBeenCalled()
+  })
+
   it.each([
     ["completed", false, true],
     ["completed", true, false],
@@ -891,12 +993,14 @@ describe("ChatPane composer acknowledgement", () => {
     runtime.peekTemplate.mockReturnValue(templatePrompt)
     const send = vi.fn<Send>().mockResolvedValue({ kind: "unconfirmed", operationId: 1 })
     const textarea = await mount(send, null)
+    await addImage("pending.png")
     change(textarea, "  exact raw draft  ")
     document.body.tabIndex = -1; document.body.focus(); act(() => composer().onSubmit()); await flush()
     expect(send).toHaveBeenCalledWith("  exact raw draft  ", {
-      skillIds: undefined, images: undefined, workspacePath: "/picked", projectId: null, templatePrompt,
+      skillIds: undefined, images: [expect.objectContaining({ name: "pending.png" })], workspacePath: "/picked", projectId: null, templatePrompt,
       permissionMode: "default", rootOrchestrationOnly: false,
     })
+    expect(composer().attachments).toEqual([expect.objectContaining({ name: "pending.png" })])
     expect(runtime.state.inputStates[""]?.content).toBe("  exact raw draft  "); expect(runtime.peekTemplate).toHaveBeenCalledTimes(1); expect(document.activeElement).toBe(textarea)
   })
   it("clears all unchanged fields only after a valid ACK", async () => {
@@ -1981,4 +2085,207 @@ it("keeps a failed secondary history distinct from empty content and retains its
   expect(document.querySelector("textarea")).toBe(textarea)
   expect(composer().draft).toBe("Unsent draft survives history recovery")
   expect(send).not.toHaveBeenCalled()
+})
+
+describe("context compression presentation", () => {
+  it("keeps a pre-start failure visible during text streaming without a usage estimate", async () => {
+    const send = vi.fn<Send>()
+    await mount(send, "compression-pane", true, "reply tokens")
+    const chat = { ...createChat(send, "compression-pane"), sending: true, streaming: "reply tokens",
+      contextCompression: { status: "failed", reason: "candidate_plan" } as const }
+    const render = async (next: ChatPaneProps["chat"]) => act(async () => roots.at(-1)!.render(
+      <ChatPane chat={next} pickedWorkspace="/picked" onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()}
+        splitOpen={false} onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false} />,
+    ))
+    await render(chat)
+    const notice = document.querySelector('[data-testid="context-compression-notice"]')
+    expect(notice?.textContent).toBe(uiText("context_compression_notice_failed_candidate"))
+    expect(notice?.querySelector("svg")).toBeNull()
+    expect(document.querySelector('[data-testid="context-usage"]')).toBeNull()
+    await render({ ...chat, streaming: "more reply tokens" })
+    expect(document.querySelector('[data-testid="context-compression-notice"]')?.textContent).toBe(notice?.textContent)
+    await render(createChat(send, "another-pane-session"))
+    expect(document.querySelector('[data-testid="context-compression-notice"]')).toBeNull()
+    expect(send).not.toHaveBeenCalled()
+  })
+
+  it("keeps compression feedback inside the history visibility boundary", async () => {
+    const send = vi.fn<Send>()
+    await mount(send, "compression-child")
+    const chat = { ...createChat(send, "compression-child"), contextCompression: { status: "running" } as const }
+    const render = async (status: "loading" | "ready") => act(async () => roots.at(-1)!.render(
+      <ChatPane chat={chat} pickedWorkspace="/picked" onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()}
+        splitOpen onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false}
+        secondary={{ sessionId: "compression-child", chats: [], onPickSession: vi.fn(), onClose: vi.fn(),
+          historyRead: { status, retry: vi.fn() } }} />,
+    ))
+    await render("loading")
+    const notice = document.querySelector('[data-testid="context-compression-notice"]')!
+    expect((notice.closest("[data-history-composer-blocked]") as HTMLElement).hidden).toBe(true)
+    await render("ready")
+    expect((notice.closest("[data-history-composer-blocked]") as HTMLElement).hidden).toBe(false)
+    expect(notice.textContent).toBe(uiText("context_compression_notice_running"))
+    expect(send).not.toHaveBeenCalled()
+  })
+})
+
+describe("session compatibility presentation and submit guard", () => {
+  const compatibility = (conflict: boolean): ChatPaneProps["chat"]["executionCompatibility"] => ({
+    report: { session_version: null, current_session_version: 1, status: conflict ? "conflict" : "legacy_compatible",
+      history_readable: true, execution_allowed: !conflict,
+      conflicts: conflict ? [{ code: "unsupported_runtime_state_version", message: "Unsupported runtime format" }] : [] },
+    blocked: conflict, observed: true, legacy: false, loading: false, readError: false, refresh: vi.fn(async () => {}),
+  })
+  it("keeps the composer draft and report visible while refusing a conflict callback", async () => {
+    const send = vi.fn<Send>(), id = "compatibility-pane-blocked"
+    const textarea = await mount(send, id, false, "", null, compatibility(true))
+    change(textarea, "keep my original draft")
+    await act(async () => composer().onSubmit()); await flush()
+    expect(send).not.toHaveBeenCalled(); expect(composer().executionBlocked).toBe(true)
+    expect(textarea.value).toBe("keep my original draft")
+    expect(document.querySelector('[data-session-execution-blocked="true"]')).not.toBeNull()
+    expect(document.querySelector('[data-testid="composer-shell"]')).not.toBeNull()
+  })
+  it("lets a compatible legacy session continue without creating a replacement", async () => {
+    const send = vi.fn<Send>().mockResolvedValue({ kind: "accepted", operationId: 1, sessionId: "compatibility-pane-open", navigated: false })
+    const textarea = await mount(send, "compatibility-pane-open", false, "", null, compatibility(false))
+    change(textarea, "continue old work")
+    await act(async () => composer().onSubmit()); await flush()
+    expect(send).toHaveBeenCalledTimes(1); expect(composer().executionBlocked).toBe(false)
+    expect(document.querySelector('[data-session-execution-blocked="true"]')).toBeNull()
+  })
+  it("a cached Goal submit callback cannot bypass a later explicit compatibility refusal", async () => {
+    const send = vi.fn<Send>(), id = "compatibility-stale-goal"
+    const textarea = await mount(send, id, false, "", null, compatibility(false))
+    change(textarea, "/goal preserve this objective")
+    const staleSubmit = composer().onSubmit
+    observeSessionExecutionConflict(id, new ApiError("incompatible", 409, "", JSON.stringify({ session_id: id,
+      error: { code: "session_execution_incompatible" }, compatibility: compatibility(true).report })))
+    await act(async () => staleSubmit()); await flush()
+    expect(agentClient.sendMessage).not.toHaveBeenCalled(); expect(agentClient.execute).not.toHaveBeenCalled()
+    expect(send).not.toHaveBeenCalled(); expect(textarea.value).toBe("/goal preserve this objective")
+  })
+
+})
+
+
+it("forwards every pending ACK to MessageList without another submission", async () => {
+  const send = vi.fn<Send>()
+  await mount(send, "pending-ack-session")
+  const pendingUserMessages = [{ operationId: 1, text: "first caption", images: [] }, { operationId: 2, text: "second caption", images: [] }]
+  await act(async () => roots.at(-1)!.render(<ChatPane chat={{ ...createChat(send, "pending-ack-session"), pendingUserMessages }} pickedWorkspace="/picked"
+    onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()} splitOpen={false}
+    onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false} />))
+  expect(runtime.messageList?.pendingUserMessages).toBe(pendingUserMessages)
+  expect(send).not.toHaveBeenCalled()
+})
+
+
+describe("child approval compatibility", () => {
+  const view = (status: "compatible" | "legacy_compatible" | "conflict" | null): NonNullable<ChatPaneProps["chat"]["executionCompatibility"]> => ({
+    report: status ? { session_version: status === "conflict" ? 99 : null, current_session_version: 1, status,
+      history_readable: true, execution_allowed: status !== "conflict",
+      conflicts: status === "conflict" ? [{ code: "unsupported_session_version", message: "Child version is incompatible" }] : [] } : null,
+    blocked: status === "conflict", observed: true, legacy: status === null, loading: false, readError: false, refresh: vi.fn(async () => {}),
+  })
+  const pending = { childSessionId: "approval-child", requestId: "child-request-7", toolName: "Write", permission: "write" }
+  async function renderApproval(parent: ReturnType<typeof view>, child: ReturnType<typeof view>, respond: (approved: boolean) => Promise<void>,
+    question?: { pending: NonNullable<ChatPaneProps["chat"]["pendingQuestion"]>; answer: (text: string) => Promise<void> },
+    submission: { approvalSubmitting?: boolean; approvalError?: string | null } = {}) {
+    if (!roots.length) await mount(vi.fn<Send>(), "approval-parent")
+    await act(async () => roots.at(-1)!.render(<ChatPane chat={{ ...createChat(vi.fn<Send>(), "approval-parent"),
+      executionCompatibility: parent, approvalCompatibility: child, pendingApproval: pending, respondApproval: respond, ...submission,
+      ...(question ? { pendingQuestion: question.pending, answerQuestion: question.answer } : {}) }} pickedWorkspace="/picked"
+      onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()} splitOpen={false}
+      onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false} />))
+  }
+  it.each(["compatible", "legacy_compatible", null] as const)("keeps %s Child approval actionable when only its parent conflicts", async (status) => {
+    const respond = vi.fn(async (_approved: boolean) => {})
+    await renderApproval(view("conflict"), view(status), respond)
+    expect(document.querySelector('[data-child-approval="approval-child"]')).not.toBeNull()
+    expect(composer().executionBlocked).toBe(true)
+    expect(respond).not.toHaveBeenCalled()
+    act(() => [...document.querySelectorAll<HTMLButtonElement>("button")].find(b => b.textContent === "Approve child")!.click())
+    expect(respond).toHaveBeenCalledExactlyOnceWith(true)
+  })
+  it("keeps the genuine parent question available while only the Child conflicts", async () => {
+    const respond = vi.fn(async (_approved: boolean) => {}), answer = vi.fn(async (_text: string) => {})
+    await renderApproval(view("compatible"), view("conflict"), respond, { answer,
+      pending: { has_pending_question: true, interaction_kind: "clarification", question: "Parent still needs Human input",
+        options: ["main answer"], allow_custom: false, tool_call_id: "parent-question" } })
+    expect(document.querySelector("[data-parent-question]")?.textContent).toContain("Parent still needs Human input")
+    expect(document.querySelector('[data-session-execution-blocked="true"]')).not.toBeNull()
+    expect(respond).not.toHaveBeenCalled(); expect(answer).not.toHaveBeenCalled()
+    act(() => [...document.querySelectorAll<HTMLButtonElement>("button")].find(b => b.textContent === "Answer parent")!.click())
+    expect(answer).toHaveBeenCalledExactlyOnceWith("main answer"); expect(respond).not.toHaveBeenCalled()
+  })
+  it("forwards retained Child approval submission and error to the dialog", async () => {
+    const respond = vi.fn(async (_approved: boolean) => {})
+    await renderApproval(view("compatible"), view("compatible"), respond, undefined, { approvalSubmitting: true })
+    const approve = [...document.querySelectorAll<HTMLButtonElement>("button")].find(b => b.textContent === "Approve child")!
+    expect(approve.disabled).toBe(true)
+    act(() => approve.click())
+    expect(respond).not.toHaveBeenCalled()
+    await renderApproval(view("compatible"), view("compatible"), respond, undefined, { approvalError: "Child approval unconfirmed" })
+    expect(document.querySelector('[data-child-approval] [role="alert"]')?.textContent).toBe("Child approval unconfirmed")
+    expect(respond).not.toHaveBeenCalled()
+  })
+  it("blocks only the Child's explicit conflict and restores its dialog after a canonical recovery", async () => {
+    const respond = vi.fn(async (_approved: boolean) => {})
+    await renderApproval(view("compatible"), view("conflict"), respond)
+    expect(document.querySelector('[data-child-approval="approval-child"]')).toBeNull()
+    expect(document.querySelector('[data-session-execution-blocked="true"]')).not.toBeNull()
+    expect(composer().executionBlocked).toBe(false)
+    expect(respond).not.toHaveBeenCalled()
+    await renderApproval(view("compatible"), view("compatible"), respond)
+    expect(document.querySelector('[data-child-approval="approval-child"]')).not.toBeNull()
+    expect(respond).not.toHaveBeenCalled()
+    act(() => [...document.querySelectorAll<HTMLButtonElement>("button")].find(b => b.textContent === "Deny child")!.click())
+    expect(respond).toHaveBeenCalledExactlyOnceWith(false)
+  })
+})
+
+describe("run diagnostics entry and canonical error isolation", () => {
+  const a = "11111111-1111-4111-8111-111111111111"
+  const b = "22222222-2222-4222-8222-222222222222"
+  const id = "9ab6cd70-bc43-4fed-9f10-50c2873fa287"
+  const otherId = "fa6aa794-30d4-4e8b-a222-46b35c8348d9"
+  const pane = (chat: ChatPaneProps["chat"]) => <ChatPane chat={chat} pickedWorkspace="/picked"
+    onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()} splitOpen={false}
+    onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false} />
+  const open = async () => {
+    const entry = [...document.querySelectorAll<HTMLButtonElement>("button")]
+      .find((button) => button.textContent?.trim() === uiText("run_diagnostics_open"))!
+    await act(async () => entry.click())
+    await act(async () => vi.dynamicImportSettled())
+  }
+  it("preserves legacy error detail and does not infer retry limit or invoke generation", async () => {
+    const send = vi.fn<Send>(), chat = createChat(send, a, "error", "legacy upstream error after 1 request(s).")
+    await mount(send, a)
+    await act(async () => roots.at(-1)!.render(pane(chat)))
+    expect(document.querySelector('details summary')?.textContent).toBe(uiText("technical_details_c26fb419"))
+    await open()
+    const report = JSON.parse(document.querySelector('[role="dialog"] pre')!.textContent!)
+    expect(report.diagnostic).toMatchObject({ diagnostic_id: null, attempt: null, attempt_limit: null })
+    expect(JSON.stringify(report)).not.toContain("legacy upstream")
+    expect(chat.retry).not.toHaveBeenCalled(); expect(send).not.toHaveBeenCalled(); expect(agentClient.execute).not.toHaveBeenCalled()
+  })
+  it("closes an old preview when navigation changes and ignores a foreign local failure", async () => {
+    const send = vi.fn<Send>()
+    await mount(send, a)
+    const root = roots.at(-1)!
+    const first = createChat(send, a, "error", "PRIVATE_OLD_ERROR. Diagnostic ID: " + id + ".")
+    await act(async () => root.render(pane(first)))
+    await open()
+    expect(JSON.parse(document.querySelector("pre")!.textContent!).diagnostic.diagnostic_id).toBe(id)
+    const next = { ...createChat(send, b, "error", "Diagnostic ID: " + otherId + "."),
+      sendFailure: { kind: "generation-failed" as const, operationId: 1, sessionId: a, message: "Diagnostic ID: " + id + "." } }
+    await act(async () => root.render(pane(next)))
+    expect(document.querySelector('[role="dialog"]')).toBeNull()
+    await open()
+    const preview = JSON.parse(document.querySelector("pre")!.textContent!)
+    expect(preview.context.session_id).toBe(b); expect(preview.diagnostic.diagnostic_id).toBe(otherId)
+    expect(document.querySelector('[role="dialog"]')?.textContent).not.toContain(id)
+    expect(agentClient.execute).not.toHaveBeenCalled(); expect(send).not.toHaveBeenCalled()
+  })
 })

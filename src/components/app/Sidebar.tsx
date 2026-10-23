@@ -1,7 +1,7 @@
 import { useUiText } from "@shared/i18n/ui"
 import { isSessionUnread, useSessionReadState } from "@/lib/sessionReadState"
-import { useId, useMemo, useRef, useState, type DragEvent } from "react"
-import { ChevronRight, Plus, Search, X, Cog, PanelLeftClose, FolderClosed, CalendarDays, ChevronDown, GitBranch, GripVertical } from "lucide-react"
+import { lazy, Suspense, useId, useMemo, useRef, useState } from "react"
+import { ChevronRight, Plus, Search, X, Cog, PanelLeftClose, FolderClosed, CalendarDays, ChevronDown, GitBranch } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { BrandMark } from "@/components/ui/brand-mark"
 import { Input } from "@/components/ui/input"
@@ -17,7 +17,7 @@ import { groupChats, groupChatsByProject, type ChatGroup } from "@/lib/groupChat
 import {
   readPinnedProjectIds, writePinnedProjectIds,
   getProjectSections, getSessionSection, createProjectSection, removeProjectSection, setSessionSection,
-  SIDEBAR_SESSION_DRAG_TYPE, SIDEBAR_SECTION_DRAG_TYPE, LEGACY_PROJECT_SECTION_ID, reorderProjectSection,
+  LEGACY_PROJECT_SECTION_ID, reorderProjectSection,
 } from "@/lib/projectSidebarPreferences"
 import { useProjectSidebarSections } from "@/hooks/useProjectSidebarSections"
 import { useAppStore } from "@shared/store/appStore"
@@ -26,6 +26,15 @@ import { cn } from "@/lib/utils"
 import { DEFAULT_SUPERVISOR_SESSION_ID, isDefaultSupervisor } from "@/lib/supervisor"
 import { getErrorMessage } from "@services/api/errors"
 import type { ChatItem } from "@shared/types/chatMessages"
+import type { SidebarDragParts, SidebarDragPickup, SidebarDropTarget } from "./sidebarDrag"
+import { confirmedProjectRevision } from "@shared/store/appStore/slices/projectSlice"
+
+const SidebarProjectDrag = lazy(() => import("./SidebarProjectDrag"))
+const StaticDropTarget: SidebarDragParts["Target"] = ({ target, disabled, ...props }) => {
+  void target
+  void disabled
+  return <div {...props} />
+}
 
 export type SidebarGroupingMode = "date" | "project"
 
@@ -70,8 +79,8 @@ export function Sidebar({
   /** Desktop: when true the persistent rail is hidden (mobile drawer unaffected). */
   collapsed: boolean
   onToggleCollapse: () => void
-  /** Desktop rail width in px (resizable); mobile drawer keeps its own width. */
-  width: number
+  /** Desktop rail width; mobile drawer keeps its own width. */
+  width: number | string
   chats: ChatItem[]
   booted: boolean
   currentSessionId: string | null | undefined
@@ -90,16 +99,6 @@ export function Sidebar({
   const [groupingMode, setGroupingMode] = useState<SidebarGroupingMode>(readGroupingMode)
   const [pinnedProjectIds, setPinnedProjectIds] = useState(readPinnedProjectIds)
   const [sectionDialogMode, setSectionDialogMode] = useState<"create" | "manage">("create")
-  const [dragOverSection, setDragOverSection] = useState<string | null>(null)
-  const draggingProjectId = useRef<string | null | undefined>(undefined)
-  const suppressSectionClick = useRef(false)
-  const [dragNotice, setDragNotice] = useState<string | null>(null)
-  const dragFeedbackTarget = useRef<HTMLElement | null>(null)
-  const clearDragFeedback = () => {
-    dragFeedbackTarget.current = null
-    setDragOverSection(null)
-    setDragNotice(null)
-  }
   const [workProjectId, setWorkProjectId] = useState<string | null>(null)
   const [editingProjectId, setEditingProjectId] = useState<string | null>(null)
   const [sectioningProjectId, setSectioningProjectId] = useState<string | null>(null)
@@ -269,13 +268,19 @@ export function Sidebar({
     }
   }
 
-  const moveSessionToSection = (projectId: string, sessionId: string, sectionId: string | null) => {
+  const moveSessionToSection = (projectId: string, sessionId: string, sectionId: string | null, pickup?: SidebarDragPickup): Promise<boolean> => {
     const chat = rootChats.find((candidate) => candidate.id === sessionId)
     // Canonical project identity is read from the session, never from the drag payload.
-    if (chat?.config?.projectId?.trim() !== projectId || !projects[projectId] || projects[projectId].status !== "active") return
-    if (getSessionSection(sectionPreferences, projectId, sessionId, projects[projectId].section) === sectionId) return
-    void updateSectionPreferences(projectId, (previous) => setSessionSection(previous, projectId, sessionId, sectionId, projects[projectId]?.section)).then((saved) => {
-      if (!saved) return
+    if (chat?.config?.projectId?.trim() !== projectId || !projects[projectId] || projects[projectId].status !== "active") return Promise.resolve(false)
+    if (getSessionSection(sectionPreferences, projectId, sessionId, projects[projectId].section) === sectionId) return Promise.resolve(false)
+    let applied = false
+    return updateSectionPreferences(projectId, (previous) => {
+      if (pickup && !pickupIsCurrent(pickup)) return previous
+      const next = setSessionSection(previous, projectId, sessionId, sectionId, projects[projectId]?.section)
+      applied = next !== previous
+      return next
+    }).then((saved) => {
+      if (!saved || !applied) return false
       setDisclosures((previous) => {
         const closedDates = new Set(previous.closedDates)
         closedDates.delete(projectId)
@@ -286,77 +291,35 @@ export function Sidebar({
         expandedProjectGroups.add(key)
         return { ...previous, closedDates, closedSections, expandedProjectGroups }
       })
+      return true
     })
   }
 
-  const readDraggedSession = (event: DragEvent<HTMLElement>): { projectId: string | null; sessionId: string } | null => {
-    try {
-      const payload: unknown = JSON.parse(event.dataTransfer.getData(SIDEBAR_SESSION_DRAG_TYPE))
-      if (!payload || typeof payload !== "object" || !("projectId" in payload) || !("sessionId" in payload)) return null
-      if ((payload.projectId !== null && typeof payload.projectId !== "string") || typeof payload.sessionId !== "string") return null
-      return { projectId: payload.projectId, sessionId: payload.sessionId }
-    } catch { return null }
+  const pickupIsCurrent = (pickup: SidebarDragPickup) => {
+    const project = useAppStore.getState().projects[pickup.projectId]
+    return !!project && project.status === "active" && project.sidebar !== undefined
+      && project.revision === pickup.revision && confirmedProjectRevision(project) === pickup.revision
+      && !sectionBusy.has(project.id)
+  }
+  const moveDraggedSession = (pickup: SidebarDragPickup, target: SidebarDropTarget) => {
+    if (!pickupIsCurrent(pickup) || pickup.projectId !== target.projectId) return Promise.resolve(false)
+    return moveSessionToSection(pickup.projectId, pickup.id, target.sectionId, pickup)
+  }
+  const moveDraggedSection = (pickup: SidebarDragPickup, target: SidebarDropTarget, after: boolean) => {
+    if (!pickupIsCurrent(pickup) || pickup.projectId !== target.projectId) return
+    void updateSectionPreferences(pickup.projectId, (previous) => pickupIsCurrent(pickup)
+      ? reorderProjectSection(previous, pickup.projectId, pickup.id, target.sectionId, after) : previous)
   }
 
-  const readDraggedSection = (event: DragEvent<HTMLElement>): { projectId: string; sectionId: string } | null => {
-    try {
-      const payload: unknown = JSON.parse(event.dataTransfer.getData(SIDEBAR_SECTION_DRAG_TYPE))
-      if (!payload || typeof payload !== "object" || !("projectId" in payload) || !("sectionId" in payload)) return null
-      return typeof payload.projectId === "string" && typeof payload.sectionId === "string"
-        ? { projectId: payload.projectId, sectionId: payload.sectionId } : null
-    } catch { return null }
-  }
-
-  const dropProps = (projectId: string, sectionId: string | null, key: string) => ({
-    onDragOver: (event: DragEvent<HTMLElement>) => {
-      event.stopPropagation()
-      dragFeedbackTarget.current = event.currentTarget
-      const project = projects[projectId]
-      const supported = event.dataTransfer.types.includes(SIDEBAR_SESSION_DRAG_TYPE) || event.dataTransfer.types.includes(SIDEBAR_SECTION_DRAG_TYPE)
-      if (supported && draggingProjectId.current !== undefined && draggingProjectId.current !== projectId) setDragNotice(uiText("sidebar_cross_project_drop_unavailable"))
-      else setDragNotice(null)
-      if (!supported || !project || project.status !== "active" || project.sidebar === undefined || sectionBusy.has(projectId) || draggingProjectId.current !== projectId) {
-        event.dataTransfer.dropEffect = "none"
-        setDragOverSection(null)
-        return
-      }
-      event.preventDefault()
-      event.dataTransfer.dropEffect = "move"
-      setDragOverSection(key)
-    },
-    onDragLeave: (event: DragEvent<HTMLElement>) => {
-      // A late leave from the old target must not clear the new target's feedback.
-      if (dragFeedbackTarget.current === event.currentTarget && !event.currentTarget.contains(event.relatedTarget as Node | null)) clearDragFeedback()
-    },
-    onDrop: (event: DragEvent<HTMLElement>) => {
-      event.preventDefault()
-      event.stopPropagation()
-      clearDragFeedback()
-      draggingProjectId.current = undefined
-      dragFeedbackTarget.current = event.currentTarget
-      const project = projects[projectId]
-      if (!project || project.status !== "active" || project.sidebar === undefined || sectionBusy.has(projectId)) return
-      const section = readDraggedSection(event)
-      if (section) {
-        if (section.projectId !== projectId) { setDragNotice(uiText("sidebar_cross_project_drop_unavailable")); return }
-        const bounds = (event.currentTarget.querySelector("button") ?? event.currentTarget).getBoundingClientRect()
-        const after = event.clientY > bounds.top + bounds.height / 2
-        void updateSectionPreferences(projectId, (previous) => reorderProjectSection(previous, projectId, section.sectionId, sectionId, after))
-        return
-      }
-      const session = readDraggedSession(event)
-      if (session && session.projectId !== projectId) setDragNotice(uiText("sidebar_cross_project_drop_unavailable"))
-      if (session?.projectId === projectId) moveSessionToSection(projectId, session.sessionId, sectionId)
-    },
-  })
-
-  const renderSession = (chat: ChatItem) => {
+  const renderSession = (chat: ChatItem, drag?: SidebarDragParts) => {
     const projectId = chat.config?.projectId?.trim()
     const project = projectId ? projects[projectId] : undefined
     return <SessionRow
       key={chat.id} chat={chat} active={chat.id === currentSessionId}
       unread={chat.id !== currentSessionId && isSessionUnread(chat, readState)}
       projectId={project?.id}
+      dragHandle={drag && project && project.status === "active" && project.sidebar !== undefined && !query
+        ? <drag.Handle source={{ kind: "session", projectId: project.id, id: chat.id }} label={`${uiText("sidebar_move_to_section")} · ${chat.title || uiText("new_session_c57c30bc")}`} disabled={sectionBusy.has(project.id)} /> : undefined}
       sections={project ? getProjectSections(sectionPreferences, project.id, project.section) : undefined}
       sectionId={project ? getSessionSection(sectionPreferences, project.id, chat.id, project.section) : undefined}
       onMoveToSection={project && project.sidebar !== undefined && !sectionBusy.has(project.id) ? (sectionId) => moveSessionToSection(project.id, chat.id, sectionId) : undefined}
@@ -366,14 +329,14 @@ export function Sidebar({
     />
   }
 
-  const renderSessionBucket = (bucket: ChatGroup, expanded: boolean, previewKey: string) => {
+  const renderSessionBucket = (bucket: ChatGroup, expanded: boolean, previewKey: string, drag?: SidebarDragParts) => {
     const fold = isProjectMode && !query && bucket.key !== "__pinned" && bucket.chats.length > PROJECT_GROUP_PREVIEW_COUNT
     const showAll = disclosures.expandedProjectGroups.has(previewKey)
     const shown = fold && !showAll ? bucket.chats.slice(0, PROJECT_GROUP_PREVIEW_COUNT) : bucket.chats
     return <>
-      {expanded ? shown.map(renderSession) : null}
+      {expanded ? shown.map((chat) => renderSession(chat, drag)) : null}
       {expanded && fold ? (
-        <button type="button" className="flex select-none w-full items-center gap-1 rounded-md px-2 py-1.5 text-left text-xs text-muted-foreground outline-none hover:bg-sidebar-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+        <button type="button" className="flex select-none w-full items-center gap-1 rounded-md px-2 py-1.5 text-left text-xs text-muted-foreground outline-none hover:bg-sidebar-accent hover:text-foreground"
           onClick={() => setDisclosures((previous) => {
             const expandedProjectGroups = new Set(previous.expandedProjectGroups)
             if (expandedProjectGroups.has(previewKey)) expandedProjectGroups.delete(previewKey)
@@ -387,10 +350,10 @@ export function Sidebar({
     </>
   }
 
-  const renderProjectSections = (group: ChatGroup) => {
+  const renderProjectSections = (group: ChatGroup, drag?: SidebarDragParts) => {
     const project = projects[group.key]!
     const sections = getProjectSections(sectionPreferences, project.id, project.section)
-    if (!sections.length) return renderSessionBucket(group, true, sectionDisclosureKey(project.id, null))
+    if (!sections.length) return renderSessionBucket(group, true, sectionDisclosureKey(project.id, null), drag)
     const targets = [...sections, { id: null, name: uiText("sidebar_no_section") }]
     return targets.map((section) => {
       const key = sectionDisclosureKey(project.id, section.id)
@@ -398,27 +361,19 @@ export function Sidebar({
       if (query && !bucket.chats.length) return null
       const expanded = !!query || !disclosures.closedSections.has(key)
       const contentId = `${disclosureId}-section-${encodeURIComponent(key)}`
-      return <div key={key} data-project-section={section.name} data-section-id={section.id ?? "none"} data-section-project={project.id}
+      const DropTarget = drag?.Target ?? StaticDropTarget
+      const disabled = project.status !== "active" || project.sidebar === undefined || sectionBusy.has(project.id) || !!query
+      return <DropTarget key={key} target={{ projectId: project.id, sectionId: section.id }} disabled={disabled}
+        data-project-section={section.name} data-section-id={section.id ?? "none"} data-section-project={project.id}
         aria-disabled={project.status !== "active" || project.sidebar === undefined || sectionBusy.has(project.id)}
-        data-drop-active={dragOverSection === key || undefined}
-        style={{ marginInlineStart: 12 }} className={cn("mb-1 rounded-md feedback-motion switch-feedback", dragOverSection === key && "bg-primary/5 ring-2 ring-ring")}
-        {...dropProps(project.id, section.id, key)}>
+        style={{ marginInlineStart: 12 }} className="mb-1 rounded-md feedback-motion switch-feedback">
         <ProjectSectionHeader onManageSections={() => {
           setSectionDialogMode("manage")
           setSectioningProjectId(project.id)
         }}>
           <button type="button" aria-expanded={expanded} aria-controls={contentId} disabled={!!query}
-            title={section.id && section.id !== LEGACY_PROJECT_SECTION_ID ? uiText("sidebar_section_drag_hint") : undefined}
-            draggable={section.id !== null && section.id !== LEGACY_PROJECT_SECTION_ID && project.status === "active" && project.sidebar !== undefined && !sectionBusy.has(project.id) && !query}
-            onPointerDown={() => { suppressSectionClick.current = false }}
-            onClickCapture={(event) => { if (suppressSectionClick.current && event.detail !== 0) { event.preventDefault(); event.stopPropagation() } }}
-            onDragStart={(event) => {
-              if (!section.id || section.id === LEGACY_PROJECT_SECTION_ID) { event.preventDefault(); return }
-              suppressSectionClick.current = true
-              event.dataTransfer.setData(SIDEBAR_SECTION_DRAG_TYPE, JSON.stringify({ projectId: project.id, sectionId: section.id }))
-              event.dataTransfer.effectAllowed = "move"
-            }}
-            className={cn("flex min-w-0 flex-1 select-none items-center gap-1 rounded-md px-2 py-1.5 text-left text-xs font-medium text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default", section.id && section.id !== LEGACY_PROJECT_SECTION_ID && "cursor-grab active:cursor-grabbing")}
+            className="flex min-w-0 flex-1 select-none items-center gap-1 rounded-md px-2 py-1.5 text-left text-xs font-medium text-muted-foreground outline-none hover:text-foreground disabled:cursor-default"
+            data-sidebar-section-header
             onClick={() => setDisclosures((previous) => {
               const closedSections = new Set(previous.closedSections)
               if (closedSections.has(key)) closedSections.delete(key)
@@ -426,20 +381,21 @@ export function Sidebar({
               return { ...previous, closedSections }
             })}>
             <ChevronRight aria-hidden="true" className={cn("size-3 shrink-0 feedback-motion transition-transform", expanded && "rotate-90")} />
-            {section.id && section.id !== LEGACY_PROJECT_SECTION_ID ? <GripVertical aria-hidden="true" className="size-3 shrink-0 text-muted-foreground" /> : null}
             <span className="truncate">{section.name}</span>
             <span className="ml-auto whitespace-nowrap pl-2 font-normal">{uiText("project_sessions", { count: bucket.chats.length })}</span>
           </button>
+          {drag && section.id && section.id !== LEGACY_PROJECT_SECTION_ID
+            ? <drag.Handle source={{ kind: "section", projectId: project.id, id: section.id }} label={`${uiText("sidebar_section_drag_hint")} · ${section.name}`} disabled={disabled} /> : null}
         </ProjectSectionHeader>
         <div id={contentId} hidden={!expanded}>
-          {renderSessionBucket(bucket, expanded, key)}
+          {renderSessionBucket(bucket, expanded, key, drag)}
           {expanded && !bucket.chats.length ? <p className="px-2 py-2 text-xs text-muted-foreground">{uiText("sidebar_section_empty")}</p> : null}
         </div>
-      </div>
+      </DropTarget>
     })
   }
 
-  const renderGroup = (group: ChatGroup) => {
+  const renderGroup = (group: ChatGroup, drag?: SidebarDragParts) => {
     const pinned = group.key === "__pinned"
     const expanded = pinned || !!query || !disclosures.closedDates.has(group.key)
     const contentId = `${disclosureId}-${group.key}`
@@ -450,6 +406,7 @@ export function Sidebar({
       else closedDates.add(group.key)
       return { ...previous, closedDates }
     })
+    const DropTarget = drag?.Target ?? StaticDropTarget
     return (
       <div key={group.key} data-sidebar-project={project?.id} aria-busy={project ? sectionBusy.has(project.id) : undefined} className="mb-1">
         {pinned ? (
@@ -457,9 +414,8 @@ export function Sidebar({
             {group.label}
           </div>
         ) : project ? (
-          <div {...dropProps(project.id, null, `project:${project.id}`)} data-project-drop={project.id} title={uiText("sidebar_project_drop_hint")}
-            className={cn("rounded-md feedback-motion switch-feedback", dragOverSection === `project:${project.id}` && "bg-primary/5 ring-2 ring-ring")}
-            data-drop-active={dragOverSection === `project:${project.id}` || undefined}>
+          <DropTarget target={{ projectId: project.id, sectionId: null }} disabled={project.status !== "active" || project.sidebar === undefined || sectionBusy.has(project.id) || !!query}
+            data-project-drop={project.id} title={uiText("sidebar_project_drop_hint")} className="rounded-md feedback-motion switch-feedback">
             <ProjectGroupHeader
               project={project}
               label={group.label}
@@ -508,14 +464,14 @@ export function Sidebar({
                 }
               }}
             />
-          </div>
+          </DropTarget>
         ) : (
           <button
             type="button"
             aria-expanded={expanded}
             aria-controls={contentId}
             disabled={!!query}
-            className="flex select-none w-full items-center gap-1 rounded-md px-2 pt-3 pb-1 text-left text-xs font-medium text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default"
+            className="flex select-none w-full items-center gap-1 rounded-md px-2 pt-3 pb-1 text-left text-xs font-medium text-muted-foreground outline-none hover:text-foreground disabled:cursor-default"
             onClick={toggleExpanded}
           >
             <ChevronRight aria-hidden="true" className={cn("size-3 shrink-0 feedback-motion transition-transform", expanded && "rotate-90")} />
@@ -524,7 +480,7 @@ export function Sidebar({
           </button>
         )}
         <div id={contentId} hidden={!expanded}>
-          {project ? (expanded ? renderProjectSections(group) : null) : renderSessionBucket(group, expanded, group.key)}
+          {project ? (expanded ? renderProjectSections(group, drag) : null) : renderSessionBucket(group, expanded, group.key, drag)}
         </div>
       </div>
     )
@@ -542,14 +498,8 @@ export function Sidebar({
       )}
 
       <aside
-        onDragStart={(event) => { clearDragFeedback(); draggingProjectId.current = (readDraggedSession(event) ?? readDraggedSection(event))?.projectId }}
-        onDragEnd={() => { draggingProjectId.current = undefined; clearDragFeedback() }}
-        onDragLeave={(event) => {
-          // ChatView and other non-sidebar drop surfaces own their own feedback.
-          if (event.target === event.currentTarget && !event.currentTarget.contains(event.relatedTarget as Node | null)) clearDragFeedback()
-        }}
         style={{
-          ["--sidebar-w" as string]: `${width}px`,
+          ["--sidebar-w" as string]: typeof width === "number" ? `${width}px` : width,
           ["--text-xs" as string]: "13px",
           ["--text-sm" as string]: "15px",
           fontFamily: '-apple-system, "PingFang SC", sans-serif',
@@ -563,7 +513,7 @@ export function Sidebar({
       >
         <div className="flex items-center gap-2 px-3 py-3">
           <BrandMark className="size-7" />
-          <span className="flex-1 text-sm font-semibold">Bodhi</span>
+          <span className="flex-1 text-sm font-semibold dark:font-medium">Bodhi</span>
           <Button
             size="icon"
             variant="ghost"
@@ -619,8 +569,11 @@ export function Sidebar({
           </div>
         </div>
         <div className="flex items-center gap-2 px-3">
-          <span className="flex-1 text-xs font-medium text-muted-foreground">
-            {isProjectMode ? uiText("project_79f326be") : uiText("recent_997a5e6e")}
+          <span className="relative min-w-0 flex-1 text-xs font-medium text-muted-foreground">
+            <span className={sectionBusy.size ? "invisible" : undefined}>
+              {isProjectMode ? uiText("project_79f326be") : uiText("recent_997a5e6e")}
+            </span>
+            {sectionBusy.size ? <span role="status" className="absolute inset-x-0 top-0 truncate">{uiText("sidebar_sections_saving")}</span> : null}
           </span>
           <Button
             size="sm"
@@ -638,8 +591,6 @@ export function Sidebar({
           </Button>
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-3">
-          {dragNotice ? <p role="status" className="px-3 py-2 text-xs text-muted-foreground">{dragNotice}</p> : null}
-          {sectionBusy.size ? <p role="status" className="px-3 py-2 text-xs text-muted-foreground">{uiText("sidebar_sections_saving")}</p> : null}
           {isProjectMode && Object.values(projects).some((project) => project.sidebar === undefined && getProjectSections(sectionPreferences, project.id, project.section).length) ? <p role="status" className="px-3 py-2 text-xs text-muted-foreground">{uiText("sidebar_sections_unavailable")}</p> : null}
           {Object.entries(sectionErrors).filter(([id]) => projects[id] && id !== sectioningProjectId).map(([id, error]) => (
             <p key={id} role="alert" className="px-3 py-2 text-xs text-destructive">{projects[id]!.name} · {error}</p>
@@ -658,14 +609,20 @@ export function Sidebar({
               {booted ? uiText("no_sessions_yet_69e71f03") : uiText("loading_4927a53b")}
             </p>
           )}
-          {visibleGroups.map(renderGroup)}
+          {isProjectMode ? <Suspense fallback={<div inert aria-busy="true">{visibleGroups.map((group) => renderGroup(group))}</div>}>
+            <SidebarProjectDrag projects={projects} chats={rootChats} preferences={sectionPreferences} busy={sectionBusy}
+              scopeKey={JSON.stringify([currentSessionId, query, open, collapsed, editingProjectId, sectioningProjectId, pendingArchiveProjectId, projectActionBusy])}
+              onMoveSession={moveDraggedSession} onMoveSection={moveDraggedSection}>
+              {(drag) => visibleGroups.map((group) => renderGroup(group, drag))}
+            </SidebarProjectDrag>
+          </Suspense> : visibleGroups.map((group) => renderGroup(group))}
           {!query && olderGroups.length > 0 ? (
             <div className="mb-1">
               <button
                 type="button"
                 aria-expanded={disclosures.olderExpanded}
                 aria-controls={`${disclosureId}-older`}
-                className="mt-2 flex select-none w-full items-center gap-1 rounded-md px-2 py-2 text-left text-xs font-medium text-muted-foreground outline-none hover:bg-sidebar-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+                className="mt-2 flex select-none w-full items-center gap-1 rounded-md px-2 py-2 text-left text-xs font-medium text-muted-foreground outline-none hover:bg-sidebar-accent hover:text-foreground"
                 onClick={() => setDisclosures((previous) => ({
                   ...previous,
                   olderExpanded: !previous.olderExpanded,
@@ -676,7 +633,7 @@ export function Sidebar({
                 <span className="ml-auto whitespace-nowrap pl-2 font-normal">{uiText("count_days", { count: olderGroups.length })} · {uiText("project_sessions", { count: olderCount })}</span>
               </button>
               <div id={`${disclosureId}-older`} hidden={!disclosures.olderExpanded}>
-                {disclosures.olderExpanded ? olderGroups.map(renderGroup) : null}
+                {disclosures.olderExpanded ? olderGroups.map((group) => renderGroup(group)) : null}
               </div>
             </div>
           ) : null}

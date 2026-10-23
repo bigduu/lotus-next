@@ -119,8 +119,12 @@ test("split root remains interactive while child uses only projected history and
   await expectComposerText(rootComposer, "keep root draft across tabs")
   await rootComposer.fill("")
 
-  // The parent transcript's SubAgent tool group exposes the actual child-open action.
-  await page.getByRole("button", { name: /Preview child/ }).click()
+  // Expansion is presentation state; the explicit action opens the projected transcript.
+  const childCard = page.locator(`[data-subagent-id="${childId}"]`)
+  const childToggle = childCard.locator("[data-subagent-toggle]")
+  await expect(childToggle).toHaveAttribute("aria-expanded", "false")
+  await childToggle.click()
+  await childCard.getByRole("button", { name: "打开 Preview child 的会话", exact: true }).click()
   await expect(workbench.locator("[data-subagent-transcript-pane]")).toBeVisible()
   await expect(workbench.getByText("child question")).toBeVisible()
   await expect(workbench.getByText("child answer")).toBeVisible()

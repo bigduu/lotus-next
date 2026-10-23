@@ -786,3 +786,19 @@ describe("one bounded native observation expiry", () => {
     expect(label).not.toContain("已取消")
   })
 })
+
+it("does not enqueue a second read for the same in-flight tree cursor", async () => {
+  const cursor = (revision: number) => `at1-${"a".repeat(64)}-${revision}`
+  vi.mocked(getActorSnapshot).mockResolvedValueOnce(actorSnapshotFixture("root", 1, cursor(7)))
+  await mount("root")
+  const pending = deferred()
+  vi.mocked(getActorSnapshot).mockReturnValueOnce(pending.promise)
+  const control = { type: "actor_snapshot_required" as const, reason: "changed" as const, cursor: cursor(8) }
+  const handlers = vi.mocked(subscribeActorTree).mock.calls.at(-1)![2]
+  await act(async () => { handlers.onControl(control); await Promise.resolve() })
+  await act(async () => { handlers.onControl(control); await Promise.resolve() })
+  await act(async () => pending.resolve(actorSnapshotFixture("root", 1, cursor(8))))
+  expect(getActorSnapshot).toHaveBeenCalledTimes(2)
+  expect(state.snapshot?.stream_cursor).toBe(cursor(8))
+  expect(state.gapReason).toBeNull()
+})

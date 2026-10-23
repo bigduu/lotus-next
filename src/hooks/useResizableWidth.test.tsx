@@ -6,22 +6,14 @@ import { useResizableWidth } from "./useResizableWidth"
 const storageKey = "test_panel_width"
 let root: Root
 let host: HTMLDivElement
+let resize: ReturnType<typeof useResizableWidth>
 
-function Harness({ min = 360, max = 1200, edge = "left" }: {
-  min?: number
-  max?: number
-  edge?: "left" | "right"
-}) {
-  const resize = useResizableWidth(storageKey, 520, { min, max, edge })
-  return <button onPointerDown={resize.startResize} style={{ width: resize.width }} />
+function Harness({ min = 360, max = 1200 }: { min?: number; max?: number }) {
+  resize = useResizableWidth(storageKey, 520, { min, max })
+  return <div style={{ width: resize.width }} />
 }
 
-const width = () => host.querySelector<HTMLButtonElement>("button")!.style.width
-const startResize = (clientX = 1000) => act(() => {
-  host.querySelector("button")!.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, clientX }))
-})
-const move = (clientX: number) => window.dispatchEvent(new MouseEvent("pointermove", { clientX }))
-const release = () => window.dispatchEvent(new MouseEvent("pointerup"))
+const width = () => host.querySelector<HTMLDivElement>("div")!.style.width
 
 beforeEach(() => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
@@ -67,116 +59,51 @@ it.each(["invalid", "Infinity", "NaN", "-1", "0", "520px", " "])(
   },
 )
 
-it("persists the final pointer movement even when release precedes the next render", () => {
+it("persists a completed user resize and restores it after remount", () => {
   act(() => root.render(<Harness />))
-  startResize()
-  act(() => {
-    move(400)
-    release()
-  })
+  act(() => resize.setWidth(1120))
   expect(width()).toBe("1120px")
   expect(localStorage.getItem(storageKey)).toBe("1120")
-})
-
-it("uses new bounds on subsequent drags and while a drag is in progress", () => {
-  act(() => root.render(<Harness max={600} />))
-  act(() => root.render(<Harness max={1000} />))
-  startResize()
-  act(() => move(0))
-  expect(width()).toBe("1000px")
+  act(() => root.render(null))
   act(() => root.render(<Harness max={700} />))
   expect(width()).toBe("700px")
-  act(() => move(900))
-  expect(width()).toBe("620px")
+  act(() => root.render(<Harness />))
+  expect(width()).toBe("1120px")
+})
+
+it("clamps completed user changes to the latest limits", () => {
+  act(() => root.render(<Harness max={600} />))
+  act(() => root.render(<Harness max={1000} />))
+  act(() => resize.setWidth(1100))
+  expect(width()).toBe("1000px")
   act(() => root.render(<Harness min={650} max={700} />))
-  act(() => move(850))
-  expect(width()).toBe("670px")
-  act(() => {
-    move(1200)
-    release()
-  })
+  act(() => resize.setWidth(500))
   expect(width()).toBe("650px")
   expect(localStorage.getItem(storageKey)).toBe("650")
 })
 
-it("does not overwrite a clamped preference when the divider is only clicked", () => {
-  localStorage.setItem(storageKey, "1100")
-  act(() => root.render(<Harness max={700} />))
-  startResize()
-  act(() => release())
-  expect(localStorage.getItem(storageKey)).toBe("1100")
-  act(() => root.render(<Harness />))
-  expect(width()).toBe("1100px")
-})
-
-it("starts dragging from the visible width instead of an offscreen saved width", () => {
-  localStorage.setItem(storageKey, "1100")
-  act(() => root.render(<Harness max={700} />))
-  startResize()
-  act(() => {
-    move(1100)
-    release()
-  })
-  expect(width()).toBe("600px")
-  expect(localStorage.getItem(storageKey)).toBe("600")
-  act(() => root.render(<Harness />))
-  expect(width()).toBe("600px")
-})
-
-it("retains right-edge sidebar resizing and its width limits", () => {
-  localStorage.setItem(storageKey, "288")
-  act(() => root.render(<Harness min={220} max={420} edge="right" />))
-  startResize(300)
-  act(() => move(450))
+it("keeps sidebar bounds without saving temporary viewport constraints", () => {
+  localStorage.setItem(storageKey, "420")
+  act(() => root.render(<Harness min={220} max={407} />))
+  expect(width()).toBe("407px")
+  expect(localStorage.getItem(storageKey)).toBe("420")
+  act(() => root.render(<Harness min={220} max={420} />))
   expect(width()).toBe("420px")
-  act(() => {
-    move(100)
-    release()
-  })
-  expect(width()).toBe("220px")
-  expect(localStorage.getItem(storageKey)).toBe("220")
+  act(() => resize.setWidth(300))
+  expect(localStorage.getItem(storageKey)).toBe("300")
 })
 
-it("cleans up cancelled drags and restores the previous body styles", () => {
-  document.body.style.cursor = "crosshair"
-  document.body.style.userSelect = "text"
+it.each([NaN, Infinity, -1, 0])("ignores a non-positive or non-finite completed width %s", (next) => {
   act(() => root.render(<Harness />))
-  startResize()
-  expect(document.body.style.cursor).toBe("col-resize")
-  expect(document.body.style.userSelect).toBe("none")
-  act(() => {
-    move(900)
-    window.dispatchEvent(new MouseEvent("pointercancel"))
-  })
-  expect(document.body.style.cursor).toBe("crosshair")
-  expect(document.body.style.userSelect).toBe("text")
-  act(() => move(0))
-  expect(width()).toBe("620px")
+  act(() => resize.setWidth(next))
+  expect(width()).toBe("520px")
+  expect(localStorage.getItem(storageKey)).toBeNull()
 })
 
-it("removes active drag listeners on unmount without saving a partial drag", () => {
-  const save = vi.spyOn(Storage.prototype, "setItem")
+it("keeps resizing usable when local storage is unavailable", () => {
+  vi.spyOn(localStorage, "getItem").mockImplementation(() => { throw new Error("blocked") })
+  vi.spyOn(localStorage, "setItem").mockImplementation(() => { throw new Error("blocked") })
   act(() => root.render(<Harness />))
-  startResize()
-  act(() => move(800))
-  act(() => root.render(null))
-  act(() => {
-    move(0)
-    release()
-  })
-  expect(document.body.style.cursor).toBe("")
-  expect(document.body.style.userSelect).toBe("")
-  expect(save).not.toHaveBeenCalled()
-})
-
-it("still resizes when local storage is unavailable", () => {
-  vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => { throw new Error("blocked") })
-  vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => { throw new Error("blocked") })
-  act(() => root.render(<Harness />))
-  startResize()
-  act(() => {
-    move(900)
-    release()
-  })
+  act(() => resize.setWidth(620))
   expect(width()).toBe("620px")
 })

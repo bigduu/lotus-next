@@ -1,3 +1,4 @@
+import { clearSessionCompatibilityObservations, observeSessionExecutionConflict } from "@services/chat/sessionExecutionCompatibility"
 import { act } from "react"
 import { createRoot, type Root } from "react-dom/client"
 import { afterEach, beforeEach, expect, it, vi } from "vitest"
@@ -14,6 +15,7 @@ function Harness() { ingress = useTicketIngress("ticket-root"); return null }
 function NavigationHarness({ sessionId }: { sessionId: string }) { ingress = useTicketIngress(sessionId); return null }
 const request: ChatRequest = { session_id: "ticket-root", model: "fixture", message: "创建报告", thread_id: "work-A", in_reply_to: "q-A" }
 beforeEach(() => {
+  clearSessionCompatibilityObservations()
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true }); sessionStorage.clear(); localStorage.clear()
   const randomUUID = crypto.randomUUID.bind(crypto)
   vi.stubGlobal("crypto", { randomUUID, subtle: { digest: async (_algorithm: string, bytes: Uint8Array) => {
@@ -251,4 +253,22 @@ it.each(["started", "already_running", "completed"] as const)("retains activatio
   expect(apiClient.postOnce).toHaveBeenCalledTimes(1)
   expect(agentClient.execute).toHaveBeenCalledTimes(3)
   expect(ingress.hasPending("ticket-root")).toBe(false)
+})
+
+const versionRefusal = () => new ApiError("incompatible", 409, "", JSON.stringify({ session_id: "ticket-root",
+  error: { code: "session_execution_incompatible" }, compatibility: { session_version: null, current_session_version: 1,
+    status: "conflict", history_readable: true, execution_allowed: false,
+    conflicts: [{ code: "unsupported_runtime_state_version", message: "Unsupported runtime" }] } }))
+it("blocks Human ingress before submission for an explicit compatibility conflict", async () => {
+  await mount(); observeSessionExecutionConflict("ticket-root", versionRefusal())
+  await act(async () => { expect((await ingress.send(request)).kind).toBe("blocked") })
+  expect(apiClient.postOnce).not.toHaveBeenCalled(); expect(agentClient.execute).not.toHaveBeenCalled()
+  expect(sessionStorage.getItem("lotus-next.ticket-human.ticket-root")).toBeNull()
+})
+it("preserves acknowledged Human ingress when activation has a typed version conflict and never retries it", async () => {
+  await mount(); vi.mocked(agentClient.execute).mockRejectedValueOnce(versionRefusal())
+  await act(async () => { expect((await ingress.send(request)).kind).toBe("accepted") })
+  expect(ingress.executePending).toBe("ticket-root")
+  await act(async () => { expect(await ingress.retryExecute()).toBe(false) })
+  expect(apiClient.postOnce).toHaveBeenCalledTimes(1); expect(agentClient.execute).toHaveBeenCalledTimes(1)
 })

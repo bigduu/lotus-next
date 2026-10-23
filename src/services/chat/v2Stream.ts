@@ -1508,6 +1508,7 @@ export const subscribeActorTree = (
   let channel = actorTreeChannels.get(ch);
   let subscribe = !channel;
   let staleCaller = false;
+  let advancedCursor: string | undefined;
   if (!channel) {
     channel = { rootId, subscribers: new Set(), cursor, gapNotified: false, lastControl: null };
     actorTreeChannels.set(ch, channel);
@@ -1516,6 +1517,7 @@ export const subscribeActorTree = (
       channel.cursor = cursor;
       channel.lastControl = null;
       channel.gapNotified = false;
+      advancedCursor = cursor;
       subscribe = true;
     } else if (cursor !== null && treeCursorCovers(channel.cursor, cursor)) {
       staleCaller = true;
@@ -1530,6 +1532,14 @@ export const subscribeActorTree = (
   }
   const currentChannel = channel;
   currentChannel.subscribers.add(handlers);
+  // A read in one view may advance the shared wire cursor past another view's
+  // snapshot. Invalidate those readers before covered wire frames are dropped.
+  // This carries only an already-validated cursor, never state or authority.
+  if (advancedCursor !== undefined) {
+    for (const listener of [...currentChannel.subscribers]) if (listener !== handlers) {
+      listener.onControl({ type: "actor_snapshot_required", reason: "changed", cursor: advancedCursor });
+    }
+  }
   if (socket && isSocketReady(socket)) {
     if (subscribe && !sendOnSocket(socket, currentChannel.cursor === null
       ? { type: "subscribe_tree", ch }

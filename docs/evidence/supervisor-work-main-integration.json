@@ -1,0 +1,107 @@
+{
+  "issue": "https://github.com/bigduu/lotus-next/issues/322",
+  "local_only": true,
+  "main_base": "5c4f713f2b8624f881c6739ae28d7091f48f796e",
+  "old_candidate": "4c0d898230aac26158d4c37c5a8fdcd83d2775ff",
+  "merge": "6c09aef9a9d88d475409a08cb47335f75cde7ba1",
+  "product_code": "fb663875151c175ca077e491ddb1245f3eb1e181",
+  "fixture_candidate": "7b39036eb6ea71e5987f157d2c3e5f13faa65144",
+  "resources_sha256": "db1e8c5a2c4597941f7dec0f816c9e10a51b8d771fde03412439a1aa40051271",
+  "accepted_backend_static": "bf6b20bab2832b45d4b0927e971cea64866f2c77",
+  "unit_gate": {
+    "executed_revision": "fb663875151c175ca077e491ddb1245f3eb1e181",
+    "node": "v24.21.0",
+    "files": 149,
+    "passed": 3253,
+    "full_verify_exit_code": 0,
+    "source_difference_after_run": "only the Workbench browser fixture; all product/unit inputs unchanged",
+    "log_sha256": "b17ce5d9322b7ed5e7a4acdab457a3b7ff2ea53327a5b3226afd443cb78f3707"
+  },
+  "browser_gate": {
+    "full_matrix_revision": "428976234eee41b85cb4d84682afe4290c5c7023",
+    "passed": 118,
+    "skipped": 2,
+    "skip_reason": "unchanged main desktop-only native drag; touch uses menu coverage",
+    "files": {
+      "project-session-sections.spec.ts": {
+        "expected": 19,
+        "skipped": 2
+      },
+      "supervisor-sidebar.spec.ts": {
+        "expected": 18
+      },
+      "supervisor-work-availability.spec.ts": {
+        "expected": 69
+      },
+      "supervisor-workbench.spec.ts": {
+        "expected": 3
+      },
+      "ticket-owner-access.spec.ts": {
+        "expected": 9
+      }
+    },
+    "log_sha256": "d9d738c25861e514b71c25b6587987a18d4d476eeed6ca18388a8be3a5ac115c",
+    "report_archive_sha256": "59136f141e72fa877b66852addf5a7b73a33cd947572765f7cfa880fd6624a56",
+    "final_fixture_revision": "7b39036eb6ea71e5987f157d2c3e5f13faa65144",
+    "affected_rerun_passed": 3,
+    "affected_rerun_failed": 0,
+    "affected_rerun_log_sha256": "edde5aac7a1f7a62d00fdb97c5a849e7730a09f8452ed4bdcac6147bdc75a02b",
+    "affected_report_archive_sha256": "2ff54e2c0275f34c741643be02bea4f5e11db31815274958769e085404fce678",
+    "reuse": "115 unchanged browser cases and 2 unchanged skips retain full-matrix evidence; the changed Workbench fixture was rerun on desktop/tablet/phone; product resource set is identical"
+  },
+  "package_gate": {
+    "node": "v24.21.0",
+    "source_clean": true,
+    "javascript_raw": 1899985,
+    "javascript_limit": 1900000,
+    "css_raw": 108993,
+    "css_limit": 109000,
+    "budgets_changed": false,
+    "manifest_or_lockfile_changed": false
+  },
+  "scope": [
+    "Work-scope execution sessions/objective/snapshot state/results and existing gated operations",
+    "current nested initialization refusals and unavailable modes",
+    "bounded same-snapshot fallback for long assignment histories"
+  ],
+  "not_delivered": [
+    "inventory/control of all attached independent Root sessions",
+    "cross-session Loop start/status/update/stop; waiting for actual #1976 contract"
+  ],
+  "remaining_actual_pairing": [
+    "accepted dev owner-provided binary + new frontend GET/initialize/idempotency/409/403/503",
+    "nonempty assignment/result scopes, long-history budget fallback and revocation/reload",
+    "cross-session Loop authority, target lifecycle, goal update and receipts after #1976 delivery",
+    "original screenshot instance/configuration still not captured"
+  ],
+  "no_cargo": true,
+  "no_backend_process": true,
+  "no_paid_model": true,
+  "no_dispatch": true,
+  "pushed": false,
+  "published": false,
+  "preserved": [
+    {
+      "candidate": "4c0d898230aac26158d4c37c5a8fdcd83d2775ff",
+      "clean": true,
+      "changed_by_this_task": false
+    },
+    {
+      "candidate": "b9459cd60a55a8064f2bcc8edd4f70c22de87aa6",
+      "clean": true,
+      "changed_by_this_task": false
+    }
+  ],
+  "screenshots": [
+    {
+      "path": "docs/screenshots/supervisor-work-availability/integrated-execution-desktop.png",
+      "sha256": "d08d71b8087baab7bad83728c74c1becf5838024b5facc1eb86ee5e2d24751b5",
+      "kind": "deterministic HTTP fixture; no model/backend runtime execution"
+    },
+    {
+      "path": "docs/screenshots/supervisor-work-availability/integrated-execution-phone.png",
+      "sha256": "302ea800a7e6edc090a8849ff9253db701a994c9e36147c309a184f335200ee9",
+      "kind": "deterministic HTTP fixture; no model/backend runtime execution"
+    }
+  ]
+}

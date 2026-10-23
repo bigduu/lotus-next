@@ -8,6 +8,7 @@ import { useAppStore } from "@shared/store/appStore"
 import { ConfirmDialog } from "./ConfirmDialog"
 import { StatusLine } from "./StatusLine"
 import type { SectionMessage } from "./useSystemConfig"
+import { ConversationClearDialog } from "@/components/chat/ConversationClearDialog"
 
 type PendingAction =
   | { type: "clear-current"; sessionId: string }
@@ -21,13 +22,11 @@ const CLEANUP_LABEL: Record<"all" | "empty" | "children", string> = {
 }
 
 /** 会话维护 — 清空当前会话 / 批量清理 / 开发重置(带确认). */
-export function SectionSessions() {
+export function SectionSessions({ advanced = true }: { advanced?: boolean }) {
   useUiLocale()
   const chats = useAppStore((s) => s.chats)
   const currentSessionId = useAppStore((s) => s.currentSessionId)
   const loadChats = useAppStore((s) => s.loadChats)
-  const refreshChats = useAppStore((s) => s.refreshChats)
-  const loadChatHistory = useAppStore((s) => s.loadChatHistory)
 
   const [keepPinned, setKeepPinned] = useState(true)
   const [pending, setPending] = useState<PendingAction | null>(null)
@@ -40,14 +39,8 @@ export function SectionSessions() {
     [chats, currentSessionId]
   )
 
-  const dialogText = (action: PendingAction): { title: string; description: string; label: string } => {
+  const dialogText = (action: Exclude<PendingAction, { type: "clear-current" }>): { title: string; description: string; label: string } => {
     switch (action.type) {
-      case "clear-current":
-        return {
-          title: uiText("clear_current_session_messages_fd367d05"),
-          description: uiText("delete_all_messages_and_events_from_the_current_session_1b83eb83"),
-          label: uiText("clear_1ef3de06"),
-        }
       case "cleanup": {
         const scope =
           action.mode === "all" ? uiText("all_sessions_19c6c208") : action.mode === "empty" ? uiText("all_empty_sessions_5ed386ae") : uiText("all_child_sessions_343eb995")
@@ -67,16 +60,11 @@ export function SectionSessions() {
   }
 
   const execute = async () => {
-    if (!pending) return
+    if (!pending || pending.type === "clear-current") return
     setBusy(true)
     setActionError(null)
     try {
-      if (pending.type === "clear-current") {
-        await agentClient.clearSession(pending.sessionId)
-        await loadChatHistory(pending.sessionId)
-        await refreshChats()
-        setMsg({ kind: "ok", text: uiText("current_session_cleared_cc0d93c0") })
-      } else if (pending.type === "cleanup") {
+      if (pending.type === "cleanup") {
         await agentClient.cleanupSessions(pending.mode, keepPinned)
         await loadChats()
         setMsg({ kind: "ok", text: uiText("cleanup_complete_6d256e25") })
@@ -99,7 +87,7 @@ export function SectionSessions() {
     setPending(action)
   }
 
-  const text = pending ? dialogText(pending) : null
+  const text = pending && pending.type !== "clear-current" ? dialogText(pending) : null
 
   return (
     <section className="space-y-2 rounded-lg border p-3">
@@ -120,14 +108,14 @@ export function SectionSessions() {
               variant="secondary"
               onClick={() => open({ type: "clear-current", sessionId: current.id })}
             >
-              {uiText("clear_messages_d37fb6f4")}</Button>
+              {uiText("conversation_clear_action")}</Button>
           </div>
         ) : (
           <p className="text-xs text-muted-foreground">{uiText("no_active_session_d3a91aa2")}</p>
         )}
       </div>
 
-      <div className="space-y-2 border-t pt-2">
+      {advanced ? <><div className="space-y-2 border-t pt-2">
         <div className="flex items-center justify-between gap-2">
           <div className="text-sm">{uiText("keep_pinned_sessions_during_bulk_cleanup_66ca3998")}</div>
           <Switch checked={keepPinned} onCheckedChange={setKeepPinned} />
@@ -151,9 +139,13 @@ export function SectionSessions() {
           {uiText("development_reset_delete_all_backend_session_data_and_r_0331fbb6")}</div>
         <Button size="sm" variant="destructive" onClick={() => open({ type: "dev-reset" })}>
           {uiText("reset_session_storage_226dd63a")}</Button>
-      </div>
+      </div></> : null}
 
       <StatusLine msg={msg} />
+
+      {pending?.type === "clear-current" ? <ConversationClearDialog sessionId={pending.sessionId}
+        title={chats.find((chat) => chat.id === pending.sessionId)?.title || pending.sessionId}
+        onClose={() => setPending(null)} /> : null}
 
       {pending && text ? (
         <ConfirmDialog

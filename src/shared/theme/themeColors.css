@@ -1,0 +1,60 @@
+/* Generated from colorTokens.ts. Run npm run theme:generate; do not edit. */
+:root {
+  --background: #fafbfb;
+  --foreground: #1b221f;
+  --card: #f3f6f4;
+  --popover: #ffffff;
+  --primary: #396957;
+  --primary-foreground: #fafafa;
+  --secondary: #ecf0ee;
+  --muted-foreground: #5a635f;
+  --accent: #e2efe8;
+  --accent-foreground: #20392f;
+  --destructive: oklch(0.577 0.245 27.325);
+  --border: #dde2e0;
+  --input: #cdd4d1;
+  --focus-ring: #396957;
+  --focus-halo: #3969572e;
+  --focus-surface: #eaf0ed;
+  --sidebar: #f1f5f3;
+  --user-message-background: #e4eee9;
+  --user-message-foreground: #24312c;
+  --activity-tone: #3c4652;
+  --activity-shine: #637183;
+  --card-foreground: var(--foreground);
+  --popover-foreground: var(--foreground);
+  --secondary-foreground: var(--foreground);
+  --muted: var(--secondary);
+  --ring: var(--primary);
+  --sidebar-foreground: var(--foreground);
+  --sidebar-primary: var(--primary);
+  --sidebar-primary-foreground: var(--primary-foreground);
+  --sidebar-accent: var(--accent);
+  --sidebar-accent-foreground: var(--accent-foreground);
+  --sidebar-border: var(--border);
+  --sidebar-ring: var(--primary);
+}
+
+.dark {
+  --background: #101412;
+  --foreground: #eaeeec;
+  --card: #181d1b;
+  --popover: #1e2320;
+  --primary: #7db29d;
+  --primary-foreground: #0f1612;
+  --secondary: #242927;
+  --muted-foreground: #a0a6a3;
+  --accent: #24312b;
+  --accent-foreground: #d0e4da;
+  --destructive: oklch(0.704 0.191 22.216);
+  --border: oklch(1 0 0 / 10%);
+  --input: oklch(1 0 0 / 15%);
+  --focus-ring: #7db29d;
+  --focus-halo: #7db29d2e;
+  --focus-surface: #1e2621;
+  --sidebar: #151a18;
+  --user-message-background: #263e34;
+  --user-message-foreground: #e8eeea;
+  --activity-tone: #a4adba;
+  --activity-shine: #e6e9ef;
+}

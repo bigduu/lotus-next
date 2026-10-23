@@ -126,7 +126,7 @@ test("129 persistent actors render recursively without expanding the content sub
   await expect(panel.locator(`[data-actor-id="${childId}"]`)).toHaveAttribute("aria-level", "4")
   await expect(panel.locator("[data-actor-tree-virtual]")).toHaveJSProperty("offsetHeight", 129 * 64)
   expect(await panel.getByRole("treeitem").count()).toBeLessThan(30)
-  expect(reads).toBe(1)
+  expect(reads).toBe(2) // Inline status and Inspector each authorize one read.
   expect(observation.clientFrames.some((value) => frame(value).type === "subscribe" && String(frame(value).ch).startsWith("actor.actor-"))).toBe(false)
   expect(requests.some((url) => /\/history\//.test(new URL(url).pathname) && !url.includes(rootId))).toBe(false)
   expect(requests.some((url) => /\/sessions\/actor-[^/]+\/history/.test(new URL(url).pathname))).toBe(false)
@@ -191,15 +191,20 @@ const actorEvent = (activationId: string, attempt: number, seq: number) => ({
   },
 })
 
-// Every physical interest has one owner in this UI: Inspector and child preview
-// are mutually exclusive. Shared simultaneous consumers remain transport-unit
-// coverage; do not invent a production mount just to manufacture that state.
+// Inline status and Inspector share a physical tree interest. A newer cursor
+// updates that interest; it is not an additional channel subscription. Actor
+// content interests still belong only to Inspector or the selected preview.
 function expectBoundedInterests(frames: unknown[], channel: string, finalBalance: number) {
   let balance = 0
+  let treeCursor: unknown
   for (const raw of frames) {
     const value = frame(raw)
     if (value.ch !== channel) continue
-    if (value.type === "subscribe" || value.type === "subscribe_tree") balance += 1
+    if (value.type === "subscribe") balance += 1
+    if (value.type === "subscribe_tree") {
+      if (balance === 1) expect(value.cursor, "an active tree resubscribe must advance its cursor").not.toBe(treeCursor)
+      treeCursor = value.cursor; balance = 1
+    }
     if (value.type === "unsubscribe") balance -= 1
     expect(balance, `one physical interest for ${channel}`).toBeGreaterThanOrEqual(0)
     expect(balance, `one physical interest for ${channel}`).toBeLessThanOrEqual(1)
@@ -294,7 +299,7 @@ test("selected Child follows successor activation and fences late frames across 
     current = activationSnapshot(activationB, 2, "reserved", 8)
     before = reads()
     await send({ ch: tree, seq: 8, control: { type: "actor_snapshot_required", reason: "changed", cursor: current.stream_cursor } })
-    await expect.poll(reads).toBe(before + 1)
+    await expect.poll(reads).toBe(before + 2) // Both active read views share the tree channel.
     await expect(selected).toHaveAttribute("aria-label", /排队中，远端/)
     await expect(selected).toHaveAttribute("aria-selected", "true")
     expect(snapshots.at(-1)!.nodes.find((node) => node.actor_id === childId)!.activation).toEqual({
@@ -311,7 +316,7 @@ test("selected Child follows successor activation and fences late frames across 
 
     current = activationSnapshot(activationB, 2, "running", 9)
     await send(actorEvent(activationB, 2, 3))
-    await expect.poll(reads).toBe(before + 1)
+    await expect.poll(reads).toBe(before + 2) // The newer proof also invalidates inline status.
     await expect(selected).toHaveAttribute("aria-label", /运行中，远端/)
     await expect(panel).toHaveAttribute("aria-busy", "false")
     before = reads()
@@ -323,7 +328,7 @@ test("selected Child follows successor activation and fences late frames across 
 
     current = activationSnapshot(activationB, 2, "succeeded", 10)
     await send(actorEvent(activationB, 2, 4))
-    await expect.poll(reads).toBe(before + 1)
+    await expect.poll(reads).toBe(before + 2)
     await expect(selected).toHaveAttribute("aria-label", /已完成，远端/)
     await expect(selected).toHaveAttribute("aria-selected", "true")
     expect(snapshots.at(-1)!.nodes.find((node) => node.actor_id === childId)!.activation).toEqual({
@@ -354,13 +359,15 @@ test("selected Child follows successor activation and fences late frames across 
 
     await workbench.getByRole("button", { name: "收起工作面板", exact: true }).click()
     await expect(panel).toHaveCount(0)
-    await expect.poll(() => sent("unsubscribe", tree).length).toBe(sent("subscribe_tree", tree).length)
     before = reads()
     await send(actorEvent(activationB, 2, 7))
-    await send({ ch: tree, seq: 11, control: { type: "actor_snapshot_required", reason: "gap", cursor: treeCursor(11) } })
     await settleFrames()
-    expect(reads(), "closed Inspector must ignore late Actor and tree callbacks").toBe(before)
-    for (const channel of [actor, message, tree, `actor.${rootId}`]) expectBoundedInterests(observation.clientFrames, channel, 0)
+    expect(reads(), "closed Inspector must ignore late Actor callbacks").toBe(before)
+    await send({ ch: tree, seq: 11, control: { type: "actor_snapshot_required", reason: "gap", cursor: treeCursor(11) } })
+    await expect.poll(reads).toBe(before + 1) // The still-visible inline status view owns this tree read.
+    await expect(page.locator("[data-subagent-error]")).toBeVisible()
+    for (const channel of [actor, message, `actor.${rootId}`]) expectBoundedInterests(observation.clientFrames, channel, 0)
+    expectBoundedInterests(observation.clientFrames, tree, 1)
     expect(sent("subscribe", actor)).toHaveLength(2)
     expect(sent("subscribe", message)).toHaveLength(1)
     expect(sent("subscribe", `agent.${childId}`)).toHaveLength(0)
@@ -528,9 +535,9 @@ test("one expiry read cannot invent a stop or keep polling unchanged native evid
   const panel = await openInspector(page)
   await expect(panel.locator('[data-actor-id="actor-0"]')).toHaveAttribute("aria-label", /运行中/)
   await page.clock.runFor(1_000)
-  await expect.poll(() => reads).toBe(2)
+  await expect.poll(() => reads).toBe(4) // One initial + one expiry read per active view.
   await page.clock.runFor(60_000)
-  expect(reads).toBe(2)
+  expect(reads).toBe(4)
   await expect(panel.locator('[data-actor-id="actor-0"]')).toHaveAttribute("aria-label", /运行中/)
   await expect(panel.locator('[data-actor-id="actor-0"]')).not.toHaveAttribute("aria-label", /停止未确认|已取消/)
 })

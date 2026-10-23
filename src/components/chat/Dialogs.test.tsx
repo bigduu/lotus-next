@@ -149,6 +149,25 @@ describe("QuestionDialog actual controls", () => {
     expect(props.onAnswer).toHaveBeenCalledExactlyOnceWith("allow_once")
   })
 
+  it("retains child approval submission status and error without an automatic decision", async () => {
+    const onRespond = vi.fn(), a = { childSessionId: "child/a", requestId: "child/request", toolName: "Write" }
+    const root = createRoot(document.body.appendChild(document.createElement("div")))
+    roots.push(root)
+    await act(async () => root.render(<ApprovalDialog a={a} onRespond={onRespond} submitting />))
+    expect(document.querySelector('[role="status"]')?.textContent).toContain("正在提交")
+    const choices = [...document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')]
+    expect(choices).toHaveLength(2)
+    expect(choices.every((choice) => choice.disabled)).toBe(true)
+    act(() => { choices[0].click(); choices[1].click() })
+    expect(onRespond).not.toHaveBeenCalled()
+    await act(async () => root.render(<ApprovalDialog a={a} onRespond={onRespond} error="提交结果尚未确认" />))
+    expect(document.querySelector('[role="status"]')).toBeNull()
+    expect(document.querySelector('[role="alert"]')?.textContent).toBe("提交结果尚未确认")
+    expect(document.querySelector('[role="dialog"]')).not.toBeNull()
+    expect(onRespond).not.toHaveBeenCalled()
+    act(() => document.querySelector<HTMLButtonElement>('[role="dialog"] button')!.click())
+    expect(onRespond).toHaveBeenCalledExactlyOnceWith(false)
+  })
   it("keeps the separate child approval controls and boolean response contract", async () => {
     const onRespond = vi.fn()
     const root = createRoot(document.body.appendChild(document.createElement("div")))

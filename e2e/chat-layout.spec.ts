@@ -190,7 +190,11 @@ test("interactive side chat and child transcript retain the shared reading colum
   await page.getByRole("option", { name: "Layout side", exact: true }).click()
   await expectDisclosureAlignment(workbench)
   await expectComposerAlignment(workbench)
-  await page.getByRole("button", { name: /Layout child/ }).click()
+  const childCard = page.locator(`[data-subagent-id="${childId}"]`)
+  const childToggle = childCard.locator("[data-subagent-toggle]")
+  await expect(childToggle).toHaveAttribute("aria-expanded", "false")
+  await childToggle.click()
+  await childCard.getByRole("button", { name: "打开 Layout child 的会话", exact: true }).click()
   const child = workbench.locator("[data-subagent-transcript-pane]")
   await expect(child.locator('[data-message-role="assistant"] p')).toHaveText("Assistant baseline.")
   const childTextInset = await child.evaluate((element) =>

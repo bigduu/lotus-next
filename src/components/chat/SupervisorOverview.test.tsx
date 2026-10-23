@@ -13,7 +13,7 @@ afterEach(() => { act(() => root.unmount()); document.body.replaceChildren() })
 async function open(snapshot: TicketSnapshot, connected = true) {
   const onSelectWork = vi.fn()
   await act(async () => root.render(<SupervisorOverview running={false} onSelectWork={onSelectWork} controller={{
-    state: applyTicketSnapshot(null, snapshot), connected, negotiated: true, error: null, busy: {}, uncertain: {},
+    state: applyTicketSnapshot(null, snapshot), connected, negotiated: true, availability: { kind: "ready" }, refreshing: false, canRefresh: true, initializing: false, initializationError: null, canInitialize: false, initialize: async () => false, error: null, busy: {}, uncertain: {},
     respond: async () => false, refresh: async () => {}, canRespond: false, canSendIngress: false,
   }} />))
   await act(async () => document.querySelector<HTMLButtonElement>('[data-testid="ticket-work-status"]')!.click())

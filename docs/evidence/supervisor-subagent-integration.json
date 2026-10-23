@@ -1,0 +1,729 @@
+{
+  "issues": [
+    "https://github.com/bigduu/lotus-next/issues/322",
+    "https://github.com/bigduu/lotus-next/issues/331"
+  ],
+  "recordedAt": "2026-10-16T07:49:55.378295+00:00",
+  "branch": "lotus-next/fix/322-331-integration-20261016",
+  "frozenSources": {
+    "322": "7c928f898f3db09a246e3f611484f81c8821bd3b",
+    "331": "a4e077f9b5559f5278a244b098cb88a5f144d59b"
+  },
+  "merge": "9f88c88e05cdde71d4eb3fd086a368f64489e00c",
+  "mergeParents": [
+    "7c928f898f3db09a246e3f611484f81c8821bd3b",
+    "a4e077f9b5559f5278a244b098cb88a5f144d59b"
+  ],
+  "textualConflicts": false,
+  "overlappingFiles": [
+    "src/components/app/ChatPane.tsx",
+    "src/shared/i18n/resources/ui-en-US.ts",
+    "src/shared/i18n/resources/ui-zh-CN.ts"
+  ],
+  "productRevision": "85190b5aecf7b71de0eacaab3f843192341bca6e",
+  "sourceDirtyAtProductValidation": false,
+  "resourcesSha256": "ec954035d2677fd8ed0bcd8cba63d79ba47e4a36549fbbc8ae9a118f8dd5132b",
+  "integrationCorrection": "Defer only ready Work details; eager scope/initialization/error gates, local load retry and focus preservation.",
+  "backendFieldsOrApiChanged": false,
+  "persistentAuthorityChanged": false,
+  "budgetsChanged": false,
+  "manifestsOrLockfileChanged": false,
+  "budget": {
+    "initialCombinedJsRaw": 1903474,
+    "limitJsRaw": 1900000,
+    "finalJsRaw": 1893716,
+    "finalJsGzip": 583047,
+    "finalCssRaw": 108993,
+    "limitCssRaw": 109000,
+    "workDynamicEntry": "assets/TicketWorkPanel-Dcq6lxHS.js",
+    "workInStartupClosure": false
+  },
+  "validation": {
+    "node": "24.21.0",
+    "initialMergeUnits": {
+      "files": 13,
+      "passed": 516,
+      "source": "9f88c88e05cdde71d4eb3fd086a368f64489e00c"
+    },
+    "afterCorrectionUnits": {
+      "files": 3,
+      "passed": 175,
+      "inputs": "ChatPane, LazyTicketWorkPanel and useTicketWork; product/unit inputs equivalent to productRevision, executed before commit; subsequent fixture-only child metadata correction is covered by the browser run"
+    },
+    "unchangedUnitsReused": true,
+    "unrelatedFullSuitesRepeated": false,
+    "typeCheck": "passed",
+    "lint": "passed",
+    "i18n": "2121 matching keys",
+    "architecture": "passed",
+    "buildAndPackage": "passed",
+    "browser": {
+      "stats": {
+        "startTime": "2026-10-16T07:44:07.960Z",
+        "duration": 69458.671,
+        "expected": 83,
+        "skipped": 1,
+        "unexpected": 0,
+        "flaky": 0
+      },
+      "cases": [
+        {
+          "file": "actor-snapshot-inspector.spec.ts",
+          "title": "selected Child follows successor activation and fences late frames across Root and close navigation",
+          "project": "desktop-chromium",
+          "status": "expected"
+        },
+        {
+          "file": "actor-snapshot-inspector.spec.ts",
+          "title": "selected Child follows successor activation and fences late frames across Root and close navigation",
+          "project": "tablet-chromium",
+          "status": "skipped"
+        },
+        {
+          "file": "actor-snapshot-inspector.spec.ts",
+          "title": "selected Child follows successor activation and fences late frames across Root and close navigation",
+          "project": "phone-chromium",
+          "status": "expected"
+        },
+        {
+          "file": "subagent-status-origin.spec.ts",
+          "title": "saved terminal states survive unordered legacy events and reconnect without completing a newer activation",
+          "project": "desktop-chromium",
+          "status": "expected"
+        },
+        {
+          "file": "subagent-status-origin.spec.ts",
+          "title": "new turns, status refreshes and reload keep old cards at their originating activity",
+          "project": "desktop-chromium",
+          "status": "expected"
+        },
+        {
+          "file": "subagent-status-origin.spec.ts",
+          "title": "a denied snapshot shows unconfirmed states and an explicit retry",
+          "project": "desktop-chromium",
+          "status": "expected"
+        },
+        {
+          "file": "subagent-status-origin.spec.ts",
+          "title": "saved terminal states survive unordered legacy events and reconnect without completing a newer activation",
+          "project": "tablet-chromium",
+          "status": "expected"
+        },
+        {
+          "file": "subagent-status-origin.spec.ts",
+          "title": "new turns, status refreshes and reload keep old cards at their originating activity",
+          "project": "tablet-chromium",
+          "status": "expected"
+        },
+        {
+          "file": "subagent-status-origin.spec.ts",
+          "title": "a denied snapshot shows unconfirmed states and an explicit retry",
+          "project": "tablet-chromium",
+          "status": "expected"
+        },
+        {
+          "file": "subagent-status-origin.spec.ts",
+          "title": "saved terminal states survive unordered legacy events and reconnect without completing a newer activation",
+          "project": "phone-chromium",
+          "status": "expected"
+        },
+        {
+          "file": "subagent-status-origin.spec.ts",
+          "title": "new turns, status refreshes and reload keep old cards at their originating activity",
+          "project": "phone-chromium",
+          "status": "expected"
+        },
+        {
+          "file": "subagent-status-origin.spec.ts",
+          "title": "a denied snapshot shows unconfirmed states and an explicit retry",
+          "project": "phone-chromium",
+          "status": "expected"
+        },
+        {
+          "file": "supervisor-work-availability.spec.ts",
+          "title": "Supervisor Work uninitialized retains cause and explicitly re-reads a ready empty scope",
+          "project": "desktop-chromium",
+          "status": "expected"
+        },
+        {
+          "file": "supervisor-work-availability.spec.ts",
+          "title": "Supervisor Work disabled retains cause and explicitly re-reads a ready empty scope",
+          "project": "desktop-chromium",
+          "status": "expected"
+        },
+        {
+          "file": "supervisor-work-availability.spec.ts",
+          "title": "Supervisor Work unbound retains cause and explicitly re-reads a ready empty scope",
+          "project": "desktop-chromium",
+          "status": "expected"
+        },
+        {
+          "file": "supervisor-work-availability.spec.ts",
+          "title": "Supervisor Work unsupported retains cause and explicitly re-reads a ready empty scope",
+          "project": "desktop-chromium",
+          "status": "expected"
+        },
+        {
+          "file": "supervisor-work-availability.spec.ts",
+          "title": "Supervisor Work forbidden retains cause and explicitly re-reads a ready empty scope",
+          "project": "desktop-chromium",
+          "status": "expected"
+        },
+        {
+          "file": "supervisor-work-availability.spec.ts",
+          "title": "Supervisor Work error retains cause and explicitly re-reads a ready empty scope",
+          "project": "desktop-chromium",
+          "status": "expected"
+        },
+        {
+          "file": "supervisor-work-availability.spec.ts",
+          "title": "Supervisor Work remains uninitialized across Ultra exit/entry and keeps the task draft",
+          "project": "desktop-chromium",
+          "status": "expected"
+        },
+        {
+          "file": "supervisor-work-availability.spec.ts",
+          "title": "an initialized disabled scope remains readable with no write actions",
+          "project": "desktop-chromium",
+          "status": "expected"
+        },
+        {
+          "file": "supervisor-work-availability.spec.ts",
+          "title": "v1 explicit initialization created waits for canonical ready without extra fields or replay",
+          "project": "desktop-chromium",
+          "status": "expected"
+        },
+        {
+          "file": "supervisor-work-availability.spec.ts",
+          "title": "v1 explicit initialization existing waits for canonical ready without extra fields or replay",
+          "project": "desktop-chromium",
+          "status": "expected"
+        },
+        {
+          "file": "supervisor-work-availability.spec.ts",
+          "title": "v1 initialization conflict preserves refusal and reads canonical state without replay",
+          "project": "desktop-chromium",
+          "status": "expected"
+        },
+        {
+          "file": "supervisor-work-availability.spec.ts",
+          "title": "v1 initialization stale-readable preserves refusal and reads canonical state without replay",
+          "project": "desktop-chromium",
+          "status": "expected"
+        },
+        {
+          "file": "supervisor-work-availability.spec.ts",
+          "title": "v1 initialization recovery preserves refusal and reads canonical state without replay",
+          "project": "desktop-chromium",
+          "status": "expected"
+        },
+        {
+          "file": "supervisor-work-availability.spec.ts",
+          "title": "v1 initialization stale preserves refusal and reads canonical state without replay",
+          "project": "desktop-chromium",
+          "status": "expected"
+        },
+        {
+          "file": "supervisor-work-availability.spec.ts",
+          "title": "v1 initialization disabled preserves refusal and reads canonical state without replay",
+          "project": "desktop-chromium",
+          "status": "expected"
+        },
+        {
+          "file": "supervisor-work-availability.spec.ts",
+          "title": "v1 initialization denied preserves refusal and reads canonical state without replay",
+          "project": "desktop-chromium",
+          "status": "expected"
+        },
+        {
+          "file": "supervisor-work-availability.spec.ts",
+          "title": "v1 initialization mode-denied preserves refusal and reads canonical state without replay",
+          "project": "desktop-chromium",
+          "status": "expected"
+        },
+        {
+          "file": "supervisor-work-availability.spec.ts",
+          "title": "v1 initialization identity-denied preserves refusal and reads canonical state without replay",
+          "project": "desktop-chromium",
+          "status": "expected"
+        },
+        {
+          "file": "supervisor-work-availability.spec.ts",
+          "title": "v1 initialization unknown preserves refusal and reads canonical state without replay",
+          "project": "desktop-chromium",
+          "status": "expected"
+        },
+        {
+          "file": "supervisor-work-availability.spec.ts",
+          "title": "v1 initialization malformed preserves refusal and reads canonical state without replay",
+          "project": "desktop-chromium",
+          "status": "expected"
+        },
+        {
+          "file": "supervisor-work-availability.spec.ts",
+          "title": "v1 v1-no-capability never exposes an initialization action",
+          "project": "desktop-chromium",
+          "status": "expected"
+        },
+        {
+          "file": "supervisor-work-availability.spec.ts",
+          "title": "v1 v1-uninitialized-ineligible never exposes an initialization action",
+          "project": "desktop-chromium",
+          "status": "expected"
+        },
+        {
+          "file": "supervisor-work-availability.spec.ts",
+          "title": "v1 mode switching re-reads eligibility and leaves initialized old binding for reviewed recovery",
+          "project": "desktop-chromium",
+          "status": "expected"
+        },
+        {
+          "file": "supervisor-work-availability.spec.ts",
+          "title": "Supervisor Work uninitialized retains cause and explicitly re-reads a ready empty scope",
+          "project": "tablet-chromium",
+          "status": "expected"
+        },
+        {
+          "file": "supervisor-work-availability.spec.ts",
+          "title": "Supervisor Work disabled retains cause and explicitly re-reads a ready empty scope",
+          "project": "tablet-chromium",
+          "status": "expected"
+        },
+        {
+          "file": "supervisor-work-availability.spec.ts",
+          "title": "Supervisor Work unbound retains cause and explicitly re-reads a ready empty scope",
+          "project": "tablet-chromium",
+          "status": "expected"
+        },
+        {
+          "file": "supervisor-work-availability.spec.ts",
+          "title": "Supervisor Work unsupported retains cause and explicitly re-reads a ready empty scope",
+          "project": "tablet-chromium",
+          "status": "expected"
+        },
+        {
+          "file": "supervisor-work-availability.spec.ts",
+          "title": "Supervisor Work forbidden retains cause and explicitly re-reads a ready empty scope",
+          "project": "tablet-chromium",
+          "status": "expected"
+        },
+        {
+          "file": "supervisor-work-availability.spec.ts",
+          "title": "Supervisor Work error retains cause and explicitly re-reads a ready empty scope",
+          "project": "tablet-chromium",
+          "status": "expected"
+        },
+        {
+          "file": "supervisor-work-availability.spec.ts",
+          "title": "Supervisor Work remains uninitialized across Ultra exit/entry and keeps the task draft",
+          "project": "tablet-chromium",
+          "status": "expected"
+        },
+        {
+          "file": "supervisor-work-availability.spec.ts",
+          "title": "an initialized disabled scope remains readable with no write actions",
+          "project": "tablet-chromium",
+          "status": "expected"
+        },
+        {
+          "file": "supervisor-work-availability.spec.ts",
+          "title": "v1 explicit initialization created waits for canonical ready without extra fields or replay",
+          "project": "tablet-chromium",
+          "status": "expected"
+        },
+        {
+          "file": "supervisor-work-availability.spec.ts",
+          "title": "v1 explicit initialization existing waits for canonical ready without extra fields or replay",
+          "project": "tablet-chromium",
+          "status": "expected"
+        },
+        {
+          "file": "supervisor-work-availability.spec.ts",
+          "title": "v1 initialization conflict preserves refusal and reads canonical state without replay",
+          "project": "tablet-chromium",
+          "status": "expected"
+        },
+        {
+          "file": "supervisor-work-availability.spec.ts",
+          "title": "v1 initialization stale-readable preserves refusal and reads canonical state without replay",
+          "project": "tablet-chromium",
+          "status": "expected"
+        },
+        {
+          "file": "supervisor-work-availability.spec.ts",
+          "title": "v1 initialization recovery preserves refusal and reads canonical state without replay",
+          "project": "tablet-chromium",
+          "status": "expected"
+        },
+        {
+          "file": "supervisor-work-availability.spec.ts",
+          "title": "v1 initialization stale preserves refusal and reads canonical state without replay",
+          "project": "tablet-chromium",
+          "status": "expected"
+        },
+        {
+          "file": "supervisor-work-availability.spec.ts",
+          "title": "v1 initialization disabled preserves refusal and reads canonical state without replay",
+          "project": "tablet-chromium",
+          "status": "expected"
+        },
+        {
+          "file": "supervisor-work-availability.spec.ts",
+          "title": "v1 initialization denied preserves refusal and reads canonical state without replay",
+          "project": "tablet-chromium",
+          "status": "expected"
+        },
+        {
+          "file": "supervisor-work-availability.spec.ts",
+          "title": "v1 initialization mode-denied preserves refusal and reads canonical state without replay",
+          "project": "tablet-chromium",
+          "status": "expected"
+        },
+        {
+          "file": "supervisor-work-availability.spec.ts",
+          "title": "v1 initialization identity-denied preserves refusal and reads canonical state without replay",
+          "project": "tablet-chromium",
+          "status": "expected"
+        },
+        {
+          "file": "supervisor-work-availability.spec.ts",
+          "title": "v1 initialization unknown preserves refusal and reads canonical state without replay",
+          "project": "tablet-chromium",
+          "status": "expected"
+        },
+        {
+          "file": "supervisor-work-availability.spec.ts",
+          "title": "v1 initialization malformed preserves refusal and reads canonical state without replay",
+          "project": "tablet-chromium",
+          "status": "expected"
+        },
+        {
+          "file": "supervisor-work-availability.spec.ts",
+          "title": "v1 v1-no-capability never exposes an initialization action",
+          "project": "tablet-chromium",
+          "status": "expected"
+        },
+        {
+          "file": "supervisor-work-availability.spec.ts",
+          "title": "v1 v1-uninitialized-ineligible never exposes an initialization action",
+          "project": "tablet-chromium",
+          "status": "expected"
+        },
+        {
+          "file": "supervisor-work-availability.spec.ts",
+          "title": "v1 mode switching re-reads eligibility and leaves initialized old binding for reviewed recovery",
+          "project": "tablet-chromium",
+          "status": "expected"
+        },
+        {
+          "file": "supervisor-work-availability.spec.ts",
+          "title": "Supervisor Work uninitialized retains cause and explicitly re-reads a ready empty scope",
+          "project": "phone-chromium",
+          "status": "expected"
+        },
+        {
+          "file": "supervisor-work-availability.spec.ts",
+          "title": "Supervisor Work disabled retains cause and explicitly re-reads a ready empty scope",
+          "project": "phone-chromium",
+          "status": "expected"
+        },
+        {
+          "file": "supervisor-work-availability.spec.ts",
+          "title": "Supervisor Work unbound retains cause and explicitly re-reads a ready empty scope",
+          "project": "phone-chromium",
+          "status": "expected"
+        },
+        {
+          "file": "supervisor-work-availability.spec.ts",
+          "title": "Supervisor Work unsupported retains cause and explicitly re-reads a ready empty scope",
+          "project": "phone-chromium",
+          "status": "expected"
+        },
+        {
+          "file": "supervisor-work-availability.spec.ts",
+          "title": "Supervisor Work forbidden retains cause and explicitly re-reads a ready empty scope",
+          "project": "phone-chromium",
+          "status": "expected"
+        },
+        {
+          "file": "supervisor-work-availability.spec.ts",
+          "title": "Supervisor Work error retains cause and explicitly re-reads a ready empty scope",
+          "project": "phone-chromium",
+          "status": "expected"
+        },
+        {
+          "file": "supervisor-work-availability.spec.ts",
+          "title": "Supervisor Work remains uninitialized across Ultra exit/entry and keeps the task draft",
+          "project": "phone-chromium",
+          "status": "expected"
+        },
+        {
+          "file": "supervisor-work-availability.spec.ts",
+          "title": "an initialized disabled scope remains readable with no write actions",
+          "project": "phone-chromium",
+          "status": "expected"
+        },
+        {
+          "file": "supervisor-work-availability.spec.ts",
+          "title": "v1 explicit initialization created waits for canonical ready without extra fields or replay",
+          "project": "phone-chromium",
+          "status": "expected"
+        },
+        {
+          "file": "supervisor-work-availability.spec.ts",
+          "title": "v1 explicit initialization existing waits for canonical ready without extra fields or replay",
+          "project": "phone-chromium",
+          "status": "expected"
+        },
+        {
+          "file": "supervisor-work-availability.spec.ts",
+          "title": "v1 initialization conflict preserves refusal and reads canonical state without replay",
+          "project": "phone-chromium",
+          "status": "expected"
+        },
+        {
+          "file": "supervisor-work-availability.spec.ts",
+          "title": "v1 initialization stale-readable preserves refusal and reads canonical state without replay",
+          "project": "phone-chromium",
+          "status": "expected"
+        },
+        {
+          "file": "supervisor-work-availability.spec.ts",
+          "title": "v1 initialization recovery preserves refusal and reads canonical state without replay",
+          "project": "phone-chromium",
+          "status": "expected"
+        },
+        {
+          "file": "supervisor-work-availability.spec.ts",
+          "title": "v1 initialization stale preserves refusal and reads canonical state without replay",
+          "project": "phone-chromium",
+          "status": "expected"
+        },
+        {
+          "file": "supervisor-work-availability.spec.ts",
+          "title": "v1 initialization disabled preserves refusal and reads canonical state without replay",
+          "project": "phone-chromium",
+          "status": "expected"
+        },
+        {
+          "file": "supervisor-work-availability.spec.ts",
+          "title": "v1 initialization denied preserves refusal and reads canonical state without replay",
+          "project": "phone-chromium",
+          "status": "expected"
+        },
+        {
+          "file": "supervisor-work-availability.spec.ts",
+          "title": "v1 initialization mode-denied preserves refusal and reads canonical state without replay",
+          "project": "phone-chromium",
+          "status": "expected"
+        },
+        {
+          "file": "supervisor-work-availability.spec.ts",
+          "title": "v1 initialization identity-denied preserves refusal and reads canonical state without replay",
+          "project": "phone-chromium",
+          "status": "expected"
+        },
+        {
+          "file": "supervisor-work-availability.spec.ts",
+          "title": "v1 initialization unknown preserves refusal and reads canonical state without replay",
+          "project": "phone-chromium",
+          "status": "expected"
+        },
+        {
+          "file": "supervisor-work-availability.spec.ts",
+          "title": "v1 initialization malformed preserves refusal and reads canonical state without replay",
+          "project": "phone-chromium",
+          "status": "expected"
+        },
+        {
+          "file": "supervisor-work-availability.spec.ts",
+          "title": "v1 v1-no-capability never exposes an initialization action",
+          "project": "phone-chromium",
+          "status": "expected"
+        },
+        {
+          "file": "supervisor-work-availability.spec.ts",
+          "title": "v1 v1-uninitialized-ineligible never exposes an initialization action",
+          "project": "phone-chromium",
+          "status": "expected"
+        },
+        {
+          "file": "supervisor-work-availability.spec.ts",
+          "title": "v1 mode switching re-reads eligibility and leaves initialized old binding for reviewed recovery",
+          "project": "phone-chromium",
+          "status": "expected"
+        },
+        {
+          "file": "supervisor-workbench.spec.ts",
+          "title": "Supervisor floating overview opens focused Work details and preserves drafts, results and exact decisions",
+          "project": "desktop-chromium",
+          "status": "expected"
+        },
+        {
+          "file": "supervisor-workbench.spec.ts",
+          "title": "Supervisor floating overview opens focused Work details and preserves drafts, results and exact decisions",
+          "project": "tablet-chromium",
+          "status": "expected"
+        },
+        {
+          "file": "supervisor-workbench.spec.ts",
+          "title": "Supervisor floating overview opens focused Work details and preserves drafts, results and exact decisions",
+          "project": "phone-chromium",
+          "status": "expected"
+        }
+      ],
+      "scope": "69 availability/initialize/mode; 9 terminal/origin/reconnect; 3 coupled Workbench; 2 selected-Actor pass + 1 existing tablet skip",
+      "runtime": "Built frontend with strict HTTP/WebSocket fixtures; no live backend/model execution",
+      "reportSha256": "02991b97fff67f832859294b93b1feac6203d832ba7a85b12b536b35503223da",
+      "archiveSha256": "43ab3abed03a27f055724def626e4e89cc8163e3f7669c3759ba7292cf49bfcc"
+    },
+    "logs": {
+      "browser.log": "f8978d67e59147ca8644fa680377667a15f01c043bd3cbf9822174091954268a",
+      "merge-gates.log": "a6210ff2235e7e443714f7c7bbe59928e7464f75baac32edc738931fab929555",
+      "focused-final-gates.log": "23d0894a3c7136a535ff22d414145e02e56290ef60cbc2011894691a8b4ce742",
+      "initial-budget-failure.log": "64457f6d539f8aacdff56e27beadd34a2a9d83626bbb0c490dc5e9d7eeffd0a4",
+      "product-package.log": "d9b2c9126baa6789b0d6cfa032a477b2ff9537f80be15f094aefdca87b223952",
+      "boundary-gates.log": "b1f15c601272758b37374bfb00f0a9c0aff07b36045e1519b5c34e6f37488dd3"
+    }
+  },
+  "preservedEvidence": {
+    "322": {
+      "source": "7c928f898f3db09a246e3f611484f81c8821bd3b",
+      "files": [
+        {
+          "path": "docs/evidence/supervisor-work-current-contract.json",
+          "blob": "3a42da8a3f99f37a612959ee89119c329d723288"
+        },
+        {
+          "path": "docs/evidence/supervisor-work-live-contract.json",
+          "blob": "f6c6617a4884f7a204604b1dc8f10f3bc580cc87"
+        },
+        {
+          "path": "docs/evidence/supervisor-work-main-integration.json",
+          "blob": "3565542b16807ba93587c7e24971de8a621c45e6"
+        },
+        {
+          "path": "docs/screenshots/supervisor-work-availability/disabled-phone.png",
+          "blob": "68c41148bf6206cb6195afc327d8b9d659d55dbc"
+        },
+        {
+          "path": "docs/screenshots/supervisor-work-availability/empty-desktop.png",
+          "blob": "71cef7001777b38290f03414ee91617311d6996a"
+        },
+        {
+          "path": "docs/screenshots/supervisor-work-availability/error-desktop.png",
+          "blob": "3f352c0e529ace1944599a2940b2aed2af134c02"
+        },
+        {
+          "path": "docs/screenshots/supervisor-work-availability/initialize-desktop.png",
+          "blob": "3f61102e49f95091b967ef6f3ed2cdba9d0e5e24"
+        },
+        {
+          "path": "docs/screenshots/supervisor-work-availability/initialize-phone.png",
+          "blob": "5f0989b3cf9353c12fa710c00ab435db6c7f50d0"
+        },
+        {
+          "path": "docs/screenshots/supervisor-work-availability/initialized-empty-desktop.png",
+          "blob": "02d39c6579ac90115d57b43b57da456ab195b067"
+        },
+        {
+          "path": "docs/screenshots/supervisor-work-availability/integrated-execution-desktop.png",
+          "blob": "1505799d29f8dfd1125b9ebcd15bacb9a8edc2b2"
+        },
+        {
+          "path": "docs/screenshots/supervisor-work-availability/integrated-execution-phone.png",
+          "blob": "4f22b9f82d0da8b081417a6a7d4360b0e3f2a69b"
+        },
+        {
+          "path": "docs/screenshots/supervisor-work-availability/live-initialize-desktop.png",
+          "blob": "8ac177512da17883598d8287e5e3a909a26e0c98"
+        },
+        {
+          "path": "docs/screenshots/supervisor-work-availability/live-old-binding-desktop.png",
+          "blob": "a5873d40a93acc50040d111b912034fdcf3ef68d"
+        },
+        {
+          "path": "docs/screenshots/supervisor-work-availability/live-readable-conflict-desktop.png",
+          "blob": "1a314a128dd39353c87992ce87559e2a93499091"
+        },
+        {
+          "path": "docs/screenshots/supervisor-work-availability/live-ready-empty-desktop.png",
+          "blob": "7248cc22deff78ab021b3bc8ce2020fddc75b654"
+        },
+        {
+          "path": "docs/screenshots/supervisor-work-availability/old-binding-desktop.png",
+          "blob": "a7ecae1144bab187e6e54a51a2b599c2fae9aff4"
+        },
+        {
+          "path": "docs/screenshots/supervisor-work-availability/uninitialized-desktop.png",
+          "blob": "12b54f12874506c1868e3450c32dd37e03573a7d"
+        },
+        {
+          "path": "docs/supervisor-work-availability.md",
+          "blob": "02cbc11d106cb4f6e609f8924c43c6c398c639c3"
+        }
+      ],
+      "allOriginalBlobsUnchanged": true
+    },
+    "331": {
+      "source": "a4e077f9b5559f5278a244b098cb88a5f144d59b",
+      "files": [
+        {
+          "path": "docs/evidence/subagent-status-origin.json",
+          "blob": "29091f8e1e0b110e1ee0eed8f0fac07c0c2ebed3"
+        },
+        {
+          "path": "docs/screenshots/subagent-status-origin/desktop-terminal.png",
+          "blob": "63651a978243ca0ff1621a8cd5b5b678d122d089"
+        },
+        {
+          "path": "docs/screenshots/subagent-status-origin/phone-terminal.png",
+          "blob": "66f0aafcc5cb76cac10038646f900a7a73d3ddf6"
+        },
+        {
+          "path": "docs/subagent-status-origin.md",
+          "blob": "10e3c1a6cb921a105bca9eaf70fca8d8e46ff188"
+        }
+      ],
+      "allOriginalBlobsUnchanged": true
+    }
+  },
+  "screenshots": {
+    "desktop": {
+      "path": "docs/screenshots/supervisor-subagent-integration/desktop.png",
+      "sha256": "86478ab23fbb6cb88dde676d2af033cdee3df8bcab82595664a461d97063f07e"
+    },
+    "phone": {
+      "path": "docs/screenshots/supervisor-subagent-integration/phone.png",
+      "sha256": "c56c0612a67d6cf944f75bca5a3a6c72c80b3f16d4badfa0c80417668ae6c5f6"
+    }
+  },
+  "ownerFixturePorts": [
+    {
+      "port": 60915,
+      "pid": 39515,
+      "source": "42ba238d",
+      "purpose": "Earlier #1971 empty-scope initialization fixture",
+      "frontendStillDepends": false,
+      "stoppedByThisTask": false
+    },
+    {
+      "port": 61983,
+      "pid": 41843,
+      "source": "56611128",
+      "purpose": "Frozen #322 real HTTP v1 initialization/idempotency/conflict/old-binding fixture",
+      "frontendStillDepends": false,
+      "stoppedByThisTask": false
+    }
+  ],
+  "limits": [
+    "Local candidate only; no push/PR/remote merge/release.",
+    "Actual screenshot runtime/config remains uncaptured; no backend event-loss conclusion.",
+    "New cross-session control contracts are not connected by this integration."
+  ],
+  "rustBuilt": false,
+  "backendChanged": false,
+  "realModelsRun": false,
+  "dispatchRun": false,
+  "otherOwnersProcessesStopped": false
+}

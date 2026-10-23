@@ -72,24 +72,52 @@
   font-weight: inherit;
 }
 
-.assistant-streamdown [data-assistant-typewriter-caret-target="true"] {
-  position: relative;
+/* Native wrapping improves settled prose without changing copied characters. */
+@supports (text-wrap: pretty) {
+  .assistant-streamdown:not(.assistant-streamdown-streaming) :is(p, li) {
+    text-wrap: pretty;
+  }
+  .assistant-streamdown :is(pre, code, table, [data-mermaid-state]) {
+    text-wrap: wrap;
+  }
 }
 
-/* A glyph-owned pseudo-element follows wrapping, RTL, scrolling and every
-   clipping ancestor without inserting children into React's text spans. */
-.assistant-streamdown [data-assistant-typewriter-caret-target="true"]::after {
-  content: "";
-  position: absolute;
-  inset-inline-start: calc(100% + max(1px, 0.08em));
-  top: 50%;
+/* Only explicit inline UI icons participate; diagram SVG keeps its own layout. */
+.assistant-streamdown [data-inline-icon],
+.assistant-streamdown :is(p, li) > svg.lucide {
+  display: inline-block;
+  width: 1em;
+  height: 1em;
+  vertical-align: -0.125em;
+  flex-shrink: 0;
+}
+
+.assistant-streamdown [data-assistant-reveal="true"] {
+  animation: assistant-prose-reveal 140ms ease-out;
+}
+
+@keyframes assistant-prose-reveal {
+  from { opacity: 0.35; filter: blur(1px); }
+  to { opacity: 1; filter: none; }
+}
+
+/* One empty, inaccessible inline box follows the real text and all clip
+   ancestors. It wraps naturally; no glyph scan or body-level overlay is needed. */
+.assistant-streamdown [data-assistant-streaming-caret] {
+  display: none;
+}
+
+.assistant-streamdown > [data-assistant-reveal-block]:last-child [data-assistant-streaming-caret] {
+  display: inline-block;
   width: max(3px, 0.45em);
   height: 0.9em;
+  margin-inline-start: max(1px, 0.08em);
+  vertical-align: -0.08em;
   border-radius: 1px;
   background: currentColor;
   pointer-events: none;
-  transform: translateY(-50%);
-  animation: assistant-caret-pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  user-select: none;
+  animation: assistant-caret-pulse 2s ease-in-out infinite;
 }
 
 @keyframes assistant-caret-pulse {
@@ -97,10 +125,16 @@
   50% { opacity: 0.5; }
 }
 
+body[data-vdi-safe="true"] .assistant-streamdown :is([data-assistant-reveal], [data-assistant-streaming-caret]) {
+  animation: none !important;
+  filter: none !important;
+  transform: none !important;
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .assistant-streamdown [data-sd-animate],
-  .assistant-streamdown [data-assistant-typewriter-caret-target="true"]::after,
-  .assistant-streamdown [data-sd-animate-marker]::marker {
+  .assistant-streamdown :is([data-assistant-reveal], [data-assistant-streaming-caret]) {
     animation: none !important;
+    filter: none !important;
+    transform: none !important;
   }
 }

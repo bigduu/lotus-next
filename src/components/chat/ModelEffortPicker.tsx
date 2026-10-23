@@ -7,9 +7,6 @@ import type { ThinkingPickerSelection } from "@/hooks/useRootThinkingMode"
 import { cn } from "@/lib/utils"
 import { Input } from "@/components/ui/input"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
-import "./ModelEffortPicker.css"
-
-const LABEL_CELL = { gridArea: "1 / 1" }
 
 const METEORS = [
   { top: "22%", animationDuration: "1.6s", animationDelay: "-0.4s", "--meteor-rest": "-25%" },
@@ -97,22 +94,17 @@ export function ModelEffortPicker({
       <PopoverTrigger asChild>
         <button type="button" data-testid="model-effort-picker" aria-label={uiText("model_and_reasoning_effort")}
           aria-describedby={`${pickerId}-model ${pickerId}-effort`}
+          title={`${model || uiText("select_a_model_1afed6a8")} · ${currentLabel}`}
           disabled={triggerDisabled}
-          className="model-effort-trigger inline-flex min-w-0 max-w-[70vw] items-center gap-1.5 rounded-full border bg-card px-3 py-1.5 text-xs font-medium outline-none transition-colors hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50 md:max-w-xs">
-          <span id={`${pickerId}-model`} className="truncate">{model || uiText("select_a_model_1afed6a8")}</span>
-          <span className="effort-trigger-label grid shrink-0" style={{ color: accents[selected] }}>
-            <span className="effort-label-reserve invisible grid" style={LABEL_CELL} aria-hidden>
-              {[...efforts.map((effort) => text[effort]), uiText("unconfirmed_c098e854")].map((label) =>
-                <span key={label} data-label={label} style={LABEL_CELL} />)}
-            </span>
-            <span id={`${pickerId}-effort`} style={LABEL_CELL}>{currentLabel}</span>
-          </span>
+          className="model-effort-trigger inline-flex min-w-0 items-center gap-1.5 rounded-full border bg-card px-2.5 py-1.5 text-xs font-medium outline-none transition-colors hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50">
+          <span id={`${pickerId}-model`} className="min-w-0 flex-1 truncate text-left">{model || uiText("select_a_model_1afed6a8")}</span>
+          <span id={`${pickerId}-effort`} className="effort-trigger-label shrink-0 truncate text-right" style={{ color: accents[selected] }}>{currentLabel}</span>
           <ChevronDown className="size-3 shrink-0 text-muted-foreground" aria-hidden />
         </button>
       </PopoverTrigger>
       <PopoverContent side={menuPlacement === "up" ? "top" : "bottom"}
         align={menuAlign === "right" ? "end" : "start"}
-        className="model-effort-panel w-80 max-w-[calc(100vw-1.5rem)] rounded-3xl p-3 shadow-xl"
+        className="model-effort-panel w-64 max-w-[calc(100vw-1.5rem)] rounded-2xl p-2.5 shadow-xl"
         onOpenAutoFocus={(event) => {
           event.preventDefault()
           if (effortDisabled) modelButtonRef.current?.focus()
@@ -124,12 +116,12 @@ export function ModelEffortPicker({
               {selected === "ultra" ? <Sparkles className="mx-auto size-4" style={{ color: accent }} aria-hidden />
                 : <span aria-hidden />}
               <div className="min-w-0 text-center">
-                <p className="text-base font-semibold" style={{ color: accent }} aria-live="polite">
+                <p className="truncate text-sm font-semibold" style={{ color: accent }} aria-live="polite" title={unconfirmed ? currentLabel : text[displayed]}>
                   {unconfirmed ? currentLabel : text[displayed]}
                 </p>
-                <button ref={modelButtonRef} type="button" data-testid="model-picker-model" disabled={unavailableModels}
+                <button ref={modelButtonRef} type="button" data-testid="model-picker-model" disabled={unavailableModels} title={model || uiText("select_a_model_1afed6a8")}
                   onClick={() => { if (!unavailableModels) { setPage("models"); setPreview(null) } }}
-                  className="mx-auto flex max-w-full items-center gap-0.5 rounded-md px-1 py-0.5 text-xs text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50">
+                  className="mx-auto flex min-h-8 max-w-full items-center gap-0.5 rounded-md px-1 py-0.5 text-xs text-muted-foreground outline-none hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50">
                   <span className="truncate">{model || uiText("select_a_model_1afed6a8")}</span>
                   <ChevronRight className="size-3 shrink-0" aria-hidden />
                 </button>
@@ -137,7 +129,7 @@ export function ModelEffortPicker({
               <button type="button" aria-label={uiText("restore_auto_reasoning")} title={uiText("restore_auto_reasoning")}
                 disabled={effortDisabled || selected === "auto"}
                 onClick={() => { if (!effortDisabled && selected !== "auto") onChange("auto") }}
-                className="flex size-8 items-center justify-center rounded-full text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-40">
+                className="flex size-8 items-center justify-center rounded-full text-muted-foreground outline-none hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40">
                 <RotateCcw className="size-4" aria-hidden />
               </button>
             </div>
@@ -185,7 +177,7 @@ export function ModelEffortPicker({
             <div className="mb-2 flex items-center gap-1 text-sm text-muted-foreground">
               <button type="button" aria-label={uiText("back_2d1d8c1e")}
                 onClick={() => { setPage("effort"); setQuery("") }}
-                className="flex size-7 items-center justify-center rounded-full outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring">
+                className="flex size-7 items-center justify-center rounded-full outline-none hover:bg-accent">
                 <ChevronLeft className="size-4" aria-hidden />
               </button>
               <span>{uiText("select_a_model_1afed6a8")}</span>
@@ -202,7 +194,7 @@ export function ModelEffortPicker({
               </button> : null}
             </div>
             <div className="max-h-60 overflow-y-auto" aria-label={uiText("model_list_ea4bf042")}>
-              {filtered.map((item) => <button key={item} type="button" data-model-option="" aria-pressed={item === model}
+              {filtered.map((item) => <button key={item} type="button" data-model-option="" aria-pressed={item === model} title={item}
                 disabled={unavailableModels} onClick={() => { if (!unavailableModels) { onModelChange(item); changeOpen(false) } }}
                 className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-sm outline-none hover:bg-accent focus-visible:bg-accent disabled:cursor-not-allowed disabled:opacity-50">
                 <span className="min-w-0 flex-1 truncate">{item}</span>
