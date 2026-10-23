@@ -87,6 +87,20 @@
         "https://github.com/bigduu/lotus-next/pull/383#issuecomment-6277766651"
       ],
       "acceptanceReceiptSha256": "53cdbe05665f97b3eb34e85e33457014d03936070b951c57879827b0ab77b5de"
+    },
+    "2026.10.23": {
+      "sourceRef": "refs/tags/lotus-next-v2026.10.23",
+      "sourceSha": "992fb8d3d346ebb3bb546239ccc9339b9380aa29",
+      "sourceTree": "e637b98f4f97362f024a990ebba5b13b10a781cb",
+      "bambooSha": "80815125da51a5722935e99fda2ed4541aa67f98",
+      "tagObjectSha": "ff8bb43a2549ffef285e98835cbce409653b6b8e",
+      "acceptanceRunId": 39908293448,
+      "productPullRequest": 403,
+      "productMergeSha": "6ff0405f02cd86d8a2aaa9a7f82c4598ccc5735f",
+      "reviewEvidence": [
+        "https://github.com/bigduu/lotus-next/pull/403#issuecomment-6358593263"
+      ],
+      "acceptanceReceiptSha256": "e57b7e69cbdbb2308b5b87ffb754a15670f7e79e36594396d32c7d59c8384027"
     }
   }
 }
