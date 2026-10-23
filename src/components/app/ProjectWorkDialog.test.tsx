@@ -5,7 +5,6 @@ import { changeLocale } from "@shared/i18n"
 import { uiText } from "@shared/i18n/ui"
 import type { ProjectManifest } from "@services/project"
 import { ProjectWorkDialog } from "./ProjectWorkDialog"
-import { ProjectWorkDialog as LegacyDialog } from "./ProjectWorkBoard"
 
 type Props = ComponentProps<typeof ProjectWorkDialog>
 type Loader = NonNullable<Props["loadBoard"]>
@@ -50,8 +49,7 @@ afterEach(async () => {
   vi.restoreAllMocks()
 })
 
-it("preserves the old import while keeping a closed dialog from loading Board code", async () => {
-  expect(LegacyDialog).toBe(ProjectWorkDialog)
+it("keeps a closed dialog from loading Board code", async () => {
   const load = vi.fn<Loader>().mockResolvedValue({ ProjectWorkBoard: Loaded })
   const view = mount(load)
   await view.render({ project: null })

@@ -24,7 +24,7 @@ export function ProjectWorkDialog({ project, onClose, metadataError, controls, o
 }) {
   useUiLocale()
   const [Board, setBoard] = useState(() => feature(loadBoard))
-  return <ResponsiveDialog open={!!project} onOpenChange={(open) => { if (!open) onClose() }}><ResponsiveDialogContent className="sm:max-w-5xl" aria-describedby={undefined}>
+  return <ResponsiveDialog open={!!project} onOpenChange={(open) => { if (!open) onClose() }}><ResponsiveDialogContent style={{ maxWidth: "64rem" }} aria-describedby={undefined}>
     <div className="border-b p-4 pr-12"><ResponsiveDialogTitle>{uiText("project_work_title")}{project ? ` · ${project.name}` : ""}</ResponsiveDialogTitle><ResponsiveDialogDescription className="sr-only">{uiText("project_work_readonly")}</ResponsiveDialogDescription></div>
     {metadataError ? <p role="alert" className="px-4 pt-3 text-sm text-destructive">{metadataError}</p> : null}
     {project ? <ErrorBoundary key={project.id} name="ProjectWorkBoard" fallback={(_error, reset) => <div role="alert" className="p-4 text-sm">

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react"
+import "./project-work/ProjectWorkBoard.css"
 import { ProjectWorkPlanningControls, type ProjectWorkPlanningControlsProps } from "./project-work/ProjectWorkPlanningControls"
 import { ProjectWorkOwnerControls, type ProjectWorkOwnerControlsProps } from "./project-work/ProjectWorkOwnerControls"
 import { projectWorkControlsCopy } from "./project-work/projectWorkControlsCopy"
@@ -146,7 +147,7 @@ export function ProjectWorkBoard({ project, controls, onOpenSession }: { project
     {error ? <p role="alert" className="mb-3 text-sm text-destructive">{error}</p> : null}
     {page && !known ? <p role="status" className="mb-3 text-sm">{uiText("project_work_partial")}</p> : null}
     {page ? <p className="mb-3 text-xs text-muted-foreground">{stages.map((stage) => `${stageLabel(stage)}: ${known ? page.data.counts[stage] : "?"}`).join(" · ")} · {uiText("ticket_blocked_9059acb4")}: {known ? page.data.counts.blocked : "?"} · {uiText("cancelled_a37778f1")}: {known ? page.data.counts.cancelled : "?"}</p> : null}
-    {mode === "list" ? <div className="grid gap-2">{rows.map(card)}</div> : <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">{stages.map((stage) => <section key={stage} aria-label={stageLabel(stage)} className="min-w-0 rounded-xl bg-muted/40 p-2"><h3 className="mb-2 text-sm font-medium">{stageLabel(stage)}</h3><div className="grid gap-2">{rows.filter((row) => row.stage === stage).map(card)}</div></section>)}</div>}
+    {mode === "list" ? <div className="grid gap-2">{rows.map(card)}</div> : <div className="project-work-stages grid grid-cols-1 gap-3">{stages.map((stage) => <section key={stage} aria-label={stageLabel(stage)} className="min-w-0 rounded-xl bg-muted/40 p-2"><h3 className="mb-2 text-sm font-medium">{stageLabel(stage)}</h3><div className="grid gap-2">{rows.filter((row) => row.stage === stage).map(card)}</div></section>)}</div>}
     {mode === "board" && rows.some((row) => row.stage === null) ? <section className="mt-3"><h3 className="mb-2 text-sm font-medium">{uiText("project_work_other")}</h3><div className="grid gap-2">{rows.filter((row) => row.stage === null).map(card)}</div></section> : null}
     {page && !rows.length ? <p className="py-4 text-sm text-muted-foreground">{uiText("project_work_empty")}</p> : null}
     {busy ? <p role="status" className="mt-3 text-sm">{uiText("project_work_loading")}</p> : null}
@@ -158,5 +159,3 @@ export function ProjectWorkBoard({ project, controls, onOpenSession }: { project
     </div> : null}
   </div>
 }
-// Preserve the existing import for consumers while Sidebar owns the eager shell.
-export { ProjectWorkDialog } from "./ProjectWorkDialog"

@@ -36,6 +36,7 @@ const vendorFeatureNames = [
 const createFixture = async ({
   leakSettings = false,
   leakProjectWork = false,
+  projectWorkCss = false,
   leakBrowserPane = false,
   leakedOwnedModule,
   leakedOwnedPackage,
@@ -110,6 +111,7 @@ const createFixture = async ({
       imports: ["_runtime.js"],
     }
   }
+  if (projectWorkCss) manifest["src/components/app/ProjectWorkBoard.tsx"].css = ["assets/ProjectWorkBoard.css"]
 
   await writeFile(
     path.join(directory, "index.html"),
@@ -201,6 +203,15 @@ describe("ordinary-chat production bundle budget", () => {
     expect(findBundleBudgetViolations(report)).toContain(
       "ProjectWorkBoard leaked into the ordinary-chat startup closure.",
     )
+  })
+
+  it("keeps lazy board CSS out of startup and counts it if the board becomes eager", async () => {
+    const lazy = analyzeBundleBudget(await createFixture({ projectWorkCss: true }))
+    const eager = analyzeBundleBudget(await createFixture({ projectWorkCss: true, leakProjectWork: true }))
+    expect(lazy.cssFiles).toEqual(["assets/index.css"])
+    expect(eager.cssFiles).toContain("assets/ProjectWorkBoard.css")
+    expect(eager.css.rawBytes).toBeGreaterThan(lazy.css.rawBytes)
+    expect(findBundleBudgetViolations(eager)).toContain("ProjectWorkBoard leaked into the ordinary-chat startup closure.")
   })
 
   it("rejects the optional BrowserPane view in the startup import graph", async () => {
