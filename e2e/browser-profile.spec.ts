@@ -1,6 +1,7 @@
 import { expect, test, type Page } from "@playwright/test"
 import { installArtifactRuntime, standaloneScenario } from "./support/artifactRuntime.js"
 import { workbenchPanel } from "./support/workbench.js"
+import { openClosedBrowserAtServiceDefault } from "./support/browserProfile.js"
 
 const a = "all-surface-session", b = "profile-chat-b"
 type Mode = "shared" | "clean"
@@ -166,7 +167,7 @@ test("synthetic legacy404: only an explicit default open, no unsupported modes o
   await expect(f.browser.getByText("当前聊天浏览器已关闭", { exact: true })).toBeVisible()
   await expect(f.browser.getByRole("combobox")).toHaveCount(0)
   expect(f.writes).toEqual([])
-  await f.browser.getByRole("button", { name: "按当前服务默认设置打开", exact: true }).click()
+  await openClosedBrowserAtServiceDefault(page, f.browser, a)
   await expect(f.browser.getByText("当前服务尚未报告浏览器账户模式，暂不能选择。", { exact: true })).toBeAttached()
   await expect(f.browser.getByRole("combobox")).toHaveCount(0)
   await expect(f.browser.getByRole("button", { name: "关闭当前聊天浏览器" })).toHaveCount(0)
