@@ -99,6 +99,11 @@ second build, verifies the tarball, publishes with npm provenance, then
 downloads and verifies the registry copy. Publishing does not switch any
 Bamboo, Bodhi, or Zenith consumer.
 
+Each publication build also supplies `VITE_APP_REVISION` and `VITE_APP_VERSION`
+from the same verified source receipt and explicit package version. Runtime
+diagnostic exports can therefore identify that exact published frontend; local
+builds without those public values continue to report an unknown identity.
+
 Publication preflight checks the accepted candidate's files at its exact source
 SHA. CI must pin that candidate's Bamboo SHA literally; publication may use the
 same literal (historical candidates) or the exact
