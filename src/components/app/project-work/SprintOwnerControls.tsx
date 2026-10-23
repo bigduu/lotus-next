@@ -74,11 +74,12 @@ function SprintOwnerEditor({ projectId, view, sprints, canWrite, busy, request, 
   const members = sprint?.members ?? []
   const inspectComplete = !!view && matchingView && new Set(members).size === members.length
     && Object.keys(view.current_members).length === members.length
-    && members.every((memberId) => !!view.current_members[memberId] && typeof view.current_members[memberId].accepted === "boolean")
+    && members.every((memberId) => !!view.current_members[memberId] && typeof view.current_members[memberId].accepted === "boolean"
+      && typeof view.current_members[memberId].archived === "boolean")
   const unfinished = inspectComplete ? members.filter((memberId) => !view!.current_members[memberId].accepted && view!.current_members[memberId].state !== "cancelled") : []
   const dispositionsComplete = inspectComplete && unfinished.every((memberId) => {
     const choice = destinations[memberId]
-    return choice?.destination === "backlog" || (choice?.destination === "sprint"
+    return choice?.destination === "backlog" || (choice?.destination === "sprint" && !view!.current_members[memberId].archived
       && targets.some((target) => target.id === choice.sprint_id && target.revision === choice.revision))
   })
   const otherActive = sprints.some((target) => target.project_id === projectId && target.id !== sprint?.id && target.status === "active")
@@ -187,7 +188,7 @@ function SprintOwnerEditor({ projectId, view, sprints, canWrite, busy, request, 
                 setDestinations((previous) => Object.fromEntries([...Object.entries(previous).filter(([key]) => key !== memberId), ...(choice ? [[memberId, choice] as const] : [])]))
               }}>
                 <option value="">{copy.chooseDestination}</option><option value="backlog">{copy.backlog}</option>
-                {targets.map((target) => <option key={target.id} value={`sprint:${target.id}`}>{target.definition.name} · {target.id} · {copy.targetRevision} {target.revision}</option>)}
+                {targets.map((target) => <option key={target.id} value={`sprint:${target.id}`} disabled={view!.current_members[memberId].archived}>{target.definition.name} · {target.id} · {copy.targetRevision} {target.revision}</option>)}
               </select>
             </label>
             {choice?.destination === "sprint" ? <p className="text-xs text-muted-foreground">{copy.targetRevision}: {choice.revision}</p> : null}

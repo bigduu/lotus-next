@@ -343,6 +343,52 @@ it("requires explicit dispositions for Active, Submitted, Blocked and unverified
   expect(document.body.textContent).toContain(copy.closeHelp)
 })
 
+it("requires an explicit backlog destination for archived unfinished Work without removing it", async () => {
+  const current = props({ view: view("active", { "work-archived": { ...version("submitted"), archived: true } }) })
+  await render(current)
+  const destination = field(`${copy.destination}: work-archived`) as unknown as HTMLSelectElement
+  expect(destination.value).toBe("")
+  expect(destination.querySelector<HTMLOptionElement>('option[value="sprint:next-sprint"]')!.disabled).toBe(true)
+  expect(button(copy.close).disabled).toBe(true)
+  await selectDestination("work-archived", "sprint:next-sprint")
+  await click(copy.close)
+  expect(current.onCommand).not.toHaveBeenCalled()
+  await selectDestination("work-archived", "backlog")
+  await click(copy.close)
+  expect(current.onCommand).toHaveBeenCalledExactlyOnceWith("sprint-a", {
+    op: "close", expected_revision: 3, target_revisions: {},
+    dispositions: { "work-archived": { destination: "backlog" } },
+  })
+  expect(current.view!.sprint.members).toEqual(["work-archived"])
+})
+
+it("preserves a selected carry destination when Work becomes archived until the user chooses backlog", async () => {
+  const current = props()
+  await render(current)
+  await selectDestination("work-a", "sprint:next-sprint")
+  expect(button(copy.close).disabled).toBe(false)
+  current.view = { ...current.view!, current_members: { "work-a": { ...version(), record_revision: 3, archived: true } } }
+  await render(current)
+  expect(field(`${copy.destination}: work-a`).value).toBe("sprint:next-sprint")
+  expect(button(copy.close).disabled).toBe(true)
+  await click(copy.close)
+  expect(current.onCommand).not.toHaveBeenCalled()
+  await selectDestination("work-a", "backlog")
+  await click(copy.close)
+  expect(current.onCommand).toHaveBeenCalledExactlyOnceWith("sprint-a", {
+    op: "close", expected_revision: 3, target_revisions: {}, dispositions: { "work-a": { destination: "backlog" } },
+  })
+})
+
+it("keeps closing unavailable when a membership archive observation is missing", async () => {
+  const current = props({ view: view("active", { "work-a": { ...version(), archived: undefined as unknown as boolean } }) })
+  await render(current)
+  expect(document.body.textContent).toContain(copy.incompleteInspect)
+  expect(button(copy.close).disabled).toBe(true)
+  await click(copy.close)
+  expect(current.onCommand).not.toHaveBeenCalled()
+})
+
 it("sends the exact distinct target revisions and no dispositions for terminal members", async () => {
   const current = props({ view: view("active", { a: version(), b: version("submitted"), c: version("blocked"), d: version("cancelled") }) })
   await render(current)
