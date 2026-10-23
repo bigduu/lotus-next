@@ -1,5 +1,17 @@
 # Repair release 2026.10.23 preparation
 
+The original manual acceptance at `88488e05` preserved two failures: initial
+asset requests reported `ERR_NETWORK_CHANGED`, then a single failed-job retry
+reached a fully rendered permission page but Chromium 151 reported its completed
+no-store bootstrap read as aborted and could not return its body to DevTools.
+The latter matches Chromium issue 568852319. The repository already introduced
+the fixed 157.0.8090.0 outer browser in `91f367f6` for publication. Current-source
+CI now reuses those exact archive/executable pins and config-equivalence checks
+in a separate verification record. It keeps the locked Playwright, original
+configs, cases, device descriptors, inner browser, request/body assertions,
+timeouts, retry policy, local/HTTPS modes and publication source authority.
+Verification cannot accept a versioned package or write a publication identity.
+
 This candidate pairs the accepted Lotus Next application with Bamboo
 `80815125da51a5722935e99fda2ed4541aa67f98`. That normally merged backend includes
 the retry diagnostic, ordinary Workspace handoff and setup/Core write repairs.

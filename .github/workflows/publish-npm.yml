@@ -236,7 +236,7 @@ jobs:
           test "$(git rev-parse HEAD)" = "${PUBLICATION_WORKFLOW_SHA}"
           test -z "$(git status --porcelain --untracked-files=all)"
           mkdir "${RUNNER_TEMP}/release-control"
-          cp scripts/release-browser.mjs scripts/published-real-bamboo-acceptance.mjs scripts/artifact-manifest.mjs scripts/release-acceptance-identity.mjs scripts/release-source.mjs "${RUNNER_TEMP}/release-control/"
+          cp scripts/release-browser.mjs scripts/published-real-bamboo-acceptance.mjs scripts/artifact-manifest.mjs scripts/release-acceptance-identity.mjs scripts/release-source.mjs scripts/verification-browser.mjs "${RUNNER_TEMP}/release-control/"
 
       - name: Download the run-bound release source receipt
         uses: actions/download-artifact@v8
