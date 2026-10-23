@@ -163,3 +163,38 @@ it("keeps transport uncertainty latched, then accepts only a newly authorized co
   await act(async () => button(copy.pause).click())
   expect(props.onRequestAction).toHaveBeenCalledOnce()
 })
+
+it.each([
+  ["requested", "rejection"], ["requested", "mismatched receipt"],
+  ["awaiting_ack", "rejection"], ["awaiting_ack", "mismatched receipt"],
+] as const)("shows the original uncertain operation while %s props remain after %s", async (phase, failure) => {
+  const props = ownerProps()
+  const operationId = props.commands.pause!.operationId
+  let resolveReceipt!: (value: { operationId: string }) => void
+  let rejectReceipt!: (reason: Error) => void
+  props.onRequestAction = vi.fn(() => new Promise<{ operationId: string }>((resolve, reject) => { resolveReceipt = resolve; rejectReceipt = reject }))
+  await render(props)
+  await act(async () => { button(copy.pause).click() })
+  props.request = { phase, operationId }
+  await render(props)
+  const pendingCopy = phase === "requested" ? copy.requestSent : copy.awaitingAck
+  expect(document.body.textContent).toContain(pendingCopy)
+  await act(async () => {
+    if (failure === "rejection") rejectReceipt(new Error("Private transport detail should not be displayed"))
+    else resolveReceipt({ operationId: "foreign-operation" })
+  })
+  expect(document.querySelector('[role="alert"]')?.textContent).toContain(copy.outcomeUnknown)
+  expect(document.body.textContent).not.toContain(pendingCopy)
+  expect(document.body.textContent).not.toContain("Private transport detail")
+  expect(document.body.textContent).not.toContain("foreign-operation")
+  expect(document.querySelector('[data-testid="work-authoritative-state"]')?.textContent).toBe(copy.states[props.work.state])
+  await act(async () => { button(copy.reload).click(); button(copy.reconcile).click(); button(copy.pause).click() })
+  expect(props.onReload).toHaveBeenCalledOnce()
+  expect(props.onReconcile).toHaveBeenCalledExactlyOnceWith(operationId)
+  expect(props.onRequestAction).toHaveBeenCalledOnce()
+  expect(props.request).toEqual({ phase, operationId })
+  props.request = { phase: "acknowledged", operationId }
+  await render(props)
+  expect(document.body.textContent).toContain(copy.acknowledged)
+  expect(document.body.textContent).not.toContain(copy.outcomeUnknown)
+})
