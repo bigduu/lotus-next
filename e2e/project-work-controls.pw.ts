@@ -1,0 +1,66 @@
+import { mkdir } from "node:fs/promises"
+import { expect, test } from "@playwright/test"
+
+const fixture = "/e2e/fixtures/project-work-controls.html"
+for (const theme of ["light", "dark"]) {
+  for (const width of [1280, 390]) {
+    test(`${theme} ${width}px controlled planning and pending owner controls`, async ({ page }) => {
+      await page.setViewportSize({ width, height: 900 })
+      await page.goto(`${fixture}?theme=${theme}`)
+      await expect(page.getByRole("heading", { name: "Work planning", exact: true })).toBeVisible()
+      await expect(page.getByText("Overdue at this snapshot time.", { exact: true })).toBeVisible()
+      await expect(page.getByTestId("work-authoritative-state")).toHaveText("Active")
+      await expect(page.getByRole("button", { name: "Accept as User", exact: true })).toBeDisabled()
+      await expect(page.getByText("Waiting for runtime confirmation.", { exact: false })).toBeVisible()
+      expect(await page.locator("html").evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1)
+      const body = await page.locator("body").boundingBox()
+      const last = await page.getByRole("complementary", { name: "Fixture controls" }).boundingBox()
+      expect(body!.y + body!.height).toBeGreaterThanOrEqual(last!.y + last!.height)
+      const screenshots = process.env.CI ? "test-results/planning-controls-screenshots" : "docs/tickets/assets/planning-controls"
+      await mkdir(screenshots, { recursive: true })
+      await page.screenshot({ path: `${screenshots}/${theme}-${width}.png`, fullPage: true, animations: "disabled" })
+    })
+  }
+}
+test("keyboard planning emits exact nullable offset payload with snapshot CAS and query, without API writes", async ({ page }) => {
+  const apiRequests: string[] = []
+  page.on("request", (request) => { if (new URL(request.url()).pathname.startsWith("/api/")) apiRequests.push(request.url()) })
+  await page.goto(`${fixture}?scenario=editable`)
+  const planning = page.getByTestId("project-work-planning-controls")
+  const deadline = planning.getByRole("textbox", { name: "Desired deadline", exact: true })
+  await deadline.fill("2026-10-19T10:00:00")
+  await expect(planning.getByRole("button", { name: "Request planning update", exact: true })).toBeDisabled()
+  await planning.getByRole("button", { name: "Clear deadline", exact: true }).click()
+  await planning.getByRole("combobox", { name: "Sort", exact: true }).selectOption("expected_completion")
+  const save = planning.getByRole("button", { name: "Request planning update", exact: true })
+  await save.focus()
+  await page.keyboard.press("Enter")
+  await expect(save).toBeDisabled()
+  const log = JSON.parse(await page.getByTestId("fixture-callback-log").textContent() ?? "[]")
+  expect(log).toHaveLength(2)
+  expect(log[0]).toEqual({ kind: "server_query", query: { order: "expected_completion", priority: null, deadline: "any", asOf: "2026-10-17T17:00:00Z" } })
+  expect(log[1].value).toEqual({ priority: "high", expectedCompletionAt: null })
+  expect(log[1].command).toMatchObject({ operationId: "synthetic-plan-1", expectedSeq: 19, expectedEpoch: 4, binding: { scope_id: "synthetic-scope", binding_revision: 2 } })
+  await expect(planning.getByLabel("Saved planning")).toContainText("2026-10-18T00:00:00+08:00")
+  expect(apiRequests).toEqual([])
+})
+test("phone touch request/ACK does not change actual state; CAS conflict only reloads", async ({ browser }) => {
+  const context = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true })
+  const page = await context.newPage()
+  await page.goto(`${fixture}?scenario=editable&theme=dark`)
+  const owner = page.getByTestId("project-work-owner-controls")
+  await owner.getByRole("button", { name: "Request pause", exact: true }).tap()
+  await page.getByRole("button", { name: "Simulate runtime ACK", exact: true }).tap()
+  await expect(page.getByTestId("work-authoritative-state")).toHaveText("Active")
+  await expect(owner).not.toContainText("Active · Paused")
+  await page.getByRole("button", { name: "Apply authoritative paused prop", exact: true }).tap()
+  await expect(owner).toContainText("Active · Paused")
+  await page.getByRole("button", { name: "Simulate CAS conflict", exact: true }).tap()
+  await owner.getByRole("button", { name: "Reload Work", exact: true }).tap()
+  const log = JSON.parse(await page.getByTestId("fixture-callback-log").textContent() ?? "[]")
+  expect(log).toHaveLength(2)
+  expect(log[0].intent).toEqual({ kind: "pause" })
+  expect(log[1]).toEqual({ kind: "reload_owner" })
+  await expect(owner.getByRole("button", { name: "Request cancellation", exact: true })).toBeDisabled()
+  await context.close()
+})

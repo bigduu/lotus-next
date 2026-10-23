@@ -12,10 +12,11 @@ const loadWork: BoardLoader = () => import("./ProjectWorkBoard")
 const feature = (load: BoardLoader) => lazy(async () => ({ default: (await load()).ProjectWorkBoard }))
 
 /** Keep modal focus/close available while optional Project Work code loads. */
-export function ProjectWorkDialog({ project, onClose, metadataError, loadBoard = loadWork }: {
+export function ProjectWorkDialog({ project, onClose, metadataError, controls, loadBoard = loadWork }: {
   project: BoardProps["project"] | null
   onClose: () => void
   metadataError?: string | null
+  controls?: BoardProps["controls"]
   /** Test seam; production uses the canonical Project Work module. */
   loadBoard?: BoardLoader
 }) {
@@ -29,7 +30,7 @@ export function ProjectWorkDialog({ project, onClose, metadataError, loadBoard =
       <Button className="mt-2" variant="outline" onClick={() => { setBoard(feature(loadBoard)); reset() }}>{uiText("retry_b8784c8d")}</Button>
     </div>}>
       <Suspense fallback={<p role="status" aria-live="polite" className="p-4 text-sm text-muted-foreground" data-testid="project-work-loading">{uiText("project_work_loading")}</p>}>
-        <Board key={project.id} project={project} />
+        <Board key={project.id} project={project} controls={controls} />
       </Suspense>
     </ErrorBoundary> : null}
   </ResponsiveDialogContent></ResponsiveDialog>

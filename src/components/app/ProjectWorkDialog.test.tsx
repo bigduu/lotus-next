@@ -76,17 +76,18 @@ it.each(["close", "Escape"])("keeps %s available during loading and never mounts
   expect(observed).toHaveLength(0)
 })
 
-it("uses the latest project when the deferred code arrives", async () => {
+it("uses the latest project and controls when the deferred code arrives", async () => {
   const load = pending(), view = mount(load.load)
   await view.render()
   const draft = view.host.querySelector("input")!
   draft.value = "keep my conversation"
-  await view.render({ project: project("B", 4) })
+  const controls = {}
+  await view.render({ project: project("B", 4), controls })
   expect(dialog().textContent).toContain("Project B")
   await act(async () => load.resolve())
   expect(load.load).toHaveBeenCalledOnce()
   expect(observed.every((props) => props.project.id === "B")).toBe(true)
-  expect(observed.at(-1)).toMatchObject({ project: { id: "B", revision: 4 } })
+  expect(observed.at(-1)).toMatchObject({ project: { id: "B", revision: 4 }, controls })
   expect(view.host.querySelector("input")).toBe(draft)
   expect(draft.value).toBe("keep my conversation")
 })

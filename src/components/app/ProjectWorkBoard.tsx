@@ -1,4 +1,8 @@
 import { useEffect, useState } from "react"
+import { ProjectWorkPlanningControls, type ProjectWorkPlanningControlsProps } from "./project-work/ProjectWorkPlanningControls"
+import { ProjectWorkOwnerControls, type ProjectWorkOwnerControlsProps } from "./project-work/ProjectWorkOwnerControls"
+import { projectWorkControlsCopy } from "./project-work/projectWorkControlsCopy"
+import type { WorkCommandContext } from "./project-work/projectWorkControls"
 import "./project-work/ProjectWorkBoard.css"
 import { uiText, useUiLocale } from "@shared/i18n/ui"
 import type { ProjectManifest } from "@services/project"
@@ -58,7 +62,19 @@ function WorkDetails({ row, snapshot, onClose }: { row: ProjectBoardRow; snapsho
     </>}
   </section>
 }
-export function ProjectWorkBoard({ project }: { project: ProjectManifest }) {
+export interface ProjectWorkBoardControls {
+  planning?: Omit<ProjectWorkPlanningControlsProps, "copy"> | null
+  owner?: Omit<ProjectWorkOwnerControlsProps, "copy"> | null
+}
+function matchesSelectedWork(work: ProjectWorkPlanningControlsProps["work"], row: ProjectBoardRow) {
+  return work.id === row.ticket.id && work.generation === row.ticket.generation
+    && work.recordRevision === row.ticket.record_revision && work.state === row.ticket.state
+}
+function commandAtSnapshot(command: WorkCommandContext | null | undefined, row: ProjectBoardRow, snapshot: SnapshotRef) {
+  return command?.binding?.scope_id === row.ticket.scope_id && command.expectedSeq === snapshot.seq
+    && command.expectedEpoch === snapshot.authority_epoch ? command : null
+}
+export function ProjectWorkBoard({ project, controls }: { project: ProjectManifest; controls?: ProjectWorkBoardControls }) {
   useUiLocale()
   const [mode, setMode] = useState<"list" | "board">("list")
   const [cancelled, setCancelled] = useState(false)
@@ -66,6 +82,14 @@ export function ProjectWorkBoard({ project }: { project: ProjectManifest }) {
   const { page, error, busy, owner, refresh, loadMore } = useProjectWorkBoard(project.id, cancelled)
   const rows = page?.data.rows ?? []
   const selected = rows.find((row) => row.ticket.id === selectedId)
+  const planning = selected && controls?.planning && matchesSelectedWork(controls.planning.work, selected) ? controls.planning : null
+  const ownerControls = selected && controls?.owner && matchesSelectedWork(controls.owner.work, selected)
+    && controls.owner.work.contractRevision === selected.ticket.contract_revision
+    && controls.owner.work.currentSubmissionId === selected.ticket.current_submission ? controls.owner : null
+  const staleControls = selected && ((controls?.planning?.work.id === selected.ticket.id && !planning)
+    || (controls?.owner?.work.id === selected.ticket.id && !ownerControls))
+  const ownerCommands = ownerControls && selected && page ? Object.fromEntries(Object.entries(ownerControls.commands)
+    .filter(([, command]) => commandAtSnapshot(command, selected, page.snapshot))) : {}
   const known = page && boardCountsKnown(page)
   const card = (row: ProjectBoardRow) => <button key={row.ticket.id} type="button" aria-pressed={selectedId === row.ticket.id} onClick={() => setSelectedId(row.ticket.id)} className="min-w-0 w-full rounded-lg border bg-background p-3 text-left text-sm outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring" data-testid={`project-work-${row.ticket.id}`}>
     <span className="block break-words font-medium">{row.ticket.contract.title}</span>
@@ -97,6 +121,10 @@ export function ProjectWorkBoard({ project }: { project: ProjectManifest }) {
     {page && !rows.length ? <p className="py-4 text-sm text-muted-foreground">{uiText("project_work_empty")}</p> : null}
     {busy ? <p role="status" className="mt-3 text-sm">{uiText("project_work_loading")}</p> : null}
     {page?.next_cursor ? <Button className="mt-3" variant="outline" disabled={busy} onClick={() => void loadMore()}>{uiText("project_work_more")}</Button> : null}
-    {selected && page ? <div className="mt-4"><WorkDetails key={`${page.snapshot.commit}:${selected.ticket.id}`} row={selected} snapshot={page.snapshot} onClose={() => setSelectedId(null)} /></div> : null}
+    {selected && page ? <div className="mt-4 space-y-3"><WorkDetails key={`${page.snapshot.commit}:${selected.ticket.id}`} row={selected} snapshot={page.snapshot} onClose={() => setSelectedId(null)} />
+      {staleControls ? <p role="status" className="text-sm text-muted-foreground">{uiText("project_work_controls_unavailable_context")}</p> : null}
+      {planning ? <ProjectWorkPlanningControls key={`planning:${selected.ticket.id}:${selected.ticket.generation}`} {...planning} owner={owner && planning.owner} command={commandAtSnapshot(planning.command, selected, page.snapshot)} copy={projectWorkControlsCopy()} /> : null}
+      {ownerControls ? <ProjectWorkOwnerControls key={`owner:${selected.ticket.id}:${selected.ticket.generation}`} {...ownerControls} owner={owner && ownerControls.owner} commands={ownerCommands} copy={projectWorkControlsCopy()} /> : null}
+    </div> : null}
   </div>
 }
