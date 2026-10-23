@@ -31,7 +31,12 @@ const fixture = async (version = "0.0.0") => {
   const git = (...args) => execFileSync("git", ["-C", source, ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim()
   git("init", "-q"); git("config", "user.name", "Fixture"); git("config", "user.email", "fixture@example.invalid")
   git("add", "--all"); git("-c", "core.hooksPath=/dev/null", "-c", "commit.gpgSign=false", "commit", "-qm", "fixture")
-  const module = await import(pathToFileURL(path.join(source, "scripts", "verification-browser.mjs")))
+  // Exercise the actual copied CLI module in Node, outside Vitest's module
+  // resolver. This also retains its real file path and Git checkout boundary.
+  const helper = pathToFileURL(path.join(source, "scripts", "verification-browser.mjs")).href
+  const module = { verificationContext: (sourceRoot, browserRoot, environment) => JSON.parse(execFileSync(process.execPath,
+    ["--input-type=module", "-e", `import { verificationContext } from ${JSON.stringify(helper)}; process.stdout.write(JSON.stringify(verificationContext(${JSON.stringify(sourceRoot)}, ${JSON.stringify(browserRoot)}, ${JSON.stringify(environment)})))`],
+    { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] })) }
   const env = { CI: "true", GITHUB_ACTIONS: "true", GITHUB_REPOSITORY: "bigduu/lotus-next", GITHUB_EVENT_NAME: "workflow_dispatch",
     GITHUB_REF: "refs/heads/test", GITHUB_WORKFLOW_REF: "bigduu/lotus-next/.github/workflows/ci.yml@refs/heads/test",
     GITHUB_SHA: git("rev-parse", "HEAD"), GITHUB_RUN_ID: "123", GITHUB_RUN_ATTEMPT: "2", RUNNER_TEMP: parent }
