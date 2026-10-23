@@ -81,6 +81,6 @@ export function ProjectWorkOwnerControls(props: ProjectWorkOwnerControlsProps) {
       <Button type="button" size="sm" disabled={!allowed("accept")} onClick={() => requestAction("accept")}>{copy.accept}</Button>
       {work.state === "accepted" && acceptedByUser ? <p className="font-medium">{copy.acceptedByUser}</p> : null}
     </div>
-    <WorkRequestFeedback status={request.phase === "idle" && guard.uncertain ? { phase: "outcome_unknown", operationId: guard.operationId! } : request} submitting={guard.submitting} uncertain={false} copy={copy} onReload={onReload} onReconcile={onReconcile} />
+    <WorkRequestFeedback status={guard.uncertain && (request.phase === "idle" || request.phase === "requested" || request.phase === "awaiting_ack") ? { phase: "outcome_unknown", operationId: guard.operationId! } : request} submitting={guard.submitting} uncertain={false} copy={copy} onReload={onReload} onReconcile={onReconcile} />
   </section>
 }

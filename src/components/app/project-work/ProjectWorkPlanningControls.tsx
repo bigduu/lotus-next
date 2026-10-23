@@ -58,7 +58,7 @@ export function ProjectWorkPlanningControls(props: ProjectWorkPlanningControlsPr
       {editReason ? <p role="status" className="text-muted-foreground">{editReason}</p> : null}
       <Button type="submit" size="sm" disabled={!writable || !value || unchanged}>{copy.savePlanning}</Button>
     </form>
-    <WorkRequestFeedback status={request.phase === "idle" && guard.uncertain ? { phase: "outcome_unknown", operationId: guard.operationId! } : request} submitting={guard.submitting} uncertain={false} copy={copy} onReload={onReload} onReconcile={onReconcile} />
+    <WorkRequestFeedback status={guard.uncertain && (request.phase === "idle" || request.phase === "requested" || request.phase === "awaiting_ack") ? { phase: "outcome_unknown", operationId: guard.operationId! } : request} submitting={guard.submitting} uncertain={false} copy={copy} onReload={onReload} onReconcile={onReconcile} />
     <fieldset disabled={!queryCapability.available} aria-labelledby={`${id}-query`} className="grid min-w-0 gap-3 border-t pt-3 sm:grid-cols-2">
       <legend id={`${id}-query`} className="px-1 font-medium">{copy.query}</legend>
       <label className="min-w-0 space-y-1"><span>{copy.order}</span><select className={controlClass} value={query.order} onChange={(event) => onQueryChange({ ...query, order: event.target.value as WorkPlanningQuery["order"] })}><option value="updated">{copy.orderUpdated}</option><option value="priority">{copy.orderPriority}</option><option value="expected_completion">{copy.orderDeadline}</option></select></label>

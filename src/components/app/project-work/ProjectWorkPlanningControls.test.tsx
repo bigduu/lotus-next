@@ -115,3 +115,38 @@ it("treats a mismatched receipt as uncertain instead of replaying the write", as
   expect(props.onSavePlanning).toHaveBeenCalledOnce()
   expect(document.body.textContent).toContain(copy.outcomeUnknown)
 })
+
+it.each([
+  ["requested", "rejection"], ["requested", "mismatched receipt"],
+  ["awaiting_ack", "rejection"], ["awaiting_ack", "mismatched receipt"],
+] as const)("shows the original uncertain operation while %s props remain after %s", async (phase, failure) => {
+  const props = planningProps()
+  const operationId = props.command!.operationId
+  let resolveReceipt!: (value: { operationId: string }) => void
+  let rejectReceipt!: (reason: Error) => void
+  props.onSavePlanning = vi.fn(() => new Promise<{ operationId: string }>((resolve, reject) => { resolveReceipt = resolve; rejectReceipt = reject }))
+  await render(props)
+  await act(async () => { submit() })
+  props.request = { phase, operationId }
+  await render(props)
+  const pendingCopy = phase === "requested" ? copy.requestSent : copy.awaitingAck
+  expect(document.body.textContent).toContain(pendingCopy)
+  await act(async () => {
+    if (failure === "rejection") rejectReceipt(new Error("Private transport detail should not be displayed"))
+    else resolveReceipt({ operationId: "foreign-operation" })
+  })
+  expect(document.querySelector('[role="alert"]')?.textContent).toContain(copy.outcomeUnknown)
+  expect(document.body.textContent).not.toContain(pendingCopy)
+  expect(document.body.textContent).not.toContain("Private transport detail")
+  expect(document.body.textContent).not.toContain("foreign-operation")
+  expect(document.querySelector("input")?.value).toBe(props.draft.expectedCompletionAt)
+  await act(async () => { button(copy.reload).click(); button(copy.reconcile).click(); submit() })
+  expect(props.onReload).toHaveBeenCalledOnce()
+  expect(props.onReconcile).toHaveBeenCalledExactlyOnceWith(operationId)
+  expect(props.onSavePlanning).toHaveBeenCalledOnce()
+  expect(props.request).toEqual({ phase, operationId })
+  props.request = { phase: "acknowledged", operationId }
+  await render(props)
+  expect(document.body.textContent).toContain(copy.acknowledged)
+  expect(document.body.textContent).not.toContain(copy.outcomeUnknown)
+})
