@@ -4,9 +4,16 @@ export type RunFailureGuidance = {
   action: string
 }
 
-/** Explain known provider failures without hiding the original diagnostic. */
+/** Explain known run failures without hiding the original diagnostic. */
 export function describeRunFailure(detail: string | null): RunFailureGuidance | null {
   if (!detail) return null
+
+  if (/Native canonical Session Source scope changed/i.test(detail)) {
+    return {
+      title: uiText("session_source_changed"),
+      action: uiText("session_source_changed_action"),
+    }
+  }
 
   if (/\blast_http_status=429\b|\bHTTP\s+429\b/i.test(detail)) {
     return {

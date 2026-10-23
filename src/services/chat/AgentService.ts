@@ -1,3 +1,4 @@
+import type { PublicRunDiagnostic } from "./runDiagnostic"
 import { uiText } from "@shared/i18n/ui"
 import { debugLog } from "@shared/utils/debugFlags";
 /**
@@ -184,6 +185,25 @@ export interface ContextSummaryInfo {
   tokens_saved: number;
 }
 
+const readContextSummaryInfo = (value: unknown): ContextSummaryInfo | null => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const info = value as Record<string, unknown>;
+  if (
+    typeof info.summary !== "string" ||
+    typeof info.messages_summarized !== "number" ||
+    !Number.isSafeInteger(info.messages_summarized) || info.messages_summarized < 0 ||
+    typeof info.tokens_saved !== "number" ||
+    !Number.isSafeInteger(info.tokens_saved) || info.tokens_saved < 0
+  ) {
+    return null;
+  }
+  return {
+    summary: info.summary,
+    messages_summarized: info.messages_summarized,
+    tokens_saved: info.tokens_saved,
+  };
+};
+
 // TaskList Types
 export type TaskItemStatus = "pending" | "in_progress" | "completed" | "blocked";
 
@@ -238,6 +258,7 @@ export interface AgentEvent {
     images?: Array<{ mime_type: string; data: string }>;
   };
   error?: string;
+  diagnostic?: unknown;
   message?: string; // For Error events
   // Union type because 'usage' field has different shapes for different events
   usage?:
@@ -248,6 +269,9 @@ export interface AgentEvent {
       }
     | TokenBudgetUsage;
   summary_info?: ContextSummaryInfo;
+  // Current context_summarized events carry these beside the existing summary field.
+  messages_summarized?: number;
+  tokens_saved?: number;
   // TaskList events
   task_list?: TaskList;
   // TaskList delta
@@ -688,6 +712,10 @@ export interface SessionSummary {
   kind: SessionKind;
   title: string;
   title_version: number;
+  /** Canonical behavior version; absence alone never means incompatible. */
+  session_version?: number | null;
+  /** Authoritative compatibility report on session detail only. */
+  execution_compatibility?: import("./sessionExecutionCompatibility").SessionExecutionCompatibility;
   pinned: boolean;
   parent_session_id?: string | null;
   root_session_id: string;
@@ -701,7 +729,7 @@ export interface SessionSummary {
   /** Session working directory mirrored from the session index. */
   workspace_path?: string | null;
   created_by_schedule_id?: string | null;
-  token_usage?: TokenBudgetUsage;
+  token_usage?: TokenBudgetUsage | null;
   created_at: string;
   updated_at: string;
   last_activity_at: string;
@@ -710,6 +738,8 @@ export interface SessionSummary {
   is_running: boolean;
   last_run_status?: string;
   last_run_error?: string;
+  /** Detail only; index/list rows omit it. Validate before presentation. */
+  last_run_diagnostic?: unknown;
   /** Active plan mode runtime state mirrored from backend session summary. */
   plan_mode?: SessionPlanModeState | null;
   /** Authoritative only on GET /sessions/{id}; list rows omit this field. */
@@ -1110,7 +1140,7 @@ export interface AgentEventHandlers {
   onSessionHistoryCommitted?: (sessionId: string) => void;
   onComplete?: (usage: AgentEvent["usage"]) => void;
   onCancelled?: (message?: string) => void;
-  onError?: (message: string) => void;
+  onError?: (message: string, diagnostic?: Readonly<PublicRunDiagnostic>) => void;
   onSubAgentStarted?: (parentSessionId: string, childSessionId: string, title?: string) => void;
   onSubAgentEvent?: (parentSessionId: string, childSessionId: string, event: AgentEvent) => void;
   onSubAgentHeartbeat?: (
@@ -1364,7 +1394,7 @@ export class AgentClient {
 
   /** Get one session summary, including its root tree size. */
   async getSession(sessionId: string): Promise<GetSessionResponse> {
-    return apiClient.get<GetSessionResponse>(`sessions/${encodeURIComponent(sessionId)}`);
+    return apiClient.get<GetSessionResponse>(`sessions/${encodeURIComponent(sessionId)}`, { cache: "no-store" });
   }
 
   /** Open the canonical Supervisor without starting a run or enabling Tickets. */
@@ -1525,7 +1555,10 @@ export class AgentClient {
    */
   async clearSession(sessionId: string): Promise<void> {
     const encodedSessionId = encodeURIComponent(sessionId);
-    await apiClient.post(`sessions/${encodedSessionId}/clear`);
+    const receipt = await apiClient.post<{ success: boolean; session_id: string }>(`sessions/${encodedSessionId}/clear`);
+    if (receipt?.success !== true || receipt.session_id !== sessionId) {
+      throw new Error("Invalid conversation clear receipt");
+    }
   }
 
   /**
@@ -1696,8 +1729,14 @@ export class AgentClient {
       return;
     }
 
+    // Optional diagnostics stay outside the startup graph. Load before subscribing
+    // so an error keeps its order relative to the terminal control. Failure to
+    // load support details must not prevent ordinary stream observation.
+    const decode = await import("./runDiagnostic")
+      .then((module) => module.decodeRunDiagnostic).catch(() => undefined);
+    if (signal?.aborted) return;
     const { promise, close } = v2Stream.subscribeAgent(sessionId, handlers, (event, h) =>
-      this.handleEvent(event, h),
+      this.handleEvent(event, h, sessionId, decode),
     );
     const abortListener = () => {
       debugLog("[AgentClient]", "events.subscribe.ws.abort", { sessionId });
@@ -1733,7 +1772,7 @@ export class AgentClient {
   /**
    * Handle a single agent event
    */
-  private handleEvent(event: AgentEvent, handlers: AgentEventHandlers): void {
+  private handleEvent(event: AgentEvent, handlers: AgentEventHandlers, sessionId: string, decode?: typeof import("./runDiagnostic").decodeRunDiagnostic): void {
     switch (event.type) {
       case "token":
         handlers.onToken?.(event.content || "");
@@ -1848,11 +1887,16 @@ export class AgentClient {
           event.error,
         );
         break;
-      case "context_summarized":
-        if (event.summary_info) {
-          handlers.onContextSummarized?.(event.summary_info);
+      case "context_summarized": {
+        // Keep the legacy nested payload authoritative when supplied.
+        const info = readContextSummaryInfo(
+          event.summary_info === undefined ? event : event.summary_info,
+        );
+        if (info) {
+          handlers.onContextSummarized?.(info);
         }
         break;
+      }
       case "context_pressure_notification":
         if (typeof event.percent === "number" && typeof event.level === "string") {
           handlers.onContextPressureNotification?.(event.percent, event.level, event.message || "");
@@ -1979,7 +2023,13 @@ export class AgentClient {
       case "error":
         debugLog("[AgentClient]", "events.dispatch.error", summarizeStreamControlEvent(event));
         // Error event uses 'message' field, not 'error' field
-        handlers.onError?.(event.message || event.error || "Unknown error");
+        if (event.session_id && event.session_id !== sessionId) break;
+        {
+          const message = event.message || event.error || "Unknown error";
+          const diagnostic = decode?.(event.diagnostic, sessionId, message);
+          if (diagnostic) handlers.onError?.(message, diagnostic);
+          else handlers.onError?.(message);
+        }
         break;
       default:
         console.warn("Unknown event type:", event);
@@ -2015,9 +2065,9 @@ export class AgentClient {
     // appended after it (`is_delta: true`), so a client that already has most
     // of the history only transfers the tail.
     const path = sinceMessageId
-      ? `history/${sessionId}?since_message_id=${encodeURIComponent(sinceMessageId)}`
-      : `history/${sessionId}`;
-    const response = await apiClient.get<HistoryResponse>(path);
+      ? `history/${encodeURIComponent(sessionId)}?since_message_id=${encodeURIComponent(sinceMessageId)}`
+      : `history/${encodeURIComponent(sessionId)}`;
+    const response = await apiClient.get<HistoryResponse>(path, { cache: "no-store" });
     debugLog("[AgentClient]", "history.response", summarizeHistoryResponse(response));
     return response;
   }

@@ -22,6 +22,22 @@ const transportOwner = (member = "", tail = "") =>
   `export class HttpTransport { ${member} } const canonical = new HttpTransport({}); const fetchOwner = globalThis.fetch; ${tail}`;
 
 describe("architecture boundary fixtures", () => {
+  it("allows the dedicated Project scope native adapter and keeps other native imports denied", () => {
+    const file = "src/services/supervisorScope/nativeOwnerBridge.ts";
+    const source = `const core = await import("@tauri-apps/api/core");
+      invoke("supervisor_scope_inspect_availability", { observation });
+      invoke("supervisor_scope_confirm_and_apply", { intent });`;
+    expect(fixtureMessages(file, source)).toBe("");
+    expect(fixtureMessages("src/services/supervisorScope/anotherNative.ts", source)).toMatch(/concrete Tauri import/);
+    expect(fixtureMessages(file, `const plugin = await import("@tauri-apps/plugin-fs");`)).toMatch(/concrete Tauri import/);
+    expect(buildInventory(new Map([[file, source]]))["tauri-runtime"][file]).toBe(1);
+  });
+  it("rejects caller-selected or unrelated commands in the dedicated Project scope native adapter", () => {
+    const file = "src/services/supervisorScope/nativeOwnerBridge.ts";
+    expect(fixtureMessages(file, `invoke(command, args);`)).toMatch(/only its two fixed commands/);
+    expect(fixtureMessages(file, `core.invoke("read_local_image", { path });`)).toMatch(/only its two fixed commands/);
+  });
+
   it("allows the designated runtime, composition, and transport adapters", () => {
     const sources = new Map([
       [

@@ -39,7 +39,7 @@ export interface BoardAssignment {
   awaiting_request?: string | null
   workspace: { repo: string; branch: string; worktree: string; base_commit: string } | null
 }
-export interface BoardWorkView extends WorkView { assignments: BoardAssignment[] }
+export interface BoardWorkView extends Omit<WorkView, "assignments"> { assignments: BoardAssignment[] }
 
 function validateSnapshot(actual: SnapshotRef, expected: SnapshotRef) {
   if (actual.commit !== expected.commit || actual.seq !== expected.seq || actual.authority_epoch !== expected.authority_epoch

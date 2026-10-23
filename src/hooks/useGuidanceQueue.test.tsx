@@ -1,3 +1,5 @@
+import { ApiError } from "@services/api/errors"
+import { clearSessionCompatibilityObservations, observeSessionExecutionConflict } from "@services/chat/sessionExecutionCompatibility"
 import { act } from "react"
 import { createRoot, type Root } from "react-dom/client"
 import { afterEach, beforeEach, expect, it, vi } from "vitest"
@@ -11,6 +13,7 @@ let container: HTMLDivElement
 let queue: ReturnType<typeof useGuidanceQueue>
 function Harness({ session = "s/1" }: { session?: string }) { queue = useGuidanceQueue(session, true); return null }
 beforeEach(() => {
+  clearSessionCompatibilityObservations()
   localStorage.clear()
   sessionStorage.clear()
   const randomUUID = crypto.randomUUID.bind(crypto)
@@ -87,4 +90,52 @@ it("clears a previous withdrawal failure when the next withdrawal succeeds", asy
   await act(async () => queue.cancel("m"))
   expect(queue.pending).toHaveLength(0)
   expect(queue.error).toBeNull()
+})
+
+const versionRefusal = () => new ApiError("incompatible", 409, "", JSON.stringify({ session_id: "s/1",
+  error: { code: "session_execution_incompatible" }, compatibility: { session_version: null, current_session_version: 1,
+    status: "conflict", history_readable: true, execution_allowed: false,
+    conflicts: [{ code: "unsupported_runtime_state_version", message: "Unsupported runtime" }] } }))
+it("blocks guidance only for an explicit compatibility conflict", async () => {
+  await mount(); observeSessionExecutionConflict("s/1", versionRefusal())
+  await act(async () => { expect((await queue.send("keep draft")).kind).toBe("blocked") })
+  expect(guidanceService.send).not.toHaveBeenCalled()
+})
+it("records a typed guidance refusal without resending or marking the new request uncertain", async () => {
+  await mount(); vi.mocked(guidanceService.send).mockRejectedValueOnce(versionRefusal())
+  await act(async () => { expect((await queue.send("keep draft")).kind).toBe("blocked") })
+  await act(async () => { expect((await queue.send("keep draft")).kind).toBe("blocked") })
+  expect(guidanceService.send).toHaveBeenCalledTimes(1)
+  expect(queue.hasUnconfirmed).toBe(false)
+})
+
+it("preserves an earlier uncertain guidance receipt after a later compatibility refusal", async () => {
+  await mount(); vi.mocked(guidanceService.send).mockRejectedValueOnce(new Error("lost acknowledgement"))
+  await act(async () => { expect((await queue.send("same uncertain draft")).kind).toBe("unconfirmed") })
+  const previous = sessionStorage.getItem("lotus-next.guidance-submission.s/1")
+  vi.mocked(guidanceService.send).mockRejectedValueOnce(versionRefusal())
+  await act(async () => { expect((await queue.send("same uncertain draft")).kind).toBe("blocked") })
+  expect(sessionStorage.getItem("lotus-next.guidance-submission.s/1")).toBe(previous)
+  expect(queue.hasUnconfirmed).toBe(true)
+  expect(guidanceService.send).toHaveBeenCalledTimes(2)
+})
+
+
+it.each([false, true])("restores a prior uncertain receipt when changed guidance is definitively incompatible (image=%s)", async (image) => {
+  await mount()
+  vi.mocked(guidanceService.send).mockRejectedValueOnce(new Error("lost acknowledgement"))
+  await act(async () => { expect((await queue.send("original uncertain draft")).kind).toBe("unconfirmed") })
+  const first = vi.mocked(guidanceService.send).mock.calls[0]
+  const previous = sessionStorage.getItem("lotus-next.guidance-submission.s/1")
+  vi.mocked(guidanceService.send).mockRejectedValueOnce(versionRefusal())
+  await act(async () => { expect((await queue.send(image ? "original uncertain draft" : "changed draft", image ? [{ base64: "new-image" }] : [])).kind).toBe("blocked") })
+  expect(vi.mocked(guidanceService.send).mock.calls[1][1]).not.toBe(first[1])
+  expect(sessionStorage.getItem("lotus-next.guidance-submission.s/1")).toBe(previous)
+  expect(queue.hasUnconfirmed).toBe(true)
+  expect(guidanceService.send).toHaveBeenCalledTimes(2)
+  clearSessionCompatibilityObservations()
+  if (image) { await act(async () => root.render(null)); await mount() }
+  await act(async () => { expect((await queue.send("original uncertain draft")).kind).toBe("accepted") })
+  expect(vi.mocked(guidanceService.send).mock.calls[2]).toEqual(first)
+  expect(sessionStorage.getItem("lotus-next.guidance-submission.s/1")).toBeNull()
 })

@@ -15,7 +15,13 @@ const session = (id: string) => ({
   root_mode_birth_token: "a".repeat(64),
 })
 
-async function prepare(page: Page, target: string, childApproval = false) {
+async function prepare(page: Page, target: string, childApproval = false,
+  compatibility?: { parentBlocked?: boolean; childBlocked?: boolean; parentQuestion?: boolean; rejectChildOnce?: "conflict" | "undelivered" }) {
+  let childBlocked = compatibility?.childBlocked === true
+  let rejectChildOnce = compatibility?.rejectChildOnce
+  const report = (blocked: boolean) => ({ session_version: blocked ? 99 : 1, current_session_version: 1,
+    status: blocked ? "conflict" : "compatible", history_readable: true, execution_allowed: !blocked,
+    conflicts: blocked ? [{ code: "unsupported_session_version", message: "Fixture future version" }] : [] })
   await page.addInitScript((id) => {
     localStorage.setItem("bodhi_onboarded_v1", "1")
     localStorage.setItem("lotus_next_last_session", id)
@@ -57,13 +63,14 @@ async function prepare(page: Page, target: string, childApproval = false) {
     }
     for (const id of [mainId, sideId]) {
       if (path === `/api/v1/sessions/${id}`) return route.fulfill({
-        json: { session: { ...session(id), is_running: childApproval && id === target } }, headers: { ETag: '"1"' },
+        json: { session: { ...session(id), is_running: childApproval && id === target,
+          ...(compatibility ? { execution_compatibility: report(id === target && compatibility.parentBlocked === true) } : {}) } }, headers: { ETag: '"1"' },
       })
       if (path === `/api/v1/history/${id}`) return route.fulfill({ json: { session_id: id, messages: [] } })
       if (path === `/api/v1/task/${id}`) return route.fulfill({ json: { items: [] } })
       if (path === `/api/v1/actors/${id}/snapshot`) return route.fulfill({ json: actorSnapshotFixture(id, 0) })
       if (path === `/api/v1/respond/${id}/pending`) return route.fulfill({
-        json: id === target && generation <= 2 && !childApproval ? pending() : { has_pending_question: false },
+        json: id === target && generation <= 2 && (!childApproval || compatibility?.parentQuestion === true) ? pending() : { has_pending_question: false },
       })
     }
     if (path === `/api/v1/sessions/${target}/permission-decisions`) {
@@ -75,9 +82,20 @@ async function prepare(page: Page, target: string, childApproval = false) {
         resume: { success: true, auto_resume_status: "completed" },
       } })
     }
+    if (path === "/api/v1/sessions/fixture-child") return route.fulfill({ json: {
+      session: { ...session("fixture-child"), kind: "child", parent_session_id: target, root_session_id: target,
+        execution_compatibility: report(childBlocked) },
+    } })
     if (path === "/api/v1/child-approval/fixture-child") {
       childDecisions.push(request.postDataJSON())
-      return route.fulfill({ json: { success: true } })
+      const rejection = rejectChildOnce
+      rejectChildOnce = undefined
+      if (rejection === "conflict") {
+        childBlocked = true
+        return route.fulfill({ status: 409, json: { session_id: "fixture-child",
+          error: { code: "session_execution_incompatible" }, compatibility: report(true) } })
+      }
+      return route.fulfill({ json: { delivered: rejection !== "undelivered" } })
     }
     return route.fallback()
   })
@@ -89,7 +107,7 @@ async function prepare(page: Page, target: string, childApproval = false) {
     await workbench.getByRole("combobox").filter({ hasText: "选择会话并排" }).click()
     await page.getByRole("option", { name: "Approval side", exact: true }).click()
   }
-  return { observation, decisions, childDecisions, channels,
+  return { observation, decisions, childDecisions, channels, setChildBlocked: (value: boolean) => { childBlocked = value },
     sendChildRequest: (requestId: string, seq: number) => socket!.send(JSON.stringify({
       ch: `agent.${target}`, seq, event: { type: "child_approval_requested", child_session_id: "fixture-child",
         request_id: requestId, tool_name: "Bash", permission: "execute_command", resource: "echo fixture child" },
@@ -147,5 +165,106 @@ test("live child approval adapter uses the shared card and keeps its boolean res
   await card.getByRole("button", { name: "批准", exact: true }).press("Enter")
   await expect.poll(() => fixture.childDecisions).toEqual([{ request_id: "child-request-1", approved: true }])
   await expect(card).toHaveCount(0)
+  expect(fixture.observation.pageErrors).toEqual([])
+})
+
+
+test("approval compatibility is scoped to the Child despite a parent compatibility conflict", async ({ page }, testInfo) => {
+  const fixture = await prepare(page, mainId, true, { parentBlocked: true })
+  await expect.poll(() => fixture.channels.has(`agent.${mainId}`)).toBe(true)
+  fixture.sendChildRequest("child-parent-conflict", 1)
+  const card = page.locator("[data-approval-presentation]")
+  await expect(card).toContainText("子代理请求授权")
+  await expect(page.locator('[data-session-execution-blocked="true"]')).toHaveCount(1)
+  expect(fixture.childDecisions).toEqual([]); expect(fixture.decisions).toEqual([])
+  await page.screenshot({ path: testInfo.outputPath(`child-parent-conflict-${testInfo.project.name}.png`), animations: "disabled" })
+  await card.getByRole("button", { name: "拒绝", exact: true }).click()
+  await expect.poll(() => fixture.childDecisions).toEqual([{ request_id: "child-parent-conflict", approved: false }])
+  expect(fixture.decisions).toEqual([])
+  expect(fixture.observation.pageErrors).toEqual([])
+})
+
+test("approval compatibility waits for the Child's explicit conflict recovery without auto-answer", async ({ page }, testInfo) => {
+  const fixture = await prepare(page, mainId, true, { childBlocked: true })
+  await expect.poll(() => fixture.channels.has(`agent.${mainId}`)).toBe(true)
+  fixture.sendChildRequest("child-own-conflict", 1)
+  const region = page.getByRole("region", { name: "子代理请求授权", exact: true })
+  await expect(region.locator('[data-session-execution-blocked="true"]')).toBeVisible()
+  const composer = page.getByRole("textbox", { name: "消息", exact: true }).first()
+  expect((await composer.boundingBox())?.width ?? 0).toBeGreaterThan(page.viewportSize()!.width / 2)
+  await page.screenshot({ path: testInfo.outputPath(`child-conflict-layout-${testInfo.project.name}.png`), animations: "disabled" })
+  await expect(page.locator("[data-approval-presentation]")).toHaveCount(0)
+  expect(fixture.childDecisions).toEqual([])
+  fixture.setChildBlocked(false)
+  await region.getByRole("button", { name: "重新核对兼容性", exact: true }).click()
+  const card = page.locator("[data-approval-presentation]")
+  await expect(card).toContainText("子代理请求授权")
+  expect(fixture.childDecisions).toEqual([])
+  await page.screenshot({ path: testInfo.outputPath(`child-own-recovered-${testInfo.project.name}.png`), animations: "disabled" })
+  await card.getByRole("button", { name: "批准", exact: true }).click()
+  await expect.poll(() => fixture.childDecisions).toEqual([{ request_id: "child-own-conflict", approved: true }])
+  expect(fixture.decisions).toEqual([])
+  expect(fixture.observation.pageErrors).toEqual([])
+})
+
+
+test("approval compatibility retains a genuine parent question during a Child conflict", async ({ page }, testInfo) => {
+  const fixture = await prepare(page, mainId, true, { childBlocked: true, parentQuestion: true })
+  await expect.poll(() => fixture.channels.has(`agent.${mainId}`)).toBe(true)
+  fixture.sendChildRequest("child-blocked-parent-still-pending", 1)
+  // The live parent modal aria-hides the background Child notice.
+  await expect(page.locator('section[aria-label="子代理请求授权"] [data-session-execution-blocked="true"]')).toHaveCount(1)
+  const card = page.locator("[data-approval-presentation]")
+  await expect(card).toContainText("Fixture approval 1")
+  expect(fixture.childDecisions).toEqual([]); expect(fixture.decisions).toEqual([])
+  await page.screenshot({ path: testInfo.outputPath(`parent-question-child-conflict-${testInfo.project.name}.png`), animations: "disabled" })
+  await card.getByRole("button", { name: "仅本次拒绝", exact: true }).click()
+  await expect.poll(() => fixture.decisions).toEqual([{ request_id: "approval-1", request_generation: "generation-1",
+    expected_policy_revision: 7, decision: "deny_once" }])
+  expect(fixture.childDecisions).toEqual([])
+  expect(fixture.observation.pageErrors).toEqual([])
+})
+
+
+test("child approval submit refusal retains the request through explicit compatibility recovery", async ({ page }, info) => {
+  const fixture = await prepare(page, mainId, true, { rejectChildOnce: "conflict" })
+  await expect.poll(() => fixture.channels.has(`agent.${mainId}`)).toBe(true)
+  fixture.sendChildRequest("child-submit-refusal", 1)
+  const card = page.locator("[data-approval-presentation]")
+  await expect(card).toContainText("子代理请求授权")
+  await card.getByRole("button", { name: "批准", exact: true }).click()
+  const region = page.getByRole("region", { name: "子代理请求授权", exact: true })
+  await expect(region.locator('[data-session-execution-blocked="true"]')).toBeVisible()
+  await expect(card).toHaveCount(0)
+  expect(fixture.childDecisions).toEqual([{ request_id: "child-submit-refusal", approved: true }])
+  expect(fixture.decisions).toEqual([])
+  await page.screenshot({ path: info.outputPath(`child-submit-conflict-${info.project.name}.png`), animations: "disabled" })
+  fixture.setChildBlocked(false)
+  await region.getByRole("button", { name: "重新核对兼容性", exact: true }).click()
+  await expect(card).toContainText("子代理请求授权")
+  expect(fixture.childDecisions).toHaveLength(1)
+  await card.getByRole("button", { name: "拒绝", exact: true }).click()
+  await expect(card).toHaveCount(0)
+  expect(fixture.childDecisions).toEqual([{ request_id: "child-submit-refusal", approved: true },
+    { request_id: "child-submit-refusal", approved: false }])
+  expect(fixture.observation.pageErrors).toEqual([])
+})
+
+test("child approval unconfirmed delivery stays visible until an explicit Human retry", async ({ page }, info) => {
+  const fixture = await prepare(page, mainId, true, { rejectChildOnce: "undelivered" })
+  await expect.poll(() => fixture.channels.has(`agent.${mainId}`)).toBe(true)
+  fixture.sendChildRequest("child-unconfirmed", 1)
+  const card = page.locator("[data-approval-presentation]")
+  await expect(card).toContainText("子代理请求授权")
+  await card.getByRole("button", { name: "批准", exact: true }).click()
+  await expect(card.getByRole("alert")).toContainText("提交结果尚未确认")
+  await expect(card.getByRole("button", { name: "拒绝", exact: true })).toBeEnabled()
+  expect(fixture.childDecisions).toEqual([{ request_id: "child-unconfirmed", approved: true }])
+  expect(fixture.decisions).toEqual([])
+  await page.screenshot({ path: info.outputPath(`child-approval-unconfirmed-${info.project.name}.png`), animations: "disabled" })
+  await card.getByRole("button", { name: "拒绝", exact: true }).click()
+  await expect(card).toHaveCount(0)
+  expect(fixture.childDecisions).toEqual([{ request_id: "child-unconfirmed", approved: true },
+    { request_id: "child-unconfirmed", approved: false }])
   expect(fixture.observation.pageErrors).toEqual([])
 })

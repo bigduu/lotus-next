@@ -1,18 +1,26 @@
-import { act, StrictMode, type ComponentProps } from "react"
+import { act, StrictMode, type ComponentProps, type ReactNode } from "react"
 import { createRoot, type Root } from "react-dom/client"
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest"
 import type { ChatItem } from "@shared/types/chatMessages"
 import type { PatchProjectRequest, ProjectManifest } from "@services/project"
 import { ApiError } from "@services/api"
+import type { SidebarProjectDragProps, SidebarDragParts, SidebarDragPickup } from "./sidebarDrag"
+const dragHarness = vi.hoisted(() => ({ current: null as SidebarProjectDragProps | null }))
+vi.mock("./SidebarProjectDrag", () => {
+  const Handle: SidebarDragParts["Handle"] = ({ source, label, disabled }) => <button data-sidebar-drag-handle={`${source.kind}:${source.id}`} aria-label={label} disabled={disabled} />
+  const Target: SidebarDragParts["Target"] = ({ target, disabled, ...attributes }) => { void target; void disabled; return <div {...attributes} /> }
+  return { default: (props: SidebarProjectDragProps) => { dragHarness.current = props; return props.children({ Handle, Target }) } }
+})
 
 vi.mock("@/components/chat/SessionRow", () => ({
-  SessionRow: ({ chat, active, onSelect, onRename, onDelete, onTogglePin, onCopySessionId, sections = [], onMoveToSection }: {
+  SessionRow: ({ chat, active, onSelect, onRename, onDelete, onTogglePin, onCopySessionId, sections = [], onMoveToSection, dragHandle }: {
     chat: ChatItem; active: boolean; onSelect(): void; onRename(title: string): void
     onDelete(): void; onTogglePin(): void; onCopySessionId(): void
-    sections?: readonly { id: string; name: string }[]; projectId?: string; onMoveToSection?: (id: string | null) => void
+    dragHandle?: ReactNode; sections?: readonly { id: string; name: string }[]; projectId?: string; onMoveToSection?: (id: string | null) => void
   }) => (
     <div data-session={chat.id} data-active={active}>
       <button onClick={onSelect}>{chat.title}</button>
+      {dragHandle}
       <button onClick={() => onRename("Renamed")}>Rename {chat.id}</button>
       <button onClick={onDelete}>Delete {chat.id}</button>
       <button onClick={onTogglePin}>Pin {chat.id}</button>
@@ -80,6 +88,19 @@ function search(value: string) {
     input.dispatchEvent(new Event("input", { bubbles: true }))
   })
 }
+
+beforeAll(async () => {
+  // Resolve the actual lazy boundary once before synchronous disclosure assertions.
+  localStorage.setItem("lotus.sidebar.grouping-mode.v1", "project")
+  const host = document.body.appendChild(document.createElement("div"))
+  const primingRoot = createRoot(host)
+  const noop = () => {}
+  await act(async () => primingRoot.render(<Sidebar open={false} onClose={noop} collapsed={false} onToggleCollapse={noop} width={288}
+    chats={[]} booted currentSessionId={null} onNewChat={noop} onSelect={noop} onRename={noop} onDelete={noop}
+    onTogglePin={noop} onCopySessionId={noop} onOpenSettings={noop} onOpenProjectManager={noop} />))
+  act(() => primingRoot.unmount())
+  host.remove()
+})
 
 beforeEach(() => {
   vi.restoreAllMocks()
@@ -498,10 +519,17 @@ function installProjectBackend(initial: Record<string, ProjectManifest>) {
 function projectChat(id: string, projectId: string, extra: Partial<ChatItem> = {}) {
   return chat(id, 5, { config: { systemPromptId: "", baseSystemPrompt: "", lastUsedEnhancedPrompt: null, projectId }, ...extra })
 }
-async function drop(target: Element, payload: unknown, mime = SIDEBAR_SESSION_DRAG_TYPE) {
-  const event = new Event("drop", { bubbles: true, cancelable: true })
-  Object.defineProperty(event, "dataTransfer", { value: { getData: (type: string) => type === mime ? JSON.stringify(payload) : "" } })
-  await act(async () => target.dispatchEvent(event))
+async function drop(target: Element, payload: unknown, mime = SIDEBAR_SESSION_DRAG_TYPE, revision?: number) {
+  const data = payload as { projectId: string; sessionId?: string; sectionId?: string }
+  const projectId = target.getAttribute("data-section-project") ?? target.getAttribute("data-project-drop")!
+  const sectionId = target.getAttribute("data-section-id")
+  const destination = { projectId, sectionId: sectionId === "none" ? null : sectionId }
+  const pickup: SidebarDragPickup = { kind: mime === SIDEBAR_SECTION_DRAG_TYPE ? "section" : "session", projectId: data.projectId,
+    id: (mime === SIDEBAR_SECTION_DRAG_TYPE ? data.sectionId : data.sessionId)!, revision: revision ?? useAppStore.getState().projects[data.projectId]?.revision ?? 0 }
+  await act(async () => {
+    if (pickup.kind === "session") await dragHarness.current!.onMoveSession(pickup, destination)
+    else dragHarness.current!.onMoveSection(pickup, destination, false)
+  })
 }
 
 describe("Sidebar server sections", () => {
@@ -530,7 +558,6 @@ describe("Sidebar server sections", () => {
     await drop(target, { projectId: "p1", sessionId: "foreign" })
     await drop(target, { projectId: "p2", sessionId: "foreign" })
     expect(updateProject).toHaveBeenCalledTimes(2)
-    expect(container.textContent).toContain("暂不支持跨项目移动")
     expect(props.onSelect).not.toHaveBeenCalled()
   })
 
@@ -570,76 +597,28 @@ describe("Sidebar server sections", () => {
     expect(props.onSelect).not.toHaveBeenCalled()
   })
 
-  it("shows legal drop feedback and clears it on cancelled section drags without folding", async () => {
+  it("uses a dedicated internal section handle and leaves disclosure and native drops independent", async () => {
     const { updateProject } = setup()
-    const source = container.querySelector<HTMLButtonElement>('[data-section-id="' + lotusA + '"] button')!
-    const target = container.querySelector('[data-project-drop="p1"]')!
-    const values = new Map<string, string>()
-    const dataTransfer = { types: [SIDEBAR_SECTION_DRAG_TYPE], setData: (type: string, value: string) => values.set(type, value), getData: (type: string) => values.get(type) ?? "", effectAllowed: "", dropEffect: "" }
-    const drag = (element: Element, type: string) => {
-      const event = new Event(type, { bubbles: true, cancelable: true })
-      Object.defineProperty(event, "dataTransfer", { value: dataTransfer })
-      act(() => element.dispatchEvent(event))
-      return event
-    }
-    expect(source.draggable).toBe(true)
-    drag(source, "dragstart")
-    expect(drag(target, "dragover").defaultPrevented).toBe(true)
-    expect(target.getAttribute("data-drop-active")).toBe("true")
-    expect(dataTransfer.dropEffect).toBe("move")
-    const foreign = container.querySelector('[data-project-drop="p2"]')!
-    expect(drag(foreign, "dragover").defaultPrevented).toBe(false)
-    expect(dataTransfer.dropEffect).toBe("none")
-    expect(container.textContent).toContain("暂不支持跨项目移动")
-    expect(target.getAttribute("data-drop-active")).toBeNull()
-    drag(source, "dragend")
-    expect(container.textContent).not.toContain("暂不支持跨项目移动")
-    expect(target.getAttribute("data-drop-active")).toBeNull()
-    act(() => source.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 1 })))
-    expect(source.getAttribute("aria-expanded")).toBe("true")
+    const section = container.querySelector('[data-section-id="' + lotusA + '"]')!
+    const disclosure = section.querySelector<HTMLButtonElement>('button[aria-expanded]')!
+    expect(disclosure.draggable).toBe(false)
+    expect(section.querySelector('[data-sidebar-drag-handle="section:' + lotusA + '"]')).not.toBeNull()
+    expect(disclosure.getAttribute("aria-expanded")).toBe("true")
+    act(() => disclosure.click())
+    expect(disclosure.getAttribute("aria-expanded")).toBe("false")
+    const event = new Event("drop", { bubbles: true, cancelable: true })
+    Object.defineProperty(event, "dataTransfer", { value: { getData: () => JSON.stringify({ projectId: "p1", sessionId: "first" }) } })
+    await act(async () => section.dispatchEvent(event))
     expect(updateProject).not.toHaveBeenCalled()
-    act(() => source.dispatchEvent(new Event("pointerdown", { bubbles: true })))
-    act(() => source.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 1 })))
-    expect(source.getAttribute("aria-expanded")).toBe("false")
   })
 
-  it("clears rejection on target exit and preserves newer drop feedback", () => {
-    const { updateProject } = setup()
-    const source = container.querySelector<HTMLButtonElement>('[data-section-id="' + lotusA + '"] button')!
-    const own = container.querySelector('[data-project-drop="p1"]')!
-    const foreign = container.querySelector('[data-project-drop="p2"]')!
-    const values = new Map<string, string>()
-    const dataTransfer = { types: [SIDEBAR_SECTION_DRAG_TYPE], setData: (type: string, value: string) => values.set(type, value), getData: (type: string) => values.get(type) ?? "", effectAllowed: "", dropEffect: "" }
-    const drag = (element: Element, type: string, relatedTarget: EventTarget | null = null) => {
-      const event = new Event(type, { bubbles: true, cancelable: true })
-      Object.defineProperties(event, { dataTransfer: { value: dataTransfer }, relatedTarget: { value: relatedTarget } })
-      act(() => element.dispatchEvent(event))
-    }
-    const rejected = () => container.textContent!.includes("暂不支持跨项目移动")
-    drag(source, "dragstart")
-    drag(foreign, "dragover")
-    expect(rejected()).toBe(true)
-    // Moving across descendants is still inside the rejected target.
-    drag(foreign, "dragleave", foreign.querySelector("button"))
-    expect(rejected()).toBe(true)
-    // ChatView is outside this Sidebar: clear immediately, without waiting for dragend.
-    drag(foreign, "dragleave", document.body)
-    expect(rejected()).toBe(false)
-    drag(foreign, "dragover")
-    drag(own, "dragover")
-    expect(rejected()).toBe(false)
-    expect(own.getAttribute("data-drop-active")).toBe("true")
-    // A late leave with a missing relatedTarget must not erase the new highlight.
-    drag(foreign, "dragleave")
-    expect(own.getAttribute("data-drop-active")).toBe("true")
-    drag(own, "dragleave", container.querySelector("input"))
-    expect(own.getAttribute("data-drop-active")).toBeNull()
-    drag(foreign, "dragover")
-    drag(container.querySelector("aside")!, "dragleave", document.body)
-    expect(rejected()).toBe(false)
-    drag(foreign, "dragover")
-    drag(source, "dragend")
-    expect(rejected()).toBe(false)
+  it("rejects an internal drop after its pickup revision has changed", async () => {
+    const { snapshots, updateProject } = setup()
+    snapshots.p1 = { ...snapshots.p1, revision: 2 }
+    act(() => useAppStore.setState({ projects: structuredClone(snapshots) }))
+    const target = container.querySelector('[data-section-project="p1"][data-project-section="lotus"]')!
+    await drop(target, { projectId: "p1", sessionId: "first" }, SIDEBAR_SESSION_DRAG_TYPE, 1)
+    await drop(target, { projectId: "p1", sectionId: lotusA }, SIDEBAR_SECTION_DRAG_TYPE, 1)
     expect(updateProject).not.toHaveBeenCalled()
     expect(props.onSelect).not.toHaveBeenCalled()
   })
@@ -697,15 +676,29 @@ describe("Sidebar server sections", () => {
     expect(container.querySelector('[role="alert"]')?.textContent).toContain("Zenith · 分区未保存")
   })
 
-  it("temporarily disables same-Project moves and drops while a save awaits confirmation", async () => {
+  it("keeps busy drag handles mounted and saving feedback outside the session list while awaiting confirmation", async () => {
     const { updateProject } = setup()
     const persist = updateProject.getMockImplementation()!
     let confirm!: () => Promise<void>
     updateProject.mockImplementationOnce((...args) => new Promise<ProjectManifest>((resolve) => {
       confirm = async () => { resolve(await persist(...args)) }
     }))
+    const firstHandle = row("first")!.querySelector<HTMLButtonElement>("[data-sidebar-drag-handle]")!
+    const secondHandle = row("second")!.querySelector<HTMLButtonElement>("[data-sidebar-drag-handle]")!
+    const foreignHandle = row("foreign")!.querySelector<HTMLButtonElement>("[data-sidebar-drag-handle]")!
+    const projectGroup = container.querySelector('[data-sidebar-project="p1"]')!
+    const sessionList = projectGroup.closest(".overflow-y-auto")!
     click("Move first to lotus")
-    expect(container.querySelector('[role="status"]')?.textContent).toContain("正在保存分区")
+    const saving = container.querySelector('[role="status"]')!
+    expect(saving.textContent).toContain("正在保存分区")
+    expect(sessionList.contains(saving)).toBe(false)
+    expect(projectGroup.getAttribute("aria-busy")).toBe("true")
+    expect(row("first")!.querySelector("[data-sidebar-drag-handle]")).toBe(firstHandle)
+    expect(firstHandle.isConnected).toBe(true)
+    expect(firstHandle.disabled).toBe(true)
+    expect(row("second")!.querySelector("[data-sidebar-drag-handle]")).toBe(secondHandle)
+    expect(secondHandle.disabled).toBe(true)
+    expect(foreignHandle.disabled).toBe(false)
     expect([...container.querySelectorAll("button")].some((item) => item.textContent === "Move second to lotus")).toBe(false)
     const target = container.querySelector('[data-section-project="p1"][data-project-section="lotus"]')!
     expect(target.getAttribute("aria-disabled")).toBe("true")
@@ -714,6 +707,9 @@ describe("Sidebar server sections", () => {
     await act(async () => { await confirm() })
     expect(target.contains(row("first"))).toBe(true)
     expect(target.getAttribute("aria-disabled")).toBe("false")
+    expect(projectGroup.getAttribute("aria-busy")).toBe("false")
+    expect(row("second")!.querySelector("[data-sidebar-drag-handle]")).toBe(secondHandle)
+    expect(secondHandle.disabled).toBe(false)
     expect(container.querySelector('[role="status"]')).toBeNull()
     expect(button("Move second to lotus")).toBeDefined()
   })
@@ -744,6 +740,7 @@ describe("Sidebar server sections", () => {
     expect(row("first")).toBeNull()
     search("first")
     expect(row("first")).not.toBeNull()
+    expect(container.querySelector('[data-section-project="p1"]')?.getAttribute("aria-disabled")).toBe("false")
     search("")
     expect(row("first")).toBeNull()
     render({ currentSessionId: "first" })

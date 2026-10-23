@@ -1,5 +1,7 @@
+import { THEME_COLORS } from "./colorTokens"
+
 export const USER_MESSAGE_COLOR_PRESETS = [
-  { id: "jade", light: "#e4eee9", dark: "#263e34" },
+  { id: "jade", light: THEME_COLORS.light["user-message-background"], dark: THEME_COLORS.dark["user-message-background"] },
   { id: "slate", light: "#e9edef", dark: "#2d343b" },
   { id: "blue", light: "#e4edf4", dark: "#293b4a" },
   { id: "violet", light: "#eeebf5", dark: "#3b334a" },
@@ -38,5 +40,5 @@ export function getUserMessageColors(
     }
   }
   const preset = USER_MESSAGE_COLOR_PRESETS.find((item) => item.id === selection) ?? USER_MESSAGE_COLOR_PRESETS[0]
-  return { background: preset[mode], foreground: mode === "dark" ? "#e8eeea" : "#24312c" }
+  return { background: preset[mode], foreground: THEME_COLORS[mode]["user-message-foreground"] }
 }

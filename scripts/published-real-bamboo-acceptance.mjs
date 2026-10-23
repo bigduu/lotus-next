@@ -20,6 +20,7 @@ import {
 import { writeAcceptedIdentity } from "./release-acceptance-identity.mjs"
 import { verifySourceReceipt } from "./release-source.mjs"
 import { publicationConfigPath } from "./release-browser.mjs"
+import { verificationConfigPath } from "./verification-browser.mjs"
 
 export const PUBLISHED_ARTIFACT_IDENTITY = Object.freeze({
   schemaVersion: 1,
@@ -187,6 +188,13 @@ const parsePackResult = (stdout) => {
 export const acceptanceArguments = (arguments_) => {
   const args = [...arguments_]
   let browserRoot
+  if (args.at(-2) === "--verification-browser") {
+    const directory = args.pop()
+    args.pop()
+    if (!path.isAbsolute(directory)) throw new Error("Verification browser directory must be absolute.")
+    if (args.length !== 1 || args[0] !== "--current-source") throw new Error("Verification browser is only for current-source checks without accepted identity.")
+    return { artifactMode: "current-source", browserRoot: { kind: "verification", directory } }
+  }
   if (args.at(-2) === "--publication-browser") {
     browserRoot = args.pop()
     args.pop()
@@ -204,6 +212,10 @@ export const acceptanceArtifactMode = (arguments_) => acceptanceArguments(argume
 // A split publication checkout must use its verified external wrapper. Ordinary
 // in-repository acceptance retains the original config and runner unchanged.
 export const acceptanceConfigArgument = (browserRoot, sourceRoot = repositoryRoot, env = process.env) => {
+  if (isRecord(browserRoot) && browserRoot.kind === "verification") {
+    if (Object.keys(browserRoot).sort().join(",") !== "directory,kind") throw new Error("Invalid verification browser selector.")
+    return `--config=${verificationConfigPath(sourceRoot, browserRoot.directory, env)}`
+  }
   if (!browserRoot) {
     if (env.LOTUS_NEXT_ACCEPTANCE_SOURCE_DIR || env.LOTUS_NEXT_RELEASE_SOURCE_RECEIPT) {
       throw new Error("Publication acceptance requires the verified publication browser.")
@@ -506,6 +518,10 @@ export const runAcceptanceMode = ({ mode, tls }, artifact, browserRoot) => {
 }
 
 export const runAcceptanceSurfaces = ({ tls, artifact, browserRoot, acceptedIdentityPath }, runMode = runAcceptanceMode) => {
+  if (isRecord(browserRoot) && browserRoot.kind === "verification" &&
+      (acceptedIdentityPath || artifact.identity.packageVersion !== "0.0.0")) {
+    throw new Error("Verification browser cannot write a publication acceptance identity.")
+  }
   for (const mode of acceptanceRunPlan(tls)) runMode(mode, artifact, browserRoot)
   if (acceptedIdentityPath) {
     const accepted = writeAcceptedIdentity(acceptedIdentityPath, artifact.identity)

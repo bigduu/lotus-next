@@ -5,7 +5,9 @@ import { apiClient } from "@services/api"
 vi.mock("@services/api", () => ({
   apiClient: {
     put: vi.fn(),
+    putOnce: vi.fn(),
     get: vi.fn(),
+    getOnce: vi.fn(),
     post: vi.fn(),
     delete: vi.fn(),
     fetchRaw: vi.fn(),
@@ -26,7 +28,7 @@ it("binds every browser action to one encoded Bamboo session and epoch", async (
     can_go_back: false,
     can_go_forward: false,
   }
-  vi.mocked(apiClient.put).mockResolvedValue(state)
+  vi.mocked(apiClient.putOnce).mockResolvedValue(state)
   vi.mocked(apiClient.post).mockResolvedValue(state)
   const signal = new AbortController().signal
 
@@ -45,7 +47,7 @@ it("binds every browser action to one encoded Bamboo session and epoch", async (
     dialog_id: "a".repeat(24), expected_epoch: 7, accept: true, text: "",
   })
 
-  expect(apiClient.put).toHaveBeenCalledWith("browser/sessions/session%2Fa", {}, { signal })
+  expect(apiClient.putOnce).toHaveBeenCalledWith("browser/sessions/session%2Fa", {}, { signal })
   expect(apiClient.post).toHaveBeenNthCalledWith(
     1,
     "browser/sessions/session%2Fa/navigate",
@@ -91,6 +93,27 @@ it("binds every browser action to one encoded Bamboo session and epoch", async (
     "browser/sessions/session%2Fa/dialog",
     { dialog_id: "a".repeat(24), expected_epoch: 7, accept: true, text: "" },
   )
+})
+
+it("keeps explicit default opens mode-free and preserves a reported clean scope", async () => {
+  const state = {
+    page_epoch: 4,
+    frame_seq: 0,
+    url: "about:blank",
+    title: "",
+    viewport: { width: 640, height: 480 },
+    can_go_back: false,
+    can_go_forward: false,
+    profile_mode: "clean" as const,
+    storage_shared: false,
+  }
+  vi.mocked(apiClient.putOnce).mockResolvedValue(state)
+  const signal = new AbortController().signal
+
+  expect(await service.open("chat/clean", signal)).toBe(state)
+  expect(apiClient.putOnce).toHaveBeenCalledExactlyOnceWith("browser/sessions/chat%2Fclean", {}, { signal })
+  expect(apiClient.post).not.toHaveBeenCalled()
+  expect(apiClient.delete).not.toHaveBeenCalled()
 })
 
 it("creates and navigates a browser tab in one request", async () => {

@@ -3,7 +3,7 @@ import type { ComposerInputHandle } from "@/components/chat/ComposerEditor"
 import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { useMarkSessionRead } from "@/lib/sessionReadState"
 import { useMediaQuery } from "@shared/hooks/useMediaQuery"
-import { useEffect, useId, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react"
 import { createPortal } from "react-dom"
 import {
   ChevronDown,
@@ -34,7 +34,7 @@ import { agentClient } from "@services/chat/AgentService"
 import { commandService, type CommandItem } from "@services/command"
 import { prepareWorkflowSelection, workflowUnavailableReason, type TypedWorkflowDraft, type WorkflowSelection } from "@services/command/workflowCatalog"
 import { getErrorMessage } from "@services/api/errors"
-import type { ChildProgress } from "@shared/store/appStore/slices/executionStateSlice/types"
+import { useSubAgentView } from "@/hooks/useSubAgentView"
 import { useProviderStore } from "@shared/store/appStore/slices/providerSlice"
 import { getRuntimeModelIds, resolveNewChatModelRef } from "@shared/types/providerConfig"
 import type { ReasoningEffortSelection } from "@shared/utils/reasoningEffort"
@@ -50,7 +50,8 @@ import { MessageList } from "@/components/app/MessageList"
 import { useGuidanceQueue } from "@/hooks/useGuidanceQueue"
 import { useTicketWork } from "@/hooks/useTicketWork"
 import { useTicketIngress } from "@/hooks/useTicketIngress"
-import { TicketWorkPanel } from "@/components/chat/TicketWorkPanel"
+import { TicketWorkAvailability } from "@/components/chat/TicketWorkAvailability"
+import { LazyTicketWorkPanel } from "@/components/chat/LazyTicketWorkPanel"
 import { SupervisorOverview } from "@/components/chat/SupervisorOverview"
 import { isDefaultSupervisor } from "@/lib/supervisor"
 import type { PendingRequest as TicketRequest } from "@services/tickets/types"
@@ -60,12 +61,14 @@ import { Toasts, type ToastNotice } from "@/components/app/Toasts"
 import { ImageLightbox } from "@/components/app/ImageLightbox"
 import { peekPendingTemplatePrompt } from "@/lib/taskTemplates"
 import { ContextUsageRing } from "@/components/app/ContextUsageRing"
+import { ContextCompressionNotice } from "@/components/app/ContextCompressionNotice"
 import { ModelEffortPicker } from "@/components/chat/ModelEffortPicker"
 import { NewSessionPermissionControl, PermissionModeControl } from "@/components/chat/PermissionModeControl"
 import { RootOrchestrationControl } from "@/components/chat/RootOrchestrationControl"
 import { useWorkflowCatalog } from "@/components/chat/useWorkflowCatalog"
 import { WorkflowSelectionControl } from "@/components/chat/WorkflowSelectionControl"
 import { WorkflowRunsDialog } from "@/components/chat/WorkflowRunsDialog"
+import { ConversationClearDialog } from "@/components/chat/ConversationClearDialog"
 import {
   Select,
   SelectContent,
@@ -83,6 +86,10 @@ import {
 } from "@/lib/sessionFileChanges"
 import { getFileChangePayloadDiffStats } from "@shared/utils/resultFormatters"
 import { describeRunFailure } from "@/lib/runFailureGuidance"
+import { extractDiagnosticId, type RunDiagnosticsSubject } from "@/lib/runDiagnosticId"
+import { RunDiagnosticsEntry } from "@/components/chat/RunDiagnosticsEntry"
+import { SessionCompatibilityNotice } from "./SessionCompatibilityNotice"
+import { isSessionExecutionBlocked, observeSessionExecutionConflict } from "@services/chat/sessionExecutionCompatibility"
 
 /** Secondary (split) pane config — a slim header with its own session picker. */
 type SecondaryConfig = {
@@ -225,8 +232,11 @@ export function ChatPane({
     streamingReasoning,
     liveSegments,
     streamStatus,
+    contextCompression,
     outputRate,
     pendingUserText,
+    pendingUserImages = [],
+    pendingUserMessages,
     sending,
     submissionPending,
     select,
@@ -253,6 +263,7 @@ export function ChatPane({
   // `sending` belongs to this hook instance, while `streaming` is already
   // scoped to the session rendered by this pane.  Do not let a run from the
   // session we just left turn a blank/new conversation into a Stop button.
+  const executionBlocked = chat.executionCompatibility?.blocked === true
   const currentlyRunning = currentChat?.isRunning === true || (sending && streaming !== null)
   const visibleSendFailure = sendFailure?.sessionId === currentSessionId ? sendFailure : null
   const persistedRunError = !visibleSendFailure
@@ -267,8 +278,24 @@ export function ChatPane({
       ? currentChat.lastRunError?.trim() || persistedRunError
       : null)
   const runFailureGuidance = generationFailed ? describeRunFailure(runErrorDetail) : null
+  const runDiagnosticsSubject = useMemo<RunDiagnosticsSubject>(() => ({
+    sessionId: currentSessionId,
+    localOperationId: visibleSendFailure?.operationId ?? null,
+    failureKind: visibleSendFailure?.kind ?? "generation-failed",
+    diagnosticId: extractDiagnosticId(runErrorDetail),
+    errorBinding: runErrorDetail,
+    liveDiagnostic: visibleSendFailure?.kind === "generation-failed" ? visibleSendFailure.diagnostic : null,
+  }), [currentSessionId, visibleSendFailure, runErrorDetail])
+
   const queue = useGuidanceQueue(currentSessionId, currentlyRunning)
-  const tickets = useTicketWork(currentSessionId)
+  const rootAuthority = useRootOrchestrationMode(currentSessionId, currentChat?.kind)
+  // Invalidate cached Work eligibility on mode/lifecycle changes. This key is
+  // only a local read fence; initialization revision still comes from scope GET.
+  const workAuthorityKey = `${rootAuthority.authority?.birthToken ?? ""}:${rootAuthority.authority?.epoch ?? ""}:${rootAuthority.authority?.enabled ?? ""}`
+  // Settle the first identity read before starting a scoped read. Later
+  // unchanged metadata refreshes must not withdraw Work or cancel its reads.
+  const deferWorkRead = rootAuthority.loading && !rootAuthority.authority && !rootAuthority.unsafe
+  const tickets = useTicketWork(currentSessionId, workAuthorityKey, rootAuthority.unsafe, deferWorkRead)
   const ticketIngress = useTicketIngress(currentSessionId)
   const ticketScope = tickets.state?.current.scope
   const pendingTicketMessage = ticketIngress.hasPending(currentSessionId)
@@ -279,6 +306,15 @@ export function ChatPane({
   const [selectedWorkId, setSelectedWorkId] = useState<string | null>(null)
   const workFocusScope = useMemo(() => ({ currentSessionId }), [currentSessionId])
   const [workFocusRequest, setWorkFocusRequest] = useState<{ scope: object } | null>(null)
+  const focusWorkPanel = useCallback(() => {
+    if (!workFocusRequest || workFocusRequest.scope !== workFocusScope || pageVisible === false) return
+    const overview = workPanelTarget?.querySelector<HTMLElement>('[data-testid="ticket-work-overview"]')
+    if (!overview) return
+    const active = document.activeElement
+    // Preserve a newer composer focus even when it was set programmatically.
+    if (!active?.matches('input, textarea, [contenteditable="true"]') || workPanelTarget?.contains(active)) overview.focus()
+    setWorkFocusRequest(null)
+  }, [workFocusRequest, workFocusScope, workPanelTarget, pageVisible])
   const openTicketWork = (workId: string | null) => {
     setSelectedWorkId(workId)
     onOpenWork?.()
@@ -290,28 +326,23 @@ export function ChatPane({
       setWorkFocusRequest(null)
       return
     }
-    // The optional Workbench can arrive after the first animation frame.
-    // Retry when its portal target is committed, but honor newer user intent.
+    // Retain main's late portal/cancellation behavior; lazy details also call
+    // this same focus handler once their canonical overview is mounted.
     const cancel = () => setWorkFocusRequest(null)
     document.addEventListener("pointerdown", cancel, true)
     document.addEventListener("keydown", cancel, true)
-    const frame = requestAnimationFrame(() => {
-      const overview = workPanelTarget?.querySelector<HTMLElement>('[data-testid="ticket-work-overview"]')
-      if (!overview) return
-      overview.focus()
-      setWorkFocusRequest(null)
-    })
+    const frame = requestAnimationFrame(focusWorkPanel)
     return () => {
       cancelAnimationFrame(frame)
       document.removeEventListener("pointerdown", cancel, true)
       document.removeEventListener("keydown", cancel, true)
     }
-  }, [workFocusRequest, workFocusScope, workPanelTarget, pageVisible, ticketScope?.binding.supervisor_session_id])
+  }, [workFocusRequest, workFocusScope, workPanelTarget, pageVisible, ticketScope?.binding.supervisor_session_id, focusWorkPanel])
   const replayReferences = ticketIngress.references(currentSessionId)
   const visibleTicketReference = pendingTicketMessage && replayReferences?.in_reply_to
     ? { work_id: replayReferences.thread_id ?? replayReferences.in_reply_to, id: replayReferences.in_reply_to }
     : ticketReference
-  useEffect(() => { setTicketReference(null); setSelectedWorkId(null) }, [currentSessionId])
+  useEffect(() => { setWorkFocusRequest(null); setTicketReference(null); setSelectedWorkId(null) }, [currentSessionId])
   // The secondary chat hook remains mounted when its pane closes. Read state
   // follows the rendered pane, including the same breakpoint as its md:flex.
   const splitVisible = useMediaQuery("(min-width: 768px)")
@@ -369,7 +400,6 @@ export function ChatPane({
   const [workflowPicker, setWorkflowPicker] = useState<"composer" | "environment" | null>(null)
   const [removedWorkflow, setRemovedWorkflow] = useState<{ draft: TypedWorkflowDraft; revision: number } | null>(null)
   const [workflowError, setWorkflowError] = useState<string | null>(null)
-  const rootAuthority = useRootOrchestrationMode(currentSessionId, currentChat?.kind)
   const [rootModeConflict, setRootModeConflict] = useState<string | null>(null)
   useEffect(() => { setRootModeConflict(null) }, [currentSessionId])
   const [attachments, setAttachments] = useState<Attachment[]>([])
@@ -435,23 +465,8 @@ export function ChatPane({
 
   const skills = useAppStore(useShallow((s) => s.skills))
   const subAgents = useAppStore(useShallow((s) => selectChildren(currentSessionId)(s)))
-  // Sub-agents to display: persistent child sessions from the index (survive
-  // reload, navigable) overlaid with live progress (status/preview during a run).
-  const mergedSubAgents = useMemo(() => {
-    const out: Record<string, ChildProgress> = {}
-    for (const c of chats) {
-      if (currentSessionId && c.parentSessionId === currentSessionId) {
-        out[c.id] = {
-          title: c.title || c.subagentType || undefined,
-          status: c.isRunning ? "running" : "completed",
-        }
-      }
-    }
-    for (const [id, p] of Object.entries(subAgents)) {
-      out[id] = { ...out[id], ...p }
-    }
-    return out
-  }, [chats, currentSessionId, subAgents])
+  const subAgentView = useSubAgentView(currentChat, chats, subAgents, pageVisible && (!secondary || splitVisible))
+  const mergedSubAgents = subAgentView.agents
   const providerSnapshot = useProviderStore((s) => s.providerSnapshot)
   const providerStatus = useProviderStore((s) => s.providerStatus)
   const modelProviderId = currentChat?.config?.model_ref?.provider
@@ -531,6 +546,7 @@ export function ChatPane({
   const slashQuery = !menusDismissed && draft.startsWith("/") ? draft.slice(1) : null
   const catalogState = useWorkflowCatalog(currentSessionId, slashQuery !== null || workflowPicker !== null)
   const [workflowRunsOpen, setWorkflowRunsOpen] = useState(false)
+  const [clearTarget, setClearTarget] = useState<{ id: string; title: string } | null>(null)
   const workflowDisabled = submissionPending || currentlyRunning || queue.hasUnconfirmed || rootMode.unsafe
   // A hidden Environment must not strand its open editor (phone/workbench changes).
   useEffect(() => {
@@ -663,7 +679,7 @@ export function ChatPane({
 
   const submit = () => {
     // Keep an in-flight admission from capturing or clearing a second draft.
-    if (historyBlocked || submissionPending || modelSaving || queue.busy || ticketIngress.busy || rootMode.busy || goalRequestActive.current) return
+    if (executionBlocked || isSessionExecutionBlocked(currentSessionId) || historyBlocked || submissionPending || modelSaving || queue.busy || ticketIngress.busy || rootMode.busy || goalRequestActive.current) return
     if (semanticComposer && !tickets.canSendIngress) { showToast(uiText("ticket_the_ticket_connection_or_write_permission_is__c3da124f"), "error"); return }
     if (rootSessionUnsafe()) {
       setRootModeConflict(uiText("the_root_permission_change_is_unconfirmed_sending_and_e_a75a6b4f"))
@@ -706,10 +722,12 @@ export function ChatPane({
             if (currentDraftKeyRef.current === draftKey) showToast(uiText("root_permissions_are_unconfirmed_the_goal_was_saved_but_bd40481a"), "error")
             return
           }
+          if (isSessionExecutionBlocked(sessionId)) return
           try { await agentClient.execute(sessionId, currentChat?.config?.model) }
-          catch (error) { if (currentDraftKeyRef.current === draftKey) showToast(uiText("goal_saved_send_a_message_to_continue_ba844fbc"), "error", getErrorMessage(error)) }
+          catch (error) { observeSessionExecutionConflict(sessionId, error); if (currentDraftKeyRef.current === draftKey) showToast(uiText("goal_saved_send_a_message_to_continue_ba844fbc"), "error", getErrorMessage(error)) }
         }
       }).catch((error) => {
+        observeSessionExecutionConflict(sessionId, error)
         if (currentDraftKeyRef.current === draftKey) showToast(uiText("could_not_save_the_goal_your_command_is_preserved_pleas_ac375306"), "error", getErrorMessage(error))
       }).finally(() => { goalRequestActive.current = false; setGoalSaving(false) })
       return
@@ -913,6 +931,8 @@ export function ChatPane({
   }
   const selectSubAgentInPane = onSelectSubAgent ?? secondary?.onPickSession ?? select
   const overflowItems = [
+    ...(currentSessionId ? [{ label: uiText("conversation_clear_action"), icon: <RotateCcw className="size-4" />,
+      onClick: () => setClearTarget({ id: currentSessionId, title: currentChat?.title || currentSessionId }) }] : []),
     ...(currentSessionId ? [{ label: uiText("workflow_run_title"), icon: <BookText className="size-4" />,
       onClick: () => setWorkflowRunsOpen(true) }] : []),
     ...(currentSessionId && messages.length > 0
@@ -1056,6 +1076,13 @@ export function ChatPane({
         data-session-drop-target={secondary ? "secondary" : "main"}
         {...sessionDrop.handlers}
           >
+        <SessionCompatibilityNotice state={chat.executionCompatibility} />
+        {pendingApproval && chat.approvalCompatibility?.blocked ? (
+          <section aria-label={uiText("subagent_approval_request_4321e83b")}>
+            <p className="px-3 pt-2 text-sm font-medium">{uiText("subagent_approval_request_4321e83b")}</p>
+            <SessionCompatibilityNotice state={chat.approvalCompatibility} />
+          </section>
+        ) : null}
         {currentChat?.planMode ? (
           <div className="border-b bg-primary/10 px-3 py-1.5 text-center text-xs font-medium text-primary">
             {uiText("plan_mode_7cbb85b7")} {(currentChat.planMode as { status?: string }).status
@@ -1087,7 +1114,7 @@ export function ChatPane({
             ) : null}
             {currentlyRunning ? <Button variant="outline" size="sm" onClick={stop}>{uiText("stop_generation_9ad0aac3")}</Button> : null}
           </div>
-        ) : !currentSessionId && !secondary && !sending && !pendingUserText ? (
+        ) : !currentSessionId && !secondary && !sending && !pendingUserText && pendingUserImages.length === 0 && !pendingUserMessages?.length ? (
           // Main-pane home view: session shortcuts + quick-start templates.
           // The composer below stays live — a template only prefills it.
           <HomeDashboard
@@ -1104,6 +1131,8 @@ export function ChatPane({
           onScroll={handleScroll}
           messages={messages}
           mergedSubAgents={mergedSubAgents}
+          subAgentError={subAgentView.error}
+          onRefreshSubAgents={() => { void subAgentView.refresh() }}
           sending={currentlyRunning}
           latestRunFinished={
             !currentlyRunning &&
@@ -1116,13 +1145,17 @@ export function ChatPane({
           liveSegments={liveSegments}
           streamStatus={streamStatus}
           pendingUserText={pendingUserText}
+          pendingUserImages={pendingUserImages}
+          pendingUserMessages={pendingUserMessages}
           contentShiftX={messageContentShift}
           forking={forking}
+          executionBlocked={executionBlocked}
           onSelectSubAgent={(childId) => {
             selectSubAgentInPane(childId)
           }}
           onPreviewImage={setPreview}
           onRegenerate={() => {
+            if (executionBlocked) return
             if (rootSessionUnsafe()) { setRootModeConflict(uiText("the_root_permission_change_is_unconfirmed_regeneration__134c0a98")); return }
             if (modelSaving) { showToast(uiText("saving_model_please_wait_04e35c5e")); return }
             void regenerate()
@@ -1130,6 +1163,7 @@ export function ChatPane({
           onFork={handleFork}
           onDelete={(id) => void deleteMessage(id)}
           onEditMessage={(id, text) => {
+            if (executionBlocked) return
             if (rootSessionUnsafe()) { setRootModeConflict(uiText("the_root_permission_change_is_unconfirmed_editing_and_r_45b99ff9")); return }
             if (modelSaving) { showToast(uiText("saving_model_please_wait_04e35c5e")); return }
             void editMessage(id, text)
@@ -1157,6 +1191,8 @@ export function ChatPane({
               </p>
               {rootMode.unsafe && generationFailed ? (
                 <p className="mt-1 text-xs">{uiText("the_root_permission_change_is_unconfirmed_your_message__fd9a5b04")}</p>
+              ) : visibleSendFailure?.kind === "submission-unconfirmed" && visibleSendFailure.rejectionCode === "session_project_running_conflict" ? (
+                <p className="mt-1 text-xs">{uiText("session_source_conflict_action")}</p>
               ) : runFailureGuidance ? (
                 <p className="mt-1 text-xs">{runFailureGuidance.action}</p>
               ) : null}
@@ -1169,11 +1205,12 @@ export function ChatPane({
                 </details>
               ) : null}
             </div>
+            {!currentlyRunning ? <RunDiagnosticsEntry key={currentChat?.updatedAt} subject={runDiagnosticsSubject} /> : null}
             {rootMode.unsafe ? null : generationFailed ? (
               <Button
                 size="sm"
                 variant="secondary"
-                disabled={sending || modelSaving}
+                disabled={sending || modelSaving || executionBlocked}
                 onClick={() => {
                   if (rootSessionUnsafe()) { setRootModeConflict(uiText("the_root_permission_change_is_unconfirmed_generation_re_bdcf3a6c")); return }
                   if (visibleSendFailure?.kind === "generation-failed") {
@@ -1193,12 +1230,12 @@ export function ChatPane({
 
         {queue.error && <div role="alert" className="mx-auto mb-1 w-[calc(100%-1.5rem)] max-w-6xl rounded-lg border border-destructive/40 px-3 py-2 text-xs text-destructive">{queue.error}</div>}
         {workPanelTarget ? createPortal(ticketScope?.binding.supervisor_session_id === currentSessionId ? (
-          <TicketWorkPanel controller={tickets} selectedWorkId={selectedWorkId} onShowAll={() => openTicketWork(null)} onReference={tickets.canSendIngress && ticketScope.capabilities?.message_references_v1 === true && !pendingTicketMessage ? (request) => {
+          <LazyTicketWorkPanel key={currentSessionId} onReady={focusWorkPanel} controller={tickets} selectedWorkId={selectedWorkId} onShowAll={() => openTicketWork(null)} onReference={tickets.canSendIngress && ticketScope.capabilities?.message_references_v1 === true && !pendingTicketMessage ? (request) => {
             setTicketReference(request)
             onWorkReference?.()
             requestAnimationFrame(() => composerInputRef.current?.focus())
           } : undefined} />
-        ) : <p role="status" className="p-4 text-sm text-muted-foreground">{tickets.negotiated ? uiText("supervisor_work_unavailable") : uiText("loading_4927a53b")}</p>, workPanelTarget) : null}
+        ) : <TicketWorkAvailability availability={tickets.availability} refreshing={tickets.refreshing} canRefresh={tickets.canRefresh} onRefresh={() => void tickets.refresh()} canInitialize={tickets.canInitialize} initializing={tickets.initializing} initializationError={tickets.initializationError} onInitialize={() => void tickets.initialize()} />, workPanelTarget) : null}
         {semanticComposer && visibleTicketReference ? <div className="mx-4 mb-2 flex items-center gap-2 text-xs" data-testid="ticket-reference">
           <span>{uiText("ticket_reference", { title: tickets.state?.works[visibleTicketReference.work_id]?.ticket.contract.title ?? uiText("supervisor_work_tab") })}</span>
           <button type="button" className="underline" disabled={pendingTicketMessage} onClick={() => setTicketReference(null)}>{uiText("ticket_clear_reference_b2e538a2")}</button>
@@ -1224,12 +1261,14 @@ export function ChatPane({
             </div>
           )}
           <div className="shrink-0" hidden={historyBlocked} inert={historyBlocked} data-history-composer-blocked={historyBlocked}>
+          <ContextCompressionNotice feedback={contextCompression} />
           <Composer
           draft={draft}
           draftKey={draftKey}
           contentShiftX={messageContentShift}
           outputRate={outputRate}
           onDraftChange={setDraft}
+          executionBlocked={executionBlocked}
           onSubmit={submit}
           onStop={stop}
           sending={currentlyRunning}
@@ -1371,6 +1410,8 @@ export function ChatPane({
       </div>
 
       <Toasts forking={forking} toast={toast} onDismiss={() => setToast(null)} onRestoreFocus={() => { if (pageVisible !== false && !historyBlocked) composerInputRef.current?.focus() }} />
+      {clearTarget ? <ConversationClearDialog key={clearTarget.id} sessionId={clearTarget.id} title={clearTarget.title}
+        onClose={() => setClearTarget(null)} /> : null}
       {workflowRunsOpen && currentSessionId && pageVisible !== false ? <WorkflowRunsDialog key={currentSessionId}
         sessionId={currentSessionId} sessionTitle={currentChat?.title || currentSessionId} onClose={() => setWorkflowRunsOpen(false)} /> : null}
 
@@ -1385,9 +1426,10 @@ export function ChatPane({
         </div>
       ) : null}
 
-      {pendingApproval ? (
-        <ApprovalDialog a={pendingApproval} onRespond={(ok) => void respondApproval(ok)} />
-      ) : pendingQuestion ? (
+      {pendingApproval && !chat.approvalCompatibility?.blocked ? (
+        <ApprovalDialog a={pendingApproval} onRespond={(ok) => void respondApproval(ok)}
+          submitting={chat.approvalSubmitting} error={chat.approvalError} />
+      ) : !executionBlocked && pendingQuestion ? (
         <QuestionDialog q={pendingQuestion} onAnswer={(t) => void answerQuestion(t)}
           loading={questionLoading} submitting={questionSubmitting} unavailable={questionUnavailable}
           error={questionError} canRetry={questionCanRetry}

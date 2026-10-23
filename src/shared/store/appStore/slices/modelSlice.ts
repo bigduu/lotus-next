@@ -6,6 +6,7 @@ import { useBambooConfigStore } from "@shared/store/bambooConfigStore";
 import type { AppState } from "../";
 
 let fetchModelsInFlight: Promise<void> | null = null;
+let modelLoadRevision = 0;
 
 export interface ModelSlice {
   // Model Management State
@@ -17,6 +18,8 @@ export interface ModelSlice {
 
   // Actions
   fetchModels: () => Promise<void>;
+  /** Publish saved runtime IDs locally, invalidating earlier catalog-backed reads. */
+  setSavedModelOptions: (models: string[]) => void;
   setSelectedModel: (modelId: string) => void;
   loadConfigModel: () => Promise<void>;
 }
@@ -28,6 +31,17 @@ export const createModelSlice: StateCreator<AppState, [], [], ModelSlice> = (set
   isLoadingModels: false,
   modelsError: null,
   configModel: undefined,
+
+  setSavedModelOptions: (models) => {
+    modelLoadRevision += 1;
+    fetchModelsInFlight = null;
+    const admitted = [...new Set(models)].sort();
+    set((state) => ({
+      models: admitted,
+      selectedModel: state.selectedModel && admitted.includes(state.selectedModel) ? state.selectedModel : undefined,
+      configModel: undefined, isLoadingModels: false, modelsError: null,
+    }));
+  },
 
   // Model Management Actions
   setSelectedModel: (modelId) => {
@@ -55,12 +69,14 @@ export const createModelSlice: StateCreator<AppState, [], [], ModelSlice> = (set
       return fetchModelsInFlight;
     }
 
-    fetchModelsInFlight = (async () => {
+    const revision = ++modelLoadRevision;
+    const request = (async () => {
       set({ isLoadingModels: true, modelsError: null });
       try {
         // Check setup status before fetching models
         try {
           const setupStatus = await serviceFactory.getSetupStatus();
+          if (revision !== modelLoadRevision) return;
           if (!setupStatus.is_complete) {
             debugLog("[ModelSlice]", "Setup not complete, skipping model fetch");
             set({
@@ -76,7 +92,9 @@ export const createModelSlice: StateCreator<AppState, [], [], ModelSlice> = (set
           // Continue with fetch if setup status check fails
         }
 
+        if (revision !== modelLoadRevision) return;
         const availableModels = await modelService.getModels();
+        if (revision !== modelLoadRevision) return;
         set((state) => {
           const currentSelected = state.selectedModel;
 
@@ -103,6 +121,7 @@ export const createModelSlice: StateCreator<AppState, [], [], ModelSlice> = (set
           console.warn("No models available from service");
         }
       } catch (err) {
+        if (revision !== modelLoadRevision) return;
         const errorMessage = err instanceof Error ? err.message : String(err);
         console.error("Failed to fetch models:", err);
 
@@ -126,14 +145,15 @@ export const createModelSlice: StateCreator<AppState, [], [], ModelSlice> = (set
           modelsError: errorMessage,
         }));
       } finally {
-        set({ isLoadingModels: false });
+        if (revision === modelLoadRevision) set({ isLoadingModels: false });
       }
     })();
+    fetchModelsInFlight = request;
 
     try {
-      await fetchModelsInFlight;
+      await request;
     } finally {
-      fetchModelsInFlight = null;
+      if (fetchModelsInFlight === request) fetchModelsInFlight = null;
     }
   },
 });

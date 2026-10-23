@@ -128,6 +128,10 @@ const applyChange = (change: ChangeEvent): void => {
   const store = useAppStore.getState();
   const sessionId = change.session_id ?? event.session_id;
 
+  if (event.type === "session_cleared" && sessionId) {
+    store.reconcileClearedConversation(sessionId);
+  }
+
   // Server-side preference-gated notifications → surface as a browser
   // notification when the user isn't actively watching that session.
   if (event.type === "notification") {

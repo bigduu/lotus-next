@@ -1,4 +1,5 @@
 import { uiText, useUiLocale } from "@shared/i18n/ui"
+import i18n from "@shared/i18n"
 import {
   Fragment,
   useCallback,
@@ -26,15 +27,18 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { Textarea } from "@/components/ui/textarea"
+import { ConfirmationIcon } from "@/components/ui/confirmation-icon"
+import { useCopyFeedback } from "@/hooks/useCopyFeedback"
 import { AssistantMarkdown } from "@/components/chat/AssistantMarkdown"
 import { Reasoning } from "@/components/chat/Reasoning"
 import { ToolCalls } from "@/components/chat/ToolCalls"
 import { ProcessActivity } from "@/components/chat/ProcessActivity"
+import { groupSubAgents } from "./subAgentGroups"
 import { SubAgents } from "@/components/chat/SubAgents"
 import { cn } from "@/lib/utils"
 import type { Message } from "@shared/types/chatMessages"
 import type { ChildProgress } from "@shared/store/appStore/slices/executionStateSlice/types"
-import type { LiveSegment } from "@/hooks/useChat"
+import type { LiveSegment, PendingUserMessageView } from "@/hooks/useChat"
 
 // Synthesize Message-shaped rows from a live tools segment so the in-run
 // display reuses the exact ToolCalls rendering (grouping/expansion) that
@@ -56,8 +60,9 @@ function liveToolMessages(seg: Extract<LiveSegment, { kind: "tools" }>): Message
         role: "tool",
         type: "tool_result",
         toolCallId: c.toolCallId,
+        toolName: c.toolName,
         isError: c.status === "error",
-        result: { result: c.status === "error" ? c.error || c.output : c.output },
+        result: { tool_name: c.toolName, display_preference: "Default", result: c.status === "error" ? c.error || c.output : c.output },
         images: c.images?.map((image, index) => ({
           id: `${c.toolCallId}-image-${index}`,
           base64: image.data,
@@ -281,16 +286,6 @@ function renderItemKey(item: RenderItem, index: number): string {
   return item.key || `activity-${index}`
 }
 
-function findSpawnItemIndex(items: RenderItem[]): number {
-  return items.findLastIndex((item) => item.kind === "process" && item.parts.some((part) =>
-    part.kind === "tools" && part.items.some((message) =>
-      (message as { toolCalls?: { toolName?: string }[] }).toolCalls?.some((call) =>
-        /task|sub.?agent|spawn/i.test(call.toolName || ""),
-      ),
-    ),
-  ))
-}
-
 function buildHistoryEntries(items: RenderItem[]): HistoryEntry[] {
   return items.map((item, itemIndex) => ({ key: renderItemKey(item, itemIndex), item, itemIndex }))
 }
@@ -328,7 +323,7 @@ function assignRef<T>(ref: Ref<T>, value: T | null): void {
 }
 
 const MESSAGE_ACTION_BUTTON =
-  "items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50"
+  "items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
 const MESSAGE_ACTION_SIZE = { width: 28, height: 28 }
 
 function MessageActions({
@@ -338,6 +333,7 @@ function MessageActions({
   sending,
   forking,
   onEdit,
+  executionBlocked,
   onRegenerate,
   onFork,
   onDelete,
@@ -348,27 +344,42 @@ function MessageActions({
   sending: boolean
   forking: boolean
   onEdit: () => void
+  executionBlocked: boolean
   onRegenerate: () => void
   onFork: () => void
   onDelete: () => void
 }) {
   useUiLocale()
-  const copy = () => void navigator.clipboard?.writeText(text)
+  const feedback = useCopyFeedback(text, messageId)
+  const copied = feedback.status === "copied"
+  const copy = () => void feedback.copy()
 
   return (
     <div
       data-message-actions={messageId}
-      className="flex shrink-0 items-center gap-0.5 opacity-100 transition-opacity focus-within:opacity-100 group-hover:opacity-100 md:opacity-0"
+      data-copy-state={feedback.status}
+      className={cn(
+        "relative flex shrink-0 items-center gap-0.5 opacity-100 transition-opacity focus-within:opacity-100 group-hover:opacity-100",
+        feedback.status === "idle" && "md:opacity-0",
+      )}
     >
+      <span role="status" className="sr-only">
+        {copied ? <span key={feedback.sequence}>{uiText("copied_8f6f8d97")}</span> : null}
+      </span>
+      {feedback.status === "error" ? (
+        <span role="alert" className="absolute bottom-full end-0 z-10 mb-1 w-max max-w-48 rounded-md bg-popover px-2 py-1 text-xs text-popover-foreground shadow-sm">
+          {String(i18n.t("components.markdown.copyFailed"))}
+        </span>
+      ) : null}
       <button
         type="button"
         onClick={copy}
         className={`${MESSAGE_ACTION_BUTTON} hidden md:inline-flex`}
         style={MESSAGE_ACTION_SIZE}
         aria-label={uiText("copy_63d90d97")}
-        title={uiText("copy_63d90d97")}
+        title={copied ? uiText("copied_8f6f8d97") : uiText("copy_63d90d97")}
       >
-        <Copy className="size-3.5" />
+        <ConfirmationIcon confirmed={copied} sequence={feedback.sequence} className="size-3.5" />
       </button>
       <button
         type="button"
@@ -390,7 +401,8 @@ function MessageActions({
             aria-label={uiText("more_message_actions_cecaef80")}
             title={uiText("more_message_actions_cecaef80")}
           >
-            <MoreHorizontal className="size-3.5" />
+            <MoreHorizontal className="hidden size-3.5 md:block" />
+            <ConfirmationIcon confirmed={copied} sequence={feedback.sequence} fallback={MoreHorizontal} className="size-3.5 md:hidden" />
           </button>
         </DropdownMenuTrigger>
         <DropdownMenuContent
@@ -407,11 +419,11 @@ function MessageActions({
             {uiText("fork_from_here_28321cb9")}</DropdownMenuItem>
           <DropdownMenuSeparator className="md:hidden" />
           {isUser ? (
-            <DropdownMenuItem onClick={onEdit}>
+            <DropdownMenuItem disabled={executionBlocked} onClick={onEdit}>
               <Pencil />
               {uiText("edit_and_resend_f857c444")}</DropdownMenuItem>
           ) : (
-            <DropdownMenuItem disabled={sending} onClick={onRegenerate}>
+            <DropdownMenuItem disabled={sending || executionBlocked} onClick={onRegenerate}>
               <RotateCcw />
               {uiText("regenerate_3221a042")}</DropdownMenuItem>
           )}
@@ -431,6 +443,8 @@ export function MessageList({
   onScroll,
   messages,
   mergedSubAgents,
+  subAgentError,
+  onRefreshSubAgents,
   sending,
   latestRunFinished,
   streaming,
@@ -439,8 +453,11 @@ export function MessageList({
   liveSegments,
   streamStatus,
   pendingUserText,
+  pendingUserImages = [],
+  pendingUserMessages,
   contentShiftX = 0,
   readOnly = false,
+  executionBlocked = false,
   forking,
   onSelectSubAgent,
   onPreviewImage,
@@ -454,6 +471,8 @@ export function MessageList({
   onScroll: () => void
   messages: Message[]
   mergedSubAgents: Record<string, ChildProgress>
+  subAgentError?: string | null
+  onRefreshSubAgents?: () => void
   sending: boolean
   /** The latest persisted run completed normally (`stop_reason = finished`). */
   latestRunFinished: boolean
@@ -463,10 +482,13 @@ export function MessageList({
   liveSegments: LiveSegment[]
   streamStatus: string | null
   pendingUserText: string | null
+  pendingUserImages?: readonly { url?: string; base64?: string; type?: string }[]
+  pendingUserMessages?: readonly PendingUserMessageView[]
   /** Horizontal transcript offset used while a floating panel occupies the end side. */
   contentShiftX?: number
   /** Suppress transcript actions for message-only child previews. */
   readOnly?: boolean
+  executionBlocked?: boolean
   forking: boolean
   onSelectSubAgent: (id: string) => void
   onPreviewImage: (src: string) => void
@@ -478,6 +500,9 @@ export function MessageList({
   useUiLocale()
   const [editingMsg, setEditingMsg] = useState<{ id: string; text: string } | null>(null)
 
+  const pendingUsers = pendingUserMessages ?? (pendingUserText?.trim() || pendingUserImages.length
+    ? [{ operationId: 0, text: pendingUserText ?? "", images: pendingUserImages }] : [])
+  const hasPendingUser = pendingUsers.length > 0
   const renderItems = useMemo(() => buildRenderItems(messages), [messages])
   const liveItems = useMemo(
     () => buildLiveItems(liveSegments, streaming, streamingReasoning, sending || streamingActive, streamStatus),
@@ -490,6 +515,8 @@ export function MessageList({
   const historyEntries = useMemo(() => buildHistoryEntries(renderItems), [renderItems])
   const [openProcessKeys, setOpenProcessKeys] = useState<Set<string>>(() => new Set())
   const [openToolKeys, setOpenToolKeys] = useState<Set<string>>(() => new Set())
+  // Keep child choices above virtual rows and the live/history handoff.
+  const [openSubAgentIds, setOpenSubAgentIds] = useState<Set<string>>(() => new Set())
   const historyEntriesRef = useRef(historyEntries)
   const openProcessKeysRef = useRef(openProcessKeys)
   const openToolKeysRef = useRef(openToolKeys)
@@ -536,13 +563,17 @@ export function MessageList({
   const previousExpansionStateRef = useRef({
     openProcessKeys,
     openToolKeys,
+    openSubAgentIds,
   })
   useLayoutEffect(() => {
     const previous = previousExpansionStateRef.current
-    previousExpansionStateRef.current = { openProcessKeys, openToolKeys }
+    previousExpansionStateRef.current = { openProcessKeys, openToolKeys, openSubAgentIds }
     const changedKeys = new Set<string>()
     collectChangedKeys(previous.openProcessKeys, openProcessKeys, changedKeys)
     collectChangedKeys(previous.openToolKeys, openToolKeys, changedKeys)
+    const changedChildren = new Set<string>()
+    collectChangedKeys(previous.openSubAgentIds, openSubAgentIds, changedChildren)
+    for (const id of changedChildren) changedKeys.add(`subagent-${id}`)
     if (changedKeys.size === 0) return
 
     const rows = scrollElementRef.current?.querySelectorAll<HTMLDivElement>(
@@ -556,7 +587,7 @@ export function MessageList({
       const index = virtualizer.indexFromElement(row)
       virtualizer.resizeItem(index, row.offsetHeight || estimateSize(index))
     }
-  }, [estimateSize, openProcessKeys, openToolKeys, virtualizer])
+  }, [estimateSize, openProcessKeys, openToolKeys, openSubAgentIds, virtualizer])
 
   const setProcessOpen = useCallback((key: string, open: boolean) => {
     setOpenProcessKeys((current) => withSetMembership(current, key, open))
@@ -565,14 +596,25 @@ export function MessageList({
     setOpenToolKeys((current) => withSetMembership(current, key, open))
   }, [])
 
-  // Anchor the sub-agent block after the tool-group that spawned them, so it
-  // scrolls up with the conversation instead of staying pinned at the bottom.
-  const spawnItemIdx = useMemo(() => {
-    if (Object.keys(mergedSubAgents).length === 0) return -1
-    return findSpawnItemIndex(renderItems)
-  }, [renderItems, mergedSubAgents])
-  const liveSpawnItemIdx = useMemo(() => Object.keys(mergedSubAgents).length
-    ? findSpawnItemIndex(liveItems) : -1, [liveItems, mergedSubAgents])
+  const setSubAgentExpanded = useCallback((id: string, open: boolean) => {
+    setOpenSubAgentIds((current) => withSetMembership(current, id, open))
+  }, [])
+
+  const subAgentGroups = useMemo(() => groupSubAgents([...renderItems, ...liveItems]
+    .flatMap((item) => item.kind === "process" ? [{ key: item.key,
+      messages: item.parts.flatMap((part) => part.kind === "tools" ? part.items : []),
+    }] : []), mergedSubAgents), [renderItems, liveItems, mergedSubAgents])
+
+  const renderImages = (imgs: readonly { url?: string; base64?: string; type?: string }[] | undefined) => imgs?.length ? (
+    <div className="mb-1.5 flex flex-wrap gap-1.5">
+      {imgs.map((im, i) => {
+        const src = im.url || `data:${im.type || "image/png"};base64,${im.base64}`
+        return <img key={i} src={src} alt=""
+          className="max-h-48 cursor-zoom-in rounded-xl transition-opacity hover:opacity-90"
+          onClick={() => onPreviewImage(src)} />
+      })}
+    </div>
+  ) : null
 
   const renderItem = (
     it: RenderItem,
@@ -580,7 +622,7 @@ export function MessageList({
     options?: { live?: boolean },
   ) => {
     if (it.kind === "process") {
-      const active = options?.live ? it.active : idx === renderItems.length - 1 && sending && !pendingUserText && !latestRunFinished && liveItems.length === 0
+      const active = options?.live ? it.active : idx === renderItems.length - 1 && sending && !hasPendingUser && !latestRunFinished && liveItems.length === 0
       const reasoning = it.parts.findLast((part) => part.kind === "reasoning")
       const latestTool = it.parts.findLast((part) => part.kind === "tools" && part.runningCallIds?.size)
         ?? it.parts.findLast((part) => part.kind === "tools")
@@ -648,14 +690,8 @@ export function MessageList({
           </ProcessActivity>
         </div>
       )
-      if (!options?.live && idx === spawnItemIdx) {
-        return (
-          <Fragment key={`spawn-${idx}`}>
-            {process}
-            <SubAgents agents={mergedSubAgents} onOpen={onSelectSubAgent} />
-          </Fragment>
-        )
-      }
+      const children = subAgentGroups.byOrigin.get(it.key)
+      if (children) return <Fragment key={it.key}>{process}<SubAgents agents={children} onOpen={onSelectSubAgent} expandedIds={openSubAgentIds} onExpandedChange={setSubAgentExpanded} /></Fragment>
       return process
     }
     const m = it.m
@@ -677,7 +713,7 @@ export function MessageList({
               onChange={(e) => setEditingMsg({ id: m.id, text: e.target.value })}
               onKeyDown={(e) => {
                 if (e.key === "Escape") setEditingMsg(null)
-                if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+                if (!executionBlocked && e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
                   onEditMessage(m.id, editingMsg.text)
                   setEditingMsg(null)
                 }
@@ -690,6 +726,7 @@ export function MessageList({
                 {uiText("cancel_2cd0f3be")}</Button>
               <Button
                 size="sm"
+                disabled={executionBlocked}
                 onClick={() => {
                   onEditMessage(m.id, editingMsg.text)
                   setEditingMsg(null)
@@ -710,6 +747,7 @@ export function MessageList({
         forking={forking}
         onEdit={() => setEditingMsg({ id: m.id, text })}
         onRegenerate={onRegenerate}
+        executionBlocked={executionBlocked}
         onFork={() => onFork(m.id)}
         onDelete={() => onDelete(m.id)}
       />
@@ -734,22 +772,7 @@ export function MessageList({
               : ASSISTANT_MESSAGE_SURFACE,
           )}
         >
-          {imgs?.length ? (
-            <div className="mb-1.5 flex flex-wrap gap-1.5">
-              {imgs.map((im, i) => {
-                const src = im.url || `data:${im.type || "image/png"};base64,${im.base64}`
-                return (
-                  <img
-                    key={i}
-                    src={src}
-                    alt=""
-                    className="max-h-48 cursor-zoom-in rounded-xl transition-opacity hover:opacity-90"
-                    onClick={() => onPreviewImage(src)}
-                  />
-                )
-              })}
-            </div>
-          ) : null}
+          {renderImages(imgs)}
           {isUser ? (
             <>{m.role === "user" && "inReplyTo" in m && m.inReplyTo ? <div className="mb-1 text-xs" data-testid="message-request-reference">{uiText("ticket_referenced_request__7209ca36")}{m.inReplyTo}</div> : null}{text}</>
           ) : text.trim() ? (
@@ -776,7 +799,11 @@ export function MessageList({
           transition: "left 200ms ease-out",
         }}
       >
-        {messages.length === 0 && !streaming && !pendingUserText && liveSegments.length === 0 && (
+        {subAgentError ? <div role="status" className="text-xs text-muted-foreground" data-subagent-error>
+          {subAgentError}{onRefreshSubAgents ? <Button variant="ghost" size="sm" onClick={onRefreshSubAgents}>{uiText("subagent_refresh")}</Button> : null}
+        </div> : null}
+        <SubAgents agents={subAgentGroups.unplaced} originUnconfirmed onOpen={onSelectSubAgent} expandedIds={openSubAgentIds} onExpandedChange={setSubAgentExpanded} />
+        {messages.length === 0 && !streaming && !hasPendingUser && liveSegments.length === 0 && (
           <div className="flex flex-col items-center gap-2 py-20 text-center">
             <BrandMark className="size-10 text-primary" />
             <p className="text-sm text-muted-foreground">{uiText("start_a_new_conversation_bab6ab18")}</p>
@@ -814,25 +841,19 @@ export function MessageList({
           </div>
         ) : null}
 
-        {pendingUserText ? (
-          <div className="mt-2 flex justify-end">
-            <div data-pending-user-message data-message-role="user" className="user-message-surface max-w-[85%] overflow-hidden whitespace-pre-wrap rounded-2xl px-3.5 py-2 text-base leading-7 [overflow-wrap:anywhere]">
-              {pendingUserText}
+        {pendingUsers.map((pending) => (
+          <div key={pending.operationId} className="mt-2 flex justify-end">
+            <div data-pending-user-message data-pending-operation={pending.operationId} data-message-role="user" className="user-message-surface max-w-[85%] overflow-hidden whitespace-pre-wrap rounded-2xl px-3.5 py-2 text-base leading-7 [overflow-wrap:anywhere]">
+              {renderImages(pending.images)}
+              {pending.text}
             </div>
           </div>
-        ) : null}
-
-        {spawnItemIdx === -1 && liveSpawnItemIdx === -1 ? (
-          <SubAgents agents={mergedSubAgents} onOpen={onSelectSubAgent} />
-        ) : null}
+        ))}
 
         {/* The live projection uses the same message-only activity boundaries. */}
         {liveItems.map((item, index) => (
           <Fragment key={renderItemKey(item, index)}>
             {renderItem(item, index, { live: true })}
-            {index === liveSpawnItemIdx && spawnItemIdx === -1 ? (
-              <SubAgents agents={mergedSubAgents} onOpen={onSelectSubAgent} />
-            ) : null}
           </Fragment>
         ))}
       </div>

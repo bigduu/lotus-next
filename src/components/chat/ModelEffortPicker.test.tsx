@@ -112,6 +112,21 @@ describe("ModelEffortPicker effort", () => {
     expect(descriptions.map((element) => element?.textContent)).toEqual(["gpt-5.6-sol", "最大"])
   })
 
+  it("keeps complete long model and mode names in the trigger description and tooltip", () => {
+    const model = "synthetic-provider.analysis-model-with-a-long-responsive-name"
+    const picker = renderPicker({ model, models: [model], value: "max", allowUltra: true, thinkingMode: "standard" })
+    const descriptions = () => picker.trigger().getAttribute("aria-describedby")!.split(/\s+/)
+      .map((id) => document.getElementById(id)!.textContent)
+    expect(descriptions()).toEqual([model, "最大"])
+    expect(picker.trigger().title).toBe(`${model} · 最大`)
+    picker.rerender({ thinkingMode: "ultra" })
+    expect(descriptions()).toEqual([model, "Ultra · 编排"])
+    expect(picker.trigger().title).toBe(`${model} · Ultra · 编排`)
+    picker.rerender({ thinkingMode: null })
+    expect(descriptions()).toEqual([model, "未确认"])
+    expect(picker.trigger().title).toBe(`${model} · 未确认`)
+  })
+
   it("previews a drag and commits once on release while the trigger waits for authoritative props", () => {
     const picker = renderPicker()
     const trigger = picker.trigger()
@@ -205,12 +220,9 @@ describe("ModelEffortPicker effort", () => {
     expect(range().value).toBe("0")
   })
 
-  it("reserves the Ultra description and localized trigger label through preview and confirmation", () => {
+  it("keeps the Ultra description stable through preview and authoritative confirmation", () => {
     const picker = renderPicker({ value: "max", allowUltra: true, thinkingMode: "standard" })
-    const reserve = picker.trigger().querySelector(".effort-label-reserve")!
-    expect(reserve.getAttribute("aria-hidden")).toBe("true")
-    expect(reserve.querySelector('[data-label="Ultra · 编排"]')).not.toBeNull()
-    expect(reserve.textContent).toBe("")
+    expect(picker.trigger().textContent).not.toContain("Ultra")
     open(picker.trigger())
     const description = document.querySelector('.model-effort-panel p[aria-hidden]')!
     expect(description.getAttribute("aria-hidden")).toBe("true")
@@ -229,7 +241,7 @@ describe("ModelEffortPicker effort", () => {
     pointerEvent(range(), "pointerup")
     expect(picker.props.onChange).toHaveBeenCalledExactlyOnceWith("ultra")
     picker.rerender({ thinkingMode: "ultra" })
-    expect(picker.trigger().querySelector(".effort-label-reserve")).toBe(reserve)
+    expect(picker.trigger().title).toContain("Ultra · 编排")
     picker.rerender({ thinkingMode: "standard" })
     expect(document.querySelector('.model-effort-panel p[aria-hidden]')).toBe(description)
     expect(description.getAttribute("aria-hidden")).toBe("true")
@@ -264,6 +276,22 @@ describe("ModelEffortPicker effort", () => {
 })
 
 describe("ModelEffortPicker models", () => {
+  it("keeps composition Enter in model search without choosing a model or effort", async () => {
+    const picker = renderPicker()
+    open(picker.trigger())
+    await openModels()
+    act(() => search().dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true })))
+    changeInput(search(), "gpt")
+    act(() => search().dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", code: "Enter", isComposing: true, bubbles: true })))
+    expect(picker.props.onModelChange).not.toHaveBeenCalled()
+    expect(picker.props.onChange).not.toHaveBeenCalled()
+    expect(search().value).toBe("gpt")
+    expect(visibleModels()).toEqual(["gpt-6-sol", "gpt-5.6-sol"])
+    act(() => search().dispatchEvent(new CompositionEvent("compositionend", { bubbles: true })))
+    act(() => modelOption("gpt-5.6-sol").click())
+    expect(picker.props.onModelChange).toHaveBeenCalledExactlyOnceWith("gpt-5.6-sol")
+  })
+
   it("searches case-insensitively and waits for model props after selecting an option", async () => {
     const picker = renderPicker()
     open(picker.trigger())

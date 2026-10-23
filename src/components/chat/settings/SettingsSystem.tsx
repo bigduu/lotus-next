@@ -18,8 +18,8 @@ import { SectionApp } from "./system/SectionApp"
  * 代理 / 记忆 / 子代理 / 工具 / 访问密码 / Hooks / 会话维护 / 应用.
  *
  * The tab itself stays visible in 简洁 (simple) experience mode for 应用.
- * Model limits now has its own top-level tab; advanced config/hooks/sessions
- * sections continue to hide until 高级 mode.
+ * Conversation clear stays available in simple mode; bulk cleanup and developer
+ * storage reset remain advanced controls.
  */
 export function SettingsSystem() {
   useUiLocale()
@@ -58,9 +58,9 @@ export function SettingsSystem() {
       {isAdvanced ? (
         <>
           <SectionAccessPassword saveSection={saveSection} configReady={!!config} />
-          <SectionSessions />
         </>
       ) : null}
+      <SectionSessions advanced={isAdvanced} />
       <SectionApp />
     </div>
   )

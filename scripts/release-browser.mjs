@@ -9,7 +9,7 @@ import { Readable, Transform } from "node:stream"
 import { pipeline } from "node:stream/promises"
 import { fileURLToPath, pathToFileURL } from "node:url"
 
-export const ACCEPTED_SOURCE_SHA = "ad9ab8ffb9502fa538c9f36e112dfd4b1a1e8801"
+export const ACCEPTED_SOURCE_SHA = "992fb8d3d346ebb3bb546239ccc9339b9380aa29"
 export const BROWSER_VERSION = "157.0.8090.0"
 export const BROWSER_PINS = Object.freeze(Object.fromEntries(Object.entries({
   linux64: {
@@ -93,6 +93,15 @@ const outsideSource = (directory, sourceRoot) => {
   const relative = path.relative(sourceRoot, directory)
   assert(relative === ".." || relative.startsWith(`..${path.sep}`), "Browser controls must stay outside the source checkout")
 }
+export const assertLockedBrowserInputs = (sourceRoot) => {
+  for (const original of Object.values(originals)) {
+    regularFile(path.join(sourceRoot, original.filename))
+    assert.equal(fileSha256(path.join(sourceRoot, original.filename)), original.sha256, "Original config bytes changed")
+  }
+  for (const name of ["@playwright/test", "playwright", "playwright-core"]) {
+    assert.equal(JSON.parse(readFileSync(path.join(sourceRoot, "node_modules", name, "package.json"))).version, "1.62.1", "Use the original locked Playwright")
+  }
+}
 const context = (sourceRoot, browserRoot, env = process.env) => {
   assert.equal(realpathSync(sourceRoot), sourceRoot, "Source root must be canonical")
   assert(env.RUNNER_TEMP && /^[a-f0-9]{40}$/u.test(env.PUBLICATION_WORKFLOW_SHA ?? ""), "Missing publication workflow identity")
@@ -105,13 +114,7 @@ const context = (sourceRoot, browserRoot, env = process.env) => {
   outsideSource(browserRoot, sourceRoot)
   outsideSource(helperPath, sourceRoot)
   assert.equal(run("git", ["-C", sourceRoot, "rev-parse", "HEAD"]), ACCEPTED_SOURCE_SHA, "Source checkout drift")
-  for (const original of Object.values(originals)) {
-    regularFile(path.join(sourceRoot, original.filename))
-    assert.equal(fileSha256(path.join(sourceRoot, original.filename)), original.sha256, "Original config bytes changed")
-  }
-  for (const name of ["@playwright/test", "playwright", "playwright-core"]) {
-    assert.equal(JSON.parse(readFileSync(path.join(sourceRoot, "node_modules", name, "package.json"))).version, "1.62.1", "Use the original locked Playwright")
-  }
+  assertLockedBrowserInputs(sourceRoot)
   return { sourceRoot, sourceSha: ACCEPTED_SOURCE_SHA, workflowSha: env.PUBLICATION_WORKFLOW_SHA,
     runId: env.GITHUB_RUN_ID, runAttempt: env.GITHUB_RUN_ATTEMPT, controlSha256: fileSha256(helperPath) }
 }

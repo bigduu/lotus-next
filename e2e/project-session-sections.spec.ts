@@ -1,4 +1,5 @@
 import { expect, test, type Locator, type Page, type WebSocketRoute } from "@playwright/test"
+import { closeSettings, selectSettingsCategory, settingsSurface } from "./support/settingsNavigation.ts"
 import { actorSnapshotFixture } from "../src/test/fixtures/actorSnapshot.js"
 import type { PatchProjectRequest, ProjectManifest, ProjectSidebar } from "../src/services/project/types.js"
 import { installArtifactRuntime, standaloneScenario } from "./support/artifactRuntime.js"
@@ -355,8 +356,149 @@ test("named sections stay inside their project and menu moves persist in the bac
   await testInfo.attach("Sessions retained after section removal", { path: removedScreenshot, contentType: "image/png" })
 })
 
-test("desktop drag accepts an empty section and rejects cross-project and forged identities", async ({ page }, testInfo) => {
-  test.skip(testInfo.project.name !== "desktop-chromium", "native pointer drag on desktop; menus cover touch viewports")
+const handle = (scope: Locator, kind: "session" | "section", id: string) => scope.locator(`[data-sidebar-drag-handle="${kind}:${id}"]:not([inert])`)
+const targetHeader = (target: Locator) => target.locator("[data-sidebar-section-header]").first()
+async function pointerDrop(page: Page, source: Locator, target: Locator, reject = false) {
+  await source.scrollIntoViewIfNeeded()
+  const start = (await source.boundingBox())!
+  const end = (await target.boundingBox())!
+  await page.mouse.move(start.x + start.width / 2, start.y + start.height / 2)
+  await page.mouse.down()
+  await page.mouse.move(start.x + start.width / 2 + 8, start.y + start.height / 2 + 8)
+  await expect(source).toHaveAttribute("data-sidebar-dragging", "true")
+  await page.mouse.move(end.x + end.width / 2, end.y + end.height / 2, { steps: 12 })
+  if (!reject) await expect(target.locator("xpath=ancestor-or-self::*[@data-sidebar-drop-target][1]")).toHaveAttribute("data-drop-active", "true")
+  await page.mouse.up()
+}
+
+async function keyboardPickup(page: Page, source: Locator) {
+  await expect(source).toBeVisible()
+  await expect(source).toBeEnabled()
+  await expect(source).not.toHaveAttribute("data-dnd-dragging", "true")
+  await source.focus()
+  await page.keyboard.press("Space")
+  await expect(source).toHaveAttribute("data-sidebar-dragging", "true")
+}
+async function keyboardDrop(page: Page, source: Locator, target: Locator, before = false) {
+  await expect(source).toBeVisible()
+  await expect(source).toBeEnabled()
+  const start = (await source.boundingBox())!
+  const end = (await target.boundingBox())!
+  await keyboardPickup(page, source)
+  const destinationY = end.y + end.height * (before ? 0.25 : 0.5)
+  const steps = Math.round((destinationY - start.y - start.height / 2) / 10)
+  for (let index = 0; index < Math.abs(steps); index += 1) await page.keyboard.press(steps < 0 ? "ArrowUp" : "ArrowDown")
+  await expect(target.locator("xpath=ancestor-or-self::*[@data-sidebar-drop-target][1]")).toHaveAttribute("data-drop-active", "true")
+  await page.keyboard.press("Space")
+}
+
+async function sidebarGeometryFrames(scope: Locator, sessionId: string, count: number) {
+  return scope.evaluate(async (projectElement, { sessionId, count }) => {
+    const browser = projectElement.ownerDocument.defaultView!
+    const sidebar = projectElement.closest("aside")!
+    const list = projectElement.closest(".overflow-y-auto")!
+    const measure = (element: { getBoundingClientRect(): { x: number; y: number; width: number; height: number } }) => {
+      const { x, y, width, height } = element.getBoundingClientRect()
+      return { x, y, width, height }
+    }
+    const samples = []
+    for (let frame = 0; frame < count; frame += 1) {
+      await new Promise<void>((resolve) => browser.requestAnimationFrame(() => resolve()))
+      const source = projectElement.querySelector(`[data-sidebar-session="${sessionId}"]`)!
+      samples.push({
+        rects: {
+          source: measure(source),
+          label: measure(source.querySelector("button")!),
+          peer: measure(projectElement.querySelector('[data-sidebar-session="alpha-search"]')!),
+          header: measure(projectElement.querySelector("[data-project-drop]")!),
+        },
+        scrollTop: list.scrollTop,
+        feedbackElements: sidebar.querySelectorAll("[data-dnd-dragging], [data-dnd-placeholder]").length,
+      })
+    }
+    return samples
+  }, { sessionId, count })
+}
+
+type SidebarGeometry = Awaited<ReturnType<typeof sidebarGeometryFrames>>[number]
+function expectStableSidebarGeometry(samples: SidebarGeometry[], baseline: SidebarGeometry) {
+  for (const sample of samples) {
+    for (const key of ["source", "label", "peer", "header"] as const) {
+      for (const dimension of ["x", "y", "width", "height"] as const) {
+        expect(Math.abs(sample.rects[key][dimension] - baseline.rects[key][dimension]), `${key}.${dimension}`).toBeLessThanOrEqual(0.5)
+      }
+    }
+    expect(Math.abs(sample.scrollTop - baseline.scrollTop)).toBeLessThanOrEqual(0.5)
+    expect(sample.feedbackElements).toBe(0)
+  }
+}
+
+for (const theme of ["light", "dark"] as const) {
+  for (const gesture of ["pointer", "keyboard"] as const) {
+    test(`sidebar release stays still during a pending ${gesture} move in ${theme}`, async ({ page }, testInfo) => {
+      test.skip(testInfo.project.name !== "desktop-chromium", "paired-theme desktop release geometry")
+      await page.emulateMedia({ colorScheme: theme, reducedMotion: gesture === "keyboard" ? "reduce" : "no-preference" })
+      await page.addInitScript((mode) => localStorage.setItem("copilot_ui_theme_v1", mode), theme)
+      const { observation, projectWrites, backend } = await installSectionFixture(page)
+      let release!: () => void
+      const pending = new Promise<void>((resolve) => { release = resolve })
+      let pendingRequests = 0
+      await page.route(`**/api/v1/projects/${alphaId}`, async (route) => {
+        if (route.request().method() === "PATCH") { pendingRequests += 1; await pending }
+        await route.fallback()
+      })
+      try {
+        await page.goto(standaloneScenario.entryUrl)
+        await openSidebar(page, false)
+        expect(await page.locator("html").evaluate((element) => element.classList.contains("dark"))).toBe(theme === "dark")
+        await expect(page.locator("aside").getByText("Bodhi", { exact: true })).toHaveCSS("font-weight", theme === "dark" ? "500" : "600")
+        const alpha = project(page, alphaId)
+        const source = handle(alpha, "session", "alpha-unsectioned")
+        await expect(source).toBeVisible()
+        await source.scrollIntoViewIfNeeded()
+        const sourceElement = await source.elementHandle()
+        const [before] = await sidebarGeometryFrames(alpha, "alpha-unsectioned", 1)
+        const destination = targetHeader(section(alpha, alphaEmpty))
+        if (gesture === "pointer") await pointerDrop(page, source, destination)
+        else await keyboardDrop(page, source, destination)
+        await expect.poll(() => pendingRequests).toBe(1)
+        await expect(alpha).toHaveAttribute("aria-busy", "true")
+        await expect(source).toHaveCount(1)
+        await expect(source).toBeDisabled()
+        expect(await sourceElement!.evaluate((element) => element.isConnected)).toBe(true)
+        await expect(handle(alpha, "session", "alpha-search")).toBeDisabled()
+        await expect(handle(project(page, betaId), "session", "beta-session")).toBeEnabled()
+        expect(assignment(backend, alphaId, "alpha-unsectioned")).toBe(null)
+        const pendingFrames = await sidebarGeometryFrames(alpha, "alpha-unsectioned", 12)
+        expectStableSidebarGeometry(pendingFrames, before)
+        const saving = page.locator("aside").getByRole("status").filter({ hasText: "正在保存分区" })
+        await expect(saving).toBeVisible()
+        expect(await saving.evaluate((element) => !!element.closest(".overflow-y-auto"))).toBe(false)
+        await testInfo.attach(`sidebar-pending-${gesture}-${theme}`, { body: await page.screenshot(), contentType: "image/png" })
+        release()
+        await expect(row(section(alpha, alphaEmpty), "alpha-unsectioned")).toBeVisible()
+        await expect(alpha).toHaveAttribute("aria-busy", "false")
+        await expect(source).toBeEnabled()
+        if (gesture === "keyboard") await expect(source).toBeFocused()
+        const committedFrames = await sidebarGeometryFrames(alpha, "alpha-unsectioned", 12)
+        expectStableSidebarGeometry(committedFrames, committedFrames[0])
+        expect(projectWrites).toHaveLength(1)
+        expect(projectWrites[0]).toMatchObject({ projectId: alphaId, revision: '"1"', status: 200 })
+        await expect(saving).toHaveCount(0)
+        await testInfo.attach(`sidebar-release-geometry-${gesture}-${theme}`, {
+          body: JSON.stringify({ before, pendingFrames, committedFrames }), contentType: "application/json",
+        })
+        expect(observation.pageErrors).toEqual([])
+        expect(observation.consoleErrors).toEqual([])
+      } finally {
+        release()
+      }
+    })
+  }
+}
+
+test("internal pointer drag accepts empty sections and rejects cross-project and forged native identities", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop-chromium", "pointer acceptance; touch and keyboard have independent cases")
   const { observation, projectWrites, backend } = await installSectionFixture(page)
   await page.goto(standaloneScenario.entryUrl)
   await openSidebar(page, false)
@@ -366,32 +508,254 @@ test("desktop drag accepts an empty section and rejects cross-project and forged
   await expect(empty).toContainText("拖动会话到这里")
   const movable = row(alpha, "alpha-unsectioned")
   await expect(movable).toHaveAttribute("draggable", "true")
-  await movable.dragTo(empty)
+  await pointerDrop(page, handle(alpha, "session", "alpha-unsectioned"), targetHeader(empty))
   await expect(row(empty, "alpha-unsectioned")).toBeVisible()
   await expect.poll(() => assignment(backend, alphaId, "alpha-unsectioned")).toBe(alphaEmpty)
   const beforeCrossProject = structuredClone(backend.projects)
-  await row(beta, "beta-session").dragTo(empty)
+  await pointerDrop(page, handle(beta, "session", "beta-session"), targetHeader(empty), true)
   await expect(row(section(beta, "none"), "beta-session")).toBeVisible()
   expect(backend.projects).toEqual(beforeCrossProject)
-  // Check canonical session ownership as well as the declared drag project.
   await empty.evaluate((element, payload) => {
     const browser = element.ownerDocument.defaultView!
     const transfer = new browser.DataTransfer()
     transfer.setData("application/x-lotus-sidebar-session", JSON.stringify(payload))
     element.dispatchEvent(new browser.DragEvent("drop", { bubbles: true, dataTransfer: transfer }))
   }, { projectId: alphaId, sessionId: "beta-session" })
-  await empty.evaluate((element) => new Promise<void>((resolve) => {
-    const browser = element.ownerDocument.defaultView!
-    browser.requestAnimationFrame(() => browser.requestAnimationFrame(() => resolve()))
-  }))
   expect(backend.projects).toEqual(beforeCrossProject)
-  await expect(row(section(beta, "none"), "beta-session")).toBeVisible()
   await expect(row(empty, "beta-session")).toHaveCount(0)
   await page.reload()
   await expect(row(section(project(page, alphaId), alphaEmpty), "alpha-unsectioned")).toBeVisible()
-  await expect(row(section(project(page, betaId), "none"), "beta-session")).toBeVisible()
   expect(projectWrites).toHaveLength(1)
   expect(projectWrites[0]).toMatchObject({ projectId: alphaId, revision: '"1"', status: 200 })
+  const external = row(section(project(page, alphaId), alphaEmpty), "alpha-unsectioned")
+  await external.getByRole("button", { name: "Alpha movable", exact: true }).dragTo(page.locator('[data-chat-body="true"][data-session-drop-target="main"]'))
+  await expect(external.getByRole("button", { name: "Alpha movable", exact: true })).toHaveAttribute("aria-current", "page")
+  await expect(external).toHaveAttribute("data-session-project", alphaId)
+  expect(projectWrites).toHaveLength(1)
+  expect(observation.pageErrors).toEqual([])
+  expect(observation.consoleErrors).toEqual([])
+})
+
+test("loading the project drag chunk exposes readable inert rows before editable ownership is ready", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop-chromium", "delayed desktop code loading")
+  const { observation, projectWrites } = await installSectionFixture(page)
+  await page.addInitScript(() => localStorage.setItem("lotus.sidebar.grouping-mode.v1", "date"))
+  let release!: () => void
+  const pending = new Promise<void>((resolve) => { release = resolve })
+  let requested = false
+  await page.route("**/assets/SidebarProjectDrag-*.js", async (route) => {
+    requested = true
+    await pending
+    await route.fallback()
+  })
+  await page.goto(standaloneScenario.entryUrl)
+  const switcher = page.getByRole("button", { name: "切换为项目视图", exact: true })
+  await switcher.click()
+  await expect.poll(() => requested).toBe(true)
+  const loading = page.locator('aside [inert][aria-busy="true"]')
+  await expect(loading).toContainText("Alpha movable")
+  await loading.locator('[data-sidebar-session="alpha-unsectioned"] button').first().click({ force: true })
+  await expect(page.locator('[data-sidebar-session="all-surface-session"] [aria-current="page"]')).toBeVisible()
+  await loading.locator('[data-sidebar-session="alpha-unsectioned"] button[aria-haspopup="menu"]').click({ force: true })
+  await expect(page.getByRole("menu")).toHaveCount(0)
+  release()
+  await expect(loading).toHaveCount(0)
+  const movable = row(project(page, alphaId), "alpha-unsectioned")
+  await expect(handle(project(page, alphaId), "session", "alpha-unsectioned")).toBeVisible()
+  await movable.getByRole("button", { name: "会话操作", exact: true }).click()
+  await page.getByRole("menuitem", { name: "重命名", exact: true }).click()
+  const draft = project(page, alphaId).locator('input:not([placeholder])')
+  await draft.fill("Retained rename draft")
+  await expect(draft).toHaveValue("Retained rename draft")
+  await expect(draft).toBeFocused()
+  await draft.press("Escape")
+  expect(projectWrites).toHaveLength(0)
+  expect(observation.pageErrors).toEqual([])
+  expect(observation.consoleErrors).toEqual([])
+})
+
+test("keyboard internal moves restore connected focus and section order survives reload", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop-chromium", "desktop keyboard fixture")
+  const { observation, backend, projectWrites } = await installSectionFixture(page)
+  await page.goto(standaloneScenario.entryUrl)
+  await openSidebar(page, false)
+  const alpha = project(page, alphaId)
+  await keyboardDrop(page, handle(alpha, "session", "alpha-unsectioned"), targetHeader(section(alpha, alphaEmpty)))
+  await expect(row(section(alpha, alphaEmpty), "alpha-unsectioned")).toBeVisible()
+  await expect(handle(alpha, "session", "alpha-unsectioned")).toBeFocused()
+  await keyboardDrop(page, handle(alpha, "section", alphaInvestigation), targetHeader(section(alpha, alphaEmpty)), true)
+  await expect.poll(() => backend.projects[alphaId].sidebar!.sections.map((item) => item.id)).toEqual([alphaInvestigation, alphaEmpty])
+  expect(projectWrites).toHaveLength(2)
+  await page.reload()
+  await expect(project(page, alphaId).locator("[data-section-id]").nth(1)).toHaveAttribute("data-section-id", alphaInvestigation)
+  await page.screenshot({ path: testInfo.outputPath("internal-keyboard-order.png"), animations: "disabled" })
+  expect(observation.pageErrors).toEqual([])
+  expect(observation.consoleErrors).toEqual([])
+})
+
+test("internal drag cancels during initialization, navigation, search and global dialogs without stale listeners", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop-chromium", "desktop interruption fixture")
+  const { observation, projectWrites } = await installSectionFixture(page)
+  await page.goto(standaloneScenario.entryUrl)
+  await openSidebar(page, false)
+  const alpha = project(page, alphaId)
+  const source = handle(alpha, "session", "alpha-unsectioned")
+  await source.focus()
+  await page.keyboard.press("Space")
+  await page.keyboard.press("Escape")
+  await expect(source).not.toHaveAttribute("data-sidebar-dragging", "true")
+  await keyboardPickup(page, source)
+  await page.keyboard.press("Shift+F10")
+  await expect(page.getByRole("menu")).toBeVisible()
+  await expect(source).not.toHaveAttribute("data-sidebar-dragging", "true")
+  await page.keyboard.press("Escape")
+  await expect(page.getByRole("menu")).toHaveCount(0)
+  await keyboardPickup(page, source)
+  await page.keyboard.press("Meta+k")
+  await expect(page.getByRole("dialog")).toBeVisible()
+  await expect(source).not.toHaveAttribute("data-sidebar-dragging", "true")
+  await page.keyboard.press("Escape")
+  await keyboardPickup(page, source)
+  await row(alpha, "alpha-search").locator("button").first().click()
+  await expect(source).not.toHaveAttribute("data-sidebar-dragging", "true")
+  await keyboardPickup(page, source)
+  const search = page.getByPlaceholder("搜索会话")
+  await search.click()
+  await expect(source).not.toHaveAttribute("data-sidebar-dragging", "true")
+  await search.fill("Alpha")
+  await expect(search).toHaveValue("Alpha")
+  await expect(source).toHaveCount(0)
+  await search.fill("")
+  await expect(source).toBeVisible()
+  expect(projectWrites).toHaveLength(0)
+  await keyboardDrop(page, source, targetHeader(section(alpha, alphaEmpty)))
+  await expect(projectWrites).toHaveLength(1)
+  expect(observation.pageErrors).toEqual([])
+  expect(observation.consoleErrors).toEqual([])
+})
+
+test("a confirmed internal move does not reclaim focus after the user navigates during its pending save", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop-chromium", "pending-save focus ownership")
+  const { observation, projectWrites } = await installSectionFixture(page)
+  let release!: () => void
+  const pending = new Promise<void>((resolve) => { release = resolve })
+  let waiting = false
+  await page.route(`**/api/v1/projects/${alphaId}`, async (route) => {
+    if (route.request().method() === "PATCH") { waiting = true; await pending }
+    await route.fallback()
+  })
+  await page.goto(standaloneScenario.entryUrl)
+  await openSidebar(page, false)
+  const alpha = project(page, alphaId)
+  await keyboardDrop(page, handle(alpha, "session", "alpha-unsectioned"), targetHeader(section(alpha, alphaEmpty)))
+  await expect.poll(() => waiting).toBe(true)
+  await row(project(page, betaId), "beta-session").getByRole("button", { name: "Beta independent", exact: true }).click()
+  const composer = page.getByRole("textbox", { name: "消息", exact: true })
+  await composer.fill("New session draft")
+  release()
+  await expect(row(section(alpha, alphaEmpty), "alpha-unsectioned")).toBeVisible()
+  await expect(composer).toBeFocused()
+  await expect(composer).toHaveText("New session draft")
+  await expect(row(project(page, betaId), "beta-session").locator('[aria-current="page"]')).toBeVisible()
+  expect(projectWrites).toHaveLength(1)
+  expect(observation.pageErrors).toEqual([])
+  expect(observation.consoleErrors).toEqual([])
+})
+
+test("viewport resize and Settings page opening cancel held internal moves without committing", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop-chromium", "desktop resize and hidden-chat-shell fixture")
+  const { observation, projectWrites } = await installSectionFixture(page)
+  await page.route("**/api/v1/mcp/servers", (route) => route.fulfill({ json: { servers: [] } }))
+  await page.goto(standaloneScenario.entryUrl)
+  await openSidebar(page, false)
+  const alpha = project(page, alphaId)
+  const source = handle(alpha, "session", "alpha-unsectioned")
+  const destination = targetHeader(section(alpha, alphaEmpty))
+  const position = async () => {
+    const start = (await source.boundingBox())!
+    const end = (await destination.boundingBox())!
+    await keyboardPickup(page, source)
+    const steps = Math.round((end.y + end.height / 2 - start.y - start.height / 2) / 10)
+    for (let index = 0; index < Math.abs(steps); index += 1) await page.keyboard.press(steps < 0 ? "ArrowUp" : "ArrowDown")
+    await expect(section(alpha, alphaEmpty)).toHaveAttribute("data-drop-active", "true")
+  }
+  await position()
+  await page.setViewportSize({ width: 1360, height: 900 })
+  await expect(source).not.toHaveAttribute("data-sidebar-dragging", "true")
+  expect(projectWrites).toHaveLength(0)
+  await position()
+  await page.getByRole("button", { name: "系统设置", exact: true }).click()
+  const settings = settingsSurface(page)
+  await expect(settings).toBeVisible()
+  await expect(page.getByRole("dialog")).toHaveCount(0)
+  await expect(page.locator('[data-slot="chat-shell"]')).toHaveAttribute("inert", "")
+  await selectSettingsCategory(settings, "providers", "提供方")
+  await settings.getByRole("button", { name: "新增", exact: true }).click()
+  const input = settings.getByRole("textbox").first()
+  await input.fill("Settings draft")
+  await input.press("Space")
+  await input.press("x")
+  await expect(input).toHaveValue("Settings draft x")
+  expect(projectWrites).toHaveLength(0)
+  await settings.getByRole("button", { name: "取消", exact: true }).click()
+  await closeSettings(settings)
+  await expect(source).toBeVisible()
+  await keyboardDrop(page, source, destination)
+  await expect(row(section(alpha, alphaEmpty), "alpha-unsectioned")).toBeVisible()
+  expect(projectWrites).toHaveLength(1)
+  expect(observation.pageErrors).toEqual([])
+  expect(observation.consoleErrors).toEqual([])
+})
+
+test("internal moves keep failures and revision conflicts uncommitted until explicit retry", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop-chromium", "desktop persistence fixture")
+  const { observation, backend, projectWrites } = await installSectionFixture(page)
+  await page.goto(standaloneScenario.entryUrl)
+  await openSidebar(page, false)
+  const alpha = project(page, alphaId)
+  const source = handle(alpha, "session", "alpha-unsectioned")
+  const destination = targetHeader(section(alpha, alphaEmpty))
+  backend.failNextPatch = 503
+  await keyboardDrop(page, source, destination)
+  await expect(alpha.getByRole("alert")).toHaveCount(0)
+  await expect(page.getByRole("alert")).toContainText("分区未保存")
+  expect(assignment(backend, alphaId, "alpha-unsectioned")).toBe(null)
+  await keyboardDrop(page, source, destination)
+  await expect.poll(() => assignment(backend, alphaId, "alpha-unsectioned")).toBe(alphaEmpty)
+  backend.projects[alphaId].revision += 1
+  const otherSource = handle(alpha, "session", "alpha-search")
+  await keyboardDrop(page, otherSource, destination)
+  await expect(page.getByRole("alert")).toContainText("已在其他客户端更新")
+  expect(assignment(backend, alphaId, "alpha-search")).toBe(alphaInvestigation)
+  await keyboardDrop(page, otherSource, destination)
+  await expect.poll(() => assignment(backend, alphaId, "alpha-search")).toBe(alphaEmpty)
+  expect(projectWrites.map((write) => write.status)).toEqual([503, 200, 412, 200])
+  expect(observation.pageErrors).toEqual([])
+})
+
+test("touch internal handles move a session without selecting it or changing its Project", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name === "desktop-chromium", "touch-enabled tablet and phone fixture")
+  const { observation, backend, projectWrites } = await installSectionFixture(page)
+  await page.goto(standaloneScenario.entryUrl)
+  await openSidebar(page, testInfo.project.name === "phone-chromium")
+  const alpha = project(page, alphaId)
+  const source = handle(alpha, "session", "alpha-unsectioned")
+  await source.scrollIntoViewIfNeeded()
+  const start = (await source.boundingBox())!
+  const end = (await targetHeader(section(alpha, alphaEmpty)).boundingBox())!
+  const session = await page.context().newCDPSession(page)
+  const point = (x: number, y: number) => [{ x, y, radiusX: 1, radiusY: 1, force: 1, id: 1 }]
+  await session.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: point(start.x + start.width / 2, start.y + start.height / 2) })
+  // dnd-kit 0.5 uses a 250ms stationary hold before activating touch drags.
+  await expect(source).toHaveAttribute("data-sidebar-dragging", "true")
+  for (let step = 1; step <= 10; step += 1) await session.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: point(start.x + start.width / 2 + (end.x + end.width / 2 - start.x - start.width / 2) * step / 10, start.y + start.height / 2 + (end.y + end.height / 2 - start.y - start.height / 2) * step / 10) })
+  await expect(section(alpha, alphaEmpty)).toHaveAttribute("data-drop-active", "true")
+  await session.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] })
+  await expect(row(section(alpha, alphaEmpty), "alpha-unsectioned")).toBeVisible()
+  expect(assignment(backend, alphaId, "alpha-unsectioned")).toBe(alphaEmpty)
+  expect(projectWrites).toHaveLength(1)
+  await expect(row(alpha, "all-surface-session").locator('[aria-current="page"]')).toBeVisible()
+  await page.screenshot({ path: testInfo.outputPath("internal-touch-move.png"), animations: "disabled" })
   expect(observation.pageErrors).toEqual([])
   expect(observation.consoleErrors).toEqual([])
 })

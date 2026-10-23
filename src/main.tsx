@@ -2,7 +2,7 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import './index.css'
 import { resolveDefaultBrowserRuntimeConfig } from './runtime/browserRuntime.ts'
-import { isSettingsFeaturePreloadError } from './runtime/preloadErrorPolicy.ts'
+import { isLocalFeaturePreloadError } from './runtime/preloadErrorPolicy.ts'
 import { installRuntimeConfig } from './runtime/runtimeConfig.ts'
 
 // Vite surfaces a failed dynamic-import preload — a code-split chunk or its CSS
@@ -17,8 +17,8 @@ import { installRuntimeConfig } from './runtime/runtimeConfig.ts'
 let preloadReloadAttempted = false
 window.addEventListener('vite:preloadError', (event) => {
   const preloadEvent = event as Event & { payload?: unknown }
-  if (isSettingsFeaturePreloadError(preloadEvent.payload)) {
-    // Settings owns a local, shell-preserving error surface. Not preventing the
+  if (isLocalFeaturePreloadError(preloadEvent.payload)) {
+    // These features own a local, shell-preserving error surface. Not preventing the
     // event lets Vite reject the import promise into that ErrorBoundary.
     return
   }

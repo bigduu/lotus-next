@@ -20,7 +20,7 @@ export function OverflowMenu({ items }: { items: Item[] }) {
     <DropdownMenu>
       <DropdownMenuTrigger
         aria-label={uiText("more_38844b13")}
-        className="inline-flex size-9 items-center justify-center rounded-md text-muted-foreground transition-colors outline-none hover:bg-accent hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50"
+        className="inline-flex size-9 items-center justify-center rounded-md text-muted-foreground transition-colors outline-none hover:bg-accent hover:text-foreground"
       >
         <MoreHorizontal className="size-5" />
       </DropdownMenuTrigger>

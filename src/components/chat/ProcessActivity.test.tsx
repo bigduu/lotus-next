@@ -66,7 +66,7 @@ describe("ProcessActivity", () => {
         <ProcessActivity active preview={{ key: "read", running: true, content: <span>Reading app.ts</span> }}>full read result</ProcessActivity>,
       )
       expect(container.querySelector("[data-process-current]")?.textContent).toBe("Reading app.ts")
-      expect(container.querySelector<HTMLDivElement>("[data-process-content]")?.hidden).toBe(true)
+      expect(container.querySelector("[data-process-content]")?.getAttribute("aria-hidden")).toBe("true")
       await act(async () => {
         root.render(<ProcessActivity active thinking preview={{ key: "read", running: false, content: <span>Read app.ts</span> }}>full read result</ProcessActivity>)
       })
@@ -77,7 +77,7 @@ describe("ProcessActivity", () => {
       await act(async () => { handoff.resolve(); await Promise.resolve() })
       expect(container.querySelector("[data-process-handoff]")).toBeNull()
       await act(async () => { container.querySelector<HTMLButtonElement>("[data-process-toggle]")!.click() })
-      expect(container.querySelector<HTMLDivElement>("[data-process-content]")?.hidden).toBe(false)
+      expect(container.querySelector("[data-process-content]")?.getAttribute("aria-hidden")).toBe("false")
       expect(container.querySelector("[data-process-content]")?.textContent).toBe("full read result")
     } finally {
       HTMLElement.prototype.animate = originalAnimate
@@ -85,8 +85,9 @@ describe("ProcessActivity", () => {
     }
   })
 
-  it("archives completed steps immediately when motion is reduced", async () => {
-    vi.stubGlobal("matchMedia", () => ({ matches: true }))
+  it.each(["reduced motion", "VDI safe mode"])("archives completed steps immediately in %s", async (mode) => {
+    vi.stubGlobal("matchMedia", () => ({ matches: mode === "reduced motion" }))
+    if (mode === "VDI safe mode") document.body.dataset.vdiSafe = "true"
     const animate = vi.fn()
     const originalAnimate = HTMLElement.prototype.animate
     HTMLElement.prototype.animate = animate
@@ -103,6 +104,7 @@ describe("ProcessActivity", () => {
       expect(container.querySelector("[data-process-content]")?.textContent).toBe("test result")
     } finally {
       HTMLElement.prototype.animate = originalAnimate
+      delete document.body.dataset.vdiSafe
       vi.unstubAllGlobals()
     }
   })
@@ -135,15 +137,18 @@ describe("ProcessActivity", () => {
     expect(button.type).toBe("button")
     expect(button.getAttribute("aria-expanded")).toBe("false")
     expect(button.getAttribute("aria-controls")).toBe(content.id)
-    expect(content.hidden).toBe(true)
+    expect(content.getAttribute("aria-hidden")).toBe("true")
+    expect(content.hasAttribute("inert")).toBe(true)
     expect(content.textContent).toContain(fullReasoning)
     expect(container.querySelector("[data-process-brief]")?.textContent).toBe("Now check the complete output.")
 
     await act(async () => { button.click() })
     expect(button.getAttribute("aria-expanded")).toBe("true")
-    expect(content.hidden).toBe(false)
+    expect(content.getAttribute("aria-hidden")).toBe("false")
+    expect(content.hasAttribute("inert")).toBe(false)
     await act(async () => { button.click() })
-    expect(content.hidden).toBe(true)
+    expect(content.getAttribute("aria-hidden")).toBe("true")
+    expect(content.hasAttribute("inert")).toBe(true)
     expect(mounts).toBe(1)
   })
 
@@ -162,10 +167,47 @@ describe("ProcessActivity", () => {
     await act(async () => {
       root.render(<ProcessActivity open onOpenChange={onOpenChange} onToggle={onToggle}>full process</ProcessActivity>)
     })
-    expect(container.querySelector<HTMLDivElement>("[data-process-content]")?.hidden).toBe(false)
+    expect(container.querySelector("[data-process-content]")?.getAttribute("aria-hidden")).toBe("false")
     await act(async () => { button.click() })
     expect(onOpenChange).toHaveBeenLastCalledWith(false)
     expect(button.getAttribute("aria-expanded")).toBe("true")
+  })
+
+  it("restores internal focus on a controlled close without taking outside focus", async () => {
+    const children = <button data-inspect>inspect tool output</button>
+    const { container, root } = await mount(<ProcessActivity open>{children}</ProcessActivity>)
+    const button = container.querySelector<HTMLButtonElement>("[data-process-toggle]")!
+    const content = container.querySelector<HTMLDivElement>("[data-process-content]")!
+    const inspect = container.querySelector<HTMLButtonElement>("[data-inspect]")!
+    inspect.focus()
+    await act(async () => { root.render(<ProcessActivity open={false}>{children}</ProcessActivity>) })
+    expect(document.activeElement).toBe(button)
+    expect(content.hasAttribute("inert")).toBe(true)
+    expect(container.querySelector("[data-inspect]")).toBe(inspect)
+
+    await act(async () => { root.render(<ProcessActivity open>{children}</ProcessActivity>) })
+    const outside = document.createElement("button")
+    document.body.append(outside)
+    try {
+      outside.focus()
+      await act(async () => { root.render(<ProcessActivity open={false}>{children}</ProcessActivity>) })
+      expect(document.activeElement).toBe(outside)
+    } finally { outside.remove() }
+  })
+
+  it("keeps inspection state and the same panel through rapid controlled reversals", async () => {
+    const { container, root } = await mount(<ProcessActivity open={false}><input defaultValue="reader's inspection" /></ProcessActivity>)
+    const content = container.querySelector<HTMLDivElement>("[data-process-content]")!
+    const input = content.querySelector("input")!
+    input.value = "retained reader state"
+    for (const expanded of [true, false, true, false, true]) {
+      await act(async () => { root.render(<ProcessActivity open={expanded}><input defaultValue="reader's inspection" /></ProcessActivity>) })
+    }
+    expect(container.querySelector("[data-process-content]")).toBe(content)
+    expect(content.querySelector("input")).toBe(input)
+    expect(input.value).toBe("retained reader state")
+    expect(content.getAttribute("data-state")).toBe("open")
+    expect(content.hasAttribute("inert")).toBe(false)
   })
 
   it("shows current reasoning with a fixed accessible label and sweeps only while actively thinking", async () => {

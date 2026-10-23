@@ -285,7 +285,7 @@ const sameTreeNode = (left: ActorTreeNode, right: ActorTreeNode): boolean =>
   left.waitingForCount === right.waitingForCount && left.pendingRequestCount === right.pendingRequestCount
 
 /** Show the last durable activation outcome when the logical actor is idle. */
-const snapshotLifecycle = (node: PublicActorSnapshotNode): ActorTreeNode["lifecycle"] => {
+export const actorSnapshotLifecycle = (node: PublicActorSnapshotNode): ActorTreeNode["lifecycle"] => {
   if (node.logical_state === "retired" || node.logical_state === "failed" || node.logical_state === null) {
     return node.logical_state ?? "unknown"
   }
@@ -315,7 +315,7 @@ export function actorSnapshotTree(
     const projected: ActorTreeNode = {
       actorId: node.actor_id, parentActorId: node.parent_actor_id, depth: node.depth,
       title: node.title, role: node.role === "root" ? uiText("root_agent_9cfcb9f9") : uiText("sub_agent_acd37b4c"),
-      lifecycle: snapshotLifecycle(node), placement: node.placement_class ?? "unknown",
+      lifecycle: actorSnapshotLifecycle(node), placement: node.placement_class ?? "unknown",
       placementUnavailableReason: node.placement_class !== null ? null
         : node.local_task ? "native_task" : node.activation === null ? "no_activation" : "not_reported",
       health: node.local_task && node.local_task.state !== "running" ? "unknown" : null,

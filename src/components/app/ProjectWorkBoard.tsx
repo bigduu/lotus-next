@@ -3,6 +3,7 @@ import { ProjectWorkPlanningControls, type ProjectWorkPlanningControlsProps } fr
 import { ProjectWorkOwnerControls, type ProjectWorkOwnerControlsProps } from "./project-work/ProjectWorkOwnerControls"
 import { projectWorkControlsCopy } from "./project-work/projectWorkControlsCopy"
 import type { WorkCommandContext } from "./project-work/projectWorkControls"
+import "./project-work/ProjectWorkBoard.css"
 import { uiText, useUiLocale } from "@shared/i18n/ui"
 import type { ProjectManifest } from "@services/project"
 import { getErrorMessage } from "@services/api"
@@ -11,7 +12,6 @@ import type { SnapshotRef } from "@services/tickets/types"
 import { useProjectWorkBoard } from "@/hooks/useProjectWorkBoard"
 import { ticketWorkLabels } from "@/components/chat/ticketWorkLabels"
 import { Button } from "@/components/ui/button"
-import { ResponsiveDialog, ResponsiveDialogContent, ResponsiveDialogDescription, ResponsiveDialogTitle } from "@/components/ui/responsive-dialog"
 
 const stages: BoardStage[] = ["todo", "doing", "testing", "done"]
 const stageLabel = (stage: BoardStage) => uiText(({ todo: "project_work_todo", doing: "project_work_doing", testing: "project_work_testing", done: "project_work_done" } as const)[stage])
@@ -116,7 +116,7 @@ export function ProjectWorkBoard({ project, controls }: { project: ProjectManife
     {error ? <p role="alert" className="mb-3 text-sm text-destructive">{error}</p> : null}
     {page && !known ? <p role="status" className="mb-3 text-sm">{uiText("project_work_partial")}</p> : null}
     {page ? <p className="mb-3 text-xs text-muted-foreground">{stages.map((stage) => `${stageLabel(stage)}: ${known ? page.data.counts[stage] : "?"}`).join(" · ")} · {uiText("ticket_blocked_9059acb4")}: {known ? page.data.counts.blocked : "?"} · {uiText("cancelled_a37778f1")}: {known ? page.data.counts.cancelled : "?"}</p> : null}
-    {mode === "list" ? <div className="grid gap-2">{rows.map(card)}</div> : <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">{stages.map((stage) => <section key={stage} aria-label={stageLabel(stage)} className="min-w-0 rounded-xl bg-muted/40 p-2"><h3 className="mb-2 text-sm font-medium">{stageLabel(stage)}</h3><div className="grid gap-2">{rows.filter((row) => row.stage === stage).map(card)}</div></section>)}</div>}
+    {mode === "list" ? <div className="grid gap-2">{rows.map(card)}</div> : <div className="project-work-stages grid grid-cols-1 gap-3">{stages.map((stage) => <section key={stage} aria-label={stageLabel(stage)} className="min-w-0 rounded-xl bg-muted/40 p-2"><h3 className="mb-2 text-sm font-medium">{stageLabel(stage)}</h3><div className="grid gap-2">{rows.filter((row) => row.stage === stage).map(card)}</div></section>)}</div>}
     {mode === "board" && rows.some((row) => row.stage === null) ? <section className="mt-3"><h3 className="mb-2 text-sm font-medium">{uiText("project_work_other")}</h3><div className="grid gap-2">{rows.filter((row) => row.stage === null).map(card)}</div></section> : null}
     {page && !rows.length ? <p className="py-4 text-sm text-muted-foreground">{uiText("project_work_empty")}</p> : null}
     {busy ? <p role="status" className="mt-3 text-sm">{uiText("project_work_loading")}</p> : null}
@@ -127,12 +127,4 @@ export function ProjectWorkBoard({ project, controls }: { project: ProjectManife
       {ownerControls ? <ProjectWorkOwnerControls key={`owner:${selected.ticket.id}:${selected.ticket.generation}`} {...ownerControls} owner={owner && ownerControls.owner} commands={ownerCommands} copy={projectWorkControlsCopy()} /> : null}
     </div> : null}
   </div>
-}
-export function ProjectWorkDialog({ project, onClose, metadataError, controls }: { project: ProjectManifest | null; onClose: () => void; metadataError?: string | null; controls?: ProjectWorkBoardControls }) {
-  useUiLocale()
-  return <ResponsiveDialog open={!!project} onOpenChange={(open) => { if (!open) onClose() }}><ResponsiveDialogContent className="sm:max-w-5xl" aria-describedby={undefined}>
-    <div className="border-b p-4 pr-12"><ResponsiveDialogTitle>{uiText("project_work_title")}{project ? ` · ${project.name}` : ""}</ResponsiveDialogTitle><ResponsiveDialogDescription className="sr-only">{uiText("project_work_readonly")}</ResponsiveDialogDescription></div>
-    {metadataError ? <p role="alert" className="px-4 pt-3 text-sm text-destructive">{metadataError}</p> : null}
-    {project ? <ProjectWorkBoard key={project.id} project={project} controls={controls} /> : null}
-  </ResponsiveDialogContent></ResponsiveDialog>
 }

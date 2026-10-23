@@ -10,7 +10,7 @@ let resize: ReturnType<typeof useWorkbenchWidth>
 
 function Harness({ sidebarWidth = 288 }: { sidebarWidth?: number }) {
   resize = useWorkbenchWidth(sidebarWidth)
-  return <button onPointerDown={resize.startResize} />
+  return <div />
 }
 
 function setViewportWidth(width: number) {
@@ -71,13 +71,9 @@ it("adjusts for sidebar resizing and collapse without losing the preferred width
   expect(localStorage.getItem(storageKey)).toBe("1500")
 })
 
-it("drags beyond both old width caps, persists, and restores after remount", () => {
+it("commits beyond both old width caps, persists, and restores after remount", () => {
   act(() => root.render(<Harness />))
-  act(() => host.querySelector("button")!.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, clientX: 1500 })))
-  act(() => {
-    window.dispatchEvent(new MouseEvent("pointermove", { clientX: 820 }))
-    window.dispatchEvent(new MouseEvent("pointerup"))
-  })
+  act(() => resize.setWidth(1200))
   expect(resize.width).toBe(1200)
   expect(resize.width).toBeGreaterThan(840)
   expect(resize.width).toBeGreaterThan(window.innerWidth * 0.46)

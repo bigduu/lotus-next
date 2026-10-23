@@ -1,0 +1,11 @@
+@keyframes confirmation-rebound {
+  0% { opacity: 0.6; transform: scale(0.88); }
+  65% { opacity: 1; transform: scale(1.06); }
+  100% { opacity: 1; transform: scale(1); }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  body:not([data-vdi-safe="true"]) .confirmation-icon {
+    animation: confirmation-rebound 180ms var(--motion-ease, ease-out) both;
+  }
+}
