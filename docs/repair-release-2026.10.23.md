@@ -33,6 +33,16 @@ explicitly click the existing service-default open action and require its actual
 assertions, test selection, retries, timeouts and thirteen-case gate remain.
 That failed run is retained; it is not an accepted publication source receipt.
 
+The next exact-source run at `05394096` passed the original build/chat step
+(ten passed and three existing mode skips), then exposed a second stale
+expectation in local artifact acceptance. Its trace proves one initial canonical
+`GET 404` with the full `browser_not_open` error before the explicit `PUT 200`.
+The observer now accounts for exactly that independently captured pre-open read
+and its matching resource-console source. Wrong session/origin/error bodies,
+repeated reads, later errors, unrelated HTTP/console errors and WS/SSE failures
+still fail. The complete raw observation and validated receipt remain attached.
+That original failed run and its local/secure results are retained unchanged.
+
 Formal publication is still pending. The package source version stays `0.0.0`.
 Before publishing the unused immutable `2026.10.23` identity, run the existing
 exact-source Node22/24, package and real-Bamboo browser gates, normally merge

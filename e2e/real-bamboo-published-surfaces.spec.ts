@@ -1,5 +1,6 @@
 import { workbenchPanel } from "./support/workbench.js"
 import { openClosedBrowserAtServiceDefault } from "./support/browserProfile.js"
+import { assertClosedBrowserRead, unexplainedBrowserErrors, type ClosedBrowserRead } from "./support/closedBrowserRead.js"
 import { expectComposerText } from "./support/composer.js"
 import {
   devices,
@@ -8,6 +9,7 @@ import {
   type Browser,
   type BrowserContext,
   type Response,
+  type ConsoleMessage,
   type TestInfo,
 } from "@playwright/test";
 import { chmod, stat, writeFile } from "node:fs/promises";
@@ -126,13 +128,14 @@ const assertCanonicalPage = async (
   observation: PageObservation,
   pageOrigin: string,
   browserSessionId: string | null,
+  initialClosedRead: ClosedBrowserRead | null,
 ): Promise<void> => {
   await observation.drain();
   const httpRequests = observation.requests.filter((request) =>
     ["http:", "https:"].includes(new URL(request.url).protocol),
   );
-  const errorResponses = observation.responses.filter(
-    (response) => response.status >= 400,
+  const unexplained = unexplainedBrowserErrors(
+    observation.responses, observation.consoleErrors, initialClosedRead, pageOrigin, browserSessionId,
   );
   const legacyRequests = httpRequests.filter((request) =>
     /^\/v1(?:\/|$)/u.test(new URL(request.url).pathname),
@@ -190,14 +193,14 @@ const assertCanonicalPage = async (
     eventSourceRequests,
     `${observation.label}: alternate realtime fallback`,
   ).toEqual([]);
-  expect(errorResponses, `${observation.label}: HTTP errors`).toEqual([]);
+  expect(unexplained.httpErrors, `${observation.label}: HTTP errors`).toEqual([]);
   expect(
     observation.failedRequests.filter(
       (failure) => !expectedBrowserReadCancellation(failure, pageOrigin, browserSessionId),
     ),
     `${observation.label}: failed requests`,
   ).toEqual([]);
-  expect(observation.consoleErrors, `${observation.label}: console errors`).toEqual([]);
+  expect(unexplained.consoleErrors, `${observation.label}: console errors`).toEqual([]);
   expect(observation.pageErrors, `${observation.label}: page errors`).toEqual([]);
   expect(socket.errors, `${observation.label}: WebSocket errors`).toEqual([]);
   expect(
@@ -282,8 +285,22 @@ const exerciseSurface = async ({
   const observationLabel =
     `published-${entryUrl.protocol.slice(0, -1)}-${definition.label}`;
   let observation: PageObservation | undefined;
+  let initialClosedRead: ClosedBrowserRead | null = null;
+  let beforeExplicitOpen = true;
+  const initialConsoleErrors: { text: string; url: string }[] = [];
+  const observeInitialConsole = (message: ConsoleMessage): void => {
+    if (beforeExplicitOpen && message.type() === "error") {
+      initialConsoleErrors.push({ text: message.text(), url: message.location().url });
+    }
+  };
+  const expectsInitialClosedRead = currentSourceArtifact && definition.label === "desktop";
+  if (expectsInitialClosedRead) page.on("console", observeInitialConsole);
   try {
     observation = observePage(page, observationLabel);
+    const initialResponse = expectsInitialClosedRead ? page.waitForResponse((response) =>
+      response.url() === `${entryUrl.origin}/api/v1/browser/sessions/${encodeURIComponent(sessionId)}` &&
+      response.request().method() === "GET") : null;
+    void initialResponse?.catch(() => undefined);
     const observed = await page.goto(entryUrl.href, {
       waitUntil: "domcontentloaded",
     });
@@ -343,6 +360,16 @@ const exerciseSurface = async ({
       // tab; tablet reuses that page and must use the existing-page toolbar.
       const startsWithEmptyBrowser = definition.label === "desktop";
       if (startsWithEmptyBrowser) {
+        const response = await initialResponse!;
+        const body = await response.json() as unknown;
+        await response.finished();
+        await observation.drain();
+        initialClosedRead = {
+          response: { method: response.request().method(), url: response.url(), status: response.status() },
+          body, beforeExplicitOpen, consoleErrors: [...initialConsoleErrors],
+        };
+        assertClosedBrowserRead(initialClosedRead, entryUrl.origin, sessionId);
+        beforeExplicitOpen = false;
         await openClosedBrowserAtServiceDefault(page, pane, sessionId);
       }
       await expect(pane).toHaveAttribute(
@@ -384,6 +411,7 @@ const exerciseSurface = async ({
       observation,
       entryUrl.origin,
       currentSourceArtifact && !definition.mobile ? sessionId : null,
+      initialClosedRead,
     );
     if (currentSourceArtifact && definition.mobile) {
       expect(
@@ -410,6 +438,7 @@ const exerciseSurface = async ({
             viewport: definition.viewport,
             requests: observation.requests,
             responses: observation.responses,
+            expectedInitialClosedBrowserRead: initialClosedRead,
             webSockets: observation.webSockets.map((socket) => ({
               url: socket.url,
               sentFrames: socket.sent.length,
@@ -424,6 +453,7 @@ const exerciseSurface = async ({
       contentType: "application/json",
     });
   } finally {
+    page.off("console", observeInitialConsole);
     await observation?.stop().catch(() => undefined);
     await context.close();
   }
