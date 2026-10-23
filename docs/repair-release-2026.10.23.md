@@ -20,7 +20,18 @@ cold restart persistence and seven UI assertions passed, with twelve synthetic
 provider requests and zero paid calls. The chat-only terminal replay observation
 was unconfirmed and is not counted as passing. That receipt retains its original
 source identities; it does not prove a later build. The new backend's necessary
-setup path is verified separately after its source-bound CLI is available.
+setup path passed seven actual native assertions on the source-bound CLI:
+normal incomplete/complete requests, Core-only revision changes, unchanged
+Providers/credentials, cold restart persistence and minimal decoder compatibility,
+with zero model requests.
+
+The first original manual acceptance at `72948f44` retained a real browser
+failure before chat: the service correctly returned `404 browser_not_open`,
+while the older test expected an already opened empty scope. The updated tests
+explicitly click the existing service-default open action and require its actual
+`PUT 200` and empty request body. The original tabs, epoch, screenshot and model
+assertions, test selection, retries, timeouts and thirteen-case gate remain.
+That failed run is retained; it is not an accepted publication source receipt.
 
 Formal publication is still pending. The package source version stays `0.0.0`.
 Before publishing the unused immutable `2026.10.23` identity, run the existing

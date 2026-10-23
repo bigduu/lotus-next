@@ -1,4 +1,5 @@
 import { workbenchPanel } from "./support/workbench.js"
+import { openClosedBrowserAtServiceDefault } from "./support/browserProfile.js"
 import { expectComposerText } from "./support/composer.js"
 import {
   devices,
@@ -341,6 +342,9 @@ const exerciseSurface = async ({
       // Each acceptance mode starts a fresh session. Desktop opens its first
       // tab; tablet reuses that page and must use the existing-page toolbar.
       const startsWithEmptyBrowser = definition.label === "desktop";
+      if (startsWithEmptyBrowser) {
+        await openClosedBrowserAtServiceDefault(page, pane, sessionId);
+      }
       await expect(pane).toHaveAttribute(
         startsWithEmptyBrowser ? "data-browser-empty" : "data-browser-pane",
         "true",
