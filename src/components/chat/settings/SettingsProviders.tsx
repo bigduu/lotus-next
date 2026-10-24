@@ -18,6 +18,7 @@ import {
 import { cn } from "@/lib/utils"
 import { InstanceEditor, type InstanceSavePayload } from "./providers/InstanceEditor"
 import { DefaultsEditor } from "./providers/DefaultsEditor"
+import type { ModelDiscoveryNotice } from "./providers/RuntimeModelsEditor"
 
 export function SettingsProviders() {
   useUiLocale()
@@ -48,11 +49,7 @@ export function SettingsProviders() {
   const [deleteBusy, setDeleteBusy] = useState(false)
   const [deleteError, setDeleteError] = useState<string | null>(null)
   const [fetchingId, setFetchingId] = useState<string | null>(null)
-  const [fetchNotice, setFetchNotice] = useState<{
-    id: string
-    text: string
-    tone: "loading" | "success" | "warning" | "error"
-  } | null>(null)
+  const [fetchNotice, setFetchNotice] = useState<(ModelDiscoveryNotice & { id: string }) | null>(null)
   const [createRecoveryNotice, setCreateRecoveryNotice] = useState<string | null>(null)
   const [pendingCreatedId, setPendingCreatedId] = useState<string | null>(null)
   const catalogLoadRequested = useRef(false)
@@ -178,7 +175,7 @@ export function SettingsProviders() {
   const fetchModels = async (inst: ProviderInstance) => {
     setEditing(inst.id)
     setFetchingId(inst.id)
-    setFetchNotice(null)
+    setFetchNotice({ id: inst.id, text: uiText("runtime_models_fetching"), tone: "loading" })
     try {
       await fetchCatalogModels(inst.id)
       const count = useProviderStore.getState().discoveredModelsByProvider[inst.id]?.length ?? 0
@@ -291,6 +288,9 @@ export function SettingsProviders() {
                 modelOptions={modelsForInstance(inst.id)}
                 initialRuntimeModels={getRuntimeModelIds(inst, settingsSnapshot?.defaults)}
                 defaults={settingsSnapshot?.defaults}
+                onFetchModels={() => void fetchModels(inst)}
+                fetchingModels={fetchingId === inst.id}
+                fetchModelsNotice={fetchNotice?.id === inst.id ? fetchNotice : undefined}
                 onCancel={() => setEditing(null)}
                 onSave={(v) => updateInstance(inst.id, v)}
               />
@@ -349,20 +349,6 @@ export function SettingsProviders() {
                 </div>
               </>
             )}
-            {fetchNotice && fetchNotice.id === inst.id ? (
-              <p
-                role="status"
-                className={cn(
-                  "mt-1.5 text-xs",
-                  fetchNotice.tone === "success" && "text-emerald-500",
-                  fetchNotice.tone === "loading" && "text-muted-foreground",
-                  fetchNotice.tone === "warning" && "text-amber-600 dark:text-amber-300",
-                  fetchNotice.tone === "error" && "text-destructive",
-                )}
-              >
-                {fetchNotice.text}
-              </p>
-            ) : null}
           </li>
         ))}
       </ul> : null}

@@ -40,6 +40,9 @@ test("discovery requires explicit admission and preserves custom models after re
   const candidates = [chosen, excluded, ...Array.from({ length: 120 }, (_, i) => `relay-candidate-${i}`)]
   const writes: Array<Record<string, unknown>> = []
   let discoveries = 0
+  let failDiscovery = false
+  let finishDiscovery!: () => void
+  const firstDiscovery = new Promise<void>((resolve) => { finishDiscovery = resolve })
   await page.route("**/api/v1/bamboo/settings/provider-instances", (route) => route.fulfill({ json: {
     default_provider_instance_id: instance.id, instances: [instance, other],
     defaults: { chat: { provider: instance.id, model: "fixture-model" } },
@@ -58,9 +61,13 @@ test("discovery requires explicit admission and preserves custom models after re
       descriptor(other.id, otherOnly),
     ],
   } }))
-  await page.route("**/api/v1/bamboo/provider-catalog/fetch-models", (route) => {
+  await page.route("**/api/v1/bamboo/provider-catalog/fetch-models", async (route) => {
     discoveries += 1
     expect(route.request().postDataJSON()).toEqual({ provider: instance.id })
+    if (discoveries === 1) await firstDiscovery
+    if (failDiscovery) {
+      return route.fulfill({ json: { fetched: [{ provider: instance.id, error: "upstream-secret-canary" }] } })
+    }
     return route.fulfill({ json: { fetched: [{ provider: instance.id,
       models: [...candidates.map((model) => descriptor(instance.id, model)), descriptor(other.id, otherOnly)],
     }] } })
@@ -71,9 +78,15 @@ test("discovery requires explicit admission and preserves custom models after re
   expect(discoveries, "normal chat must read runtime models without discovering upstream").toBe(0)
   await openProviders(page)
   const row = page.locator("li").filter({ hasText: "Relay provider" }).first()
-  await row.getByRole("button", { name: "拉取模型列表", exact: true }).click()
+  await row.getByRole("button", { name: "编辑", exact: true }).click()
   const editor = page.getByTestId("runtime-models-editor")
   await expect(editor).toBeVisible()
+  const fetchModels = editor.getByRole("button", { name: "获取上游模型", exact: true })
+  await fetchModels.click()
+  await expect(fetchModels).toBeDisabled()
+  await expect(fetchModels).toHaveAttribute("aria-busy", "true")
+  finishDiscovery()
+  await expect(fetchModels).toBeEnabled()
   await expect(editor.getByRole("checkbox", { name: chosen, exact: true })).not.toBeChecked()
   await expect(editor.getByRole("checkbox", { name: excluded, exact: true })).not.toBeChecked()
   await expect(editor.getByRole("checkbox", { name: otherOnly, exact: true })).toHaveCount(0)
@@ -87,6 +100,20 @@ test("discovery requires explicit admission and preserves custom models after re
   await expect(editor.getByRole("combobox", { name: `${custom} 的 Vision 支持`, exact: true })).toHaveValue("true")
   await editor.getByRole("combobox", { name: `${chosen} 的 Vision 支持`, exact: true }).selectOption("true")
   await editor.getByRole("combobox", { name: `${custom} 的 Vision 支持`, exact: true }).selectOption("false")
+
+  failDiscovery = true
+  await fetchModels.click()
+  await expect(editor.getByRole("alert")).toContainText("模型发现失败")
+  await expect(page.locator("body")).not.toContainText("upstream-secret-canary")
+  await expect(editor.getByRole("checkbox", { name: chosen, exact: true })).toBeChecked()
+  await expect(editor.getByRole("checkbox", { name: custom, exact: true })).toBeChecked()
+  failDiscovery = false
+  await fetchModels.click()
+  await expect(fetchModels).toBeEnabled()
+  await expect(editor.getByRole("alert")).toHaveCount(0)
+  await expect(editor.getByRole("checkbox", { name: chosen, exact: true })).toBeChecked()
+  await expect(editor.getByRole("combobox", { name: `${custom} 的 Vision 支持`, exact: true })).toHaveValue("false")
+  expect(writes).toHaveLength(0)
 
   await editor.getByRole("searchbox", { name: "搜索候选模型", exact: true }).fill("usable")
   await expect(editor.getByRole("checkbox", { name: chosen, exact: true })).toBeVisible()
@@ -122,7 +149,7 @@ test("discovery requires explicit admission and preserves custom models after re
   await expect(editor.getByRole("checkbox", { name: custom, exact: true })).toBeChecked()
   await expect(editor.getByRole("checkbox", { name: chosen, exact: true })).toBeChecked()
   await expect(editor.getByRole("checkbox", { name: excluded, exact: true })).toHaveCount(0)
-  expect(discoveries).toBe(1)
+  expect(discoveries).toBe(3)
   expect(observation.pageErrors).toEqual([])
   const fits = await page.evaluate(() => {
     const browser = globalThis as unknown as {
