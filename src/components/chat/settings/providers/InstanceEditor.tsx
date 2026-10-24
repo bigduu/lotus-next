@@ -20,7 +20,7 @@ import {
 } from "@/components/ui/select"
 import { CopilotAuth } from "./CopilotAuth"
 import { EditableModelCombobox } from "./EditableModelCombobox"
-import { RuntimeModelsEditor } from "./RuntimeModelsEditor"
+import { RuntimeModelsEditor, type ModelDiscoveryNotice } from "./RuntimeModelsEditor"
 
 const PROVIDER_TYPES: ProviderKind[] = ["anthropic", "openai", "gemini", "copilot", "bodhi"]
 const REASONING_EFFORTS = [
@@ -235,6 +235,9 @@ export function InstanceEditor({
   modelOptions = [],
   initialRuntimeModels,
   defaults,
+  onFetchModels,
+  fetchingModels,
+  fetchModelsNotice,
 }: {
   /** null = create mode */
   instance: ProviderInstance | null
@@ -246,6 +249,10 @@ export function InstanceEditor({
   /** Includes configured legacy defaults; an explicit empty list stays empty. */
   initialRuntimeModels?: readonly string[]
   defaults?: DefaultsConfig
+  /** Discovery uses this instance's saved connection settings. */
+  onFetchModels?: () => void
+  fetchingModels?: boolean
+  fetchModelsNotice?: ModelDiscoveryNotice
 }) {
   useUiLocale()
   const isEdit = instance != null
@@ -269,6 +276,11 @@ export function InstanceEditor({
   const patch = (p: Partial<Draft>) => setDraft((d) => ({ ...d, ...p }))
   const type = draft.type
   const preset = VENDOR_PRESETS.find((p) => p.id === presetId) ?? null
+  const connectionChanged = instance !== null && (
+    draft.baseUrl.trim() !== str(instance.config.base_url).trim()
+    || (draft.apiKey.trim() !== "" && draft.apiKey.trim() !== str(instance.config.api_key).trim())
+    || draft.targetProvider !== str(instance.config.target_provider)
+  )
 
   const applyPreset = (id: string) => {
     if (id === UNSET) {
@@ -438,6 +450,12 @@ export function InstanceEditor({
         value={draft.runtimeModels}
         onChange={(runtimeModels) => patch({ runtimeModels })}
         candidates={modelOptions}
+        onFetchModels={instance && !connectionChanged && !saving ? onFetchModels : undefined}
+        fetchingModels={fetchingModels}
+        fetchModelsNotice={fetchModelsNotice}
+        fetchModelsHint={!instance
+          ? uiText("runtime_models_fetch_save_first")
+          : connectionChanged ? uiText("runtime_models_fetch_save_changes") : undefined}
         modelCapabilities={draft.modelCapabilities}
         onVisionChange={(model, supportsVision) => patch({
           modelCapabilities: {

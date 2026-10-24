@@ -1,8 +1,15 @@
 import { useMemo, useState } from "react"
+import { RefreshCw } from "lucide-react"
 import { uiText, useUiLocale } from "@shared/i18n/ui"
 import type { ProviderModelDescriptor } from "@shared/types/providerModelRef"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { cn } from "@/lib/utils"
+
+export interface ModelDiscoveryNotice {
+  text: string
+  tone: "loading" | "success" | "warning" | "error"
+}
 
 /** Discovery suggests ids; this local draft is the explicit admission step. */
 export function RuntimeModelsEditor({
@@ -11,12 +18,20 @@ export function RuntimeModelsEditor({
   candidates,
   modelCapabilities,
   onVisionChange,
+  onFetchModels,
+  fetchingModels = false,
+  fetchModelsNotice,
+  fetchModelsHint,
 }: {
   value: readonly string[]
   onChange: (models: string[]) => void
   candidates: readonly ProviderModelDescriptor[]
   modelCapabilities: Record<string, { supports_vision?: boolean | null }>
   onVisionChange: (model: string, supportsVision: boolean) => void
+  onFetchModels?: () => void
+  fetchingModels?: boolean
+  fetchModelsNotice?: ModelDiscoveryNotice
+  fetchModelsHint?: string
 }) {
   useUiLocale()
   const [query, setQuery] = useState("")
@@ -50,13 +65,44 @@ export function RuntimeModelsEditor({
       <p role="status" className="text-xs text-muted-foreground">
         {uiText("runtime_models_selected", { count: value.length })}
       </p>
-      <Input
-        type="search"
-        aria-label={uiText("runtime_models_search")}
-        placeholder={uiText("runtime_models_search")}
-        value={query}
-        onChange={(event) => setQuery(event.target.value)}
-      />
+      <div className="flex flex-col gap-2 sm:flex-row">
+        <Input
+          type="search"
+          className="min-w-0 flex-1"
+          aria-label={uiText("runtime_models_search")}
+          placeholder={uiText("runtime_models_search")}
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+        />
+        <Button
+          type="button"
+          size="sm"
+          variant="secondary"
+          className="shrink-0"
+          aria-label={uiText("runtime_models_fetch")}
+          aria-busy={fetchingModels}
+          disabled={!onFetchModels || fetchingModels}
+          onClick={onFetchModels}
+        >
+          <RefreshCw className={cn("size-3.5", fetchingModels && "animate-spin")} />
+          {uiText(fetchingModels ? "runtime_models_fetching" : "runtime_models_fetch")}
+        </Button>
+      </div>
+      {fetchModelsHint ? <p className="text-xs text-muted-foreground">{fetchModelsHint}</p> : null}
+      {fetchModelsNotice ? (
+        <p
+          role={fetchModelsNotice.tone === "error" ? "alert" : "status"}
+          className={cn(
+            "text-xs",
+            fetchModelsNotice.tone === "success" && "text-emerald-500",
+            fetchModelsNotice.tone === "loading" && "text-muted-foreground",
+            fetchModelsNotice.tone === "warning" && "text-amber-600 dark:text-amber-300",
+            fetchModelsNotice.tone === "error" && "text-destructive",
+          )}
+        >
+          {fetchModelsNotice.text}
+        </p>
+      ) : null}
       <div className="max-h-52 space-y-1 overflow-y-auto">
         {options.map(([id, label]) => (
           <div key={id} className="flex flex-col items-start justify-between gap-2 rounded px-1 py-1.5 text-xs hover:bg-muted sm:flex-row">

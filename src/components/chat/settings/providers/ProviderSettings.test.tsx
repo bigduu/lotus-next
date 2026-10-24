@@ -326,6 +326,94 @@ describe("Provider add and model discovery", () => {
     await flush()
   }
 
+  it("fetches upstream candidates from the open editor without saving or resetting its draft", async () => {
+    const candidate = { ...discoveredModel, reference: { provider: instance.id, model: "upstream-model" } }
+    let finishDiscovery!: () => void
+    const fetchCatalogModels = vi.fn((provider = instance.id) => new Promise<FetchModelsResponse>((resolve) => {
+      finishDiscovery = () => {
+        useProviderStore.setState({ discoveredModelsByProvider: { [provider]: [candidate] } })
+        resolve({ fetched: [{ provider, models: [candidate] }] })
+      }
+    }))
+    const updateProviderInstance = vi.fn()
+    setStore({ fetchCatalogModels, updateProviderInstance })
+    const container = await mount(<SettingsProviders />)
+    await click(container.querySelector('button[aria-label="编辑"]'))
+    const editor = container.querySelector('[data-testid="runtime-models-editor"]')!
+    await changeInput(container.querySelector<HTMLInputElement>(`input[value="${instance.label}"]`)!, "Unsaved provider name")
+    await changeInput(editor.querySelector<HTMLInputElement>('input[aria-label="自定义模型 ID"]')!, "custom/draft-model")
+    await click([...editor.querySelectorAll("button")].find((button) => button.textContent === "添加模型") ?? null)
+
+    const fetchButton = editor.querySelector<HTMLButtonElement>('button[aria-label="获取上游模型"]')!
+    await click(fetchButton)
+    await click(fetchButton)
+    expect(fetchCatalogModels).toHaveBeenCalledExactlyOnceWith(instance.id)
+    expect(fetchButton.disabled).toBe(true)
+    expect(fetchButton.getAttribute("aria-busy")).toBe("true")
+    expect(editor.textContent).toContain("正在获取上游模型")
+
+    await act(async () => finishDiscovery())
+    await flush()
+    expect(fetchButton.disabled).toBe(false)
+    expect(editor.textContent).toContain("已发现 1 个候选模型")
+    expect(editor.querySelector<HTMLInputElement>('input[aria-label="upstream-model"]')?.checked).toBe(false)
+    expect(editor.querySelector<HTMLInputElement>('input[aria-label="custom/draft-model"]')?.checked).toBe(true)
+    expect(container.querySelector<HTMLInputElement>('input[value="Unsaved provider name"]')?.value).toBe("Unsaved provider name")
+    expect(useProviderStore.getState().providerSnapshot?.instances[0].config.runtime_models).toEqual(instance.config.runtime_models)
+    expect(updateProviderInstance).not.toHaveBeenCalled()
+  })
+
+  it("shows discovery failures beside the search field and supports retry without losing selections", async () => {
+    const fetchCatalogModels = vi.fn()
+      .mockRejectedValueOnce(new Error("upstream-secret-canary"))
+      .mockResolvedValueOnce({ fetched: [{ provider: instance.id, models: [] }] })
+    setStore({ fetchCatalogModels })
+    const container = await mount(<SettingsProviders />)
+    await click(container.querySelector('button[aria-label="编辑"]'))
+    const editor = container.querySelector('[data-testid="runtime-models-editor"]')!
+    const fetchButton = editor.querySelector<HTMLButtonElement>('button[aria-label="获取上游模型"]')!
+
+    await click(fetchButton)
+    expect(editor.querySelector('[role="alert"]')?.textContent).toContain("模型发现失败")
+    expect(document.body.textContent).not.toContain("upstream-secret-canary")
+    expect(fetchButton.disabled).toBe(false)
+    expect(editor.querySelector<HTMLInputElement>('input[aria-label="gpt-5.4"]')?.checked).toBe(true)
+    await click(fetchButton)
+    expect(fetchCatalogModels).toHaveBeenCalledTimes(2)
+    expect(editor.querySelector('[role="alert"]')).toBeNull()
+    expect(editor.textContent).toContain("未发现模型")
+    expect(editor.querySelector<HTMLInputElement>('input[aria-label="gpt-5.4"]')?.checked).toBe(true)
+  })
+
+  it("explains that a new provider must be saved before upstream discovery", async () => {
+    const onFetchModels = vi.fn()
+    const container = await mount(<InstanceEditor instance={null} onSave={vi.fn()} onCancel={vi.fn()} onFetchModels={onFetchModels} />)
+    const fetchButton = container.querySelector<HTMLButtonElement>('button[aria-label="获取上游模型"]')!
+    expect(fetchButton.disabled).toBe(true)
+    expect(container.textContent).toContain("请先保存提供方，再获取上游模型")
+    await click(fetchButton)
+    expect(onFetchModels).not.toHaveBeenCalled()
+  })
+
+  it.each(["base_url", "api_key"])("requires saving a changed %s before fetching with stored credentials", async (field) => {
+    const onFetchModels = vi.fn()
+    const container = await mount(<InstanceEditor instance={instance} onSave={vi.fn()} onCancel={vi.fn()} onFetchModels={onFetchModels} />)
+    const fetchButton = container.querySelector<HTMLButtonElement>('button[aria-label="获取上游模型"]')!
+    const input = container.querySelector<HTMLInputElement>(field === "api_key"
+      ? 'input[type="password"]' : 'input[value="https://api.openai.com/v1"]')!
+    const initialValue = input.value
+    expect(fetchButton.disabled).toBe(false)
+    await changeInput(input, field === "api_key" ? "new-secret" : "https://new-upstream.example/v1")
+    expect(fetchButton.disabled).toBe(true)
+    expect(container.textContent).toContain("连接设置已修改，请先保存")
+    await click(fetchButton)
+    expect(onFetchModels).not.toHaveBeenCalled()
+    await changeInput(input, initialValue)
+    expect(fetchButton.disabled).toBe(false)
+    await click(fetchButton)
+    expect(onFetchModels).toHaveBeenCalledOnce()
+  })
+
   it("uses the exact created id, exposes discovered choices, and persists the selection", async () => {
     const fetchCatalogModels = vi.fn().mockImplementation(async (provider: string) => {
       expect(provider).toBe(created.id)
