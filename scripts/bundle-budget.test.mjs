@@ -228,6 +228,8 @@ describe("ordinary-chat production bundle budget", () => {
     "src/components/chat/streamdownConfig.ts",
     "src/lib/export/pdfPaginator.ts",
     "src/lib/mermaid/strictConfig.ts",
+    "src/shared/i18n/generated/frAutoOverrides.ts",
+    "src/shared/i18n/generated/hiAutoOverrides.ts",
   ])("rejects optional application ownership leaked through a shared startup chunk: %s", async (module) => {
     const report = analyzeBundleBudget(await createFixture({ leakedOwnedModule: module }))
 
