@@ -1,0 +1,65 @@
+{
+  "schemaVersion": 1,
+  "repository": "bigduu/lotus-next",
+  "run": {
+    "id": 40091952124,
+    "path": ".github/workflows/ci.yml",
+    "event": "workflow_dispatch",
+    "head_sha": "73224b3f0bd6955c4c6c6095f874a951bb68f05e",
+    "head_branch": "lotus-next/fix/406-lazy-locale-overlays",
+    "status": "completed",
+    "conclusion": "success",
+    "run_attempt": 1,
+    "html_url": "https://github.com/bigduu/lotus-next/actions/runs/40091952124",
+    "created_at": "2026-10-24T11:57:26Z",
+    "updated_at": "2026-10-24T12:53:40Z"
+  },
+  "jobs": {
+    "total_count": 3,
+    "jobs": [
+      {
+        "id": 120866286089,
+        "run_id": 40091952124,
+        "name": "Node 22",
+        "head_sha": "73224b3f0bd6955c4c6c6095f874a951bb68f05e",
+        "status": "completed",
+        "conclusion": "success",
+        "html_url": "https://github.com/bigduu/lotus-next/actions/runs/40091952124/job/120866286089",
+        "started_at": "2026-10-24T11:57:31Z",
+        "completed_at": "2026-10-24T12:29:07Z"
+      },
+      {
+        "id": 120866286352,
+        "run_id": 40091952124,
+        "name": "Node 24",
+        "head_sha": "73224b3f0bd6955c4c6c6095f874a951bb68f05e",
+        "status": "completed",
+        "conclusion": "success",
+        "html_url": "https://github.com/bigduu/lotus-next/actions/runs/40091952124/job/120866286352",
+        "started_at": "2026-10-24T11:57:31Z",
+        "completed_at": "2026-10-24T12:34:35Z"
+      },
+      {
+        "id": 120873802552,
+        "run_id": 40091952124,
+        "name": "Real Bamboo / Node 22",
+        "head_sha": "73224b3f0bd6955c4c6c6095f874a951bb68f05e",
+        "status": "completed",
+        "conclusion": "success",
+        "html_url": "https://github.com/bigduu/lotus-next/actions/runs/40091952124/job/120873802552",
+        "started_at": "2026-10-24T12:34:37Z",
+        "completed_at": "2026-10-24T12:53:40Z"
+      }
+    ]
+  },
+  "pullRequest": {
+    "number": 407,
+    "merged": true,
+    "merge_commit_sha": "6c3539e41304a518e72216aef4d39441aa6828a6",
+    "html_url": "https://github.com/bigduu/lotus-next/pull/407",
+    "merged_at": "2026-10-24T12:55:49Z",
+    "head": {
+      "sha": "73224b3f0bd6955c4c6c6095f874a951bb68f05e"
+    }
+  }
+}
