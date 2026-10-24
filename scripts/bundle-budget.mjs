@@ -66,6 +66,8 @@ const forbiddenStartupModulePaths = Object.freeze([
   "src/components/chat/CodeBlock.tsx",
   "src/components/chat/MermaidChart.tsx",
   "src/lib/export/renderPdf.tsx",
+  "src/shared/i18n/generated/frAutoOverrides.ts",
+  "src/shared/i18n/generated/hiAutoOverrides.ts",
 ])
 
 const forbiddenStartupModulePrefixes = Object.freeze([

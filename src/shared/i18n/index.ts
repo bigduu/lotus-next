@@ -1,8 +1,6 @@
 import i18n from "i18next";
 import { initReactI18next } from "react-i18next";
 import { loadBaseResource, type EnUsTranslation, type ZhCnTranslation } from "./resources";
-import { frAutoOverrides } from "./generated/frAutoOverrides";
-import { hiAutoOverrides } from "./generated/hiAutoOverrides";
 import {
   APP_LOCALE_STORAGE_KEY,
   DEFAULT_APP_LOCALE,
@@ -4502,12 +4500,18 @@ const buildZhTwTranslation = (zhCnTranslation: ZhCnBaseTranslation) => ({
 
 const localeResourceBuilders: Partial<Record<AppLocale, () => Promise<TranslationResource>>> = {
   "fr-FR": async () => {
-    const enTranslation = (await loadBaseResource("en-US")).translation;
-    return { translation: deepMerge(buildFrFullTranslation(enTranslation), frAutoOverrides) };
+    const [baseResource, { frAutoOverrides }] = await Promise.all([
+      loadBaseResource("en-US"),
+      import("./generated/frAutoOverrides"),
+    ]);
+    return { translation: deepMerge(buildFrFullTranslation(baseResource.translation), frAutoOverrides) };
   },
   "hi-IN": async () => {
-    const enTranslation = (await loadBaseResource("en-US")).translation;
-    return { translation: deepMerge(buildHiFullTranslation(enTranslation), hiAutoOverrides) };
+    const [baseResource, { hiAutoOverrides }] = await Promise.all([
+      loadBaseResource("en-US"),
+      import("./generated/hiAutoOverrides"),
+    ]);
+    return { translation: deepMerge(buildHiFullTranslation(baseResource.translation), hiAutoOverrides) };
   },
   "ja-JP": async () => {
     const enTranslation = (await loadBaseResource("en-US")).translation;
