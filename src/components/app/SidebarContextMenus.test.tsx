@@ -97,10 +97,10 @@ describe("sidebar item context menus", () => {
     await act(async () => document.querySelector<HTMLElement>('[role="menuitem"]')!.click())
     expect(action).toHaveBeenCalledTimes(1)
   })
-  it("supervisor keeps rename and offers the independent Project-scope review entry", async () => {
+  it("supervisor keeps rename and offers session management and Project-scope review entries", async () => {
     await context(render(fixtures.supervisor()))
     expect([...document.querySelectorAll('[role="menuitem"]')].map((item) => item.textContent)).toEqual([
-      uiText("supervisor_rename"), uiText("supervisor_scope_title"), uiText("conversation_clear_action"),
+      uiText("supervisor_rename"), uiText("supervisor_sessions_manage"), uiText("supervisor_scope_title"), uiText("conversation_clear_action"),
     ])
     await act(async () => document.querySelector<HTMLElement>('[role="menuitem"]')!.click())
     expect(document.querySelector('[role="dialog"]')).not.toBeNull()

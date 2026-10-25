@@ -1,4 +1,4 @@
-import { useId, useRef, useState } from "react"
+import { lazy, Suspense, useId, useRef, useState } from "react"
 import { CircleDot, MoreHorizontal, Pencil, RotateCcw } from "lucide-react"
 import { useUiText } from "@shared/i18n/ui"
 import type { ChatItem } from "@shared/types/chatMessages"
@@ -10,6 +10,9 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { cn } from "@/lib/utils"
 import { SupervisorProjectScopeDialog } from "@/components/chat/SupervisorProjectScopeDialog"
 import { ConversationClearDialog } from "@/components/chat/ConversationClearDialog"
+import { ErrorBoundary } from "@/components/app/ErrorBoundary"
+
+const ManagedSessionsDialog = lazy(async () => ({ default: (await import("@/components/chat/SupervisorManagedSessions")).SupervisorManagedSessionsDialog }))
 
 export function SupervisorEntry({ chat, active, unread, busy, disabled, onSelect, onRename }: {
   chat?: ChatItem
@@ -27,6 +30,7 @@ export function SupervisorEntry({ chat, active, unread, busy, disabled, onSelect
   const nameId = useId()
   const [open, setOpen] = useState(false)
   const [scopeOpen, setScopeOpen] = useState(false)
+  const [sessionsOpen, setSessionsOpen] = useState(false)
   const [clearOpen, setClearOpen] = useState(false)
   const scopeTrigger = useRef<HTMLButtonElement>(null)
   const [draft, setDraft] = useState("")
@@ -74,10 +78,11 @@ export function SupervisorEntry({ chat, active, unread, busy, disabled, onSelect
             className="mr-1 rounded p-1 text-muted-foreground outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring">
             <MoreHorizontal className="size-4" />
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" onCloseAutoFocus={open || scopeOpen || clearOpen ? (event) => event.preventDefault() : menu.onCloseAutoFocus}>
+          <DropdownMenuContent align="end" onCloseAutoFocus={open || scopeOpen || sessionsOpen || clearOpen ? (event) => event.preventDefault() : menu.onCloseAutoFocus}>
             <DropdownMenuItem disabled={!chat} onSelect={() => { setDraft(title); setError(false); setOpen(true) }}>
               <Pencil />{uiText("supervisor_rename")}
             </DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => setSessionsOpen(true)}>{uiText("supervisor_sessions_manage")}</DropdownMenuItem>
             <DropdownMenuItem onSelect={() => setScopeOpen(true)}>{uiText("supervisor_scope_title")}</DropdownMenuItem>
             <DropdownMenuItem variant="destructive" disabled={!chat} onSelect={() => setClearOpen(true)}>
               <RotateCcw />{uiText("conversation_clear_action")}
@@ -104,6 +109,11 @@ export function SupervisorEntry({ chat, active, unread, busy, disabled, onSelect
       </DialogContent>
     </div>
   </Dialog>
+    {sessionsOpen ? <ErrorBoundary name="Supervisor sessions" fallback={() => <Dialog open onOpenChange={setSessionsOpen}><DialogContent onCloseAutoFocus={(event) => { event.preventDefault(); scopeTrigger.current?.focus() }}>
+      <DialogHeader><DialogTitle>{uiText("supervisor_sessions_title")}</DialogTitle><DialogDescription>{uiText("supervisor_sessions_unavailable")}</DialogDescription></DialogHeader>
+    </DialogContent></Dialog>}><Suspense fallback={<Dialog open onOpenChange={setSessionsOpen}><DialogContent onCloseAutoFocus={(event) => { event.preventDefault(); scopeTrigger.current?.focus() }}>
+      <DialogHeader><DialogTitle>{uiText("supervisor_sessions_title")}</DialogTitle><DialogDescription>{uiText("supervisor_sessions_loading")}</DialogDescription></DialogHeader>
+    </DialogContent></Dialog>}><ManagedSessionsDialog open onOpenChange={setSessionsOpen} returnFocus={() => scopeTrigger.current?.focus()} /></Suspense></ErrorBoundary> : null}
     {scopeOpen ? <SupervisorProjectScopeDialog open onOpenChange={setScopeOpen} returnFocus={() => scopeTrigger.current?.focus()} /> : null}
     {clearOpen && chat ? <ConversationClearDialog sessionId={chat.id} title={title} onClose={() => {
       setClearOpen(false)
