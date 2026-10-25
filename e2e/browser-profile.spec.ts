@@ -1,12 +1,12 @@
 import { expect, test, type Page } from "@playwright/test"
 import { installArtifactRuntime, standaloneScenario } from "./support/artifactRuntime.js"
 import { workbenchPanel } from "./support/workbench.js"
-import { openClosedBrowserAtServiceDefault } from "./support/browserProfile.js"
+import { openClosedBrowserAtServiceDefault, openClosedBrowserExplicitlyClean } from "./support/browserProfile.js"
 
 const a = "all-surface-session", b = "profile-chat-b"
 type Mode = "shared" | "clean"
 type Scope = { mode: Mode; generation: number; tabs: string[]; epoch: number; viewport: { width: number; height: number } }
-async function fixture(page: Page, { legacy = false }: { legacy?: boolean } = {}) {
+async function fixture(page: Page, { legacy = false, cleanOnly = false }: { legacy?: boolean; cleanOnly?: boolean } = {}) {
   await page.addInitScript(() => { localStorage.setItem("bodhi_onboarded_v1", "1"); localStorage.setItem("lotus_next_last_session", "all-surface-session") })
   const observation = await installArtifactRuntime(page, standaloneScenario)
   const scopes = new Map<string, Scope>()
@@ -34,6 +34,8 @@ async function fixture(page: Page, { legacy = false }: { legacy?: boolean } = {}
           scopes.delete(id); return route.fulfill({ status: 204 })
         }
         expect(Object.keys(body ?? {})).toEqual(body?.profile_mode === undefined ? [] : ["profile_mode"])
+        if (cleanOnly && !scope && body?.profile_mode !== "clean") return route.fulfill({ status: 503,
+          json: { error: { code: "browser_unavailable", type: "browser_error", message: "browser runtime unavailable: browser_shared_profile_unsupported: request clean explicitly" } } })
         if (conflictOpen) { conflictOpen = false; scope = create(id, "clean"); return failure(409, "browser_profile_mode_conflict") }
         if (!legacy && scope && body?.profile_mode !== undefined && scope.mode !== body.profile_mode) return failure(409, "browser_profile_mode_conflict")
         scope ??= create(id, legacy ? "shared" : body?.profile_mode ?? "shared")
@@ -69,6 +71,29 @@ async function fixture(page: Page, { legacy = false }: { legacy?: boolean } = {}
   const browser = panel.getByRole("region", { name: "内置浏览器" })
   return { observation, panel, browser, writes, scopes, refuseClose: (code = "browser_runtime_unavailable") => { refuseClose = code }, conflictOpen: () => { conflictOpen = true }, emptyOpens: () => { emptyOpens = true } }
 }
+
+test("synthetic clean-only host: closed bootstrap requires explicit clean UI intent after default refusal", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop-chromium", "Desktop clean-only profile flow")
+  const f = await fixture(page, { cleanOnly: true })
+  await expect(f.browser.getByText("当前聊天浏览器已关闭", { exact: true })).toBeVisible()
+  await expect(f.browser.getByRole("combobox")).toHaveCount(0)
+  expect(f.writes).toEqual([])
+  const [refusal] = await Promise.all([
+    page.waitForResponse((response) => new URL(response.url()).pathname === `/api/v1/browser/sessions/${a}` && response.request().method() === "PUT"),
+    f.browser.getByRole("button", { name: "按当前服务默认设置打开", exact: true }).click(),
+  ])
+  expect(refusal.status()).toBe(503)
+  expect(await refusal.json()).toMatchObject({ error: { code: "browser_unavailable" } })
+  await expect(f.browser.getByRole("button", { name: "以干净会话打开", exact: true })).toBeEnabled()
+  expect(f.writes).toEqual([{ id: a, method: "PUT", body: {} }])
+  expect(f.scopes.has(a)).toBe(false)
+  await openClosedBrowserExplicitlyClean(page, f.browser, a)
+  await expect(f.browser.getByText("当前模式：干净会话")).toBeAttached()
+  expect(f.scopes.get(a)?.mode).toBe("clean")
+  expect(f.writes).toEqual([{ id: a, method: "PUT", body: {} }, { id: a, method: "PUT", body: { profile_mode: "clean" } }])
+  expect(f.observation.pageErrors).toEqual([])
+  await testInfo.attach("synthetic-clean-only-requests", { body: JSON.stringify(f.writes, null, 2), contentType: "application/json" })
+})
 
 test("synthetic profiles: explicit choices, chat-owned close, zero-tab scope and fresh clean reopen", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "desktop-chromium", "Desktop profile flow; phone has no browser workbench")
