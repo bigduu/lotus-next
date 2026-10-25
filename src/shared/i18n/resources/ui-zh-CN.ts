@@ -2708,5 +2708,15 @@ export const uiZhCn = {
   "conversation_clear_unknown": "清理请求的结果未知，存储数据可能已经变化。请勿重复发送；可刷新检查存储状态。未自动重试。",
   "conversation_clear_readback_failed": "服务已确认收到清理，但无法核实存储结果，不能视为成功。请刷新验证，不会再次发送清理请求。",
   "conversation_clear_refresh": "刷新存储状态",
-  "conversation_clear_readback_only": "已读回清理后的消息状态，但此前请求的结果仍未知。未发送新的清理请求。"
+  "conversation_clear_readback_only": "已读回清理后的消息状态，但此前请求的结果仍未知。未发送新的清理请求。",
+  "session_migration_action": "迁移到当前版本",
+  "session_migration_preserves_context": "保留当前会话、历史、模型、工作区和权限；仅在会话空闲时迁移。",
+  "session_migration_completed": "已确认迁移完成，会话历史与设置已保留。",
+  "session_migration_unconfirmed": "迁移结果尚未确认，请先确认这次迁移的结果。",
+  "session_migration_rejected": "迁移请求未被接受，请根据刷新后的会话状态处理。",
+  "session_migration_read_error": "暂时无法读取迁移条件，请刷新检查。",
+  "session_migration_blocked": "当前暂不能迁移",
+  "session_migration_in_progress": "正在迁移…",
+  "session_migration_confirm_result": "确认迁移结果",
+  "session_migration_refresh": "刷新迁移状态"
 } as const

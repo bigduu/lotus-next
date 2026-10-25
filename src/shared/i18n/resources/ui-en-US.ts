@@ -2708,5 +2708,15 @@ export const uiEnUs = {
   "conversation_clear_unknown": "Clear outcome unknown; stored data may have changed. Do not resend. Refresh to inspect. No automatic retry was attempted.",
   "conversation_clear_readback_failed": "Clearing acknowledged, but readback failed. Success is unconfirmed. Refresh to verify without another clear request.",
   "conversation_clear_refresh": "Refresh stored state",
-  "conversation_clear_readback_only": "Cleared message state verified. The earlier request’s outcome remains unknown; no new clear request was sent."
+  "conversation_clear_readback_only": "Cleared message state verified. The earlier request’s outcome remains unknown; no new clear request was sent.",
+  "session_migration_action": "Migrate to the current version",
+  "session_migration_preserves_context": "Keep this session, its history, model, workspace and permissions. Migration starts only when the session is idle.",
+  "session_migration_completed": "Migration verified. Your session history and settings are retained.",
+  "session_migration_unconfirmed": "The migration result is not confirmed. Check the same request before starting another migration.",
+  "session_migration_rejected": "Migration was not accepted. Review the refreshed session state before trying again.",
+  "session_migration_read_error": "Migration readiness could not be read. Refresh to check again.",
+  "session_migration_blocked": "Migration is temporarily unavailable",
+  "session_migration_in_progress": "Migrating…",
+  "session_migration_confirm_result": "Confirm migration result",
+  "session_migration_refresh": "Refresh migration state"
 } as const

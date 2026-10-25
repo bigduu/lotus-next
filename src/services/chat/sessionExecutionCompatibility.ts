@@ -56,15 +56,16 @@ export function beginSessionCompatibilityRead(id: string): number {
   publish(id, { ...getSessionCompatibilitySnapshot(id), loading: true, readError: false })
   return generation
 }
-export function completeSessionCompatibilityRead(id: string, generation: number, value: unknown) {
-  if (generations.get(id) !== generation) return
+export function completeSessionCompatibilityRead(id: string, generation: number, value: unknown): boolean {
+  if (generations.get(id) !== generation) return false
   const session = record(record(value)?.session)
-  if (session?.id !== id) { failSessionCompatibilityRead(id, generation); return }
+  if (session?.id !== id) { failSessionCompatibilityRead(id, generation); return false }
   const previous = getSessionCompatibilitySnapshot(id)
   const report = decodeSessionExecutionCompatibility(session.execution_compatibility)
   const invalid = session.execution_compatibility != null && !report
   publish(id, { report: report ?? (previous.report?.status === "conflict" ? previous.report : null), observed: true,
     legacy: !report && session.session_version == null, loading: false, readError: invalid })
+  return !invalid
 }
 export function failSessionCompatibilityRead(id: string, generation: number) {
   if (generations.get(id) === generation) publish(id, { ...getSessionCompatibilitySnapshot(id), loading: false, readError: true })
