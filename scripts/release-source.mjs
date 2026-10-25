@@ -41,22 +41,45 @@ export const verifyAcceptanceEvidence = (candidate, run, jobs, pullRequest) => {
   assert.equal(path, ".github/workflows/ci.yml")
   assert.equal(extra.length, 0)
   if (ref !== undefined) assert.equal(ref, run.head_branch, "Acceptance workflow ref suffix differs from its run")
-  assert.equal(run.event, "workflow_dispatch")
+  const mergedMainSource = candidate.sourceSha === candidate.productMergeSha
+  const mainAdmission = mergedMainSource && run.event === "push"
+  if (mainAdmission) {
+    assert.equal(run.head_branch, "main", "Main admission must run on main")
+    assert.equal(run.repository?.full_name, repository, "Main admission must belong to this repository")
+    assert.equal(run.head_repository?.full_name, repository, "Main admission source must belong to this repository")
+  } else {
+    assert.equal(run.event, "workflow_dispatch")
+  }
   assert.equal(run.head_sha, candidate.sourceSha)
   assert.equal(run.status, "completed")
   assert.equal(run.conclusion, "success")
   assert.equal(jobs.total_count, jobs.jobs.length, "Acceptance jobs must not be truncated")
-  for (const name of ["Node 22", "Node 24", "Real Bamboo / Node 22"]) {
+  const requiredJobs = mainAdmission ? ["Node 22", "Node 24"] : ["Node 22", "Node 24", "Real Bamboo / Node 22"]
+  for (const name of requiredJobs) {
     const matches = jobs.jobs.filter((job) => job.name === name)
     assert.equal(matches.length, 1, `Missing original acceptance job: ${name}`)
     assert.equal(matches[0].head_sha, candidate.sourceSha)
     assert.equal(matches[0].status, "completed")
     assert.equal(matches[0].conclusion, "success", `${name} was not accepted`)
   }
+  if (mainAdmission) {
+    const runtime = jobs.jobs.filter((job) => job.name === "Real Bamboo / Node 22")
+    assert.equal(runtime.length, 1, "Main admission must retain the runtime job's actual result")
+    assert.equal(runtime[0].head_sha, candidate.sourceSha)
+    assert.equal(runtime[0].status, "completed")
+    assert.ok(["success", "skipped"].includes(runtime[0].conclusion), "Failed runtime evidence cannot authorize publication")
+    // A policy skip is source admission only. The publication workflow still
+    // requires its own exact-version Real Bamboo artifact gate before npm upload.
+  }
   assert.equal(pullRequest.number, candidate.productPullRequest)
   assert.equal(pullRequest.merged, true)
-  assert.equal(pullRequest.head.sha, candidate.sourceSha)
   assert.equal(pullRequest.merge_commit_sha, candidate.productMergeSha)
+  if (mergedMainSource) {
+    assert.equal(pullRequest.base?.ref, "main", "Merged source must have entered main")
+    assert.equal(pullRequest.base?.repo?.full_name, repository, "Merged source must belong to this repository")
+  } else {
+    assert.equal(pullRequest.head.sha, candidate.sourceSha)
+  }
 }
 
 export const verifySourceReceipt = (receipt, environment, actualSourceSha) => {

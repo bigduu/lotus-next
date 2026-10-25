@@ -339,6 +339,46 @@ describe("accepted immutable release source", () => {
     expect(() => verifyAcceptanceEvidence(candidate, run, { ...jobs, total_count: 4 }, pr)).toThrow()
     expect(() => verifyAcceptanceEvidence(candidate, run, jobs, { ...pr, merged: false })).toThrow()
   })
+  const mergedMainEvidence = () => ({
+    accepted: { ...candidate, productMergeSha: sourceSha },
+    run: { id: candidate.acceptanceRunId, path: ".github/workflows/ci.yml", event: "push", head_branch: "main", head_sha: sourceSha, status: "completed", conclusion: "success", repository: { full_name: "bigduu/lotus-next" }, head_repository: { full_name: "bigduu/lotus-next" } },
+    jobs: { total_count: 3, jobs: ["Node 22", "Node 24", "Real Bamboo / Node 22"].map((name) => ({ name, head_sha: sourceSha, status: "completed", conclusion: name.startsWith("Real Bamboo") ? "skipped" : "success" })) },
+    pr: { number: candidate.productPullRequest, merged: true, head: { sha: workflowSha }, base: { ref: "main", repo: { full_name: "bigduu/lotus-next" } }, merge_commit_sha: sourceSha },
+  })
+  it("accepts the normally merged fixed main snapshot without pretending the skipped runtime gate executed", () => {
+    const { accepted, run, jobs, pr } = mergedMainEvidence()
+    expect(pr.head.sha).not.toBe(accepted.sourceSha)
+    expect(() => verifyAcceptanceEvidence(accepted, run, jobs, pr)).not.toThrow()
+    expect(jobs.jobs[2].conclusion).toBe("skipped")
+    const bytes = Buffer.from(JSON.stringify({ schemaVersion: 1, repository: "bigduu/lotus-next", run, jobs, pullRequest: pr }))
+    const recorded = { ...accepted, acceptanceReceiptSha256: createHash("sha256").update(bytes).digest("hex") }
+    expect(verifyCommittedAcceptance(recorded, bytes).jobs.jobs[2].conclusion).toBe("skipped")
+  })
+  it.each(["failure", "cancelled", "skipped"])("rejects a %s Node gate for the merged main snapshot", (conclusion) => {
+    const { accepted, run, jobs, pr } = mergedMainEvidence()
+    for (const index of [0, 1]) {
+      const changed = clone(jobs); changed.jobs[index].conclusion = conclusion
+      expect(() => verifyAcceptanceEvidence(accepted, run, changed, pr)).toThrow()
+    }
+  })
+  it.each(["failure", "cancelled"])("retains the failed main runtime evidence: %s", (conclusion) => {
+    const { accepted, run, jobs, pr } = mergedMainEvidence(); jobs.jobs[2].conclusion = conclusion
+    expect(() => verifyAcceptanceEvidence(accepted, run, jobs, pr)).toThrow()
+  })
+  it("rejects moving, foreign, incomplete, mismatched or unmerged main evidence", () => {
+    const { accepted, run, jobs, pr } = mergedMainEvidence()
+    for (const change of [{ head_branch: "feature" }, { head_sha: workflowSha }, { status: "in_progress" }, { conclusion: "failure" }, { repository: { full_name: "other/lotus-next" } }, { head_repository: { full_name: "other/lotus-next" } }]) {
+      expect(() => verifyAcceptanceEvidence(accepted, { ...run, ...change }, jobs, pr)).toThrow()
+    }
+    for (const change of [{ merged: false }, { merge_commit_sha: workflowSha }, { base: { ref: "dev", repo: { full_name: "bigduu/lotus-next" } } }, { base: { ref: "main", repo: { full_name: "other/lotus-next" } } }]) {
+      expect(() => verifyAcceptanceEvidence(accepted, run, jobs, { ...pr, ...change })).toThrow()
+    }
+    expect(() => verifyAcceptanceEvidence(accepted, run, { ...jobs, total_count: 4 }, pr)).toThrow()
+    expect(() => verifyAcceptanceEvidence(accepted, run, { total_count: 2, jobs: jobs.jobs.slice(0, 2) }, pr)).toThrow()
+    const duplicate = [...jobs.jobs, jobs.jobs[0]]
+    expect(() => verifyAcceptanceEvidence(accepted, run, { total_count: duplicate.length, jobs: duplicate }, pr)).toThrow()
+    expect(() => verifyAcceptanceEvidence(candidate, run, jobs, pr)).toThrow()
+  })
   it("keeps workflow and source identities distinct in one run-bound receipt", () => {
     expect(verifySourceReceipt(receipt, environment, sourceSha)).toEqual(receipt)
     expect(workflowSha).not.toBe(sourceSha)
