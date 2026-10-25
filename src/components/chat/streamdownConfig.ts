@@ -1,6 +1,6 @@
 import type { CodeHighlighterPlugin, ThemeInput, UrlTransform } from "streamdown"
 
-export const STREAMDOWN_THEMES: [ThemeInput, ThemeInput] = ["github-light", "github-dark"]
+export const STREAMDOWN_THEMES: [ThemeInput, ThemeInput] = ["github-light", "github-dark-default"]
 
 let codePluginPromise: Promise<CodeHighlighterPlugin> | undefined
 

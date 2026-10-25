@@ -7,6 +7,7 @@ import {
   MERMAID_STRICT_CONFIG,
   initializeTrustedMermaid,
 } from "./strictConfig"
+import { useThemeStore } from "@shared/store/themeStore"
 
 const originalTextLength = Object.getOwnPropertyDescriptor(
   SVGElement.prototype,
@@ -42,6 +43,7 @@ afterAll(() => {
 })
 
 beforeEach(() => {
+  useThemeStore.setState({ themeMode: "dark" })
   initializeTrustedMermaid("app")
 })
 
@@ -64,6 +66,10 @@ describe("trusted Mermaid security policy", () => {
       flowchart: { htmlLabels: false },
       theme: "default",
     })
+    const light = getTrustedMermaidConfig("app", "light")
+    expect(Object.isFrozen(light)).toBe(true)
+    expect(Object.isFrozen(light.flowchart)).toBe(true)
+    expect(light).toMatchObject({ securityLevel: "strict", htmlLabels: false, theme: "default" })
   })
 
   it("is recursively frozen and renders normal diagrams in strict native-label mode", async () => {
@@ -103,6 +109,15 @@ describe("trusted Mermaid security policy", () => {
       htmlLabels: false,
       flowchart: { htmlLabels: false },
       theme: "dark",
+    })
+  })
+
+  it("restores the resolved light application theme after a PDF export", () => {
+    useThemeStore.setState({ themeMode: "light" })
+    initMermaidForExport()
+    restoreMermaidAppConfig()
+    expect(mermaid.mermaidAPI.getConfig()).toMatchObject({
+      securityLevel: "strict", htmlLabels: false, theme: "default",
     })
   })
 
