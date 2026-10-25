@@ -3,6 +3,10 @@ import { createRoot, type Root } from "react-dom/client"
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest"
 import { uiText } from "@shared/i18n/ui"
 import { extractProcessBrief, ProcessActivity } from "./ProcessActivity"
+import { Reasoning } from "./Reasoning"
+import { readFileSync } from "node:fs"
+
+const processStyles = readFileSync("src/components/chat/ProcessActivity.css", "utf8")
 
 const views: { container: HTMLDivElement; root: Root }[] = []
 const reactActEnvironment = globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
@@ -51,14 +55,14 @@ describe("extractProcessBrief", () => {
 
 describe("ProcessActivity", () => {
   it("keeps the running step visible, then settles it into the inspectable fold", async () => {
-    const animations: { resolve: () => void; cancel: ReturnType<typeof vi.fn>; node: HTMLElement }[] = []
+    const animations: { resolve: () => void; cancel: ReturnType<typeof vi.fn>; node: HTMLElement; frames: Keyframe[]; options: KeyframeAnimationOptions }[] = []
     vi.stubGlobal("matchMedia", () => ({ matches: false }))
     const originalAnimate = HTMLElement.prototype.animate
-    HTMLElement.prototype.animate = vi.fn(function (this: HTMLElement) {
+    HTMLElement.prototype.animate = vi.fn(function (this: HTMLElement, frames: Keyframe[], options: KeyframeAnimationOptions) {
       let resolve!: () => void
       const finished = new Promise<void>((done) => { resolve = done })
       const cancel = vi.fn()
-      animations.push({ resolve, cancel, node: this })
+      animations.push({ resolve, cancel, node: this, frames, options })
       return { finished, cancel } as unknown as Animation
     })
     try {
@@ -66,6 +70,7 @@ describe("ProcessActivity", () => {
         <ProcessActivity active preview={{ key: "read", running: true, content: <span>Reading app.ts</span> }}>full read result</ProcessActivity>,
       )
       expect(container.querySelector("[data-process-current]")?.textContent).toBe("Reading app.ts")
+      expect(animations[0].options).toEqual({ duration: 140, easing: "cubic-bezier(0.2, 0.8, 0.2, 1)" })
       expect(container.querySelector("[data-process-content]")?.getAttribute("aria-hidden")).toBe("true")
       await act(async () => {
         root.render(<ProcessActivity active thinking preview={{ key: "read", running: false, content: <span>Read app.ts</span> }}>full read result</ProcessActivity>)
@@ -74,8 +79,20 @@ describe("ProcessActivity", () => {
       expect(container.querySelector("[data-process-handoff]")?.textContent).toBe("Read app.ts")
       expect(container.querySelector("[data-process-shimmer]")?.textContent).toBe(uiText("thinking_64088d8c"))
       const handoff = animations.find((animation) => animation.node.hasAttribute("data-process-handoff"))!
+      expect(animations[0].cancel).toHaveBeenCalledTimes(1)
+      expect(handoff.options).toEqual({ duration: 220, easing: "cubic-bezier(0.2, 0.8, 0.2, 1)", fill: "forwards" })
+      expect(handoff.frames).toEqual([
+        { height: expect.stringMatching(/^\d+(\.\d+)?px$/), opacity: 1, transform: "translateY(0) scale(1)", offset: 0 },
+        { height: expect.stringMatching(/^\d+(\.\d+)?px$/), opacity: 1, transform: "translateY(0) scale(1)", offset: 0.35 },
+        { height: "0px", opacity: 0, transform: "translateY(-12px) scale(0.98)" },
+      ])
+      expect(handoff.cancel).not.toHaveBeenCalled()
       await act(async () => { handoff.resolve(); await Promise.resolve() })
       expect(container.querySelector("[data-process-handoff]")).toBeNull()
+      expect(handoff.cancel).toHaveBeenCalledTimes(1)
+      await act(async () => { handoff.resolve(); await Promise.resolve() })
+      expect(container.querySelector("[data-process-handoff]")).toBeNull()
+      expect(handoff.cancel).toHaveBeenCalledTimes(1)
       await act(async () => { container.querySelector<HTMLButtonElement>("[data-process-toggle]")!.click() })
       expect(container.querySelector("[data-process-content]")?.getAttribute("aria-hidden")).toBe("false")
       expect(container.querySelector("[data-process-content]")?.textContent).toBe("full read result")
@@ -85,12 +102,87 @@ describe("ProcessActivity", () => {
     }
   })
 
-  it.each(["reduced motion", "VDI safe mode"])("archives completed steps immediately in %s", async (mode) => {
+  it.each(["resolve", "reject"])("does not let a cancelled handoff %s remove a newer leaving step", async (settlement) => {
+    const handoffs: { resolve: () => void; reject: () => void; cancel: ReturnType<typeof vi.fn> }[] = []
+    vi.stubGlobal("matchMedia", () => ({ matches: false }))
+    const originalAnimate = HTMLElement.prototype.animate
+    HTMLElement.prototype.animate = vi.fn(function (this: HTMLElement) {
+      let resolve!: () => void
+      let reject!: () => void
+      const finished = new Promise<void>((done, fail) => { resolve = done; reject = () => fail(new Error("cancelled")) })
+      const cancel = vi.fn()
+      if (this.hasAttribute("data-process-handoff")) handoffs.push({ resolve, reject, cancel })
+      return { finished, cancel } as unknown as Animation
+    })
+    try {
+      const step = (key: string) => <ProcessActivity active preview={{ key, running: true, content: key }}>full result</ProcessActivity>
+      const { container, root } = await mount(step("first"))
+      await act(async () => { root.render(step("second")) })
+      expect(container.querySelector("[data-process-handoff]")?.textContent).toBe("first")
+      await act(async () => { root.render(step("third")) })
+      expect(handoffs[0].cancel).toHaveBeenCalledTimes(1)
+      expect(container.querySelector("[data-process-handoff]")?.textContent).toBe("second")
+      await act(async () => { handoffs[0][settlement as "resolve" | "reject"](); await Promise.resolve() })
+      expect(container.querySelector("[data-process-handoff]")?.textContent).toBe("second")
+      await act(async () => { handoffs[1].resolve(); await Promise.resolve() })
+      expect(container.querySelector("[data-process-handoff]")).toBeNull()
+      expect(handoffs[1].cancel).toHaveBeenCalledTimes(1)
+      expect(container.querySelector("[data-process-current]")?.textContent).toBe("third")
+    } finally {
+      HTMLElement.prototype.animate = originalAnimate
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it("reads overridden motion tokens for entry and handoff, including second units", async () => {
+    const style = document.createElement("div").style
+    style.setProperty("--motion-fast", "110ms")
+    style.setProperty("--motion-normal", "0.26s")
+    style.setProperty("--motion-ease", "linear")
+    vi.spyOn(window, "getComputedStyle").mockReturnValue(style)
+    vi.stubGlobal("matchMedia", () => ({ matches: false }))
+    const animate = vi.fn(() => ({ finished: new Promise(() => {}), cancel: vi.fn() } as unknown as Animation))
+    const originalAnimate = HTMLElement.prototype.animate
+    HTMLElement.prototype.animate = animate
+    try {
+      const { root } = await mount(<ProcessActivity active preview={{ key: "run", running: true, content: "Running" }}>result</ProcessActivity>)
+      expect(animate).toHaveBeenLastCalledWith(expect.any(Array), { duration: 110, easing: "linear" })
+      await act(async () => { root.render(<ProcessActivity active preview={{ key: "run", running: false, content: "Done" }}>result</ProcessActivity>) })
+      expect(animate).toHaveBeenLastCalledWith(expect.any(Array), { duration: 260, easing: "linear", fill: "forwards" })
+    } finally {
+      HTMLElement.prototype.animate = originalAnimate
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it("shares compact sizing and token-timed chevrons with Reasoning", async () => {
+    const { container } = await mount(<><ProcessActivity reasoning="Checking" toolCallCount={1}>result</ProcessActivity><Reasoning text="Checking" /></>)
+    for (const selector of ["[data-process-toggle]", "[data-reasoning-toggle]"]) {
+      const toggle = container.querySelector(selector)!
+      expect(toggle.classList.contains("rounded-sm")).toBe(true)
+      expect(toggle.classList.contains("text-xs")).toBe(true)
+      for (const icon of toggle.querySelectorAll("svg")) expect(icon.classList.contains("size-3.5")).toBe(true)
+    }
+    const chevron = container.querySelector(".reasoning-chevron")!
+    expect(chevron.classList.contains("duration-(--motion-normal)")).toBe(true)
+    expect(chevron.classList.contains("ease-(--motion-ease)")).toBe(true)
+  })
+
+  it("uses token-timed chevron rotation with explicit safe-mode guards and no sizing overrides", () => {
+    expect(processStyles).toMatch(/\.process-activity-icon\s*\{[^}]*transition: rotate var\(--motion-normal\) var\(--motion-ease\)/)
+    expect(processStyles).toMatch(/body\[data-vdi-safe="true"\] \.process-activity-icon\s*\{\s*transition: none;/)
+    expect(processStyles).toMatch(/@media \(prefers-reduced-motion: reduce\)\s*\{\s*\.process-activity-icon\s*\{\s*transition: none;/)
+    expect(processStyles).not.toMatch(/\.process-activity-toggle\s*\{[^}]*border-radius:/)
+    expect(processStyles).not.toMatch(/\.process-activity-icon\s*\{[^}]*width:/)
+  })
+
+  it.each(["reduced motion", "VDI safe mode", "unavailable Web Animations"])("archives completed steps immediately in %s", async (mode) => {
     vi.stubGlobal("matchMedia", () => ({ matches: mode === "reduced motion" }))
     if (mode === "VDI safe mode") document.body.dataset.vdiSafe = "true"
     const animate = vi.fn()
     const originalAnimate = HTMLElement.prototype.animate
-    HTMLElement.prototype.animate = animate
+    if (mode === "unavailable Web Animations") Reflect.deleteProperty(HTMLElement.prototype, "animate")
+    else HTMLElement.prototype.animate = animate
     try {
       const { container, root } = await mount(
         <ProcessActivity active preview={{ key: "run", running: true, content: "Running tests" }}>test result</ProcessActivity>,

@@ -23,7 +23,7 @@ export function Reasoning({ text, active = false, spaced = false }: { text: stri
       >
         <Brain className={cn("reasoning-brain size-3.5 shrink-0", active && "animate-pulse")} />
         <span>{active ? uiText("thinking_64088d8c") : uiText("reasoning_a62acb18")}</span>
-        <ChevronRight className={cn("reasoning-chevron size-3 transition-transform", open && "rotate-90")} />
+        <ChevronRight className={cn("reasoning-chevron size-3.5 transition-transform duration-(--motion-normal) ease-(--motion-ease)", open && "rotate-90")} />
       </button>
       <DisclosurePanel expanded={open} triggerRef={triggerRef}>
         <div id={contentId} tabIndex={open ? 0 : -1} role="region" aria-label={active ? uiText("live_reasoning_b8c0edb7") : uiText("reasoning_a62acb18")} className={cn("mt-1 max-h-32 overflow-y-auto overscroll-contain whitespace-pre-wrap border-l-2 border-border pl-2.5 text-xs leading-relaxed text-muted-foreground [overflow-wrap:anywhere]", !spaced && "mb-1.5")}>

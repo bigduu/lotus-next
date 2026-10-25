@@ -142,15 +142,15 @@ it("passes exact running call IDs even when a live call has partial output", () 
   expect(group?.dataset.runningCalls).toBe("still-running")
 })
 
-it("animates only the transcript content when a floating panel opens", () => {
-  const container = renderMessageList([], false, -166)
+it.each([-166, -124, 0])("shifts only the transcript content by %ipx with token-timed transforms", (shift) => {
+  const container = renderMessageList([], false, shift)
   const scrollViewport = container.firstElementChild as HTMLElement | null
   const content = container.querySelector<HTMLElement>("[data-message-list-content]")
 
   expect(scrollViewport?.style.transform).toBe("")
-  expect(content?.style.transform).toBe("")
-  expect(content?.style.left).toBe("-166px")
-  expect(content?.style.transition).toContain("left 200ms ease-out")
+  expect(content?.style.transform).toBe(`translateX(${shift}px)`)
+  expect(content?.style.left).toBe("")
+  expect(content?.style.transition).toBe("transform var(--motion-normal) var(--motion-ease)")
 })
 
 it("renders message-only previews without transcript actions", () => {

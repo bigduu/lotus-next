@@ -98,6 +98,13 @@ async function expectDisclosureAlignment(scope: Locator) {
   expect(Math.abs(edges.toolIcon - edges.body)).toBeLessThanOrEqual(1)
 }
 
+function composerColumnShift(main: Locator) {
+  return main.locator("[data-composer-column]").evaluate((element) => {
+    const transform = element.ownerDocument.defaultView!.getComputedStyle(element).transform
+    return transform === "none" ? 0 : new DOMMatrixReadOnly(transform).m41
+  })
+}
+
 async function expectComposerAlignment(scope: Locator) {
   // Read one browser frame so an in-progress shared transition cannot be
   // mistaken for misalignment by sampling the two columns at different times.
@@ -147,12 +154,12 @@ test("Environment moves the transcript, input content, and reading control toget
     await page.getByRole("button", { name: "打开 Environment", exact: true }).click()
     await expect(floating).toHaveAttribute("data-state", "open")
     const expectedShift = await main.evaluate((element) => Math.max(-166, Math.min(0, (1152 - element.getBoundingClientRect().width) / 2)))
-    await expect.poll(() => main.locator("[data-composer-column]").evaluate((element) => parseFloat(element.ownerDocument.defaultView!.getComputedStyle(element).left))).toBe(expectedShift)
+    await expect.poll(() => composerColumnShift(main)).toBe(expectedShift)
     const shiftedCenter = await expectComposerAlignment(main)
     await expectDisclosureAlignment(main)
     await page.getByRole("button", { name: "收起 Environment", exact: true }).click()
     await expect(floating).toHaveAttribute("data-state", "closed")
-    await expect.poll(() => main.locator("[data-composer-column]").evaluate((element) => parseFloat(element.ownerDocument.defaultView!.getComputedStyle(element).left))).toBe(0)
+    await expect.poll(() => composerColumnShift(main)).toBe(0)
     const centered = await expectComposerAlignment(main)
     expect(Math.abs(centered - shiftedCenter + expectedShift)).toBeLessThanOrEqual(1)
   }
