@@ -15,9 +15,11 @@ function contrast(first: string, second: string) {
 }
 
 describe("global accent colors", () => {
-  it("preserves Lotus Next existing appearance with default teal preset", () => {
-    expect(DEFAULT_GLOBAL_ACCENT_PRESET).toBe("teal")
-    expect(DEFAULT_CUSTOM_GLOBAL_ACCENT_COLOR).toBe("#396957")
+  it("defaults to neutral colors while retaining the persisted teal preset", () => {
+    expect(DEFAULT_GLOBAL_ACCENT_PRESET).toBe("neutral")
+    expect(DEFAULT_CUSTOM_GLOBAL_ACCENT_COLOR).toBe("#202020")
+    expect(getGlobalAccentColors("light", "neutral", "#396957").primary).toBe("#202020")
+    expect(getGlobalAccentColors("dark", "neutral", "#396957").primary).toBe("#ececec")
 
     const lightTeal = getGlobalAccentColors("light", "teal", "#396957")
     expect(lightTeal.primary).toBe("#396957")
@@ -57,6 +59,7 @@ describe("global accent colors", () => {
   })
 
   it("validates preset keys and falls back gracefully for invalid values", () => {
+    expect(isGlobalAccentPreset("neutral")).toBe(true)
     expect(isGlobalAccentPreset("teal")).toBe(true)
     expect(isGlobalAccentPreset("blue")).toBe(true)
     expect(isGlobalAccentPreset("purple")).toBe(true)
@@ -67,10 +70,10 @@ describe("global accent colors", () => {
     expect(isGlobalAccentPreset("invalid")).toBe(false)
     expect(isGlobalAccentPreset(null)).toBe(false)
 
-    // Falls back to default teal for unknown preset
+    // Falls back to the neutral default for an unknown preset.
     // @ts-expect-error Testing invalid runtime value
     const fallback = getGlobalAccentColors("light", "unknown", "#123456")
-    expect(fallback.primary).toBe("#396957")
+    expect(fallback.primary).toBe("#202020")
   })
 
   it("applies accent CSS custom properties to documentElement", () => {

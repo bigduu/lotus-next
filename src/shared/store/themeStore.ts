@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { THEME_STORAGE_KEY, USER_MESSAGE_COLOR_STORAGE_KEY, GLOBAL_ACCENT_COLOR_STORAGE_KEY } from "@shared/theme/storageKeys";
-import { DEFAULT_CUSTOM_USER_MESSAGE_COLOR, isHexColor, isUserMessageColorPreset, type UserMessageColorPreset } from "@shared/theme/userMessageColors";
+import { DEFAULT_CUSTOM_USER_MESSAGE_COLOR, DEFAULT_USER_MESSAGE_COLOR_PRESET, isHexColor, isUserMessageColorPreset, type UserMessageColorPreset } from "@shared/theme/userMessageColors";
 import {
   DEFAULT_CUSTOM_GLOBAL_ACCENT_COLOR,
   DEFAULT_GLOBAL_ACCENT_PRESET,
@@ -57,7 +57,7 @@ function readUserMessageColor(): { preset: UserMessageColorPreset; custom: strin
       return { preset: parsed.preset, custom: parsed.custom.toLowerCase() };
     }
   } catch { /* Storage may be blocked or contain an older malformed value. */ }
-  return { preset: "jade", custom: DEFAULT_CUSTOM_USER_MESSAGE_COLOR };
+  return { preset: DEFAULT_USER_MESSAGE_COLOR_PRESET, custom: DEFAULT_CUSTOM_USER_MESSAGE_COLOR };
 }
 
 const initialUserMessageColor = readUserMessageColor();

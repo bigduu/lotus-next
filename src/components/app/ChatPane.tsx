@@ -118,15 +118,15 @@ type Attachment = { id: string; base64: string; name: string; type: string; size
 type SelectedWorkflow = { name: string; content: string }
 type EnvironmentPreference = "auto" | "open" | "closed"
 
-const MESSAGE_COLUMN_MAX_WIDTH = 1152
+const MESSAGE_WORKSPACE_WIDTH = 1152
 const ENVIRONMENT_OCCUPIED_WIDTH = 332
 const ENVIRONMENT_CONTENT_SHIFT = ENVIRONMENT_OCCUPIED_WIDTH / 2
 
-// Once the card fits beside the full 72rem message column, reveal it and
-// recenter that column within the remaining space. The card still floats, but
-// the transcript slides left by half of its 20rem width plus 0.75rem edge.
+// Keep the existing 72rem workspace threshold so narrowing the reading column
+// does not automatically open Environment on smaller windows. It still floats
+// beside the transcript with the same bounded shift and comfortable gutters.
 const ENVIRONMENT_AUTO_SHOW_MIN_WIDTH =
-  MESSAGE_COLUMN_MAX_WIDTH + ENVIRONMENT_OCCUPIED_WIDTH
+  MESSAGE_WORKSPACE_WIDTH + ENVIRONMENT_OCCUPIED_WIDTH
 
 type ComposerSubmissionSnapshot = Readonly<{
   draftKey: string
@@ -382,7 +382,7 @@ export function ChatPane({
   const messageContentShift = environmentVisible
     ? -Math.min(
         ENVIRONMENT_CONTENT_SHIFT,
-        Math.max(0, (chatLayoutWidth - MESSAGE_COLUMN_MAX_WIDTH) / 2),
+        Math.max(0, (chatLayoutWidth - MESSAGE_WORKSPACE_WIDTH) / 2),
       )
     : 0
 

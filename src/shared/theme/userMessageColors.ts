@@ -1,13 +1,15 @@
-import { THEME_COLORS } from "./colorTokens"
+import { COLOR_PALETTE, THEME_COLORS } from "./colorTokens"
 
 export const USER_MESSAGE_COLOR_PRESETS = [
-  { id: "jade", light: THEME_COLORS.light["user-message-background"], dark: THEME_COLORS.dark["user-message-background"] },
+  { id: "neutral", light: THEME_COLORS.light["user-message-background"], dark: THEME_COLORS.dark["user-message-background"] },
+  { id: "jade", light: COLOR_PALETTE.light.jade[4], dark: COLOR_PALETTE.dark.jade[4] },
   { id: "slate", light: "#e9edef", dark: "#2d343b" },
   { id: "blue", light: "#e4edf4", dark: "#293b4a" },
   { id: "violet", light: "#eeebf5", dark: "#3b334a" },
 ] as const
 
 export type UserMessageColorPreset = (typeof USER_MESSAGE_COLOR_PRESETS)[number]["id"] | "custom"
+export const DEFAULT_USER_MESSAGE_COLOR_PRESET: UserMessageColorPreset = "neutral"
 export const DEFAULT_CUSTOM_USER_MESSAGE_COLOR = "#345448"
 
 export function isUserMessageColorPreset(value: unknown): value is UserMessageColorPreset {

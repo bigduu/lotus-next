@@ -1,8 +1,9 @@
 import { expect, test } from "@playwright/test"
 import { installArtifactRuntime, standaloneScenario } from "./support/artifactRuntime.js"
 import { markdownThemeFixture } from "./support/markdownThemeFixture.js"
+import { THEME_COLORS } from "../src/shared/theme/colorTokens.js"
 
-const accents = ["teal", "blue", "purple", "green", "rose", "orange", "#ffffff", "#000000"]
+const accents = ["neutral", "teal", "blue", "purple", "green", "rose", "orange", "#ffffff", "#000000"]
 
 function luminance(color: string): number {
   const values = color.match(/[\d.]+/g)!.slice(0, 3).map(Number)
@@ -31,6 +32,8 @@ for (const theme of ["light", "dark"] as const) {
       role: "assistant", content: markdownThemeFixture, timestamp: "2026-09-03T00:00:00.000Z",
     }])
     await page.goto(standaloneScenario.entryUrl)
+    await expect(page.getByRole("textbox", { name: "消息", exact: true }).first()).toBeVisible()
+    expect(await page.locator("html").evaluate((element) => element.style.getPropertyValue("--primary"))).toBe(THEME_COLORS[theme].primary)
 
     const palette = []
     for (const accent of accents) {
@@ -169,3 +172,51 @@ for (const theme of ["light", "dark"] as const) {
     expect(observation.pageErrors).toEqual([])
   })
 }
+
+test("neutral defaults and saved jade choices remain selectable across responsive settings and reload", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("bodhi_onboarded_v1", "1")
+    localStorage.setItem("lotus_next_last_session", "all-surface-session")
+  })
+  const observation = await installArtifactRuntime(page, standaloneScenario, [
+    { id: "alignment-user", role: "user", content: "Check the reading column.", created_at: "2026-10-24T00:00:00.000Z" },
+    { id: "alignment-assistant", role: "assistant", content: "Aligned response.", created_at: "2026-10-24T00:00:01.000Z" },
+  ])
+  await page.goto(standaloneScenario.entryUrl)
+  await expect(page.locator("[data-message-list-content]")).toContainText("Aligned response.")
+  const geometry = await page.locator("[data-chat-layout]").first().evaluate((element) => {
+    const transcript = element.querySelector("[data-message-list-content]")!.getBoundingClientRect()
+    const composer = element.querySelector("[data-composer-surface]")!.getBoundingClientRect()
+    return { width: transcript.width, leftDifference: Math.abs(transcript.left - composer.left), widthDifference: Math.abs(transcript.width - composer.width) }
+  })
+  expect(geometry.width).toBeLessThanOrEqual(832)
+  expect(geometry.leftDifference).toBeLessThanOrEqual(1)
+  expect(geometry.widthDifference).toBeLessThanOrEqual(1)
+
+  const openSettings = async () => {
+    if ((page.viewportSize()?.width ?? 0) < 768) {
+      await page.getByRole("button", { name: "菜单", exact: true }).click()
+    }
+    await page.getByRole("button", { name: "系统设置", exact: true }).click()
+    await expect(page.locator(".settings-accent-options")).toBeVisible()
+  }
+  await openSettings()
+  const accents = page.locator(".settings-accent-options")
+  const bubbles = page.locator(".settings-bubble-options")
+  await expect(accents.getByRole("button", { name: "中性色", exact: true })).toHaveAttribute("aria-pressed", "true")
+  await expect(bubbles.getByRole("button", { name: "中性色", exact: true })).toHaveAttribute("aria-pressed", "true")
+  await accents.getByRole("button", { name: "青色", exact: true }).click()
+  await bubbles.getByRole("button", { name: "玉石绿", exact: true }).click()
+  await page.reload()
+  await expect(page.locator("[data-message-list-content]")).toContainText("Aligned response.")
+  await openSettings()
+  await expect(accents.getByRole("button", { name: "青色", exact: true })).toHaveAttribute("aria-pressed", "true")
+  await expect(bubbles.getByRole("button", { name: "玉石绿", exact: true })).toHaveAttribute("aria-pressed", "true")
+  await accents.getByRole("button", { name: "中性色", exact: true }).click()
+  await bubbles.getByRole("button", { name: "中性色", exact: true }).click()
+  await page.getByRole("button", { name: "返回聊天", exact: true }).click()
+  await expect(page.locator('[data-message-role="user"]')).toHaveCSS("background-color", "rgb(48, 48, 48)")
+  expect(await page.locator("html").evaluate((element) => element.scrollWidth - element.ownerDocument.defaultView!.innerWidth)).toBeLessThanOrEqual(1)
+  expect(observation.pageErrors).toEqual([])
+  expect(observation.errorResponses).toEqual([])
+})

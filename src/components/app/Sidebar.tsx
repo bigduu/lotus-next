@@ -502,19 +502,16 @@ export function Sidebar({
       <aside
         style={{
           ["--sidebar-w" as string]: typeof width === "number" ? `${width}px` : width,
-          ["--text-xs" as string]: "13px",
-          ["--text-sm" as string]: "15px",
-          fontFamily: '-apple-system, "PingFang SC", sans-serif',
           color: "var(--sidebar-foreground)",
         }}
         className={cn(
-          "fixed inset-y-0 left-0 z-50 flex w-[84%] max-w-xs flex-col border-r bg-sidebar transition-transform md:static md:w-[var(--sidebar-w)] md:max-w-none md:translate-x-0",
+          "fixed inset-y-0 left-0 z-50 flex w-[84%] max-w-xs flex-col bg-sidebar transition-transform md:static md:w-[var(--sidebar-w)] md:max-w-none md:translate-x-0",
           open ? "translate-x-0" : "-translate-x-full",
           collapsed && "md:hidden",
         )}
       >
-        <div className="flex items-center gap-2 px-3 py-3">
-          <BrandMark className="size-7" />
+        <div className="flex items-center gap-2 px-4 py-3">
+          <BrandMark className="size-6" />
           <span className="flex-1 text-sm font-semibold dark:font-medium">Bodhi</span>
           <Button
             size="icon"
@@ -557,7 +554,7 @@ export function Sidebar({
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder={uiText("search_sessions_feb95554")}
-              className="py-1.5 pl-8 pr-7"
+              className="border-transparent bg-transparent py-1.5 pl-8 pr-7 shadow-none"
             />
             {search ? (
               <button
@@ -640,7 +637,7 @@ export function Sidebar({
             </div>
           ) : null}
         </div>
-        <div className="border-t p-2">
+        <div className="p-2">
           {onOpenWorktrees && <Button variant="ghost" className="w-full justify-start gap-2" onClick={() => { onOpenWorktrees(); onClose() }}>
             <GitBranch className="size-4" />{uiText("worktrees_title")}
           </Button>}

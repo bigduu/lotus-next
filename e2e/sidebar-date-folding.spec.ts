@@ -108,8 +108,8 @@ for (const scenario of [standaloneScenario, embeddedScenario, secureRemoteScenar
     const phone = testInfo.project.name === "phone-chromium"
     const sidebar = await openSidebar(surface, phone)
     await expect(sidebar).toHaveCSS("-webkit-font-smoothing", "antialiased")
-    await expect(sidebar.getByText("最近", { exact: true })).toHaveCSS("font-size", "13px")
-    await expect(sidebar.getByRole("button", { name: "最近任务 1", exact: true })).toHaveCSS("font-size", "15px")
+    await expect(sidebar.getByText("最近", { exact: true })).toHaveCSS("font-size", "12px")
+    await expect(sidebar.getByRole("button", { name: "最近任务 1", exact: true })).toHaveCSS("font-size", "14px")
     const older = sidebar.getByRole("button", { name: /^更早\s*\d+\s*天/ })
     await expect(older).toHaveAttribute("aria-expanded", "false")
     await expect(sidebar.getByRole("button", { name: "长期置顶", exact: true })).toBeVisible()

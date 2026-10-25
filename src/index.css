@@ -137,6 +137,8 @@
 }
 
 @theme inline {
+  /* Chat, composer, menus and home share this existing column utility. */
+  --container-6xl: 52rem;
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);

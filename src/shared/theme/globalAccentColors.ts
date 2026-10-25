@@ -1,5 +1,5 @@
 import { colorLuminance, isHexColor } from "./userMessageColors"
-import { DEFAULT_ACCENT_COLORS, THEME_COLORS } from "./colorTokens"
+import { DEFAULT_ACCENT_COLORS, JADE_ACCENT_COLORS, THEME_COLORS } from "./colorTokens"
 
 export interface AccentColorPair {
   primary: string
@@ -10,8 +10,12 @@ export interface AccentColorPair {
 
 export const GLOBAL_ACCENT_PRESETS = [
   {
-    id: "teal",
+    id: "neutral",
     ...DEFAULT_ACCENT_COLORS,
+  },
+  {
+    id: "teal",
+    ...JADE_ACCENT_COLORS,
   },
   {
     id: "blue",
@@ -92,7 +96,7 @@ export const GLOBAL_ACCENT_PRESETS = [
 
 export type GlobalAccentPreset = (typeof GLOBAL_ACCENT_PRESETS)[number]["id"] | "custom"
 
-export const DEFAULT_GLOBAL_ACCENT_PRESET: GlobalAccentPreset = "teal"
+export const DEFAULT_GLOBAL_ACCENT_PRESET: GlobalAccentPreset = "neutral"
 export const DEFAULT_CUSTOM_GLOBAL_ACCENT_COLOR = DEFAULT_ACCENT_COLORS.light.primary
 
 export function isGlobalAccentPreset(value: unknown): value is GlobalAccentPreset {
