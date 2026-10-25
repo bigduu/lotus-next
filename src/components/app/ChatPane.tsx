@@ -1147,7 +1147,7 @@ export function ChatPane({
         data-session-drop-target={secondary ? "secondary" : "main"}
         {...sessionDrop.handlers}
           >
-        <SessionCompatibilityNotice state={chat.executionCompatibility} />
+        <SessionCompatibilityNotice state={chat.executionCompatibility} sessionId={currentSessionId} />
         {pendingApproval && chat.approvalCompatibility?.blocked ? (
           <section aria-label={uiText("subagent_approval_request_4321e83b")}>
             <p className="px-3 pt-2 text-sm font-medium">{uiText("subagent_approval_request_4321e83b")}</p>

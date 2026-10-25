@@ -2747,4 +2747,14 @@ export const uiZhCn = {
   "supervisor_sessions_auxiliary": "辅助子代理",
   "supervisor_sessions_unverified": "无法验证",
   "supervisor_sessions_open_failed": "无法打开此会话，请刷新当前状态后重试。",
+  "session_migration_action": "迁移到当前版本",
+  "session_migration_preserves_context": "保留当前会话、历史、模型、工作区和权限；仅在会话空闲时迁移。",
+  "session_migration_completed": "已确认迁移完成，会话历史与设置已保留。",
+  "session_migration_unconfirmed": "迁移结果尚未确认，请先确认这次迁移的结果。",
+  "session_migration_rejected": "迁移请求未被接受，请根据刷新后的会话状态处理。",
+  "session_migration_read_error": "暂时无法读取迁移条件，请刷新检查。",
+  "session_migration_blocked": "当前暂不能迁移",
+  "session_migration_in_progress": "正在迁移…",
+  "session_migration_confirm_result": "确认迁移结果",
+  "session_migration_refresh": "刷新迁移状态"
 } as const
