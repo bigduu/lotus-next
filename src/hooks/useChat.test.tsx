@@ -2446,6 +2446,111 @@ describe("owned streams without a terminal frame", () => {
     expect(mocks.appState.refreshChatsNow).not.toHaveBeenCalled()
   })
 
+  it("releases a child-wait suspension without a terminal frame and accepts another message", async () => {
+    const { hook, controller } = await start()
+    mocks.getSession.mockResolvedValue({ session: {
+      id: sessionId, is_running: false, last_run_status: "suspended", has_pending_question: false,
+    } })
+    mocks.appState.refreshChatsNow.mockImplementation(async () => {
+      Object.assign(mocks.appState.chats[0], { isRunning: false, lastRunStatus: "suspended" })
+    })
+    const handlers = mocks.subscribeToEvents.mock.calls[0][1] as SubscriptionHandlers
+    await act(async () => { handlers.onToken("Waiting for the background agent.") })
+    mocks.appState.loadChatHistory.mockImplementation(async () => {
+      mocks.appState.chats[0].messages = [{ id: "waiting-reply", role: "assistant", type: "text",
+        content: "Waiting for the background agent." }]
+    })
+
+    await advance(5_000)
+    expect(controller.signal.aborted).toBe(false)
+    await advance(2_000)
+    expect(controller.signal.aborted).toBe(true)
+    expect(hook.current.sending).toBe(false)
+    expect(hook.current.streamPhase).toBeNull()
+    expect(hook.current.streaming).toBeNull()
+    expect(hook.current.sendFailure).toBeNull()
+    expect(mocks.stopGeneration).not.toHaveBeenCalled()
+
+    // A child can keep the execution rail busy while its parent is suspended.
+    // Only a resumed parent should acquire another passive subscription.
+    mocks.shouldObserve = true
+    await hook.rerender({ mode: "bound", sessionId })
+    await advance(10_000)
+    expect(mocks.subscribeToEvents).toHaveBeenCalledTimes(1)
+    mocks.subscribeToEvents.mockImplementation(() => pendingForever())
+    let result!: SendSubmissionResult
+    await act(async () => { result = await hook.current.send("How is the work going?") })
+    expect(result.kind).toBe("accepted")
+    expect(mocks.sendMessage).toHaveBeenCalledTimes(2)
+    expect(mocks.execute).toHaveBeenCalledTimes(2)
+  })
+
+  it("passively observes a parent that resumes after its child-wait suspension", async () => {
+    const { hook, controller } = await start()
+    mocks.getSession.mockResolvedValue({ session: {
+      id: sessionId, is_running: false, last_run_status: "suspended", has_pending_question: false,
+    } })
+    mocks.appState.refreshChatsNow.mockImplementation(async () => {
+      Object.assign(mocks.appState.chats[0], { isRunning: false, lastRunStatus: "suspended" })
+    })
+    await advance(7_000)
+    expect(controller.signal.aborted).toBe(true)
+    mocks.shouldObserve = true
+    mocks.appState.chats[0].isRunning = true
+    mocks.subscribeToEvents.mockImplementation(() => pendingForever())
+    await hook.rerender({ mode: "bound", sessionId })
+    expect(mocks.subscribeToEvents).toHaveBeenCalledTimes(2)
+    expect(mocks.execute).toHaveBeenCalledTimes(1)
+    const resumed = mocks.subscribeToEvents.mock.calls[1][1] as SubscriptionHandlers
+    await act(async () => { resumed.onToken("The background result is ready.") })
+    await advance(20)
+    expect(hook.current.streaming).toBe("The background result is ready.")
+    expect(hook.current.sendFailure).toBeNull()
+  })
+
+  it("retains a suspended question and retries an unavailable suspension history", async () => {
+    const { hook, controller } = await start()
+    mocks.getSession.mockResolvedValue({ session: {
+      id: sessionId, is_running: false, last_run_status: "suspended", has_pending_question: true,
+    } })
+    await advance(10_000)
+    expect(controller.signal.aborted).toBe(false)
+    expect(hook.current.sending).toBe(true)
+    mocks.getSession.mockResolvedValue({ session: {
+      id: sessionId, is_running: false, last_run_status: "suspended", has_pending_question: false,
+    } })
+    mocks.appState.loadChatHistory.mockRejectedValue(new Error("offline"))
+    await advance(7_000)
+    expect(controller.signal.aborted).toBe(false)
+    expect(hook.current.sendFailure).toBeNull()
+    mocks.appState.loadChatHistory.mockResolvedValue(undefined)
+    await advance(5_000)
+    expect(controller.signal.aborted).toBe(true)
+    expect(hook.current.sending).toBe(false)
+    expect(hook.current.sendFailure).toBeNull()
+  })
+
+  it.each(["pending", "unavailable"])("confirms canonical question absence before settling a suspension (%s)", async (answer) => {
+    const { hook, controller } = await start()
+    mocks.getSession.mockResolvedValue({ session: {
+      id: sessionId, is_running: false, last_run_status: "suspended", has_pending_question: false,
+    } })
+    if (answer === "pending") mocks.getPendingQuestion.mockResolvedValue(clarificationQuestion())
+    else mocks.getPendingQuestion.mockRejectedValue(new Error("offline"))
+    await advance(7_000)
+    expect(controller.signal.aborted).toBe(false)
+    expect(hook.current.sending).toBe(true)
+    expect(hook.current.sendFailure).toBeNull()
+    if (answer === "pending") expect(hook.current.pendingQuestion).toEqual(clarificationQuestion())
+    else expect(hook.current.questionUnavailable).toBe(true)
+
+    mocks.getPendingQuestion.mockResolvedValue(noQuestion)
+    await advance(5_000)
+    expect(controller.signal.aborted).toBe(true)
+    expect(hook.current.sending).toBe(false)
+    expect(hook.current.sendFailure).toBeNull()
+  })
+
   it("preserves a running successor admitted while history is being read", async () => {
     const { hook, controller } = await start()
     mocks.appState.loadChatHistory.mockImplementation(async () => {
