@@ -111,6 +111,28 @@ it("keeps older-server exact Project bindings usable without rebinding", async (
   expect(onOpen).toHaveBeenCalledWith("project-a", "/repo")
 })
 
+it("disables a metadata-only entry while keeping a valid linked checkout openable", async () => {
+  const onOpen = vi.fn()
+  const mixed = listing()
+  const linked = { ...mixed.repositories[0]!.worktrees[0]!, openable: true }
+  mixed.repositories[0]!.worktrees = [
+    { ...linked, path: "/repo/.git/modules/backend", openable: false, project_owned: true, dirty: null,
+      error: "Git metadata does not identify an available checkout" },
+    linked,
+  ]
+  mocks.list.mockResolvedValueOnce(mixed)
+  await mount(onOpen)
+  expect(document.body.textContent).toContain("Git metadata does not identify an available checkout")
+  expect(buttons("打开并新建会话")[0]!.disabled).toBe(true)
+  expect(buttons("打开并新建会话")[1]!.disabled).toBe(false)
+  await act(async () => buttons("打开并新建会话")[0]!.click())
+  expect(onOpen).not.toHaveBeenCalled()
+  expect(useAppStore.getState().bindWorkspace).not.toHaveBeenCalled()
+  await act(async () => buttons("打开并新建会话")[1]!.click())
+  expect(useAppStore.getState().bindWorkspace).toHaveBeenCalledWith("project-a", 7, { path: linked.path })
+  expect(onOpen).toHaveBeenCalledWith("project-a", linked.path)
+})
+
 it("creates from the selected child repository while retaining nonfatal discovery warnings", async () => {
   const nested = listing()
   nested.repositories = [
