@@ -502,7 +502,7 @@ export const uiEnUs = {
   "worktrees_no_projects": "Create a Project first",
   "worktrees_repositories": "Repositories and worktrees",
   "worktrees_refresh": "Refresh",
-  "worktrees_no_repositories": "No source repositories are bound to this Project.",
+  "worktrees_no_repositories": "No Git repositories were found in this Project's source directories.",
   "worktrees_detached": "Detached HEAD",
   "worktrees_open": "Open for new session",
   "worktrees_unknown": "Status unknown",

@@ -502,7 +502,7 @@ export const uiZhCn = {
   "worktrees_no_projects": "请先创建项目",
   "worktrees_repositories": "仓库与 worktree",
   "worktrees_refresh": "刷新",
-  "worktrees_no_repositories": "该项目尚未绑定源仓库。",
+  "worktrees_no_repositories": "未在该项目的源目录中发现 Git 仓库。",
   "worktrees_detached": "游离 HEAD",
   "worktrees_open": "打开并新建会话",
   "worktrees_unknown": "状态未知",

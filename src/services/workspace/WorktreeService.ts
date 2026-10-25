@@ -15,12 +15,17 @@ export interface GitWorktree {
   dirty: boolean | null
   error: string | null
   occupied: boolean
+  /** Backend ownership snapshot; session creation still validates the workspace. */
+  project_owned?: boolean
+  /** False for Git metadata, unavailable paths, and display-only path labels. */
+  openable?: boolean
   sessions: { id: string; title: string; active: boolean }[]
 }
 export interface WorktreeRepository {
   path: string
   common_dir?: string
   error: string | null
+  warnings?: string[]
   worktrees: GitWorktree[]
 }
 export interface ProjectWorktrees {
