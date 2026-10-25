@@ -5,6 +5,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest
 import type { Editor } from "@tiptap/core"
 import type { ComposerInputHandle } from "@/components/chat/ComposerEditor"
 import { Composer } from "./Composer"
+import { NewChatWorktreeControl } from "./NewChatWorktreeControl"
 import { changeLocale } from "@shared/i18n"
 import { useAppStore } from "@shared/store/appStore"
 
@@ -416,6 +417,33 @@ describe("container-aware composer toolbar", () => {
     expect(document.querySelector('[role="dialog"]')).toBeNull()
     expect(container.querySelector("[data-composer-editor]")?.textContent).toBe("另一个草稿")
     expect(props.onSubmit).not.toHaveBeenCalled()
+  })
+
+  it("places the new-chat workspace slot beside Project on desktop and omits it for existing sessions", () => {
+    observeWidth(900)
+    const h = mountComposer({ hasSession: false, workspaceControl: <button data-workspace-control>Current workspace</button> })
+    const slot = h.container.querySelector('[data-workspace-control]')!
+    expect(slot.closest('[data-composer-secondary-controls]')).not.toBeNull()
+    expect(slot.previousElementSibling?.getAttribute('data-slot')).toBe('dropdown-menu-trigger')
+    h.rerender({ hasSession: true })
+    expect(h.container.querySelector('[data-workspace-control]')).toBeNull()
+  })
+
+  it("keeps compact More open when its nested worktree selector is inspected and cancelled", async () => {
+    observeWidth(420)
+    const onChange = vi.fn()
+    const h = mountComposer({ hasSession: false, workspaceControl: <NewChatWorktreeControl projectId={null} workspacePath="/repo" value={null} onChange={onChange} /> })
+    expect(h.container.querySelector('[data-new-chat-worktree-control]')).toBeNull()
+    act(() => h.container.querySelector<HTMLButtonElement>('[aria-label="更多"]')!.click())
+    const trigger = document.querySelector<HTMLButtonElement>('button[aria-label="会话工作区"]')!
+    expect(trigger.closest('[data-composer-secondary-controls]')).not.toBeNull()
+    act(() => trigger.click())
+    expect(document.querySelector('[role="dialog"][aria-label="会话工作区"]')).not.toBeNull()
+    act(() => document.activeElement?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })))
+    await vi.waitFor(() => expect(document.querySelector('[role="dialog"][aria-label="会话工作区"]')).toBeNull())
+    expect(document.querySelector('[role="dialog"][aria-label="更多"]')).not.toBeNull()
+    expect(onChange).not.toHaveBeenCalled()
+    expect(h.props.onSubmit).not.toHaveBeenCalled()
   })
 
   it("keeps More open while a nested preset menu is cancelled", async () => {

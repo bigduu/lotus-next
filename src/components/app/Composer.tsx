@@ -138,6 +138,7 @@ export function Composer({
   sendWhileRunning = false,
   queueControls,
   permissionControl,
+  workspaceControl,
   runtimeControls,
   workflowControl,
   workflowUndoControl,
@@ -189,6 +190,8 @@ export function Composer({
   queueControls?: ReactNode
   /** Permission selector shown in the lower-left composer toolbar. */
   permissionControl?: ReactNode
+  /** Draft workspace/worktree selector beside Project, shown only for new chats. */
+  workspaceControl?: ReactNode
   /** Context, reasoning, and model controls shown in the lower-right toolbar. */
   runtimeControls?: ReactNode
   /** Exact catalog selection; separate from slash-command text expansion. */
@@ -273,6 +276,7 @@ export function Composer({
             selectedProjectId={selectedProjectId}
             onSelect={onSelectProject}
           />
+          {workspaceControl}
           <button
             onClick={() => openSecondaryDialog(onOpenWorkspacePicker)}
             className={selectedProjectId && !showProjectWorkspace ? "hidden" : "flex max-w-full items-center gap-1.5 rounded-full border bg-card px-2.5 py-1 text-xs text-muted-foreground hover:text-foreground"}

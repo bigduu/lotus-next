@@ -1765,8 +1765,11 @@ export function useChat(
         permissionMode?: SessionPermissionMode
         /** Frozen picker value for this new-session submission. */
         reasoningSelection?: ReasoningEffortSelection
+        /** Optional first-send preparation fence, including null → null navigation. */
+        isOriginCurrent?: () => boolean
       },
     ): Promise<SendSubmissionResult> => {
+      if (opts?.isOriginCurrent && !opts.isOriginCurrent()) return { kind: "blocked" }
       if (isSessionExecutionBlocked(sid)) return { kind: "blocked" }
       const body = text.trim()
       if (!body && !opts?.images?.length) return { kind: "ignored" }
@@ -1933,7 +1936,8 @@ export function useChat(
       const stillAtOrigin =
         mountedRef.current &&
         navigationRef.current.sessionId === operation.originSessionId &&
-        navigationRef.current.epoch === operation.originNavigationEpoch
+        navigationRef.current.epoch === operation.originNavigationEpoch &&
+        (opts?.isOriginCurrent?.() ?? true)
 
       if (!stillAtOrigin) {
         // A valid late acknowledgement still owns a server-side generation, but

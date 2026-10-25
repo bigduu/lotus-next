@@ -84,6 +84,7 @@ test("configures a root, creates a checkout, and opens its explicit workspace", 
   await expect(dialog).not.toBeVisible()
   expect(bindings).toEqual([{ path: target }])
   await revealComposerSettings(page)
-  await expect(page.getByTitle(target, { exact: true })).toBeVisible()
+  await expect(page.getByRole("button", { name: "task", exact: true }).and(page.getByTitle(target, { exact: true }))).toBeVisible()
+  await expect(page.getByRole("button", { name: "会话工作区", exact: true })).toContainText("当前工作区")
   expect(observation.pageErrors).toEqual([])
 })
