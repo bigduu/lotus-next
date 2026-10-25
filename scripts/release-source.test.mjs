@@ -4,7 +4,7 @@ import { createHash } from "node:crypto"
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { dirname, join, resolve } from "node:path"
-import { resolveReleaseRequest, verifyAcceptanceEvidence, verifySourceReceipt, verifyCommittedAcceptance, verifyCandidateBackendPins } from "./release-source.mjs"
+import { resolveReleaseRequest, verifyAcceptanceEvidence, verifySourceReceipt, verifyCommittedAcceptance, verifyCandidateBackendPins, verifyProductMerge } from "./release-source.mjs"
 
 const sourceSha = "5242eaf1d6e8cd8d437e8a4dcb82c63d00af82f1"
 const candidate = {
@@ -30,6 +30,19 @@ const environment = {
   GITHUB_WORKFLOW_REF: workflowRef, GITHUB_SHA: workflowSha, GITHUB_RUN_ID: "123", GITHUB_RUN_ATTEMPT: "1",
   LOTUS_NEXT_EXPECTED_SOURCE_REVISION: sourceSha, LOTUS_NEXT_RELEASE_VERSION: request.version,
 }
+
+describe("frozen reviewed PR-head merge provenance", () => {
+  it("retains historical equal-tree merges and accepts an exact head merged after main advanced", () => {
+    expect(() => verifyProductMerge(candidate, candidate.sourceTree, [sourceSha])).not.toThrow()
+    expect(() => verifyProductMerge(candidate, "a".repeat(40), [workflowSha, sourceSha])).not.toThrow()
+  })
+  it.each([
+    [], [sourceSha], [sourceSha, workflowSha], [workflowSha, "b".repeat(40)],
+    [workflowSha, sourceSha, "b".repeat(40)], ["moving-main", sourceSha],
+  ])("rejects unrelated, indirect, rewritten or malformed merge parents %j", (...parents) => {
+    expect(() => verifyProductMerge(candidate, "a".repeat(40), parents)).toThrow()
+  })
+})
 
 describe("candidate Bamboo source bindings", () => {
   const files = {

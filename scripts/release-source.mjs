@@ -111,6 +111,17 @@ export const verifyCommittedAcceptance = (candidate, bytes) => {
   return receipt
 }
 
+export const verifyProductMerge = (candidate, mergeTree, parents) => {
+  assert.match(mergeTree, sha)
+  if (mergeTree === candidate.sourceTree) return
+  // A reviewed PR head can remain frozen while main advances independently.
+  // The canonical PR receipt above binds the actual main merge; Git must also
+  // prove that it directly merged this exact head, not just an older ancestor.
+  assert.equal(parents.length, 2, "A different merge tree requires a normal two-parent merge")
+  for (const parent of parents) assert.match(parent, sha)
+  assert.equal(parents[1], candidate.sourceSha, "The main merge did not directly include the reviewed source head")
+}
+
 // Accept the reviewed workflow's explicit block form, failing closed if its
 // authority wiring changes. This is deliberately not a general YAML parser.
 const workflowBlock = (source, key, indentation) => {
@@ -280,7 +291,9 @@ const main = async () => {
   assert.equal(git(["rev-parse", "FETCH_HEAD^{commit}"]), candidate.sourceSha)
   assert.equal(git(["rev-parse", `${candidate.sourceSha}^{tree}`]), candidate.sourceTree)
   git(["fetch", "--no-tags", "origin", candidate.productMergeSha])
-  assert.equal(git(["rev-parse", `${candidate.productMergeSha}^{tree}`]), candidate.sourceTree)
+  verifyProductMerge(candidate,
+    git(["rev-parse", `${candidate.productMergeSha}^{tree}`]),
+    git(["show", "-s", "--format=%P", candidate.productMergeSha]).split(" "))
   verifyCandidateBackendPins(candidate, {
     ci: git(["show", `${candidate.sourceSha}:.github/workflows/ci.yml`]),
     publication: git(["show", `${candidate.sourceSha}:.github/workflows/publish-npm.yml`]),
