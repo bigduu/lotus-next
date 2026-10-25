@@ -379,6 +379,16 @@ describe("accepted immutable release source", () => {
     expect(() => verifyAcceptanceEvidence(accepted, run, { total_count: duplicate.length, jobs: duplicate }, pr)).toThrow()
     expect(() => verifyAcceptanceEvidence(candidate, run, jobs, pr)).toThrow()
   })
+  it("reuses successful reviewed PR-head admission without repeating its artifact runtime gate", () => {
+    const { run, jobs, pr } = mergedMainEvidence()
+    const headRun = { ...run, event: "pull_request", head_branch: "release/fixed-ui" }
+    const headPr = { ...pr, head: { sha: sourceSha }, merge_commit_sha: candidate.productMergeSha }
+    expect(() => verifyAcceptanceEvidence(candidate, headRun, jobs, headPr)).not.toThrow()
+    expect(() => verifyAcceptanceEvidence(candidate, headRun, jobs, { ...headPr, head: { sha: workflowSha } })).toThrow()
+    expect(() => verifyAcceptanceEvidence(candidate, headRun, jobs, { ...headPr, merged: false })).toThrow()
+    expect(() => verifyAcceptanceEvidence(candidate, { ...headRun, head_repository: { full_name: "foreign/lotus-next" } }, jobs, headPr)).toThrow()
+    expect(() => verifyAcceptanceEvidence(candidate, headRun, jobs, { ...headPr, base: { ref: "dev", repo: { full_name: "bigduu/lotus-next" } } })).toThrow()
+  })
   it("keeps workflow and source identities distinct in one run-bound receipt", () => {
     expect(verifySourceReceipt(receipt, environment, sourceSha)).toEqual(receipt)
     expect(workflowSha).not.toBe(sourceSha)
