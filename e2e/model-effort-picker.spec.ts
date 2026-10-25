@@ -45,6 +45,17 @@ async function screenshot(page: Page, info: TestInfo, name: string) {
   await info.attach(detailName, { path: detailFile, contentType: "image/png" })
 }
 
+function expectStableRightEdge(actual: { x: number; y: number; width: number; height: number } | null,
+  expected: { x: number; y: number; width: number; height: number } | null) {
+  expect(actual).not.toBeNull()
+  expect(expected).not.toBeNull()
+  // Labels fit their content; the popup anchor and neighboring send action
+  // stay fixed while model/effort text legitimately changes the left edge.
+  expect(actual!.x + actual!.width).toBeCloseTo(expected!.x + expected!.width, 2)
+  expect(actual!.y).toBeCloseTo(expected!.y, 2)
+  expect(actual!.height).toBeCloseTo(expected!.height, 2)
+}
+
 async function setup(page: Page, beforeSessionRestoration?: () => Promise<void>, beforeModeCommit?: () => Promise<void>) {
   await page.addInitScript((id) => {
     localStorage.setItem("bodhi_onboarded_v1", "1")
@@ -169,6 +180,44 @@ test("saved-session restoration completes before the picker test edits its draft
   expect(observation.errorResponses).toEqual([])
 })
 
+test("short model and effort labels align with the composer toolbar without a spacer", async ({ page }, info) => {
+  const { observation } = await setup(page)
+  const picker = modelEffortPicker(page)
+  const geometry = await picker.evaluate((trigger) => {
+    const composer = trigger.closest("[data-composer-surface]")!
+    const permission = composer.querySelector('[role="combobox"]')!
+    const send = composer.querySelector('button[aria-label="发送消息"]')!
+    const [model, effort] = [...trigger.querySelectorAll("span")]
+    const text = trigger.ownerDocument.createRange()
+    text.selectNodeContents(model)
+    const center = (element: { getBoundingClientRect(): { y: number; height: number } }) => {
+      const rect = element.getBoundingClientRect()
+      return rect.y + rect.height / 2
+    }
+    const styles = trigger.ownerDocument.defaultView!.getComputedStyle(trigger)
+    return {
+      textGap: effort.getBoundingClientRect().left - text.getBoundingClientRect().right,
+      labelCenterDifference: Math.abs(center(model) - center(effort)),
+      permissionCenterDifference: Math.abs(center(trigger) - center(permission)),
+      sendCenterDifference: Math.abs(center(trigger) - center(send)),
+      borderWidth: styles.borderTopWidth,
+      width: trigger.getBoundingClientRect().width,
+      compact: trigger.closest("[data-composer-column]")?.getAttribute("data-composer-compact") === "true",
+    }
+  })
+  expect(geometry.textGap).toBeGreaterThanOrEqual(4)
+  expect(geometry.textGap).toBeLessThanOrEqual(8)
+  expect(geometry.labelCenterDifference).toBeLessThanOrEqual(0.5)
+  if (!geometry.compact) expect(geometry.permissionCenterDifference).toBeLessThanOrEqual(0.5)
+  expect(geometry.sendCenterDifference).toBeLessThanOrEqual(0.5)
+  expect(geometry.borderWidth).toBe("0px")
+  expect(geometry.width).toBeLessThan(160)
+  const file = info.outputPath("aligned-composer-toolbar.png")
+  await page.locator("[data-composer-surface]").screenshot({ path: file, animations: "disabled" })
+  await info.attach("Aligned composer toolbar", { path: file, contentType: "image/png" })
+  expect(observation.pageErrors).toEqual([])
+})
+
 for (const width of [390, 820, 1440]) {
   test(`compact picker keeps long model names, modes, context and send usable at ${width}px`, async ({ page }, info) => {
     test.skip(info.project.name !== "desktop-chromium", "explicit responsive viewport and localized geometry")
@@ -194,7 +243,7 @@ for (const width of [390, 820, 1440]) {
     const send = composer.getByRole("button", { name: english ? "Send message" : "发送消息", exact: true })
     const usage = composer.locator("[data-prefix-cache]").locator("..")
     const max = english ? "Max" : "最大"
-    const ultra = english ? "Ultra · Orchestration" : "Ultra · 编排"
+    const ultra = "Ultra"
     await expect(picker).toHaveAttribute("title", `${alternateModel} · ${max}`)
     await expect(picker).toHaveAccessibleDescription(`${alternateModel} ${max}`)
     await expect(usage).toHaveAttribute("title", /62%/)
@@ -224,6 +273,7 @@ for (const width of [390, 820, 1440]) {
     const panelBefore = await panel.boundingBox()
     const sliderBefore = await slider.boundingBox()
     expect(panelBefore!.width).toBeLessThanOrEqual(256.5)
+    expect(panelBefore!.height).toBeLessThanOrEqual(124)
     expect(panelBefore!.x).toBeGreaterThanOrEqual(0)
     expect(panelBefore!.x + panelBefore!.width).toBeLessThanOrEqual(width)
     expect(panelBefore!.y).toBeGreaterThanOrEqual(0)
@@ -234,7 +284,7 @@ for (const width of [390, 820, 1440]) {
     await screenshot(page, info, `compact-picker-${width}-max`)
     await slider.press("ArrowLeft")
     await expect(slider).toHaveAttribute("aria-valuetext", english ? "Extra high" : "极高")
-    expectCloseBounds(await picker.boundingBox(), triggerBefore)
+    expectStableRightEdge(await picker.boundingBox(), triggerBefore)
     await slider.press("ArrowRight")
     await expect(slider).toHaveAttribute("aria-valuetext", max)
     const operationsBeforeUltra = operations.length
@@ -245,7 +295,7 @@ for (const width of [390, 820, 1440]) {
     expect(main.reasoning_effort).toBe("max")
     expect(operations).toHaveLength(operationsBeforeUltra + 1)
     expect(operations.at(-1)).toMatchObject({ enabled: true, thinking_mode: "ultra" })
-    expectCloseBounds(await picker.boundingBox(), triggerBefore)
+    expectStableRightEdge(await picker.boundingBox(), triggerBefore)
     expectCloseBounds(await panel.boundingBox(), panelBefore)
     expectCloseBounds(await slider.boundingBox(), sliderBefore)
     expectCloseBounds(await send.boundingBox(), sendBefore)
@@ -273,7 +323,7 @@ for (const width of [390, 820, 1440]) {
     await expect(picker).toBeFocused()
     expect(main.model).toBe("fixture-model")
     expect(main.thinking_mode).toBe("ultra")
-    expectCloseBounds(await picker.boundingBox(), triggerBefore)
+    expectStableRightEdge(await picker.boundingBox(), triggerBefore)
     await expectComposerText(input, "Synthetic compact picker draft")
     await send.click({ trial: true })
     expect(await page.locator("html").evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1)
@@ -342,7 +392,7 @@ test("the combined picker persists effort and model, supports keyboard, and fits
     sample.forEach((value, index) => expect(value).toBeCloseTo(expected[index]!, 2))
   }
   expect(await page.locator(".model-effort-panel").boundingBox()).toEqual(panelBeforeUltra)
-  expect(await picker.boundingBox()).toEqual(triggerBeforeUltra)
+  expectStableRightEdge(await picker.boundingBox(), triggerBeforeUltra)
   expect(await slider.boundingBox()).toEqual(sliderBeforeUltra)
   await expect(page.locator(".effort-meteors i")).toHaveCount(3)
   await page.emulateMedia({ reducedMotion: "reduce" })

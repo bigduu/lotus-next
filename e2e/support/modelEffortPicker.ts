@@ -1,6 +1,6 @@
 import { expect, type Locator, type Page } from "@playwright/test"
 
-const labels = ["自动", "关闭", "低", "中", "高", "极高", "最大", "Ultra · 编排"]
+const labels = ["自动", "关闭", "低", "中", "高", "极高", "最大", "Ultra"]
 
 export const modelEffortPicker = (page: Page) => page.getByTestId("model-effort-picker")
 

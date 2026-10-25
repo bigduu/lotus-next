@@ -26,14 +26,11 @@ async function selectThinking(page: Page, label: string) {
 }
 async function toggleThinking(page: Page) {
   const current = await modelEffortPicker(page).textContent()
-  await selectThinking(page, current?.includes("Ultra") ? "自动" : "Ultra · 编排")
+  await selectThinking(page, current?.includes("Ultra") ? "自动" : "Ultra")
 }
 
-async function expectExplanation(page: Page, text: string | RegExp) {
-  await page.getByRole("textbox", { name: "消息", exact: true }).focus()
-  await page.getByRole("button", { name: "查看 Ultra 编排说明" }).focus()
-  await expect(page.getByRole("tooltip")).toContainText(text)
-  await page.keyboard.press("Escape")
+async function expectModeStatus(page: Page, text: string | RegExp) {
+  await expect(page.getByRole("status").filter({ hasText: text })).toHaveText(text)
 }
 
 test("creation and message-free Root switches survive reload and typed rejection", async ({ page }, testInfo) => {
@@ -81,7 +78,7 @@ test("creation and message-free Root switches survive reload and typed rejection
   await page.goto(standaloneScenario.entryUrl)
   const mode = modelEffortPicker(page)
   const composer = page.getByRole("textbox", { name: "消息", exact: true })
-  await expect(mode).toBeVisible(); await selectThinking(page, "Ultra · 编排")
+  await expect(mode).toBeVisible(); await selectThinking(page, "Ultra")
   await expect(mode).toContainText("Ultra")
   await composer.fill("delegate bounded work")
   await page.reload()
@@ -94,17 +91,17 @@ test("creation and message-free Root switches survive reload and typed rejection
   const menuScreenshot = testInfo.outputPath("ultra-thinking-picker-menu.png")
   await page.screenshot({ path: menuScreenshot, animations: "disabled" }); await testInfo.attach("ultra-thinking-picker-menu", { path: menuScreenshot, contentType: "image/png" })
   await page.keyboard.press("Escape")
-  await expectExplanation(page, /Ultra 是 Root.*执行模式。Supervisor 是独立的可信角色，访问已有会话需要明确授权/)
+  await expectModeStatus(page, "下次创建时使用 Ultra 编排")
   await composer.fill("delegate bounded work")
   await page.getByRole("button", { name: "发送消息", exact: true }).click()
   await expect.poll(() => chats.length).toBe(1)
   expect(chats[0].thinking_mode).toBe("ultra"); expect(chats[0].root_orchestration_only).toBe(true); expect(chats[0].session_id).toBeUndefined()
   await page.reload(); await expect(mode).toContainText("Ultra")
-  await expectExplanation(page, "服务器已确认 Ultra 编排")
+  await expectModeStatus(page, "服务器已确认 Ultra 编排")
 
   await toggleThinking(page)
   await expect.poll(() => operations.length).toBe(1)
-  await expectExplanation(page, "服务器已确认普通模式")
+  await expectModeStatus(page, "服务器已确认普通模式")
   expect(chats).toHaveLength(1)
   await composer.fill("return to direct execution")
   await page.getByRole("button", { name: "发送消息", exact: true }).click()
@@ -118,7 +115,7 @@ test("creation and message-free Root switches survive reload and typed rejection
   await expect(mode).not.toContainText("Ultra"); expect(chats).toHaveLength(2)
   await toggleThinking(page)
   await expect.poll(() => operations.length).toBe(3)
-  await expectExplanation(page, "服务器已确认 Ultra 编排")
+  await expectModeStatus(page, "服务器已确认 Ultra 编排")
   await page.reload(); await expect(mode).toContainText("Ultra")
   expect(await page.locator("html").evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1)
   const screenshot = testInfo.outputPath("root-mode-after-reload.png")
@@ -163,13 +160,12 @@ test("Root without native reasoning keeps High during Ultra and shows a truthful
   const picker = modelEffortPicker(page); const composer = page.getByRole("textbox", { name: "消息", exact: true })
   await expect(picker).toContainText("高")
   await composer.fill("retain bounded task across partial exit")
-  await selectThinking(page, "Ultra · 编排")
+  await selectThinking(page, "Ultra")
   await expect(picker).toContainText("Ultra")
-  await expectExplanation(page, "单次推理：高")
   expect(sequence).not.toContain("ordinary"); expect(effort).toBe("high")
   await selectThinking(page, "低")
   await expect(page.getByRole("alert").filter({ hasText: "已退出 Ultra" })).toBeVisible()
-  await expectExplanation(page, "服务器已确认普通模式")
+  await expectModeStatus(page, "服务器已确认普通模式")
   await expect(picker).toContainText("高"); await expectComposerText(composer, "retain bounded task across partial exit")
   expect(sequence.indexOf("mode:false")).toBeLessThan(sequence.indexOf("ordinary")); expect(chats).toBe(0)
   const partial = testInfo.outputPath("ultra-partial-exit-high-preserved.png")
@@ -209,7 +205,7 @@ for (const legacy of ["missing", "contradictory", "active-run"] as const) {
     if (legacy === "active-run") {
       await expect(picker).toBeDisabled()
       await expect(picker).toContainText("Ultra")
-      await expectExplanation(page, "服务器已确认 Ultra 编排")
+      await expectModeStatus(page, "服务器已确认 Ultra 编排")
     } else {
       await expect(picker).toContainText("未确认")
       await expect(page.getByRole("alert").filter({ hasText: "无法确认思考模式" })).toContainText("请更新 Bamboo 后重新读取")
@@ -248,7 +244,7 @@ test("restored Child composer keeps ordinary effort without a Root Ultra option"
   const picker = modelEffortPicker(page)
   await expect(picker).toBeEnabled(); await picker.click()
   await expect(page.getByRole("slider", { name: "推理强度", exact: true })).toHaveAttribute("max", "6")
-  await expect(page.getByText("Ultra · 编排", { exact: true })).toHaveCount(0)
+  await expect(page.getByText("Ultra", { exact: true })).toHaveCount(0)
   await expect(page.getByRole("checkbox", { name: "Root 仅编排模式" })).toHaveCount(0)
   expect(observation.pageErrors).toEqual([])
 })
@@ -307,7 +303,7 @@ test("a timed-out mode operation recovers after reload without chat replay", asy
   await testInfo.attach("root-mode-uncertain", { path: uncertainScreenshot, contentType: "image/png" })
   await expect.poll(() => terminal !== null).toBe(true)
   await page.reload()
-  await expectExplanation(page, "服务器已确认普通模式")
+  await expectModeStatus(page, "服务器已确认普通模式")
   await expect(mode).toBeEnabled(); expect(selects).toBe(1); expect(recoveries).toBeGreaterThanOrEqual(2)
   expect(chats).toBe(0); expect(executes).toBe(0)
   await composer.fill("continue after terminal recovery")
@@ -371,7 +367,7 @@ test("every concurrent pending operation needs its own terminal recovery", async
   await page.getByRole("button", { name: "发送消息", exact: true }).click()
   await expectComposerText(composer, "wait for both operation proofs"); expect(mutations).toBe(0)
   releaseSecond!()
-  await expectExplanation(page, "服务器已确认 Ultra 编排")
+  await expectModeStatus(page, "服务器已确认 Ultra 编排")
   await expect(mode).toBeEnabled(); await expect(mode).toContainText("Ultra")
   expect(await page.evaluate((id) => Object.keys(localStorage).filter((key) => key.startsWith(`lotus-next.root-mode-operation.v2.${id}.`)), sessionId)).toEqual([])
   expect(mutations).toBe(0)

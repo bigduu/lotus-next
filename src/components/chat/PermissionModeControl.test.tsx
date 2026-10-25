@@ -110,8 +110,7 @@ describe("PermissionModeControl", () => {
     expect(section?.getAttribute("title")).toBe(help?.textContent)
     expect(selector().tagName).toBe("BUTTON")
     expect(selector().dataset.slot).toBe("select-trigger")
-    expect(selector().className).toContain("w-[4.5rem]")
-    expect(selector().querySelector("svg")).not.toBeNull()
+    expect(selector().querySelector(".lucide-shield-alert")).not.toBeNull()
   })
 
   it("opens themed options with the keyboard and cancels without changing permissions", async () => {

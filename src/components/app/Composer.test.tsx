@@ -120,30 +120,32 @@ describe("Composer submission controls", () => {
     expect(surface?.contains(send)).toBe(true)
   })
 
-  it("keeps the optional output rate inside the input without changing its layout", () => {
+  it("keeps the optional output rate in the toolbar without narrowing or replacing the editor", () => {
     const view = mountComposer({ outputRate: null })
     const surface = view.container.querySelector("[data-composer-surface]")
     const inputRow = view.textarea.parentElement?.parentElement
+    const toolbar = view.container.querySelector("[data-composer-toolbar]")
     const inputClass = view.textarea.className
     const inputPadding = view.textarea.style.paddingRight
 
     expect(surface?.contains(inputRow ?? null)).toBe(true)
     expect(inputRow?.className).toContain("relative")
-    expect(inputPadding).toBe("128px")
+    expect(inputPadding).toBe("")
     expect(inputRow?.querySelector("[data-output-rate]")).toBeNull()
 
     act(() => mountedRoots.at(-1)?.render(<Composer {...view.props} outputRate={18.3} />))
-    const rate = inputRow?.querySelector<HTMLElement>("[data-output-rate]")
+    const rate = toolbar?.querySelector<HTMLElement>("[data-output-rate]")
     expect(rate?.textContent?.trim()).toBe("约 18.3 token/秒")
     expect(rate?.title).toBe("根据流式文本估算，不用于计费")
-    expect(rate?.className).toContain("absolute")
-    expect(rate?.className).not.toContain("pointer-events-none")
+    expect(inputRow?.contains(rate ?? null)).toBe(false)
+    expect(view.container.querySelector("[data-composer-editor]")).toBe(view.textarea)
     expect(view.textarea.parentElement?.parentElement).toBe(inputRow)
     expect(view.textarea.className).toBe(inputClass)
     expect(view.textarea.style.paddingRight).toBe(inputPadding)
 
     act(() => mountedRoots.at(-1)?.render(<Composer {...view.props} outputRate={null} />))
     expect(inputRow?.querySelector("[data-output-rate]")).toBeNull()
+    expect(toolbar?.querySelector("[data-output-rate]")).toBeNull()
     expect(view.textarea.parentElement?.parentElement).toBe(inputRow)
     expect(view.textarea.className).toBe(inputClass)
     expect(view.textarea.style.paddingRight).toBe(inputPadding)

@@ -1,12 +1,4 @@
-import { useRef, useState } from "react"
 import { uiText, useUiLocale } from "@shared/i18n/ui"
-import { Sparkles } from "lucide-react"
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
-import type { ReasoningEffortSelection } from "@shared/utils/reasoningEffort"
-
-const ordinaryLabels: Record<ReasoningEffortSelection, string> = {
-  get auto() { return uiText("auto_7eb336e4") }, get none() { return uiText("reasoning_none") }, get low() { return uiText("low_aa9e366f") }, get medium() { return uiText("medium_a567bdaa") }, get high() { return uiText("high_b1c27820") }, get xhigh() { return uiText("extra_high_392d0dce") }, get max() { return uiText("max_9730c15f") },
-}
 
 type Props = {
   sessionId: string | null
@@ -20,17 +12,14 @@ type Props = {
   recoverable: boolean
   error: string | null
   conflict: string | null
-  ordinaryValue: ReasoningEffortSelection
   onRetry: () => void
 }
 
 export function RootOrchestrationControl({
   sessionId, child, unsafe, selected, confirmed, loading, pending, recovering, recoverable,
-  error, conflict, ordinaryValue, onRetry,
+  error, conflict, onRetry,
 }: Props) {
   useUiLocale()
-  const [explanationOpen, setExplanationOpen] = useState(false)
-  const openBeforePointerDown = useRef(false)
   if (child) return null
   const changed = sessionId && typeof selected === "boolean" && typeof confirmed === "boolean"
     && selected !== confirmed
@@ -53,27 +42,8 @@ export function RootOrchestrationControl({
               : confirmed ? uiText("server_confirmed_ultra_orchestration_25a54375") : uiText("server_confirmed_standard_mode_fb0ea60d")
 
   return (
-    <div className="flex min-w-0 max-w-full flex-wrap items-center gap-1.5 text-xs" aria-busy={loading || pending || recovering}>
+    <div className={error || conflict ? "flex min-w-0 max-w-full flex-wrap items-center gap-1.5 text-xs" : "sr-only"} aria-busy={loading || pending || recovering}>
       <span role="status" aria-live="polite" className="sr-only">{status}</span>
-      <Tooltip open={explanationOpen} onOpenChange={setExplanationOpen}>
-        <TooltipTrigger asChild>
-          <button type="button" aria-label={uiText("about_ultra_orchestration_85ab439b")} onPointerDown={() => {
-            // Radix closes an open tooltip on pointer down, before click runs.
-            openBeforePointerDown.current = explanationOpen
-          }} onClick={(event) => {
-            // Preserve hover/focus and allow a touch tap to open the explanation.
-            event.preventDefault()
-            setExplanationOpen((open) => !(event.detail === 0 ? open : openBeforePointerDown.current))
-          }} className={`rounded p-1 hover:text-foreground ${selected ? "text-primary" : "text-muted-foreground"}`}>
-            <Sparkles className="size-3.5" aria-hidden="true" />
-          </button>
-        </TooltipTrigger>
-        <TooltipContent side="top" align="start" className="max-w-xs border bg-popover text-popover-foreground shadow-md text-xs leading-relaxed">
-          <p>{status}</p>
-          {selected !== null ? <p>{uiText("single_call_reasoning_14a4fc24")}{ordinaryLabels[ordinaryValue]}</p> : null}
-          <p className="mt-2">{uiText("ultra_is_a_separate_root_orchestration_mode_above_max_r_d8ebbb6c")}</p>
-        </TooltipContent>
-      </Tooltip>
       {error || conflict ? (
         <span role="alert" className="basis-full text-destructive">
           {conflict || error}

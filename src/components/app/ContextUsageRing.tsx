@@ -53,11 +53,11 @@ export function ContextUsageRing({
   return (
     <button
       onClick={onClick}
-      className="flex items-center gap-1.5"
+      className="flex h-8 shrink-0 items-center gap-1.5 rounded-md px-2 text-muted-foreground hover:bg-accent hover:text-foreground"
       title={title}
       aria-label={cacheLabel === null ? uiText("context_usage_06d7b2e3") : uiText("context_usage_cache_0cd3733a", { v0: cacheLabel })}
     >
-      <svg width="20" height="20" viewBox="0 0 18 18" className="-rotate-90">
+      <svg width="16" height="16" viewBox="0 0 18 18" className="-rotate-90" aria-hidden>
         <circle cx="9" cy="9" r="7" fill="none" strokeWidth="2.5" className="stroke-muted" />
         <circle
           cx="9"
@@ -71,11 +71,11 @@ export function ContextUsageRing({
           className={cn("stroke-current transition-all", color)}
         />
       </svg>
-      <span className="hidden text-xs tabular-nums text-muted-foreground sm:inline">{pct}%</span>
+      <span className="hidden text-sm tabular-nums sm:inline">{pct}%</span>
       {cacheLabel === null ? null : (
         <span
           data-prefix-cache
-          className="hidden rounded-full bg-muted px-1.5 py-0.5 text-[11px] font-medium tabular-nums text-muted-foreground sm:inline-flex"
+          className="hidden text-xs tabular-nums text-muted-foreground sm:inline-flex"
         >
           Cache {cacheLabel}
         </span>

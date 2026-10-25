@@ -120,8 +120,8 @@ describe("ModelEffortPicker effort", () => {
     expect(descriptions()).toEqual([model, "最大"])
     expect(picker.trigger().title).toBe(`${model} · 最大`)
     picker.rerender({ thinkingMode: "ultra" })
-    expect(descriptions()).toEqual([model, "Ultra · 编排"])
-    expect(picker.trigger().title).toBe(`${model} · Ultra · 编排`)
+    expect(descriptions()).toEqual([model, "Ultra"])
+    expect(picker.trigger().title).toBe(`${model} · Ultra`)
     picker.rerender({ thinkingMode: null })
     expect(descriptions()).toEqual([model, "未确认"])
     expect(picker.trigger().title).toBe(`${model} · 未确认`)
@@ -220,19 +220,15 @@ describe("ModelEffortPicker effort", () => {
     expect(range().value).toBe("0")
   })
 
-  it("keeps the Ultra description stable through preview and authoritative confirmation", () => {
+  it("keeps Ultra preview and confirmation compact without an explanatory footer", () => {
     const picker = renderPicker({ value: "max", allowUltra: true, thinkingMode: "standard" })
     expect(picker.trigger().textContent).not.toContain("Ultra")
     open(picker.trigger())
-    const description = document.querySelector('.model-effort-panel p[aria-hidden]')!
-    expect(description.getAttribute("aria-hidden")).toBe("true")
-    expect(description.classList.contains("invisible")).toBe(true)
+    expect(document.querySelector('.model-effort-panel p[aria-hidden]')).toBeNull()
     pointerEvent(range(), "pointerdown")
     changeInput(range(), "7")
     expect(picker.props.onChange).not.toHaveBeenCalled()
-    expect(document.querySelector('.model-effort-panel p[aria-hidden]')).toBe(description)
-    expect(description.getAttribute("aria-hidden")).toBe("false")
-    expect(description.classList.contains("invisible")).toBe(false)
+    expect(document.querySelector('.model-effort-panel p[aria-hidden]')).toBeNull()
     const meteors = [...document.querySelectorAll<HTMLElement>(".effort-meteors i")]
     expect(meteors).toHaveLength(3)
     expect(new Set(meteors.map((item) => item.style.animationDuration)).size).toBe(3)
@@ -241,10 +237,10 @@ describe("ModelEffortPicker effort", () => {
     pointerEvent(range(), "pointerup")
     expect(picker.props.onChange).toHaveBeenCalledExactlyOnceWith("ultra")
     picker.rerender({ thinkingMode: "ultra" })
-    expect(picker.trigger().title).toContain("Ultra · 编排")
+    expect(picker.trigger().title).toContain("Ultra")
+    expect(document.querySelector('.model-effort-panel p[aria-hidden]')).toBeNull()
     picker.rerender({ thinkingMode: "standard" })
-    expect(document.querySelector('.model-effort-panel p[aria-hidden]')).toBe(description)
-    expect(description.getAttribute("aria-hidden")).toBe("true")
+    expect(document.querySelector('.model-effort-panel p[aria-hidden]')).toBeNull()
     expect(document.querySelector(".effort-meteors")).toBeNull()
   })
 

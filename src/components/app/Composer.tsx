@@ -17,6 +17,7 @@ import {
 import { useShallow } from "zustand/react/shallow"
 import { Button } from "@/components/ui/button"
 import { ComposerEditor, type ComposerInputHandle, type ComposerFocusSnapshot, type FileSuggestion } from "@/components/chat/ComposerEditor"
+import { composerControlClassName, composerIconButtonClassName } from "@/components/chat/composerStyles"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -54,10 +55,10 @@ function PromptChip() {
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <button
-          className="flex max-w-full items-center gap-1.5 rounded-full border bg-card px-2.5 py-1 text-xs text-muted-foreground hover:text-foreground"
+          className={composerControlClassName}
           title={uiText("system_prompt_b9068145", { v0: active.name })}
         >
-          <BookText className="size-3.5 shrink-0" />
+          <BookText className="size-4 shrink-0" />
           <span className="truncate">{active.name}</span>
           <ChevronDown className="size-3 shrink-0 opacity-60" />
         </button>
@@ -98,10 +99,10 @@ function ProjectChip({
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <button
-          className="flex max-w-full items-center gap-1.5 rounded-full border bg-card px-2.5 py-1 text-xs text-muted-foreground hover:text-foreground"
+          className={composerControlClassName}
           title={selected ? uiText("project_690aa0ce", { v0: selected.name }) : uiText("select_project_682279bf")}
         >
-          <FolderClosed className="size-3.5 shrink-0" />
+          <FolderClosed className="size-4 shrink-0" />
           <span className="truncate">{selected ? selected.name : uiText("select_project_682279bf")}</span>
           <ChevronDown className="size-3 shrink-0 opacity-60" />
         </button>
@@ -262,13 +263,13 @@ export function Composer({
       <Button
         size="icon"
         variant="ghost"
-        className="size-8 shrink-0 text-muted-foreground"
+        className={composerIconButtonClassName}
         aria-label={uiText("add_images_9f0d4e46")}
         onClick={() => fileInputRef.current?.click()}
       >
         <Paperclip className="size-4" />
       </Button>
-      {onPickCatalog && <Button size="icon" variant="ghost" className="size-8 shrink-0 text-muted-foreground"
+      {onPickCatalog && <Button size="icon" variant="ghost" className={composerIconButtonClassName}
         aria-label={uiText("open_workflow_catalog_1bd98d37")} title={uiText("catalog_workflow_this_message_4bad8776")} onClick={() => openSecondaryDialog(onOpenCatalog ?? onPickCatalog)}><BookText className="size-4" /></Button>}
       {!hasSession ? (
         <>
@@ -279,10 +280,10 @@ export function Composer({
           {workspaceControl}
           <button
             onClick={() => openSecondaryDialog(onOpenWorkspacePicker)}
-            className={selectedProjectId && !showProjectWorkspace ? "hidden" : "flex max-w-full items-center gap-1.5 rounded-full border bg-card px-2.5 py-1 text-xs text-muted-foreground hover:text-foreground"}
+            className={selectedProjectId && !showProjectWorkspace ? "hidden" : composerControlClassName}
             title={displayWorkspace || uiText("default_working_directory_3d80c40d")}
           >
-            <FolderGit2 className="size-3.5 shrink-0" />
+            <FolderGit2 className="size-4 shrink-0" />
             <span className="truncate">
               {displayWorkspace
                 ? displayWorkspace.split("/").filter(Boolean).pop() || displayWorkspace
@@ -297,7 +298,7 @@ export function Composer({
   )
 
   return (
-    <div className="shrink-0 border-t px-3 py-3">
+    <div className="shrink-0 px-3 py-3">
       <div
         ref={columnRef}
         data-composer-column
@@ -390,6 +391,7 @@ export function Composer({
         <div
           data-composer-surface
           className="rounded-2xl border border-transparent bg-card p-1.5"
+          style={{ borderRadius: "1.5rem" }}
         >
           {workflowControl}
           {workflowUndoControl}
@@ -411,24 +413,15 @@ export function Composer({
               title={uiText("enter_to_send_shift_enter_for_a_new_line_b6153e81")}
               placeholder={canQueue ? uiText("type_a_message_to_add_to_the_queue_38c6f67b") : uiText("send_a_message_ae2f86f0")}
             />
-            {typeof outputRate === "number" && (
-              <span
-                data-output-rate
-                className="absolute right-2 top-2 text-xs tabular-nums text-muted-foreground"
-                style={{ maxWidth: 112, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
-                title={uiText("estimated_from_streamed_text_not_used_for_billing_1de5fc8d")}
-              >
-                {uiText("output_rate", { rate: outputRate.toLocaleString(uiLanguage(), { minimumFractionDigits: 1, maximumFractionDigits: 1 }) })}</span>
-            )}
           </div>
-          <div className="flex flex-wrap items-end gap-1.5">
+          <div data-composer-toolbar className="flex flex-wrap items-center gap-1">
             <div className="flex min-w-0 flex-wrap items-center gap-1"
-              style={{ flex: compactToolbar ? "0 1 auto" : "1 1 auto" }}>
+              style={{ flex: compactToolbar ? "1 0 100%" : "1 1 auto" }}>
               {permissionControl}
               {compactToolbar ? (
                 <Popover open={moreOpen} onOpenChange={setMoreOpen}>
                   <PopoverTrigger asChild>
-                    <Button size="icon" variant="ghost" className="size-8 shrink-0 text-muted-foreground"
+                    <Button size="icon" variant="ghost" className={composerIconButtonClassName}
                       aria-label={uiText("more_38844b13")} title={uiText("more_38844b13")}>
                       <Ellipsis className="size-4" />
                     </Button>
@@ -448,6 +441,13 @@ export function Composer({
                   </PopoverContent>
                 </Popover>
               ) : secondaryControls}
+              {typeof outputRate === "number" && (
+                <span data-output-rate className="ml-auto min-w-0 text-xs tabular-nums text-muted-foreground"
+                  style={{ maxWidth: 112, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+                  title={uiText("estimated_from_streamed_text_not_used_for_billing_1de5fc8d")}>
+                  {uiText("output_rate", { rate: outputRate.toLocaleString(uiLanguage(), { minimumFractionDigits: 1, maximumFractionDigits: 1 }) })}
+                </span>
+              )}
             </div>
             <div className="ml-auto flex max-w-full flex-wrap items-center justify-end gap-1">
               {canQueue ? (
@@ -456,7 +456,7 @@ export function Composer({
                   <select aria-label={uiText("send_timing_22388dde")} value={queueMode ?? "after_round"} disabled={submissionPending}
                     onChange={(event) => onQueueModeChange?.(event.target.value as GuidanceMode)}
                     title={queueMode === "after_run" ? uiText("send_when_the_run_finishes_1525b79a") : uiText("send_after_the_current_tool_call_before_the_next_model__ce3a9c75")}
-                    className="h-full w-full rounded border-0 bg-transparent text-xs"
+                    className="h-full w-full rounded-md border-0 bg-transparent text-sm text-muted-foreground"
                     style={{ appearance: compactToolbar ? "none" : "auto", color: compactToolbar ? "transparent" : undefined }}>
                     <option className="text-foreground" value="after_round">{uiText("after_tool_call_252b019e")}</option>
                     <option className="text-foreground" value="after_run">{uiText("after_run_81638e07")}</option>
@@ -465,15 +465,15 @@ export function Composer({
               ) : null}
               {runtimeControls}
               {submissionPending ? (
-                <Button size="icon" disabled aria-label={uiText("sending_2d88d503")} className="rounded-full">
+                <Button size="icon" disabled aria-label={uiText("sending_2d88d503")} className="size-8 rounded-full">
                   <LoaderCircle className="animate-spin" />
                 </Button>
               ) : canSubmit ? (
-                <Button size="icon" onClick={onSubmit} disabled={!hasContent || executionBlocked} className="rounded-full"
+                <Button size="icon" onClick={onSubmit} disabled={!hasContent || executionBlocked} className="size-8 rounded-full"
                   aria-label={canQueue ? uiText("add_to_queue_bc3b684c") : uiText("send_message_00881483")} title={canQueue ? uiText("add_to_queue_bc3b684c") : uiText("send_message_00881483")}><ArrowUp /></Button>
               ) : null}
               {sending && (!submissionPending || canQueue) ? (
-                <Button size="icon" onClick={onStop} className="rounded-full" aria-label={uiText("stop_generation_9ad0aac3")}>
+                <Button size="icon" onClick={onStop} className="size-8 rounded-full" aria-label={uiText("stop_generation_9ad0aac3")}>
                   <Square fill="currentColor" />
                 </Button>
               ) : null}

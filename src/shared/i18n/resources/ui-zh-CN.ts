@@ -1347,7 +1347,7 @@ export const uiZhCn = {
   "extra_high_392d0dce": "极高",
   "max_9730c15f": "最大",
   "unconfirmed_c098e854": "未确认",
-  "ultra_orchestration_5857fcd7": "Ultra · 编排",
+  "ultra_orchestration_5857fcd7": "Ultra",
   "select_a_session_to_compare_4a072dce": "选择会话对比…",
   "close_split_view_1e9b6e9d": "关闭分屏",
   "select_a_session_to_view_33105165": "选择一个会话查看",
