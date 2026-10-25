@@ -25,6 +25,9 @@ type Send = ChatPaneProps["chat"]["send"]
 type TicketController = ReturnType<(typeof import("@/hooks/useTicketWork"))["useTicketWork"]>
 type WorkflowControlProps = ComponentProps<(typeof import("@/components/chat/WorkflowSelectionControl"))["WorkflowSelectionControl"]>
 type State = {
+  bindWorkspace: typeof import("@services/project/ProjectService").projectService.bindWorkspace
+  currentSessionId: string | null
+  projects: Record<string, { project_path: string; name: string }>
   chats: { id: string; config: { reasoningEffort?: ReasoningEffort | null } }[]
   getInputState(id: string): State["inputStates"][string]
   setInputThinkingMode(id: string, mode: "standard" | "ultra"): boolean
@@ -52,6 +55,8 @@ const runtime = vi.hoisted(() => ({
   stickyAtBottom: true, scrollToBottom: vi.fn(),
   queueSend: vi.fn(), revision: 0, getWorkflow: vi.fn(), listCommands: vi.fn(), peekTemplate: vi.fn(),
   ticketWork: null as TicketController | null,
+  worktreeControl: null as import("@services/workspace/newChatWorktreeTypes").NewChatWorktreeControlProps | null,
+  getProject: vi.fn(), createWorktree: vi.fn(), bindWorkspace: vi.fn(),
   observeStateDispatch: null as ((dispatch: unknown, value: unknown) => void) | null,
 }))
 // Observe actual dispatcher calls, including equal-state updates which React
@@ -103,6 +108,14 @@ vi.mock("@services/command/workflowCatalog", async (original) => ({
 }))
 vi.mock("@services/command", () => ({ commandService: { listCommands: runtime.listCommands, getWorkflowCommand: runtime.getWorkflow } }))
 vi.mock("@services/workspace", () => ({ workspaceService: { listWorkspaceFiles: vi.fn().mockResolvedValue([]) } }))
+vi.mock("@services/project/ProjectService", () => ({ projectService: { getProject: runtime.getProject, bindWorkspace: runtime.bindWorkspace } }))
+vi.mock("@services/workspace/WorktreeService", () => ({ worktreeService: { create: runtime.createWorktree } }))
+vi.mock("@/components/app/NewChatWorktreeControl", () => ({
+  NewChatWorktreeControl: (props: import("@services/workspace/newChatWorktreeTypes").NewChatWorktreeControlProps) => {
+    runtime.worktreeControl = props
+    return <div data-worktree-control>{props.error}</div>
+  },
+}))
 vi.mock("@services/chat/AgentService", () => ({ isThinkingMode: (v: unknown) => v === "standard" || v === "ultra", agentClient: {
   patchSession: vi.fn().mockResolvedValue(undefined),
   getSession: vi.fn(),
@@ -166,6 +179,7 @@ vi.mock("@/components/app/Composer", () => ({
     <div data-testid="composer-shell">
       <textarea ref={props.inputRef as React.Ref<HTMLTextAreaElement>} aria-label="消息" value={props.draft} onChange={(event) => props.onDraftChange(event.currentTarget.value)} />
       {props.permissionControl}
+      {props.workspaceControl}
       {props.runtimeControls}
     </div>),
 }))
@@ -324,7 +338,15 @@ beforeEach(() => {
     defaults: { chat: { provider: "easycli", model: "test-model" } },
   }
   runtime.listeners.clear(); runtime.revision = 0
+  runtime.worktreeControl = null
+  runtime.getProject.mockReset().mockResolvedValue({ id: "p1", status: "active", revision: 1, project_path: "/repo" })
+  runtime.createWorktree.mockReset().mockResolvedValue({ path: "/trees/task" })
+  runtime.bindWorkspace.mockReset().mockImplementation(async (_id, revision, request) => ({
+    id: "p1", status: "active", revision: revision + 1, project_path: "/repo", workspace_bindings: [{ path: request.path }],
+  }))
   runtime.state = {
+    bindWorkspace: runtime.bindWorkspace,
+    currentSessionId: null, projects: { p1: { project_path: "/repo", name: "Project one" }, p2: { project_path: "/other", name: "Project two" } },
     chats: [], getInputState: (id) => runtime.state.inputStates[id] ?? { content: "", contentRevision: 0 },
     setInputThinkingMode: (id, thinkingMode) => { runtime.state.inputStates = { ...runtime.state.inputStates, [id]: { ...runtime.state.getInputState(id), thinkingMode, thinkingModeRevision: ++runtime.revision } }; notify(); return true },
     tokenUsages: {}, inputStates: {}, skills: [skillA, skillB], childProgress: {}, models: [],
@@ -379,6 +401,213 @@ beforeEach(() => {
   runtime.listCommands.mockReset().mockResolvedValue({ commands: [], total: 0 }); runtime.peekTemplate.mockReset().mockReturnValue(null)
 })
 afterEach(() => { for (const root of roots.splice(0)) act(() => root.unmount()); document.body.replaceChildren(); vi.unstubAllGlobals() })
+const worktreeSelection = { repository: "/repo", root: "/trees", name: "task", branch: "task-branch" }
+function worktreeControl() {
+  if (!runtime.worktreeControl) throw new Error("Worktree control did not render")
+  return runtime.worktreeControl
+}
+async function mountWorktreeChat(send: Send) {
+  const host = document.body.appendChild(document.createElement("div"))
+  const root = createRoot(host); roots.push(root)
+  let props: ChatPaneProps = {
+    chat: createChat(send, null), pickedWorkspace: null, pendingProjectId: "p1", newChatEpoch: 0,
+    onOpenWorkspacePicker: vi.fn(), onOpenInspector: vi.fn(), splitOpen: false,
+    onToggleSplit: vi.fn(), onOpenSidebar: vi.fn(), sidebarCollapsed: false,
+  }
+  const render = async (changes: Partial<ChatPaneProps> = {}) => {
+    props = { ...props, ...changes }
+    runtime.state.currentSessionId = props.chat.currentSessionId
+    await act(async () => { root.render(<ChatPane {...props} />); await vi.dynamicImportSettled() })
+  }
+  await render()
+  return { host, render }
+}
+
+describe("ChatPane new-chat worktree first send", () => {
+  it("defaults to current Project workspace without creating or binding", async () => {
+    const send = vi.fn<Send>().mockResolvedValue({ kind: "blocked" })
+    await mountWorktreeChat(send)
+    expect(worktreeControl().value).toBeNull()
+    act(() => { write("", "use current checkout"); composer().onSubmit() })
+    await flush()
+    expect(send).toHaveBeenCalledExactlyOnceWith("use current checkout", expect.objectContaining({ workspacePath: "/repo", projectId: "p1" }))
+    expect(runtime.createWorktree).not.toHaveBeenCalled()
+    expect(runtime.bindWorkspace).not.toHaveBeenCalled()
+  })
+
+  it("guards duplicate submit synchronously, binds first, and sends the original frozen text/attachments", async () => {
+    const creating = deferred<{ path: string }>()
+    runtime.createWorktree.mockReturnValueOnce(creating.promise)
+    const send = vi.fn<Send>().mockResolvedValue({ kind: "accepted", operationId: 1, sessionId: "created-session", navigated: true })
+    await mountWorktreeChat(send)
+    act(() => worktreeControl().onChange(worktreeSelection))
+    await addImage("before.png")
+    act(() => { write("", "frozen request"); composer().onSubmit(); composer().onSubmit() })
+    await flush()
+    expect(runtime.createWorktree).toHaveBeenCalledTimes(1)
+    expect(send).not.toHaveBeenCalled()
+    expect(composer().submissionPending).toBe(true)
+    act(() => write("", "newer draft"))
+    await addImage("after.png")
+    await act(async () => { creating.resolve({ path: "/trees/task" }); await Promise.resolve() })
+    await flush()
+    expect(runtime.bindWorkspace).toHaveBeenCalledExactlyOnceWith("p1", 1, { path: "/trees/task" })
+    expect(send).toHaveBeenCalledExactlyOnceWith("frozen request", expect.objectContaining({
+      projectId: "p1", workspacePath: "/trees/task", images: [expect.objectContaining({ name: "before.png" })],
+      isOriginCurrent: expect.any(Function),
+    }))
+    expect(runtime.state.inputStates["created-session"]?.content).toBe("newer draft")
+    expect(composer().attachments.map((attachment) => attachment.name)).toEqual(["before.png", "after.png"])
+    expect(worktreeControl().preparedPath).toBe("/trees/task")
+    expect(worktreeControl().disabled).toBe(true)
+  })
+
+  it("preserves draft and known path on binding failure, then retries binding without another create", async () => {
+    runtime.bindWorkspace.mockRejectedValueOnce(new ApiError("stale", 409, "Conflict"))
+    const send = vi.fn<Send>().mockResolvedValue({ kind: "blocked" })
+    await mountWorktreeChat(send)
+    act(() => { worktreeControl().onChange(worktreeSelection); write("", "preserve my request") })
+    act(() => composer().onSubmit())
+    await flush()
+    expect(send).not.toHaveBeenCalled()
+    expect(runtime.state.inputStates[""]?.content).toBe("preserve my request")
+    expect(worktreeControl().preparedPath).toBe("/trees/task")
+    expect(worktreeControl().error).toBe(uiText("chat_worktree_prepare_failed"))
+    runtime.getProject.mockResolvedValue({ id: "p1", status: "active", revision: 12, project_path: "/repo" })
+    act(() => composer().onSubmit())
+    await flush()
+    expect(runtime.createWorktree).toHaveBeenCalledTimes(1)
+    expect(runtime.bindWorkspace).toHaveBeenNthCalledWith(2, "p1", 12, { path: "/trees/task" })
+    expect(send).toHaveBeenCalledOnce()
+  })
+})
+
+describe("ChatPane new-chat worktree lifecycle fences", () => {
+  it.each(["timeout", "partial-http-400"])("locks uncertain creation (%s), preserves draft, and never retries create", async (kind) => {
+    runtime.createWorktree.mockRejectedValueOnce(kind === "timeout" ? new RequestTimeoutError() : new ApiError("partial checkout", 400, "Bad Request"))
+    const send = vi.fn<Send>().mockResolvedValue({ kind: "blocked" })
+    await mountWorktreeChat(send)
+    act(() => { worktreeControl().onChange(worktreeSelection); write("", "keep this draft") })
+    act(() => composer().onSubmit())
+    await flush()
+    expect(worktreeControl().error).toBe(uiText("chat_worktree_uncertain"))
+    expect(worktreeControl().disabled).toBe(true)
+    act(() => { worktreeControl().onChange(null); composer().onSubmit() })
+    await flush()
+    expect(worktreeControl().value).toEqual(worktreeSelection)
+    expect(runtime.createWorktree).toHaveBeenCalledTimes(1)
+    expect(runtime.bindWorkspace).not.toHaveBeenCalled()
+    expect(send).not.toHaveBeenCalled()
+    expect(runtime.state.inputStates[""]?.content).toBe("keep this draft")
+  })
+
+  it.each(["existing", "new-draft", "project", "workspace", "away-back", "send-callback"])("fences create completion after %s", async (destination) => {
+    const creating = deferred<{ path: string }>()
+    runtime.createWorktree.mockReturnValueOnce(creating.promise)
+    const send = vi.fn<Send>().mockResolvedValue({ kind: "blocked" })
+    const nextSend = vi.fn<Send>().mockResolvedValue({ kind: "blocked" })
+    const pane = await mountWorktreeChat(send)
+    act(() => { worktreeControl().onChange(worktreeSelection); write("", "original draft") })
+    act(() => composer().onSubmit())
+    await flush()
+    expect(runtime.createWorktree).toHaveBeenCalledTimes(1)
+    if (destination === "existing" || destination === "away-back") await pane.render({ chat: createChat(nextSend, "other-session") })
+    if (destination === "away-back") await pane.render({ chat: createChat(send, null) })
+    if (destination === "new-draft") await pane.render({ newChatEpoch: 1 })
+    if (destination === "project") await pane.render({ pendingProjectId: "p2" })
+    if (destination === "workspace") await pane.render({ pickedWorkspace: "/another" })
+    if (destination === "send-callback") await pane.render({ chat: createChat(nextSend, null) })
+    await act(async () => { creating.resolve({ path: "/trees/task" }); await Promise.resolve() })
+    await flush()
+    expect(runtime.bindWorkspace).not.toHaveBeenCalled()
+    expect(send).not.toHaveBeenCalled()
+    expect(nextSend).not.toHaveBeenCalled()
+    expect(runtime.state.inputStates[""]?.content).toBe("original draft")
+    if (destination === "new-draft") expect(worktreeControl().value).toBeNull()
+    if (destination === "away-back") {
+      expect(worktreeControl().preparedPath).toBe("/trees/task")
+      act(() => composer().onSubmit())
+      await flush()
+      expect(runtime.createWorktree).toHaveBeenCalledTimes(1)
+      expect(send).toHaveBeenCalledTimes(1)
+    }
+  })
+
+  it("fences intent before a React render, including new→new and away→back", async () => {
+    const creating = deferred<{ path: string }>()
+    runtime.createWorktree.mockReturnValueOnce(creating.promise)
+    const send = vi.fn<Send>().mockResolvedValue({ kind: "blocked" })
+    const pane = await mountWorktreeChat(send)
+    let navigationVersion = 0
+    await pane.render({ getNavigationVersion: () => navigationVersion })
+    act(() => { worktreeControl().onChange(worktreeSelection); write("", "keep draft") })
+    act(() => composer().onSubmit())
+    await flush()
+    navigationVersion += 2
+    await act(async () => { creating.resolve({ path: "/trees/task" }); await Promise.resolve() })
+    await flush()
+    expect(send).not.toHaveBeenCalled()
+    expect(runtime.bindWorkspace).not.toHaveBeenCalled()
+    expect(runtime.state.inputStates[""]?.content).toBe("keep draft")
+  })
+
+  it.each(["accepted", "unconfirmed"])("preserves a replacement draft on stale prepared-send %s", async (outcome) => {
+    const acknowledgement = deferred<Awaited<ReturnType<Send>>>()
+    const send = vi.fn<Send>().mockReturnValueOnce(acknowledgement.promise)
+    const pane = await mountWorktreeChat(send)
+    act(() => { worktreeControl().onChange(worktreeSelection); write("", "original request") })
+    act(() => composer().onSubmit())
+    await flush()
+    expect(send).toHaveBeenCalledOnce()
+    expect(send.mock.calls[0][1]?.isOriginCurrent?.()).toBe(true)
+    await pane.render({ newChatEpoch: 1 })
+    act(() => write("", "replacement draft"))
+    expect(send.mock.calls[0][1]?.isOriginCurrent?.()).toBe(false)
+    await act(async () => acknowledgement.resolve(outcome === "accepted"
+      ? { kind: "accepted", operationId: 1, sessionId: "late-session", navigated: false }
+      : { kind: "unconfirmed", operationId: 1, workflowError: { code: "workflow_revision_mismatch", message: "late error" } }))
+    await flush()
+    expect(runtime.state.inputStates[""]?.content).toBe("replacement draft")
+    expect(composer().workflowControl).toBeNull()
+    expect(worktreeControl().value).toBeNull()
+  })
+
+  it("preserves editable configuration when the pre-create Project read fails", async () => {
+    runtime.getProject.mockRejectedValueOnce(new RequestTimeoutError())
+    const send = vi.fn<Send>().mockResolvedValue({ kind: "blocked" })
+    await mountWorktreeChat(send)
+    act(() => { worktreeControl().onChange(worktreeSelection); write("", "retry read") })
+    act(() => composer().onSubmit())
+    await flush()
+    expect(runtime.createWorktree).not.toHaveBeenCalled()
+    expect(worktreeControl().disabled).toBe(false)
+    expect(worktreeControl().error).toBe(uiText("chat_worktree_prepare_failed"))
+    act(() => composer().onSubmit())
+    await flush()
+    expect(runtime.createWorktree).toHaveBeenCalledOnce()
+    expect(send).toHaveBeenCalledOnce()
+  })
+
+  it("does not send when navigation changes while binding is in flight", async () => {
+    const binding = deferred<{ id: string; status: string; revision: number; workspace_bindings: { path: string }[] }>()
+    runtime.bindWorkspace.mockReturnValueOnce(binding.promise)
+    const send = vi.fn<Send>().mockResolvedValue({ kind: "blocked" })
+    const nextSend = vi.fn<Send>().mockResolvedValue({ kind: "blocked" })
+    const pane = await mountWorktreeChat(send)
+    act(() => { worktreeControl().onChange(worktreeSelection); write("", "bind original") })
+    act(() => composer().onSubmit())
+    await flush()
+    expect(runtime.bindWorkspace).toHaveBeenCalledOnce()
+    await pane.render({ chat: createChat(nextSend, "different-session") })
+    await act(async () => binding.resolve({ id: "p1", status: "active", revision: 2, workspace_bindings: [{ path: "/trees/task" }] }))
+    await flush()
+    expect(send).not.toHaveBeenCalled()
+    expect(nextSend).not.toHaveBeenCalled()
+    expect(runtime.state.inputStates[""]?.content).toBe("bind original")
+    expect(composer().workspaceControl).toBeNull()
+  })
+})
+
 describe("ChatPane composer acknowledgement", () => {
   it("opens the floating Supervisor overview in the header and keeps Work details in its existing target", async () => {
     const value = ticketSnapshot()

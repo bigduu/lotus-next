@@ -3,7 +3,7 @@ import type { ComposerInputHandle } from "@/components/chat/ComposerEditor"
 import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { useMarkSessionRead } from "@/lib/sessionReadState"
 import { useMediaQuery } from "@shared/hooks/useMediaQuery"
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react"
+import { lazy, Suspense, useCallback, useEffect, useId, useMemo, useRef, useState } from "react"
 import { createPortal } from "react-dom"
 import {
   ChevronDown,
@@ -90,6 +90,19 @@ import { extractDiagnosticId, type RunDiagnosticsSubject } from "@/lib/runDiagno
 import { RunDiagnosticsEntry } from "@/components/chat/RunDiagnosticsEntry"
 import { SessionCompatibilityNotice } from "./SessionCompatibilityNotice"
 import { isSessionExecutionBlocked, observeSessionExecutionConflict } from "@services/chat/sessionExecutionCompatibility"
+import { NewChatWorktreePreparation, NewChatWorktreePreparationError } from "@services/workspace/newChatWorktreePreparation"
+
+const NewChatWorktreeControl = lazy(() => import("@/components/app/NewChatWorktreeControl").then((module) => ({ default: module.NewChatWorktreeControl })))
+
+function worktreeErrorMessage(error: NewChatWorktreePreparationError | null) {
+  if (!error) return null
+  switch (error.kind) {
+    case "invalid": return uiText("chat_worktree_invalid_config")
+    case "uncertain": return uiText("chat_worktree_uncertain")
+    case "context-changed": return uiText("chat_worktree_context_changed")
+    default: return uiText("chat_worktree_prepare_failed")
+  }
+}
 
 /** Secondary (split) pane config — a slim header with its own session picker. */
 type SecondaryConfig = {
@@ -176,6 +189,8 @@ export function ChatPane({
   pickedWorkspace,
   worktreePath,
   pendingProjectId,
+  newChatEpoch = 0,
+  getNavigationVersion,
   onSelectProject,
   onOpenWorkspacePicker,
   onOpenInspector,
@@ -199,6 +214,10 @@ export function ChatPane({
   worktreePath?: string | null
   /** Project preselected for the next NEW session (project-grouped sidebar). */
   pendingProjectId?: string | null
+  /** Explicit New chat intent, including new → new with a null session ID. */
+  newChatEpoch?: number
+  /** Synchronous navigation-intent fence owned by the main App. */
+  getNavigationVersion?: () => number
   /** Chip-driven project selection for the next NEW session. */
   onSelectProject?: (projectId: string | null) => void
   onOpenWorkspacePicker: () => void
@@ -380,6 +399,10 @@ export function ChatPane({
   const draftKey = currentSessionId ?? (secondary ? "__new_chat_pane2__" : "")
   const draft = useAppStore((s) => s.inputStates[draftKey]?.content ?? "")
   const composerInputRef = useRef<ComposerInputHandle>(null)
+  const submissionActiveRef = useRef(false)
+  const [preparationPending, setPreparationPending] = useState(false)
+  const mountedRef = useRef(true)
+  useEffect(() => { mountedRef.current = true; return () => { mountedRef.current = false } }, [])
   const currentDraftKeyRef = useRef(draftKey)
   currentDraftKeyRef.current = draftKey
   const setDraft = (value: string | ((prev: string) => string)) => {
@@ -572,7 +595,24 @@ export function ChatPane({
   const selectedProjectPath = useAppStore((state) =>
     pendingProjectId ? state.projects[pendingProjectId]?.project_path : undefined,
   )
-  const selectedWorktreePath = !currentSessionId ? worktreePath : null
+  const [, refreshPreparation] = useState(0)
+  const preparationDrafts = useRef({ epoch: newChatEpoch, entries: new Map<string, NewChatWorktreePreparation>() })
+  if (preparationDrafts.current.epoch !== newChatEpoch) {
+    preparationDrafts.current = { epoch: newChatEpoch, entries: new Map() }
+  }
+  const preparationKey = JSON.stringify([pendingProjectId ?? null, pickedWorkspace, worktreePath ?? null])
+  let preparation = preparationDrafts.current.entries.get(preparationKey)
+  if (!preparation) {
+    preparation = new NewChatWorktreePreparation(pendingProjectId ?? null,
+      () => { if (mountedRef.current) refreshPreparation((revision) => revision + 1) })
+    preparationDrafts.current.entries.set(preparationKey, preparation)
+  }
+  const submissionScope = useMemo(() => ({ currentSessionId, pendingProjectId, pickedWorkspace, worktreePath, selectedProjectPath, newChatEpoch }), [currentSessionId, pendingProjectId, pickedWorkspace, worktreePath, selectedProjectPath, newChatEpoch])
+  const submissionScopeRef = useRef(submissionScope)
+  submissionScopeRef.current = submissionScope
+  const liveSendRef = useRef(send)
+  liveSendRef.current = send
+  const selectedWorktreePath = !currentSessionId ? preparation.path ?? worktreePath : null
   const displayWorkspace = workspacePath ?? selectedWorktreePath ?? selectedProjectPath ?? pickedWorkspace
   const currentProjectName = useAppStore((state) => {
     const projectId = currentChat?.config?.projectId
@@ -679,7 +719,7 @@ export function ChatPane({
 
   const submit = () => {
     // Keep an in-flight admission from capturing or clearing a second draft.
-    if (executionBlocked || isSessionExecutionBlocked(currentSessionId) || historyBlocked || submissionPending || modelSaving || queue.busy || ticketIngress.busy || rootMode.busy || goalRequestActive.current) return
+    if (submissionActiveRef.current || executionBlocked || isSessionExecutionBlocked(currentSessionId) || historyBlocked || submissionPending || modelSaving || queue.busy || ticketIngress.busy || rootMode.busy || goalRequestActive.current) return
     if (semanticComposer && !tickets.canSendIngress) { showToast(uiText("ticket_the_ticket_connection_or_write_permission_is__c3da124f"), "error"); return }
     if (rootSessionUnsafe()) {
       setRootModeConflict(uiText("the_root_permission_change_is_unconfirmed_sending_and_e_a75a6b4f"))
@@ -788,6 +828,28 @@ export function ChatPane({
       return
     }
     const frozenReference = ticketReference
+    const prepareWorktree = !currentSessionId && !secondary && preparation.selection !== null
+    const originNavigationVersion = getNavigationVersion?.()
+    const isOriginCurrent = () => mountedRef.current
+      && submissionScopeRef.current === submissionScope
+      && liveSendRef.current === send
+      && (!!secondary || useAppStore.getState().currentSessionId === currentSessionId)
+      && getNavigationVersion?.() === originNavigationVersion
+    const sendSnapshot = (path: string | null) => send(finalText, {
+      skillIds: snapshot.selectedSkill ? [snapshot.selectedSkill.id] : undefined,
+      ...(snapshot.typedWorkflow ? { workflowSelection: snapshot.typedWorkflow } : {}),
+      images: images.length ? images : undefined,
+      workspacePath: path,
+      projectId: snapshot.projectId,
+      templatePrompt: snapshot.templatePrompt,
+      permissionMode: snapshot.permissionMode ?? undefined,
+      rootOrchestrationOnly: snapshot.rootOrchestrationOnly,
+      thinkingMode: snapshot.thinkingMode,
+      reasoningSelection: snapshot.reasoningSelection,
+      ...(prepareWorktree ? { isOriginCurrent } : {}),
+    })
+    // React pending state cannot guard two submit callbacks in the same event.
+    submissionActiveRef.current = true
     const submission = semanticComposer && currentSessionId
       ? ticketIngress.send({ session_id: currentSessionId, message: finalText,
           model: activeModel, model_ref: currentChat?.config.model_ref ?? undefined,
@@ -796,20 +858,25 @@ export function ChatPane({
         })
       : currentSessionId && (currentlyRunning || queue.hasUnconfirmed)
       ? queue.send(finalText, images)
-      : send(finalText, {
-          skillIds: snapshot.selectedSkill ? [snapshot.selectedSkill.id] : undefined,
-          ...(snapshot.typedWorkflow ? { workflowSelection: snapshot.typedWorkflow } : {}),
-          images: images.length ? images : undefined,
-          workspacePath: snapshot.workspacePath,
-          projectId: snapshot.projectId,
-          templatePrompt: snapshot.templatePrompt,
-          permissionMode: snapshot.permissionMode ?? undefined,
-          rootOrchestrationOnly: snapshot.rootOrchestrationOnly,
-          thinkingMode: snapshot.thinkingMode,
-          reasoningSelection: snapshot.reasoningSelection,
-        })
+      : prepareWorktree
+      ? (async () => {
+          setPreparationPending(true)
+          try {
+            const path = await preparation.prepare(isOriginCurrent)
+            if (!isOriginCurrent()) throw new NewChatWorktreePreparationError("context-changed")
+            return await sendSnapshot(path)
+          } catch (error) {
+            if (isOriginCurrent()) showToast(worktreeErrorMessage(error instanceof NewChatWorktreePreparationError ? error : null)
+              ?? uiText("chat_worktree_prepare_failed"), "error")
+            return { kind: "blocked" as const }
+          } finally {
+            if (mountedRef.current) setPreparationPending(false)
+          }
+        })()
+      : sendSnapshot(snapshot.workspacePath)
     void submission
       .then((result) => {
+        if (prepareWorktree && result.kind !== "accepted" && !isOriginCurrent()) return
         if (currentSessionId && !rootMode.child && !currentlyRunning && !queue.hasUnconfirmed
           && result.kind !== "busy" && result.kind !== "ignored" && result.kind !== "blocked") {
           void rootMode.refresh(currentSessionId)
@@ -833,6 +900,9 @@ export function ChatPane({
           return
         }
         if (result.kind !== "accepted") return
+        if (prepareWorktree && (!mountedRef.current
+          || getNavigationVersion?.() !== originNavigationVersion
+          || (!result.navigated && !isOriginCurrent()))) return
         if (frozenReference) setTicketReference((current) => current?.id === frozenReference.id ? null : current)
 
         // Commit only fields that still have the exact mutation revision captured
@@ -877,6 +947,7 @@ export function ChatPane({
         console.error("[ChatPane] submission coordinator failed", err)
         if (currentDraftKeyRef.current === snapshot.draftKey) composerInputRef.current?.focus()
       })
+      .finally(() => { submissionActiveRef.current = false })
     // Re-pin to bottom on send — the ResizeObserver keeps it there as the reply
     // grows and as the streaming→markdown swap relayouts.
     pinToBottom()
@@ -1276,6 +1347,14 @@ export function ChatPane({
           onQueueModeChange={currentSessionId && !submissionPending && !semanticComposer ? queue.setMode : undefined}
           sendWhileRunning={semanticComposer}
           queueControls={currentSessionId && !semanticComposer ? <SessionGuidance key={currentSessionId} sessionId={currentSessionId} messages={queue.pending} busy={queue.busy} onCancel={(id) => void queue.cancel(id)} onPreview={setPreview} /> : null}
+          workspaceControl={!currentSessionId && !secondary ? <Suspense fallback={null}>
+            <NewChatWorktreeControl projectId={pendingProjectId ?? null}
+              workspacePath={worktreePath ?? selectedProjectPath ?? pickedWorkspace}
+              value={preparation.selection} onChange={(value) => preparation.select(value)}
+              disabled={preparation.locked || submissionPending || preparationPending}
+              preparedPath={preparation.path} error={worktreeErrorMessage(preparation.error)} />
+            {preparationPending ? <span role="status" className="px-2 text-xs text-muted-foreground">{uiText("chat_worktree_preparing")}</span> : null}
+          </Suspense> : null}
           workflowControl={workflowPicker === "composer" || typedWorkflow || workflowError ? workflowControl("composer") : null}
           catalogState={catalogState}
           catalogDisabled={workflowDisabled}
@@ -1352,7 +1431,7 @@ export function ChatPane({
               />
             </>
           )}
-          submissionPending={submissionPending || goalSaving || queue.busy || ticketIngress.busy || modelSaving || rootMode.busy}
+          submissionPending={submissionPending || preparationPending || goalSaving || queue.busy || ticketIngress.busy || modelSaving || rootMode.busy}
           inputRef={composerInputRef}
           attachments={attachments}
           onAddFiles={(files) => void addFiles(files)}
