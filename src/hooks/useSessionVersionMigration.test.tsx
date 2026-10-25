@@ -3,7 +3,7 @@ import { createRoot, type Root } from "react-dom/client"
 import { afterEach, beforeEach, expect, it, vi } from "vitest"
 import { ApiError } from "@services/api/errors"
 import { beginSessionCompatibilityRead, clearSessionCompatibilityObservations, completeSessionCompatibilityRead,
-  getSessionCompatibilitySnapshot } from "@services/chat/sessionExecutionCompatibility"
+  getSessionCompatibilitySnapshot, isSessionExecutionBlocked } from "@services/chat/sessionExecutionCompatibility"
 import { useSessionVersionMigration } from "./useSessionVersionMigration"
 
 const mocks = vi.hoisted(() => ({ assess: vi.fn(), migrate: vi.fn(), getSession: vi.fn() }))
@@ -59,6 +59,35 @@ it("a matching receipt without current canonical version stays unconfirmed", asy
   expect(value.phase).toBe("unconfirmed")
   expect(value.canRecover).toBe(true)
 })
+it("publishes a canonical execution conflict without reporting a read failure or migration success", async () => {
+  const prior = beginSessionCompatibilityRead("a")
+  completeSessionCompatibilityRead("a", prior, detail("a", 1))
+  mocks.getSession.mockResolvedValue({ session: { ...detail("a", 99).session, execution_compatibility: {
+    ...detail("a", 99).session.execution_compatibility, status: "conflict", execution_allowed: false,
+    conflicts: [{ code: "unsupported_session_version", message: "A newer behavior version was observed" }] } } })
+  await mount("a")
+  await act(async () => { await value.migrate() })
+  expect(isSessionExecutionBlocked("a")).toBe(true)
+  expect(getSessionCompatibilitySnapshot("a")).toMatchObject({ report: { status: "conflict", session_version: 99 },
+    loading: false, readError: false })
+  expect(value.phase).toBe("unconfirmed")
+  expect(value.canRecover).toBe(true)
+  expect(mocks.migrate).toHaveBeenCalledTimes(1)
+})
+it.each(["foreign", "invalid"])("a %s canonical read cannot publish compatibility or confirm migration", async (mode) => {
+  const prior = beginSessionCompatibilityRead("a")
+  completeSessionCompatibilityRead("a", prior, detail("a", 1))
+  mocks.getSession.mockResolvedValue(mode === "foreign" ? detail("other") : {
+    session: { ...detail().session, execution_compatibility: { status: "conflict", execution_allowed: false } } })
+  await mount("a")
+  await act(async () => { await value.migrate() })
+  expect(getSessionCompatibilitySnapshot("a").report?.session_version).toBe(1)
+  expect(getSessionCompatibilitySnapshot("a").readError).toBe(true)
+  expect(getSessionCompatibilitySnapshot("other").observed).toBe(false)
+  expect(value.phase).toBe("unconfirmed")
+  expect(value.canRecover).toBe(true)
+  expect(mocks.migrate).toHaveBeenCalledTimes(1)
+})
 it("a typed refusal during readback cannot erase an already acknowledged migration intent", async () => {
   mocks.getSession.mockRejectedValueOnce(new ApiError("pending", 409, "Conflict", "{}"))
     .mockResolvedValueOnce(detail())
@@ -78,7 +107,7 @@ it("a same-ID replacement cannot claim preserved-history success for the origina
   await act(async () => { await value.migrate() })
   expect(value.phase).toBe("unconfirmed")
   expect(value.canRecover).toBe(true)
-  expect(getSessionCompatibilitySnapshot("a").report).toBeNull()
+  expect(getSessionCompatibilitySnapshot("a")).toMatchObject({ report: { session_version: 2 }, readError: false })
 })
 it("a newer canonical observation supersedes delayed migration readback without losing the original intent", async () => {
   let finish!: (result: unknown) => void
@@ -90,10 +119,13 @@ it("a newer canonical observation supersedes delayed migration readback without 
   const newer = beginSessionCompatibilityRead("a")
   expect(completeSessionCompatibilityRead("a", newer, { session: { ...detail().session,
     root_mode_birth_token: "e".repeat(64) } })).toBe(true)
-  await act(async () => { finish(detail()); await operation })
+  await act(async () => { finish({ session: { ...detail("a", 99).session, execution_compatibility: {
+    ...detail("a", 99).session.execution_compatibility, status: "conflict", execution_allowed: false,
+    conflicts: [{ code: "unsupported_session_version", message: "Superseded conflict" }] } } }); await operation })
   expect(value.phase).toBe("unconfirmed")
   expect(value.canRecover).toBe(true)
   expect(mocks.migrate.mock.calls[0][0]).toEqual(intent)
+  expect(getSessionCompatibilitySnapshot("a")).toMatchObject({ report: { session_version: 2, status: "compatible" }, readError: false })
 })
 it("Child readback without a Root token uses the server's focused lifetime witness", async () => {
   mocks.getSession.mockResolvedValue({ session: { ...detail().session, root_mode_birth_token: undefined } })
@@ -103,6 +135,24 @@ it("Child readback without a Root token uses the server's focused lifetime witne
   await act(async () => { await value.migrate() })
   expect(value.phase).toBe("committed")
   expect(mocks.assess).toHaveBeenCalledTimes(2)
+})
+it("a newer compatibility read during Child lifetime verification prevents migration success", async () => {
+  let finish!: (result: unknown) => void
+  mocks.getSession.mockResolvedValue({ session: { ...detail().session, root_mode_birth_token: undefined } })
+  mocks.assess.mockResolvedValueOnce(assessment()).mockImplementationOnce(() => new Promise((resolve) => { finish = resolve }))
+  await mount("a")
+  let operation!: Promise<void>
+  await act(async () => { operation = value.migrate() })
+  expect(getSessionCompatibilitySnapshot("a").report?.session_version).toBe(2)
+  const newer = beginSessionCompatibilityRead("a")
+  completeSessionCompatibilityRead("a", newer, { session: { ...detail("a", 99).session, execution_compatibility: {
+    ...detail("a", 99).session.execution_compatibility, status: "conflict", execution_allowed: false,
+    conflicts: [{ code: "unsupported_session_version", message: "Newer conflict" }] } } })
+  await act(async () => { finish({ ...assessment(), session_version: 2 }); await operation })
+  expect(isSessionExecutionBlocked("a")).toBe(true)
+  expect(getSessionCompatibilitySnapshot("a").readError).toBe(false)
+  expect(value.phase).toBe("unconfirmed")
+  expect(value.canRecover).toBe(true)
 })
 it("CAS refusal refreshes readiness and does not resend the rejected operation", async () => {
   mocks.migrate.mockRejectedValue(new ApiError("changed", 412, "Precondition Failed", "{}"))

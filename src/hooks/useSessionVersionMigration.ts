@@ -77,11 +77,16 @@ export function useSessionVersionMigration(sessionId: string | null, enabled: bo
       // A matching durable receipt is followed by a canonical compatibility
       // read. An admitted request alone never becomes a success message.
       const compatibilityRead = beginSessionCompatibilityRead(sessionId)
+      let compatibilityPublished = false
       try {
         const detail = await agentClient.getSession(sessionId)
         const report = decodeSessionExecutionCompatibility(detail.session.execution_compatibility)
-        if (detail.session.id !== sessionId || !report || !report.execution_allowed
-          || report.session_version !== receipt.target_version) throw new Error("migration_readback_unconfirmed")
+        if (detail.session.id !== sessionId || !report) throw new Error("migration_readback_unconfirmed")
+        if (!completeSessionCompatibilityRead(sessionId, compatibilityRead, detail)) throw new Error("migration_readback_superseded")
+        compatibilityPublished = true
+        // Current execution compatibility is authoritative even when this
+        // particular migration cannot be confirmed from its receipt.
+        if (!report.execution_allowed || report.session_version !== receipt.target_version) throw new Error("migration_readback_unconfirmed")
         // Root detail already carries its lifetime witness. Child detail may
         // omit it; the focused owner assessment supplies the same canonical
         // witness without deriving it from version numbers or creation dates.
@@ -92,9 +97,11 @@ export function useSessionVersionMigration(sessionId: string | null, enabled: bo
           witness = observation.birth_token
         }
         if (witness !== intent.request.birth_token) throw new Error("migration_lifetime_changed")
+        // A Child lifetime assessment may have awaited a newer compatibility
+        // read. Recheck the original read before confirming the migration.
         if (!completeSessionCompatibilityRead(sessionId, compatibilityRead, detail)) throw new Error("migration_readback_superseded")
       } catch (error) {
-        failSessionCompatibilityRead(sessionId, compatibilityRead)
+        if (!compatibilityPublished) failSessionCompatibilityRead(sessionId, compatibilityRead)
         throw error
       }
       if (!current(sessionId, revision)) return

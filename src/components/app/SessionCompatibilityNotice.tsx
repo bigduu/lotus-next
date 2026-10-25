@@ -35,7 +35,7 @@ export function SessionCompatibilityNotice({ state, sessionId }: { state?: Sessi
       {uiText("session_compatibility_refresh")}
     </Button>
     {sessionId ? <SessionVersionMigrationAction sessionId={sessionId}
-      enabled={!state.blocked && (state.loading || state.readError || state.observed && state.report?.execution_allowed === true)}
+      enabled={state.loading || state.readError || state.observed && (state.blocked || state.report?.execution_allowed === true)}
       allowNewMigration={state.observed && !state.readError && !state.blocked && state.report?.execution_allowed === true} /> : null}
   </section>
 }

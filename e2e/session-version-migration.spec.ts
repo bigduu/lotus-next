@@ -7,7 +7,7 @@ import { installArtifactRuntime, standaloneScenario } from "./support/artifactRu
 const sid = "all-surface-session", at = "2026-10-25T00:00:00Z"
 const birth = "d".repeat(64), before = "a".repeat(64), after = "b".repeat(64)
 const endpoint = `/api/v1/sessions/${sid}/version-migration`
-type Mode = "success" | "uncertain-post" | "uncertain-readback" | "cold-pending" | "busy" | "unsupported"
+type Mode = "success" | "uncertain-post" | "uncertain-readback" | "cold-pending" | "busy" | "unsupported" | "canonical-conflict"
 interface Intent {
   operation_id: string; birth_token: string; expected_session_version: null
   expected_metadata_version: number; expected_snapshot_sha256: string
@@ -40,9 +40,12 @@ async function fixture(page: Page, mode: Mode) {
   const readbackGate = new Promise<void>((resolve) => { releaseReadback = resolve })
   const posts: Intent[] = [], sessionWrites: { path: string; body: unknown }[] = []
   const events: string[] = []
-  const compatibility = () => ({ session_version: migrated ? 2 : null, current_session_version: 2,
-    status: migrated ? "compatible" : "legacy_compatible", history_readable: true, execution_allowed: true, conflicts: [] })
-  const canonical = () => ({ session: { ...session, session_version: migrated ? 2 : null, execution_compatibility: compatibility() } })
+  const conflicting = () => mode === "canonical-conflict" && migrated
+  const retainedVersion = () => conflicting() ? 99 : migrated ? 2 : null
+  const compatibility = () => ({ session_version: retainedVersion(), current_session_version: 2,
+    status: conflicting() ? "conflict" : migrated ? "compatible" : "legacy_compatible", history_readable: true,
+    execution_allowed: !conflicting(), conflicts: conflicting() ? [{ code: "unsupported_session_version", message: "A future version appeared after the receipt" }] : [] })
+  const canonical = () => ({ session: { ...session, session_version: retainedVersion(), execution_compatibility: compatibility() } })
   await page.route("**/api/v1/**", async (route) => {
     const request = route.request(), url = new URL(request.url()), path = url.pathname
     if (request.method() !== "GET" && /^\/api\/v1\/(sessions|history|chat|execute)(?:\/|$)/.test(path)) {
@@ -53,9 +56,11 @@ async function fixture(page: Page, mode: Mode) {
       if (mode === "unsupported") return route.fulfill({ status: 404, json: { error: "Unsupported route" } })
       const blockers = pending ? [{ code: "migration_pending", message: "A saved migration needs confirmation" }]
         : mode === "busy" ? [{ code: "session_busy", message: "An existing operation blocks migration" }]
+          : conflicting() ? [{ code: "unsupported_session_version", message: "A future version blocks new migration" }]
           : migrated ? [{ code: "already_current", message: "Already current" }] : []
-      return route.fulfill({ json: { session_id: sid, birth_token: birth, session_version: migrated ? 2 : null,
-        current_session_version: 2, metadata_version: migrated ? 6 : 5, snapshot_sha256: migrated ? after : before,
+      return route.fulfill({ json: { session_id: sid, birth_token: birth, session_version: retainedVersion(),
+        current_session_version: 2, metadata_version: conflicting() ? 7 : migrated ? 6 : 5,
+        snapshot_sha256: conflicting() ? "c".repeat(64) : migrated ? after : before,
         eligible: !blockers.length, blockers, ...(pending ? { pending_operation: pending } : {}) } })
     }
     if (path === endpoint && request.method() === "POST") {
@@ -201,6 +206,43 @@ test("cold refresh recovers only the server's pending operation even when sessio
   await expect(page.getByText("Compatibility could not be checked", { exact: false })).toHaveCount(0)
   expect(f.commits).toBe(1)
   expect(f.runtime.pageErrors).toEqual([])
+})
+
+test("canonical conflict after a matching receipt blocks the Composer and preserves only explicit recovery", async ({ page }, info) => {
+  const f = await fixture(page, "canonical-conflict")
+  const input = page.getByRole("textbox", { name: "Messages", exact: true }).first()
+  const draft = "Keep this unsent instruction after the canonical conflict"
+  await input.fill(draft)
+  await expect(page.getByRole("button", { name: "Send message", exact: true })).toBeEnabled()
+  await start(page).click()
+  await expect(migration(page)).toContainText(unconfirmed)
+  await expect(page.locator('[data-session-execution-blocked="true"]')).toBeVisible()
+  await expect(page.getByText("Compatibility could not be checked", { exact: false })).toHaveCount(0)
+  await expect(migration(page)).not.toContainText(completed)
+  await expect(start(page)).toHaveCount(0)
+  await expect(recover(page)).toBeEnabled()
+  expect(f.posts).toHaveLength(1)
+  await expect(page.getByRole("button", { name: "Send message", exact: true })).toBeDisabled()
+  await input.press("Enter")
+  await expect(input).toHaveText(draft)
+  expect(f.sessionWrites).toEqual([{ path: endpoint, body: f.posts[0] }])
+  const original = structuredClone(f.posts[0]), reads = f.assessReads
+  await migration(page).getByRole("button", { name: "Refresh migration state", exact: true }).click()
+  await expect.poll(() => f.assessReads).toBeGreaterThan(reads)
+  await expect(recover(page)).toBeEnabled()
+  await expect(start(page)).toHaveCount(0)
+  expect(f.posts).toHaveLength(1)
+  await recover(page).click()
+  await expect.poll(() => f.posts.length).toBe(2)
+  await expect(migration(page)).toContainText(unconfirmed)
+  await expect(recover(page)).toBeEnabled()
+  expect(f.posts).toEqual([original, original])
+  expect(f.sessionWrites).toEqual([{ path: endpoint, body: original }, { path: endpoint, body: original }])
+  await expect(page.locator('[data-session-execution-blocked="true"]')).toBeVisible()
+  await expect(page.getByRole("button", { name: "Send message", exact: true })).toBeDisabled()
+  await expect(input).toHaveText(draft)
+  expect(f.runtime.pageErrors).toEqual([])
+  await screenshot(page, info, "session-migration-canonical-conflict")
 })
 
 for (const mode of ["busy", "unsupported"] as const) {
