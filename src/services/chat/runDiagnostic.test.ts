@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest"
 import { diagnosticSessionHash } from "./diagnosticSessionHash"
-import { decodeRunDiagnostic, inspectCanonicalDiagnostic } from "./runDiagnostic"
-import { diagnosticFixture, diagnosticFixtureError as error } from "./runDiagnostic.testFixtures"
+import { decodeRunDiagnostic, generatedDiagnosticError, inspectCanonicalDiagnostic, type PublicStreamTimeoutDiagnostic } from "./runDiagnostic"
+import { diagnosticFixture, diagnosticFixtureError as error, timeoutDiagnosticFixture, timeoutDiagnosticFixtureError as timeoutError } from "./runDiagnostic.testFixtures"
 
 const sid = "11111111-1111-4111-8111-111111111111"
 describe("frozen public diagnostic v2 binding", () => {
@@ -43,5 +43,63 @@ describe("frozen public diagnostic v2 binding", () => {
     for (const missing of [undefined,null,{ ...diagnosticFixture(sid), raw_body:"PRIVATE" }]) {
       expect(inspectCanonicalDiagnostic({ ...canonical,last_run_diagnostic:missing },sid,error)).toEqual({ status:"not_provided",diagnostic:null })
     }
+  })
+})
+
+describe("provider-independent stream timeout diagnostics", () => {
+  it("accepts the exact terminal timeout identity, with an optional LLM wrapper", () => {
+    const receipt = timeoutDiagnosticFixture(sid)
+    expect(generatedDiagnosticError(receipt)).toBe(timeoutError)
+    expect(decodeRunDiagnostic(receipt, sid, timeoutError)).toEqual(receipt)
+    expect(Object.isFrozen(decodeRunDiagnostic(receipt, sid, "LLM error: " + timeoutError))).toBe(true)
+    expect(decodeRunDiagnostic(receipt, sid, timeoutError.split(". Diagnostic ID:")[0]!)).toBeNull()
+  })
+
+  it.each([
+    { kind:undefined }, { kind:"private-kind" }, { schema_version:2 }, { request_id:"invented-request" },
+    { diagnostic_id:"sk-private" }, { error_id:"11111111-1111-4111-8111-111111111111" },
+    { provider:"https://private.invalid/key" }, { provider:"sk-secret" }, { model:"Bearer-credential" },
+    { model:"x".repeat(121) }, { model:"private\nbody" }, { phase:"private-phase" },
+    { deadline_ms:999 }, { deadline_ms:86_400_001 }, { last_transport_ms_ago:-1 }, { last_transport_ms_ago:120003 },
+    { last_semantic_ms_ago:Number.MAX_SAFE_INTEGER+1 }, { semantic_output_started:false }, { retry_safe:true },
+    { retry_safe:"false" }, { phase:"bootstrap" }, { phase:"first_semantic" },
+    { last_http_status:429, retry_delay_ms:1000 }, { retry_delay_ms:1000 }, { raw_body:"PRIVATE_CANARY" },
+  ])("rejects malformed or foreign timeout projections %j", (patch) => {
+    const receipt = { ...timeoutDiagnosticFixture(sid), ...patch }
+    const matchingText = generatedDiagnosticError({ ...receipt, kind:"stream_timeout" } as PublicStreamTimeoutDiagnostic)
+    expect(decodeRunDiagnostic(receipt, sid, matchingText)).toBeNull()
+  })
+
+  it("preserves the 600 second semantic threshold independently of the transport threshold", () => {
+    const receipt = { ...timeoutDiagnosticFixture(sid), phase:"semantic_idle" as const,
+      deadline_ms:600000, last_transport_ms_ago:3, last_semantic_ms_ago:600002 }
+    const text = "Stream timed out: phase=semantic_idle, deadline_ms=600000, provider=a2a3cebf-8abc-45cb-8407-66c90fd9a978, model=gpt-6-astra, last_transport_ms_ago=3, last_semantic_ms_ago=600002ms, semantic_output_started=true, retry_safe=false. Diagnostic ID: 9ab6cd70-bc43-4fed-9f10-50c2873fa287."
+    expect(decodeRunDiagnostic(receipt, sid, text)).toEqual(receipt)
+    expect(decodeRunDiagnostic(receipt, sid, text.replace("600000", "120000"))).toBeNull()
+  })
+
+  it("supports a first-output timeout and bootstrap retry evidence without inventing attempts", () => {
+    const receipt = { ...timeoutDiagnosticFixture(sid), provider:null, model:null, phase:"first_semantic" as const,
+      deadline_ms:600000, last_transport_ms_ago:1, last_semantic_ms_ago:null, semantic_output_started:false, retry_safe:true }
+    const text = "Stream timed out: phase=first_semantic, deadline_ms=600000, provider=unknown, model=unknown, last_transport_ms_ago=1, last_semantic_ms_ago=never, semantic_output_started=false, retry_safe=true. Diagnostic ID: 9ab6cd70-bc43-4fed-9f10-50c2873fa287."
+    expect(decodeRunDiagnostic(receipt, sid, text)).toEqual(receipt)
+    const bootstrap = { ...receipt, phase:"bootstrap" as const, last_http_status:429, retry_delay_ms:60000 }
+    const bootstrapText = text.replace("phase=first_semantic", "phase=bootstrap").replace(". Diagnostic ID:", ", last_http_status=429, retry_delay_ms=60000. Diagnostic ID:")
+    expect(decodeRunDiagnostic(bootstrap, sid, bootstrapText)).toEqual(bootstrap)
+    for (const patch of [{ last_http_status:null }, { retry_delay_ms:null }, { last_http_status:999 }, { retry_delay_ms:-1 }]) {
+      expect(decodeRunDiagnostic({ ...bootstrap, ...patch }, sid, bootstrapText)).toBeNull()
+    }
+  })
+
+  it("rejects foreign sessions and repeated equivalent errors from a newer run", () => {
+    const receipt = timeoutDiagnosticFixture(sid)
+    expect(decodeRunDiagnostic(receipt, "other-session", timeoutError)).toBeNull()
+    const nextId = "11111111-1111-4111-8111-111111111111"
+    const next = { ...receipt, diagnostic_id:nextId, error_id:nextId }
+    expect(decodeRunDiagnostic(next, sid, timeoutError)).toBeNull()
+    const saved = { id:sid, is_running:false, last_run_status:"error", last_run_error:timeoutError, last_run_diagnostic:receipt }
+    expect(inspectCanonicalDiagnostic(saved, sid, timeoutError).status).toBe("confirmed")
+    expect(inspectCanonicalDiagnostic({ ...saved, last_run_error:generatedDiagnosticError(next), last_run_diagnostic:next }, sid, timeoutError)).toEqual({ status:"changed", diagnostic:null })
+    expect(inspectCanonicalDiagnostic({ ...saved, last_run_diagnostic:null }, sid, timeoutError)).toEqual({ status:"not_provided", diagnostic:null })
   })
 })

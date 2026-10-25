@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
 import { createRunDiagnostics, downloadRunDiagnostics } from "./runDiagnostics"
 import type { RunDiagnosticsSubject } from "./runDiagnosticId"
-import { diagnosticFixture, diagnosticFixtureError } from "@services/chat/runDiagnostic.testFixtures"
+import { diagnosticFixture, diagnosticFixtureError, timeoutDiagnosticFixture, timeoutDiagnosticFixtureError } from "@services/chat/runDiagnostic.testFixtures"
 
 const sid = "11111111-1111-4111-8111-111111111111"
 const id = "9ab6cd70-bc43-4fed-9f10-50c2873fa287"
@@ -11,6 +11,21 @@ const runtime = { artifact: { version: "2026.10.19", revision: "a".repeat(40) },
 afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers() })
 
 describe("local allowlist diagnostic report", () => {
+  it("exports observed timeout progress without fabricated request budgets or parsing a legacy error", () => {
+    const current = { ...subject, errorBinding:timeoutDiagnosticFixtureError, liveDiagnostic:timeoutDiagnosticFixture(sid) }
+    const report = createRunDiagnostics(current,sid,runtime,now)!
+    expect(report.diagnostic).toMatchObject({ source:"live_event", kind:"stream_timeout", provider:"a2a3cebf-8abc-45cb-8407-66c90fd9a978",
+      model:"gpt-6-astra", failure_stage:"transport_idle", deadline_ms:120000, last_transport_ms_ago:120002,
+      last_semantic_ms_ago:120002, semantic_output_started:true, retry_safe:false, request_id:null,
+      attempt:null, attempt_limit:null, status:null, total_budget_ms:null, retry_stop_reason:null })
+    expect(JSON.stringify(report)).not.toContain("Stream timed out")
+    const legacy = createRunDiagnostics({ ...current, diagnosticId:null, liveDiagnostic:null },sid,runtime,now)!
+    expect(legacy.diagnostic).toMatchObject({ source:"not_provided", deadline_ms:null, model:null, retry_safe:null })
+    const refreshed = createRunDiagnostics(current,sid,runtime,now,{ diagnostic:null,source:"canonical_read",canonicalStatus:"not_provided" })!
+    expect(refreshed.diagnostic).toMatchObject({ kind:null, failure_stage:null, deadline_ms:null, last_transport_ms_ago:null,
+      last_semantic_ms_ago:null, semantic_output_started:null, retry_safe:null, model:null })
+  })
+
   it("exports finite v2 fields without raw error/failure text and never resurrects live data on a missing refresh", () => {
     const current = { ...subject, errorBinding:diagnosticFixtureError, liveDiagnostic:diagnosticFixture(sid) }
     const live = createRunDiagnostics(current,sid,runtime,now)!
