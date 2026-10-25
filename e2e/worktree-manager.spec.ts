@@ -111,6 +111,7 @@ test("selects a child repository, creates a checkout, and opens Project-owned an
   await expect(dialog).not.toBeVisible()
   expect(bindings).toEqual([{ path: target }])
   await revealComposerSettings(page)
-  await expect(page.getByTitle(target, { exact: true })).toBeVisible()
+  await expect(page.getByRole("button", { name: "task", exact: true }).and(page.getByTitle(target, { exact: true }))).toBeVisible()
+  await expect(page.getByRole("button", { name: "会话工作区", exact: true })).toContainText("当前工作区")
   expect(observation.pageErrors).toEqual([])
 })

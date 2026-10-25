@@ -48,6 +48,8 @@ function App() {
   const chat = useChat()
   const { booted, chats, currentSessionId, currentChat, select: selectSession, newChat: createChat } = chat
   const mainNavigationVersion = useRef(0)
+  const [newChatEpoch, setNewChatEpoch] = useState(0)
+  const getNavigationVersion = useCallback(() => mainNavigationVersion.current, [])
   // Navigation intent matters even when returning to the same session or
   // starting another empty composer while Supervisor is still opening.
   const select = useCallback((id: string) => {
@@ -57,6 +59,7 @@ function App() {
   }, [selectSession])
   const newChat = useCallback(() => {
     mainNavigationVersion.current += 1
+    setNewChatEpoch((epoch) => epoch + 1)
     setPaletteOpen(false)
     createChat()
   }, [createChat])
@@ -631,7 +634,10 @@ function App() {
           pickedWorkspace={pickedWorkspace}
           worktreePath={pickedWorktree?.projectId === pendingProjectId ? pickedWorktree.path : null}
           pendingProjectId={pendingProjectId}
+          newChatEpoch={newChatEpoch}
+          getNavigationVersion={getNavigationVersion}
           onSelectProject={(projectId) => {
+            mainNavigationVersion.current += 1
             setPendingProjectId(projectId)
             setPickedWorktree(null)
             // A manual project pick owns the workspace; drop a manual choice.
@@ -665,6 +671,7 @@ function App() {
         locked={!!workspacePath}
         onClose={() => setWsPickerOpen(false)}
         onSelect={(p) => {
+          mainNavigationVersion.current += 1
           setPickedWorkspace(p)
           setPickedWorktree(null)
           // Manual workspace choice overrides a project pick for the next chat.

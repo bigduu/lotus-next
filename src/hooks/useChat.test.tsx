@@ -1820,6 +1820,35 @@ describe("useChat two-phase send lifecycle", () => {
     expect(mocks.appState.refreshChatsNow).toHaveBeenCalledTimes(1)
     expect(mocks.appState.loadChatHistory).toHaveBeenCalledWith("stop-failed")
   })
+  it("blocks a delayed first send whose preparation origin was already invalidated", async () => {
+    const hook = await mountUseChat({ mode: "main" })
+    await act(async () => {
+      expect(await hook.current.send("stale prepared draft", { isOriginCurrent: () => false })).toEqual({ kind: "blocked" })
+    })
+    expect(mocks.sendMessage).not.toHaveBeenCalled()
+    expect(mocks.execute).not.toHaveBeenCalled()
+  })
+
+  it("does not navigate a prepared send ACK after null-to-null new-chat intent", async () => {
+    const acknowledgement = deferred<{ session_id: string }>()
+    mocks.sendMessage.mockReturnValueOnce(acknowledgement.promise)
+    const hook = await mountUseChat({ mode: "main" })
+    let version = 0
+    const originalVersion = version
+    let pending!: Promise<SendSubmissionResult>
+    act(() => { pending = hook.current.send("prepared original draft", { isOriginCurrent: () => version === originalVersion }) })
+    act(() => { version += 1; hook.current.newChat() })
+    mocks.appState.selectSession.mockClear()
+    await act(async () => {
+      acknowledgement.resolve({ session_id: "late-prepared-session" })
+      expect(await pending).toMatchObject({ kind: "accepted", navigated: false, sessionId: "late-prepared-session" })
+    })
+    expect(mocks.appState.selectSession).not.toHaveBeenCalled()
+    expect(mocks.subscribeToEvents).not.toHaveBeenCalled()
+    expect(mocks.execute).toHaveBeenCalledWith("late-prepared-session", "test-model", undefined, undefined,
+      { provider: "test-provider", model: "test-model" })
+  })
+
   it("does not let a late acknowledgement navigate after the pane has moved", async () => {
     const acknowledgement = deferred<{ session_id: string }>()
     const onSessionCreated = vi.fn()

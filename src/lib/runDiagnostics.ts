@@ -32,6 +32,8 @@ export function createRunDiagnostics(
   const detail = subject.sessionId !== null && typeof subject.errorBinding === "string"
     ? decodeRunDiagnostic(value, subject.sessionId, subject.errorBinding) : null
   const diagnosticId = detail?.diagnostic_id ?? (isDiagnosticId(subject.diagnosticId) ? subject.diagnosticId : null)
+  const timeout = detail?.kind === "stream_timeout" ? detail : null
+  const request = detail?.kind === "stream_timeout" ? null : detail
   const timestamp = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(collectedAt)
     && Number.isFinite(Date.parse(collectedAt)) ? collectedAt : null
   return Object.freeze({
@@ -54,26 +56,34 @@ export function createRunDiagnostics(
       source: detail ? evidence?.source ?? "live_event" : diagnosticId ? "legacy_terminal_error_marker" : "not_provided",
       structured_details: detail ? "provided" : "not_provided",
       canonical_status: evidence?.canonicalStatus ?? "not_checked",
-      request_id: detail?.request_id ?? null,
+      kind: timeout?.kind ?? null,
+      request_id: request?.request_id ?? null,
       error_id: detail?.error_id ?? null,
       observed_at: detail?.observed_at ?? null,
       provider: detail?.provider ?? null,
+      model: timeout?.model ?? null,
       session_hash: detail?.session_hash ?? null,
       // Runtime correlation is distinct from the Host activation/backendRunId.
       runtime_run_id: detail?.run_id ?? null,
       backend_run_id: null,
       failure_stage: detail?.phase ?? null,
-      attempt: detail?.attempt ?? null,
-      attempt_limit: detail?.attempt_limit ?? null,
-      status: detail?.status ?? null,
-      attempt_timeout_ms: detail?.attempt_timeout_ms ?? null,
-      total_budget_ms: detail?.total_budget_ms ?? null,
-      attempt_elapsed_ms: detail?.attempt_elapsed_ms ?? null,
-      total_elapsed_ms: detail?.total_elapsed_ms ?? null,
-      remaining_budget_ms: detail?.remaining_budget_ms ?? null,
+      attempt: request?.attempt ?? null,
+      attempt_limit: request?.attempt_limit ?? null,
+      status: request?.status ?? null,
+      attempt_timeout_ms: request?.attempt_timeout_ms ?? null,
+      total_budget_ms: request?.total_budget_ms ?? null,
+      attempt_elapsed_ms: request?.attempt_elapsed_ms ?? null,
+      total_elapsed_ms: request?.total_elapsed_ms ?? null,
+      remaining_budget_ms: request?.remaining_budget_ms ?? null,
       retry_delay_ms: detail?.retry_delay_ms ?? null,
-      retry_stop_reason: detail?.stop_reason ?? null,
-      upstream_outcome: detail?.upstream_outcome ?? null,
+      retry_stop_reason: request?.stop_reason ?? null,
+      upstream_outcome: request?.upstream_outcome ?? null,
+      deadline_ms: timeout?.deadline_ms ?? null,
+      last_transport_ms_ago: timeout?.last_transport_ms_ago ?? null,
+      last_semantic_ms_ago: timeout?.last_semantic_ms_ago ?? null,
+      semantic_output_started: timeout?.semantic_output_started ?? null,
+      retry_safe: timeout?.retry_safe ?? null,
+      last_http_status: timeout?.last_http_status ?? null,
     }),
   })
 }

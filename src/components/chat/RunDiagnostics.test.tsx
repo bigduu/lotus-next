@@ -5,7 +5,7 @@ import { uiText } from "@shared/i18n/ui"
 import type { RunDiagnosticsSubject } from "@/lib/runDiagnosticId"
 import { RunDiagnosticsEntry, type RunDiagnosticsContentProps } from "./RunDiagnosticsEntry"
 import { RunDiagnosticsDialogContent } from "./RunDiagnosticsDialogContent"
-import { diagnosticFixture, diagnosticFixtureError } from "@services/chat/runDiagnostic.testFixtures"
+import { diagnosticFixture, diagnosticFixtureError, timeoutDiagnosticFixture, timeoutDiagnosticFixtureError } from "@services/chat/runDiagnostic.testFixtures"
 
 const environment = globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
 environment.IS_REACT_ACT_ENVIRONMENT = true
@@ -147,6 +147,30 @@ describe("optional loading and session/failure isolation", () => {
 })
 
 describe("v2 canonical diagnostic read and refresh", () => {
+  it("shows timeout progress and exports only the current saved timeout without replaying it", async () => {
+    const diagnostic = timeoutDiagnosticFixture(a.sessionId!)
+    const timeoutSubject = { ...a,errorBinding:timeoutDiagnosticFixtureError,liveDiagnostic:diagnostic }
+    let current: unknown = diagnostic
+    const readSession = vi.fn(async () => ({ session:{ id:a.sessionId,is_running:false,last_run_status:"error",
+      last_run_error:timeoutDiagnosticFixtureError,last_run_diagnostic:current } })), download = vi.fn()
+    mount(<RunDiagnosticsDialogContent subject={timeoutSubject} isCurrent={() => true} onClose={vi.fn()} readSession={readSession} download={download} />)
+    const details = document.querySelector("dl")!
+    expect(details.textContent).toContain(uiText("run_diagnostics_phase_transport_idle"))
+    expect(details.textContent).toContain("120000 ms")
+    expect(details.textContent).toContain(uiText("run_diagnostics_retry_unsafe"))
+    expect(details.textContent).not.toContain(uiText("run_diagnostics_attempts"))
+    expect(readSession).not.toHaveBeenCalled()
+    await click(uiText("run_diagnostics_read"))
+    await click(uiText("run_diagnostics_download"))
+    expect(download.mock.calls[0]?.[0].diagnostic).toMatchObject({ source:"canonical_read",canonical_status:"confirmed",
+      kind:"stream_timeout",deadline_ms:120000,semantic_output_started:true,retry_safe:false,attempt:null })
+    current = null
+    await click(uiText("run_diagnostics_read"))
+    expect(JSON.parse(document.querySelector("pre")!.textContent!).diagnostic).toMatchObject({ source:"legacy_terminal_error_marker",
+      canonical_status:"not_provided",kind:null,deadline_ms:null,semantic_output_started:null,retry_safe:null })
+    expect(document.querySelector("dl")!.textContent).not.toContain("120000 ms")
+  })
+
   const subject = { ...a,errorBinding:diagnosticFixtureError,liveDiagnostic:diagnosticFixture(a.sessionId!) }
   const receipt = () => ({ session:{ id:a.sessionId,is_running:false,last_run_status:"error",last_run_error:diagnosticFixtureError,last_run_diagnostic:diagnosticFixture(a.sessionId!) } })
   it("shows scoped live evidence, reads explicitly, and labels a canonical receipt without uploading", async () => {
