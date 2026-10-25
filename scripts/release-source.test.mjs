@@ -32,15 +32,21 @@ const environment = {
 }
 
 describe("frozen reviewed PR-head merge provenance", () => {
+  const mainPr = { base: { ref: "main", repo: { full_name: "bigduu/lotus-next" } } }
   it("retains historical equal-tree merges and accepts an exact head merged after main advanced", () => {
     expect(() => verifyProductMerge(candidate, candidate.sourceTree, [sourceSha])).not.toThrow()
-    expect(() => verifyProductMerge(candidate, "a".repeat(40), [workflowSha, sourceSha])).not.toThrow()
+    expect(() => verifyProductMerge(candidate, "a".repeat(40), [workflowSha, sourceSha], mainPr)).not.toThrow()
   })
   it.each([
     [], [sourceSha], [sourceSha, workflowSha], [workflowSha, "b".repeat(40)],
     [workflowSha, sourceSha, "b".repeat(40)], ["moving-main", sourceSha],
   ])("rejects unrelated, indirect, rewritten or malformed merge parents %j", (...parents) => {
-    expect(() => verifyProductMerge(candidate, "a".repeat(40), parents)).toThrow()
+    expect(() => verifyProductMerge(candidate, "a".repeat(40), parents, mainPr)).toThrow()
+  })
+  it.each([undefined, {}, { base: { ref: "dev", repo: { full_name: "bigduu/lotus-next" } } },
+    { base: { ref: "main", repo: { full_name: "other/lotus-next" } } },
+  ])("rejects missing or foreign main provenance even with the exact head parent: %j", (pr) => {
+    expect(() => verifyProductMerge(candidate, "a".repeat(40), [workflowSha, sourceSha], pr)).toThrow()
   })
 })
 

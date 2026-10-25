@@ -111,12 +111,14 @@ export const verifyCommittedAcceptance = (candidate, bytes) => {
   return receipt
 }
 
-export const verifyProductMerge = (candidate, mergeTree, parents) => {
+export const verifyProductMerge = (candidate, mergeTree, parents, pullRequest) => {
   assert.match(mergeTree, sha)
   if (mergeTree === candidate.sourceTree) return
   // A reviewed PR head can remain frozen while main advances independently.
   // The canonical PR receipt above binds the actual main merge; Git must also
   // prove that it directly merged this exact head, not just an older ancestor.
+  assert.equal(pullRequest?.base?.ref, "main", "A different merge tree requires a main PR")
+  assert.equal(pullRequest?.base?.repo?.full_name, repository, "A different merge tree requires this repository's main")
   assert.equal(parents.length, 2, "A different merge tree requires a normal two-parent merge")
   for (const parent of parents) assert.match(parent, sha)
   assert.equal(parents[1], candidate.sourceSha, "The main merge did not directly include the reviewed source head")
@@ -283,7 +285,7 @@ const main = async () => {
   })
   // This historical acceptance receipt is part of the reviewed main authority.
   // Every original publication gate still reruns against the fixed source below.
-  verifyCommittedAcceptance(candidate, readFileSync(`.github/release-acceptance/${environment.LOTUS_NEXT_RELEASE_VERSION}.json`))
+  const acceptance = verifyCommittedAcceptance(candidate, readFileSync(`.github/release-acceptance/${environment.LOTUS_NEXT_RELEASE_VERSION}.json`))
   git(["fetch", "--no-tags", "origin", candidate.sourceRef])
   assert.equal(git(["cat-file", "-t", "FETCH_HEAD"]), "tag", "An annotated release tag is required")
   const tagObjectSha = git(["rev-parse", "FETCH_HEAD"])
@@ -293,7 +295,7 @@ const main = async () => {
   git(["fetch", "--no-tags", "origin", candidate.productMergeSha])
   verifyProductMerge(candidate,
     git(["rev-parse", `${candidate.productMergeSha}^{tree}`]),
-    git(["show", "-s", "--format=%P", candidate.productMergeSha]).split(" "))
+    git(["show", "-s", "--format=%P", candidate.productMergeSha]).split(" "), acceptance.pullRequest)
   verifyCandidateBackendPins(candidate, {
     ci: git(["show", `${candidate.sourceSha}:.github/workflows/ci.yml`]),
     publication: git(["show", `${candidate.sourceSha}:.github/workflows/publish-npm.yml`]),
