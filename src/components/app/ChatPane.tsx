@@ -1396,7 +1396,6 @@ export function ChatPane({
                 recoverable={rootMode.recoverable}
                 error={rootMode.error}
                 conflict={rootModeConflict ?? skillModeConflict}
-                ordinaryValue={rootMode.ordinaryValue}
                 onRetry={() => { void rootMode.retry() }}
               />
               {rootMode.child && rootMode.error ? (

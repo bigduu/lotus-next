@@ -99,8 +99,7 @@ export function ComposerEditor(props: Props) {
         role: "textbox",
         "aria-multiline": "true",
         "data-composer-editor": "",
-        class: "composer-editor min-h-11 max-h-40 w-full min-w-0 overflow-y-auto overflow-x-hidden rounded-md bg-transparent px-2 py-2 pr-32 text-base outline-none whitespace-pre-wrap [overflow-wrap:anywhere] [&_p]:m-0",
-        style: "padding-right: 128px",
+        class: "composer-editor min-h-11 max-h-40 w-full min-w-0 overflow-y-auto overflow-x-hidden rounded-md bg-transparent px-2 py-2 text-base outline-none whitespace-pre-wrap [overflow-wrap:anywhere] [&_p]:m-0",
       },
       clipboardTextSerializer: (slice) => composerText(slice.content),
       handleKeyDown: (view, event) => {

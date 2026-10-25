@@ -7,6 +7,7 @@ import type { ThinkingPickerSelection } from "@/hooks/useRootThinkingMode"
 import { cn } from "@/lib/utils"
 import { Input } from "@/components/ui/input"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { composerControlClassName } from "./composerStyles"
 
 const METEORS = [
   { top: "22%", animationDuration: "1.6s", animationDelay: "-0.4s", "--meteor-rest": "-25%" },
@@ -96,9 +97,9 @@ export function ModelEffortPicker({
           aria-describedby={`${pickerId}-model ${pickerId}-effort`}
           title={`${model || uiText("select_a_model_1afed6a8")} · ${currentLabel}`}
           disabled={triggerDisabled}
-          className="model-effort-trigger inline-flex min-w-0 items-center gap-1.5 rounded-full border bg-card px-2.5 py-1.5 text-xs font-medium outline-none transition-colors hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50">
-          <span id={`${pickerId}-model`} className="min-w-0 flex-1 truncate text-left">{model || uiText("select_a_model_1afed6a8")}</span>
-          <span id={`${pickerId}-effort`} className="effort-trigger-label shrink-0 truncate text-right" style={{ color: accents[selected] }}>{currentLabel}</span>
+          className={cn("model-effort-trigger", composerControlClassName)}>
+          <span id={`${pickerId}-model`} className="min-w-0 truncate text-left">{model || uiText("select_a_model_1afed6a8")}</span>
+          <span id={`${pickerId}-effort`} className="effort-trigger-label shrink-0 truncate">{currentLabel}</span>
           <ChevronDown className="size-3 shrink-0 text-muted-foreground" aria-hidden />
         </button>
       </PopoverTrigger>
@@ -167,10 +168,6 @@ export function ModelEffortPicker({
                 onBlur={() => { keyboardActive.current = false; if (!pointerActive.current) setPreview(null) }}
               />
             </div>
-            <div className="mt-1.5 flex justify-between px-1 text-[10px] text-muted-foreground" aria-hidden>
-              <span>{text.auto}</span><span>{text[efforts[efforts.length - 1]!]}</span>
-            </div>
-            {allowUltra && <p aria-hidden={displayed !== "ultra"} className={cn("mt-2 border-t pt-2 text-xs leading-relaxed text-muted-foreground", displayed !== "ultra" && "invisible")}>{uiText("ultra_picker_description")}</p>}
           </>
         ) : (
           <>

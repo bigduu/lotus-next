@@ -8,6 +8,8 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { getErrorMessage } from "@services/api/errors"
 import { prepareWorkflowSelection, workflowUnavailableReason, type TypedWorkflowDraft } from "@services/command/workflowCatalog"
 import type { WorkflowCatalogState } from "./useWorkflowCatalog"
+import { composerControlClassName } from "./composerStyles"
+import { cn } from "@/lib/utils"
 
 export function WorkflowSelectionControl({ sessionId, selected, onChange, onRemove, open, onOpenChange,
   catalogState, disabled, error, onArgsFocus, onReturnFocus, variant = "composer",
@@ -39,17 +41,17 @@ export function WorkflowSelectionControl({ sessionId, selected, onChange, onRemo
   const environment = variant === "environment"
   return (
     <Popover open={open} onOpenChange={(value) => { setQuery(""); onOpenChange(value) }}>
-      <div className={environment ? "px-1" : "flex min-w-0 flex-wrap items-center gap-1 px-2 pt-1"} data-workflow-chip={environment ? undefined : ""}>
+      <div className={environment ? "px-1" : "flex min-w-0 flex-wrap items-center gap-1 pt-1"} data-workflow-chip={environment ? undefined : ""}>
         <PopoverTrigger asChild>
           <button type="button" aria-label={selected ? uiText("edit_catalog_workflow_for_this_message_c2caaa3d", { v0: selected.entry.name }) : uiText("choose_a_catalog_workflow_for_this_message_9594a231")}
             className={environment
               ? "flex w-full items-center gap-2 rounded-xl px-2 py-2 text-left hover:bg-accent"
-              : "flex max-w-full items-center gap-1.5 rounded-full bg-primary/15 px-2.5 py-1 text-xs font-medium text-primary hover:bg-accent"}>
-            <BookText className="size-3.5 shrink-0" />
+              : cn(composerControlClassName, "bg-primary/15 text-primary")}>
+            <BookText className={environment ? "size-3.5 shrink-0" : "size-4 shrink-0"} />
             <span className="min-w-0 flex-1 truncate">{selected ? selected.entry.name : uiText("choose_catalog_workflow_cf058476")}
               {environment && <span className="mt-0.5 block text-xs text-muted-foreground">{uiText("catalog_workflow_this_message_4bad8776")}</span>}
             </span>
-            {!environment && <span className="shrink-0 text-[10px] opacity-70">{uiText("this_message_12a8838f")}</span>}
+            {!environment && <span className="shrink-0 text-xs opacity-70">{uiText("this_message_12a8838f")}</span>}
             <ChevronDown className="size-3 shrink-0 opacity-60" />
           </button>
         </PopoverTrigger>

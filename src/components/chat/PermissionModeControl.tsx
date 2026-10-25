@@ -8,11 +8,12 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { cn } from "@/lib/utils"
 import { useNewSessionPermission } from "@shared/store/newSessionPermission"
+import { composerControlClassName } from "./composerStyles"
 
 type Props = { sessionId: string; title: string; compact?: boolean }
 
-const compactPermissionSelectClassName =
-  "h-8 w-[4.5rem] gap-0.5 rounded-md border-0 bg-transparent px-1 py-0 text-xs font-medium shadow-none dark:bg-transparent dark:hover:bg-transparent [&_svg]:size-3"
+const compactPermissionSelectClassName = cn(composerControlClassName,
+  "border-0 bg-transparent shadow-none dark:bg-transparent dark:hover:bg-accent [&>svg:last-child]:size-3")
 
 function PermissionModeOptions() {
   return (
@@ -65,8 +66,7 @@ function SessionPermissionControl({ sessionId, title, compact = false }: Props) 
       data-variant={compact ? "composer" : "bar"}
       title={compact ? [helpText, errorText].filter(Boolean).join(" ") : undefined}
     >
-      <div className={cn("flex flex-wrap items-center", compact ? "gap-1 rounded-md px-1 transition-colors hover:bg-accent" : "gap-x-3 gap-y-1.5")}>
-        {compact ? <ShieldAlert className={cn("size-3.5 shrink-0", confirmed && mode === "auto" ? "text-amber-500" : "text-muted-foreground")} aria-hidden /> : null}
+      <div className={cn("flex flex-wrap items-center", compact ? "gap-1" : "gap-x-3 gap-y-1.5")}>
         <label htmlFor={labelId} className={compact ? "sr-only" : "text-xs font-medium"}>{t("chat.permissionMode.label")}</label>
         <Select
           disabled={!ready}
@@ -90,6 +90,7 @@ function SessionPermissionControl({ sessionId, title, compact = false }: Props) 
               confirmed && mode === "auto" && (compact ? "text-amber-700 dark:text-amber-400" : "border-amber-500 text-amber-700 dark:text-amber-400"),
             )}
           >
+            {compact ? <ShieldAlert className={cn("size-4 shrink-0", confirmed && mode === "auto" ? "text-amber-500" : "text-muted-foreground")} aria-hidden /> : null}
             <SelectValue placeholder={unavailableLabel} />
           </SelectTrigger>
           <PermissionModeOptions />
@@ -154,11 +155,10 @@ export function NewSessionPermissionControl() {
 
   return (
     <div
-      className="flex min-w-0 items-center gap-1 rounded-md px-1 transition-colors hover:bg-accent"
+      className="flex min-w-0 items-center"
       data-permission-scope="new-session"
       title={t(`chat.permissionMode.help.${mode}`)}
     >
-      <ShieldAlert className={cn("size-3.5 shrink-0", mode === "auto" ? "text-amber-500" : "text-muted-foreground")} aria-hidden />
       <span className="sr-only">{t("chat.permissionMode.label")}</span>
       <Select
         value={mode}
@@ -175,6 +175,7 @@ export function NewSessionPermissionControl() {
             mode === "auto" && "text-amber-700 dark:text-amber-400",
           )}
         >
+          <ShieldAlert className={cn("size-4 shrink-0", mode === "auto" ? "text-amber-500" : "text-muted-foreground")} aria-hidden />
           <SelectValue />
         </SelectTrigger>
         <PermissionModeOptions />
