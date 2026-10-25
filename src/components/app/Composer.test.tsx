@@ -251,8 +251,8 @@ describe("Composer submission controls", () => {
     expect(stop).not.toBeNull()
     expect(stop?.className).toContain("bg-primary")
     expect(stop?.className).toContain("text-primary-foreground")
-    expect(stop?.querySelector("svg")?.getAttribute("fill")).toBe("white")
-    expect(stop?.querySelector("svg")?.getAttribute("stroke")).toBe("white")
+    expect(stop?.querySelector("svg")?.getAttribute("fill")).toBe("currentColor")
+    expect(stop?.querySelector("svg")?.getAttribute("stroke")).toBe("currentColor")
 
     const idleView = mountComposer()
     expect(idleView.container.querySelector('button[aria-label="发送消息"]')).not.toBeNull()

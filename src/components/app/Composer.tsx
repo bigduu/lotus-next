@@ -474,7 +474,7 @@ export function Composer({
               ) : null}
               {sending && (!submissionPending || canQueue) ? (
                 <Button size="icon" onClick={onStop} className="rounded-full" aria-label={uiText("stop_generation_9ad0aac3")}>
-                  <Square fill="white" stroke="white" />
+                  <Square fill="currentColor" />
                 </Button>
               ) : null}
             </div>

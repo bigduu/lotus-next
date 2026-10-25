@@ -14,7 +14,7 @@ Normal and muted text must retain at least 4.5:1 contrast on canvas, card, popov
 
 The Codex-inspired alignment uses neutral canvas, sidebar and composer surfaces, a shared 52rem reading/input column, compact navigation, and flat settings rows. New profiles default to `neutral`; saved color selections retain their preset IDs and are not migrated. Environment keeps its existing automatic-open threshold and bounded content shift. Fixed-alpha mobile scrims, opaque image controls, syntax/diagram colors, interaction state protocols and backend behavior retain their existing treatment.
 
-Current [alignment screenshots and local validation](../screenshots/codex-visual-alignment/README.md) include desktop, tablet and phone surfaces in light and dark modes.
+Current [alignment screenshots and local validation](../screenshots/neutral-surfaces/README.md) include desktop, tablet and phone surfaces in light and dark modes.
 
 ## Historical palette-consolidation acceptance
 
