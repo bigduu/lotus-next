@@ -201,7 +201,7 @@ export function HomeDashboard({
                   onClick={() => pick(tpl)}
                   className={cn(
                     cardInteraction,
-                    "flex items-start gap-2.5 rounded-xl border bg-card p-3 text-left shadow-xs hover:bg-accent",
+                    "flex items-start gap-2.5 rounded-xl border p-3 text-left hover:bg-accent",
                   )}
                 >
                   <span aria-hidden className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-accent text-primary">{ICONS[tpl.icon] ?? ICONS.plus}</span>

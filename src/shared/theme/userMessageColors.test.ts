@@ -28,6 +28,6 @@ describe("readable user message colors", () => {
     expect(isHexColor("#abcdef")).toBe(true)
     expect(isHexColor("url(example)" )).toBe(false)
     expect(isHexColor("#abc")).toBe(false)
-    expect(getUserMessageColors("dark", "custom", "invalid")).toEqual(getUserMessageColors("dark", "jade", "#345448"))
+    expect(getUserMessageColors("dark", "custom", "invalid")).toEqual(getUserMessageColors("dark", "neutral", "#345448"))
   })
 })

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest"
 import { THEME_COLORS } from "./colorTokens"
-import { colorLuminance, getUserMessageColors } from "./userMessageColors"
-import { DEFAULT_CUSTOM_GLOBAL_ACCENT_COLOR, getGlobalAccentColors } from "./globalAccentColors"
+import { colorLuminance, DEFAULT_USER_MESSAGE_COLOR_PRESET, getUserMessageColors } from "./userMessageColors"
+import { DEFAULT_CUSTOM_GLOBAL_ACCENT_COLOR, DEFAULT_GLOBAL_ACCENT_PRESET, getGlobalAccentColors } from "./globalAccentColors"
 
 const contrast = (first: string, second: string) => {
   const [light, dark] = [colorLuminance(first), colorLuminance(second)].sort((a, b) => b - a)
@@ -37,14 +37,14 @@ describe.each(["light", "dark"] as const)("%s semantic color contract", (mode) =
   })
 
   it("matches the CSS fallback to persisted default accent and user-message preferences", () => {
-    const accent = getGlobalAccentColors(mode, "teal", DEFAULT_CUSTOM_GLOBAL_ACCENT_COLOR)
+    const accent = getGlobalAccentColors(mode, DEFAULT_GLOBAL_ACCENT_PRESET, DEFAULT_CUSTOM_GLOBAL_ACCENT_COLOR)
     expect(accent).toEqual({
       primary: colors.primary,
       primaryForeground: colors["primary-foreground"],
       accent: colors.accent,
       accentForeground: colors["accent-foreground"],
     })
-    expect(getUserMessageColors(mode, "jade", "invalid")).toEqual({
+    expect(getUserMessageColors(mode, DEFAULT_USER_MESSAGE_COLOR_PRESET, "invalid")).toEqual({
       background: colors["user-message-background"],
       foreground: colors["user-message-foreground"],
     })

@@ -45,7 +45,7 @@ export function ChatHeader({
   )
 
   return (
-    <header className="flex items-center gap-2 border-b px-3 py-2.5">
+    <header className="flex items-center gap-2 px-4 py-2.5">
       <Button
         size="icon"
         variant="ghost"
@@ -55,7 +55,7 @@ export function ChatHeader({
       >
         <Menu />
       </Button>
-      <span className="flex-1 truncate text-sm font-semibold">{title}</span>
+      <span className="flex-1 truncate text-sm font-medium">{title}</span>
       {placement && placement.kind !== "local" ? (
         <MachineTag placement={placement} compact className="max-w-36 shrink-0" />
       ) : null}

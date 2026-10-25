@@ -1,11 +1,11 @@
-/** Sparse, theme-specific steps preserve the established Lotus palette.
+/** Sparse, theme-specific steps for neutral surfaces and optional color accents.
  * Components consume semantic variables, never these raw palette steps. */
 export const COLOR_PALETTE = {
   light: {
     neutral: {
-      0: "#ffffff", 1: "#fafbfb", 2: "#f3f6f4", 3: "#f1f5f3",
-      4: "#ecf0ee", 5: "#eaf0ed", 6: "#dde2e0", 7: "#cdd4d1",
-      11: "#5a635f", 12: "#1b221f",
+      0: "#ffffff", 1: "#ffffff", 2: "#f5f5f5", 3: "#f7f7f7",
+      4: "#ededed", 5: "#f5f5f5", 6: "#e5e5e5", 7: "#d4d4d4",
+      11: "#626262", 12: "#202020",
     },
     jade: {
       1: "#fafafa", 3: "#e2efe8", 4: "#e4eee9", 9: "#396957",
@@ -16,9 +16,9 @@ export const COLOR_PALETTE = {
   },
   dark: {
     neutral: {
-      1: "#101412", 2: "#151a18", 3: "#181d1b", 4: "#1e2320",
-      5: "#1e2621", 6: "#242927", 7: "oklch(1 0 0 / 10%)",
-      8: "oklch(1 0 0 / 15%)", 11: "#a0a6a3", 12: "#eaeeec",
+      1: "#212121", 2: "#171717", 3: "#303030", 4: "#2b2b2b",
+      5: "#303030", 6: "#383838", 7: "oklch(1 0 0 / 10%)",
+      8: "oklch(1 0 0 / 15%)", 11: "#b4b4b4", 12: "#ececec",
     },
     jade: {
       1: "#0f1612", 3: "#24312b", 4: "#263e34", 9: "#7db29d",
@@ -31,8 +31,8 @@ export const COLOR_PALETTE = {
 
 const { light, dark } = COLOR_PALETTE
 
-/** The persisted `teal` preset and pre-JS CSS fallback share these values. */
-export const DEFAULT_ACCENT_COLORS = {
+/** Keep the persisted `teal` preset available independently of the new default. */
+export const JADE_ACCENT_COLORS = {
   light: {
     primary: light.jade[9],
     primaryForeground: light.jade[1],
@@ -44,6 +44,22 @@ export const DEFAULT_ACCENT_COLORS = {
     primaryForeground: dark.jade[1],
     accent: dark.jade[3],
     accentForeground: dark.jade[11],
+  },
+} as const
+
+/** The neutral preset and pre-JS CSS fallback share the same source. */
+export const DEFAULT_ACCENT_COLORS = {
+  light: {
+    primary: light.neutral[12],
+    primaryForeground: light.neutral[0],
+    accent: light.neutral[4],
+    accentForeground: light.neutral[12],
+  },
+  dark: {
+    primary: dark.neutral[12],
+    primaryForeground: dark.neutral[1],
+    accent: dark.neutral[6],
+    accentForeground: dark.neutral[12],
   },
 } as const
 
@@ -64,12 +80,12 @@ export const THEME_COLORS = {
     destructive: light.danger,
     border: light.neutral[6],
     input: light.neutral[7],
-    "focus-ring": light.jade[9],
-    "focus-halo": `${light.jade[9]}2e`,
+    "focus-ring": light.neutral[11],
+    "focus-halo": `${light.neutral[11]}2e`,
     "focus-surface": light.neutral[5],
     sidebar: light.neutral[3],
-    "user-message-background": light.jade[4],
-    "user-message-foreground": light.jade[12],
+    "user-message-background": light.neutral[4],
+    "user-message-foreground": light.neutral[12],
     "activity-tone": light.steel[12],
     "activity-shine": light.steel[11],
   },
@@ -87,12 +103,12 @@ export const THEME_COLORS = {
     destructive: dark.danger,
     border: dark.neutral[7],
     input: dark.neutral[8],
-    "focus-ring": dark.jade[9],
-    "focus-halo": `${dark.jade[9]}2e`,
+    "focus-ring": dark.neutral[11],
+    "focus-halo": `${dark.neutral[11]}2e`,
     "focus-surface": dark.neutral[5],
     sidebar: dark.neutral[2],
-    "user-message-background": dark.jade[4],
-    "user-message-foreground": dark.jade[12],
+    "user-message-background": dark.neutral[3],
+    "user-message-foreground": dark.neutral[12],
     "activity-tone": dark.steel[11],
     "activity-shine": dark.steel[12],
   },
