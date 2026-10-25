@@ -47,11 +47,12 @@ describe("frozen public diagnostic v2 binding", () => {
 })
 
 describe("provider-independent stream timeout diagnostics", () => {
-  it("accepts the exact terminal timeout identity, with an optional LLM wrapper", () => {
+  it("accepts only the exact terminal timeout identity without a foreign wrapper", () => {
     const receipt = timeoutDiagnosticFixture(sid)
     expect(generatedDiagnosticError(receipt)).toBe(timeoutError)
     expect(decodeRunDiagnostic(receipt, sid, timeoutError)).toEqual(receipt)
-    expect(Object.isFrozen(decodeRunDiagnostic(receipt, sid, "LLM error: " + timeoutError))).toBe(true)
+    expect(Object.isFrozen(decodeRunDiagnostic(receipt, sid, timeoutError))).toBe(true)
+    expect(decodeRunDiagnostic(receipt, sid, "LLM error: " + timeoutError)).toBeNull()
     expect(decodeRunDiagnostic(receipt, sid, timeoutError.split(". Diagnostic ID:")[0]!)).toBeNull()
   })
 
@@ -99,6 +100,8 @@ describe("provider-independent stream timeout diagnostics", () => {
     expect(decodeRunDiagnostic(next, sid, timeoutError)).toBeNull()
     const saved = { id:sid, is_running:false, last_run_status:"error", last_run_error:timeoutError, last_run_diagnostic:receipt }
     expect(inspectCanonicalDiagnostic(saved, sid, timeoutError).status).toBe("confirmed")
+    expect(inspectCanonicalDiagnostic(saved, sid, "LLM error: " + timeoutError)).toEqual({ status:"changed", diagnostic:null })
+    expect(inspectCanonicalDiagnostic({ ...saved,last_run_error:"LLM error: " + timeoutError }, sid, timeoutError)).toEqual({ status:"changed", diagnostic:null })
     expect(inspectCanonicalDiagnostic({ ...saved, last_run_error:generatedDiagnosticError(next), last_run_diagnostic:next }, sid, timeoutError)).toEqual({ status:"changed", diagnostic:null })
     expect(inspectCanonicalDiagnostic({ ...saved, last_run_diagnostic:null }, sid, timeoutError)).toEqual({ status:"not_provided", diagnostic:null })
   })

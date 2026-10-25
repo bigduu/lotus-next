@@ -47,7 +47,7 @@ const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 const budgetUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
 const nat = (v: unknown): v is number => typeof v === "number" && Number.isSafeInteger(v) && v >= 0
 const record = (v: unknown): Record<string, unknown> => v !== null && typeof v === "object" && !Array.isArray(v) ? v as Record<string, unknown> : {}
-export const diagnosticErrorText = (v: string) => v.startsWith("LLM error: ") ? v.slice(11) : v
+export const diagnosticErrorText = (v: string) => v.startsWith("LLM error: Anthropic upstream request failed (") ? v.slice(11) : v
 
 /** Mirrors the frozen generated error solely for exact association, never prose classification. */
 export function generatedDiagnosticError(d: PublicRunDiagnostic): string {
@@ -124,7 +124,7 @@ function decodeStreamTimeout(v: Record<string, unknown>, error: string): Readonl
   if (v.last_http_status === null ? v.retry_delay_ms !== null
     : v.phase !== "bootstrap" || !nat(v.last_http_status) || v.last_http_status < 100 || v.last_http_status > 599 || !nat(v.retry_delay_ms)) return null
   const d = v as unknown as PublicStreamTimeoutDiagnostic
-  if (diagnosticErrorText(error) !== generatedDiagnosticError(d)) return null
+  if (error !== generatedDiagnosticError(d)) return null
   return Object.freeze({
     schema_version:1, kind:"stream_timeout", diagnostic_id:d.diagnostic_id, error_id:d.error_id,
     observed_at:d.observed_at, provider:d.provider, model:d.model, session_hash:d.session_hash, run_id:d.run_id,
