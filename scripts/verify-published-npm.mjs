@@ -40,7 +40,7 @@ const rawDocument = (record, name) => {
 }
 
 // Bounded to one already-published release. No generic exception to publisher gates.
-export const verifyRecoveryRecord = (record, candidateBytes, acceptanceBytes) => {
+export const verifyRecoveryRecord = (record, candidateBytes, acceptanceBytes, sourceWorkflow) => {
   assert.equal(record.schemaVersion, 1)
   assert.equal(record.kind, "reviewed-original-publication-evidence")
   assert.equal(record.repository, repository)
@@ -64,7 +64,7 @@ export const verifyRecoveryRecord = (record, candidateBytes, acceptanceBytes) =>
   for (const key of ["sourceRef", "sourceSha", "sourceTree", "bambooSha", "tagObjectSha", "acceptanceRunId", "acceptanceReceiptSha256", "productPullRequest", "productMergeSha", "reviewEvidence"]) {
     assert.deepEqual(receipt[key], candidate[key], `Original source receipt ${key} differs from accepted candidate`)
   }
-  verifyCommittedAcceptance(candidate, acceptanceBytes)
+  verifyCommittedAcceptance(candidate, acceptanceBytes, sourceWorkflow)
   const accepted = assertAcceptedIdentity(rawDocument(record, "acceptedIdentity"))
   assert.equal(accepted.sourceRevision, sourceSha)
   assert.equal(accepted.packageVersion, version)
@@ -372,7 +372,7 @@ export const verifyPublishedNpm = async ({ environment = process.env, cwd = proc
   const recordBytes = readFileSync(join(cwd, recordPath))
   assert.equal(digest(recordBytes), recordSha256, "Reviewed recovery evidence changed")
   const record = JSON.parse(recordBytes)
-  const { candidate } = verifyRecoveryRecord(record, readFileSync(join(cwd, ".github/release-candidates.json")), readFileSync(join(cwd, `.github/release-acceptance/${version}.json`)))
+  const { candidate } = verifyRecoveryRecord(record, readFileSync(join(cwd, ".github/release-candidates.json")), readFileSync(join(cwd, `.github/release-acceptance/${version}.json`)), git(["show", `${sourceSha}:.github/workflows/ci.yml`]))
   git(["fetch", "--no-tags", "origin", candidate.sourceRef])
   assert.equal(git(["cat-file", "-t", "FETCH_HEAD"]), "tag")
   assert.equal(git(["rev-parse", "FETCH_HEAD"]), candidate.tagObjectSha)

@@ -35,7 +35,40 @@ export const resolveReleaseRequest = (document, request) => {
   return candidate
 }
 
-export const verifyAcceptanceEvidence = (candidate, run, jobs, pullRequest) => {
+// Read the graph from the immutable accepted source, never from today's
+// controller or from the (possibly incomplete) job names in a receipt.
+export const acceptanceJobNames = (source) => {
+  assert.equal(typeof source, "string", "Acceptance requires its source workflow")
+  const graph = workflowBlock(source, "jobs", 0)
+  const ids = [...graph.matchAll(/^  ([a-z][a-z0-9-]*):\s*$/gm)].map((match) => match[1]).sort()
+  const sharded = ids.includes("browser")
+  assert.deepEqual(ids, sharded ? ["browser", "browser-summary", "real-bamboo", "verify"] : ["real-bamboo", "verify"], "Unknown acceptance workflow graph")
+  const verify = workflowBlock(graph, "verify", 2)
+  assert.equal(workflowValue(verify, "name", 4), "Node ${{ matrix.node }}")
+  const nodes = (block) => [...workflowBlock(workflowBlock(workflowBlock(block, "strategy", 4), "matrix", 6), "node", 8).matchAll(/^          - (\d+)$/gm)].map((match) => Number(match[1]))
+  assert.deepEqual(nodes(verify), [22, 24])
+  assert.equal(workflowValue(workflowBlock(graph, "real-bamboo", 2), "name", 4), "Real Bamboo / Node 22")
+  const names = ["Node 22", "Node 24", "Real Bamboo / Node 22"]
+  if (sharded) {
+    const browser = workflowBlock(graph, "browser", 2)
+    assert.equal(workflowValue(browser, "name", 4), "Browser / Node ${{ matrix.node }} / shard ${{ matrix.shard }} of 4")
+    assert.deepEqual(nodes(browser), [22, 24])
+    const matrix = workflowBlock(workflowBlock(browser, "strategy", 4), "matrix", 6)
+    assert.deepEqual([...workflowBlock(matrix, "shard", 8).matchAll(/^          - (\d+)$/gm)].map((match) => Number(match[1])), [1, 2, 3, 4])
+    const summary = workflowBlock(graph, "browser-summary", 2)
+    assert.equal(workflowValue(summary, "name", 4), "Browser acceptance")
+    assert.equal(workflowValue(summary, "if", 4), "${{ always() }}")
+    assert.equal(workflowValue(summary, "needs", 4), "[verify, browser]")
+    assert.equal(workflowValue(workflowBlock(graph, "real-bamboo", 2), "needs", 4), "[verify, browser-summary]")
+    for (const node of [22, 24]) for (const shard of [1, 2, 3, 4]) names.push(`Browser / Node ${node} / shard ${shard} of 4`)
+    names.push("Browser acceptance")
+  }
+  return names
+}
+
+const acceptanceWorkflow = (candidate) => execFileSync("git", ["show", `${candidate.sourceSha}:.github/workflows/ci.yml`], { encoding: "utf8" })
+
+export const verifyAcceptanceEvidence = (candidate, run, jobs, pullRequest, sourceWorkflow = acceptanceWorkflow(candidate)) => {
   assert.equal(run.id, candidate.acceptanceRunId)
   const [path, ref, ...extra] = run.path.split("@")
   assert.equal(path, ".github/workflows/ci.yml")
@@ -56,7 +89,9 @@ export const verifyAcceptanceEvidence = (candidate, run, jobs, pullRequest) => {
   assert.equal(run.status, "completed")
   assert.equal(run.conclusion, "success")
   assert.equal(jobs.total_count, jobs.jobs.length, "Acceptance jobs must not be truncated")
-  const requiredJobs = sourceAdmission ? ["Node 22", "Node 24"] : ["Node 22", "Node 24", "Real Bamboo / Node 22"]
+  const graphJobs = acceptanceJobNames(sourceWorkflow)
+  assert.deepEqual(jobs.jobs.map((job) => job.name).sort(), [...graphJobs].sort(), "Acceptance must contain exactly its source workflow's complete job set")
+  const requiredJobs = graphJobs.filter((name) => !sourceAdmission || name !== "Real Bamboo / Node 22")
   for (const name of requiredJobs) {
     const matches = jobs.jobs.filter((job) => job.name === name)
     assert.equal(matches.length, 1, `Missing original acceptance job: ${name}`)
@@ -102,12 +137,12 @@ export const verifySourceReceipt = (receipt, environment, actualSourceSha) => {
   return receipt
 }
 
-export const verifyCommittedAcceptance = (candidate, bytes) => {
+export const verifyCommittedAcceptance = (candidate, bytes, sourceWorkflow = acceptanceWorkflow(candidate)) => {
   assert.equal(createHash("sha256").update(bytes).digest("hex"), candidate.acceptanceReceiptSha256)
   const receipt = JSON.parse(bytes)
   assert.equal(receipt.schemaVersion, 1)
   assert.equal(receipt.repository, repository)
-  verifyAcceptanceEvidence(candidate, receipt.run, receipt.jobs, receipt.pullRequest)
+  verifyAcceptanceEvidence(candidate, receipt.run, receipt.jobs, receipt.pullRequest, sourceWorkflow)
   return receipt
 }
 
@@ -285,7 +320,6 @@ const main = async () => {
   })
   // This historical acceptance receipt is part of the reviewed main authority.
   // Every original publication gate still reruns against the fixed source below.
-  const acceptance = verifyCommittedAcceptance(candidate, readFileSync(`.github/release-acceptance/${environment.LOTUS_NEXT_RELEASE_VERSION}.json`))
   git(["fetch", "--no-tags", "origin", candidate.sourceRef])
   assert.equal(git(["cat-file", "-t", "FETCH_HEAD"]), "tag", "An annotated release tag is required")
   const tagObjectSha = git(["rev-parse", "FETCH_HEAD"])
@@ -293,11 +327,13 @@ const main = async () => {
   assert.equal(git(["rev-parse", "FETCH_HEAD^{commit}"]), candidate.sourceSha)
   assert.equal(git(["rev-parse", `${candidate.sourceSha}^{tree}`]), candidate.sourceTree)
   git(["fetch", "--no-tags", "origin", candidate.productMergeSha])
+  const sourceWorkflow = git(["show", `${candidate.sourceSha}:.github/workflows/ci.yml`])
+  const acceptance = verifyCommittedAcceptance(candidate, readFileSync(`.github/release-acceptance/${environment.LOTUS_NEXT_RELEASE_VERSION}.json`), sourceWorkflow)
   verifyProductMerge(candidate,
     git(["rev-parse", `${candidate.productMergeSha}^{tree}`]),
     git(["show", "-s", "--format=%P", candidate.productMergeSha]).split(" "), acceptance.pullRequest)
   verifyCandidateBackendPins(candidate, {
-    ci: git(["show", `${candidate.sourceSha}:.github/workflows/ci.yml`]),
+    ci: sourceWorkflow,
     publication: git(["show", `${candidate.sourceSha}:.github/workflows/publish-npm.yml`]),
     runtime: git(["show", `${candidate.sourceSha}:e2e/support/realBambooRuntime.ts`]),
     acceptanceTest: git(["show", `${candidate.sourceSha}:scripts/published-real-bamboo-acceptance.test.mjs`]),

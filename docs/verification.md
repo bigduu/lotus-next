@@ -22,6 +22,9 @@ embedded hosting while enforcing the canonical `/api/v1` and `/v2/stream`
 runtime contract. CI retains its HTML report, trace, screenshot, video, and
 runtime observations when a case fails.
 
+CI splits this unchanged all-surface inventory into four independently rerunnable
+shards per Node lane. See [browser shard evidence, reruns, and timing](browser-test-shards.md).
+
 The source-built real-runtime gate is intentionally separate from that
 deterministic matrix. It builds a clean checkout of Bamboo revision
 `80815125da51a5722935e99fda2ed4541aa67f98` into an isolated Docker image,

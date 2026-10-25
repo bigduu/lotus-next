@@ -47,36 +47,153 @@ jobs:
       - name: Verify the deterministic provider fixture
         run: python3 e2e/support/realBambooProvider.py --self-test
 
+      - name: Verify the complete four-shard browser inventory
+        run: node scripts/browser-shards.mjs inventory
+
+      - name: Share the verified exact-source artifact and inventory
+        uses: actions/upload-artifact@v5
+        with:
+          name: browser-input-node-${{ matrix.node }}
+          overwrite: true
+          path: |
+            dist/
+            browser-inventory.json
+          if-no-files-found: error
+          retention-days: 14
+
+  browser:
+    name: Browser / Node ${{ matrix.node }} / shard ${{ matrix.shard }} of 4
+    needs: verify
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node:
+          - 22
+          - 24
+        shard:
+          - 1
+          - 2
+          - 3
+          - 4
+    env:
+      BROWSER_SHARD: ${{ matrix.shard }}
+
+    steps:
+      - name: Check out exact source
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Restore the verified artifact and inventory for this Node lane
+        uses: actions/download-artifact@v5
+        with:
+          name: browser-input-node-${{ matrix.node }}
+
+      - name: Check exact artifact source and inventory
+        run: node scripts/browser-shards.mjs check-source
+
       - name: Install Chromium
         run: npx playwright install --with-deps chromium
 
-      - name: Verify the all-surface browser contract
-        run: npm run test:e2e:built
+      - name: Verify the all-surface browser shard
+        env:
+          PLAYWRIGHT_JSON_OUTPUT_NAME: browser-results.json
+        run: npm run test:e2e:built -- --shard=${{ matrix.shard }}/4 --reporter=line,html,json
 
       - name: Verify controlled Project Work component fixtures
+        if: ${{ matrix.shard == 1 }}
         run: node node_modules/@playwright/test/cli.js test --config=playwright.planning-controls.config.ts
 
       - name: Verify Sprint planning and fixed-snapshot browser contracts
+        if: ${{ matrix.shard == 1 }}
+        env:
+          LOTUS_SPRINT_REVIEW_DIR: ${{ github.workspace }}/test-results/sprints
         run: node node_modules/@playwright/test/cli.js test --config=playwright.sprints.config.ts
 
       - name: Verify configuration sharing with the synthetic source harness
+        if: ${{ matrix.shard == 1 }}
         run: npx playwright test --config=playwright.config-share.config.ts
 
-      - name: Upload browser evidence
-        if: ${{ !cancelled() }}
+      - name: Record this shard's actual outcome and inventory
+        if: ${{ always() }}
+        env:
+          SHARD_STATUS: ${{ job.status }}
+        run: node scripts/browser-shards.mjs receipt
+
+      - name: Upload the independent shard receipt
+        if: ${{ always() }}
         uses: actions/upload-artifact@v5
         with:
-          name: playwright-report-node-${{ matrix.node }}
+          name: browser-receipt-node-${{ matrix.node }}-shard-${{ matrix.shard }}-attempt-${{ github.run_attempt }}
+          path: browser-shard.json
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload browser evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v5
+        with:
+          name: playwright-report-node-${{ matrix.node }}-shard-${{ matrix.shard }}-attempt-${{ github.run_attempt }}
           path: |
             playwright-report/
             test-results/
+            browser-results.json
+          if-no-files-found: error
+          retention-days: 14
+
+  browser-summary:
+    name: Browser acceptance
+    if: ${{ always() }}
+    needs: [verify, browser]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out exact source
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          package-manager-cache: false
+
+      - name: Collect independent shard receipts across attempts
+        uses: actions/download-artifact@v5
+        with:
+          pattern: browser-receipt-*
+          path: browser-receipts
+
+      - name: Require all Node lanes, shards, and original browser cases
+        if: ${{ always() }}
+        env:
+          VERIFY_RESULT: ${{ needs.verify.result }}
+          BROWSER_RESULT: ${{ needs.browser.result }}
+        run: node scripts/browser-shards.mjs summarize
+
+      - name: Upload the complete browser summary
+        uses: actions/upload-artifact@v5
+        with:
+          name: browser-summary-attempt-${{ github.run_attempt }}
+          path: browser-summary.json
           if-no-files-found: error
           retention-days: 14
 
   real-bamboo:
     name: Real Bamboo / Node 22
     if: ${{ github.event_name == 'workflow_dispatch' }}
-    needs: verify
+    needs: [verify, browser-summary]
     runs-on: ubuntu-latest
     timeout-minutes: 60
 
@@ -86,6 +203,8 @@ jobs:
     steps:
       - name: Check out Lotus Next
         uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - name: Check out the paired Bamboo revision
         uses: actions/checkout@v7
