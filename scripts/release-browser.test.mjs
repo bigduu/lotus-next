@@ -161,6 +161,7 @@ describe("fixed browser provenance and fail-closed preparation", () => {
     mkdirSync(controls)
     const helper = path.join(controls, "release-browser.mjs")
     writeFileSync(helper, readFileSync(path.join(sourceRoot, "scripts/release-browser.mjs")))
+    writeFileSync(path.join(controls, "release-candidates.json"), readFileSync(path.join(sourceRoot, ".github/release-candidates.json")))
     const browserRoot = path.join(root, "release-browser")
     const result = spawnSync(process.execPath, ["--input-type=module", "-e", `
       globalThis.fetch = () => { process.stdout.write("PINNED_DOWNLOAD_BOUNDARY\\n"); throw new Error("INERT_DOWNLOAD_STOP") }
@@ -169,6 +170,7 @@ describe("fixed browser provenance and fail-closed preparation", () => {
     `], { encoding: "utf8", env: { ...process.env, RUNNER_TEMP: root,
       PUBLICATION_WORKFLOW_SHA: "6520681865c11bc0eb3ac7866a803cb1bfa7d158",
       GITHUB_SHA: "6520681865c11bc0eb3ac7866a803cb1bfa7d158",
+      LOTUS_NEXT_RELEASE_VERSION: Object.keys(JSON.parse(readFileSync(path.join(controls, "release-candidates.json"), "utf8")).candidates).sort((a, b) => a.localeCompare(b, "en", { numeric: true })).at(-1),
       LOTUS_NEXT_EXPECTED_SOURCE_REVISION: expected, GITHUB_RUN_ID: "1", GITHUB_RUN_ATTEMPT: "1" } })
     return { ...result, browserDirectoryCreated: existsSync(browserRoot) }
   }
