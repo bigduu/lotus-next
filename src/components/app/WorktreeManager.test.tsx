@@ -21,6 +21,11 @@ const fill = (id: string, value: string) => act(() => {
   Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input(id), value)
   input(id).dispatchEvent(new Event("input", { bubbles: true }))
 })
+const selectRepository = (value: string) => act(() => {
+  const select = document.getElementById("worktree-repository") as HTMLSelectElement
+  select.value = value
+  select.dispatchEvent(new Event("change", { bubbles: true }))
+})
 const buttons = (text: string) => [...document.querySelectorAll<HTMLButtonElement>("button")].filter((button) => button.textContent?.trim() === text)
 const mount = async (onOpen = vi.fn(), onSession = vi.fn()) => {
   await act(async () => { root.render(<WorktreeManager open onClose={vi.fn()} onOpen={onOpen} onSession={onSession} />) })
@@ -69,12 +74,91 @@ it("saves and clears only the selected project override, keeping the global root
 it("binds an existing native worktree with the current Project revision before opening it", async () => {
   const onOpen = vi.fn()
   const onSession = vi.fn()
+  const external = listing()
+  external.repositories[0]!.worktrees[0]!.project_owned = false
+  mocks.list.mockResolvedValueOnce(external)
   await mount(onOpen, onSession)
   await act(async () => buttons("打开并新建会话")[0]!.click())
   expect(useAppStore.getState().bindWorkspace).toHaveBeenCalledWith("project-a", 7, { path: "/Volumes/External/worktrees/existing" })
   expect(onOpen).toHaveBeenCalledWith("project-a", "/Volumes/External/worktrees/existing")
   await act(async () => buttons("Active task · 活跃")[0]!.click())
   expect(onSession).toHaveBeenCalledWith("session-a")
+})
+
+it("opens an owned child repository without adding an overlapping Project binding", async () => {
+  const onOpen = vi.fn()
+  const nested = listing()
+  nested.repositories[0]!.path = "/repo/frontend"
+  Object.assign(nested.repositories[0]!.worktrees[0]!, { path: "/repo/frontend", project_owned: true })
+  mocks.list.mockResolvedValueOnce(nested)
+  await mount(onOpen)
+  await act(async () => buttons("打开并新建会话")[0]!.click())
+  expect(useAppStore.getState().bindWorkspace).not.toHaveBeenCalled()
+  expect(mocks.getProject).not.toHaveBeenCalled()
+  expect(onOpen).toHaveBeenCalledWith("project-a", "/repo/frontend")
+  expect(useAppStore.getState().projects[project.id]?.project_path).toBe("/repo")
+})
+
+it("keeps older-server exact Project bindings usable without rebinding", async () => {
+  const onOpen = vi.fn()
+  const existing = listing()
+  existing.repositories[0]!.worktrees[0]!.path = "/repo"
+  mocks.list.mockResolvedValueOnce(existing)
+  await mount(onOpen)
+  await act(async () => buttons("打开并新建会话")[0]!.click())
+  expect(mocks.getProject).toHaveBeenCalledWith("project-a")
+  expect(useAppStore.getState().bindWorkspace).not.toHaveBeenCalled()
+  expect(onOpen).toHaveBeenCalledWith("project-a", "/repo")
+})
+
+it("creates from the selected child repository while retaining nonfatal discovery warnings", async () => {
+  const nested = listing()
+  nested.repositories = [
+    { path: "/repo/frontend", error: null, warnings: ["Discovery reached its depth limit"], worktrees: [] },
+    { path: "/repo/backend", error: null, worktrees: [] },
+    { path: "/repo/broken", error: "Repository metadata is unavailable", worktrees: [] },
+  ]
+  mocks.list.mockResolvedValue(nested)
+  await mount()
+  expect(document.body.textContent).toContain("Discovery reached its depth limit")
+  const select = document.getElementById("worktree-repository") as HTMLSelectElement
+  expect([...select.options].map((option) => option.value)).toEqual(["/repo/frontend", "/repo/backend"])
+  selectRepository("/repo/backend")
+  fill("worktree-name", "task")
+  fill("worktree-branch", "feature/task")
+  await act(async () => { document.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })) })
+  expect(mocks.create).toHaveBeenCalledWith("project-a", { repository: "/repo/backend", root: "/Volumes/External/worktrees", name: "task", branch: "feature/task" })
+  expect(select.value).toBe("/repo/backend")
+  expect(useAppStore.getState().projects[project.id]?.project_path).toBe("/repo")
+})
+
+it("preserves a valid source choice on refresh and replaces a removed or failed source", async () => {
+  const nested = listing()
+  nested.repositories = [
+    { path: "/repo/frontend", error: null, worktrees: [] },
+    { path: "/repo/backend", error: null, worktrees: [] },
+  ]
+  mocks.list.mockResolvedValue(nested)
+  await mount()
+  selectRepository("/repo/backend")
+  await act(async () => buttons("刷新")[0]!.click())
+  expect(input("worktree-repository").value).toBe("/repo/backend")
+  mocks.list.mockResolvedValueOnce({ ...nested, repositories: [nested.repositories[0]] })
+  await act(async () => buttons("刷新")[0]!.click())
+  expect(input("worktree-repository").value).toBe("/repo/frontend")
+  mocks.list.mockResolvedValueOnce({ ...nested, repositories: [{ ...nested.repositories[0], error: "Repository is unavailable" }] })
+  await act(async () => buttons("刷新")[0]!.click())
+  expect(input("worktree-repository").value).toBe("")
+  expect(buttons("创建 worktree")[0]!.disabled).toBe(true)
+})
+
+it("selects a repository discovered after refreshing an initially empty Project", async () => {
+  mocks.list.mockResolvedValueOnce({ ...listing(), repositories: [] })
+  await mount()
+  expect(document.body.textContent).toContain("未在该项目的源目录中发现 Git 仓库")
+  expect(input("worktree-repository").value).toBe("")
+  await act(async () => buttons("刷新")[0]!.click())
+  expect(input("worktree-repository").value).toBe("/repo")
 })
 
 it("opens a native worktree when Project GET omits empty workspace bindings", async () => {

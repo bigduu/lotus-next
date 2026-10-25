@@ -3,7 +3,7 @@ import { GitBranch, RefreshCw } from "lucide-react"
 import { useUiText } from "@shared/i18n/ui"
 import { useAppStore } from "@shared/store/appStore"
 import { projectService } from "@services/project"
-import { worktreeService, type ProjectWorktrees, type WorktreePreferences } from "@services/workspace/WorktreeService"
+import { worktreeService, type GitWorktree, type ProjectWorktrees, type WorktreePreferences } from "@services/workspace/WorktreeService"
 import { getErrorMessage } from "@services/api/errors"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -67,7 +67,11 @@ export function WorktreeManager({ open, onClose, onOpen, onSession }: {
     finally { actionInFlight.current = false; setBusy(false) }
   }
   const refresh = async () => {
-    if (selectedProjectId) setListing(await worktreeService.list(selectedProjectId))
+    if (!selectedProjectId) return
+    const next = await worktreeService.list(selectedProjectId)
+    setListing(next)
+    setRepository((current) => next.repositories.some((repo) => !repo.error && repo.path === current)
+      ? current : next.repositories.find((repo) => !repo.error)?.path ?? "")
   }
   const saveRoot = (scope?: string) => run(async () => {
     const value = scope ? projectRoot : globalRoot
@@ -78,14 +82,18 @@ export function WorktreeManager({ open, onClose, onOpen, onSession }: {
     setRoot(next.project_roots?.[selectedProjectId] ?? next.default_root ?? "")
     await refresh()
   })
-  const openWorktree = (path: string) => run(async () => {
+  const openWorktree = (entry: GitWorktree) => run(async () => {
     // Binding grants the existing Project workspace authority; it is not a
     // worktree registry. Discovery always comes from Git, including CLI worktrees.
-    const project = await projectService.getProject(selectedProjectId)
-    if (project.project_path !== path && !(project.workspace_bindings ?? []).some((binding) => binding.path === path)) {
-      await useAppStore.getState().bindWorkspace(project.id, project.revision, { path })
+    // An owned descendant already belongs to the Project's source directory.
+    // The session endpoint revalidates ownership when opening the workspace.
+    if (entry.project_owned !== true) {
+      const project = await projectService.getProject(selectedProjectId)
+      if (project.project_path !== entry.path && !(project.workspace_bindings ?? []).some((binding) => binding.path === entry.path)) {
+        await useAppStore.getState().bindWorkspace(project.id, project.revision, { path: entry.path })
+      }
     }
-    onOpen(selectedProjectId, path)
+    onOpen(selectedProjectId, entry.path)
   })
 
   if (!open) return null
@@ -120,9 +128,10 @@ export function WorktreeManager({ open, onClose, onOpen, onSession }: {
           {listing.repositories.map((repo) => <section key={repo.path} className="space-y-2 rounded-md border p-3">
             <h4 className="break-all text-xs text-muted-foreground">{repo.path}</h4>
             {repo.error && <p role="alert" className="break-words text-sm text-destructive">{repo.error}</p>}
+            {repo.warnings?.map((warning) => <p key={warning} role="status" className="break-words text-sm text-muted-foreground">{warning}</p>)}
             {repo.worktrees.map((entry) => <article key={entry.path} aria-label={entry.path} className="space-y-2 border-t pt-2 text-sm">
               <div className="flex items-start justify-between gap-2"><div className="min-w-0"><div className="font-medium">{entry.branch ?? uiText("worktrees_detached")}</div><div className="break-all text-xs text-muted-foreground">{entry.path}</div></div>
-                <Button size="sm" variant="outline" disabled={busy || entry.prunable || entry.path_encoding === "escaped"} onClick={() => void openWorktree(entry.path)}>{uiText("worktrees_open")}</Button></div>
+                <Button size="sm" variant="outline" disabled={busy || entry.prunable || entry.path_encoding === "escaped"} onClick={() => void openWorktree(entry)}>{uiText("worktrees_open")}</Button></div>
               <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
                 <span>{entry.dirty === null ? uiText("worktrees_unknown") : entry.dirty ? uiText("worktrees_dirty") : uiText("worktrees_clean")}</span>
                 <span>{entry.occupied ? uiText("worktrees_occupied") : uiText("worktrees_idle")}</span>
