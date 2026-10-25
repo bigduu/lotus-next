@@ -1,5 +1,5 @@
 import { uiText, useUiLocale } from "@shared/i18n/ui"
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { ArrowRight, Copy, X, FolderGit2 } from "lucide-react"
 import { useShallow } from "zustand/react/shallow"
 import {
@@ -295,7 +295,9 @@ export function Inspector({
   const evaluation = useAppStore((s) => (sessionId ? s.evaluationStates[sessionId] : undefined))
   const loadTaskList = useAppStore((s) => s.loadTaskList)
   const [auxiliaryOpen, setAuxiliaryOpen] = useState(false)
+  const managedNavigation = useRef(0)
   useEffect(() => { setAuxiliaryOpen(false) }, [sessionId])
+  useEffect(() => () => { ++managedNavigation.current }, [open, sessionId])
   // Inspector shows a deduplicated index; Review owns the full diff surface.
   const sessionMessages = useAppStore(
     useShallow((s) => (sessionId ? (selectSessionById(sessionId)(s)?.messages ?? []) : [])),
@@ -337,9 +339,13 @@ export function Inspector({
         <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4">
           {chat && isDefaultSupervisor(chat) ? <>
             <SupervisorManagedSessionsPanel active={open} onSelectSession={async (id) => {
+              const navigation = ++managedNavigation.current
               const before = useAppStore.getState().currentSessionId
+              const current = () => managedNavigation.current === navigation && useAppStore.getState().currentSessionId === before
               const restored = await useAppStore.getState().restoreSession(id)
-              if (!restored || useAppStore.getState().currentSessionId !== before) return false
+              if (!restored || !current()) return false
+              await useAppStore.getState().loadChatHistory(id, { throwOnError: true })
+              if (!current()) return false
               useAppStore.getState().selectSession(id)
               return true
             }} />
