@@ -604,6 +604,10 @@ function App() {
                         if (id === currentSessionId && browser.profilePhase === "closed") openWorkbench("browser")
                         return browser.openDefault(id)
                       },
+                      openClean: (id) => {
+                        if (id === currentSessionId && browser.profilePhase === "closed") openWorkbench("browser")
+                        return browser.openClean(id)
+                      },
                       openProfile: (id, mode) => {
                         if (id === currentSessionId && browser.profilePhase === "closed") openWorkbench("browser")
                         return browser.openProfile(id, mode)
