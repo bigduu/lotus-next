@@ -13,7 +13,7 @@ vi.mock("./v2Stream", () => ({
 }))
 
 import { AgentClient } from "./AgentService"
-import { diagnosticFixture, diagnosticFixtureError } from "./runDiagnostic.testFixtures"
+import { diagnosticFixture, diagnosticFixtureError, timeoutDiagnosticFixture, timeoutDiagnosticFixtureError } from "./runDiagnostic.testFixtures"
 
 describe("AgentClient session event routing", () => {
   beforeEach(() => {
@@ -131,6 +131,17 @@ describe("AgentClient session event routing", () => {
 })
 
 describe("public v2 error diagnostics", () => {
+  it("forwards a bound timeout receipt and rejects a timeout from another session", async () => {
+    const onError = vi.fn()
+    stream.event = { type:"error",message:timeoutDiagnosticFixtureError,diagnostic:timeoutDiagnosticFixture("session-1") }
+    await new AgentClient().subscribeToEvents("session-1",{ onError })
+    expect(onError).toHaveBeenCalledExactlyOnceWith(timeoutDiagnosticFixtureError,timeoutDiagnosticFixture("session-1"))
+    onError.mockClear()
+    stream.event = { ...stream.event,diagnostic:timeoutDiagnosticFixture("foreign") }
+    await new AgentClient().subscribeToEvents("session-1",{ onError })
+    expect(onError).toHaveBeenCalledExactlyOnceWith(timeoutDiagnosticFixtureError)
+  })
+
   it("forwards exact scoped finite diagnostics while preserving the legacy one-argument callback", async () => {
     const onError = vi.fn()
     stream.event = { type:"error",message:diagnosticFixtureError,diagnostic:diagnosticFixture("session-1") }

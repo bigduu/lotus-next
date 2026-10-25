@@ -10,7 +10,9 @@ import { inspectCanonicalDiagnostic } from "@services/chat/runDiagnostic"
 
 const readCanonical = (sessionId: string): Promise<{ session: unknown }> => agentClient.getSession(sessionId)
 const stageLabels = { send_headers:"run_diagnostics_phase_headers", error_body:"run_diagnostics_phase_body",
-  response_status:"run_diagnostics_phase_status", backoff:"run_diagnostics_phase_backoff" } as const
+  response_status:"run_diagnostics_phase_status", backoff:"run_diagnostics_phase_backoff",
+  bootstrap:"run_diagnostics_phase_bootstrap", transport_idle:"run_diagnostics_phase_transport_idle",
+  first_semantic:"run_diagnostics_phase_first_semantic", semantic_idle:"run_diagnostics_phase_semantic_idle" } as const
 const stopLabels = { attempts_exhausted:"run_diagnostics_stop_attempts", time_budget_exhausted:"run_diagnostics_stop_time",
   retry_delay_exceeds_budget:"run_diagnostics_stop_delay", non_retryable_transport:"run_diagnostics_stop_transport",
   unclassified_error_body:"run_diagnostics_stop_body", cancelled_or_dropped:"run_diagnostics_stop_cancelled" } as const
@@ -75,8 +77,15 @@ export function RunDiagnosticsDialogContent({ subject, isCurrent, onClose, downl
       <dl className="grid grid-cols-2 gap-2 text-sm">
         <dt>{t("run_diagnostics_id")}</dt><dd className="break-all font-mono text-xs">{detail?.diagnostic_id ?? t("run_diagnostics_not_provided")}</dd>
         <dt>{t("run_diagnostics_stage")}</dt><dd>{detail?.failure_stage ? t(stageLabels[detail.failure_stage]) : t("run_diagnostics_not_provided")}</dd>
-        <dt>{t("run_diagnostics_attempts")}</dt><dd>{detail?.attempt !== null && detail?.attempt !== undefined ? String(detail.attempt) + " / " + detail.attempt_limit : t("run_diagnostics_not_provided")}</dd>
-        <dt>{t("run_diagnostics_stop_reason")}</dt><dd>{detail?.retry_stop_reason ? t(stopLabels[detail.retry_stop_reason]) : t("run_diagnostics_not_provided")}</dd>
+        {detail?.kind === "stream_timeout" ? <>
+          <dt>{t("run_diagnostics_deadline")}</dt><dd>{detail.deadline_ms} ms</dd>
+          <dt>{t("run_diagnostics_transport_gap")}</dt><dd>{detail.last_transport_ms_ago} ms</dd>
+          <dt>{t("run_diagnostics_semantic_gap")}</dt><dd>{detail.semantic_output_started ? `${detail.last_semantic_ms_ago} ms` : t("run_diagnostics_output_not_started")}</dd>
+          <dt>{t("run_diagnostics_retry_safety")}</dt><dd>{t(detail.retry_safe ? "run_diagnostics_retry_safe" : "run_diagnostics_retry_unsafe")}</dd>
+        </> : <>
+          <dt>{t("run_diagnostics_attempts")}</dt><dd>{detail?.attempt !== null && detail?.attempt !== undefined ? String(detail.attempt) + " / " + detail.attempt_limit : t("run_diagnostics_not_provided")}</dd>
+          <dt>{t("run_diagnostics_stop_reason")}</dt><dd>{detail?.retry_stop_reason ? t(stopLabels[detail.retry_stop_reason]) : t("run_diagnostics_not_provided")}</dd>
+        </>}
       </dl>
       <p role={evidence.canonicalStatus === "changed" ? "alert" : "status"} className="text-xs text-muted-foreground">{t(sourceText)}</p>
       <pre aria-label={t("run_diagnostics_preview")} className="max-h-64 overflow-auto whitespace-pre-wrap break-all rounded border p-2 text-xs">{JSON.stringify(report, null, 2)}</pre>
