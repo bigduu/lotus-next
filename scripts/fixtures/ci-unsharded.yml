@@ -1,0 +1,147 @@
+name: Frontend checks
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: frontend-checks-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Node ${{ matrix.node }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node:
+          - 22
+          - 24
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Verify architecture, behavior, build, and package contents
+        run: npm run verify
+
+      - name: Verify the deterministic provider fixture
+        run: python3 e2e/support/realBambooProvider.py --self-test
+
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Verify the all-surface browser contract
+        run: npm run test:e2e:built
+
+      - name: Verify controlled Project Work component fixtures
+        run: node node_modules/@playwright/test/cli.js test --config=playwright.planning-controls.config.ts
+
+      - name: Verify Sprint planning and fixed-snapshot browser contracts
+        run: node node_modules/@playwright/test/cli.js test --config=playwright.sprints.config.ts
+
+      - name: Verify configuration sharing with the synthetic source harness
+        run: npx playwright test --config=playwright.config-share.config.ts
+
+      - name: Upload browser evidence
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v5
+        with:
+          name: playwright-report-node-${{ matrix.node }}
+          path: |
+            playwright-report/
+            test-results/
+          if-no-files-found: error
+          retention-days: 14
+
+  real-bamboo:
+    name: Real Bamboo / Node 22
+    if: ${{ github.event_name == 'workflow_dispatch' }}
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    env:
+      BAMBOO_E2E_REVISION: 5b317e4e1900177399f601e775d10253bbea7289
+
+    steps:
+      - name: Check out Lotus Next
+        uses: actions/checkout@v7
+
+      - name: Check out the paired Bamboo revision
+        uses: actions/checkout@v7
+        with:
+          repository: bigduu/Bamboo-agent
+          ref: ${{ env.BAMBOO_E2E_REVISION }}
+          path: .e2e-bamboo
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build the production Lotus Next artifact
+        run: npm run build
+
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Prepare the fixed verification browser
+        run: node scripts/verification-browser.mjs prepare "${GITHUB_WORKSPACE}" "${RUNNER_TEMP}/verification-browser"
+
+      - name: Build exact Bamboo and verify a real chat round trip
+        env:
+          BAMBOO_E2E_SOURCE_DIR: ${{ github.workspace }}/.e2e-bamboo
+        run: node node_modules/@playwright/test/cli.js test --config="${RUNNER_TEMP}/verification-browser/real-bamboo.config.mjs"
+
+      - name: Verify the current source artifact on local and secure browser surfaces
+        env:
+          BAMBOO_E2E_SOURCE_DIR: ${{ github.workspace }}/.e2e-bamboo
+        run: node scripts/published-real-bamboo-acceptance.mjs --current-source --verification-browser "${RUNNER_TEMP}/verification-browser"
+
+      - name: Upload the verification browser identity
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v5
+        with:
+          name: real-bamboo-verification-browser
+          path: ${{ runner.temp }}/verification-browser/browser-identity.json
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload real Bamboo browser evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v5
+        with:
+          name: playwright-report-real-bamboo-node-22
+          path: |
+            playwright-report-real-bamboo/
+            playwright-report-real-bamboo-local/
+            playwright-report-real-bamboo-remote/
+            test-results-real-bamboo/
+            test-results-real-bamboo-local/
+            test-results-real-bamboo-remote/
+          if-no-files-found: error
+          retention-days: 14

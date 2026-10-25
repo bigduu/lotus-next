@@ -4,7 +4,12 @@ import { createHash } from "node:crypto"
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { dirname, join, resolve } from "node:path"
-import { resolveReleaseRequest, verifyAcceptanceEvidence, verifySourceReceipt, verifyCommittedAcceptance, verifyCandidateBackendPins } from "./release-source.mjs"
+import { resolveReleaseRequest, verifyAcceptanceEvidence, verifySourceReceipt, verifyCommittedAcceptance, verifyCandidateBackendPins, acceptanceJobNames } from "./release-source.mjs"
+
+const legacyWorkflow = readFileSync("scripts/fixtures/ci-unsharded.yml", "utf8")
+const shardedWorkflow = readFileSync(".github/workflows/ci.yml", "utf8")
+const verifyLegacyAcceptance = (...args) => verifyAcceptanceEvidence(...args, legacyWorkflow)
+const verifyLegacyCommittedAcceptance = (...args) => verifyCommittedAcceptance(...args, legacyWorkflow)
 
 const sourceSha = "5242eaf1d6e8cd8d437e8a4dcb82c63d00af82f1"
 const candidate = {
@@ -79,7 +84,7 @@ describe("candidate Bamboo source bindings", () => {
       const acceptance = {
         schemaVersion: 1, repository: "bigduu/lotus-next",
         run: { id: candidate.acceptanceRunId, path: ".github/workflows/ci.yml", event: "workflow_dispatch", head_sha: sourceSha, status: "completed", conclusion: "success" },
-        jobs: { total_count: 3, jobs: ["Node 22", "Node 24", "Real Bamboo / Node 22"].map((name) => ({ name, head_sha: sourceSha, status: "completed", conclusion: "success" })) },
+        jobs: { total_count: acceptanceJobNames(files.ci).length, jobs: acceptanceJobNames(files.ci).map((name) => ({ name, head_sha: sourceSha, status: "completed", conclusion: "success" })) },
         pullRequest: { number: candidate.productPullRequest, merged: true, head: { sha: sourceSha }, merge_commit_sha: productMergeSha },
       }
       const acceptanceBytes = JSON.stringify(acceptance)
@@ -296,16 +301,56 @@ describe("candidate Bamboo source bindings", () => {
 })
 
 describe("accepted immutable release source", () => {
+  const shardedEvidence = () => ({
+    run: { id: candidate.acceptanceRunId, path: ".github/workflows/ci.yml", event: "workflow_dispatch", head_sha: sourceSha, status: "completed", conclusion: "success" },
+    jobs: { total_count: 12, jobs: acceptanceJobNames(shardedWorkflow).map((name) => ({ name, head_sha: sourceSha, status: "completed", conclusion: "success" })) },
+    pr: { number: candidate.productPullRequest, merged: true, head: { sha: sourceSha }, merge_commit_sha: candidate.productMergeSha },
+  })
+  it("binds all eight shards and the aggregate to the source workflow rather than the controller", () => {
+    const { run, jobs, pr } = shardedEvidence()
+    expect(() => verifyAcceptanceEvidence(candidate, run, jobs, pr, shardedWorkflow)).not.toThrow()
+    expect(() => verifyAcceptanceEvidence(candidate, run, jobs, pr, legacyWorkflow)).toThrow()
+    const legacyJobs = jobs.jobs.filter((job) => ["Node 22", "Node 24", "Real Bamboo / Node 22"].includes(job.name))
+    expect(() => verifyAcceptanceEvidence(candidate, run, { total_count: 3, jobs: legacyJobs }, pr, shardedWorkflow)).toThrow()
+    expect(() => verifyAcceptanceEvidence(candidate, run, { total_count: 3, jobs: legacyJobs }, pr, legacyWorkflow)).not.toThrow()
+    const bytes = Buffer.from(JSON.stringify({ schemaVersion: 1, repository: "bigduu/lotus-next", run, jobs, pullRequest: pr }))
+    const accepted = { ...candidate, acceptanceReceiptSha256: createHash("sha256").update(bytes).digest("hex") }
+    expect(() => verifyCommittedAcceptance(accepted, bytes, shardedWorkflow)).not.toThrow()
+    expect(() => verifyCommittedAcceptance(accepted, bytes, legacyWorkflow)).toThrow()
+  })
+  it.each(["missing", "duplicate", "failure", "cancelled", "skipped", "wrong SHA", "in progress"])("rejects %s for every required shard and aggregate", (mutation) => {
+    for (const name of acceptanceJobNames(shardedWorkflow).filter((name) => name.startsWith("Browser"))) {
+      const { run, jobs, pr } = shardedEvidence()
+      const index = jobs.jobs.findIndex((job) => job.name === name)
+      if (mutation === "missing") jobs.jobs.splice(index, 1)
+      else if (mutation === "duplicate") jobs.jobs.push(clone(jobs.jobs[index]))
+      else if (mutation === "wrong SHA") jobs.jobs[index].head_sha = workflowSha
+      else if (mutation === "in progress") jobs.jobs[index].status = "in_progress"
+      else jobs.jobs[index].conclusion = mutation
+      jobs.total_count = jobs.jobs.length
+      expect(() => verifyAcceptanceEvidence(candidate, run, jobs, pr, shardedWorkflow)).toThrow()
+    }
+  })
+  it.each([
+    (source) => source.replace("          - 4", "          - 5"),
+    (source) => source.replace("          - 24", "          - 26"),
+    (source) => source.replace("    needs: [verify, browser-summary]", "    needs: verify"),
+    (source) => source.replace("    needs: [verify, browser]", "    needs: browser"),
+    (source) => source.replace("    name: Browser acceptance\n    if: ${{ always() }}", "    name: Browser acceptance\n    if: ${{ success() }}"),
+    (source) => source.replace("  browser-summary:", "  other-summary:"),
+  ])("rejects an unknown or incomplete source workflow graph", (mutate) => {
+    expect(() => acceptanceJobNames(mutate(shardedWorkflow))).toThrow()
+  })
   it("verifies real reviewed historical acceptance bytes and rejects tampering", () => {
     const accepted = JSON.parse(readFileSync(".github/release-candidates.json", "utf8")).candidates["2026.10.8"]
     const bytes = readFileSync(".github/release-acceptance/2026.10.8.json")
-    const actual = verifyCommittedAcceptance(accepted, bytes)
+    const actual = verifyLegacyCommittedAcceptance(accepted, bytes)
     expect(actual.run.head_sha).toBe(accepted.sourceSha)
     expect(actual.jobs.jobs.every((job) => job.conclusion === "success")).toBe(true)
-    expect(() => verifyCommittedAcceptance(accepted, Buffer.concat([bytes, Buffer.from(" ")]))).toThrow()
+    expect(() => verifyLegacyCommittedAcceptance(accepted, Buffer.concat([bytes, Buffer.from(" ")]))).toThrow()
     const altered = { ...actual, run: { ...actual.run, head_sha: workflowSha } }
     const alteredBytes = Buffer.from(JSON.stringify(altered))
-    expect(() => verifyCommittedAcceptance({ ...accepted, acceptanceReceiptSha256: createHash("sha256").update(alteredBytes).digest("hex") }, alteredBytes)).toThrow()
+    expect(() => verifyLegacyCommittedAcceptance({ ...accepted, acceptanceReceiptSha256: createHash("sha256").update(alteredBytes).digest("hex") }, alteredBytes)).toThrow()
   })
   it("selects only the committed reviewed candidate", () => {
     expect(resolveReleaseRequest(document, request)).toEqual(candidate)
@@ -326,18 +371,18 @@ describe("accepted immutable release source", () => {
     const run = { id: candidate.acceptanceRunId, path: ".github/workflows/ci.yml", event: "workflow_dispatch", head_sha: sourceSha, status: "completed", conclusion: "success" }
     const jobs = { total_count: 3, jobs: ["Node 22", "Node 24", "Real Bamboo / Node 22"].map((name) => ({ name, head_sha: sourceSha, status: "completed", conclusion: "success" })) }
     const pr = { number: 282, merged: true, head: { sha: sourceSha }, merge_commit_sha: candidate.productMergeSha }
-    expect(() => verifyAcceptanceEvidence(candidate, run, jobs, pr)).not.toThrow()
-    expect(() => verifyAcceptanceEvidence(candidate, { ...run, path: run.path + "@release/2026.10.8", head_branch: "release/2026.10.8" }, jobs, pr)).not.toThrow()
-    expect(() => verifyAcceptanceEvidence(candidate, { ...run, path: ".github/workflows/other.yml@main", head_branch: "main" }, jobs, pr)).toThrow()
-    expect(() => verifyAcceptanceEvidence(candidate, { ...run, path: run.path + "@wrong", head_branch: "release/2026.10.8" }, jobs, pr)).toThrow()
+    expect(() => verifyLegacyAcceptance(candidate, run, jobs, pr)).not.toThrow()
+    expect(() => verifyLegacyAcceptance(candidate, { ...run, path: run.path + "@release/2026.10.8", head_branch: "release/2026.10.8" }, jobs, pr)).not.toThrow()
+    expect(() => verifyLegacyAcceptance(candidate, { ...run, path: ".github/workflows/other.yml@main", head_branch: "main" }, jobs, pr)).toThrow()
+    expect(() => verifyLegacyAcceptance(candidate, { ...run, path: run.path + "@wrong", head_branch: "release/2026.10.8" }, jobs, pr)).toThrow()
     for (const conclusion of ["skipped", "failure", "cancelled"]) {
       const skipped = clone(jobs)
       skipped.jobs[2].conclusion = conclusion
-      expect(() => verifyAcceptanceEvidence(candidate, run, skipped, pr)).toThrow()
+      expect(() => verifyLegacyAcceptance(candidate, run, skipped, pr)).toThrow()
     }
-    expect(() => verifyAcceptanceEvidence(candidate, { ...run, head_sha: workflowSha }, jobs, pr)).toThrow()
-    expect(() => verifyAcceptanceEvidence(candidate, run, { ...jobs, total_count: 4 }, pr)).toThrow()
-    expect(() => verifyAcceptanceEvidence(candidate, run, jobs, { ...pr, merged: false })).toThrow()
+    expect(() => verifyLegacyAcceptance(candidate, { ...run, head_sha: workflowSha }, jobs, pr)).toThrow()
+    expect(() => verifyLegacyAcceptance(candidate, run, { ...jobs, total_count: 4 }, pr)).toThrow()
+    expect(() => verifyLegacyAcceptance(candidate, run, jobs, { ...pr, merged: false })).toThrow()
   })
   const mergedMainEvidence = () => ({
     accepted: { ...candidate, productMergeSha: sourceSha },
@@ -348,46 +393,46 @@ describe("accepted immutable release source", () => {
   it("accepts the normally merged fixed main snapshot without pretending the skipped runtime gate executed", () => {
     const { accepted, run, jobs, pr } = mergedMainEvidence()
     expect(pr.head.sha).not.toBe(accepted.sourceSha)
-    expect(() => verifyAcceptanceEvidence(accepted, run, jobs, pr)).not.toThrow()
+    expect(() => verifyLegacyAcceptance(accepted, run, jobs, pr)).not.toThrow()
     expect(jobs.jobs[2].conclusion).toBe("skipped")
     const bytes = Buffer.from(JSON.stringify({ schemaVersion: 1, repository: "bigduu/lotus-next", run, jobs, pullRequest: pr }))
     const recorded = { ...accepted, acceptanceReceiptSha256: createHash("sha256").update(bytes).digest("hex") }
-    expect(verifyCommittedAcceptance(recorded, bytes).jobs.jobs[2].conclusion).toBe("skipped")
+    expect(verifyLegacyCommittedAcceptance(recorded, bytes).jobs.jobs[2].conclusion).toBe("skipped")
   })
   it.each(["failure", "cancelled", "skipped"])("rejects a %s Node gate for the merged main snapshot", (conclusion) => {
     const { accepted, run, jobs, pr } = mergedMainEvidence()
     for (const index of [0, 1]) {
       const changed = clone(jobs); changed.jobs[index].conclusion = conclusion
-      expect(() => verifyAcceptanceEvidence(accepted, run, changed, pr)).toThrow()
+      expect(() => verifyLegacyAcceptance(accepted, run, changed, pr)).toThrow()
     }
   })
   it.each(["failure", "cancelled"])("retains the failed main runtime evidence: %s", (conclusion) => {
     const { accepted, run, jobs, pr } = mergedMainEvidence(); jobs.jobs[2].conclusion = conclusion
-    expect(() => verifyAcceptanceEvidence(accepted, run, jobs, pr)).toThrow()
+    expect(() => verifyLegacyAcceptance(accepted, run, jobs, pr)).toThrow()
   })
   it("rejects moving, foreign, incomplete, mismatched or unmerged main evidence", () => {
     const { accepted, run, jobs, pr } = mergedMainEvidence()
     for (const change of [{ head_branch: "feature" }, { head_sha: workflowSha }, { status: "in_progress" }, { conclusion: "failure" }, { repository: { full_name: "other/lotus-next" } }, { head_repository: { full_name: "other/lotus-next" } }]) {
-      expect(() => verifyAcceptanceEvidence(accepted, { ...run, ...change }, jobs, pr)).toThrow()
+      expect(() => verifyLegacyAcceptance(accepted, { ...run, ...change }, jobs, pr)).toThrow()
     }
     for (const change of [{ merged: false }, { merge_commit_sha: workflowSha }, { base: { ref: "dev", repo: { full_name: "bigduu/lotus-next" } } }, { base: { ref: "main", repo: { full_name: "other/lotus-next" } } }]) {
-      expect(() => verifyAcceptanceEvidence(accepted, run, jobs, { ...pr, ...change })).toThrow()
+      expect(() => verifyLegacyAcceptance(accepted, run, jobs, { ...pr, ...change })).toThrow()
     }
-    expect(() => verifyAcceptanceEvidence(accepted, run, { ...jobs, total_count: 4 }, pr)).toThrow()
-    expect(() => verifyAcceptanceEvidence(accepted, run, { total_count: 2, jobs: jobs.jobs.slice(0, 2) }, pr)).toThrow()
+    expect(() => verifyLegacyAcceptance(accepted, run, { ...jobs, total_count: 4 }, pr)).toThrow()
+    expect(() => verifyLegacyAcceptance(accepted, run, { total_count: 2, jobs: jobs.jobs.slice(0, 2) }, pr)).toThrow()
     const duplicate = [...jobs.jobs, jobs.jobs[0]]
-    expect(() => verifyAcceptanceEvidence(accepted, run, { total_count: duplicate.length, jobs: duplicate }, pr)).toThrow()
-    expect(() => verifyAcceptanceEvidence(candidate, run, jobs, pr)).toThrow()
+    expect(() => verifyLegacyAcceptance(accepted, run, { total_count: duplicate.length, jobs: duplicate }, pr)).toThrow()
+    expect(() => verifyLegacyAcceptance(candidate, run, jobs, pr)).toThrow()
   })
   it("reuses successful reviewed PR-head admission without repeating its artifact runtime gate", () => {
     const { run, jobs, pr } = mergedMainEvidence()
     const headRun = { ...run, event: "pull_request", head_branch: "release/fixed-ui" }
     const headPr = { ...pr, head: { sha: sourceSha }, merge_commit_sha: candidate.productMergeSha }
-    expect(() => verifyAcceptanceEvidence(candidate, headRun, jobs, headPr)).not.toThrow()
-    expect(() => verifyAcceptanceEvidence(candidate, headRun, jobs, { ...headPr, head: { sha: workflowSha } })).toThrow()
-    expect(() => verifyAcceptanceEvidence(candidate, headRun, jobs, { ...headPr, merged: false })).toThrow()
-    expect(() => verifyAcceptanceEvidence(candidate, { ...headRun, head_repository: { full_name: "foreign/lotus-next" } }, jobs, headPr)).toThrow()
-    expect(() => verifyAcceptanceEvidence(candidate, headRun, jobs, { ...headPr, base: { ref: "dev", repo: { full_name: "bigduu/lotus-next" } } })).toThrow()
+    expect(() => verifyLegacyAcceptance(candidate, headRun, jobs, headPr)).not.toThrow()
+    expect(() => verifyLegacyAcceptance(candidate, headRun, jobs, { ...headPr, head: { sha: workflowSha } })).toThrow()
+    expect(() => verifyLegacyAcceptance(candidate, headRun, jobs, { ...headPr, merged: false })).toThrow()
+    expect(() => verifyLegacyAcceptance(candidate, { ...headRun, head_repository: { full_name: "foreign/lotus-next" } }, jobs, headPr)).toThrow()
+    expect(() => verifyLegacyAcceptance(candidate, headRun, jobs, { ...headPr, base: { ref: "dev", repo: { full_name: "bigduu/lotus-next" } } })).toThrow()
   })
   it("keeps workflow and source identities distinct in one run-bound receipt", () => {
     expect(verifySourceReceipt(receipt, environment, sourceSha)).toEqual(receipt)

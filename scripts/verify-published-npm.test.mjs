@@ -25,12 +25,14 @@ import {
   verifyProvenance,
   verifyPublishedNpm,
   verifyRecoveryContext,
-  verifyRecoveryRecord,
+  verifyRecoveryRecord as verifyOriginalRecoveryRecord,
   verifyRegistryBytes,
   verifyRegistryMetadata,
   verifyRegistryPackage,
 } from "./verify-published-npm.mjs"
 
+const legacyWorkflow = readFileSync("scripts/fixtures/ci-unsharded.yml", "utf8")
+const verifyRecoveryRecord = (...args) => verifyOriginalRecoveryRecord(...args, legacyWorkflow)
 const temporaryDirectories = []
 const hash = (algorithm, bytes, encoding = "hex") =>
   createHash(algorithm).update(bytes).digest(encoding)
@@ -862,7 +864,7 @@ const integrationFixture = () => {
   // These git-show results belong to the recovered source, not today's checkout.
   // Keep its source-bound pins stable when a later release changes the pairing.
   const sourceFiles = new Map([
-    [".github/workflows/ci.yml", `BAMBOO_E2E_REVISION: ${historicalBamboo}`],
+    [".github/workflows/ci.yml", legacyWorkflow.replace(/BAMBOO_E2E_REVISION: [^\r\n]+/, `BAMBOO_E2E_REVISION: ${historicalBamboo}`)],
     [".github/workflows/publish-npm.yml", readRepositoryBytes(".github/workflows/publish-npm.yml").toString()],
     ["e2e/support/realBambooRuntime.ts", `export const REAL_BAMBOO_REVISION = "${historicalBamboo}";`],
     ["scripts/published-real-bamboo-acceptance.test.mjs", `const expectedBambooRevision = "${historicalBamboo}"`],
