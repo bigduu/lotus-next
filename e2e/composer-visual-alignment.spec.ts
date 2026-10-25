@@ -1,5 +1,6 @@
 import { expect, test, type Page, type WebSocketRoute } from "@playwright/test"
 import { installArtifactRuntime, standaloneScenario } from "./support/artifactRuntime.js"
+import { expectComposerText, revealComposerSettings } from "./support/composer.js"
 
 async function toolbarGeometry(page: Page) {
   return page.locator("[data-composer-surface]").evaluate((surface) => {
@@ -111,6 +112,60 @@ for (const width of [390, 1440]) {
 
 for (const width of [320, 390, 820, 1440]) {
   for (const theme of ["light", "dark"]) {
+    test(`new-chat workspace control aligns at ${width}px in ${theme}`, async ({ page }, info) => {
+      test.skip(info.project.name !== "desktop-chromium", "explicit new-chat viewport and theme matrix")
+      await page.setViewportSize({ width, height: 900 })
+      await page.addInitScript((theme) => {
+        localStorage.setItem("bodhi_onboarded_v1", "1")
+        localStorage.setItem("copilot_ui_theme_v1", theme)
+        localStorage.setItem("lotus_ui_locale_v1", "zh-CN")
+      }, theme)
+      const observation = await installArtifactRuntime(page, standaloneScenario)
+      await page.route("**/api/v1/sessions?*", (route) => route.fulfill({ json: { sessions: [], total: 0, limit: 200, offset: 0 } }))
+      await page.goto(standaloneScenario.entryUrl)
+      await expect(page.getByTestId("home-dashboard")).toBeVisible()
+      const editor = page.getByRole("textbox", { name: "消息", exact: true })
+      const draft = "Keep this new-chat draft while inspecting its workspace."
+      await editor.fill(draft)
+      await revealComposerSettings(page)
+      const workspace = page.getByRole("button", { name: "会话工作区", exact: true })
+      await expect(workspace).toBeVisible()
+      await expect.poll(async () => (await workspace.boundingBox())?.height).toBe(32)
+      const geometry = await workspace.evaluate((element) => {
+        const box = element.getBoundingClientRect()
+        const css = element.ownerDocument.defaultView!.getComputedStyle(element)
+        const text = element.querySelector("span")!.getBoundingClientRect()
+        return {
+          height: box.height, center: box.y + box.height / 2, left: box.left, right: box.right,
+          font: css.fontSize, line: css.lineHeight, textCenter: text.y + text.height / 2,
+          icons: [...element.querySelectorAll("svg")].map((icon) => {
+            const bounds = icon.getBoundingClientRect()
+            return { size: bounds.width, height: bounds.height, center: bounds.y + bounds.height / 2 }
+          }),
+        }
+      })
+      expect(geometry.height).toBe(32)
+      expect(geometry.font).toBe("14px")
+      expect(geometry.line).toBe("20px")
+      expect(geometry.textCenter).toBeCloseTo(geometry.center, 2)
+      expect(geometry.left).toBeGreaterThanOrEqual(0)
+      expect(geometry.right).toBeLessThanOrEqual(width)
+      expect(geometry.icons.map((icon) => icon.size)).toEqual([16, 12])
+      for (const icon of geometry.icons) {
+        expect(icon.height).toBe(icon.size)
+        expect(icon.center).toBeCloseTo(geometry.center, 2)
+      }
+      await workspace.click()
+      await expect(page.getByRole("dialog", { name: "会话工作区", exact: true })).toBeVisible()
+      await page.keyboard.press("Escape")
+      await expect(workspace).toBeFocused()
+      const more = page.getByRole("dialog", { name: "更多", exact: true })
+      if (await more.isVisible()) await page.keyboard.press("Escape")
+      await expectComposerText(editor, draft)
+      expect(await page.locator("html").evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1)
+      expect(observation.pageErrors).toEqual([])
+    })
+
     test(`composer typography and icons align at ${width}px in ${theme}`, async ({ page }, info) => {
       test.skip(info.project.name !== "desktop-chromium", "explicit viewport and theme matrix")
       const english = width === 390 || width === 1440

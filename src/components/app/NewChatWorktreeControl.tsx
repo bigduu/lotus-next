@@ -7,6 +7,8 @@ import type { NewChatWorktreeControlProps } from "@services/workspace/newChatWor
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { composerControlClassName } from "@/components/chat/composerStyles"
+import { cn } from "@/lib/utils"
 
 const normalizePath = (path: string | null | undefined) => path?.replace(/\/+$/, "") || "/"
 const folderName = (path: string) => path.split("/").filter(Boolean).at(-1) || path
@@ -62,8 +64,8 @@ export function NewChatWorktreeControl({
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
         <button type="button" aria-label={uiText("chat_worktree_control")} title={preparedPath || value?.repository || workspacePath || uiText("chat_worktree_current")}
-          className={`flex max-w-full items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs transition-colors hover:text-foreground ${value ? "border-primary/30 bg-primary/10 text-primary" : "bg-card text-muted-foreground"}`}>
-          {error ? <AlertCircle className="size-3.5 shrink-0" /> : preparedPath ? <Check className="size-3.5 shrink-0" /> : value ? <GitBranch className="size-3.5 shrink-0" /> : <FolderGit2 className="size-3.5 shrink-0" />}
+          className={cn(composerControlClassName, value && "bg-primary/10 text-primary")}>
+          {error ? <AlertCircle className="size-4 shrink-0" /> : preparedPath ? <Check className="size-4 shrink-0" /> : value ? <GitBranch className="size-4 shrink-0" /> : <FolderGit2 className="size-4 shrink-0" />}
           <span className="truncate">{preparedPath ? uiText("chat_worktree_ready") : value ? uiText("chat_worktree_new") : uiText("chat_worktree_current")}</span>
           <ChevronDown className="size-3 shrink-0 opacity-60" />
         </button>
