@@ -24,6 +24,8 @@ import {
 } from "@shared/types/tokenBudget"
 import { FileChangeList } from "./FileChangeList"
 import { ActorSnapshotPanel } from "./ActorSnapshotPanel"
+import { SupervisorManagedSessionsPanel } from "./SupervisorManagedSessions"
+import { isDefaultSupervisor } from "@/lib/supervisor"
 
 function GoalSection({
   sessionId,
@@ -292,6 +294,8 @@ export function Inspector({
   const taskList = useAppStore((s) => (sessionId ? s.taskLists[sessionId] : undefined))
   const evaluation = useAppStore((s) => (sessionId ? s.evaluationStates[sessionId] : undefined))
   const loadTaskList = useAppStore((s) => s.loadTaskList)
+  const [auxiliaryOpen, setAuxiliaryOpen] = useState(false)
+  useEffect(() => { setAuxiliaryOpen(false) }, [sessionId])
   // Inspector shows a deduplicated index; Review owns the full diff surface.
   const sessionMessages = useAppStore(
     useShallow((s) => (sessionId ? (selectSessionById(sessionId)(s)?.messages ?? []) : [])),
@@ -331,9 +335,22 @@ export function Inspector({
         </div> : null}
 
         <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4">
-          <ActorSnapshotPanel rootId={rootId} active={open} selectedActorId={selectedActorId ?? sessionId}
+          {chat && isDefaultSupervisor(chat) ? <>
+            <SupervisorManagedSessionsPanel active={open} onSelectSession={async (id) => {
+              const before = useAppStore.getState().currentSessionId
+              const restored = await useAppStore.getState().restoreSession(id)
+              if (!restored || useAppStore.getState().currentSessionId !== before) return false
+              useAppStore.getState().selectSession(id)
+              return true
+            }} />
+            <details className="rounded-lg border p-3" open={auxiliaryOpen} onToggle={(event) => setAuxiliaryOpen(event.currentTarget.open)} data-testid="supervisor-auxiliary-agents">
+              <summary className="cursor-pointer text-xs font-medium text-muted-foreground">{uiText("supervisor_sessions_auxiliary")}</summary>
+              <div className="mt-3"><ActorSnapshotPanel rootId={rootId} active={open && auxiliaryOpen} selectedActorId={selectedActorId ?? sessionId}
+                descendantCountHint={rootDescendantCount} onSelectActor={onSelectActor} /></div>
+            </details>
+          </> : <ActorSnapshotPanel rootId={rootId} active={open} selectedActorId={selectedActorId ?? sessionId}
             descendantCountHint={rootDescendantCount}
-            onSelectActor={onSelectActor} />
+            onSelectActor={onSelectActor} />}
           <section className="rounded-lg border p-3">
             <div className="mb-2 flex items-center justify-between">
               <span className="text-xs font-medium text-muted-foreground">{uiText("working_directory_3db7b06b")}</span>
