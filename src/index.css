@@ -246,7 +246,9 @@ body[data-vdi-safe="true"] .motion-page-enter {
   *::after {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
-    transition-duration: 0.01ms !important;
+    /* A nonzero duration activates default transition:all even on SVG nodes,
+       so Mermaid measures their old positions while building its viewBox. */
+    transition-duration: 0s !important;
     scroll-behavior: auto !important;
   }
 }

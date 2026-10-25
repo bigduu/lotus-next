@@ -12,7 +12,7 @@ vi.mock("@streamdown/code", () => ({
     name: "shiki",
     type: "code-highlighter",
     getSupportedLanguages: () => ["typescript"],
-    getThemes: () => ["github-light", "github-dark"],
+    getThemes: () => ["github-light", "github-dark-default"],
     supportsLanguage: () => true,
     highlight: ({ code, themes }: { code: string; themes: [unknown, unknown] }) => {
       highlightCode({ code, themes })
@@ -413,7 +413,7 @@ describe("StreamdownMarkdown security, layout and theme semantics", () => {
     await vi.waitFor(() =>
       expect(highlightCode).toHaveBeenCalledWith({
         code: "/a/very/long/path/without/a/breakpoint",
-        themes: ["github-light", "github-dark"],
+        themes: ["github-light", "github-dark-default"],
       }),
     )
 

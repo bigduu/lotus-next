@@ -14,6 +14,15 @@ vi.mock("mermaid", () => ({
   },
 }))
 
+vi.mock("@streamdown/mermaid", () => ({
+  createMermaidPlugin: () => ({
+    getMermaid(config: unknown) {
+      initializeMermaid(config)
+      return { render: renderMermaid }
+    },
+  }),
+}))
+
 import MermaidChart from "./MermaidChart"
 
 const mountedRoots: Root[] = []
@@ -61,10 +70,10 @@ describe("MermaidChart", () => {
         securityLevel: "strict",
         htmlLabels: false,
         flowchart: { htmlLabels: false },
-        theme: "dark",
+        theme: "default",
       }),
     )
-    expect(renderMermaid).toHaveBeenCalledWith(expect.stringMatching(/^mmd-\d+$/), "flowchart LR\nA[Safe]")
+    expect(renderMermaid).toHaveBeenCalledWith(expect.stringMatching(/^streamdown-mermaid-\d+$/), "flowchart LR\nA[Safe]")
     expect(container.querySelector("svg")?.textContent).toBe("Safe")
   })
 
@@ -74,7 +83,7 @@ describe("MermaidChart", () => {
 
     const container = await mountChart(malformed)
 
-    expect(container.querySelector("pre")?.textContent).toBe(malformed)
+    expect(container.querySelector("[data-mermaid-source]")?.textContent).toBe(malformed)
     expect(container.querySelector("svg")).toBeNull()
   })
 })

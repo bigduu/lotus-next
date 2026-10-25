@@ -21,6 +21,7 @@ vi.mock("@streamdown/mermaid", () => ({
 }))
 
 import StreamdownMermaid from "./StreamdownMermaid"
+import { useThemeStore } from "@shared/store/themeStore"
 
 const mountedRoots: Root[] = []
 const reactActEnvironment = globalThis as typeof globalThis & {
@@ -38,6 +39,7 @@ afterAll(() => {
 beforeEach(() => {
   initializeMermaid.mockReset()
   renderMermaid.mockReset()
+  useThemeStore.setState({ themeMode: "light" })
 })
 
 afterEach(() => {
@@ -72,17 +74,16 @@ describe("StreamdownMermaid", () => {
         securityLevel: "strict",
         htmlLabels: false,
         flowchart: { htmlLabels: false },
-        theme: "dark",
+        theme: "default",
       }),
     )
-    expect(mermaidPluginState.config).toMatchObject({ securityLevel: "strict", theme: "dark" })
+    expect(mermaidPluginState.config).toMatchObject({ securityLevel: "strict", htmlLabels: false })
     expect(renderMermaid).toHaveBeenCalledWith(
       expect.stringMatching(/^streamdown-mermaid-\d+$/),
       "flowchart LR\nA[Safe chart]",
     )
     const chart = container.querySelector<HTMLElement>('[data-mermaid-state="ready"]')
-    expect(chart?.getAttribute("role")).toBe("img")
-    expect(chart?.getAttribute("aria-label")).toBe("Mermaid 图表")
+    expect(chart?.querySelector('[role="img"]')?.getAttribute("aria-label")).toBe("Mermaid 图表")
     expect(chart?.querySelector("svg")?.textContent).toBe("Safe chart")
   })
 
@@ -92,9 +93,8 @@ describe("StreamdownMermaid", () => {
     const { container } = await mountMermaid(malformed)
 
     const fallback = container.querySelector<HTMLElement>('[data-mermaid-state="error"]')
-    expect(fallback?.getAttribute("role")).toBe("alert")
-    expect(fallback?.getAttribute("aria-live")).toBe("polite")
-    expect(fallback?.querySelector("pre")?.textContent).toBe(malformed)
+    expect(fallback?.querySelector('[role="alert"]')?.textContent).toBe("Mermaid 图表无法渲染")
+    expect(fallback?.querySelector("[data-mermaid-source]")?.textContent).toBe(malformed)
     expect(fallback?.querySelector("img")).toBeNull()
     expect(fallback?.querySelector("script")).toBeNull()
     expect(fallback?.textContent).toContain("parse failed")
@@ -112,5 +112,53 @@ describe("StreamdownMermaid", () => {
 
     expect(container.querySelector("svg")).toBeNull()
     expect(container.querySelector('[data-mermaid-state="loading"]')).not.toBeNull()
+  })
+
+  it("rerenders existing diagrams with the resolved theme and ignores a stale themed SVG", async () => {
+    renderMermaid.mockResolvedValueOnce({ svg: '<svg><text>Light chart</text></svg>' })
+    const { container } = await mountMermaid("flowchart LR\nA[Theme]")
+    let finishDark!: (value: { svg: string }) => void
+    renderMermaid.mockReturnValueOnce(new Promise((resolve) => { finishDark = resolve }))
+    act(() => useThemeStore.setState({ themeMode: "dark" }))
+    expect(container.querySelector("svg")).toBeNull()
+    expect(initializeMermaid).toHaveBeenLastCalledWith(expect.objectContaining({ theme: "dark", securityLevel: "strict" }))
+    renderMermaid.mockResolvedValueOnce({ svg: '<svg><text>Current light chart</text></svg>' })
+    await act(async () => useThemeStore.setState({ themeMode: "light" }))
+    await act(async () => finishDark({ svg: '<svg><text>Stale dark chart</text></svg>' }))
+    expect(container.querySelector("svg")?.textContent).toBe("Current light chart")
+  })
+
+  it("retries failed rendering and repairs only the local preview, with restore and source-change reset", async () => {
+    const original = "flowchart LR\nA[Broken"
+    renderMermaid.mockRejectedValueOnce(new Error("Visible parse error"))
+    const { container, root } = await mountMermaid(original)
+    const button = (label: string) => [...container.querySelectorAll("button")].find((element) => element.textContent === label)!
+    renderMermaid.mockRejectedValueOnce(new Error("Still invalid"))
+    await act(async () => button("重新渲染").click())
+    expect(renderMermaid).toHaveBeenLastCalledWith(expect.any(String), original)
+    expect(container.textContent).toContain("Still invalid")
+    act(() => button("编辑源码").click())
+    const editor = container.querySelector("textarea")!
+    for (const ime of [{ isComposing: true }, { keyCode: 229 }]) {
+      act(() => editor.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, ...ime })))
+      expect(container.querySelector("textarea")).toBe(editor)
+    }
+    const repaired = "flowchart LR\nA[Repaired] --> B[Done]"
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(editor, repaired)
+      editor.dispatchEvent(new Event("input", { bubbles: true }))
+    })
+    renderMermaid.mockResolvedValueOnce({ svg: '<svg><text>Repaired chart</text></svg>' })
+    await act(async () => container.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })))
+    expect(renderMermaid).toHaveBeenLastCalledWith(expect.any(String), repaired)
+    expect(container.querySelector("svg")?.textContent).toBe("Repaired chart")
+    expect(container.querySelector("textarea")).toBeNull()
+    renderMermaid.mockRejectedValueOnce(new Error("Original still invalid"))
+    await act(async () => button("还原原图").click())
+    expect(container.querySelector("[data-mermaid-source]")?.textContent).toBe(original)
+    renderMermaid.mockResolvedValueOnce({ svg: '<svg><text>Updated message</text></svg>' })
+    await act(async () => root.render(<StreamdownMermaid code="flowchart LR\nA[Updated message]" />))
+    expect(container.querySelector("svg")?.textContent).toBe("Updated message")
+    expect(container.textContent).not.toContain("还原原图")
   })
 })

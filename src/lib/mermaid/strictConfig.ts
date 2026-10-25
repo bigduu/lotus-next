@@ -34,24 +34,29 @@ export const MERMAID_STRICT_CONFIG = deepFreeze({
 } as const satisfies MermaidConfig)
 
 export type MermaidSurface = "app" | "export"
+export type MermaidTheme = "light" | "dark"
 
 const MERMAID_SURFACE_CONFIGS = deepFreeze({
   app: {
     ...MERMAID_STRICT_CONFIG,
     theme: "dark",
   },
+  light: {
+    ...MERMAID_STRICT_CONFIG,
+    theme: "default",
+  },
   export: {
     ...MERMAID_STRICT_CONFIG,
     theme: "default",
   },
-} as const satisfies Record<MermaidSurface, MermaidConfig>)
+} as const satisfies Record<MermaidSurface | "light", MermaidConfig>)
 
 /** Return the exact frozen #14 policy for integrations that own a Mermaid instance. */
-export function getTrustedMermaidConfig(surface: MermaidSurface) {
-  return MERMAID_SURFACE_CONFIGS[surface]
+export function getTrustedMermaidConfig(surface: MermaidSurface, theme: MermaidTheme = "dark") {
+  return MERMAID_SURFACE_CONFIGS[surface === "app" && theme === "light" ? "light" : surface]
 }
 
 /** Initialize Mermaid from a closed set of trusted, recursively frozen configs. */
-export function initializeTrustedMermaid(surface: MermaidSurface): void {
-  mermaid.initialize(getTrustedMermaidConfig(surface))
+export function initializeTrustedMermaid(surface: MermaidSurface, theme: MermaidTheme = "dark"): void {
+  mermaid.initialize(getTrustedMermaidConfig(surface, theme))
 }

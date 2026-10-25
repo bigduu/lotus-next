@@ -1,4 +1,5 @@
 import { initializeTrustedMermaid } from "@/lib/mermaid/strictConfig"
+import { useThemeStore } from "@shared/store/themeStore"
 
 export const MERMAID_LOADING_SELECTOR = '[data-mermaid-loading="true"]'
 
@@ -7,5 +8,5 @@ export function initMermaidForExport(): void {
 }
 
 export function restoreMermaidAppConfig(): void {
-  initializeTrustedMermaid("app")
+  initializeTrustedMermaid("app", useThemeStore.getState().themeMode)
 }
