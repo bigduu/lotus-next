@@ -23,26 +23,12 @@ ENV BAMBOO_BROWSER_HOST_SCRIPT=/usr/local/libexec/bamboo-browser/host.cjs
 
 USER bamboo
 
-FROM rust:1-bookworm AS builder
-
-WORKDIR /app
-
-COPY . .
-
-ENV CARGO_NET_RETRY=5
-
-RUN --mount=type=cache,target=/usr/local/cargo/registry \
-    --mount=type=cache,target=/usr/local/cargo/git \
-    --mount=type=cache,target=/app/target \
-    BAMBOO_FRONTEND_BUILD_MODE=api-only cargo build --release --locked --bin bamboo \
-    && cp /app/target/release/bamboo /tmp/bamboo
-
 FROM browser-runtime AS runtime
 
 ARG BAMBOO_REVISION
 LABEL org.opencontainers.image.revision="${BAMBOO_REVISION}"
 
-COPY --from=builder /tmp/bamboo /usr/local/bin/bamboo
+COPY .lotus-published-bamboo /usr/local/bin/bamboo
 COPY .lotus-real-bamboo-provider.py /usr/local/libexec/lotus-real-bamboo-provider.py
 
 ENV BAMBOO_DATA_DIR=/data/bamboo
