@@ -55,19 +55,23 @@ test("Stop is a primary realtime control and never enters the message queue", as
   const queue = page.getByRole("button", { name: "加入队列", exact: true })
   await expect(queue).toBeVisible()
 
-  const [stopBackground, queueBackground, squareFill] = await Promise.all([
+  const [stopBackground, queueBackground, stopForeground, squareFill] = await Promise.all([
     stop.evaluate(
       (element) => element.ownerDocument.defaultView!.getComputedStyle(element).backgroundColor,
     ),
     queue.evaluate(
       (element) => element.ownerDocument.defaultView!.getComputedStyle(element).backgroundColor,
     ),
+    stop.evaluate(
+      (element) => element.ownerDocument.defaultView!.getComputedStyle(element).color,
+    ),
     stop
       .locator("svg")
       .evaluate((element) => element.ownerDocument.defaultView!.getComputedStyle(element).fill),
   ])
   expect(stopBackground).toBe(queueBackground)
-  expect(squareFill).toBe("rgb(255, 255, 255)")
+  expect(squareFill).toBe(stopForeground)
+  expect(squareFill).not.toBe(stopBackground)
   await testInfo.attach("solid-primary-stop", {
     body: await page.screenshot(),
     contentType: "image/png",
