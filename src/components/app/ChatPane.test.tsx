@@ -25,6 +25,7 @@ type Send = ChatPaneProps["chat"]["send"]
 type TicketController = ReturnType<(typeof import("@/hooks/useTicketWork"))["useTicketWork"]>
 type WorkflowControlProps = ComponentProps<(typeof import("@/components/chat/WorkflowSelectionControl"))["WorkflowSelectionControl"]>
 type State = {
+  bindWorkspace: typeof import("@services/project/ProjectService").projectService.bindWorkspace
   currentSessionId: string | null
   projects: Record<string, { project_path: string; name: string }>
   chats: { id: string; config: { reasoningEffort?: ReasoningEffort | null } }[]
@@ -344,6 +345,7 @@ beforeEach(() => {
     id: "p1", status: "active", revision: revision + 1, project_path: "/repo", workspace_bindings: [{ path: request.path }],
   }))
   runtime.state = {
+    bindWorkspace: runtime.bindWorkspace,
     currentSessionId: null, projects: { p1: { project_path: "/repo", name: "Project one" }, p2: { project_path: "/other", name: "Project two" } },
     chats: [], getInputState: (id) => runtime.state.inputStates[id] ?? { content: "", contentRevision: 0 },
     setInputThinkingMode: (id, thinkingMode) => { runtime.state.inputStates = { ...runtime.state.inputStates, [id]: { ...runtime.state.getInputState(id), thinkingMode, thinkingModeRevision: ++runtime.revision } }; notify(); return true },
