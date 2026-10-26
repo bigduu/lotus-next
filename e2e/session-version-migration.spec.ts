@@ -35,7 +35,7 @@ async function fixture(page: Page, mode: Mode) {
   ]
   let migrated = mode === "current", detailUnavailable = mode === "cold-pending", holdReadback = false
   let pending: Intent | null = mode === "cold-pending" ? pendingIntent : null
-  let assessReads = 0, readbacksHeld = 0, commits = 0
+  let assessReads = 0, readbacksHeld = 0, commits = 0, metadataVersion = 1
   let releaseReadback!: () => void
   const readbackGate = new Promise<void>((resolve) => { releaseReadback = resolve })
   const posts: Intent[] = [], sessionWrites: { path: string; body: unknown }[] = []
@@ -91,11 +91,13 @@ async function fixture(page: Page, mode: Mode) {
       if (holdReadback) { readbacksHeld += 1; await readbackGate }
       if (detailUnavailable) return route.fulfill({ status: 503, json: { error: "Canonical detail unavailable" } })
       events.push(migrated ? "current-detail" : "legacy-detail")
-      return route.fulfill({ json: canonical(), headers: { ETag: '"1"' } })
+      return route.fulfill({ json: canonical(), headers: { ETag: `"${metadataVersion}"` } })
     }
     if (path === `/api/v1/sessions/${sid}` && request.method() === "PATCH") {
+      expect(request.headers()["if-match"]).toBe(`"${metadataVersion}"`)
       Object.assign(session, request.postDataJSON())
-      return route.fulfill({ json: canonical(), headers: { ETag: '"1"' } })
+      metadataVersion += 1
+      return route.fulfill({ json: canonical(), headers: { ETag: `"${metadataVersion}"` } })
     }
     if (path === `/api/v1/history/${sid}` && request.method() === "GET") return route.fulfill({ json: { session_id: sid, messages: history } })
     if (path === `/api/v1/actors/${sid}/snapshot`) return route.fulfill({ json: actorSnapshotFixture(sid, 0) })
