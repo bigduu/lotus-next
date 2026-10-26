@@ -101,120 +101,11 @@ jobs:
             exit 1
           fi
 
-  verify:
-    name: Node ${{ matrix.node }} release artifact
-    needs: preflight
-    env:
-      LOTUS_NEXT_SOURCE_REVISION: ${{ needs.preflight.outputs.source_sha }}
-      LOTUS_NEXT_EXPECTED_SOURCE_REVISION: ${{ needs.preflight.outputs.source_sha }}
-      PUBLICATION_WORKFLOW_SHA: ${{ needs.preflight.outputs.workflow_sha }}
-      ACCEPTED_SOURCE_TREE: ${{ needs.preflight.outputs.source_tree }}
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        node:
-          - 22
-          - 24
-
-    steps:
-      - name: Check out trusted publication browser controls
-        uses: actions/checkout@v7
-        with:
-          ref: ${{ needs.preflight.outputs.workflow_sha }}
-          persist-credentials: false
-
-      - name: Preserve trusted browser controls outside the source checkout
-        run: |
-          test "$(git rev-parse HEAD)" = "${PUBLICATION_WORKFLOW_SHA}"
-          test -z "$(git status --porcelain --untracked-files=all)"
-          mkdir "${RUNNER_TEMP}/release-control"
-          cp scripts/release-browser.mjs "${RUNNER_TEMP}/release-control/"
-          cp .github/release-candidates.json "${RUNNER_TEMP}/release-control/"
-
-      - name: Check out exact source
-        uses: actions/checkout@v7
-        with:
-          ref: ${{ needs.preflight.outputs.source_sha }}
-          persist-credentials: false
-
-      - name: Require accepted source under the default-branch publication workflow
-        run: |
-          test "${GITHUB_REF}" = "refs/heads/${DEFAULT_BRANCH}"
-          test "${GITHUB_SHA}" = "${PUBLICATION_WORKFLOW_SHA}"
-          test "$(git rev-parse HEAD)" = "${LOTUS_NEXT_EXPECTED_SOURCE_REVISION}"
-          test "$(git rev-parse "HEAD^{tree}")" = "${ACCEPTED_SOURCE_TREE}"
-          test -z "$(git status --porcelain --untracked-files=all)"
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v7
-        with:
-          node-version: ${{ matrix.node }}
-          cache: npm
-          cache-dependency-path: package-lock.json
-
-      - name: Install exact dependencies
-        run: npm ci
-
-      - name: Apply the release identity without a Git commit
-        run: |
-          test -z "$(git status --porcelain --untracked-files=all)"
-          node --input-type=module - <<'NODE'
-          import { assertPackageVersion } from "./scripts/artifact-manifest.mjs"
-          const version = assertPackageVersion(process.env.LOTUS_NEXT_RELEASE_VERSION)
-          if (version === "0.0.0") throw new Error("The source placeholder cannot be published")
-          NODE
-          npm version "${LOTUS_NEXT_RELEASE_VERSION}" --no-git-tag-version --ignore-scripts
-          test "$(node -p "require('./package.json').version")" = "${LOTUS_NEXT_RELEASE_VERSION}"
-          test "$(node -p "require('./package-lock.json').version")" = "${LOTUS_NEXT_RELEASE_VERSION}"
-          test "$(node -p "require('./package-lock.json').packages[''].version")" = "${LOTUS_NEXT_RELEASE_VERSION}"
-          git diff --exit-code -- . ':(exclude)package.json' ':(exclude)package-lock.json'
-          test -z "$(git ls-files --others --exclude-standard)"
-          git diff -- package.json package-lock.json > "${RUNNER_TEMP}/release-identity.patch"
-
-      - name: Verify architecture, behavior, build, and package contents
-        run: |
-          VITE_APP_REVISION="${LOTUS_NEXT_EXPECTED_SOURCE_REVISION}" VITE_APP_VERSION="${LOTUS_NEXT_RELEASE_VERSION}" npm run verify
-          git diff -- package.json package-lock.json | cmp - "${RUNNER_TEMP}/release-identity.patch"
-          git diff --exit-code -- . ':(exclude)package.json' ':(exclude)package-lock.json'
-          test -z "$(git ls-files --others --exclude-standard)"
-
-      - name: Install Chromium
-        run: npx playwright install --with-deps chromium
-
-      - name: Prepare the pinned publication browser outside the source checkout
-        run: node "${RUNNER_TEMP}/release-control/release-browser.mjs" prepare "${GITHUB_WORKSPACE}" "${RUNNER_TEMP}/release-browser"
-
-      - name: Verify the all-surface production artifact
-        run: |
-          node node_modules/@playwright/test/cli.js test --config="${RUNNER_TEMP}/release-browser/all-surface.config.mjs"
-          git diff -- package.json package-lock.json | cmp - "${RUNNER_TEMP}/release-identity.patch"
-          git diff --exit-code -- . ':(exclude)package.json' ':(exclude)package-lock.json'
-          test -z "$(git ls-files --others --exclude-standard)"
-
-      - name: Upload the outer browser identity
-        if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@v7
-        with:
-          name: publish-browser-identity-node-${{ matrix.node }}
-          path: ${{ runner.temp }}/release-browser/browser-identity.json
-          if-no-files-found: error
-          retention-days: 30
-
-      - name: Upload browser evidence
-        if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@v7
-        with:
-          name: publish-playwright-node-${{ matrix.node }}
-          path: |
-            playwright-report/
-            test-results/
-          if-no-files-found: error
-          retention-days: 30
-
+  # Complete Node/unit/browser source CI was already accepted in preflight.
+  # Publication reuses that exact-source receipt and checks the versioned artifact.
   real-bamboo:
     name: Real Bamboo / Node 22 release artifact
-    needs: [preflight, verify]
+    needs: [preflight]
     runs-on: ubuntu-latest
     timeout-minutes: 60
     env:
@@ -365,7 +256,6 @@ jobs:
     name: Pack, publish, and verify registry artifact
     needs:
       - preflight
-      - verify
       - real-bamboo
     env:
       LOTUS_NEXT_SOURCE_REVISION: ${{ needs.preflight.outputs.source_sha }}
@@ -433,7 +323,9 @@ jobs:
 
       - name: Build and verify the final package tree
         run: |
-          VITE_APP_REVISION="${LOTUS_NEXT_EXPECTED_SOURCE_REVISION}" VITE_APP_VERSION="${LOTUS_NEXT_RELEASE_VERSION}" npm run verify
+          VITE_APP_REVISION="${LOTUS_NEXT_EXPECTED_SOURCE_REVISION}" VITE_APP_VERSION="${LOTUS_NEXT_RELEASE_VERSION}" npm run build
+          npm run artifact:verify
+          npm run package:contents
           git diff -- package.json package-lock.json | cmp - "${RUNNER_TEMP}/release-identity.patch"
           git diff --exit-code -- . ':(exclude)package.json' ':(exclude)package-lock.json'
           test -z "$(git ls-files --others --exclude-standard)"
