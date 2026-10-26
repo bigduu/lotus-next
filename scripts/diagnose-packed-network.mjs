@@ -2,7 +2,7 @@
 // harness H is the actual diagnostic commit. No publication/source receipt is made.
 import assert from "node:assert/strict"
 import { spawn, spawnSync } from "node:child_process"
-import { createWriteStream, existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs"
+import { createWriteStream, existsSync, mkdirSync, realpathSync, writeFileSync } from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { verifyArtifactManifest } from "./artifact-manifest.mjs"
