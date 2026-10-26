@@ -1,0 +1,2299 @@
+{
+  "schemaVersion": 1,
+  "repository": "bigduu/lotus-next",
+  "run": {
+    "id": 40350273595,
+    "name": "Frontend checks",
+    "node_id": "WFR_kwLOTGLQTM8AAAAJZRBQOw",
+    "head_branch": "lotus-next/fix/440-bamboo18-acceptance",
+    "head_sha": "ee2a7f4d52bbabefd49a8fc21550f061028f4117",
+    "path": ".github/workflows/ci.yml",
+    "display_title": "fix: align migration acceptance with Bamboo 18",
+    "run_number": 780,
+    "event": "pull_request",
+    "status": "completed",
+    "conclusion": "success",
+    "workflow_id": 347269362,
+    "check_suite_id": 109362166539,
+    "check_suite_node_id": "CS_kwDOTGLQTM8AAAAZdn47Cw",
+    "url": "https://api.github.com/repos/bigduu/lotus-next/actions/runs/40350273595",
+    "html_url": "https://github.com/bigduu/lotus-next/actions/runs/40350273595",
+    "pull_requests": [],
+    "created_at": "2026-10-26T15:32:10Z",
+    "updated_at": "2026-10-26T15:57:54Z",
+    "actor": {
+      "login": "bigduu",
+      "id": 18681616,
+      "node_id": "MDQ6VXNlcjE4NjgxNjE2",
+      "avatar_url": "https://avatars.githubusercontent.com/u/18681616?v=4",
+      "gravatar_id": "",
+      "url": "https://api.github.com/users/bigduu",
+      "html_url": "https://github.com/bigduu",
+      "followers_url": "https://api.github.com/users/bigduu/followers",
+      "following_url": "https://api.github.com/users/bigduu/following{/other_user}",
+      "gists_url": "https://api.github.com/users/bigduu/gists{/gist_id}",
+      "starred_url": "https://api.github.com/users/bigduu/starred{/owner}{/repo}",
+      "subscriptions_url": "https://api.github.com/users/bigduu/subscriptions",
+      "organizations_url": "https://api.github.com/users/bigduu/orgs",
+      "repos_url": "https://api.github.com/users/bigduu/repos",
+      "events_url": "https://api.github.com/users/bigduu/events{/privacy}",
+      "received_events_url": "https://api.github.com/users/bigduu/received_events",
+      "type": "User",
+      "user_view_type": "public",
+      "site_admin": false
+    },
+    "run_attempt": 1,
+    "referenced_workflows": [],
+    "run_started_at": "2026-10-26T15:32:10Z",
+    "triggering_actor": {
+      "login": "bigduu",
+      "id": 18681616,
+      "node_id": "MDQ6VXNlcjE4NjgxNjE2",
+      "avatar_url": "https://avatars.githubusercontent.com/u/18681616?v=4",
+      "gravatar_id": "",
+      "url": "https://api.github.com/users/bigduu",
+      "html_url": "https://github.com/bigduu",
+      "followers_url": "https://api.github.com/users/bigduu/followers",
+      "following_url": "https://api.github.com/users/bigduu/following{/other_user}",
+      "gists_url": "https://api.github.com/users/bigduu/gists{/gist_id}",
+      "starred_url": "https://api.github.com/users/bigduu/starred{/owner}{/repo}",
+      "subscriptions_url": "https://api.github.com/users/bigduu/subscriptions",
+      "organizations_url": "https://api.github.com/users/bigduu/orgs",
+      "repos_url": "https://api.github.com/users/bigduu/repos",
+      "events_url": "https://api.github.com/users/bigduu/events{/privacy}",
+      "received_events_url": "https://api.github.com/users/bigduu/received_events",
+      "type": "User",
+      "user_view_type": "public",
+      "site_admin": false
+    },
+    "jobs_url": "https://api.github.com/repos/bigduu/lotus-next/actions/runs/40350273595/jobs",
+    "logs_url": "https://api.github.com/repos/bigduu/lotus-next/actions/runs/40350273595/logs",
+    "check_suite_url": "https://api.github.com/repos/bigduu/lotus-next/check-suites/109362166539",
+    "artifacts_url": "https://api.github.com/repos/bigduu/lotus-next/actions/runs/40350273595/artifacts",
+    "cancel_url": "https://api.github.com/repos/bigduu/lotus-next/actions/runs/40350273595/cancel",
+    "rerun_url": "https://api.github.com/repos/bigduu/lotus-next/actions/runs/40350273595/rerun",
+    "previous_attempt_url": null,
+    "workflow_url": "https://api.github.com/repos/bigduu/lotus-next/actions/workflows/347269362",
+    "head_commit": {
+      "id": "ee2a7f4d52bbabefd49a8fc21550f061028f4117",
+      "tree_id": "7f3e59504d5868ea2a2c68fcd8619e2ca8316b1a",
+      "message": "fix: align migration acceptance with Bamboo 18 (#440)",
+      "timestamp": "2026-10-26T15:32:02Z",
+      "author": {
+        "name": "bigduu",
+        "email": "mugeng.du@gmail.com"
+      },
+      "committer": {
+        "name": "bigduu",
+        "email": "mugeng.du@gmail.com"
+      }
+    },
+    "repository": {
+      "id": 1281544268,
+      "node_id": "R_kgDOTGLQTA",
+      "name": "lotus-next",
+      "full_name": "bigduu/lotus-next",
+      "private": false,
+      "owner": {
+        "login": "bigduu",
+        "id": 18681616,
+        "node_id": "MDQ6VXNlcjE4NjgxNjE2",
+        "avatar_url": "https://avatars.githubusercontent.com/u/18681616?v=4",
+        "gravatar_id": "",
+        "url": "https://api.github.com/users/bigduu",
+        "html_url": "https://github.com/bigduu",
+        "followers_url": "https://api.github.com/users/bigduu/followers",
+        "following_url": "https://api.github.com/users/bigduu/following{/other_user}",
+        "gists_url": "https://api.github.com/users/bigduu/gists{/gist_id}",
+        "starred_url": "https://api.github.com/users/bigduu/starred{/owner}{/repo}",
+        "subscriptions_url": "https://api.github.com/users/bigduu/subscriptions",
+        "organizations_url": "https://api.github.com/users/bigduu/orgs",
+        "repos_url": "https://api.github.com/users/bigduu/repos",
+        "events_url": "https://api.github.com/users/bigduu/events{/privacy}",
+        "received_events_url": "https://api.github.com/users/bigduu/received_events",
+        "type": "User",
+        "user_view_type": "public",
+        "site_admin": false
+      },
+      "html_url": "https://github.com/bigduu/lotus-next",
+      "description": "Default web UI for Bamboo and the Bodhi desktop app: conversations, tool activity, approvals and settings.",
+      "fork": false,
+      "url": "https://api.github.com/repos/bigduu/lotus-next",
+      "forks_url": "https://api.github.com/repos/bigduu/lotus-next/forks",
+      "keys_url": "https://api.github.com/repos/bigduu/lotus-next/keys{/key_id}",
+      "collaborators_url": "https://api.github.com/repos/bigduu/lotus-next/collaborators{/collaborator}",
+      "teams_url": "https://api.github.com/repos/bigduu/lotus-next/teams",
+      "hooks_url": "https://api.github.com/repos/bigduu/lotus-next/hooks",
+      "issue_events_url": "https://api.github.com/repos/bigduu/lotus-next/issues/events{/number}",
+      "events_url": "https://api.github.com/repos/bigduu/lotus-next/events",
+      "assignees_url": "https://api.github.com/repos/bigduu/lotus-next/assignees{/user}",
+      "branches_url": "https://api.github.com/repos/bigduu/lotus-next/branches{/branch}",
+      "tags_url": "https://api.github.com/repos/bigduu/lotus-next/tags",
+      "blobs_url": "https://api.github.com/repos/bigduu/lotus-next/git/blobs{/sha}",
+      "git_tags_url": "https://api.github.com/repos/bigduu/lotus-next/git/tags{/sha}",
+      "git_refs_url": "https://api.github.com/repos/bigduu/lotus-next/git/refs{/sha}",
+      "trees_url": "https://api.github.com/repos/bigduu/lotus-next/git/trees{/sha}",
+      "statuses_url": "https://api.github.com/repos/bigduu/lotus-next/statuses/{sha}",
+      "languages_url": "https://api.github.com/repos/bigduu/lotus-next/languages",
+      "stargazers_url": "https://api.github.com/repos/bigduu/lotus-next/stargazers",
+      "contributors_url": "https://api.github.com/repos/bigduu/lotus-next/contributors",
+      "subscribers_url": "https://api.github.com/repos/bigduu/lotus-next/subscribers",
+      "subscription_url": "https://api.github.com/repos/bigduu/lotus-next/subscription",
+      "commits_url": "https://api.github.com/repos/bigduu/lotus-next/commits{/sha}",
+      "git_commits_url": "https://api.github.com/repos/bigduu/lotus-next/git/commits{/sha}",
+      "comments_url": "https://api.github.com/repos/bigduu/lotus-next/comments{/number}",
+      "issue_comment_url": "https://api.github.com/repos/bigduu/lotus-next/issues/comments{/number}",
+      "contents_url": "https://api.github.com/repos/bigduu/lotus-next/contents/{+path}",
+      "compare_url": "https://api.github.com/repos/bigduu/lotus-next/compare/{base}...{head}",
+      "merges_url": "https://api.github.com/repos/bigduu/lotus-next/merges",
+      "archive_url": "https://api.github.com/repos/bigduu/lotus-next/{archive_format}{/ref}",
+      "downloads_url": "https://api.github.com/repos/bigduu/lotus-next/downloads",
+      "issues_url": "https://api.github.com/repos/bigduu/lotus-next/issues{/number}",
+      "pulls_url": "https://api.github.com/repos/bigduu/lotus-next/pulls{/number}",
+      "milestones_url": "https://api.github.com/repos/bigduu/lotus-next/milestones{/number}",
+      "notifications_url": "https://api.github.com/repos/bigduu/lotus-next/notifications{?since,all,participating}",
+      "labels_url": "https://api.github.com/repos/bigduu/lotus-next/labels{/name}",
+      "releases_url": "https://api.github.com/repos/bigduu/lotus-next/releases{/id}",
+      "deployments_url": "https://api.github.com/repos/bigduu/lotus-next/deployments"
+    },
+    "head_repository": {
+      "id": 1281544268,
+      "node_id": "R_kgDOTGLQTA",
+      "name": "lotus-next",
+      "full_name": "bigduu/lotus-next",
+      "private": false,
+      "owner": {
+        "login": "bigduu",
+        "id": 18681616,
+        "node_id": "MDQ6VXNlcjE4NjgxNjE2",
+        "avatar_url": "https://avatars.githubusercontent.com/u/18681616?v=4",
+        "gravatar_id": "",
+        "url": "https://api.github.com/users/bigduu",
+        "html_url": "https://github.com/bigduu",
+        "followers_url": "https://api.github.com/users/bigduu/followers",
+        "following_url": "https://api.github.com/users/bigduu/following{/other_user}",
+        "gists_url": "https://api.github.com/users/bigduu/gists{/gist_id}",
+        "starred_url": "https://api.github.com/users/bigduu/starred{/owner}{/repo}",
+        "subscriptions_url": "https://api.github.com/users/bigduu/subscriptions",
+        "organizations_url": "https://api.github.com/users/bigduu/orgs",
+        "repos_url": "https://api.github.com/users/bigduu/repos",
+        "events_url": "https://api.github.com/users/bigduu/events{/privacy}",
+        "received_events_url": "https://api.github.com/users/bigduu/received_events",
+        "type": "User",
+        "user_view_type": "public",
+        "site_admin": false
+      },
+      "html_url": "https://github.com/bigduu/lotus-next",
+      "description": "Default web UI for Bamboo and the Bodhi desktop app: conversations, tool activity, approvals and settings.",
+      "fork": false,
+      "url": "https://api.github.com/repos/bigduu/lotus-next",
+      "forks_url": "https://api.github.com/repos/bigduu/lotus-next/forks",
+      "keys_url": "https://api.github.com/repos/bigduu/lotus-next/keys{/key_id}",
+      "collaborators_url": "https://api.github.com/repos/bigduu/lotus-next/collaborators{/collaborator}",
+      "teams_url": "https://api.github.com/repos/bigduu/lotus-next/teams",
+      "hooks_url": "https://api.github.com/repos/bigduu/lotus-next/hooks",
+      "issue_events_url": "https://api.github.com/repos/bigduu/lotus-next/issues/events{/number}",
+      "events_url": "https://api.github.com/repos/bigduu/lotus-next/events",
+      "assignees_url": "https://api.github.com/repos/bigduu/lotus-next/assignees{/user}",
+      "branches_url": "https://api.github.com/repos/bigduu/lotus-next/branches{/branch}",
+      "tags_url": "https://api.github.com/repos/bigduu/lotus-next/tags",
+      "blobs_url": "https://api.github.com/repos/bigduu/lotus-next/git/blobs{/sha}",
+      "git_tags_url": "https://api.github.com/repos/bigduu/lotus-next/git/tags{/sha}",
+      "git_refs_url": "https://api.github.com/repos/bigduu/lotus-next/git/refs{/sha}",
+      "trees_url": "https://api.github.com/repos/bigduu/lotus-next/git/trees{/sha}",
+      "statuses_url": "https://api.github.com/repos/bigduu/lotus-next/statuses/{sha}",
+      "languages_url": "https://api.github.com/repos/bigduu/lotus-next/languages",
+      "stargazers_url": "https://api.github.com/repos/bigduu/lotus-next/stargazers",
+      "contributors_url": "https://api.github.com/repos/bigduu/lotus-next/contributors",
+      "subscribers_url": "https://api.github.com/repos/bigduu/lotus-next/subscribers",
+      "subscription_url": "https://api.github.com/repos/bigduu/lotus-next/subscription",
+      "commits_url": "https://api.github.com/repos/bigduu/lotus-next/commits{/sha}",
+      "git_commits_url": "https://api.github.com/repos/bigduu/lotus-next/git/commits{/sha}",
+      "comments_url": "https://api.github.com/repos/bigduu/lotus-next/comments{/number}",
+      "issue_comment_url": "https://api.github.com/repos/bigduu/lotus-next/issues/comments{/number}",
+      "contents_url": "https://api.github.com/repos/bigduu/lotus-next/contents/{+path}",
+      "compare_url": "https://api.github.com/repos/bigduu/lotus-next/compare/{base}...{head}",
+      "merges_url": "https://api.github.com/repos/bigduu/lotus-next/merges",
+      "archive_url": "https://api.github.com/repos/bigduu/lotus-next/{archive_format}{/ref}",
+      "downloads_url": "https://api.github.com/repos/bigduu/lotus-next/downloads",
+      "issues_url": "https://api.github.com/repos/bigduu/lotus-next/issues{/number}",
+      "pulls_url": "https://api.github.com/repos/bigduu/lotus-next/pulls{/number}",
+      "milestones_url": "https://api.github.com/repos/bigduu/lotus-next/milestones{/number}",
+      "notifications_url": "https://api.github.com/repos/bigduu/lotus-next/notifications{?since,all,participating}",
+      "labels_url": "https://api.github.com/repos/bigduu/lotus-next/labels{/name}",
+      "releases_url": "https://api.github.com/repos/bigduu/lotus-next/releases{/id}",
+      "deployments_url": "https://api.github.com/repos/bigduu/lotus-next/deployments"
+    }
+  },
+  "jobs": {
+    "total_count": 12,
+    "jobs": [
+      {
+        "id": 121668118403,
+        "run_id": 40350273595,
+        "workflow_name": "Frontend checks",
+        "head_branch": "lotus-next/fix/440-bamboo18-acceptance",
+        "run_url": "https://api.github.com/repos/bigduu/lotus-next/actions/runs/40350273595",
+        "run_attempt": 1,
+        "node_id": "CR_kwDOTGLQTM8AAAAcU_wngw",
+        "head_sha": "ee2a7f4d52bbabefd49a8fc21550f061028f4117",
+        "url": "https://api.github.com/repos/bigduu/lotus-next/actions/jobs/121668118403",
+        "html_url": "https://github.com/bigduu/lotus-next/actions/runs/40350273595/job/121668118403",
+        "status": "completed",
+        "conclusion": "success",
+        "created_at": "2026-10-26T15:32:11Z",
+        "started_at": "2026-10-26T15:32:14Z",
+        "completed_at": "2026-10-26T15:36:05Z",
+        "name": "Node 24",
+        "steps": [
+          {
+            "name": "Set up job",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 1,
+            "started_at": "2026-10-26T15:32:15Z",
+            "completed_at": "2026-10-26T15:32:16Z"
+          },
+          {
+            "name": "Check out repository",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 2,
+            "started_at": "2026-10-26T15:32:16Z",
+            "completed_at": "2026-10-26T15:32:18Z"
+          },
+          {
+            "name": "Set up Node.js",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 3,
+            "started_at": "2026-10-26T15:32:18Z",
+            "completed_at": "2026-10-26T15:32:21Z"
+          },
+          {
+            "name": "Install dependencies",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 4,
+            "started_at": "2026-10-26T15:32:21Z",
+            "completed_at": "2026-10-26T15:32:31Z"
+          },
+          {
+            "name": "Verify architecture, behavior, build, and package contents",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 5,
+            "started_at": "2026-10-26T15:32:31Z",
+            "completed_at": "2026-10-26T15:35:50Z"
+          },
+          {
+            "name": "Verify the deterministic provider fixture",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 6,
+            "started_at": "2026-10-26T15:35:50Z",
+            "completed_at": "2026-10-26T15:35:50Z"
+          },
+          {
+            "name": "Verify the complete four-shard browser inventory",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 7,
+            "started_at": "2026-10-26T15:35:50Z",
+            "completed_at": "2026-10-26T15:35:59Z"
+          },
+          {
+            "name": "Share the verified exact-source artifact and inventory",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 8,
+            "started_at": "2026-10-26T15:35:59Z",
+            "completed_at": "2026-10-26T15:36:02Z"
+          },
+          {
+            "name": "Post Set up Node.js",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 15,
+            "started_at": "2026-10-26T15:36:02Z",
+            "completed_at": "2026-10-26T15:36:03Z"
+          },
+          {
+            "name": "Post Check out repository",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 16,
+            "started_at": "2026-10-26T15:36:03Z",
+            "completed_at": "2026-10-26T15:36:03Z"
+          },
+          {
+            "name": "Complete job",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 17,
+            "started_at": "2026-10-26T15:36:03Z",
+            "completed_at": "2026-10-26T15:36:03Z"
+          }
+        ],
+        "check_run_url": "https://api.github.com/repos/bigduu/lotus-next/check-runs/121668118403",
+        "labels": [
+          "ubuntu-latest"
+        ],
+        "runner_id": 1000047097,
+        "runner_name": "GitHub Actions 1000047097",
+        "runner_group_id": 0,
+        "runner_group_name": "GitHub Actions"
+      },
+      {
+        "id": 121668119211,
+        "run_id": 40350273595,
+        "workflow_name": "Frontend checks",
+        "head_branch": "lotus-next/fix/440-bamboo18-acceptance",
+        "run_url": "https://api.github.com/repos/bigduu/lotus-next/actions/runs/40350273595",
+        "run_attempt": 1,
+        "node_id": "CR_kwDOTGLQTM8AAAAcU_wqqw",
+        "head_sha": "ee2a7f4d52bbabefd49a8fc21550f061028f4117",
+        "url": "https://api.github.com/repos/bigduu/lotus-next/actions/jobs/121668119211",
+        "html_url": "https://github.com/bigduu/lotus-next/actions/runs/40350273595/job/121668119211",
+        "status": "completed",
+        "conclusion": "success",
+        "created_at": "2026-10-26T15:32:11Z",
+        "started_at": "2026-10-26T15:32:14Z",
+        "completed_at": "2026-10-26T15:34:36Z",
+        "name": "Node 22",
+        "steps": [
+          {
+            "name": "Set up job",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 1,
+            "started_at": "2026-10-26T15:32:15Z",
+            "completed_at": "2026-10-26T15:32:16Z"
+          },
+          {
+            "name": "Check out repository",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 2,
+            "started_at": "2026-10-26T15:32:16Z",
+            "completed_at": "2026-10-26T15:32:18Z"
+          },
+          {
+            "name": "Set up Node.js",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 3,
+            "started_at": "2026-10-26T15:32:18Z",
+            "completed_at": "2026-10-26T15:32:20Z"
+          },
+          {
+            "name": "Install dependencies",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 4,
+            "started_at": "2026-10-26T15:32:20Z",
+            "completed_at": "2026-10-26T15:32:25Z"
+          },
+          {
+            "name": "Verify architecture, behavior, build, and package contents",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 5,
+            "started_at": "2026-10-26T15:32:25Z",
+            "completed_at": "2026-10-26T15:34:26Z"
+          },
+          {
+            "name": "Verify the deterministic provider fixture",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 6,
+            "started_at": "2026-10-26T15:34:26Z",
+            "completed_at": "2026-10-26T15:34:26Z"
+          },
+          {
+            "name": "Verify the complete four-shard browser inventory",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 7,
+            "started_at": "2026-10-26T15:34:26Z",
+            "completed_at": "2026-10-26T15:34:32Z"
+          },
+          {
+            "name": "Share the verified exact-source artifact and inventory",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 8,
+            "started_at": "2026-10-26T15:34:32Z",
+            "completed_at": "2026-10-26T15:34:34Z"
+          },
+          {
+            "name": "Post Set up Node.js",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 15,
+            "started_at": "2026-10-26T15:34:34Z",
+            "completed_at": "2026-10-26T15:34:34Z"
+          },
+          {
+            "name": "Post Check out repository",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 16,
+            "started_at": "2026-10-26T15:34:34Z",
+            "completed_at": "2026-10-26T15:34:34Z"
+          },
+          {
+            "name": "Complete job",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 17,
+            "started_at": "2026-10-26T15:34:34Z",
+            "completed_at": "2026-10-26T15:34:34Z"
+          }
+        ],
+        "check_run_url": "https://api.github.com/repos/bigduu/lotus-next/check-runs/121668119211",
+        "labels": [
+          "ubuntu-latest"
+        ],
+        "runner_id": 1000047098,
+        "runner_name": "GitHub Actions 1000047098",
+        "runner_group_id": 0,
+        "runner_group_name": "GitHub Actions"
+      },
+      {
+        "id": 121670395472,
+        "run_id": 40350273595,
+        "workflow_name": "Frontend checks",
+        "head_branch": "lotus-next/fix/440-bamboo18-acceptance",
+        "run_url": "https://api.github.com/repos/bigduu/lotus-next/actions/runs/40350273595",
+        "run_attempt": 1,
+        "node_id": "CR_kwDOTGLQTM8AAAAcVB7mUA",
+        "head_sha": "ee2a7f4d52bbabefd49a8fc21550f061028f4117",
+        "url": "https://api.github.com/repos/bigduu/lotus-next/actions/jobs/121670395472",
+        "html_url": "https://github.com/bigduu/lotus-next/actions/runs/40350273595/job/121670395472",
+        "status": "completed",
+        "conclusion": "success",
+        "created_at": "2026-10-26T15:36:06Z",
+        "started_at": "2026-10-26T15:36:08Z",
+        "completed_at": "2026-10-26T15:44:19Z",
+        "name": "Browser / Node 22 / shard 2 of 4",
+        "steps": [
+          {
+            "name": "Set up job",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 1,
+            "started_at": "2026-10-26T15:36:09Z",
+            "completed_at": "2026-10-26T15:36:11Z"
+          },
+          {
+            "name": "Check out exact source",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 2,
+            "started_at": "2026-10-26T15:36:11Z",
+            "completed_at": "2026-10-26T15:36:13Z"
+          },
+          {
+            "name": "Set up Node.js",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 3,
+            "started_at": "2026-10-26T15:36:13Z",
+            "completed_at": "2026-10-26T15:36:15Z"
+          },
+          {
+            "name": "Install dependencies",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 4,
+            "started_at": "2026-10-26T15:36:15Z",
+            "completed_at": "2026-10-26T15:36:20Z"
+          },
+          {
+            "name": "Restore the verified artifact and inventory for this Node lane",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 5,
+            "started_at": "2026-10-26T15:36:20Z",
+            "completed_at": "2026-10-26T15:36:22Z"
+          },
+          {
+            "name": "Check exact artifact source and inventory",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 6,
+            "started_at": "2026-10-26T15:36:22Z",
+            "completed_at": "2026-10-26T15:36:22Z"
+          },
+          {
+            "name": "Install Chromium",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 7,
+            "started_at": "2026-10-26T15:36:22Z",
+            "completed_at": "2026-10-26T15:36:39Z"
+          },
+          {
+            "name": "Verify the all-surface browser shard",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 8,
+            "started_at": "2026-10-26T15:36:39Z",
+            "completed_at": "2026-10-26T15:44:13Z"
+          },
+          {
+            "name": "Verify controlled Project Work component fixtures",
+            "status": "completed",
+            "conclusion": "skipped",
+            "number": 9,
+            "started_at": "2026-10-26T15:44:13Z",
+            "completed_at": "2026-10-26T15:44:13Z"
+          },
+          {
+            "name": "Verify Sprint planning and fixed-snapshot browser contracts",
+            "status": "completed",
+            "conclusion": "skipped",
+            "number": 10,
+            "started_at": "2026-10-26T15:44:13Z",
+            "completed_at": "2026-10-26T15:44:13Z"
+          },
+          {
+            "name": "Verify configuration sharing with the synthetic source harness",
+            "status": "completed",
+            "conclusion": "skipped",
+            "number": 11,
+            "started_at": "2026-10-26T15:44:13Z",
+            "completed_at": "2026-10-26T15:44:13Z"
+          },
+          {
+            "name": "Record this shard's actual outcome and inventory",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 12,
+            "started_at": "2026-10-26T15:44:13Z",
+            "completed_at": "2026-10-26T15:44:13Z"
+          },
+          {
+            "name": "Upload the independent shard receipt",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 13,
+            "started_at": "2026-10-26T15:44:13Z",
+            "completed_at": "2026-10-26T15:44:14Z"
+          },
+          {
+            "name": "Upload browser evidence",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 14,
+            "started_at": "2026-10-26T15:44:14Z",
+            "completed_at": "2026-10-26T15:44:17Z"
+          },
+          {
+            "name": "Post Set up Node.js",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 27,
+            "started_at": "2026-10-26T15:44:17Z",
+            "completed_at": "2026-10-26T15:44:17Z"
+          },
+          {
+            "name": "Post Check out exact source",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 28,
+            "started_at": "2026-10-26T15:44:17Z",
+            "completed_at": "2026-10-26T15:44:17Z"
+          },
+          {
+            "name": "Complete job",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 29,
+            "started_at": "2026-10-26T15:44:17Z",
+            "completed_at": "2026-10-26T15:44:17Z"
+          }
+        ],
+        "check_run_url": "https://api.github.com/repos/bigduu/lotus-next/check-runs/121670395472",
+        "labels": [
+          "ubuntu-latest"
+        ],
+        "runner_id": 1000047104,
+        "runner_name": "GitHub Actions 1000047104",
+        "runner_group_id": 0,
+        "runner_group_name": "GitHub Actions"
+      },
+      {
+        "id": 121670395479,
+        "run_id": 40350273595,
+        "workflow_name": "Frontend checks",
+        "head_branch": "lotus-next/fix/440-bamboo18-acceptance",
+        "run_url": "https://api.github.com/repos/bigduu/lotus-next/actions/runs/40350273595",
+        "run_attempt": 1,
+        "node_id": "CR_kwDOTGLQTM8AAAAcVB7mVw",
+        "head_sha": "ee2a7f4d52bbabefd49a8fc21550f061028f4117",
+        "url": "https://api.github.com/repos/bigduu/lotus-next/actions/jobs/121670395479",
+        "html_url": "https://github.com/bigduu/lotus-next/actions/runs/40350273595/job/121670395479",
+        "status": "completed",
+        "conclusion": "success",
+        "created_at": "2026-10-26T15:36:06Z",
+        "started_at": "2026-10-26T15:36:09Z",
+        "completed_at": "2026-10-26T15:57:37Z",
+        "name": "Browser / Node 22 / shard 4 of 4",
+        "steps": [
+          {
+            "name": "Set up job",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 1,
+            "started_at": "2026-10-26T15:36:10Z",
+            "completed_at": "2026-10-26T15:36:11Z"
+          },
+          {
+            "name": "Check out exact source",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 2,
+            "started_at": "2026-10-26T15:36:12Z",
+            "completed_at": "2026-10-26T15:36:13Z"
+          },
+          {
+            "name": "Set up Node.js",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 3,
+            "started_at": "2026-10-26T15:36:13Z",
+            "completed_at": "2026-10-26T15:36:20Z"
+          },
+          {
+            "name": "Install dependencies",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 4,
+            "started_at": "2026-10-26T15:36:20Z",
+            "completed_at": "2026-10-26T15:36:30Z"
+          },
+          {
+            "name": "Restore the verified artifact and inventory for this Node lane",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 5,
+            "started_at": "2026-10-26T15:36:30Z",
+            "completed_at": "2026-10-26T15:36:32Z"
+          },
+          {
+            "name": "Check exact artifact source and inventory",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 6,
+            "started_at": "2026-10-26T15:36:32Z",
+            "completed_at": "2026-10-26T15:36:32Z"
+          },
+          {
+            "name": "Install Chromium",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 7,
+            "started_at": "2026-10-26T15:36:32Z",
+            "completed_at": "2026-10-26T15:48:16Z"
+          },
+          {
+            "name": "Verify the all-surface browser shard",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 8,
+            "started_at": "2026-10-26T15:48:16Z",
+            "completed_at": "2026-10-26T15:57:28Z"
+          },
+          {
+            "name": "Verify controlled Project Work component fixtures",
+            "status": "completed",
+            "conclusion": "skipped",
+            "number": 9,
+            "started_at": "2026-10-26T15:57:28Z",
+            "completed_at": "2026-10-26T15:57:28Z"
+          },
+          {
+            "name": "Verify Sprint planning and fixed-snapshot browser contracts",
+            "status": "completed",
+            "conclusion": "skipped",
+            "number": 10,
+            "started_at": "2026-10-26T15:57:28Z",
+            "completed_at": "2026-10-26T15:57:28Z"
+          },
+          {
+            "name": "Verify configuration sharing with the synthetic source harness",
+            "status": "completed",
+            "conclusion": "skipped",
+            "number": 11,
+            "started_at": "2026-10-26T15:57:28Z",
+            "completed_at": "2026-10-26T15:57:28Z"
+          },
+          {
+            "name": "Record this shard's actual outcome and inventory",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 12,
+            "started_at": "2026-10-26T15:57:28Z",
+            "completed_at": "2026-10-26T15:57:28Z"
+          },
+          {
+            "name": "Upload the independent shard receipt",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 13,
+            "started_at": "2026-10-26T15:57:28Z",
+            "completed_at": "2026-10-26T15:57:29Z"
+          },
+          {
+            "name": "Upload browser evidence",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 14,
+            "started_at": "2026-10-26T15:57:29Z",
+            "completed_at": "2026-10-26T15:57:33Z"
+          },
+          {
+            "name": "Post Set up Node.js",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 27,
+            "started_at": "2026-10-26T15:57:33Z",
+            "completed_at": "2026-10-26T15:57:33Z"
+          },
+          {
+            "name": "Post Check out exact source",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 28,
+            "started_at": "2026-10-26T15:57:33Z",
+            "completed_at": "2026-10-26T15:57:33Z"
+          },
+          {
+            "name": "Complete job",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 29,
+            "started_at": "2026-10-26T15:57:33Z",
+            "completed_at": "2026-10-26T15:57:33Z"
+          }
+        ],
+        "check_run_url": "https://api.github.com/repos/bigduu/lotus-next/check-runs/121670395479",
+        "labels": [
+          "ubuntu-latest"
+        ],
+        "runner_id": 1000047102,
+        "runner_name": "GitHub Actions 1000047102",
+        "runner_group_id": 0,
+        "runner_group_name": "GitHub Actions"
+      },
+      {
+        "id": 121670395519,
+        "run_id": 40350273595,
+        "workflow_name": "Frontend checks",
+        "head_branch": "lotus-next/fix/440-bamboo18-acceptance",
+        "run_url": "https://api.github.com/repos/bigduu/lotus-next/actions/runs/40350273595",
+        "run_attempt": 1,
+        "node_id": "CR_kwDOTGLQTM8AAAAcVB7mfw",
+        "head_sha": "ee2a7f4d52bbabefd49a8fc21550f061028f4117",
+        "url": "https://api.github.com/repos/bigduu/lotus-next/actions/jobs/121670395519",
+        "html_url": "https://github.com/bigduu/lotus-next/actions/runs/40350273595/job/121670395519",
+        "status": "completed",
+        "conclusion": "success",
+        "created_at": "2026-10-26T15:36:06Z",
+        "started_at": "2026-10-26T15:36:08Z",
+        "completed_at": "2026-10-26T15:45:50Z",
+        "name": "Browser / Node 24 / shard 4 of 4",
+        "steps": [
+          {
+            "name": "Set up job",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 1,
+            "started_at": "2026-10-26T15:36:09Z",
+            "completed_at": "2026-10-26T15:36:10Z"
+          },
+          {
+            "name": "Check out exact source",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 2,
+            "started_at": "2026-10-26T15:36:10Z",
+            "completed_at": "2026-10-26T15:36:12Z"
+          },
+          {
+            "name": "Set up Node.js",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 3,
+            "started_at": "2026-10-26T15:36:12Z",
+            "completed_at": "2026-10-26T15:36:14Z"
+          },
+          {
+            "name": "Install dependencies",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 4,
+            "started_at": "2026-10-26T15:36:14Z",
+            "completed_at": "2026-10-26T15:36:22Z"
+          },
+          {
+            "name": "Restore the verified artifact and inventory for this Node lane",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 5,
+            "started_at": "2026-10-26T15:36:22Z",
+            "completed_at": "2026-10-26T15:36:23Z"
+          },
+          {
+            "name": "Check exact artifact source and inventory",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 6,
+            "started_at": "2026-10-26T15:36:23Z",
+            "completed_at": "2026-10-26T15:36:23Z"
+          },
+          {
+            "name": "Install Chromium",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 7,
+            "started_at": "2026-10-26T15:36:23Z",
+            "completed_at": "2026-10-26T15:36:43Z"
+          },
+          {
+            "name": "Verify the all-surface browser shard",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 8,
+            "started_at": "2026-10-26T15:36:43Z",
+            "completed_at": "2026-10-26T15:45:44Z"
+          },
+          {
+            "name": "Verify controlled Project Work component fixtures",
+            "status": "completed",
+            "conclusion": "skipped",
+            "number": 9,
+            "started_at": "2026-10-26T15:45:44Z",
+            "completed_at": "2026-10-26T15:45:44Z"
+          },
+          {
+            "name": "Verify Sprint planning and fixed-snapshot browser contracts",
+            "status": "completed",
+            "conclusion": "skipped",
+            "number": 10,
+            "started_at": "2026-10-26T15:45:44Z",
+            "completed_at": "2026-10-26T15:45:44Z"
+          },
+          {
+            "name": "Verify configuration sharing with the synthetic source harness",
+            "status": "completed",
+            "conclusion": "skipped",
+            "number": 11,
+            "started_at": "2026-10-26T15:45:44Z",
+            "completed_at": "2026-10-26T15:45:44Z"
+          },
+          {
+            "name": "Record this shard's actual outcome and inventory",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 12,
+            "started_at": "2026-10-26T15:45:44Z",
+            "completed_at": "2026-10-26T15:45:44Z"
+          },
+          {
+            "name": "Upload the independent shard receipt",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 13,
+            "started_at": "2026-10-26T15:45:44Z",
+            "completed_at": "2026-10-26T15:45:45Z"
+          },
+          {
+            "name": "Upload browser evidence",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 14,
+            "started_at": "2026-10-26T15:45:45Z",
+            "completed_at": "2026-10-26T15:45:48Z"
+          },
+          {
+            "name": "Post Set up Node.js",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 27,
+            "started_at": "2026-10-26T15:45:48Z",
+            "completed_at": "2026-10-26T15:45:48Z"
+          },
+          {
+            "name": "Post Check out exact source",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 28,
+            "started_at": "2026-10-26T15:45:48Z",
+            "completed_at": "2026-10-26T15:45:48Z"
+          },
+          {
+            "name": "Complete job",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 29,
+            "started_at": "2026-10-26T15:45:48Z",
+            "completed_at": "2026-10-26T15:45:48Z"
+          }
+        ],
+        "check_run_url": "https://api.github.com/repos/bigduu/lotus-next/check-runs/121670395519",
+        "labels": [
+          "ubuntu-latest"
+        ],
+        "runner_id": 1000047103,
+        "runner_name": "GitHub Actions 1000047103",
+        "runner_group_id": 0,
+        "runner_group_name": "GitHub Actions"
+      },
+      {
+        "id": 121670395626,
+        "run_id": 40350273595,
+        "workflow_name": "Frontend checks",
+        "head_branch": "lotus-next/fix/440-bamboo18-acceptance",
+        "run_url": "https://api.github.com/repos/bigduu/lotus-next/actions/runs/40350273595",
+        "run_attempt": 1,
+        "node_id": "CR_kwDOTGLQTM8AAAAcVB7m6g",
+        "head_sha": "ee2a7f4d52bbabefd49a8fc21550f061028f4117",
+        "url": "https://api.github.com/repos/bigduu/lotus-next/actions/jobs/121670395626",
+        "html_url": "https://github.com/bigduu/lotus-next/actions/runs/40350273595/job/121670395626",
+        "status": "completed",
+        "conclusion": "success",
+        "created_at": "2026-10-26T15:36:06Z",
+        "started_at": "2026-10-26T15:36:09Z",
+        "completed_at": "2026-10-26T15:55:11Z",
+        "name": "Browser / Node 24 / shard 2 of 4",
+        "steps": [
+          {
+            "name": "Set up job",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 1,
+            "started_at": "2026-10-26T15:36:10Z",
+            "completed_at": "2026-10-26T15:36:12Z"
+          },
+          {
+            "name": "Check out exact source",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 2,
+            "started_at": "2026-10-26T15:36:12Z",
+            "completed_at": "2026-10-26T15:36:15Z"
+          },
+          {
+            "name": "Set up Node.js",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 3,
+            "started_at": "2026-10-26T15:36:15Z",
+            "completed_at": "2026-10-26T15:36:18Z"
+          },
+          {
+            "name": "Install dependencies",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 4,
+            "started_at": "2026-10-26T15:36:18Z",
+            "completed_at": "2026-10-26T15:36:25Z"
+          },
+          {
+            "name": "Restore the verified artifact and inventory for this Node lane",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 5,
+            "started_at": "2026-10-26T15:36:25Z",
+            "completed_at": "2026-10-26T15:36:26Z"
+          },
+          {
+            "name": "Check exact artifact source and inventory",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 6,
+            "started_at": "2026-10-26T15:36:26Z",
+            "completed_at": "2026-10-26T15:36:26Z"
+          },
+          {
+            "name": "Install Chromium",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 7,
+            "started_at": "2026-10-26T15:36:26Z",
+            "completed_at": "2026-10-26T15:47:28Z"
+          },
+          {
+            "name": "Verify the all-surface browser shard",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 8,
+            "started_at": "2026-10-26T15:47:28Z",
+            "completed_at": "2026-10-26T15:55:04Z"
+          },
+          {
+            "name": "Verify controlled Project Work component fixtures",
+            "status": "completed",
+            "conclusion": "skipped",
+            "number": 9,
+            "started_at": "2026-10-26T15:55:04Z",
+            "completed_at": "2026-10-26T15:55:04Z"
+          },
+          {
+            "name": "Verify Sprint planning and fixed-snapshot browser contracts",
+            "status": "completed",
+            "conclusion": "skipped",
+            "number": 10,
+            "started_at": "2026-10-26T15:55:04Z",
+            "completed_at": "2026-10-26T15:55:04Z"
+          },
+          {
+            "name": "Verify configuration sharing with the synthetic source harness",
+            "status": "completed",
+            "conclusion": "skipped",
+            "number": 11,
+            "started_at": "2026-10-26T15:55:04Z",
+            "completed_at": "2026-10-26T15:55:04Z"
+          },
+          {
+            "name": "Record this shard's actual outcome and inventory",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 12,
+            "started_at": "2026-10-26T15:55:04Z",
+            "completed_at": "2026-10-26T15:55:04Z"
+          },
+          {
+            "name": "Upload the independent shard receipt",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 13,
+            "started_at": "2026-10-26T15:55:04Z",
+            "completed_at": "2026-10-26T15:55:06Z"
+          },
+          {
+            "name": "Upload browser evidence",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 14,
+            "started_at": "2026-10-26T15:55:06Z",
+            "completed_at": "2026-10-26T15:55:08Z"
+          },
+          {
+            "name": "Post Set up Node.js",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 27,
+            "started_at": "2026-10-26T15:55:08Z",
+            "completed_at": "2026-10-26T15:55:09Z"
+          },
+          {
+            "name": "Post Check out exact source",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 28,
+            "started_at": "2026-10-26T15:55:09Z",
+            "completed_at": "2026-10-26T15:55:09Z"
+          },
+          {
+            "name": "Complete job",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 29,
+            "started_at": "2026-10-26T15:55:09Z",
+            "completed_at": "2026-10-26T15:55:09Z"
+          }
+        ],
+        "check_run_url": "https://api.github.com/repos/bigduu/lotus-next/check-runs/121670395626",
+        "labels": [
+          "ubuntu-latest"
+        ],
+        "runner_id": 1000047105,
+        "runner_name": "GitHub Actions 1000047105",
+        "runner_group_id": 0,
+        "runner_group_name": "GitHub Actions"
+      },
+      {
+        "id": 121670395645,
+        "run_id": 40350273595,
+        "workflow_name": "Frontend checks",
+        "head_branch": "lotus-next/fix/440-bamboo18-acceptance",
+        "run_url": "https://api.github.com/repos/bigduu/lotus-next/actions/runs/40350273595",
+        "run_attempt": 1,
+        "node_id": "CR_kwDOTGLQTM8AAAAcVB7m_Q",
+        "head_sha": "ee2a7f4d52bbabefd49a8fc21550f061028f4117",
+        "url": "https://api.github.com/repos/bigduu/lotus-next/actions/jobs/121670395645",
+        "html_url": "https://github.com/bigduu/lotus-next/actions/runs/40350273595/job/121670395645",
+        "status": "completed",
+        "conclusion": "success",
+        "created_at": "2026-10-26T15:36:06Z",
+        "started_at": "2026-10-26T15:36:09Z",
+        "completed_at": "2026-10-26T15:46:16Z",
+        "name": "Browser / Node 24 / shard 1 of 4",
+        "steps": [
+          {
+            "name": "Set up job",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 1,
+            "started_at": "2026-10-26T15:36:09Z",
+            "completed_at": "2026-10-26T15:36:12Z"
+          },
+          {
+            "name": "Check out exact source",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 2,
+            "started_at": "2026-10-26T15:36:12Z",
+            "completed_at": "2026-10-26T15:36:14Z"
+          },
+          {
+            "name": "Set up Node.js",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 3,
+            "started_at": "2026-10-26T15:36:14Z",
+            "completed_at": "2026-10-26T15:36:16Z"
+          },
+          {
+            "name": "Install dependencies",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 4,
+            "started_at": "2026-10-26T15:36:16Z",
+            "completed_at": "2026-10-26T15:36:21Z"
+          },
+          {
+            "name": "Restore the verified artifact and inventory for this Node lane",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 5,
+            "started_at": "2026-10-26T15:36:21Z",
+            "completed_at": "2026-10-26T15:36:23Z"
+          },
+          {
+            "name": "Check exact artifact source and inventory",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 6,
+            "started_at": "2026-10-26T15:36:23Z",
+            "completed_at": "2026-10-26T15:36:23Z"
+          },
+          {
+            "name": "Install Chromium",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 7,
+            "started_at": "2026-10-26T15:36:23Z",
+            "completed_at": "2026-10-26T15:36:42Z"
+          },
+          {
+            "name": "Verify the all-surface browser shard",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 8,
+            "started_at": "2026-10-26T15:36:42Z",
+            "completed_at": "2026-10-26T15:45:34Z"
+          },
+          {
+            "name": "Verify controlled Project Work component fixtures",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 9,
+            "started_at": "2026-10-26T15:45:34Z",
+            "completed_at": "2026-10-26T15:45:45Z"
+          },
+          {
+            "name": "Verify Sprint planning and fixed-snapshot browser contracts",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 10,
+            "started_at": "2026-10-26T15:45:45Z",
+            "completed_at": "2026-10-26T15:46:03Z"
+          },
+          {
+            "name": "Verify configuration sharing with the synthetic source harness",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 11,
+            "started_at": "2026-10-26T15:46:03Z",
+            "completed_at": "2026-10-26T15:46:10Z"
+          },
+          {
+            "name": "Record this shard's actual outcome and inventory",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 12,
+            "started_at": "2026-10-26T15:46:10Z",
+            "completed_at": "2026-10-26T15:46:10Z"
+          },
+          {
+            "name": "Upload the independent shard receipt",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 13,
+            "started_at": "2026-10-26T15:46:10Z",
+            "completed_at": "2026-10-26T15:46:11Z"
+          },
+          {
+            "name": "Upload browser evidence",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 14,
+            "started_at": "2026-10-26T15:46:11Z",
+            "completed_at": "2026-10-26T15:46:14Z"
+          },
+          {
+            "name": "Post Set up Node.js",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 27,
+            "started_at": "2026-10-26T15:46:14Z",
+            "completed_at": "2026-10-26T15:46:14Z"
+          },
+          {
+            "name": "Post Check out exact source",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 28,
+            "started_at": "2026-10-26T15:46:14Z",
+            "completed_at": "2026-10-26T15:46:14Z"
+          },
+          {
+            "name": "Complete job",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 29,
+            "started_at": "2026-10-26T15:46:14Z",
+            "completed_at": "2026-10-26T15:46:14Z"
+          }
+        ],
+        "check_run_url": "https://api.github.com/repos/bigduu/lotus-next/check-runs/121670395645",
+        "labels": [
+          "ubuntu-latest"
+        ],
+        "runner_id": 1000047106,
+        "runner_name": "GitHub Actions 1000047106",
+        "runner_group_id": 0,
+        "runner_group_name": "GitHub Actions"
+      },
+      {
+        "id": 121670395665,
+        "run_id": 40350273595,
+        "workflow_name": "Frontend checks",
+        "head_branch": "lotus-next/fix/440-bamboo18-acceptance",
+        "run_url": "https://api.github.com/repos/bigduu/lotus-next/actions/runs/40350273595",
+        "run_attempt": 1,
+        "node_id": "CR_kwDOTGLQTM8AAAAcVB7nEQ",
+        "head_sha": "ee2a7f4d52bbabefd49a8fc21550f061028f4117",
+        "url": "https://api.github.com/repos/bigduu/lotus-next/actions/jobs/121670395665",
+        "html_url": "https://github.com/bigduu/lotus-next/actions/runs/40350273595/job/121670395665",
+        "status": "completed",
+        "conclusion": "success",
+        "created_at": "2026-10-26T15:36:06Z",
+        "started_at": "2026-10-26T15:36:09Z",
+        "completed_at": "2026-10-26T15:47:39Z",
+        "name": "Browser / Node 22 / shard 1 of 4",
+        "steps": [
+          {
+            "name": "Set up job",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 1,
+            "started_at": "2026-10-26T15:36:10Z",
+            "completed_at": "2026-10-26T15:36:11Z"
+          },
+          {
+            "name": "Check out exact source",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 2,
+            "started_at": "2026-10-26T15:36:11Z",
+            "completed_at": "2026-10-26T15:36:14Z"
+          },
+          {
+            "name": "Set up Node.js",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 3,
+            "started_at": "2026-10-26T15:36:14Z",
+            "completed_at": "2026-10-26T15:36:17Z"
+          },
+          {
+            "name": "Install dependencies",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 4,
+            "started_at": "2026-10-26T15:36:17Z",
+            "completed_at": "2026-10-26T15:36:24Z"
+          },
+          {
+            "name": "Restore the verified artifact and inventory for this Node lane",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 5,
+            "started_at": "2026-10-26T15:36:24Z",
+            "completed_at": "2026-10-26T15:36:25Z"
+          },
+          {
+            "name": "Check exact artifact source and inventory",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 6,
+            "started_at": "2026-10-26T15:36:25Z",
+            "completed_at": "2026-10-26T15:36:25Z"
+          },
+          {
+            "name": "Install Chromium",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 7,
+            "started_at": "2026-10-26T15:36:25Z",
+            "completed_at": "2026-10-26T15:36:48Z"
+          },
+          {
+            "name": "Verify the all-surface browser shard",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 8,
+            "started_at": "2026-10-26T15:36:48Z",
+            "completed_at": "2026-10-26T15:46:50Z"
+          },
+          {
+            "name": "Verify controlled Project Work component fixtures",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 9,
+            "started_at": "2026-10-26T15:46:50Z",
+            "completed_at": "2026-10-26T15:47:03Z"
+          },
+          {
+            "name": "Verify Sprint planning and fixed-snapshot browser contracts",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 10,
+            "started_at": "2026-10-26T15:47:03Z",
+            "completed_at": "2026-10-26T15:47:24Z"
+          },
+          {
+            "name": "Verify configuration sharing with the synthetic source harness",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 11,
+            "started_at": "2026-10-26T15:47:24Z",
+            "completed_at": "2026-10-26T15:47:32Z"
+          },
+          {
+            "name": "Record this shard's actual outcome and inventory",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 12,
+            "started_at": "2026-10-26T15:47:32Z",
+            "completed_at": "2026-10-26T15:47:32Z"
+          },
+          {
+            "name": "Upload the independent shard receipt",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 13,
+            "started_at": "2026-10-26T15:47:32Z",
+            "completed_at": "2026-10-26T15:47:33Z"
+          },
+          {
+            "name": "Upload browser evidence",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 14,
+            "started_at": "2026-10-26T15:47:33Z",
+            "completed_at": "2026-10-26T15:47:36Z"
+          },
+          {
+            "name": "Post Set up Node.js",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 27,
+            "started_at": "2026-10-26T15:47:36Z",
+            "completed_at": "2026-10-26T15:47:37Z"
+          },
+          {
+            "name": "Post Check out exact source",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 28,
+            "started_at": "2026-10-26T15:47:37Z",
+            "completed_at": "2026-10-26T15:47:37Z"
+          },
+          {
+            "name": "Complete job",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 29,
+            "started_at": "2026-10-26T15:47:37Z",
+            "completed_at": "2026-10-26T15:47:37Z"
+          }
+        ],
+        "check_run_url": "https://api.github.com/repos/bigduu/lotus-next/check-runs/121670395665",
+        "labels": [
+          "ubuntu-latest"
+        ],
+        "runner_id": 1000047107,
+        "runner_name": "GitHub Actions 1000047107",
+        "runner_group_id": 0,
+        "runner_group_name": "GitHub Actions"
+      },
+      {
+        "id": 121670395783,
+        "run_id": 40350273595,
+        "workflow_name": "Frontend checks",
+        "head_branch": "lotus-next/fix/440-bamboo18-acceptance",
+        "run_url": "https://api.github.com/repos/bigduu/lotus-next/actions/runs/40350273595",
+        "run_attempt": 1,
+        "node_id": "CR_kwDOTGLQTM8AAAAcVB7nhw",
+        "head_sha": "ee2a7f4d52bbabefd49a8fc21550f061028f4117",
+        "url": "https://api.github.com/repos/bigduu/lotus-next/actions/jobs/121670395783",
+        "html_url": "https://github.com/bigduu/lotus-next/actions/runs/40350273595/job/121670395783",
+        "status": "completed",
+        "conclusion": "success",
+        "created_at": "2026-10-26T15:36:06Z",
+        "started_at": "2026-10-26T15:36:09Z",
+        "completed_at": "2026-10-26T15:44:25Z",
+        "name": "Browser / Node 24 / shard 3 of 4",
+        "steps": [
+          {
+            "name": "Set up job",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 1,
+            "started_at": "2026-10-26T15:36:09Z",
+            "completed_at": "2026-10-26T15:36:10Z"
+          },
+          {
+            "name": "Check out exact source",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 2,
+            "started_at": "2026-10-26T15:36:10Z",
+            "completed_at": "2026-10-26T15:36:12Z"
+          },
+          {
+            "name": "Set up Node.js",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 3,
+            "started_at": "2026-10-26T15:36:12Z",
+            "completed_at": "2026-10-26T15:36:16Z"
+          },
+          {
+            "name": "Install dependencies",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 4,
+            "started_at": "2026-10-26T15:36:16Z",
+            "completed_at": "2026-10-26T15:36:25Z"
+          },
+          {
+            "name": "Restore the verified artifact and inventory for this Node lane",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 5,
+            "started_at": "2026-10-26T15:36:25Z",
+            "completed_at": "2026-10-26T15:36:26Z"
+          },
+          {
+            "name": "Check exact artifact source and inventory",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 6,
+            "started_at": "2026-10-26T15:36:26Z",
+            "completed_at": "2026-10-26T15:36:26Z"
+          },
+          {
+            "name": "Install Chromium",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 7,
+            "started_at": "2026-10-26T15:36:26Z",
+            "completed_at": "2026-10-26T15:36:45Z"
+          },
+          {
+            "name": "Verify the all-surface browser shard",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 8,
+            "started_at": "2026-10-26T15:36:45Z",
+            "completed_at": "2026-10-26T15:44:21Z"
+          },
+          {
+            "name": "Verify controlled Project Work component fixtures",
+            "status": "completed",
+            "conclusion": "skipped",
+            "number": 9,
+            "started_at": "2026-10-26T15:44:21Z",
+            "completed_at": "2026-10-26T15:44:21Z"
+          },
+          {
+            "name": "Verify Sprint planning and fixed-snapshot browser contracts",
+            "status": "completed",
+            "conclusion": "skipped",
+            "number": 10,
+            "started_at": "2026-10-26T15:44:21Z",
+            "completed_at": "2026-10-26T15:44:21Z"
+          },
+          {
+            "name": "Verify configuration sharing with the synthetic source harness",
+            "status": "completed",
+            "conclusion": "skipped",
+            "number": 11,
+            "started_at": "2026-10-26T15:44:21Z",
+            "completed_at": "2026-10-26T15:44:21Z"
+          },
+          {
+            "name": "Record this shard's actual outcome and inventory",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 12,
+            "started_at": "2026-10-26T15:44:21Z",
+            "completed_at": "2026-10-26T15:44:21Z"
+          },
+          {
+            "name": "Upload the independent shard receipt",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 13,
+            "started_at": "2026-10-26T15:44:21Z",
+            "completed_at": "2026-10-26T15:44:22Z"
+          },
+          {
+            "name": "Upload browser evidence",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 14,
+            "started_at": "2026-10-26T15:44:22Z",
+            "completed_at": "2026-10-26T15:44:24Z"
+          },
+          {
+            "name": "Post Set up Node.js",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 27,
+            "started_at": "2026-10-26T15:44:24Z",
+            "completed_at": "2026-10-26T15:44:24Z"
+          },
+          {
+            "name": "Post Check out exact source",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 28,
+            "started_at": "2026-10-26T15:44:24Z",
+            "completed_at": "2026-10-26T15:44:24Z"
+          },
+          {
+            "name": "Complete job",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 29,
+            "started_at": "2026-10-26T15:44:24Z",
+            "completed_at": "2026-10-26T15:44:24Z"
+          }
+        ],
+        "check_run_url": "https://api.github.com/repos/bigduu/lotus-next/check-runs/121670395783",
+        "labels": [
+          "ubuntu-latest"
+        ],
+        "runner_id": 1000047108,
+        "runner_name": "GitHub Actions 1000047108",
+        "runner_group_id": 0,
+        "runner_group_name": "GitHub Actions"
+      },
+      {
+        "id": 121670395787,
+        "run_id": 40350273595,
+        "workflow_name": "Frontend checks",
+        "head_branch": "lotus-next/fix/440-bamboo18-acceptance",
+        "run_url": "https://api.github.com/repos/bigduu/lotus-next/actions/runs/40350273595",
+        "run_attempt": 1,
+        "node_id": "CR_kwDOTGLQTM8AAAAcVB7niw",
+        "head_sha": "ee2a7f4d52bbabefd49a8fc21550f061028f4117",
+        "url": "https://api.github.com/repos/bigduu/lotus-next/actions/jobs/121670395787",
+        "html_url": "https://github.com/bigduu/lotus-next/actions/runs/40350273595/job/121670395787",
+        "status": "completed",
+        "conclusion": "success",
+        "created_at": "2026-10-26T15:36:06Z",
+        "started_at": "2026-10-26T15:36:09Z",
+        "completed_at": "2026-10-26T15:44:41Z",
+        "name": "Browser / Node 22 / shard 3 of 4",
+        "steps": [
+          {
+            "name": "Set up job",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 1,
+            "started_at": "2026-10-26T15:36:10Z",
+            "completed_at": "2026-10-26T15:36:12Z"
+          },
+          {
+            "name": "Check out exact source",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 2,
+            "started_at": "2026-10-26T15:36:12Z",
+            "completed_at": "2026-10-26T15:36:14Z"
+          },
+          {
+            "name": "Set up Node.js",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 3,
+            "started_at": "2026-10-26T15:36:14Z",
+            "completed_at": "2026-10-26T15:36:17Z"
+          },
+          {
+            "name": "Install dependencies",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 4,
+            "started_at": "2026-10-26T15:36:17Z",
+            "completed_at": "2026-10-26T15:36:26Z"
+          },
+          {
+            "name": "Restore the verified artifact and inventory for this Node lane",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 5,
+            "started_at": "2026-10-26T15:36:26Z",
+            "completed_at": "2026-10-26T15:36:27Z"
+          },
+          {
+            "name": "Check exact artifact source and inventory",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 6,
+            "started_at": "2026-10-26T15:36:27Z",
+            "completed_at": "2026-10-26T15:36:27Z"
+          },
+          {
+            "name": "Install Chromium",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 7,
+            "started_at": "2026-10-26T15:36:27Z",
+            "completed_at": "2026-10-26T15:36:47Z"
+          },
+          {
+            "name": "Verify the all-surface browser shard",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 8,
+            "started_at": "2026-10-26T15:36:47Z",
+            "completed_at": "2026-10-26T15:44:34Z"
+          },
+          {
+            "name": "Verify controlled Project Work component fixtures",
+            "status": "completed",
+            "conclusion": "skipped",
+            "number": 9,
+            "started_at": "2026-10-26T15:44:34Z",
+            "completed_at": "2026-10-26T15:44:34Z"
+          },
+          {
+            "name": "Verify Sprint planning and fixed-snapshot browser contracts",
+            "status": "completed",
+            "conclusion": "skipped",
+            "number": 10,
+            "started_at": "2026-10-26T15:44:34Z",
+            "completed_at": "2026-10-26T15:44:34Z"
+          },
+          {
+            "name": "Verify configuration sharing with the synthetic source harness",
+            "status": "completed",
+            "conclusion": "skipped",
+            "number": 11,
+            "started_at": "2026-10-26T15:44:34Z",
+            "completed_at": "2026-10-26T15:44:34Z"
+          },
+          {
+            "name": "Record this shard's actual outcome and inventory",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 12,
+            "started_at": "2026-10-26T15:44:34Z",
+            "completed_at": "2026-10-26T15:44:34Z"
+          },
+          {
+            "name": "Upload the independent shard receipt",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 13,
+            "started_at": "2026-10-26T15:44:34Z",
+            "completed_at": "2026-10-26T15:44:35Z"
+          },
+          {
+            "name": "Upload browser evidence",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 14,
+            "started_at": "2026-10-26T15:44:35Z",
+            "completed_at": "2026-10-26T15:44:38Z"
+          },
+          {
+            "name": "Post Set up Node.js",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 27,
+            "started_at": "2026-10-26T15:44:38Z",
+            "completed_at": "2026-10-26T15:44:38Z"
+          },
+          {
+            "name": "Post Check out exact source",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 28,
+            "started_at": "2026-10-26T15:44:38Z",
+            "completed_at": "2026-10-26T15:44:38Z"
+          },
+          {
+            "name": "Complete job",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 29,
+            "started_at": "2026-10-26T15:44:38Z",
+            "completed_at": "2026-10-26T15:44:38Z"
+          }
+        ],
+        "check_run_url": "https://api.github.com/repos/bigduu/lotus-next/check-runs/121670395787",
+        "labels": [
+          "ubuntu-latest"
+        ],
+        "runner_id": 1000047109,
+        "runner_name": "GitHub Actions 1000047109",
+        "runner_group_id": 0,
+        "runner_group_name": "GitHub Actions"
+      },
+      {
+        "id": 121682937947,
+        "run_id": 40350273595,
+        "workflow_name": "Frontend checks",
+        "head_branch": "lotus-next/fix/440-bamboo18-acceptance",
+        "run_url": "https://api.github.com/repos/bigduu/lotus-next/actions/runs/40350273595",
+        "run_attempt": 1,
+        "node_id": "CR_kwDOTGLQTM8AAAAcVN5IWw",
+        "head_sha": "ee2a7f4d52bbabefd49a8fc21550f061028f4117",
+        "url": "https://api.github.com/repos/bigduu/lotus-next/actions/jobs/121682937947",
+        "html_url": "https://github.com/bigduu/lotus-next/actions/runs/40350273595/job/121682937947",
+        "status": "completed",
+        "conclusion": "success",
+        "created_at": "2026-10-26T15:57:38Z",
+        "started_at": "2026-10-26T15:57:41Z",
+        "completed_at": "2026-10-26T15:57:54Z",
+        "name": "Browser acceptance",
+        "steps": [
+          {
+            "name": "Set up job",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 1,
+            "started_at": "2026-10-26T15:57:41Z",
+            "completed_at": "2026-10-26T15:57:43Z"
+          },
+          {
+            "name": "Check out exact source",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 2,
+            "started_at": "2026-10-26T15:57:43Z",
+            "completed_at": "2026-10-26T15:57:45Z"
+          },
+          {
+            "name": "Set up Node.js",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 3,
+            "started_at": "2026-10-26T15:57:45Z",
+            "completed_at": "2026-10-26T15:57:48Z"
+          },
+          {
+            "name": "Collect independent shard receipts across attempts",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 4,
+            "started_at": "2026-10-26T15:57:48Z",
+            "completed_at": "2026-10-26T15:57:49Z"
+          },
+          {
+            "name": "Require all Node lanes, shards, and original browser cases",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 5,
+            "started_at": "2026-10-26T15:57:49Z",
+            "completed_at": "2026-10-26T15:57:50Z"
+          },
+          {
+            "name": "Upload the complete browser summary",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 6,
+            "started_at": "2026-10-26T15:57:50Z",
+            "completed_at": "2026-10-26T15:57:51Z"
+          },
+          {
+            "name": "Post Set up Node.js",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 11,
+            "started_at": "2026-10-26T15:57:51Z",
+            "completed_at": "2026-10-26T15:57:51Z"
+          },
+          {
+            "name": "Post Check out exact source",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 12,
+            "started_at": "2026-10-26T15:57:51Z",
+            "completed_at": "2026-10-26T15:57:51Z"
+          },
+          {
+            "name": "Complete job",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 13,
+            "started_at": "2026-10-26T15:57:51Z",
+            "completed_at": "2026-10-26T15:57:51Z"
+          }
+        ],
+        "check_run_url": "https://api.github.com/repos/bigduu/lotus-next/check-runs/121682937947",
+        "labels": [
+          "ubuntu-latest"
+        ],
+        "runner_id": 1000047135,
+        "runner_name": "GitHub Actions 1000047135",
+        "runner_group_id": 0,
+        "runner_group_name": "GitHub Actions"
+      },
+      {
+        "id": 121683097982,
+        "run_id": 40350273595,
+        "workflow_name": "Frontend checks",
+        "head_branch": "lotus-next/fix/440-bamboo18-acceptance",
+        "run_url": "https://api.github.com/repos/bigduu/lotus-next/actions/runs/40350273595",
+        "run_attempt": 1,
+        "node_id": "CR_kwDOTGLQTM8AAAAcVOC5fg",
+        "head_sha": "ee2a7f4d52bbabefd49a8fc21550f061028f4117",
+        "url": "https://api.github.com/repos/bigduu/lotus-next/actions/jobs/121683097982",
+        "html_url": "https://github.com/bigduu/lotus-next/actions/runs/40350273595/job/121683097982",
+        "status": "completed",
+        "conclusion": "skipped",
+        "created_at": "2026-10-26T15:57:54Z",
+        "started_at": "2026-10-26T15:57:54Z",
+        "completed_at": "2026-10-26T15:57:54Z",
+        "name": "Real Bamboo / Node 22",
+        "steps": [],
+        "check_run_url": "https://api.github.com/repos/bigduu/lotus-next/check-runs/121683097982",
+        "labels": [
+          "ubuntu-latest"
+        ],
+        "runner_id": null,
+        "runner_name": null,
+        "runner_group_id": null,
+        "runner_group_name": null
+      }
+    ]
+  },
+  "pullRequest": {
+    "url": "https://api.github.com/repos/bigduu/lotus-next/pulls/443",
+    "id": 5020128057,
+    "node_id": "PR_kwDOTGLQTM8AAAABKzkTOQ",
+    "html_url": "https://github.com/bigduu/lotus-next/pull/443",
+    "diff_url": "https://github.com/bigduu/lotus-next/pull/443.diff",
+    "patch_url": "https://github.com/bigduu/lotus-next/pull/443.patch",
+    "issue_url": "https://api.github.com/repos/bigduu/lotus-next/issues/443",
+    "commits_url": "https://api.github.com/repos/bigduu/lotus-next/pulls/443/commits",
+    "review_comments_url": "https://api.github.com/repos/bigduu/lotus-next/pulls/443/comments",
+    "review_comment_url": "https://api.github.com/repos/bigduu/lotus-next/pulls/comments{/number}",
+    "comments_url": "https://api.github.com/repos/bigduu/lotus-next/issues/443/comments",
+    "statuses_url": "https://api.github.com/repos/bigduu/lotus-next/statuses/ee2a7f4d52bbabefd49a8fc21550f061028f4117",
+    "number": 443,
+    "state": "closed",
+    "locked": false,
+    "title": "fix: align migration acceptance with Bamboo 18",
+    "user": {
+      "login": "bigduu",
+      "id": 18681616,
+      "node_id": "MDQ6VXNlcjE4NjgxNjE2",
+      "avatar_url": "https://avatars.githubusercontent.com/u/18681616?v=4",
+      "gravatar_id": "",
+      "url": "https://api.github.com/users/bigduu",
+      "html_url": "https://github.com/bigduu",
+      "followers_url": "https://api.github.com/users/bigduu/followers",
+      "following_url": "https://api.github.com/users/bigduu/following{/other_user}",
+      "gists_url": "https://api.github.com/users/bigduu/gists{/gist_id}",
+      "starred_url": "https://api.github.com/users/bigduu/starred{/owner}{/repo}",
+      "subscriptions_url": "https://api.github.com/users/bigduu/subscriptions",
+      "organizations_url": "https://api.github.com/users/bigduu/orgs",
+      "repos_url": "https://api.github.com/users/bigduu/repos",
+      "events_url": "https://api.github.com/users/bigduu/events{/privacy}",
+      "received_events_url": "https://api.github.com/users/bigduu/received_events",
+      "type": "User",
+      "user_view_type": "public",
+      "site_admin": false
+    },
+    "body": "## Summary\n\nFrontend27 publication correctly stopped before npm upload when the strict real-runtime gate found five `/api/v1/sessions/{id}/version-migration` 404 failures. Its source includes explicit Session migration while the paired Bamboo17 runtime lacks that route.\n\nUpdate the three paired source authorities and the actual published Linux executable URL/size/SHA-256 atomically to Bamboo18 source `d6325a732c7669f94962f604e4ce98966e374d73`, which provides the route and is the requested Bodhi target. Update the existing binary contract test and the stale runtime documentation. A source-label-only update would still execute the pinned v17 binary.\n\n## Test Plan\n\n- 209 focused source-authority, published-runtime policy and executable-admission tests passed.\n- Verified the actual Linux ELF against the official v18 manifest: 247,723,520 bytes, SHA-256 `06df1bd069b42c46958dcdb7084c1822a8c2d5cb39d0f95affceb3820bbcc8e1`.\n- Ran that exact downloaded executable in an isolated existing amd64 image with network disabled: `bamboo 2026.10.18`. No Bamboo compilation or new download was performed.\n- Original source CI and independent exact-head review are required before merge. Real round trip and packaged local/HTTPS acceptance against v18 remain required in the later normal publisher before this dependency is declared accepted.\n- Preserved failed publication [40341682463](https://github.com/bigduu/lotus-next/actions/runs/40341682463), all existing frontend27 candidate/tag identities and every product/network/gate/retry/timeout contract. Publisher optimization is a separate #441 change; no publish dispatch is made here.\n\n## Screenshots\n\nNo product UI changes in this runtime identity update.\n\nRefs #440; dependency of #438. Keep #440 open until its real-runtime acceptance passes.",
+    "labels": [
+      {
+        "id": 12024174038,
+        "node_id": "LA_kwDOTGLQTM8AAAACzLJV1g",
+        "url": "https://api.github.com/repos/bigduu/lotus-next/labels/review:agent",
+        "name": "review:agent",
+        "description": "Agent review complete; merge gates may proceed",
+        "color": "5319e7",
+        "default": false,
+        "archived_at": null,
+        "archived_by": null
+      }
+    ],
+    "milestone": null,
+    "active_lock_reason": null,
+    "created_at": "2026-10-26T15:32:06Z",
+    "updated_at": "2026-10-26T16:00:47Z",
+    "closed_at": "2026-10-26T16:00:47Z",
+    "merged_at": "2026-10-26T16:00:47Z",
+    "merge_commit_sha": "cbe83ceb60064aa7142b70f7fbcbe5cd263eacb3",
+    "assignee": null,
+    "assignees": [],
+    "requested_reviewers": [],
+    "requested_teams": [],
+    "head": {
+      "label": "bigduu:lotus-next/fix/440-bamboo18-acceptance",
+      "ref": "lotus-next/fix/440-bamboo18-acceptance",
+      "repo": {
+        "id": 1281544268,
+        "node_id": "R_kgDOTGLQTA",
+        "name": "lotus-next",
+        "full_name": "bigduu/lotus-next",
+        "owner": {
+          "login": "bigduu",
+          "id": 18681616,
+          "node_id": "MDQ6VXNlcjE4NjgxNjE2",
+          "avatar_url": "https://avatars.githubusercontent.com/u/18681616?v=4",
+          "gravatar_id": "",
+          "url": "https://api.github.com/users/bigduu",
+          "html_url": "https://github.com/bigduu",
+          "followers_url": "https://api.github.com/users/bigduu/followers",
+          "following_url": "https://api.github.com/users/bigduu/following{/other_user}",
+          "gists_url": "https://api.github.com/users/bigduu/gists{/gist_id}",
+          "starred_url": "https://api.github.com/users/bigduu/starred{/owner}{/repo}",
+          "subscriptions_url": "https://api.github.com/users/bigduu/subscriptions",
+          "organizations_url": "https://api.github.com/users/bigduu/orgs",
+          "repos_url": "https://api.github.com/users/bigduu/repos",
+          "events_url": "https://api.github.com/users/bigduu/events{/privacy}",
+          "received_events_url": "https://api.github.com/users/bigduu/received_events",
+          "type": "User",
+          "user_view_type": "public",
+          "site_admin": false
+        },
+        "private": false,
+        "fork": false,
+        "archived": false,
+        "disabled": false,
+        "description": "Default web UI for Bamboo and the Bodhi desktop app: conversations, tool activity, approvals and settings.",
+        "homepage": null,
+        "language": "TypeScript",
+        "visibility": "public",
+        "is_template": false,
+        "topics": [],
+        "forks_count": 0,
+        "forks": 0,
+        "stargazers_count": 2,
+        "watchers_count": 2,
+        "watchers": 2,
+        "open_issues_count": 55,
+        "open_issues": 55,
+        "size": 21937,
+        "default_branch": "main",
+        "has_issues": true,
+        "has_projects": true,
+        "has_wiki": true,
+        "has_pages": false,
+        "has_downloads": false,
+        "has_discussions": false,
+        "has_pull_requests": true,
+        "pushed_at": "2026-10-26T16:00:47Z",
+        "created_at": "2026-06-26T16:59:58Z",
+        "updated_at": "2026-10-26T16:00:57Z",
+        "allow_forking": true,
+        "web_commit_signoff_required": true,
+        "pull_request_creation_policy": "all",
+        "license": {
+          "key": "mit",
+          "name": "MIT License",
+          "url": "https://api.github.com/licenses/mit",
+          "spdx_id": "MIT",
+          "node_id": "MDc6TGljZW5zZTEz"
+        },
+        "url": "https://api.github.com/repos/bigduu/lotus-next",
+        "html_url": "https://github.com/bigduu/lotus-next",
+        "archive_url": "https://api.github.com/repos/bigduu/lotus-next/{archive_format}{/ref}",
+        "assignees_url": "https://api.github.com/repos/bigduu/lotus-next/assignees{/user}",
+        "blobs_url": "https://api.github.com/repos/bigduu/lotus-next/git/blobs{/sha}",
+        "branches_url": "https://api.github.com/repos/bigduu/lotus-next/branches{/branch}",
+        "collaborators_url": "https://api.github.com/repos/bigduu/lotus-next/collaborators{/collaborator}",
+        "comments_url": "https://api.github.com/repos/bigduu/lotus-next/comments{/number}",
+        "commits_url": "https://api.github.com/repos/bigduu/lotus-next/commits{/sha}",
+        "compare_url": "https://api.github.com/repos/bigduu/lotus-next/compare/{base}...{head}",
+        "contents_url": "https://api.github.com/repos/bigduu/lotus-next/contents/{+path}",
+        "contributors_url": "https://api.github.com/repos/bigduu/lotus-next/contributors",
+        "deployments_url": "https://api.github.com/repos/bigduu/lotus-next/deployments",
+        "downloads_url": "https://api.github.com/repos/bigduu/lotus-next/downloads",
+        "events_url": "https://api.github.com/repos/bigduu/lotus-next/events",
+        "forks_url": "https://api.github.com/repos/bigduu/lotus-next/forks",
+        "git_commits_url": "https://api.github.com/repos/bigduu/lotus-next/git/commits{/sha}",
+        "git_refs_url": "https://api.github.com/repos/bigduu/lotus-next/git/refs{/sha}",
+        "git_tags_url": "https://api.github.com/repos/bigduu/lotus-next/git/tags{/sha}",
+        "git_url": "git://github.com/bigduu/lotus-next.git",
+        "issue_comment_url": "https://api.github.com/repos/bigduu/lotus-next/issues/comments{/number}",
+        "issue_events_url": "https://api.github.com/repos/bigduu/lotus-next/issues/events{/number}",
+        "issues_url": "https://api.github.com/repos/bigduu/lotus-next/issues{/number}",
+        "keys_url": "https://api.github.com/repos/bigduu/lotus-next/keys{/key_id}",
+        "labels_url": "https://api.github.com/repos/bigduu/lotus-next/labels{/name}",
+        "languages_url": "https://api.github.com/repos/bigduu/lotus-next/languages",
+        "merges_url": "https://api.github.com/repos/bigduu/lotus-next/merges",
+        "milestones_url": "https://api.github.com/repos/bigduu/lotus-next/milestones{/number}",
+        "notifications_url": "https://api.github.com/repos/bigduu/lotus-next/notifications{?since,all,participating}",
+        "pulls_url": "https://api.github.com/repos/bigduu/lotus-next/pulls{/number}",
+        "releases_url": "https://api.github.com/repos/bigduu/lotus-next/releases{/id}",
+        "ssh_url": "git@github.com:bigduu/lotus-next.git",
+        "stargazers_url": "https://api.github.com/repos/bigduu/lotus-next/stargazers",
+        "statuses_url": "https://api.github.com/repos/bigduu/lotus-next/statuses/{sha}",
+        "subscribers_url": "https://api.github.com/repos/bigduu/lotus-next/subscribers",
+        "subscription_url": "https://api.github.com/repos/bigduu/lotus-next/subscription",
+        "tags_url": "https://api.github.com/repos/bigduu/lotus-next/tags",
+        "teams_url": "https://api.github.com/repos/bigduu/lotus-next/teams",
+        "trees_url": "https://api.github.com/repos/bigduu/lotus-next/git/trees{/sha}",
+        "clone_url": "https://github.com/bigduu/lotus-next.git",
+        "mirror_url": null,
+        "hooks_url": "https://api.github.com/repos/bigduu/lotus-next/hooks",
+        "svn_url": "https://github.com/bigduu/lotus-next"
+      },
+      "sha": "ee2a7f4d52bbabefd49a8fc21550f061028f4117",
+      "user": {
+        "login": "bigduu",
+        "id": 18681616,
+        "node_id": "MDQ6VXNlcjE4NjgxNjE2",
+        "avatar_url": "https://avatars.githubusercontent.com/u/18681616?v=4",
+        "gravatar_id": "",
+        "url": "https://api.github.com/users/bigduu",
+        "html_url": "https://github.com/bigduu",
+        "followers_url": "https://api.github.com/users/bigduu/followers",
+        "following_url": "https://api.github.com/users/bigduu/following{/other_user}",
+        "gists_url": "https://api.github.com/users/bigduu/gists{/gist_id}",
+        "starred_url": "https://api.github.com/users/bigduu/starred{/owner}{/repo}",
+        "subscriptions_url": "https://api.github.com/users/bigduu/subscriptions",
+        "organizations_url": "https://api.github.com/users/bigduu/orgs",
+        "repos_url": "https://api.github.com/users/bigduu/repos",
+        "events_url": "https://api.github.com/users/bigduu/events{/privacy}",
+        "received_events_url": "https://api.github.com/users/bigduu/received_events",
+        "type": "User",
+        "user_view_type": "public",
+        "site_admin": false
+      }
+    },
+    "base": {
+      "label": "bigduu:main",
+      "ref": "main",
+      "repo": {
+        "id": 1281544268,
+        "node_id": "R_kgDOTGLQTA",
+        "name": "lotus-next",
+        "full_name": "bigduu/lotus-next",
+        "owner": {
+          "login": "bigduu",
+          "id": 18681616,
+          "node_id": "MDQ6VXNlcjE4NjgxNjE2",
+          "avatar_url": "https://avatars.githubusercontent.com/u/18681616?v=4",
+          "gravatar_id": "",
+          "url": "https://api.github.com/users/bigduu",
+          "html_url": "https://github.com/bigduu",
+          "followers_url": "https://api.github.com/users/bigduu/followers",
+          "following_url": "https://api.github.com/users/bigduu/following{/other_user}",
+          "gists_url": "https://api.github.com/users/bigduu/gists{/gist_id}",
+          "starred_url": "https://api.github.com/users/bigduu/starred{/owner}{/repo}",
+          "subscriptions_url": "https://api.github.com/users/bigduu/subscriptions",
+          "organizations_url": "https://api.github.com/users/bigduu/orgs",
+          "repos_url": "https://api.github.com/users/bigduu/repos",
+          "events_url": "https://api.github.com/users/bigduu/events{/privacy}",
+          "received_events_url": "https://api.github.com/users/bigduu/received_events",
+          "type": "User",
+          "user_view_type": "public",
+          "site_admin": false
+        },
+        "private": false,
+        "fork": false,
+        "archived": false,
+        "disabled": false,
+        "description": "Default web UI for Bamboo and the Bodhi desktop app: conversations, tool activity, approvals and settings.",
+        "homepage": null,
+        "language": "TypeScript",
+        "visibility": "public",
+        "is_template": false,
+        "topics": [],
+        "forks_count": 0,
+        "forks": 0,
+        "stargazers_count": 2,
+        "watchers_count": 2,
+        "watchers": 2,
+        "open_issues_count": 55,
+        "open_issues": 55,
+        "size": 21937,
+        "default_branch": "main",
+        "has_issues": true,
+        "has_projects": true,
+        "has_wiki": true,
+        "has_pages": false,
+        "has_downloads": false,
+        "has_discussions": false,
+        "has_pull_requests": true,
+        "pushed_at": "2026-10-26T16:00:47Z",
+        "created_at": "2026-06-26T16:59:58Z",
+        "updated_at": "2026-10-26T16:00:57Z",
+        "allow_forking": true,
+        "web_commit_signoff_required": true,
+        "pull_request_creation_policy": "all",
+        "license": {
+          "key": "mit",
+          "name": "MIT License",
+          "url": "https://api.github.com/licenses/mit",
+          "spdx_id": "MIT",
+          "node_id": "MDc6TGljZW5zZTEz"
+        },
+        "url": "https://api.github.com/repos/bigduu/lotus-next",
+        "html_url": "https://github.com/bigduu/lotus-next",
+        "archive_url": "https://api.github.com/repos/bigduu/lotus-next/{archive_format}{/ref}",
+        "assignees_url": "https://api.github.com/repos/bigduu/lotus-next/assignees{/user}",
+        "blobs_url": "https://api.github.com/repos/bigduu/lotus-next/git/blobs{/sha}",
+        "branches_url": "https://api.github.com/repos/bigduu/lotus-next/branches{/branch}",
+        "collaborators_url": "https://api.github.com/repos/bigduu/lotus-next/collaborators{/collaborator}",
+        "comments_url": "https://api.github.com/repos/bigduu/lotus-next/comments{/number}",
+        "commits_url": "https://api.github.com/repos/bigduu/lotus-next/commits{/sha}",
+        "compare_url": "https://api.github.com/repos/bigduu/lotus-next/compare/{base}...{head}",
+        "contents_url": "https://api.github.com/repos/bigduu/lotus-next/contents/{+path}",
+        "contributors_url": "https://api.github.com/repos/bigduu/lotus-next/contributors",
+        "deployments_url": "https://api.github.com/repos/bigduu/lotus-next/deployments",
+        "downloads_url": "https://api.github.com/repos/bigduu/lotus-next/downloads",
+        "events_url": "https://api.github.com/repos/bigduu/lotus-next/events",
+        "forks_url": "https://api.github.com/repos/bigduu/lotus-next/forks",
+        "git_commits_url": "https://api.github.com/repos/bigduu/lotus-next/git/commits{/sha}",
+        "git_refs_url": "https://api.github.com/repos/bigduu/lotus-next/git/refs{/sha}",
+        "git_tags_url": "https://api.github.com/repos/bigduu/lotus-next/git/tags{/sha}",
+        "git_url": "git://github.com/bigduu/lotus-next.git",
+        "issue_comment_url": "https://api.github.com/repos/bigduu/lotus-next/issues/comments{/number}",
+        "issue_events_url": "https://api.github.com/repos/bigduu/lotus-next/issues/events{/number}",
+        "issues_url": "https://api.github.com/repos/bigduu/lotus-next/issues{/number}",
+        "keys_url": "https://api.github.com/repos/bigduu/lotus-next/keys{/key_id}",
+        "labels_url": "https://api.github.com/repos/bigduu/lotus-next/labels{/name}",
+        "languages_url": "https://api.github.com/repos/bigduu/lotus-next/languages",
+        "merges_url": "https://api.github.com/repos/bigduu/lotus-next/merges",
+        "milestones_url": "https://api.github.com/repos/bigduu/lotus-next/milestones{/number}",
+        "notifications_url": "https://api.github.com/repos/bigduu/lotus-next/notifications{?since,all,participating}",
+        "pulls_url": "https://api.github.com/repos/bigduu/lotus-next/pulls{/number}",
+        "releases_url": "https://api.github.com/repos/bigduu/lotus-next/releases{/id}",
+        "ssh_url": "git@github.com:bigduu/lotus-next.git",
+        "stargazers_url": "https://api.github.com/repos/bigduu/lotus-next/stargazers",
+        "statuses_url": "https://api.github.com/repos/bigduu/lotus-next/statuses/{sha}",
+        "subscribers_url": "https://api.github.com/repos/bigduu/lotus-next/subscribers",
+        "subscription_url": "https://api.github.com/repos/bigduu/lotus-next/subscription",
+        "tags_url": "https://api.github.com/repos/bigduu/lotus-next/tags",
+        "teams_url": "https://api.github.com/repos/bigduu/lotus-next/teams",
+        "trees_url": "https://api.github.com/repos/bigduu/lotus-next/git/trees{/sha}",
+        "clone_url": "https://github.com/bigduu/lotus-next.git",
+        "mirror_url": null,
+        "hooks_url": "https://api.github.com/repos/bigduu/lotus-next/hooks",
+        "svn_url": "https://github.com/bigduu/lotus-next"
+      },
+      "sha": "18d83eb40bf8c8eae55eee7c3eb0fcab9549ad16",
+      "user": {
+        "login": "bigduu",
+        "id": 18681616,
+        "node_id": "MDQ6VXNlcjE4NjgxNjE2",
+        "avatar_url": "https://avatars.githubusercontent.com/u/18681616?v=4",
+        "gravatar_id": "",
+        "url": "https://api.github.com/users/bigduu",
+        "html_url": "https://github.com/bigduu",
+        "followers_url": "https://api.github.com/users/bigduu/followers",
+        "following_url": "https://api.github.com/users/bigduu/following{/other_user}",
+        "gists_url": "https://api.github.com/users/bigduu/gists{/gist_id}",
+        "starred_url": "https://api.github.com/users/bigduu/starred{/owner}{/repo}",
+        "subscriptions_url": "https://api.github.com/users/bigduu/subscriptions",
+        "organizations_url": "https://api.github.com/users/bigduu/orgs",
+        "repos_url": "https://api.github.com/users/bigduu/repos",
+        "events_url": "https://api.github.com/users/bigduu/events{/privacy}",
+        "received_events_url": "https://api.github.com/users/bigduu/received_events",
+        "type": "User",
+        "user_view_type": "public",
+        "site_admin": false
+      }
+    },
+    "_links": {
+      "comments": {
+        "href": "https://api.github.com/repos/bigduu/lotus-next/issues/443/comments"
+      },
+      "commits": {
+        "href": "https://api.github.com/repos/bigduu/lotus-next/pulls/443/commits"
+      },
+      "statuses": {
+        "href": "https://api.github.com/repos/bigduu/lotus-next/statuses/ee2a7f4d52bbabefd49a8fc21550f061028f4117"
+      },
+      "html": {
+        "href": "https://github.com/bigduu/lotus-next/pull/443"
+      },
+      "issue": {
+        "href": "https://api.github.com/repos/bigduu/lotus-next/issues/443"
+      },
+      "review_comments": {
+        "href": "https://api.github.com/repos/bigduu/lotus-next/pulls/443/comments"
+      },
+      "review_comment": {
+        "href": "https://api.github.com/repos/bigduu/lotus-next/pulls/comments{/number}"
+      },
+      "self": {
+        "href": "https://api.github.com/repos/bigduu/lotus-next/pulls/443"
+      }
+    },
+    "author_association": "OWNER",
+    "auto_merge": null,
+    "draft": false,
+    "merged": true,
+    "mergeable": true,
+    "rebaseable": false,
+    "mergeable_state": "clean",
+    "merged_by": {
+      "login": "bigduu",
+      "id": 18681616,
+      "node_id": "MDQ6VXNlcjE4NjgxNjE2",
+      "avatar_url": "https://avatars.githubusercontent.com/u/18681616?v=4",
+      "gravatar_id": "",
+      "url": "https://api.github.com/users/bigduu",
+      "html_url": "https://github.com/bigduu",
+      "followers_url": "https://api.github.com/users/bigduu/followers",
+      "following_url": "https://api.github.com/users/bigduu/following{/other_user}",
+      "gists_url": "https://api.github.com/users/bigduu/gists{/gist_id}",
+      "starred_url": "https://api.github.com/users/bigduu/starred{/owner}{/repo}",
+      "subscriptions_url": "https://api.github.com/users/bigduu/subscriptions",
+      "organizations_url": "https://api.github.com/users/bigduu/orgs",
+      "repos_url": "https://api.github.com/users/bigduu/repos",
+      "events_url": "https://api.github.com/users/bigduu/events{/privacy}",
+      "received_events_url": "https://api.github.com/users/bigduu/received_events",
+      "type": "User",
+      "user_view_type": "public",
+      "site_admin": false
+    },
+    "comments": 1,
+    "review_comments": 0,
+    "maintainer_can_modify": false,
+    "commits": 1,
+    "additions": 17,
+    "deletions": 15,
+    "changed_files": 5
+  }
+}
