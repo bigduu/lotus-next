@@ -16,11 +16,11 @@ describe("published Bamboo executable admission", () => {
     expect(() => verifyBambooBinary(wrongArch, { bytes: 32, sha256: createHash("sha256").update(wrongArch).digest("hex") })).toThrow(/Linux x86_64/);
   });
   it("pins the official release used by Bodhi rather than the old fixture backend", () => {
-    expect(REAL_BAMBOO_REVISION).toBe("5b317e4e1900177399f601e775d10253bbea7289");
+    expect(REAL_BAMBOO_REVISION).toBe("d6325a732c7669f94962f604e4ce98966e374d73");
     expect(REAL_BAMBOO_BINARY).toEqual({
-      url: "https://github.com/bigduu/Bamboo-agent/releases/download/v2026.10.17/bamboo-x86_64-unknown-linux-gnu",
-      bytes: 245505088,
-      sha256: "194cc3f027d44436072251f0965388edd81eaa34942e07b6b823d9cd36123931",
+      url: "https://github.com/bigduu/Bamboo-agent/releases/download/v2026.10.18/bamboo-x86_64-unknown-linux-gnu",
+      bytes: 247723520,
+      sha256: "06df1bd069b42c46958dcdb7084c1822a8c2d5cb39d0f95affceb3820bbcc8e1",
     });
     expect(() => verifyBambooBinary(elf)).toThrow(/length mismatch/);
   });
