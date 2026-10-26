@@ -23,6 +23,40 @@ tag, source or receipt.
 
 ## Complete tests before dev
 
+### Read-only frozen-source foundation
+
+The frozen-dev-source.mjs helper (#454) prepares the dependent source proof. It
+is not wired into the historical publisher. Its verifyAcceptedDev function
+checks a confirmed normal dev merge against the original actual test merge and
+all eleven real feature jobs, including complete Unit, browser, Real Bamboo and
+native Actor steps. The admitFrozenDev wrapper additionally checks release/S
+before and after. Do not create a release ref just to inspect an accepted source.
+
+The verifier authenticates the official workflow/check suite and the finite
+reviewed producer closure. GitHub may clear run PR associations after merge;
+the independently confirmed PR, exact parents and original source ZIP establish
+the link. A present association must match. Copied-success records retain the
+original physical execution, ZIP ownership and latest logical outcome.
+The original source/acceptance receipts and canonical Node24 dist must exist,
+match their Actions digests and original execution times, and agree on the
+actual M; every dist resource and the complete four-shard inventory are
+verified without running candidate code or extracting the ZIP.
+
+The trusted-main CLI is node scripts/frozen-dev-source.mjs admit <new-proof-path>,
+with actual Actions controller identity, EXPECTED_SOURCE_SHA,
+FEATURE_PULL_REQUEST, FEATURE_RUN_ID, FEATURE_RUN_ATTEMPT and a separate clean
+SOURCE_ROOT. It writes a new local proof exclusively; it changes no Git ref or
+remote state. Controller C, tested M, accepted/frozen S and a later main merge
+remain distinct. Missing/expired originals, failed or skipped runtime, changed
+refs, unconfirmed merges, unknown API state and unreviewed producers reject.
+
+PR450 still lacks complete passing runtime evidence. This foundation does not
+admit it or activate a release. Single final-tgz retention/publication is #455;
+main admission/bootstrap is #456. Keep the failed historical v28 candidate,
+published v29 and fixed2026.10.12 recovery unchanged.
+
+### Executable feature ownership
+
 Feature PRs target `dev`. `ci.yml` has no main-push or release trigger. It checks
 out the actual PR merge snapshot consistently in every source test job:
 

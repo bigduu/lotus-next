@@ -35,6 +35,17 @@ release/main flow as active or submit a new feature-graph receipt to that old
 publisher. Preserve the separately owned frontend 2026.10.28 request (#445),
 existing tags and original receipts.
 
+The read-only source foundation in scripts/frozen-dev-source.mjs (#454) is
+separate from publisher activation. It verifies the original eleven feature
+jobs, their physical executions and logical outcomes, the real source and
+acceptance ZIPs, and every resource in the original Node24 dist. It preserves
+actual tested M, accepted dev S and trusted main controller C separately.
+Missing or expired successful original artifacts stop admission. A successful
+source proof cannot reserve a version, build, pack, publish or promote main.
+The current red #450 run cannot authorize a cut; do not manufacture a green
+receipt or replace a missing artifact with a new build. Review any producer
+closure change explicitly before accepting it.
+
 After the dependent cutover, only a fully accepted dev cut may become a frozen
 release. Release work builds/packages/publishes the formal artifact once; it
 does not run Unit or E2E. A runtime fix returns to a feature branch, tested dev
