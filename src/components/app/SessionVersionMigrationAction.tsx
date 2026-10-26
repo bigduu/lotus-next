@@ -2,15 +2,13 @@ import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { useSessionVersionMigration } from "@/hooks/useSessionVersionMigration"
 import { Button } from "@/components/ui/button"
 
-export function SessionVersionMigrationAction({ sessionId, enabled, allowNewMigration = true }: {
-  sessionId: string; enabled: boolean; allowNewMigration?: boolean
+export function SessionVersionMigrationAction({ sessionId, enabled, allowNewMigration = true, autoAssess = allowNewMigration }: {
+  sessionId: string; enabled: boolean; allowNewMigration?: boolean; autoAssess?: boolean
 }) {
   useUiLocale()
-  const migration = useSessionVersionMigration(sessionId, enabled, allowNewMigration)
+  const migration = useSessionVersionMigration(sessionId, enabled, allowNewMigration, autoAssess)
   if (!enabled || migration.problem === "unsupported") return null
   const blockers = migration.assessment?.blockers.filter((reason) => reason.code !== "already_current") ?? []
-  if (!migration.reading && !migration.problem && !migration.canStart && !migration.canRecover
-    && !blockers.length && migration.phase !== "committed") return null
   return <div className="mt-2 space-y-1 text-xs" data-testid="session-version-migration">
     {migration.phase === "committed" ? <p role="status">{uiText("session_migration_completed")}</p> : <>
       {migration.canStart ? <p className="text-muted-foreground">{uiText("session_migration_preserves_context")}</p> : null}

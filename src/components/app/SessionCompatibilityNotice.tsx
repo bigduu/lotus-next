@@ -13,6 +13,8 @@ export function SessionCompatibilityNotice({ state, sessionId }: { state?: Sessi
   useUiLocale()
   if (!state || !state.observed && !state.readError && !state.loading) return null
   const report = state.report
+  const needsMigration = state.observed && !state.loading && !state.readError && !state.blocked
+    && report?.status === "legacy_compatible" && report.execution_allowed
   return <section className="border-b px-3 py-2 text-sm" aria-label={uiText("session_compatibility_label")}
     data-session-execution-blocked={state.blocked}>
     <p role={state.blocked ? "alert" : "status"} className={state.blocked ? "font-medium text-destructive" : "text-muted-foreground"}>
@@ -35,7 +37,6 @@ export function SessionCompatibilityNotice({ state, sessionId }: { state?: Sessi
       {uiText("session_compatibility_refresh")}
     </Button>
     {sessionId ? <SessionVersionMigrationAction sessionId={sessionId}
-      enabled={state.loading || state.readError || state.observed && (state.blocked || state.report?.execution_allowed === true)}
-      allowNewMigration={state.observed && !state.readError && !state.blocked && state.report?.execution_allowed === true} /> : null}
+      enabled={true} autoAssess={needsMigration} allowNewMigration={needsMigration} /> : null}
   </section>
 }
