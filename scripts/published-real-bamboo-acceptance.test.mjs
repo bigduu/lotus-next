@@ -300,16 +300,14 @@ describe("published real-Bamboo acceptance policy", () => {
     expect(publication).toContain("node scripts/release-acceptance-identity.mjs verify")
   })
 
-  it("reserves real Bamboo for manual CI runs", () => {
+  it("requires real Bamboo in feature CI before dev admission", () => {
     const ci = readRepositoryFile(".github/workflows/ci.yml")
-
-    expect(ci).toContain("  workflow_dispatch:")
-    expect(ci).toContain("    branches:\n      - main")
-    expect(ci).toContain(
-      "    if: ${{ github.event_name == 'workflow_dispatch' }}",
-    )
-  })
-})
+    expect(ci).toContain("  pull_request:\n    branches: [dev]")
+    expect(ci).not.toMatch(/^  (?:push|workflow_dispatch):/m)
+    expect(ci).toContain("needs: [source, verify, browser-summary]")
+    expect(ci).toContain("needs: [source, verify, browser-summary, real-bamboo, native-actor]")
+    expect(ci).toContain("REAL_BAMBOO_RESULT: ${{ needs.real-bamboo.result }}")
+  })})
 
 
 describe("publication browser acceptance controller", () => {

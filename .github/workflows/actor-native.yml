@@ -1,14 +1,8 @@
 name: Native Actor acceptance
 
+# Called once by feature CI; its result is part of Feature acceptance.
 on:
-  pull_request:
-    branches: [main]
-    paths:
-      - .github/workflows/actor-native.yml
-      - e2e/actor-native-runtime.spec.ts
-      - playwright.actor-runtime.config.ts
-      - playwright.config.ts
-  workflow_dispatch:
+  workflow_call:
 
 permissions:
   contents: read
@@ -50,8 +44,22 @@ jobs:
           cache: npm
           cache-dependency-path: package-lock.json
 
-      - name: Install dependencies and build Lotus
-        run: npm ci && npm run build
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Restore the canonical Node 24 test artifact
+        uses: actions/download-artifact@v5
+        with:
+          name: browser-input-node-24
+
+      - name: Verify and preserve the pristine artifact for both base controls
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/browser-shards.mjs check-source
+          node scripts/artifact-manifest.mjs verify --dist dist --expected-name @bigduu/lotus-next --expected-version 0.0.0 --expected-revision "$GITHUB_SHA" --expected-dirty false
+          test ! -e "$RUNNER_TEMP/actor-pristine-dist"
+          cp -R dist "$RUNNER_TEMP/actor-pristine-dist"
 
       - name: Install Chromium
         run: npx playwright install --with-deps chromium
@@ -140,6 +148,8 @@ jobs:
           original = hook.read_bytes()
           sha = lambda p: hashlib.sha256(Path(p).read_bytes()).hexdigest()
           hook_hash = sha(hook)
+          pristine_dist = Path(os.environ['RUNNER_TEMP']) / 'actor-pristine-dist'
+          pristine_manifest_sha = sha(pristine_dist / 'lotus-next-manifest.json')
           results = []
           
           def write(path, value):
@@ -178,6 +188,7 @@ jobs:
                   'PLAYWRIGHT_HTML_OUTPUT_DIR': str(case / 'report')}
               write(case / 'identity.json', {'case': name, 'variant': variant, 'binary': binary,
                   'hook_sha256': sha(hook), 'builder_sha256': sha(builder), 'bamboo_commit': manifest['bamboo_commit'],
+                  'dist_manifest_sha256': sha(root / 'dist/lotus-next-manifest.json'),
                   'lotus_commit': manifest['lotus_commit'], 'restored_positive': name == 'restored_positive'})
               with (case / 'native.log').open('w') as native_log, (case / 'browser.log').open('w') as browser_log:
                   native = subprocess.Popen([binary['fixture'], '--ignored', '--exact',
@@ -283,8 +294,12 @@ jobs:
                   run_case(name, 'base')
                   hook.write_bytes(original)
               restored_sources()
-              with (out / 'restored-build.log').open('w') as log:
-                  subprocess.run(['npm', 'run', 'build'], stdout=log, stderr=subprocess.STDOUT, check=True, timeout=120)
+              shutil.rmtree(root / 'dist')
+              shutil.copytree(pristine_dist, root / 'dist')
+              assert sha(root / 'dist/lotus-next-manifest.json') == pristine_manifest_sha
+              subprocess.run(['node', 'scripts/artifact-manifest.mjs', 'verify', '--dist', 'dist',
+                  '--expected-name', '@bigduu/lotus-next', '--expected-version', '0.0.0',
+                  '--expected-revision', manifest['lotus_commit'], '--expected-dirty', 'false'], check=True)
               restored_sources()
               run_case('restored_positive', 'base')
               assert len(results) == 4 and all(row['verified'] for row in results)
@@ -299,7 +314,7 @@ jobs:
         if: ${{ always() }}
         uses: actions/upload-artifact@v5
         with:
-          name: native-actor-browser-evidence
+          name: native-actor-browser-evidence-attempt-${{ github.run_attempt }}
           path: |
             playwright-report-actor-runtime/
             test-results-actor-runtime/

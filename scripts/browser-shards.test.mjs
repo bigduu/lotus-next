@@ -4,12 +4,13 @@ import { reportCases, verifyPartition, summarizeShards } from "./browser-shards.
 const clone = (value) => JSON.parse(JSON.stringify(value))
 const context = { sourceSha: "a".repeat(40), runId: "123", runAttempt: 1, verifyResult: "success", browserResult: "success" }
 const inventory = {
+  schemaVersion: 2, producerNode: 24,
   sourceSha: context.sourceSha,
   projects: ["desktop-chromium", "tablet-chromium", "phone-chromium"],
   tests: ["a", "b", "c", "d"], shards: [["a"], ["b"], ["c"], ["d"]],
 }
-const fixtures = () => [22, 24].flatMap((node) => inventory.shards.map((ids, index) => ({
-  schemaVersion: 1, sourceSha: context.sourceSha, runId: context.runId, runAttempt: 1,
+const fixtures = () => [24].flatMap((node) => inventory.shards.map((ids, index) => ({
+  schemaVersion: 2, sourceSha: context.sourceSha, runId: context.runId, runAttempt: 1,
   node, shard: index + 1, status: "success", inventory: clone(inventory),
   cases: ids.map((id) => ({ id, outcome: index === 3 ? "skipped" : "expected" })),
   startedAt: `2026-10-25T00:0${index}:00Z`, durationMs: 120_000,
@@ -34,10 +35,10 @@ describe("browser shard inventory", () => {
 describe("fail-closed browser aggregate", () => {
   it("reports actual browser wall and runner time with the retained skip counts", () => {
     const summary = summarizeShards(fixtures(), context)
-    expect(summary.lanes).toEqual([22, 24].map((node) => ({ node, cases: 4, expected: 3, flaky: 0, skipped: 1, browserWallMs: 300_000, browserRunnerMs: 480_000 })))
+    expect(summary.lanes).toEqual([24].map((node) => ({ node, cases: 4, expected: 3, flaky: 0, skipped: 1, browserWallMs: 300_000, browserRunnerMs: 480_000 })))
   })
   it.each(["failure", "cancelled", "skipped", "timed_out"])("rejects a %s shard despite a successful aggregate dependency", (status) => {
-    const receipts = fixtures(); receipts[6].status = status
+    const receipts = fixtures(); receipts[2].status = status
     expect(() => summarizeShards(receipts, context)).toThrow()
   })
   it.each(["verifyResult", "browserResult"])("requires a successful %s", (field) => {
@@ -63,12 +64,21 @@ describe("fail-closed browser aggregate", () => {
     const receipts = fixtures(); mutate(receipts)
     expect(() => summarizeShards(receipts, context)).toThrow()
   })
+  it("rejects historical receipts and any extra browser lane without dropping original cases", () => {
+    const receipts = fixtures()
+    expect(receipts).toHaveLength(4)
+    expect(() => summarizeShards(receipts.map((receipt) => ({ ...receipt, schemaVersion: 1 })), context)).toThrow(/single-producer/)
+    expect(() => summarizeShards([...receipts, ...receipts.map((receipt) => ({ ...receipt, node: 22 }))], context)).toThrow()
+    const wrongProducer = fixtures()
+    for (const receipt of wrongProducer) receipt.inventory.producerNode = 22
+    expect(() => summarizeShards(wrongProducer, context)).toThrow(/canonical Node 24/)
+  })
   it("accepts a single failed-shard rerun with unchanged successful siblings", () => {
     const receipts = fixtures()
     receipts[2].status = "failure"
     const retry = { ...clone(receipts[2]), runAttempt: 2, status: "success" }
     const result = summarizeShards([...receipts, retry], { ...context, runAttempt: 2 })
-    expect(result.shards.filter((shard) => shard.runAttempt === 2)).toEqual([expect.objectContaining({ node: 22, shard: 3 })])
+    expect(result.shards.filter((shard) => shard.runAttempt === 2)).toEqual([expect.objectContaining({ node: 24, shard: 3 })])
     retry.status = "failure"
     expect(() => summarizeShards([...receipts, retry], { ...context, runAttempt: 2 })).toThrow()
   })

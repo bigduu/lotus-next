@@ -7,7 +7,10 @@ import { dirname, join, resolve } from "node:path"
 import { resolveReleaseRequest, verifyAcceptanceEvidence, verifySourceReceipt, verifyCommittedAcceptance, verifyCandidateBackendPins, acceptanceJobNames, verifyProductMerge } from "./release-source.mjs"
 
 const legacyWorkflow = readFileSync("scripts/fixtures/ci-unsharded.yml", "utf8")
-const shardedWorkflow = readFileSync(".github/workflows/ci.yml", "utf8")
+// The old publisher remains unchanged until its dependent producer slice lands.
+// Its historical receipts must keep their original graph; feature-complete
+// merge-snapshot receipts are not silently interpreted as this old authority.
+const shardedWorkflow = readFileSync("scripts/fixtures/ci-sharded-main-v1.yml", "utf8")
 const verifyLegacyAcceptance = (...args) => verifyAcceptanceEvidence(...args, legacyWorkflow)
 const verifyLegacyCommittedAcceptance = (...args) => verifyCommittedAcceptance(...args, legacyWorkflow)
 
@@ -36,6 +39,13 @@ const environment = {
   LOTUS_NEXT_EXPECTED_SOURCE_REVISION: sourceSha, LOTUS_NEXT_RELEASE_VERSION: request.version,
 }
 
+describe("feature delivery activation boundary", () => {
+  it("keeps the new feature receipt graph outside the unchanged historical publisher", () => {
+    expect(() => acceptanceJobNames(readFileSync(".github/workflows/ci.yml", "utf8"))).toThrow(/Unknown acceptance workflow graph/)
+    expect(acceptanceJobNames(shardedWorkflow)).toHaveLength(12)
+  })
+})
+
 describe("frozen reviewed PR-head merge provenance", () => {
   const mainPr = { base: { ref: "main", repo: { full_name: "bigduu/lotus-next" } } }
   it("retains historical equal-tree merges and accepts an exact head merged after main advanced", () => {
@@ -57,7 +67,7 @@ describe("frozen reviewed PR-head merge provenance", () => {
 
 describe("candidate Bamboo source bindings", () => {
   const files = {
-    ci: readFileSync(".github/workflows/ci.yml", "utf8"),
+    ci: shardedWorkflow,
     publication: readFileSync(".github/workflows/publish-npm.yml", "utf8"),
     runtime: readFileSync("e2e/support/realBambooRuntime.ts", "utf8"),
     acceptanceTest: readFileSync("scripts/published-real-bamboo-acceptance.test.mjs", "utf8"),
@@ -109,7 +119,7 @@ describe("candidate Bamboo source bindings", () => {
       git("config", "user.name", "Lotus preflight test")
       git("config", "user.email", "preflight@example.invalid")
       for (const path of ["scripts/release-source.mjs", ".github/workflows/ci.yml", ".github/workflows/publish-npm.yml", "e2e/support/realBambooRuntime.ts", "scripts/published-real-bamboo-acceptance.test.mjs"]) {
-        write(path, readFileSync(resolve(path)))
+        write(path, path === ".github/workflows/ci.yml" ? files.ci : readFileSync(resolve(path)))
       }
       git("add", ".")
       git("commit", "--quiet", "-m", "Candidate source")
