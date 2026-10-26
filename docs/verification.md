@@ -25,10 +25,12 @@ runtime observations when a case fails.
 CI splits this unchanged all-surface inventory into four independently rerunnable
 shards per Node lane. See [browser shard evidence, reruns, and timing](browser-test-shards.md).
 
-The source-built real-runtime gate is intentionally separate from that
-deterministic matrix. It builds a clean checkout of Bamboo revision
-`80815125da51a5722935e99fda2ed4541aa67f98` into an isolated Docker image,
-serves the production Lotus Next artifact from that Bamboo process, and drives
+The real-runtime gate is intentionally separate from that deterministic
+matrix. It verifies a clean checkout of Bamboo revision
+`d6325a732c7669f94962f604e4ce98966e374d73`, pairs its browser host with the
+hash-verified published Bamboo `2026.10.18` Linux x64 executable, and assembles
+an isolated Docker image without compiling Bamboo. It serves the production
+Lotus Next artifact from that Bamboo process and drives
 one complete chat turn through the visible desktop UI and a local deterministic
 OpenAI-compatible provider. It requires the `auth.ws_hello_ack.v1` bootstrap
 capability and records one ordered, bidirectional WebSocket timeline for both
