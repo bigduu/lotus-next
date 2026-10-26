@@ -243,10 +243,19 @@ const verifyDynamicBackendWiring = (publication) => {
     NPM_CONFIG_PROGRESS: '"false"',
   })
   const jobs = workflowBlock(publication, "jobs", 0)
-  workflowMappingKeys(jobs, 2)
+  const jobNames = [...workflowMappingKeys(jobs, 2)].sort()
+  const historicalVerification = jobNames.includes("verify")
+  assert.deepEqual(jobNames, historicalVerification
+    ? ["preflight", "publish", "real-bamboo", "verify"]
+    : ["preflight", "publish", "real-bamboo"], "Candidate publication requires its complete reviewed job graph")
   const realBamboo = workflowBlock(jobs, "real-bamboo", 2)
   assert.deepEqual([...workflowMappingKeys(realBamboo, 4)].sort(), ["env", "name", "needs", "runs-on", "steps", "timeout-minutes"])
-  assert.equal(workflowValue(realBamboo, "needs", 4), "[preflight, verify]")
+  assert.equal(workflowValue(realBamboo, "needs", 4), historicalVerification ? "[preflight, verify]" : "[preflight]")
+  const publishNeeds = workflowBlock(workflowBlock(jobs, "publish", 2), "needs", 4)
+    .split(/\r?\n/).map((line) => line.trim()).filter((line) => line && !line.startsWith("#"))
+  assert.deepEqual(publishNeeds, historicalVerification
+    ? ["- preflight", "- verify", "- real-bamboo"]
+    : ["- preflight", "- real-bamboo"], "Publication must wait for its exact-source authority and real Bamboo acceptance")
   verifyWorkflowEnvironment(realBamboo, 4, {
     LOTUS_NEXT_SOURCE_REVISION: "${{ needs.preflight.outputs.source_sha }}",
     LOTUS_NEXT_EXPECTED_SOURCE_REVISION: "${{ needs.preflight.outputs.source_sha }}",
@@ -319,7 +328,8 @@ const main = async () => {
     expectedSourceSha: environment.EXPECTED_SOURCE_SHA_INPUT,
   })
   // This historical acceptance receipt is part of the reviewed main authority.
-  // Every original publication gate still reruns against the fixed source below.
+  // Node/unit/browser source tests are reused; publication still builds and
+  // checks the exact versioned artifact against the paired real Bamboo runtime.
   git(["fetch", "--no-tags", "origin", candidate.sourceRef])
   assert.equal(git(["cat-file", "-t", "FETCH_HEAD"]), "tag", "An annotated release tag is required")
   const tagObjectSha = git(["rev-parse", "FETCH_HEAD"])

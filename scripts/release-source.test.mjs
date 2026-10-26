@@ -70,6 +70,25 @@ describe("candidate Bamboo source bindings", () => {
   it("accepts the actual receipt-bound publication workflow with its paired source pins", () => {
     expect(() => verifyCandidateBackendPins(currentCandidate, files)).not.toThrow()
   })
+  it("retains the historical publication graph with its Node verification dependency", () => {
+    const publication = files.publication
+      .replace("  real-bamboo:\n", "  verify:\n    name: Node verification\n    runs-on: ubuntu-latest\n    steps: []\n\n  real-bamboo:\n")
+      .replace("    needs: [preflight]\n", "    needs: [preflight, verify]\n")
+      .replace("      - preflight\n      - real-bamboo\n", "      - preflight\n      - verify\n      - real-bamboo\n")
+    expect(() => verifyCandidateBackendPins(currentCandidate, { ...files, publication })).not.toThrow()
+  })
+  it.each([
+    ["an extra job", (source) => source.replace("  real-bamboo:\n", "  extra:\n    steps: []\n  real-bamboo:\n")],
+    ["a missing real-Bamboo job", (source) => source.replace("  real-bamboo:\n", "  other-runtime:\n")],
+    ["a missing pack/publish job", (source) => source.replace("  publish:\n", "  other-publish:\n")],
+    ["a stale verification dependency", (source) => source.replace("    needs: [preflight]\n", "    needs: [preflight, verify]\n")],
+    ["publication before Bamboo acceptance", (source) => source.replace("      - real-bamboo\n", "")],
+    ["publication without source authority", (source) => source.replace("      - preflight\n", "")],
+    ["duplicate publication dependency", (source) => source.replace("      - real-bamboo\n", "      - real-bamboo\n      - real-bamboo\n")],
+    ["an unknown publication dependency", (source) => source.replace("      - real-bamboo\n", "      - real-bamboo\n      - other\n")],
+  ])("rejects a publication graph with %s", (_name, alter) => {
+    expect(() => verifyCandidateBackendPins(currentCandidate, { ...files, publication: alter(files.publication) })).toThrow()
+  })
   it("retains historical candidates whose publication workflow pins the accepted SHA literally", () => {
     const historical = Object.fromEntries(Object.entries(files).map(([key, source]) => [key, source.replaceAll(bambooSha, candidate.bambooSha)]))
     historical.publication = replaceBinding(historical.publication, candidate.bambooSha)
@@ -149,7 +168,7 @@ describe("candidate Bamboo source bindings", () => {
     ["commented output mapping", (source) => source.replace("      bamboo_sha:", "      # bamboo_sha:")],
     ["duplicate output mapping", (source) => source.replace("      bamboo_sha:", "      bamboo_sha: main\n      bamboo_sha:")],
     ["another job's environment", (source) => source.replace("  real-bamboo:", "  other-runtime:")],
-    ["missing preflight dependency", (source) => source.replace("    needs: [preflight, verify]", "    needs: verify")],
+    ["missing preflight dependency", (source) => source.replace("    needs: [preflight]", "    needs: verify")],
     ["another environment level", (source) => source.replace(`      BAMBOO_E2E_REVISION: ${dynamicBinding}`, `          BAMBOO_E2E_REVISION: ${dynamicBinding}`)],
     ["wrong source step", (source) => source.replace("        id: source", "        id: other")],
     ["duplicate source step ID", (source) => source.replace("        id: source", "        id: source\n        id: other")],
