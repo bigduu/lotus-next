@@ -85,6 +85,33 @@ Use the existing protected review and release authorization. Do not change
 branch protections, publication credentials or Environment scope as an
 implementation shortcut. This feature slice does not authorize publication.
 
+## Read-only Main foundation staged by #456 Phase A
+
+`scripts/published-npm-admission.mjs` verifies completed publication with public
+read ports. It independently authenticates the official C run/check suite,
+executed workflow and complete helper/lock closure, latest successful jobs and
+original physical executions, the unique finalizer frame, original raw Actions
+ZIP and retained assets, tgz bytes and registry/provenance fields. It invokes
+the real Source454 verifier. Main never imports the publisher's privileged
+factory, spoofs `GITHUB_*`, installs npm dependencies or builds/tests/packages.
+The shared registry comparator remains data-only and explicitly does not claim
+cryptographic signature verification.
+
+Promotion requires actual S ancestry and every S product blob/mode/gitlink,
+plus the whole currently trusted Base control closure as ordinary blobs. Exact
+S passes only if it already has those same controls. Preserve old physical
+frame identities on copied-success reruns and retain earlier failed npm jobs;
+a later successful finalizer may attest exact registry readback without
+rewriting their outcomes. Download/comment counters are not identity.
+
+The accepted release registry is empty by default. There is no CLI, Main YAML,
+required-check/protection change, bootstrap, publication or hosted admission in
+this phase. A future trusted-Base loader must supply the complete reviewed
+control closure, including its own entrypoint, and authenticate real original
+release evidence. Missing/expired Source artifacts or missing official original
+metadata stop; never replace them with compilation. Run only the new focused
+`published-npm-admission.test.mjs` cases while developing this data boundary.
+
 ## Validation and scope
 
 Use `npm run verify` and the built browser suites against the output it

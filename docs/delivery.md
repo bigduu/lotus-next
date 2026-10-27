@@ -7,8 +7,9 @@ continues from the same branch/checkpoint and original evidence; it does not
 repeat successful work merely because ownership changed.
 
 This repository follows the unified Zenith #399 delivery contract. This checkout
-contains feature acceptance (#446), the read-only source foundation (#454) and
-the staged single-original npm producer (#455). It does not establish accepted
+contains feature acceptance (#446), the read-only source foundation (#454), the
+staged single-original npm producer (#455) and read-only Main proof (#456 Phase
+A). It does not establish accepted
 feature evidence or activate main admission/bootstrap (#456). Main remains the
 default branch and trusted publication controller.
 
@@ -112,6 +113,62 @@ publication authority; public Main must authenticate their original official
 execution. Registry DSSE field comparison is not standalone cryptographic
 verification. This local slice has no actual release/registry acceptance,
 Main gate, bootstrap, protection update or production dispatch.
+
+### Read-only completed-publication and Main proof (#456 Phase A)
+
+`scripts/published-npm-admission.mjs` provides `verifyPublishedNpm` and
+`verifyPromotion` for a future trusted-Base caller. Inputs are exact frozen S,
+version, original feature PR/run/attempt and release run; promotion additionally
+binds the live Main PR, B, F and actual tested merge M. There is no CLI or write
+port, and the default accepted-release registry is empty. No workflow or
+protection is activated by importing the module.
+
+The public reader authenticates the original release run's repository ID,
+GitHub Actions check suite, executed main workflow C, normal C/Main ancestry and
+the full reviewed C helper plus package/lock byte closure. It calls the real
+Source454 verifier rather than a publisher factory that requires an active
+dispatch. C, S, original feature M and Main promotion M remain separate facts;
+the reader neither sets nor impersonates Actions environment variables.
+
+Latest logical prepare/builder/finalizer jobs must succeed. Copied successes
+retain the earliest complete physical execution and its original finalizer
+log, ID and attempt. A real restore job is distinct from the original builder;
+it must have skipped the compiler/packer/uploader and passed restore. A failed
+pre-build job cannot hide actual compiler execution. The original Actions
+artifact ID/digest/upload interval and retained raw ZIP must identify the same
+physical build, original tgz and full resource manifest. Missing successful
+metadata stops, even if Release bytes survive. Source454's own original feature
+artifacts remain necessary too.
+
+The exact annotated tag and Release intent bind S/version/C/run/original
+prepare job. `Release.created_at` is commit metadata, not a prepare-job clock.
+The unique successful physical finalizer's bounded completion frame binds the
+original asset IDs and immutable completion asset. Registry bytes, checksums
+and provenance fields must match that same tgz and actual C/run/publication
+attempt. An earlier npm job may remain failed after uncertain publication;
+only the independently authenticated successful finalizer proves its exact
+registry readback. No old frame, job or failure is rewritten. The shared
+`registryIdentity` comparator is moved verbatim into the original-output data
+module; DSSE field comparison still reports `cryptographicVerification:false`.
+Trusted C execution supplies the authority, not a self-described JSON archive.
+
+Normal Main promotion preserves S's real ancestry and exact product leaves,
+including symlink/executable modes and mode-160000 gitlinks. The candidate and
+actual merge must contain the whole current trusted B control closure; all
+declared B controls must be ordinary blobs. A complete S tree is acceptable only
+when its controls already equal B. A same-tree copy without S ancestry, partial
+control overlay or feature-only workflow that removes the Main gate rejects.
+Fresh API checks ignore incidental download/comment counters while retaining
+actual source/ref/ID/size/digest/body and original bytes.
+
+Phase B still owns trusted-Base loading, the complete live entrypoint/control
+list, source-only Main bootstrap and required checks, approved producer entries,
+and positive/negative hosted admission. Phase A runs no npm install, tsc, Vite,
+pack, Unit/browser runtime or publication. Its focused test command is
+`node node_modules/vitest/vitest.mjs run scripts/published-npm-admission.test.mjs`;
+tiny real Git/tar/ZIP fixtures and mock API/registry reads are not hosted
+feature, release or Main acceptance. Preserve historical v28/v29 and fixed
+2026.10.12 workflows, records and original evidence throughout activation.
 
 ### Executable feature ownership
 

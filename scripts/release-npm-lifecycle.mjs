@@ -5,9 +5,9 @@ import { createHash } from "node:crypto"
 import { spawnSync } from "node:child_process"
 import { appendFileSync, existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs"
 import path from "node:path"
-import { fileURLToPath, URL } from "node:url"
+import { fileURLToPath } from "node:url"
 import { admitFrozenDev, executionKey, requireController, requireProduct, zipFiles } from "./frozen-dev-source.mjs"
-import { assetName, inputs, REPOSITORY, seal, unseal, verifyPackResult } from "./release-npm-original.mjs"
+import { assetName, inputs, REPOSITORY, registryIdentity, seal, unseal, verifyPackResult } from "./release-npm-original.mjs"
 
 export const WORKFLOW = ".github/workflows/publish-npm.yml"
 export const JOBS = Object.freeze({ prepare: "Reserve frozen npm release", build: "Produce original npm archive", finalize: "Publish retained npm archive" })
@@ -33,41 +33,6 @@ const skipped = (job, names) => names.every(name => {
   return value.status === "completed" && value.conclusion === "skipped"
 })
 const core = [STEPS.build, STEPS.pack, STEPS.upload]
-
-function registryIdentity(record, original, expected, controller, runId, attempt, repository) {
-  assert.ok(record && Buffer.isBuffer(record.archive)); same(record.archive, original.sealed.archive)
-  const metadata = record.metadata, archive = original.sealed.proof.archive, slsa = "https://slsa.dev/provenance/v1"
-  assert.equal(metadata.name, "@bigduu/lotus-next"); assert.equal(metadata.version, expected.version)
-  assert.equal(metadata.dist.shasum, archive.shasum); assert.equal(metadata.dist.integrity, archive.integrity)
-  const tar = new URL(metadata.dist.tarball)
-  assert.equal(tar.origin, "https://registry.npmjs.org"); assert.ok(!tar.username && !tar.password && !tar.search && !tar.hash)
-  assert.equal(decodeURIComponent(tar.pathname), "/@bigduu/lotus-next/-/lotus-next-" + expected.version + ".tgz")
-  assert.equal(metadata.dist.attestations.provenance.predicateType, slsa)
-  const matches = record.attestations.attestations.filter(value => value.predicateType === slsa)
-  assert.equal(matches.length, 1)
-  const envelope = matches[0].bundle.dsseEnvelope
-  assert.equal(envelope.payloadType, "application/vnd.in-toto+json")
-  assert.ok(typeof envelope.payload === "string" && envelope.payload.length <= 1024 * 1024)
-  const payload = Buffer.from(envelope.payload, "base64"); assert.equal(payload.toString("base64"), envelope.payload)
-  const statement = JSON.parse(payload)
-  assert.equal(statement._type, "https://in-toto.io/Statement/v1"); assert.equal(statement.predicateType, slsa)
-  same(statement.subject, [{ name: "pkg:npm/%40bigduu/lotus-next@" + expected.version,
-    digest: { sha512: Buffer.from(archive.integrity.slice(7), "base64").toString("hex") } }])
-  const build = statement.predicate.buildDefinition
-  assert.equal(build.buildType, "https://slsa-framework.github.io/github-actions-buildtypes/workflow/v1")
-  same(build.externalParameters.workflow, { ref: "refs/heads/main", repository: "https://github.com/" + REPOSITORY, path: WORKFLOW })
-  assert.equal(build.internalParameters.github.event_name, "workflow_dispatch")
-  assert.equal(build.internalParameters.github.repository_id, String(integer(repository.id)))
-  assert.equal(build.internalParameters.github.repository_owner_id, String(integer(repository.owner.id)))
-  same(build.resolvedDependencies, [{ uri: "git+https://github.com/" + REPOSITORY + "@refs/heads/main", digest: { gitCommit: controller } }])
-  assert.equal(statement.predicate.runDetails.builder.id, "https://github.com/actions/runner/github-hosted")
-  const invocationId = statement.predicate.runDetails.metadata.invocationId
-  const prefix = "https://github.com/" + REPOSITORY + "/actions/runs/" + runId + "/attempts/"
-  assert.ok(invocationId.startsWith(prefix)); const originAttempt = integer(Number(invocationId.slice(prefix.length)))
-  assert.equal(invocationId, prefix + originAttempt); assert.ok(originAttempt <= attempt)
-  return { sha256: archive.sha256, shasum: archive.shasum, integrity: archive.integrity, invocationId,
-    publicationAttempt: originAttempt, workflowSha: controller, payloadSha256: hash(payload), cryptographicVerification: false }
-}
 
 export function createLifecycle({ expected, feature, controllerRoot, environment = process.env }, ports) {
   for (const name of ["read", "write", "upload", "binary", "registry"]) assert.equal(typeof ports[name], "function", "Missing lifecycle port: " + name)
