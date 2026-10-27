@@ -423,4 +423,30 @@ describe("single frozen npm original lifecycle with the real Source454 verifier"
     assert.equal(calls.length, 3); assert.equal(calls[0].url, "https://registry.npmjs.org/@bigduu%2flotus-next/2026.10.99")
     for (const call of calls) { assert.equal(call.options.redirect, "error"); assert.equal(call.options.headers, undefined) }
   })
+  it("preserves real GitHub provenance metadata only for the finalizer npm child without relabeling C as S", () => {
+    const provenance = { GITHUB_ACTIONS: "true", GITHUB_WORKFLOW_REF: expected.repository + "/" + WORKFLOW + "@refs/heads/main",
+      GITHUB_REPOSITORY: expected.repository, GITHUB_SERVER_URL: "https://github.com", GITHUB_EVENT_NAME: "workflow_dispatch",
+      GITHUB_REPOSITORY_ID: "1281544268", GITHUB_REPOSITORY_OWNER_ID: "18681616", GITHUB_REF: "refs/heads/main",
+      GITHUB_SHA: controller, GITHUB_RUN_ID: "900", GITHUB_RUN_ATTEMPT: "2", RUNNER_ENVIRONMENT: "github-hosted" }
+    const output = mkdtempSync(path.join(root, "provenance-wire-")), calls = []
+    const environment = { ...safeEnv, ...provenance, GITHUB_JOB: "finalize", GH_TOKEN: "forbidden", GITHUB_RUNTIME_TOKEN: "forbidden",
+      ACTIONS_RUNTIME_TOKEN: "forbidden", NODE_AUTH_TOKEN: "fixture-npm-credential", NODE_OPTIONS: "forbidden", NODE_PATH: "/forbidden",
+      GIT_DIR: "/forbidden", LOTUS_NEXT_SOURCE_REVISION: S,
+      ACTIONS_ID_TOKEN_REQUEST_URL: "https://fixture.invalid/oidc", ACTIONS_ID_TOKEN_REQUEST_TOKEN: "fixture-oidc-credential" }
+    const ports = controllerPorts({ output, environment, execute: (program, args, options) => { calls.push({ program, args, options }); return { status: 0, stdout: "{}" } } })
+    ports.npm(["ci", "--ignore-scripts"], controlRoot)
+    ports.npm(["--ignore-scripts", "run", "build"], controlRoot, false, { LOTUS_NEXT_SOURCE_REVISION: S })
+    for (const call of calls) for (const key of [...Object.keys(provenance), "NODE_AUTH_TOKEN", "ACTIONS_ID_TOKEN_REQUEST_URL", "ACTIONS_ID_TOKEN_REQUEST_TOKEN"])
+      assert.equal(call.options.env[key], undefined, "Install/build must not inherit " + key)
+    ports.publish(tarball, expected)
+    const child = calls[2].options.env
+    for (const [key, value] of Object.entries(provenance)) assert.equal(child[key], value, "npm provenance requires actual " + key)
+    assert.notEqual(child.GITHUB_SHA, S); assert.equal(child.GITHUB_SHA, environment.GITHUB_SHA)
+    assert.equal(child.NODE_AUTH_TOKEN, environment.NODE_AUTH_TOKEN)
+    assert.equal(child.ACTIONS_ID_TOKEN_REQUEST_URL, environment.ACTIONS_ID_TOKEN_REQUEST_URL)
+    assert.equal(child.ACTIONS_ID_TOKEN_REQUEST_TOKEN, environment.ACTIONS_ID_TOKEN_REQUEST_TOKEN)
+    for (const key of ["GH_TOKEN", "GITHUB_RUNTIME_TOKEN", "ACTIONS_RUNTIME_TOKEN", "NODE_OPTIONS", "NODE_PATH", "GIT_DIR", "LOTUS_NEXT_SOURCE_REVISION"])
+      assert.equal(child[key], undefined, key)
+    assert.deepEqual(readFileSync(calls[2].args[1]), tarball)
+  })
 })

@@ -379,7 +379,12 @@ export function controllerPorts({ environment = process.env, output, execute = s
       ? "//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}\n" : "")
     return { ...transportEnv(environment), HOME: home, USERPROFILE: home, CI: "true", NPM_CONFIG_USERCONFIG: config,
       NPM_CONFIG_GLOBALCONFIG: global, NPM_CONFIG_REGISTRY: registry, NPM_CONFIG_AUDIT: "false", NPM_CONFIG_FUND: "false",
-      ...(publication ? Object.fromEntries(["NODE_AUTH_TOKEN", "ACTIONS_ID_TOKEN_REQUEST_URL", "ACTIONS_ID_TOKEN_REQUEST_TOKEN"]
+      // npm's ci-info/provenance code needs the real GitHub provider and C/run
+      // metadata. Preserve it only for publication; never replace C with S.
+      ...(publication ? Object.fromEntries(["NODE_AUTH_TOKEN", "ACTIONS_ID_TOKEN_REQUEST_URL", "ACTIONS_ID_TOKEN_REQUEST_TOKEN",
+        "GITHUB_ACTIONS", "GITHUB_WORKFLOW_REF", "GITHUB_REPOSITORY", "GITHUB_SERVER_URL", "GITHUB_EVENT_NAME",
+        "GITHUB_REPOSITORY_ID", "GITHUB_REPOSITORY_OWNER_ID", "GITHUB_REF", "GITHUB_SHA", "GITHUB_RUN_ID",
+        "GITHUB_RUN_ATTEMPT", "RUNNER_ENVIRONMENT"]
         .filter(key => environment[key] !== undefined).map(key => [key, environment[key]])) : {}) }
   }
   const npm = (args, cwd, publication = false, extra = {}) => {
