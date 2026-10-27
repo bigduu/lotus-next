@@ -131,6 +131,21 @@ describe("single frozen npm original lifecycle with the real Source454 verifier"
     f.beginBuild(); const plan = f.lifecycle().planBuild()
     assert.equal(plan.mode, "build"); assert.deepEqual(plan.origin, { controllerRevision: controller, runId, attempt: 1, jobId: 2001 })
   })
+  it("treats the release commit date as metadata rather than its reservation job execution time", async () => {
+    const f = sample(), write = f.ports.write
+    f.ports.write = (...args) => {
+      const result = write(...args)
+      if (args[0] === "POST" && args[1] === "releases") result.created_at = "2026-10-25T00:00:00Z"
+      return result
+    }
+    const reserved = await f.lifecycle().reserve()
+    assert.equal(reserved.intent.origin.jobId, f.prepared.id)
+    assert.equal(reserved.release.created_at, "2026-10-25T00:00:00Z")
+    f.beginBuild(); assert.equal(f.lifecycle().planBuild().mode, "build")
+    // The real original owner/step binding still rejects fabricated ownership.
+    f.prepared.conclusion = "failure"
+    assert.throws(() => f.lifecycle().planBuild())
+  })
   it("rechecks the actual frozen source before every write and stops at the first changed ref", async () => {
     const f = sample(), original = f.ports.write
     f.ports.write = (...args) => { const result = original(...args); f.source.frozen = "f".repeat(40); return result }

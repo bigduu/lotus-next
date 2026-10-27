@@ -170,9 +170,9 @@ export function createLifecycle({ expected, feature, controllerRoot, environment
     assert.equal(owners.length, 1, "Reservation lacks its original API job")
     const owner = owners[0]
     if (owner.status !== "in_progress" || origin.attempt !== attempt) { success(owner); success(step(owner, STEPS.reserve)) }
-    const created = timestamp(release.created_at)
-    assert.ok(created >= timestamp(owner.started_at))
-    if (owner.completed_at) assert.ok(created <= timestamp(owner.completed_at) + 1000)
+    // GitHub created_at is the source commit date, not the draft creation
+    // time. Ownership is the original C/run/job/step plus matching tag intent.
+    timestamp(release.created_at)
     return { release, intent: body, tagObject: ref.object.sha }
   }
   const assets = (release) => {
