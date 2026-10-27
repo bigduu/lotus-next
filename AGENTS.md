@@ -40,7 +40,8 @@ The known Bamboo HTTPS failure still blocks #450; do not skip or weaken it.
 dev. It has one dispatch path: preflight -> build/pack -> publish.
 Freeze `release/<accepted-Dev-SHA>`, reserve the existing annotated version tag at
 that same SHA and provide the exact version, source tag, Dev PR and CI run.
-Preflight emits only a temporary run-bound receipt. Build stamps a disposable
+Preflight uploads its run/attempt-bound receipt only after all checks; publish
+uses that successful preflight's artifact ID on retries. Build stamps a disposable
 checkout, builds dist once, packs once without lifecycle scripts and retains the
 original tgz plus pack identity in standard Actions storage. Publish downloads
 those exact bytes, checks them, refreshes Dev/source admission and the immutable
@@ -50,8 +51,9 @@ Main does not run the publication controller after cutover.
 
 Retry failed publication jobs in the original run using the retained tarball;
 an already published version must match it exactly. A build retry is allowed only
-when every prior attempt's build and pack steps are explicitly skipped in that
-same run/controller's complete job metadata. Started or missing evidence stops
+when the same run/controller's complete metadata proves every prior attempt had
+both build/pack steps skipped, or a wholly skipped job with an empty steps array.
+Started or missing evidence stops
 rebuilding, as does a replacement dispatch for the same version.
 Missing original output stops recovery. Historical candidate/receipt functions
 and fixed published-version recovery keep their old identities and cannot admit

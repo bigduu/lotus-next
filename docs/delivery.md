@@ -27,7 +27,8 @@ failure still blocks #450 and remains with its feature/input owner.
    Dev-ref dispatch. Controller and product source identities remain distinct.
 2. Preflight reads the actual PR/run/jobs, original Actions feature receipt and
    Git parents/tree. Unit, all four browser shards, real Bamboo and native Actor
-   must have succeeded before Dev merge. It writes only a temporary source receipt.
+   must have succeeded before Dev merge. After every check, upload the run/attempt
+   receipt; publish keeps the successful preflight's artifact ID across retries.
 3. One build job stamps disposable package metadata, runs the final dist build
    once and creates one actual tgz with lifecycle scripts disabled. Static package
    inventory may inspect a dry-run manifest; it produces no second tarball or
@@ -39,6 +40,7 @@ failure still blocks #450 and remains with its feature/input owner.
 5. Rerun failed publish jobs in that original run. Existing registry bytes
    must equal the retained tarball. A build retry requires complete same-run,
    same-controller metadata proving every earlier build/pack step was skipped;
+   a whole skipped job requires its skipped conclusion and an empty steps array;
    started or missing evidence stops it. Another dispatch of the same version
    stops before compiling again; missing successful
    originals stop recovery. A product repair returns through feature/dev/new cut.

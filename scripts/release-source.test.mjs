@@ -12,6 +12,7 @@ const legacyWorkflow = readFileSync("scripts/fixtures/ci-unsharded.yml", "utf8")
 const currentPublication = readFileSync(".github/workflows/publish-npm.yml", "utf8")
 // Small structural fixture for the historical parser; no shallow-Git dependency.
 const legacyPublication = currentPublication
+  .replace("      source_receipt_artifact_id: ${{ steps.receipt.outputs.artifact-id }}\n", "")
   .replace("    permissions:\n      contents: read\n      actions: read\n      pull-requests: read\n", "")
   .replace("          GH_TOKEN: ${{ github.token }}\n          FEATURE_PR_INPUT: ${{ inputs.feature_pr }}\n          FEATURE_RUN_INPUT: ${{ inputs.feature_run }}\n", "")
   .replaceAll("    if: github.ref == 'refs/heads/dev' && github.ref_protected\n", "")

@@ -98,6 +98,18 @@ describe("minimal publication source and recovery boundary", () => {
     expect(workflow).toContain("Refresh the accepted Dev source immediately before publication")
     expect(workflow).toContain("Verify the existing version against the original tarball below")
   })
+  it("uploads only checked attempt-bound receipts and reuses the successful preflight output", () => {
+    const preflight = workflow.split("\n  preflight:\n")[1].split("\n  build:\n")[0]
+    const upload = preflight.indexOf("      - name: Upload the run-bound release source receipt")
+    expect(upload).toBeGreaterThan(preflight.indexOf("      - name: Validate version, source, and registry vacancy"))
+    expect(preflight.slice(upload)).toContain("name: release-source-receipt-${{ github.run_id }}-${{ github.run_attempt }}")
+    expect(preflight.slice(upload)).toContain("overwrite: false")
+    expect(preflight).toContain("source_receipt_artifact_id: ${{ steps.receipt.outputs.artifact-id }}")
+    expect(preflight.slice(upload)).toContain("id: receipt")
+    const download = workflow.split("      - name: Download the run-bound release source receipt\n")[1].split("      - name:")[0]
+    expect(download).toContain("artifact-ids: ${{ needs.preflight.outputs.source_receipt_artifact_id }}")
+    expect(download).not.toContain("github.run_attempt")
+  })
 })
 
 describe("publication build retry boundary", () => {
@@ -107,7 +119,7 @@ describe("publication build retry boundary", () => {
   const runGuard = (attempt, mutate = () => {}) => {
     const root = mkdtempSync(join(tmpdir(), "lotus-build-retry-"))
     const history = Array.from({ length: attempt - 1 }, (_, index) => ({ total_count: 1, jobs: [{
-      name: "Build and pack the final artifact once", run_id: 77, run_attempt: index + 1, head_sha: source, status: "completed",
+      name: "Build and pack the final artifact once", run_id: 77, run_attempt: index + 1, head_sha: source, status: "completed", conclusion: "failure",
       steps: [ { name: "Install exact dependencies", status: "completed", conclusion: "failure" },
         ...["Build and verify the final package tree", "Pack once without another lifecycle build"].map(name => ({ name, status: "completed", conclusion: "skipped" })) ],
     }] }))
@@ -129,6 +141,11 @@ process.stdout.write(JSON.stringify(JSON.parse(process.env.RETRY_HISTORY)[Number
     expect(result.status, result.stderr).toBe(0)
     expect(result.calls).toEqual(Array.from({ length: attempt - 1 }, (_, index) => String(index + 1)))
   })
+  it("permits an entirely skipped build after a failed preflight", () => {
+    const result = runGuard(3, h => { h[0].jobs[0].conclusion = "skipped"; h[0].jobs[0].steps = [] })
+    expect(result.status, result.stderr).toBe(0)
+    expect(result.calls).toEqual(["1", "2"])
+  })
   it.each([
     ["latest build succeeded", h => { h[1].jobs[0].steps[1].conclusion = "success" }],
     ["build failed", h => { h[0].jobs[0].steps[1].conclusion = "failure" }],
@@ -139,6 +156,10 @@ process.stdout.write(JSON.stringify(JSON.parse(process.env.RETRY_HISTORY)[Number
     ["missing pack step", h => { h[0].jobs[0].steps.pop() }],
     ["missing job", h => { h[0].jobs = []; h[0].total_count = 0 }],
     ["truncated jobs", h => { h[0].total_count = 2 }],
+    ["empty steps without a skipped job", h => { h[0].jobs[0].steps = [] }],
+    ["skipped job with missing steps", h => { h[0].jobs[0].conclusion = "skipped"; delete h[0].jobs[0].steps }],
+    ["skipped job with actual steps", h => { h[0].jobs[0].conclusion = "skipped" }],
+    ["skipped foreign job", h => { Object.assign(h[0].jobs[0], { conclusion: "skipped", steps: [], head_sha: "b".repeat(40) }) }],
     ...[ ["run_id", 78], ["run_attempt", 2], ["head_sha", "b".repeat(40)], ["status", "in_progress"] ]
       .map(([key, value]) => [`wrong ${key}`, h => { h[0].jobs[0][key] = value }]),
   ])("refuses %s instead of rebuilding", (_name, mutate) => {
