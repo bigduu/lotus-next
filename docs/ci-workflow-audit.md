@@ -83,6 +83,10 @@ promotion, Docker consumption or Pages deployment acceptance.
 
 ## Lotus Next
 
+The original PR450 snapshot ran Unit on both Node versions. The current
+candidate assigns Unit once to Node 22 and the shared artifact checks to Node 24;
+it has not yet completed feature admission. Check the tracker for its status.
+
 | File | Responsibility and review decision |
 | --- | --- |
 | `ci.yml` | Feature PRs into dev own one Node22 Unit suite, one Node24 dist, four complete browser shards and Real Bamboo using that dist. The feature aggregate rejects missing/skipped/failed selected jobs. No dev/main push repeat after feature admission. The packed-runtime network failure remains tracked in Issue453. |
