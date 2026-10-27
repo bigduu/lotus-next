@@ -32,12 +32,12 @@ the Lotus-specific commands below; check actual activation before a cut.
 ## Delivery activation
 
 Issue #446 implements the feature gate under the unified Zenith #399 contract.
-Its dependent release producer and main promotion changes are not implemented
-by this slice. The current publisher still recognizes historical candidate
-receipts and retains its existing real-runtime gate. Do not describe the new
-release/main flow as active or submit a new feature-graph receipt to that old
-publisher. Preserve the separately owned frontend 2026.10.28 request (#445),
-existing tags and original receipts.
+This checkout also stages the original npm producer (#455). It is not release
+acceptance or main activation: complete feature evidence and the reviewed main
+controller/bootstrap (#456) remain prerequisites. Historical v28/v29 publisher
+definitions and the fixed 2026.10.12 recovery retain their original identities;
+their tests read the frozen legacy fixture. Never submit a new feature receipt
+to the old publisher or change an existing tag to make it fit the new producer.
 
 The read-only source foundation in scripts/frozen-dev-source.mjs (#454) is
 separate from publisher activation. It verifies the original eleven feature
@@ -49,6 +49,25 @@ source proof cannot reserve a version, build, pack, publish or promote main.
 The current red #450 run cannot authorize a cut; do not manufacture a green
 receipt or replace a missing artifact with a new build. Review any producer
 closure change explicitly before accepting it.
+
+The staged publisher runs only by trusted-main `workflow_dispatch`. Its CLI is
+`node scripts/release-npm-lifecycle.mjs <phase>`; actual `GITHUB_JOB` must match
+`reserve`/prepare, `select|install|build|pack|restore`/build, or `finalize`/finalize.
+Select before both lock installations, stamping, Vite or pack. Only C helpers
+and C dependencies verify S data; install each trust root's locked dependencies
+separately with scripts disabled. S builds once and packs once with prepack
+disabled. Unit/browser/real Bamboo/native Actor suites belong to feature CI.
+Only finalize receives npm/OIDC authority and publishes the retained original
+tgz with scripts disabled. Every remote write re-enters the real Source verifier.
+
+Rerun failed jobs in the same original run/controller. Complete explicit skipped
+Build/Pack/Upload records allow a first build after known pre-build failure;
+successful physical outputs always select restore. Started, missing or unknown
+work, missing successful originals, or a different run stop instead of compiling
+again. Preserve the original RED. The raw Actions ZIP is copied to the reserved
+Release without repacking; 90-day Actions retention and surviving official
+metadata bound recovery. A Release asset or completion JSON never grants Main
+authority. Do not dispatch, bootstrap or change protection from this staged slice.
 
 After the dependent cutover, only a fully accepted dev cut may become a frozen
 release. Release work builds/packages/publishes the formal artifact once; it

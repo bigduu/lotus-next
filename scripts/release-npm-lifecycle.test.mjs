@@ -1,11 +1,11 @@
 import assert from "node:assert/strict"
 import { execFileSync } from "node:child_process"
-import { mkdtempSync, mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs"
+import { mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"
 import { afterAll, beforeAll, describe, it } from "vitest"
 import { calculateResourcesSha256 } from "./artifact-manifest.mjs"
-import { createLifecycle, JOBS, STEPS, WORKFLOW } from "./release-npm-lifecycle.mjs"
+import { controllerPorts, createLifecycle, JOBS, runPhase, STEPS, WORKFLOW } from "./release-npm-lifecycle.mjs"
 import { seal, assetName, inspectArchive } from "./release-npm-original.mjs"
 import { fixture, archive as outerZip, sha256, bytes, safeEnv, S, T } from "./frozen-dev-source.test-fixture.mjs"
 
@@ -362,5 +362,65 @@ describe("single frozen npm original lifecycle with the real Source454 verifier"
     const writes = f.state.writes.length
     await assert.rejects(() => f.lifecycle().retainOriginal(), /GITHUB_JOB|phase/)
     assert.equal(f.state.writes.length, writes)
+  })
+  it("CLI phase routing uses the real controller and Source454 guard before each write", async () => {
+    const f = sample(), write = f.ports.write, output = mkdtempSync(path.join(root, "phase-"))
+    f.ports.write = (...args) => { const result = write(...args); f.source.frozen = "f".repeat(40); return result }
+    await assert.rejects(() => runPhase("reserve", { ...f.context, output }, f.ports), /Frozen cut/)
+    assert.equal(f.state.writes.length, 1)
+    for (const command of ["build", "pack", "install", "restore", "select", "finalize"]) {
+      await assert.rejects(() => runPhase(command, { ...f.context, output }, f.ports), /GITHUB_JOB/)
+    }
+    assert.equal(f.state.writes.length, 1)
+  })
+  it("uses standard gh HTTP status and raw input/output ports without repacking original ZIP bytes", () => {
+    const output = mkdtempSync(path.join(root, "gh-wire-")), calls = []
+    const ports = controllerPorts({ output, environment: { ...safeEnv, GH_TOKEN: "fixture-github-credential", NODE_OPTIONS: "untrusted" },
+      execute: (program, args, options) => {
+        calls.push({ program, args, options })
+        if (args.includes("--allow-escape-sequences")) return { status: 0, stdout: tarball }
+        const missing = args[1].endsWith("/missing")
+        return { status: missing ? 1 : 0, stdout: Buffer.from("HTTP/2.0 " + (missing ? "404 Not Found" : "201 Created") + "\r\nContent-Type: application/json\r\n\r\n" + JSON.stringify(missing ? { message: "Not Found" } : { id: 8 })) }
+      } })
+    assert.equal(ports.read("missing"), null)
+    assert.deepEqual(ports.upload(700, "original.zip", tarball), { id: 8 })
+    assert.deepEqual(ports.binary("actions/artifacts/501/zip"), tarball)
+    assert.equal(calls[1].program, "gh"); assert.ok(calls[1].args[1].startsWith("https://uploads.github.com/repos/bigduu/lotus-next/releases/700/assets?name="))
+    assert.deepEqual(calls[1].options.input, tarball); assert.ok(calls[1].args.includes("--input"))
+    assert.equal(calls[1].options.env.GH_TOKEN, "fixture-github-credential"); assert.equal(calls[1].options.env.NODE_OPTIONS, undefined)
+    assert.ok(calls[2].args.includes("Accept: application/octet-stream"))
+  })
+  it("the standard npm port isolates config and credentials and publishes only the exact original tgz", () => {
+    const output = mkdtempSync(path.join(root, "npm-wire-")), calls = []
+    const environment = { ...safeEnv, GITHUB_JOB: "finalize", NODE_AUTH_TOKEN: "fixture-npm-credential", GH_TOKEN: "fixture-github-credential",
+      ACTIONS_ID_TOKEN_REQUEST_URL: "https://fixture.invalid/oidc", ACTIONS_ID_TOKEN_REQUEST_TOKEN: "fixture-oidc-credential",
+      GITHUB_RUNTIME_TOKEN: "forbidden", NODE_OPTIONS: "--require forbidden", NODE_PATH: "/forbidden", GIT_DIR: "/forbidden", NPM_CONFIG_USERCONFIG: "/forbidden" }
+    const ports = controllerPorts({ output, environment, execute: (program, args, options) => { calls.push({ program, args, options }); return { status: 0, stdout: "{}" } } })
+    ports.npm(["ci", "--ignore-scripts"], controlRoot)
+    for (const key of ["GH_TOKEN", "NODE_AUTH_TOKEN", "ACTIONS_ID_TOKEN_REQUEST_TOKEN", "GITHUB_RUNTIME_TOKEN", "NODE_OPTIONS", "NODE_PATH", "GIT_DIR"])
+      assert.equal(calls[0].options.env[key], undefined, key)
+    ports.publish(tarball, expected)
+    const call = calls[1]
+    assert.deepEqual(call.args, ["publish", path.join(output, "bigduu-lotus-next-2026.10.99.tgz"), "--ignore-scripts", "--provenance", "--access", "public", "--registry=https://registry.npmjs.org"])
+    assert.deepEqual(readFileSync(call.args[1]), tarball); assert.equal(call.options.cwd, output)
+    assert.equal(call.options.env.NODE_AUTH_TOKEN, environment.NODE_AUTH_TOKEN)
+    assert.equal(call.options.env.ACTIONS_ID_TOKEN_REQUEST_TOKEN, environment.ACTIONS_ID_TOKEN_REQUEST_TOKEN)
+    for (const key of ["GH_TOKEN", "GITHUB_RUNTIME_TOKEN", "NODE_OPTIONS", "NODE_PATH", "GIT_DIR"]) assert.equal(call.options.env[key], undefined)
+    assert.equal(readFileSync(call.options.env.NPM_CONFIG_USERCONFIG, "utf8"), "//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}\n")
+    assert.equal(readFileSync(call.options.env.NPM_CONFIG_GLOBALCONFIG, "utf8"), "")
+    environment.GITHUB_JOB = "build"; assert.throws(() => ports.publish(tarball, expected), /finalizer/)
+    assert.equal(calls.length, 2)
+  })
+  it("reads the exact registry metadata, archive and provenance endpoints with no credentialed redirect", async () => {
+    const output = mkdtempSync(path.join(root, "registry-wire-")), record = registryRecord(), calls = []
+    record.metadata.dist.attestations.url = "https://registry.npmjs.org/-/npm/v1/attestations/@bigduu%2flotus-next@2026.10.99"
+    const ports = controllerPorts({ output, environment: safeEnv, fetchImpl: async (url, options) => {
+      calls.push({ url, options })
+      const bytes = url.endsWith(".tgz") ? tarball : url.includes("/attestations/") ? Buffer.from(JSON.stringify(record.attestations)) : Buffer.from(JSON.stringify(record.metadata))
+      return { status: 200, body: [bytes] }
+    } })
+    assert.deepEqual(await ports.registry(expected, false), record)
+    assert.equal(calls.length, 3); assert.equal(calls[0].url, "https://registry.npmjs.org/@bigduu%2flotus-next/2026.10.99")
+    for (const call of calls) { assert.equal(call.options.redirect, "error"); assert.equal(call.options.headers, undefined) }
   })
 })

@@ -2,9 +2,12 @@
 // Source or Main authority: every mutation re-enters the real source verifier.
 import assert from "node:assert/strict"
 import { createHash } from "node:crypto"
-import { URL } from "node:url"
-import { admitFrozenDev, executionKey, requireController, zipFiles } from "./frozen-dev-source.mjs"
-import { assetName, inputs, REPOSITORY, unseal } from "./release-npm-original.mjs"
+import { spawnSync } from "node:child_process"
+import { appendFileSync, existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs"
+import path from "node:path"
+import { fileURLToPath, URL } from "node:url"
+import { admitFrozenDev, executionKey, requireController, requireProduct, zipFiles } from "./frozen-dev-source.mjs"
+import { assetName, inputs, REPOSITORY, seal, unseal, verifyPackResult } from "./release-npm-original.mjs"
 
 export const WORKFLOW = ".github/workflows/publish-npm.yml"
 export const JOBS = Object.freeze({ prepare: "Reserve frozen npm release", build: "Produce original npm archive", finalize: "Publish retained npm archive" })
@@ -329,4 +332,161 @@ export function createLifecycle({ expected, feature, controllerRoot, environment
   return { reserve, planBuild, retainOriginal, readOriginal: original, restoreBuild, publishRetained,
     context: { expected, feature, controller, runId, attempt, tag, completionName },
     source, jobs, currentJob, owned }
+}
+
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
+const registry = "https://registry.npmjs.org"
+const transportEnv = (environment, github = false) => ({
+  ...Object.fromEntries(["PATH", "HOME", "USERPROFILE", "SystemRoot", "TEMP", "TMP", "TMPDIR", "LANG", "LC_ALL",
+    ...(github ? ["GH_TOKEN"] : [])].filter(key => environment[key] !== undefined).map(key => [key, environment[key]])),
+  GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1", GH_HOST: "github.com",
+})
+const exclusive = (name, bytes) => writeFileSync(name, bytes, { flag: "wx", mode: 0o600 })
+const regular = (name) => { const value = lstatSync(name); assert.ok(value.isFile() && !value.isSymbolicLink()); return name }
+
+// These are transport ports, not an alternate authority. The CLI below always
+// enters createLifecycle; only its fresh real Source guard may call a write port.
+export function controllerPorts({ environment = process.env, output, execute = spawnSync, fetchImpl = fetch }) {
+  assert.ok(path.isAbsolute(output))
+  mkdirSync(output, { recursive: true, mode: 0o700 })
+  const command = (program, args, options = {}) => {
+    const result = execute(program, args, { env: transportEnv(environment), maxBuffer: 128 * 1024 * 1024, ...options })
+    assert.ok(!result.error, "Could not start " + program)
+    return result
+  }
+  const github = (method, endpoint, body, binary = false, upload = false) => {
+    const target = upload ? "https://uploads.github.com/repos/" + REPOSITORY + "/" + endpoint : "repos/" + REPOSITORY + "/" + endpoint
+    const args = ["api", target, "--method", method, ...(binary ? ["--allow-escape-sequences"] : ["--include"]),
+      "-H", "Accept: " + (binary ? "application/octet-stream" : "application/vnd.github+json"),
+      ...(body !== undefined ? ["--input", "-", "-H", "Content-Type: " + (upload ? "application/octet-stream" : "application/json")] : [])]
+    const result = command("gh", args, { env: transportEnv(environment, true), input: body === undefined ? undefined : Buffer.isBuffer(body) ? body : encode(body) })
+    if (binary) { assert.equal(result.status, 0, "GitHub binary read failed"); return Buffer.from(result.stdout) }
+    const text = Buffer.from(result.stdout).toString("utf8"), split = /\r?\n\r?\n/u.exec(text)
+    assert.ok(split, "Missing official HTTP response status")
+    const header = text.slice(0, split.index), match = /^HTTP\/[0-9.]+ ([0-9]{3})(?:\s|$)/u.exec(header)
+    assert.ok(match, "Unknown GitHub HTTP response")
+    const status = Number(match[1])
+    if (status === 404 && method === "GET") return null
+    assert.ok(result.status === 0 && status >= 200 && status < 300, "GitHub operation failed: " + method + " " + endpoint)
+    return JSON.parse(text.slice(split.index + split[0].length))
+  }
+  const read = endpoint => github("GET", endpoint)
+  const binary = endpoint => github("GET", endpoint, undefined, true)
+  const npmEnv = (publication = false) => {
+    const home = path.join(output, "npm-home"), config = path.join(output, publication ? "publish.npmrc" : "empty.npmrc"), global = path.join(output, "global.npmrc")
+    mkdirSync(home, { recursive: true, mode: 0o700 })
+    for (const name of [config, global]) if (!existsSync(name)) exclusive(name, publication && name === config && environment.NODE_AUTH_TOKEN
+      ? "//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}\n" : "")
+    return { ...transportEnv(environment), HOME: home, USERPROFILE: home, CI: "true", NPM_CONFIG_USERCONFIG: config,
+      NPM_CONFIG_GLOBALCONFIG: global, NPM_CONFIG_REGISTRY: registry, NPM_CONFIG_AUDIT: "false", NPM_CONFIG_FUND: "false",
+      ...(publication ? Object.fromEntries(["NODE_AUTH_TOKEN", "ACTIONS_ID_TOKEN_REQUEST_URL", "ACTIONS_ID_TOKEN_REQUEST_TOKEN"]
+        .filter(key => environment[key] !== undefined).map(key => [key, environment[key]])) : {}) }
+  }
+  const npm = (args, cwd, publication = false, extra = {}) => {
+    const result = command(process.platform === "win32" ? "npm.cmd" : "npm", args, { cwd, env: { ...npmEnv(publication), ...extra }, encoding: "utf8" })
+    assert.equal(result.status, 0, "npm command failed: " + args[0])
+    return result.stdout
+  }
+  const publicBytes = async (url, missing = false) => {
+    const response = await fetchImpl(url, { redirect: "error", signal: AbortSignal.timeout(30000) })
+    if (missing && response.status === 404) return null
+    assert.equal(response.status, 200, "Registry read was not successful")
+    const chunks = []; let size = 0
+    for await (const chunk of response.body) { size += chunk.length; assert.ok(size <= 64 * 1024 * 1024); chunks.push(chunk) }
+    return Buffer.concat(chunks)
+  }
+  const registryRead = async (expected, wait) => {
+    const identity = "/@bigduu%2flotus-next/" + encodeURIComponent(expected.version)
+    for (let tries = 0; tries < (wait ? 6 : 1); tries++) {
+      const bytes = await publicBytes(registry + identity, true)
+      if (bytes !== null) {
+        const metadata = JSON.parse(bytes), url = registry + "/@bigduu/lotus-next/-/lotus-next-" + expected.version + ".tgz"
+        assert.equal(metadata.dist.tarball, url)
+        const attestations = registry + "/-/npm/v1/attestations/@bigduu%2flotus-next@" + expected.version
+        assert.equal(metadata.dist.attestations.url, attestations)
+        return { metadata, archive: await publicBytes(url), attestations: JSON.parse(await publicBytes(attestations)) }
+      }
+      if (tries + 1 < (wait ? 6 : 1)) await new Promise(resolve => setTimeout(resolve, 3000))
+    }
+    return null
+  }
+  return { read, binary, source: { request: read, artifactBytes: id => binary("actions/artifacts/" + integer(id) + "/zip") },
+    write: (method, endpoint, body) => github(method, endpoint, body),
+    upload: (id, name, bytes) => github("POST", "releases/" + integer(id) + "/assets?name=" + encodeURIComponent(name), bytes, false, true),
+    registry: registryRead, npm,
+    publish: (bytes, expected) => {
+      assert.equal(environment.GITHUB_JOB, "finalize", "Only the actual finalizer may invoke npm publish")
+      const filename = path.join(output, "bigduu-lotus-next-" + expected.version + ".tgz")
+      exclusive(filename, bytes)
+      return npm(["publish", filename, "--ignore-scripts", "--provenance", "--access", "public", "--registry=" + registry], output, true)
+    } }
+}
+
+export async function runPhase(command, { expected, feature, controllerRoot = ROOT, environment = process.env, output }, ports) {
+  const phase = { reserve: "prepare", select: "build", install: "build", build: "build", pack: "build", restore: "build", finalize: "finalize" }[command]
+  assert.ok(phase, "Unknown publication phase"); assert.equal(environment.GITHUB_JOB, phase, "GITHUB_JOB does not own CLI phase")
+  const lifecycle = createLifecycle({ expected, feature, controllerRoot, environment }, ports)
+  const emit = (key, value) => { assert.ok(!String(value).includes("\n")); if (environment.GITHUB_OUTPUT) appendFileSync(environment.GITHUB_OUTPUT, key + "=" + value + "\n") }
+  if (command === "reserve") { const value = await lifecycle.reserve(); emit("source_tree", value.intent.inputs.sourceTree); return value }
+  if (command === "select") { const plan = lifecycle.planBuild(); emit("mode", plan.mode); return plan }
+  if (command === "restore") return { origin: lifecycle.restoreBuild().sealed.proof.origin, publicationAuthorized: false }
+  if (command === "finalize") return lifecycle.publishRetained()
+  const plan = lifecycle.planBuild(); assert.equal(plan.mode, "build", "Successful originals must be restored")
+  const sourceRoot = environment.SOURCE_ROOT
+  const git = (...args) => {
+    const result = spawnSync("git", ["--no-replace-objects", "-C", sourceRoot, ...args], { encoding: "utf8", env: transportEnv(environment) })
+    assert.equal(result.status, 0); return result.stdout.trim()
+  }
+  assert.ok(path.isAbsolute(sourceRoot) && realpathSync(sourceRoot) !== realpathSync(controllerRoot))
+  const product = JSON.parse(git("show", expected.sourceRevision + ":package.json")), packagePath = path.join(sourceRoot, "package.json")
+  const metadata = { LOTUS_NEXT_RELEASE_VERSION: expected.version, LOTUS_NEXT_SOURCE_REVISION: expected.sourceRevision,
+    LOTUS_NEXT_EXPECTED_SOURCE_REVISION: expected.sourceRevision, LOTUS_NEXT_SOURCE_DIRTY: "false", LOTUS_NEXT_EXPECTED_SOURCE_DIRTY: "false" }
+  if (command === "install" || command === "build") {
+    assert.equal(requireProduct(expected.sourceRevision, sourceRoot).tree, expected.sourceTree)
+    if (command === "install") {
+      ports.npm(["ci", "--ignore-scripts"], controllerRoot); ports.npm(["ci", "--ignore-scripts"], sourceRoot)
+      requireController(environment, controllerRoot); requireProduct(expected.sourceRevision, sourceRoot)
+      return { installed: true }
+    }
+    assert.equal(product.version, "0.0.0"); regular(packagePath)
+    writeFileSync(packagePath, JSON.stringify({ ...product, version: expected.version }, null, 2) + "\n")
+    ports.npm(["--ignore-scripts", "run", "build"], sourceRoot, false, metadata)
+    requireController(environment, controllerRoot)
+    return { built: true }
+  }
+  assert.equal(command, "pack")
+  assert.equal(git("rev-parse", "HEAD"), expected.sourceRevision); regular(packagePath)
+  same(JSON.parse(readFileSync(packagePath)), { ...product, version: expected.version })
+  assert.equal(git("diff", "--name-only"), "package.json"); assert.equal(git("diff", "--cached", "--name-only"), "")
+  assert.equal(git("ls-files", "--others", "--exclude-standard"), "")
+  const packed = ports.npm(["pack", "--ignore-scripts", "--json", "--pack-destination", output], sourceRoot, false, metadata)
+  const packResult = path.join(output, "pack-result.json"); exclusive(packResult, packed)
+  const filename = path.join(output, "bigduu-lotus-next-" + expected.version + ".tgz"), archive = readFileSync(regular(filename))
+  verifyPackResult(JSON.parse(packed), archive, expected)
+  const result = spawnSync(process.execPath, [path.join(controllerRoot, "scripts/verify-package.mjs"), "--pack-result", packResult, "--source-root", sourceRoot],
+    { cwd: controllerRoot, env: { ...transportEnv(environment), ...metadata }, encoding: "utf8" })
+  assert.equal(result.status, 0, "Trusted static package verification failed")
+  requireController(environment, controllerRoot)
+  exclusive(path.join(output, "original.zip"), seal(archive, expected, plan.origin).bytes)
+  return { origin: plan.origin, publicationAuthorized: false }
+}
+
+async function main() {
+  const [command, ...rest] = process.argv.slice(2); assert.equal(rest.length, 0)
+  const environment = process.env, output = environment.RELEASE_OUTPUT_DIR ?? path.join(environment.RUNNER_TEMP,
+    "lotus-npm-" + environment.GITHUB_RUN_ID + "-" + environment.GITHUB_RUN_ATTEMPT + "-" + environment.GITHUB_JOB)
+  assert.ok(path.isAbsolute(output))
+  const feature = Object.fromEntries([["pullRequest", "FEATURE_PULL_REQUEST"], ["runId", "FEATURE_RUN_ID"], ["attempt", "FEATURE_RUN_ATTEMPT"]]
+    .map(([key, name]) => { assert.match(environment[name], /^[1-9][0-9]*$/u); return [key, integer(Number(environment[name]))] }))
+  requireController(environment)
+  const ports = controllerPorts({ environment, output })
+  const proof = admitFrozenDev({ source: environment.EXPECTED_SOURCE_SHA, ...feature }, ports.source)
+  if (environment.EXPECTED_SOURCE_TREE) assert.equal(proof.tree, environment.EXPECTED_SOURCE_TREE)
+  const expected = inputs({ repository: REPOSITORY, version: environment.LOTUS_NEXT_RELEASE_VERSION,
+    sourceRevision: environment.EXPECTED_SOURCE_SHA, sourceTree: proof.tree })
+  const value = await runPhase(command, { expected, feature, environment, output }, ports)
+  if (value?.frame) console.log(value.frame)
+}
+if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  main().catch(error => { console.error("Original npm release: " + error.message); process.exitCode = 1 })
 }

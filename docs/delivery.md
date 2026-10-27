@@ -6,9 +6,10 @@ The complete shared [delivery-flow/v1](delivery-workflow.md) and
 continues from the same branch/checkpoint and original evidence; it does not
 repeat successful work merely because ownership changed.
 
-This repository follows the unified Zenith #399 delivery contract. This change
-implements feature acceptance (#446); the dependent single-artifact release
-producer and main promotion verifier have not yet landed. Main remains the
+This repository follows the unified Zenith #399 delivery contract. This checkout
+contains feature acceptance (#446), the read-only source foundation (#454) and
+the staged single-original npm producer (#455). It does not establish accepted
+feature evidence or activate main admission/bootstrap (#456). Main remains the
 default branch and trusted publication controller.
 
 | Phase | Responsibility | Acceptance |
@@ -18,14 +19,13 @@ default branch and trusted publication controller.
 | Frozen release, after cutover | Temporarily stamp the version, build/package/publish one formal artifact | Exact source/version, tag, manifest, hashes and registry readback; no Unit/E2E |
 | Main push/promotion, after cutover | Promote stable code and retain immutable release references | Promotion PR/merge, tag and Release manifest/provenance; no tests, compilation or publication |
 
-The last two rows are the target contract. The existing `publish-npm.yml` and
-`release-source.mjs` remain unchanged for historical candidates during this
-feature slice. Their real-runtime publication gate must not be removed or
-bypassed piecemeal. The old source parser deliberately rejects the new feature
-workflow graph until its dependent producer/admission change is ready. Do not
-claim a release cutover from green feature CI alone. Coordinate outstanding
-#445/frontend28 with its current owner; do not retarget or replace its frozen
-tag, source or receipt.
+The last two rows require coordinated activation. This branch stages a new
+`publish-npm.yml`; immutable historical runs keep their original controller and
+workflow. `scripts/fixtures/publish-npm-legacy-v29.yml`, old source helpers and
+fixed recovery identities remain preserved. The old parser rejects the new
+feature graph. Do not claim cutover from source/policy fixtures or green feature
+CI alone. Preserve outstanding #445/frontend28, published v29 and the fixed
+2026.10.12 tag, source, package bytes and receipts.
 
 ## Complete tests before dev
 
@@ -57,9 +57,61 @@ remain distinct. Missing/expired originals, failed or skipped runtime, changed
 refs, unconfirmed merges, unknown API state and unreviewed producers reject.
 
 PR450 still lacks complete passing runtime evidence. This foundation does not
-admit it or activate a release. Single final-tgz retention/publication is #455;
-main admission/bootstrap is #456. Keep the failed historical v28 candidate,
-published v29 and fixed2026.10.12 recovery unchanged.
+admit it or activate a release. Main admission/bootstrap remains #456. Keep the
+failed historical v28 candidate, published v29 and fixed2026.10.12 recovery
+unchanged.
+
+### Staged original npm lifecycle (#455)
+
+The trusted controller C verifies the frozen accepted S at `release/S` with the
+original feature PR/run/attempt before every GitHub or npm write. C is the real
+main-dispatch workflow/checkout SHA; M is the original tested merge snapshot.
+They remain distinct. No phase rewrites `GITHUB_SHA`, `GITHUB_JOB` or other
+Actions identity variables. The entrypoint is
+`node scripts/release-npm-lifecycle.mjs <phase>`; workflow inputs supply one
+explicit unused version, S and the original feature locators. `source_tree` is
+derived by the real Source454 verifier, then checked again downstream.
+
+| Job / CLI phase | Work and authority |
+| --- | --- |
+| prepare / `reserve` | Verify Source; reserve the explicit unused version with an annotated `lotus-next-vVERSION` tag and draft Release intent tied to this C/run and real numeric prepare job. GitHub contents write, Actions read; no npm token or OIDC. |
+| build / `select` | Before installs or stamping, authenticate prior jobs and originals. A first execution selects build; a successful original selects restore. Read-only GitHub permissions. |
+| build / `install`, `build`, `pack` | Install C and S from their own locks with scripts disabled. Stamp only disposable S package metadata, run S's explicit tsc/Vite build once, then `npm pack --ignore-scripts --json` once. C's `verify-package.mjs --source-root S --pack-result JSON` reuses that same pack JSON; full tar/resource hashes and filename/size/shasum/integrity must agree. No second dry-run pack or runtime suite. |
+| build / `restore` | Verify and reuse the original physical job and raw outer Actions ZIP. No install, compiler, packer or replacement upload. |
+| finalize / `finalize` | Check the latest builder whole-job success, retain the exact raw ZIP on the reserved Release, publish only its original tgz with `npm publish FILE --ignore-scripts --provenance --access public --registry=https://registry.npmjs.org`, and read back exact registry bytes and provenance fields. Only this job has OIDC and only this step receives the existing npm token. |
+
+The checker uses C modules and C dependencies, never S's helper or dependency
+tree. npm child environments explicitly omit inherited `NODE_OPTIONS`,
+`NODE_PATH`, `GIT_*`, GitHub runtime/service tokens and unrelated credentials.
+Publishing uses isolated user/global configs and a fixed registry. The real
+Source guard runs immediately before every remote write; output JSON/ZIP is
+data and cannot substitute for it. Source manifests remain committed at
+`0.0.0`; temporary stamping adds no source commit or lockfile edit.
+
+For infrastructure failure, rerun failed jobs in the same run and C. Only
+complete explicit skipped Build/Pack/Upload records permit a first build after
+known pre-build failure. Missing/unknown records or any actual failed build stop.
+A later selector/pre-build failure can only restore an earlier successful
+physical original; it never allows another build. Finalization still requires
+the latest whole builder job to succeed. An uncertain publish permits exact
+registry readback, never an automatic second publish. A previous explicitly
+skipped publish step may proceed even when GitHub includes time placeholders.
+
+Actions stores `original.zip` for 90 days. The Release asset
+`lotus-next-original-VERSION.zip` is a byte-for-byte copy of the official outer
+Actions ZIP, not a newly assembled archive. Missing successful originals or
+missing official metadata stop recovery; surviving Release bytes alone do not
+make deleted provenance reusable. A different dispatch cannot adopt the same
+reservation. Preserve the original failure and return source repairs to feature
+acceptance and a new cut/version rather than rebuilding an old successful one.
+
+The immutable `lotus-next-publication-VERSION.json` and one bounded
+`LOTUS_NPM_COMPLETION_V1` log frame carry the real C/run/finalizer and original
+artifact/asset IDs and digests for #456. Both explicitly deny standalone
+publication authority; public Main must authenticate their original official
+execution. Registry DSSE field comparison is not standalone cryptographic
+verification. This local slice has no actual release/registry acceptance,
+Main gate, bootstrap, protection update or production dispatch.
 
 ### Executable feature ownership
 
