@@ -7,7 +7,8 @@ const sid="all-surface-session", at="2026-10-27T00:00:00Z"
 async function fixture(page:Page, support:boolean) {
   await page.addInitScript((id)=>{localStorage.setItem("bodhi_onboarded_v1","1");localStorage.setItem("lotus_ui_locale_v1","en-US");localStorage.setItem("lotus_next_last_session",id)},sid)
   const runtime=await installArtifactRuntime(page,standaloneScenario,[],{bootstrapRequestState:"local_bypass"})
-  let supported=support, reads=0
+  let supported=support, reads=0, activeRun:string|null=null
+  const cancelledRuns:string[]=[]
   const writes:{path:string;body:unknown;run:string|undefined}[]=[]
   const session={id:sid,title:"Synthetic connection retry",kind:"root",title_version:1,root_session_id:sid,parent_session_id:null,
     spawn_depth:0,pinned:false,model:"fixture-model",model_ref:{provider:"fixture-provider",model:"fixture-model"},
@@ -26,15 +27,22 @@ async function fixture(page:Page, support:boolean) {
     if(path===`/api/v1/actors/${sid}/snapshot`)return route.fulfill({json:actorSnapshotFixture(sid,0)})
     if(path===`/api/v1/task/${sid}`)return route.fulfill({json:{session_id:sid,items:[]}})
     if(path===`/api/v1/respond/${sid}/pending`)return route.fulfill({json:{has_pending_question:false}})
-    if(path===`/api/v1/execute/${sid}`&&req.method()==="POST")return route.fulfill({json:{session_id:sid,status:"started",run_id:"synthetic-original-run",events_url:`/api/v1/events/${sid}`}})
-    if(path===`/api/v1/stop/${sid}`&&req.method()==="POST") {session.last_run_status="cancelled";return route.fulfill({json:{success:true,session_id:sid,run_id:"synthetic-original-run"}})}
+    if(path===`/api/v1/execute/${sid}`&&req.method()==="POST") {
+      activeRun="synthetic-original-run";session.is_running=true
+      return route.fulfill({json:{session_id:sid,status:"started",run_id:activeRun,events_url:`/api/v1/events/${sid}`}})
+    }
+    if(path===`/api/v1/stop/${sid}`&&req.method()==="POST") {
+      if(req.headers()["bamboo-run-id"]!==activeRun)return route.fulfill({status:409,json:{error:"Stale run identity"}})
+      cancelledRuns.push(activeRun!);session.last_run_status="cancelled";session.is_running=false
+      return route.fulfill({json:{success:true,session_id:sid,run_id:activeRun}})
+    }
     if(req.method()!=="GET")return route.fulfill({status:409,json:{error:"Unexpected write rejected by fixture"}})
     return route.fallback()
   })
   await page.goto(standaloneScenario.entryUrl)
   await expect(page.getByText("Earlier completed reply",{exact:true})).toBeVisible()
   await expect(page.getByRole("button",{name:"Retry generation",exact:true})).toBeVisible()
-  return {runtime,writes,get reads(){return reads},withdraw(){supported=false}}
+  return {runtime,writes,cancelledRuns,get reads(){return reads},withdraw(){supported=false},replaceRun(id:string){activeRun=id}}
 }
 for(const width of [1440,390])test(`explicit continuous retry resumes once and Stops the exact execution at ${width}px`,async({page},info)=>{
   await page.setViewportSize({width,height:900})
@@ -55,6 +63,21 @@ for(const width of [1440,390])test(`explicit continuous retry resumes once and S
   expect(f.runtime.clientFrames.filter((x)=>!!x&&typeof x==="object"&&"type" in x&&x.type==="stop")).toEqual([])
   expect(f.runtime.pageErrors).toEqual([])
   await info.attach("synthetic-wire",{body:JSON.stringify({writes:f.writes,reads:f.reads}),contentType:"application/json"})
+})
+for(const successor of [false,true])test(`reload retains exact Stop identity when a successor ${successor?"has":"has not"} started`,async({page})=>{
+  const f=await fixture(page,true),action=page.getByRole("button",{name:"Retry connection until stopped",exact:true})
+  await action.click()
+  await expect(page.getByText("Continuous connection retries are enabled for this run.",{exact:false})).toBeVisible()
+  await expect.poll(()=>f.writes.length).toBe(1)
+  if(successor)f.replaceRun("synthetic-successor-run")
+  await page.reload()
+  await expect(page.getByText("Earlier completed reply",{exact:true})).toBeVisible()
+  await page.getByRole("button",{name:"Stop generation",exact:true}).click()
+  await expect.poll(()=>f.writes.filter((entry)=>entry.path===`/api/v1/stop/${sid}`).length).toBe(1)
+  expect(f.writes.at(-1)).toEqual({path:`/api/v1/stop/${sid}`,body:null,run:"synthetic-original-run"})
+  expect(f.cancelledRuns).toEqual(successor?[]:["synthetic-original-run"])
+  expect(f.runtime.clientFrames.filter((x)=>!!x&&typeof x==="object"&&"type" in x&&x.type==="stop")).toEqual([])
+  if(successor)await expect(page.getByText("Stop could not be confirmed for this execution.",{exact:false})).toBeVisible()
 })
 test("old producer hides continuous retry while keeping ordinary retry available",async({page})=>{
   const f=await fixture(page,false)
