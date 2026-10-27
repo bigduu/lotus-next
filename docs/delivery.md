@@ -8,10 +8,11 @@ repeat successful work merely because ownership changed.
 
 This repository follows the unified Zenith #399 delivery contract. This checkout
 contains feature acceptance (#446), the read-only source foundation (#454), the
-staged single-original npm producer (#455) and read-only Main proof (#456 Phase
-A). It does not establish accepted
-feature evidence or activate main admission/bootstrap (#456). Main remains the
-default branch and trusted publication controller.
+staged single-original npm producer (#455), read-only Main proof (#456 Phase A)
+and trusted-Base loader (#459). It does not establish accepted feature evidence,
+install a trusted Main bootstrap or activate protection/publication. Main remains
+the default branch; its currently unprotected legacy controller requires
+separate Ops before this new admission path can be used.
 
 | Phase | Responsibility | Acceptance |
 | --- | --- | --- |
@@ -58,8 +59,8 @@ remain distinct. Missing/expired originals, failed or skipped runtime, changed
 refs, unconfirmed merges, unknown API state and unreviewed producers reject.
 
 PR450 still lacks complete passing runtime evidence. This foundation does not
-admit it or activate a release. Main admission/bootstrap remains #456. Keep the
-failed historical v28 candidate, published v29 and fixed2026.10.12 recovery
+admit it or activate a release. Main bootstrap/activation remains separate Ops.
+Keep the failed historical v28 candidate, published v29 and fixed2026.10.12 recovery
 unchanged.
 
 ### Staged original npm lifecycle (#455)
@@ -117,11 +118,11 @@ Main gate, bootstrap, protection update or production dispatch.
 ### Read-only completed-publication and Main proof (#456 Phase A)
 
 `scripts/published-npm-admission.mjs` provides `verifyPublishedNpm` and
-`verifyPromotion` for a future trusted-Base caller. Inputs are exact frozen S,
-version, original feature PR/run/attempt and release run; promotion additionally
-binds the live Main PR, B, F and actual tested merge M. There is no CLI or write
-port, and the default accepted-release registry is empty. No workflow or
-protection is activated by importing the module.
+`verifyPromotion` for the trusted-Base caller staged by #459. Inputs are exact
+frozen S, version, original feature PR/run/attempt and release run; promotion additionally
+binds the live Main PR, B, F and actual tested merge M. This data module has no
+CLI or write port, and the default accepted-release registry is empty. No
+workflow or protection is activated by importing the module.
 
 The public reader authenticates the original release run's repository ID,
 GitHub Actions check suite, executed main workflow C, normal C/Main ancestry and
@@ -161,13 +162,58 @@ control overlay or feature-only workflow that removes the Main gate rejects.
 Fresh API checks ignore incidental download/comment counters while retaining
 actual source/ref/ID/size/digest/body and original bytes.
 
-Phase B still owns trusted-Base loading, the complete live entrypoint/control
-list, source-only Main bootstrap and required checks, approved producer entries,
-and positive/negative hosted admission. Phase A runs no npm install, tsc, Vite,
-pack, Unit/browser runtime or publication. Its focused test command is
-`node node_modules/vitest/vitest.mjs run scripts/published-npm-admission.test.mjs`;
-tiny real Git/tar/ZIP fixtures and mock API/registry reads are not hosted
-feature, release or Main acceptance. Preserve historical v28/v29 and fixed
+### Trusted-Base Main loader (#459; activation pending)
+
+`main-admission.yml` has one read-only `Main Admission` job and only
+`pull_request_target` events targeting `main`, including `edited` so a changed
+locator requires fresh verification. Before checkout it requires actual default
+Main and protection. It fetches only executed Base B at `github.workflow_sha`,
+uses pinned actions and Node24, and runs the zero-argument,
+dependency-free `node scripts/main-admission.mjs`. No install, compiler, pack,
+Unit/E2E or publisher runs in this workflow. Existing legacy Main behavior is
+not changed or declared activated by this staged file.
+
+The original Target run/job/official check-suite metadata names F, including
+the suite file URL. Actual `GITHUB_SHA` and `GITHUB_WORKFLOW_SHA` name B. The
+loader retains both identities, proves actual M through live PR/API ordered
+parents [B,F], checks the active workflow/job/step, and calls the existing real
+completed-publication verifier. It repeats the Main/PR/locator/runtime checks
+before emitting the single bounded `LOTUS_MAIN_ADMISSION_V1` log frame with
+`publicationAuthorized:false`. A same-name candidate stub, changed body,
+changed Main, wrong event/attempt or unknown API state rejects without a frame.
+
+`MAIN_CONTROLS` is the fixed version-1 22-path closure: the four existing
+publication/feature/native/verification workflows and this Main workflow;
+`published-npm-admission`, `main-admission`, `release-npm-lifecycle`,
+`release-npm-original`, `frozen-dev-source`, `artifact-manifest`,
+`browser-shards`, `verify-package`, `bundle-budget`, `package-policy`,
+`feature-acceptance`, `verification-browser` and `release-browser` helpers;
+`AGENTS.md`, this guide and both complete shared Markdown documents.
+Caller-selected paths are forbidden. Product and package/lock files are
+outside this control overlay. Every B control must be an ordinary Git blob;
+the complete candidate/merge tree must retain all other S leaves and ancestry.
+
+The ordinary CLI supports only `mode: promotion` in one exact
+`lotus-main-locator/v1` PR-body JSON locator containing S, version, original
+feature PR/run/attempt and release run. It never accepts bootstrap or controller
+maintenance. The separate `verifyLegacyBootstrap` read-only export is fixed to
+legacy Main `ae53034cd4622a4b501c6fac196dd574936b6aac` and tree
+`79df4aa86d7b1d6d667ea5364ccc18a97be4e72b`. It reuses real accepted-Dev Source
+verification without inventing a release ref, proves B ancestry and [B,F]
+merge parents, and permits only unchanged legacy product/package/locks plus
+all 22 ordinary controls from the same accepted D. It checks D's literal Main
+workflow and refreshes Source, Main and locator. Its data result is distinct
+from a normal admission frame and grants no check/publication authority.
+
+The registry is still empty, Main remains unprotected and PR450 remains RED.
+Separate Ops owns the reviewed one-time bootstrap/trust anchor, required check,
+explicit accepted producer entries, and live positive/negative Main proofs.
+A focused Main-history-to-Dev sync feature PR is required before the first new
+cut; do not replace ancestry with tree equality. Future controller maintenance
+and closed-Main consumers need separate versioned contracts. Missing/expired
+original Source artifacts or official metadata stop; no replacement build is
+allowed. Focused Vitest, inert CLI/network ports and tiny real Git fixtures
+provide local contract evidence only. Preserve historical v28/v29 and fixed
 2026.10.12 workflows, records and original evidence throughout activation.
 
 ### Executable feature ownership

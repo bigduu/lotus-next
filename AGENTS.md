@@ -33,9 +33,10 @@ the Lotus-specific commands below; check actual activation before a cut.
 
 Issue #446 implements the feature gate under the unified Zenith #399 contract.
 This checkout also stages the original npm producer (#455). It is not release
-acceptance or main activation: complete feature evidence and the reviewed main
-controller/bootstrap (#456) remain prerequisites. Historical v28/v29 publisher
-definitions and the fixed 2026.10.12 recovery retain their original identities;
+acceptance or main activation: complete feature evidence, approved producer
+entries and the separately reviewed Main bootstrap/Ops remain prerequisites.
+Historical v28/v29 publisher definitions and the fixed 2026.10.12 recovery
+retain their original identities;
 their tests read the frozen legacy fixture. Never submit a new feature receipt
 to the old publisher or change an existing tag to make it fit the new producer.
 
@@ -85,7 +86,7 @@ Use the existing protected review and release authorization. Do not change
 branch protections, publication credentials or Environment scope as an
 implementation shortcut. This feature slice does not authorize publication.
 
-## Read-only Main foundation staged by #456 Phase A
+## Read-only Main admission staged by #456 / #459
 
 `scripts/published-npm-admission.mjs` verifies completed publication with public
 read ports. It independently authenticates the official C run/check suite,
@@ -104,13 +105,33 @@ frame identities on copied-success reruns and retain earlier failed npm jobs;
 a later successful finalizer may attest exact registry readback without
 rewriting their outcomes. Download/comment counters are not identity.
 
-The accepted release registry is empty by default. There is no CLI, Main YAML,
-required-check/protection change, bootstrap, publication or hosted admission in
-this phase. A future trusted-Base loader must supply the complete reviewed
-control closure, including its own entrypoint, and authenticate real original
-release evidence. Missing/expired Source artifacts or missing official original
-metadata stop; never replace them with compilation. Run only the new focused
-`published-npm-admission.test.mjs` cases while developing this data boundary.
+The staged `main-admission.yml` runs one read-only `Main Admission` job on
+`pull_request_target` for `main`, including body edits. It checks out only the
+actual protected default Main Base B and invokes the dependency-free,
+zero-argument `node scripts/main-admission.mjs`. Official run/job/check-suite
+metadata names candidate F; executed `GITHUB_SHA`/`GITHUB_WORKFLOW_SHA` remain B.
+The helper proves actual merge M from ordered API parents [B,F], and rechecks
+the live PR, locator, Main and physical execution before emitting one bounded
+`LOTUS_MAIN_ADMISSION_V1` frame. Candidate scripts are never checked out or run.
+
+Promotion owns a fixed 22-path ordinary-blob control closure, including this
+loader/workflow and both complete local shared Markdown documents. Callers
+cannot choose paths. All other product, package/lock, mode and gitlink leaves
+must equal published S with real S ancestry. The normal CLI accepts only
+`mode: promotion`. Unknown/controller modes stop. The separate read-only
+`verifyLegacyBootstrap` export is fixed to legacy Main `ae53034c` and its exact
+tree; it accepts only legacy product/locks plus the complete accepted Dev
+control overlay, and cannot emit the normal check frame or publish anything.
+
+The accepted release registry remains empty. Default Main is currently
+unprotected and PR450 lacks complete feature acceptance; this source installs
+no trusted bootstrap, protection or approved producer entry. Separate Ops must
+review the fixed legacy bootstrap, required check and Main/Dev history sync
+before a new cut, then prove positive/negative hosted admission. A future
+controller-maintenance mode or closed-Main consumer needs its own versioned
+boundary; neither is authorized here. Missing/expired Source artifacts or
+official original metadata stop. Never substitute compilation. Inert port,
+CLI and tiny Git tests do not establish hosted or publication acceptance.
 
 ## Validation and scope
 

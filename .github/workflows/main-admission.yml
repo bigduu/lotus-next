@@ -1,0 +1,48 @@
+name: Lotus Main admission
+
+on:
+  pull_request_target:
+    branches: [main]
+    types: [opened, synchronize, reopened, edited, ready_for_review]
+
+permissions:
+  contents: read
+  actions: read
+  checks: read
+  pull-requests: read
+
+concurrency:
+  group: lotus-main-admission-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  main-admission:
+    name: Main Admission
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Require the actual protected default Main
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          test "$DEFAULT_BRANCH" = main
+          test "$GITHUB_EVENT_NAME" = pull_request_target
+          test "$GITHUB_REF" = refs/heads/main
+          test "$GITHUB_REF_PROTECTED" = true
+          test "$GITHUB_SHA" = "$GITHUB_WORKFLOW_SHA"
+      - name: Check out only the trusted Base controller
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.workflow_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Set up verification Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - name: Verify published source and exact Main promotion
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/main-admission.mjs

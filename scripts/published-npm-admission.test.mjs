@@ -150,7 +150,7 @@ function fixture() {
   const contract = { complete: true, workflowId: 700, workflowName: state.run.name, mainHistoryAnchor: A,
     helpers: Object.fromEntries(CONTROLLER_HELPERS.map(name => [name, hash(content(name, C) && blobs.get(content(name, C).sha))])),
     requiredJobs: { [names[0]]: [reserve], [names[1]]: [select], [names[2]]: [publish] } }
-  const policy = { releaseProducers: { [hash(blobs.get(content(WORKFLOW, C).sha))]: contract }, controlPaths: REQUIRED_CONTROLS }
+  const policy = { releaseProducers: { [hash(blobs.get(content(WORKFLOW, C).sha))]: contract } }
   const reads = { request, binary: endpoint => {
     if (state.data.has(endpoint)) return Buffer.from(state.data.get(endpoint))
     const match = /^actions\/artifacts\/(\d+)\/zip$/u.exec(endpoint), source = match && feature.archives[Number(match[1])]
@@ -242,6 +242,12 @@ describe("read-only completed npm/public Main proof", () => {
   })
   it("admits normal actual-S ancestry and complete trusted Base controls with real Git leaf/mode/gitlinks", async () => {
     const f = fixture(), result = await f.promote(); assert.equal(result.promotion.snapshotRevision, PM); assert.equal(result.promotion.controlMode, "complete-trusted-base")
+  })
+  it("Main459 forbids caller-selected control paths even when the extra path is absent", async () => {
+    const f = fixture()
+    await assert.rejects(() => verifyPromotion({ ...f.input, pullRequest: 88, baseRevision: C,
+      headRevision: H, snapshotRevision: PM }, f.reads,
+    { ...f.policy, controlPaths: [...REQUIRED_CONTROLS, "docs/absent-product.md"] }), /Caller-selected control paths/)
   })
   for (const fault of ["product", "mode", "gitlink", "partial-controls", "control-symlink", "truncated", "same-tree-no-S", "wrong-parents"]) it("rejects promotion " + fault, async () => {
     const f = fixture()

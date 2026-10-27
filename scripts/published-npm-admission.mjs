@@ -2,7 +2,7 @@
 // grants Main authority: authenticate the reviewed C execution independently.
 import assert from "node:assert/strict"
 import { createHash } from "node:crypto"
-import { admitFrozenDev, executionKey, PRODUCER, zipFiles } from "./frozen-dev-source.mjs"
+import { admitFrozenDev, executionKey, zipFiles } from "./frozen-dev-source.mjs"
 import { assetName, inputs, registryIdentity, REPOSITORY, unseal } from "./release-npm-original.mjs"
 
 export const WORKFLOW = ".github/workflows/publish-npm.yml"
@@ -13,10 +13,20 @@ export const CONTROLLER_HELPERS = Object.freeze([
   "scripts/artifact-manifest.mjs", "scripts/browser-shards.mjs", "scripts/verify-package.mjs",
   "scripts/bundle-budget.mjs", "scripts/package-policy.mjs", "package.json", "package-lock.json",
 ])
-export const REQUIRED_CONTROLS = Object.freeze([...new Set([
-  WORKFLOW, ".github/workflows/ci.yml", ".github/workflows/actor-native.yml", ".github/workflows/verify-published-npm.yml",
-  "scripts/published-npm-admission.mjs", ...CONTROLLER_HELPERS.filter(name => name.startsWith("scripts/")), ...Object.keys(PRODUCER),
-])])
+export const MAIN_WORKFLOW = ".github/workflows/main-admission.yml"
+export const MAIN_WORKFLOW_SHA256 = "92f16180b2fa7b591f034525f55b7cf5cff5abdabbdc40e4599b8cdcab8ccbe8"
+// Version1 is a literal whole-control boundary. Product manifests/locks remain
+// product leaves. Another workflow/helper/path requires a separate version review.
+export const MAIN_CONTROLS = Object.freeze([
+  ".github/workflows/publish-npm.yml", ".github/workflows/ci.yml", ".github/workflows/actor-native.yml",
+  ".github/workflows/verify-published-npm.yml", ".github/workflows/main-admission.yml",
+  "scripts/published-npm-admission.mjs", "scripts/main-admission.mjs", "scripts/release-npm-lifecycle.mjs",
+  "scripts/release-npm-original.mjs", "scripts/frozen-dev-source.mjs", "scripts/artifact-manifest.mjs",
+  "scripts/browser-shards.mjs", "scripts/verify-package.mjs", "scripts/bundle-budget.mjs", "scripts/package-policy.mjs",
+  "scripts/feature-acceptance.mjs", "scripts/verification-browser.mjs", "scripts/release-browser.mjs",
+  "AGENTS.md", "docs/delivery.md", "docs/delivery-workflow.md", "docs/ci-workflow-audit.md",
+])
+export const REQUIRED_CONTROLS = MAIN_CONTROLS
 const JOBS = { prepare: "Reserve frozen npm release", build: "Produce original npm archive", finalize: "Publish retained npm archive" }
 const CORE = ["Build final dist once", "Pack and statically verify once", "Retain original npm archive"]
 const RESERVE = "Reserve source and version", SELECT = "Select original npm build", RESTORE = "Restore original npm archive", PUBLISH = "Publish original npm archive"
@@ -223,6 +233,7 @@ export async function verifyPublishedNpm(input, reads, policy = {}) {
 }
 
 export async function verifyPromotion(input, reads, policy = {}) {
+  assert.equal(policy.controlPaths, undefined, "Caller-selected control paths are forbidden")
   keys(input, ["sourceRevision", "version", "feature", "releaseRunId", "pullRequest", "baseRevision", "headRevision", "snapshotRevision"])
   const { get, branch, ancestor } = reader(reads), B = sha(input.baseRevision), F = sha(input.headRevision), M = sha(input.snapshotRevision)
   const pr = get("pulls/" + positive(input.pullRequest)); assert.equal(pr.number, input.pullRequest); assert.equal(pr.state, "open"); assert.equal(pr.draft, false)
@@ -231,7 +242,7 @@ export async function verifyPromotion(input, reads, policy = {}) {
   const commits = [B, F, M].map(value => { const result = get("git/commits/" + value); assert.equal(result.sha, value); return result })
   same(commits[2].parents.map(value => value.sha), [B, F])
   const [released, base, head, snapshot] = [facts.source.tree, ...commits.map(value => value.tree.sha)].map(value => treeLeaves(get, value))
-  const paths = policy.controlPaths; assert.ok(Array.isArray(paths) && paths.length && paths.length <= 128 && new Set(paths).size === paths.length)
+  const paths = MAIN_CONTROLS
   for (const name of REQUIRED_CONTROLS) { assert.ok(paths.includes(name), "Incomplete trusted Main control closure"); assert.ok(base.has(name), "Missing trusted Base control") }
   const expected = new Map(released)
   for (const name of paths) {
@@ -244,3 +255,4 @@ export async function verifyPromotion(input, reads, policy = {}) {
   return { ...facts, kind: "lotus-main-promotion-facts/v1", promotion: { pullRequest: pr.number, baseRevision: B, headRevision: F,
     snapshotRevision: M, snapshotTree: commits[2].tree.sha, controlMode: key(head) === key(released) ? "released-source" : "complete-trusted-base" } }
 }
+export { reader as publicReader, jobKey, prKey }
