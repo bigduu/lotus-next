@@ -3735,6 +3735,124 @@ describe("explicit continuous upstream retry", () => {
     expect(hook.current.upstreamRetryStatus).toBe("already_running")
     await act(async()=>{sub.resolve();await request})
   })
+  it.each([false, true])("keeps the exact Stop fence after navigation and passive resume (delayed ACK=%s)", async (delayedAck) => {
+    allow()
+    const ack = deferred<{ session_id: string; status: "started"; run_id: string }>()
+    mocks.execute.mockReturnValue(ack.promise)
+    mocks.stopGeneration.mockResolvedValue(undefined)
+    mocks.subscribeToEvents.mockImplementation((_sessionId: string, _handlers: SubscriptionHandlers, controller: AbortController) => {
+      const subscription = deferred<void>()
+      controller.signal.addEventListener("abort", () => subscription.resolve(), { once: true })
+      return subscription.promise
+    })
+    const hook = await persisted()
+    let request!: Promise<void>
+    await act(async () => { request = hook.current.retry(undefined, options) })
+    if (!delayedAck) await act(async () => { ack.resolve({ session_id: sid, status: "started", run_id: "exact-original-run" }); await Promise.resolve() })
+    await act(async () => { hook.current.select("other"); await request })
+    await hook.rerender({ mode: "bound", sessionId: "other" })
+    mocks.appState.chats[0].isRunning = true
+    mocks.shouldObserve = true
+    await hook.rerender({ mode: "bound", sessionId: sid }); await flushMicrotasks()
+    expect(mocks.subscribeToEvents).toHaveBeenCalledTimes(2)
+    mocks.shouldObserve = false
+    await act(async () => { hook.current.stop(); await Promise.resolve() })
+    if (delayedAck) {
+      expect(mocks.stopGeneration).not.toHaveBeenCalled()
+      await act(async () => { ack.resolve({ session_id: sid, status: "started", run_id: "exact-original-run" }); await Promise.resolve(); await Promise.resolve() })
+    }
+    expect(mocks.stopGeneration).toHaveBeenCalledExactlyOnceWith(sid, "exact-original-run")
+  })
+  it("keeps the exact Stop fence when the originating pane unmounts", async () => {
+    allow()
+    mocks.execute.mockResolvedValue({ session_id: sid, status: "started", run_id: "pane-original-run" })
+    mocks.stopGeneration.mockResolvedValue(undefined)
+    mocks.subscribeToEvents.mockImplementation((_sessionId: string, _handlers: SubscriptionHandlers, controller: AbortController) => {
+      const subscription = deferred<void>()
+      controller.signal.addEventListener("abort", () => subscription.resolve(), { once: true })
+      return subscription.promise
+    })
+    const first = await persisted()
+    let request!: Promise<void>
+    await act(async () => { request = first.current.retry(undefined, options) })
+    first.unmount()
+    await act(async () => { await request })
+    mocks.appState.chats[0].isRunning = true
+    mocks.shouldObserve = true
+    const restored = await mountUseChat({ mode: "bound", sessionId: sid })
+    expect(mocks.subscribeToEvents).toHaveBeenCalledTimes(2)
+    mocks.shouldObserve = false
+    await act(async () => { restored.current.stop(); await Promise.resolve(); await Promise.resolve() })
+    expect(mocks.stopGeneration).toHaveBeenCalledExactlyOnceWith(sid, "pane-original-run")
+  })
+  it("does not use one session's exact Stop fence for another session", async () => {
+    allow()
+    mocks.execute.mockResolvedValue({ session_id: sid, status: "started", run_id: "session-a-run" })
+    mocks.stopGeneration.mockResolvedValue(undefined)
+    mocks.subscribeToEvents.mockImplementation((_sessionId: string, _handlers: SubscriptionHandlers, controller: AbortController) => {
+      const subscription = deferred<void>()
+      controller.signal.addEventListener("abort", () => subscription.resolve(), { once: true })
+      return subscription.promise
+    })
+    const hook = await persisted()
+    mocks.appState.chats.push({ id: "other", messages: [], isRunning: true })
+    let request!: Promise<void>
+    await act(async () => { request = hook.current.retry(undefined, options) })
+    await act(async () => { hook.current.select("other"); await request })
+    mocks.shouldObserve = true
+    await hook.rerender({ mode: "bound", sessionId: "other" })
+    mocks.shouldObserve = false
+    await act(async () => { hook.current.stop(); await Promise.resolve() })
+    expect(mocks.stopGeneration).toHaveBeenCalledExactlyOnceWith("other")
+  })
+  it("does not let a delayed ordinary ACK erase another pane's newer fence", async () => {
+    allow()
+    const oldOrdinaryAck = deferred<{ session_id: string; status: "started"; run_id: string }>()
+    mocks.execute.mockResolvedValueOnce({ session_id: sid, status: "started", run_id: "first-continuous-run" })
+      .mockReturnValueOnce(oldOrdinaryAck.promise)
+      .mockResolvedValueOnce({ session_id: sid, status: "started", run_id: "new-continuous-run" })
+    mocks.sendMessage.mockResolvedValue({ session_id: sid })
+    mocks.stopGeneration.mockResolvedValue(undefined)
+    mocks.subscribeToEvents.mockImplementation((_sessionId: string, _handlers: SubscriptionHandlers, controller: AbortController) => {
+      const subscription = deferred<void>()
+      controller.signal.addEventListener("abort", () => subscription.resolve(), { once: true })
+      return subscription.promise
+    })
+    const first = await persisted()
+    let firstRequest!: Promise<void>
+    await act(async () => { firstRequest = first.current.retry(undefined, options) })
+    await act(async () => { first.current.select("other"); await firstRequest })
+    await first.rerender({ mode: "bound", sessionId: "other" })
+    await first.rerender({ mode: "bound", sessionId: sid })
+    await act(async () => { await first.current.send("ordinary attempt") })
+    const second = await mountUseChat({ mode: "bound", sessionId: sid })
+    let secondRequest!: Promise<void>
+    await act(async () => { secondRequest = second.current.retry(undefined, options); await Promise.resolve(); await Promise.resolve() })
+    expect(mocks.execute).toHaveBeenCalledTimes(3)
+    await act(async () => { oldOrdinaryAck.resolve({ session_id: sid, status: "started", run_id: "older-ordinary-run" }); await Promise.resolve() })
+    await act(async () => { second.current.stop(); await secondRequest })
+    expect(mocks.stopGeneration).toHaveBeenCalledExactlyOnceWith(sid, "new-continuous-run")
+  })
+  it("retires the old fence after a new ordinary execution is acknowledged", async () => {
+    allow()
+    const firstSubscription = deferred<void>()
+    let firstHandlers!: SubscriptionHandlers
+    mocks.subscribeToEvents.mockImplementationOnce((_sessionId: string, handlers: SubscriptionHandlers) => {
+      firstHandlers = handlers
+      return firstSubscription.promise
+    }).mockReturnValue(pendingForever())
+    mocks.execute.mockResolvedValueOnce({ session_id: sid, status: "started", run_id: "old-continuous-run" })
+      .mockResolvedValueOnce({ session_id: sid, status: "started", run_id: "new-ordinary-run" })
+    mocks.sendMessage.mockResolvedValue({ session_id: sid })
+    mocks.stopGeneration.mockResolvedValue(undefined)
+    const hook = await persisted()
+    let request!: Promise<void>
+    await act(async () => { request = hook.current.retry(undefined, options) })
+    await act(async () => { firstHandlers.onCancelled(); firstSubscription.resolve(); await request })
+    await act(async () => { await hook.current.send("a later instruction"); await Promise.resolve() })
+    await act(async () => { hook.current.stop(); await Promise.resolve() })
+    expect(mocks.stopGeneration).toHaveBeenCalledExactlyOnceWith(sid)
+  })
   it("does not inherit the mode on a later ordinary send",async()=>{
     allow();const sub=deferred<void>();let handlers!:SubscriptionHandlers
     mocks.execute.mockResolvedValue({session_id:sid,run_id:"original-run"})

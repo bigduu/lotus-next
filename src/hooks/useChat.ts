@@ -170,6 +170,16 @@ type RetainedTerminal = {
   baselineMessageId: string | null
 }
 
+type ContinuousStopFence = {
+  sessionId: string
+  operationId: number
+  stop: () => Promise<void>
+}
+
+// All panes share one immutable API client. Keep the exact Execute receipt
+// across navigation and pane remounts; a stale run identity fails closed.
+const continuousStopFences = new Map<string, ContinuousStopFence>()
+
 const EMPTY_PENDING_IMAGES: readonly MessageImage[] = []
 
 type PendingUserMessage = {
@@ -397,7 +407,6 @@ export function useChat(
   const mountedRef = useRef(false)
   const operationSequenceRef = useRef(0)
   const activeSendRef = useRef<ActiveSendOperation | null>(null)
-  const continuousStopRef = useRef<{ sessionId: string; operationId: number; stop: () => Promise<void> } | null>(null)
   const [upstreamRetryFeedback, setUpstreamRetryFeedback] = useState<{
     sessionId: string; operationId: number; status: UpstreamRetryFeedback
   } | null>(null)
@@ -851,7 +860,6 @@ export function useChat(
       const operationId = opts?.operationId ?? operationSequenceRef.current + 1
       operationSequenceRef.current = Math.max(operationSequenceRef.current, operationId)
       noteSessionOperation(runSid, operationId)
-      continuousStopRef.current = null
       setUpstreamRetryFeedback(null)
       streamOperationRef.current = operationId
       const baselineMessages = useAppStore
@@ -924,6 +932,8 @@ export function useChat(
         }
         const executeModel = opts?.modelSelection?.model ?? effectiveModel
         const executeModelRef = opts?.modelSelection ? opts.modelSelection.modelRef : effectiveModelRef
+        const previousFence = continuousStopFences.get(runSid)
+        let ownFence: ContinuousStopFence | null = null
         const execution = opts?.upstreamRetry
           ? agentClient.execute(runSid, executeModel || undefined, executeReasoningEffort, undefined, executeModelRef, opts.upstreamRetry)
           : agentClient.execute(runSid, executeModel || undefined, executeReasoningEffort, undefined, executeModelRef)
@@ -932,14 +942,19 @@ export function useChat(
           // A Stop clicked before Execute returns waits for that exact ACK. It
           // never falls back to a session-only cancel which could hit a successor.
           let requested: Promise<void> | null = null
-          continuousStopRef.current = { sessionId: runSid, operationId, stop: () => requested ??= execution.then(async (ack) => {
+          ownFence = { sessionId: runSid, operationId, stop: () => requested ??= execution.then(async (ack) => {
             if (ack?.session_id !== runSid || !isRetryRunId(ack.run_id)) throw new Error("Missing execution identity")
             await agentClient.stopGeneration(runSid, ack.run_id)
           }) }
+          continuousStopFences.set(runSid, ownFence)
         }
         void execution.then((ack) => {
           executeAcknowledged = true
-          if (opts?.upstreamRetry && ownsRunEvent()) setUpstreamRetryFeedback((current) => {
+          // Retire an old fence only after a matching, newly started ordinary
+          // execution is acknowledged. A late ACK cannot erase a newer fence.
+          if (!opts?.upstreamRetry && ack?.session_id === runSid && ack.status === "started"
+              && continuousStopFences.get(runSid) === previousFence) continuousStopFences.delete(runSid)
+          if (ownFence && continuousStopFences.get(runSid) === ownFence && ownsRunEvent()) setUpstreamRetryFeedback((current) => {
             if (current?.operationId !== operationId || current.sessionId !== runSid || current.status !== "requesting") return current
             return ack?.status === "started" ? { ...current, status: "enabled" }
               : ack?.status === "already_running" ? { ...current, status: "already_running" } : null
@@ -2119,16 +2134,16 @@ export function useChat(
     const operationId = active?.id ?? streamOperationRef.current ?? undefined
     // Continuous retries retain the Execute ACK for an exact-run REST Stop.
     // Ordinary Stop keeps its existing realtime-first path before detaching.
-    const continuous = continuousStopRef.current
-    const exactStop = continuous?.sessionId === targetSessionId
-      && latestOperationBySessionRef.current.get(targetSessionId) === continuous.operationId ? continuous : null
+    const exactStop = targetSessionId ? continuousStopFences.get(targetSessionId) : undefined
     if (exactStop) setUpstreamRetryFeedback({ sessionId: exactStop.sessionId, operationId: exactStop.operationId, status: "stopping" })
     const stopRequest = exactStop ? exactStop.stop() : targetSessionId ? agentClient.stopGeneration(targetSessionId) : null
     if (exactStop && stopRequest) void stopRequest.then(() => {
-      if (mountedRef.current && latestOperationBySessionRef.current.get(exactStop.sessionId) === exactStop.operationId)
+      if (mountedRef.current && navigationRef.current.sessionId === exactStop.sessionId
+          && continuousStopFences.get(exactStop.sessionId) === exactStop)
         setUpstreamRetryFeedback({ sessionId: exactStop.sessionId, operationId: exactStop.operationId, status: "stop_requested" })
     }, () => {
-      if (mountedRef.current && latestOperationBySessionRef.current.get(exactStop.sessionId) === exactStop.operationId)
+      if (mountedRef.current && navigationRef.current.sessionId === exactStop.sessionId
+          && continuousStopFences.get(exactStop.sessionId) === exactStop)
         setUpstreamRetryFeedback({ sessionId: exactStop.sessionId, operationId: exactStop.operationId, status: "stop_unconfirmed" })
     })
     if (targetSessionId) {
