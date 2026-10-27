@@ -1,7 +1,7 @@
 import { apiClient } from "@services/api"
 
 export type UpstreamRetrySelection = { mode: "until_cancelled" }
-export type UpstreamRetryFeedback = "requesting" | "already_running" | "enabled" | "stopping" | "stop_requested" | "stop_unconfirmed" | "unavailable"
+export type UpstreamRetryFeedback = "requesting" | "already_running" | "enabled" | "stopping" | "stop_requested" | "stop_unconfirmed" | "identity_unsaved" | "identity_unavailable" | "unavailable"
 
 /** Capability only; never infer support from a package version or missing fields. */
 export async function supportsContinuousUpstreamRetry(): Promise<boolean> {

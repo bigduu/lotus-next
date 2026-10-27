@@ -4,7 +4,7 @@ import { installArtifactRuntime, standaloneScenario } from "./support/artifactRu
 
 // Controlled API/WS contract only. This does not run provider retries or timers.
 const sid="all-surface-session", at="2026-10-27T00:00:00Z"
-async function fixture(page:Page, support:boolean) {
+async function fixture(page:Page, support:boolean, abortExecuteAck=false) {
   await page.addInitScript((id)=>{localStorage.setItem("bodhi_onboarded_v1","1");localStorage.setItem("lotus_ui_locale_v1","en-US");localStorage.setItem("lotus_next_last_session",id)},sid)
   const runtime=await installArtifactRuntime(page,standaloneScenario,[],{bootstrapRequestState:"local_bypass"})
   let supported=support, reads=0, activeRun:string|null=null
@@ -29,6 +29,7 @@ async function fixture(page:Page, support:boolean) {
     if(path===`/api/v1/respond/${sid}/pending`)return route.fulfill({json:{has_pending_question:false}})
     if(path===`/api/v1/execute/${sid}`&&req.method()==="POST") {
       activeRun="synthetic-original-run";session.is_running=true
+      if(abortExecuteAck)return route.abort("failed")
       return route.fulfill({json:{session_id:sid,status:"started",run_id:activeRun,events_url:`/api/v1/events/${sid}`}})
     }
     if(path===`/api/v1/stop/${sid}`&&req.method()==="POST") {
@@ -78,6 +79,34 @@ for(const successor of [false,true])test(`reload retains exact Stop identity whe
   expect(f.cancelledRuns).toEqual(successor?[]:["synthetic-original-run"])
   expect(f.runtime.clientFrames.filter((x)=>!!x&&typeof x==="object"&&"type" in x&&x.type==="stop")).toEqual([])
   if(successor)await expect(page.getByText("Stop could not be confirmed for this execution.",{exact:false})).toBeVisible()
+})
+test("a tab without the original receipt never guesses a Stop identity",async({page})=>{
+  const f=await fixture(page,true),action=page.getByRole("button",{name:"Retry connection until stopped",exact:true})
+  await action.click()
+  await expect(page.getByText("Continuous connection retries are enabled for this run.",{exact:false})).toBeVisible()
+  await expect.poll(()=>f.writes.length).toBe(1)
+  // Another tab has its own session storage but shares the guard.
+  await page.evaluate(()=>sessionStorage.clear())
+  f.replaceRun("synthetic-successor-run")
+  await page.reload()
+  await expect(page.getByText("Earlier completed reply",{exact:true})).toBeVisible()
+  await page.getByRole("button",{name:"Stop generation",exact:true}).click()
+  await expect(page.getByText("The execution identity could not be safely stored or recovered.",{exact:false})).toBeVisible()
+  expect(f.writes).toHaveLength(1)
+  expect(f.cancelledRuns).toEqual([])
+  expect(f.runtime.clientFrames.filter((x)=>!!x&&typeof x==="object"&&"type" in x&&x.type==="stop")).toEqual([])
+})
+test("a lost Execute ACK survives reload as unknown and never sends an unfenced Stop",async({page})=>{
+  const f=await fixture(page,true,true),action=page.getByRole("button",{name:"Retry connection until stopped",exact:true})
+  await action.click()
+  await expect.poll(()=>f.writes.length).toBe(1)
+  await page.reload()
+  await expect(page.getByText("Earlier completed reply",{exact:true})).toBeVisible()
+  await page.getByRole("button",{name:"Stop generation",exact:true}).click()
+  await expect(page.getByText("The execution identity could not be safely stored or recovered.",{exact:false})).toBeVisible()
+  expect(f.writes).toHaveLength(1)
+  expect(f.cancelledRuns).toEqual([])
+  expect(f.runtime.clientFrames.filter((x)=>!!x&&typeof x==="object"&&"type" in x&&x.type==="stop")).toEqual([])
 })
 test("old producer hides continuous retry while keeping ordinary retry available",async({page})=>{
   const f=await fixture(page,false)

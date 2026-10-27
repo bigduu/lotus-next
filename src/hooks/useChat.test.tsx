@@ -114,6 +114,7 @@ vi.mock("@services/chat/AgentService", () => ({
   },
 }))
 vi.mock("@services/api", () => ({
+  getBackendStorageScope: () => "https://fixture.test/api/v1",
   apiClient: {
     get: mocks.apiGet,
     post: mocks.apiPost,
@@ -285,6 +286,7 @@ afterAll(() => {
 })
 beforeEach(() => {
   localStorage.clear()
+  sessionStorage.clear()
   mocks.shouldObserve = false
   mocks.appState.chats = []
   mocks.appState.currentSessionId = null
@@ -3706,6 +3708,41 @@ describe("explicit continuous upstream retry", () => {
     await act(async()=>{cap.resolve({upstream_retry:{supported_modes:["until_cancelled"]}});await request})
     expect(mocks.execute).not.toHaveBeenCalled();expect(mocks.sendMessage).not.toHaveBeenCalled()
   })
+  it("does not issue Execute when the identity marker cannot be stored", async () => {
+    allow()
+    const hook = await persisted()
+    const blocked = vi.spyOn(localStorage, "setItem").mockImplementation(() => { throw new Error("blocked") })
+    await act(async () => { await hook.current.retry(undefined, options) })
+    expect(mocks.execute).not.toHaveBeenCalled()
+    expect(mocks.sendMessage).not.toHaveBeenCalled()
+    expect(hook.current.upstreamRetryStatus).toBe("identity_unavailable")
+    blocked.mockRestore()
+  })
+  it("reports when an acknowledged run identity cannot be saved", async () => {
+    allow()
+    const ack = deferred<{ session_id: string; status: "started"; run_id: string }>()
+    const sub = deferred<void>()
+    mocks.execute.mockReturnValue(ack.promise)
+    mocks.subscribeToEvents.mockReturnValue(sub.promise)
+    const hook = await persisted(); let request!: Promise<void>
+    await act(async () => { request = hook.current.retry(undefined, options) })
+    const blocked = vi.spyOn(sessionStorage, "setItem").mockImplementation(() => { throw new Error("blocked") })
+    await act(async () => { ack.resolve({ session_id: sid, status: "started", run_id: "original-run" }); await Promise.resolve() })
+    expect(hook.current.upstreamRetryStatus).toBe("identity_unsaved")
+    blocked.mockRestore()
+    await act(async () => { sub.resolve(); await request })
+  })
+  it("does not fall back to session-only Stop when stored identity cannot be read", async () => {
+    const other = "storage-unavailable-session"
+    mocks.appState.chats = [{ id: other, messages: [], isRunning: true, config: { model: "test-model" } }]
+    const hook = await mountUseChat({ mode: "bound", sessionId: other })
+    const blocked = vi.spyOn(localStorage, "getItem").mockImplementation(() => { throw new Error("blocked") })
+    await act(async () => { hook.current.stop(); await Promise.resolve() })
+    expect(mocks.stopGeneration).not.toHaveBeenCalled()
+    expect(mocks.appState.markCancel).not.toHaveBeenCalled()
+    expect(hook.current.upstreamRetryStatus).toBe("identity_unavailable")
+    blocked.mockRestore()
+  })
   it("waits for the exact Execute ACK before Stop and coalesces repeated clicks",async()=>{
     allow();const ack=deferred<{session_id:string;run_id:string}>();const sub=deferred<void>()
     mocks.execute.mockReturnValue(ack.promise);mocks.subscribeToEvents.mockReturnValue(sub.promise);mocks.stopGeneration.mockResolvedValue(undefined)
@@ -3718,6 +3755,49 @@ describe("explicit continuous upstream retry", () => {
     expect(hook.current.upstreamRetryStatus).toBe("stop_requested")
     await act(async()=>{sub.resolve();await request})
     await hook.rerender({mode:"bound",sessionId:"other"});expect(hook.current.upstreamRetryStatus).toBeNull()
+  })
+  it("does not send an exact Stop if the producer no longer advertises the capability", async () => {
+    allow()
+    mocks.execute.mockResolvedValue({ session_id: sid, status: "started", run_id: "original-run" })
+    const sub = deferred<void>(); mocks.subscribeToEvents.mockReturnValue(sub.promise)
+    const hook = await persisted(); let request!: Promise<void>
+    await act(async () => { request = hook.current.retry(undefined, options) })
+    mocks.apiGet.mockResolvedValue({})
+    await act(async () => { hook.current.stop(); await Promise.resolve(); await Promise.resolve(); await Promise.resolve() })
+    expect(mocks.stopGeneration).not.toHaveBeenCalled()
+    expect(mocks.appState.markCancel).not.toHaveBeenCalled()
+    expect(hook.current.upstreamRetryStatus).toBe("stop_unconfirmed")
+    await act(async () => { sub.resolve(); await request })
+  })
+  it("retries a failed exact Stop only after another explicit click", async () => {
+    allow()
+    mocks.execute.mockResolvedValue({ session_id: sid, status: "started", run_id: "original-run" })
+    mocks.stopGeneration.mockRejectedValueOnce(new Error("temporary failure")).mockResolvedValueOnce(undefined)
+    const sub = deferred<void>(); mocks.subscribeToEvents.mockReturnValue(sub.promise)
+    const hook = await persisted(); let request!: Promise<void>
+    await act(async () => { request = hook.current.retry(undefined, options) })
+    await act(async () => { hook.current.stop(); for (let i = 0; i < 8; i++) await Promise.resolve() })
+    expect(mocks.stopGeneration).toHaveBeenCalledExactlyOnceWith(sid, "original-run")
+    expect(hook.current.upstreamRetryStatus).toBe("stop_unconfirmed")
+    await act(async () => { hook.current.stop(); for (let i = 0; i < 8; i++) await Promise.resolve() })
+    expect(mocks.stopGeneration).toHaveBeenCalledTimes(2)
+    expect(mocks.stopGeneration).toHaveBeenLastCalledWith(sid, "original-run")
+    expect(hook.current.upstreamRetryStatus).toBe("stop_requested")
+    await act(async () => { sub.resolve(); await request })
+  })
+  it("does not mark a successor stopped when an exact Stop is rejected", async () => {
+    allow()
+    mocks.execute.mockResolvedValue({ session_id: sid, status: "started", run_id: "original-run" })
+    mocks.stopGeneration.mockRejectedValue(new Error("stale run"))
+    const sub = deferred<void>(); mocks.subscribeToEvents.mockReturnValue(sub.promise)
+    const hook = await persisted(); let request!: Promise<void>
+    await act(async () => { request = hook.current.retry(undefined, options) })
+    await act(async () => { hook.current.stop(); await Promise.resolve(); await Promise.resolve(); await Promise.resolve() })
+    expect(mocks.stopGeneration).toHaveBeenCalledExactlyOnceWith(sid, "original-run")
+    expect(mocks.appState.markCancel).not.toHaveBeenCalled()
+    expect(mocks.appState.updateSession).not.toHaveBeenCalledWith(sid, { isRunning: false }, { skipBackendPatch: true })
+    expect(hook.current.upstreamRetryStatus).toBe("stop_unconfirmed")
+    await act(async () => { sub.resolve(); await request })
   })
   it.each([{}, {session_id:sid}, {session_id:"other",run_id:"foreign-run"}])("never sends an unfenced Stop for malformed ACK %j",async(ack)=>{
     allow();mocks.execute.mockResolvedValue(ack);const sub=deferred<void>();mocks.subscribeToEvents.mockReturnValue(sub.promise)
@@ -3833,7 +3913,7 @@ describe("explicit continuous upstream retry", () => {
     await act(async () => { second.current.stop(); await secondRequest })
     expect(mocks.stopGeneration).toHaveBeenCalledExactlyOnceWith(sid, "new-continuous-run")
   })
-  it("retires the old fence after a new ordinary execution is acknowledged", async () => {
+  it("uses the newly acknowledged ordinary execution without clearing other tabs’ identities", async () => {
     allow()
     const firstSubscription = deferred<void>()
     let firstHandlers!: SubscriptionHandlers
@@ -3850,8 +3930,8 @@ describe("explicit continuous upstream retry", () => {
     await act(async () => { request = hook.current.retry(undefined, options) })
     await act(async () => { firstHandlers.onCancelled(); firstSubscription.resolve(); await request })
     await act(async () => { await hook.current.send("a later instruction"); await Promise.resolve() })
-    await act(async () => { hook.current.stop(); await Promise.resolve() })
-    expect(mocks.stopGeneration).toHaveBeenCalledExactlyOnceWith(sid)
+    await act(async () => { hook.current.stop(); for (let i = 0; i < 8; i++) await Promise.resolve() })
+    expect(mocks.stopGeneration).toHaveBeenCalledExactlyOnceWith(sid, "new-ordinary-run")
   })
   it("does not inherit the mode on a later ordinary send",async()=>{
     allow();const sub=deferred<void>();let handlers!:SubscriptionHandlers

@@ -1314,7 +1314,9 @@ export function ChatPane({
             : chat.upstreamRetryStatus === "enabled" ? "upstream_retry_enabled"
             : chat.upstreamRetryStatus === "stopping" ? "upstream_retry_stopping"
               : chat.upstreamRetryStatus === "stop_requested" ? "upstream_retry_stop_requested"
-                : chat.upstreamRetryStatus === "unavailable" ? "upstream_retry_unavailable" : "upstream_retry_stop_unconfirmed")}
+                : chat.upstreamRetryStatus === "unavailable" ? "upstream_retry_unavailable"
+                  : chat.upstreamRetryStatus === "identity_unsaved" ? "upstream_retry_identity_unsaved"
+                    : chat.upstreamRetryStatus === "identity_unavailable" ? "upstream_retry_identity_unavailable" : "upstream_retry_stop_unconfirmed")}
         </p> : null}
 
         {queue.error && <div role="alert" className="mx-auto mb-1 w-[calc(100%-1.5rem)] max-w-6xl rounded-lg border border-destructive/40 px-3 py-2 text-xs text-destructive">{queue.error}</div>}
