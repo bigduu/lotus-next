@@ -118,6 +118,10 @@ describe("final npm original bytes", () => {
     })
     expect(() => archiveFiles(bytes)).toThrow()
   })
+  it("bounds empty entry count before resource verification or extraction", () => {
+    const bytes = tar(Array.from({ length: 10033 }, (_, index) => ({ name: `package/dist/empty-${index}.js`, bytes: Buffer.alloc(0) })))
+    expect(() => archiveFiles(bytes)).toThrow(/entry count/u)
+  })
   it("rejects corrupt ZIP and compressed/extra entries rather than rebuilding", () => {
     const retained = seal(archive, expected, physical)
     const broken = Buffer.from(retained.bytes)

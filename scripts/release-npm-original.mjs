@@ -13,6 +13,9 @@ import { findUnexpectedPackagePaths } from "./package-policy.mjs"
 export const REPOSITORY = "bigduu/lotus-next"
 export const KIND = "lotus-original-npm/v1"
 export const MAX_ARCHIVE = 64 * 1024 * 1024
+// The universal manifest permits 10,000 resources; allow bounded npm metadata
+// as well, before allocating/parsing the entire archive's member inventory.
+export const MAX_ENTRIES = 10032
 const MAX_PROOF = 64 * 1024
 export const MAX_ZIP = MAX_ARCHIVE + MAX_PROOF + 1024
 const SHA = /^[0-9a-f]{40}$/u
@@ -62,8 +65,10 @@ export function archiveFiles(archive) {
   const bytes = gunzipSync(archive, { maxOutputLength: MAX_ARCHIVE })
   assert.equal(bytes.length % 512, 0)
   const files = new Map()
+  const parents = new Set()
   let offset = 0
   while (offset + 512 <= bytes.length && bytes.subarray(offset, offset + 512).some((byte) => byte !== 0)) {
+    assert.ok(files.size < MAX_ENTRIES, "Original archive entry count exceeds limit")
     const header = bytes.subarray(offset, offset + 512)
     assert.equal(header.subarray(257, 265).toString("ascii"), "ustar\0" + "00")
     assert.equal(tarNumber(header.subarray(148, 156)), [...header].reduce((sum, byte, index) => sum + (index >= 148 && index < 156 ? 32 : byte), 0))
@@ -74,7 +79,14 @@ export function archiveFiles(archive) {
     assert.ok(name.startsWith("package/") && !name.includes("\\") && !name.includes(":"))
     assert.ok(name.split("/").every((part) => part && part !== "." && part !== ".."), "Unsafe archive path")
     assert.ok(!files.has(name), "Duplicate archive path")
-    for (const earlier of files.keys()) assert.ok(!name.startsWith(`${earlier}/`) && !earlier.startsWith(`${name}/`), "Conflicting archive paths")
+    assert.ok(!parents.has(name), "Conflicting archive paths")
+    const parts = name.split("/")
+    let parent = ""
+    for (const part of parts.slice(0, -1)) {
+      parent = parent ? `${parent}/${part}` : part
+      assert.ok(!files.has(parent), "Conflicting archive paths")
+      parents.add(parent)
+    }
     const size = tarNumber(header.subarray(124, 136)), end = offset + 512 + size
     const next = offset + 512 + Math.ceil(size / 512) * 512
     assert.ok(next <= bytes.length && bytes.subarray(end, next).every((byte) => byte === 0), "Truncated or invalid tar entry")
