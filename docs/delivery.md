@@ -2,7 +2,7 @@
 
 The complete shared [delivery-flow/v1](delivery-workflow.md) and
 [Actions audit](ci-workflow-audit.md) are local files copied from Zenith
-`874ee7c`. This guide supplies the Lotus commands and runtime map. A new agent
+`28b6e0e`. This guide supplies the Lotus commands and runtime map. A new agent
 continues from the same branch/checkpoint and original evidence; it does not
 repeat successful work merely because ownership changed.
 
