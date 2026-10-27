@@ -165,3 +165,18 @@ it("does not expose mode choices for a legacy closed scope with no positive prof
   expect(host.textContent).not.toContain("当前模式：")
   expect(open).not.toHaveBeenCalled()
 })
+
+it("offers a separate explicit clean request without changing the legacy default or claiming a mode", async () => {
+  const openDefault = vi.fn(), openClean = vi.fn()
+  await render({ profile: { kind: "unreported" }, phase: "closed", actions: { open, close, openDefault, openClean } })
+  expect(host.querySelector("select")).toBeNull()
+  expect(host.textContent).not.toContain("当前模式：")
+  expect(openClean).not.toHaveBeenCalled()
+  const button = [...host.querySelectorAll("button")].find(button => button.textContent === "以干净会话打开")!
+  await act(async () => button.click())
+  expect(openClean).toHaveBeenCalledExactlyOnceWith("chat-a")
+  expect(openDefault).not.toHaveBeenCalled()
+  expect(open).not.toHaveBeenCalled()
+  await render({ profile: { kind: "unreported" }, phase: "closed", pending: true, actions: { open, close, openDefault, openClean } })
+  expect([...host.querySelectorAll("button")].every(button => button.disabled)).toBe(true)
+})

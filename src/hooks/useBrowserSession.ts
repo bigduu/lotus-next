@@ -577,7 +577,7 @@ export function useBrowserSession(sessionId: string | null, active: boolean) {
     [],
   )
 
-  const changeProfile = useCallback((id: string, operation: "open" | "close", mode?: BrowserProfileMode): Promise<void> => {
+  const changeProfile = useCallback((id: string, operation: "open" | "close", mode?: BrowserProfileMode, explicitClean = false): Promise<void> => {
     const previousScope = scopeRef.current
     if (!previousScope || previousScope.sessionId !== id || previousScope.controller.signal.aborted ||
       profileFlightsRef.current.has(id) || stateRef.current?.pending_dialog || busy) return Promise.resolve()
@@ -585,9 +585,11 @@ export function useBrowserSession(sessionId: string | null, active: boolean) {
       if (profilePhaseRef.current !== "active" || readBrowserProfileReport(stateRef.current).kind !== "reported") return Promise.resolve()
     } else {
       if (profilePhaseRef.current !== "closed") return Promise.resolve()
-      // A legacy404 is not a profile capability. Until this chat has a coherent
-      // report, offer only a user-explicit mode-free default open.
-      if (mode !== undefined && ((mode !== "shared" && mode !== "clean") || !profileReportsRef.current.has(id))) return Promise.resolve()
+      // A legacy404 is not a profile capability. The ordinary selector still
+      // requires a report. A separate user action may request clean explicitly;
+      // its ACK and canonical read must confirm the mode before it is shown.
+      if (mode !== undefined && ((mode !== "shared" && mode !== "clean") ||
+        (!profileReportsRef.current.has(id) && !(explicitClean && mode === "clean")))) return Promise.resolve()
     }
 
     profileFailuresRef.current.delete(id)
@@ -629,6 +631,7 @@ export function useBrowserSession(sessionId: string | null, active: boolean) {
   }, [busy])
   const openProfile = useCallback((id: string, mode: BrowserProfileMode) => changeProfile(id, "open", mode), [changeProfile])
   const openDefault = useCallback((id: string) => changeProfile(id, "open"), [changeProfile])
+  const openClean = useCallback((id: string) => changeProfile(id, "open", "clean", true), [changeProfile])
   const closeProfile = useCallback((id: string) => changeProfile(id, "close"), [changeProfile])
 
   const retry = useCallback(() => setRetryVersion((version) => version + 1), [])
@@ -641,6 +644,7 @@ export function useBrowserSession(sessionId: string | null, active: boolean) {
     profilePhase,
     openProfile,
     openDefault,
+    openClean,
     closeProfile,
     frame,
     dom,

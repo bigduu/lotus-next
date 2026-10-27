@@ -161,6 +161,7 @@ describe("fixed browser provenance and fail-closed preparation", () => {
     mkdirSync(controls)
     const helper = path.join(controls, "release-browser.mjs")
     writeFileSync(helper, readFileSync(path.join(sourceRoot, "scripts/release-browser.mjs")))
+    writeFileSync(path.join(controls, "release-candidates.json"), readFileSync(path.join(sourceRoot, ".github/release-candidates.json")))
     const browserRoot = path.join(root, "release-browser")
     const result = spawnSync(process.execPath, ["--input-type=module", "-e", `
       globalThis.fetch = () => { process.stdout.write("PINNED_DOWNLOAD_BOUNDARY\\n"); throw new Error("INERT_DOWNLOAD_STOP") }
@@ -169,6 +170,7 @@ describe("fixed browser provenance and fail-closed preparation", () => {
     `], { encoding: "utf8", env: { ...process.env, RUNNER_TEMP: root,
       PUBLICATION_WORKFLOW_SHA: "6520681865c11bc0eb3ac7866a803cb1bfa7d158",
       GITHUB_SHA: "6520681865c11bc0eb3ac7866a803cb1bfa7d158",
+      LOTUS_NEXT_RELEASE_VERSION: Object.keys(JSON.parse(readFileSync(path.join(controls, "release-candidates.json"), "utf8")).candidates).sort((a, b) => a.localeCompare(b, "en", { numeric: true })).at(-1),
       LOTUS_NEXT_EXPECTED_SOURCE_REVISION: expected, GITHUB_RUN_ID: "1", GITHUB_RUN_ATTEMPT: "1" } })
     return { ...result, browserDirectoryCreated: existsSync(browserRoot) }
   }
@@ -303,20 +305,16 @@ describe("fixed browser provenance and fail-closed preparation", () => {
 })
 
 describe("publication workflow controller boundary", () => {
-  it("uses the trusted adapter in both Node jobs and all real Bamboo gates", () => {
+  it("uses the trusted adapter for real Bamboo publication acceptance", () => {
     const workflow = readFileSync(path.join(sourceRoot, ".github/workflows/publish-npm.yml"), "utf8")
-    const verify = workflow.slice(workflow.indexOf("  verify:"), workflow.indexOf("  real-bamboo:"))
     const real = workflow.slice(workflow.indexOf("  real-bamboo:"), workflow.indexOf("  publish:"))
-    expect(verify).toContain("- 22\n          - 24")
-    for (const job of [verify, real]) {
-      expect(job.indexOf("scripts/release-browser.mjs")).toBeLessThan(job.indexOf("ref: ${{ needs.preflight.outputs.source_sha }}"))
-      expect(job).toContain('test "$(git rev-parse HEAD)" = "${PUBLICATION_WORKFLOW_SHA}"')
-      expect(job).toContain('prepare "${GITHUB_WORKSPACE}" "${RUNNER_TEMP}/release-browser"')
-      expect(job).toContain("npx playwright install --with-deps chromium")
-      expect(job).toContain("${{ runner.temp }}/release-browser/browser-identity.json")
-      expect(job).not.toMatch(/NODE_OPTIONS|NODE_PATH/)
-    }
-    expect(verify).toContain('node node_modules/@playwright/test/cli.js test --config="${RUNNER_TEMP}/release-browser/all-surface.config.mjs"')
+    expect(workflow).not.toMatch(/^  verify:/m)
+    expect(real.indexOf("scripts/release-browser.mjs")).toBeLessThan(real.indexOf("ref: ${{ needs.preflight.outputs.source_sha }}"))
+    expect(real).toContain('test "$(git rev-parse HEAD)" = "${PUBLICATION_WORKFLOW_SHA}"')
+    expect(real).toContain('prepare "${GITHUB_WORKSPACE}" "${RUNNER_TEMP}/release-browser"')
+    expect(real).toContain("npx playwright install --with-deps chromium")
+    expect(real).toContain("${{ runner.temp }}/release-browser/browser-identity.json")
+    expect(real).not.toMatch(/NODE_OPTIONS|NODE_PATH/)
     expect(real).toContain('node node_modules/@playwright/test/cli.js test --config="${RUNNER_TEMP}/release-browser/real-bamboo.config.mjs"')
     expect(real).toContain('--publication-browser "${RUNNER_TEMP}/release-browser"')
     expect(real.indexOf("Verify the exact Bamboo round trip")).toBeLessThan(real.indexOf("Verify the release artifact on local and secure browser surfaces"))

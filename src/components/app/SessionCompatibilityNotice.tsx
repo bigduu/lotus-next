@@ -1,6 +1,7 @@
 import { uiText, useUiLocale } from "@shared/i18n/ui"
 import type { SessionExecutionCompatibilityView } from "@/hooks/useSessionExecutionCompatibility"
 import { Button } from "@/components/ui/button"
+import { SessionVersionMigrationAction } from "./SessionVersionMigrationAction"
 
 const reasons = {
   unsupported_session_version: "session_compatibility_version_conflict",
@@ -8,9 +9,9 @@ const reasons = {
   unsupported_runtime_state_version: "session_compatibility_runtime_conflict",
   unsupported_model_context_version: "session_compatibility_context_conflict",
 } as const
-export function SessionCompatibilityNotice({ state }: { state?: SessionExecutionCompatibilityView }) {
+export function SessionCompatibilityNotice({ state, sessionId }: { state?: SessionExecutionCompatibilityView; sessionId?: string | null }) {
   useUiLocale()
-  if (!state || !state.observed && !state.readError) return null
+  if (!state || !state.observed && !state.readError && !state.loading) return null
   const report = state.report
   return <section className="border-b px-3 py-2 text-sm" aria-label={uiText("session_compatibility_label")}
     data-session-execution-blocked={state.blocked}>
@@ -33,5 +34,8 @@ export function SessionCompatibilityNotice({ state }: { state?: SessionExecution
     <Button size="sm" variant="ghost" disabled={state.loading} onClick={() => void state.refresh()}>
       {uiText("session_compatibility_refresh")}
     </Button>
+    {sessionId ? <SessionVersionMigrationAction sessionId={sessionId}
+      enabled={state.loading || state.readError || state.observed && (state.blocked || state.report?.execution_allowed === true)}
+      allowNewMigration={state.observed && !state.readError && !state.blocked && state.report?.execution_allowed === true} /> : null}
   </section>
 }

@@ -35,28 +35,87 @@ export const resolveReleaseRequest = (document, request) => {
   return candidate
 }
 
-export const verifyAcceptanceEvidence = (candidate, run, jobs, pullRequest) => {
+// Read the graph from the immutable accepted source, never from today's
+// controller or from the (possibly incomplete) job names in a receipt.
+export const acceptanceJobNames = (source) => {
+  assert.equal(typeof source, "string", "Acceptance requires its source workflow")
+  const graph = workflowBlock(source, "jobs", 0)
+  const ids = [...graph.matchAll(/^  ([a-z][a-z0-9-]*):\s*$/gm)].map((match) => match[1]).sort()
+  const sharded = ids.includes("browser")
+  assert.deepEqual(ids, sharded ? ["browser", "browser-summary", "real-bamboo", "verify"] : ["real-bamboo", "verify"], "Unknown acceptance workflow graph")
+  const verify = workflowBlock(graph, "verify", 2)
+  assert.equal(workflowValue(verify, "name", 4), "Node ${{ matrix.node }}")
+  const nodes = (block) => [...workflowBlock(workflowBlock(workflowBlock(block, "strategy", 4), "matrix", 6), "node", 8).matchAll(/^          - (\d+)$/gm)].map((match) => Number(match[1]))
+  assert.deepEqual(nodes(verify), [22, 24])
+  assert.equal(workflowValue(workflowBlock(graph, "real-bamboo", 2), "name", 4), "Real Bamboo / Node 22")
+  const names = ["Node 22", "Node 24", "Real Bamboo / Node 22"]
+  if (sharded) {
+    const browser = workflowBlock(graph, "browser", 2)
+    assert.equal(workflowValue(browser, "name", 4), "Browser / Node ${{ matrix.node }} / shard ${{ matrix.shard }} of 4")
+    assert.deepEqual(nodes(browser), [22, 24])
+    const matrix = workflowBlock(workflowBlock(browser, "strategy", 4), "matrix", 6)
+    assert.deepEqual([...workflowBlock(matrix, "shard", 8).matchAll(/^          - (\d+)$/gm)].map((match) => Number(match[1])), [1, 2, 3, 4])
+    const summary = workflowBlock(graph, "browser-summary", 2)
+    assert.equal(workflowValue(summary, "name", 4), "Browser acceptance")
+    assert.equal(workflowValue(summary, "if", 4), "${{ always() }}")
+    assert.equal(workflowValue(summary, "needs", 4), "[verify, browser]")
+    assert.equal(workflowValue(workflowBlock(graph, "real-bamboo", 2), "needs", 4), "[verify, browser-summary]")
+    for (const node of [22, 24]) for (const shard of [1, 2, 3, 4]) names.push(`Browser / Node ${node} / shard ${shard} of 4`)
+    names.push("Browser acceptance")
+  }
+  return names
+}
+
+const acceptanceWorkflow = (candidate) => execFileSync("git", ["show", `${candidate.sourceSha}:.github/workflows/ci.yml`], { encoding: "utf8" })
+
+export const verifyAcceptanceEvidence = (candidate, run, jobs, pullRequest, sourceWorkflow = acceptanceWorkflow(candidate)) => {
   assert.equal(run.id, candidate.acceptanceRunId)
   const [path, ref, ...extra] = run.path.split("@")
   assert.equal(path, ".github/workflows/ci.yml")
   assert.equal(extra.length, 0)
   if (ref !== undefined) assert.equal(ref, run.head_branch, "Acceptance workflow ref suffix differs from its run")
-  assert.equal(run.event, "workflow_dispatch")
+  const mergedMainSource = candidate.sourceSha === candidate.productMergeSha
+  const mainAdmission = mergedMainSource && run.event === "push"
+  const pullRequestAdmission = run.event === "pull_request"
+  const sourceAdmission = mainAdmission || pullRequestAdmission
+  if (sourceAdmission) {
+    if (mainAdmission) assert.equal(run.head_branch, "main", "Main admission must run on main")
+    assert.equal(run.repository?.full_name, repository, "Main admission must belong to this repository")
+    assert.equal(run.head_repository?.full_name, repository, "Main admission source must belong to this repository")
+  } else {
+    assert.equal(run.event, "workflow_dispatch")
+  }
   assert.equal(run.head_sha, candidate.sourceSha)
   assert.equal(run.status, "completed")
   assert.equal(run.conclusion, "success")
   assert.equal(jobs.total_count, jobs.jobs.length, "Acceptance jobs must not be truncated")
-  for (const name of ["Node 22", "Node 24", "Real Bamboo / Node 22"]) {
+  const graphJobs = acceptanceJobNames(sourceWorkflow)
+  assert.deepEqual(jobs.jobs.map((job) => job.name).sort(), [...graphJobs].sort(), "Acceptance must contain exactly its source workflow's complete job set")
+  const requiredJobs = graphJobs.filter((name) => !sourceAdmission || name !== "Real Bamboo / Node 22")
+  for (const name of requiredJobs) {
     const matches = jobs.jobs.filter((job) => job.name === name)
     assert.equal(matches.length, 1, `Missing original acceptance job: ${name}`)
     assert.equal(matches[0].head_sha, candidate.sourceSha)
     assert.equal(matches[0].status, "completed")
     assert.equal(matches[0].conclusion, "success", `${name} was not accepted`)
   }
+  if (sourceAdmission) {
+    const runtime = jobs.jobs.filter((job) => job.name === "Real Bamboo / Node 22")
+    assert.equal(runtime.length, 1, "Main admission must retain the runtime job's actual result")
+    assert.equal(runtime[0].head_sha, candidate.sourceSha)
+    assert.equal(runtime[0].status, "completed")
+    assert.ok(["success", "skipped"].includes(runtime[0].conclusion), "Failed runtime evidence cannot authorize publication")
+    // A policy skip is source admission only. The publication workflow still
+    // requires its own exact-version Real Bamboo artifact gate before npm upload.
+  }
   assert.equal(pullRequest.number, candidate.productPullRequest)
   assert.equal(pullRequest.merged, true)
-  assert.equal(pullRequest.head.sha, candidate.sourceSha)
   assert.equal(pullRequest.merge_commit_sha, candidate.productMergeSha)
+  if (mergedMainSource || pullRequestAdmission) {
+    assert.equal(pullRequest.base?.ref, "main", "Merged source must have entered main")
+    assert.equal(pullRequest.base?.repo?.full_name, repository, "Merged source must belong to this repository")
+  }
+  if (!mergedMainSource) assert.equal(pullRequest.head.sha, candidate.sourceSha)
 }
 
 export const verifySourceReceipt = (receipt, environment, actualSourceSha) => {
@@ -78,13 +137,26 @@ export const verifySourceReceipt = (receipt, environment, actualSourceSha) => {
   return receipt
 }
 
-export const verifyCommittedAcceptance = (candidate, bytes) => {
+export const verifyCommittedAcceptance = (candidate, bytes, sourceWorkflow = acceptanceWorkflow(candidate)) => {
   assert.equal(createHash("sha256").update(bytes).digest("hex"), candidate.acceptanceReceiptSha256)
   const receipt = JSON.parse(bytes)
   assert.equal(receipt.schemaVersion, 1)
   assert.equal(receipt.repository, repository)
-  verifyAcceptanceEvidence(candidate, receipt.run, receipt.jobs, receipt.pullRequest)
+  verifyAcceptanceEvidence(candidate, receipt.run, receipt.jobs, receipt.pullRequest, sourceWorkflow)
   return receipt
+}
+
+export const verifyProductMerge = (candidate, mergeTree, parents, pullRequest) => {
+  assert.match(mergeTree, sha)
+  if (mergeTree === candidate.sourceTree) return
+  // A reviewed PR head can remain frozen while main advances independently.
+  // The canonical PR receipt above binds the actual main merge; Git must also
+  // prove that it directly merged this exact head, not just an older ancestor.
+  assert.equal(pullRequest?.base?.ref, "main", "A different merge tree requires a main PR")
+  assert.equal(pullRequest?.base?.repo?.full_name, repository, "A different merge tree requires this repository's main")
+  assert.equal(parents.length, 2, "A different merge tree requires a normal two-parent merge")
+  for (const parent of parents) assert.match(parent, sha)
+  assert.equal(parents[1], candidate.sourceSha, "The main merge did not directly include the reviewed source head")
 }
 
 // Accept the reviewed workflow's explicit block form, failing closed if its
@@ -171,10 +243,19 @@ const verifyDynamicBackendWiring = (publication) => {
     NPM_CONFIG_PROGRESS: '"false"',
   })
   const jobs = workflowBlock(publication, "jobs", 0)
-  workflowMappingKeys(jobs, 2)
+  const jobNames = [...workflowMappingKeys(jobs, 2)].sort()
+  const historicalVerification = jobNames.includes("verify")
+  assert.deepEqual(jobNames, historicalVerification
+    ? ["preflight", "publish", "real-bamboo", "verify"]
+    : ["preflight", "publish", "real-bamboo"], "Candidate publication requires its complete reviewed job graph")
   const realBamboo = workflowBlock(jobs, "real-bamboo", 2)
   assert.deepEqual([...workflowMappingKeys(realBamboo, 4)].sort(), ["env", "name", "needs", "runs-on", "steps", "timeout-minutes"])
-  assert.equal(workflowValue(realBamboo, "needs", 4), "[preflight, verify]")
+  assert.equal(workflowValue(realBamboo, "needs", 4), historicalVerification ? "[preflight, verify]" : "[preflight]")
+  const publishNeeds = workflowBlock(workflowBlock(jobs, "publish", 2), "needs", 4)
+    .split(/\r?\n/).map((line) => line.trim()).filter((line) => line && !line.startsWith("#"))
+  assert.deepEqual(publishNeeds, historicalVerification
+    ? ["- preflight", "- verify", "- real-bamboo"]
+    : ["- preflight", "- real-bamboo"], "Publication must wait for its exact-source authority and real Bamboo acceptance")
   verifyWorkflowEnvironment(realBamboo, 4, {
     LOTUS_NEXT_SOURCE_REVISION: "${{ needs.preflight.outputs.source_sha }}",
     LOTUS_NEXT_EXPECTED_SOURCE_REVISION: "${{ needs.preflight.outputs.source_sha }}",
@@ -247,8 +328,8 @@ const main = async () => {
     expectedSourceSha: environment.EXPECTED_SOURCE_SHA_INPUT,
   })
   // This historical acceptance receipt is part of the reviewed main authority.
-  // Every original publication gate still reruns against the fixed source below.
-  verifyCommittedAcceptance(candidate, readFileSync(`.github/release-acceptance/${environment.LOTUS_NEXT_RELEASE_VERSION}.json`))
+  // Node/unit/browser source tests are reused; publication still builds and
+  // checks the exact versioned artifact against the paired real Bamboo runtime.
   git(["fetch", "--no-tags", "origin", candidate.sourceRef])
   assert.equal(git(["cat-file", "-t", "FETCH_HEAD"]), "tag", "An annotated release tag is required")
   const tagObjectSha = git(["rev-parse", "FETCH_HEAD"])
@@ -256,9 +337,13 @@ const main = async () => {
   assert.equal(git(["rev-parse", "FETCH_HEAD^{commit}"]), candidate.sourceSha)
   assert.equal(git(["rev-parse", `${candidate.sourceSha}^{tree}`]), candidate.sourceTree)
   git(["fetch", "--no-tags", "origin", candidate.productMergeSha])
-  assert.equal(git(["rev-parse", `${candidate.productMergeSha}^{tree}`]), candidate.sourceTree)
+  const sourceWorkflow = git(["show", `${candidate.sourceSha}:.github/workflows/ci.yml`])
+  const acceptance = verifyCommittedAcceptance(candidate, readFileSync(`.github/release-acceptance/${environment.LOTUS_NEXT_RELEASE_VERSION}.json`), sourceWorkflow)
+  verifyProductMerge(candidate,
+    git(["rev-parse", `${candidate.productMergeSha}^{tree}`]),
+    git(["show", "-s", "--format=%P", candidate.productMergeSha]).split(" "), acceptance.pullRequest)
   verifyCandidateBackendPins(candidate, {
-    ci: git(["show", `${candidate.sourceSha}:.github/workflows/ci.yml`]),
+    ci: sourceWorkflow,
     publication: git(["show", `${candidate.sourceSha}:.github/workflows/publish-npm.yml`]),
     runtime: git(["show", `${candidate.sourceSha}:e2e/support/realBambooRuntime.ts`]),
     acceptanceTest: git(["show", `${candidate.sourceSha}:scripts/published-real-bamboo-acceptance.test.mjs`]),

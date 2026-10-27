@@ -22,10 +22,15 @@ embedded hosting while enforcing the canonical `/api/v1` and `/v2/stream`
 runtime contract. CI retains its HTML report, trace, screenshot, video, and
 runtime observations when a case fails.
 
-The source-built real-runtime gate is intentionally separate from that
-deterministic matrix. It builds a clean checkout of Bamboo revision
-`80815125da51a5722935e99fda2ed4541aa67f98` into an isolated Docker image,
-serves the production Lotus Next artifact from that Bamboo process, and drives
+CI splits this unchanged all-surface inventory into four independently rerunnable
+shards per Node lane. See [browser shard evidence, reruns, and timing](browser-test-shards.md).
+
+The real-runtime gate is intentionally separate from that deterministic
+matrix. It verifies a clean checkout of Bamboo revision
+`d6325a732c7669f94962f604e4ce98966e374d73`, pairs its browser host with the
+hash-verified published Bamboo `2026.10.18` Linux x64 executable, and assembles
+an isolated Docker image without compiling Bamboo. It serves the production
+Lotus Next artifact from that Bamboo process and drives
 one complete chat turn through the visible desktop UI and a local deterministic
 OpenAI-compatible provider. It requires the `auth.ws_hello_ack.v1` bootstrap
 capability and records one ordered, bidirectional WebSocket timeline for both
@@ -93,11 +98,15 @@ before serving or staging an artifact; a dirty source manifest is never a
 release artifact.
 
 The committed package version remains the `0.0.0` source placeholder. The
-manual publication workflow accepts one explicit SemVer, verifies the complete
-Node 22/24 and real-Bamboo gates from a clean `main` commit, packs without a
-second build, verifies the tarball, publishes with npm provenance, then
-downloads and verifies the registry copy. Publishing does not switch any
-Bamboo, Bodhi, or Zenith consumer.
+manual publication workflow accepts one explicit SemVer and reuses the complete
+Node 22/24 and browser source-CI results bound to the exact clean candidate in
+the committed acceptance receipt. It does not rerun that Node test matrix or
+`npm run verify`. Publication builds the versioned artifact, checks it against
+the paired real Bamboo runtime on local and HTTPS browser surfaces, then builds
+and statically verifies the final package and requires its tarball to match the
+accepted runtime identity. It packs without another lifecycle build, publishes
+with npm provenance, and downloads and verifies the registry copy. Publishing
+does not switch any Bamboo, Bodhi, or Zenith consumer.
 
 Each publication build also supplies `VITE_APP_REVISION` and `VITE_APP_VERSION`
 from the same verified source receipt and explicit package version. Runtime
@@ -128,9 +137,12 @@ current plain, unique top-level keys, rejecting added container execution and
 other wrappers without interpreting them. The parent job-name mapping requires
 plain, unique keys, and preflight outputs require their six reviewed plain,
 unique, flat entries, preventing equivalent quoted or merged overrides.
+The current publication graph contains preflight, real-Bamboo acceptance and
+pack/publish, with publication waiting for both preceding gates. Historical
+candidate sources retain their four-job graph with the additional Node
+verification dependency; their receipts and tags remain unchanged.
 These checks prevent inherited execution overrides such as `NODE_OPTIONS` from
-changing how the source script,
-paired checkout, or Node verification gates run. This bounded structural check
+changing how the source script or paired checkout runs. This bounded structural check
 does not evaluate arbitrary other steps, file mutations, action supply chains,
 or general YAML.
 Missing, duplicate, or mismatched workflow bindings are

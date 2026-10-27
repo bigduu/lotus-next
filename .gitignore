@@ -12,6 +12,11 @@ dist
 dist-ssr
 playwright-report
 test-results
+browser-inventory.json
+browser-results.json
+browser-shard.json
+browser-summary.json
+browser-receipts/
 playwright-report-real-bamboo*
 test-results-real-bamboo*
 playwright-report-tickets*

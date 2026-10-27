@@ -9,7 +9,6 @@ import { Readable, Transform } from "node:stream"
 import { pipeline } from "node:stream/promises"
 import { fileURLToPath, pathToFileURL } from "node:url"
 
-export const ACCEPTED_SOURCE_SHA = "73224b3f0bd6955c4c6c6095f874a951bb68f05e"
 export const BROWSER_VERSION = "157.0.8090.0"
 export const BROWSER_PINS = Object.freeze(Object.fromEntries(Object.entries({
   linux64: {
@@ -106,16 +105,25 @@ const context = (sourceRoot, browserRoot, env = process.env) => {
   assert.equal(realpathSync(sourceRoot), sourceRoot, "Source root must be canonical")
   assert(env.RUNNER_TEMP && /^[a-f0-9]{40}$/u.test(env.PUBLICATION_WORKFLOW_SHA ?? ""), "Missing publication workflow identity")
   assert.equal(env.GITHUB_SHA, env.PUBLICATION_WORKFLOW_SHA, "Workflow identity mismatch")
-  assert.equal(env.LOTUS_NEXT_EXPECTED_SOURCE_REVISION, ACCEPTED_SOURCE_SHA, "Unexpected accepted source")
-  assert(/^[1-9][0-9]*$/u.test(env.GITHUB_RUN_ID ?? "") && /^[1-9][0-9]*$/u.test(env.GITHUB_RUN_ATTEMPT ?? ""), "Missing run identity")
   const runnerTemp = realpathSync(env.RUNNER_TEMP)
+  // This registry is preserved from the same trusted workflow checkout as
+  // this helper, outside the disposable product source checkout. Preflight
+  // validates the corresponding immutable tag, tree and acceptance receipt.
+  const registryPath = path.join(runnerTemp, "release-control", "release-candidates.json")
+  regularFile(registryPath)
+  const registry = JSON.parse(readFileSync(registryPath, "utf8"))
+  assert.equal(registry.schemaVersion, 1)
+  const acceptedSourceSha = registry.candidates?.[env.LOTUS_NEXT_RELEASE_VERSION]?.sourceSha
+  assert(/^[a-f0-9]{40}$/u.test(acceptedSourceSha ?? ""), "Missing committed accepted source")
+  assert.equal(env.LOTUS_NEXT_EXPECTED_SOURCE_REVISION, acceptedSourceSha, "Unexpected accepted source")
+  assert(/^[1-9][0-9]*$/u.test(env.GITHUB_RUN_ID ?? "") && /^[1-9][0-9]*$/u.test(env.GITHUB_RUN_ATTEMPT ?? ""), "Missing run identity")
   assert.equal(browserRoot, path.join(runnerTemp, "release-browser"), "Unexpected publication browser directory")
   assert.equal(helperPath, path.join(runnerTemp, "release-control", "release-browser.mjs"), "Use the preserved workflow control helper")
   outsideSource(browserRoot, sourceRoot)
   outsideSource(helperPath, sourceRoot)
-  assert.equal(run("git", ["-C", sourceRoot, "rev-parse", "HEAD"]), ACCEPTED_SOURCE_SHA, "Source checkout drift")
+  assert.equal(run("git", ["-C", sourceRoot, "rev-parse", "HEAD"]), acceptedSourceSha, "Source checkout drift")
   assertLockedBrowserInputs(sourceRoot)
-  return { sourceRoot, sourceSha: ACCEPTED_SOURCE_SHA, workflowSha: env.PUBLICATION_WORKFLOW_SHA,
+  return { sourceRoot, sourceSha: acceptedSourceSha, workflowSha: env.PUBLICATION_WORKFLOW_SHA,
     runId: env.GITHUB_RUN_ID, runAttempt: env.GITHUB_RUN_ATTEMPT, controlSha256: fileSha256(helperPath) }
 }
 

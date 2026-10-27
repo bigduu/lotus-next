@@ -1,5 +1,5 @@
 import { workbenchPanel } from "./support/workbench.js"
-import { openClosedBrowserAtServiceDefault } from "./support/browserProfile.js"
+import { openClosedBrowserExplicitlyClean } from "./support/browserProfile.js"
 import { execFile } from "node:child_process"
 import { createHash } from "node:crypto"
 import { promisify } from "node:util"
@@ -189,7 +189,7 @@ const exerciseSurface = async (
     const panel = workbenchPanel(page)
     await panel.getByRole("button", { name: /浏览器.*输入网址后打开/ }).click()
     const pane = panel.getByRole("region", { name: "内置浏览器" })
-    await openClosedBrowserAtServiceDefault(page, pane, sessionId)
+    await openClosedBrowserExplicitlyClean(page, pane, sessionId)
     const address = pane.getByRole("textbox", { name: "网页地址" })
     const picture = pane.getByAltText("网页画面")
     await expect(pane.getByRole("heading", { name: "还没有打开网页", exact: true })).toBeVisible()

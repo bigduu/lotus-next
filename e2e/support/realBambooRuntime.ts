@@ -22,7 +22,28 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-export const REAL_BAMBOO_REVISION = "80815125da51a5722935e99fda2ed4541aa67f98";
+export const REAL_BAMBOO_REVISION = "d6325a732c7669f94962f604e4ce98966e374d73";
+
+// Published executable identity from Bamboo v2026.10.18. Browser-host sources
+// still come from the same verified Git checkout; Cargo is not rerun here.
+export const REAL_BAMBOO_BINARY = Object.freeze({
+  url: "https://github.com/bigduu/Bamboo-agent/releases/download/v2026.10.18/bamboo-x86_64-unknown-linux-gnu",
+  bytes: 247723520,
+  sha256: "06df1bd069b42c46958dcdb7084c1822a8c2d5cb39d0f95affceb3820bbcc8e1",
+});
+
+export const verifyBambooBinary = (
+  bytes: Uint8Array,
+  identity: { bytes: number; sha256: string } = REAL_BAMBOO_BINARY,
+): void => {
+  if (bytes.byteLength !== identity.bytes)
+    throw new Error("Published Bamboo binary length mismatch");
+  if (createHash("sha256").update(bytes).digest("hex") !== identity.sha256)
+    throw new Error("Published Bamboo binary SHA-256 mismatch");
+  if (Buffer.from(bytes.subarray(0, 6)).toString("hex") !== "7f454c460201" ||
+      bytes[18] !== 62 || bytes[19] !== 0)
+    throw new Error("Published Bamboo binary must be Linux x86_64 ELF");
+};
 
 const REAL_BAMBOO_MODEL = "gpt-4o-mini";
 const REAL_BAMBOO_PROVIDER = "e2e-openai";
@@ -598,9 +619,27 @@ const buildPinnedBambooImage = async (
   }
   const image = state.builtImage;
   try {
+    advanceStage(state, "downloading pinned published Bamboo executable");
+    const response = await fetch(REAL_BAMBOO_BINARY.url, {
+      signal: AbortSignal.timeout(120_000),
+    });
+    if (response.status !== 200)
+      throw new Error(`Published Bamboo download returned HTTP ${response.status}`);
+    const executable = new Uint8Array(await response.arrayBuffer());
+    verifyBambooBinary(executable);
+    throwIfInterrupted(state);
+    const executablePath = path.join(contextPath, ".lotus-published-bamboo");
+    await writeFile(executablePath, executable, { mode: 0o755 });
+    await writeEvidence(state, "bamboo-executable.json", {
+      schemaVersion: 1,
+      sourceRevision: REAL_BAMBOO_REVISION,
+      ...REAL_BAMBOO_BINARY,
+    });
     state.imageBuildAttempted = true;
     await runCommand("docker", [
       "build",
+      "--platform",
+      "linux/amd64",
       "--file",
       DOCKERFILE_PATH,
       "--build-arg",
@@ -1592,7 +1631,7 @@ const cleanupRuntime = (state: RuntimeState): Promise<string[]> => {
 const revisionEvidence = (state: RuntimeState) => ({
   schemaVersion: 1,
   expectedRevision: REAL_BAMBOO_REVISION,
-  mode: "source-build",
+  mode: "published-binary",
   source: state.sourceValidation
     ? {
         head: state.sourceValidation.head,
@@ -1600,7 +1639,7 @@ const revisionEvidence = (state: RuntimeState) => ({
         clean: state.sourceValidation.clean,
         cleanlinessCommand: "git status --porcelain=v1 --untracked-files=all",
         buildContext:
-          "git archive of the verified commit plus one harness-owned provider script",
+          "git archive of the verified browser host plus the hash-verified published executable and harness-owned provider",
         bambooSourceArchiveExact: true,
         providerHarnessInjected: true,
       }
@@ -1628,7 +1667,7 @@ const runtimeSummary = (
   status,
   stage: state.stage,
   revision: REAL_BAMBOO_REVISION,
-  mode: "source-build",
+  mode: "published-binary",
   sourceHeadExact: state.sourceValidation
     ? state.sourceValidation.head === REAL_BAMBOO_REVISION
     : null,
@@ -2033,7 +2072,7 @@ const globalSetup = async (): Promise<() => Promise<void>> => {
     const configuredImage = process.env.BAMBOO_E2E_IMAGE?.trim();
     if (configuredImage) {
       throw new Error(
-        "BAMBOO_E2E_IMAGE is not supported: real Bamboo E2E must build the verified source so Bamboo and the private provider sibling share one harness-owned runtime image.",
+        "BAMBOO_E2E_IMAGE is not supported: real Bamboo E2E must assemble the verified source and published executable so Bamboo and the private provider sibling share one harness-owned runtime image.",
       );
     }
     if (!configuredSource) {

@@ -1056,7 +1056,7 @@ export function useChat(
           const { session } = await agentClient.getSession(runSid)
           if (!canReconcile()) return
           if (session.id !== runSid || session.is_running || session.has_pending_question
-              || session.last_run_status === "suspended") {
+              || session.last_run_status === "suspended" && session.has_pending_question !== false) {
             observedIdle = false
             return
           }
@@ -1070,6 +1070,10 @@ export function useChat(
           if (useAppStore.getState().chats.find((chat) => chat.id === runSid)?.isRunning) {
             observedIdle = false
             return
+          }
+          if (session.last_run_status === "suspended") {
+            const scope = navigationRef.current
+            if (scope.sessionId !== runSid || await reconcileQuestion(scope) !== "absent" || !canReconcile()) return
           }
           let historyReady = false
           try {
@@ -1096,7 +1100,11 @@ export function useChat(
           const durableReply = finalText && tail?.role === "assistant" && tail.type === "text"
             && tail.id !== streamBaselineMessageIdRef.current && tail.content.trim() === finalText
           if (session.last_run_status === "cancelled") settleCancelled(true)
-          else if (session.last_run_status === "completed" && durableReply) settleCompleted(true)
+          // Waiting for children or background work leaves the agent channel
+          // open. Settle this pane's response after confirmed suspension so the
+          // composer can send again; this never stops the backend task.
+          else if (session.last_run_status === "suspended"
+              || session.last_run_status === "completed" && durableReply) settleCompleted(true)
           else {
             const decoder = session.last_run_diagnostic == null ? null : await import("@services/chat/runDiagnostic").catch(() => null)
             const message = toFailureMessage(session.last_run_error)
@@ -1452,20 +1460,23 @@ export function useChat(
   // this session's execution phase to busy via the session summary. If nothing
   // here is subscribed to its agent channel yet, subscribe (no execute) so live
   // tokens stream in instead of the transcript freezing until terminal.
+  const summaryRunning = currentChat?.isRunning ?? false
+  const summarySuspended = currentChat?.lastRunStatus === "suspended"
   const shouldObserve = useAppStore((s) => (sid ? selectShouldObserve(sid)(s) : false))
   useEffect(() => {
-    if (!sid || !shouldObserve) return
+    // Active children can keep the execution rail busy while their parent is
+    // suspended. Wait for its running summary before observing another run.
+    if (!sid || !shouldObserve || summarySuspended && !summaryRunning) return
     if (activeSendRef.current) return
     if (subscribedSidRef.current === sid) return
     void runStream(sid, { resume: true })
-  }, [sid, shouldObserve, sending, runStream])
+  }, [sid, shouldObserve, summarySuspended, summaryRunning, sending, runStream])
 
   // ── Stranded-terminal reconcile ───────────────────────────────────────
   // If the summary settles (is_running=false via the feed) while we still hold
   // a live subscription for that session, the agent channel probably missed
   // its terminal frame (e.g. frozen background WS). Give the channel a grace
   // period to deliver, then force-settle: abort + reload history.
-  const summaryRunning = currentChat?.isRunning ?? false
   useEffect(() => {
     if (!sid || summaryRunning) return
     if (subscribedSidRef.current !== sid) return
@@ -1486,7 +1497,6 @@ export function useChat(
   // ── Pending-question rehydration ──────────────────────────────────────
   // The execution reducer retains only terminal statuses. Keep the raw pane
   // summary's suspended hint even when its optional pending flag is absent.
-  const summarySuspended = currentChat?.lastRunStatus === "suspended"
   const [recoveredQuestion, hasPendingQuestion, pendingSummary, lastRunStatus] = useAppStore(useShallow((state) => {
     const execution = sid ? state.executionBySession[sid] : undefined
     return [

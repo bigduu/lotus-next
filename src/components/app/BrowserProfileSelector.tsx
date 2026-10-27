@@ -10,6 +10,8 @@ export interface BrowserProfileActions {
   close: (sessionId: string) => void
   /** Existing API default; never promises profile isolation or sharing. */
   openDefault?: (sessionId: string) => void
+  /** User-explicit clean request; capability is confirmed only by the response. */
+  openClean?: (sessionId: string) => void
 }
 
 export function BrowserProfileSelector({
@@ -44,6 +46,9 @@ export function BrowserProfileSelector({
         <Button type="button" variant="outline" disabled={pending} onClick={() => {
           if (!pending) actions.openDefault?.(sessionId)
         }}>{uiText("browser_profile_open_default")}</Button>
+        {actions.openClean ? <Button type="button" variant="outline" disabled={pending} onClick={() => {
+          if (!pending) actions.openClean?.(sessionId)
+        }}>{uiText("browser_profile_open_clean")}</Button> : null}
       </> : null}
     </section>
   }

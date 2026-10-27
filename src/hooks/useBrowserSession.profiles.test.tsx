@@ -260,3 +260,32 @@ it("keeps a known busy refusal distinct when its later canonical read fails", as
   expect(browserService.open).not.toHaveBeenCalled()
   expect(browserService.openProfile).not.toHaveBeenCalled()
 })
+
+it("allows only a user-explicit clean request from a canonical closed scope and confirms the result", async () => {
+  states.a = null
+  await render()
+  expect(browserService.openProfile).not.toHaveBeenCalled()
+  await act(async () => browser.openProfile("a", "shared"))
+  expect(browserService.openProfile).not.toHaveBeenCalled()
+  await act(async () => browser.openClean("a"))
+  expect(browserService.openProfile).toHaveBeenCalledExactlyOnceWith("a", "clean", expect.any(AbortSignal))
+  expect(browserService.open).not.toHaveBeenCalled()
+  expect(browser.profile).toMatchObject({ kind: "reported", mode: "clean", storageShared: false })
+  await act(async () => browser.retry())
+  expect(browserService.openProfile).toHaveBeenCalledTimes(1)
+})
+
+it("does not turn a generic404 or unconfirmed clean ACK into clean capability", async () => {
+  states.a = null
+  vi.mocked(browserService.get).mockRejectedValueOnce(new ApiError("missing", 404, "Not Found"))
+  await render()
+  await act(async () => browser.openClean("a"))
+  expect(browserService.openProfile).not.toHaveBeenCalled()
+  await act(async () => browser.retry())
+  const { profile_mode: _mode, storage_shared: _shared, ...legacy } = state("shared")
+  vi.mocked(browserService.openProfile).mockImplementationOnce(async () => { states.a = legacy; return legacy })
+  await act(async () => browser.openClean("a"))
+  expect(browser.profile).toEqual({ kind: "unreported" })
+  expect(browser.error).toContain("结果未确认")
+  expect(browserService.openProfile).toHaveBeenCalledTimes(1)
+})

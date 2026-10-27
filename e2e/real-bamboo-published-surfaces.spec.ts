@@ -1,5 +1,5 @@
 import { workbenchPanel } from "./support/workbench.js"
-import { openClosedBrowserAtServiceDefault } from "./support/browserProfile.js"
+import { openClosedBrowserExplicitlyClean } from "./support/browserProfile.js"
 import { assertClosedBrowserRead, unexplainedBrowserErrors, type ClosedBrowserRead } from "./support/closedBrowserRead.js"
 import { expectComposerText } from "./support/composer.js"
 import {
@@ -370,7 +370,7 @@ const exerciseSurface = async ({
         };
         assertClosedBrowserRead(initialClosedRead, entryUrl.origin, sessionId);
         beforeExplicitOpen = false;
-        await openClosedBrowserAtServiceDefault(page, pane, sessionId);
+        await openClosedBrowserExplicitlyClean(page, pane, sessionId);
       }
       await expect(pane).toHaveAttribute(
         startsWithEmptyBrowser ? "data-browser-empty" : "data-browser-pane",

@@ -8,6 +8,7 @@ const DIST_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..
 const ASSET_MANIFEST_PATH = path.join(DIST_ROOT, "asset-manifest.json")
 const FIXTURE_SESSION_ID = "all-surface-session"
 const FIXTURE_TIME = "2026-09-03T00:00:00.000Z"
+const FIXTURE_SESSION_VERSION = 2
 
 export interface ArtifactScenario {
   readonly name: "standalone" | "embedded" | "secure-remote"
@@ -105,6 +106,15 @@ const bootstrapDocument = {
 
 const fixtureSession = {
   id: FIXTURE_SESSION_ID,
+  session_version: FIXTURE_SESSION_VERSION,
+  execution_compatibility: {
+    session_version: FIXTURE_SESSION_VERSION,
+    current_session_version: FIXTURE_SESSION_VERSION,
+    status: "compatible",
+    history_readable: true,
+    execution_allowed: true,
+    conflicts: [],
+  },
   kind: "root",
   root_orchestration_only: false,
   thinking_mode: "standard",
@@ -147,6 +157,22 @@ const fixtureModel = {
 }
 
 const apiResponse = (method: string, pathnameWithSearch: string): unknown => {
+  const migrationRead = /^\/api\/v1\/sessions\/([^/]+)\/version-migration$/.exec(pathnameWithSearch)
+  if (method === "GET" && migrationRead) {
+    // Shared surface fixtures model current, idle sessions, including IDs
+    // supplied by individual specs. Migration scenarios override this GET;
+    // writes retain the strict unimplemented-route failure below.
+    return {
+      session_id: decodeURIComponent(migrationRead[1]),
+      birth_token: fixtureSession.root_mode_birth_token,
+      session_version: FIXTURE_SESSION_VERSION,
+      current_session_version: FIXTURE_SESSION_VERSION,
+      metadata_version: 1,
+      snapshot_sha256: "b".repeat(64),
+      eligible: false,
+      blockers: [{ code: "already_current", message: "This Session already uses the current behavior version." }],
+    }
+  }
   if (method === "GET" && pathnameWithSearch === `/api/v1/actors/${FIXTURE_SESSION_ID}/snapshot?subtree_id=${FIXTURE_SESSION_ID}`) {
     return actorSnapshotFixture(FIXTURE_SESSION_ID, 0)
   }

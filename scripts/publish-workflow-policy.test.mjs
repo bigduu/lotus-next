@@ -13,6 +13,31 @@ const stepStart = workflow.indexOf(stepName)
 const stepEnd = workflow.indexOf(nextStepName, stepStart)
 const registryRoundTripStep = workflow.slice(stepStart, stepEnd)
 
+describe("publication reuses accepted source CI", () => {
+  it("keeps source tests in CI and publishes without repeating the Node test matrix", () => {
+    const sourceCi = readFileSync(resolve(process.cwd(), ".github/workflows/ci.yml"), "utf8")
+    expect(sourceCi).toContain("run: npm run verify")
+    expect(sourceCi).toContain("run: npm run test:e2e:built -- --shard=${{ matrix.shard }}/4")
+    const jobs = workflow.slice(workflow.indexOf("\njobs:\n"))
+    expect([...jobs.matchAll(/^  ([a-z-]+):$/gm)].map((match) => match[1]))
+      .toEqual(["preflight", "real-bamboo", "publish"])
+    expect(workflow).not.toMatch(/npm run (?:verify|test(?::[\w:-]+)?)(?:\s|$)/)
+    expect(workflow).not.toContain("release-browser/all-surface.config.mjs")
+    expect(workflow).toContain("run: node scripts/release-source.mjs")
+  })
+  it("builds and statically checks the final package before matching its real-runtime identity", () => {
+    const build = workflow.indexOf("      - name: Build and verify the final package tree")
+    const pack = workflow.indexOf("      - name: Pack once without another lifecycle build")
+    const checks = workflow.slice(build, pack)
+    expect(checks).toContain("npm run build")
+    expect(checks).toContain("npm run artifact:verify")
+    expect(checks).toContain("npm run package:contents")
+    expect(pack).toBeGreaterThan(build)
+    expect(workflow).toContain("node scripts/release-acceptance-identity.mjs verify")
+    expect(workflow).toContain('run: npm publish "${PACKED_FILENAME}" --provenance --access public')
+  })
+})
+
 describe("npm publication workflow cache policy", () => {
   it("isolates the post-publish round trip from all vacancy-check caches", () => {
     expect(stepStart).toBeGreaterThanOrEqual(0)
