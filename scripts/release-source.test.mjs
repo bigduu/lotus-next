@@ -7,7 +7,9 @@ import { dirname, join, resolve } from "node:path"
 import { resolveReleaseRequest, verifyAcceptanceEvidence, verifySourceReceipt, verifyCommittedAcceptance, verifyCandidateBackendPins, acceptanceJobNames, verifyProductMerge } from "./release-source.mjs"
 
 const legacyWorkflow = readFileSync("scripts/fixtures/ci-unsharded.yml", "utf8")
-const shardedWorkflow = readFileSync(".github/workflows/ci.yml", "utf8")
+// Preserve the exact pre-transition graph for historical publication contracts.
+// The current protection bridge deliberately cannot authorize publication.
+const shardedWorkflow = readFileSync("scripts/fixtures/ci-sharded-main-v1.yml", "utf8")
 const verifyLegacyAcceptance = (...args) => verifyAcceptanceEvidence(...args, legacyWorkflow)
 const verifyLegacyCommittedAcceptance = (...args) => verifyCommittedAcceptance(...args, legacyWorkflow)
 
@@ -57,7 +59,7 @@ describe("frozen reviewed PR-head merge provenance", () => {
 
 describe("candidate Bamboo source bindings", () => {
   const files = {
-    ci: readFileSync(".github/workflows/ci.yml", "utf8"),
+    ci: shardedWorkflow,
     publication: readFileSync(".github/workflows/publish-npm.yml", "utf8"),
     runtime: readFileSync("e2e/support/realBambooRuntime.ts", "utf8"),
     acceptanceTest: readFileSync("scripts/published-real-bamboo-acceptance.test.mjs", "utf8"),
@@ -109,7 +111,7 @@ describe("candidate Bamboo source bindings", () => {
       git("config", "user.name", "Lotus preflight test")
       git("config", "user.email", "preflight@example.invalid")
       for (const path of ["scripts/release-source.mjs", ".github/workflows/ci.yml", ".github/workflows/publish-npm.yml", "e2e/support/realBambooRuntime.ts", "scripts/published-real-bamboo-acceptance.test.mjs"]) {
-        write(path, readFileSync(resolve(path)))
+        write(path, path === ".github/workflows/ci.yml" ? files.ci : readFileSync(resolve(path)))
       }
       git("add", ".")
       git("commit", "--quiet", "-m", "Candidate source")

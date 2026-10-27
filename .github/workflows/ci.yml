@@ -266,3 +266,21 @@ jobs:
             test-results-real-bamboo-remote/
           if-no-files-found: error
           retention-days: 14
+
+  feature-acceptance:
+    # Temporary dev protection bridge; #450 replaces this with full admission.
+    name: Feature acceptance
+    if: ${{ always() && github.event_name == 'pull_request' && github.base_ref == 'dev' }}
+    needs: [verify, browser-summary]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require the existing Unit and browser acceptance
+        shell: bash
+        env:
+          VERIFY_RESULT: ${{ needs.verify.result }}
+          BROWSER_RESULT: ${{ needs.browser-summary.result }}
+        run: |
+          set -euo pipefail
+          test "$VERIFY_RESULT" = success
+          test "$BROWSER_RESULT" = success

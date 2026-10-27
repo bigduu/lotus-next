@@ -1,5 +1,23 @@
 # Browser CI shards
 
+## Temporary dev protection bridge
+
+Until #450 installs the complete feature contract, `Feature acceptance` runs
+only for pull requests into `dev` and requires both existing `verify` and
+`Browser acceptance` jobs to succeed. Failure, cancellation, skipped or missing
+dependency outcomes fail this bridge. It adds no test skip or protection bypass.
+The existing dual Node 22/24 Unit verification and all eight browser shards
+remain unchanged. Real Bamboo remains an explicit manual check; it is not
+automatically covered by this temporary aggregate, and native Actor acceptance
+and exact PR merge-source receipts are not installed here.
+
+This bridge produces no release receipt and cannot authorize publication under
+the new release-source contract. The historical parser also rejects this
+transitional graph. Historical publication tests retain the exact prior workflow
+in `scripts/fixtures/ci-sharded-main-v1.yml`; #450 replaces the temporary bridge
+and its tests with the complete feature/source admission rather than treating
+this check name alone as full acceptance.
+
 `ci.yml` retains Node 22 and 24 verification and runs four all-surface Playwright
 shards per Node lane. Each shard keeps one worker, the existing retry/timeout
 settings, and the desktop/tablet/phone projects. The three additional source
