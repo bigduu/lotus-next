@@ -60,8 +60,8 @@ out the actual PR merge snapshot consistently in every source test job:
    actual Git merge parents, checkout SHA and clean tree. It preserves PR base
    and head, tested snapshot/tree, workflow identity and run/attempt in the
    `feature-source` Actions artifact.
-2. Node 22 runs Unit compatibility. Node 24 runs Unit, type, lint, architecture,
-   build and package checks and produces the one canonical test artifact.
+2. Node 22 runs the Unit suite once. Node 24 runs lint, architecture, build and
+   package checks and produces the canonical test artifact without rerunning Unit.
    Four browser shards consume that artifact once across the complete original
    desktop/tablet/phone inventory. `build` owns TypeScript compilation; `verify` does
    not invoke `type-check` again before the same build. Standalone `type-check`

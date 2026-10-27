@@ -155,11 +155,11 @@ describe("feature workflow phase policy", () => {
     expect(real).toContain("npx playwright install ffmpeg")
     expect(real).not.toContain("playwright install --with-deps")
   })
-  it("keeps Unit compatibility on Node22 and24 while building and testing browsers only on Node24", () => {
+  it("runs Unit once on Node 22 and builds and tests browsers only on Node 24", () => {
     const verify = job("verify"), browser = job("browser")
     expect(verify).toContain("          - 22\n          - 24")
     expect(verify).toContain("if: matrix.node == 22\n        run: npm run test:run")
-    expect(verify).toContain("if: matrix.node == 24\n        run: npm run verify")
+    expect(verify).toContain("if: matrix.node == 24\n        run: npm run verify:artifact")
     expect(verify).toContain("if: matrix.node == 24\n        run: node scripts/browser-shards.mjs inventory")
     expect(verify).toContain("Share the verified exact-source artifact and inventory\n        if: matrix.node == 24")
     expect(browser).toContain("        node:\n          - 24\n        shard:")
@@ -193,25 +193,27 @@ describe("feature compiler ownership", () => {
   const scripts = JSON.parse(readFileSync("package.json", "utf8")).scripts
   it("lets build own TypeScript compilation while preserving its failure status", () => {
     expect(scripts.build).toBe("tsc -b && vite build && node scripts/artifact-manifest.mjs generate")
-    expect(scripts.verify).not.toContain("npm run type-check")
-    expect(scripts.verify.match(/npm run build/gu)).toHaveLength(1)
+    expect(scripts.verify).toBe("npm run test:run && npm run verify:artifact")
+    expect(scripts["verify:artifact"]).not.toMatch(/npm run (?:test:run|type-check)/u)
+    expect(scripts["verify:artifact"].match(/npm run build/gu)).toHaveLength(1)
     const directory = realpathSync(mkdtempSync(path.join(tmpdir(), "lotus-compiler-owner-")))
     directories.push(directory)
     const record = path.join(directory, "commands")
     const stub = (name, body) => writeFileSync(path.join(directory, name), `#!/bin/bash\n${body}\n`, { mode: 0o755 })
-    stub("npm", 'echo "npm $*" >> "$COMMAND_RECORD"\nif [[ "$*" == "run build" ]]; then exec bash -c "$BUILD_SCRIPT"; fi')
+    stub("npm", 'echo "npm $*" >> "$COMMAND_RECORD"\nif [[ "$*" == "run verify:artifact" ]]; then exec bash -c "$VERIFY_ARTIFACT_SCRIPT"; fi\nif [[ "$*" == "run build" ]]; then exec bash -c "$BUILD_SCRIPT"; fi')
     stub("tsc", 'echo "tsc $*" >> "$COMMAND_RECORD"\nexit "$TSC_STATUS"')
     stub("vite", 'echo "vite $*" >> "$COMMAND_RECORD"')
     stub("node", 'echo "node $*" >> "$COMMAND_RECORD"')
     const run = (status) => {
       writeFileSync(record, "")
       const result = spawnSync("bash", ["-c", scripts.verify], { encoding: "utf8", env: { ...process.env,
-        PATH: `${directory}${path.delimiter}${process.env.PATH}`, BUILD_SCRIPT: scripts.build,
+        PATH: `${directory}${path.delimiter}${process.env.PATH}`, BUILD_SCRIPT: scripts.build, VERIFY_ARTIFACT_SCRIPT: scripts["verify:artifact"],
         COMMAND_RECORD: record, TSC_STATUS: String(status) } })
       return { ...result, commands: readFileSync(record, "utf8").trim().split("\n") }
     }
     const success = run(0)
     expect(success.status).toBe(0)
+    expect(success.commands.filter((command) => command === "npm run test:run")).toHaveLength(1)
     expect(success.commands.filter((command) => command.startsWith("tsc "))).toEqual(["tsc -b"])
     expect(success.commands).toContain("npm run package:contents")
     const failure = run(42)

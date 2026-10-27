@@ -1,7 +1,7 @@
 # Browser CI shards
 
-`ci.yml` retains Node 22 and 24 Unit compatibility. Node 24 alone runs the full
-verification/build/package command and produces one canonical test artifact.
+`ci.yml` runs the Unit suite once on Node 22. Node 24 runs the remaining
+verification/build/package checks and produces one canonical test artifact.
 Four all-surface Playwright shards consume it on Node 24. Each shard keeps one
 worker, the existing retry/timeout settings, and the desktop/tablet/phone
 projects. The three additional source fixture suites run once, on shard 1.
@@ -14,9 +14,9 @@ union must contain each original case exactly once. The Node 24 producer shares
 its built artifact and inventory with the four shards and real Bamboo E2E; the
 source revision and clean artifact identity are checked before execution.
 
-`Browser acceptance` runs even if a dependency fails. It requires both Node
-Unit/verification lanes and all four browser jobs to succeed. Receipts must agree
-on source, run, original inventory and per-shard cases. Missing, duplicate,
+`Browser acceptance` runs even if a dependency fails. It requires the Node 22
+Unit lane, Node 24 verification lane and all four browser jobs to succeed.
+Receipts must agree on source, run, original inventory and per-shard cases. Missing, duplicate,
 failed, cancelled, skipped-required, interrupted or mismatched results fail
 closed. Real Bamboo now depends on verification and this complete aggregate on
 every feature PR to dev, using the same verified Node 24 artifact. The final

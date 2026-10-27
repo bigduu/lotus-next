@@ -81,9 +81,9 @@ jobs:
         if: matrix.node == 22
         run: npm run test:run
 
-      - name: Verify architecture, behavior, build, and package contents
+      - name: Verify architecture, build, and package contents
         if: matrix.node == 24
-        run: npm run verify
+        run: npm run verify:artifact
 
       - name: Verify the deterministic provider fixture
         if: matrix.node == 24

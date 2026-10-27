@@ -13,16 +13,17 @@ is a historical snapshot; check the local guide and live workflows for activatio
   regression before dev admission. Fix Unit, browser E2E, real Bamboo and native
   Actor failures on the feature branch. Never leave test or fixture repairs for
   a release branch.
-- Require the current-head/base `Feature acceptance` check. It joins both Node
-  Unit lanes, all four browser shards, the real Bamboo round trip and packed
-  local/HTTPS surfaces, and native Actor acceptance. Skipped, failed, cancelled
-  or missing required jobs do not constitute acceptance.
+- Require the current-head/base `Feature acceptance` check. It joins the Node
+  22 Unit lane, Node 24 artifact checks, all four browser shards, the real Bamboo
+  round trip and packed local/HTTPS surfaces, and native Actor acceptance.
+  Skipped, failed, cancelled or missing required jobs do not constitute acceptance.
 - CI executes the actual PR merge snapshot. Preserve its base, head, snapshot,
   tree and run/attempt receipt. A feature head, tested merge snapshot, later dev
   commit and final release source are distinct identities. Do not rewrite
   `GITHUB_*` variables or relabel evidence to make them appear identical.
-- Node 24 alone produces the verified `dist`; the four ordinary browser shards
-  and real Bamboo E2E consume it. Node 22 runs Unit compatibility without Vite.
+- Node 22 runs the Unit suite once. Node 24 runs the other verification checks
+  and alone produces the verified `dist`; all browser shards and real Bamboo
+  E2E consume it.
   Do not repeat browser suites for the test runner's Node version, run a second
   Vite build for real Bamboo, or rerun successful unrelated shards after one fails.
   Preserve the original failed attempt when reporting a rerun.

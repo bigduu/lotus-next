@@ -529,7 +529,7 @@ describe("minimal publication requires complete pre-merge Dev feature evidence",
       head: { sha: head, repo: { full_name: "bigduu/lotus-next" } }, merge_commit_sha: source, merged_at: "2026-10-27T12:00:00Z" }
     const run = { id: 10, run_attempt: 1, workflow_id: 1, path: ".github/workflows/ci.yml", event: "pull_request", head_sha: head,
       repository: { full_name: "bigduu/lotus-next" }, head_repository: { full_name: "bigduu/lotus-next" }, status: "completed", conclusion: "success" }
-    const steps = { "Node 22": ["Verify Node 22 Unit compatibility"], "Node 24": ["Verify architecture, behavior, build, and package contents"],
+    const steps = { "Node 22": ["Verify Node 22 Unit compatibility"], "Node 24": ["Verify architecture, build, and package contents"],
       "Real Bamboo / Node 24": ["Verify a real chat round trip with the pinned published Bamboo", "Verify the current source artifact on local and secure browser surfaces"],
       "Native Actor acceptance / Native Actor / Node 24": ["Verify three negative controls and restored real Actor proof"] }
     for (const n of [1, 2, 3, 4]) steps[`Browser / Node 24 / shard ${n} of 4`] = ["Verify the all-surface browser shard"]

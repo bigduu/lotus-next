@@ -22,7 +22,7 @@ embedded hosting while enforcing the canonical `/api/v1` and `/v2/stream`
 runtime contract. CI retains its HTML report, trace, screenshot, video, and
 runtime observations when a case fails.
 
-CI retains Node 22/24 Unit compatibility and builds its canonical test artifact
+CI runs the Unit suite once on Node 22 and builds its canonical test artifact
 once on Node 24. Four independently rerunnable shards consume that artifact
 across the complete all-surface inventory. See
 [browser shard evidence, reruns, and timing](browser-test-shards.md).

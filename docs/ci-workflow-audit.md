@@ -85,7 +85,7 @@ promotion, Docker consumption or Pages deployment acceptance.
 
 | File | Responsibility and review decision |
 | --- | --- |
-| `ci.yml` | Feature PRs into dev own supported Node Unit lanes, one Node24 dist, four complete browser shards and Real Bamboo using that dist. The feature aggregate rejects missing/skipped/failed selected jobs. No dev/main push repeat after feature admission. The packed-runtime network failure remains tracked in Issue453. |
+| `ci.yml` | Feature PRs into dev own one Node22 Unit suite, one Node24 dist, four complete browser shards and Real Bamboo using that dist. The feature aggregate rejects missing/skipped/failed selected jobs. No dev/main push repeat after feature admission. The packed-runtime network failure remains tracked in Issue453. |
 | `actor-native.yml` | Called once by feature CI. Positive controls consume the same canonical dist; deliberately mutated frontend and backend negative controls require different source outputs. Keep those controls and their failure assertions. |
 | `publish-npm.yml` | Old publication still builds final-version dist twice and transfers an identity instead of the actual archive. Issue451 must produce one final-version dist/tgz, retain it, publish those bytes and move all runtime suites to accepted feature evidence. Preserve the failed version28 candidate/run and the published version29 identity separately. |
 | `verify-published-npm.yml` | Explicit read-only recovery for fixed published version2026.10.12. Verifies registry bytes and original evidence without building or republishing. Retain its narrow version/source scope. |

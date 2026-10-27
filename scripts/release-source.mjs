@@ -395,7 +395,7 @@ export const verifyDevAcceptance = (sourceSha, pr, run, jobs, receipt, merged, t
     assert.equal(job.head_sha, pr.head.sha); assert.equal(job.status, "completed"); assert.equal(job.conclusion, "success")
     assert.ok(Date.parse(job.completed_at) <= Date.parse(pr.merged_at), "Feature evidence must predate Dev admission")
   }
-  for (const [job, step] of [["Node 22", "Verify Node 22 Unit compatibility"], ["Node 24", "Verify architecture, behavior, build, and package contents"],
+  for (const [job, step] of [["Node 22", "Verify Node 22 Unit compatibility"], ["Node 24", "Verify architecture, build, and package contents"],
     ...[1, 2, 3, 4].map(n => [`Browser / Node 24 / shard ${n} of 4`, "Verify the all-surface browser shard"]),
     ["Real Bamboo / Node 24", "Verify a real chat round trip with the pinned published Bamboo"],
     ["Real Bamboo / Node 24", "Verify the current source artifact on local and secure browser surfaces"],
