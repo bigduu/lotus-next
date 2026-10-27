@@ -1,5 +1,11 @@
 # Lotus Next delivery
 
+The complete shared [delivery-flow/v1](delivery-workflow.md) and
+[Actions audit](ci-workflow-audit.md) are local files copied from Zenith
+`874ee7c`. This guide supplies the Lotus commands and runtime map. A new agent
+continues from the same branch/checkpoint and original evidence; it does not
+repeat successful work merely because ownership changed.
+
 This repository follows the unified Zenith #399 delivery contract. This change
 implements feature acceptance (#446); the dependent single-artifact release
 producer and main promotion verifier have not yet landed. Main remains the

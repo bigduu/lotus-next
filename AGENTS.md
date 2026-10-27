@@ -2,7 +2,11 @@
 
 Read [README.md](README.md) for the product boundary and
 [delivery.md](docs/delivery.md) before changing CI, accepting a feature, cutting a
-release, or publishing npm assets.
+release, or publishing npm assets. The complete common
+[delivery workflow](docs/delivery-workflow.md) and
+[Actions audit](docs/ci-workflow-audit.md) are also stored in this repository.
+Every agent uses their phase ownership and checkpoint procedure together with
+the Lotus-specific commands below; check actual activation before a cut.
 
 ## Feature ownership
 
