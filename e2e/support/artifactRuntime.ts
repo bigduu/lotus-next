@@ -192,6 +192,10 @@ const apiResponse = (method: string, pathnameWithSearch: string): unknown => {
     return { sessions, total: sessions.length, limit: 200, offset: 0 }
   }
   switch (`${method} ${pathnameWithSearch}`) {
+    case "GET /api/v1/execute/defaults":
+      // The shared fixture models a producer without continuous retry support.
+      // Retry-specific tests override this route to exercise capability changes.
+      return {}
     case "GET /api/v1/bootstrap":
       return bootstrapDocument
     case "GET /api/v1/bamboo/setup/status":
