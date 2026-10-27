@@ -67,6 +67,7 @@ export function createRunDiagnostics(
       runtime_run_id: detail?.run_id ?? null,
       backend_run_id: null,
       failure_stage: detail?.phase ?? null,
+      retry_mode: request?.retry_mode ?? null,
       attempt: request?.attempt ?? null,
       attempt_limit: request?.attempt_limit ?? null,
       status: request?.status ?? null,

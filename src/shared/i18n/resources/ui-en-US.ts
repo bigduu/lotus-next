@@ -301,6 +301,8 @@ export const uiEnUs = {
   "run_diagnostics_retry_safety": "Automatic replay safety",
   "run_diagnostics_retry_safe": "Eligible for replay; does not confirm a retry occurred",
   "run_diagnostics_retry_unsafe": "This request cannot be replayed automatically",
+  "run_diagnostics_stop_delay_too_large": "Required retry delay cannot be scheduled safely",
+  "run_diagnostics_continuous_attempts": "{{count}} · continuous connection retries",
   "run_diagnostics_stop_attempts": "Request limit reached",
   "run_diagnostics_stop_time": "Total time budget exhausted",
   "run_diagnostics_stop_delay": "Retry delay exceeds the remaining budget",

@@ -301,6 +301,8 @@ export const uiZhCn = {
   "run_diagnostics_retry_safety": "自动重放安全性",
   "run_diagnostics_retry_safe": "允许重放，不代表已经重试",
   "run_diagnostics_retry_unsafe": "此请求不适合自动重放",
+  "run_diagnostics_stop_delay_too_large": "无法安全安排所需重试等待时间",
+  "run_diagnostics_continuous_attempts": "{{count}} 次 · 持续连接重试",
   "run_diagnostics_stop_attempts": "请求次数已达到上限",
   "run_diagnostics_stop_time": "总等待时限已用完",
   "run_diagnostics_stop_delay": "重试等待时间超出剩余时限",
