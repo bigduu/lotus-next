@@ -36,6 +36,7 @@ import { ProcessActivity } from "@/components/chat/ProcessActivity"
 import { groupSubAgents } from "./subAgentGroups"
 import { SubAgents } from "@/components/chat/SubAgents"
 import { cn } from "@/lib/utils"
+import { isCompletedAnswerHandoff } from "@/lib/completedAnswerHandoff"
 import type { Message } from "@shared/types/chatMessages"
 import type { ChildProgress } from "@shared/store/appStore/slices/executionStateSlice/types"
 import type { LiveSegment, PendingUserMessageView } from "@/hooks/useChat"
@@ -700,7 +701,7 @@ export function MessageList({
       m as { images?: Array<{ url?: string; base64?: string; type?: string }> }
     ).images
     const isUser = m.role === "user"
-    const showMessageActions = !readOnly && !options?.live && (isUser || actionableAssistantIndexes.has(idx))
+    const showMessageActions = !readOnly && !options?.live && !isCompletedAnswerHandoff(m) && (isUser || actionableAssistantIndexes.has(idx))
     // Truly empty (no text, no images, no reasoning) → skip the blank bubble.
     if (!text.trim() && !imgs?.length) return null
 

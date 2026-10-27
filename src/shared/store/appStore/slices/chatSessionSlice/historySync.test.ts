@@ -95,6 +95,55 @@ afterEach(() => {
 });
 
 describe("terminal history synchronization", () => {
+  it.each([false, true])("hydrates an earlier assistant body with unchanged IDs/count after a follow-up (compressed=%s)", async (compressed) => {
+    const store = harness();
+    const full: HistoryResponse = { ...committedHistory, messages: [
+      ...committedHistory.messages.map((message) => ({ ...message, compressed })),
+      { id: "follow-up-user", role: "user", content: "Synthetic follow-up", created_at: "2026-10-27T00:00:00Z" },
+    ] };
+    const empty: HistoryResponse = { ...full, messages: full.messages.map((message) => message.id === "assistant-final" ? { ...message, content: "" } : message) };
+    vi.spyOn(agentClient, "getHistory").mockResolvedValueOnce(empty).mockResolvedValueOnce(full);
+    await store.getState().loadChatHistory("session-1", { mode: "monotonic" });
+    await store.getState().loadChatHistory("session-1", { mode: "monotonic" });
+    expect(store.getState().chats[0].messages.find((message) => message.id === "assistant-final")).toMatchObject({ content: "final answer", isCompressed: compressed });
+    expect(store.getState().chats[0].messages.filter((message) => message.id === "assistant-final")).toHaveLength(1);
+  });
+  it("preserves known canonical body against an older prefix while admitting the appended user", async () => {
+    const store = harness();
+    const later: HistoryResponse = { ...committedHistory, messages: [
+      ...committedHistory.messages.map((message) => message.id === "assistant-final" ? { ...message, content: "final", compressed: true } : message),
+      { id: "next-user", role: "user", content: "Synthetic next request", created_at: "2026-10-27T00:00:00Z" },
+    ] };
+    vi.spyOn(agentClient, "getHistory").mockResolvedValueOnce(committedHistory).mockResolvedValueOnce(later).mockResolvedValueOnce(later);
+    await store.getState().loadChatHistory("session-1");
+    await store.getState().loadChatHistory("session-1", { mode: "monotonic" });
+    expect(store.getState().chats[0].messages.find((message) => message.id === "assistant-final")).toMatchObject({ content: "final answer", isCompressed: true });
+    expect(store.getState().chats[0].messages.at(-1)?.id).toBe("next-user");
+    // An explicit replacement remains authoritative, so this is not a cache
+    // that permanently revives text after an edit/clear/restore.
+    await store.getState().loadChatHistory("session-1", { mode: "replace" });
+    expect(store.getState().chats[0].messages.find((message) => message.id === "assistant-final")).toMatchObject({ content: "final" });
+  });
+  it("waits past an empty assistant checkpoint instead of treating it as a durable answer", async () => {
+    const empty = { ...committedHistory, messages: committedHistory.messages.map((message) => message.id === "assistant-final" ? { ...message, content: "" } : message) };
+    expect(hasTerminalAssistantTail(empty.messages)).toBe(false);
+    const getHistory = vi.spyOn(agentClient, "getHistory").mockResolvedValueOnce(empty).mockResolvedValueOnce(committedHistory);
+    const store = harness();
+    await store.getState().loadChatHistory("session-1", { waitForAssistant: true, retries: 1, retryDelayMs: 1 });
+    expect(getHistory).toHaveBeenCalledTimes(2);
+    expect(store.getState().chats[0].messages.at(-1)).toMatchObject({ content: "final answer" });
+  });
+  it("keeps compressed transcript bodies when an older incomplete refetch resolves after canonical hydration", async () => {
+    const older = deferred<HistoryResponse>(); const store = harness();
+    const full = { ...committedHistory, compression_events: [{ id: "synthetic-summary", created_at: "2026-10-27T00:00:00Z", messages_compressed: 3, segments_removed: 1 }],
+      messages: committedHistory.messages.map((message) => ({ ...message, compressed: true, compressed_by_event_id: "synthetic-summary" })) };
+    vi.spyOn(agentClient, "getHistory").mockReturnValueOnce(older.promise).mockResolvedValueOnce(full);
+    const staleRead = store.getState().loadChatHistory("session-1", { mode: "replace" });
+    await store.getState().loadChatHistory("session-1", { mode: "monotonic" });
+    older.resolve(staleToolTail); await staleRead;
+    expect(store.getState().chats[0].messages.at(-1)).toMatchObject({ id: "assistant-final", content: "final answer", isCompressed: true });
+    expect(store.getState().chats[0].messages.some((message) => "content" in message && message.content === "synthetic-summary")).toBe(false);
+  });
   it("does not treat a tool tail as a committed assistant reply", () => {
     expect(hasTerminalAssistantTail(staleToolTail.messages)).toBe(false);
     expect(hasTerminalAssistantTail(committedHistory.messages)).toBe(true);

@@ -61,6 +61,7 @@ import { apiClient } from "@services/api"
 import { uiText } from "@shared/i18n/ui"
 import type { Message, MessageImage } from "@shared/types/chatMessages"
 import type { LiveSegment } from "@/hooks/useChat"
+import { projectCompletedAnswers } from "@/lib/completedAnswerHandoff"
 
 const mountedRoots: Root[] = []
 const reactActEnvironment = globalThis as typeof globalThis & {
@@ -140,6 +141,30 @@ it("passes exact running call IDs even when a live call has partial output", () 
   expect(group?.dataset.toolActive).toBe("true")
   expect(group?.dataset.toolItems).toBe("4")
   expect(group?.dataset.runningCalls).toBe("still-running")
+})
+it.each([false, true])("keeps completed compressed=%s assistant bodies outside collapsed activity across four turns", (compressed) => {
+  const raw = Array.from({ length: 4 }, (_, index) => [
+    { id: `synthetic-user-${index}`, role: "user" as const, content: `Synthetic request ${index}`, compressed, created_at: "2026-10-27T00:00:00Z" },
+    { id: `synthetic-call-${index}`, role: "assistant" as const, content: "", compressed, created_at: "2026-10-27T00:00:01Z",
+      tool_calls: [{ id: `call-${index}`, type: "function", function: { name: "Read", arguments: "{}" } }] },
+    { id: `synthetic-result-${index}`, role: "tool" as const, content: "Synthetic tool evidence", tool_call_id: `call-${index}`, compressed, created_at: "2026-10-27T00:00:02Z" },
+    { id: `synthetic-final-${index}`, role: "assistant" as const, content: `Synthetic final body ${index}`, compressed, created_at: "2026-10-27T00:00:03Z" },
+  ]).flat()
+  const container = renderMessageList(mapHistoryMessagesToUi("synthetic-compressed-transcript", raw), true)
+  for (let index = 0; index < 4; index += 1) {
+    const body = container.querySelector(`[data-assistant-content="Synthetic final body ${index}"]`)
+    expect(body).not.toBeNull(); expect(body?.closest("[data-process-activity]")).toBeNull()
+  }
+})
+it("renders a completed handoff as body without offering server actions for its local ID", () => {
+  const messages = projectCompletedAnswers([{ id: "synthetic-user", role: "user", content: "Synthetic request", createdAt: "" }], [{
+    sessionId: "synthetic", operationId: 1, text: "Synthetic handoff body", acknowledgedMessageId: "synthetic-user",
+    baselineMessageId: null, baselineMessageIds: new Set(), anchorSeen: true,
+  }]).messages
+  const container = renderMessageList(messages, true)
+  const row = container.querySelector('[data-message-row="completed-answer-handoff-1"]')!
+  expect(row.querySelector('[data-assistant-content="Synthetic handoff body"]')).not.toBeNull()
+  expect(row.querySelector("button")).toBeNull()
 })
 
 it("animates only the transcript content when a floating panel opens", () => {

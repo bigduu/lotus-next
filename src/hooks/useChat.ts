@@ -39,6 +39,7 @@ import {
   getRootModeFenceState,
 } from "@/lib/rootModeTransitionFence"
 import type { Message, MessageImage } from "@shared/types/chat"
+import { projectCompletedAnswers, type CompletedAnswerHandoff } from "@/lib/completedAnswerHandoff"
 import { resolveNewChatModelRef } from "@shared/types/providerConfig"
 import type { ProviderModelRef } from "@shared/types/providerModelRef"
 import {
@@ -162,12 +163,7 @@ type ScopedCompressionFeedback = {
   value: ContextCompressionFeedback
 }
 
-type RetainedTerminal = {
-  sessionId: string
-  operationId: number
-  text: string
-  baselineMessageId: string | null
-}
+type RetainedTerminal = CompletedAnswerHandoff
 
 const EMPTY_PENDING_IMAGES: readonly MessageImage[] = []
 
@@ -214,9 +210,16 @@ const hasPersistedTerminalText = (
   messages: Message[],
   finalText: string,
   baselineMessageId: string | null,
+  acknowledgedMessageId?: string | null,
 ): boolean => {
-  const tail = messages.findLast((message) => message.role !== "system")
-  if (tail?.role !== "assistant" || tail.type !== "text") return false
+  const anchor = acknowledgedMessageId == null ? -1
+    : messages.findIndex((message) => message.role === "user" && message.id === acknowledgedMessageId)
+  if (acknowledgedMessageId != null && anchor < 0) return false
+  const nextUser = anchor < 0 ? -1 : messages.findIndex((message, index) => index > anchor && message.role === "user")
+  const tail = messages.slice(anchor + 1, nextUser < 0 ? undefined : nextUser).findLast((message) => message.role !== "system")
+  if (tail?.role !== "assistant" || tail.type !== "text" || !tail.content.trim()) return false
+  if (finalText.trim().startsWith(tail.content.trim()) && finalText.trim() !== tail.content.trim()) return false
+  if (acknowledgedMessageId != null) return true
   // Once a baseline exists, a new terminal assistant id is the durable turn
   // boundary. Prefer it over byte equality because persistence may normalize
   // harmless whitespace/markdown. With no local baseline, keep the stricter
@@ -300,7 +303,19 @@ export function useChat(
   const sid = isBound ? boundSessionId : globalCurrentSessionId
   const executionCompatibility = useSessionExecutionCompatibility(sid)
   const currentChat = useAppStore(selectSessionById(sid))
-  const messages = useAppStore(useShallow((s) => selectSessionById(sid)(s)?.messages ?? []))
+  const canonicalMessages = useAppStore(useShallow((s) => selectSessionById(sid)(s)?.messages ?? []))
+  const [completedHandoffs, setCompletedHandoffs] = useState<readonly CompletedAnswerHandoff[]>([])
+  const messages = useMemo(() => projectCompletedAnswers(canonicalMessages,
+    completedHandoffs.filter((entry) => entry.sessionId === sid)).messages, [canonicalMessages, completedHandoffs, sid])
+  useEffect(() => {
+    setCompletedHandoffs((current) => {
+      const remaining = current.flatMap((entry) => {
+        const chat = chats.find((item) => item.id === entry.sessionId)
+        return chat ? projectCompletedAnswers(chat.messages, [entry]).remaining : []
+      })
+      return remaining.length === current.length && remaining.every((entry, index) => entry === current[index]) ? current : remaining
+    })
+  }, [chats, completedHandoffs, canonicalMessages])
   const selectedModel = useAppStore((s) => s.selectedModel)
   // Global default model (configured in provider settings). It seeds new
   // sessions; an existing session keeps its own bound model unless the user
@@ -501,9 +516,10 @@ export function useChat(
   const retainedTerminal = retainedTerminalRef.current
   const retainedTerminalIsHydrated = retainedTerminal?.sessionId === sid
     && hasPersistedTerminalText(
-      messages,
+      canonicalMessages,
       retainedTerminal.text,
       retainedTerminal.baselineMessageId,
+      retainedTerminal.acknowledgedMessageId,
     )
   const streaming = streamSid === sid && !retainedTerminalIsHydrated ? streamingText : null
   const streamingReasoning = streamSid === sid ? streamingReasoningText : null
@@ -737,10 +753,10 @@ export function useChat(
     const retained = retainedTerminalRef.current
     if (!retained || retained.sessionId !== sid) return
     if (streamOperationRef.current !== null) return
-    if (!hasPersistedTerminalText(messages, retained.text, retained.baselineMessageId)) return
+    if (!hasPersistedTerminalText(canonicalMessages, retained.text, retained.baselineMessageId, retained.acknowledgedMessageId)) return
     retainedTerminalRef.current = null
     stopStream(null)
-  }, [messages, sid, stopStream])
+  }, [canonicalMessages, sid, stopStream])
 
   useEffect(() => {
     if (streamSid !== sid || streamPhaseState !== null || streamOperationRef.current !== null
@@ -817,6 +833,9 @@ export function useChat(
       // Navigation detaches only this pane's observer.  The backend run keeps
       // going and can be observed again when its session is reopened.
       abortRef.current?.abort()
+      const retained = retainedTerminalRef.current
+      if (retained) setCompletedHandoffs((current) => current.some((entry) => entry.operationId === retained.operationId)
+        ? current : [...current, retained])
       stopStream(null)
     }
     useAppStore.getState().selectSession(id)
@@ -843,6 +862,11 @@ export function useChat(
       if (!opts?.resume && isSessionExecutionBlocked(runSid)) throw new Error(uiText("session_compatibility_execution_blocked"))
       const operationId = opts?.operationId ?? operationSequenceRef.current + 1
       operationSequenceRef.current = Math.max(operationSequenceRef.current, operationId)
+      // A successor owns fresh buffers, not an earlier completed answer whose
+      // exact canonical history has not arrived yet.
+      const previousTerminal = retainedTerminalRef.current
+      if (previousTerminal) setCompletedHandoffs((current) => current.some((entry) => entry.operationId === previousTerminal.operationId)
+        ? current : [...current, previousTerminal])
       noteSessionOperation(runSid, operationId)
       streamOperationRef.current = operationId
       const baselineMessages = useAppStore
@@ -970,7 +994,7 @@ export function useChat(
           const baselineMessageId = streamBaselineMessageIdRef.current
           if (
             !finalText.trim()
-            || hasPersistedTerminalText(persistedMessages, finalText, baselineMessageId)
+            || hasPersistedTerminalText(persistedMessages, finalText, baselineMessageId, opts?.acknowledgedMessageId)
           ) {
             stopStream(null, operationId)
             return
@@ -984,6 +1008,9 @@ export function useChat(
             operationId,
             text: finalText,
             baselineMessageId,
+            acknowledgedMessageId: opts?.acknowledgedMessageId ?? null,
+            baselineMessageIds: new Set(baselineMessages.map((message) => message.id)),
+            anchorSeen: opts?.acknowledgedMessageId != null && persistedMessages.some((message) => message.role === "user" && message.id === opts.acknowledgedMessageId),
           }
           stopStream(finalText, operationId)
         })()
@@ -1398,6 +1425,7 @@ export function useChat(
               persistedMessages,
               finalText,
               streamBaselineMessageIdRef.current,
+              opts?.acknowledgedMessageId,
             )
           ) {
             settleCompleted(historyReady)

@@ -56,7 +56,7 @@ export const hasTerminalAssistantTail = (
   messages: HistoryResponse["messages"],
 ): boolean => {
   const tail = messages.findLast((message) => message.role !== "system");
-  return tail?.role === "assistant" && (tail.tool_calls?.length ?? 0) === 0;
+  return tail?.role === "assistant" && (tail.tool_calls?.length ?? 0) === 0 && Boolean(tail.content.trim());
 };
 
 // Multi-device reconcile debounce: coalesce a burst of account-feed events for
@@ -922,10 +922,25 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
             continue;
           }
 
-          const nextMessages = mapHistoryMessagesToUi(sessionId, history.messages);
+          let nextMessages = mapHistoryMessagesToUi(sessionId, history.messages);
 
           if (mode === "monotonic" && !afterClear) {
             const prevMessages = currentChat.messages || [];
+            const previousById = new Map(prevMessages.map((message) => [message.id, message]));
+            let assistantTextEnriched = false;
+            nextMessages = nextMessages.map((next) => {
+              const previous = previousById.get(next.id);
+              if (previous?.role !== "assistant" || previous.type !== "text" || next.role !== "assistant" || next.type !== "text") return next;
+              // Message identity/count may stay fixed while final persistence
+              // fills an empty or partial body. Monotonic reads admit that
+              // enrichment and cannot replace known text with an older prefix.
+              // Explicit edit/clear/restore reads still use replacement mode.
+              if (next.content.trim() && (!previous.content.trim()
+                || next.content.length > previous.content.length && next.content.startsWith(previous.content))) assistantTextEnriched = true;
+              if (previous.content.trim() && (!next.content.trim()
+                || previous.content.length > next.content.length && previous.content.startsWith(next.content))) return { ...next, content: previous.content };
+              return next;
+            });
             const prevLen = prevMessages.length;
             const nextLen = nextMessages.length;
             const nextLastRole = nextMessages[nextMessages.length - 1]?.role;
@@ -947,7 +962,7 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
                 typeof prevLastId === "string" &&
                 typeof nextLastId === "string" &&
                 prevLastId !== nextLastId;
-              shouldReplace = resolvedUserTail || terminalChanged;
+              shouldReplace = resolvedUserTail || terminalChanged || assistantTextEnriched;
             }
 
             debugLog("[ChatSlice]", "loadChatHistory.monotonicDecision", {
