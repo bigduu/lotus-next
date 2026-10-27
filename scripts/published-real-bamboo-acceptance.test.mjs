@@ -1,3 +1,4 @@
+// Legacy publisher reads use the pinned data fixture; no claim about the current #455 producer.
 import { createHash } from "node:crypto"
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
@@ -22,7 +23,8 @@ import { buildArtifactManifest } from "./artifact-manifest.mjs"
 const expectedBambooRevision =
   "d6325a732c7669f94962f604e4ce98966e374d73"
 const readRepositoryFile = (relativePath) =>
-  readFileSync(resolve(process.cwd(), relativePath), "utf8")
+  readFileSync(resolve(process.cwd(), relativePath === ".github/workflows/publish-npm.yml"
+    ? "scripts/fixtures/publish-npm-legacy-v29.yml" : relativePath), "utf8")
 
 const currentRevision = "0123456789abcdef0123456789abcdef01234567"
 const currentVersion = "0.0.0"

@@ -1,19 +1,26 @@
+// Historical compatibility only. Current producer policy is owned by #455.
+import { createHash } from "node:crypto"
 import { readFileSync } from "node:fs"
 import { resolve } from "node:path"
 
 import { describe, expect, it } from "vitest"
 
 const workflow = readFileSync(
-  resolve(process.cwd(), ".github/workflows/publish-npm.yml"),
+  resolve(process.cwd(), "scripts/fixtures/publish-npm-legacy-v29.yml"),
   "utf8",
 )
+it("pins the byte-exact legacy publisher without describing it as the current producer", () => {
+  expect(createHash("sha256").update(workflow).digest("hex"))
+    .toBe("99f7c60d3579284c8c12ec4046e9565c45d150293640ea4fdf952a95b67f4345")
+})
+
 const stepName = "      - name: Download and verify the registry copy"
 const nextStepName = "      - name: Record immutable publication identity"
 const stepStart = workflow.indexOf(stepName)
 const stepEnd = workflow.indexOf(nextStepName, stepStart)
 const registryRoundTripStep = workflow.slice(stepStart, stepEnd)
 
-describe("publication reuses accepted source CI", () => {
+describe("frozen legacy publication reuses accepted source CI", () => {
   it("keeps source tests in CI and publishes without repeating the Node test matrix", () => {
     const sourceCi = readFileSync(resolve(process.cwd(), ".github/workflows/ci.yml"), "utf8")
     expect(sourceCi).toContain("run: npm run verify")

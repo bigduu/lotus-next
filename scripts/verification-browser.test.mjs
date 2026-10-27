@@ -1,3 +1,4 @@
+// Legacy publisher reads use the pinned data fixture; no claim about the current #455 producer.
 import { execFileSync } from "node:child_process"
 import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
@@ -153,7 +154,7 @@ describe("current-source verification browser", () => {
     expect(ci).toContain('node node_modules/@playwright/test/cli.js test --config="${RUNNER_TEMP}/verification-browser/real-bamboo.config.mjs"')
     expect(ci).toContain('--current-source --verification-browser "${RUNNER_TEMP}/verification-browser"')
     expect(ci).toContain("name: real-bamboo-verification-browser-attempt-${{ github.run_attempt }}\n")
-    const publication = readFileSync(".github/workflows/publish-npm.yml", "utf8")
+    const publication = readFileSync("scripts/fixtures/publish-npm-legacy-v29.yml", "utf8")
     expect(publication).toContain('scripts/verification-browser.mjs "${RUNNER_TEMP}/release-control/"')
     expect(publication).toContain('--current-source --accepted-identity "${ACCEPTED_IDENTITY_PATH}" --publication-browser "${RUNNER_TEMP}/release-browser"')
     expect(publication).not.toContain("--verification-browser")

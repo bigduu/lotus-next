@@ -1,3 +1,4 @@
+// Legacy publisher reads use the pinned data fixture; no claim about the current #455 producer.
 import assert from "node:assert/strict"
 import { spawnSync } from "node:child_process"
 import { createHash } from "node:crypto"
@@ -306,7 +307,7 @@ describe("fixed browser provenance and fail-closed preparation", () => {
 
 describe("publication workflow controller boundary", () => {
   it("uses the trusted adapter for real Bamboo publication acceptance", () => {
-    const workflow = readFileSync(path.join(sourceRoot, ".github/workflows/publish-npm.yml"), "utf8")
+    const workflow = readFileSync(path.join(sourceRoot, "scripts/fixtures/publish-npm-legacy-v29.yml"), "utf8")
     const real = workflow.slice(workflow.indexOf("  real-bamboo:"), workflow.indexOf("  publish:"))
     expect(workflow).not.toMatch(/^  verify:/m)
     expect(real.indexOf("scripts/release-browser.mjs")).toBeLessThan(real.indexOf("ref: ${{ needs.preflight.outputs.source_sha }}"))

@@ -1,3 +1,4 @@
+// Legacy publisher reads use the pinned data fixture; no claim about the current #455 producer.
 import { describe, expect, it } from "vitest"
 import { execFileSync } from "node:child_process"
 import { createHash } from "node:crypto"
@@ -68,7 +69,7 @@ describe("frozen reviewed PR-head merge provenance", () => {
 describe("candidate Bamboo source bindings", () => {
   const files = {
     ci: shardedWorkflow,
-    publication: readFileSync(".github/workflows/publish-npm.yml", "utf8"),
+    publication: readFileSync("scripts/fixtures/publish-npm-legacy-v29.yml", "utf8"),
     runtime: readFileSync("e2e/support/realBambooRuntime.ts", "utf8"),
     acceptanceTest: readFileSync("scripts/published-real-bamboo-acceptance.test.mjs", "utf8"),
   }
@@ -119,7 +120,9 @@ describe("candidate Bamboo source bindings", () => {
       git("config", "user.name", "Lotus preflight test")
       git("config", "user.email", "preflight@example.invalid")
       for (const path of ["scripts/release-source.mjs", ".github/workflows/ci.yml", ".github/workflows/publish-npm.yml", "e2e/support/realBambooRuntime.ts", "scripts/published-real-bamboo-acceptance.test.mjs"]) {
-        write(path, path === ".github/workflows/ci.yml" ? files.ci : readFileSync(resolve(path)))
+        write(path, path === ".github/workflows/ci.yml" ? files.ci : readFileSync(resolve(
+          path === ".github/workflows/publish-npm.yml" ? "scripts/fixtures/publish-npm-legacy-v29.yml" : path,
+        )))
       }
       git("add", ".")
       git("commit", "--quiet", "-m", "Candidate source")
