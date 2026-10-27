@@ -1,9 +1,10 @@
 # Lotus Next delivery
 
-This repository follows the unified Zenith #399 delivery contract. This change
-implements feature acceptance (#446); the dependent single-artifact release
-producer and main promotion verifier have not yet landed. Main remains the
-default branch and trusted publication controller.
+This repository follows the unified Zenith #399 delivery contract. The feature
+and single-artifact release changes below are staged until their reviewed PR is
+accepted. Main remains the default branch; the target publisher uses protected
+Dev controls to build the frozen release source. Check the installed workflows
+before a release; the new path has not yet been exercised in production.
 
 | Phase | Responsibility | Acceptance |
 | --- | --- | --- |
@@ -81,11 +82,9 @@ out the actual PR merge snapshot consistently in every source test job:
    `feature-acceptance` artifact retains the actual tested source and gate
    results; it is not a publication receipt.
 
-The required branch check must be configured as `Feature acceptance` when dev
-is activated. Creating/protecting dev and the release-controller bootstrap are
-coordinated repository operations; editing YAML alone does not prove that
-protection is active. Do not admit a feature while its required evidence is
-missing or failed.
+Dev protection requires `Feature acceptance`. The staged feature workflow must
+pass that real check before admission; editing YAML alone does not establish
+acceptance. Do not admit a feature while its evidence is missing or failed.
 
 For a failed shard, rerun that job and its dependencies. Other successful
 shards and the original same-run source receipt remain reusable. Source
@@ -98,8 +97,7 @@ Let `B` be the feature PR base, `F` its head and `M` the actual merge snapshot
 executed by CI. The receipt requires the real parents `B,F`, records `M` and its
 tree, and never substitutes `F` for `M`. A later accepted dev commit `D` must
 have its own normal-admission proof and the exact tested tree before a release
-cut. This feature slice records the inputs needed for that later verifier; it
-does not implement or claim the future `D` admission proof.
+cut. The staged publisher verifies that proof from the original feature run.
 
 The formal artifact must identify the commit actually built from the frozen
 release. A later main merge is separate promotion evidence. Equal source trees
@@ -110,7 +108,7 @@ The PR adapter verifies the real event and Git parents explicitly.
 Unit/E2E test builds at source version `0.0.0`, Node compatibility lanes and
 controlled negative variants are distinct test inputs. The formal versioned
 release build is a separate input and occurs once after feature acceptance.
-The future release producer performs static package/version/source checks and
+The staged release producer performs static package/version/source checks and
 publishes that exact tgz; no runtime test or repair is deferred to release.
 
 ## Immutable release references

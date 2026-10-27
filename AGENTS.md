@@ -1,8 +1,10 @@
 # Lotus Next agent guidance
 
 Read [README.md](README.md) for the product boundary and
-[delivery.md](docs/delivery.md) before changing CI, accepting a feature, cutting a
-release, or publishing npm assets.
+[delivery.md](docs/delivery.md), the shared [delivery workflow](docs/delivery-workflow.md)
+and [Actions audit](docs/ci-workflow-audit.md) before changing CI, accepting a
+feature, cutting a release, or publishing npm assets. The shared migration table
+is a historical snapshot; check the local guide and live workflows for activation.
 
 ## Feature ownership
 
@@ -43,7 +45,8 @@ checkout, builds dist once, packs once without lifecycle scripts and retains the
 original tgz plus pack identity in standard Actions storage. Publish downloads
 those exact bytes, checks them, refreshes Dev/source admission and the immutable
 tag, then retains the existing npm provenance and registry readback checks.
-There is no release Unit/E2E, second Vite build, producer registry or Main controller.
+The target path has no release Unit/E2E, second Vite build or producer registry;
+Main does not run the publication controller after cutover.
 
 Retry failed publication jobs in the original run using the retained tarball;
 an already published version must match it exactly. A build retry is allowed only
