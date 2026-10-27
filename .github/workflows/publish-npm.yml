@@ -29,6 +29,7 @@ run-name: Publish @bigduu/lotus-next@${{ inputs.version }}
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: publish-lotus-next-${{ inputs.version }}
@@ -133,7 +134,31 @@ jobs:
       ACCEPTED_SOURCE_TREE: ${{ needs.preflight.outputs.source_tree }}
     steps:
       - name: Refuse another build on workflow retries
-        run: test "$GITHUB_RUN_ATTEMPT" = 1
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          node --input-type=module <<'NODE'
+          import assert from "node:assert/strict"
+          import { execFileSync } from "node:child_process"
+          const env = process.env, attempt = Number(env.GITHUB_RUN_ATTEMPT), runId = Number(env.GITHUB_RUN_ID)
+          assert.equal(env.GITHUB_REPOSITORY, "bigduu/lotus-next")
+          assert.ok(Number.isSafeInteger(attempt) && attempt > 0 && Number.isSafeInteger(runId) && runId > 0)
+          assert.match(env.GITHUB_SHA, /^[0-9a-f]{40}$/)
+          for (let prior = 1; prior < attempt; prior++) {
+            const result = JSON.parse(execFileSync("gh", ["api", `repos/${env.GITHUB_REPOSITORY}/actions/runs/${runId}/attempts/${prior}/jobs?per_page=100`], { encoding: "utf8", maxBuffer: 256 * 1024 }))
+            assert.equal(result.total_count, result.jobs.length, "Incomplete prior jobs")
+            const matches = result.jobs.filter(job => job.name === "Build and pack the final artifact once")
+            assert.equal(matches.length, 1, "Missing or ambiguous prior build job")
+            const [job] = matches
+            for (const [key, value] of Object.entries({ run_id: runId, run_attempt: prior, head_sha: env.GITHUB_SHA, status: "completed" })) assert.equal(job[key], value)
+            for (const name of ["Build and verify the final package tree", "Pack once without another lifecycle build"]) {
+              const steps = job.steps.filter(step => step.name === name)
+              assert.equal(steps.length, 1, "Missing or ambiguous build/pack evidence")
+              assert.equal(steps[0].status, "completed")
+              assert.equal(steps[0].conclusion, "skipped", "Build/pack already started; reuse the original tarball")
+            }
+          }
+          NODE
 
       - name: Check out exact source
         uses: actions/checkout@v7

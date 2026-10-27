@@ -1,5 +1,7 @@
-import { readFileSync } from "node:fs"
-import { resolve } from "node:path"
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { delimiter, join, resolve } from "node:path"
+import { tmpdir } from "node:os"
+import { spawnSync } from "node:child_process"
 
 import { describe, expect, it } from "vitest"
 
@@ -91,10 +93,56 @@ describe("minimal publication source and recovery boundary", () => {
     expect(source).toContain("FEATURE_RUN_INPUT")
   })
   it("retains the first artifact and cannot silently rebuild a workflow retry", () => {
-    expect(workflow).toContain('run: test "$GITHUB_RUN_ATTEMPT" = 1')
+    expect(workflow).toContain('assert.equal(steps[0].conclusion, "skipped"')
     expect(workflow).toContain("overwrite: false")
     expect(workflow).toContain("Refresh the accepted Dev source immediately before publication")
     expect(workflow).toContain("Verify the existing version against the original tarball below")
+  })
+})
+
+describe("publication build retry boundary", () => {
+  const guard = workflow.split("      - name: Refuse another build on workflow retries\n")[1]
+    .split("          node --input-type=module <<'NODE'\n")[1].split("          NODE\n")[0].replace(/^ {10}/gm, "")
+  const source = "a".repeat(40)
+  const runGuard = (attempt, mutate = () => {}) => {
+    const root = mkdtempSync(join(tmpdir(), "lotus-build-retry-"))
+    const history = Array.from({ length: attempt - 1 }, (_, index) => ({ total_count: 1, jobs: [{
+      name: "Build and pack the final artifact once", run_id: 77, run_attempt: index + 1, head_sha: source, status: "completed",
+      steps: [ { name: "Install exact dependencies", status: "completed", conclusion: "failure" },
+        ...["Build and verify the final package tree", "Pack once without another lifecycle build"].map(name => ({ name, status: "completed", conclusion: "skipped" })) ],
+    }] }))
+    mutate(history)
+    try {
+      writeFileSync(join(root, "gh"), `#!${process.execPath}\nconst fs = require('node:fs');
+const match = process.argv[3].match(/^repos\\/bigduu\\/lotus-next\\/actions\\/runs\\/77\\/attempts\\/([1-9][0-9]*)\\/jobs\\?per_page=100$/);
+if (!match || process.argv[2] !== 'api') process.exit(2);
+fs.appendFileSync(process.env.RETRY_LOG, match[1] + '\\n');
+process.stdout.write(JSON.stringify(JSON.parse(process.env.RETRY_HISTORY)[Number(match[1]) - 1]));\n`, { mode: 0o755 })
+      const result = spawnSync(process.execPath, ["--input-type=module", "-e", guard], { encoding: "utf8", timeout: 5000,
+        env: { ...process.env, PATH: root + delimiter + process.env.PATH, GITHUB_REPOSITORY: "bigduu/lotus-next", GITHUB_RUN_ID: "77",
+          GITHUB_RUN_ATTEMPT: String(attempt), GITHUB_SHA: source, RETRY_HISTORY: JSON.stringify(history), RETRY_LOG: join(root, "calls") } })
+      return { ...result, calls: attempt === 1 ? [] : readFileSync(join(root, "calls"), "utf8").trim().split("\n") }
+    } finally { rmSync(root, { recursive: true, force: true }) }
+  }
+  it.each([1, 2, 3])("permits attempt %s only before any prior build or pack began", (attempt) => {
+    const result = runGuard(attempt)
+    expect(result.status, result.stderr).toBe(0)
+    expect(result.calls).toEqual(Array.from({ length: attempt - 1 }, (_, index) => String(index + 1)))
+  })
+  it.each([
+    ["latest build succeeded", h => { h[1].jobs[0].steps[1].conclusion = "success" }],
+    ["build failed", h => { h[0].jobs[0].steps[1].conclusion = "failure" }],
+    ["build cancelled", h => { h[0].jobs[0].steps[1].conclusion = "cancelled" }],
+    ["pack started", h => { h[0].jobs[0].steps[2].status = "in_progress" }],
+    ["earlier build before a skipped retry", h => { h[0].jobs[0].steps[1].conclusion = "success" }],
+    ["missing build step", h => { h[0].jobs[0].steps.splice(1, 1) }],
+    ["missing pack step", h => { h[0].jobs[0].steps.pop() }],
+    ["missing job", h => { h[0].jobs = []; h[0].total_count = 0 }],
+    ["truncated jobs", h => { h[0].total_count = 2 }],
+    ...[ ["run_id", 78], ["run_attempt", 2], ["head_sha", "b".repeat(40)], ["status", "in_progress"] ]
+      .map(([key, value]) => [`wrong ${key}`, h => { h[0].jobs[0][key] = value }]),
+  ])("refuses %s instead of rebuilding", (_name, mutate) => {
+    expect(runGuard(3, mutate).status).toBe(1)
   })
 })
 

@@ -45,9 +45,11 @@ those exact bytes, checks them, refreshes Dev/source admission and the immutable
 tag, then retains the existing npm provenance and registry readback checks.
 There is no release Unit/E2E, second Vite build, producer registry or Main controller.
 
-Retry only failed publication jobs in the original run. They reuse the retained
-tarball; an already published version must match it exactly. Full workflow/build
-retries and replacement dispatches for the same version stop before rebuilding.
+Retry failed publication jobs in the original run using the retained tarball;
+an already published version must match it exactly. A build retry is allowed only
+when every prior attempt's build and pack steps are explicitly skipped in that
+same run/controller's complete job metadata. Started or missing evidence stops
+rebuilding, as does a replacement dispatch for the same version.
 Missing original output stops recovery. Historical candidate/receipt functions
 and fixed published-version recovery keep their old identities and cannot admit
 a new feature cut through the current CLI. These source changes do not activate

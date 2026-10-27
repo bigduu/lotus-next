@@ -35,9 +35,11 @@ failure still blocks #450 and remains with its feature/input owner.
    refreshes admission/tag reads, and uses the existing npm provenance and exact
    registry hash/resource readback. It installs/builds/packs no source and runs
    no Unit, browser or real-Bamboo suite. Main push/promotion runs no product suite.
-5. Rerun failed publish jobs only in that original run. Existing registry bytes
-   must equal the retained tarball. Build/full-workflow retries and another
-   dispatch of the same version stop before compiling again; missing successful
+5. Rerun failed publish jobs in that original run. Existing registry bytes
+   must equal the retained tarball. A build retry requires complete same-run,
+   same-controller metadata proving every earlier build/pack step was skipped;
+   started or missing evidence stops it. Another dispatch of the same version
+   stops before compiling again; missing successful
    originals stop recovery. A product repair returns through feature/dev/new cut.
 
 Historical candidate rows, signed identities and the fixed published-version
