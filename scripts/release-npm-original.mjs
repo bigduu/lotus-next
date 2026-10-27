@@ -98,8 +98,10 @@ export function archiveFiles(archive) {
 }
 
 export function inspectArchive(archive, expected) {
+  return inspectMembers(archive, expected, archiveFiles(archive))
+}
+function inspectMembers(archive, expected, files) {
   inputs(expected)
-  const files = archiveFiles(archive)
   assert.deepEqual(findUnexpectedPackagePaths([...files.keys()].map((name) => name.slice("package/".length))), [])
   const packageJson = json(files.get("package/package.json"))
   assert.equal(packageJson.name, LOTUS_NEXT_PACKAGE_NAME)
@@ -133,6 +135,21 @@ export function inspectArchive(archive, expected) {
   return { filename: `bigduu-lotus-next-${expected.version}.tgz`, size: archive.length,
     sha256: digest(archive), shasum: digest(archive, "sha1"), integrity: `sha512-${digest(archive, "sha512", "base64")}`,
     manifestSha256: digest(manifestBytes), resourcesSha256: manifest.resourcesSha256, resourceCount: paths.length }
+}
+
+export function verifyPackResult(records, archive, expected) {
+  assert.ok(Array.isArray(records) && records.length === 1, "Require one actual npm pack record")
+  const files = archiveFiles(archive), observed = inspectMembers(archive, expected, files), record = records[0]
+  assert.equal(record.name, LOTUS_NEXT_PACKAGE_NAME)
+  assert.equal(record.version, expected.version)
+  for (const field of ["filename", "size", "shasum", "integrity"]) {
+    assert.equal(record[field], observed[field], "Actual npm pack differs: " + field)
+  }
+  assert.ok(Array.isArray(record.files) && record.files.length > 0)
+  const members = [...files].map(([name, bytes]) => ({ path: name.slice(8), size: bytes.length }))
+    .sort((a, b) => a.path < b.path ? -1 : a.path > b.path ? 1 : 0)
+  assert.deepEqual(record.files.map(({ path, size }) => ({ path, size })).sort((a, b) => a.path < b.path ? -1 : a.path > b.path ? 1 : 0), members)
+  return observed
 }
 
 export function proof(value, expected) {

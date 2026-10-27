@@ -1,5 +1,6 @@
 import { spawnSync } from "node:child_process"
-import { readFileSync } from "node:fs"
+import { lstatSync, readFileSync, realpathSync } from "node:fs"
+import path from "node:path"
 import { fileURLToPath } from "node:url"
 
 import {
@@ -15,8 +16,22 @@ import {
 import { findUnexpectedPackagePaths } from "./package-policy.mjs"
 
 const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm"
+const options = new Map()
+const arguments_ = process.argv.slice(2)
+for (let index = 0; index < arguments_.length; index += 2) {
+  const key = arguments_[index], value = arguments_[index + 1]
+  if (!["--pack-result", "--source-root"].includes(key) || !value || options.has(key)) {
+    throw new Error("Expected unique --pack-result <json> and/or --source-root <absolute-directory>")
+  }
+  options.set(key, value)
+}
+const sourceRoot = options.get("--source-root") ?? fileURLToPath(new URL("../", import.meta.url))
+if (!path.isAbsolute(sourceRoot) || lstatSync(sourceRoot).isSymbolicLink() || !lstatSync(sourceRoot).isDirectory()) {
+  throw new Error("Package source root must be an absolute regular directory")
+}
+const root = realpathSync(sourceRoot), distDirectory = path.join(root, "dist")
 const packageDocument = JSON.parse(
-  readFileSync(new URL("../package.json", import.meta.url), "utf8"),
+  readFileSync(path.join(root, "package.json"), "utf8"),
 )
 const expectedDirtyInput = process.env.LOTUS_NEXT_EXPECTED_SOURCE_DIRTY
 if (
@@ -29,16 +44,12 @@ if (
 }
 // Release already produced the one actual tgz. Reuse that pack's JSON for the
 // same static package/bundle checks instead of invoking a second dry-run pack.
-const arguments_ = process.argv.slice(2)
-if (arguments_.length && (arguments_.length !== 2 || arguments_[0] !== "--pack-result" || !arguments_[1])) {
-  throw new Error("Expected --pack-result <existing-npm-pack-json> or no arguments")
-}
-const result = arguments_.length
-  ? { status: 0, stdout: readFileSync(arguments_[1], "utf8") }
+const result = options.has("--pack-result")
+  ? { status: 0, stdout: readFileSync(options.get("--pack-result"), "utf8") }
   : spawnSync(
     npmCommand,
     ["pack", "--dry-run", "--json", "--ignore-scripts", "--loglevel=error"],
-    { encoding: "utf8" },
+    { cwd: root, encoding: "utf8" },
   )
 
 if (result.error) {
@@ -92,7 +103,7 @@ for (const [chunkName, pattern] of lazyJavaScriptChunks) {
   if (!paths.some((file) => pattern.test(file))) missing.push(`dist/assets/${chunkName}-*.js`)
 }
 
-const entryHtml = readFileSync(new URL("../dist/index.html", import.meta.url), "utf8")
+const entryHtml = readFileSync(path.join(distDirectory, "index.html"), "utf8")
 const nonPortableEntryReferences = [
   ...entryHtml.matchAll(/\b(?:href|src)=["'](\/(?!\/)[^"']*)["']/g),
 ].map((match) => match[1])
@@ -123,7 +134,7 @@ if (eagerlyPreloaded.length > 0) {
 
 let bundleReport
 try {
-  bundleReport = analyzeBundleBudget()
+  bundleReport = analyzeBundleBudget(distDirectory)
 } catch (error) {
   process.stderr.write(
     `Could not verify the production bundle graph: ${error instanceof Error ? error.message : String(error)}\n`,
@@ -141,7 +152,7 @@ if (bundleViolations.length > 0) {
 }
 
 const assetManifest = JSON.parse(
-  readFileSync(new URL("../dist/asset-manifest.json", import.meta.url), "utf8"),
+  readFileSync(path.join(distDirectory, "asset-manifest.json"), "utf8"),
 )
 const isAssetRecord = (value) =>
   typeof value === "object" && value !== null && !Array.isArray(value)
@@ -281,7 +292,7 @@ if (
 let artifactManifest
 try {
   artifactManifest = verifyArtifactManifest({
-    distDirectory: fileURLToPath(new URL("../dist/", import.meta.url)),
+    distDirectory,
     expectedPackageName: manifest.name,
     expectedPackageVersion: manifest.version,
     expectedSourceRevision: process.env.LOTUS_NEXT_EXPECTED_SOURCE_REVISION,
