@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs"
 import { delimiter, join, resolve } from "node:path"
 import { tmpdir } from "node:os"
 import { spawnSync } from "node:child_process"
@@ -41,6 +41,30 @@ describe("publication reuses accepted source CI", () => {
     expect(publish).not.toMatch(/npm ci|npm run build|npm version|npm pack --ignore-scripts --json/)
     expect(publish).toContain("name: frontend-release-${{ github.run_id }}")
     expect(workflow).toContain('npm publish "${PACKED_FILENAME}" --ignore-scripts --provenance --access public')
+  })
+  it("hands off the original tarball and pack identity as one flat directory", () => {
+    const stage = workflow.split("      - name: Stage the original tarball and pack identity together\n")[1].split("      - name:")[0]
+    const script = stage.split("        run: |\n")[1].replace(/^ {10}/gm, "")
+    const upload = workflow.split("      - name: Retain the original final tarball and pack identity\n")[1].split("      - name:")[0]
+    expect(upload).toContain("          path: ${{ runner.temp }}/release-package\n")
+    expect(upload).not.toContain("          path: |")
+    const download = workflow.split("      - name: Download the original final tarball\n")[1].split("      - name:")[0]
+    expect(download).toContain("          path: ${{ runner.temp }}/release-package\n")
+    const root = mkdtempSync(join(tmpdir(), "lotus-artifact-handoff-"))
+    try {
+      const workspace = join(root, "workspace root"), temporary = join(root, "runner temp")
+      mkdirSync(workspace); mkdirSync(temporary)
+      const filename = "bigduu-lotus-next-2026.10.30.tgz", archive = Buffer.from("original archive\0bytes")
+      const identity = Buffer.from(JSON.stringify([{ filename }]) + "\n")
+      writeFileSync(join(workspace, filename), archive); writeFileSync(join(temporary, "pack.json"), identity)
+      const result = spawnSync("bash", ["-eu", "-c", script], { cwd: workspace, encoding: "utf8",
+        env: { ...process.env, RUNNER_TEMP: temporary, PACKED_FILENAME: filename } })
+      expect(result.status, result.stderr).toBe(0)
+      const directory = join(temporary, "release-package")
+      expect(readdirSync(directory).sort()).toEqual([filename, "pack.json"].sort())
+      expect(readFileSync(join(directory, filename))).toEqual(archive)
+      expect(readFileSync(join(directory, "pack.json"))).toEqual(identity)
+    } finally { rmSync(root, { recursive: true, force: true }) }
   })
 })
 

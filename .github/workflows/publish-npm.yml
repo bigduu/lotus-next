@@ -256,13 +256,18 @@ jobs:
             --expected-revision "${LOTUS_NEXT_EXPECTED_SOURCE_REVISION}" \
             --expected-dirty false
 
+      - name: Stage the original tarball and pack identity together
+        env:
+          PACKED_FILENAME: ${{ steps.pack.outputs.filename }}
+        run: |
+          mkdir "${RUNNER_TEMP}/release-package"
+          cp -- "${PACKED_FILENAME}" "${RUNNER_TEMP}/pack.json" "${RUNNER_TEMP}/release-package/"
+
       - name: Retain the original final tarball and pack identity
         uses: actions/upload-artifact@v7
         with:
           name: frontend-release-${{ github.run_id }}
-          path: |
-            ${{ steps.pack.outputs.filename }}
-            ${{ runner.temp }}/pack.json
+          path: ${{ runner.temp }}/release-package
           if-no-files-found: error
           overwrite: false
           retention-days: 90
