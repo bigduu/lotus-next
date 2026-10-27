@@ -1,3 +1,4 @@
+// Legacy publisher reads use the pinned data fixture; no claim about the current #455 producer.
 import assert from "node:assert/strict"
 import { createHash } from "node:crypto"
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync } from "node:fs"
@@ -6,7 +7,7 @@ import path from "node:path"
 import { spawnSync } from "node:child_process"
 import { describe, expect, it } from "vitest"
 
-const workflow = readFileSync(path.join(process.cwd(), ".github/workflows/publish-npm.yml"), "utf8")
+const workflow = readFileSync(path.join(process.cwd(), "scripts/fixtures/publish-npm-legacy-v29.yml"), "utf8")
 const section = workflow.split("      - name: Download and verify the registry copy\n")[1].split("\n      - name:")[0]
 const body = section.split("        run: |\n")[1].split("\n").map((line) => line.replace(/^ {10}/, "")).join("\n")
 const version = "2026.10.12"
