@@ -27,13 +27,32 @@ release, or publishing npm assets.
 
 ## Delivery activation
 
-Issue #446 implements the feature gate under the unified Zenith #399 contract.
-Its dependent release producer and main promotion changes are not implemented
-by this slice. The current publisher still recognizes historical candidate
-receipts and retains its existing real-runtime gate. Do not describe the new
-release/main flow as active or submit a new feature-graph receipt to that old
-publisher. Preserve the separately owned frontend 2026.10.28 request (#445),
-existing tags and original receipts.
+Issue #446 owns complete feature acceptance. The minimal publisher uses the
+actual normally merged Dev PR, its original complete CI run and Actions feature
+receipt. All eleven selected jobs and required runtime steps must succeed before
+Dev admission; the actual tested merge and admitted Dev tree must match. No
+candidate/version registration on Main is required before the release build.
+The known Bamboo HTTPS failure still blocks #450; do not skip or weaken it.
+
+`publish-npm.yml` runs only from protected Dev controls; it never builds moving
+dev. It has one dispatch path: preflight -> build/pack -> publish.
+Freeze `release/<accepted-Dev-SHA>`, reserve the existing annotated version tag at
+that same SHA and provide the exact version, source tag, Dev PR and CI run.
+Preflight emits only a temporary run-bound receipt. Build stamps a disposable
+checkout, builds dist once, packs once without lifecycle scripts and retains the
+original tgz plus pack identity in standard Actions storage. Publish downloads
+those exact bytes, checks them, refreshes Dev/source admission and the immutable
+tag, then retains the existing npm provenance and registry readback checks.
+There is no release Unit/E2E, second Vite build, producer registry or Main controller.
+
+Retry only failed publication jobs in the original run. They reuse the retained
+tarball; an already published version must match it exactly. Full workflow/build
+retries and replacement dispatches for the same version stop before rebuilding.
+Missing original output stops recovery. Historical candidate/receipt functions
+and fixed published-version recovery keep their old identities and cannot admit
+a new feature cut through the current CLI. These source changes do not activate
+publication or alter branch protection; normal review and full feature acceptance
+remain required before a real release.
 
 After the dependent cutover, only a fully accepted dev cut may become a frozen
 release. Release work builds/packages/publishes the formal artifact once; it
@@ -41,7 +60,7 @@ does not run Unit or E2E. A runtime fix returns to a feature branch, tested dev
 admission and a new cut. Main retains stable code and immutable tag/Release
 manifest/provenance plus promotion PR/merge references. Main push/promotion
 events perform no tests, compilation, package rebuild or publication. A trusted
-release `workflow_dispatch` may execute the main-ref controller to build the
+release `workflow_dispatch` executes the protected dev-ref controller to build the
 frozen release source once; controller ref and product phase are distinct.
 Do not mutate the release head or add a
 post-build JSON commit. Source manifests may keep `0.0.0`; temporary publication

@@ -20,12 +20,12 @@ describe("publication reuses accepted source CI", () => {
     expect(sourceCi).toContain("run: npm run test:e2e:built -- --shard=${{ matrix.shard }}/4")
     const jobs = workflow.slice(workflow.indexOf("\njobs:\n"))
     expect([...jobs.matchAll(/^  ([a-z-]+):$/gm)].map((match) => match[1]))
-      .toEqual(["preflight", "real-bamboo", "publish"])
+      .toEqual(["preflight", "build", "publish"])
     expect(workflow).not.toMatch(/npm run (?:verify|test(?::[\w:-]+)?)(?:\s|$)/)
     expect(workflow).not.toContain("release-browser/all-surface.config.mjs")
     expect(workflow).toContain("run: node scripts/release-source.mjs")
   })
-  it("builds and statically checks the final package before matching its real-runtime identity", () => {
+  it("builds and packs once, then publishes only the retained original tarball", () => {
     const build = workflow.indexOf("      - name: Build and verify the final package tree")
     const pack = workflow.indexOf("      - name: Pack once without another lifecycle build")
     const checks = workflow.slice(build, pack)
@@ -33,8 +33,12 @@ describe("publication reuses accepted source CI", () => {
     expect(checks).toContain("npm run artifact:verify")
     expect(checks).toContain("npm run package:contents")
     expect(pack).toBeGreaterThan(build)
-    expect(workflow).toContain("node scripts/release-acceptance-identity.mjs verify")
-    expect(workflow).toContain('run: npm publish "${PACKED_FILENAME}" --provenance --access public')
+    expect((workflow.match(/npm run build/g) || [])).toHaveLength(1)
+    expect((workflow.match(/npm pack --ignore-scripts --json/g) || [])).toHaveLength(1)
+    const publish = workflow.split("\n  publish:\n")[1]
+    expect(publish).not.toMatch(/npm ci|npm run build|npm version|npm pack --ignore-scripts --json/)
+    expect(publish).toContain("name: frontend-release-${{ github.run_id }}")
+    expect(workflow).toContain('npm publish "${PACKED_FILENAME}" --ignore-scripts --provenance --access public')
   })
 })
 
@@ -73,4 +77,38 @@ describe("npm publication workflow cache policy", () => {
       expect(commandLine).toContain("--registry=https://registry.npmjs.org/")
     },
   )
+})
+
+
+describe("minimal publication source and recovery boundary", () => {
+  it("does not run release E2E or require a committed candidate before publication", () => {
+    expect(workflow).not.toContain("  real-bamboo:")
+    expect(workflow).not.toContain("playwright")
+    const source = readFileSync("scripts/release-source.mjs", "utf8").split("const main = async () => {")[1]
+    expect(source).not.toContain("release-candidates.json")
+    expect(source).not.toContain("release-acceptance/")
+    expect(source).toContain("FEATURE_PR_INPUT")
+    expect(source).toContain("FEATURE_RUN_INPUT")
+  })
+  it("retains the first artifact and cannot silently rebuild a workflow retry", () => {
+    expect(workflow).toContain('run: test "$GITHUB_RUN_ATTEMPT" = 1')
+    expect(workflow).toContain("overwrite: false")
+    expect(workflow).toContain("Refresh the accepted Dev source immediately before publication")
+    expect(workflow).toContain("Verify the existing version against the original tarball below")
+  })
+})
+
+
+describe("protected Dev publication controller", () => {
+  it("guards both admission and credentialed publication without compiling Dev", () => {
+    const guard = "    if: github.ref == 'refs/heads/dev' && github.ref_protected"
+    expect(workflow.split(guard)).toHaveLength(3)
+    expect(workflow).toContain("ref: ${{ needs.preflight.outputs.source_sha }}")
+    expect(workflow).toContain("ref: ${{ needs.preflight.outputs.workflow_sha }}")
+    expect(workflow).not.toContain('refs/heads/${DEFAULT_BRANCH}')
+    expect(workflow.indexOf("Refresh the accepted Dev source immediately before publication"))
+      .toBeLessThan(workflow.indexOf("Recheck the immutable source tag before publication"))
+    expect(workflow.indexOf("Recheck the immutable source tag before publication"))
+      .toBeLessThan(workflow.indexOf("Publish the exact verified tarball with provenance"))
+  })
 })

@@ -12,14 +12,39 @@ default branch and trusted publication controller.
 | Frozen release, after cutover | Temporarily stamp the version, build/package/publish one formal artifact | Exact source/version, tag, manifest, hashes and registry readback; no Unit/E2E |
 | Main push/promotion, after cutover | Promote stable code and retain immutable release references | Promotion PR/merge, tag and Release manifest/provenance; no tests, compilation or publication |
 
-The last two rows are the target contract. The existing `publish-npm.yml` and
-`release-source.mjs` remain unchanged for historical candidates during this
-feature slice. Their real-runtime publication gate must not be removed or
-bypassed piecemeal. The old source parser deliberately rejects the new feature
-workflow graph until its dependent producer/admission change is ready. Do not
-claim a release cutover from green feature CI alone. Coordinate outstanding
-#445/frontend28 with its current owner; do not retarget or replace its frozen
-tag, source or receipt.
+The release/main rows require complete feature acceptance and normal review.
+The minimal publisher has one dispatch path. It reads the actual merged Dev PR,
+original CI run and feature receipt; it does not require an unreleased candidate
+or version record to be committed to Main. The known published Bamboo HTTPS
+failure still blocks #450 and remains with its feature/input owner.
+
+## Build and publish the original package once
+
+1. After real feature acceptance, freeze `release/<accepted-Dev-SHA>` and reserve
+   the existing annotated `lotus-next-vVERSION` tag at that exact Dev commit.
+   Supply that version/tag/SHA plus the original Dev PR and CI run to the protected
+   Dev-ref dispatch. Controller and product source identities remain distinct.
+2. Preflight reads the actual PR/run/jobs, original Actions feature receipt and
+   Git parents/tree. Unit, all four browser shards, real Bamboo and native Actor
+   must have succeeded before Dev merge. It writes only a temporary source receipt.
+3. One build job stamps disposable package metadata, runs the final dist build
+   once and creates one actual tgz with lifecycle scripts disabled. Static package
+   inventory may inspect a dry-run manifest; it produces no second tarball or
+   compiler output. Retain the original tgz and pack identity for 90 days.
+4. Publish downloads that same-run artifact, verifies its bytes and source,
+   refreshes admission/tag reads, and uses the existing npm provenance and exact
+   registry hash/resource readback. It installs/builds/packs no source and runs
+   no Unit, browser or real-Bamboo suite. Main push/promotion runs no product suite.
+5. Rerun failed publish jobs only in that original run. Existing registry bytes
+   must equal the retained tarball. Build/full-workflow retries and another
+   dispatch of the same version stop before compiling again; missing successful
+   originals stop recovery. A product repair returns through feature/dev/new cut.
+
+Historical candidate rows, signed identities and the fixed published-version
+verifier stay historical. The old reader remains available for those receipts,
+not as a current publication fallback. No custom producer registry, allocator,
+maintenance mode or separate publisher is introduced. Local policy fixtures do
+not prove production publication; actual activation remains separately reviewed.
 
 ## Complete tests before dev
 
@@ -95,9 +120,9 @@ repair. Keep the release version in immutable tag and Release
 manifest/provenance records with promotion PR and main merge references; do not
 write a post-build JSON commit or change the source identity inside a package.
 
-Keep publication on the existing trusted default-branch controller. Feature CI
+Keep publication on the protected Dev controller; build only frozen release S. Feature CI
 has no npm credentials or publication authority. This slice neither changes
 Environment/secret scope nor dispatches production publication.
-The release workflow may be dispatched on its trusted main ref while building
-the frozen release source once. That is release-phase work controlled by main;
+The release workflow is dispatched on protected dev while building only the
+frozen release source once. Dev C and product S remain distinct;
 it does not authorize builds or publication on main push/promotion events.
