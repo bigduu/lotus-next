@@ -34,7 +34,7 @@ function sample(attempt = 1) {
   const source = fixture(), state = { ref: null, tag: null, release: null, assets: [], binary: new Map(), writes: [], artifacts: [], jobs: [], registry: null, publishes: 0 }
   const environment = { GITHUB_REPOSITORY: expected.repository, GITHUB_EVENT_NAME: "workflow_dispatch", GITHUB_REF: "refs/heads/main",
     GITHUB_WORKFLOW_REF: expected.repository + "/" + WORKFLOW + "@refs/heads/main", GITHUB_WORKFLOW_SHA: controller, GITHUB_SHA: controller,
-    GITHUB_RUN_ID: String(runId), GITHUB_RUN_ATTEMPT: String(attempt) }
+    GITHUB_RUN_ID: String(runId), GITHUB_RUN_ATTEMPT: String(attempt), GITHUB_JOB: "prepare" }
   const job = (name, id, runAttempt = attempt) => ({ name, id, run_id: runId, head_sha: controller, run_attempt: runAttempt,
     status: "in_progress", conclusion: null, started_at: clock(0), completed_at: null,
     steps: [{ name: STEPS.reserve, number: 1, status: "in_progress", conclusion: null, started_at: clock(1), completed_at: null }] })
@@ -77,7 +77,7 @@ function sample(attempt = 1) {
       steps: names.map((name, index) => ({ name, number: index + 1, status: "completed", conclusion: "success", started_at: clock(start + index * 2), completed_at: clock(start + index * 2 + 1) })) })
     return value
   }
-  const beginBuild = () => { finish(prepared, [STEPS.reserve]); const build = job(JOBS.build, 2001); state.jobs.push(build); return build }
+  const beginBuild = () => { finish(prepared, [STEPS.reserve]); environment.GITHUB_JOB = "build"; const build = job(JOBS.build, 2001); state.jobs.push(build); return build }
   const built = async () => {
     await lifecycle().reserve(); const build = beginBuild()
     finish(build, [STEPS.select, STEPS.build, STEPS.pack, STEPS.upload], 4, 20)
@@ -88,7 +88,7 @@ function sample(attempt = 1) {
     const finalizer = job(JOBS.finalize, 3001)
     finalizer.started_at = clock(21)
     finalizer.steps = [{ name: STEPS.publish, number: 1, status: "in_progress", conclusion: null, started_at: clock(21), completed_at: null }]
-    state.jobs.push(finalizer)
+    state.jobs.push(finalizer); environment.GITHUB_JOB = "finalize"
     return { build, artifact, raw, finalizer }
   }
   return { source, state, ports, context, environment, lifecycle, prepared, job, finish, beginBuild, built }
@@ -108,6 +108,13 @@ function registryRecord(data = tarball, attempt = 1) {
       integrity: archive.integrity, attestations: { provenance: { predicateType: slsa } } } },
   attestations: { attestations: [{ predicateType: slsa, bundle: { dsseEnvelope: { payloadType: "application/vnd.in-toto+json", payload: bytes(statement).toString("base64") } } }] } }
 }
+
+const beforeBuildFailure = (job) => Object.assign(job, { status: "completed", conclusion: "failure", started_at: clock(4), completed_at: clock(7),
+  steps: [STEPS.select, "Install locked controller dependencies", STEPS.build, STEPS.pack, STEPS.upload].map((name, index) => ({
+    name, number: index + 1, status: "completed", conclusion: index === 0 ? "success" : index === 1 ? "failure" : "skipped",
+    // GitHub also represents skipped steps with non-null zero-duration placeholders.
+    started_at: clock(index < 2 ? 4 + index : 7), completed_at: clock(index < 2 ? 5 + index : 7),
+  })) })
 
 describe("single frozen npm original lifecycle with the real Source454 verifier", () => {
   it("requires the real source verifier dependencies rather than an approving callback or raw token fallback", () => {
@@ -193,7 +200,7 @@ describe("single frozen npm original lifecycle with the real Source454 verifier"
   it("selects originals before a full-workflow rerun can enter any compiler or packer", async () => {
     const f = sample(), original = await f.built(); await f.lifecycle().retainOriginal()
     f.finish(original.finalizer, [STEPS.publish], 21, 25); original.finalizer.conclusion = "failure"
-    f.environment.GITHUB_RUN_ATTEMPT = "2"
+    f.environment.GITHUB_RUN_ATTEMPT = "2"; f.environment.GITHUB_JOB = "build"
     const prep = f.finish(f.job(JOBS.prepare, 1002, 2), [STEPS.reserve])
     f.state.jobs.push(prep, f.job(JOBS.build, 2002, 2))
     assert.equal(f.lifecycle().planBuild().mode, "restore")
@@ -236,7 +243,7 @@ describe("single frozen npm original lifecycle with the real Source454 verifier"
   it("never replaces a missing successful ZIP with a new build, even on the original run", async () => {
     const f = sample(), value = await f.built(); f.finish(value.finalizer, [STEPS.publish], 21, 25); value.finalizer.conclusion = "failure"
     f.state.binary.delete("actions/artifacts/501/zip")
-    f.environment.GITHUB_RUN_ATTEMPT = "2"; f.state.jobs.push(f.finish(f.job(JOBS.prepare, 1002, 2), [STEPS.reserve]), f.job(JOBS.build, 2002, 2))
+    f.environment.GITHUB_RUN_ATTEMPT = "2"; f.environment.GITHUB_JOB = "build"; f.state.jobs.push(f.finish(f.job(JOBS.prepare, 1002, 2), [STEPS.reserve]), f.job(JOBS.build, 2002, 2))
     assert.throws(() => f.lifecycle().planBuild(), /Missing remote bytes/)
   })
   it("uses a retained copy after raw Actions download expires only while its official metadata still authenticates the same bytes", async () => {
@@ -302,5 +309,58 @@ describe("single frozen npm original lifecycle with the real Source454 verifier"
   ]) it("refuses " + label + " without treating data as Main authority", async () => {
     const f = sample(); await f.built(); f.state.registry = registryRecord(); mutate(f.state.registry)
     await assert.rejects(() => f.lifecycle().publishRetained()); assert.equal(f.state.publishes, 0); assert.equal(f.state.release.draft, true)
+  })
+  it("planning retries only the first build after known pre-build infra failure with complete skipped core records", async () => {
+    const f = sample(); await f.lifecycle().reserve(); const failed = beforeBuildFailure(f.beginBuild())
+    f.environment.GITHUB_RUN_ATTEMPT = "2"
+    f.state.jobs.push(f.finish(f.job(JOBS.prepare, 1002, 2), [STEPS.reserve]), f.job(JOBS.build, 2002, 2))
+    assert.equal(f.lifecycle().planBuild().mode, "build")
+    for (const index of [2, 3, 4]) for (const state of ["missing", "pending", "failure", "success"]) {
+      const original = structuredClone(failed.steps)
+      if (state === "missing") failed.steps.splice(index, 1)
+      else { failed.steps[index].conclusion = state; if (state === "pending") failed.steps[index].status = "in_progress" }
+      assert.throws(() => f.lifecycle().planBuild(), state); failed.steps = original
+    }
+    f.state.artifacts.push({ id: 502, name: "lotus-next-original-900-1" })
+    assert.throws(() => f.lifecycle().planBuild(), /Existing original/)
+    f.state.artifacts = []; f.state.assets.push({ id: 800, name: assetName(expected) })
+    assert.throws(() => f.lifecycle().planBuild(), /Existing retained/)
+  })
+  it("planning restores an existing successful original across a later selector failure and never returns build", async () => {
+    const f = sample(), value = await f.built(); await f.lifecycle().retainOriginal()
+    f.finish(value.finalizer, [STEPS.publish], 21, 25); value.finalizer.conclusion = "failure"
+    const failed = beforeBuildFailure(f.job(JOBS.build, 2002, 2)); failed.steps[0].conclusion = "failure"
+    f.state.jobs.push(f.finish(f.job(JOBS.prepare, 1002, 2), [STEPS.reserve]), failed,
+      f.finish(f.job(JOBS.prepare, 1003, 3), [STEPS.reserve]), f.job(JOBS.build, 2003, 3))
+    f.environment.GITHUB_RUN_ATTEMPT = "3"; f.environment.GITHUB_JOB = "build"
+    assert.equal(f.lifecycle().planBuild().mode, "restore")
+    assert.equal(f.lifecycle().restoreBuild().physical.id, value.build.id)
+    assert.throws(() => f.lifecycle().readOriginal(), "finalizer still requires the latest whole job to succeed")
+    failed.steps[2].conclusion = "failure"
+    assert.throws(() => f.lifecycle().planBuild(), "an actual later build failure must remain visible")
+    failed.steps[2].conclusion = "skipped"
+    f.state.artifacts = []; assert.throws(() => f.lifecycle().planBuild(), "missing original must never fall back to build")
+  })
+  it("accepts skipped publish placeholders as proof no previous publish executed", async () => {
+    const f = sample(), value = await f.built(); await f.lifecycle().retainOriginal()
+    f.finish(value.finalizer, [STEPS.publish], 21, 25); value.finalizer.conclusion = "failure"
+    Object.assign(value.finalizer.steps[0], { conclusion: "skipped", started_at: clock(25), completed_at: clock(25) })
+    f.environment.GITHUB_RUN_ATTEMPT = "2"
+    const next = f.job(JOBS.finalize, 3002, 2); next.steps[0].name = STEPS.publish; f.state.jobs.push(next)
+    const originalSteps = structuredClone(value.finalizer.steps)
+    for (const state of ["missing", "pending", "failure", "success"]) {
+      value.finalizer.steps = structuredClone(originalSteps)
+      if (state === "missing") value.finalizer.steps = []
+      else { value.finalizer.steps[0].conclusion = state; if (state === "pending") value.finalizer.steps[0].status = "in_progress" }
+      await assert.rejects(() => f.lifecycle().publishRetained()); assert.equal(f.state.publishes, 0)
+    }
+    value.finalizer.steps = originalSteps
+    await f.lifecycle().publishRetained(); assert.equal(f.state.publishes, 1)
+  })
+  it("never borrows an active API job from another GITHUB_JOB phase to authorize a write", async () => {
+    const f = sample(); await f.built(); f.environment.GITHUB_JOB = "build"
+    const writes = f.state.writes.length
+    await assert.rejects(() => f.lifecycle().retainOriginal(), /GITHUB_JOB|phase/)
+    assert.equal(f.state.writes.length, writes)
   })
 })

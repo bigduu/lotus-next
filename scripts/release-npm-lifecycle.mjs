@@ -24,6 +24,12 @@ const step = (job, name) => {
   return rows[0]
 }
 const success = (value) => { assert.equal(value.status, "completed"); assert.equal(value.conclusion, "success") }
+const skipped = (job, names) => names.every(name => {
+  const value = step(job, name)
+  integer(value.number)
+  return value.status === "completed" && value.conclusion === "skipped"
+})
+const core = [STEPS.build, STEPS.pack, STEPS.upload]
 
 function registryIdentity(record, original, expected, controller, runId, attempt, repository) {
   assert.ok(record && Buffer.isBuffer(record.archive)); same(record.archive, original.sealed.archive)
@@ -126,6 +132,7 @@ export function createLifecycle({ expected, feature, controllerRoot, environment
     return rows
   }
   const currentJob = (name, rows = jobs()) => {
+    assert.equal(JOBS[environment.GITHUB_JOB], name, "GITHUB_JOB does not own this lifecycle phase")
     const matches = rows.filter((job) => job.name === name && job.run_attempt === attempt)
     assert.equal(matches.length, 1); assert.equal(matches[0].status, "in_progress")
     assert.equal(matches[0].conclusion, null)
@@ -195,16 +202,26 @@ export function createLifecycle({ expected, feature, controllerRoot, environment
     const selected = rows.filter((job) => job.name === JOBS.build && !(planning && job.run_attempt === attempt))
     if (!selected.length) return null
     const logical = [...selected].sort((a, b) => b.run_attempt - a.run_attempt)[0]
-    success(logical)
+    if (!planning) success(logical) // Finalization never hides the latest whole-job failure.
     const originals = selected.filter((job) => executionKey(job) !== null &&
       [STEPS.select, STEPS.build, STEPS.pack, STEPS.upload].every((name) => {
         const selected = step(job, name)
         return selected.status === "completed" && selected.conclusion === "success"
       }))
-    assert.ok(originals.length, "No complete original build execution")
+    if (!originals.length) {
+      assert.ok(planning && selected.every(job => job.status === "completed" && job.conclusion === "failure" && skipped(job, core)),
+        "No complete original build execution or conclusive pre-build failure")
+      return null
+    }
     const keys = new Set(originals.map(executionKey)); assert.equal(keys.size, 1, "More than one physical formal build")
     const physical = [...originals].sort((a, b) => a.run_attempt - b.run_attempt)[0]
-    if (executionKey(logical) !== executionKey(physical)) success(step(logical, STEPS.restore))
+    for (const job of selected) {
+      if (executionKey(job) === executionKey(physical)) continue
+      if (planning && job.status === "completed" && job.conclusion === "failure" && skipped(job, core)) continue
+      success(job); success(step(job, STEPS.select)); success(step(job, STEPS.restore))
+      assert.ok(skipped(job, core), "Restoration must not execute a compiler, packer or uploader")
+      assert.ok(executionKey(job), "Incomplete restoration execution")
+    }
     return { physical, logical, fingerprint: hash(executionKey(physical)) }
   }
   const original = (planning = false) => {
@@ -255,9 +272,14 @@ export function createLifecycle({ expected, feature, controllerRoot, environment
     return result
   }
   const planBuild = () => {
-    source(); assert.ok(owned(), "Missing reservation")
+    source(); const reservation = owned(); assert.ok(reservation, "Missing reservation")
     const rows = jobs(), current = currentJob(JOBS.build, rows), selected = producer(rows, true)
-    if (!selected) return { mode: "build", origin: { controllerRevision: controller, runId, attempt, jobId: current.id } }
+    if (!selected) {
+      assert.equal(assets(reservation.release).length, 0, "Existing retained output cannot be rebuilt")
+      assert.ok(!page("actions/runs/" + runId + "/artifacts", "artifacts").some(value => value.name.startsWith("lotus-next-original-")),
+        "Existing original output cannot be rebuilt")
+      return { mode: "build", origin: { controllerRevision: controller, runId, attempt, jobId: current.id } }
+    }
     const value = original(true)
     return { mode: "restore", origin: value.sealed.proof.origin, artifactId: value.artifact.id, digest: value.artifact.digest }
   }
@@ -274,7 +296,7 @@ export function createLifecycle({ expected, feature, controllerRoot, environment
     let registry = await ports.registry(expected, false)
     if (registry === null) {
       const old = jobs().filter(job => job.name === JOBS.finalize && job.id !== finalizer.id)
-      assert.ok(old.every(job => job.steps.every(entry => entry.name !== STEPS.publish || entry.started_at === null)), "Unknown prior publication: read back the original version only")
+      assert.ok(old.every(job => skipped(job, [STEPS.publish])), "Unknown prior publication: read back the original version only")
       assert.equal(typeof ports.publish, "function", "Missing guarded npm publication port")
       let error
       await mutate(() => ports.publish(value.sealed.archive, expected), reason => { error = reason })
@@ -306,5 +328,5 @@ export function createLifecycle({ expected, feature, controllerRoot, environment
   const restoreBuild = () => { currentJob(JOBS.build); return original(true) }
   return { reserve, planBuild, retainOriginal, readOriginal: original, restoreBuild, publishRetained,
     context: { expected, feature, controller, runId, attempt, tag, completionName },
-    source, mutate, jobs, currentJob, owned, putAsset }
+    source, jobs, currentJob, owned }
 }
