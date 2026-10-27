@@ -886,3 +886,21 @@ it("restores a persisted image-only user message through the existing full histo
     .toBe(apiClient.resolveUrl("sessions/fixture/attachments/asset-1"))
   expect(host.querySelector("[data-pending-user-message]")).toBeNull()
 })
+
+
+it("renders only the complete handoff when exact-turn history has a partial checkpoint", () => {
+  const canonical: Message[] = [
+    { id: "synthetic-user", role: "user", content: "Synthetic request", createdAt: "" },
+    { id: "synthetic-partial", role: "assistant", type: "text", content: "Synthetic", createdAt: "", metadata: { reasoning: "Synthetic reasoning" } },
+    { id: "synthetic-next", role: "user", content: "Synthetic follow-up", createdAt: "" },
+  ]
+  const projected = projectCompletedAnswers(canonical, [{
+    sessionId: "synthetic", operationId: 1, text: "Synthetic handoff body", acknowledgedMessageId: "synthetic-user",
+    baselineMessageId: null, baselineMessageIds: new Set(), anchorSeen: true,
+  }])
+  const container = renderMessageList(projected.messages, true)
+  expect(container.querySelectorAll('[data-assistant-content="Synthetic handoff body"]')).toHaveLength(1)
+  expect(container.querySelector('[data-assistant-content="Synthetic"]')).toBeNull()
+  expect(container.querySelectorAll('[data-reasoning="Synthetic reasoning"]')).toHaveLength(1)
+  expect(canonical[1].id).toBe("synthetic-partial")
+})

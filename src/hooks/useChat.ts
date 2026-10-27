@@ -39,7 +39,7 @@ import {
   getRootModeFenceState,
 } from "@/lib/rootModeTransitionFence"
 import type { Message, MessageImage } from "@shared/types/chat"
-import { projectCompletedAnswers, type CompletedAnswerHandoff } from "@/lib/completedAnswerHandoff"
+import { matchesCompletedAnswer, projectCompletedAnswers, type CompletedAnswerHandoff } from "@/lib/completedAnswerHandoff"
 import { resolveNewChatModelRef } from "@shared/types/providerConfig"
 import type { ProviderModelRef } from "@shared/types/providerModelRef"
 import {
@@ -217,16 +217,11 @@ const hasPersistedTerminalText = (
   if (acknowledgedMessageId != null && anchor < 0) return false
   const nextUser = anchor < 0 ? -1 : messages.findIndex((message, index) => index > anchor && message.role === "user")
   const tail = messages.slice(anchor + 1, nextUser < 0 ? undefined : nextUser).findLast((message) => message.role !== "system")
-  if (tail?.role !== "assistant" || tail.type !== "text" || !tail.content.trim()) return false
-  if (finalText.trim().startsWith(tail.content.trim()) && finalText.trim() !== tail.content.trim()) return false
+  if (tail?.role !== "assistant" || tail.type !== "text" || !matchesCompletedAnswer(tail.content, finalText)) return false
   if (acknowledgedMessageId != null) return true
-  // Once a baseline exists, a new terminal assistant id is the durable turn
-  // boundary. Prefer it over byte equality because persistence may normalize
-  // harmless whitespace/markdown. With no local baseline, keep the stricter
-  // text check so an older assistant tail cannot settle a brand-new run.
-  return baselineMessageId !== null
-    ? tail.id !== baselineMessageId
-    : tail.content.trim() === finalText.trim()
+  // Legacy acknowledgements need a new canonical ID as well as matching text
+  // so an older, identical answer cannot settle a new run.
+  return baselineMessageId === null || tail.id !== baselineMessageId
 }
 
 type PromptPresetForComposition = {

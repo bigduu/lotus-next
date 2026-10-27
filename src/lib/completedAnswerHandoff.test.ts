@@ -15,8 +15,20 @@ it("inserts the handoff before the following user without changing canonical rec
   expect(isCompletedAnswerHandoff(projected.messages[1])).toBe(true)
 })
 it("retires a canonical answer in its own user window even when another turn follows", () => {
-  const canonical = [user("user-1"), assistant("answer-1", "Canonical whitespace may differ.\n"), user("user-2")]
+  const canonical = [user("user-1"), assistant("answer-1", "  Synthetic final\n"), user("user-2")]
   expect(projectCompletedAnswers(canonical, [entry()])).toEqual({ messages: canonical, remaining: [] })
+})
+it("accepts a canonical answer with normalized line endings", () => {
+  const canonical = [user("user-1"), assistant("answer-1", "Synthetic\r\nfinal"), user("user-2")]
+  expect(projectCompletedAnswers(canonical, [entry({ text: "Synthetic\nfinal" })])).toEqual({ messages: canonical, remaining: [] })
+})
+it("does not retire a completed answer for a different intermediate body in its user turn", () => {
+  const canonical = [user("user-1"), assistant("intermediate", "Synthetic intermediate step"), user("user-2")]
+  const projected = projectCompletedAnswers(canonical, [entry()])
+  expect(projected.remaining).toHaveLength(1)
+  expect(projected.messages.map((message) => message.id)).toEqual(["user-1", "intermediate", "completed-answer-handoff-1", "user-2"])
+  const saved = [user("user-1"), assistant("intermediate", "Synthetic intermediate step"), assistant("final"), user("user-2")]
+  expect(projectCompletedAnswers(saved, projected.remaining)).toEqual({ messages: saved, remaining: [] })
 })
 it("does not let an identical answer in a later turn confirm the missing earlier reply", () => {
   const canonical = [user("user-1"), user("user-2"), assistant("answer-2")]
@@ -48,4 +60,37 @@ it("waits past a partial body, then accepts full canonical text on the same ID i
   const retained = entry({ baselineMessageId: "partial-answer", baselineMessageIds: new Set(["user-1", "partial-answer"]) })
   expect(projectCompletedAnswers([user("user-1"), assistant("partial-answer", "Synthetic")], [retained]).remaining).toHaveLength(1)
   expect(projectCompletedAnswers([user("user-1"), assistant("partial-answer")], [retained]).remaining).toHaveLength(0)
+})
+
+
+it("shows one complete reply while an exact-turn checkpoint is only a prefix", () => {
+  const canonical = [user("user-1"), assistant("partial-answer", "Synthetic"), user("user-2")]
+  const original = [...canonical]
+  const projected = projectCompletedAnswers(canonical, [entry()])
+  expect(projected.messages.map((message) => message.id)).toEqual(["user-1", "completed-answer-handoff-1", "user-2"])
+  expect(projected.remaining).toHaveLength(1)
+  expect(canonical).toEqual(original)
+
+  const saved = [user("user-1"), assistant("partial-answer"), user("user-2")]
+  expect(projectCompletedAnswers(saved, projected.remaining)).toEqual({ messages: saved, remaining: [] })
+})
+
+it("keeps a baseline prefix and another turn's prefix when their identities are not the new answer", () => {
+  const canonical = [user("user-1"), assistant("baseline-prefix", "Synthetic"), user("user-2"), assistant("later-prefix", "Synthetic")]
+  const pending = entry({ baselineMessageId: "baseline-prefix", baselineMessageIds: new Set(["baseline-prefix"]) })
+  const projected = projectCompletedAnswers(canonical, [pending])
+  expect(projected.messages.map((message) => message.id)).toEqual(["user-1", "baseline-prefix", "completed-answer-handoff-1", "user-2", "later-prefix"])
+  expect(canonical).toHaveLength(4)
+})
+
+
+it("retains checkpoint reasoning and provenance while displaying the complete handoff", () => {
+  const partial = { ...assistant("partial-answer", "Synthetic"), model: "synthetic-model",
+    metadata: { reasoning: "Synthetic reasoning" } }
+  const canonical = [user("user-1"), partial, user("user-2")]
+  const projected = projectCompletedAnswers(canonical, [entry()])
+  const handoff = projected.messages.find(isCompletedAnswerHandoff)
+  expect(handoff).toMatchObject({ content: "Synthetic final", model: "synthetic-model",
+    metadata: { reasoning: "Synthetic reasoning", completedAnswerHandoff: true } })
+  expect(canonical[1]).toEqual(partial)
 })

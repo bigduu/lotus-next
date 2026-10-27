@@ -3359,6 +3359,57 @@ describe("completed answer followed by another turn", () => {
     expect(visibleAnswers(hook.current).filter((body) => body === answer)).toHaveLength(1)
     expect(hook.current.messages.some((message) => "content" in message && message.content === "Synthetic context-only summary")).toBe(false)
   })
+  it.each([false, true])("shows one completed answer through a partial history checkpoint after follow-up (compression=%s)", async (compressed) => {
+    const { hook, sid, props } = await completed(compressed)
+    queue(sid, "next-user")
+    await act(async () => { await hook.current.send("Synthetic follow-up") })
+    appendPersistedUser(sid, "Synthetic follow-up", "next-user")
+    const chat = mocks.appState.chats.find((item) => item.id === sid)!
+    const next = chat.messages!.findIndex((message) => (message as { id: string }).id === "next-user")
+    const partial = { id: "canonical-answer", role: "assistant", type: "text", content: answer.slice(0, 20), createdAt: "", isCompressed: compressed }
+    chat.messages = [...chat.messages!.slice(0, next), partial, ...chat.messages!.slice(next)]
+    await hook.rerender(props); await flushMicrotasks()
+    expect(visibleAnswers(hook.current).filter((body) => body === answer)).toHaveLength(1)
+    expect(visibleAnswers(hook.current)).not.toContain(partial.content)
+    expect(chat.messages.some((message) => (message as { id: string }).id === partial.id)).toBe(true)
+
+    chat.messages = chat.messages.map((message) => (message as { id: string }).id === partial.id ? { ...partial, content: answer } : message)
+    await hook.rerender(props); await flushMicrotasks()
+    expect(visibleAnswers(hook.current).filter((body) => body === answer)).toHaveLength(1)
+    expect(hook.current.messages.some((message) => message.id.startsWith("completed-answer-handoff-"))).toBe(false)
+  })
+  it("keeps a completed answer when an intermediate body was saved before the completion event", async () => {
+    const sid = "synthetic-intermediate-before-completion"
+    mocks.appState.currentSessionId = sid
+    mocks.appState.chats = [{ id: sid, config: { model: "test-model" }, messages: [] }]
+    const first = queue(sid, "current-user")
+    const props: HookProps = { mode: "bound", sessionId: sid }
+    const hook = await mountUseChat(props)
+    await act(async () => { await hook.current.send("Synthetic first request") })
+    appendPersistedUser(sid, "Synthetic first request", "current-user")
+    const chat = mocks.appState.chats.find((item) => item.id === sid)!
+    chat.messages = [...chat.messages!, { id: "intermediate", role: "assistant", type: "text", content: "Synthetic intermediate step", createdAt: "" }]
+    await hook.rerender(props)
+    await act(async () => { first.handlers.onToken(answer); first.handlers.onComplete(); first.subscription.resolve() })
+    await flushMicrotasks()
+    expect(visibleAnswers(hook.current)).toContain("Synthetic intermediate step")
+    expect(visibleAnswers(hook.current).filter((body) => body === answer)).toHaveLength(1)
+  })
+
+  it("keeps a completed answer when delayed history contains a different intermediate body", async () => {
+    const { hook, sid, props } = await completed(true)
+    queue(sid, "next-user")
+    await act(async () => { await hook.current.send("Synthetic follow-up") })
+    appendPersistedUser(sid, "Synthetic follow-up", "next-user")
+    const chat = mocks.appState.chats.find((item) => item.id === sid)!
+    const next = chat.messages!.findIndex((message) => (message as { id: string }).id === "next-user")
+    chat.messages = [...chat.messages!.slice(0, next),
+      { id: "intermediate", role: "assistant", type: "text", content: "Synthetic intermediate step", createdAt: "" },
+      ...chat.messages!.slice(next)]
+    await hook.rerender(props); await flushMicrotasks()
+    expect(visibleAnswers(hook.current)).toContain("Synthetic intermediate step")
+    expect(visibleAnswers(hook.current).filter((body) => body === answer)).toHaveLength(1)
+  })
   it("retires a delayed canonical reply between its exact user and a later user, then honors a history edit", async () => {
     const { hook, sid, props } = await completed(true)
     queue(sid, "next-user")
