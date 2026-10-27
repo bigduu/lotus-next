@@ -3885,6 +3885,29 @@ describe("explicit continuous upstream retry", () => {
     await act(async () => { hook.current.stop(); await Promise.resolve() })
     expect(mocks.stopGeneration).toHaveBeenCalledExactlyOnceWith("other")
   })
+  it("keeps an older pane's Stop bound to its own run after a successor starts", async () => {
+    allow()
+    mocks.execute.mockResolvedValueOnce({ session_id: sid, status: "started", run_id: "older-pane-run" })
+      .mockResolvedValueOnce({ session_id: sid, status: "started", run_id: "successor-pane-run" })
+    mocks.stopGeneration.mockImplementation(async (_sessionId: string, runId?: string) => {
+      if (runId !== "successor-pane-run") throw new Error("stale run")
+    })
+    mocks.subscribeToEvents.mockImplementation((_sessionId: string, _handlers: SubscriptionHandlers, controller: AbortController) => {
+      const subscription = deferred<void>()
+      controller.signal.addEventListener("abort", () => subscription.resolve(), { once: true })
+      return subscription.promise
+    })
+    const older = await persisted(); let olderRequest!: Promise<void>
+    await act(async () => { olderRequest = older.current.retry(undefined, options) })
+    const newer = await mountUseChat({ mode: "bound", sessionId: sid }); let newerRequest!: Promise<void>
+    await act(async () => { newerRequest = newer.current.retry(undefined, options) })
+    await act(async () => { older.current.stop(); await olderRequest; for (let i = 0; i < 8; i++) await Promise.resolve() })
+    expect(mocks.stopGeneration).toHaveBeenCalledExactlyOnceWith(sid, "older-pane-run")
+    expect(mocks.appState.markCancel).not.toHaveBeenCalled()
+    expect(older.current.upstreamRetryStatus).toBe("stop_unconfirmed")
+    newer.unmount()
+    await act(async () => { await newerRequest })
+  })
   it("does not let a delayed ordinary ACK erase another pane's newer fence", async () => {
     allow()
     const oldOrdinaryAck = deferred<{ session_id: string; status: "started"; run_id: string }>()

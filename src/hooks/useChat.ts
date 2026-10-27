@@ -427,6 +427,9 @@ export function useChat(
   const mountedRef = useRef(false)
   const operationSequenceRef = useRef(0)
   const activeSendRef = useRef<ActiveSendOperation | null>(null)
+  // A pane that started a run retains that identity even if another pane
+  // later starts a successor in the same session.
+  const paneStopFencesRef = useRef<Map<string, ContinuousStopFence>>(new Map())
   const [upstreamRetryFeedback, setUpstreamRetryFeedback] = useState<{
     sessionId: string; operationId: number; status: UpstreamRetryFeedback
   } | null>(null)
@@ -976,6 +979,7 @@ export function useChat(
             await stopExactContinuousRun(runSid, ack.run_id)
           })) }
           continuousStopFences.set(runSid, ownFence)
+          paneStopFencesRef.current.set(runSid, ownFence)
         }
         void execution.then((ack) => {
           executeAcknowledged = true
@@ -988,8 +992,10 @@ export function useChat(
               && advanceOrdinaryRetryFence(ordinaryFenceSnapshot, ack.run_id)
               && continuousStopFences.get(runSid) === previousFence) {
             const exactRunId = ack.run_id
-            continuousStopFences.set(runSid, { sessionId: runSid, operationId,
-              stop: coalesceExactStop(() => stopExactContinuousRun(runSid, exactRunId)) })
+            const nextFence = { sessionId: runSid, operationId,
+              stop: coalesceExactStop(() => stopExactContinuousRun(runSid, exactRunId)) }
+            continuousStopFences.set(runSid, nextFence)
+            paneStopFencesRef.current.set(runSid, nextFence)
           }
           if (ownFence && continuousStopFences.get(runSid) === ownFence && ownsRunEvent()) setUpstreamRetryFeedback((current) => {
             if (current?.operationId !== operationId || current.sessionId !== runSid || current.status !== "requesting") return current
@@ -2172,7 +2178,9 @@ export function useChat(
     const operationId = active?.id ?? streamOperationRef.current ?? undefined
     // Continuous retries retain the Execute ACK for an exact-run REST Stop.
     // Ordinary Stop keeps its existing realtime-first path before detaching.
-    let exactStop = targetSessionId ? continuousStopFences.get(targetSessionId) : undefined
+    let exactStop = targetSessionId
+      ? paneStopFencesRef.current.get(targetSessionId) ?? continuousStopFences.get(targetSessionId)
+      : undefined
     const persisted = targetSessionId ? readContinuousRetryFence(getBackendStorageScope(), targetSessionId) : { kind: "clear" as const }
     if (!exactStop && targetSessionId && persisted.kind === "confirmed") {
       const sessionId = targetSessionId, runId = persisted.runId
@@ -2187,15 +2195,18 @@ export function useChat(
       return
     }
     const stopFence = exactStop
+    if (stopFence) paneStopFencesRef.current.set(stopFence.sessionId, stopFence)
+    const ownsStopFence = () => !!stopFence
+      && paneStopFencesRef.current.get(stopFence.sessionId) === stopFence
     if (stopFence) setUpstreamRetryFeedback({ sessionId: stopFence.sessionId, operationId: stopFence.operationId, status: "stopping" })
     const stopRequest = stopFence ? stopFence.stop() : targetSessionId ? agentClient.stopGeneration(targetSessionId) : null
     if (stopFence && stopRequest) void stopRequest.then(() => {
       if (mountedRef.current && navigationRef.current.sessionId === stopFence.sessionId
-          && continuousStopFences.get(stopFence.sessionId) === stopFence)
+          && ownsStopFence())
         setUpstreamRetryFeedback({ sessionId: stopFence.sessionId, operationId: stopFence.operationId, status: "stop_requested" })
     }, () => {
       if (mountedRef.current && navigationRef.current.sessionId === stopFence.sessionId
-          && continuousStopFences.get(stopFence.sessionId) === stopFence)
+          && ownsStopFence())
         setUpstreamRetryFeedback({ sessionId: stopFence.sessionId, operationId: stopFence.operationId, status: "stop_unconfirmed" })
     })
     if (targetSessionId && !stopFence) {
