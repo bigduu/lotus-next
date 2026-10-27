@@ -27,11 +27,19 @@ if (
   process.stderr.write("LOTUS_NEXT_EXPECTED_SOURCE_DIRTY must be exactly true or false.\n")
   process.exit(1)
 }
-const result = spawnSync(
-  npmCommand,
-  ["pack", "--dry-run", "--json", "--ignore-scripts", "--loglevel=error"],
-  { encoding: "utf8" },
-)
+// Release already produced the one actual tgz. Reuse that pack's JSON for the
+// same static package/bundle checks instead of invoking a second dry-run pack.
+const arguments_ = process.argv.slice(2)
+if (arguments_.length && (arguments_.length !== 2 || arguments_[0] !== "--pack-result" || !arguments_[1])) {
+  throw new Error("Expected --pack-result <existing-npm-pack-json> or no arguments")
+}
+const result = arguments_.length
+  ? { status: 0, stdout: readFileSync(arguments_[1], "utf8") }
+  : spawnSync(
+    npmCommand,
+    ["pack", "--dry-run", "--json", "--ignore-scripts", "--loglevel=error"],
+    { encoding: "utf8" },
+  )
 
 if (result.error) {
   throw result.error
