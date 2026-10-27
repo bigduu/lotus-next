@@ -9,14 +9,41 @@ export interface ManagedSessionLink {
   readonly enabled: boolean
   readonly authorized: boolean
   readonly target_created_at: string
+  readonly target_project_id: string | null
+  readonly target_metadata_version: number
+  readonly authorization_error?: "target_authority_unavailable" | null
+  readonly kind?: "root" | "child"
+  readonly root_session_id?: string
+  readonly parent_session_id?: string | null
+  readonly current_user_target?: CurrentUserSessionTarget
+}
+/** Canonical observation kept intact for a future exact-target adapter, never a grant. */
+export interface CurrentUserSessionTarget {
+  readonly session_id: string
+  readonly created_at: string
+  readonly kind: "root" | "child"
+  readonly root_session_id: string
+  readonly parent_session_id: string | null
+  readonly authority_sha256: string
+  readonly ancestry_sha256: string
+  readonly metadata_version: number
+  readonly project_id: string | null
+}
+export interface ManagedSessionsQuery { readonly query?: string; readonly after?: string; readonly limit?: number }
+export interface LegacyManagedLink {
+  readonly revision: number
+  readonly enabled: boolean
+  readonly target_created_at: string
   readonly target_project_id: string
   readonly target_metadata_version: number
-  readonly authorization_error?: "target_authority_unavailable"
 }
 export interface ManagedSessionsResponse {
-  readonly capabilities: { readonly managed_sessions_http_v1: true }
+  readonly capabilities: { readonly managed_sessions_http_v1: true; readonly supervisor_current_user_scope_v1?: true }
   readonly scope: { readonly supervisor: SupervisorReference; readonly state_revision: number; readonly allowed_projects: readonly string[] }
   readonly sessions: readonly ManagedSessionLink[]
+  readonly management_access?: { readonly kind: "current_user"; readonly requires_session_attachment: false }
+  readonly next_after?: string | null
+  readonly legacy_links?: Readonly<Record<string, LegacyManagedLink>>
   readonly owner_authorization: { readonly available: boolean; readonly required: true; readonly kind: "existing_access"; readonly http_registration: false; readonly code: null }
 }
 /** Owner index metadata helps selection and display. It never grants management. */
@@ -52,13 +79,59 @@ const reference = (value: unknown): value is SupervisorReference => {
 }
 class InvalidManagedSessions extends Error {}
 const invalid = (): never => { throw new InvalidManagedSessions("invalid_managed_sessions_response") }
+const locator = (value: unknown): value is string => value === "bamboo-default-supervisor" || managedSessionId(value)
+const timestamp = (value: unknown): value is string => typeof value === "string" && Number.isFinite(Date.parse(value))
+function currentUserEntry(value: unknown): ManagedSessionLink {
+  const entry = record(value), target = record(entry?.current_user_target)
+  if (!entry || !target || !managedSessionId(entry.session_id) || entry.link_revision !== 0 || entry.enabled !== true || entry.authorized !== true
+    || entry.authorization_error !== null || !timestamp(entry.target_created_at) || !safeRevision(entry.target_metadata_version)
+    || entry.target_project_id !== null && !projectId(entry.target_project_id)
+    || target.session_id !== entry.session_id || target.created_at !== entry.target_created_at || target.metadata_version !== entry.target_metadata_version || target.project_id !== entry.target_project_id
+    || (target.kind !== "root" && target.kind !== "child") || entry.kind !== target.kind
+    || !locator(target.root_session_id) || entry.root_session_id !== target.root_session_id || entry.parent_session_id !== target.parent_session_id
+    || (target.kind === "root" ? target.root_session_id !== target.session_id || target.parent_session_id !== null
+      : !locator(target.parent_session_id) || target.parent_session_id === target.session_id)
+    || typeof target.authority_sha256 !== "string" || !/^[a-f0-9]{64}$/.test(target.authority_sha256)
+    || typeof target.ancestry_sha256 !== "string" || !/^[a-f0-9]{64}$/.test(target.ancestry_sha256)) return invalid()
+  const parent = target.parent_session_id
+  if (parent !== null && !locator(parent)) return invalid()
+  return { session_id: entry.session_id, link_revision: 0, enabled: true, authorized: true,
+    target_created_at: entry.target_created_at, target_project_id: entry.target_project_id, target_metadata_version: entry.target_metadata_version,
+    kind: target.kind, root_session_id: target.root_session_id, parent_session_id: parent, authorization_error: null,
+    current_user_target: { session_id: target.session_id, created_at: entry.target_created_at, kind: target.kind,
+      root_session_id: target.root_session_id, parent_session_id: parent, authority_sha256: target.authority_sha256,
+      ancestry_sha256: target.ancestry_sha256, metadata_version: entry.target_metadata_version, project_id: entry.target_project_id } }
+}
 export function decodeManagedSessions(value: unknown): ManagedSessionsResponse {
   const body = record(value), scope = record(body?.scope), caps = record(body?.capabilities), owner = record(body?.owner_authorization)
   const projects = scope?.allowed_projects, links = body?.sessions
-  if (!scope || !reference(scope.supervisor) || !safeRevision(scope.state_revision)
+  if (!body || !scope || !reference(scope.supervisor) || !safeRevision(scope.state_revision)
     || !Array.isArray(projects) || projects.length > 64 || !projects.every(projectId) || new Set(projects).size !== projects.length
     || caps?.managed_sessions_http_v1 !== true || !Array.isArray(links) || links.length > 256
     || typeof owner?.available !== "boolean" || owner.required !== true || owner.kind !== "existing_access" || owner.http_registration !== false || owner.code !== null) return invalid()
+  const management = record(body?.management_access)
+  if (management || caps.supervisor_current_user_scope_v1 !== undefined) {
+    if (management?.kind !== "current_user" || management.requires_session_attachment !== false || caps.supervisor_current_user_scope_v1 !== true
+      || links.length > 20 || body?.next_after !== null && !managedSessionId(body?.next_after) || !record(body?.legacy_links)) return invalid()
+    const sessions = links.map(currentUserEntry)
+    if (new Set(sessions.map((session) => session.session_id)).size !== sessions.length) return invalid()
+    const legacyEntries = Object.entries(record(body.legacy_links)!)
+    if (legacyEntries.length > 256) return invalid()
+    const stateRevision = scope.state_revision
+    const legacy = Object.fromEntries(legacyEntries.map(([id, value]) => {
+      const link = record(value)
+      if (!managedSessionId(id) || !link || !safeRevision(link.revision) || link.revision === 0 || link.revision > stateRevision
+        || typeof link.enabled !== "boolean" || !timestamp(link.target_created_at) || !projectId(link.target_project_id) || !safeRevision(link.target_metadata_version)) return invalid()
+      return [id, { revision: link.revision, enabled: link.enabled, target_created_at: link.target_created_at,
+        target_project_id: link.target_project_id, target_metadata_version: link.target_metadata_version }]
+    }))
+    return { scope: { supervisor: { ...scope.supervisor }, state_revision: scope.state_revision, allowed_projects: [...projects].sort() },
+      capabilities: { managed_sessions_http_v1: true, supervisor_current_user_scope_v1: true },
+      owner_authorization: { available: owner.available, required: true, kind: "existing_access", http_registration: false, code: null },
+      management_access: { kind: "current_user", requires_session_attachment: false }, sessions,
+      next_after: body.next_after as string | null, legacy_links: legacy }
+  }
+  if (body?.management_access !== undefined || body?.legacy_links !== undefined || body?.next_after !== undefined) return invalid()
   const sessions: ManagedSessionLink[] = []
   for (const value of links) {
     const link = record(value)
@@ -84,14 +157,28 @@ export function decodeManagedSessionReceipt(value: unknown, intent: ManagedSessi
     || receipt.link_revision !== null && (!safeRevision(receipt.link_revision) || receipt.link_revision === 0 || receipt.link_revision > receipt.state_revision)) return invalid()
   return { supervisor: { ...receipt.supervisor }, state_revision: receipt.state_revision, changed: receipt.changed, link_revision: receipt.link_revision }
 }
-export const canWriteManagedSessions = (value: ManagedSessionsResponse | null) => value?.capabilities.managed_sessions_http_v1 === true && value.owner_authorization.available
+export const canWriteManagedSessions = (value: ManagedSessionsResponse | null) => value?.management_access === undefined
+  && value?.capabilities.managed_sessions_http_v1 === true && value.owner_authorization.available
 export function managedSessionsProblem(error: unknown): ScopeProblem {
   if (error instanceof InvalidManagedSessions) return { kind: "invalid" }
   if (isApiError(error) && error.status === 501) return { kind: "unsupported" }
   return scopeProblem(error)
 }
 export const managedSessionsClient = {
-  async read(signal?: AbortSignal) { return decodeManagedSessions(await apiClient.get<unknown>("supervisor/default/sessions", { signal })) },
+  async read(signal?: AbortSignal, page?: ManagedSessionsQuery) {
+    const params = new URLSearchParams()
+    if (page) {
+      const limit = page.limit ?? 20
+      if (!Number.isSafeInteger(limit) || limit < 1 || limit > 20 || page.after !== undefined && !managedSessionId(page.after)
+        || page.query !== undefined && typeof page.query !== "string") return invalid()
+      params.set("limit", String(limit))
+      if (page.after !== undefined) params.set("after", page.after)
+      if (page.query !== undefined) params.set("query", page.query)
+    }
+    const response = decodeManagedSessions(await apiClient.get<unknown>(`supervisor/default/sessions${page ? `?${params}` : ""}`, { signal }))
+    if (page?.after !== undefined && response.next_after === page.after) return invalid()
+    return response
+  },
   async candidates(offset = 0): Promise<SessionCandidatesPage> {
     const page = await agentClient.listSessions({ kind: "root", limit: 100, offset })
     if (!Array.isArray(page.sessions) || page.sessions.length > 256 || !safeRevision(page.total) || !safeRevision(page.offset)

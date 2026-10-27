@@ -6,6 +6,7 @@ import { uiText } from "@shared/i18n/ui"
 import type { ManagedSessionsResponse } from "@services/supervisorScope/managedSessions"
 import type { ManagedSessionsDependencies } from "@/hooks/useSupervisorManagedSessions"
 import { SupervisorManagedSessionsDialog, SupervisorManagedSessionsPanel } from "./SupervisorManagedSessions"
+import { currentUserManagedSessionsFixture } from "@services/supervisorScope/testFixtures"
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
 const roots: Root[] = []
 afterEach(() => { for (const root of roots.splice(0)) act(() => root.unmount()); document.body.replaceChildren() })
@@ -29,6 +30,23 @@ async function mount(options: { canonical?: ManagedSessionsResponse; panel?: boo
   await act(async () => root.render(<Probe />))
   return { dependencies, close, select }
 }
+it("browses current-user Root/Child sessions without displaying Project authorization or attach/detach", async () => {
+  const h = await mount({ canonical: currentUserManagedSessionsFixture("child-a") })
+  expect(document.querySelectorAll('[data-managed-session]')).toHaveLength(2)
+  expect(document.body.textContent).toContain(uiText("supervisor_sessions_current_user_description"))
+  expect(document.body.textContent).toContain(uiText("supervisor_sessions_legacy_links", { count: 1 }))
+  expect(document.body.textContent).not.toContain(uiText("supervisor_sessions_no_scope"))
+  expect(button("supervisor_sessions_attach")).toBeUndefined(); expect(button("supervisor_sessions_detach")).toBeUndefined()
+  expect(button("supervisor_sessions_more")).toBeDefined()
+  expect(h.dependencies.candidates).not.toHaveBeenCalled(); expect(h.dependencies.update).not.toHaveBeenCalled()
+})
+it("opens the selected current-user Child through existing navigation without manufacturing a target grant", async () => {
+  const h = await mount({ canonical: currentUserManagedSessionsFixture(), panel: true })
+  const child = document.querySelector('[data-managed-session="child-a"]')!
+  expect(child.textContent).toContain("Child")
+  await act(async () => button("supervisor_sessions_open", child).click())
+  expect(h.select).toHaveBeenCalledExactlyOnceWith("child-a"); expect(h.dependencies.update).not.toHaveBeenCalled()
+})
 it("distinguishes canonical authorized, stale and detached rows with explicit review before any write", async () => {
   const h = await mount()
   expect(document.body.textContent).toContain(uiText("supervisor_sessions_authorized"))

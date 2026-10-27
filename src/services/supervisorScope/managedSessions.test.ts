@@ -2,12 +2,49 @@ import { expect, it, vi } from "vitest"
 import { apiClient, ApiError } from "@services/api"
 import { agentClient } from "@services/chat/AgentService"
 import { canWriteManagedSessions, decodeManagedSessionReceipt, decodeManagedSessions, managedSessionsClient, managedSessionsProblem, type ManagedSessionIntent, type ManagedSessionsResponse } from "./managedSessions"
+import { currentUserManagedSessionsFixture } from "./testFixtures"
 vi.mock("@services/api", async (original) => ({ ...await original<typeof import("@services/api")>(), apiClient: { get: vi.fn(), putOnce: vi.fn(), put: vi.fn(), post: vi.fn() } }))
 vi.mock("@services/chat/AgentService", () => ({ agentClient: { listSessions: vi.fn() } }))
 const fixture = (): ManagedSessionsResponse => ({ capabilities: { managed_sessions_http_v1: true }, scope: { supervisor: { session_id: "bamboo-default-supervisor", incarnation_id: "11111111-1111-4111-8111-111111111111" }, state_revision: 4, allowed_projects: ["p1"] },
   sessions: [{ session_id: "root-a", link_revision: 3, enabled: true, authorized: true, target_created_at: "2026-10-25T00:00:00Z", target_project_id: "p1", target_metadata_version: 2 }],
   owner_authorization: { available: true, required: true, kind: "existing_access", http_registration: false, code: null } })
 const intent: ManagedSessionIntent = { supervisor: fixture().scope.supervisor, expected_state_revision: 4, target_session_id: "root-b", enabled: true }
+it("preserves the canonical Root/Child target observations and separates legacy links without granting writes", () => {
+  const body = currentUserManagedSessionsFixture("child-a")
+  expect(decodeManagedSessions(body)).toEqual(body)
+  expect(canWriteManagedSessions(body)).toBe(false)
+  expect(decodeManagedSessions(body).sessions.map((entry) => entry.session_id)).toEqual(["root-a", "child-a"])
+  expect(decodeManagedSessions(body).sessions[0]?.target_project_id).toBeNull()
+  expect(decodeManagedSessions(body).sessions[1]?.current_user_target?.ancestry_sha256).toBe("d".repeat(64))
+})
+it.each([
+  (body: ManagedSessionsResponse) => ({ ...body, management_access: undefined }),
+  (body: ManagedSessionsResponse) => ({ ...body, management_access: { kind: "current_user", requires_session_attachment: true } }),
+  (body: ManagedSessionsResponse) => ({ ...body, legacy_links: [] }),
+  (body: ManagedSessionsResponse) => ({ ...body, next_after: undefined }),
+  (body: ManagedSessionsResponse) => ({ ...body, sessions: Array.from({ length: 21 }, () => body.sessions[0]) }),
+  ...[
+    { current_user_target: undefined }, { link_revision: 1 }, { authorized: false }, { target_metadata_version: 99 },
+    { parent_session_id: "unrelated-root" }, { target_created_at: "2026-10-27T09:00:00Z" },
+  ].map((patch) => (body: ManagedSessionsResponse) => ({ ...body, sessions: [{ ...body.sessions[0], ...patch }] })),
+])("rejects incomplete or mismatched current-user directory observations %#", (damage) => {
+  expect(() => decodeManagedSessions(damage(currentUserManagedSessionsFixture()))).toThrow()
+})
+it("uses the canonical after/query/limit page and never falls back to an attachment mutation", async () => {
+  vi.mocked(apiClient.get).mockResolvedValue(currentUserManagedSessionsFixture())
+  const signal = new AbortController().signal
+  const result = await managedSessionsClient.read(signal, { after: "root-a", query: "task & plan", limit: 20 })
+  expect(result).toEqual(currentUserManagedSessionsFixture())
+  expect(apiClient.get).toHaveBeenCalledExactlyOnceWith("supervisor/default/sessions?limit=20&after=root-a&query=task+%26+plan", { signal })
+  expect(apiClient.putOnce).not.toHaveBeenCalled(); expect(agentClient.listSessions).not.toHaveBeenCalled()
+})
+it("refuses an oversized page request or repeated cursor without retrying", async () => {
+  await expect(managedSessionsClient.read(undefined, { limit: 21 })).rejects.toThrow()
+  expect(apiClient.get).not.toHaveBeenCalled()
+  vi.mocked(apiClient.get).mockResolvedValue(currentUserManagedSessionsFixture("root-a"))
+  await expect(managedSessionsClient.read(undefined, { after: "root-a" })).rejects.toThrow()
+  expect(apiClient.get).toHaveBeenCalledTimes(1)
+})
 it("reads only canonical metadata and preserves unavailable target proof without a grant", async () => {
   const base = fixture(), body: ManagedSessionsResponse = { ...base, sessions: [{ ...base.sessions[0]!, authorized: false, authorization_error: "target_authority_unavailable" }] }
   vi.mocked(apiClient.get).mockResolvedValue({ ...body, private_history: "not part of the view" })

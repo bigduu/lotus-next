@@ -1,22 +1,22 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { isApiError } from "@services/api"
-import { sameSupervisor } from "@services/supervisorScope/client"
+import { ApiError, isApiError } from "@services/api"
+import { sameProjects, sameSupervisor } from "@services/supervisorScope/client"
 import { canWriteManagedSessions, decodeManagedSessionReceipt, managedSessionsClient, managedSessionsProblem,
-  type ManagedSessionIntent, type ManagedSessionReceipt, type ManagedSessionsResponse, type SessionCandidate, type SessionCandidatesPage } from "@services/supervisorScope/managedSessions"
+  type ManagedSessionIntent, type ManagedSessionReceipt, type ManagedSessionsQuery, type ManagedSessionsResponse, type SessionCandidate, type SessionCandidatesPage } from "@services/supervisorScope/managedSessions"
 import type { ScopeProblem } from "@services/supervisorScope/types"
 
 export interface ManagedSessionsDependencies {
-  read(signal?: AbortSignal): Promise<ManagedSessionsResponse>
+  read(signal?: AbortSignal, page?: ManagedSessionsQuery): Promise<ManagedSessionsResponse>
   candidates(offset?: number): Promise<SessionCandidatesPage>
   update(intent: ManagedSessionIntent): Promise<ManagedSessionReceipt>
 }
 type Notice = "saved" | "conflict" | "rejected" | "unknown"
 interface View {
-  observation: ManagedSessionsResponse | null; candidates: readonly SessionCandidate[]; nextOffset: number | null
+  observation: ManagedSessionsResponse | null; candidates: readonly SessionCandidate[]; nextOffset: number | null; nextAfter: string | null
   loading: boolean; catalogError: boolean; loadingMore: boolean; problem: ScopeProblem | null
   review: ManagedSessionIntent | null; notice: Notice | null; submitting: boolean; writeBlocked: boolean
 }
-const initial = (): View => ({ observation: null, candidates: [], nextOffset: null, loading: false, catalogError: false,
+const initial = (): View => ({ observation: null, candidates: [], nextOffset: null, nextAfter: null, loading: false, catalogError: false,
   loadingMore: false, problem: null, review: null, notice: null, submitting: false, writeBlocked: true })
 export function useSupervisorManagedSessions(active: boolean, dependencies: ManagedSessionsDependencies = managedSessionsClient) {
   const [view, setView] = useState<View>(initial)
@@ -28,16 +28,24 @@ export function useSupervisorManagedSessions(active: boolean, dependencies: Mana
     const scope = generation.current, version = ++readVersion.current
     controller.current?.abort(); pageFlight.current = null; const request = new AbortController(); controller.current = request
     setView((previous) => ({ ...previous, loading: true, loadingMore: false, review: null, problem: null, writeBlocked: true }))
-    const [canonical, candidates] = await Promise.allSettled([dependencies.read(request.signal), dependencies.candidates()])
-    if (!visible.current || generation.current !== scope || readVersion.current !== version) return null
-    if (canonical.status === "rejected") {
-      setView((previous) => ({ ...previous, loading: false, observation: null, problem: managedSessionsProblem(canonical.reason), writeBlocked: true }))
+    const current = () => visible.current && generation.current === scope && readVersion.current === version
+    let canonical: ManagedSessionsResponse
+    try { canonical = await dependencies.read(request.signal) }
+    catch (error) {
+      if (!current()) return null
+      setView((previous) => ({ ...previous, loading: false, observation: null, nextAfter: null, problem: managedSessionsProblem(error), writeBlocked: true }))
       return null
     }
-    setView((previous) => ({ ...previous, loading: false, observation: canonical.value,
-      candidates: candidates.status === "fulfilled" ? candidates.value.sessions : [], nextOffset: candidates.status === "fulfilled" ? candidates.value.nextOffset : null,
-      catalogError: candidates.status === "rejected", problem: null, review: null, writeBlocked: false }))
-    return canonical.value
+    if (!current()) return null
+    let candidates: SessionCandidatesPage = { sessions: [], nextOffset: null }, catalogError = false
+    if (!canonical.management_access) {
+      try { candidates = await dependencies.candidates() } catch { catalogError = true }
+    }
+    if (!current()) return null
+    setView((previous) => ({ ...previous, loading: false, observation: canonical,
+      candidates: candidates.sessions, nextOffset: candidates.nextOffset, nextAfter: canonical.next_after ?? null,
+      catalogError, problem: null, review: null, writeBlocked: false }))
+    return canonical
   }, [dependencies])
   useEffect(() => {
     generation.current += 1; mutation.current = null; pageFlight.current = null
@@ -47,18 +55,41 @@ export function useSupervisorManagedSessions(active: boolean, dependencies: Mana
   const refresh = useCallback(() => visible.current && !mutation.current ? load() : Promise.resolve(null), [load])
   const loadMore = useCallback(async () => {
     const current = latest.current
-    if (!visible.current || pageFlight.current || mutation.current || current.loading || current.nextOffset === null) return
+    if (!visible.current || pageFlight.current || mutation.current || current.loading || current.nextOffset === null && current.nextAfter === null) return
     const token = {}, scope = generation.current, version = readVersion.current, offset = current.nextOffset
     pageFlight.current = token; setView((previous) => ({ ...previous, loadingMore: true }))
     const stillCurrent = () => visible.current && generation.current === scope && readVersion.current === version && pageFlight.current === token
     try {
-      const page = await dependencies.candidates(offset)
+      if (current.observation?.management_access) {
+        if (current.nextAfter === null) return
+        const page = await dependencies.read(controller.current?.signal, { after: current.nextAfter, limit: 20 })
+        if (!stillCurrent()) return
+        if (!page.management_access || !sameSupervisor(page.scope.supervisor, current.observation.scope.supervisor)
+          || page.scope.state_revision !== current.observation.scope.state_revision || !sameProjects(page.scope.allowed_projects, current.observation.scope.allowed_projects)) {
+          throw new ApiError("directory_scope_changed", 409, "", JSON.stringify({ code: "scope_revision_conflict" }))
+        }
+        setView((previous) => ({ ...previous, observation: { ...page,
+          sessions: [...new Map([...(previous.observation?.sessions ?? []), ...page.sessions].map((session) => [session.session_id, session])).values()] },
+          nextAfter: page.next_after ?? null, problem: null }))
+        return
+      }
+      const page = await dependencies.candidates(offset ?? undefined)
       if (!stillCurrent()) return
       setView((previous) => ({ ...previous, candidates: [...new Map([...previous.candidates, ...page.sessions].map((session) => [session.session_id, session])).values()], nextOffset: page.nextOffset, catalogError: false }))
-    } catch { if (stillCurrent()) setView((previous) => ({ ...previous, catalogError: true })) }
+    } catch (error) {
+      if (stillCurrent()) setView((previous) => {
+        if (!current.observation?.management_access) return { ...previous, catalogError: true }
+        const problem = managedSessionsProblem(error)
+        return { ...previous, problem, ...(["authentication", "forbidden"].includes(problem.kind)
+          ? { observation: null, nextAfter: null, writeBlocked: true } : {}) }
+      })
+    }
     finally { if (pageFlight.current === token) { const notify = stillCurrent(); pageFlight.current = null; if (notify) setView((previous) => ({ ...previous, loadingMore: false })) } }
   }, [dependencies])
   const rows = useMemo(() => {
+    if (view.observation?.management_access) return view.observation.sessions.map((link) => ({
+      session_id: link.session_id, link, summary: undefined as SessionCandidate | undefined, status: "current_user" as const, canEnable: false,
+    }))
     const allowed = new Set(view.observation?.scope.allowed_projects)
     const candidates = new Map(view.candidates.map((session) => [session.session_id, session]))
     const links = new Map(view.observation?.sessions.map((link) => [link.session_id, link]))
@@ -92,12 +123,12 @@ export function useSupervisorManagedSessions(active: boolean, dependencies: Mana
       const canonical = await load()
       if (!stillCurrent()) return
       const link = canonical?.sessions.find((session) => session.session_id === intent.target_session_id)
-      if (receipt && canonical && sameSupervisor(receipt.supervisor, canonical.scope.supervisor) && receipt.state_revision === canonical.scope.state_revision
+      if (receipt && canonical && !canonical.management_access && sameSupervisor(receipt.supervisor, canonical.scope.supervisor) && receipt.state_revision === canonical.scope.state_revision
         && receipt.link_revision === (link?.link_revision ?? null) && (intent.enabled ? link?.enabled && link.authorized : !link?.enabled)) notice = "saved"
       setView((previous) => ({ ...previous, review: null, notice, writeBlocked: canonical === null }))
     } finally { if (stillCurrent()) { mutation.current = null; setView((previous) => ({ ...previous, submitting: false })) } }
   }, [dependencies, load])
-  return { ...view, rows, refresh, loadMore, reviewTarget, confirm,
+  return { ...view, rows, refresh, loadMore, reviewTarget, confirm, currentUser: view.observation?.management_access?.kind === "current_user",
     cancelReview: () => setView((previous) => ({ ...previous, review: null })),
     canManage: !view.loading && !view.submitting && !view.writeBlocked && canWriteManagedSessions(view.observation) }
 }
