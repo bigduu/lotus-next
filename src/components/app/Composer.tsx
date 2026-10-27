@@ -298,12 +298,12 @@ export function Composer({
   )
 
   return (
-    <div className="shrink-0 px-3 py-3">
+    <div className="min-w-0 shrink-0 px-3 py-3">
       <div
         ref={columnRef}
         data-composer-column
         data-composer-compact={compactToolbar}
-        className="relative mx-auto w-full max-w-6xl"
+        className="relative mx-auto min-w-0 w-full max-w-full"
         style={{ left: contentShiftX, transition: "left 200ms ease-out" }}
       >
       {queueControls}
@@ -328,7 +328,7 @@ export function Composer({
           onPick={(entry) => fileSuggestion.pick(entry.path)} onDismiss={() => fileSuggestion.dismiss()} />
       ) : null}
       {selectedSkill && (
-        <div className="mx-auto mb-2 flex w-full max-w-6xl">
+        <div className="mx-auto mb-2 flex w-full max-w-full">
           <span className="inline-flex items-center gap-1 rounded-full bg-primary/15 px-2.5 py-1 text-xs font-medium text-primary">
             /{selectedSkill.name}
             <button
@@ -342,7 +342,7 @@ export function Composer({
         </div>
       )}
       {selectedWorkflow && (
-        <div className="mx-auto mb-2 flex w-full max-w-6xl">
+        <div className="mx-auto mb-2 flex w-full max-w-full">
           <span className="inline-flex items-center gap-1 rounded-full bg-primary/15 px-2.5 py-1 text-xs font-medium text-primary">
             {uiText("text_expansion_6768e498")}{selectedWorkflow.name}
             <button
@@ -356,7 +356,7 @@ export function Composer({
         </div>
       )}
       {attachments.length > 0 && (
-        <div className="mx-auto mb-2 flex w-full max-w-6xl flex-wrap gap-2">
+        <div className="mx-auto mb-2 flex w-full max-w-full flex-wrap gap-2">
           {attachments.map((a) => (
             <div key={a.id} className="relative size-24 overflow-hidden rounded-2xl border">
               <img
@@ -387,7 +387,7 @@ export function Composer({
           e.target.value = ""
         }}
       />
-      <div className="relative mx-auto w-full max-w-6xl">
+      <div className="relative mx-auto min-w-0 w-full max-w-full">
         <div
           data-composer-surface
           className="rounded-2xl border border-transparent bg-card p-1.5"

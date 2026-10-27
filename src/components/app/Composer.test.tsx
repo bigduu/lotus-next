@@ -95,6 +95,16 @@ function dispatchSubmitShortcut(
 }
 
 describe("Composer submission controls", () => {
+  it("fills the available pane width while retaining shrinkable columns and gutters", () => {
+    const { container } = mountComposer()
+    const column = container.querySelector<HTMLElement>("[data-composer-column]")!
+    expect(column.classList.contains("w-full")).toBe(true)
+    expect(column.classList.contains("max-w-full")).toBe(true)
+    expect(column.classList.contains("min-w-0")).toBe(true)
+    expect(container.querySelector('[class*="max-w-6xl"]')).toBeNull()
+    expect(column.parentElement?.classList.contains("px-3")).toBe(true)
+  })
+
   it("sends semantic ingress during execution without showing legacy queue controls", () => {
     const { container, textarea, props } = mountComposer({ sending: true, sendWhileRunning: true })
     expect(container.querySelector('[aria-label="发送时机"]')).toBeNull()

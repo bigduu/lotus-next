@@ -120,11 +120,10 @@ type EnvironmentPreference = "auto" | "open" | "closed"
 
 const MESSAGE_WORKSPACE_WIDTH = 1152
 const ENVIRONMENT_OCCUPIED_WIDTH = 332
-const ENVIRONMENT_CONTENT_SHIFT = ENVIRONMENT_OCCUPIED_WIDTH / 2
 
-// Keep the existing 72rem workspace threshold so narrowing the reading column
-// does not automatically open Environment on smaller windows. It still floats
-// beside the transcript with the same bounded shift and comfortable gutters.
+// Only auto-open Environment when a 72rem chat pane still fits beside it.
+// Reserve its space in the layout so the chat can expand without being shifted
+// outside its pane or underneath the floating card.
 const ENVIRONMENT_AUTO_SHOW_MIN_WIDTH =
   MESSAGE_WORKSPACE_WIDTH + ENVIRONMENT_OCCUPIED_WIDTH
 
@@ -379,11 +378,8 @@ export function ChatPane({
   const environmentOpen = environmentPreference === "open"
     || (environmentPreference === "auto" && environmentHasRoom)
   const environmentVisible = !secondary && environmentOpen && !(sidePaneOpen ?? false)
-  const messageContentShift = environmentVisible
-    ? -Math.min(
-        ENVIRONMENT_CONTENT_SHIFT,
-        Math.max(0, (chatLayoutWidth - MESSAGE_WORKSPACE_WIDTH) / 2),
-      )
+  const environmentReservedWidth = environmentVisible && environmentHasRoom
+    ? ENVIRONMENT_OCCUPIED_WIDTH
     : 0
 
   // Live in-run token budget (pushed over the agent channel) — beats the
@@ -1140,10 +1136,11 @@ export function ChatPane({
           />
         )}
 
-        <div ref={chatLayoutRef} data-chat-layout className="relative flex min-h-0 flex-1">
+        <div ref={chatLayoutRef} data-chat-layout className="relative flex min-h-0 min-w-0 flex-1">
           <div
             data-chat-body
             className="relative flex min-w-0 flex-1 flex-col"
+            style={{ paddingInlineEnd: environmentReservedWidth, transition: "padding-inline-end 200ms ease-out" }}
         data-session-drop-target={secondary ? "secondary" : "main"}
         {...sessionDrop.handlers}
           >
@@ -1218,7 +1215,6 @@ export function ChatPane({
           pendingUserText={pendingUserText}
           pendingUserImages={pendingUserImages}
           pendingUserMessages={pendingUserMessages}
-          contentShiftX={messageContentShift}
           forking={forking}
           executionBlocked={executionBlocked}
           onSelectSubAgent={(childId) => {
@@ -1246,7 +1242,7 @@ export function ChatPane({
           <div
             role="alert"
             aria-live="assertive"
-            className="mx-auto mb-1 flex w-[calc(100%-1.5rem)] max-w-6xl flex-wrap items-center justify-between gap-2 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm"
+            className="mx-auto mb-1 flex w-[calc(100%-1.5rem)] max-w-full flex-wrap items-center justify-between gap-2 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm"
           >
             <div className="min-w-0 flex-1 text-destructive">
               <p className="font-medium">
@@ -1299,7 +1295,7 @@ export function ChatPane({
           </div>
         ) : null}
 
-        {queue.error && <div role="alert" className="mx-auto mb-1 w-[calc(100%-1.5rem)] max-w-6xl rounded-lg border border-destructive/40 px-3 py-2 text-xs text-destructive">{queue.error}</div>}
+        {queue.error && <div role="alert" className="mx-auto mb-1 w-[calc(100%-1.5rem)] max-w-full rounded-lg border border-destructive/40 px-3 py-2 text-xs text-destructive">{queue.error}</div>}
         {workPanelTarget ? createPortal(ticketScope?.binding.supervisor_session_id === currentSessionId ? (
           <LazyTicketWorkPanel key={currentSessionId} onReady={focusWorkPanel} controller={tickets} selectedWorkId={selectedWorkId} onShowAll={() => openTicketWork(null)} onReference={tickets.canSendIngress && ticketScope.capabilities?.message_references_v1 === true && !pendingTicketMessage ? (request) => {
             setTicketReference(request)
@@ -1315,12 +1311,11 @@ export function ChatPane({
           {ticketIngress.executePending === currentSessionId ? <button type="button" className="ml-2 underline" onClick={() => void ticketIngress.retryExecute()}>{uiText("ticket_retry_start_47d5cd3e")}</button> : null}
         </div> : null}
         <div data-composer-region className="relative shrink-0">
-          {/* Keep the jump control centered on the same max-width column as the composer. */}
+          {/* Keep the jump control centered on the available chat column. */}
           {!atBottom && (
             <div
               data-scroll-to-bottom-anchor
-              className="pointer-events-none absolute inset-x-0 top-0 z-20 mx-auto flex max-w-6xl -translate-y-1/2 justify-center px-3"
-              style={{ transform: `translateX(${messageContentShift}px)`, transition: "transform 200ms ease-out" }}
+              className="pointer-events-none absolute inset-x-0 top-0 z-20 mx-auto flex max-w-full -translate-y-1/2 justify-center px-3"
             >
               <button
                 onClick={scrollToBottom}
@@ -1336,7 +1331,6 @@ export function ChatPane({
           <Composer
           draft={draft}
           draftKey={draftKey}
-          contentShiftX={messageContentShift}
           outputRate={outputRate}
           onDraftChange={setDraft}
           executionBlocked={executionBlocked}
