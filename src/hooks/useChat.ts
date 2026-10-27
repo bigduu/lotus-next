@@ -1,3 +1,4 @@
+import { supportsContinuousUpstreamRetry, isRetryRunId, type UpstreamRetrySelection, type UpstreamRetryFeedback } from "@services/chat/upstreamRetry"
 import type { PublicRunDiagnostic } from "@services/chat/runDiagnostic"
 import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { useOutputRate } from "./useOutputRate"
@@ -396,6 +397,10 @@ export function useChat(
   const mountedRef = useRef(false)
   const operationSequenceRef = useRef(0)
   const activeSendRef = useRef<ActiveSendOperation | null>(null)
+  const continuousStopRef = useRef<{ sessionId: string; operationId: number; stop: () => Promise<void> } | null>(null)
+  const [upstreamRetryFeedback, setUpstreamRetryFeedback] = useState<{
+    sessionId: string; operationId: number; status: UpstreamRetryFeedback
+  } | null>(null)
   const sendFailuresRef = useRef<ReadonlyMap<string | null, SendFailure>>(new Map())
   const latestOperationBySessionRef = useRef<Map<string | null, number>>(new Map())
   const streamOperationRef = useRef<number | null>(null)
@@ -712,6 +717,7 @@ export function useChat(
       reasonBufRef.current = ""
       liveSegRef.current = retainedSegments
       toolCallsByIdRef.current.clear()
+      setUpstreamRetryFeedback((current) => current?.status === "enabled" || current?.status === "requesting" || current?.status === "already_running" ? null : current)
       streamOperationRef.current = null
       setLiveSegmentsState(retainedSegments)
       setStreamStatus(null)
@@ -830,6 +836,7 @@ export function useChat(
       runSid: string,
       opts?: {
         resume?: boolean
+        upstreamRetry?: UpstreamRetrySelection
         operationId?: number
         pendingOperationId?: number
         /** Exact chat ACK identity; missing ids leave failed tool evidence unconfirmed. */
@@ -844,6 +851,8 @@ export function useChat(
       const operationId = opts?.operationId ?? operationSequenceRef.current + 1
       operationSequenceRef.current = Math.max(operationSequenceRef.current, operationId)
       noteSessionOperation(runSid, operationId)
+      continuousStopRef.current = null
+      setUpstreamRetryFeedback(null)
       streamOperationRef.current = operationId
       const baselineMessages = useAppStore
         .getState()
@@ -915,8 +924,26 @@ export function useChat(
         }
         const executeModel = opts?.modelSelection?.model ?? effectiveModel
         const executeModelRef = opts?.modelSelection ? opts.modelSelection.modelRef : effectiveModelRef
-        void agentClient.execute(runSid, executeModel || undefined, executeReasoningEffort, undefined, executeModelRef).then(() => {
+        const execution = opts?.upstreamRetry
+          ? agentClient.execute(runSid, executeModel || undefined, executeReasoningEffort, undefined, executeModelRef, opts.upstreamRetry)
+          : agentClient.execute(runSid, executeModel || undefined, executeReasoningEffort, undefined, executeModelRef)
+        if (opts?.upstreamRetry) {
+          setUpstreamRetryFeedback({ sessionId: runSid, operationId, status: "requesting" })
+          // A Stop clicked before Execute returns waits for that exact ACK. It
+          // never falls back to a session-only cancel which could hit a successor.
+          let requested: Promise<void> | null = null
+          continuousStopRef.current = { sessionId: runSid, operationId, stop: () => requested ??= execution.then(async (ack) => {
+            if (ack?.session_id !== runSid || !isRetryRunId(ack.run_id)) throw new Error("Missing execution identity")
+            await agentClient.stopGeneration(runSid, ack.run_id)
+          }) }
+        }
+        void execution.then((ack) => {
           executeAcknowledged = true
+          if (opts?.upstreamRetry && ownsRunEvent()) setUpstreamRetryFeedback((current) => {
+            if (current?.operationId !== operationId || current.sessionId !== runSid || current.status !== "requesting") return current
+            return ack?.status === "started" ? { ...current, status: "enabled" }
+              : ack?.status === "already_running" ? { ...current, status: "already_running" } : null
+          })
         }).catch((err) => {
           if (!ownsStream()) return
           observeSessionExecutionConflict(runSid, err)
@@ -1557,6 +1584,7 @@ export function useChat(
       runSid: string,
       opts?: {
         prepare?: () => Promise<unknown>
+        upstreamRetry?: UpstreamRetrySelection
         expectedFailureOperationId?: number
         pendingOperationId?: number
         preserveFailureOnPrepareError?: boolean
@@ -1599,6 +1627,13 @@ export function useChat(
       try {
         await opts?.prepare?.()
         if (activeSendRef.current?.id !== operation.id) return false
+        // Continuous negotiation is read-only: navigation or a replaced failure
+        // must cancel this explicit request, rather than starting it off-screen.
+        if (opts?.upstreamRetry && (!mountedRef.current
+          || navigationRef.current.sessionId !== operation.originSessionId
+          || navigationRef.current.epoch !== operation.originNavigationEpoch
+          || opts.expectedFailureOperationId !== undefined
+            && getSendFailure(runSid)?.operationId !== opts.expectedFailureOperationId)) return false
         if (getRootModeFenceState(runSid) !== "clear" || isSessionExecutionBlocked(runSid)) return false
         if (
           opts?.expectedFailureOperationId !== undefined &&
@@ -1651,6 +1686,7 @@ export function useChat(
 
         if (mountedRef.current) setSubmissionPending(false)
         const stream = runStream(runSid, {
+          upstreamRetry: opts?.upstreamRetry,
           operationId: operation.id,
           pendingOperationId: operation.pendingOperationId,
         })
@@ -1669,6 +1705,8 @@ export function useChat(
       } catch (err) {
         observeSessionExecutionConflict(runSid, err)
         console.error("[useChat] rerun failed", err)
+        if (opts?.upstreamRetry && !streamStarted && mountedRef.current)
+          setUpstreamRetryFeedback({ sessionId: runSid, operationId: operation.id, status: "unavailable" })
         if (streamStarted || !opts?.preserveFailureOnPrepareError) {
           publishSendFailure({
             kind: "generation-failed",
@@ -1713,17 +1751,24 @@ export function useChat(
   }, [sid, rerun])
 
   const retry = useCallback(
-    async (failure?: GenerationFailure) => {
+    async (failure?: GenerationFailure, options?: { upstreamRetry?: UpstreamRetrySelection }) => {
+      const upstreamRetry = options?.upstreamRetry
+      const prepare = async (sessionId: string) => {
+        if (upstreamRetry) {
+          if (!await supportsContinuousUpstreamRetry()) throw new Error(uiText("upstream_retry_unavailable"))
+          // Resume Execute only. No Chat, truncate, or tool replay.
+        } else await agentClient.truncateSessionMessages(sessionId, { mode: "error_retry" })
+      }
       const currentFailure = getSendFailure(sid ?? null)
       const target = failure ?? (currentFailure?.kind === "generation-failed" ? currentFailure : undefined)
       if (target) {
         if (getSendFailure(target.sessionId)?.operationId !== target.operationId) return
         await rerun(target.sessionId, {
+          upstreamRetry,
           expectedFailureOperationId: target.operationId,
           pendingOperationId: target.pendingOperationId,
           preserveFailureOnPrepareError: true,
-          prepare: () =>
-            agentClient.truncateSessionMessages(target.sessionId, { mode: "error_retry" }),
+          prepare: () => prepare(target.sessionId),
         })
         return
       }
@@ -1734,8 +1779,9 @@ export function useChat(
       // same safe resume path instead of rendering a retry button that no-ops.
       if (!sid || currentChat?.lastRunStatus !== "error") return
       await rerun(sid, {
+        upstreamRetry,
         preserveFailureOnPrepareError: true,
-        prepare: () => agentClient.truncateSessionMessages(sid, { mode: "error_retry" }),
+        prepare: () => prepare(sid),
       })
     },
     [currentChat?.lastRunStatus, getSendFailure, rerun, sid],
@@ -2071,12 +2117,20 @@ export function useChat(
     const targetSessionId = active?.acknowledgedSessionId ?? sid
     const pendingOperationId = active?.pendingOperationId
     const operationId = active?.id ?? streamOperationRef.current ?? undefined
-    // Dispatch realtime Stop while this pane still owns the live subscription.
-    // `stopGeneration` sends its WebSocket control frame synchronously before
-    // its first await; only then detach the local observer.
-    const stopRequest = targetSessionId
-      ? agentClient.stopGeneration(targetSessionId)
-      : null
+    // Continuous retries retain the Execute ACK for an exact-run REST Stop.
+    // Ordinary Stop keeps its existing realtime-first path before detaching.
+    const continuous = continuousStopRef.current
+    const exactStop = continuous?.sessionId === targetSessionId
+      && latestOperationBySessionRef.current.get(targetSessionId) === continuous.operationId ? continuous : null
+    if (exactStop) setUpstreamRetryFeedback({ sessionId: exactStop.sessionId, operationId: exactStop.operationId, status: "stopping" })
+    const stopRequest = exactStop ? exactStop.stop() : targetSessionId ? agentClient.stopGeneration(targetSessionId) : null
+    if (exactStop && stopRequest) void stopRequest.then(() => {
+      if (mountedRef.current && latestOperationBySessionRef.current.get(exactStop.sessionId) === exactStop.operationId)
+        setUpstreamRetryFeedback({ sessionId: exactStop.sessionId, operationId: exactStop.operationId, status: "stop_requested" })
+    }, () => {
+      if (mountedRef.current && latestOperationBySessionRef.current.get(exactStop.sessionId) === exactStop.operationId)
+        setUpstreamRetryFeedback({ sessionId: exactStop.sessionId, operationId: exactStop.operationId, status: "stop_unconfirmed" })
+    })
     if (targetSessionId) {
       const store = useAppStore.getState()
       store.markCancel(targetSessionId)
@@ -2285,6 +2339,7 @@ export function useChat(
     streamStatus,
     contextCompression,
     outputRate,
+    upstreamRetryStatus: upstreamRetryFeedback?.sessionId === sid ? upstreamRetryFeedback.status : null,
     pendingUserText,
     pendingUserImages,
     pendingUserMessages,

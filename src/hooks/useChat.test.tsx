@@ -3668,3 +3668,84 @@ describe("owned public error diagnostic lifecycle", () => {
     expect(hook.current.currentSessionId).toBe("diagnostic-other"); expect(hook.current.sendFailure).toBeNull()
   })
 })
+
+
+describe("explicit continuous upstream retry", () => {
+  const options = { upstreamRetry: { mode: "until_cancelled" as const } }
+  const sid = "continuous-session"
+  const allow = () => mocks.apiGet.mockImplementation(async (path:string) => path === "execute/defaults"
+    ? {upstream_retry:{supported_modes:["bounded","until_cancelled"]}} : {})
+  async function persisted() {
+    mocks.appState.chats = [{id:sid,messages:[],lastRunStatus:"error",config:{model:"test-model"}}]
+    return mountUseChat({mode:"bound",sessionId:sid})
+  }
+  it("negotiates once, fences duplicate clicks and executes without Chat or truncate", async () => {
+    const cap=deferred<unknown>();mocks.apiGet.mockReturnValue(cap.promise)
+    const subscription=deferred<void>();mocks.subscribeToEvents.mockReturnValue(subscription.promise)
+    mocks.execute.mockResolvedValue({session_id:sid,status:"started",run_id:"new-run"})
+    const hook=await persisted();let first!:Promise<void>
+    act(()=>{first=hook.current.retry(undefined,options);void hook.current.retry(undefined,options)})
+    expect(mocks.execute).not.toHaveBeenCalled()
+    await act(async()=>cap.resolve({upstream_retry:{supported_modes:["until_cancelled"]}}))
+    expect(mocks.apiGet).toHaveBeenCalledExactlyOnceWith("execute/defaults",{cache:"no-store"})
+    expect(mocks.execute).toHaveBeenCalledExactlyOnceWith(sid,"test-model",undefined,undefined,undefined,{mode:"until_cancelled"})
+    expect(mocks.sendMessage).not.toHaveBeenCalled();expect(mocks.truncateSessionMessages).not.toHaveBeenCalled()
+    expect(hook.current.upstreamRetryStatus).toBe("enabled")
+    await act(async()=>{subscription.resolve();await first})
+  })
+  it.each([{}, {upstream_retry:{supported_modes:["bounded"]}}])("does not execute against old/unsupported producer %j",async(value)=>{
+    mocks.apiGet.mockResolvedValue(value);const hook=await persisted()
+    await act(async()=>{await hook.current.retry(undefined,options)})
+    expect(mocks.execute).not.toHaveBeenCalled();expect(mocks.sendMessage).not.toHaveBeenCalled()
+    expect(mocks.truncateSessionMessages).not.toHaveBeenCalled();expect(hook.current.upstreamRetryStatus).toBe("unavailable")
+  })
+  it("discards read-only negotiation after navigating away and back",async()=>{
+    const cap=deferred<unknown>();mocks.apiGet.mockReturnValue(cap.promise);const hook=await persisted();let request!:Promise<void>
+    act(()=>{request=hook.current.retry(undefined,options)})
+    await hook.rerender({mode:"bound",sessionId:"other"});await hook.rerender({mode:"bound",sessionId:sid})
+    await act(async()=>{cap.resolve({upstream_retry:{supported_modes:["until_cancelled"]}});await request})
+    expect(mocks.execute).not.toHaveBeenCalled();expect(mocks.sendMessage).not.toHaveBeenCalled()
+  })
+  it("waits for the exact Execute ACK before Stop and coalesces repeated clicks",async()=>{
+    allow();const ack=deferred<{session_id:string;run_id:string}>();const sub=deferred<void>()
+    mocks.execute.mockReturnValue(ack.promise);mocks.subscribeToEvents.mockReturnValue(sub.promise);mocks.stopGeneration.mockResolvedValue(undefined)
+    const hook=await persisted();let request!:Promise<void>
+    await act(async()=>{request=hook.current.retry(undefined,options)})
+    await act(async()=>{hook.current.stop();hook.current.stop()})
+    expect(mocks.stopGeneration).not.toHaveBeenCalled();expect(hook.current.upstreamRetryStatus).toBe("stopping")
+    await act(async()=>{ack.resolve({session_id:sid,run_id:"exact-original-run"});await Promise.resolve();await Promise.resolve()})
+    expect(mocks.stopGeneration).toHaveBeenCalledExactlyOnceWith(sid,"exact-original-run")
+    expect(hook.current.upstreamRetryStatus).toBe("stop_requested")
+    await act(async()=>{sub.resolve();await request})
+    await hook.rerender({mode:"bound",sessionId:"other"});expect(hook.current.upstreamRetryStatus).toBeNull()
+  })
+  it.each([{}, {session_id:sid}, {session_id:"other",run_id:"foreign-run"}])("never sends an unfenced Stop for malformed ACK %j",async(ack)=>{
+    allow();mocks.execute.mockResolvedValue(ack);const sub=deferred<void>();mocks.subscribeToEvents.mockReturnValue(sub.promise)
+    const hook=await persisted();let request!:Promise<void>
+    await act(async()=>{request=hook.current.retry(undefined,options)})
+    await act(async()=>{hook.current.stop();await Promise.resolve();await Promise.resolve()})
+    expect(mocks.stopGeneration).not.toHaveBeenCalled();expect(hook.current.upstreamRetryStatus).toBe("stop_unconfirmed")
+    await act(async()=>{sub.resolve();await request})
+  })
+  it("does not claim an already running execution adopted the requested mode",async()=>{
+    allow();mocks.execute.mockResolvedValue({session_id:sid,status:"already_running",run_id:"other-owned-run"})
+    const sub=deferred<void>();mocks.subscribeToEvents.mockReturnValue(sub.promise)
+    const hook=await persisted();let request!:Promise<void>
+    await act(async()=>{request=hook.current.retry(undefined,options)})
+    expect(hook.current.upstreamRetryStatus).toBe("already_running")
+    await act(async()=>{sub.resolve();await request})
+  })
+  it("does not inherit the mode on a later ordinary send",async()=>{
+    allow();const sub=deferred<void>();let handlers!:SubscriptionHandlers
+    mocks.execute.mockResolvedValue({session_id:sid,run_id:"original-run"})
+    mocks.subscribeToEvents.mockImplementationOnce((_sid:string,h:SubscriptionHandlers)=>{handlers=h;return sub.promise})
+    const hook=await persisted();let request!:Promise<void>
+    await act(async()=>{request=hook.current.retry(undefined,options)})
+    await act(async()=>{handlers.onCancelled();sub.resolve();await request})
+    expect(hook.current.upstreamRetryStatus).toBeNull()
+    mocks.sendMessage.mockResolvedValue({session_id:sid});mocks.subscribeToEvents.mockReturnValue(pendingForever())
+    await act(async()=>{await hook.current.send("a later instruction")})
+    expect(mocks.execute.mock.calls.at(-1)).toHaveLength(5)
+    expect(mocks.execute.mock.calls.at(-1)?.[0]).toBe(sid)
+  })
+})

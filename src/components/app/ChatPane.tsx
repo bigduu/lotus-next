@@ -1,3 +1,4 @@
+import { RetryUpstreamAction } from "@/components/chat/RetryUpstreamAction"
 import { useSessionDrop } from "@/hooks/useSessionDrop"
 import type { ComposerInputHandle } from "@/components/chat/ComposerEditor"
 import { uiText, useUiLocale } from "@shared/i18n/ui"
@@ -1277,6 +1278,14 @@ export function ChatPane({
               ) : null}
             </div>
             {!currentlyRunning ? <RunDiagnosticsEntry key={currentChat?.updatedAt} subject={runDiagnosticsSubject} /> : null}
+            {!rootMode.unsafe && generationFailed && currentSessionId ? <RetryUpstreamAction
+              key={`${currentSessionId}:${visibleSendFailure?.operationId ?? "persisted"}`}
+              disabled={sending || modelSaving || executionBlocked || currentlyRunning}
+              onRetry={() => {
+                if (rootSessionUnsafe()) return
+                void retry(visibleSendFailure?.kind === "generation-failed" ? visibleSendFailure : undefined,
+                  { upstreamRetry: { mode: "until_cancelled" } })
+              }} /> : null}
             {rootMode.unsafe ? null : generationFailed ? (
               <Button
                 size="sm"
@@ -1298,6 +1307,15 @@ export function ChatPane({
             )}
           </div>
         ) : null}
+
+        {chat.upstreamRetryStatus ? <p role="status" className="mx-4 mb-2 text-xs text-muted-foreground">
+          {uiText(chat.upstreamRetryStatus === "requesting" ? "upstream_retry_requesting"
+            : chat.upstreamRetryStatus === "already_running" ? "upstream_retry_already_running"
+            : chat.upstreamRetryStatus === "enabled" ? "upstream_retry_enabled"
+            : chat.upstreamRetryStatus === "stopping" ? "upstream_retry_stopping"
+              : chat.upstreamRetryStatus === "stop_requested" ? "upstream_retry_stop_requested"
+                : chat.upstreamRetryStatus === "unavailable" ? "upstream_retry_unavailable" : "upstream_retry_stop_unconfirmed")}
+        </p> : null}
 
         {queue.error && <div role="alert" className="mx-auto mb-1 w-[calc(100%-1.5rem)] max-w-6xl rounded-lg border border-destructive/40 px-3 py-2 text-xs text-destructive">{queue.error}</div>}
         {workPanelTarget ? createPortal(ticketScope?.binding.supervisor_session_id === currentSessionId ? (
