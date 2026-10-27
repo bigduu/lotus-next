@@ -128,3 +128,18 @@ Environment/secret scope nor dispatches production publication.
 The release workflow is dispatched on protected dev while building only the
 frozen release source once. Dev C and product S remain distinct;
 it does not authorize builds or publication on main push/promotion events.
+
+## Main promotion gate
+
+The staged `Main Admission` check is a separate read-only `pull_request_target`
+workflow for Main; dev PRs keep the original Feature acceptance alone. Bootstrap
+its reviewed workflow/helper controls into Main first and require its real check
+in Main protection with an up-to-date base before activation. Main controls execute at the exact workflow
+SHA; the PR is fetched as Git data and is never executed. Admission verifies
+`release/<S>`, protected Dev ancestry, actual merge parents and unchanged S tree,
+one annotated formal version tag, registry SHA-1/SHA-512 and the original complete
+frontend manifest. Registry-served SLSA source binding must identify the actual
+successful Dev publication run/controller. It does not claim Sigstore certificate
+verification. Missing, ambiguous, moved or unpublished evidence fails closed;
+there is no Main build, package, test or publish fallback. No positive promotion
+or protection activation is established by these staged source changes.

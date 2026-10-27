@@ -84,3 +84,14 @@ produced. Record exact source, commands, outcomes and remaining limitations in
 the PR. Source-policy fixtures are not real-runtime or publication evidence.
 Keep one acceptance slice within 4–8 hours and fewer than roughly 15 core files;
 split independent lifecycle, recovery or persistence work before extending it.
+
+## Read-only Main admission
+
+After the reviewed control-only bootstrap into Main, `main-promotion.yml` runs
+only on `pull_request_target` to Main and executes the exact Main workflow SHA.
+It fetches PR Git objects as data; it never runs PR/package code. `Main Admission`
+requires same-repository `release/<S>`, protected Dev ancestry, the actual B/S
+merge with tree equal to S, an annotated formal tag and the original npm package,
+manifest and completed Dev publisher evidence. The original dev Feature acceptance
+workflow remains separate. Main protection must require this real check against the current base before
+cutover; installing YAML alone is not enforcement or a positive promotion proof.
