@@ -80,6 +80,9 @@ async function expectDisclosureAlignment(scope: Locator) {
   await expect(scope.locator("[data-tool-call-entry-detail]")).toContainText("Read complete.")
   await expect(reasoning).toBeVisible()
   await expect(scope.locator('[data-message-role="assistant"] p').first()).toBeVisible()
+  // Rotating the square icon temporarily expands its bounding box. Measure
+  // settled alignment after the real CSS rotation, without timing sleeps.
+  await expect(scope.locator("[data-process-toggle] .process-activity-icon").first()).toHaveCSS("rotate", "90deg")
   const edges = await scope.evaluate((element) => {
     const tool = element.querySelector("[data-tool-call-entry-heading]")!
     const reasoning = element.querySelector("[data-reasoning-toggle]")!
@@ -101,7 +104,10 @@ async function expectDisclosureAlignment(scope: Locator) {
 function composerColumnShift(main: Locator) {
   return main.locator("[data-composer-column]").evaluate((element) => {
     const transform = element.ownerDocument.defaultView!.getComputedStyle(element).transform
-    return transform === "none" ? 0 : new DOMMatrixReadOnly(transform).m41
+    const Matrix = (element.ownerDocument.defaultView as unknown as {
+      DOMMatrixReadOnly: new (value: string) => { m41: number }
+    }).DOMMatrixReadOnly
+    return transform === "none" ? 0 : new Matrix(transform).m41
   })
 }
 
