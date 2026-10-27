@@ -35,10 +35,12 @@ async function fixture(page: Page, mode: Mode) {
   ]
   let migrated = mode === "current", detailUnavailable = mode === "cold-pending", holdReadback = false
   let pending: Intent | null = mode === "cold-pending" ? pendingIntent : null
-  let assessReads = 0, readbacksHeld = 0, commits = 0
+  let assessReads = 0, readbacksHeld = 0, commits = 0, permissionRevision = 1
   let releaseReadback!: () => void
   const readbackGate = new Promise<void>((resolve) => { releaseReadback = resolve })
   const posts: Intent[] = [], sessionWrites: { path: string; body: unknown }[] = []
+  const permissionWrites: { mode: string; ifMatch: string }[] = []
+  const permissionEtag = () => `"${permissionRevision}"`
   const events: string[] = []
   const conflicting = () => mode === "canonical-conflict" && migrated
   const retainedVersion = () => conflicting() ? 99 : migrated ? 2 : null
@@ -91,11 +93,20 @@ async function fixture(page: Page, mode: Mode) {
       if (holdReadback) { readbacksHeld += 1; await readbackGate }
       if (detailUnavailable) return route.fulfill({ status: 503, json: { error: "Canonical detail unavailable" } })
       events.push(migrated ? "current-detail" : "legacy-detail")
-      return route.fulfill({ json: canonical(), headers: { ETag: '"1"' } })
+      return route.fulfill({ json: canonical(), headers: { ETag: permissionEtag() } })
     }
     if (path === `/api/v1/sessions/${sid}` && request.method() === "PATCH") {
-      Object.assign(session, request.postDataJSON())
-      return route.fulfill({ json: canonical(), headers: { ETag: '"1"' } })
+      const body = request.postDataJSON() as Record<string, unknown>
+      const ifMatch = request.headers()["if-match"]
+      if (ifMatch !== permissionEtag()) return route.fulfill({ status: 412, json: { error: "Stale permission revision" } })
+      if (Object.keys(body).length !== 1 || !["default", "bypass", "auto"].includes(String(body.permission_mode))) {
+        return route.fulfill({ status: 400, json: { error: "Invalid permission update" } })
+      }
+      permissionWrites.push({ mode: String(body.permission_mode), ifMatch })
+      session.permission_mode = String(body.permission_mode)
+      session.bypass_permissions = session.permission_mode !== "default"
+      permissionRevision += 1
+      return route.fulfill({ json: canonical(), headers: { ETag: permissionEtag() } })
     }
     if (path === `/api/v1/history/${sid}` && request.method() === "GET") return route.fulfill({ json: { session_id: sid, messages: history } })
     if (path === `/api/v1/actors/${sid}/snapshot`) return route.fulfill({ json: actorSnapshotFixture(sid, 0) })
@@ -108,7 +119,7 @@ async function fixture(page: Page, mode: Mode) {
   })
   await page.goto(standaloneScenario.entryUrl)
   await expect(page.getByText(history[0].content, { exact: true })).toBeVisible()
-  return { runtime, posts, sessionWrites, events, session,
+  return { runtime, posts, sessionWrites, permissionWrites, events, session,
     get assessReads() { return assessReads }, get readbacksHeld() { return readbacksHeld }, get commits() { return commits },
     allowDetail() { detailUnavailable = false },
     releaseReadback() { holdReadback = false; releaseReadback() } }
@@ -236,6 +247,7 @@ test("current Sessions change permission modes without automatically probing mig
   await page.getByRole("option", { name: "Default", exact: true }).click()
   await expect.poll(() => f.session.permission_mode).toBe("default")
   await expect(permission).toHaveText("Default")
+  expect(f.permissionWrites).toEqual([{ mode: "auto", ifMatch: '"1"' }, { mode: "default", ifMatch: '"2"' }])
   await expect(page.getByRole("button", { name: "Check compatibility again", exact: true })).toHaveCount(0)
   await expect(page.getByRole("button", { name: "Refresh migration state", exact: true })).toHaveCount(0)
   expect(f.assessReads).toBe(0)
