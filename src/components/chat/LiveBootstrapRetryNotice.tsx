@@ -21,7 +21,7 @@ export function LiveBootstrapRetryNotice({ offer, disabled, stopDisabled = false
   const canStop = ["waiting", "confirming", "continued", "unconfirmed"].includes(offer.status)
   return <div role="status" aria-live="polite" className="mx-4 mb-2 text-xs text-muted-foreground">
     <p>{message}</p>
-    {offer.status === "waiting" || canStop ? <div className="flex items-center gap-2">
+    {offer.status === "waiting" || canStop ? <div className="flex flex-wrap items-center gap-2">
       {offer.status === "waiting" ? <Button size="sm" variant="outline" disabled={disabled} onClick={onConfirm}>
         {uiText("upstream_retry_until_stopped")}</Button> : null}
       {canStop ? <Button size="sm" variant="outline" disabled={stopDisabled} onClick={onStop}>
