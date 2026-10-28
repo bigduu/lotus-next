@@ -46,8 +46,11 @@ a source fix alone does not establish that acceptance.
 
 `publish-npm.yml` runs only from protected Dev controls; it never builds moving
 dev. It has one dispatch path: preflight -> build/pack -> publish.
-Freeze `release/<accepted-Dev-SHA>`, reserve the existing annotated version tag at
-that same SHA and provide the exact version, source tag and normally merged Dev PR.
+Freeze `release/<accepted-Dev-SHA>` and provide the version, formal tag name and
+normally merged Dev PR. Do not pre-create the formal version tag. Preflight first
+checks source admission and npm vacancy, then claims `lotus-next-vVERSION` with an
+annotated object binding version/source/original run/controller. Only that run
+may reuse the tag; another run or an old annotation without an owner stops.
 Preflight uploads its run/attempt-bound receipt only after all checks; publish
 uses that successful preflight's artifact ID on retries. Build stamps a disposable
 checkout, builds dist once, packs once without lifecycle scripts and retains the
@@ -62,7 +65,10 @@ an already published version must match it exactly. A build retry is allowed onl
 when the same run/controller's complete metadata proves every prior attempt had
 both build/pack steps skipped, or a wholly skipped job with an empty steps array.
 Started or missing evidence stops rebuilding. A replacement dispatch for the
-same version also stops while the original run remains in GitHub history.
+same claimed version stops even after the original Actions history expires.
+If its tag is missing on a same-run retry, first claim is allowed only when every
+earlier preflight/source step was positively unstarted; missing or started
+evidence stops rather than recreating a potentially lost original tag.
 Missing original output stops recovery. Historical candidate/receipt functions
 and fixed published-version recovery keep their old identities and cannot admit
 a new feature cut through the current CLI. The reviewed workflow becomes available
@@ -74,11 +80,27 @@ the existing 30-day artifact retention. Their expiry does not invalidate normal
 protected Dev source admission. This trust boundary replaces the publisher's
 historical-CI dependency discussed in #471; it is not durable authentication of
 deleted CI records. Do not invent `testedSnapshot` or feature-attempt claims.
-The producer's own retry guard and original tarball remain time limited: Actions
-run history may expire, so the guard is not permanent proof against a second
-dispatch. Never manually dispatch the same version again. If original metadata
-or output has expired, retain any original receipts and use separately reviewed
-recovery; do not treat absent history as proof that no build occurred.
+The original run's retry evidence and tarball remain time limited. Missing
+metadata or output stops recovery; tag ownership never permits another build.
+Do not delete or move a claimed version tag to release its reservation. Main
+still checks the completed publisher and package; a reservation is not success.
+
+Before enabling this path, an administrator must configure and actually verify
+an active repository tag ruleset with include `[refs/tags/lotus-next-v*]`,
+exclude `[]`, update/deletion restrictions and no bypass actors, then set
+`LOTUS_RELEASE_TAG_RULESET_ID` as a repository variable. This change does not
+create or activate that rule. Runtime checks the visible rule ID, target/scope,
+enforcement and restrictions; Metadata read access does not guarantee visibility
+of `bypass_actors`. Hidden actors are recorded as hidden, never interpreted as an
+empty list. The no-bypass guarantee depends on the administrator's separately
+verified configuration remaining in force. Only preflight gets `contents: write`;
+build/publish retain read access, and only publish receives npm/OIDC authority.
+Do not add an admin token or claim local tests prove live protection.
+This protects versions first claimed after that governance is enabled. It cannot
+reconstruct a pre-cutover failed build whose tag and Actions history were both
+deleted. An administrator must establish that a selected new version is new;
+present-day tag/npm 404s are not proof that an unknown historical version was
+never built. Do not admit such a version or rewrite an old unowned tag.
 
 After the dependent cutover, only a fully accepted dev cut may become a frozen
 release. Release work builds/packages/publishes the formal artifact once; it

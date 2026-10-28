@@ -3,9 +3,133 @@ import { execFileSync, spawnSync } from "node:child_process"
 import { tmpdir } from "node:os"
 import { delimiter, join, resolve } from "node:path"
 import { describe, expect, it } from "vitest"
-import { acceptanceJobNames, devFeatureJobNames, verifyDevAcceptance, verifyProtectedDevMerge } from "./release-source.mjs"
+import { acceptanceJobNames, devFeatureJobNames, verifyDevAcceptance, verifyProtectedDevMerge,
+  versionTagOwner, verifyVersionTagRuleset, readOwnedVersionTag, claimVersionTag, assertUnclaimedTagRetry } from "./release-source.mjs"
 
 const clone = value => JSON.parse(JSON.stringify(value))
+const tagRule = () => ({ id: 7, source_type: "Repository", source: "bigduu/lotus-next", target: "tag", enforcement: "active",
+  conditions: { ref_name: { include: ["refs/tags/lotus-next-v*"], exclude: [] } }, rules: [{ type: "update" }, { type: "deletion" }] })
+
+describe("durable formal version ownership", () => {
+  const owner = versionTagOwner({ LOTUS_NEXT_RELEASE_VERSION: "2026.10.30", EXPECTED_SOURCE_SHA_INPUT: "d".repeat(40),
+    GITHUB_RUN_ID: "99", GITHUB_WORKFLOW_SHA: "c".repeat(40) })
+  const fixture = ({ existing, failure, vacant = true } = {}) => {
+    const objects = new Map(), calls = [], objectSha = "a".repeat(40), refName = "refs/tags/lotus-next-v2026.10.30"
+    let ref = null, refreshes = 0
+    const object = (data, value = objectSha) => ({ sha: value, tag: "lotus-next-v2026.10.30", message: JSON.stringify(data), object: { type: "commit", sha: data.sourceSha } })
+    if (existing) { objects.set(objectSha, object(existing)); ref = { ref: refName, object: { type: "tag", sha: objectSha } } }
+    const read = route => {
+      calls.push("GET " + route)
+      if (route === "git/ref/tags/lotus-next-v2026.10.30") return clone(ref)
+      if (!route.startsWith("git/tags/") || !objects.has(route.slice(9))) throw Error("Unknown tag object")
+      return clone(objects.get(route.slice(9)))
+    }
+    const operations = { read,
+      refresh: () => { calls.push("refresh"); if (++refreshes === 2 && failure === "protection drift") throw Error("Protection changed") },
+      registryVacant: async () => { calls.push("npm vacancy"); if (!vacant) throw Error("Registry not proven vacant") },
+      create: (route, payload) => {
+        calls.push("POST " + route)
+        if (route === "git/tags") {
+          expect(payload).toEqual({ tag: "lotus-next-v2026.10.30", message: JSON.stringify(owner), object: owner.sourceSha, type: "commit" })
+          const created = object(owner); objects.set(objectSha, created)
+          if (failure === "object response lost") throw Error("Unknown object response")
+          return clone(created)
+        }
+        expect(route).toBe("git/refs"); expect(payload).toEqual({ ref: refName, sha: objectSha })
+        if (failure === "foreign race") {
+          const foreign = "b".repeat(40); objects.set(foreign, object({ ...owner, runId: "100" }, foreign))
+          ref = { ref: refName, object: { type: "tag", sha: foreign } }; throw Error("Create conflict")
+        }
+        if (failure === "missing ref") throw Error("Unknown ref response")
+        ref = { ref: refName, object: { type: "tag", sha: objectSha } }
+        if (failure === "ref response lost") throw Error("Unknown ref response")
+        return clone(ref)
+      },
+    }
+    return { operations, calls, read, objects, ref: () => ref, objectSha }
+  }
+  it("claims only after registry vacancy and fresh protection, then verifies the exact atomic ref", async () => {
+    const x = fixture()
+    expect(await claimVersionTag(owner, x.operations)).toBe(x.objectSha)
+    expect(x.calls).toEqual(["GET git/ref/tags/lotus-next-v2026.10.30", "npm vacancy", "refresh", "POST git/tags", "refresh",
+      "POST git/refs", "GET git/ref/tags/lotus-next-v2026.10.30", "GET git/tags/" + x.objectSha])
+  })
+  it("reuses its own run without Actions history or another registry vacancy/create request", async () => {
+    const x = fixture({ existing: owner, vacant: false })
+    expect(await claimVersionTag(owner, x.operations)).toBe(x.objectSha)
+    expect(x.calls.some(call => call.startsWith("POST ") || call === "npm vacancy")).toBe(false)
+  })
+  it("does not replace an already observed tag even with the same owner fields", async () => {
+    const x = fixture({ existing: owner })
+    await expect(claimVersionTag(owner, { ...x.operations, expectedTag: "b".repeat(40) })).rejects.toThrow(/changed during admission/)
+    expect(x.calls.some(call => call.startsWith("POST ") || call === "npm vacancy")).toBe(false)
+  })
+  it("allows a first claim on retry only when every prior source step was positively unstarted", () => {
+    const env = { GITHUB_RUN_ID: "99", GITHUB_RUN_ATTEMPT: "2", GITHUB_SHA: owner.workflowSha }
+    const previous = { total_count: 1, jobs: [{ name: "Validate publication request", run_id: 99, run_attempt: 1,
+      head_sha: owner.workflowSha, status: "completed", conclusion: "failure", steps: [
+        { name: "Resolve the reviewed immutable release candidate", status: "completed", conclusion: "skipped" },
+      ] }] }
+    expect(() => assertUnclaimedTagRetry(env, () => clone(previous))).not.toThrow()
+    for (const change of [
+      d => { d.jobs[0].steps[0].conclusion = "success" }, d => { d.jobs[0].steps[0].conclusion = "failure" },
+      d => { d.jobs[0].steps[0].status = "in_progress" }, d => { d.jobs[0].steps = [] },
+      d => { d.jobs[0].head_sha = owner.sourceSha }, d => { d.total_count++ },
+    ]) { const altered = clone(previous); change(altered); expect(() => assertUnclaimedTagRetry(env, () => altered)).toThrow() }
+    previous.jobs[0].conclusion = "skipped"; previous.jobs[0].steps = []
+    expect(() => assertUnclaimedTagRetry(env, () => clone(previous))).not.toThrow()
+    expect(() => assertUnclaimedTagRetry(env, () => { throw Error("No retained evidence") })).toThrow()
+  })
+  it.each(["runId", "workflowSha", "sourceSha", "version"])("refuses another %s before a write or registry query", async field => {
+    const value = field === "runId" ? "100" : field === "version" ? "2026.10.31" : "f".repeat(40)
+    const x = fixture({ existing: { ...owner, [field]: value } })
+    await expect(claimVersionTag(owner, x.operations)).rejects.toThrow()
+    expect(x.calls.some(call => call.startsWith("POST ") || call === "npm vacancy")).toBe(false)
+  })
+  it("never adopts an unowned historical annotation or lightweight tag", () => {
+    for (const mutate of [x => { x.objects.get(x.objectSha).message = "Reserved formal version" },
+      x => { x.ref().object.type = "commit" }]) {
+      const x = fixture({ existing: owner }); mutate(x)
+      expect(() => readOwnedVersionTag(owner, x.read)).toThrow()
+    }
+  })
+  it("does not reserve a published version or unknown registry state", async () => {
+    const x = fixture({ vacant: false })
+    await expect(claimVersionTag(owner, x.operations)).rejects.toThrow(/Registry not proven vacant/)
+    expect(x.calls.some(call => call.startsWith("POST "))).toBe(false)
+  })
+  it.each(["object response lost", "missing ref", "foreign race", "protection drift"])("stops %s without retrying a write", async failure => {
+    const x = fixture({ failure })
+    await expect(claimVersionTag(owner, x.operations)).rejects.toThrow()
+    expect(x.calls.filter(call => call === "POST git/tags")).toHaveLength(1)
+    expect(x.calls.filter(call => call === "POST git/refs").length).toBeLessThanOrEqual(1)
+  })
+  it("recovers an unknown successful ref creation only by reading the owned immutable object", async () => {
+    const x = fixture({ failure: "ref response lost" })
+    expect(await claimVersionTag(owner, x.operations)).toBe(x.objectSha)
+    expect(x.calls.filter(call => call.startsWith("POST "))).toHaveLength(2)
+  })
+  it("fails unknown reads rather than treating them as a missing tag", async () => {
+    const x = fixture(); x.operations.read = () => { throw Error("GitHub unavailable") }
+    await expect(claimVersionTag(owner, x.operations)).rejects.toThrow(/GitHub unavailable/)
+    expect(x.calls).toEqual([])
+  })
+  it("checks exact active tag protection without pretending hidden bypass actors are empty", () => {
+    expect(verifyVersionTagRuleset(tagRule(), 7)).toEqual({ rulesetId: 7, bypassActorsVisible: false })
+    expect(verifyVersionTagRuleset({ ...tagRule(), bypass_actors: [] }, 7)).toEqual({ rulesetId: 7, bypassActorsVisible: true })
+    expect(verifyVersionTagRuleset({ ...tagRule(), rules: [{ type: "update", parameters: { update_allows_fetch_and_merge: false } }, { type: "deletion" }] }, 7)).toBeTruthy()
+  })
+  it.each([
+    r => { r.enforcement = "evaluate" }, r => { r.target = "branch" }, r => { r.id = 8 }, r => { r.source = "other/repository" },
+    r => { r.conditions.ref_name.exclude = ["refs/tags/lotus-next-v2026.10.*"] },
+    r => { r.conditions.ref_name.include = ["refs/tags/lotus-next-v2026.10.*"] },
+    r => { delete r.conditions.ref_name.exclude }, r => { r.rules.pop() }, r => { r.rules.push({ type: "creation" }) },
+    r => { r.rules[0].parameters = { update_allows_fetch_and_merge: true } },
+    r => { r.bypass_actors = [{ actor_type: "Integration", actor_id: 1, bypass_mode: "always" }] },
+  ])("rejects incomplete or incompatible tag protection #%#", mutate => {
+    const r = tagRule(); mutate(r); expect(() => verifyVersionTagRuleset(r, 7)).toThrow()
+  })
+})
 
 describe("historical explicit pre-merge Dev feature evidence", () => {
   const workflow = readFileSync(".github/workflows/ci.yml", "utf8")
@@ -137,14 +261,19 @@ describe("protected Dev publication CLI", () => {
       const head = git("rev-parse", "HEAD")
       git("checkout", "--quiet", "dev"); git("merge", "--quiet", "--no-ff", "feature", "-m", "Normal Dev merge")
       const source = git("rev-parse", "HEAD"), tree = git("rev-parse", "HEAD^{tree}")
-      git("tag", "-a", "lotus-next-v2026.10.30", "-m", "Reserved formal version")
       git("commit", "--quiet", "--allow-empty", "-m", "Later trusted controller")
       const controller = git("rev-parse", "HEAD")
+      const owner = versionTagOwner({ LOTUS_NEXT_RELEASE_VERSION: "2026.10.30", EXPECTED_SOURCE_SHA_INPUT: source,
+        GITHUB_RUN_ID: "99", GITHUB_WORKFLOW_SHA: controller })
+      const reserve = ["new tag", "lost ref response", "registry published", "registry unknown"].includes(change)
+      if (!reserve) git("tag", "-a", "lotus-next-v2026.10.30", source, "-m", JSON.stringify(owner))
       git("remote", "add", "origin", repo)
       const pr = { number: 450, state: "closed", merged: true, merged_at: "2020-01-01T00:00:00Z", merge_commit_sha: source,
         base: { ref: "dev", sha: base, repo: { full_name: "bigduu/lotus-next" } }, head: { sha: head, repo: { full_name: "bigduu/lotus-next" } } }
-      const routes = { "actions/runs/99": { id: 99, created_at: "2026-10-30T00:00:00Z" },
-        "actions/workflows/publish-npm.yml/runs?event=workflow_dispatch&per_page=100&page=1": { total_count: 0, workflow_runs: [] },
+      const object = reserve ? "a".repeat(40) : git("rev-parse", "refs/tags/lotus-next-v2026.10.30")
+      const routes = { "rulesets/7": tagRule(),
+        "git/ref/tags/lotus-next-v2026.10.30": { ref: "refs/tags/lotus-next-v2026.10.30", object: { type: "tag", sha: object } },
+        [`git/tags/${object}`]: { sha: object, tag: "lotus-next-v2026.10.30", object: { type: "commit", sha: source }, message: JSON.stringify(owner) },
         "pulls/450": pr, [`git/commits/${source}`]: { sha: source, parents: [{ sha: base }, { sha: head }], tree: { sha: tree } },
         "branches/dev": { protected: true, commit: { sha: controller } },
         [`compare/${controller}...${controller}`]: { merge_base_commit: { sha: controller }, status: "identical" },
@@ -155,22 +284,51 @@ describe("protected Dev publication CLI", () => {
       if (change === "non-ancestor source") routes[`compare/${source}...${controller}`].merge_base_commit.sha = base
       if (change === "moved release ref") routes[`git/ref/heads/release/${source}`].object.sha = controller
       if (change === "forged Git parents") routes[`git/commits/${source}`].parents[0].sha = controller
-      if (change === "moved tag") { git("tag", "--delete", "lotus-next-v2026.10.30"); git("tag", "-a", "lotus-next-v2026.10.30", "-m", "Wrong source") }
+      if (change === "moved tag") routes[`git/tags/${object}`].object.sha = controller
       writeFileSync(join(bin, "gh"), `#!${process.execPath}\nconst fs = require('node:fs');
+const {spawnSync}=require('node:child_process');
 const route = process.argv[3]?.replace('repos/bigduu/lotus-next/', '');
-fs.appendFileSync(process.env.SOURCE_API_LOG, route + '\\n');
+const method=process.argv.includes('--method')?process.argv[process.argv.indexOf('--method')+1]:'GET';
+fs.appendFileSync(process.env.SOURCE_API_LOG, (method==='GET'?'':method+' ')+route + '\\n');
 const routes = JSON.parse(process.env.SOURCE_API_ROUTES);
+const git=(args,input)=>{const r=spawnSync('git',args,{encoding:'utf8',input});if(r.status!==0)process.exit(2);return r.stdout.trim()};
+if(process.env.SOURCE_TAG_RESERVE==='true'){
+  const name='lotus-next-v2026.10.30', ref='refs/tags/'+name;
+  const tagged=object=>{const raw=git(['cat-file','-p',object]);const at=raw.indexOf('\\n\\n');return {sha:object,tag:name,message:raw.slice(at+2),object:{type:'commit',sha:/^object ([0-9a-f]{40})/m.exec(raw)[1]}}};
+  if(method==='POST'){
+    const value=JSON.parse(fs.readFileSync(0,'utf8'));
+    if(route==='git/tags'){
+      const object=git(['mktag'],'object '+value.object+'\\ntype commit\\ntag '+value.tag+'\\ntagger Fixture <fixture@example.invalid> 1700000000 +0000\\n\\n'+value.message+'\\n');
+      process.stdout.write(JSON.stringify(tagged(object)));process.exit(0);
+    }
+    if(route!=='git/refs'||value.ref!==ref)process.exit(2);
+    git(['update-ref',ref,value.sha,'0'.repeat(40)]);
+    if(process.env.SOURCE_LOST_REF==='true'){process.stdout.write('unknown');process.exit(1)}
+    process.stdout.write(JSON.stringify({ref,object:{type:'tag',sha:value.sha}}));process.exit(0);
+  }
+  if(route==='git/ref/tags/'+name){
+    const r=spawnSync('git',['rev-parse','--verify','--quiet',ref],{encoding:'utf8'});
+    if(r.status!==0){process.stdout.write(JSON.stringify({status:'404'}));process.exit(1)}
+    process.stdout.write(JSON.stringify({ref,object:{type:'tag',sha:r.stdout.trim()}}));process.exit(0);
+  }
+  if(route?.startsWith('git/tags/')){process.stdout.write(JSON.stringify(tagged(route.slice(9))));process.exit(0)}
+}
 if (process.argv[2] !== 'api' || !Object.hasOwn(routes, route)) { console.error('No retained feature CI record: ' + route); process.exit(2); }
 process.stdout.write(JSON.stringify(routes[route]));\n`, { mode: 0o755 })
+      writeFileSync(join(root, "registry.mjs"), `import {appendFileSync} from 'node:fs';
+globalThis.fetch=async(url,options)=>{if(url!=='https://registry.npmjs.org/@bigduu%2flotus-next/2026.10.30'||options.redirect!=='error')throw Error('Unexpected registry request');appendFileSync(process.env.SOURCE_API_LOG,'npm vacancy\\n');return {status:Number(process.env.SOURCE_REGISTRY_STATUS),body:{cancel:async()=>{}}}};\n`)
       const output = join(root, "receipt.json"), calls = join(root, "api.log")
-      const result = spawnSync(process.execPath, [join(repo, "scripts/release-source.mjs")], { cwd: repo, encoding: "utf8", timeout: 10000,
+      const result = spawnSync(process.execPath, ["--import", join(root, "registry.mjs"), join(repo, "scripts/release-source.mjs"), ...(reserve ? ["reserve"] : [])], { cwd: repo, encoding: "utf8", timeout: 10000,
         env: { ...process.env, PATH: bin + delimiter + process.env.PATH, GITHUB_REPOSITORY: "bigduu/lotus-next",
           GITHUB_REF: "refs/heads/dev", GITHUB_REF_PROTECTED: "true", GITHUB_EVENT_NAME: "workflow_dispatch",
           GITHUB_SHA: controller, GITHUB_WORKFLOW_SHA: controller, EXPECTED_WORKFLOW_SHA: controller,
           GITHUB_WORKFLOW_REF: "bigduu/lotus-next/.github/workflows/publish-npm.yml@refs/heads/dev",
           GITHUB_RUN_ID: "99", GITHUB_RUN_ATTEMPT: "1", FEATURE_PR_INPUT: "450", FEATURE_RUN_INPUT: "",
+          LOTUS_RELEASE_TAG_RULESET_ID: "7",
           EXPECTED_SOURCE_SHA_INPUT: source, SOURCE_REF_INPUT: "refs/tags/lotus-next-v2026.10.30",
           LOTUS_NEXT_RELEASE_VERSION: "2026.10.30", SOURCE_RECEIPT_PATH: output, GITHUB_OUTPUT: join(root, "outputs"),
+          SOURCE_TAG_RESERVE: String(reserve), SOURCE_LOST_REF: String(change === "lost ref response"),
+          SOURCE_REGISTRY_STATUS: change === "registry published" ? "200" : change === "registry unknown" ? "503" : "404",
           SOURCE_API_LOG: calls, SOURCE_API_ROUTES: JSON.stringify(routes) } })
       return { ...result, source, controller, tree, receipt: result.status === 0 ? JSON.parse(readFileSync(output, "utf8")) : null,
         calls: readFileSync(calls, "utf8").trim().split("\n") }
@@ -182,9 +340,20 @@ process.stdout.write(JSON.stringify(routes[route]));\n`, { mode: 0o755 })
     expect(result.receipt).toMatchObject({ sourceSha: result.source, sourceTree: result.tree, workflowSha: result.controller, featurePr: 450 })
     expect(result.source).not.toBe(result.controller)
     for (const key of ["testedSnapshot", "featureRun", "featureRunAttempt"]) expect(result.receipt).not.toHaveProperty(key)
-    expect(result.calls.filter(route => route.startsWith("actions/"))).toEqual([
-      "actions/runs/99", "actions/workflows/publish-npm.yml/runs?event=workflow_dispatch&per_page=100&page=1",
-    ])
+    expect(result.calls.filter(route => route.startsWith("actions/"))).toEqual([])
+    expect(result.receipt.tagProtection).toEqual({ rulesetId: 7, bypassActorsVisible: false })
+  })
+  it.each(["new tag", "lost ref response"])("reserves %s through the actual CLI and local Git ref/object readback", change => {
+    const result = runSource(change)
+    expect(result.status, result.stderr).toBe(0)
+    expect(result.calls.filter(call => call.startsWith("POST "))).toEqual(["POST git/tags", "POST git/refs"])
+    expect(result.calls.indexOf("npm vacancy")).toBeLessThan(result.calls.indexOf("POST git/tags"))
+    expect(result.receipt.runId).toBe("99")
+  })
+  it.each(["registry published", "registry unknown"])("leaves no version reservation when %s", change => {
+    const result = runSource(change)
+    expect(result.status).toBe(1)
+    expect(result.calls.some(call => call.startsWith("POST "))).toBe(false)
   })
   it.each(["unprotected Dev", "unaccepted controller", "non-ancestor source", "moved release ref", "forged Git parents", "moved tag"])(
     "fails closed for %s without tests or product builds", change => { expect(runSource(change).status).toBe(1) },

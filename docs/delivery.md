@@ -24,17 +24,22 @@ Bamboo source and binary is required before accepting the feature.
 
 ## Build and publish the original package once
 
-1. After real feature acceptance, freeze `release/<accepted-Dev-SHA>` and reserve
-   the existing annotated `lotus-next-vVERSION` tag at that exact Dev commit.
-   Supply that version/tag/SHA plus the normally merged Dev PR to the protected
-   Dev-ref dispatch. Controller and product source identities remain distinct.
+1. After real feature acceptance, freeze `release/<accepted-Dev-SHA>`. Supply the
+   version, `refs/tags/lotus-next-vVERSION`, source SHA and normally merged Dev PR
+   to protected Dev; do not create that tag yourself. Controller and product
+   source identities remain distinct.
 2. Preflight checks the same-repository merged Dev PR, `merge_commit_sha=S`,
    exactly two Git parents matching the PR base/head, S's tree and protected
    Dev ancestry. S must contain the complete feature graph, all dependency edges
    and the real always-running aggregate. Unit, all four browser shards, real
    Bamboo and native Actor must have succeeded before the normal protected merge;
    release trusts that admission instead of independently proving historical
-   job/step outcomes. After every check, upload the publication run/attempt receipt;
+   job/step outcomes. For a new tag, require npm's explicit 404 before creating
+   an annotated object binding version/source/original run/controller and
+   atomically creating its formal ref. Read back the exact object before allowing
+   build. Another run and an old tag without that owner are refused; an unknown
+   create result permits only readback, never another speculative write.
+   After every check, upload the publication run/attempt receipt;
    publish keeps the successful preflight's artifact ID across retries.
 3. One build job stamps disposable package metadata, runs the final dist build
    once and creates one actual tgz with lifecycle scripts disabled. Static package
@@ -48,9 +53,16 @@ Bamboo source and binary is required before accepting the feature.
    must equal the retained tarball. A build retry requires complete same-run,
    same-controller metadata proving every earlier build/pack step was skipped;
    a whole skipped job requires its skipped conclusion and an empty steps array;
-   started or missing evidence stops it. While the original run remains in GitHub
-   history, another dispatch of the same version stops before compiling again; missing successful
-   originals stop recovery. A product repair returns through feature/dev/new cut.
+   started or missing evidence stops it. The owned formal tag rejects another
+   run even when Actions history has disappeared. Same-run preflight may reuse
+   its reservation without requiring npm vacancy again; publish still verifies
+   any existing npm bytes against the retained original. Publication refresh is
+   read-only and cannot recreate a missing tag. Missing successful originals
+   stop recovery. A product repair returns through feature/dev/new cut.
+   If a same-run preflight retry finds no tag, complete original metadata must
+   prove that all earlier source/claim steps were skipped (or the whole preflight
+   was skipped with no steps). A started, failed or unknown claim cannot authorize
+   recreation of a missing tag.
 
 Historical candidate rows, signed identities and the fixed published-version
 verifier stay historical. The old reader remains available for those receipts,
@@ -67,12 +79,40 @@ individual jobs were correct. The feature diagnostic artifact still expires afte
 This replaces the historical-CI dependency discussed in [#471](https://github.com/bigduu/lotus-next/issues/471),
 without claiming to authenticate deleted records or adding a trusted archive.
 
-Publication recovery still depends on its original tarball and Actions records.
-The duplicate-dispatch guard only sees retained workflow history; it cannot prove
-permanently that a version was never built after that history expires. Never
-manually redispatch the same version. Preserve original receipts/output and use
-separately reviewed recovery when records expire; absent history is not permission
-to rebuild. This revision does not extend the existing 90-day tarball retention.
+Publication recovery still depends on its original tarball and same-run Actions
+records. The formal tag preserves the run that owns the version; it does not
+preserve expired artifacts or prove a completed release. Never move/delete the
+tag or dispatch that version in another run. Preserve originals and use separately
+reviewed recovery when records expire; absent history is not permission to
+rebuild. This revision does not extend the 90-day tarball retention. Main retains
+its completed-publisher/npm checks and its one-formal-tag-per-source requirement.
+
+### Required tag governance before activation
+
+An administrator must separately configure and actually verify a repository
+ruleset with target `tag`, enforcement `active`, include
+`[refs/tags/lotus-next-v*]`, exclude `[]`, both update/deletion restrictions and
+no bypass actors. Configure its numeric ID in the repository variable
+`LOTUS_RELEASE_TAG_RULESET_ID`. No GitHub setting or real tag is created by this
+code change. Do not enable publication until that live protection is verified.
+
+Preflight alone adds `contents: write` for Git tag-object/ref creation. Build and
+publish keep read-only repository access; npm/OIDC stays with publish. Both
+preflight and publication refresh require the configured rule and exact scope;
+missing, disabled, narrowed or excluded rules stop the job. GitHub's low-privilege
+Get ruleset API does not guarantee `bypass_actors` visibility. Runtime records
+whether the field was visible, rejects visible bypass actors, and never treats a
+hidden field as empty. The administrator's no-bypass audit and ongoing governance
+are explicit prerequisites, not facts established by runtime/local fixtures.
+No long-lived admin token is introduced. Actual hosted token capability and
+protection still need separate acceptance; permission errors stop before build.
+
+This applies only to versions newly claimed after the rule and governance are
+enabled. Before the first claim, an administrator must confirm the selected
+version is new. If a pre-cutover failed build has lost both its formal tag and
+Actions history, current tag/npm 404s cannot prove it never built. Do not reuse
+that unknown historical version or claim this mechanism authenticates all past
+versions. Existing old tags without an owner remain rejected.
 
 ## Complete tests before dev
 
