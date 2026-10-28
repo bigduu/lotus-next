@@ -20,7 +20,7 @@ import {
 import { buildArtifactManifest } from "./artifact-manifest.mjs"
 
 const expectedBambooRevision =
-  "d6325a732c7669f94962f604e4ce98966e374d73"
+  "4786b7db862cabbebce49e288da62b284ccf5b72"
 const readRepositoryFile = (relativePath) =>
   readFileSync(resolve(process.cwd(), relativePath), "utf8")
 
@@ -229,15 +229,8 @@ describe("published real-Bamboo acceptance policy", () => {
 
     expect(ci).toContain(`BAMBOO_E2E_REVISION: ${expectedBambooRevision}`)
     expect(ci).toContain("BAMBOO_E2E_HOST_REVISION: 4786b7db862cabbebce49e288da62b284ccf5b72")
-    const hostCheckouts = ci.split("      - name: Check out the accepted feature browser host\n")
-    expect(hostCheckouts).toHaveLength(2)
-    const hostCheckout = hostCheckouts[1].split(/\n      - /u)[0]
-    expect(hostCheckout).toContain("uses: actions/checkout@v7")
-    expect(hostCheckout).toContain("repository: bigduu/Bamboo-agent")
-    expect(hostCheckout).toContain("ref: ${{ env.BAMBOO_E2E_HOST_REVISION }}")
-    expect(hostCheckout).toContain("path: .e2e-bamboo-host")
-    expect(hostCheckout).toContain("persist-credentials: false")
-    expect(ci.match(/BAMBOO_E2E_HOST_SOURCE_DIR: \${{ github.workspace }}\/.e2e-bamboo-host/g)).toHaveLength(2)
+    expect(ci).not.toContain("      - name: Check out the accepted feature browser host\n")
+    expect(ci.match(/BAMBOO_E2E_HOST_SOURCE_DIR: \${{ github.workspace }}\/.e2e-bamboo\n/g)).toHaveLength(2)
     expect(publication).not.toContain("BAMBOO_E2E_HOST_REVISION")
     expect(publication).not.toContain("BAMBOO_E2E_HOST_SOURCE_DIR")
     expect(publication).toContain('BAMBOO_E2E_REVISION: ${{ needs.preflight.outputs.bamboo_sha }}')

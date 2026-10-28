@@ -1,8 +1,9 @@
 # Lotus Next agent guidance
 
-Read [README.md](README.md) for the product boundary and
-[delivery.md](docs/delivery.md) before changing CI, accepting a feature, cutting a
-release, or publishing npm assets.
+Read [README.md](README.md) for the product boundary, [delivery.md](docs/delivery.md),
+the shared [delivery workflow](docs/delivery-workflow.md), and the
+[Actions audit](docs/ci-workflow-audit.md) before changing CI or releasing.
+The shared migration table is a historical snapshot; check live workflows.
 
 ## Feature ownership
 
@@ -11,16 +12,16 @@ release, or publishing npm assets.
   regression before dev admission. Fix Unit, browser E2E, real Bamboo and native
   Actor failures on the feature branch. Never leave test or fixture repairs for
   a release branch.
-- Require the current-head/base `Feature acceptance` check. It joins both Node
-  Unit lanes, all four browser shards, the real Bamboo round trip and packed
+- Require the current-head/base `Feature acceptance` check. It joins the Node 22
+  Unit lane, Node 24 artifact checks, all four browser shards, the real Bamboo round trip and packed
   local/HTTPS surfaces, and native Actor acceptance. Skipped, failed, cancelled
   or missing required jobs do not constitute acceptance.
 - CI executes the actual PR merge snapshot. Preserve its base, head, snapshot,
   tree and run/attempt receipt. A feature head, tested merge snapshot, later dev
   commit and final release source are distinct identities. Do not rewrite
   `GITHUB_*` variables or relabel evidence to make them appear identical.
-- Node 24 alone produces the verified `dist`; the four ordinary browser shards
-  and real Bamboo E2E consume it. Node 22 runs Unit compatibility without Vite.
+- Node 22 runs Unit once. Node 24 alone produces the verified `dist`; the four
+  ordinary browser shards and real Bamboo E2E consume it.
   Do not repeat browser suites for the test runner's Node version, run a second
   Vite build for real Bamboo, or rerun successful unrelated shards after one fails.
   Preserve the original failed attempt when reporting a rerun.
@@ -28,8 +29,9 @@ release, or publishing npm assets.
 ## Delivery activation
 
 Issue #446 implements the feature gate under the unified Zenith #399 contract.
-Its dependent release producer and main promotion changes are not implemented
-by this slice. The current publisher still recognizes historical candidate
+Its dependent single-artifact release producer is not implemented by this slice.
+The trusted read-only Main admission bootstrap is installed, but a real release
+still needs the dependent producer. The current publisher recognizes historical candidate
 receipts and retains its existing real-runtime gate. Do not describe the new
 release/main flow as active or submit a new feature-graph receipt to that old
 publisher. Preserve the separately owned frontend 2026.10.28 request (#445),

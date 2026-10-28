@@ -22,14 +22,14 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-export const REAL_BAMBOO_REVISION = "d6325a732c7669f94962f604e4ce98966e374d73";
+export const REAL_BAMBOO_REVISION = "4786b7db862cabbebce49e288da62b284ccf5b72";
 
-// Published executable identity from Bamboo v2026.10.18. Browser-host sources
+// Published executable identity from Bamboo v2026.10.19. Browser-host sources
 // still come from the same verified Git checkout; Cargo is not rerun here.
 export const REAL_BAMBOO_BINARY = Object.freeze({
-  url: "https://github.com/bigduu/Bamboo-agent/releases/download/v2026.10.18/bamboo-x86_64-unknown-linux-gnu",
-  bytes: 247723520,
-  sha256: "06df1bd069b42c46958dcdb7084c1822a8c2d5cb39d0f95affceb3820bbcc8e1",
+  url: "https://github.com/bigduu/Bamboo-agent/releases/download/v2026.10.19/bamboo-x86_64-unknown-linux-gnu",
+  bytes: 248709064,
+  sha256: "f37f51bafe1d49055adcb0e1b51067e2f9a07ad0cb36497a91f86889e5773286",
 });
 
 export const verifyBambooBinary = (
@@ -45,15 +45,15 @@ export const verifyBambooBinary = (
     throw new Error("Published Bamboo binary must be Linux x86_64 ELF");
 };
 
-// This pair is used only by feature CI. The published executable remains tied
-// to d632, while the reviewed host-only fix comes from accepted Bamboo dev.
+// Feature CI verifies the executable and browser host against the same released
+// source. The explicit pair check preserves the original host identity evidence.
 export const FEATURE_BAMBOO_HOST_REVISION = "4786b7db862cabbebce49e288da62b284ccf5b72";
 const FEATURE_BAMBOO_HOST_PAIR = Object.freeze({
   binaryRevision: REAL_BAMBOO_REVISION,
   hostRevision: FEATURE_BAMBOO_HOST_REVISION,
   binaryAdapterTree: "55390529b9823112c56ce9c993c4aa8ad473cd01",
   hostAdapterTree: "55390529b9823112c56ce9c993c4aa8ad473cd01",
-  binaryHostBlob: "66d96c85715849e601b826d579960f1818d74c8c",
+  binaryHostBlob: "3c6a6e5463394bc689f95528446c9fc983e150a6",
   hostHostBlob: "3c6a6e5463394bc689f95528446c9fc983e150a6",
   binaryPackageBlob: "4df53cb8e1e41e1e6a34ad5e65843a866ae8101d",
   hostPackageBlob: "4df53cb8e1e41e1e6a34ad5e65843a866ae8101d",
@@ -70,7 +70,7 @@ export const assertFeatureBambooHostPair = (actual: BambooHostPairObservation): 
   }
 };
 
-/** A mixed pair is confined to a dev PR's read-only feature verification. */
+/** Explicit host verification is confined to a dev PR's feature verification. */
 export const resolveFeatureBrowserHost = (environment: NodeJS.ProcessEnv):
   { mode: "same-source" } | { mode: "feature-pair"; directory: string } => {
   const directory = environment.BAMBOO_E2E_HOST_SOURCE_DIR?.trim();

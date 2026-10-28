@@ -22,7 +22,7 @@ embedded hosting while enforcing the canonical `/api/v1` and `/v2/stream`
 runtime contract. CI retains its HTML report, trace, screenshot, video, and
 runtime observations when a case fails.
 
-CI retains Node 22/24 Unit compatibility and builds its canonical test artifact
+CI runs Unit once on Node 22 and builds its canonical test artifact
 once on Node 24. Four independently rerunnable shards consume that artifact
 across the complete all-surface inventory. See
 [browser shard evidence, reruns, and timing](browser-test-shards.md).
@@ -35,19 +35,14 @@ slice, and the existing historical publisher is unchanged.
 
 The real-runtime gate is intentionally separate from that deterministic
 matrix. It verifies a clean checkout of Bamboo revision
-`d6325a732c7669f94962f604e4ce98966e374d73` and the hash-verified published
-Bamboo `2026.10.18` Linux x64 executable. Feature PR CI separately verifies the
-accepted browser host at `4786b7db862cabbebce49e288da62b284ccf5b72`. It checks
-the exact host blobs and identical Rust browser-adapter tree and browser-runtime
-package/lock objects for the two revisions, then overlays only `host.cjs` from
-the accepted host checkout into the isolated test image. The image records both
-revisions and the actual host SHA-256, which the browser test checks against the
-file inside the running container. This is a test-only pair, not a same-source
-Bamboo release. Publication and ordinary local verification retain the original
-same-source host and published executable. The feature gate still runs the full
-real Bamboo and native Actor tests; the static checks alone do not establish
-runtime compatibility. The image is assembled without compiling Bamboo. It
-serves the production
+`4786b7db862cabbebce49e288da62b284ccf5b72` and the hash-verified published
+Bamboo `2026.10.19` Linux x64 executable. Feature PR CI checks the browser host,
+Rust adapter and browser-runtime package/lock objects against that same source.
+The image records the source revision and host SHA-256, which the browser test
+checks against the file inside the running container. The feature gate still
+runs the full real Bamboo and native Actor tests; static checks alone do not
+establish runtime compatibility. The image is assembled without compiling
+Bamboo. It serves the production
 Lotus Next artifact from that Bamboo process and drives
 one complete chat turn through the visible desktop UI and a local deterministic
 OpenAI-compatible provider. It requires the `auth.ws_hello_ack.v1` bootstrap
@@ -70,9 +65,9 @@ BAMBOO_E2E_SOURCE_DIR=/absolute/path/to/bamboo \
 ```
 
 Docker and Chromium are required. The runner rejects a different or dirty
-Bamboo checkout and never accepts a live Bamboo URL. The two-revision mode is
-restricted to the canonical dev feature PR workflow and requires its separate
-clean, exact host checkout; publication inputs cannot select it. Normal completion, setup
+Bamboo checkout and never accepts a live Bamboo URL. Feature CI uses the same
+clean checkout for binary source and host verification; publication inputs cannot
+select the feature-only host path. Normal completion, setup
 failure, `SIGINT`, and `SIGTERM` share one exact-resource teardown for the two
 containers, private network, temporary image, observation mount, and data root
 it created. CI runs this single desktop lane once on Node 24; it does not repeat
