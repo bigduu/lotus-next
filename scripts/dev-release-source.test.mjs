@@ -108,6 +108,12 @@ describe("publication trusts normal protected Dev admission", () => {
     ["skipped aggregate step", s => s.replace("        run: node scripts/feature-acceptance.mjs summarize", "        if: false\n        run: node scripts/feature-acceptance.mjs summarize")],
     ["forged runtime result", s => s.replace("REAL_BAMBOO_RESULT: ${{ needs.real-bamboo.result }}", "REAL_BAMBOO_RESULT: success")],
     ["quoted conditional override", s => s.replace("    name: Real Bamboo / Node 24", "    'if': false\n    name: Real Bamboo / Node 24")],
+    ["verify matrix excludes the Unit lane", s => s.replace("      matrix:\n        node:\n", "      matrix:\n        exclude:\n          - node: 22\n        node:\n")],
+    ["verify matrix adds an included lane", s => s.replace("      matrix:\n        node:\n", "      matrix:\n        include:\n          - node: 22\n        node:\n")],
+    ["browser matrix excludes a shard", s => s.replace("        shard:\n", "        exclude:\n          - node: 24\n            shard: 1\n        shard:\n")],
+    ["browser matrix includes an extra shard", s => s.replace("        shard:\n", "        include:\n          - node: 24\n            shard: 5\n        shard:\n")],
+    ["verify matrix has a quoted exclusion", s => s.replace("      matrix:\n        node:\n", "      matrix:\n        'exclude':\n          - node: 22\n        node:\n")],
+    ["browser matrix repeats the shard key", s => s.replace("        shard:\n", "        shard:\n          - 1\n        shard:\n")],
   ])("rejects incomplete gate wiring: %s", (_name, mutate) => {
     expect(() => verify(fixture(), mutate(workflow))).toThrow()
   })
