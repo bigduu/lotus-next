@@ -42,6 +42,6 @@ export function SessionCompatibilityNotice({ state, sessionId }: { state?: Sessi
   </section> : null}
     {sessionId ? <SessionVersionMigrationAction key={sessionId} sessionId={sessionId}
       enabled={true} autoAssess={needsMigration} allowNewMigration={needsMigration}
-      hideIdle={!showNotice} className="mx-3 mb-2" /> : null}
+      hideIdle={!showNotice} className="mx-4 mb-2" /> : null}
   </>
 }
