@@ -132,7 +132,7 @@ describe("minimal publication source and recovery boundary", () => {
   it("uploads only checked attempt-bound receipts and reuses the successful preflight output", () => {
     const preflight = workflow.split("\n  preflight:\n")[1].split("\n  build:\n")[0]
     const upload = preflight.indexOf("      - name: Upload the run-bound release source receipt")
-    expect(upload).toBeGreaterThan(preflight.indexOf("      - name: Validate version, source, and registry vacancy"))
+    expect(upload).toBeGreaterThan(preflight.indexOf("      - name: Validate version and clean controller source"))
     expect(preflight.slice(upload)).toContain("name: release-source-receipt-${{ github.run_id }}-${{ github.run_attempt }}")
     expect(preflight.slice(upload)).toContain("overwrite: false")
     expect(preflight).toContain("source_receipt_artifact_id: ${{ steps.receipt.outputs.artifact-id }}")
@@ -200,6 +200,19 @@ process.stdout.write(JSON.stringify(JSON.parse(process.env.RETRY_HISTORY)[Number
 
 
 describe("protected Dev publication controller", () => {
+  it("limits tag creation to preflight and keeps publication refresh read-only", () => {
+    const preflight = workflow.split("\n  preflight:\n")[1].split("\n  build:\n")[0]
+    const publish = workflow.split("\n  publish:\n")[1]
+    expect(preflight).toContain("      contents: write\n")
+    expect(preflight).toContain("run: node scripts/release-source.mjs reserve")
+    expect(preflight).toContain("LOTUS_RELEASE_TAG_RULESET_ID: ${{ vars.LOTUS_RELEASE_TAG_RULESET_ID }}")
+    expect(preflight).not.toContain("npm view")
+    expect(publish).toContain("      contents: read\n")
+    expect(publish).not.toContain("      contents: write\n")
+    expect(publish).not.toContain("release-source.mjs reserve")
+    expect(publish).toContain("        run: node scripts/release-source.mjs\n")
+    expect(publish).toContain("LOTUS_RELEASE_TAG_RULESET_ID: ${{ vars.LOTUS_RELEASE_TAG_RULESET_ID }}")
+  })
   it("guards both admission and credentialed publication without compiling Dev", () => {
     const guard = "    if: github.ref == 'refs/heads/dev' && github.ref_protected"
     expect(workflow.split(guard)).toHaveLength(3)

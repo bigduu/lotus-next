@@ -495,6 +495,95 @@ export const legacySource = async () => {
 }
 
 
+// Administrator governance prerequisite: audit no bypass actors separately.
+// Metadata:read does not guarantee that GitHub reveals bypass_actors here.
+export const verifyVersionTagRuleset = (rule, rulesetId) => {
+  assert.equal(rule.id, rulesetId); assert.equal(rule.source_type, "Repository")
+  assert.equal(rule.source, repository); assert.equal(rule.target, "tag"); assert.equal(rule.enforcement, "active")
+  exactKeys(rule.conditions, ["ref_name"])
+  assert.deepEqual(rule.conditions.ref_name, { include: ["refs/tags/lotus-next-v*"], exclude: [] })
+  assert.deepEqual(rule.rules.map(item => item.type).sort(), ["deletion", "update"])
+  for (const item of rule.rules) {
+    if (item.parameters !== undefined) {
+      assert.ok(item.type === "update")
+      assert.deepEqual(item.parameters, { update_allows_fetch_and_merge: false })
+    }
+  }
+  const visible = Object.hasOwn(rule, "bypass_actors")
+  if (visible) assert.ok(Array.isArray(rule.bypass_actors) && rule.bypass_actors.length === 0,
+    "Visible bypass actors violate the administrator prerequisite")
+  return { rulesetId, bypassActorsVisible: visible }
+}
+
+export const versionTagOwner = (env) => {
+  const { LOTUS_NEXT_RELEASE_VERSION: version, EXPECTED_SOURCE_SHA_INPUT: sourceSha,
+    GITHUB_RUN_ID: runId, GITHUB_WORKFLOW_SHA: workflowSha } = env
+  assert.match(version, versionPattern); assert.notEqual(version, "0.0.0")
+  assert.match(sourceSha, sha); assert.match(workflowSha, sha); assert.match(runId, /^[1-9][0-9]*$/)
+  return { kind: "lotus-publication-owner/v1", repository, version, sourceSha, runId, workflowSha }
+}
+
+export const readOwnedVersionTag = (owner, read) => {
+  const ref = `refs/tags/lotus-next-v${owner.version}`, found = read(`git/ref/${ref.slice(5)}`)
+  if (found === null) return null
+  assert.equal(found.ref, ref); assert.equal(found.object.type, "tag", "Require an owned annotated version tag")
+  assert.match(found.object.sha, sha)
+  const object = read(`git/tags/${found.object.sha}`)
+  assert.equal(object.sha, found.object.sha); assert.equal(object.tag, ref.slice(10))
+  assert.equal(object.object.type, "commit"); assert.equal(object.object.sha, owner.sourceSha)
+  // One trailing LF is Git's normal annotation terminator, not another field.
+  const message = object.message?.endsWith("\n") ? object.message.slice(0, -1) : object.message
+  assert.ok(message === JSON.stringify(owner), "Version belongs to another run/controller or an unowned historical tag; never rebuild")
+  return object.sha
+}
+
+export const claimVersionTag = async (owner, { read, create, registryVacant, refresh, expectedTag }) => {
+  const existing = readOwnedVersionTag(owner, read)
+  if (expectedTag !== undefined) assert.equal(existing, expectedTag, "Version tag changed during admission; never replace it")
+  if (existing) { refresh(); return existing }
+  // Never leave a new reservation for an already published/unknown version.
+  await registryVacant()
+  refresh()
+  const readback = expected => {
+    const object = readOwnedVersionTag(owner, read)
+    assert.ok(object, "Version tag creation was not confirmed; stop without another write or build")
+    if (expected) assert.equal(object, expected, "Version tag object changed during creation")
+    return object
+  }
+  let object
+  try {
+    object = create("git/tags", { tag: `lotus-next-v${owner.version}`, message: JSON.stringify(owner),
+      object: owner.sourceSha, type: "commit" })
+  } catch { return readback() } // Unknown write: only read, never retry a POST.
+  assert.match(object.sha, sha)
+  assert.equal(object.tag, `lotus-next-v${owner.version}`)
+  assert.equal(object.object.type, "commit"); assert.equal(object.object.sha, owner.sourceSha)
+  assert.equal(object.message, JSON.stringify(owner))
+  refresh()
+  try { create("git/refs", { ref: `refs/tags/lotus-next-v${owner.version}`, sha: object.sha }) }
+  catch { return readback(object.sha) } // The create-only ref is the atomic race winner.
+  assert.equal(readback(), object.sha, "Created tag ref changed before its readback")
+  return object.sha
+}
+
+export const assertUnclaimedTagRetry = (env, read) => {
+  const attempt = Number(env.GITHUB_RUN_ATTEMPT), runId = Number(env.GITHUB_RUN_ID)
+  assert.ok(Number.isSafeInteger(attempt) && attempt > 0 && Number.isSafeInteger(runId) && runId > 0)
+  for (let prior = 1; prior < attempt; prior++) {
+    const data = read(`actions/runs/${runId}/attempts/${prior}/jobs?per_page=100`)
+    assert.equal(data.total_count, data.jobs.length, "Incomplete earlier preflight evidence")
+    const matches = data.jobs.filter(job => job.name === "Validate publication request")
+    assert.equal(matches.length, 1, "Missing or ambiguous earlier preflight")
+    const [job] = matches
+    for (const [key, value] of Object.entries({ run_id: runId, run_attempt: prior, head_sha: env.GITHUB_SHA, status: "completed" })) assert.equal(job[key], value)
+    assert.ok(Array.isArray(job.steps))
+    if (job.conclusion === "skipped") { assert.equal(job.steps.length, 0); continue }
+    const steps = job.steps.filter(step => step.name === "Resolve the reviewed immutable release candidate")
+    assert.equal(steps.length, 1); assert.equal(steps[0].status, "completed")
+    assert.equal(steps[0].conclusion, "skipped", "Earlier tag claim may have started; a missing original tag cannot be recreated")
+  }
+}
+
 const main = async () => {
   const env = process.env, sourceSha = env.EXPECTED_SOURCE_SHA_INPUT, version = env.LOTUS_NEXT_RELEASE_VERSION
   assert.equal(env.GITHUB_REPOSITORY, repository); assert.equal(env.GITHUB_REF_PROTECTED, "true")
@@ -508,26 +597,28 @@ const main = async () => {
   const api = route => JSON.parse(execFileSync("gh", ["api", `repos/${repository}/${route}`], { encoding: "utf8", maxBuffer: 8 * 1024 * 1024 }))
   const id = value => { assert.match(value ?? "", /^[1-9][0-9]*$/); assert.ok(Number.isSafeInteger(Number(value))); return Number(value) }
   const prId = id(env.FEATURE_PR_INPUT)
-  assert.equal(git("rev-parse", "HEAD"), env.GITHUB_SHA); assert.equal(git("status", "--porcelain", "--untracked-files=all"), "")
-  // A replacement dispatch cannot rebuild a previously attempted version.
-  // Failed publication resumes in the original run using its retained tarball.
-  const ownRun = api(`actions/runs/${id(env.GITHUB_RUN_ID)}`)
-  for (let page = 1; ; page++) {
-    const history = api(`actions/workflows/publish-npm.yml/runs?event=workflow_dispatch&per_page=100&page=${page}`)
-    assert.ok(page <= 100 && Array.isArray(history.workflow_runs))
-    for (const prior of history.workflow_runs) if (prior.id !== ownRun.id &&
-      Date.parse(prior.created_at) <= Date.parse(ownRun.created_at) && prior.display_title === `Publish @bigduu/lotus-next@${version}`) {
-      throw new Error(`Reuse original publication run ${prior.id}; do not dispatch/build this version again`)
+  const mode = process.argv[2] ?? "verify"
+  assert.ok(["reserve", "verify"].includes(mode)); id(env.GITHUB_RUN_ID)
+  const rulesetId = id(env.LOTUS_RELEASE_TAG_RULESET_ID), owner = versionTagOwner(env)
+  const read = route => {
+    try { return api(route) } catch (error) {
+      if (route.startsWith("git/ref/tags/")) {
+        let body
+        try { body = JSON.parse(error.stdout?.toString() ?? "") } catch { /* Unknown response is not absence. */ }
+        if (String(body?.status) === "404") return null
+      }
+      throw new Error("Required GitHub publication state is unavailable")
     }
-    if (page * 100 >= history.total_count) break
-    assert.equal(history.workflow_runs.length, 100, "Incomplete publication history")
   }
+  assert.equal(git("rev-parse", "HEAD"), env.GITHUB_SHA); assert.equal(git("status", "--porcelain", "--untracked-files=all"), "")
+  // Reject another run before any reservation, registry query or product work;
+  // this identity does not depend on the lifetime of Actions run history.
+  const initialTag = readOwnedVersionTag(owner, read)
+  if (mode === "verify") assert.ok(initialTag, "Missing original version tag; never recreate it during publication")
+  else if (!initialTag) assertUnclaimedTagRetry(env, read)
   const pr = api(`pulls/${prId}`)
   assert.equal(pr.number, prId)
-  git("fetch", "--no-tags", "origin", env.SOURCE_REF_INPUT)
-  assert.equal(git("cat-file", "-t", "FETCH_HEAD"), "tag")
-  const tagObjectSha = git("rev-parse", "FETCH_HEAD")
-  assert.equal(git("rev-parse", "FETCH_HEAD^{commit}"), sourceSha)
+  git("fetch", "--no-tags", "origin", sourceSha)
   const sourceWorkflow = git("show", `${sourceSha}:.github/workflows/ci.yml`)
   const product = JSON.parse(git("show", `${sourceSha}:package.json`))
   assert.equal(product.name, "@bigduu/lotus-next"); assert.equal(product.version, "0.0.0")
@@ -535,17 +626,36 @@ const main = async () => {
   assert.equal(git("rev-parse", `${sourceSha}^{tree}`), merged.tree.sha)
   assert.deepEqual(git("show", "-s", "--format=%P", sourceSha).split(" "), merged.parents.map(parent => parent.sha))
   const facts = verifyProtectedDevMerge(sourceSha, pr, merged, sourceWorkflow)
-  const current = api("branches/dev"); assert.equal(current.protected, true)
-  const controller = api(`compare/${env.GITHUB_SHA}...${current.commit.sha}`)
-  assert.equal(controller.merge_base_commit.sha, env.GITHUB_SHA); assert.ok(["identical", "ahead"].includes(controller.status))
-  const ancestry = api(`compare/${sourceSha}...${current.commit.sha}`)
-  assert.equal(ancestry.merge_base_commit.sha, sourceSha); assert.ok(["identical", "ahead"].includes(ancestry.status))
-  assert.equal(api(`git/ref/heads/release/${sourceSha}`).object.sha, sourceSha, "Frozen release source moved")
-  assert.equal(api(`pulls/${prId}`).merge_commit_sha, sourceSha)
+  const refresh = () => {
+    const current = api("branches/dev"); assert.equal(current.protected, true)
+    for (const revision of new Set([env.GITHUB_SHA, sourceSha])) {
+      const proof = api(`compare/${revision}...${current.commit.sha}`)
+      assert.equal(proof.merge_base_commit.sha, revision); assert.ok(["identical", "ahead"].includes(proof.status))
+    }
+    assert.equal(api(`git/ref/heads/release/${sourceSha}`).object.sha, sourceSha, "Frozen release source moved")
+    assert.equal(api(`pulls/${prId}`).merge_commit_sha, sourceSha)
+    return verifyVersionTagRuleset(api(`rulesets/${rulesetId}`), rulesetId)
+  }
+  refresh()
+  const tagObjectSha = mode === "reserve" ? await claimVersionTag(owner, { read, refresh, expectedTag: initialTag,
+    registryVacant: async () => {
+      const response = await fetch(`https://registry.npmjs.org/@bigduu%2flotus-next/${version}`,
+        { redirect: "error", signal: AbortSignal.timeout(30000) })
+      await response.body?.cancel()
+      assert.equal(response.status, 404, "Registry must explicitly prove version vacancy before reserving its tag")
+    },
+    create: (route, value) => JSON.parse(execFileSync("gh", ["api", `repos/${repository}/${route}`, "--method", "POST", "--input", "-"],
+      { input: JSON.stringify(value), encoding: "utf8", timeout: 30000, maxBuffer: 65536, stdio: ["pipe", "pipe", "pipe"] })),
+  }) : initialTag
+  git("fetch", "--no-tags", "origin", env.SOURCE_REF_INPUT)
+  assert.equal(git("cat-file", "-t", "FETCH_HEAD"), "tag"); assert.equal(git("rev-parse", "FETCH_HEAD"), tagObjectSha)
+  assert.equal(git("rev-parse", "FETCH_HEAD^{commit}"), sourceSha)
+  assert.equal(readOwnedVersionTag(owner, read), tagObjectSha)
+  const tagProtection = refresh()
   const bambooSha = sourceWorkflow.match(/^\s*BAMBOO_E2E_REVISION: ([0-9a-f]{40})$/m)?.[1]; assert.match(bambooSha ?? "", sha)
   const result = { schemaVersion: 1, repository, version, sourceRef: env.SOURCE_REF_INPUT, sourceSha, sourceTree: facts.sourceTree,
     bambooSha, tagObjectSha, workflowRef: env.GITHUB_WORKFLOW_REF, workflowSha: env.GITHUB_SHA, runId: env.GITHUB_RUN_ID,
-    runAttempt: env.GITHUB_RUN_ATTEMPT, featurePr: prId }
+    runAttempt: env.GITHUB_RUN_ATTEMPT, featurePr: prId, tagProtection }
   writeFileSync(env.SOURCE_RECEIPT_PATH, JSON.stringify(result, null, 2) + "\n", { flag: "wx" })
   appendFileSync(env.GITHUB_OUTPUT, Object.entries({ source_sha: sourceSha, source_tree: facts.sourceTree, source_ref: result.sourceRef,
     bamboo_sha: bambooSha, workflow_sha: env.GITHUB_SHA, tag_object_sha: tagObjectSha }).map(([key, value]) => `${key}=${value}\n`).join(""))
