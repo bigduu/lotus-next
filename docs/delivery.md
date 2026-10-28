@@ -218,3 +218,8 @@ successful Dev publication run/controller. It does not claim Sigstore certificat
 verification. Missing, ambiguous, moved or unpublished evidence fails closed;
 there is no Main build, package, test or publish fallback. A positive promotion
 still requires an actual completed publication and its evidence.
+
+After the ready-event trigger update reaches Main, marking a draft promotion
+ready starts a fresh read-only admission check. The currently installed Main
+workflow lacks that trigger, so open the initial promotion ready for review;
+do not change its frozen release head solely to retrigger admission.

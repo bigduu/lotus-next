@@ -3,6 +3,7 @@ name: Lotus Main admission
 # Base-branch controls inspect the PR merge and published bytes as data only.
 on:
   pull_request_target:
+    types: [opened, synchronize, reopened, ready_for_review]
     branches: [main]
 
 permissions:
