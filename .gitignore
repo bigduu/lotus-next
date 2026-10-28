@@ -22,6 +22,7 @@ test-results-real-bamboo*
 playwright-report-tickets*
 test-results-tickets*
 .e2e-bamboo
+.e2e-bamboo-host
 *.local
 
 # Editor directories and files

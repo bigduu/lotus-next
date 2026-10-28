@@ -83,7 +83,7 @@ test("one process disclosure shows every compact call and reveals individual det
     await expect(rows.nth(index)).toContainText(detail)
   }
 
-  await page.locator("body").click({ position: { x: 900, y: 400 } })
+  await process.blur()
   const screenshot = testInfo.outputPath("all-tool-calls-collapsed-details.png")
   await page.screenshot({ path: screenshot, animations: "disabled" })
   await testInfo.attach("All compact tool calls", { path: screenshot, contentType: "image/png" })
