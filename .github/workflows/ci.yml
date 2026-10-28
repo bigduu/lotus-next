@@ -81,9 +81,9 @@ jobs:
         if: matrix.node == 22
         run: npm run test:run
 
-      - name: Verify architecture, behavior, build, and package contents
+      - name: Verify architecture, build, and package contents
         if: matrix.node == 24
-        run: npm run verify
+        run: npm run verify:artifact
 
       - name: Verify the deterministic provider fixture
         if: matrix.node == 24
@@ -240,7 +240,7 @@ jobs:
     timeout-minutes: 60
 
     env:
-      BAMBOO_E2E_REVISION: d6325a732c7669f94962f604e4ce98966e374d73
+      BAMBOO_E2E_REVISION: 4786b7db862cabbebce49e288da62b284ccf5b72
       BAMBOO_E2E_HOST_REVISION: 4786b7db862cabbebce49e288da62b284ccf5b72
 
     steps:
@@ -257,14 +257,6 @@ jobs:
           repository: bigduu/Bamboo-agent
           ref: ${{ env.BAMBOO_E2E_REVISION }}
           path: .e2e-bamboo
-          persist-credentials: false
-
-      - name: Check out the accepted feature browser host
-        uses: actions/checkout@v7
-        with:
-          repository: bigduu/Bamboo-agent
-          ref: ${{ env.BAMBOO_E2E_HOST_REVISION }}
-          path: .e2e-bamboo-host
           persist-credentials: false
 
       - name: Set up Node.js
@@ -297,13 +289,13 @@ jobs:
       - name: Verify a real chat round trip with the pinned published Bamboo
         env:
           BAMBOO_E2E_SOURCE_DIR: ${{ github.workspace }}/.e2e-bamboo
-          BAMBOO_E2E_HOST_SOURCE_DIR: ${{ github.workspace }}/.e2e-bamboo-host
+          BAMBOO_E2E_HOST_SOURCE_DIR: ${{ github.workspace }}/.e2e-bamboo
         run: node node_modules/@playwright/test/cli.js test --config="${RUNNER_TEMP}/verification-browser/real-bamboo.config.mjs"
 
       - name: Verify the current source artifact on local and secure browser surfaces
         env:
           BAMBOO_E2E_SOURCE_DIR: ${{ github.workspace }}/.e2e-bamboo
-          BAMBOO_E2E_HOST_SOURCE_DIR: ${{ github.workspace }}/.e2e-bamboo-host
+          BAMBOO_E2E_HOST_SOURCE_DIR: ${{ github.workspace }}/.e2e-bamboo
         run: node scripts/published-real-bamboo-acceptance.mjs --current-source --verification-browser "${RUNNER_TEMP}/verification-browser"
 
       - name: Upload the verification browser identity

@@ -65,16 +65,26 @@ describe("frozen reviewed PR-head merge provenance", () => {
 })
 
 describe("candidate Bamboo source bindings", () => {
+  const runtime = readFileSync("e2e/support/realBambooRuntime.ts", "utf8")
+  const bambooSha = runtime.match(/export const REAL_BAMBOO_REVISION = "([0-9a-f]{40})";/)[1]
+  const replaceBinding = (source, value) => source.replace(/BAMBOO_E2E_REVISION: [^\r\n]+/, `BAMBOO_E2E_REVISION: ${value}`)
+  const historicalBindings = [...shardedWorkflow.matchAll(/^[ \t]*BAMBOO_E2E_REVISION: [^\r\n]+$/gm)]
+  if (historicalBindings.length !== 1) throw new Error("Historical CI fixture must contain exactly one Bamboo binding")
   const files = {
-    ci: shardedWorkflow,
+    // Synthetic wiring input only: historical receipt checks use shardedWorkflow unchanged.
+    ci: replaceBinding(shardedWorkflow, bambooSha),
     publication: readFileSync(".github/workflows/publish-npm.yml", "utf8"),
-    runtime: readFileSync("e2e/support/realBambooRuntime.ts", "utf8"),
+    runtime,
     acceptanceTest: readFileSync("scripts/published-real-bamboo-acceptance.test.mjs", "utf8"),
   }
-  const bambooSha = files.runtime.match(/export const REAL_BAMBOO_REVISION = "([0-9a-f]{40})";/)[1]
   const currentCandidate = { ...candidate, bambooSha }
   const dynamicBinding = "${{ needs.preflight.outputs.bamboo_sha }}"
-  const replaceBinding = (source, value) => source.replace(/BAMBOO_E2E_REVISION: [^\r\n]+/, `BAMBOO_E2E_REVISION: ${value}`)
+
+  it("preserves the historical CI fixture while binding the synthetic input to the current runtime", () => {
+    expect(shardedWorkflow).toContain("BAMBOO_E2E_REVISION: d6325a732c7669f94962f604e4ce98966e374d73")
+    expect(files.ci).toContain(`BAMBOO_E2E_REVISION: ${bambooSha}`)
+    expect(readFileSync("scripts/fixtures/ci-sharded-main-v1.yml", "utf8")).toBe(shardedWorkflow)
+  })
 
   it("accepts the actual receipt-bound publication workflow with its paired source pins", () => {
     expect(() => verifyCandidateBackendPins(currentCandidate, files)).not.toThrow()

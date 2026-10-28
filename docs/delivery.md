@@ -1,9 +1,9 @@
 # Lotus Next delivery
 
-This repository follows the unified Zenith #399 delivery contract. This change
-implements feature acceptance (#446); the dependent single-artifact release
-producer and main promotion verifier have not yet landed. Main remains the
-default branch and trusted publication controller.
+This repository follows the unified Zenith #399 delivery contract. Feature
+acceptance is active on protected Dev. The trusted Main admission bootstrap is
+installed; the single-artifact release producer is still a dependent change.
+Main remains the default branch and current publication controller.
 
 | Phase | Responsibility | Acceptance |
 | --- | --- | --- |
@@ -30,18 +30,17 @@ out the actual PR merge snapshot consistently in every source test job:
    actual Git merge parents, checkout SHA and clean tree. It preserves PR base
    and head, tested snapshot/tree, workflow identity and run/attempt in the
    `feature-source` Actions artifact.
-2. Node 22 runs Unit compatibility. Node 24 runs Unit, type, lint, architecture,
-   build and package checks and produces the one canonical test artifact.
+2. Node 22 runs Unit once. Node 24 runs type, lint, architecture, build and
+   package checks and produces the one canonical test artifact without rerunning Unit.
    Four browser shards consume that artifact once across the complete original
    desktop/tablet/phone inventory. `build` owns TypeScript compilation; `verify` does
    not invoke `type-check` again before the same build. Standalone `type-check`
    remains available while iterating, and a compiler failure still fails CI.
 3. Real Bamboo runs on every feature PR after all browser shards pass. It
    downloads the same verified Node 24 artifact instead of rebuilding it. The
-   pinned published Bamboo executable and separately pinned, compatibility-checked
-   accepted browser host drive the original round trip, packed loopback and
-   HTTPS/WSS surfaces. CI records both source identities and the host file hash;
-   this feature-only pair does not alter publication's same-source runtime. These
+   pinned published Bamboo executable and its same-source, compatibility-checked
+   browser host drive the original round trip, packed loopback and HTTPS/WSS
+   surfaces. CI records the source identities and the host file hash. These
    use isolated data and deterministic
    providers, not the user's live Bamboo instance. Install OS dependencies and
    the Playwright FFmpeg recorder while using the pinned verification browser;
@@ -57,11 +56,8 @@ out the actual PR merge snapshot consistently in every source test job:
    `feature-acceptance` artifact retains the actual tested source and gate
    results; it is not a publication receipt.
 
-The required branch check must be configured as `Feature acceptance` when dev
-is activated. Creating/protecting dev and the release-controller bootstrap are
-coordinated repository operations; editing YAML alone does not prove that
-protection is active. Do not admit a feature while its required evidence is
-missing or failed.
+Dev protection requires `Feature acceptance`. Do not admit a feature while its
+required evidence is missing or failed.
 
 For a failed shard, rerun that job and its dependencies. Other successful
 shards and the original same-run source receipt remain reusable. Source

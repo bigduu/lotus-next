@@ -15,12 +15,12 @@ describe("published Bamboo executable admission", () => {
     const wrongArch = Buffer.from(elf); wrongArch[18] = 183;
     expect(() => verifyBambooBinary(wrongArch, { bytes: 32, sha256: createHash("sha256").update(wrongArch).digest("hex") })).toThrow(/Linux x86_64/);
   });
-  it("pins the official release used by Bodhi rather than the old fixture backend", () => {
-    expect(REAL_BAMBOO_REVISION).toBe("d6325a732c7669f94962f604e4ce98966e374d73");
+  it("pins the released executable and matching source for the real runtime", () => {
+    expect(REAL_BAMBOO_REVISION).toBe("4786b7db862cabbebce49e288da62b284ccf5b72");
     expect(REAL_BAMBOO_BINARY).toEqual({
-      url: "https://github.com/bigduu/Bamboo-agent/releases/download/v2026.10.18/bamboo-x86_64-unknown-linux-gnu",
-      bytes: 247723520,
-      sha256: "06df1bd069b42c46958dcdb7084c1822a8c2d5cb39d0f95affceb3820bbcc8e1",
+      url: "https://github.com/bigduu/Bamboo-agent/releases/download/v2026.10.19/bamboo-x86_64-unknown-linux-gnu",
+      bytes: 248709064,
+      sha256: "f37f51bafe1d49055adcb0e1b51067e2f9a07ad0cb36497a91f86889e5773286",
     });
     expect(() => verifyBambooBinary(elf)).toThrow(/length mismatch/);
   });
@@ -35,11 +35,11 @@ describe("feature-only Bamboo browser-host pairing", () => {
     BAMBOO_E2E_HOST_SOURCE_DIR: "/tmp/accepted-bamboo-host",
   }
   const pair = {
-    binaryRevision: "d6325a732c7669f94962f604e4ce98966e374d73",
+    binaryRevision: "4786b7db862cabbebce49e288da62b284ccf5b72",
     hostRevision: "4786b7db862cabbebce49e288da62b284ccf5b72",
     binaryAdapterTree: "55390529b9823112c56ce9c993c4aa8ad473cd01",
     hostAdapterTree: "55390529b9823112c56ce9c993c4aa8ad473cd01",
-    binaryHostBlob: "66d96c85715849e601b826d579960f1818d74c8c",
+    binaryHostBlob: "3c6a6e5463394bc689f95528446c9fc983e150a6",
     hostHostBlob: "3c6a6e5463394bc689f95528446c9fc983e150a6",
     binaryPackageBlob: "4df53cb8e1e41e1e6a34ad5e65843a866ae8101d",
     hostPackageBlob: "4df53cb8e1e41e1e6a34ad5e65843a866ae8101d",

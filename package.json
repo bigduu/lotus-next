@@ -36,7 +36,8 @@
     "artifact:verify": "node scripts/artifact-manifest.mjs verify",
     "package:contents": "node scripts/verify-package.mjs",
     "pack:check": "npm run build && npm run package:contents",
-    "verify": "npm run lint && npm run theme:check && npm run i18n:check && npm run test:run && npm run architecture:check && npm run build && npm run package:contents",
+    "verify": "npm run test:run && npm run verify:artifact",
+    "verify:artifact": "npm run lint && npm run theme:check && npm run i18n:check && npm run architecture:check && npm run build && npm run package:contents",
     "prepack": "npm run build",
     "preview": "vite preview",
     "i18n:check": "node scripts/check-i18n.mjs"
