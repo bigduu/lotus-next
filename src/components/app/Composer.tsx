@@ -304,7 +304,7 @@ export function Composer({
         data-composer-column
         data-composer-compact={compactToolbar}
         className="relative mx-auto min-w-0 w-full max-w-full"
-        style={{ left: contentShiftX, transition: "left 200ms ease-out" }}
+        style={{ transform: `translateX(${contentShiftX}px)`, transition: "transform var(--motion-normal) var(--motion-ease)" }}
       >
       {queueControls}
       {slashQuery !== null && (

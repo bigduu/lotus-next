@@ -2062,6 +2062,7 @@ it("auto-shows Environment once the chat surface clears it and animates state ch
   expect(floating()?.getAttribute("data-state")).toBe("open")
   expect(floating()?.getAttribute("aria-hidden")).toBe("false")
   expect(runtime.messageList?.contentShiftX ?? 0).toBe(0)
+  expect(composer().contentShiftX ?? 0).toBe(0)
   expect(Number.parseFloat(container.querySelector<HTMLElement>("[data-chat-body]")?.style.paddingInlineEnd ?? "NaN")).toBe(0)
   expect(container.querySelector("[data-environment-inline]")).toBeNull()
   rectSpy.mockRestore()

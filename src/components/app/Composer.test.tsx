@@ -105,6 +105,18 @@ describe("Composer submission controls", () => {
     expect(column.parentElement?.classList.contains("px-3")).toBe(true)
   })
 
+  it("keeps exact column offsets with token-timed transforms without shifting the viewport", () => {
+    const { container, rerender } = mountComposer()
+    const column = container.querySelector<HTMLElement>("[data-composer-column]")!
+    for (const shift of [-166, -124, 0]) {
+      rerender({ contentShiftX: shift })
+      expect(column.style.transform).toBe(`translateX(${shift}px)`)
+      expect(column.style.left).toBe("")
+      expect(column.style.transition).toBe("transform var(--motion-normal) var(--motion-ease)")
+      expect((container.firstElementChild as HTMLElement).style.transform).toBe("")
+    }
+  })
+
   it("sends semantic ingress during execution without showing legacy queue controls", () => {
     const { container, textarea, props } = mountComposer({ sending: true, sendWhileRunning: true })
     expect(container.querySelector('[aria-label="发送时机"]')).toBeNull()

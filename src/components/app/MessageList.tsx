@@ -795,8 +795,8 @@ export function MessageList({
         data-message-list-content
         className="relative mx-auto flex min-w-0 w-full max-w-full flex-col gap-2 py-4"
         style={{
-          left: contentShiftX,
-          transition: "left 200ms ease-out",
+          transform: `translateX(${contentShiftX}px)`,
+          transition: "transform var(--motion-normal) var(--motion-ease)",
         }}
       >
         {subAgentError ? <div role="status" className="text-xs text-muted-foreground" data-subagent-error>

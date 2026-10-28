@@ -296,7 +296,15 @@ test("one native Child: real Actor/tree invalidation, isolated history and hones
     await inspect.locator(`[data-actor-id="${root}"]`).click()
     await expect.poll(() => frames.slice(cleanupFrame).some((f) => f.direction === "sent" && f.value.type === "unsubscribe" && f.value.ch === actor)).toBe(true)
     await workbench.getByRole("button", { name: "收起工作面板", exact: true }).click()
-    await expect.poll(() => frames.slice(cleanupFrame).some((f) => f.direction === "sent" && f.value.type === "unsubscribe" && f.value.ch === tree)).toBe(true)
+    await expect(inspect).not.toBeVisible()
+    // The visible chat's SubAgents cards still own the shared Root tree. Leave
+    // that chat before requiring the last local consumer to unsubscribe.
+    expect(frames.slice(cleanupFrame).some((f) => f.direction === "sent" && f.value.type === "unsubscribe" && f.value.ch === tree)).toBe(false)
+    const leaveChatFrame = frames.length
+    await page.getByRole("button", { name: "新建会话", exact: true }).click()
+    await expect(page.getByRole("heading", { name: "开始新任务", exact: true })).toBeVisible()
+    await expect.poll(() => frames.slice(leaveChatFrame).some((f) => f.direction === "sent" && f.value.type === "unsubscribe" && f.value.ch === tree)).toBe(true)
+    await page.getByRole("button", { name: title, exact: true }).click()
     await page.getByRole("button", { name: "打开侧边面板" }).click()
     if (!await inspect.isVisible()) await workbench.getByRole("tab", { name: "检查器", exact: true }).click()
     await expect(inspect.locator(`[data-actor-id="${child}"]`)).toBeVisible()

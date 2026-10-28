@@ -80,6 +80,9 @@ async function expectDisclosureAlignment(scope: Locator) {
   await expect(scope.locator("[data-tool-call-entry-detail]")).toContainText("Read complete.")
   await expect(reasoning).toBeVisible()
   await expect(scope.locator('[data-message-role="assistant"] p').first()).toBeVisible()
+  // Rotating the square icon temporarily expands its bounding box. Measure
+  // settled alignment after the real CSS rotation, without timing sleeps.
+  await expect(scope.locator("[data-process-toggle] .process-activity-icon").first()).toHaveCSS("rotate", "90deg")
   const edges = await scope.evaluate((element) => {
     const tool = element.querySelector("[data-tool-call-entry-heading]")!
     const reasoning = element.querySelector("[data-reasoning-toggle]")!
@@ -96,6 +99,16 @@ async function expectDisclosureAlignment(scope: Locator) {
   expect(Math.abs(edges.toolIcon - edges.reasoningIcon)).toBeLessThanOrEqual(1)
   expect(Math.abs(edges.toolLabel - edges.reasoningLabel)).toBeLessThanOrEqual(1)
   expect(Math.abs(edges.toolIcon - edges.body)).toBeLessThanOrEqual(1)
+}
+
+function composerColumnShift(main: Locator) {
+  return main.locator("[data-composer-column]").evaluate((element) => {
+    const transform = element.ownerDocument.defaultView!.getComputedStyle(element).transform
+    const Matrix = (element.ownerDocument.defaultView as unknown as {
+      DOMMatrixReadOnly: new (value: string) => { m41: number }
+    }).DOMMatrixReadOnly
+    return transform === "none" ? 0 : new Matrix(transform).m41
+  })
 }
 
 async function expectComposerAlignment(scope: Locator) {
@@ -151,13 +164,13 @@ test("Environment reserves shared pane space for the transcript, composer, and r
     await expect(floating).toHaveAttribute("data-state", "open")
     const expectedInset = await main.evaluate((element) => element.getBoundingClientRect().width >= 1484 ? 332 : 0)
     await expect.poll(() => main.locator("[data-chat-body]").evaluate((element) => parseFloat(element.ownerDocument.defaultView!.getComputedStyle(element).paddingInlineEnd))).toBe(expectedInset)
-    await expect.poll(() => main.locator("[data-composer-column]").evaluate((element) => parseFloat(element.ownerDocument.defaultView!.getComputedStyle(element).left))).toBe(0)
+    await expect.poll(() => composerColumnShift(main)).toBe(0)
     const reservedCenter = await expectComposerAlignment(main)
     await expectDisclosureAlignment(main)
     await page.getByRole("button", { name: "收起 Environment", exact: true }).click()
     await expect(floating).toHaveAttribute("data-state", "closed")
     await expect.poll(() => main.locator("[data-chat-body]").evaluate((element) => parseFloat(element.ownerDocument.defaultView!.getComputedStyle(element).paddingInlineEnd))).toBe(0)
-    await expect.poll(() => main.locator("[data-composer-column]").evaluate((element) => parseFloat(element.ownerDocument.defaultView!.getComputedStyle(element).left))).toBe(0)
+    await expect.poll(() => composerColumnShift(main)).toBe(0)
     const centered = await expectComposerAlignment(main)
     expect(Math.abs(centered - reservedCenter - expectedInset / 2)).toBeLessThanOrEqual(1)
   }
