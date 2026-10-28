@@ -178,7 +178,7 @@ function App() {
       pendingBrowserNavigationAttemptRef.current = null
       return
     }
-    if (browserReadySessionId !== currentSessionId || !browserState) return
+    if (browserReadySessionId !== currentSessionId || !browserState || browser.busy || browser.loading || browser.entryOpening) return
     if (browserState.pending_dialog) {
       setBrowserEntryOpen(false)
       return
@@ -195,7 +195,7 @@ function App() {
         setPendingBrowserNavigation((current) => current === pendingBrowserNavigation ? null : current)
       }
     })
-  }, [pendingBrowserNavigation, currentSessionId, browserReadySessionId, browserState, openUrlInNewTab, hasPendingDialog])
+  }, [pendingBrowserNavigation, currentSessionId, browserReadySessionId, browserState, browser.busy, browser.loading, browser.entryOpening, openUrlInNewTab, hasPendingDialog])
   useEffect(() => {
     if (!browserEntryOpen || browserReadySessionId !== currentSessionId || !browserState) return
     const origin = browserEntrySessionRef.current
@@ -352,9 +352,10 @@ function App() {
       setWorkbenchTab(null)
     }
   }
-  const openWorkbench = (tab: RightWorkbenchTab) => {
+  const openWorkbench = (tab: RightWorkbenchTab, openBrowserFromEntry = true) => {
     workbenchSelectionVersionRef.current += 1
     if (tab === "browser") {
+      if (openBrowserFromEntry && currentSessionId) browser.requestEntryOpen(currentSessionId)
       setBrowserStartedSessionId(currentSessionId)
       const resumeLegacyPage = browserReadySessionId === currentSessionId
         && browserState !== null
@@ -601,15 +602,15 @@ function App() {
                     browser={{
                       ...browser,
                       openDefault: (id) => {
-                        if (id === currentSessionId && browser.profilePhase === "closed") openWorkbench("browser")
+                        if (id === currentSessionId && browser.profilePhase === "closed") openWorkbench("browser", false)
                         return browser.openDefault(id)
                       },
                       openClean: (id) => {
-                        if (id === currentSessionId && browser.profilePhase === "closed") openWorkbench("browser")
+                        if (id === currentSessionId && browser.profilePhase === "closed") openWorkbench("browser", false)
                         return browser.openClean(id)
                       },
                       openProfile: (id, mode) => {
-                        if (id === currentSessionId && browser.profilePhase === "closed") openWorkbench("browser")
+                        if (id === currentSessionId && browser.profilePhase === "closed") openWorkbench("browser", false)
                         return browser.openProfile(id, mode)
                       },
                     }}
