@@ -193,9 +193,9 @@ const apiResponse = (method: string, pathnameWithSearch: string): unknown => {
   }
   switch (`${method} ${pathnameWithSearch}`) {
     case "GET /api/v1/execute/defaults":
-      // The shared fixture models a producer without continuous retry support.
-      // Retry-specific tests override this route to exercise capability changes.
-      return {}
+      // Model the published legacy producer's defaults shape. An empty or malformed
+      // response remains unknown and must not enable session-wide Stop.
+      return { model: null, system_prompt: "", base_system_prompt: "", default_session_permission_mode: "default" }
     case "GET /api/v1/bootstrap":
       return bootstrapDocument
     case "GET /api/v1/bamboo/setup/status":

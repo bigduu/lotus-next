@@ -4439,6 +4439,31 @@ describe("explicit continuous upstream retry", () => {
     expect(observer.current.upstreamRetryStatus).toBe("stop_unconfirmed")
     owner.unmount(); await act(async () => { await request })
   })
+  it.each(["continuous-pending", "missing-tab-receipt", "ordinary-pending"] as const)("reports unavailable identity after passive resume with %s", async (kind) => {
+    allow()
+    const target = `resume-${kind}`
+    if (kind === "ordinary-pending") {
+      expect(beginOrdinaryRetryFence("https://fixture.test/api/v1", target, { ensureGuard: true }).kind).toBe("reserved")
+    } else {
+      expect(beginContinuousRetryFence("https://fixture.test/api/v1", target)).not.toBeNull()
+      if (kind === "missing-tab-receipt") sessionStorage.clear()
+    }
+    mocks.appState.chats = [{ id: target, messages: [], isRunning: true, config: { model: "test-model" } }]
+    mocks.subscribeToEvents.mockImplementation((_sid: string, _handlers: SubscriptionHandlers, controller: AbortController) => {
+      const subscription = deferred<void>()
+      controller.signal.addEventListener("abort", () => subscription.resolve(), { once: true })
+      return subscription.promise
+    })
+    mocks.shouldObserve = true
+    const hook = await mountUseChat({ mode: "bound", sessionId: target })
+    await flushMicrotasks()
+    expect(mocks.subscribeToEvents).toHaveBeenCalled()
+    mocks.shouldObserve = false
+    await act(async () => { hook.current.stop(); for (let i = 0; i < 8; i++) await Promise.resolve() })
+    expect(mocks.stopGeneration).not.toHaveBeenCalled()
+    expect(mocks.appState.markCancel).not.toHaveBeenCalled()
+    expect(hook.current.upstreamRetryStatus).toBe("identity_unavailable")
+  })
   it("persists a first ordinary started identity for reload on an exact-capable service", async () => {
     allow()
     const target = "first-ordinary-reload"

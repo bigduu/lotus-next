@@ -1014,10 +1014,12 @@ export function useChat(
         const existing = continuousStopFences.get(runSid)
         const ordinary = readOrdinaryRetryFence(backendScope, runSid)
         const saved = readContinuousRetryFence(backendScope, runSid)
-        const restored = ordinary ? makeRestoredOrdinaryStopFence(runSid, operationId, ordinary.operationId)
+        const restored = ordinary?.started ? makeRestoredOrdinaryStopFence(runSid, operationId, ordinary.operationId)
           : saved.kind === "confirmed" ? { sessionId: runSid, operationId,
             stop: coalesceExactStop((onDispatched) => stopExactContinuousRun(runSid, saved.runId, onDispatched)) } : null
-        paneStopFencesRef.current.set(runSid, existing ?? restored ?? makeUnownedStopFence(runSid, operationId))
+        const recoverable = existing ?? restored
+        if (recoverable) paneStopFencesRef.current.set(runSid, recoverable)
+        else if (saved.kind === "clear") paneStopFencesRef.current.set(runSid, makeUnownedStopFence(runSid, operationId))
       }
       // A successor owns fresh buffers, not an earlier completed answer whose
       // exact canonical history has not arrived yet.
@@ -2355,7 +2357,7 @@ export function useChat(
       : undefined
     const persisted = targetSessionId ? readContinuousRetryFence(getBackendStorageScope(), targetSessionId) : { kind: "clear" as const }
     const ordinary = targetSessionId ? readOrdinaryRetryFence(getBackendStorageScope(), targetSessionId) : null
-    if (!exactStop && targetSessionId && ordinary)
+    if (!exactStop && targetSessionId && ordinary?.started)
       exactStop = makeRestoredOrdinaryStopFence(targetSessionId, operationId ?? 0, ordinary.operationId)
     if (!exactStop && targetSessionId && persisted.kind === "confirmed") {
       const sessionId = targetSessionId, runId = persisted.runId
