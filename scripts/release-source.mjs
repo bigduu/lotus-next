@@ -110,6 +110,10 @@ export const verifyProtectedDevMerge = (sourceSha, pr, merged, sourceWorkflow) =
   assert.deepEqual([...workflowMappingKeys(pullRequest, 4)], ["branches"])
   assert.equal(workflowValue(pullRequest, "branches", 4), "[dev]")
   const graph = workflowBlock(sourceWorkflow, "jobs", 0)
+  for (const [name, axes] of [["verify", ["node"]], ["browser", ["node", "shard"]]]) {
+    const matrix = workflowBlock(workflowBlock(workflowBlock(graph, name, 2), "strategy", 4), "matrix", 6)
+    assert.deepEqual([...workflowMappingKeys(matrix, 8)].sort(), axes, "Feature matrix cannot add, exclude or override lanes")
+  }
   const needs = { source: null, verify: "source", browser: "verify", "browser-summary": "[verify, browser]",
     "real-bamboo": "[source, verify, browser-summary]", "native-actor": "[source, verify]",
     "feature-acceptance": "[source, verify, browser-summary, real-bamboo, native-actor]" }

@@ -117,8 +117,9 @@ release artifact.
 ## Publication and recovery
 
 The committed package version remains the `0.0.0` source placeholder. After
-feature acceptance, the protected Dev publisher verifies the exact accepted PR,
-run, source tree and frozen release tag. It builds the formal-version dist once,
+feature acceptance, the publisher trusts the normal PR merge into protected Dev
+and verifies the admitted source, its parents/tree and frozen release tag. It
+builds the formal-version dist once,
 packs one original tgz without lifecycle scripts, retains those bytes and then
 publishes and verifies them against the registry. It does not rerun Unit, browser
 or real-Bamboo tests during release. Publication does not switch Bamboo, Bodhi
