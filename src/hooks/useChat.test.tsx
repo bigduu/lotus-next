@@ -130,6 +130,7 @@ vi.mock("@shared/utils/copilotConclusionWithOptionsEnhancementUtils", () => ({
   isCopilotConclusionWithOptionsEnhancementEnabled: () => false,
 }))
 import { useChat, type GenerationFailure, type SendSubmissionResult } from "./useChat"
+import { invalidateCompletedAnswers, resetCompletedAnswerHandoffsForTest } from "@/lib/completedAnswerHandoffRegistry"
 import type { PublicRunDiagnostic } from "@services/chat/runDiagnostic"
 import { diagnosticFixture, diagnosticFixtureError } from "@services/chat/runDiagnostic.testFixtures"
 import { beginRootModeOperation, getRootModeFenceState } from "@/lib/rootModeTransitionFence"
@@ -284,6 +285,7 @@ afterAll(() => {
   Reflect.deleteProperty(reactActEnvironment, "IS_REACT_ACT_ENVIRONMENT")
 })
 beforeEach(() => {
+  resetCompletedAnswerHandoffsForTest()
   localStorage.clear()
   mocks.shouldObserve = false
   mocks.appState.chats = []
@@ -1372,13 +1374,10 @@ describe("useChat two-phase send lifecycle", () => {
     mocks.appState.chats = [{
       id: sessionId,
       isRunning: false,
-      messages: [{
-        id: "persisted-final",
-        role: "assistant",
-        type: "text",
-        content: "durable final answer",
-        createdAt: "2026-09-19T12:00:01Z",
-      }],
+      // A legacy ACK has no user ID; require the new canonical user boundary.
+      messages: [{ id: "tool-result", role: "assistant", type: "tool_result", createdAt: "2026-09-19T12:00:00Z" },
+        { id: "persisted-user", role: "user", content: "finish after the tool", createdAt: "2026-09-19T12:00:01Z" },
+        { id: "persisted-final", role: "assistant", type: "text", content: "durable final answer", createdAt: "2026-09-19T12:00:02Z" }],
     }]
     handlers?.onSessionHistoryCommitted(sessionId)
     await hook.rerender(props)
@@ -3300,6 +3299,356 @@ describe("useChat context compression feedback", () => {
     expect(hook.current.contextCompression).toEqual({ status: "running" })
     await act(async () => { stream.handlers.onContextCompressionStatus("preflight", "completed") })
     expect(hook.current.contextCompression).toEqual({ status: "completed", awaitingUsage: true })
+  })
+})
+
+describe("completed answer followed by another turn", () => {
+  const answer = "Synthetic completed answer retained until its own canonical history arrives."
+  function queue(sessionId: string, messageId: string) {
+    const subscription = deferred<void>()
+    let handlers!: SubscriptionHandlers
+    mocks.sendMessage.mockResolvedValueOnce({ session_id: sessionId, message_id: messageId })
+    mocks.subscribeToEvents.mockImplementationOnce((_sid: string, next: SubscriptionHandlers, ac: AbortController) => {
+      handlers = next
+      ac.signal.addEventListener("abort", () => subscription.resolve(), { once: true })
+      return subscription.promise
+    })
+    return { subscription, get handlers() { return handlers } }
+  }
+  const visibleAnswers = (value: HookValue) => [
+    ...value.messages.flatMap((message) => message.role === "assistant" && "content" in message ? [message.content] : []),
+    ...(value.streaming ? [value.streaming] : []),
+  ]
+  async function completed(compressed: boolean, mode: "main" | "bound" = "bound") {
+    const sid = `synthetic-answer-handoff-${compressed}-${mode}`
+    mocks.appState.currentSessionId = sid
+    mocks.appState.chats = [{ id: sid, config: { model: "test-model" }, messages: [
+      { id: "previous-user", role: "user", content: "Synthetic old request", createdAt: "2026-10-27T00:00:00Z" },
+      { id: "previous-answer", role: "assistant", type: "text", content: "Synthetic old answer", isCompressed: compressed,
+        createdAt: "2026-10-27T00:00:01Z" },
+    ] }]
+    const first = queue(sid, "current-user")
+    const props: HookProps = mode === "main" ? { mode } : { mode, sessionId: sid }
+    const hook = await mountUseChat(props)
+    await act(async () => { await hook.current.send("Synthetic first request") })
+    appendPersistedUser(sid, "Synthetic first request", "current-user")
+    await hook.rerender(props)
+    await act(async () => {
+      if (compressed) {
+        first.handlers.onContextCompressionStatus("preflight", "started")
+        first.handlers.onContextSummarized({ summary: "Synthetic context-only summary", messages_summarized: 2, tokens_saved: 100 })
+        first.handlers.onContextCompressionStatus("preflight", "completed")
+      }
+      first.handlers.onToken(answer)
+      first.handlers.onComplete(); first.handlers.onComplete()
+      first.subscription.resolve()
+    })
+    await flushMicrotasks()
+    expect(hook.current.sending).toBe(false)
+    expect(visibleAnswers(hook.current).filter((body) => body === answer)).toHaveLength(1)
+    return { hook, first, props, sid }
+  }
+  it.each([
+    { compressed: false, mode: "main" as const }, { compressed: true, mode: "main" as const },
+    { compressed: false, mode: "bound" as const }, { compressed: true, mode: "bound" as const },
+  ])("keeps a completed answer during immediate follow-up: $mode, compression=$compressed", async ({ compressed, mode }) => {
+    const { hook, sid } = await completed(compressed, mode)
+    queue(sid, "next-user")
+    await act(async () => { await hook.current.send("Synthetic follow-up") })
+    expect(visibleAnswers(hook.current).filter((body) => body === answer)).toHaveLength(1)
+    expect(hook.current.messages.some((message) => "content" in message && message.content === "Synthetic context-only summary")).toBe(false)
+  })
+  it.each([false, true])("shows one completed answer through a partial history checkpoint after follow-up (compression=%s)", async (compressed) => {
+    const { hook, sid, props } = await completed(compressed)
+    queue(sid, "next-user")
+    await act(async () => { await hook.current.send("Synthetic follow-up") })
+    appendPersistedUser(sid, "Synthetic follow-up", "next-user")
+    const chat = mocks.appState.chats.find((item) => item.id === sid)!
+    const next = chat.messages!.findIndex((message) => (message as { id: string }).id === "next-user")
+    const partial = { id: "canonical-answer", role: "assistant", type: "text", content: answer.slice(0, 20), createdAt: "", isCompressed: compressed }
+    chat.messages = [...chat.messages!.slice(0, next), partial, ...chat.messages!.slice(next)]
+    await hook.rerender(props); await flushMicrotasks()
+    expect(visibleAnswers(hook.current).filter((body) => body === answer)).toHaveLength(1)
+    expect(visibleAnswers(hook.current)).not.toContain(partial.content)
+    expect(chat.messages.some((message) => (message as { id: string }).id === partial.id)).toBe(true)
+
+    chat.messages = chat.messages.map((message) => (message as { id: string }).id === partial.id ? { ...partial, content: answer } : message)
+    await hook.rerender(props); await flushMicrotasks()
+    expect(visibleAnswers(hook.current).filter((body) => body === answer)).toHaveLength(1)
+    expect(hook.current.messages.some((message) => message.id.startsWith("completed-answer-handoff-"))).toBe(false)
+  })
+  it("keeps a completed answer when an intermediate body was saved before the completion event", async () => {
+    const sid = "synthetic-intermediate-before-completion"
+    mocks.appState.currentSessionId = sid
+    mocks.appState.chats = [{ id: sid, config: { model: "test-model" }, messages: [] }]
+    const first = queue(sid, "current-user")
+    const props: HookProps = { mode: "bound", sessionId: sid }
+    const hook = await mountUseChat(props)
+    await act(async () => { await hook.current.send("Synthetic first request") })
+    appendPersistedUser(sid, "Synthetic first request", "current-user")
+    const chat = mocks.appState.chats.find((item) => item.id === sid)!
+    chat.messages = [...chat.messages!, { id: "intermediate", role: "assistant", type: "text", content: "Synthetic intermediate step", createdAt: "" }]
+    await hook.rerender(props)
+    await act(async () => { first.handlers.onToken(answer); first.handlers.onComplete(); first.subscription.resolve() })
+    await flushMicrotasks()
+    expect(visibleAnswers(hook.current)).toContain("Synthetic intermediate step")
+    expect(visibleAnswers(hook.current).filter((body) => body === answer)).toHaveLength(1)
+  })
+
+  it("keeps a completed answer when delayed history contains a different intermediate body", async () => {
+    const { hook, sid, props } = await completed(true)
+    queue(sid, "next-user")
+    await act(async () => { await hook.current.send("Synthetic follow-up") })
+    appendPersistedUser(sid, "Synthetic follow-up", "next-user")
+    const chat = mocks.appState.chats.find((item) => item.id === sid)!
+    const next = chat.messages!.findIndex((message) => (message as { id: string }).id === "next-user")
+    chat.messages = [...chat.messages!.slice(0, next),
+      { id: "intermediate", role: "assistant", type: "text", content: "Synthetic intermediate step", createdAt: "" },
+      ...chat.messages!.slice(next)]
+    await hook.rerender(props); await flushMicrotasks()
+    expect(visibleAnswers(hook.current)).toContain("Synthetic intermediate step")
+    expect(visibleAnswers(hook.current).filter((body) => body === answer)).toHaveLength(1)
+  })
+  it("retires a delayed canonical reply between its exact user and a later user, then honors a history edit", async () => {
+    const { hook, sid, props } = await completed(true)
+    queue(sid, "next-user")
+    await act(async () => { await hook.current.send("Synthetic follow-up") })
+    const chat = mocks.appState.chats.find((item) => item.id === sid)!
+    const canonical = { id: "canonical-answer", role: "assistant", type: "text", content: answer, createdAt: "2026-10-27T00:00:03Z", isCompressed: true }
+    chat.messages = [...chat.messages!, canonical, { id: "next-user", role: "user", content: "Synthetic follow-up", createdAt: "2026-10-27T00:00:04Z" }]
+    await hook.rerender(props); await flushMicrotasks()
+    expect(visibleAnswers(hook.current).filter((body) => body === answer)).toHaveLength(1)
+    expect(hook.current.messages.some((message) => message.id.startsWith("completed-answer-handoff-"))).toBe(false)
+    chat.messages = chat.messages.filter((message) => (message as { id: string }).id !== canonical.id)
+    await hook.rerender(props)
+    expect(visibleAnswers(hook.current)).not.toContain(answer)
+  })
+  it("does not mistake an empty assistant checkpoint for persistence of the displayed final body", async () => {
+    const { hook, sid, props } = await completed(true)
+    const chat = mocks.appState.chats.find((item) => item.id === sid)!
+    chat.messages = [...chat.messages!, { id: "empty-final-checkpoint", role: "assistant", type: "text", content: "", createdAt: "" }]
+    await hook.rerender(props)
+    expect(visibleAnswers(hook.current).filter((body) => body === answer)).toHaveLength(1)
+  })
+  it("keeps separate session handoffs through navigation without rendering another session's reply", async () => {
+    const { hook, props } = await completed(true)
+    const other = "synthetic-other-session"
+    mocks.appState.chats = [...mocks.appState.chats, { id: other, messages: [], config: { model: "test-model" } }]
+    await hook.rerender({ mode: "bound", sessionId: other })
+    expect(visibleAnswers(hook.current)).not.toContain(answer)
+    queue(other, "other-user")
+    await act(async () => { await hook.current.send("Synthetic other session request") })
+    expect(visibleAnswers(hook.current)).not.toContain(answer)
+    await hook.rerender(props)
+    expect(visibleAnswers(hook.current).filter((body) => body === answer)).toHaveLength(1)
+    expect(hook.current.pendingUserMessages.some((pending) => pending.text === "Synthetic other session request")).toBe(false)
+  })
+  it.each([false, true])("retains a finished reply after unmount before a follow-up (compression=%s)", async (compressed) => {
+    const { hook, sid } = await completed(compressed)
+    hook.unmount()
+    const restored = await mountUseChat({ mode: "bound", sessionId: sid })
+    expect(visibleAnswers(restored.current).filter((body) => body === answer)).toHaveLength(1)
+  })
+  it.each([false, true])("keeps only its own unfinished history across remount after follow-up (compression=%s)", async (compressed) => {
+    const { hook, sid } = await completed(compressed)
+    queue(sid, "next-user")
+    await act(async () => { await hook.current.send("Synthetic follow-up") })
+    appendPersistedUser(sid, "Synthetic follow-up", "next-user")
+    hook.unmount()
+    const other = "synthetic-remount-other"
+    mocks.appState.chats = [...mocks.appState.chats, { id: other, messages: [], config: { model: "test-model" } }]
+    const unrelated = await mountUseChat({ mode: "bound", sessionId: other })
+    expect(visibleAnswers(unrelated.current)).not.toContain(answer)
+    unrelated.unmount()
+    const props: HookProps = { mode: "bound", sessionId: sid }
+    const restored = await mountUseChat(props)
+    expect(visibleAnswers(restored.current).filter((body) => body === answer)).toHaveLength(1)
+    const chat = mocks.appState.chats.find((item) => item.id === sid)!
+    const next = chat.messages!.findIndex((message) => (message as { id: string }).id === "next-user")
+    const canonical = { id: "canonical-remount-answer", role: "assistant", type: "text", content: answer, createdAt: "", isCompressed: compressed }
+    chat.messages = [...chat.messages!.slice(0, next), canonical, ...chat.messages!.slice(next)]
+    await restored.rerender(props); await flushMicrotasks()
+    expect(visibleAnswers(restored.current).filter((body) => body === answer)).toHaveLength(1)
+    expect(restored.current.messages.some((message) => message.id.startsWith("completed-answer-handoff-"))).toBe(false)
+    chat.messages = chat.messages.filter((message) => (message as { id: string }).id !== canonical.id)
+    restored.unmount()
+    const edited = await mountUseChat(props)
+    expect(visibleAnswers(edited.current)).not.toContain(answer)
+  })
+  it("retains a terminal body when the final history request is still in flight at unmount", async () => {
+    const sid = "synthetic-pending-history-remount"
+    mocks.appState.chats = [{ id: sid, messages: [], config: { model: "test-model" } }]
+    const first = queue(sid, "current-user")
+    const props: HookProps = { mode: "bound", sessionId: sid }
+    const hook = await mountUseChat(props)
+    await act(async () => { await hook.current.send("Synthetic request") })
+    appendPersistedUser(sid, "Synthetic request", "current-user")
+    await hook.rerender(props)
+    const delayedHistory = deferred<void>()
+    mocks.appState.loadChatHistory.mockReturnValueOnce(delayedHistory.promise)
+    await act(async () => { first.handlers.onToken(answer); first.handlers.onComplete(); first.subscription.resolve() })
+    expect(visibleAnswers(hook.current).filter((body) => body === answer)).toHaveLength(1)
+    hook.unmount()
+    const restored = await mountUseChat(props)
+    expect(visibleAnswers(restored.current).filter((body) => body === answer)).toHaveLength(1)
+    const chat = mocks.appState.chats.find((item) => item.id === sid)!
+    chat.messages = [...chat.messages!, { id: "saved-answer", role: "assistant", type: "text", content: answer, createdAt: "" }]
+    await restored.rerender(props); await flushMicrotasks()
+    await act(async () => { delayedHistory.resolve(); await delayedHistory.promise })
+    expect(visibleAnswers(restored.current).filter((body) => body === answer)).toHaveLength(1)
+    expect(restored.current.messages.some((message) => message.id.startsWith("completed-answer-handoff-"))).toBe(false)
+  })
+  it("retires the exact completed turn after a confirmed regenerate truncate and ignores its late events", async () => {
+    const { hook, first, sid, props } = await completed(true)
+    mocks.truncateSessionMessages.mockResolvedValueOnce({ success: true, session_id: sid, messages_removed: 1, message_count: 3 })
+    const next = deferred<void>()
+    mocks.subscribeToEvents.mockImplementationOnce((_id: string, _handlers: SubscriptionHandlers, ac: AbortController) => {
+      ac.signal.addEventListener("abort", () => next.resolve(), { once: true })
+      return next.promise
+    })
+    act(() => { void hook.current.regenerate() })
+    await flushMicrotasks()
+    expect(visibleAnswers(hook.current)).not.toContain(answer)
+    await act(async () => { first.handlers.onToken(answer); first.handlers.onComplete() })
+    expect(visibleAnswers(hook.current)).not.toContain(answer)
+    hook.unmount()
+    const restored = await mountUseChat(props)
+    expect(visibleAnswers(restored.current)).not.toContain(answer)
+  })
+  it("does not resurrect a still-streaming answer after a confirmed clear", async () => {
+    const sid = "synthetic-clear-before-terminal"
+    mocks.appState.chats = [{ id: sid, messages: [], config: { model: "test-model" } }]
+    const first = queue(sid, "current-user")
+    const props: HookProps = { mode: "bound", sessionId: sid }
+    const hook = await mountUseChat(props)
+    await act(async () => { await hook.current.send("Synthetic request") })
+    appendPersistedUser(sid, "Synthetic request", "current-user")
+    await hook.rerender(props)
+    await act(async () => { first.handlers.onToken(answer) })
+    await act(async () => { invalidateCompletedAnswers(sid) })
+    const delayedHistory = deferred<void>()
+    mocks.appState.loadChatHistory.mockReturnValueOnce(delayedHistory.promise)
+    await act(async () => { first.handlers.onToken(answer); first.handlers.onComplete(); first.subscription.resolve() })
+    await flushMicrotasks()
+    expect(visibleAnswers(hook.current).some((body) => body.includes(answer))).toBe(false)
+    hook.unmount()
+    const restored = await mountUseChat(props)
+    await act(async () => { delayedHistory.resolve(); await delayedHistory.promise })
+    expect(visibleAnswers(restored.current).some((body) => body.includes(answer))).toBe(false)
+  })
+  it("drops the confirmed deleted user turn and ignores its late completion", async () => {
+    const { hook, first, props } = await completed(true)
+    mocks.deleteSessionMessage.mockResolvedValueOnce(undefined)
+    await act(async () => { await hook.current.deleteMessage("current-user") })
+    expect(visibleAnswers(hook.current)).not.toContain(answer)
+    await act(async () => { first.handlers.onToken(answer); first.handlers.onComplete() })
+    expect(visibleAnswers(hook.current)).not.toContain(answer)
+    hook.unmount()
+    const restored = await mountUseChat(props)
+    expect(visibleAnswers(restored.current)).not.toContain(answer)
+  })
+  it("keeps two distinct turns when a remounted hook reuses operation number one", async () => {
+    const { hook, sid, props } = await completed(true)
+    hook.unmount()
+    const resumed = await mountUseChat(props)
+    const second = queue(sid, "second-user")
+    await act(async () => { await resumed.current.send("Synthetic second request") })
+    appendPersistedUser(sid, "Synthetic second request", "second-user")
+    await resumed.rerender(props)
+    const secondAnswer = "Synthetic second completed answer"
+    await act(async () => { second.handlers.onToken(secondAnswer); second.handlers.onComplete(); second.subscription.resolve() })
+    await flushMicrotasks()
+    resumed.unmount()
+    const restored = await mountUseChat(props)
+    expect(visibleAnswers(restored.current).filter((body) => body === answer)).toHaveLength(1)
+    expect(visibleAnswers(restored.current).filter((body) => body === secondAnswer)).toHaveLength(1)
+    expect(restored.current.messages.filter((message) => message.id.startsWith("completed-answer-handoff-")).map((message) => message.id)).toHaveLength(2)
+    expect(new Set(restored.current.messages.map((message) => message.id)).size).toBe(restored.current.messages.length)
+  })
+  it("shows one final body in two panes when the same run identity is confirmed", async () => {
+    const sid = "synthetic-answer-handoff-true-bound"
+    mocks.execute.mockResolvedValue({ session_id: sid, status: "started", run_id: "same-confirmed-run" })
+    const { hook, props } = await completed(true)
+    const observer = await mountUseChat(props)
+    const second = queue(sid, "current-user")
+    await act(async () => { await observer.current.send("Synthetic first request") })
+    await act(async () => { second.handlers.onToken(answer); await new Promise<void>((resolve) => requestAnimationFrame(() => resolve())) })
+    expect(visibleAnswers(observer.current).filter((body) => body === answer)).toHaveLength(1)
+    await act(async () => { second.handlers.onComplete(); second.subscription.resolve() })
+    await flushMicrotasks()
+    expect(visibleAnswers(observer.current).filter((body) => body === answer)).toHaveLength(1)
+    hook.unmount(); observer.unmount()
+    const restored = await mountUseChat(props)
+    expect(visibleAnswers(restored.current).filter((body) => body === answer)).toHaveLength(1)
+  })
+  it("does not let one saved answer confirm two distinct runs with the same user and text", async () => {
+    const sid = "synthetic-answer-handoff-true-bound"
+    mocks.execute.mockResolvedValueOnce({ session_id: sid, status: "started", run_id: "first-run" })
+    const { hook, props } = await completed(true)
+    hook.unmount()
+    const next = await mountUseChat(props)
+    const second = queue(sid, "current-user")
+    mocks.execute.mockResolvedValueOnce({ session_id: sid, status: "started", run_id: "second-run" })
+    await act(async () => { await next.current.send("Synthetic first request") })
+    await act(async () => { second.handlers.onToken(answer); second.handlers.onComplete(); second.subscription.resolve() })
+    await flushMicrotasks()
+    next.unmount()
+    const restored = await mountUseChat(props)
+    expect(visibleAnswers(restored.current).filter((body) => body === answer)).toHaveLength(2)
+    const chat = mocks.appState.chats.find((item) => item.id === sid)!
+    chat.messages = [...chat.messages!, { id: "saved-first-run", role: "assistant", type: "text", content: answer, createdAt: "" }]
+    await restored.rerender(props); await flushMicrotasks()
+    expect(visibleAnswers(restored.current).filter((body) => body === answer)).toHaveLength(2)
+    expect(restored.current.messages.filter((message) => message.id.startsWith("completed-answer-handoff-"))).toHaveLength(1)
+    await restored.rerender(props); await flushMicrotasks()
+    expect(restored.current.messages.filter((message) => message.id.startsWith("completed-answer-handoff-"))).toHaveLength(1)
+  })
+  it.each(["another-pane", "bootstrap"] as const)("keeps an unresolved reply when its session is temporarily absent during %s", async (mode) => {
+    const { hook, sid, props } = await completed(true)
+    const saved = mocks.appState.chats.find((chat) => chat.id === sid)!
+    hook.unmount()
+    mocks.appState.chats = mode === "bootstrap" ? [] : [{ id: "partial-list-other", messages: [], config: { model: "test-model" } }]
+    const temporary = await mountUseChat({ mode: "bound", sessionId: mode === "bootstrap" ? null : "partial-list-other" })
+    expect(visibleAnswers(temporary.current)).not.toContain(answer)
+    temporary.unmount()
+    mocks.appState.chats = [...mocks.appState.chats, saved]
+    const restored = await mountUseChat(props)
+    expect(visibleAnswers(restored.current).filter((body) => body === answer)).toHaveLength(1)
+  })
+  it("matches the restored canonical transcript after remount without storing a transient duplicate", async () => {
+    const { hook, sid } = await completed(true)
+    queue(sid, "next-user")
+    await act(async () => { await hook.current.send("Synthetic follow-up") })
+    const before = visibleAnswers(hook.current).filter((body) => body === answer)
+    hook.unmount()
+    const chat = mocks.appState.chats.find((item) => item.id === sid)!
+    chat.messages = [...chat.messages!, { id: "canonical-restored-answer", role: "assistant", type: "text", content: answer, createdAt: "2026-10-27T00:00:03Z" }]
+    const restored = await mountUseChat({ mode: "bound", sessionId: sid })
+    expect(visibleAnswers(restored.current).filter((body) => body === answer)).toEqual(before)
+    expect(restored.current.messages.some((message) => message.id.startsWith("completed-answer-handoff-"))).toBe(false)
+  })
+  it("reconciles four compressed follow-ups to the same canonical transcript without accumulating duplicate bodies", async () => {
+    const { hook, sid, props } = await completed(true)
+    const replies = [answer]
+    for (let index = 2; index <= 4; index += 1) {
+      const next = queue(sid, `user-${index}`)
+      await act(async () => { await hook.current.send(`Synthetic request ${index}`) })
+      appendPersistedUser(sid, `Synthetic request ${index}`, `user-${index}`)
+      await hook.rerender(props)
+      const text = `Synthetic completed reply ${index}`; replies.push(text)
+      await act(async () => { next.handlers.onToken(text); next.handlers.onComplete(); next.subscription.resolve() })
+      await flushMicrotasks()
+      expect(visibleAnswers(hook.current).filter((body) => replies.includes(body))).toEqual(replies)
+    }
+    const chat = mocks.appState.chats.find((item) => item.id === sid)!
+    chat.messages = replies.flatMap((text, index) => [
+      { id: index === 0 ? "current-user" : `user-${index + 1}`, role: "user", content: `Synthetic request ${index + 1}`, createdAt: "" },
+      { id: `canonical-final-${index + 1}`, role: "assistant", type: "text", content: text, isCompressed: true, createdAt: "" },
+    ])
+    await hook.rerender(props); await flushMicrotasks()
+    expect(visibleAnswers(hook.current).filter((body) => replies.includes(body))).toEqual(replies)
+    expect(hook.current.messages.some((message) => message.id.startsWith("completed-answer-handoff-"))).toBe(false)
+    expect(hook.current.streaming).toBeNull()
   })
 })
 
