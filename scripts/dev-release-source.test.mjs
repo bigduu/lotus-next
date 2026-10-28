@@ -331,11 +331,17 @@ describe("protected Dev publication CLI", () => {
         "git/ref/tags/lotus-next-v2026.10.30": { ref: "refs/tags/lotus-next-v2026.10.30", object: { type: "tag", sha: object } },
         [`git/tags/${object}`]: { sha: object, tag: "lotus-next-v2026.10.30", object: { type: "commit", sha: source }, message: JSON.stringify(owner) },
         "pulls/450": pr, [`git/commits/${source}`]: { sha: source, parents: [{ sha: base }, { sha: head }], tree: { sha: tree } },
-        "branches/dev": { protected: true, commit: { sha: controller } },
+        "branches/dev": { name: "dev", protected: true, protection: { enabled: true, required_status_checks: {
+          enforcement_level: "everyone", contexts: ["Feature acceptance"], checks: [{ context: "Feature acceptance", app_id: 15368 }],
+        } }, commit: { sha: controller } },
         [`compare/${controller}...${controller}`]: { merge_base_commit: { sha: controller }, status: "identical" },
         [`compare/${source}...${controller}`]: { merge_base_commit: { sha: source }, status: "ahead" },
         [`git/ref/heads/release/${source}`]: { object: { sha: source } } }
       if (change === "unprotected Dev") routes["branches/dev"].protected = false
+      if (change === "disabled Dev protection") routes["branches/dev"].protection.enabled = false
+      if (change === "missing required feature check") routes["branches/dev"].protection.required_status_checks.contexts = []
+      if (change === "wrong feature check app") routes["branches/dev"].protection.required_status_checks.checks[0].app_id = 1
+      if (change === "administrators exempted") routes["branches/dev"].protection.required_status_checks.enforcement_level = "non_admins"
       if (change === "unaccepted controller") routes[`compare/${controller}...${controller}`].merge_base_commit.sha = base
       if (change === "non-ancestor source") routes[`compare/${source}...${controller}`].merge_base_commit.sha = base
       if (change === "moved release ref") routes[`git/ref/heads/release/${source}`].object.sha = controller
@@ -411,7 +417,8 @@ globalThis.fetch=async(url,options)=>{if(url!=='https://registry.npmjs.org/@bigd
     expect(result.status).toBe(1)
     expect(result.calls.some(call => call.startsWith("POST "))).toBe(false)
   })
-  it.each(["unprotected Dev", "unaccepted controller", "non-ancestor source", "moved release ref", "forged Git parents", "moved tag"])(
+  it.each(["unprotected Dev", "disabled Dev protection", "missing required feature check", "wrong feature check app", "administrators exempted",
+    "unaccepted controller", "non-ancestor source", "moved release ref", "forged Git parents", "moved tag"])(
     "fails closed for %s without tests or product builds", change => { expect(runSource(change).status).toBe(1) },
   )
 })

@@ -43,7 +43,10 @@ not independently replay historical CI or require expiring feature run/job/artif
 Dev must keep strict `Feature acceptance` from Actions app15368, enforced for
 administrators, with force pushes and deletion disabled. Keep the real aggregate,
 normal review and resolved-thread gates; a same-name success stub or skipped
-owner is not acceptance. No candidate/version record on Main is required.
+owner is not acceptance. The publisher checks the current Dev branch response for
+that required Actions check and administrator enforcement; it cannot reconstruct
+the protection settings at an earlier merge. No candidate/version record on Main
+is required.
 The earlier Bamboo HTTPS failure in #450 remains recorded. Require a fresh
 real-runtime result against the matching published Bamboo source and binary;
 a source fix alone does not establish that acceptance.

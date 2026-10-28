@@ -72,10 +72,12 @@ not prove production publication; actual activation remains separately reviewed.
 
 **Trust and retention:** protected Dev must retain strict `Feature acceptance`
 from Actions app15368, administrator enforcement, no force pushes/deletion and
-normal review/resolved-thread gates. The publisher checks protected Dev ancestry
-and source gate wiring; it does not prove that historical protection settings or
-individual jobs were correct. The feature diagnostic artifact still expires after
-30 days; its absence no longer prevents releasing an unchanged accepted Dev cut.
+normal review/resolved-thread gates. The publisher checks the current branch
+response for the required Actions check and administrator enforcement, as well as
+protected Dev ancestry and source gate wiring; it does not prove that historical
+protection settings or individual jobs were correct. The feature diagnostic
+artifact still expires after 30 days; its absence no longer prevents releasing an
+unchanged accepted Dev cut.
 This replaces the historical-CI dependency discussed in [#471](https://github.com/bigduu/lotus-next/issues/471),
 without claiming to authenticate deleted records or adding a trusted archive.
 
