@@ -173,6 +173,26 @@ describe("terminal history synchronization", () => {
     await store.getState().loadChatHistory("session-1", { mode: "replace" });
     expect(store.getState().chats[0].messages.find((message) => message.id === "assistant-final")).toMatchObject({ content: "final" });
   });
+  it.each([
+    { label: "text", part: { type: "text" as const, text: "synthetic part" } },
+    { label: "image", part: { type: "image_url" as const, image_url: { url: "https://example.invalid/synthetic.png" } } },
+  ])("treats a parts-only $label assistant as terminal without extra history polls", async ({ part }) => {
+    const history: HistoryResponse = { session_id: "session-1", messages: [
+      { id: "parts-answer", role: "assistant", content: "", content_parts: [part], created_at: "" },
+    ] };
+    expect(hasTerminalAssistantTail(history.messages)).toBe(true);
+    const getHistory = vi.spyOn(agentClient, "getHistory").mockResolvedValue(history);
+    await harness().getState().loadChatHistory("session-1", { waitForAssistant: true, retries: 1, retryDelayMs: 1 });
+    expect(getHistory).toHaveBeenCalledTimes(1);
+  });
+  it("does not treat empty parts or a tool-call assistant as a terminal answer", () => {
+    const empty: HistoryResponse["messages"][number] = { id: "empty", role: "assistant", content: "", created_at: "",
+      content_parts: [{ type: "text", text: "   " }, { type: "image_url", image_url: { url: " " } }] };
+    const tool: HistoryResponse["messages"][number] = { ...empty, content_parts: [{ type: "text", text: "synthetic" }],
+      tool_calls: [{ id: "call", type: "function", function: { name: "Read", arguments: "{}" } }] };
+    expect(hasTerminalAssistantTail([empty])).toBe(false);
+    expect(hasTerminalAssistantTail([tool])).toBe(false);
+  });
   it("waits past an empty assistant checkpoint instead of treating it as a durable answer", async () => {
     const empty = { ...committedHistory, messages: committedHistory.messages.map((message) => message.id === "assistant-final" ? { ...message, content: "" } : message) };
     expect(hasTerminalAssistantTail(empty.messages)).toBe(false);

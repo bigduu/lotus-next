@@ -57,7 +57,13 @@ export const hasTerminalAssistantTail = (
   messages: HistoryResponse["messages"],
 ): boolean => {
   const tail = messages.findLast((message) => message.role !== "system");
-  return tail?.role === "assistant" && (tail.tool_calls?.length ?? 0) === 0 && Boolean(tail.content.trim());
+  if (tail?.role !== "assistant" || (tail.tool_calls?.length ?? 0) > 0) return false;
+  if (typeof tail.content === "string" && tail.content.trim()) return true;
+  return Array.isArray(tail.content_parts) && tail.content_parts.some((part) => {
+    if (part?.type === "text") return typeof part.text === "string" && Boolean(part.text.trim());
+    if (part?.type === "image_url") return typeof part.image_url?.url === "string" && Boolean(part.image_url.url.trim());
+    return false;
+  });
 };
 
 // Multi-device reconcile debounce: coalesce a burst of account-feed events for

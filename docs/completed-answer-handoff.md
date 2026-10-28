@@ -26,3 +26,9 @@ with no run identity can therefore temporarily show duplicate unconfirmed bodies
 The history contract likewise cannot prove two same-turn, same-text attempts
 from one unchanged canonical message; one canonical ID confirms at most one
 pending attempt. The cache and UI projections reset on a full page reload.
+
+History readiness treats a nonempty text or image part as a terminal assistant
+response, while a genuinely empty checkpoint continues the bounded history
+read. The existing assistant-history mapper does not project `content_parts`
+into the displayed message when `content` is empty; this separate parts-only
+rendering gap is not fixed or claimed as covered by this slice.
