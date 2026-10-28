@@ -1,41 +1,34 @@
 # Browser CI shards
 
-## Temporary dev protection bridge
+`ci.yml` retains Node 22 and 24 Unit compatibility. Node 24 alone runs the full
+verification/build/package command and produces one canonical test artifact.
+Four all-surface Playwright shards consume it on Node 24. Each shard keeps one
+worker, the existing retry/timeout settings, and the desktop/tablet/phone
+projects. The three additional source fixture suites run once, on shard 1.
+No original browser case or skip policy is removed; the same browser suite is
+not duplicated solely for its test runner's Node version.
 
-Until #450 installs the complete feature contract, `Feature acceptance` runs
-only for pull requests into `dev` and requires both existing `verify` and
-`Browser acceptance` jobs to succeed. Failure, cancellation, skipped or missing
-dependency outcomes fail this bridge. It adds no test skip or protection bypass.
-The existing dual Node 22/24 Unit verification and all eight browser shards
-remain unchanged. Real Bamboo remains an explicit manual check; it is not
-automatically covered by this temporary aggregate, and native Actor acceptance
-and exact PR merge-source receipts are not installed here.
-
-This bridge produces no release receipt and cannot authorize publication under
-the new release-source contract. The historical parser also rejects this
-transitional graph. Historical publication tests retain the exact prior workflow
-in `scripts/fixtures/ci-sharded-main-v1.yml`; #450 replaces the temporary bridge
-and its tests with the complete feature/source admission rather than treating
-this check name alone as full acceptance.
-
-`ci.yml` retains Node 22 and 24 verification and runs four all-surface Playwright
-shards per Node lane. Each shard keeps one worker, the existing retry/timeout
-settings, and the desktop/tablet/phone projects. The three additional source
-fixture suites still run once per Node lane, on shard 1. No test or skip policy
-is changed.
+The prior dev protection bridge is preserved as a historical fixture. It did
+not authorize publication and is replaced here by the complete feature gate.
 
 After the verified build, `node scripts/browser-shards.mjs inventory` compares
 the unsharded `--list` inventory with all four `--shard=N/4` inventories. Their
-union must contain each original case exactly once. Each Node lane shares its
-own built artifact and inventory with its shards; the source revision and clean
-artifact identity are checked before execution.
+union must contain each original case exactly once. The Node 24 producer shares
+its built artifact and inventory with the four shards and real Bamboo E2E; the
+source revision and clean artifact identity are checked before execution.
 
 `Browser acceptance` runs even if a dependency fails. It requires both Node
-verification lanes and all eight browser jobs to succeed. Receipts must agree
+Unit/verification lanes and all four browser jobs to succeed. Receipts must agree
 on source, run, original inventory and per-shard cases. Missing, duplicate,
 failed, cancelled, skipped-required, interrupted or mismatched results fail
-closed. The conditional Real Bamboo job depends on verification and this
-complete aggregate; its existing dispatch policy is unchanged.
+closed. Real Bamboo now depends on verification and this complete aggregate on
+every feature PR to dev, using the same verified Node 24 artifact. The final
+`Feature acceptance` check joins this browser aggregate, real Bamboo, native
+Actor and the source gate. Main pushes do not repeat the feature suites.
+Current browser inventories, shard receipts and summaries use schema version 2
+and identify the Node 24 producer. Historical version 1 eight-shard receipts
+remain attributed to their original source workflow and cannot substitute for
+the new single-producer feature graph.
 
 ## Diagnose and rerun one shard
 
@@ -84,6 +77,13 @@ before changing concurrency again.
 
 ## Publication evidence and historical sources
 
+Feature CI now records its actual merge snapshot, base/head, tree and run in
+`feature-source` and successful `feature-acceptance` artifacts. These retain the
+tested commit identity; a future dev/release admission verifier must prove the
+subsequent dev tree separately. See [delivery and cutover status](delivery.md).
+
+The following parser describes the unchanged historical publisher. It does not
+yet accept the new feature graph or authorize a new release from its receipts.
 `scripts/release-source.mjs` loads the CI workflow from the immutable accepted
 source SHA. The legacy graph requires its original Node 22/24 and Real Bamboo
 jobs. The sharded graph additionally requires all eight exact shard jobs and

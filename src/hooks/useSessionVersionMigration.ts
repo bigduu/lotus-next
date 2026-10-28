@@ -16,7 +16,7 @@ interface MigrationState {
 const initial: MigrationState = { assessment: null, reading: false, submitting: false, phase: "idle", problem: null }
 
 /** A transient owner action; canonical migration state lives only in Bamboo. */
-export function useSessionVersionMigration(sessionId: string | null, enabled: boolean, allowNewMigration = true) {
+export function useSessionVersionMigration(sessionId: string | null, enabled: boolean, allowNewMigration = true, autoAssess = allowNewMigration) {
   const [state, setState] = useState<MigrationState>(initial)
   const scope = useRef({ sessionId, enabled })
   scope.current = { sessionId, enabled }
@@ -44,13 +44,20 @@ export function useSessionVersionMigration(sessionId: string | null, enabled: bo
   }, [current])
 
   useEffect(() => {
-    const revision = ++generation.current
+    ++generation.current
     pending.current = null
     activeOperation.current = null
     setState(initial)
-    if (enabled && sessionId) void read(sessionId, revision)
     return invalidate
-  }, [sessionId, enabled, read, invalidate])
+  }, [sessionId, enabled, invalidate])
+
+  // Read admission may change after canonical readback while the same exact
+  // operation still awaits its lifetime witness. Only a scope change resets it.
+  useEffect(() => {
+    if (enabled && sessionId && autoAssess && !activeOperation.current) {
+      void read(sessionId, ++generation.current)
+    }
+  }, [sessionId, enabled, autoAssess, read])
 
   const refresh = useCallback(async () => {
     if (!sessionId || !enabled || activeOperation.current) return

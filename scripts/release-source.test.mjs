@@ -8,7 +8,7 @@ import { resolveReleaseRequest, verifyAcceptanceEvidence, verifySourceReceipt, v
 
 const legacyWorkflow = readFileSync("scripts/fixtures/ci-unsharded.yml", "utf8")
 // Preserve the exact pre-transition graph for historical publication contracts.
-// The current protection bridge deliberately cannot authorize publication.
+// Neither the temporary bridge nor the new feature receipt authorizes the old publisher.
 const shardedWorkflow = readFileSync("scripts/fixtures/ci-sharded-main-v1.yml", "utf8")
 const verifyLegacyAcceptance = (...args) => verifyAcceptanceEvidence(...args, legacyWorkflow)
 const verifyLegacyCommittedAcceptance = (...args) => verifyCommittedAcceptance(...args, legacyWorkflow)
@@ -37,6 +37,13 @@ const environment = {
   GITHUB_WORKFLOW_REF: workflowRef, GITHUB_SHA: workflowSha, GITHUB_RUN_ID: "123", GITHUB_RUN_ATTEMPT: "1",
   LOTUS_NEXT_EXPECTED_SOURCE_REVISION: sourceSha, LOTUS_NEXT_RELEASE_VERSION: request.version,
 }
+
+describe("feature delivery activation boundary", () => {
+  it("keeps the new feature receipt graph outside the unchanged historical publisher", () => {
+    expect(() => acceptanceJobNames(readFileSync(".github/workflows/ci.yml", "utf8"))).toThrow(/Unknown acceptance workflow graph/)
+    expect(acceptanceJobNames(shardedWorkflow)).toHaveLength(12)
+  })
+})
 
 describe("frozen reviewed PR-head merge provenance", () => {
   const mainPr = { base: { ref: "main", repo: { full_name: "bigduu/lotus-next" } } }
