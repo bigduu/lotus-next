@@ -370,6 +370,12 @@ describe("MessageList assistant streaming ownership", () => {
 
     const userSurface = container.querySelector<HTMLElement>('[data-message-role="user"]')
     expect(userSurface?.classList.contains("user-message-surface")).toBe(true)
+    expect(userSurface?.classList.contains("max-w-[85%]")).toBe(true)
+    const column = container.querySelector<HTMLElement>("[data-message-list-content]")!
+    expect(column.classList.contains("w-full")).toBe(true)
+    expect(column.classList.contains("max-w-full")).toBe(true)
+    expect(column.classList.contains("min-w-0")).toBe(true)
+    expect(column.classList.contains("max-w-6xl")).toBe(false)
 
     const assistantSurfaces = container.querySelectorAll<HTMLElement>(
       '[data-message-role="assistant"]',
@@ -380,6 +386,9 @@ describe("MessageList assistant streaming ownership", () => {
       expect(surface.classList.contains("bg-muted")).toBe(false)
       expect(surface.classList.contains("text-base")).toBe(true)
       expect(surface.classList.contains("font-normal")).toBe(true)
+      expect(surface.classList.contains("flex-1")).toBe(true)
+      expect(surface.classList.contains("min-w-0")).toBe(true)
+      expect(surface.classList.contains("max-w-[85%]")).toBe(false)
     }
   })
 
