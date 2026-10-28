@@ -2030,6 +2030,7 @@ it("auto-shows Environment once the chat surface clears it and animates state ch
   expect(floating()?.getAttribute("data-state")).toBe("open")
   expect(floating()?.style.transform).toContain("translateX(0)")
   expect(runtime.messageList?.contentShiftX).toBe(-166)
+  expect(composer().contentShiftX).toBe(-166)
 
   containerWidth = 1400
   await act(async () => window.dispatchEvent(new Event("resize")))
@@ -2044,6 +2045,7 @@ it("auto-shows Environment once the chat surface clears it and animates state ch
   expect(floating()?.getAttribute("data-state")).toBe("open")
   expect(floating()?.getAttribute("aria-hidden")).toBe("false")
   expect(runtime.messageList?.contentShiftX).toBe(-124)
+  expect(composer().contentShiftX).toBe(-124)
   expect(container.querySelector("[data-environment-inline]")).toBeNull()
   rectSpy.mockRestore()
 })
