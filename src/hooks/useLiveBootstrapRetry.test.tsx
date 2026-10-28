@@ -207,7 +207,7 @@ it("rechecks the owned run after capability negotiation before Stop", async () =
   mocks.fence.mockReturnValue({kind:"confirmed",runId:"new-run"})
   await act(async () => { later.resolve(capability); await stopping })
   expect(mocks.stop).not.toHaveBeenCalled()
-  expect(hook.current.offer?.status).toBe("stop_unconfirmed")
+  expect(hook.current.offer).toBeNull()
 })
 it("does not confirm after the originating pane unmounts during the offer recheck", async () => {
   const later = deferred<unknown>(); let reads = 0
@@ -233,4 +233,161 @@ it("does not confirm an offer that another client is already confirming", async 
   const hook = await mount({sessionId:"s",running:true,root:true})
   expect(hook.current.offer?.status).toBe("confirming")
   await act(async () => { await hook.current.confirm() });expect(mocks.postOnce).not.toHaveBeenCalled()
+})
+
+
+it.each(["accepted", "refused", "unknown"] as const)("same-session successor stays confirmed when an older result is %s", async (outcome) => {
+  let offered = "run-a"
+  const first = deferred<unknown>()
+  mocks.get.mockImplementation(async (path:string) => path === "execute/defaults" ? capability : waiting("s",offered))
+  mocks.fence.mockImplementation(() => ({kind:"confirmed",runId:offered}))
+  mocks.postOnce.mockImplementation((_path:string, _body:unknown, options:{headers:{"Bamboo-Run-Id":string}}) =>
+    options.headers["Bamboo-Run-Id"] === "run-a" ? first.promise : Promise.resolve({session_id:"s",run_id:"run-b",status:"retry_continuing"}))
+  const hook = await mount({sessionId:"s",running:true,root:true})
+  let oldRequest!: Promise<void>
+  await act(async () => { oldRequest = hook.current.confirm(); for (let i=0;i<12;i++) await Promise.resolve() })
+  expect(mocks.postOnce).toHaveBeenCalledTimes(1)
+  offered = "run-b"
+  await act(async () => { await vi.advanceTimersByTimeAsync(5000) })
+  expect(hook.current.offer).toMatchObject({runId:"run-b",status:"waiting"})
+  await act(async () => { await hook.current.confirm() })
+  expect(mocks.postOnce).toHaveBeenCalledTimes(2)
+  expect(hook.current.offer).toMatchObject({runId:"run-b",status:"continued"})
+  await act(async () => {
+    if (outcome === "accepted") first.resolve({session_id:"s",run_id:"run-a",status:"retry_continuing"})
+    else if (outcome === "refused") first.reject(new ApiError("conflict",409,"Conflict",JSON.stringify({session_id:"s",error:{code:"retry_resume_not_prepared"}})))
+    else first.reject(new Error("synthetic unknown outcome"))
+    await oldRequest
+  })
+  expect(hook.current.offer).toMatchObject({runId:"run-b",status:"continued"})
+  expect(readLiveBootstrapConfirmation("s","run-b")).toBe("accepted")
+})
+
+it("a late acknowledgement cannot replace a same-session successor offer", async () => {
+  let offered = "run-a"
+  const first = deferred<unknown>()
+  mocks.get.mockImplementation(async (path:string) => path === "execute/defaults" ? capability : waiting("s",offered))
+  mocks.fence.mockImplementation(() => ({kind:"confirmed",runId:offered}))
+  mocks.postOnce.mockReturnValue(first.promise)
+  const hook = await mount({sessionId:"s",running:true,root:true})
+  let oldRequest!: Promise<void>
+  await act(async () => { oldRequest = hook.current.confirm(); for (let i=0;i<12;i++) await Promise.resolve() })
+  offered = "run-b"
+  await act(async () => { await vi.advanceTimersByTimeAsync(5000) })
+  expect(hook.current.offer).toMatchObject({runId:"run-b",status:"waiting"})
+  await act(async () => { first.resolve({session_id:"s",run_id:"run-a",status:"retry_continuing"}); await oldRequest })
+  expect(hook.current.offer).toMatchObject({runId:"run-b",status:"waiting"})
+})
+
+it("renegotiates the live capability after an initial transient failure", async () => {
+  let calls = 0
+  mocks.get.mockImplementation(async (path:string) => {
+    if (path !== "execute/defaults") return waiting()
+    if (++calls === 1) throw new Error("temporary network failure")
+    return capability
+  })
+  const hook = await mount({sessionId:null,running:false,root:true})
+  expect(hook.current.canPrepare).toBe(false)
+  let next!: boolean | Promise<boolean>
+  await act(async () => { next = hook.current.prepareInitial(); for (let i=0;i<12;i++) await Promise.resolve() })
+  expect(await next).toBe(true)
+  expect(calls).toBe(2)
+})
+
+
+it("shares a recovered capability request across concurrent submissions", async () => {
+  let calls = 0
+  const recovery = deferred<unknown>()
+  mocks.get.mockImplementation((path:string) => {
+    if (path !== "execute/defaults") return Promise.resolve(waiting())
+    return ++calls === 1 ? Promise.reject(new Error("temporary network failure")) : recovery.promise
+  })
+  const hook = await mount({sessionId:null,running:false,root:true})
+  let first!: boolean | Promise<boolean>, second!: boolean | Promise<boolean>
+  act(() => { first = hook.current.prepareInitial(); second = hook.current.prepareInitial() })
+  expect(calls).toBe(2)
+  await act(async () => { recovery.resolve(capability); for (let i=0;i<8;i++) await Promise.resolve() })
+  await expect(first).resolves.toBe(true)
+  await expect(second).resolves.toBe(true)
+})
+
+it("does not apply a recovered capability decision to a different session", async () => {
+  let calls = 0
+  const recovery = deferred<unknown>()
+  mocks.get.mockImplementation((path:string) => {
+    if (path !== "execute/defaults") return Promise.resolve(waiting())
+    return ++calls === 1 ? Promise.reject(new Error("temporary network failure")) : recovery.promise
+  })
+  const hook = await mount({sessionId:null,running:false,root:true})
+  let decision!: boolean | Promise<boolean>
+  act(() => { decision = hook.current.prepareInitial() })
+  await hook.render({sessionId:"other",running:false,root:true})
+  await act(async () => { recovery.resolve(capability); for (let i=0;i<8;i++) await Promise.resolve() })
+  await expect(decision).resolves.toBe(false)
+})
+
+
+it.each(["acknowledged", "unknown"] as const)("late Stop result cannot overwrite a confirmed successor when %s", async (outcome) => {
+  let offered = "run-a"
+  const oldStop = deferred<void>()
+  mocks.get.mockImplementation(async (path:string) => path === "execute/defaults" ? capability : waiting("s",offered))
+  mocks.fence.mockImplementation(() => ({kind:"confirmed",runId:offered}))
+  mocks.stop.mockReturnValue(oldStop.promise)
+  mocks.postOnce.mockResolvedValue({session_id:"s",run_id:"run-b",status:"retry_continuing"})
+  const hook = await mount({sessionId:"s",running:true,root:true})
+  let stopping!: Promise<void>
+  await act(async () => { stopping = hook.current.stop(); for (let i=0;i<12;i++) await Promise.resolve() })
+  expect(mocks.stop).toHaveBeenCalledExactlyOnceWith("s","run-a")
+  offered = "run-b"
+  await act(async () => { await vi.advanceTimersByTimeAsync(5000) })
+  expect(hook.current.offer).toMatchObject({runId:"run-b",status:"waiting"})
+  await act(async () => { await hook.current.confirm() })
+  expect(hook.current.offer).toMatchObject({runId:"run-b",status:"continued"})
+  await act(async () => {
+    if (outcome === "acknowledged") oldStop.resolve()
+    else oldStop.reject(new Error("synthetic lost Stop response"))
+    await stopping
+  })
+  expect(hook.current.offer).toMatchObject({runId:"run-b",status:"continued"})
+  expect(mocks.stop).toHaveBeenCalledTimes(1)
+})
+
+
+it.each(["confirmation", "stop"] as const)("clears stale %s feedback when successor identity changes before the pane observes it", async (kind) => {
+  let currentRun = "run-a", unavailable = false
+  const pending = deferred<unknown>()
+  mocks.get.mockImplementation(async (path:string) => path === "execute/defaults" ? capability
+    : unavailable ? {session_id:"s",status:"unavailable"} : waiting("s","run-a"))
+  mocks.fence.mockImplementation(() => ({kind:"confirmed",runId:currentRun}))
+  if (kind === "confirmation") mocks.postOnce.mockReturnValue(pending.promise)
+  else mocks.stop.mockReturnValue(pending.promise)
+  const hook = await mount({sessionId:"s",running:true,root:true})
+  let oldAction!: Promise<void>
+  await act(async () => { oldAction = kind === "confirmation" ? hook.current.confirm() : hook.current.stop(); for (let i=0;i<12;i++) await Promise.resolve() })
+  expect(kind === "confirmation" ? mocks.postOnce : mocks.stop).toHaveBeenCalledTimes(1)
+  currentRun = "run-b"
+  unavailable = true
+  await act(async () => {
+    pending.resolve(kind === "confirmation" ? {session_id:"s",run_id:"run-a",status:"retry_continuing"} : undefined)
+    await oldAction
+  })
+  expect(hook.current.offer).toBeNull()
+  await act(async () => { await vi.advanceTimersByTimeAsync(5000) })
+  expect(hook.current.offer).toBeNull()
+})
+
+
+it.each(["confirmation", "stop"] as const)("does not claim a %s result when the run identity becomes unreadable", async (kind) => {
+  const pending = deferred<unknown>()
+  if (kind === "confirmation") mocks.postOnce.mockReturnValue(pending.promise)
+  else mocks.stop.mockReturnValue(pending.promise)
+  const hook = await mount({sessionId:"s",running:true,root:true})
+  let oldAction!: Promise<void>
+  await act(async () => { oldAction = kind === "confirmation" ? hook.current.confirm() : hook.current.stop(); for (let i=0;i<12;i++) await Promise.resolve() })
+  mocks.fence.mockReturnValue({kind:"unavailable"})
+  await act(async () => {
+    pending.resolve(kind === "confirmation" ? {session_id:"s",run_id:"run-a",status:"retry_continuing"} : undefined)
+    await oldAction
+  })
+  expect(hook.current.offer).toMatchObject({runId:"run-a",status:"identity_unavailable"})
 })

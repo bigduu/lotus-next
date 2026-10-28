@@ -20,21 +20,30 @@ export function useLiveBootstrapRetry(sessionId: string | null, running: boolean
   const viewRef = useRef<LiveBootstrapView | null>(null)
   const pendingCapabilityRef = useRef<{ scope: string; promise: Promise<LiveBootstrapCapability | null> } | null>(null)
   const actionRef = useRef<{ epoch: number; runId: string } | null>(null)
+  const stopActionRef = useRef<{ epoch: number; runId: string } | null>(null)
   const stopRef = useRef<string | null>(null)
   const mountedRef = useRef(false)
   const contextRef = useRef({ sessionId, running, root, epoch: 0 })
   if (contextRef.current.sessionId !== sessionId || contextRef.current.running !== running || contextRef.current.root !== root) {
     contextRef.current = { sessionId, running, root, epoch: contextRef.current.epoch + 1 }
     actionRef.current = null
+    stopActionRef.current = null
     stopRef.current = null
   }
   const update = useCallback((next: LiveBootstrapView | null) => { viewRef.current = next; setView(next) }, [])
+  // A successor can be acknowledged in another pane before this pane polls it.
+  const settleOwnedView = useCallback((scope: string, selected: LiveBootstrapView, status: LiveStatus, secondsRemaining?: number) => {
+    const fence = readContinuousRetryFence(scope, selected.sessionId)
+    if (fence.kind === "confirmed" && fence.runId !== selected.runId) { update(null); return }
+    if (fence.kind !== "confirmed") { update({ ...selected, status: "identity_unavailable", secondsRemaining: 0 }); return }
+    update({ ...selected, status, ...(secondsRemaining === undefined ? {} : { secondsRemaining }) })
+  }, [update])
   const scope = getBackendStorageScope()
   const canPrepare = root && capability?.scope === scope
 
   useEffect(() => {
     mountedRef.current = true
-    return () => { mountedRef.current = false; actionRef.current = null }
+    return () => { mountedRef.current = false; actionRef.current = null; stopActionRef.current = null }
   }, [])
 
   useEffect(() => {
@@ -42,18 +51,23 @@ export function useLiveBootstrapRetry(sessionId: string | null, running: boolean
     if (current && (!root || current.sessionId !== sessionId || (!running && current.status !== "expired"))) update(null)
   }, [sessionId, running, root, update])
 
-  useEffect(() => {
-    if (!root) { setCapability(null); return }
-    let active = true
-    const initialScope = getBackendStorageScope()
+  const requestCapability = useCallback((initialScope: string) => {
     const pending = { scope: initialScope, promise: readLiveBootstrapCapability() }
     pendingCapabilityRef.current = pending
     void pending.promise.then((value) => {
-      if (pendingCapabilityRef.current === pending) pendingCapabilityRef.current = null
-      if (active && initialScope === getBackendStorageScope()) setCapability(value ? { scope: initialScope, value } : null)
+      if (pendingCapabilityRef.current !== pending) return
+      pendingCapabilityRef.current = null
+      if (mountedRef.current && contextRef.current.root && initialScope === getBackendStorageScope())
+        setCapability(value ? { scope: initialScope, value } : null)
     })
-    return () => { active = false; if (pendingCapabilityRef.current === pending) pendingCapabilityRef.current = null }
-  }, [root])
+    return pending
+  }, [])
+
+  useEffect(() => {
+    if (!root) { pendingCapabilityRef.current = null; setCapability(null); return }
+    const pending = requestCapability(getBackendStorageScope())
+    return () => { if (pendingCapabilityRef.current === pending) pendingCapabilityRef.current = null }
+  }, [root, requestCapability])
 
   // Allow a short in-flight negotiation on the first send, without holding normal chat indefinitely.
   const prepareInitial = useCallback((): boolean | Promise<boolean> => {
@@ -61,8 +75,8 @@ export function useLiveBootstrapRetry(sessionId: string | null, running: boolean
     const initialScope = getBackendStorageScope()
     if (!mountedRef.current || !root || !current.root) return false
     if (capability?.scope === initialScope) return true
-    const pending = pendingCapabilityRef.current
-    if (!pending || pending.scope !== initialScope) return false
+    const currentPending = pendingCapabilityRef.current
+    const pending = currentPending?.scope === initialScope ? currentPending : requestCapability(initialScope)
     return new Promise((resolve) => {
       let settled = false
       const finish = (value: boolean) => {
@@ -76,7 +90,7 @@ export function useLiveBootstrapRetry(sessionId: string | null, running: boolean
         && contextRef.current.epoch === current.epoch && contextRef.current.root
         && initialScope === getBackendStorageScope()), () => finish(false))
     })
-  }, [capability, root])
+  }, [capability, root, requestCapability])
 
   useEffect(() => {
     if (!sessionId || !running || !root || !capability || capability.scope !== getBackendStorageScope()) return
@@ -93,6 +107,11 @@ export function useLiveBootstrapRetry(sessionId: string | null, running: boolean
           if (previous?.sessionId === sessionId && !["continued", "unconfirmed", "stopping", "stop_requested", "stop_unconfirmed"].includes(previous.status))
             update({ ...previous, status: performance.now() >= previous.deadline ? "expired" : "unavailable", secondsRemaining: 0 })
         } else if (stopRef.current !== JSON.stringify([sessionId, observation.runId])) {
+          // A newer offer owns this pane even if an older confirmation is still in flight.
+          if (actionRef.current?.epoch === epoch && actionRef.current.runId !== observation.runId)
+            actionRef.current = null
+          if (stopActionRef.current?.epoch === epoch && stopActionRef.current.runId !== observation.runId)
+            stopActionRef.current = null
           const calculated = started + observation.expiresInMs
           const deadline = previous?.sessionId === sessionId && previous.runId === observation.runId
             ? Math.min(previous.deadline, calculated) : calculated
@@ -137,11 +156,15 @@ export function useLiveBootstrapRetry(sessionId: string | null, running: boolean
     actionRef.current = action
     update({ ...selected, status: "confirming" })
     const owns = () => mountedRef.current && contextRef.current.epoch === action.epoch && actionRef.current === action
+      && viewRef.current?.sessionId === selected.sessionId && viewRef.current.runId === action.runId
       && capability.scope === getBackendStorageScope()
+    const settle = (status: LiveStatus, secondsRemaining?: number) => {
+      if (owns()) settleOwnedView(capability.scope, selected, status, secondsRemaining)
+    }
     try {
       const currentCapability = await readLiveBootstrapCapability()
       if (!owns()) return
-      if (!currentCapability) { update({ ...selected, status: "unavailable" }); return }
+      if (!currentCapability) { settle("unavailable"); return }
       const started = performance.now()
       const fresh = await readLiveBootstrapOffer(selected.sessionId, currentCapability.offerTimeoutMs)
       if (!owns()) return
@@ -149,26 +172,27 @@ export function useLiveBootstrapRetry(sessionId: string | null, running: boolean
       if (fresh.kind !== "waiting" || fresh.runId !== selected.runId || fresh.confirming
           || fresh.expiresInMs <= 0 || performance.now() >= Math.min(selected.deadline, started + fresh.expiresInMs)
           || fence.kind !== "confirmed" || fence.runId !== selected.runId) {
-        update({ ...selected, status: performance.now() >= selected.deadline ? "expired" : "unavailable", secondsRemaining: 0 })
+        settle(performance.now() >= selected.deadline ? "expired" : "unavailable", 0)
         return
       }
       const reservation = beginLiveBootstrapConfirmation(selected.sessionId, selected.runId)
-      if (!reservation) { update({ ...selected, status: "unconfirmed" }); return }
+      if (!reservation) { settle("unconfirmed"); return }
       try {
         await confirmLiveBootstrapOffer(selected.sessionId, selected.runId)
         finishLiveBootstrapConfirmation(reservation, "accepted")
-        if (owns()) update({ ...selected, status: "continued" })
+        settle("continued")
       } catch (error) {
         const refused = isLiveBootstrapNotPrepared(error, selected.sessionId)
         finishLiveBootstrapConfirmation(reservation, refused ? "refused" : "unknown")
-        if (owns()) update({ ...selected, status: refused ? "unavailable" : "unconfirmed" })
+        settle(refused ? "unavailable" : "unconfirmed")
       }
-    } catch { if (owns()) update({ ...selected, status: "unavailable" }) }
+    } catch { settle("unavailable") }
     finally { if (actionRef.current === action) actionRef.current = null }
-  }, [capability, update])
+  }, [capability, settleOwnedView, update])
 
   const cancelForStop = useCallback(() => {
     actionRef.current = null
+    stopActionRef.current = null
     const selected = viewRef.current
     if (!selected || selected.sessionId !== contextRef.current.sessionId) return
     stopRef.current = JSON.stringify([selected.sessionId, selected.runId])
@@ -185,19 +209,27 @@ export function useLiveBootstrapRetry(sessionId: string | null, running: boolean
     }
     const scope = getBackendStorageScope()
     cancelForStop()
+    const action = { epoch: current.epoch, runId: selected.runId }
+    stopActionRef.current = action
+    const owns = () => mountedRef.current && contextRef.current.epoch === action.epoch && stopActionRef.current === action
+      && viewRef.current?.sessionId === selected.sessionId && viewRef.current.runId === action.runId
+      && scope === getBackendStorageScope()
+    const settle = (status: LiveStatus) => { if (owns()) settleOwnedView(scope, selected, status) }
     try {
       const currentCapability = await readLiveBootstrapCapability()
-      if (!mountedRef.current || contextRef.current.epoch !== current.epoch || scope !== getBackendStorageScope()) return
+      if (!owns()) return
       const currentFence = readContinuousRetryFence(scope, selected.sessionId)
       if (!currentCapability || currentFence.kind !== "confirmed" || currentFence.runId !== selected.runId) {
-        update({ ...selected, status: "stop_unconfirmed" }); return
+        settle("stop_unconfirmed"); return
       }
       await agentClient.stopGeneration(selected.sessionId, selected.runId)
-      if (mountedRef.current && contextRef.current.epoch === current.epoch) update({ ...selected, status: "stop_requested" })
+      settle("stop_requested")
     } catch {
-      if (mountedRef.current && contextRef.current.epoch === current.epoch) update({ ...selected, status: "stop_unconfirmed" })
+      settle("stop_unconfirmed")
+    } finally {
+      if (stopActionRef.current === action) stopActionRef.current = null
     }
-  }, [cancelForStop, update])
+  }, [cancelForStop, settleOwnedView, update])
 
   return { canPrepare: !!canPrepare, prepareInitial, offer: root && view?.sessionId === sessionId ? view : null, confirm, stop, cancelForStop }
 }
