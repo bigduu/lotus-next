@@ -4108,6 +4108,28 @@ describe("explicit continuous upstream retry", () => {
     expect(hook.current.messages.some((message) => "content" in message && message.content === "Synthetic stale answer")).toBe(false)
     expect(hook.current.streaming).not.toBe("Synthetic stale answer")
   })
+  it("carries the negotiated live bootstrap opt-in only on the initial Execute", async () => {
+    const target = "live-initial-execute"
+    mocks.appState.chats = [{ id: target, messages: [], config: { model: "test-model" } }]
+    mocks.sendMessage.mockResolvedValue({ session_id: target })
+    mocks.execute.mockResolvedValue({ session_id: target, status: "started", run_id: "live-run" })
+    mocks.subscribeToEvents.mockReturnValue(pendingForever())
+    const hook = await mountUseChat({ mode: "bound", sessionId: target })
+    await act(async () => { await hook.current.send("one synthetic request", { liveBootstrapResume: true }) })
+    expect(mocks.execute).toHaveBeenCalledExactlyOnceWith(target, "test-model", undefined, undefined, undefined, undefined, true)
+    expect(mocks.sendMessage).toHaveBeenCalledTimes(1)
+    expect(mocks.truncateSessionMessages).not.toHaveBeenCalled()
+  })
+  it("does not add live bootstrap opt-in to an ordinary send when not negotiated", async () => {
+    const target = "live-initial-unsupported"
+    mocks.appState.chats = [{ id: target, messages: [], config: { model: "test-model" } }]
+    mocks.sendMessage.mockResolvedValue({ session_id: target })
+    mocks.execute.mockResolvedValue({ session_id: target, status: "started", run_id: "ordinary-run" })
+    mocks.subscribeToEvents.mockReturnValue(pendingForever())
+    const hook = await mountUseChat({ mode: "bound", sessionId: target })
+    await act(async () => { await hook.current.send("one synthetic request") })
+    expect(mocks.execute).toHaveBeenCalledExactlyOnceWith(target, "test-model", undefined, undefined, undefined)
+  })
   it("negotiates once, fences duplicate clicks and executes without Chat or truncate", async () => {
     const cap=deferred<unknown>();mocks.apiGet.mockReturnValue(cap.promise)
     const subscription=deferred<void>();mocks.subscribeToEvents.mockReturnValue(subscription.promise)

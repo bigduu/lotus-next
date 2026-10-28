@@ -1006,6 +1006,7 @@ export function useChat(
       opts?: {
         resume?: boolean
         upstreamRetry?: UpstreamRetrySelection
+        liveBootstrapResume?: boolean
         operationId?: number
         pendingOperationId?: number
         /** Exact chat ACK identity; missing ids leave failed tool evidence unconfirmed. */
@@ -1123,7 +1124,9 @@ export function useChat(
         let previousPaneFence: ContinuousStopFence | undefined
         const execution = opts?.upstreamRetry
           ? agentClient.execute(runSid, executeModel || undefined, executeReasoningEffort, undefined, executeModelRef, opts.upstreamRetry)
-          : startOrdinaryExecution(runSid, operationId, () => agentClient.execute(runSid, executeModel || undefined, executeReasoningEffort, undefined, executeModelRef))
+          : startOrdinaryExecution(runSid, operationId, () => opts?.liveBootstrapResume
+            ? agentClient.execute(runSid, executeModel || undefined, executeReasoningEffort, undefined, executeModelRef, undefined, true)
+            : agentClient.execute(runSid, executeModel || undefined, executeReasoningEffort, undefined, executeModelRef))
         if (opts?.upstreamRetry) {
           setUpstreamRetryFeedback({ sessionId: runSid, operationId, status: "requesting" })
           // A Stop clicked before Execute returns waits for that exact ACK. It
@@ -2094,6 +2097,8 @@ export function useChat(
         reasoningSelection?: ReasoningEffortSelection
         /** Optional first-send preparation fence, including null → null navigation. */
         isOriginCurrent?: () => boolean
+        /** This Root's initial execution opted into a negotiated live offer. */
+        liveBootstrapResume?: boolean
       },
     ): Promise<SendSubmissionResult> => {
       if (opts?.isOriginCurrent && !opts.isOriginCurrent()) return { kind: "blocked" }
@@ -2285,8 +2290,9 @@ export function useChat(
             message: uiText("the_root_permission_change_is_unconfirmed_your_message__64f12563"),
           })
         } else {
-          void startOrdinaryExecution(acknowledgedSessionId, operation.id, () => agentClient
-            .execute(acknowledgedSessionId, submittedModel || undefined, submittedReasoningEffort, undefined, submittedModelRef))
+          void startOrdinaryExecution(acknowledgedSessionId, operation.id, () => opts?.liveBootstrapResume
+            ? agentClient.execute(acknowledgedSessionId, submittedModel || undefined, submittedReasoningEffort, undefined, submittedModelRef, undefined, true)
+            : agentClient.execute(acknowledgedSessionId, submittedModel || undefined, submittedReasoningEffort, undefined, submittedModelRef))
             .catch((err) => {
               observeSessionExecutionConflict(acknowledgedSessionId, err)
               console.warn("[useChat] detached generation start failed", err)
@@ -2325,6 +2331,7 @@ export function useChat(
           operationId: operation.id,
           pendingOperationId: operation.pendingOperationId,
           acknowledgedMessageId,
+          liveBootstrapResume: opts?.liveBootstrapResume,
           reasoningEffort: submittedReasoningEffort ?? null,
           modelSelection: { model: submittedModel, modelRef: submittedModelRef },
         })

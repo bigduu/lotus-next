@@ -492,6 +492,7 @@ export interface ExecuteResponse {
 
 export interface ExecuteRequest {
   upstream_retry?: UpstreamRetrySelection;
+  live_bootstrap_resume?: boolean;
   model?: string;
   model_ref?: { provider: string; model: string };
   provider?: string;
@@ -1343,9 +1344,11 @@ export class AgentClient {
     clientSync?: ExecuteClientSync,
     modelRef?: { provider: string; model: string },
     upstreamRetry?: UpstreamRetrySelection,
+    liveBootstrapResume?: boolean,
   ): Promise<ExecuteResponse> {
     const payload: ExecuteRequest = {};
     if (upstreamRetry) payload.upstream_retry = upstreamRetry;
+    if (liveBootstrapResume === true) payload.live_bootstrap_resume = true;
     if (model) {
       payload.model = model;
     }

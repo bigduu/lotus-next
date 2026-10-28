@@ -13,6 +13,13 @@ it("adds continuous mode only to the explicitly selected Execute", async () => {
     ["execute/session-1",{}],["execute/child-session",{}],
   ])
 })
+it("opts a single initial execution into the negotiated live bootstrap offer", async () => {
+  await agentClient.execute("session-1", undefined, undefined, undefined, undefined, undefined, true)
+  await agentClient.execute("session-1")
+  expect(api.post.mock.calls).toEqual([
+    ["execute/session-1", { live_bootstrap_resume: true }], ["execute/session-1", {}],
+  ])
+})
 it("uses only the exact-run Stop header even with a live socket", async () => {
   await agentClient.stopGeneration("session/a","run-original")
   expect(api.stopAgent).not.toHaveBeenCalled()
