@@ -21,6 +21,14 @@ claim a release cutover from green feature CI alone. Coordinate outstanding
 #445/frontend28 with its current owner; do not retarget or replace its frozen
 tag, source or receipt.
 
+The read-only `verifyDevAcceptance` foundation recognizes the complete Dev
+feature graph separately from the historical publication parser. Given the
+original PR, run, jobs, receipt and commit metadata, it checks their identities,
+required results, pre-merge timing, parents and tree. It performs no API reads,
+build, pack, publication or branch mutation on its own. The pending release
+producer must obtain the original evidence, check the frozen ref and protected
+Dev ancestry, and call this proof before activating a new publication path.
+
 ## Complete tests before dev
 
 Feature PRs target `dev`. `ci.yml` has no main-push or release trigger. It checks

@@ -37,6 +37,12 @@ release/main flow as active or submit a new feature-graph receipt to that old
 publisher. Preserve the separately owned frontend 2026.10.28 request (#445),
 existing tags and original receipts.
 
+The `verifyDevAcceptance` API in `scripts/release-source.mjs` checks an actual
+Dev feature run and its tested merge tree as data. It does not fetch evidence,
+freeze a release, allocate a version, build, pack, publish or replace the
+historical publisher. A later reviewed producer must supply the original GitHub
+evidence and independently prove the frozen ref and protected Dev ancestry.
+
 After the dependent cutover, only a fully accepted dev cut may become a frozen
 release. Release work builds/packages/publishes the formal artifact once; it
 does not run Unit or E2E. A runtime fix returns to a feature branch, tested dev
