@@ -103,6 +103,19 @@ export const devFeatureJobNames = (source) => {
   return names
 }
 
+export const verifyDevProtection = branch => {
+  assert.equal(branch?.name, "dev")
+  assert.equal(branch.protected, true, "Dev must remain protected")
+  assert.equal(branch.protection?.enabled, true, "Dev protection must be enabled")
+  const checks = branch.protection?.required_status_checks
+  assert.equal(checks?.enforcement_level, "everyone", "Dev admission must apply to administrators")
+  assert.ok(Array.isArray(checks?.contexts) && checks.contexts.includes("Feature acceptance"), "Dev must require Feature acceptance")
+  assert.ok(Array.isArray(checks?.checks) && checks.checks.some(check => check.context === "Feature acceptance" && check.app_id === 15368),
+    "Dev must require the GitHub Actions Feature acceptance check")
+  assert.match(branch.commit?.sha ?? "", sha)
+  return branch.commit.sha
+}
+
 // Current releases trust normal protected Dev admission. This checks the
 // immutable source/merge and complete gate wiring, not expired CI execution.
 export const verifyProtectedDevMerge = (sourceSha, pr, merged, sourceWorkflow) => {
@@ -717,7 +730,7 @@ const main = async () => {
   assert.deepEqual(git("show", "-s", "--format=%P", sourceSha).split(" "), merged.parents.map(parent => parent.sha))
   const facts = verifyProtectedDevMerge(sourceSha, pr, merged, sourceWorkflow)
   const refresh = () => {
-    const current = api("branches/dev"); assert.equal(current.protected, true)
+    const current = api("branches/dev"); verifyDevProtection(current)
     for (const revision of new Set([env.GITHUB_SHA, sourceSha])) {
       const proof = api(`compare/${revision}...${current.commit.sha}`)
       assert.equal(proof.merge_base_commit.sha, revision); assert.ok(["identical", "ahead"].includes(proof.status))
