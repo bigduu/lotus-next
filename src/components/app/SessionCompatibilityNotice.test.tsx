@@ -13,17 +13,41 @@ const state = (status?: "compatible" | "legacy_compatible" | "conflict"): Sessio
       ? [{ code: "unsupported_session_version", message: "Original service diagnostic" }] : [] } : null,
   blocked: status === "conflict", observed: true, legacy: !status, readError: false, loading: false, refresh: vi.fn(async () => {}),
 })
-async function mount(value?: SessionExecutionCompatibilityView) {
+async function mount(value?: SessionExecutionCompatibilityView, sessionId?: string) {
   const root = createRoot(document.body.appendChild(document.createElement("div"))); roots.push(root)
-  await act(async () => root.render(<SessionCompatibilityNotice state={value} />))
+  await act(async () => root.render(<SessionCompatibilityNotice state={value} sessionId={sessionId} />))
+  return root
 }
-it.each(["compatible", "legacy_compatible", undefined] as const)("presents %s without an unsupported alert or continuation write", async (status) => {
-  const value = state(status); await mount(value)
+it.each(["compatible", undefined] as const)("omits the entire %s panel and its actions", async (status) => {
+  const value = state(status); await mount(value, "synthetic-session")
+  expect(document.querySelector("section")).toBeNull()
+  expect(document.querySelector("button")).toBeNull()
+  expect(document.body.textContent).toBe("")
+  expect(value.refresh).not.toHaveBeenCalled()
+})
+it("retains an observed legacy migration requirement", async () => {
+  const value = state("legacy_compatible"); await mount(value)
   expect(document.querySelector('[role="alert"]')).toBeNull()
   expect(document.querySelector('[data-session-execution-blocked="false"]')).not.toBeNull()
-  expect(document.body.textContent).toContain(uiText(status === "compatible" ? "session_compatibility_compatible"
-    : status === "legacy_compatible" ? "session_compatibility_legacy_compatible" : "session_compatibility_legacy_unassessed"))
+  expect(document.body.textContent).toContain(uiText("session_compatibility_legacy_compatible"))
   expect(value.refresh).not.toHaveBeenCalled()
+})
+it("keeps unknown, compatible and compatible-refresh transitions free of a normal banner", async () => {
+  const loading = { ...state(), observed: false, loading: true }
+  const root = await mount(loading, "synthetic-session")
+  expect(document.body.textContent).toBe("")
+  for (const value of [state("compatible"), { ...state("compatible"), loading: true }, state("compatible")]) {
+    await act(async () => root.render(<SessionCompatibilityNotice state={value} sessionId="synthetic-session" />))
+    expect(document.querySelector("section")).toBeNull()
+    expect(document.querySelector("button")).toBeNull()
+    expect(document.body.textContent).toBe("")
+  }
+})
+it("shows a read failure without presenting the stale compatible report as success", async () => {
+  await mount({ ...state("compatible"), readError: true })
+  expect(document.body.textContent).toContain(uiText("session_compatibility_read_error"))
+  expect(document.body.textContent).not.toContain(uiText("session_compatibility_compatible"))
+  expect(document.querySelector("button")).not.toBeNull()
 })
 it("shows explicit conflict, readable-history recovery and original escaped diagnostic", async () => {
   const value = state("conflict"); value.report!.conflicts = [{ code: "unsupported_session_version", message: "<script>not executable</script>" }]

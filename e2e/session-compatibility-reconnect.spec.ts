@@ -50,7 +50,9 @@ test("#2077 in-place websocket recovery rereads compatibility and never replays 
     return route.fallback()
   })
   await page.goto(standaloneScenario.entryUrl)
-  await expect(page.getByText("This session is compatible", { exact: false })).toBeVisible()
+  await expect(page.getByText("Retained compatibility transcript", { exact: true })).toBeVisible()
+  await expect.poll(() => detailReads).toBeGreaterThan(0)
+  await expect(page.locator("[data-session-execution-blocked]")).toHaveCount(0)
   const input = page.getByRole("textbox", { name: "Messages", exact: true })
   await input.fill("Keep this draft through reconnects")
   const before = detailReads

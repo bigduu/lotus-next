@@ -35,10 +35,12 @@ async function fixture(page: Page, mode: Mode) {
   ]
   let migrated = mode === "current", detailUnavailable = mode === "cold-pending", holdReadback = false
   let pending: Intent | null = mode === "cold-pending" ? pendingIntent : null
-  let assessReads = 0, readbacksHeld = 0, commits = 0, metadataVersion = 1
+  let assessReads = 0, readbacksHeld = 0, commits = 0, permissionRevision = 1
   let releaseReadback!: () => void
   const readbackGate = new Promise<void>((resolve) => { releaseReadback = resolve })
   const posts: Intent[] = [], sessionWrites: { path: string; body: unknown }[] = []
+  const permissionWrites: { mode: string; ifMatch: string }[] = []
+  const permissionEtag = () => `"${permissionRevision}"`
   const events: string[] = []
   const conflicting = () => mode === "canonical-conflict" && migrated
   const retainedVersion = () => conflicting() ? 99 : migrated ? 2 : null
@@ -91,13 +93,20 @@ async function fixture(page: Page, mode: Mode) {
       if (holdReadback) { readbacksHeld += 1; await readbackGate }
       if (detailUnavailable) return route.fulfill({ status: 503, json: { error: "Canonical detail unavailable" } })
       events.push(migrated ? "current-detail" : "legacy-detail")
-      return route.fulfill({ json: canonical(), headers: { ETag: `"${metadataVersion}"` } })
+      return route.fulfill({ json: canonical(), headers: { ETag: permissionEtag() } })
     }
     if (path === `/api/v1/sessions/${sid}` && request.method() === "PATCH") {
-      expect(request.headers()["if-match"]).toBe(`"${metadataVersion}"`)
-      Object.assign(session, request.postDataJSON())
-      metadataVersion += 1
-      return route.fulfill({ json: canonical(), headers: { ETag: `"${metadataVersion}"` } })
+      const body = request.postDataJSON() as Record<string, unknown>
+      const ifMatch = request.headers()["if-match"]
+      if (ifMatch !== permissionEtag()) return route.fulfill({ status: 412, json: { error: "Stale permission revision" } })
+      if (Object.keys(body).length !== 1 || !["default", "bypass", "auto"].includes(String(body.permission_mode))) {
+        return route.fulfill({ status: 400, json: { error: "Invalid permission update" } })
+      }
+      permissionWrites.push({ mode: String(body.permission_mode), ifMatch })
+      session.permission_mode = String(body.permission_mode)
+      session.bypass_permissions = session.permission_mode !== "default"
+      permissionRevision += 1
+      return route.fulfill({ json: canonical(), headers: { ETag: permissionEtag() } })
     }
     if (path === `/api/v1/history/${sid}` && request.method() === "GET") return route.fulfill({ json: { session_id: sid, messages: history } })
     if (path === `/api/v1/actors/${sid}/snapshot`) return route.fulfill({ json: actorSnapshotFixture(sid, 0) })
@@ -110,7 +119,7 @@ async function fixture(page: Page, mode: Mode) {
   })
   await page.goto(standaloneScenario.entryUrl)
   await expect(page.getByText(history[0].content, { exact: true })).toBeVisible()
-  return { runtime, posts, sessionWrites, events, session,
+  return { runtime, posts, sessionWrites, permissionWrites, events, session,
     get assessReads() { return assessReads }, get readbacksHeld() { return readbacksHeld }, get commits() { return commits },
     allowDetail() { detailUnavailable = false },
     releaseReadback() { holdReadback = false; releaseReadback() } }
@@ -149,8 +158,8 @@ test("explicit legacy migration confirms one matching receipt and canonical read
     await expect(migration(page).getByRole("button", { name: "Migrating…", exact: true })).toBeDisabled()
     expect(f.posts).toHaveLength(1)
     f.releaseReadback()
-    await expect(migration(page)).toContainText(completed)
-    await expect(page.getByText("This session is compatible", { exact: false }).first()).toBeVisible()
+    await expect.poll(() => f.events.lastIndexOf("current-detail")).toBeGreaterThan(f.events.indexOf("matching-receipt"))
+    await expect(page.locator("[data-session-execution-blocked]")).toHaveCount(0)
     await retained(page)
     await expect(input).toHaveText("Keep this unsent instruction and its context")
     expect(f.sessionWrites).toEqual([{ path: endpoint, body: f.posts[0] }])
@@ -186,7 +195,9 @@ for (const mode of ["uncertain-post", "uncertain-readback"] as const) {
     await screenshot(page, info, `session-migration-${mode}`)
     f.allowDetail()
     await recover(page).click()
-    await expect(migration(page)).toContainText(completed)
+    await expect.poll(() => f.commits).toBe(1)
+    await expect(migration(page)).toHaveCount(0)
+    await expect(page.locator("[data-session-execution-blocked]")).toHaveCount(0)
     expect(f.posts).toEqual([original, original])
     expect(f.commits).toBe(1)
     expect(f.sessionWrites).toEqual([{ path: endpoint, body: original }, { path: endpoint, body: original }])
@@ -213,7 +224,7 @@ test("cold refresh recovers only the server's pending operation even when sessio
   await screenshot(page, info, "session-migration-cold-pending")
   f.allowDetail()
   await recover(page).click()
-  await expect(migration(page)).toContainText(completed)
+  await expect(page.locator("[data-session-execution-blocked]")).toHaveCount(0)
   expect(f.posts).toEqual([pendingIntent])
   await expect(page.getByText("Compatibility could not be checked", { exact: false })).toHaveCount(0)
   expect(f.commits).toBe(1)
@@ -222,7 +233,8 @@ test("cold refresh recovers only the server's pending operation even when sessio
 
 test("current Sessions change permission modes without automatically probing migration authority", async ({ page }, info) => {
   const f = await fixture(page, "current")
-  await expect(page.getByText("This session is compatible", { exact: false }).first()).toBeVisible()
+  await retained(page)
+  await expect(page.locator("[data-session-execution-blocked]")).toHaveCount(0)
   expect(f.assessReads).toBe(0)
   const permission = page.getByRole("combobox", { name: "Permission mode", exact: true })
   await expect(permission).toHaveText("Default")
@@ -235,17 +247,18 @@ test("current Sessions change permission modes without automatically probing mig
   await page.getByRole("option", { name: "Default", exact: true }).click()
   await expect.poll(() => f.session.permission_mode).toBe("default")
   await expect(permission).toHaveText("Default")
-  await page.getByRole("button", { name: "Check compatibility again", exact: true }).click()
-  await expect(page.getByRole("button", { name: "Check compatibility again", exact: true })).toBeEnabled()
+  expect(f.permissionWrites).toEqual([{ mode: "auto", ifMatch: '"1"' }, { mode: "default", ifMatch: '"2"' }])
+  await expect(page.getByRole("button", { name: "Check compatibility again", exact: true })).toHaveCount(0)
+  await expect(page.getByRole("button", { name: "Refresh migration state", exact: true })).toHaveCount(0)
   expect(f.assessReads).toBe(0)
   expect(f.posts).toEqual([])
-  await migration(page).getByRole("button", { name: "Refresh migration state", exact: true }).click()
-  await expect.poll(() => f.assessReads).toBe(1)
+  await expect(migration(page)).toHaveCount(0)
   await expect(start(page)).toHaveCount(0)
   await expect(recover(page)).toHaveCount(0)
+  expect(f.assessReads).toBe(0)
   expect(f.posts).toEqual([])
   expect(f.runtime.pageErrors).toEqual([])
-  await screenshot(page, info, "session-migration-current-manual-read")
+  await screenshot(page, info, "session-migration-current-hidden")
 })
 
 test("canonical conflict after a matching receipt blocks the Composer and preserves only explicit recovery", async ({ page }, info) => {
