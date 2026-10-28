@@ -22,27 +22,26 @@ embedded hosting while enforcing the canonical `/api/v1` and `/v2/stream`
 runtime contract. CI retains its HTML report, trace, screenshot, video, and
 runtime observations when a case fails.
 
-CI runs Unit once on Node 22 and builds its canonical test artifact
+CI runs the Unit suite once on Node 22 and builds its canonical test artifact
 once on Node 24. Four independently rerunnable shards consume that artifact
 across the complete all-surface inventory. See
 [browser shard evidence, reruns, and timing](browser-test-shards.md).
 Feature CI also requires real Bamboo and native Actor E2E. Its `Feature acceptance`
 gate binds the actual PR merge snapshot, base/head and tree and rejects skipped
-or failed required jobs. It does not rerun tests on main pushes. See
-[delivery and cutover status](delivery.md) before releasing: the single-artifact
-producer and main promotion changes are separate dependencies of this feature
-slice, and the existing historical publisher is unchanged.
+or failed required jobs. It does not rerun tests on main pushes. The candidate
+also contains the single-artifact publisher and read-only Main admission. See
+[delivery and cutover status](delivery.md) and the installed workflow before
+releasing; a reviewed source change alone is not production publication evidence.
 
 The real-runtime gate is intentionally separate from that deterministic
 matrix. It verifies a clean checkout of Bamboo revision
-`4786b7db862cabbebce49e288da62b284ccf5b72` and the hash-verified published
-Bamboo `2026.10.19` Linux x64 executable. Feature PR CI checks the browser host,
-Rust adapter and browser-runtime package/lock objects against that same source.
-The image records the source revision and host SHA-256, which the browser test
-checks against the file inside the running container. The feature gate still
-runs the full real Bamboo and native Actor tests; static checks alone do not
-establish runtime compatibility. The image is assembled without compiling
-Bamboo. It serves the production
+`4786b7db862cabbebce49e288da62b284ccf5b72`, pairs its browser host with the
+hash-verified published Bamboo `2026.10.19` Linux x64 executable, and assembles
+an isolated Docker image without compiling Bamboo. CI verifies the exact host
+and browser-adapter objects from that same checkout. The image records the
+source revision and host SHA-256, which the browser test checks against the file
+inside the running container. Static checks alone do not establish runtime
+compatibility. It serves the production
 Lotus Next artifact from that Bamboo process and drives
 one complete chat turn through the visible desktop UI and a local deterministic
 OpenAI-compatible provider. It requires the `auth.ws_hello_ack.v1` bootstrap
@@ -66,15 +65,17 @@ BAMBOO_E2E_SOURCE_DIR=/absolute/path/to/bamboo \
 
 Docker and Chromium are required. The runner rejects a different or dirty
 Bamboo checkout and never accepts a live Bamboo URL. Feature CI uses the same
-clean checkout for binary source and host verification; publication inputs cannot
-select the feature-only host path. Normal completion, setup
+clean checkout for both binary source and host verification; publication inputs
+cannot select the feature-only host path. Normal completion, setup
 failure, `SIGINT`, and `SIGTERM` share one exact-resource teardown for the two
 containers, private network, temporary image, observation mount, and data root
 it created. CI runs this single desktop lane once on Node 24; it does not repeat
 it across the mock suite's viewport/runtime matrix. It runs on every feature PR
 using the already verified Node 24 `dist`; it does not rebuild that output.
 
-The published-artifact acceptance is a second real-runtime lane. It downloads
+The feature job also packs the already-built current-source artifact without a
+new Vite build, then verifies it on local HTTP and HTTPS/WSS browser surfaces.
+The separate manual published-artifact diagnostic downloads
 `@bigduu/lotus-next@2026.9.14` from the public npm registry into a fresh cache
 with lifecycle scripts disabled, then requires the committed SHA-1, SHA-512
 integrity, manifest SHA-256, resource-set digest, 34-resource inventory, and
@@ -113,60 +114,22 @@ digest is deterministic for one resource set. Consumers must verify this file
 before serving or staging an artifact; a dirty source manifest is never a
 release artifact.
 
-The following publication behavior is the existing historical contract, pending
-the dependent release-producer cutover described in [delivery.md](delivery.md).
-It is not the target release/main flow and does not authorize sending a new
-feature-graph receipt to the old publisher.
+## Publication and recovery
 
-The committed package version remains the `0.0.0` source placeholder. The
-manual publication workflow accepts one explicit SemVer and reuses the complete
-Node 22/24 and browser source-CI results bound to the exact clean candidate in
-the committed acceptance receipt. It does not rerun that Node test matrix or
-`npm run verify`. Publication builds the versioned artifact, checks it against
-the paired real Bamboo runtime on local and HTTPS browser surfaces, then builds
-and statically verifies the final package and requires its tarball to match the
-accepted runtime identity. It packs without another lifecycle build, publishes
-with npm provenance, and downloads and verifies the registry copy. Publishing
-does not switch any Bamboo, Bodhi, or Zenith consumer.
+The committed package version remains the `0.0.0` source placeholder. After
+feature acceptance, the publisher trusts the normal PR merge into protected Dev
+and verifies the admitted source, its parents/tree and frozen release tag. It
+builds the formal-version dist once,
+packs one original tgz without lifecycle scripts, retains those bytes and then
+publishes and verifies them against the registry. It does not rerun Unit, browser
+or real-Bamboo tests during release. Publication does not switch Bamboo, Bodhi
+or Zenith consumers automatically.
 
-Each publication build also supplies `VITE_APP_REVISION` and `VITE_APP_VERSION`
-from the same verified source receipt and explicit package version. Runtime
-diagnostic exports can therefore identify that exact published frontend; local
-builds without those public values continue to report an unknown identity.
-
-Publication preflight checks the accepted candidate's files at its exact source
-SHA. CI must pin that candidate's Bamboo SHA literally; publication may use the
-same literal (historical candidates) or the exact
-`${{ needs.preflight.outputs.bamboo_sha }}` binding. The latter obtains its SHA
-from the reviewed candidate and the run-bound source receipt, rather than a
-dispatch input or moving backend ref. Preflight also checks that this binding
-is in the real-Bamboo job's environment, that the preflight output maps to
-`steps.source.outputs.bamboo_sha`, and that this source step runs the release
-authority script. The paired Bamboo checkout must consume that environment
-binding from the official repository into `.e2e-bamboo`, with only the reviewed
-plain block keys and action inputs. Step environments, merged or quoted keys,
-duplicate mappings, and unreviewed inputs fail closed. This strengthens
-preflight rejection; the existing runtime gate still checks the exact Bamboo
-checkout SHA independently.
-The source authority step also requires its reviewed plain block shape and
-four exact environment inputs, without step execution overrides or inherited
-workflow/preflight run defaults. Preflight job environments are rejected, and
-the workflow environment accepts only the seven reviewed plain, unique entries
-with exact values. The real-Bamboo job environment likewise requires its six
-reviewed plain, unique entries and exact values. Both jobs permit only their
-current plain, unique top-level keys, rejecting added container execution and
-other wrappers without interpreting them. The parent job-name mapping requires
-plain, unique keys, and preflight outputs require their six reviewed plain,
-unique, flat entries, preventing equivalent quoted or merged overrides.
-The current publication graph contains preflight, real-Bamboo acceptance and
-pack/publish, with publication waiting for both preceding gates. Historical
-candidate sources retain their four-job graph with the additional Node
-verification dependency; their receipts and tags remain unchanged.
-These checks prevent inherited execution overrides such as `NODE_OPTIONS` from
-changing how the source script or paired checkout runs. This bounded structural check
-does not evaluate arbitrary other steps, file mutations, action supply chains,
-or general YAML.
-Missing, duplicate, or mismatched workflow bindings are
-rejected without changing the tag, tree, acceptance, or workflow identity gates.
+The build supplies `VITE_APP_REVISION` and `VITE_APP_VERSION` from the verified
+source and release version. Historical candidate records and workflow fixtures
+remain available for their original receipts; they do not authorize a new cut.
+The [pre-cutover verification guide](https://github.com/bigduu/lotus-next/blob/db0fe8bad768c98fbcc28f090763327061268d69/docs/verification.md)
+retains the original candidate-graph and binding details for historical recovery.
+See [delivery.md](delivery.md) for the current source, retry and promotion gates.
 
 The initial bundle-size baseline is recorded in [`docs/bundle-baseline.md`](bundle-baseline.md). It is an observation gate, not a size-budget change.

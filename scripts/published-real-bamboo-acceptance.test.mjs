@@ -233,8 +233,10 @@ describe("published real-Bamboo acceptance policy", () => {
     expect(ci.match(/BAMBOO_E2E_HOST_SOURCE_DIR: \${{ github.workspace }}\/.e2e-bamboo\n/g)).toHaveLength(2)
     expect(publication).not.toContain("BAMBOO_E2E_HOST_REVISION")
     expect(publication).not.toContain("BAMBOO_E2E_HOST_SOURCE_DIR")
-    expect(publication).toContain('BAMBOO_E2E_REVISION: ${{ needs.preflight.outputs.bamboo_sha }}')
     expect(publication).toContain("run: node scripts/release-source.mjs")
+    const source = readRepositoryFile("scripts/release-source.mjs")
+    expect(source).toContain('"Real Bamboo / Node 24", "Verify a real chat round trip with the pinned published Bamboo"')
+    expect(source).toContain('"Real Bamboo / Node 24", "Verify the current source artifact on local and secure browser surfaces"')
     expect(runtime).toContain(
       `export const REAL_BAMBOO_REVISION = "${expectedBambooRevision}";`,
     )
@@ -247,13 +249,13 @@ describe("published real-Bamboo acceptance policy", () => {
     expect(dockerfile).not.toContain(expectedBambooRevision)
   })
 
-  it("runs both current-source topologies and retains their evidence in CI and publication", () => {
+  it("runs both current-source topologies and retains their evidence in feature CI", () => {
     const ci = readRepositoryFile(".github/workflows/ci.yml")
     const publication = readRepositoryFile(".github/workflows/publish-npm.yml")
 
     expect(ci).toContain("run: node scripts/published-real-bamboo-acceptance.mjs --current-source")
-    expect(publication).toContain('run: node "${RUNNER_TEMP}/release-control/published-real-bamboo-acceptance.mjs" --current-source')
-    expect(publication).toContain("LOTUS_NEXT_RELEASE_SOURCE_RECEIPT:")
+    expect(publication).toContain("run: node scripts/release-source.mjs")
+    expect(publication).not.toContain("published-real-bamboo-acceptance.mjs --current-source")
     for (const directory of [
       "playwright-report-real-bamboo/",
       "playwright-report-real-bamboo-local/",
@@ -263,7 +265,7 @@ describe("published real-Bamboo acceptance policy", () => {
       "test-results-real-bamboo-remote/",
     ]) {
       expect(ci).toContain(directory)
-      expect(publication).toContain(directory)
+      expect(publication).not.toContain(directory)
     }
   })
 
@@ -279,30 +281,27 @@ describe("published real-Bamboo acceptance policy", () => {
     expect(surfaces).toContain('pathname.startsWith("/api/v1/browser/")')
   })
 
-  it("blocks publication until the final Node 24 tarball matches Node 22 browser acceptance", () => {
+  it("blocks publication until retained bytes and original feature acceptance are rechecked", () => {
     const publication = readRepositoryFile(".github/workflows/publish-npm.yml")
     const index = (step) => publication.indexOf(`      - name: ${step}`)
-    const acceptance = index("Verify the release artifact on local and secure browser surfaces")
-    const upload = index("Upload the accepted browser artifact identity")
-    const finalPack = index("Verify the exact local tarball")
-    const download = index("Download the accepted browser artifact identity")
-    const compare = index("Require the final tarball to match both real browser surfaces")
-    const credentials = index("Require npm publication credentials")
+    const upload = index("Retain the original final tarball and pack identity")
+    const download = index("Download the original final tarball")
+    const bytes = index("Verify retained bytes and original source identity")
+    const finalPack = publication.indexOf("      - name: Verify the exact local tarball", download)
+    const acceptance = index("Refresh the accepted Dev source immediately before publication")
+    const tag = index("Recheck the immutable source tag before publication")
     const publish = index("Publish the exact verified tarball with provenance")
-    expect([acceptance, upload, finalPack, download, compare, credentials, publish].every((position) => position >= 0)).toBe(true)
-    expect(publication).toContain(
-      'run: node "${RUNNER_TEMP}/release-control/published-real-bamboo-acceptance.mjs" --current-source --accepted-identity "${ACCEPTED_IDENTITY_PATH}"',
-    )
-    expect(acceptance).toBeLessThan(upload)
+    expect([upload, download, bytes, finalPack, acceptance, tag, publish].every((position) => position >= 0)).toBe(true)
+    expect(upload).toBeLessThan(download)
     expect(publication).toContain("uses: actions/upload-artifact@v7")
-    expect(publication.match(/name: real-bamboo-accepted-identity/g)).toHaveLength(2)
-    expect(finalPack).toBeLessThan(download)
-    expect(download).toBeLessThan(compare)
-    expect(compare).toBeLessThan(credentials)
-    expect(credentials).toBeLessThan(publish)
-    expect(publication.slice(0, compare)).not.toContain("secrets.NPM_TOKEN")
+    expect(download).toBeLessThan(bytes)
+    expect(bytes).toBeLessThan(finalPack)
+    expect(finalPack).toBeLessThan(acceptance)
+    expect(acceptance).toBeLessThan(tag)
+    expect(tag).toBeLessThan(publish)
+    expect(publication.slice(0, publish)).not.toContain("secrets.NPM_TOKEN")
     expect(publication).toContain("uses: actions/download-artifact@v8")
-    expect(publication).toContain("node scripts/release-acceptance-identity.mjs verify")
+    expect(publication.slice(acceptance, tag)).toContain("run: node scripts/release-source.mjs")
   })
 
   it("requires real Bamboo in feature CI before dev admission", () => {
