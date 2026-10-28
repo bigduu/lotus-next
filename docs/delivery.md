@@ -53,6 +53,12 @@ not as a current publication fallback. No custom producer registry, allocator,
 maintenance mode or separate publisher is introduced. Local policy fixtures do
 not prove production publication; actual activation remains separately reviewed.
 
+**Evidence retention limitation:** the feature acceptance artifact is retained
+for 30 days, and the publisher also reads the original Actions run and jobs. If
+any required record has expired, this producer stops; a rerun after the Dev merge
+is not the original pre-merge proof. Durable acceptance evidence is tracked in
+[#471](https://github.com/bigduu/lotus-next/issues/471).
+
 ## Complete tests before dev
 
 Feature PRs target `dev`. `ci.yml` has no main-push or release trigger. It checks

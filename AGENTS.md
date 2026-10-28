@@ -64,6 +64,11 @@ a new feature cut through the current CLI. The reviewed workflow becomes availab
 on protected Dev after admission. It does not itself authorize publication; full
 feature acceptance and release authorization remain required.
 
+The current feature receipt is retained for 30 days and publication also needs
+the original GitHub run and job records. If these expire, the current producer
+fails closed; a post-merge rerun cannot replace the original proof. Durable
+feature acceptance evidence is tracked in #471.
+
 After the dependent cutover, only a fully accepted dev cut may become a frozen
 release. Release work builds/packages/publishes the formal artifact once; it
 does not run Unit or E2E. A runtime fix returns to a feature branch, tested dev
