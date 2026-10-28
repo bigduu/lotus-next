@@ -376,7 +376,7 @@ export const verifyCandidateBackendPins = (candidate, files) => {
   assert.ok(files.acceptanceTest.includes(`"${candidate.bambooSha}"`))
 }
 
-const main = async () => {
+export const legacySource = async () => {
   const environment = process.env
   assert.equal(environment.GITHUB_REPOSITORY, repository)
   assert.equal(environment.GITHUB_REF, `refs/heads/${environment.DEFAULT_BRANCH}`)
@@ -432,6 +432,72 @@ const main = async () => {
   }).map(([key, value]) => `${key}=${value}\n`).join(""))
   console.log(`Accepted source ${candidate.sourceRef} -> ${candidate.sourceSha}; workflow ${environment.GITHUB_SHA}`)
 }
+
+
+const main = async () => {
+  const env = process.env, sourceSha = env.EXPECTED_SOURCE_SHA_INPUT, version = env.LOTUS_NEXT_RELEASE_VERSION
+  assert.equal(env.GITHUB_REPOSITORY, repository); assert.equal(env.GITHUB_REF_PROTECTED, "true")
+  assert.equal(env.GITHUB_REF, "refs/heads/dev"); assert.equal(env.GITHUB_EVENT_NAME, "workflow_dispatch")
+  assert.equal(env.GITHUB_WORKFLOW_REF, `${repository}/${workflowPath}@refs/heads/dev`)
+  assert.equal(env.GITHUB_WORKFLOW_SHA, env.GITHUB_SHA)
+  assert.equal(env.EXPECTED_WORKFLOW_SHA, env.GITHUB_SHA); assert.match(env.GITHUB_SHA, sha); assert.match(sourceSha, sha)
+  assert.match(version, versionPattern); assert.notEqual(version, "0.0.0")
+  assert.equal(env.SOURCE_REF_INPUT, `refs/tags/lotus-next-v${version}`)
+  const git = (...args) => execFileSync("git", ["--no-replace-objects", ...args], { encoding: "utf8" }).trim()
+  const api = route => JSON.parse(execFileSync("gh", ["api", `repos/${repository}/${route}`], { encoding: "utf8", maxBuffer: 8 * 1024 * 1024 }))
+  const id = value => { assert.match(value ?? "", /^[1-9][0-9]*$/); assert.ok(Number.isSafeInteger(Number(value))); return Number(value) }
+  const prId = id(env.FEATURE_PR_INPUT), runId = id(env.FEATURE_RUN_INPUT)
+  assert.equal(git("rev-parse", "HEAD"), env.GITHUB_SHA); assert.equal(git("status", "--porcelain", "--untracked-files=all"), "")
+  // A replacement dispatch cannot rebuild a previously attempted version.
+  // Failed publication resumes in the original run using its retained tarball.
+  const ownRun = api(`actions/runs/${id(env.GITHUB_RUN_ID)}`)
+  for (let page = 1; ; page++) {
+    const history = api(`actions/workflows/publish-npm.yml/runs?event=workflow_dispatch&per_page=100&page=${page}`)
+    assert.ok(page <= 100 && Array.isArray(history.workflow_runs))
+    for (const prior of history.workflow_runs) if (prior.id !== ownRun.id &&
+      Date.parse(prior.created_at) <= Date.parse(ownRun.created_at) && prior.display_title === `Publish @bigduu/lotus-next@${version}`) {
+      throw new Error(`Reuse original publication run ${prior.id}; do not dispatch/build this version again`)
+    }
+    if (page * 100 >= history.total_count) break
+    assert.equal(history.workflow_runs.length, 100, "Incomplete publication history")
+  }
+  const pr = api(`pulls/${prId}`), run = api(`actions/runs/${runId}`), jobs = api(`actions/runs/${runId}/jobs?filter=latest&per_page=100`)
+  assert.equal(pr.number, prId); assert.equal(run.id, runId)
+  const artifacts = api(`actions/runs/${runId}/artifacts?per_page=100`)
+  assert.equal(artifacts.total_count, artifacts.artifacts.length)
+  const matches = artifacts.artifacts.filter(item => item.name === "feature-acceptance" && !item.expired)
+  assert.equal(matches.length, 1); const artifact = matches[0]
+  assert.equal(artifact.workflow_run.id, runId); assert.equal(artifact.workflow_run.head_sha, pr.head.sha)
+  assert.ok(Date.parse(artifact.created_at) <= Date.parse(pr.merged_at))
+  const zip = execFileSync("gh", ["api", `repos/${repository}/actions/artifacts/${artifact.id}/zip`], { maxBuffer: 128 * 1024 })
+  assert.equal(zip.length, artifact.size_in_bytes)
+  assert.equal("sha256:" + createHash("sha256").update(zip).digest("hex"), artifact.digest)
+  const receipt = JSON.parse(execFileSync("python3", ["-c", "import io,sys,zipfile; z=zipfile.ZipFile(io.BytesIO(sys.stdin.buffer.read())); assert z.namelist()==['feature-acceptance.json']; i=z.infolist()[0]; assert i.file_size<=65536 and not i.is_dir(); sys.stdout.buffer.write(z.read(i))"], { input: zip, maxBuffer: 65536 }).toString())
+  git("fetch", "--no-tags", "origin", env.SOURCE_REF_INPUT)
+  assert.equal(git("cat-file", "-t", "FETCH_HEAD"), "tag")
+  const tagObjectSha = git("rev-parse", "FETCH_HEAD")
+  assert.equal(git("rev-parse", "FETCH_HEAD^{commit}"), sourceSha)
+  const sourceWorkflow = git("show", `${sourceSha}:.github/workflows/ci.yml`)
+  const product = JSON.parse(git("show", `${sourceSha}:package.json`))
+  assert.equal(product.name, "@bigduu/lotus-next"); assert.equal(product.version, "0.0.0")
+  const facts = verifyDevAcceptance(sourceSha, pr, run, jobs, receipt, api(`git/commits/${sourceSha}`),
+    api(`git/commits/${receipt.source.testedSnapshot}`), api("actions/workflows/ci.yml").id, sourceWorkflow)
+  const current = api("branches/dev"); assert.equal(current.protected, true)
+  const controller = api(`compare/${env.GITHUB_SHA}...${current.commit.sha}`)
+  assert.equal(controller.merge_base_commit.sha, env.GITHUB_SHA); assert.ok(["identical", "ahead"].includes(controller.status))
+  const ancestry = api(`compare/${sourceSha}...${current.commit.sha}`)
+  assert.equal(ancestry.merge_base_commit.sha, sourceSha); assert.ok(["identical", "ahead"].includes(ancestry.status))
+  assert.equal(api(`git/ref/heads/release/${sourceSha}`).object.sha, sourceSha, "Frozen release source moved")
+  assert.equal(api(`pulls/${prId}`).merge_commit_sha, sourceSha)
+  const bambooSha = sourceWorkflow.match(/^\s*BAMBOO_E2E_REVISION: ([0-9a-f]{40})$/m)?.[1]; assert.match(bambooSha ?? "", sha)
+  const result = { schemaVersion: 1, repository, version, sourceRef: env.SOURCE_REF_INPUT, sourceSha, sourceTree: facts.sourceTree,
+    bambooSha, tagObjectSha, workflowRef: env.GITHUB_WORKFLOW_REF, workflowSha: env.GITHUB_SHA, runId: env.GITHUB_RUN_ID,
+    runAttempt: env.GITHUB_RUN_ATTEMPT, featurePr: prId, featureRun: runId, ...facts }
+  writeFileSync(env.SOURCE_RECEIPT_PATH, JSON.stringify(result, null, 2) + "\n", { flag: "wx" })
+  appendFileSync(env.GITHUB_OUTPUT, Object.entries({ source_sha: sourceSha, source_tree: facts.sourceTree, source_ref: result.sourceRef,
+    bamboo_sha: bambooSha, workflow_sha: env.GITHUB_SHA, tag_object_sha: tagObjectSha }).map(([key, value]) => `${key}=${value}\n`).join(""))
+}
+
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   main().catch((error) => {

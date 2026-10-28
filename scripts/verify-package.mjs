@@ -1,4 +1,3 @@
-import { spawnSync } from "node:child_process"
 import { readFileSync } from "node:fs"
 import { fileURLToPath } from "node:url"
 
@@ -13,8 +12,8 @@ import {
   formatBundleBudgetReport,
 } from "./bundle-budget.mjs"
 import { findUnexpectedPackagePaths } from "./package-policy.mjs"
+import { readPackManifest } from "./pack-manifest.mjs"
 
-const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm"
 const packageDocument = JSON.parse(
   readFileSync(new URL("../package.json", import.meta.url), "utf8"),
 )
@@ -27,36 +26,11 @@ if (
   process.stderr.write("LOTUS_NEXT_EXPECTED_SOURCE_DIRTY must be exactly true or false.\n")
   process.exit(1)
 }
-const result = spawnSync(
-  npmCommand,
-  ["pack", "--dry-run", "--json", "--ignore-scripts", "--loglevel=error"],
-  { encoding: "utf8" },
-)
-
-if (result.error) {
-  throw result.error
+const args = process.argv.slice(2)
+if (args.length !== 0 && (args.length !== 2 || args[0] !== "--pack-json")) {
+  throw new Error("Usage: node scripts/verify-package.mjs [--pack-json <path>]")
 }
-
-if (result.status !== 0) {
-  process.stderr.write(result.stderr)
-  process.exit(result.status ?? 1)
-}
-
-let manifests
-try {
-  manifests = JSON.parse(result.stdout)
-} catch {
-  process.stderr.write("npm pack did not return a JSON manifest.\n")
-  process.stderr.write(result.stdout)
-  process.exit(1)
-}
-
-if (!Array.isArray(manifests) || manifests.length !== 1) {
-  process.stderr.write(`Expected one package manifest, received ${manifests?.length ?? 0}.\n`)
-  process.exit(1)
-}
-
-const [manifest] = manifests
+const manifest = readPackManifest(args.length === 2 ? args[1] : undefined)
 const paths = (manifest.files ?? []).map((file) => file.path).sort()
 const unexpected = findUnexpectedPackagePaths(paths)
 const missing = [

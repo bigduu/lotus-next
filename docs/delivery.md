@@ -1,9 +1,11 @@
 # Lotus Next delivery
 
 This repository follows the unified Zenith #399 delivery contract. Feature
-acceptance is active on protected Dev. The trusted Main admission bootstrap is
-installed; the single-artifact release producer is still a dependent change.
-Main remains the default branch and current publication controller.
+acceptance is active on protected Dev. The single-artifact release changes below
+activate after their reviewed PR is accepted. Main remains the default branch;
+the publisher uses protected Dev controls to build the frozen release source.
+Check the installed workflows before a release; the new path has not yet been
+exercised in production.
 
 | Phase | Responsibility | Acceptance |
 | --- | --- | --- |
@@ -12,22 +14,44 @@ Main remains the default branch and current publication controller.
 | Frozen release, after cutover | Temporarily stamp the version, build/package/publish one formal artifact | Exact source/version, tag, manifest, hashes and registry readback; no Unit/E2E |
 | Main push/promotion, after cutover | Promote stable code and retain immutable release references | Promotion PR/merge, tag and Release manifest/provenance; no tests, compilation or publication |
 
-The last two rows are the target contract. The existing `publish-npm.yml` and
-`release-source.mjs` remain unchanged for historical candidates during this
-feature slice. Their real-runtime publication gate must not be removed or
-bypassed piecemeal. The old source parser deliberately rejects the new feature
-workflow graph until its dependent producer/admission change is ready. Do not
-claim a release cutover from green feature CI alone. Coordinate outstanding
-#445/frontend28 with its current owner; do not retarget or replace its frozen
-tag, source or receipt.
+The release/main rows require complete feature acceptance and normal review.
+The minimal publisher has one dispatch path. It reads the actual merged Dev PR,
+original CI run and feature receipt; it does not require an unreleased candidate
+or version record to be committed to Main. The earlier Bamboo HTTPS failure in
+#450 remains recorded; a fresh real-runtime result against the matching published
+Bamboo source and binary is required before accepting the feature.
 
-The read-only `verifyDevAcceptance` foundation recognizes the complete Dev
-feature graph separately from the historical publication parser. Given the
-original PR, run, jobs, receipt and commit metadata, it checks their identities,
-required results, pre-merge timing, parents and tree. It performs no API reads,
-build, pack, publication or branch mutation on its own. The pending release
-producer must obtain the original evidence, check the frozen ref and protected
-Dev ancestry, and call this proof before activating a new publication path.
+## Build and publish the original package once
+
+1. After real feature acceptance, freeze `release/<accepted-Dev-SHA>` and reserve
+   the existing annotated `lotus-next-vVERSION` tag at that exact Dev commit.
+   Supply that version/tag/SHA plus the original Dev PR and CI run to the protected
+   Dev-ref dispatch. Controller and product source identities remain distinct.
+2. Preflight reads the actual PR/run/jobs, original Actions feature receipt and
+   Git parents/tree. Unit, all four browser shards, real Bamboo and native Actor
+   must have succeeded before Dev merge. After every check, upload the run/attempt
+   receipt; publish keeps the successful preflight's artifact ID across retries.
+3. One build job stamps disposable package metadata, runs the final dist build
+   once and creates one actual tgz with lifecycle scripts disabled. Static package
+   checks use that pack's own manifest without another pack or compiler output.
+   Retain the original tgz and pack identity for 90 days.
+4. Publish downloads that same-run artifact, verifies its bytes and source,
+   refreshes admission/tag reads, and uses the existing npm provenance and exact
+   registry hash/resource readback. It installs/builds/packs no source and runs
+   no Unit, browser or real-Bamboo suite. Main push/promotion runs no product suite.
+5. Rerun failed publish jobs in that original run. Existing registry bytes
+   must equal the retained tarball. A build retry requires complete same-run,
+   same-controller metadata proving every earlier build/pack step was skipped;
+   a whole skipped job requires its skipped conclusion and an empty steps array;
+   started or missing evidence stops it. Another dispatch of the same version
+   stops before compiling again; missing successful
+   originals stop recovery. A product repair returns through feature/dev/new cut.
+
+Historical candidate rows, signed identities and the fixed published-version
+verifier stay historical. The old reader remains available for those receipts,
+not as a current publication fallback. No custom producer registry, allocator,
+maintenance mode or separate publisher is introduced. Local policy fixtures do
+not prove production publication; actual activation remains separately reviewed.
 
 ## Complete tests before dev
 
@@ -38,8 +62,8 @@ out the actual PR merge snapshot consistently in every source test job:
    actual Git merge parents, checkout SHA and clean tree. It preserves PR base
    and head, tested snapshot/tree, workflow identity and run/attempt in the
    `feature-source` Actions artifact.
-2. Node 22 runs Unit once. Node 24 runs type, lint, architecture, build and
-   package checks and produces the one canonical test artifact without rerunning Unit.
+2. Node 22 runs the Unit suite once. Node 24 runs lint, architecture, build and
+   package checks and produces the canonical test artifact without rerunning Unit.
    Four browser shards consume that artifact once across the complete original
    desktop/tablet/phone inventory. `build` owns TypeScript compilation; `verify` does
    not invoke `type-check` again before the same build. Standalone `type-check`
@@ -64,8 +88,9 @@ out the actual PR merge snapshot consistently in every source test job:
    `feature-acceptance` artifact retains the actual tested source and gate
    results; it is not a publication receipt.
 
-Dev protection requires `Feature acceptance`. Do not admit a feature while its
-required evidence is missing or failed.
+Dev protection requires `Feature acceptance`. The staged feature workflow must
+pass that real check before admission; editing YAML alone does not establish
+acceptance. Do not admit a feature while its evidence is missing or failed.
 
 For a failed shard, rerun that job and its dependencies. Other successful
 shards and the original same-run source receipt remain reusable. Source
@@ -78,8 +103,7 @@ Let `B` be the feature PR base, `F` its head and `M` the actual merge snapshot
 executed by CI. The receipt requires the real parents `B,F`, records `M` and its
 tree, and never substitutes `F` for `M`. A later accepted dev commit `D` must
 have its own normal-admission proof and the exact tested tree before a release
-cut. This feature slice records the inputs needed for that later verifier; it
-does not implement or claim the future `D` admission proof.
+cut. The staged publisher verifies that proof from the original feature run.
 
 The formal artifact must identify the commit actually built from the frozen
 release. A later main merge is separate promotion evidence. Equal source trees
@@ -90,7 +114,7 @@ The PR adapter verifies the real event and Git parents explicitly.
 Unit/E2E test builds at source version `0.0.0`, Node compatibility lanes and
 controlled negative variants are distinct test inputs. The formal versioned
 release build is a separate input and occurs once after feature acceptance.
-The future release producer performs static package/version/source checks and
+The staged release producer performs static package/version/source checks and
 publishes that exact tgz; no runtime test or repair is deferred to release.
 
 ## Immutable release references
@@ -102,9 +126,24 @@ repair. Keep the release version in immutable tag and Release
 manifest/provenance records with promotion PR and main merge references; do not
 write a post-build JSON commit or change the source identity inside a package.
 
-Keep publication on the existing trusted default-branch controller. Feature CI
+Keep publication on the protected Dev controller; build only frozen release S. Feature CI
 has no npm credentials or publication authority. This slice neither changes
 Environment/secret scope nor dispatches production publication.
-The release workflow may be dispatched on its trusted main ref while building
-the frozen release source once. That is release-phase work controlled by main;
+The release workflow is dispatched on protected dev while building only the
+frozen release source once. Dev C and product S remain distinct;
 it does not authorize builds or publication on main push/promotion events.
+
+## Main promotion gate
+
+The `Main Admission` check is a separate read-only `pull_request_target`
+workflow for Main; dev PRs keep Feature acceptance. The reviewed Main bootstrap
+and required check are installed; use Dev as the feature base while the complete
+feature and publication controls await their own release and promotion. Main controls execute at the exact workflow
+SHA; the PR is fetched as Git data and is never executed. Admission verifies
+`release/<S>`, protected Dev ancestry, actual merge parents and unchanged S tree,
+one annotated formal version tag, registry SHA-1/SHA-512 and the original complete
+frontend manifest. Registry-served SLSA source binding must identify the actual
+successful Dev publication run/controller. It does not claim Sigstore certificate
+verification. Missing, ambiguous, moved or unpublished evidence fails closed;
+there is no Main build, package, test or publish fallback. A positive promotion
+still requires an actual completed publication and its evidence.

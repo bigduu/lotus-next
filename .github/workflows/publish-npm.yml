@@ -1,4 +1,4 @@
-name: Publish verified frontend artifact
+name: Publish frontend artifact once
 
 on:
   workflow_dispatch:
@@ -12,7 +12,16 @@ on:
         required: true
         type: string
       expected_source_sha:
-        description: "Exact 40-character source SHA in the reviewed candidate record"
+        description: "Exact normally accepted Dev commit frozen at release/S"
+        required: true
+        type: string
+
+      feature_pr:
+        description: "Original normally merged Dev feature PR"
+        required: true
+        type: string
+      feature_run:
+        description: "Original complete feature acceptance CI run"
         required: true
         type: string
 
@@ -20,6 +29,7 @@ run-name: Publish @bigduu/lotus-next@${{ inputs.version }}
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: publish-lotus-next-${{ inputs.version }}
@@ -37,6 +47,11 @@ env:
 jobs:
   preflight:
     name: Validate publication request
+    if: github.ref == 'refs/heads/dev' && github.ref_protected
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: read
     outputs:
       source_sha: ${{ steps.source.outputs.source_sha }}
       source_tree: ${{ steps.source.outputs.source_tree }}
@@ -44,6 +59,7 @@ jobs:
       bamboo_sha: ${{ steps.source.outputs.bamboo_sha }}
       workflow_sha: ${{ steps.source.outputs.workflow_sha }}
       tag_object_sha: ${{ steps.source.outputs.tag_object_sha }}
+      source_receipt_artifact_id: ${{ steps.receipt.outputs.artifact-id }}
     runs-on: ubuntu-latest
 
     steps:
@@ -64,19 +80,14 @@ jobs:
       - name: Resolve the reviewed immutable release candidate
         id: source
         env:
+          GH_TOKEN: ${{ github.token }}
+          FEATURE_PR_INPUT: ${{ inputs.feature_pr }}
+          FEATURE_RUN_INPUT: ${{ inputs.feature_run }}
           SOURCE_REF_INPUT: ${{ inputs.source_ref }}
           EXPECTED_SOURCE_SHA_INPUT: ${{ inputs.expected_source_sha }}
           EXPECTED_WORKFLOW_SHA: ${{ github.workflow_sha }}
           SOURCE_RECEIPT_PATH: ${{ runner.temp }}/release-source-receipt.json
         run: node scripts/release-source.mjs
-
-      - name: Upload the run-bound release source receipt
-        uses: actions/upload-artifact@v7
-        with:
-          name: release-source-receipt
-          path: ${{ runner.temp }}/release-source-receipt.json
-          if-no-files-found: error
-          retention-days: 30
 
       - name: Validate version, source, and registry vacancy
         env:
@@ -87,7 +98,7 @@ jobs:
           const version = assertPackageVersion(process.env.LOTUS_NEXT_RELEASE_VERSION)
           if (version === "0.0.0") throw new Error("The source placeholder cannot be published")
           NODE
-          test "${GITHUB_REF}" = "refs/heads/${DEFAULT_BRANCH}"
+          test "${GITHUB_REF}" = "refs/heads/dev"
           test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
           test -z "$(git status --porcelain --untracked-files=all)"
           if npm view "@bigduu/lotus-next@${LOTUS_NEXT_RELEASE_VERSION}" version \
@@ -101,182 +112,71 @@ jobs:
             exit 1
           fi
 
-  # Complete Node/unit/browser source CI was already accepted in preflight.
-  # Publication reuses that exact-source receipt and checks the versioned artifact.
-  real-bamboo:
-    name: Real Bamboo / Node 22 release artifact
+      - name: Upload the run-bound release source receipt
+        id: receipt
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-source-receipt-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/release-source-receipt.json
+          if-no-files-found: error
+          overwrite: false
+          retention-days: 30
+
+  build:
+    name: Build and pack the final artifact once
     needs: [preflight]
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    outputs:
+      filename: ${{ steps.pack.outputs.filename }}
+      integrity: ${{ steps.pack.outputs.integrity }}
+      shasum: ${{ steps.pack.outputs.shasum }}
     env:
       LOTUS_NEXT_SOURCE_REVISION: ${{ needs.preflight.outputs.source_sha }}
       LOTUS_NEXT_EXPECTED_SOURCE_REVISION: ${{ needs.preflight.outputs.source_sha }}
       PUBLICATION_WORKFLOW_SHA: ${{ needs.preflight.outputs.workflow_sha }}
       ACCEPTED_SOURCE_TREE: ${{ needs.preflight.outputs.source_tree }}
-      BAMBOO_E2E_REVISION: ${{ needs.preflight.outputs.bamboo_sha }}
-      LOTUS_NEXT_ACCEPTANCE_SOURCE_DIR: ${{ github.workspace }}
-
     steps:
-      - name: Check out trusted publication acceptance controls
-        uses: actions/checkout@v7
-        with:
-          ref: ${{ needs.preflight.outputs.workflow_sha }}
-          persist-credentials: false
-
-      - name: Preserve trusted acceptance controls outside the source checkout
+      - name: Refuse another build on workflow retries
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          test "$(git rev-parse HEAD)" = "${PUBLICATION_WORKFLOW_SHA}"
-          test -z "$(git status --porcelain --untracked-files=all)"
-          mkdir "${RUNNER_TEMP}/release-control"
-          cp scripts/release-browser.mjs scripts/published-real-bamboo-acceptance.mjs scripts/artifact-manifest.mjs scripts/release-acceptance-identity.mjs scripts/release-source.mjs scripts/verification-browser.mjs "${RUNNER_TEMP}/release-control/"
-          cp .github/release-candidates.json "${RUNNER_TEMP}/release-control/"
-
-      - name: Download the run-bound release source receipt
-        uses: actions/download-artifact@v8
-        with:
-          name: release-source-receipt
-          path: ${{ runner.temp }}/accepted-source
-
-      - name: Check out exact Lotus Next source
-        uses: actions/checkout@v7
-        with:
-          ref: ${{ needs.preflight.outputs.source_sha }}
-          persist-credentials: false
-
-      - name: Require accepted source under the default-branch publication workflow
-        run: |
-          test "${GITHUB_REF}" = "refs/heads/${DEFAULT_BRANCH}"
-          test "${GITHUB_SHA}" = "${PUBLICATION_WORKFLOW_SHA}"
-          test "$(git rev-parse HEAD)" = "${LOTUS_NEXT_EXPECTED_SOURCE_REVISION}"
-          test "$(git rev-parse "HEAD^{tree}")" = "${ACCEPTED_SOURCE_TREE}"
-          test -z "$(git status --porcelain --untracked-files=all)"
-
-      - name: Check out the paired Bamboo revision
-        uses: actions/checkout@v7
-        with:
-          repository: bigduu/Bamboo-agent
-          ref: ${{ env.BAMBOO_E2E_REVISION }}
-          path: .e2e-bamboo
-          persist-credentials: false
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v7
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: package-lock.json
-
-      - name: Install exact dependencies
-        run: npm ci
-
-      - name: Apply the release identity without a Git commit
-        run: |
-          test -z "$(git status --porcelain --untracked-files=all)"
-          node --input-type=module - <<'NODE'
-          import { assertPackageVersion } from "./scripts/artifact-manifest.mjs"
-          const version = assertPackageVersion(process.env.LOTUS_NEXT_RELEASE_VERSION)
-          if (version === "0.0.0") throw new Error("The source placeholder cannot be published")
+          node --input-type=module <<'NODE'
+          import assert from "node:assert/strict"
+          import { execFileSync } from "node:child_process"
+          const env = process.env, attempt = Number(env.GITHUB_RUN_ATTEMPT), runId = Number(env.GITHUB_RUN_ID)
+          assert.equal(env.GITHUB_REPOSITORY, "bigduu/lotus-next")
+          assert.ok(Number.isSafeInteger(attempt) && attempt > 0 && Number.isSafeInteger(runId) && runId > 0)
+          assert.match(env.GITHUB_SHA, /^[0-9a-f]{40}$/)
+          for (let prior = 1; prior < attempt; prior++) {
+            const result = JSON.parse(execFileSync("gh", ["api", `repos/${env.GITHUB_REPOSITORY}/actions/runs/${runId}/attempts/${prior}/jobs?per_page=100`], { encoding: "utf8", maxBuffer: 256 * 1024 }))
+            assert.equal(result.total_count, result.jobs.length, "Incomplete prior jobs")
+            const matches = result.jobs.filter(job => job.name === "Build and pack the final artifact once")
+            assert.equal(matches.length, 1, "Missing or ambiguous prior build job")
+            const [job] = matches
+            for (const [key, value] of Object.entries({ run_id: runId, run_attempt: prior, head_sha: env.GITHUB_SHA, status: "completed" })) assert.equal(job[key], value)
+            assert.ok(Array.isArray(job.steps), "Missing prior steps")
+            if (job.conclusion === "skipped") {
+              assert.equal(job.steps.length, 0, "Inconsistent skipped job")
+              continue
+            }
+            for (const name of ["Build and verify the final package tree", "Pack once without another lifecycle build"]) {
+              const steps = job.steps.filter(step => step.name === name)
+              assert.equal(steps.length, 1, "Missing or ambiguous build/pack evidence")
+              assert.equal(steps[0].status, "completed")
+              assert.equal(steps[0].conclusion, "skipped", "Build/pack already started; reuse the original tarball")
+            }
+          }
           NODE
-          npm version "${LOTUS_NEXT_RELEASE_VERSION}" --no-git-tag-version --ignore-scripts
-          test "$(node -p "require('./package.json').version")" = "${LOTUS_NEXT_RELEASE_VERSION}"
-          test "$(node -p "require('./package-lock.json').version")" = "${LOTUS_NEXT_RELEASE_VERSION}"
-          test "$(node -p "require('./package-lock.json').packages[''].version")" = "${LOTUS_NEXT_RELEASE_VERSION}"
-          git diff --exit-code -- . ':(exclude)package.json' ':(exclude)package-lock.json'
-          test -z "$(git ls-files --others --exclude-standard)"
-          git diff -- package.json package-lock.json > "${RUNNER_TEMP}/release-identity.patch"
 
-      - name: Build the release artifact
-        run: |
-          VITE_APP_REVISION="${LOTUS_NEXT_EXPECTED_SOURCE_REVISION}" VITE_APP_VERSION="${LOTUS_NEXT_RELEASE_VERSION}" npm run build
-          git diff -- package.json package-lock.json | cmp - "${RUNNER_TEMP}/release-identity.patch"
-          git diff --exit-code -- . ':(exclude)package.json' ':(exclude)package-lock.json'
-          test -z "$(git ls-files --others --exclude-standard)"
-
-      - name: Install Chromium
-        run: npx playwright install --with-deps chromium
-
-      - name: Prepare the pinned publication browser outside the source checkout
-        run: node "${RUNNER_TEMP}/release-control/release-browser.mjs" prepare "${GITHUB_WORKSPACE}" "${RUNNER_TEMP}/release-browser"
-
-      - name: Verify the exact Bamboo round trip
-        env:
-          BAMBOO_E2E_SOURCE_DIR: ${{ github.workspace }}/.e2e-bamboo
-        run: |
-          node node_modules/@playwright/test/cli.js test --config="${RUNNER_TEMP}/release-browser/real-bamboo.config.mjs"
-          git diff -- package.json package-lock.json | cmp - "${RUNNER_TEMP}/release-identity.patch"
-          git diff --exit-code -- . ':(exclude)package.json' ':(exclude)package-lock.json'
-          test -z "$(git ls-files --others --exclude-standard)"
-
-      - name: Verify the release artifact on local and secure browser surfaces
-        env:
-          BAMBOO_E2E_SOURCE_DIR: ${{ github.workspace }}/.e2e-bamboo
-          ACCEPTED_IDENTITY_PATH: ${{ runner.temp }}/accepted-identity.json
-          LOTUS_NEXT_RELEASE_SOURCE_RECEIPT: ${{ runner.temp }}/accepted-source/release-source-receipt.json
-        run: node "${RUNNER_TEMP}/release-control/published-real-bamboo-acceptance.mjs" --current-source --accepted-identity "${ACCEPTED_IDENTITY_PATH}" --publication-browser "${RUNNER_TEMP}/release-browser"
-
-      - name: Require unchanged source after both packed browser surfaces
-        run: |
-          git diff -- package.json package-lock.json | cmp - "${RUNNER_TEMP}/release-identity.patch"
-          git diff --exit-code -- . ':(exclude)package.json' ':(exclude)package-lock.json'
-          test -z "$(git ls-files --others --exclude-standard)"
-
-      - name: Upload the accepted browser artifact identity
-        uses: actions/upload-artifact@v7
-        with:
-          name: real-bamboo-accepted-identity
-          path: ${{ runner.temp }}/accepted-identity.json
-          if-no-files-found: error
-          retention-days: 30
-
-      - name: Upload the real Bamboo outer browser identity
-        if: ${{ always() }}
-        uses: actions/upload-artifact@v7
-        with:
-          name: publish-real-bamboo-browser-identity-node-22
-          path: ${{ runner.temp }}/release-browser/browser-identity.json
-          if-no-files-found: error
-          retention-days: 30
-
-      - name: Upload real Bamboo evidence
-        if: ${{ always() }}
-        uses: actions/upload-artifact@v7
-        with:
-          name: publish-real-bamboo-node-22
-          path: |
-            playwright-report-real-bamboo/
-            playwright-report-real-bamboo-local/
-            playwright-report-real-bamboo-remote/
-            test-results-real-bamboo/
-            test-results-real-bamboo-local/
-            test-results-real-bamboo-remote/
-          if-no-files-found: error
-          retention-days: 30
-
-  publish:
-    name: Pack, publish, and verify registry artifact
-    needs:
-      - preflight
-      - real-bamboo
-    env:
-      LOTUS_NEXT_SOURCE_REVISION: ${{ needs.preflight.outputs.source_sha }}
-      LOTUS_NEXT_EXPECTED_SOURCE_REVISION: ${{ needs.preflight.outputs.source_sha }}
-      PUBLICATION_WORKFLOW_SHA: ${{ needs.preflight.outputs.workflow_sha }}
-      ACCEPTED_SOURCE_TREE: ${{ needs.preflight.outputs.source_tree }}
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      id-token: write
-
-    steps:
       - name: Check out exact source
         uses: actions/checkout@v7
         with:
           ref: ${{ needs.preflight.outputs.source_sha }}
           persist-credentials: false
 
-      - name: Require accepted source under the default-branch publication workflow
+      - name: Require frozen source under the protected Dev publication workflow
         run: |
-          test "${GITHUB_REF}" = "refs/heads/${DEFAULT_BRANCH}"
+          test "${GITHUB_REF}" = "refs/heads/dev"
           test "${GITHUB_SHA}" = "${PUBLICATION_WORKFLOW_SHA}"
           test "$(git rev-parse HEAD)" = "${LOTUS_NEXT_EXPECTED_SOURCE_REVISION}"
           test "$(git rev-parse "HEAD^{tree}")" = "${ACCEPTED_SOURCE_TREE}"
@@ -291,7 +191,7 @@ jobs:
           package-manager-cache: false
 
       - name: Install exact dependencies
-        run: npm ci
+        run: npm ci --ignore-scripts
 
       - name: Apply and verify a new release identity
         run: |
@@ -325,7 +225,6 @@ jobs:
         run: |
           VITE_APP_REVISION="${LOTUS_NEXT_EXPECTED_SOURCE_REVISION}" VITE_APP_VERSION="${LOTUS_NEXT_RELEASE_VERSION}" npm run build
           npm run artifact:verify
-          npm run package:contents
           git diff -- package.json package-lock.json | cmp - "${RUNNER_TEMP}/release-identity.patch"
           git diff --exit-code -- . ':(exclude)package.json' ':(exclude)package-lock.json'
           test -z "$(git ls-files --others --exclude-standard)"
@@ -334,6 +233,7 @@ jobs:
         id: pack
         run: |
           npm pack --ignore-scripts --json > "${RUNNER_TEMP}/pack.json"
+          node scripts/verify-package.mjs --pack-json "${RUNNER_TEMP}/pack.json"
           node --input-type=module <<'NODE'
           import { appendFileSync, readFileSync } from "node:fs"
           const [packed] = JSON.parse(readFileSync(process.env.RUNNER_TEMP + "/pack.json", "utf8"))
@@ -356,25 +256,105 @@ jobs:
             --expected-revision "${LOTUS_NEXT_EXPECTED_SOURCE_REVISION}" \
             --expected-dirty false
 
-      - name: Download the accepted browser artifact identity
+      - name: Stage the original tarball and pack identity together
+        env:
+          PACKED_FILENAME: ${{ steps.pack.outputs.filename }}
+        run: |
+          mkdir "${RUNNER_TEMP}/release-package"
+          cp -- "${PACKED_FILENAME}" "${RUNNER_TEMP}/pack.json" "${RUNNER_TEMP}/release-package/"
+
+      - name: Retain the original final tarball and pack identity
+        uses: actions/upload-artifact@v7
+        with:
+          name: frontend-release-${{ github.run_id }}
+          path: ${{ runner.temp }}/release-package
+          if-no-files-found: error
+          overwrite: false
+          retention-days: 90
+
+  publish:
+    name: Publish the retained tarball and verify the registry
+    if: github.ref == 'refs/heads/dev' && github.ref_protected
+    needs: [preflight, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: read
+      id-token: write
+    env:
+      LOTUS_NEXT_EXPECTED_SOURCE_REVISION: ${{ needs.preflight.outputs.source_sha }}
+    steps:
+      - name: Check out only the original publication controls
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.preflight.outputs.workflow_sha }}
+          persist-credentials: false
+      - name: Set up publishing Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+          scope: "@bigduu"
+          package-manager-cache: false
+      - name: Download the original final tarball
         uses: actions/download-artifact@v8
         with:
-          name: real-bamboo-accepted-identity
-          path: ${{ runner.temp }}/accepted-real-bamboo
-
-      - name: Require the final tarball to match both real browser surfaces
-        run: |
-          node scripts/release-acceptance-identity.mjs verify \
-            --accepted "${RUNNER_TEMP}/accepted-real-bamboo/accepted-identity.json" \
-            --dist "${RUNNER_TEMP}/local-roundtrip/package/dist" \
-            --expected-version "${LOTUS_NEXT_RELEASE_VERSION}" \
-            --expected-revision "${LOTUS_NEXT_EXPECTED_SOURCE_REVISION}"
-
+          name: frontend-release-${{ github.run_id }}
+          path: ${{ runner.temp }}/release-package
       - name: Download the run-bound release source receipt
         uses: actions/download-artifact@v8
         with:
-          name: release-source-receipt
+          artifact-ids: ${{ needs.preflight.outputs.source_receipt_artifact_id }}
           path: ${{ runner.temp }}/accepted-source
+      - name: Verify retained bytes and original source identity
+        env:
+          ARCHIVE_FILENAME: ${{ needs.build.outputs.filename }}
+          EXPECTED_SHASUM: ${{ needs.build.outputs.shasum }}
+          EXPECTED_INTEGRITY: ${{ needs.build.outputs.integrity }}
+        run: |
+          node --input-type=module <<'NODE'
+          import assert from "node:assert/strict"
+          import { createHash } from "node:crypto"
+          import { readFileSync, appendFileSync } from "node:fs"
+          const records = JSON.parse(readFileSync(process.env.RUNNER_TEMP + "/release-package/pack.json"))
+          assert.equal(records.length, 1)
+          const [packed] = records
+          assert.equal(packed.name, "@bigduu/lotus-next"); assert.equal(packed.version, process.env.LOTUS_NEXT_RELEASE_VERSION)
+          assert.equal(packed.filename, `bigduu-lotus-next-${process.env.LOTUS_NEXT_RELEASE_VERSION}.tgz`)
+          assert.equal(packed.filename, process.env.ARCHIVE_FILENAME)
+          const filename = process.env.RUNNER_TEMP + "/release-package/" + packed.filename
+          const bytes = readFileSync(filename)
+          appendFileSync(process.env.GITHUB_ENV, `PACKED_FILENAME=${filename}\n`)
+          assert.equal(createHash("sha1").update(bytes).digest("hex"), process.env.EXPECTED_SHASUM)
+          assert.equal(`sha512-${createHash("sha512").update(bytes).digest("base64")}`, process.env.EXPECTED_INTEGRITY)
+          assert.equal(packed.shasum, process.env.EXPECTED_SHASUM); assert.equal(packed.integrity, process.env.EXPECTED_INTEGRITY)
+          const source = JSON.parse(readFileSync(process.env.RUNNER_TEMP + "/accepted-source/release-source-receipt.json"))
+          for (const [key, value] of Object.entries({ sourceSha: process.env.LOTUS_NEXT_EXPECTED_SOURCE_REVISION,
+            version: process.env.LOTUS_NEXT_RELEASE_VERSION, workflowSha: process.env.GITHUB_SHA, runId: process.env.GITHUB_RUN_ID })) assert.equal(source[key], value)
+          assert.ok(Number(source.runAttempt) > 0 && Number(source.runAttempt) <= Number(process.env.GITHUB_RUN_ATTEMPT))
+          NODE
+      - name: Verify the exact local tarball
+        run: |
+          mkdir -p "${RUNNER_TEMP}/local-roundtrip"
+          tar -xzf "${PACKED_FILENAME}" -C "${RUNNER_TEMP}/local-roundtrip"
+          node scripts/artifact-manifest.mjs verify \
+            --dist "${RUNNER_TEMP}/local-roundtrip/package/dist" \
+            --expected-name "@bigduu/lotus-next" \
+            --expected-version "${LOTUS_NEXT_RELEASE_VERSION}" \
+            --expected-revision "${LOTUS_NEXT_EXPECTED_SOURCE_REVISION}" \
+            --expected-dirty false
+
+      - name: Refresh the accepted Dev source immediately before publication
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FEATURE_PR_INPUT: ${{ inputs.feature_pr }}
+          FEATURE_RUN_INPUT: ${{ inputs.feature_run }}
+          SOURCE_REF_INPUT: ${{ inputs.source_ref }}
+          EXPECTED_SOURCE_SHA_INPUT: ${{ inputs.expected_source_sha }}
+          EXPECTED_WORKFLOW_SHA: ${{ github.workflow_sha }}
+          SOURCE_RECEIPT_PATH: ${{ runner.temp }}/fresh-release-source-receipt.json
+        run: node scripts/release-source.mjs
 
       - name: Recheck the immutable source tag before publication
         env:
@@ -385,29 +365,26 @@ jobs:
           test "$(awk -v ref="${ACCEPTED_SOURCE_REF}" '$2 == ref { print $1 }' "${RUNNER_TEMP}/source-tag.txt")" = "${ACCEPTED_TAG_OBJECT_SHA}"
           test "$(awk -v ref="${ACCEPTED_SOURCE_REF}^{}" '$2 == ref { print $1 }' "${RUNNER_TEMP}/source-tag.txt")" = "${LOTUS_NEXT_EXPECTED_SOURCE_REVISION}"
 
-      - name: Require npm publication credentials
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: |
-          if [ -z "${NODE_AUTH_TOKEN}" ]; then
-            echo "::error::The first @bigduu/lotus-next publication requires the repository NPM_TOKEN secret."
-            exit 1
-          fi
-
       - name: Publish the exact verified tarball with provenance
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-          PACKED_FILENAME: ${{ steps.pack.outputs.filename }}
-        run: npm publish "${PACKED_FILENAME}" --provenance --access public
+        run: |
+          if npm view "@bigduu/lotus-next@${LOTUS_NEXT_RELEASE_VERSION}" dist --json > "${RUNNER_TEMP}/existing-version.json" 2> "${RUNNER_TEMP}/publish-vacancy.err"; then
+            echo "Verify the existing version against the original tarball below."
+          else
+            grep -q E404 "${RUNNER_TEMP}/publish-vacancy.err"
+            test -n "${NODE_AUTH_TOKEN}"
+            npm publish "${PACKED_FILENAME}" --ignore-scripts --provenance --access public
+          fi
 
       - name: Wait for the immutable registry version
         run: node scripts/wait-for-registry-version.mjs "@bigduu/lotus-next" "${LOTUS_NEXT_RELEASE_VERSION}"
 
       - name: Download and verify the registry copy
         env:
-          LOCAL_TARBALL: ${{ steps.pack.outputs.filename }}
-          EXPECTED_INTEGRITY: ${{ steps.pack.outputs.integrity }}
-          EXPECTED_SHASUM: ${{ steps.pack.outputs.shasum }}
+          LOCAL_TARBALL: ${{ env.PACKED_FILENAME }}
+          EXPECTED_INTEGRITY: ${{ needs.build.outputs.integrity }}
+          EXPECTED_SHASUM: ${{ needs.build.outputs.shasum }}
         run: |
           REGISTRY_TARBALL=""
           READBACK_DEADLINE=$((SECONDS + 600))
@@ -492,15 +469,15 @@ jobs:
             echo "- Package: \`@bigduu/lotus-next@${LOTUS_NEXT_RELEASE_VERSION}\`"
             echo "- Source: \`${LOTUS_NEXT_EXPECTED_SOURCE_REVISION}\`"
             echo "- Publication workflow: \`${GITHUB_SHA}\`"
-            echo "- npm integrity: \`${{ steps.pack.outputs.integrity }}\`"
-            echo "- npm shasum: \`${{ steps.pack.outputs.shasum }}\`"
+            echo "- npm integrity: \`${{ needs.build.outputs.integrity }}\`"
+            echo "- npm shasum: \`${{ needs.build.outputs.shasum }}\`"
             echo "- Universal manifest SHA-256: \`${MANIFEST_SHA256}\`"
           } >> "${GITHUB_STEP_SUMMARY}"
 
       - name: Record the verified publication source receipt
         env:
-          EXPECTED_INTEGRITY: ${{ steps.pack.outputs.integrity }}
-          EXPECTED_SHASUM: ${{ steps.pack.outputs.shasum }}
+          EXPECTED_INTEGRITY: ${{ needs.build.outputs.integrity }}
+          EXPECTED_SHASUM: ${{ needs.build.outputs.shasum }}
         run: |
           node --input-type=module - <<'NODE'
           import assert from "node:assert/strict"
@@ -510,7 +487,7 @@ jobs:
           const receipt = JSON.parse(readFileSync(root + "/accepted-source/release-source-receipt.json", "utf8"))
           assert.equal(receipt.workflowSha, process.env.GITHUB_SHA)
           assert.equal(receipt.runId, process.env.GITHUB_RUN_ID)
-          assert.equal(receipt.runAttempt, process.env.GITHUB_RUN_ATTEMPT)
+          assert.ok(Number(receipt.runAttempt) > 0 && Number(receipt.runAttempt) <= Number(process.env.GITHUB_RUN_ATTEMPT))
           assert.equal(receipt.sourceSha, process.env.LOTUS_NEXT_EXPECTED_SOURCE_REVISION)
           assert.equal(receipt.version, process.env.LOTUS_NEXT_RELEASE_VERSION)
           const bytes = readFileSync(root + "/registry-roundtrip/package/dist/lotus-next-manifest.json")
