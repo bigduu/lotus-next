@@ -38,8 +38,11 @@ out the actual PR merge snapshot consistently in every source test job:
    remains available while iterating, and a compiler failure still fails CI.
 3. Real Bamboo runs on every feature PR after all browser shards pass. It
    downloads the same verified Node 24 artifact instead of rebuilding it. The
-   pinned published Bamboo executable drives the original round trip, packed
-   loopback and HTTPS/WSS surfaces. These use isolated data and deterministic
+   pinned published Bamboo executable and separately pinned, compatibility-checked
+   accepted browser host drive the original round trip, packed loopback and
+   HTTPS/WSS surfaces. CI records both source identities and the host file hash;
+   this feature-only pair does not alter publication's same-source runtime. These
+   use isolated data and deterministic
    providers, not the user's live Bamboo instance. Install OS dependencies and
    the Playwright FFmpeg recorder while using the pinned verification browser;
    do not download a second, unused Chromium distribution.

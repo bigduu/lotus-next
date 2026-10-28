@@ -130,7 +130,7 @@ describe("feature workflow phase policy", () => {
     expect(ci).toContain("  pull_request:\n    branches: [dev]")
     expect(ci).not.toMatch(/^  (?:push|workflow_dispatch):/m)
     expect(ci).not.toContain("github.event.pull_request.head.sha || github.sha")
-    for (const block of ci.split(/(?=^      - name: Check out)/m).filter((part) => part.startsWith("      - name: Check out") && !part.startsWith("      - name: Check out the paired Bamboo"))) {
+    for (const block of ci.split(/(?=^      - name: Check out)/m).filter((part) => part.startsWith("      - name: Check out") && !part.startsWith("      - name: Check out the paired Bamboo") && !part.startsWith("      - name: Check out the accepted feature browser host"))) {
       expect(block.split(/\n      - /u)[0]).toContain("ref: ${{ github.sha }}")
     }
   })
