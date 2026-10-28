@@ -1,6 +1,6 @@
 // Read-only current-source verification. This record cannot authorize publication.
 import assert from "node:assert/strict"
-import { spawnSync } from "node:child_process"
+import { execFileSync, spawnSync } from "node:child_process"
 import { lstatSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs"
 import path from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
@@ -8,6 +8,56 @@ import {
   BROWSER_PINS, assertBrowserVersion, assertLockedBrowserInputs, browserPlatform,
   deriveConfig, downloadPinnedArchive, extractPinnedArchive, fileSha256, verifyFileIdentity,
 } from "./release-browser.mjs"
+
+// Keep the PR adapter in this already-preserved helper: the historical
+// publisher copies this file and release-browser.mjs outside its checkout.
+// Adding a new module dependency here would break that unchanged copy closure.
+const repository = "bigduu/lotus-next"
+const sha = /^[0-9a-f]{40}$/u
+const positive = /^[1-9][0-9]*$/u
+const gitAt = (root) => (args) => execFileSync("git", ["--no-replace-objects", "-C", root, ...args], {
+  encoding: "utf8", stdio: ["ignore", "pipe", "pipe"],
+}).trim()
+
+// This receipt describes the PR merge snapshot actually executed by feature CI.
+// A later dev commit or release build keeps its own identity; neither is renamed
+// to this snapshot merely because its source tree is identical.
+export const featureSource = ({ root = process.cwd(), environment = process.env,
+  event = JSON.parse(readFileSync(environment.GITHUB_EVENT_PATH, "utf8")), git = gitAt(root) } = {}) => {
+  assert.equal(environment.GITHUB_ACTIONS, "true", "Feature admission requires its Actions context")
+  assert.equal(environment.GITHUB_REPOSITORY, repository, "Unexpected feature repository")
+  assert.equal(environment.GITHUB_EVENT_NAME, "pull_request", "Feature admission requires a pull request")
+  const pr = event.pull_request
+  assert.ok(pr && Number.isSafeInteger(pr.number) && pr.number > 0, "Missing feature PR identity")
+  assert.equal(event.number, pr.number, "Feature PR identity differs")
+  assert.equal(pr.base?.ref, "dev", "Feature tests must target dev")
+  assert.equal(pr.base?.repo?.full_name, repository, "Unexpected feature target repository")
+  assert.equal(environment.GITHUB_BASE_REF, "dev", "Feature base ref differs from the event")
+  for (const value of [pr.base.sha, pr.head?.sha, environment.GITHUB_SHA, environment.FEATURE_WORKFLOW_SHA]) assert.match(value ?? "", sha)
+  assert.match(pr.head?.repo?.full_name ?? "", /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u)
+  assert.ok(typeof pr.head.ref === "string" && pr.head.ref.length > 0 && !/[\r\n]/u.test(pr.head.ref), "Missing feature head ref")
+  assert.equal(environment.GITHUB_HEAD_REF, pr.head.ref, "Feature head ref differs from the event")
+  const ref = `refs/pull/${pr.number}/merge`
+  assert.equal(environment.GITHUB_REF, ref, "Feature tests must execute the actual merge snapshot")
+  assert.equal(environment.GITHUB_WORKFLOW_REF, `${repository}/.github/workflows/ci.yml@${ref}`, "Unexpected feature workflow identity")
+  assert.match(environment.GITHUB_RUN_ID ?? "", positive)
+  assert.match(environment.GITHUB_RUN_ATTEMPT ?? "", positive)
+  assert.equal(git(["rev-parse", "HEAD"]), environment.GITHUB_SHA, "Feature checkout is not the event merge snapshot")
+  assert.equal(git(["status", "--porcelain", "--untracked-files=all"]), "", "Feature source must be clean")
+  const parents = git(["show", "-s", "--format=%P", "HEAD"]).split(" ")
+  assert.deepEqual(parents, [pr.base.sha, pr.head.sha], "Feature merge parents differ from the actual base/head")
+  const tree = git(["rev-parse", "HEAD^{tree}"])
+  assert.match(tree, sha)
+  return {
+    schemaVersion: 1, kind: "lotus-feature-source/v1", repository,
+    pullRequest: pr.number, baseRef: "dev", baseSha: pr.base.sha,
+    headRepository: pr.head.repo.full_name, headRef: pr.head.ref, headSha: pr.head.sha,
+    testedSnapshot: environment.GITHUB_SHA, testedTree: tree,
+    workflowRef: environment.GITHUB_WORKFLOW_REF, workflowSha: environment.FEATURE_WORKFLOW_SHA,
+    runId: environment.GITHUB_RUN_ID, sourceRunAttempt: Number(environment.GITHUB_RUN_ATTEMPT),
+  }
+}
+
 
 const helperPath = fileURLToPath(import.meta.url)
 const run = (command, args) => {
@@ -36,11 +86,17 @@ export const verificationContext = (sourceRoot, browserRoot, env = process.env) 
   assert.equal(JSON.parse(readFileSync(path.join(sourceRoot, "package.json"))).version, "0.0.0", "Verification cannot accept a publication version")
   assertLockedBrowserInputs(sourceRoot)
   const github = env.GITHUB_ACTIONS === "true"
+  let feature
   if (github) {
     assert.equal(env.GITHUB_REPOSITORY, "bigduu/lotus-next")
-    assert.equal(env.GITHUB_EVENT_NAME, "workflow_dispatch")
-    assert.match(env.GITHUB_REF ?? "", /^refs\/heads\/\S+$/u)
-    assert.equal(env.GITHUB_WORKFLOW_REF, `bigduu/lotus-next/.github/workflows/ci.yml@${env.GITHUB_REF}`)
+    if (env.GITHUB_EVENT_NAME === "pull_request") {
+      feature = featureSource({ root: sourceRoot, environment: env })
+    } else {
+      // Historical manual verification remains distinct from feature admission.
+      assert.equal(env.GITHUB_EVENT_NAME, "workflow_dispatch")
+      assert.match(env.GITHUB_REF ?? "", /^refs\/heads\/\S+$/u)
+      assert.equal(env.GITHUB_WORKFLOW_REF, `bigduu/lotus-next/.github/workflows/ci.yml@${env.GITHUB_REF}`)
+    }
     assert.equal(env.GITHUB_SHA, sourceSha, "Verification checkout drift")
     assert(/^[1-9][0-9]*$/u.test(env.GITHUB_RUN_ID ?? "") && /^[1-9][0-9]*$/u.test(env.GITHUB_RUN_ATTEMPT ?? ""), "Missing verification run identity")
     assert.equal(browserRoot, path.join(realpathSync(env.RUNNER_TEMP), "verification-browser"))
@@ -51,6 +107,7 @@ export const verificationContext = (sourceRoot, browserRoot, env = process.env) 
     purpose: "current-source-verification", sourceRoot, sourceSha,
     runId: github ? env.GITHUB_RUN_ID : null, runAttempt: github ? env.GITHUB_RUN_ATTEMPT : null,
     workflowRef: github ? env.GITHUB_WORKFLOW_REF : null,
+    ...(feature ? { featureSource: feature } : {}),
     helperSha256: fileSha256(helperPath),
     browserControlSha256: fileSha256(path.join(path.dirname(helperPath), "release-browser.mjs")),
   }

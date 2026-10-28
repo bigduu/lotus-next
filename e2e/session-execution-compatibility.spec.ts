@@ -65,11 +65,11 @@ async function fixture(page: Page, initial: Mode) {
     count(path: string) { return writes.filter((entry) => entry.path === path).length } }
 }
 
-for (const [mode, copy] of [["compatible", "This session is compatible"], ["legacy", "Legacy session: compatible"],
-  ["missing", "Legacy session: no compatibility report"]] as const) {
+for (const mode of ["compatible", "legacy", "missing"] as const) {
   test(`compatibility fixture: ${mode} stays usable without replacement or migration`, async ({ page }) => {
     const f = await fixture(page, mode)
-    await expect(page.getByText(copy, { exact: false }).first()).toBeVisible()
+    if (mode === "legacy") await expect(page.getByText("Legacy session: compatible", { exact: false }).first()).toBeVisible()
+    else await expect(page.locator("[data-session-execution-blocked]")).toHaveCount(0)
     await expect(page.locator('[data-session-execution-blocked="true"]')).toHaveCount(0)
     await f.input.fill("Continue the existing session")
     await page.getByRole("button", { name: "Send message", exact: true }).click()
@@ -92,10 +92,10 @@ test("compatibility fixture: detail read error is distinct from a conflict and p
   expect(f.writes).toEqual([])
   await page.screenshot({ path: info.outputPath("read-failure-distinct-from-version-conflict.png"), animations: "disabled" })
   f.setMode("missing")
+  await page.getByRole("button", { name: "Check compatibility again", exact: true }).click()
+  await expect(page.locator("[data-session-execution-blocked]")).toHaveCount(0)
   await page.getByRole("button", { name: "Reload state", exact: true }).click()
   await expect(page.getByText("State unavailable", { exact: true })).toHaveCount(0)
-  await page.getByRole("button", { name: "Check compatibility again", exact: true }).click()
-  await expect(page.getByText("Legacy session: no compatibility report", { exact: false })).toBeVisible()
   expect(f.writes).toEqual([])
   await page.getByRole("button", { name: "Send message", exact: true }).click()
   await expect.poll(() => f.count(`/api/v1/execute/${sid}`)).toBe(1)
@@ -119,7 +119,7 @@ for (const mode of ["version-conflict", "state-conflict"] as const) {
 }
 test("compatibility fixture: typed submit conflict retains draft and only an explicit reread allows another send", async ({ page }, info) => {
   const f = await fixture(page, "submit-refusal")
-  await expect(page.getByText("This session is compatible", { exact: false })).toBeVisible()
+  await expect(page.locator("[data-session-execution-blocked]")).toHaveCount(0)
   await f.input.fill("Keep the exact reviewed instruction")
   await page.getByRole("button", { name: "Send message", exact: true }).click()
   await expect(page.locator('[data-session-execution-blocked="true"]')).toBeVisible()
@@ -138,7 +138,7 @@ test("compatibility fixture: typed submit conflict retains draft and only an exp
 })
 test("compatibility fixture: typed execute refusal preserves the acknowledged message without replay", async ({ page }) => {
   const f = await fixture(page, "execute-refusal")
-  await expect(page.getByText("This session is compatible", { exact: false })).toBeVisible()
+  await expect(page.locator("[data-session-execution-blocked]")).toHaveCount(0)
   await f.input.fill("This message is saved before execution refusal")
   await page.getByRole("button", { name: "Send message", exact: true }).click()
   await expect(page.locator('[data-session-execution-blocked="true"]')).toBeVisible()

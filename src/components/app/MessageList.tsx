@@ -36,6 +36,7 @@ import { ProcessActivity } from "@/components/chat/ProcessActivity"
 import { groupSubAgents } from "./subAgentGroups"
 import { SubAgents } from "@/components/chat/SubAgents"
 import { cn } from "@/lib/utils"
+import { isCompletedAnswerHandoff } from "@/lib/completedAnswerHandoff"
 import type { Message } from "@shared/types/chatMessages"
 import type { ChildProgress } from "@shared/store/appStore/slices/executionStateSlice/types"
 import type { LiveSegment, PendingUserMessageView } from "@/hooks/useChat"
@@ -140,9 +141,9 @@ function measureHistoryElement(
 }
 
 const MESSAGE_SURFACE_LAYOUT =
-  "max-w-[85%] overflow-hidden rounded-2xl px-3.5 py-2 [overflow-wrap:anywhere]"
+  "min-w-0 overflow-hidden rounded-2xl px-3.5 py-2 [overflow-wrap:anywhere]"
 const ASSISTANT_MESSAGE_SURFACE =
-  "bg-transparent text-base font-normal leading-7 text-foreground"
+  "flex-1 bg-transparent text-base font-normal leading-7 text-foreground"
 
 function appendProcessPart(items: RenderItem[], key: string, part: ProcessPart): ProcessItem {
   const previous = items.at(-1)
@@ -700,7 +701,7 @@ export function MessageList({
       m as { images?: Array<{ url?: string; base64?: string; type?: string }> }
     ).images
     const isUser = m.role === "user"
-    const showMessageActions = !readOnly && !options?.live && (isUser || actionableAssistantIndexes.has(idx))
+    const showMessageActions = !readOnly && !options?.live && !isCompletedAnswerHandoff(m) && (isUser || actionableAssistantIndexes.has(idx))
     // Truly empty (no text, no images, no reasoning) → skip the blank bubble.
     if (!text.trim() && !imgs?.length) return null
 
@@ -768,7 +769,7 @@ export function MessageList({
           className={cn(
             MESSAGE_SURFACE_LAYOUT,
             isUser
-              ? "user-message-surface whitespace-pre-wrap text-base leading-7"
+              ? "user-message-surface max-w-[85%] whitespace-pre-wrap text-base leading-7"
               : ASSISTANT_MESSAGE_SURFACE,
           )}
         >
@@ -789,14 +790,14 @@ export function MessageList({
   const virtualItems = virtualizer.getVirtualItems()
 
   return (
-    <div ref={setScrollElement} onScroll={onScroll} className="min-h-0 flex-1 overflow-y-auto px-3">
+    <div ref={setScrollElement} onScroll={onScroll} className="min-h-0 min-w-0 flex-1 overflow-y-auto px-3">
       <div
         ref={contentRef}
         data-message-list-content
-        className="relative mx-auto flex w-full max-w-6xl flex-col gap-2 py-4"
+        className="relative mx-auto flex min-w-0 w-full max-w-full flex-col gap-2 py-4"
         style={{
-          left: contentShiftX,
-          transition: "left 200ms ease-out",
+          transform: `translateX(${contentShiftX}px)`,
+          transition: "transform var(--motion-normal) var(--motion-ease)",
         }}
       >
         {subAgentError ? <div role="status" className="text-xs text-muted-foreground" data-subagent-error>

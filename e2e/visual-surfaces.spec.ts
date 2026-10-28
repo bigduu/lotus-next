@@ -185,11 +185,18 @@ test("neutral defaults and saved jade choices remain selectable across responsiv
   await page.goto(standaloneScenario.entryUrl)
   await expect(page.locator("[data-message-list-content]")).toContainText("Aligned response.")
   const geometry = await page.locator("[data-chat-layout]").first().evaluate((element) => {
-    const transcript = element.querySelector("[data-message-list-content]")!.getBoundingClientRect()
+    const transcriptElement = element.querySelector("[data-message-list-content]")!
+    const transcript = transcriptElement.getBoundingClientRect()
+    const viewport = transcriptElement.parentElement!
+    const viewportStyle = element.ownerDocument.defaultView!.getComputedStyle(viewport)
+    const availableWidth = viewport.clientWidth - parseFloat(viewportStyle.paddingLeft) - parseFloat(viewportStyle.paddingRight)
     const composer = element.querySelector("[data-composer-surface]")!.getBoundingClientRect()
-    return { width: transcript.width, leftDifference: Math.abs(transcript.left - composer.left), widthDifference: Math.abs(transcript.width - composer.width) }
+    return { width: transcript.width, availableWidth, overflow: viewport.scrollWidth - viewport.clientWidth,
+      leftDifference: Math.abs(transcript.left - composer.left), widthDifference: Math.abs(transcript.width - composer.width) }
   })
-  expect(geometry.width).toBeLessThanOrEqual(832)
+  expect(geometry.width).toBeGreaterThan(0)
+  expect(Math.abs(geometry.width - geometry.availableWidth)).toBeLessThanOrEqual(1)
+  expect(geometry.overflow).toBeLessThanOrEqual(1)
   expect(geometry.leftDifference).toBeLessThanOrEqual(1)
   expect(geometry.widthDifference).toBeLessThanOrEqual(1)
 
