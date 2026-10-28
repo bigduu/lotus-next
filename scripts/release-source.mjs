@@ -66,6 +66,76 @@ export const acceptanceJobNames = (source) => {
   return names
 }
 
+// This graph belongs to the new Dev feature contract. Keep the historical
+// parser above separate so adding this read-only proof cannot authorize an old
+// publisher to consume a new-contract receipt.
+export const devFeatureJobNames = (source) => {
+  assert.equal(typeof source, "string", "Feature acceptance requires its source workflow")
+  const graph = workflowBlock(source, "jobs", 0)
+  const ids = [...graph.matchAll(/^  ([a-z][a-z0-9-]*):\s*$/gm)].map((match) => match[1]).sort()
+  assert.deepEqual(ids, ["browser", "browser-summary", "feature-acceptance", "native-actor", "real-bamboo", "source", "verify"])
+  assert.match(source, /pull_request:\n    branches: \[dev\]/)
+  const matrixValues = (job, key) => [...workflowBlock(workflowBlock(workflowBlock(job, "strategy", 4), "matrix", 6), key, 8)
+    .matchAll(/^          - (\d+)$/gm)].map((match) => Number(match[1]))
+  const verify = workflowBlock(graph, "verify", 2), browser = workflowBlock(graph, "browser", 2)
+  assert.equal(workflowValue(verify, "name", 4), "Node ${{ matrix.node }}")
+  assert.deepEqual(matrixValues(verify, "node"), [22, 24])
+  assert.equal(workflowValue(browser, "name", 4), "Browser / Node ${{ matrix.node }} / shard ${{ matrix.shard }} of 4")
+  assert.deepEqual(matrixValues(browser, "node"), [24])
+  assert.deepEqual(matrixValues(browser, "shard"), [1, 2, 3, 4])
+  assert.equal(workflowValue(workflowBlock(graph, "real-bamboo", 2), "name", 4), "Real Bamboo / Node 24")
+  return ["Feature Source", "Node 22", "Node 24", ...[1, 2, 3, 4].map(n => `Browser / Node 24 / shard ${n} of 4`),
+    "Browser acceptance", "Real Bamboo / Node 24", "Native Actor acceptance / Native Actor / Node 24", "Feature acceptance"]
+}
+
+// Only inspect evidence supplied by a later release controller; this function
+// has no network, versioning, build, packing or publication side effects.
+export const verifyDevAcceptance = (sourceSha, pr, run, jobs, receipt, merged, tested, workflowId, sourceWorkflow) => {
+  assert.match(sourceSha, sha)
+  assert.equal(pr.state, "closed"); assert.equal(pr.merged, true)
+  assert.equal(pr.base?.ref, "dev"); assert.equal(pr.base.repo.full_name, repository)
+  assert.equal(pr.head?.repo?.full_name, repository); assert.equal(pr.merge_commit_sha, sourceSha)
+  assert.equal(run.event, "pull_request"); assert.equal(run.workflow_id, workflowId)
+  assert.equal(run.path.split("@")[0], ".github/workflows/ci.yml")
+  assert.equal(run.repository?.full_name, repository); assert.equal(run.head_repository?.full_name, repository)
+  assert.equal(run.head_sha, pr.head.sha); assert.equal(run.status, "completed"); assert.equal(run.conclusion, "success")
+  assert.match(pr.head.sha, sha)
+  for (const value of [pr.number, run.id, run.run_attempt]) assert.ok(Number.isSafeInteger(value) && value > 0)
+  const names = devFeatureJobNames(sourceWorkflow)
+  assert.equal(jobs.total_count, jobs.jobs.length)
+  assert.deepEqual(jobs.jobs.map(job => job.name).sort(), names.sort())
+  for (const job of jobs.jobs) {
+    assert.equal(job.run_id, run.id, "Feature job belongs to a different run")
+    assert.ok(Number.isSafeInteger(job.run_attempt) && job.run_attempt > 0 && job.run_attempt <= run.run_attempt,
+      "Feature job has an invalid or future attempt")
+    assert.equal(job.head_sha, pr.head.sha); assert.equal(job.status, "completed"); assert.equal(job.conclusion, "success")
+    assert.ok(Date.parse(job.completed_at) <= Date.parse(pr.merged_at), "Feature evidence must predate Dev admission")
+  }
+  for (const [job, step] of [["Node 22", "Verify Node 22 Unit compatibility"], ["Node 24", "Verify architecture, build, and package contents"],
+    ...[1, 2, 3, 4].map(n => [`Browser / Node 24 / shard ${n} of 4`, "Verify the all-surface browser shard"]),
+    ["Real Bamboo / Node 24", "Verify a real chat round trip with the pinned published Bamboo"],
+    ["Real Bamboo / Node 24", "Verify the current source artifact on local and secure browser surfaces"],
+    ["Native Actor acceptance / Native Actor / Node 24", "Verify three negative controls and restored real Actor proof"]]) {
+    const found = jobs.jobs.find(item => item.name === job).steps.filter(item => item.name === step)
+    assert.equal(found.length, 1); assert.equal(found[0].status, "completed"); assert.equal(found[0].conclusion, "success")
+  }
+  assert.equal(receipt.schemaVersion, 1); assert.equal(receipt.kind, "lotus-feature-acceptance/v1")
+  assert.deepEqual(receipt.gates, { source: "success", verify: "success", browser: "success", realBamboo: "success", nativeActor: "success" })
+  const source = receipt.source
+  assert.equal(source.repository, repository); assert.equal(source.pullRequest, pr.number); assert.equal(source.baseRef, "dev")
+  assert.equal(source.headSha, pr.head.sha); assert.equal(source.runId, String(run.id))
+  for (const value of [source.baseSha, source.headSha, source.testedSnapshot, source.testedTree]) assert.match(value, sha)
+  for (const value of [source.sourceRunAttempt, receipt.acceptanceRunAttempt]) assert.ok(Number.isSafeInteger(value) && value > 0)
+  assert.ok(source.sourceRunAttempt > 0 && source.sourceRunAttempt <= receipt.acceptanceRunAttempt && receipt.acceptanceRunAttempt <= run.run_attempt)
+  assert.equal(jobs.jobs.find(job => job.name === "Feature acceptance").run_attempt, receipt.acceptanceRunAttempt,
+    "Feature acceptance job and receipt attempts differ")
+  assert.equal(merged.sha, sourceSha); assert.equal(tested.sha, source.testedSnapshot)
+  assert.deepEqual(merged.parents.map(item => item.sha), [source.baseSha, source.headSha])
+  assert.deepEqual(tested.parents.map(item => item.sha), [source.baseSha, source.headSha])
+  assert.equal(merged.tree.sha, source.testedTree); assert.equal(tested.tree.sha, source.testedTree)
+  return { sourceTree: source.testedTree, testedSnapshot: source.testedSnapshot, featureRunAttempt: receipt.acceptanceRunAttempt }
+}
+
 const acceptanceWorkflow = (candidate) => execFileSync("git", ["show", `${candidate.sourceSha}:.github/workflows/ci.yml`], { encoding: "utf8" })
 
 export const verifyAcceptanceEvidence = (candidate, run, jobs, pullRequest, sourceWorkflow = acceptanceWorkflow(candidate)) => {
