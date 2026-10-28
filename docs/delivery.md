@@ -15,9 +15,10 @@ exercised in production.
 | Main push/promotion, after cutover | Promote stable code and retain immutable release references | Promotion PR/merge, tag and Release manifest/provenance; no tests, compilation or publication |
 
 The release/main rows require complete feature acceptance and normal review.
-The minimal publisher has one dispatch path. It reads the actual merged Dev PR,
-original CI run and feature receipt; it does not require an unreleased candidate
-or version record to be committed to Main. The earlier Bamboo HTTPS failure in
+The minimal publisher has one dispatch path. It trusts the actual normally merged
+feature PR into protected Dev and verifies its immutable Git source; it does not
+replay expiring historical CI or require an unreleased candidate/version record
+to be committed to Main. The earlier Bamboo HTTPS failure in
 #450 remains recorded; a fresh real-runtime result against the matching published
 Bamboo source and binary is required before accepting the feature.
 
@@ -25,12 +26,16 @@ Bamboo source and binary is required before accepting the feature.
 
 1. After real feature acceptance, freeze `release/<accepted-Dev-SHA>` and reserve
    the existing annotated `lotus-next-vVERSION` tag at that exact Dev commit.
-   Supply that version/tag/SHA plus the original Dev PR and CI run to the protected
+   Supply that version/tag/SHA plus the normally merged Dev PR to the protected
    Dev-ref dispatch. Controller and product source identities remain distinct.
-2. Preflight reads the actual PR/run/jobs, original Actions feature receipt and
-   Git parents/tree. Unit, all four browser shards, real Bamboo and native Actor
-   must have succeeded before Dev merge. After every check, upload the run/attempt
-   receipt; publish keeps the successful preflight's artifact ID across retries.
+2. Preflight checks the same-repository merged Dev PR, `merge_commit_sha=S`,
+   exactly two Git parents matching the PR base/head, S's tree and protected
+   Dev ancestry. S must contain the complete feature graph, all dependency edges
+   and the real always-running aggregate. Unit, all four browser shards, real
+   Bamboo and native Actor must have succeeded before the normal protected merge;
+   release trusts that admission instead of independently proving historical
+   job/step outcomes. After every check, upload the publication run/attempt receipt;
+   publish keeps the successful preflight's artifact ID across retries.
 3. One build job stamps disposable package metadata, runs the final dist build
    once and creates one actual tgz with lifecycle scripts disabled. Static package
    checks use that pack's own manifest without another pack or compiler output.
@@ -43,8 +48,8 @@ Bamboo source and binary is required before accepting the feature.
    must equal the retained tarball. A build retry requires complete same-run,
    same-controller metadata proving every earlier build/pack step was skipped;
    a whole skipped job requires its skipped conclusion and an empty steps array;
-   started or missing evidence stops it. Another dispatch of the same version
-   stops before compiling again; missing successful
+   started or missing evidence stops it. While the original run remains in GitHub
+   history, another dispatch of the same version stops before compiling again; missing successful
    originals stop recovery. A product repair returns through feature/dev/new cut.
 
 Historical candidate rows, signed identities and the fixed published-version
@@ -53,11 +58,21 @@ not as a current publication fallback. No custom producer registry, allocator,
 maintenance mode or separate publisher is introduced. Local policy fixtures do
 not prove production publication; actual activation remains separately reviewed.
 
-**Evidence retention limitation:** the feature acceptance artifact is retained
-for 30 days, and the publisher also reads the original Actions run and jobs. If
-any required record has expired, this producer stops; a rerun after the Dev merge
-is not the original pre-merge proof. Durable acceptance evidence is tracked in
-[#471](https://github.com/bigduu/lotus-next/issues/471).
+**Trust and retention:** protected Dev must retain strict `Feature acceptance`
+from Actions app15368, administrator enforcement, no force pushes/deletion and
+normal review/resolved-thread gates. The publisher checks protected Dev ancestry
+and source gate wiring; it does not prove that historical protection settings or
+individual jobs were correct. The feature diagnostic artifact still expires after
+30 days; its absence no longer prevents releasing an unchanged accepted Dev cut.
+This replaces the historical-CI dependency discussed in [#471](https://github.com/bigduu/lotus-next/issues/471),
+without claiming to authenticate deleted records or adding a trusted archive.
+
+Publication recovery still depends on its original tarball and Actions records.
+The duplicate-dispatch guard only sees retained workflow history; it cannot prove
+permanently that a version was never built after that history expires. Never
+manually redispatch the same version. Preserve original receipts/output and use
+separately reviewed recovery when records expire; absent history is not permission
+to rebuild. This revision does not extend the existing 90-day tarball retention.
 
 ## Complete tests before dev
 
@@ -108,8 +123,11 @@ first failure in the report instead of replacing it with the retry result.
 Let `B` be the feature PR base, `F` its head and `M` the actual merge snapshot
 executed by CI. The receipt requires the real parents `B,F`, records `M` and its
 tree, and never substitutes `F` for `M`. A later accepted dev commit `D` must
-have its own normal-admission proof and the exact tested tree before a release
-cut. The staged publisher verifies that proof from the original feature run.
+have its own normal protected admission and the exact tested tree before a
+release cut. The publisher verifies D's PR/parents/tree and trusts Dev's enforced
+feature acceptance; it does not reconstruct M or an original run/attempt after
+their evidence expires. The publication receipt records only the source and
+publication identities actually checked.
 
 The formal artifact must identify the commit actually built from the frozen
 release. A later main merge is separate promotion evidence. Equal source trees
