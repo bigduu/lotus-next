@@ -6,7 +6,7 @@ import { featureSource } from "./verification-browser.mjs"
 
 export { featureSource }
 
-const resultNames = ["source", "verify", "browser", "realBamboo", "nativeActor"]
+const resultNames = ["source", "verify", "browser", "realBamboo", "realBambooPackage", "realBambooSurface", "nativeActor"]
 
 
 export const verifyFeatureSource = (receipt, expected) => {
@@ -34,9 +34,11 @@ const main = () => {
   }
   if (command === "summarize") {
     const gates = requireFeatureResults({ source: process.env.SOURCE_RESULT, verify: process.env.VERIFY_RESULT,
-      browser: process.env.BROWSER_RESULT, realBamboo: process.env.REAL_BAMBOO_RESULT, nativeActor: process.env.NATIVE_ACTOR_RESULT })
+      browser: process.env.BROWSER_RESULT, realBamboo: process.env.REAL_BAMBOO_RESULT,
+      realBambooPackage: process.env.REAL_BAMBOO_PACKAGE_RESULT, realBambooSurface: process.env.REAL_BAMBOO_SURFACE_RESULT,
+      nativeActor: process.env.NATIVE_ACTOR_RESULT })
     const source = verifyFeatureSource(JSON.parse(readFileSync(process.env.FEATURE_RECEIPT_PATH, "utf8")), featureSource())
-    const receipt = { schemaVersion: 1, kind: "lotus-feature-acceptance/v1", source, gates,
+    const receipt = { schemaVersion: 2, kind: "lotus-feature-acceptance/v2", source, gates,
       acceptanceRunAttempt: Number(process.env.GITHUB_RUN_ATTEMPT) }
     writeReceipt(process.env.FEATURE_ACCEPTANCE_PATH, receipt)
     console.log(`Accepted all feature gates for tested snapshot ${source.testedSnapshot}, tree ${source.testedTree}`)
