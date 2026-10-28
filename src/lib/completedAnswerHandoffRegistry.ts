@@ -115,7 +115,7 @@ function affectedByTruncate(handoff: CompletedAnswerHandoff, messages: Message[]
 
 /** Fence in-flight older callbacks when a clear or truncate is confirmed. */
 export function invalidateCompletedAnswers(sessionId: string, truncate?: { messages: Message[]; targetId: string | null }) {
-  const affected = (handoff: CompletedAnswerHandoff) => !truncate || affectedByTruncate(handoff, truncate.messages, truncate.targetId)
+  const affected = (handoff: CompletedAnswerHandoff) => truncate === undefined || affectedByTruncate(handoff, truncate.messages, truncate.targetId)
   for (const lease of leases.get(sessionId) ?? []) {
     if (!lease.handoff || affected(lease.handoff)) lease.valid = false
   }

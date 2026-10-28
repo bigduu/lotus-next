@@ -3603,6 +3603,18 @@ describe("completed answer followed by another turn", () => {
     await restored.rerender(props); await flushMicrotasks()
     expect(restored.current.messages.filter((message) => message.id.startsWith("completed-answer-handoff-"))).toHaveLength(1)
   })
+  it.each(["another-pane", "bootstrap"] as const)("keeps an unresolved reply when its session is temporarily absent during %s", async (mode) => {
+    const { hook, sid, props } = await completed(true)
+    const saved = mocks.appState.chats.find((chat) => chat.id === sid)!
+    hook.unmount()
+    mocks.appState.chats = mode === "bootstrap" ? [] : [{ id: "partial-list-other", messages: [], config: { model: "test-model" } }]
+    const temporary = await mountUseChat({ mode: "bound", sessionId: mode === "bootstrap" ? null : "partial-list-other" })
+    expect(visibleAnswers(temporary.current)).not.toContain(answer)
+    temporary.unmount()
+    mocks.appState.chats = [...mocks.appState.chats, saved]
+    const restored = await mountUseChat(props)
+    expect(visibleAnswers(restored.current).filter((body) => body === answer)).toHaveLength(1)
+  })
   it("matches the restored canonical transcript after remount without storing a transient duplicate", async () => {
     const { hook, sid } = await completed(true)
     queue(sid, "next-user")

@@ -290,8 +290,9 @@ export function useChat(
   useEffect(() => {
     for (const sessionId of new Set(completedHandoffs.map((entry) => entry.sessionId))) {
       const chat = chats.find((item) => item.id === sessionId)
+      // A paged or bootstrapping index can omit a still-existing session.
+      // Only explicit clear/delete signals and the cache limits retire it.
       if (chat) reconcileCompletedAnswers(sessionId, chat.messages)
-      else invalidateCompletedAnswers(sessionId)
     }
   }, [chats, completedHandoffs, canonicalMessages])
   const selectedModel = useAppStore((s) => s.selectedModel)
