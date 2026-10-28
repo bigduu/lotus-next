@@ -4,7 +4,7 @@
 
 ## Verification gates
 
-Run the same checks locally that CI runs for pull requests and `main`:
+Run the same checks locally that feature CI runs before admission to `dev`:
 
 ```bash
 npm ci
@@ -22,14 +22,32 @@ embedded hosting while enforcing the canonical `/api/v1` and `/v2/stream`
 runtime contract. CI retains its HTML report, trace, screenshot, video, and
 runtime observations when a case fails.
 
-CI splits this unchanged all-surface inventory into four independently rerunnable
-shards per Node lane. See [browser shard evidence, reruns, and timing](browser-test-shards.md).
+CI retains Node 22/24 Unit compatibility and builds its canonical test artifact
+once on Node 24. Four independently rerunnable shards consume that artifact
+across the complete all-surface inventory. See
+[browser shard evidence, reruns, and timing](browser-test-shards.md).
+Feature CI also requires real Bamboo and native Actor E2E. Its `Feature acceptance`
+gate binds the actual PR merge snapshot, base/head and tree and rejects skipped
+or failed required jobs. It does not rerun tests on main pushes. See
+[delivery and cutover status](delivery.md) before releasing: the single-artifact
+producer and main promotion changes are separate dependencies of this feature
+slice, and the existing historical publisher is unchanged.
 
 The real-runtime gate is intentionally separate from that deterministic
 matrix. It verifies a clean checkout of Bamboo revision
-`d6325a732c7669f94962f604e4ce98966e374d73`, pairs its browser host with the
-hash-verified published Bamboo `2026.10.18` Linux x64 executable, and assembles
-an isolated Docker image without compiling Bamboo. It serves the production
+`d6325a732c7669f94962f604e4ce98966e374d73` and the hash-verified published
+Bamboo `2026.10.18` Linux x64 executable. Feature PR CI separately verifies the
+accepted browser host at `4786b7db862cabbebce49e288da62b284ccf5b72`. It checks
+the exact host blobs and identical Rust browser-adapter tree and browser-runtime
+package/lock objects for the two revisions, then overlays only `host.cjs` from
+the accepted host checkout into the isolated test image. The image records both
+revisions and the actual host SHA-256, which the browser test checks against the
+file inside the running container. This is a test-only pair, not a same-source
+Bamboo release. Publication and ordinary local verification retain the original
+same-source host and published executable. The feature gate still runs the full
+real Bamboo and native Actor tests; the static checks alone do not establish
+runtime compatibility. The image is assembled without compiling Bamboo. It
+serves the production
 Lotus Next artifact from that Bamboo process and drives
 one complete chat turn through the visible desktop UI and a local deterministic
 OpenAI-compatible provider. It requires the `auth.ws_hello_ack.v1` bootstrap
@@ -52,11 +70,14 @@ BAMBOO_E2E_SOURCE_DIR=/absolute/path/to/bamboo \
 ```
 
 Docker and Chromium are required. The runner rejects a different or dirty
-Bamboo checkout and never accepts a live Bamboo URL. Normal completion, setup
+Bamboo checkout and never accepts a live Bamboo URL. The two-revision mode is
+restricted to the canonical dev feature PR workflow and requires its separate
+clean, exact host checkout; publication inputs cannot select it. Normal completion, setup
 failure, `SIGINT`, and `SIGTERM` share one exact-resource teardown for the two
 containers, private network, temporary image, observation mount, and data root
-it created. CI runs this single desktop lane once on Node 22; it does not repeat
-it across the mock suite's viewport/runtime matrix.
+it created. CI runs this single desktop lane once on Node 24; it does not repeat
+it across the mock suite's viewport/runtime matrix. It runs on every feature PR
+using the already verified Node 24 `dist`; it does not rebuild that output.
 
 The published-artifact acceptance is a second real-runtime lane. It downloads
 `@bigduu/lotus-next@2026.9.14` from the public npm registry into a fresh cache
@@ -96,6 +117,11 @@ regular `dist/` resource by portable path, byte size, and SHA-256. Its combined
 digest is deterministic for one resource set. Consumers must verify this file
 before serving or staging an artifact; a dirty source manifest is never a
 release artifact.
+
+The following publication behavior is the existing historical contract, pending
+the dependent release-producer cutover described in [delivery.md](delivery.md).
+It is not the target release/main flow and does not authorize sending a new
+feature-graph receipt to the old publisher.
 
 The committed package version remains the `0.0.0` source placeholder. The
 manual publication workflow accepts one explicit SemVer and reuses the complete

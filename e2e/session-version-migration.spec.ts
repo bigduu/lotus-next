@@ -7,7 +7,7 @@ import { installArtifactRuntime, standaloneScenario } from "./support/artifactRu
 const sid = "all-surface-session", at = "2026-10-25T00:00:00Z"
 const birth = "d".repeat(64), before = "a".repeat(64), after = "b".repeat(64)
 const endpoint = `/api/v1/sessions/${sid}/version-migration`
-type Mode = "success" | "uncertain-post" | "uncertain-readback" | "cold-pending" | "busy" | "unsupported" | "canonical-conflict"
+type Mode = "success" | "uncertain-post" | "uncertain-readback" | "cold-pending" | "busy" | "unsupported" | "canonical-conflict" | "current"
 interface Intent {
   operation_id: string; birth_token: string; expected_session_version: null
   expected_metadata_version: number; expected_snapshot_sha256: string
@@ -33,9 +33,9 @@ async function fixture(page: Page, mode: Mode) {
     { id: "retained-user", role: "user", content: "Keep the original workspace and project context", created_at: at },
     { id: "retained-assistant", role: "assistant", content: "Retained result: use the existing configuration", created_at: at },
   ]
-  let migrated = false, detailUnavailable = mode === "cold-pending", holdReadback = false
+  let migrated = mode === "current", detailUnavailable = mode === "cold-pending", holdReadback = false
   let pending: Intent | null = mode === "cold-pending" ? pendingIntent : null
-  let assessReads = 0, readbacksHeld = 0, commits = 0
+  let assessReads = 0, readbacksHeld = 0, commits = 0, metadataVersion = 1
   let releaseReadback!: () => void
   const readbackGate = new Promise<void>((resolve) => { releaseReadback = resolve })
   const posts: Intent[] = [], sessionWrites: { path: string; body: unknown }[] = []
@@ -91,7 +91,13 @@ async function fixture(page: Page, mode: Mode) {
       if (holdReadback) { readbacksHeld += 1; await readbackGate }
       if (detailUnavailable) return route.fulfill({ status: 503, json: { error: "Canonical detail unavailable" } })
       events.push(migrated ? "current-detail" : "legacy-detail")
-      return route.fulfill({ json: canonical(), headers: { ETag: '"1"' } })
+      return route.fulfill({ json: canonical(), headers: { ETag: `"${metadataVersion}"` } })
+    }
+    if (path === `/api/v1/sessions/${sid}` && request.method() === "PATCH") {
+      expect(request.headers()["if-match"]).toBe(`"${metadataVersion}"`)
+      Object.assign(session, request.postDataJSON())
+      metadataVersion += 1
+      return route.fulfill({ json: canonical(), headers: { ETag: `"${metadataVersion}"` } })
     }
     if (path === `/api/v1/history/${sid}` && request.method() === "GET") return route.fulfill({ json: { session_id: sid, messages: history } })
     if (path === `/api/v1/actors/${sid}/snapshot`) return route.fulfill({ json: actorSnapshotFixture(sid, 0) })
@@ -191,10 +197,16 @@ for (const mode of ["uncertain-post", "uncertain-readback"] as const) {
 
 test("cold refresh recovers only the server's pending operation even when session detail is unavailable", async ({ page }, info) => {
   const f = await fixture(page, "cold-pending")
+  expect(f.assessReads).toBe(0)
+  await migration(page).getByRole("button", { name: "Refresh migration state", exact: true }).click()
   await expect(recover(page)).toBeVisible()
   expect(f.posts).toEqual([])
   await page.reload()
   await expect(page.getByText("Compatibility could not be checked", { exact: false })).toBeVisible()
+  const reads = f.assessReads
+  await expect(recover(page)).toHaveCount(0)
+  await migration(page).getByRole("button", { name: "Refresh migration state", exact: true }).click()
+  await expect.poll(() => f.assessReads).toBeGreaterThan(reads)
   await expect(recover(page)).toBeVisible()
   await expect(start(page)).toHaveCount(0)
   expect(f.posts).toEqual([])
@@ -206,6 +218,34 @@ test("cold refresh recovers only the server's pending operation even when sessio
   await expect(page.getByText("Compatibility could not be checked", { exact: false })).toHaveCount(0)
   expect(f.commits).toBe(1)
   expect(f.runtime.pageErrors).toEqual([])
+})
+
+test("current Sessions change permission modes without automatically probing migration authority", async ({ page }, info) => {
+  const f = await fixture(page, "current")
+  await expect(page.getByText("This session is compatible", { exact: false }).first()).toBeVisible()
+  expect(f.assessReads).toBe(0)
+  const permission = page.getByRole("combobox", { name: "Permission mode", exact: true })
+  await expect(permission).toHaveText("Default")
+  await permission.click()
+  await page.getByRole("option", { name: "Auto", exact: true }).click()
+  await page.getByRole("dialog", { name: "Enable Auto for this session?", exact: true })
+    .getByRole("button", { name: "Enable Auto", exact: true }).click()
+  await expect(permission).toHaveText("Auto")
+  await permission.click()
+  await page.getByRole("option", { name: "Default", exact: true }).click()
+  await expect.poll(() => f.session.permission_mode).toBe("default")
+  await expect(permission).toHaveText("Default")
+  await page.getByRole("button", { name: "Check compatibility again", exact: true }).click()
+  await expect(page.getByRole("button", { name: "Check compatibility again", exact: true })).toBeEnabled()
+  expect(f.assessReads).toBe(0)
+  expect(f.posts).toEqual([])
+  await migration(page).getByRole("button", { name: "Refresh migration state", exact: true }).click()
+  await expect.poll(() => f.assessReads).toBe(1)
+  await expect(start(page)).toHaveCount(0)
+  await expect(recover(page)).toHaveCount(0)
+  expect(f.posts).toEqual([])
+  expect(f.runtime.pageErrors).toEqual([])
+  await screenshot(page, info, "session-migration-current-manual-read")
 })
 
 test("canonical conflict after a matching receipt blocks the Composer and preserves only explicit recovery", async ({ page }, info) => {

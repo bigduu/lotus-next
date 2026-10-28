@@ -26,6 +26,16 @@ function motionAllowed(node: HTMLElement) {
     && !window.matchMedia?.("(prefers-reduced-motion: reduce)").matches
 }
 
+function motionTiming(node: HTMLElement, token: "--motion-fast" | "--motion-normal") {
+  const style = getComputedStyle(node)
+  const time = style.getPropertyValue(token).trim()
+  const duration = Number.parseFloat(time) * (time.endsWith("ms") ? 1 : 1000)
+  return {
+    duration: Number.isFinite(duration) ? duration : token === "--motion-fast" ? 140 : 220,
+    easing: style.getPropertyValue("--motion-ease").trim() || "cubic-bezier(0.2, 0.8, 0.2, 1)",
+  }
+}
+
 /** The foreground step settles into the disclosure as execution moves on. */
 function CurrentStep({ preview, expanded }: { preview?: ActivityPreview; expanded: boolean }) {
   const current = !expanded && preview?.running ? preview : undefined
@@ -51,7 +61,7 @@ function CurrentStep({ preview, expanded }: { preview?: ActivityPreview; expande
     const animation = node.animate([
       { opacity: 0, transform: "translateY(4px)" },
       { opacity: 1, transform: "translateY(0)" },
-    ], { duration: 180, easing: "ease-out" })
+    ], motionTiming(node, "--motion-fast"))
     return () => animation.cancel()
   }, [current?.key])
 
@@ -68,7 +78,7 @@ function CurrentStep({ preview, expanded }: { preview?: ActivityPreview; expande
       { height, opacity: 1, transform: "translateY(0) scale(1)", offset: 0 },
       { height, opacity: 1, transform: "translateY(0) scale(1)", offset: 0.35 },
       { height: "0px", opacity: 0, transform: "translateY(-12px) scale(0.98)" },
-    ], { duration: 420, easing: "ease-in-out", fill: "forwards" })
+    ], { ...motionTiming(node, "--motion-normal"), fill: "forwards" })
     animation.finished.then(finish, () => {})
     return () => animation.cancel()
   }, [leavingKey])
@@ -143,7 +153,7 @@ export function ProcessActivity({
   }
 
   const summary = <>
-    {hasDetails ? <ChevronRight className="process-activity-icon" aria-hidden="true" /> : null}
+    {hasDetails ? <ChevronRight className="process-activity-icon size-3.5" aria-hidden="true" /> : null}
     {hasDetails && brief !== resolvedLabel ? <span className="process-activity-label">{resolvedLabel}</span> : null}
     <span
       data-process-brief
@@ -164,11 +174,11 @@ export function ProcessActivity({
         aria-label={resolvedLabel}
         aria-expanded={expanded}
         aria-controls={contentId}
-        className="process-activity-toggle"
+        className="process-activity-toggle rounded-sm text-xs"
         onClick={toggle}
       >
         {summary}
-      </button> : <div data-process-status role="status" className="process-activity-toggle" style={{ cursor: "default" }}>{summary}</div>}
+      </button> : <div data-process-status role="status" className="process-activity-toggle rounded-sm text-xs" style={{ cursor: "default" }}>{summary}</div>}
       <CurrentStep preview={preview ? { ...preview, running: active && preview.running } : undefined} expanded={expanded} />
       {hasDetails ? <DisclosurePanel
         id={contentId}
