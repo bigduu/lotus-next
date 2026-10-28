@@ -2482,6 +2482,7 @@ export const uiEnUs = {
   "browser_profile_refresh": "Read current state",
   "browser_view_load_failed": "The browser panel could not load. Try again.",
   "browser_request_busy": "The browser is busy. This request was not performed. Try again later.",
+  "browser_shared_unsupported": "This service cannot open a shared browser. You can explicitly open a clean session instead.",
   "browser_profile_open_default": "Open using server defaults",
   "browser_profile_open_clean": "Open as a clean session",
   "browser_profile_default_help": "Account mode is unconfirmed. Explicitly request a clean session or use server defaults. The actual mode is shown only after the service confirms it.",

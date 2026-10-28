@@ -2482,6 +2482,7 @@ export const uiZhCn = {
   "browser_profile_refresh": "重新读取状态",
   "browser_view_load_failed": "浏览器面板加载失败，请重试。",
   "browser_request_busy": "浏览器当前繁忙，本次请求未执行。请稍后重试。",
+  "browser_shared_unsupported": "当前服务不支持打开共享浏览器。你可以明确选择打开干净会话。",
   "browser_profile_open_default": "按当前服务默认设置打开",
   "browser_profile_open_clean": "以干净会话打开",
   "browser_profile_default_help": "当前账户模式尚未确认。可明确请求干净会话，或按服务默认设置打开；只有服务确认后才会显示实际模式。",
