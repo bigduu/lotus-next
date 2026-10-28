@@ -135,6 +135,7 @@ import { invalidateCompletedAnswers, resetCompletedAnswerHandoffsForTest } from 
 import type { PublicRunDiagnostic } from "@services/chat/runDiagnostic"
 import { diagnosticFixture, diagnosticFixtureError } from "@services/chat/runDiagnostic.testFixtures"
 import { beginRootModeOperation, getRootModeFenceState } from "@/lib/rootModeTransitionFence"
+import { beginOrdinaryRetryFence, beginContinuousRetryFence, confirmContinuousRetryFence, confirmOrdinaryStartedWithoutRunId, readContinuousRetryFence } from "@/lib/continuousRetryFence"
 import { getUsedModels } from "@shared/utils/usedModels"
 type HookValue = ReturnType<typeof useChat>
 type HookProps =
@@ -346,12 +347,12 @@ beforeEach(() => {
   mocks.appState.restoreSession.mockResolvedValue(false)
   mocks.appState.loadChatHistory.mockResolvedValue(undefined)
   mocks.appState.refreshChatsNow.mockResolvedValue(undefined)
-  mocks.execute.mockResolvedValue(undefined)
+  mocks.execute.mockImplementation(async (sessionId: string) => ({ session_id: sessionId, status: "started", run_id: "synthetic-default-run" }))
   mocks.subscribeToEvents.mockResolvedValue(undefined)
   mocks.truncateSessionMessages.mockResolvedValue(undefined)
   mocks.getPendingQuestion.mockResolvedValue({ has_pending_question: false })
   mocks.getSession.mockRejectedValue(new Error("no status fixture"))
-  mocks.apiGet.mockRejectedValue(new Error("no pending question"))
+  mocks.apiGet.mockImplementation(async (path: string) => { if (path === "execute/defaults") return { model:null, system_prompt:"", base_system_prompt:"", default_session_permission_mode:"default" }; throw new Error("no pending question") })
   mocks.apiPost.mockResolvedValue(undefined)
   consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {})
   consoleWarnSpy = vi.spyOn(console, "warn").mockImplementation(() => {})
@@ -4170,13 +4171,13 @@ describe("explicit continuous upstream retry", () => {
     blocked.mockRestore()
   })
   it("waits for the exact Execute ACK before Stop and coalesces repeated clicks",async()=>{
-    allow();const ack=deferred<{session_id:string;run_id:string}>();const sub=deferred<void>()
+    allow();const ack=deferred<{session_id:string;status:"started";run_id:string}>();const sub=deferred<void>()
     mocks.execute.mockReturnValue(ack.promise);mocks.subscribeToEvents.mockReturnValue(sub.promise);mocks.stopGeneration.mockResolvedValue(undefined)
     const hook=await persisted();let request!:Promise<void>
     await act(async()=>{request=hook.current.retry(undefined,options)})
     await act(async()=>{hook.current.stop();hook.current.stop()})
     expect(mocks.stopGeneration).not.toHaveBeenCalled();expect(hook.current.upstreamRetryStatus).toBe("stopping")
-    await act(async()=>{ack.resolve({session_id:sid,run_id:"exact-original-run"});await Promise.resolve();await Promise.resolve()})
+    await act(async()=>{ack.resolve({session_id:sid,status:"started",run_id:"exact-original-run"});await Promise.resolve();await Promise.resolve()})
     expect(mocks.stopGeneration).toHaveBeenCalledExactlyOnceWith(sid,"exact-original-run")
     expect(hook.current.upstreamRetryStatus).toBe("stop_requested")
     await act(async()=>{sub.resolve();await request})
@@ -4232,6 +4233,250 @@ describe("explicit continuous upstream retry", () => {
     await act(async()=>{hook.current.stop();await Promise.resolve();await Promise.resolve()})
     expect(mocks.stopGeneration).not.toHaveBeenCalled();expect(hook.current.upstreamRetryStatus).toBe("stop_unconfirmed")
     await act(async()=>{sub.resolve();await request})
+  })
+  it("does not stop a pre-existing run when Execute says already_running", async () => {
+    allow()
+    mocks.execute.mockResolvedValue({ session_id: sid, status: "already_running", run_id: "pre-existing-run" })
+    const sub = deferred<void>(); mocks.subscribeToEvents.mockReturnValue(sub.promise)
+    const hook = await persisted(); let request!: Promise<void>
+    await act(async () => { request = hook.current.retry(undefined, options); await Promise.resolve() })
+    expect(hook.current.upstreamRetryStatus).toBe("already_running")
+    await act(async () => { hook.current.stop(); await Promise.resolve(); await Promise.resolve() })
+    expect(mocks.stopGeneration).not.toHaveBeenCalled()
+    expect(hook.current.upstreamRetryStatus).toBe("stop_unconfirmed")
+    await act(async () => { sub.resolve(); await request })
+  })
+  it("reports a completed Execute ACK as not started and leaves no live spinner", async () => {
+    allow()
+    mocks.execute.mockResolvedValue({ session_id: sid, status: "completed" })
+    const sub = deferred<void>(); mocks.subscribeToEvents.mockReturnValue(sub.promise)
+    const hook = await persisted(); let request!: Promise<void>
+    await act(async () => { request = hook.current.retry(undefined, options); await Promise.resolve(); await Promise.resolve() })
+    expect(hook.current.upstreamRetryStatus).toBe("not_started")
+    expect(hook.current.streamPhase).toBeNull()
+    await act(async () => { sub.resolve(); await request })
+  })
+  it("keeps a guarded ordinary Stop on its own pending Execute ACK", async () => {
+    allow()
+    const target = "guarded-ordinary-pending"
+    const prior = beginContinuousRetryFence("https://fixture.test/api/v1", target)!
+    expect(confirmContinuousRetryFence(prior, "previous-run")).toBe(true)
+    mocks.appState.chats = [{ id: target, messages: [], config: { model: "test-model" } }]
+    mocks.sendMessage.mockResolvedValue({ session_id: target })
+    const ack = deferred<{ session_id: string; status: "started"; run_id: string }>()
+    mocks.execute.mockReturnValue(ack.promise); mocks.stopGeneration.mockResolvedValue(undefined)
+    mocks.subscribeToEvents.mockImplementation((_sid: string, _h: SubscriptionHandlers, controller: AbortController) => {
+      const sub = deferred<void>(); controller.signal.addEventListener("abort", () => sub.resolve(), { once: true }); return sub.promise
+    })
+    const hook = await mountUseChat({ mode: "bound", sessionId: target })
+    await act(async () => { await hook.current.send("ordinary follow-up") })
+    await act(async () => { hook.current.stop(); await Promise.resolve(); await Promise.resolve() })
+    expect(mocks.stopGeneration).not.toHaveBeenCalled()
+    await act(async () => { ack.resolve({ session_id: target, status: "started", run_id: "new-ordinary-run" }); for (let i=0;i<8;i++) await Promise.resolve() })
+    expect(mocks.stopGeneration).toHaveBeenCalledExactlyOnceWith(target, "new-ordinary-run")
+  })
+  it("does not let an old unguarded pane stop a newer continuous run", async () => {
+    allow()
+    const target = "unguarded-older-pane"
+    mocks.appState.chats = [{ id: target, messages: [], lastRunStatus: "error", config: { model: "test-model" } }]
+    mocks.sendMessage.mockResolvedValue({ session_id: target })
+    mocks.execute.mockResolvedValueOnce({ session_id: target, status: "started", run_id: "ordinary-old" })
+      .mockResolvedValueOnce({ session_id: target, status: "started", run_id: "continuous-new" })
+    mocks.stopGeneration.mockResolvedValue(undefined)
+    mocks.subscribeToEvents.mockImplementation((_sid: string, _h: SubscriptionHandlers, controller: AbortController) => {
+      const sub = deferred<void>(); controller.signal.addEventListener("abort", () => sub.resolve(), { once: true }); return sub.promise
+    })
+    const old = await mountUseChat({ mode: "bound", sessionId: target })
+    await act(async () => { await old.current.send("old ordinary turn"); await Promise.resolve() })
+    const newer = await mountUseChat({ mode: "bound", sessionId: target }); let newerRequest!: Promise<void>
+    await act(async () => { newerRequest = newer.current.retry(undefined, options); await Promise.resolve() })
+    await act(async () => { old.current.stop(); for (let i=0;i<8;i++) await Promise.resolve() })
+    expect(mocks.stopGeneration).toHaveBeenCalledExactlyOnceWith(target, "ordinary-old")
+    newer.unmount(); await act(async () => { await newerRequest })
+  })
+  it("retains the detached ordinary Execute ACK after switching sessions", async () => {
+    allow()
+    const target = "detached-ordinary-followup"
+    const prior = beginContinuousRetryFence("https://fixture.test/api/v1", target)!
+    expect(confirmContinuousRetryFence(prior, "previous-run")).toBe(true)
+    mocks.appState.chats = [{ id: target, messages: [], config: { model: "test-model" } }, { id: "other", messages: [] }]
+    const chatAck = deferred<{ session_id: string }>(); mocks.sendMessage.mockReturnValue(chatAck.promise)
+    mocks.execute.mockResolvedValue({ session_id: target, status: "started", run_id: "detached-new" })
+    mocks.stopGeneration.mockResolvedValue(undefined)
+    const hook = await mountUseChat({ mode: "bound", sessionId: target }); let sending!: Promise<SendSubmissionResult>
+    act(() => { sending = hook.current.send("follow-up before leaving") })
+    await act(async () => { hook.current.select("other") }); await hook.rerender({ mode: "bound", sessionId: "other" })
+    await act(async () => { chatAck.resolve({ session_id: target }); await sending; await Promise.resolve() })
+    await hook.rerender({ mode: "bound", sessionId: target })
+    await act(async () => { hook.current.stop(); for (let i=0;i<8;i++) await Promise.resolve() })
+    expect(mocks.stopGeneration).toHaveBeenCalledExactlyOnceWith(target, "detached-new")
+  })
+  it("retains the detached ordinary retry Execute ACK after preparation and navigation", async () => {
+    allow()
+    const target = "detached-ordinary-rerun"
+    const prior = beginContinuousRetryFence("https://fixture.test/api/v1", target)!
+    expect(confirmContinuousRetryFence(prior, "previous-run")).toBe(true)
+    mocks.appState.chats = [{ id: target, messages: [], lastRunStatus: "error", config: { model: "test-model" } }, { id: "other", messages: [] }]
+    const prepared = deferred<void>(); mocks.truncateSessionMessages.mockReturnValue(prepared.promise)
+    mocks.execute.mockResolvedValue({ session_id: target, status: "started", run_id: "detached-rerun" })
+    mocks.stopGeneration.mockResolvedValue(undefined)
+    const hook = await mountUseChat({ mode: "bound", sessionId: target }); let retrying!: Promise<void>
+    act(() => { retrying = hook.current.retry() })
+    await act(async () => { hook.current.select("other") }); await hook.rerender({ mode: "bound", sessionId: "other" })
+    await act(async () => { prepared.resolve(); await retrying; await Promise.resolve() })
+    await hook.rerender({ mode: "bound", sessionId: target })
+    await act(async () => { hook.current.stop(); for (let i=0;i<8;i++) await Promise.resolve() })
+    expect(mocks.stopGeneration).toHaveBeenCalledExactlyOnceWith(target, "detached-rerun")
+  })
+  it("keeps the later ordinary reservation when older and newer ACKs both arrive late", async () => {
+    allow()
+    const target = "two-ordinary-starts"
+    const prior = beginContinuousRetryFence("https://fixture.test/api/v1", target)!
+    expect(confirmContinuousRetryFence(prior, "previous-run")).toBe(true)
+    mocks.appState.chats = [{ id: target, messages: [], config: { model: "test-model" } }]
+    mocks.sendMessage.mockResolvedValue({ session_id: target }); mocks.stopGeneration.mockResolvedValue(undefined)
+    const firstAck = deferred<{ session_id: string; status: "started"; run_id: string }>()
+    const secondAck = deferred<{ session_id: string; status: "started"; run_id: string }>()
+    mocks.execute.mockReturnValueOnce(firstAck.promise).mockReturnValueOnce(secondAck.promise)
+    mocks.subscribeToEvents.mockImplementation((_sid: string, _h: SubscriptionHandlers, controller: AbortController) => {
+      const sub = deferred<void>(); controller.signal.addEventListener("abort", () => sub.resolve(), { once: true }); return sub.promise
+    })
+    const first = await mountUseChat({ mode: "bound", sessionId: target })
+    const second = await mountUseChat({ mode: "bound", sessionId: target })
+    await act(async () => { await first.current.send("first turn") })
+    await act(async () => { await second.current.send("later turn") })
+    await act(async () => { firstAck.resolve({ session_id: target, status: "started", run_id: "ordinary-first" }); await Promise.resolve() })
+    await act(async () => { secondAck.resolve({ session_id: target, status: "started", run_id: "ordinary-second" }); await Promise.resolve(); await Promise.resolve() })
+    expect(readContinuousRetryFence("https://fixture.test/api/v1", target)).toEqual({ kind: "confirmed", runId: "ordinary-second" })
+    await act(async () => { second.current.stop(); for (let i=0;i<8;i++) await Promise.resolve() })
+    expect(mocks.stopGeneration).toHaveBeenCalledExactlyOnceWith(target, "ordinary-second")
+  })
+  it("keeps unguarded ordinary chat working when browser storage writes are blocked", async () => {
+    const target = "ordinary-storage-write-blocked"
+    mocks.appState.chats = [{ id: target, messages: [], config: { model: "test-model" } }]
+    mocks.sendMessage.mockResolvedValue({ session_id: target }); mocks.execute.mockResolvedValue({ session_id: target, status: "started", run_id: "ordinary-run" })
+    mocks.stopGeneration.mockResolvedValue(undefined); mocks.subscribeToEvents.mockReturnValue(pendingForever())
+    const blocked = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => { throw new Error("write blocked") })
+    const hook = await mountUseChat({ mode: "bound", sessionId: target })
+    await act(async () => { await hook.current.send("ordinary message"); await Promise.resolve() })
+    expect(mocks.execute).toHaveBeenCalledTimes(1)
+    await act(async () => { hook.current.stop(); await Promise.resolve() })
+    expect(mocks.stopGeneration).toHaveBeenCalledExactlyOnceWith(target)
+    blocked.mockRestore()
+  })
+  it("does not strand an ordinary message when storage cannot be read", async () => {
+    allow()
+    const target = "ordinary-storage-read-blocked"
+    mocks.appState.chats = [{ id: target, messages: [], config: { model: "test-model" } }]
+    mocks.sendMessage.mockResolvedValue({ session_id: target }); mocks.execute.mockResolvedValue({ session_id: target, status: "started", run_id: "known-ordinary-run" })
+    mocks.stopGeneration.mockResolvedValue(undefined); mocks.subscribeToEvents.mockReturnValue(pendingForever())
+    const hook = await mountUseChat({ mode: "bound", sessionId: target })
+    const blocked = vi.spyOn(sessionStorage, "getItem").mockImplementation(() => { throw new Error("read blocked") })
+    await act(async () => { await hook.current.send("ordinary message"); await Promise.resolve() })
+    expect(mocks.execute).toHaveBeenCalledTimes(1)
+    expect(hook.current.upstreamRetryStatus).toBe("identity_unsaved")
+    await act(async () => { hook.current.stop(); for (let i=0;i<8;i++) await Promise.resolve() })
+    expect(mocks.stopGeneration).toHaveBeenCalledExactlyOnceWith(target, "known-ordinary-run")
+    blocked.mockRestore()
+  })
+  it("uses exact Stop for an unguarded ordinary run when the service supports it", async () => {
+    allow()
+    const target = "exact-capable-ordinary"
+    mocks.appState.chats = [{ id: target, messages: [], config: { model: "test-model" } }]
+    mocks.sendMessage.mockResolvedValue({ session_id: target }); mocks.execute.mockResolvedValue({ session_id: target, status: "started", run_id: "ordinary-exact" })
+    mocks.stopGeneration.mockResolvedValue(undefined); mocks.subscribeToEvents.mockReturnValue(pendingForever())
+    const hook = await mountUseChat({ mode: "bound", sessionId: target })
+    await act(async () => { await hook.current.send("ordinary message"); await Promise.resolve() })
+    await act(async () => { hook.current.stop(); for (let i=0;i<8;i++) await Promise.resolve() })
+    expect(mocks.stopGeneration).toHaveBeenCalledExactlyOnceWith(target, "ordinary-exact")
+  })
+  it("permits another explicit continuous retry after a confirmed non-start", async () => {
+    allow()
+    mocks.execute.mockResolvedValueOnce({ session_id: sid, status: "completed" })
+      .mockResolvedValueOnce({ session_id: sid, status: "started", run_id: "later-retry" })
+    mocks.subscribeToEvents.mockImplementation((_sid: string, _h: SubscriptionHandlers, controller: AbortController) => {
+      const sub = deferred<void>(); controller.signal.addEventListener("abort", () => sub.resolve(), { once: true }); return sub.promise
+    })
+    const hook = await persisted(); let first!: Promise<void>; let second!: Promise<void>
+    await act(async () => { first = hook.current.retry(undefined, options); await first })
+    expect(hook.current.upstreamRetryStatus).toBe("not_started")
+    await act(async () => { second = hook.current.retry(undefined, options); await Promise.resolve(); await Promise.resolve() })
+    expect(mocks.execute).toHaveBeenCalledTimes(2)
+    expect(hook.current.upstreamRetryStatus).toBe("enabled")
+    hook.unmount(); await act(async () => { await second })
+  })
+  it("warns if an ordinary ACK cannot be persisted", async () => {
+    allow()
+    const target = "ordinary-ack-save-failed"
+    const prior = beginContinuousRetryFence("https://fixture.test/api/v1", target)!
+    expect(confirmContinuousRetryFence(prior, "previous-run")).toBe(true)
+    mocks.appState.chats = [{ id: target, messages: [], config: { model: "test-model" } }]
+    mocks.sendMessage.mockResolvedValue({ session_id: target }); const ack = deferred<{session_id:string;status:"started";run_id:string}>()
+    mocks.execute.mockReturnValue(ack.promise); mocks.subscribeToEvents.mockReturnValue(pendingForever())
+    const hook = await mountUseChat({ mode: "bound", sessionId: target })
+    await act(async () => { await hook.current.send("follow-up") })
+    const blocked = vi.spyOn(sessionStorage, "setItem").mockImplementation(() => { throw new Error("write blocked") })
+    await act(async () => { ack.resolve({session_id:target,status:"started",run_id:"new-run"}); await Promise.resolve(); await Promise.resolve() })
+    expect(hook.current.upstreamRetryStatus).toBe("identity_unsaved")
+    blocked.mockRestore()
+  })
+  it("does not let an unowned observer borrow a later run's Stop identity", async () => {
+    allow()
+    const target = "unowned-observer"
+    mocks.appState.chats = [{ id: target, messages: [], isRunning: true, lastRunStatus: "error", config: { model: "test-model" } }]
+    mocks.execute.mockResolvedValue({ session_id: target, status: "started", run_id: "later-continuous" })
+    mocks.stopGeneration.mockResolvedValue(undefined)
+    mocks.subscribeToEvents.mockImplementation((_sid: string, _h: SubscriptionHandlers, controller: AbortController) => {
+      const sub = deferred<void>(); controller.signal.addEventListener("abort", () => sub.resolve(), { once: true }); return sub.promise
+    })
+    mocks.shouldObserve = true
+    const observer = await mountUseChat({ mode: "bound", sessionId: target })
+    mocks.shouldObserve = false
+    const owner = await mountUseChat({ mode: "bound", sessionId: target }); let request!: Promise<void>
+    await act(async () => { request = owner.current.retry(undefined, options); await Promise.resolve() })
+    await act(async () => { observer.current.stop(); for (let i=0;i<8;i++) await Promise.resolve() })
+    expect(mocks.stopGeneration).not.toHaveBeenCalled()
+    expect(observer.current.upstreamRetryStatus).toBe("stop_unconfirmed")
+    owner.unmount(); await act(async () => { await request })
+  })
+  it("persists a first ordinary started identity for reload on an exact-capable service", async () => {
+    allow()
+    const target = "first-ordinary-reload"
+    mocks.appState.chats = [{ id: target, messages: [], config: { model: "test-model" } }]
+    mocks.sendMessage.mockResolvedValue({ session_id: target }); mocks.execute.mockResolvedValue({ session_id: target, status: "started", run_id: "first-run" })
+    mocks.subscribeToEvents.mockReturnValue(pendingForever()); const hook = await mountUseChat({ mode: "bound", sessionId: target })
+    await act(async () => { await hook.current.send("ordinary message"); await Promise.resolve(); await Promise.resolve() })
+    expect(readContinuousRetryFence("https://fixture.test/api/v1", target)).toEqual({kind:"confirmed",runId:"first-run"})
+  })
+  it("does not send a legacy Stop when capability data is malformed", async () => {
+    mocks.apiGet.mockResolvedValue({ upstream_retry:{supported_modes:"until_cancelled"} })
+    const target = "malformed-capability"
+    mocks.appState.chats = [{ id: target, messages: [], config: { model: "test-model" } }]
+    mocks.sendMessage.mockResolvedValue({ session_id: target }); mocks.execute.mockResolvedValue({ session_id: target, status: "started", run_id: "known-run" })
+    mocks.stopGeneration.mockResolvedValue(undefined); mocks.subscribeToEvents.mockReturnValue(pendingForever())
+    const hook = await mountUseChat({ mode: "bound", sessionId: target })
+    await act(async () => { await hook.current.send("ordinary message"); await Promise.resolve() })
+    await act(async () => { hook.current.stop(); for (let i=0;i<8;i++) await Promise.resolve() })
+    expect(mocks.stopGeneration).not.toHaveBeenCalled()
+    expect(hook.current.upstreamRetryStatus).toBe("stop_unconfirmed")
+  })
+  it("does not let a restored legacy observer stop a newer local run when its receipt cannot be written", async () => {
+    const target = "restored-legacy-observer"
+    const prior = beginOrdinaryRetryFence("https://fixture.test/api/v1", target, {ensureGuard:true})
+    if (prior.kind !== "reserved") throw new Error("expected ordinary reservation")
+    expect(confirmOrdinaryStartedWithoutRunId(prior.reservation)).toBe(true)
+    mocks.appState.chats = [{ id: target, messages: [], isRunning:true, config: { model: "test-model" } }]
+    mocks.subscribeToEvents.mockImplementation((_sid: string, _h: SubscriptionHandlers, controller: AbortController) => {
+      const sub = deferred<void>(); controller.signal.addEventListener("abort", () => sub.resolve(), { once: true }); return sub.promise
+    })
+    mocks.shouldObserve = true; const observer = await mountUseChat({mode:"bound",sessionId:target}); mocks.shouldObserve = false
+    mocks.sendMessage.mockResolvedValue({session_id:target}); mocks.execute.mockResolvedValue({session_id:target,status:"started",run_id:"new-run"})
+    const blocked = vi.spyOn(sessionStorage,"setItem").mockImplementation(() => {throw new Error("write blocked")})
+    const newer = await mountUseChat({mode:"bound",sessionId:target})
+    await act(async () => {await newer.current.send("new turn"); await Promise.resolve()}); blocked.mockRestore()
+    await act(async () => {observer.current.stop(); for(let i=0;i<8;i++) await Promise.resolve()})
+    expect(mocks.stopGeneration).not.toHaveBeenCalled()
+    expect(observer.current.upstreamRetryStatus).toBe("stop_unconfirmed")
   })
   it("does not claim an already running execution adopted the requested mode",async()=>{
     allow();mocks.execute.mockResolvedValue({session_id:sid,status:"already_running",run_id:"other-owned-run"})
@@ -4308,8 +4553,9 @@ describe("explicit continuous upstream retry", () => {
     mocks.shouldObserve = true
     await hook.rerender({ mode: "bound", sessionId: "other" })
     mocks.shouldObserve = false
-    await act(async () => { hook.current.stop(); await Promise.resolve() })
-    expect(mocks.stopGeneration).toHaveBeenCalledExactlyOnceWith("other")
+    await act(async () => { hook.current.stop(); for (let i=0;i<8;i++) await Promise.resolve() })
+    expect(mocks.stopGeneration).not.toHaveBeenCalled()
+    expect(hook.current.upstreamRetryStatus).toBe("stop_unconfirmed")
   })
   it("keeps an older pane's Stop bound to its own run after a successor starts", async () => {
     allow()
@@ -4384,7 +4630,7 @@ describe("explicit continuous upstream retry", () => {
   })
   it("does not inherit the mode on a later ordinary send",async()=>{
     allow();const sub=deferred<void>();let handlers!:SubscriptionHandlers
-    mocks.execute.mockResolvedValue({session_id:sid,run_id:"original-run"})
+    mocks.execute.mockResolvedValue({session_id:sid,status:"started",run_id:"original-run"})
     mocks.subscribeToEvents.mockImplementationOnce((_sid:string,h:SubscriptionHandlers)=>{handlers=h;return sub.promise})
     const hook=await persisted();let request!:Promise<void>
     await act(async()=>{request=hook.current.retry(undefined,options)})

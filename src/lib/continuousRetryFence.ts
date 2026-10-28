@@ -1,19 +1,26 @@
 import { isRetryRunId } from "@services/chat/upstreamRetry"
 
-type PendingRecord = { version: 1; operationId: string; state: "pending" }
-type ConfirmedRecord = { version: 1; operationId: string; state: "confirmed"; runId: string }
-type RecordValue = PendingRecord | ConfirmedRecord
+type PendingRecord = { version: 1; operationId: string; state: "pending"; origin?: "ordinary" | "continuous" }
+type ConfirmedRecord = { version: 1; operationId: string; state: "confirmed"; runId: string; origin?: "ordinary" | "continuous" }
+type StartedUnidentifiedRecord = { version: 1; operationId: string; state: "started_unidentified"; origin: "ordinary" }
+type RecordValue = PendingRecord | ConfirmedRecord | StartedUnidentifiedRecord
 type TabFence =
   | { kind: "clear"; raw: null }
-  | { kind: "pending"; raw: string }
-  | { kind: "ambiguous" | "unavailable" }
-  | { kind: "confirmed"; raw: string; runId: string }
+  | { kind: "pending"; raw: string; operationId: string; origin: "ordinary" | "continuous" | "unknown" }
+  | { kind: "started_unidentified"; raw: string; operationId: string; origin: "ordinary" }
+  | { kind: "ambiguous" }
+  | { kind: "unavailable" }
+  | { kind: "confirmed"; raw: string; operationId: string; origin: "ordinary" | "continuous" | "unknown"; runId: string }
 type SharedGuard = "clear" | "guarded" | "ambiguous" | "unavailable"
 export type RetryFence =
   | { kind: "clear" | "pending" | "ambiguous" | "unavailable" }
   | { kind: "confirmed"; runId: string }
 export type RetryFenceReservation = { tabKey: string; pendingRaw: string; priorTabRaw: string | null; operationId: string }
-export type OrdinaryRetryFenceSnapshot = { tabKey: string; tabRaw: string | null }
+export type OrdinaryRetryFence = { operationId: string; started: boolean; runId: string | null }
+export type OrdinaryRetryFenceResult =
+  | { kind: "unguarded" }
+  | { kind: "unavailable" }
+  | { kind: "reserved"; reservation: RetryFenceReservation }
 
 const operationPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const scopeKey = (backend: string, sessionId: string) => encodeURIComponent(JSON.stringify([backend, sessionId]))
@@ -25,11 +32,22 @@ function parseRecord(raw: string): RecordValue | null {
   try {
     const parsed: unknown = JSON.parse(raw)
     if (typeof parsed !== "object" || parsed === null) return null
-    const value = parsed as { version?: unknown; operationId?: unknown; state?: unknown; runId?: unknown }
+    const value = parsed as { version?: unknown; operationId?: unknown; state?: unknown; runId?: unknown; origin?: unknown }
     if (value.version !== 1 || typeof value.operationId !== "string" || !operationPattern.test(value.operationId)) return null
-    if (value.state === "pending") return { version: 1, operationId: value.operationId, state: "pending" }
-    if (value.state === "confirmed" && isRetryRunId(value.runId))
-      return { version: 1, operationId: value.operationId, state: "confirmed", runId: value.runId }
+    if (value.state === "pending") {
+      if (value.origin === undefined) return { version: 1, operationId: value.operationId, state: "pending" }
+      if (value.origin === "ordinary" || value.origin === "continuous")
+        return { version: 1, operationId: value.operationId, state: "pending", origin: value.origin }
+      return null
+    }
+    if (value.state === "started_unidentified" && value.origin === "ordinary" && value.runId === undefined)
+      return { version: 1, operationId: value.operationId, state: "started_unidentified", origin: "ordinary" }
+    if (value.state === "confirmed" && isRetryRunId(value.runId)) {
+      if (value.origin === undefined) return { version: 1, operationId: value.operationId, state: "confirmed", runId: value.runId }
+      if (value.origin === "ordinary" || value.origin === "continuous")
+        return { version: 1, operationId: value.operationId, state: "confirmed", runId: value.runId, origin: value.origin }
+      return null
+    }
     return null
   } catch { return null }
 }
@@ -40,7 +58,9 @@ function readTabFence(backend: string, sessionId: string): TabFence {
     if (raw === null) return { kind: "clear", raw: null }
     const value = parseRecord(raw)
     if (!value) return { kind: "ambiguous" }
-    return value.state === "pending" ? { kind: "pending", raw } : { kind: "confirmed", raw, runId: value.runId }
+    if (value.state === "pending") return { kind: "pending", raw, operationId: value.operationId, origin: value.origin ?? "unknown" }
+    if (value.state === "started_unidentified") return { kind: "started_unidentified", raw, operationId: value.operationId, origin: "ordinary" }
+    return { kind: "confirmed", raw, operationId: value.operationId, origin: value.origin ?? "unknown", runId: value.runId }
   } catch { return { kind: "unavailable" } }
 }
 
@@ -55,21 +75,38 @@ function readSharedGuard(backend: string, sessionId: string): SharedGuard {
 export function readContinuousRetryFence(backend: string, sessionId: string): RetryFence {
   const tab = readTabFence(backend, sessionId)
   if (tab.kind === "confirmed") return { kind: "confirmed", runId: tab.runId }
-  if (tab.kind === "pending" || tab.kind === "ambiguous") return { kind: tab.kind }
+  if (tab.kind === "started_unidentified") return { kind: "ambiguous" }
+  if (tab.kind === "pending" || tab.kind === "ambiguous" || tab.kind === "unavailable") return { kind: tab.kind }
   const guard = readSharedGuard(backend, sessionId)
   if (guard === "clear") return { kind: "clear" }
   if (guard === "ambiguous" || guard === "unavailable") return { kind: guard }
-  return { kind: tab.kind === "unavailable" ? "unavailable" : "ambiguous" }
+  return { kind: "ambiguous" }
+}
+
+/** Return only this tab's ordinary receipt while its shared guard is valid. */
+export function readOrdinaryRetryFence(backend: string, sessionId: string): OrdinaryRetryFence | null {
+  if (readSharedGuard(backend, sessionId) !== "guarded") return null
+  const tab = readTabFence(backend, sessionId)
+  if ((tab.kind !== "pending" && tab.kind !== "confirmed" && tab.kind !== "started_unidentified") || tab.origin !== "ordinary") return null
+  if (readSharedGuard(backend, sessionId) !== "guarded") return null
+  return { operationId: tab.operationId, started: tab.kind !== "pending", runId: tab.kind === "confirmed" ? tab.runId : null }
+}
+
+/** Check that this exact ordinary generation still owns the current tab receipt. */
+export function isOrdinaryRetryFenceCurrent(backend: string, sessionId: string, operationId: string): boolean {
+  return readOrdinaryRetryFence(backend, sessionId)?.operationId === operationId
 }
 
 /** Persist the shared guard and this tab's pending receipt before Execute. */
 export function beginContinuousRetryFence(backend: string, sessionId: string): RetryFenceReservation | null {
   const tab = readTabFence(backend, sessionId), guard = readSharedGuard(backend, sessionId)
-  if ((tab.kind !== "clear" && tab.kind !== "confirmed") || (guard !== "clear" && guard !== "guarded")) return null
+  if ((tab.kind !== "clear" && tab.kind !== "confirmed" && tab.kind !== "started_unidentified"
+      && !(tab.kind === "pending" && tab.origin === "ordinary")) || (guard !== "clear" && guard !== "guarded")) return null
   let reservation: RetryFenceReservation | null = null
   try {
     const operationId = crypto.randomUUID(), tabKey = tabKeyFor(backend, sessionId), guardKey = guardKeyFor(backend, sessionId)
-    const pendingRaw = JSON.stringify({ version: 1, operationId, state: "pending" } satisfies PendingRecord)
+    if (!operationPattern.test(operationId) || (tab.raw !== null && parseRecord(tab.raw)?.operationId === operationId)) return null
+    const pendingRaw = JSON.stringify({ version: 1, operationId, state: "pending", origin: "continuous" } satisfies PendingRecord)
     reservation = { tabKey, pendingRaw, priorTabRaw: tab.raw, operationId }
     if (sessionStorage.getItem(tabKey) !== tab.raw) return null
     if (guard === "clear") localStorage.setItem(guardKey, guardValue)
@@ -94,10 +131,18 @@ export function discardUnsentContinuousRetryFence(reservation: RetryFenceReserva
   } catch { return false }
 }
 
+/** Restore only after the caller verifies that this operation's ACK proves it did not start. */
+export function restoreConfirmedUnstartedRetryFence(reservation: RetryFenceReservation): boolean {
+  return discardUnsentContinuousRetryFence(reservation)
+}
+
 /** A malformed or late ACK cannot confirm a newer tab operation. */
 export function confirmContinuousRetryFence(reservation: RetryFenceReservation, runId: unknown): boolean {
   if (!isRetryRunId(runId)) return false
-  const raw = JSON.stringify({ version: 1, operationId: reservation.operationId, state: "confirmed", runId } satisfies ConfirmedRecord)
+  const pending = parseRecord(reservation.pendingRaw)
+  if (!pending || pending.state !== "pending" || pending.operationId !== reservation.operationId) return false
+  const raw = JSON.stringify({ version: 1, operationId: reservation.operationId, state: "confirmed", runId,
+    ...(pending.origin ? { origin: pending.origin } : {}) } satisfies ConfirmedRecord)
   try {
     if (sessionStorage.getItem(reservation.tabKey) !== reservation.pendingRaw) return false
     sessionStorage.setItem(reservation.tabKey, raw)
@@ -105,21 +150,69 @@ export function confirmContinuousRetryFence(reservation: RetryFenceReservation, 
   } catch { return false }
 }
 
-/** Capture this tab before an ordinary Execute, without changing its receipt. */
-export function captureOrdinaryRetryFence(backend: string, sessionId: string): OrdinaryRetryFenceSnapshot | null {
-  const tab = readTabFence(backend, sessionId)
-  if (tab.kind === "confirmed" || tab.kind === "pending") return { tabKey: tabKeyFor(backend, sessionId), tabRaw: tab.raw }
-  if (tab.kind !== "clear" || readSharedGuard(backend, sessionId) !== "guarded") return null
-  return { tabKey: tabKeyFor(backend, sessionId), tabRaw: null }
+/** Record a started ACK with no run ID after the caller has validated its session and status. */
+export function confirmOrdinaryStartedWithoutRunId(reservation: RetryFenceReservation): boolean {
+  const pending = parseRecord(reservation.pendingRaw)
+  if (!pending || pending.state !== "pending" || pending.origin !== "ordinary" || pending.operationId !== reservation.operationId) return false
+  const raw = JSON.stringify({ version: 1, operationId: reservation.operationId, state: "started_unidentified", origin: "ordinary" } satisfies StartedUnidentifiedRecord)
+  try {
+    if (sessionStorage.getItem(reservation.tabKey) !== reservation.pendingRaw) return false
+    sessionStorage.setItem(reservation.tabKey, raw)
+    return sessionStorage.getItem(reservation.tabKey) === raw
+  } catch { return false }
 }
 
-/** A newly acknowledged ordinary run only replaces the unchanged tab receipt. */
-export function advanceOrdinaryRetryFence(snapshot: OrdinaryRetryFenceSnapshot, runId: unknown): boolean {
-  if (!isRetryRunId(runId)) return false
+/** Verify protected-session storage writes without overwriting an existing key. */
+function storageIsWritable(storage: Storage): boolean {
+  const key = `lotus-next.continuous-retry.probe.${Date.now()}.${Math.random().toString(36).slice(2)}`
+  const value = "probe"
+  let attempted = false
   try {
-    if (sessionStorage.getItem(snapshot.tabKey) !== snapshot.tabRaw) return false
-    const raw = JSON.stringify({ version: 1, operationId: crypto.randomUUID(), state: "confirmed", runId } satisfies ConfirmedRecord)
-    sessionStorage.setItem(snapshot.tabKey, raw)
-    return sessionStorage.getItem(snapshot.tabKey) === raw
+    if (storage.getItem(key) !== null) return false
+    attempted = true
+    storage.setItem(key, value)
+    if (storage.getItem(key) !== value) return false
+    storage.removeItem(key)
+    attempted = false
+    return storage.getItem(key) === null
   } catch { return false }
+  finally {
+    if (attempted) {
+      try { if (storage.getItem(key) === value) storage.removeItem(key) } catch { /* unavailable */ }
+    }
+  }
+}
+
+/** Reserve a new tab generation synchronously before sending a guarded ordinary Execute. */
+export function beginOrdinaryRetryFence(backend: string, sessionId: string, options?: { ensureGuard?: boolean }): OrdinaryRetryFenceResult {
+  const unavailable: OrdinaryRetryFenceResult = { kind: "unavailable" }
+  const tab = readTabFence(backend, sessionId), guard = readSharedGuard(backend, sessionId)
+  if (tab.kind === "ambiguous" || tab.kind === "unavailable" || guard === "ambiguous" || guard === "unavailable") return unavailable
+  let reservation: RetryFenceReservation | null = null
+  try {
+    if (guard === "clear" && tab.kind === "clear" && !options?.ensureGuard) {
+      return readSharedGuard(backend, sessionId) === "clear" && sessionStorage.getItem(tabKeyFor(backend, sessionId)) === null
+        ? { kind: "unguarded" } : unavailable
+    }
+    if (!storageIsWritable(localStorage) || !storageIsWritable(sessionStorage)) return unavailable
+    // Recheck after the probes so an intervening receipt or guard change is never mistaken for a clear session.
+    if (readSharedGuard(backend, sessionId) !== guard || sessionStorage.getItem(tabKeyFor(backend, sessionId)) !== tab.raw) return unavailable
+    // Restore prior protection or establish it for an exact-stop-capable ordinary Execute.
+    if (guard === "clear") {
+      localStorage.setItem(guardKeyFor(backend, sessionId), guardValue)
+      if (readSharedGuard(backend, sessionId) !== "guarded") return unavailable
+    }
+
+    const operationId = crypto.randomUUID(), tabKey = tabKeyFor(backend, sessionId)
+    if (!operationPattern.test(operationId) || (tab.raw !== null && parseRecord(tab.raw)?.operationId === operationId)) return unavailable
+    const pendingRaw = JSON.stringify({ version: 1, operationId, state: "pending", origin: "ordinary" } satisfies PendingRecord)
+    reservation = { tabKey, pendingRaw, priorTabRaw: tab.raw, operationId }
+    sessionStorage.setItem(tabKey, pendingRaw)
+    if (sessionStorage.getItem(tabKey) === pendingRaw) return { kind: "reserved", reservation }
+    discardUnsentContinuousRetryFence(reservation)
+    return unavailable
+  } catch {
+    if (reservation) discardUnsentContinuousRetryFence(reservation)
+    return unavailable
+  }
 }

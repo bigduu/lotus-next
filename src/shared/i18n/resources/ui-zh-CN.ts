@@ -934,6 +934,7 @@ export const uiZhCn = {
   "the_root_permission_change_is_unconfirmed_your_message__fd9a5b04": "Root 权限切换结果未知。消息保留在会话中；请先处理模式切换后继续。",
   "technical_details_c26fb419": "技术详情",
   "the_root_permission_change_is_unconfirmed_generation_re_bdcf3a6c": "Root 权限切换结果未知，此会话已停止重试生成。请先处理模式切换。",
+  "upstream_retry_not_started": "本次重试未启动，请核对会话后再试。",
   "upstream_retry_requesting": "正在为本次执行请求持续连接重试…",
   "upstream_retry_already_running": "此会话已有执行，未更改其重试设置。",
   "upstream_retry_until_stopped": "持续重试连接，直到停止",

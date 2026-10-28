@@ -1,7 +1,7 @@
 import { beforeEach, expect, it, vi } from "vitest"
 const get = vi.hoisted(() => vi.fn())
 vi.mock("@services/api", () => ({ apiClient: { get } }))
-import { supportsContinuousUpstreamRetry, isRetryRunId } from "./upstreamRetry"
+import { supportsContinuousUpstreamRetry, readUpstreamRetryCapability, isRetryRunId } from "./upstreamRetry"
 beforeEach(() => get.mockReset())
 it.each([null, {}, {upstream_retry:null}, {upstream_retry:{supported_modes:["bounded"]}},
   {upstream_retry:{supported_modes:"until_cancelled"}}, {upstream_retry:{supported_modes:[true]}}])("fails closed for unsupported capability %j", async (value) => {
@@ -17,3 +17,18 @@ it("freshly negotiates the explicit supported mode without caching configuration
 })
 it.each([undefined,null,"","bad\nrun","a".repeat(129),"含中文"])("rejects unsafe run identity %j", (v) => expect(isRetryRunId(v)).toBe(false))
 it("accepts the bounded exact opaque execution identity", () => expect(isRetryRunId("run-1:exact")).toBe(true))
+
+it("distinguishes valid legacy, unsupported, malformed and unavailable responses", async () => {
+  get.mockResolvedValueOnce({ model:null, system_prompt:"", base_system_prompt:"", default_session_permission_mode:"default" })
+    .mockResolvedValueOnce({ upstream_retry:{supported_modes:["bounded"]} })
+    .mockResolvedValueOnce({ upstream_retry:{supported_modes:"until_cancelled"} })
+    .mockResolvedValueOnce({ upstream_retry:{supported_modes:["bounded",true]} })
+    .mockResolvedValueOnce({})
+    .mockRejectedValueOnce(new Error("network"))
+  expect(await readUpstreamRetryCapability()).toBe("unsupported")
+  expect(await readUpstreamRetryCapability()).toBe("unsupported")
+  expect(await readUpstreamRetryCapability()).toBe("unknown")
+  expect(await readUpstreamRetryCapability()).toBe("unknown")
+  expect(await readUpstreamRetryCapability()).toBe("unknown")
+  expect(await readUpstreamRetryCapability()).toBe("unknown")
+})

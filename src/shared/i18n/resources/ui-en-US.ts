@@ -934,6 +934,7 @@ export const uiEnUs = {
   "the_root_permission_change_is_unconfirmed_your_message__fd9a5b04": "The Root permission change is unconfirmed. Your message remains in the session. Resolve the mode change before continuing.",
   "technical_details_c26fb419": "Technical details",
   "the_root_permission_change_is_unconfirmed_generation_re_bdcf3a6c": "The Root permission change is unconfirmed. Generation retries are stopped until you resolve the mode change.",
+  "upstream_retry_not_started": "The retry did not start. Review the session before trying again.",
   "upstream_retry_requesting": "Requesting continuous connection retries for this execution…",
   "upstream_retry_already_running": "This session already has an execution. Its retry settings have not been changed.",
   "upstream_retry_until_stopped": "Retry connection until stopped",

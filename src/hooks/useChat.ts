@@ -1,4 +1,4 @@
-import { supportsContinuousUpstreamRetry, isRetryRunId, type UpstreamRetrySelection, type UpstreamRetryFeedback } from "@services/chat/upstreamRetry"
+import { supportsContinuousUpstreamRetry, readUpstreamRetryCapability, isRetryRunId, type UpstreamRetrySelection, type UpstreamRetryFeedback } from "@services/chat/upstreamRetry"
 import type { PublicRunDiagnostic } from "@services/chat/runDiagnostic"
 import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { useOutputRate } from "./useOutputRate"
@@ -20,12 +20,13 @@ import {
   type PermissionDecisionRequest,
   type ReasoningEffort,
   type SessionPermissionMode,
+  type ExecuteResponse,
 } from "@services/chat/AgentService"
 import { apiClient, getBackendStorageScope } from "@services/api"
 import { getErrorMessage, isApiError } from "@services/api/errors"
 import { workflowSubmissionError, type WorkflowSelection } from "@services/command/workflowCatalog"
 import { notify } from "@/lib/notify"
-import { advanceOrdinaryRetryFence, beginContinuousRetryFence, captureOrdinaryRetryFence, confirmContinuousRetryFence, discardUnsentContinuousRetryFence, readContinuousRetryFence } from "@/lib/continuousRetryFence"
+import { beginOrdinaryRetryFence, beginContinuousRetryFence, confirmContinuousRetryFence, confirmOrdinaryStartedWithoutRunId, discardUnsentContinuousRetryFence, restoreConfirmedUnstartedRetryFence, readContinuousRetryFence, readOrdinaryRetryFence } from "@/lib/continuousRetryFence"
 import { mapTokenBudgetUsage } from "@shared/types/tokenBudget"
 import {
   compressionBudgetReceived, compressionFeedbackFromStatus, compressionRunEnded,
@@ -175,25 +176,36 @@ type RetainedTerminal = CompletedAnswerHandoff & { lease: ReturnType<typeof acqu
 type ContinuousStopFence = {
   sessionId: string
   operationId: number
-  stop: () => Promise<void>
+  stop: (onDispatched?: () => void) => Promise<void>
 }
 
 // All panes share one immutable API client. Keep the exact Execute receipt
 // across navigation and pane remounts; a stale run identity fails closed.
 const continuousStopFences = new Map<string, ContinuousStopFence>()
 
-const stopExactContinuousRun = async (sessionId: string, runId: string) => {
+const requestLegacyStop = async (sessionId: string, onDispatched?: () => void) => {
+  const store = useAppStore.getState()
+  store.markCancel(sessionId)
+  store.updateSession(sessionId, { isRunning: false }, { skipBackendPatch: true })
+  const request = agentClient.stopGeneration(sessionId)
+  onDispatched?.()
+  await request
+}
+
+const stopExactContinuousRun = async (sessionId: string, runId: string, onDispatched?: () => void) => {
   // An older producer may ignore an unfamiliar Stop header. Re-negotiate
   // support rather than treating a persisted identity as proof of capability.
   if (!await supportsContinuousUpstreamRetry()) throw new Error("Exact Stop capability unavailable")
-  await agentClient.stopGeneration(sessionId, runId)
+  const request = agentClient.stopGeneration(sessionId, runId)
+  onDispatched?.()
+  await request
 }
 
-const coalesceExactStop = (dispatch: () => Promise<void>) => {
+const coalesceExactStop = (dispatch: (onDispatched?: () => void) => Promise<void>) => {
   let pending: Promise<void> | null = null
-  return () => {
+  return (onDispatched?: () => void) => {
     if (pending) return pending
-    const request = dispatch()
+    const request = dispatch(onDispatched)
     pending = request
     // A failed request may be retried only by another explicit user action.
     void request.catch(() => { if (pending === request) pending = null })
@@ -884,6 +896,80 @@ export function useChat(
     void useAppStore.getState().loadChatHistory(id)
   }, [retainTerminalAcrossUnmount, stopStream])
 
+  // Give every ordinary start a pane-owned identity before its ACK. A guarded
+  // session reserves a unique persistent generation before the request is sent.
+  const startOrdinaryExecution = useCallback((runSid: string, operationId: number, execute: () => Promise<ExecuteResponse>) => {
+    const backendScope = getBackendStorageScope()
+    // Reserve synchronously: an acknowledged user message must dispatch its
+    // Execute before send() resolves, without awaiting a capability request.
+    const reservation = beginOrdinaryRetryFence(backendScope, runSid, { ensureGuard: true })
+    if (reservation.kind === "unavailable" && mountedRef.current && navigationRef.current.sessionId === runSid)
+      setUpstreamRetryFeedback({ sessionId: runSid, operationId, status: "identity_unsaved" })
+    const execution = execute()
+    const ownFence: ContinuousStopFence = { sessionId: runSid, operationId, stop: coalesceExactStop(async (onDispatched) => {
+      const ack = await execution
+      if (ack?.session_id !== runSid || ack.status !== "started") throw new Error("Execution did not start")
+      const capability = await readUpstreamRetryCapability()
+      if (capability === "unsupported") {
+        const current = readOrdinaryRetryFence(backendScope, runSid)
+        const owns = reservation.kind === "reserved"
+          ? current?.operationId === reservation.reservation.operationId && current.started
+          : readContinuousRetryFence(backendScope, runSid).kind === "clear"
+        if ((ack.run_id != null && !isRetryRunId(ack.run_id)) || !owns || continuousStopFences.get(runSid) !== ownFence)
+          throw new Error("Legacy Stop no longer owns this session")
+        await requestLegacyStop(runSid, onDispatched)
+        return
+      }
+      if (capability !== "supported" || !isRetryRunId(ack.run_id)) throw new Error("Exact Stop identity unavailable")
+      await stopExactContinuousRun(runSid, ack.run_id, onDispatched)
+    }) }
+    continuousStopFences.set(runSid, ownFence)
+    paneStopFencesRef.current.set(runSid, ownFence)
+    if (reservation.kind === "reserved") void execution.then((ack) => {
+      if (ack?.session_id !== runSid) return
+      if (ack.status === "started") {
+        const saved = ack.run_id == null
+          ? confirmOrdinaryStartedWithoutRunId(reservation.reservation)
+          : confirmContinuousRetryFence(reservation.reservation, ack.run_id)
+        if ((!saved || !isRetryRunId(ack.run_id)) && continuousStopFences.get(runSid) === ownFence
+            && paneStopFencesRef.current.get(runSid) === ownFence && mountedRef.current && navigationRef.current.sessionId === runSid)
+          setUpstreamRetryFeedback({ sessionId: runSid, operationId, status: "identity_unsaved" })
+      } else if (ack.status === "already_running" || ack.status === "completed" || ack.status === "error" || ack.status === "cancelled")
+        restoreConfirmedUnstartedRetryFence(reservation.reservation)
+    }, () => {})
+    return execution
+  }, [])
+
+  // Restored ordinary identities are scoped to this tab's same generation.
+  const makeRestoredOrdinaryStopFence = useCallback((runSid: string, operationId: number, originalOperationId: string): ContinuousStopFence => {
+    const backendScope = getBackendStorageScope()
+    const priorFence = continuousStopFences.get(runSid)
+    return { sessionId: runSid, operationId, stop: coalesceExactStop(async (onDispatched) => {
+      const capability = await readUpstreamRetryCapability()
+      const current = readOrdinaryRetryFence(backendScope, runSid)
+      if (!current || current.operationId !== originalOperationId || !current.started) throw new Error("Execution identity unavailable")
+      if (capability === "unsupported") {
+        if (continuousStopFences.get(runSid) !== priorFence) throw new Error("Legacy Stop no longer owns this session")
+        await requestLegacyStop(runSid, onDispatched); return
+      }
+      if (capability !== "supported" || !isRetryRunId(current.runId)) throw new Error("Exact Stop identity unavailable")
+      await stopExactContinuousRun(runSid, current.runId, onDispatched)
+    }) }
+  }, [])
+
+  // A pane observing a run without an identity must not borrow a later pane's
+  // fence. Only an explicitly unsupported old service can use legacy Stop.
+  const makeUnownedStopFence = useCallback((runSid: string, operationId: number): ContinuousStopFence => {
+    const backendScope = getBackendStorageScope()
+    const priorFence = continuousStopFences.get(runSid)
+    return { sessionId: runSid, operationId, stop: coalesceExactStop(async (onDispatched) => {
+      if (await readUpstreamRetryCapability() !== "unsupported" || continuousStopFences.get(runSid) !== priorFence
+          || readContinuousRetryFence(backendScope, runSid).kind !== "clear")
+        throw new Error("Execution identity unavailable")
+      await requestLegacyStop(runSid, onDispatched)
+    }) }
+  }, [])
+
   // Execute a session + subscribe to its token stream. Shared by send (after a
   // new user message) and by regenerate / retry / edit (after a truncate).
   const runStream = useCallback(
@@ -905,8 +991,6 @@ export function useChat(
       if (!opts?.resume && isSessionExecutionBlocked(runSid)) throw new Error(uiText("session_compatibility_execution_blocked"))
       const operationId = opts?.operationId ?? operationSequenceRef.current + 1
       const backendScope = getBackendStorageScope()
-      const ordinaryFenceSnapshot = !opts?.resume && !opts?.upstreamRetry
-        ? captureOrdinaryRetryFence(backendScope, runSid) : null
       const reservation = !opts?.resume && opts?.upstreamRetry
         ? beginContinuousRetryFence(backendScope, runSid) : null
       if (!opts?.resume && opts?.upstreamRetry && !reservation) {
@@ -914,6 +998,15 @@ export function useChat(
         throw new Error(uiText("upstream_retry_identity_unavailable"))
       }
       operationSequenceRef.current = Math.max(operationSequenceRef.current, operationId)
+      if (opts?.resume && !paneStopFencesRef.current.has(runSid)) {
+        const existing = continuousStopFences.get(runSid)
+        const ordinary = readOrdinaryRetryFence(backendScope, runSid)
+        const saved = readContinuousRetryFence(backendScope, runSid)
+        const restored = ordinary ? makeRestoredOrdinaryStopFence(runSid, operationId, ordinary.operationId)
+          : saved.kind === "confirmed" ? { sessionId: runSid, operationId,
+            stop: coalesceExactStop((onDispatched) => stopExactContinuousRun(runSid, saved.runId, onDispatched)) } : null
+        paneStopFencesRef.current.set(runSid, existing ?? restored ?? makeUnownedStopFence(runSid, operationId))
+      }
       // A successor owns fresh buffers, not an earlier completed answer whose
       // exact canonical history has not arrived yet.
       retainTerminalAcrossUnmount()
@@ -995,18 +1088,17 @@ export function useChat(
         }
         const executeModel = opts?.modelSelection?.model ?? effectiveModel
         const executeModelRef = opts?.modelSelection ? opts.modelSelection.modelRef : effectiveModelRef
-        const previousFence = continuousStopFences.get(runSid)
         let ownFence: ContinuousStopFence | null = null
         const execution = opts?.upstreamRetry
           ? agentClient.execute(runSid, executeModel || undefined, executeReasoningEffort, undefined, executeModelRef, opts.upstreamRetry)
-          : agentClient.execute(runSid, executeModel || undefined, executeReasoningEffort, undefined, executeModelRef)
+          : startOrdinaryExecution(runSid, operationId, () => agentClient.execute(runSid, executeModel || undefined, executeReasoningEffort, undefined, executeModelRef))
         if (opts?.upstreamRetry) {
           setUpstreamRetryFeedback({ sessionId: runSid, operationId, status: "requesting" })
           // A Stop clicked before Execute returns waits for that exact ACK. It
           // never falls back to a session-only cancel which could hit a successor.
-          ownFence = { sessionId: runSid, operationId, stop: coalesceExactStop(() => execution.then(async (ack) => {
-            if (ack?.session_id !== runSid || !isRetryRunId(ack.run_id)) throw new Error("Missing execution identity")
-            await stopExactContinuousRun(runSid, ack.run_id)
+          ownFence = { sessionId: runSid, operationId, stop: coalesceExactStop((onDispatched) => execution.then(async (ack) => {
+            if (ack?.session_id !== runSid || ack.status !== "started" || !isRetryRunId(ack.run_id)) throw new Error("Execution did not start with a valid identity")
+            await stopExactContinuousRun(runSid, ack.run_id, onDispatched)
           })) }
           continuousStopFences.set(runSid, ownFence)
           paneStopFencesRef.current.set(runSid, ownFence)
@@ -1017,26 +1109,26 @@ export function useChat(
             confirmedRunId = ack.run_id
             answerLease.runId = ack.run_id
           }
-          const identitySaved = !!reservation && ack?.session_id === runSid
+          const identitySaved = !!reservation && ack?.session_id === runSid && ack.status === "started"
             && confirmContinuousRetryFence(reservation, ack.run_id)
-          // Advance only this tab's unchanged receipt. Other tabs retain their
-          // own identities, so a delayed Stop cannot target a successor.
-          if (!opts?.upstreamRetry && ack?.session_id === runSid && ack.status === "started"
-              && ordinaryFenceSnapshot && isRetryRunId(ack.run_id)
-              && advanceOrdinaryRetryFence(ordinaryFenceSnapshot, ack.run_id)
-              && continuousStopFences.get(runSid) === previousFence) {
-            const exactRunId = ack.run_id
-            const nextFence = { sessionId: runSid, operationId,
-              stop: coalesceExactStop(() => stopExactContinuousRun(runSid, exactRunId)) }
-            continuousStopFences.set(runSid, nextFence)
-            paneStopFencesRef.current.set(runSid, nextFence)
-          }
+          if (reservation && ack?.session_id === runSid
+              && (ack.status === "already_running" || ack.status === "completed" || ack.status === "error" || ack.status === "cancelled"))
+            restoreConfirmedUnstartedRetryFence(reservation)
           if (ownFence && continuousStopFences.get(runSid) === ownFence && ownsRunEvent()) setUpstreamRetryFeedback((current) => {
             if (current?.operationId !== operationId || current.sessionId !== runSid || current.status !== "requesting") return current
+            if (ack?.session_id === runSid && ack.status === "already_running") return { ...current, status: "already_running" }
+            if (ack?.session_id === runSid && (ack.status === "completed" || ack.status === "error" || ack.status === "cancelled"))
+              return { ...current, status: "not_started" }
             if (!identitySaved) return { ...current, status: "identity_unsaved" }
-            return ack?.status === "started" ? { ...current, status: "enabled" }
-              : ack?.status === "already_running" ? { ...current, status: "already_running" } : null
+            return { ...current, status: "enabled" }
           })
+          if (ownFence && ownsRunEvent() && ack?.session_id === runSid
+              && (ack.status === "completed" || ack.status === "error" || ack.status === "cancelled")) {
+            publishSendFailure({ kind: "generation-failed", operationId, sessionId: runSid,
+              pendingOperationId: opts?.pendingOperationId, message: uiText("upstream_retry_not_started") })
+            stopStream(null, operationId)
+            ac.abort()
+          }
         }).catch((err) => {
           if (!ownsStream()) return
           observeSessionExecutionConflict(runSid, err)
@@ -1559,6 +1651,9 @@ export function useChat(
       effectiveModel,
       effectiveModelRef,
       reasoningEffort,
+      startOrdinaryExecution,
+      makeUnownedStopFence,
+      makeRestoredOrdinaryStopFence,
       freezeTextSegment,
       pushToken,
       resetOutputRate,
@@ -1773,7 +1868,7 @@ export function useChat(
           // submit immediately while this detached start settles.
           releaseOperation()
           try {
-            await agentClient.execute(runSid, effectiveModel || undefined, reasoningEffort, undefined, effectiveModelRef)
+            await startOrdinaryExecution(runSid, operation.id, () => agentClient.execute(runSid, effectiveModel || undefined, reasoningEffort, undefined, effectiveModelRef))
             try {
               await useAppStore.getState().loadChatHistory(runSid)
               if (operation.pendingOperationId !== undefined) {
@@ -1851,6 +1946,7 @@ export function useChat(
       publishSendFailure,
       reasoningEffort,
       runStream,
+      startOrdinaryExecution,
       stopStream,
     ],
   )
@@ -2136,8 +2232,8 @@ export function useChat(
             message: uiText("the_root_permission_change_is_unconfirmed_your_message__64f12563"),
           })
         } else {
-          void agentClient
-            .execute(acknowledgedSessionId, submittedModel || undefined, submittedReasoningEffort, undefined, submittedModelRef)
+          void startOrdinaryExecution(acknowledgedSessionId, operation.id, () => agentClient
+            .execute(acknowledgedSessionId, submittedModel || undefined, submittedReasoningEffort, undefined, submittedModelRef))
             .catch((err) => {
               observeSessionExecutionConflict(acknowledgedSessionId, err)
               console.warn("[useChat] detached generation start failed", err)
@@ -2230,6 +2326,7 @@ export function useChat(
       clearSendFailure,
       noteSessionOperation,
       publishSendFailure,
+      startOrdinaryExecution,
     ],
   )
 
@@ -2245,10 +2342,13 @@ export function useChat(
       ? paneStopFencesRef.current.get(targetSessionId) ?? continuousStopFences.get(targetSessionId)
       : undefined
     const persisted = targetSessionId ? readContinuousRetryFence(getBackendStorageScope(), targetSessionId) : { kind: "clear" as const }
+    const ordinary = targetSessionId ? readOrdinaryRetryFence(getBackendStorageScope(), targetSessionId) : null
+    if (!exactStop && targetSessionId && ordinary)
+      exactStop = makeRestoredOrdinaryStopFence(targetSessionId, operationId ?? 0, ordinary.operationId)
     if (!exactStop && targetSessionId && persisted.kind === "confirmed") {
       const sessionId = targetSessionId, runId = persisted.runId
       exactStop = { sessionId, operationId: operationId ?? 0,
-        stop: coalesceExactStop(() => stopExactContinuousRun(sessionId, runId)) }
+        stop: coalesceExactStop((onDispatched) => stopExactContinuousRun(sessionId, runId, onDispatched)) }
       continuousStopFences.set(sessionId, exactStop)
     }
     if (!exactStop && targetSessionId && persisted.kind !== "clear") {
@@ -2257,12 +2357,14 @@ export function useChat(
       setUpstreamRetryFeedback({ sessionId: targetSessionId, operationId: operationId ?? 0, status: "identity_unavailable" })
       return
     }
+    if (!exactStop && targetSessionId) exactStop = makeUnownedStopFence(targetSessionId, operationId ?? 0)
     const stopFence = exactStop
     if (stopFence) paneStopFencesRef.current.set(stopFence.sessionId, stopFence)
     const ownsStopFence = () => !!stopFence
       && paneStopFencesRef.current.get(stopFence.sessionId) === stopFence
     if (stopFence) setUpstreamRetryFeedback({ sessionId: stopFence.sessionId, operationId: stopFence.operationId, status: "stopping" })
-    const stopRequest = stopFence ? stopFence.stop() : targetSessionId ? agentClient.stopGeneration(targetSessionId) : null
+    const stoppedSubscription = abortRef.current
+    const stopRequest = stopFence ? stopFence.stop(() => stoppedSubscription?.abort()) : targetSessionId ? agentClient.stopGeneration(targetSessionId) : null
     if (stopFence && stopRequest) void stopRequest.then(() => {
       if (mountedRef.current && navigationRef.current.sessionId === stopFence.sessionId
           && ownsStopFence())
@@ -2283,7 +2385,10 @@ export function useChat(
       const value = compressionRunEnded(compression.value)
       if (value !== compression.value) publishCompression({ ...compression, value: value! })
     }
-    abortRef.current?.abort()
+    // Failed capability/identity checks never dispatch, so detach on rejection.
+    // stopStream fences callbacks while a request awaits its exact identity.
+    if (stopFence && stopRequest) void stopRequest.catch(() => stoppedSubscription?.abort())
+    else stoppedSubscription?.abort()
     stopStream(null, operationId)
     if (!targetSessionId || !stopRequest) return
     void (async () => {
@@ -2303,7 +2408,7 @@ export function useChat(
         console.warn("[useChat] stopped-generation history hydration failed", err)
       }
     })()
-  }, [clearPendingOperation, sid, stopStream, publishCompression])
+  }, [clearPendingOperation, sid, stopStream, publishCompression, makeUnownedStopFence, makeRestoredOrdinaryStopFence])
 
   const newChat = useCallback(() => {
     if (navigationRef.current.sessionId !== null) {

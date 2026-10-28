@@ -1310,6 +1310,7 @@ export function ChatPane({
             : chat.upstreamRetryStatus === "enabled" ? "upstream_retry_enabled"
             : chat.upstreamRetryStatus === "stopping" ? "upstream_retry_stopping"
               : chat.upstreamRetryStatus === "stop_requested" ? "upstream_retry_stop_requested"
+                : chat.upstreamRetryStatus === "not_started" ? "upstream_retry_not_started"
                 : chat.upstreamRetryStatus === "unavailable" ? "upstream_retry_unavailable"
                   : chat.upstreamRetryStatus === "identity_unsaved" ? "upstream_retry_identity_unsaved"
                     : chat.upstreamRetryStatus === "identity_unavailable" ? "upstream_retry_identity_unavailable" : "upstream_retry_stop_unconfirmed")}
