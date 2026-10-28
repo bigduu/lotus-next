@@ -20,11 +20,6 @@ on:
         description: "Original normally merged Dev feature PR"
         required: true
         type: string
-      feature_run:
-        description: "Original complete feature acceptance CI run"
-        required: true
-        type: string
-
 run-name: Publish @bigduu/lotus-next@${{ inputs.version }}
 
 permissions:
@@ -82,7 +77,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           FEATURE_PR_INPUT: ${{ inputs.feature_pr }}
-          FEATURE_RUN_INPUT: ${{ inputs.feature_run }}
           SOURCE_REF_INPUT: ${{ inputs.source_ref }}
           EXPECTED_SOURCE_SHA_INPUT: ${{ inputs.expected_source_sha }}
           EXPECTED_WORKFLOW_SHA: ${{ github.workflow_sha }}
@@ -349,7 +343,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           FEATURE_PR_INPUT: ${{ inputs.feature_pr }}
-          FEATURE_RUN_INPUT: ${{ inputs.feature_run }}
           SOURCE_REF_INPUT: ${{ inputs.source_ref }}
           EXPECTED_SOURCE_SHA_INPUT: ${{ inputs.expected_source_sha }}
           EXPECTED_WORKFLOW_SHA: ${{ github.workflow_sha }}

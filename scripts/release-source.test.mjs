@@ -14,7 +14,7 @@ const currentPublication = readFileSync(".github/workflows/publish-npm.yml", "ut
 const legacyPublication = currentPublication
   .replace("      source_receipt_artifact_id: ${{ steps.receipt.outputs.artifact-id }}\n", "")
   .replace("    permissions:\n      contents: read\n      actions: read\n      pull-requests: read\n", "")
-  .replace("          GH_TOKEN: ${{ github.token }}\n          FEATURE_PR_INPUT: ${{ inputs.feature_pr }}\n          FEATURE_RUN_INPUT: ${{ inputs.feature_run }}\n", "")
+  .replace("          GH_TOKEN: ${{ github.token }}\n          FEATURE_PR_INPUT: ${{ inputs.feature_pr }}\n", "")
   .replaceAll("    if: github.ref == 'refs/heads/dev' && github.ref_protected\n", "")
   .replace("  build:\n", "  real-bamboo:\n")
   .replace("    name: Build and pack the final artifact once\n", "    name: Legacy runtime\n    timeout-minutes: 60\n")

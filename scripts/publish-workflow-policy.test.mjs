@@ -15,7 +15,7 @@ const stepStart = workflow.indexOf(stepName)
 const stepEnd = workflow.indexOf(nextStepName, stepStart)
 const registryRoundTripStep = workflow.slice(stepStart, stepEnd)
 
-describe("publication reuses accepted source CI", () => {
+describe("publication reuses protected Dev admission", () => {
   it("keeps source tests in CI and publishes without repeating the Node test matrix", () => {
     const sourceCi = readFileSync(resolve(process.cwd(), ".github/workflows/ci.yml"), "utf8")
     expect(sourceCi).toContain("run: npm run verify")
@@ -118,7 +118,10 @@ describe("minimal publication source and recovery boundary", () => {
     expect(source).not.toContain("release-candidates.json")
     expect(source).not.toContain("release-acceptance/")
     expect(source).toContain("FEATURE_PR_INPUT")
-    expect(source).toContain("FEATURE_RUN_INPUT")
+    expect(source).not.toContain("FEATURE_RUN_INPUT")
+    expect(source).not.toContain("feature-acceptance")
+    expect(source).toContain("verifyProtectedDevMerge")
+    expect(workflow).not.toContain("feature_run")
   })
   it("retains the first artifact and cannot silently rebuild a workflow retry", () => {
     expect(workflow).toContain('assert.equal(steps[0].conclusion, "skipped"')

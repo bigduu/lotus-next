@@ -30,11 +30,16 @@ is a historical snapshot; check the local guide and live workflows for activatio
 
 ## Delivery activation
 
-Issue #446 owns complete feature acceptance. The minimal publisher uses the
-actual normally merged Dev PR, its original complete CI run and Actions feature
-receipt. All eleven selected jobs and required runtime steps must succeed before
-Dev admission; the actual tested merge and admitted Dev tree must match. No
-candidate/version registration on Main is required before the release build.
+Issue #446 owns complete feature acceptance. All eleven selected jobs and required
+runtime steps must succeed before Dev admission; the actual tested merge and
+admitted Dev tree must match. The publisher trusts that normal protected Dev
+admission. It checks the same-repository merged PR, S's actual parents matching
+the PR base/head, S's tree, Dev ancestry and complete source gate wiring. It does
+not independently replay historical CI or require expiring feature run/job/artifact records.
+Dev must keep strict `Feature acceptance` from Actions app15368, enforced for
+administrators, with force pushes and deletion disabled. Keep the real aggregate,
+normal review and resolved-thread gates; a same-name success stub or skipped
+owner is not acceptance. No candidate/version record on Main is required.
 The earlier Bamboo HTTPS failure in #450 remains recorded. Require a fresh
 real-runtime result against the matching published Bamboo source and binary;
 a source fix alone does not establish that acceptance.
@@ -42,7 +47,7 @@ a source fix alone does not establish that acceptance.
 `publish-npm.yml` runs only from protected Dev controls; it never builds moving
 dev. It has one dispatch path: preflight -> build/pack -> publish.
 Freeze `release/<accepted-Dev-SHA>`, reserve the existing annotated version tag at
-that same SHA and provide the exact version, source tag, Dev PR and CI run.
+that same SHA and provide the exact version, source tag and normally merged Dev PR.
 Preflight uploads its run/attempt-bound receipt only after all checks; publish
 uses that successful preflight's artifact ID on retries. Build stamps a disposable
 checkout, builds dist once, packs once without lifecycle scripts and retains the
@@ -56,18 +61,24 @@ Retry failed publication jobs in the original run using the retained tarball;
 an already published version must match it exactly. A build retry is allowed only
 when the same run/controller's complete metadata proves every prior attempt had
 both build/pack steps skipped, or a wholly skipped job with an empty steps array.
-Started or missing evidence stops
-rebuilding, as does a replacement dispatch for the same version.
+Started or missing evidence stops rebuilding. A replacement dispatch for the
+same version also stops while the original run remains in GitHub history.
 Missing original output stops recovery. Historical candidate/receipt functions
 and fixed published-version recovery keep their old identities and cannot admit
 a new feature cut through the current CLI. The reviewed workflow becomes available
 on protected Dev after admission. It does not itself authorize publication; full
 feature acceptance and release authorization remain required.
 
-The current feature receipt is retained for 30 days and publication also needs
-the original GitHub run and job records. If these expire, the current producer
-fails closed; a post-merge rerun cannot replace the original proof. Durable
-feature acceptance evidence is tracked in #471.
+Feature CI still records its actual snapshot and attempt for diagnostics, with
+the existing 30-day artifact retention. Their expiry does not invalidate normal
+protected Dev source admission. This trust boundary replaces the publisher's
+historical-CI dependency discussed in #471; it is not durable authentication of
+deleted CI records. Do not invent `testedSnapshot` or feature-attempt claims.
+The producer's own retry guard and original tarball remain time limited: Actions
+run history may expire, so the guard is not permanent proof against a second
+dispatch. Never manually dispatch the same version again. If original metadata
+or output has expired, retain any original receipts and use separately reviewed
+recovery; do not treat absent history as proof that no build occurred.
 
 After the dependent cutover, only a fully accepted dev cut may become a frozen
 release. Release work builds/packages/publishes the formal artifact once; it
