@@ -173,10 +173,11 @@ type ScopedCompressionFeedback = {
 
 type RetainedTerminal = CompletedAnswerHandoff & { lease: ReturnType<typeof acquireCompletedAnswerLease> }
 
+type StopDispatchKind = "legacy" | "exact"
 type ContinuousStopFence = {
   sessionId: string
   operationId: number
-  stop: (onDispatched?: () => void) => Promise<void>
+  stop: (onDispatched?: () => void) => Promise<StopDispatchKind>
 }
 
 // All panes share one immutable API client. Keep the exact Execute receipt
@@ -190,6 +191,7 @@ const requestLegacyStop = async (sessionId: string, onDispatched?: () => void) =
   const request = agentClient.stopGeneration(sessionId)
   onDispatched?.()
   await request
+  return "legacy" as const
 }
 
 const stopExactContinuousRun = async (sessionId: string, runId: string, onDispatched?: () => void) => {
@@ -199,10 +201,11 @@ const stopExactContinuousRun = async (sessionId: string, runId: string, onDispat
   const request = agentClient.stopGeneration(sessionId, runId)
   onDispatched?.()
   await request
+  return "exact" as const
 }
 
-const coalesceExactStop = (dispatch: (onDispatched?: () => void) => Promise<void>) => {
-  let pending: Promise<void> | null = null
+const coalesceExactStop = (dispatch: (onDispatched?: () => void) => Promise<StopDispatchKind>) => {
+  let pending: Promise<StopDispatchKind> | null = null
   return (onDispatched?: () => void) => {
     if (pending) return pending
     const request = dispatch(onDispatched)
@@ -908,10 +911,10 @@ export function useChat(
       if (capability === "unsupported") {
         if (continuousStopFences.get(runSid) !== priorFence && continuousStopFences.get(runSid) !== restored)
           throw new Error("Legacy Stop no longer owns this session")
-        await requestLegacyStop(runSid, onDispatched); return
+        return requestLegacyStop(runSid, onDispatched)
       }
       if (capability !== "supported" || !isRetryRunId(current.runId)) throw new Error("Exact Stop identity unavailable")
-      await stopExactContinuousRun(runSid, current.runId, onDispatched)
+      return stopExactContinuousRun(runSid, current.runId, onDispatched)
     }) }
     return restored
   }, [])
@@ -937,11 +940,10 @@ export function useChat(
           : readContinuousRetryFence(backendScope, runSid).kind === "clear"
         if ((ack.run_id != null && !isRetryRunId(ack.run_id)) || !owns || continuousStopFences.get(runSid) !== ownFence)
           throw new Error("Legacy Stop no longer owns this session")
-        await requestLegacyStop(runSid, onDispatched)
-        return
+        return requestLegacyStop(runSid, onDispatched)
       }
       if (capability !== "supported" || !isRetryRunId(ack.run_id)) throw new Error("Exact Stop identity unavailable")
-      await stopExactContinuousRun(runSid, ack.run_id, onDispatched)
+      return stopExactContinuousRun(runSid, ack.run_id, onDispatched)
     }) }
     continuousStopFences.set(runSid, ownFence)
     paneStopFencesRef.current.set(runSid, ownFence)
@@ -978,7 +980,7 @@ export function useChat(
       if (await readUpstreamRetryCapability() !== "unsupported" || continuousStopFences.get(runSid) !== priorFence
           || readContinuousRetryFence(backendScope, runSid).kind !== "clear")
         throw new Error("Execution identity unavailable")
-      await requestLegacyStop(runSid, onDispatched)
+      return requestLegacyStop(runSid, onDispatched)
     }) }
   }, [])
 
@@ -1112,7 +1114,7 @@ export function useChat(
           // never falls back to a session-only cancel which could hit a successor.
           ownFence = { sessionId: runSid, operationId, stop: coalesceExactStop((onDispatched) => execution.then(async (ack) => {
             if (ack?.session_id !== runSid || ack.status !== "started" || !isRetryRunId(ack.run_id)) throw new Error("Execution did not start with a valid identity")
-            await stopExactContinuousRun(runSid, ack.run_id, onDispatched)
+            return stopExactContinuousRun(runSid, ack.run_id, onDispatched)
           })) }
           continuousStopFences.set(runSid, ownFence)
           paneStopFencesRef.current.set(runSid, ownFence)
@@ -2407,12 +2409,12 @@ export function useChat(
     if (!targetSessionId || !stopRequest) return
     void (async () => {
       const dispatched = await stopRequest.then(
-        () => true,
-        () => false,
+        (kind) => kind ?? "legacy",
+        () => null,
       )
-      if (!dispatched || stopFence) {
-        // Even a successful exact Stop is only an acknowledgement; reconcile
-        // instead of marking a potentially newer Session owner as stopped.
+      if (dispatched !== "legacy") {
+        // A failed Stop or even a successful exact Stop needs reconciliation;
+        // a successful legacy Stop retains its existing local behavior.
         await useAppStore.getState().refreshChatsNow().catch(() => {})
       }
       try {

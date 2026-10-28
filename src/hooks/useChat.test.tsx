@@ -4439,6 +4439,33 @@ describe("explicit continuous upstream retry", () => {
     expect(observer.current.upstreamRetryStatus).toBe("stop_unconfirmed")
     owner.unmount(); await act(async () => { await request })
   })
+  it.each([
+    { kind: "legacy", rejected: false, refresh: false },
+    { kind: "legacy", rejected: true, refresh: true },
+    { kind: "exact", rejected: false, refresh: true },
+    { kind: "exact", rejected: true, refresh: true },
+  ] as const)("reconciles $kind Stop after rejection=$rejected only when needed", async ({ kind, rejected, refresh }) => {
+    if (kind === "exact") allow()
+    else mocks.apiGet.mockResolvedValue({ model: null, system_prompt: "", base_system_prompt: "", default_session_permission_mode: "default" })
+    const target = `stop-reconcile-${kind}-${rejected}`
+    mocks.appState.chats = [{ id: target, messages: [], config: { model: "test-model" } }]
+    mocks.sendMessage.mockResolvedValue({ session_id: target })
+    mocks.execute.mockResolvedValue({ session_id: target, status: "started", run_id: "owned-run" })
+    if (rejected) mocks.stopGeneration.mockRejectedValue(new Error("synthetic stop failure"))
+    else mocks.stopGeneration.mockResolvedValue(undefined)
+    mocks.subscribeToEvents.mockImplementation((_sid: string, _handlers: SubscriptionHandlers, controller: AbortController) => {
+      const subscription = deferred<void>()
+      controller.signal.addEventListener("abort", () => subscription.resolve(), { once: true })
+      return subscription.promise
+    })
+    const hook = await mountUseChat({ mode: "bound", sessionId: target })
+    await act(async () => { await hook.current.send("synthetic request"); await Promise.resolve() })
+    const before = mocks.appState.refreshChatsNow.mock.calls.length
+    await act(async () => { hook.current.stop(); for (let i = 0; i < 12; i++) await Promise.resolve() })
+    expect(mocks.stopGeneration).toHaveBeenCalledExactlyOnceWith(...(kind === "exact" ? [target, "owned-run"] : [target]))
+    expect(mocks.appState.refreshChatsNow.mock.calls.length - before).toBe(refresh ? 1 : 0)
+    if (kind === "exact") expect(mocks.appState.markCancel).not.toHaveBeenCalled()
+  })
   it.each(["continuous-pending", "missing-tab-receipt", "ordinary-pending"] as const)("reports unavailable identity after passive resume with %s", async (kind) => {
     allow()
     const target = `resume-${kind}`
