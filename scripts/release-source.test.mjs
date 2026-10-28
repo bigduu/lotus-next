@@ -1,12 +1,38 @@
 import { describe, expect, it } from "vitest"
+import { pathToFileURL } from "node:url"
 import { execFileSync } from "node:child_process"
 import { createHash } from "node:crypto"
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { dirname, join, resolve } from "node:path"
-import { resolveReleaseRequest, verifyAcceptanceEvidence, verifySourceReceipt, verifyCommittedAcceptance, verifyCandidateBackendPins, acceptanceJobNames, verifyProductMerge } from "./release-source.mjs"
+import { resolveReleaseRequest, verifyAcceptanceEvidence, verifySourceReceipt, verifyCommittedAcceptance, verifyCandidateBackendPins, acceptanceJobNames, devFeatureJobNames, verifyProductMerge } from "./release-source.mjs"
 
 const legacyWorkflow = readFileSync("scripts/fixtures/ci-unsharded.yml", "utf8")
+// Historical receipts retain their original source/workflow graph.
+const currentPublication = readFileSync(".github/workflows/publish-npm.yml", "utf8")
+// Small structural fixture for the historical parser; no shallow-Git dependency.
+const legacyPublication = currentPublication
+  .replace("      source_receipt_artifact_id: ${{ steps.receipt.outputs.artifact-id }}\n", "")
+  .replace("    permissions:\n      contents: write\n      actions: read\n      pull-requests: read\n", "")
+  .replace("        run: node scripts/release-source.mjs reserve", "        run: node scripts/release-source.mjs")
+  .replaceAll("          LOTUS_RELEASE_TAG_RULESET_ID: ${{ vars.LOTUS_RELEASE_TAG_RULESET_ID }}\n", "")
+  .replace("          GH_TOKEN: ${{ github.token }}\n          FEATURE_PR_INPUT: ${{ inputs.feature_pr }}\n", "")
+  .replaceAll("    if: github.ref == 'refs/heads/dev' && github.ref_protected\n", "")
+  .replace("  build:\n", "  real-bamboo:\n")
+  .replace("    name: Build and pack the final artifact once\n", "    name: Legacy runtime\n    timeout-minutes: 60\n")
+  .replace("    outputs:\n      filename: ${{ steps.pack.outputs.filename }}\n      integrity: ${{ steps.pack.outputs.integrity }}\n      shasum: ${{ steps.pack.outputs.shasum }}\n", "")
+  .replace("    needs: [preflight, build]\n", "    needs:\n      - preflight\n      - real-bamboo\n")
+  .replace("      ACCEPTED_SOURCE_TREE: ${{ needs.preflight.outputs.source_tree }}\n", "      ACCEPTED_SOURCE_TREE: ${{ needs.preflight.outputs.source_tree }}\n      BAMBOO_E2E_REVISION: ${{ needs.preflight.outputs.bamboo_sha }}\n      LOTUS_NEXT_ACCEPTANCE_SOURCE_DIR: ${{ github.workspace }}\n\n")
+  .replace("      - name: Refuse another build on workflow retries\n", `      - name: Check out the paired Bamboo revision
+        uses: actions/checkout@v7
+        with:
+          repository: bigduu/Bamboo-agent
+          ref: \${{ env.BAMBOO_E2E_REVISION }}
+          path: .e2e-bamboo
+          persist-credentials: false
+      - name: Refuse another build on workflow retries
+`)
+
 // Preserve the exact pre-transition graph for historical publication contracts.
 // Neither the temporary bridge nor the new feature receipt authorizes the old publisher.
 const shardedWorkflow = readFileSync("scripts/fixtures/ci-sharded-main-v1.yml", "utf8")
@@ -39,8 +65,8 @@ const environment = {
 }
 
 describe("feature delivery activation boundary", () => {
-  it("keeps the new feature receipt graph outside the unchanged historical publisher", () => {
-    expect(() => acceptanceJobNames(readFileSync(".github/workflows/ci.yml", "utf8"))).toThrow(/Unknown acceptance workflow graph/)
+  it("recognizes the complete feature graph while preserving historical graph reads", () => {
+    expect(devFeatureJobNames(readFileSync(".github/workflows/ci.yml", "utf8"))).toHaveLength(14)
     expect(acceptanceJobNames(shardedWorkflow)).toHaveLength(12)
   })
 })
@@ -73,7 +99,7 @@ describe("candidate Bamboo source bindings", () => {
   const files = {
     // Synthetic wiring input only: historical receipt checks use shardedWorkflow unchanged.
     ci: replaceBinding(shardedWorkflow, bambooSha),
-    publication: readFileSync(".github/workflows/publish-npm.yml", "utf8"),
+    publication: legacyPublication,
     runtime,
     acceptanceTest: readFileSync("scripts/published-real-bamboo-acceptance.test.mjs", "utf8"),
   }
@@ -128,7 +154,7 @@ describe("candidate Bamboo source bindings", () => {
       git("config", "user.name", "Lotus preflight test")
       git("config", "user.email", "preflight@example.invalid")
       for (const path of ["scripts/release-source.mjs", ".github/workflows/ci.yml", ".github/workflows/publish-npm.yml", "e2e/support/realBambooRuntime.ts", "scripts/published-real-bamboo-acceptance.test.mjs"]) {
-        write(path, path === ".github/workflows/ci.yml" ? files.ci : readFileSync(resolve(path)))
+        write(path, path === ".github/workflows/ci.yml" ? files.ci : path === ".github/workflows/publish-npm.yml" ? files.publication : readFileSync(resolve(path)))
       }
       git("add", ".")
       git("commit", "--quiet", "-m", "Candidate source")
@@ -157,7 +183,7 @@ describe("candidate Bamboo source bindings", () => {
       git("remote", "add", "origin", repo)
       const receiptPath = join(root, "receipt.json")
       const outputPath = join(root, "outputs")
-      execFileSync(process.execPath, [join(repo, "scripts/release-source.mjs")], {
+      execFileSync(process.execPath, ["--input-type=module", "-e", `import { legacySource } from ${JSON.stringify(pathToFileURL(join(repo, "scripts/release-source.mjs")).href)}; await legacySource()`], {
         cwd: repo,
         env: { ...process.env, ...environment, GITHUB_SHA: workflowSha, EXPECTED_WORKFLOW_SHA: workflowSha, SOURCE_REF_INPUT: accepted.sourceRef, EXPECTED_SOURCE_SHA_INPUT: sourceSha, SOURCE_RECEIPT_PATH: receiptPath, GITHUB_OUTPUT: outputPath },
         timeout: 10_000,
@@ -506,4 +532,20 @@ describe("accepted immutable release source", () => {
   it("rejects a different source checkout even with a valid workflow receipt", () => {
     expect(() => verifySourceReceipt(receipt, environment, workflowSha)).toThrow()
   })
+})
+
+
+describe("minimal protected Dev controller", () => {
+  it.each([["refs/heads/main", "false"], ["refs/heads/main", "true"], ["refs/heads/dev", "false"]])(
+    "rejects controller ref/protection %s/%s before any API or source work", (ref, protectedRef) => {
+      let error
+      try { execFileSync(process.execPath, [resolve("scripts/release-source.mjs")], { encoding: "utf8", env: {
+        PATH: "", GITHUB_REPOSITORY: "bigduu/lotus-next", GITHUB_REF: ref, GITHUB_REF_PROTECTED: protectedRef,
+        GITHUB_EVENT_NAME: "workflow_dispatch", GITHUB_SHA: workflowSha, GITHUB_WORKFLOW_SHA: workflowSha,
+        GITHUB_WORKFLOW_REF: `bigduu/lotus-next/.github/workflows/publish-npm.yml@${ref}`,
+        EXPECTED_WORKFLOW_SHA: workflowSha, EXPECTED_SOURCE_SHA_INPUT: sourceSha, LOTUS_NEXT_RELEASE_VERSION: "2026.10.30",
+      }, stdio: "pipe" }) } catch (value) { error = value }
+      expect(error).toBeDefined(); expect(String(error.stderr)).toMatch(/Expected values|AssertionError/)
+    },
+  )
 })
