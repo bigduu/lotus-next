@@ -8,6 +8,9 @@ projects. The three additional source fixture suites run once, on shard 1.
 No original browser case or skip policy is removed; the same browser suite is
 not duplicated solely for its test runner's Node version.
 
+The prior dev protection bridge is preserved as a historical fixture. It did
+not authorize publication and is replaced here by the complete feature gate.
+
 After the verified build, `node scripts/browser-shards.mjs inventory` compares
 the unsharded `--list` inventory with all four `--shard=N/4` inventories. Their
 union must contain each original case exactly once. The Node 24 producer shares

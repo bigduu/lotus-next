@@ -7,9 +7,8 @@ import { dirname, join, resolve } from "node:path"
 import { resolveReleaseRequest, verifyAcceptanceEvidence, verifySourceReceipt, verifyCommittedAcceptance, verifyCandidateBackendPins, acceptanceJobNames, verifyProductMerge } from "./release-source.mjs"
 
 const legacyWorkflow = readFileSync("scripts/fixtures/ci-unsharded.yml", "utf8")
-// The old publisher remains unchanged until its dependent producer slice lands.
-// Its historical receipts must keep their original graph; feature-complete
-// merge-snapshot receipts are not silently interpreted as this old authority.
+// Preserve the exact pre-transition graph for historical publication contracts.
+// Neither the temporary bridge nor the new feature receipt authorizes the old publisher.
 const shardedWorkflow = readFileSync("scripts/fixtures/ci-sharded-main-v1.yml", "utf8")
 const verifyLegacyAcceptance = (...args) => verifyAcceptanceEvidence(...args, legacyWorkflow)
 const verifyLegacyCommittedAcceptance = (...args) => verifyCommittedAcceptance(...args, legacyWorkflow)
