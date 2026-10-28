@@ -73,7 +73,10 @@ export const devFeatureJobNames = (source) => {
   assert.equal(typeof source, "string", "Feature acceptance requires its source workflow")
   const graph = workflowBlock(source, "jobs", 0)
   const ids = [...graph.matchAll(/^  ([a-z][a-z0-9-]*):\s*$/gm)].map((match) => match[1]).sort()
-  assert.deepEqual(ids, ["browser", "browser-summary", "feature-acceptance", "native-actor", "real-bamboo", "source", "verify"])
+  const split = ids.includes("real-bamboo-package")
+  const expectedIds = ["browser", "browser-summary", "feature-acceptance", "native-actor", "real-bamboo", "source", "verify"]
+  if (split) expectedIds.push("real-bamboo-package", "real-bamboo-surface")
+  assert.deepEqual(ids, expectedIds.sort(), "Unknown Dev feature workflow graph")
   assert.match(source, /pull_request:\n    branches: \[dev\]/)
   const matrixValues = (job, key) => [...workflowBlock(workflowBlock(workflowBlock(job, "strategy", 4), "matrix", 6), key, 8)
     .matchAll(/^          - (\d+)$/gm)].map((match) => Number(match[1]))
@@ -84,8 +87,20 @@ export const devFeatureJobNames = (source) => {
   assert.deepEqual(matrixValues(browser, "node"), [24])
   assert.deepEqual(matrixValues(browser, "shard"), [1, 2, 3, 4])
   assert.equal(workflowValue(workflowBlock(graph, "real-bamboo", 2), "name", 4), "Real Bamboo / Node 24")
-  return ["Feature Source", "Node 22", "Node 24", ...[1, 2, 3, 4].map(n => `Browser / Node 24 / shard ${n} of 4`),
+  const names = ["Feature Source", "Node 22", "Node 24", ...[1, 2, 3, 4].map(n => `Browser / Node 24 / shard ${n} of 4`),
     "Browser acceptance", "Real Bamboo / Node 24", "Native Actor acceptance / Native Actor / Node 24", "Feature acceptance"]
+  if (split) {
+    assert.equal(workflowValue(workflowBlock(graph, "real-bamboo-package", 2), "name", 4), "Prepare real Bamboo test package")
+    const surface = workflowBlock(graph, "real-bamboo-surface", 2)
+    assert.equal(workflowValue(surface, "name", 4), "Real Bamboo ${{ matrix.mode }} / Node 24")
+    const strategy = workflowBlock(surface, "strategy", 4), matrix = workflowBlock(strategy, "matrix", 6)
+    assert.equal(workflowValue(strategy, "fail-fast", 6), "false")
+    assert.deepEqual([...workflowMappingKeys(matrix, 8)], ["mode"])
+    const modes = workflowBlock(matrix, "mode", 8).split(/\r?\n/).filter(line => line.trim())
+    assert.deepEqual(modes, ["          - local", "          - remote"], "Feature surfaces must include exactly local and remote")
+    names.push("Prepare real Bamboo test package", "Real Bamboo local / Node 24", "Real Bamboo remote / Node 24")
+  }
+  return names
 }
 
 // Current releases trust normal protected Dev admission. This checks the
@@ -114,9 +129,13 @@ export const verifyProtectedDevMerge = (sourceSha, pr, merged, sourceWorkflow) =
     const matrix = workflowBlock(workflowBlock(workflowBlock(graph, name, 2), "strategy", 4), "matrix", 6)
     assert.deepEqual([...workflowMappingKeys(matrix, 8)].sort(), axes, "Feature matrix cannot add, exclude or override lanes")
   }
+  const split = workflowMappingKeys(graph, 2).has("real-bamboo-package")
   const needs = { source: null, verify: "source", browser: "verify", "browser-summary": "[verify, browser]",
-    "real-bamboo": "[source, verify, browser-summary]", "native-actor": "[source, verify]",
-    "feature-acceptance": "[source, verify, browser-summary, real-bamboo, native-actor]" }
+    "real-bamboo": split ? "[source, verify]" : "[source, verify, browser-summary]", "native-actor": "[source, verify]",
+    "feature-acceptance": split ? "[source, verify, browser-summary, real-bamboo, real-bamboo-package, real-bamboo-surface, native-actor]"
+      : "[source, verify, browser-summary, real-bamboo, native-actor]" }
+  if (split) Object.assign(needs, { "real-bamboo-package": "[source, verify]",
+    "real-bamboo-surface": "[source, verify, real-bamboo-package]" })
   assert.deepEqual([...workflowMappingKeys(graph, 2)].sort(), Object.keys(needs).sort())
   for (const [name, dependencies] of Object.entries(needs)) {
     const job = workflowBlock(graph, name, 2), keys = workflowMappingKeys(job, 4)
@@ -131,16 +150,78 @@ export const verifyProtectedDevMerge = (sourceSha, pr, merged, sourceWorkflow) =
   const steps = workflowBlock(aggregate, "steps", 4).split(/^ {6}-[ \t]/m)
     .filter(step => /^name: Require every feature gate on the exact tested snapshot$/m.test(step))
   assert.equal(steps.length, 1)
-  verifyWorkflowStepShape(steps[0], ["env", "name", "run"], "env", ["BROWSER_RESULT", "FEATURE_ACCEPTANCE_PATH",
-    "FEATURE_RECEIPT_PATH", "NATIVE_ACTOR_RESULT", "REAL_BAMBOO_RESULT", "SOURCE_RESULT", "VERIFY_RESULT"])
-  assert.equal(workflowValue(steps[0], "run", 8), "node scripts/feature-acceptance.mjs summarize")
-  verifyWorkflowEnvironment(steps[0], 8, {
+  const aggregateEnv = {
     SOURCE_RESULT: "${{ needs.source.result }}", VERIFY_RESULT: "${{ needs.verify.result }}",
     BROWSER_RESULT: "${{ needs.browser-summary.result }}", REAL_BAMBOO_RESULT: "${{ needs.real-bamboo.result }}",
     NATIVE_ACTOR_RESULT: "${{ needs.native-actor.result }}",
     FEATURE_RECEIPT_PATH: "${{ runner.temp }}/accepted-feature-source/feature-source.json",
     FEATURE_ACCEPTANCE_PATH: "${{ runner.temp }}/feature-acceptance.json",
-  })
+  }
+  if (split) Object.assign(aggregateEnv, { REAL_BAMBOO_PACKAGE_RESULT: "${{ needs.real-bamboo-package.result }}",
+    REAL_BAMBOO_SURFACE_RESULT: "${{ needs.real-bamboo-surface.result }}" })
+  verifyWorkflowStepShape(steps[0], ["env", "name", "run"], "env", Object.keys(aggregateEnv).sort())
+  assert.equal(workflowValue(steps[0], "run", 8), "node scripts/feature-acceptance.mjs summarize")
+  verifyWorkflowEnvironment(steps[0], 8, aggregateEnv)
+  if (split) {
+    const step = (jobId, stepName) => {
+      const found = workflowBlock(workflowBlock(graph, jobId, 2), "steps", 4).split(/^ {6}-[ \t]/m)
+        .filter(value => value.startsWith(`name: ${stepName}\n`))
+      assert.equal(found.length, 1, `Missing or ambiguous feature step: ${stepName}`)
+      return found[0]
+    }
+    const chat = step("real-bamboo", "Verify a real chat round trip with the pinned published Bamboo")
+    verifyWorkflowStepShape(chat, ["env", "name", "run"], "env", ["BAMBOO_E2E_HOST_SOURCE_DIR", "BAMBOO_E2E_SOURCE_DIR"])
+    assert.equal(workflowValue(chat, "run", 8), 'node node_modules/@playwright/test/cli.js test --config="${RUNNER_TEMP}/verification-browser/real-bamboo.config.mjs"')
+    verifyWorkflowEnvironment(chat, 8, { BAMBOO_E2E_SOURCE_DIR: "${{ github.workspace }}/.e2e-bamboo",
+      BAMBOO_E2E_HOST_SOURCE_DIR: "${{ github.workspace }}/.e2e-bamboo" })
+    const guard = step("real-bamboo-package", "Refuse another test package after an earlier pack started")
+    verifyWorkflowStepShape(guard, ["env", "name", "run"], "env", ["GH_TOKEN"])
+    assert.equal(workflowValue(guard, "run", 8), "node scripts/feature-bamboo-package.mjs guard")
+    verifyWorkflowEnvironment(guard, 8, { GH_TOKEN: "${{ github.token }}" })
+    const pack = step("real-bamboo-package", "Pack the exact-source test artifact")
+    verifyWorkflowStepShape(pack, ["env", "name", "run"], "env", ["FEATURE_RECEIPT_PATH"])
+    assert.equal(workflowValue(pack, "run", 8), 'node scripts/feature-bamboo-package.mjs prepare "${RUNNER_TEMP}/feature-bamboo-package"')
+    verifyWorkflowEnvironment(pack, 8, { FEATURE_RECEIPT_PATH: "${{ runner.temp }}/accepted-feature-source/feature-source.json" })
+    const packageJob = workflowBlock(graph, "real-bamboo-package", 2)
+    const outputs = workflowBlock(packageJob, "outputs", 4)
+    const expectedOutputs = { artifact_id: "${{ steps.upload.outputs.artifact-id }}",
+      artifact_digest: "${{ steps.upload.outputs.artifact-digest }}", producer_attempt: "${{ steps.attempt.outputs.value }}" }
+    assert.deepEqual([...workflowMappingKeys(outputs, 6, true)].sort(), Object.keys(expectedOutputs).sort())
+    for (const [key, value] of Object.entries(expectedOutputs)) assert.equal(workflowValue(outputs, key, 6), value)
+    const attempt = step("real-bamboo-package", "Record the physical producer attempt")
+    verifyWorkflowStepShape(attempt, ["id", "name", "run"], "unused", [])
+    assert.equal(workflowValue(attempt, "id", 8), "attempt")
+    assert.equal(workflowValue(attempt, "run", 8), 'echo "value=${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"')
+    const upload = step("real-bamboo-package", "Upload the original test package")
+    verifyWorkflowStepShape(upload, ["id", "name", "uses", "with"], "with", ["if-no-files-found", "name", "path", "retention-days"])
+    assert.equal(workflowValue(upload, "id", 8), "upload")
+    assert.equal(workflowValue(upload, "uses", 8), "actions/upload-artifact@v5")
+    const uploadInputs = workflowBlock(upload, "with", 8)
+    for (const [key, value] of Object.entries({ name: "real-bamboo-test-package", path: "${{ runner.temp }}/feature-bamboo-package/",
+      "if-no-files-found": "error", "retention-days": "14" })) assert.equal(workflowValue(uploadInputs, key, 10), value)
+    {
+      const id = "real-bamboo-surface"
+      const owner = workflowBlock(graph, id, 2)
+      const ownerEnv = workflowBlock(owner, "env", 4)
+      const bambooRevision = workflowValue(ownerEnv, "BAMBOO_E2E_REVISION", 6)
+      assert.match(bambooRevision, sha)
+      verifyWorkflowEnvironment(owner, 4, { BAMBOO_E2E_REVISION: bambooRevision, BAMBOO_E2E_HOST_REVISION: bambooRevision,
+        FEATURE_PACKAGE_ARTIFACT_ID: "${{ needs.real-bamboo-package.outputs.artifact_id }}",
+        FEATURE_PACKAGE_ARTIFACT_DIGEST: "${{ needs.real-bamboo-package.outputs.artifact_digest }}",
+        FEATURE_PACKAGE_PRODUCER_ATTEMPT: "${{ needs.real-bamboo-package.outputs.producer_attempt }}" })
+      const retrieve = step(id, "Verify and restore the original test package by ID")
+      verifyWorkflowStepShape(retrieve, ["env", "name", "run"], "env", ["FEATURE_RECEIPT_PATH", "GH_TOKEN"])
+      assert.equal(workflowValue(retrieve, "run", 8), 'node scripts/feature-bamboo-package.mjs retrieve "${RUNNER_TEMP}/feature-bamboo-package"')
+      verifyWorkflowEnvironment(retrieve, 8, { FEATURE_RECEIPT_PATH: "${{ runner.temp }}/accepted-feature-source/feature-source.json",
+        GH_TOKEN: "${{ github.token }}" })
+      const surface = step(id, "Verify the current source artifact on the selected browser surface")
+      verifyWorkflowStepShape(surface, ["env", "name", "run"], "env", ["BAMBOO_E2E_HOST_SOURCE_DIR", "BAMBOO_E2E_SOURCE_DIR", "FEATURE_RECEIPT_PATH"])
+      assert.equal(workflowValue(surface, "run", 8), 'node scripts/feature-bamboo-package.mjs surface ${{ matrix.mode }} "${RUNNER_TEMP}/feature-bamboo-package" "${RUNNER_TEMP}/verification-browser"')
+      verifyWorkflowEnvironment(surface, 8, { BAMBOO_E2E_SOURCE_DIR: "${{ github.workspace }}/.e2e-bamboo",
+        BAMBOO_E2E_HOST_SOURCE_DIR: "${{ github.workspace }}/.e2e-bamboo",
+        FEATURE_RECEIPT_PATH: "${{ runner.temp }}/accepted-feature-source/feature-source.json" })
+    }
+  }
   return { sourceTree: merged.tree.sha }
 }
 
@@ -167,16 +248,25 @@ export const verifyDevAcceptance = (sourceSha, pr, run, jobs, receipt, merged, t
     assert.equal(job.head_sha, pr.head.sha); assert.equal(job.status, "completed"); assert.equal(job.conclusion, "success")
     assert.ok(Date.parse(job.completed_at) <= Date.parse(pr.merged_at), "Feature evidence must predate Dev admission")
   }
-  for (const [job, step] of [["Node 22", "Verify Node 22 Unit compatibility"], ["Node 24", "Verify architecture, build, and package contents"],
+  const split = names.includes("Prepare real Bamboo test package")
+  const requiredSteps = [["Node 22", "Verify Node 22 Unit compatibility"], ["Node 24", "Verify architecture, build, and package contents"],
     ...[1, 2, 3, 4].map(n => [`Browser / Node 24 / shard ${n} of 4`, "Verify the all-surface browser shard"]),
     ["Real Bamboo / Node 24", "Verify a real chat round trip with the pinned published Bamboo"],
-    ["Real Bamboo / Node 24", "Verify the current source artifact on local and secure browser surfaces"],
-    ["Native Actor acceptance / Native Actor / Node 24", "Verify three negative controls and restored real Actor proof"]]) {
+    ["Native Actor acceptance / Native Actor / Node 24", "Verify three negative controls and restored real Actor proof"]]
+  if (split) requiredSteps.push(["Prepare real Bamboo test package", "Pack the exact-source test artifact"],
+    ["Prepare real Bamboo test package", "Upload the original test package"],
+    ["Real Bamboo local / Node 24", "Verify the current source artifact on the selected browser surface"],
+    ["Real Bamboo remote / Node 24", "Verify the current source artifact on the selected browser surface"])
+  else requiredSteps.push(["Real Bamboo / Node 24", "Verify the current source artifact on local and secure browser surfaces"])
+  for (const [job, step] of requiredSteps) {
     const found = jobs.jobs.find(item => item.name === job).steps.filter(item => item.name === step)
     assert.equal(found.length, 1); assert.equal(found[0].status, "completed"); assert.equal(found[0].conclusion, "success")
   }
-  assert.equal(receipt.schemaVersion, 1); assert.equal(receipt.kind, "lotus-feature-acceptance/v1")
-  assert.deepEqual(receipt.gates, { source: "success", verify: "success", browser: "success", realBamboo: "success", nativeActor: "success" })
+  assert.equal(receipt.schemaVersion, split ? 2 : 1)
+  assert.equal(receipt.kind, split ? "lotus-feature-acceptance/v2" : "lotus-feature-acceptance/v1")
+  const gates = { source: "success", verify: "success", browser: "success", realBamboo: "success", nativeActor: "success" }
+  if (split) Object.assign(gates, { realBambooPackage: "success", realBambooSurface: "success" })
+  assert.deepEqual(receipt.gates, gates)
   const source = receipt.source
   assert.equal(source.repository, repository); assert.equal(source.pullRequest, pr.number); assert.equal(source.baseRef, "dev")
   assert.equal(source.headSha, pr.head.sha); assert.equal(source.runId, String(run.id))

@@ -15,7 +15,8 @@ is a historical snapshot; check the local guide and live workflows for activatio
   a release branch.
 - Require the current-head/base `Feature acceptance` check. It joins the Node
   22 Unit lane, Node 24 artifact checks, all four browser shards, the real Bamboo
-  round trip and packed local/HTTPS surfaces, and native Actor acceptance.
+  round trip, one test-package producer, both packed local/HTTPS surfaces, and
+  native Actor acceptance.
   Skipped, failed, cancelled or missing required jobs do not constitute acceptance.
 - CI executes the actual PR merge snapshot. Preserve its base, head, snapshot,
   tree and run/attempt receipt. A feature head, tested merge snapshot, later dev
@@ -24,13 +25,16 @@ is a historical snapshot; check the local guide and live workflows for activatio
 - Node 22 runs the Unit suite once. Node 24 runs the other verification checks
   and alone produces the verified `dist`; all browser shards and real Bamboo
   E2E consume it.
+  The real Bamboo round trip, local surface and HTTPS surface are independently
+  rerunnable; both surfaces use the original run-bound test tarball. Rerun failed
+  jobs only and retain the first failure. Do not repack after a pack step starts:
+  missing, expired or unverifiable original package evidence stops recovery.
   Do not repeat browser suites for the test runner's Node version, run a second
   Vite build for real Bamboo, or rerun successful unrelated shards after one fails.
-  Preserve the original failed attempt when reporting a rerun.
 
 ## Delivery activation
 
-Issue #446 owns complete feature acceptance. All eleven selected jobs and required
+Issue #446 owns complete feature acceptance. All fourteen selected jobs and required
 runtime steps must succeed before Dev admission; the actual tested merge and
 admitted Dev tree must match. The publisher trusts that normal protected Dev
 admission. It checks the same-repository merged PR, S's actual parents matching

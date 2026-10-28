@@ -151,7 +151,7 @@ describe("current-source verification browser", () => {
     const ci = readFileSync(".github/workflows/ci.yml", "utf8")
     expect(ci).toContain('node scripts/verification-browser.mjs prepare "${GITHUB_WORKSPACE}" "${RUNNER_TEMP}/verification-browser"')
     expect(ci).toContain('node node_modules/@playwright/test/cli.js test --config="${RUNNER_TEMP}/verification-browser/real-bamboo.config.mjs"')
-    expect(ci).toContain('--current-source --verification-browser "${RUNNER_TEMP}/verification-browser"')
+    expect(ci).toContain('feature-bamboo-package.mjs surface ${{ matrix.mode }} "${RUNNER_TEMP}/feature-bamboo-package" "${RUNNER_TEMP}/verification-browser"')
     expect(ci).toContain("name: real-bamboo-verification-browser-attempt-${{ github.run_attempt }}\n")
     const publication = readFileSync(".github/workflows/publish-npm.yml", "utf8")
     expect(publication).toContain("run: node scripts/release-source.mjs")

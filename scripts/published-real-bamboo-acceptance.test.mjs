@@ -253,16 +253,15 @@ describe("published real-Bamboo acceptance policy", () => {
     const ci = readRepositoryFile(".github/workflows/ci.yml")
     const publication = readRepositoryFile(".github/workflows/publish-npm.yml")
 
-    expect(ci).toContain("run: node scripts/published-real-bamboo-acceptance.mjs --current-source")
+    expect(ci).toContain("run: node scripts/feature-bamboo-package.mjs surface ${{ matrix.mode }}")
+    expect(ci).toContain("        mode:\n          - local\n          - remote")
     expect(publication).toContain("run: node scripts/release-source.mjs")
     expect(publication).not.toContain("published-real-bamboo-acceptance.mjs --current-source")
     for (const directory of [
       "playwright-report-real-bamboo/",
-      "playwright-report-real-bamboo-local/",
-      "playwright-report-real-bamboo-remote/",
+      "playwright-report-real-bamboo-${{ matrix.mode }}/",
       "test-results-real-bamboo/",
-      "test-results-real-bamboo-local/",
-      "test-results-real-bamboo-remote/",
+      "test-results-real-bamboo-${{ matrix.mode }}/",
     ]) {
       expect(ci).toContain(directory)
       expect(publication).not.toContain(directory)
@@ -308,8 +307,8 @@ describe("published real-Bamboo acceptance policy", () => {
     const ci = readRepositoryFile(".github/workflows/ci.yml")
     expect(ci).toContain("  pull_request:\n    branches: [dev]")
     expect(ci).not.toMatch(/^  (?:push|workflow_dispatch):/m)
-    expect(ci).toContain("needs: [source, verify, browser-summary]")
-    expect(ci).toContain("needs: [source, verify, browser-summary, real-bamboo, native-actor]")
+    expect(ci).toContain("needs: [source, verify, real-bamboo-package]")
+    expect(ci).toContain("needs: [source, verify, browser-summary, real-bamboo, real-bamboo-package, real-bamboo-surface, native-actor]")
     expect(ci).toContain("REAL_BAMBOO_RESULT: ${{ needs.real-bamboo.result }}")
   })})
 

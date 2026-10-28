@@ -73,8 +73,11 @@ it created. CI runs this single desktop lane once on Node 24; it does not repeat
 it across the mock suite's viewport/runtime matrix. It runs on every feature PR
 using the already verified Node 24 `dist`; it does not rebuild that output.
 
-The feature job also packs the already-built current-source artifact without a
-new Vite build, then verifies it on local HTTP and HTTPS/WSS browser surfaces.
+The feature package producer packs the already-built current-source artifact
+once without a new Vite build. Independently rerunnable local HTTP and HTTPS/WSS
+matrix jobs verify and reuse that same run-bound tarball. The chat/runtime job
+is separate. A failed surface does not rerun successful siblings; unavailable or
+unverifiable original package bytes stop recovery rather than trigger a repack.
 The separate manual published-artifact diagnostic downloads
 `@bigduu/lotus-next@2026.9.14` from the public npm registry into a fresh cache
 with lifecycle scripts disabled, then requires the committed SHA-1, SHA-512
