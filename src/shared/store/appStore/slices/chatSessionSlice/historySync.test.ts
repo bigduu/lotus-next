@@ -9,6 +9,8 @@ import {
 import type { AppState } from "../..";
 import { createChatSlice, hasTerminalAssistantTail } from "../chatSessionSlice";
 import { mapHistoryMessagesToUi, sessionSummaryToChatItem } from "./messageMapping";
+import { acquireCompletedAnswerLease, getCompletedAnswerHandoffs, resetCompletedAnswerHandoffsForTest,
+  retainCompletedAnswer } from "@/lib/completedAnswerHandoffRegistry";
 
 const summary = (id = "session-1"): SessionSummary => ({
   id,
@@ -90,11 +92,58 @@ const deferred = <T,>() => {
 };
 
 afterEach(() => {
+  resetCompletedAnswerHandoffsForTest();
   vi.useRealTimers();
   vi.restoreAllMocks();
 });
 
 describe("terminal history synchronization", () => {
+  it.each([
+    { sessionId: "session-2", strict: false }, { sessionId: "session-2", strict: true },
+    { sessionId: undefined, strict: false }, { sessionId: undefined, strict: true },
+  ])("rejects history with session_id=$sessionId, strict=$strict without confirming a pending answer", async ({ sessionId, strict }) => {
+    const store = harness(["session-1", "session-2"]);
+    const chat = store.getState().chats[0];
+    store.setState({ chats: [{ ...chat, messages: mapHistoryMessagesToUi("session-1", [staleToolTail.messages[0]]) }, store.getState().chats[1]] });
+    const pending = { sessionId: "session-1", operationId: 1, handoffId: "foreign-test", text: "final answer",
+      acknowledgedMessageId: "user-1", baselineMessageId: null, baselineMessageIds: new Set<string>(), anchorSeen: true };
+    retainCompletedAnswer(acquireCompletedAnswerLease("session-1"), pending);
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.spyOn(agentClient, "getHistory").mockResolvedValue({ ...committedHistory, session_id: sessionId } as HistoryResponse);
+    const read = store.getState().loadChatHistory("session-1", { throwOnError: strict });
+    if (strict) await expect(read).rejects.toThrow("History session mismatch");
+    else await expect(read).resolves.toBeUndefined();
+    expect(store.getState().chats[0].messages.map((message) => message.id)).toEqual(["user-1"]);
+    expect(getCompletedAnswerHandoffs().map((item) => item.handoffId)).toEqual(["foreign-test"]);
+  });
+  it("keeps a pending answer when an accepted snapshot temporarily omits its observed anchor", async () => {
+    const store = harness();
+    const chat = store.getState().chats[0];
+    store.setState({ chats: [{ ...chat, messages: mapHistoryMessagesToUi("session-1", [staleToolTail.messages[0]]) }] });
+    const pending = { sessionId: "session-1", operationId: 1, handoffId: "stale-test", text: "final answer",
+      acknowledgedMessageId: "user-1", baselineMessageId: null, baselineMessageIds: new Set<string>(), anchorSeen: true };
+    retainCompletedAnswer(acquireCompletedAnswerLease("session-1"), pending);
+    vi.spyOn(agentClient, "getHistory").mockResolvedValueOnce({ session_id: "session-1", messages: [] }).mockResolvedValueOnce(committedHistory);
+    await store.getState().loadChatHistory("session-1");
+    expect(getCompletedAnswerHandoffs().map((item) => item.handoffId)).toEqual(["stale-test"]);
+    await store.getState().loadChatHistory("session-1");
+    expect(getCompletedAnswerHandoffs()).toHaveLength(0);
+    expect(store.getState().chats[0].messages.some((message) => message.id === "assistant-final")).toBe(true);
+  });
+  it("does not restore a pending answer when an older read returns after canonical confirmation", async () => {
+    const store = harness();
+    const pending = { sessionId: "session-1", operationId: 1, handoffId: "late-test", text: "final answer",
+      acknowledgedMessageId: "user-1", baselineMessageId: null, baselineMessageIds: new Set<string>(), anchorSeen: true };
+    retainCompletedAnswer(acquireCompletedAnswerLease("session-1"), pending);
+    const held = deferred<HistoryResponse>();
+    vi.spyOn(agentClient, "getHistory").mockReturnValueOnce(held.promise).mockResolvedValueOnce(committedHistory);
+    const older = store.getState().loadChatHistory("session-1");
+    await store.getState().loadChatHistory("session-1");
+    expect(getCompletedAnswerHandoffs()).toHaveLength(0);
+    held.resolve({ session_id: "session-1", messages: [] }); await older;
+    expect(getCompletedAnswerHandoffs()).toHaveLength(0);
+    expect(store.getState().chats[0].messages.some((message) => message.id === "assistant-final")).toBe(true);
+  });
   it.each([false, true])("hydrates an earlier assistant body with unchanged IDs/count after a follow-up (compressed=%s)", async (compressed) => {
     const store = harness();
     const full: HistoryResponse = { ...committedHistory, messages: [

@@ -1,4 +1,5 @@
 import { uiText } from "@shared/i18n/ui"
+import { invalidateCompletedAnswerForDeletedMessage, invalidateCompletedAnswers, reconcileCompletedAnswers } from "@/lib/completedAnswerHandoffRegistry";
 import { StateCreator } from "zustand";
 import { ChatItem, Message } from "@shared/types/chat";
 import {
@@ -71,9 +72,22 @@ const historyReads = new WeakMap<() => AppState, Map<string, object>>();
 export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, get) => {
   const deferredClears = new Set<string>();
   const replacementRequired = new Set<string>();
+  const reconcileClear = (sessionId: string, newEvent: boolean) => {
+    // An event has no revision. Fence work known at notification time, not
+    // newer work created while the replacement read is in flight.
+    historyReads.get(get)?.delete(sessionId);
+    if (newEvent) invalidateCompletedAnswers(sessionId);
+    const timer = reconcileTimers.get(sessionId);
+    if (timer) { clearTimeout(timer); reconcileTimers.delete(sessionId); }
+    if (!get().chats.some((chat) => chat.id === sessionId)) return;
+    replacementRequired.add(sessionId);
+    if (get().conversationClears[sessionId]?.busy) { deferredClears.add(sessionId); return; }
+    deferredClears.delete(sessionId);
+    void get().loadChatHistory(sessionId, { mode: "replace" });
+  };
   const clearState = (sessionId: string, value: ConversationClearState) => {
     set((state) => ({ conversationClears: { ...state.conversationClears, [sessionId]: value } }));
-    if (!value.busy && deferredClears.delete(sessionId)) get().reconcileClearedConversation(sessionId);
+    if (!value.busy && deferredClears.delete(sessionId)) reconcileClear(sessionId, false);
   };
   return ({
   chats: [],
@@ -186,6 +200,7 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
       .filter((chat) => chat.id === sessionId || chat.rootSessionId === sessionId)
       .map((chat) => chat.id);
     get().resetSessionPermissionModes(removedIds);
+    for (const id of new Set([sessionId, ...removedIds])) invalidateCompletedAnswers(id);
     set((state) => {
       const toDelete = new Set<string>();
       for (const chat of state.chats) {
@@ -543,6 +558,7 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
       };
     }
 
+    invalidateCompletedAnswerForDeletedMessage(sessionId, messageId);
     set((state) => ({
       ...state,
       chats: state.chats.map((existingChat) =>
@@ -802,6 +818,7 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
       if (reads.get(sessionId) !== request) throw new ConversationClearError("readback_failed");
       const chat = get().chats.find((item) => item.id === sessionId);
       if (!chat) throw new ConversationClearError("readback_failed");
+      invalidateCompletedAnswers(sessionId);
       get().updateSession(sessionId, {
         messages: mapHistoryMessagesToUi(sessionId, history.messages),
         messageCount: history.messages.length,
@@ -829,18 +846,7 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
     }
   },
 
-  reconcileClearedConversation: (sessionId) => {
-    // The event has no revision. Fence reads already in flight on this client
-    // and replace from a fresh read, including loaded split/inactive sessions.
-    historyReads.get(get)?.delete(sessionId);
-    const timer = reconcileTimers.get(sessionId);
-    if (timer) { clearTimeout(timer); reconcileTimers.delete(sessionId); }
-    if (!get().chats.some((chat) => chat.id === sessionId)) return;
-    replacementRequired.add(sessionId);
-    if (get().conversationClears[sessionId]?.busy) { deferredClears.add(sessionId); return; }
-    deferredClears.delete(sessionId);
-    void get().loadChatHistory(sessionId, { mode: "replace" });
-  },
+  reconcileClearedConversation: (sessionId) => reconcileClear(sessionId, true),
 
   loadChatHistory: async (sessionId, options) => {
     let discarded: DOMException | undefined;
@@ -885,7 +891,7 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
 
           const history = await agentClient.getHistory(sessionId);
           if (options?.signal?.aborted) return discardRead();
-          if (options?.throwOnError && history.session_id !== sessionId) throw new Error("History session mismatch");
+          if (history.session_id !== sessionId) throw new Error("History session mismatch");
           if (!isCurrentRead()) return discardRead();
           // Clear replacement intent survives superseding monotonic reads and
           // failures. Read token state too: the live cache outranks list config.
@@ -978,6 +984,7 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
             });
 
             if (!shouldReplace) {
+              reconcileCompletedAnswers(sessionId, currentChat.messages);
               get().updateSession(sessionId, {
                 messageCount: Math.max(currentChat.messageCount ?? 0, history.messages.length),
               });
@@ -1020,6 +1027,7 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
               },
             },
           }, { skipBackendPatch: true });
+          reconcileCompletedAnswers(sessionId, nextMessages);
           if (afterClear) {
             replacementRequired.delete(sessionId);
             get().clearTokenUsage(sessionId);

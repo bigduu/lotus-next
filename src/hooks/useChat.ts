@@ -3,7 +3,7 @@ import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { useOutputRate } from "./useOutputRate"
 import { useSessionExecutionCompatibility } from "./useSessionExecutionCompatibility"
 import { isSessionExecutionBlocked, observeSessionExecutionConflict } from "@services/chat/sessionExecutionCompatibility"
-import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react"
 import { useShallow } from "zustand/react/shallow"
 import {
   useAppStore,
@@ -39,7 +39,12 @@ import {
   getRootModeFenceState,
 } from "@/lib/rootModeTransitionFence"
 import type { Message, MessageImage } from "@shared/types/chat"
-import { matchesCompletedAnswer, projectCompletedAnswers, type CompletedAnswerHandoff } from "@/lib/completedAnswerHandoff"
+import { projectCompletedAnswers, type CompletedAnswerHandoff } from "@/lib/completedAnswerHandoff"
+import {
+  acquireCompletedAnswerLease, getCompletedAnswerHandoffs, invalidateCompletedAnswerForDeletedMessage, invalidateCompletedAnswers,
+  newCompletedAnswerHandoffId, reconcileCompletedAnswers, releaseCompletedAnswerLease,
+  retainCompletedAnswer, subscribeCompletedAnswerHandoffs,
+} from "@/lib/completedAnswerHandoffRegistry"
 import { resolveNewChatModelRef } from "@shared/types/providerConfig"
 import type { ProviderModelRef } from "@shared/types/providerModelRef"
 import {
@@ -163,7 +168,7 @@ type ScopedCompressionFeedback = {
   value: ContextCompressionFeedback
 }
 
-type RetainedTerminal = CompletedAnswerHandoff
+type RetainedTerminal = CompletedAnswerHandoff & { lease: ReturnType<typeof acquireCompletedAnswerLease> }
 
 const EMPTY_PENDING_IMAGES: readonly MessageImage[] = []
 
@@ -204,24 +209,6 @@ const matchPendingUserMessages = (
     if (message) { matches.set(entry.operationId, message.id); used.add(message.id) }
   }
   return matches
-}
-
-const hasPersistedTerminalText = (
-  messages: Message[],
-  finalText: string,
-  baselineMessageId: string | null,
-  acknowledgedMessageId?: string | null,
-): boolean => {
-  const anchor = acknowledgedMessageId == null ? -1
-    : messages.findIndex((message) => message.role === "user" && message.id === acknowledgedMessageId)
-  if (acknowledgedMessageId != null && anchor < 0) return false
-  const nextUser = anchor < 0 ? -1 : messages.findIndex((message, index) => index > anchor && message.role === "user")
-  const tail = messages.slice(anchor + 1, nextUser < 0 ? undefined : nextUser).findLast((message) => message.role !== "system")
-  if (tail?.role !== "assistant" || tail.type !== "text" || !matchesCompletedAnswer(tail.content, finalText)) return false
-  if (acknowledgedMessageId != null) return true
-  // Legacy acknowledgements need a new canonical ID as well as matching text
-  // so an older, identical answer cannot settle a new run.
-  return baselineMessageId === null || tail.id !== baselineMessageId
 }
 
 type PromptPresetForComposition = {
@@ -299,17 +286,13 @@ export function useChat(
   const executionCompatibility = useSessionExecutionCompatibility(sid)
   const currentChat = useAppStore(selectSessionById(sid))
   const canonicalMessages = useAppStore(useShallow((s) => selectSessionById(sid)(s)?.messages ?? []))
-  const [completedHandoffs, setCompletedHandoffs] = useState<readonly CompletedAnswerHandoff[]>([])
-  const messages = useMemo(() => projectCompletedAnswers(canonicalMessages,
-    completedHandoffs.filter((entry) => entry.sessionId === sid)).messages, [canonicalMessages, completedHandoffs, sid])
+  const completedHandoffs = useSyncExternalStore(subscribeCompletedAnswerHandoffs, getCompletedAnswerHandoffs, getCompletedAnswerHandoffs)
   useEffect(() => {
-    setCompletedHandoffs((current) => {
-      const remaining = current.flatMap((entry) => {
-        const chat = chats.find((item) => item.id === entry.sessionId)
-        return chat ? projectCompletedAnswers(chat.messages, [entry]).remaining : []
-      })
-      return remaining.length === current.length && remaining.every((entry, index) => entry === current[index]) ? current : remaining
-    })
+    for (const sessionId of new Set(completedHandoffs.map((entry) => entry.sessionId))) {
+      const chat = chats.find((item) => item.id === sessionId)
+      if (chat) reconcileCompletedAnswers(sessionId, chat.messages)
+      else invalidateCompletedAnswers(sessionId)
+    }
   }, [chats, completedHandoffs, canonicalMessages])
   const selectedModel = useAppStore((s) => s.selectedModel)
   // Global default model (configured in provider settings). It seeds new
@@ -506,20 +489,40 @@ export function useChat(
   // A completed live tail remains renderable until the WebSocket/SSE-triggered
   // history reconciliation contains that exact terminal assistant message.
   const retainedTerminalRef = useRef<RetainedTerminal | null>(null)
+  const answerLeaseRef = useRef<ReturnType<typeof acquireCompletedAnswerLease> | null>(null)
+  const retainTerminalAcrossUnmount = useCallback(() => {
+    const retained = retainedTerminalRef.current
+    if (!retained) return
+    const { lease, ...handoff } = retained
+    const chat = useAppStore.getState().chats.find((item) => item.id === handoff.sessionId)
+    if (chat) reconcileCompletedAnswers(handoff.sessionId, chat.messages)
+    releaseCompletedAnswerLease(lease)
+    retainedTerminalRef.current = null
+    if (answerLeaseRef.current === lease) answerLeaseRef.current = null
+  }, [])
 
   // Streaming / optimistic message are scoped to this instance's session.
   const retainedTerminal = retainedTerminalRef.current
+  // Project all pending turns together before hiding this pane's own live tail:
+  // a single canonical message can settle only one pending run.
+  const sessionHandoffs = useMemo(() => completedHandoffs.filter((entry) => entry.sessionId === sid), [completedHandoffs, sid])
+  const projection = useMemo(() => projectCompletedAnswers(canonicalMessages, sessionHandoffs), [canonicalMessages, sessionHandoffs])
+  const ownHandoffId = streamSid === sid && retainedTerminal?.lease.valid ? retainedTerminal.handoffId : undefined
+  const ownPresent = !!ownHandoffId && sessionHandoffs.some((entry) => entry.handoffId === ownHandoffId)
+  const ownUnconfirmed = !!ownHandoffId && projection.remaining.some((entry) => entry.handoffId === ownHandoffId)
+  const messages = useMemo(() => ownHandoffId && ownUnconfirmed
+    ? projection.messages.filter((message) => message.id !== `completed-answer-handoff-${ownHandoffId}`)
+    : projection.messages, [ownHandoffId, ownUnconfirmed, projection])
   const retainedTerminalIsHydrated = retainedTerminal?.sessionId === sid
-    && hasPersistedTerminalText(
-      canonicalMessages,
-      retainedTerminal.text,
-      retainedTerminal.baselineMessageId,
-      retainedTerminal.acknowledgedMessageId,
-    )
-  const streaming = streamSid === sid && !retainedTerminalIsHydrated ? streamingText : null
-  const streamingReasoning = streamSid === sid ? streamingReasoningText : null
+    && (retainedTerminal.lease.confirmed || ownPresent && !ownUnconfirmed)
+  const knownRun = answerLeaseRef.current?.runId
+  const cachedSameRun = !retainedTerminal && streamSid === sid && knownRun && completedHandoffs.some((entry) =>
+    entry.sessionId === sid && entry.runId === knownRun && entry.text.startsWith(streamingText ?? ""))
+  const answerLeaseValid = answerLeaseRef.current?.valid !== false
+  const streaming = streamSid === sid && !retainedTerminalIsHydrated && !cachedSameRun && answerLeaseValid ? streamingText : null
+  const streamingReasoning = streamSid === sid && answerLeaseValid ? streamingReasoningText : null
   const liveSegments = useMemo(() => {
-    if (streamSid !== sid) return EMPTY_SEGMENTS
+    if (streamSid !== sid || !answerLeaseValid) return EMPTY_SEGMENTS
     if (streamPhaseState !== null) return liveSegmentsState
     // Failed history reads retain terminal tool evidence without keeping a run
     // active. Only results after this operation's acknowledged user can confirm
@@ -543,10 +546,10 @@ export function useChat(
       return calls.length ? [{ ...segment, calls }] : []
     })
     return hydrated ? remaining : liveSegmentsState
-  }, [liveSegmentsState, messages, sid, streamPhaseState, streamSid])
-  const streamStatus = streamSid === sid ? streamStatusState : null
+  }, [answerLeaseValid, liveSegmentsState, messages, sid, streamPhaseState, streamSid])
+  const streamStatus = streamSid === sid && answerLeaseValid ? streamStatusState : null
   const contextCompression = compressionState?.sessionId === sid ? compressionState.value : null
-  const streamPhase = streamSid === sid ? streamPhaseState : null
+  const streamPhase = streamSid === sid && answerLeaseValid ? streamPhaseState : null
   const sessionPending = useMemo(() => [...pendingState.entries.values()].filter((entry) => entry.sid === sid), [pendingState.entries, sid])
   const hydratedPending = useMemo(() => matchPendingUserMessages(messages, sessionPending, pendingState.claimed.get(sid ?? "")), [messages, pendingState.claimed, sessionPending, sid])
   // Swap each exact ACK to history in this render, before cleanup, without
@@ -731,6 +734,8 @@ export function useChat(
       // Release the run even when a failed history read keeps static tool
       // evidence. A retained result never owns streaming or Stop controls.
       if (final === null) {
+        if (answerLeaseRef.current) releaseCompletedAnswerLease(answerLeaseRef.current)
+        answerLeaseRef.current = null
         retainedTerminalRef.current = null
         setStreamPhaseState(null)
         if (!retainedSegments.length) setStreamSid(null)
@@ -745,13 +750,18 @@ export function useChat(
   // retained terminal tail only after the matching durable assistant message is
   // present, avoiding both disappearance and a one-frame duplicate.
   useEffect(() => {
+    const activeLease = answerLeaseRef.current
+    if (activeLease && !activeLease.valid && activeLease.sessionId === sid) {
+      abortRef.current?.abort()
+      stopStream(null)
+      return
+    }
     const retained = retainedTerminalRef.current
     if (!retained || retained.sessionId !== sid) return
     if (streamOperationRef.current !== null) return
-    if (!hasPersistedTerminalText(canonicalMessages, retained.text, retained.baselineMessageId, retained.acknowledgedMessageId)) return
-    retainedTerminalRef.current = null
+    if (retained.lease.valid && !retained.lease.confirmed) return
     stopStream(null)
-  }, [canonicalMessages, sid, stopStream])
+  }, [canonicalMessages, completedHandoffs, sid, stopStream])
 
   useEffect(() => {
     if (streamSid !== sid || streamPhaseState !== null || streamOperationRef.current !== null
@@ -828,14 +838,12 @@ export function useChat(
       // Navigation detaches only this pane's observer.  The backend run keeps
       // going and can be observed again when its session is reopened.
       abortRef.current?.abort()
-      const retained = retainedTerminalRef.current
-      if (retained) setCompletedHandoffs((current) => current.some((entry) => entry.operationId === retained.operationId)
-        ? current : [...current, retained])
+      retainTerminalAcrossUnmount()
       stopStream(null)
     }
     useAppStore.getState().selectSession(id)
     void useAppStore.getState().loadChatHistory(id)
-  }, [stopStream])
+  }, [retainTerminalAcrossUnmount, stopStream])
 
   // Execute a session + subscribe to its token stream. Shared by send (after a
   // new user message) and by regenerate / retry / edit (after a truncate).
@@ -859,9 +867,10 @@ export function useChat(
       operationSequenceRef.current = Math.max(operationSequenceRef.current, operationId)
       // A successor owns fresh buffers, not an earlier completed answer whose
       // exact canonical history has not arrived yet.
-      const previousTerminal = retainedTerminalRef.current
-      if (previousTerminal) setCompletedHandoffs((current) => current.some((entry) => entry.operationId === previousTerminal.operationId)
-        ? current : [...current, previousTerminal])
+      retainTerminalAcrossUnmount()
+      if (answerLeaseRef.current) releaseCompletedAnswerLease(answerLeaseRef.current)
+      const answerLease = acquireCompletedAnswerLease(runSid)
+      answerLeaseRef.current = answerLease
       noteSessionOperation(runSid, operationId)
       streamOperationRef.current = operationId
       const baselineMessages = useAppStore
@@ -872,7 +881,7 @@ export function useChat(
       streamBaselineToolResultIdsRef.current = new Set(baselineMessages.flatMap((message) =>
         "type" in message && message.type === "tool_result" ? [message.id] : []))
       streamAcknowledgedMessageIdRef.current = opts?.acknowledgedMessageId ?? null
-      const ownsStream = () => streamOperationRef.current === operationId
+      const ownsStream = () => streamOperationRef.current === operationId && answerLease.valid
       const terminal = { settlement: null as Promise<void> | null, pendingRead: null as Promise<void> | null }
       // ONE live subscription per hook instance: sever the previous one FIRST
       // so its handlers can't pollute the buffers we're about to re-key to a
@@ -917,6 +926,7 @@ export function useChat(
         return { previous, next }
       }
       let executeAcknowledged = false
+      let confirmedRunId: string | null = null
       let reconcileTimer: ReturnType<typeof setTimeout> | undefined
       const clearReconcileTimer = () => clearTimeout(reconcileTimer)
       ac.signal.addEventListener("abort", clearReconcileTimer, { once: true })
@@ -934,8 +944,12 @@ export function useChat(
         }
         const executeModel = opts?.modelSelection?.model ?? effectiveModel
         const executeModelRef = opts?.modelSelection ? opts.modelSelection.modelRef : effectiveModelRef
-        void agentClient.execute(runSid, executeModel || undefined, executeReasoningEffort, undefined, executeModelRef).then(() => {
+        void agentClient.execute(runSid, executeModel || undefined, executeReasoningEffort, undefined, executeModelRef).then((response) => {
           executeAcknowledged = true
+          if (ownsRunEvent() && response?.session_id === runSid && response.run_id?.trim()) {
+            confirmedRunId = response.run_id
+            answerLease.runId = response.run_id
+          }
         }).catch((err) => {
           if (!ownsStream()) return
           observeSessionExecutionConflict(runSid, err)
@@ -966,6 +980,23 @@ export function useChat(
           }
           const finalText = streamBufRef.current
           if (finalText) setStreamingText(finalText)
+          const observed = useAppStore.getState().chats.find((chat) => chat.id === runSid)?.messages ?? []
+          if (finalText.trim() && answerLease.valid) {
+            const baseline = baselineMessages.find((message) => message.id === streamBaselineMessageIdRef.current)
+            const handoff: CompletedAnswerHandoff = {
+              sessionId: runSid, operationId, handoffId: newCompletedAnswerHandoffId(), runId: confirmedRunId,
+              text: finalText, baselineMessageId: streamBaselineMessageIdRef.current,
+              baselineMessageText: baseline?.role === "assistant" && baseline.type === "text" ? baseline.content : null,
+              excludedCanonicalIds: new Set(answerLease.excludedCanonicalIds),
+              acknowledgedMessageId: opts?.acknowledgedMessageId ?? null,
+              baselineMessageIds: new Set(baselineMessages.map((message) => message.id)),
+              anchorSeen: opts?.acknowledgedMessageId != null && observed.some((message) => message.role === "user" && message.id === opts.acknowledgedMessageId),
+            }
+            const retained = { ...handoff, lease: answerLease }
+            retainedTerminalRef.current = retained
+            const id = retainCompletedAnswer(answerLease, handoff)
+            if (id) retained.handoffId = id
+          }
           if (!historyReady) {
             try {
               // waitForAssistant is a no-op without a real retry budget.
@@ -980,17 +1011,15 @@ export function useChat(
             }
           }
           if (!ownsStream()) return
+          if (!answerLease.valid) { stopStream(null, operationId); return }
           if (opts?.pendingOperationId !== undefined) {
             clearPendingOperation(opts.pendingOperationId)
           }
           const persistedMessages = useAppStore
             .getState()
             .chats.find((chat) => chat.id === runSid)?.messages ?? []
-          const baselineMessageId = streamBaselineMessageIdRef.current
-          if (
-            !finalText.trim()
-            || hasPersistedTerminalText(persistedMessages, finalText, baselineMessageId, opts?.acknowledgedMessageId)
-          ) {
+          reconcileCompletedAnswers(runSid, persistedMessages)
+          if (!finalText.trim() || answerLease.confirmed) {
             stopStream(null, operationId)
             return
           }
@@ -998,14 +1027,10 @@ export function useChat(
           // The terminal frame won the race with the final checkpoint. Keep the
           // exact streamed reply visible; the account WebSocket's durable change
           // reconciliation retires it once history catches up.
-          retainedTerminalRef.current = {
-            sessionId: runSid,
-            operationId,
-            text: finalText,
-            baselineMessageId,
-            acknowledgedMessageId: opts?.acknowledgedMessageId ?? null,
-            baselineMessageIds: new Set(baselineMessages.map((message) => message.id)),
-            anchorSeen: opts?.acknowledgedMessageId != null && persistedMessages.some((message) => message.role === "user" && message.id === opts.acknowledgedMessageId),
+          const retained = retainedTerminalRef.current
+          if (retained) {
+            retained.anchorSeen ||= opts?.acknowledgedMessageId != null && persistedMessages.some((message) => message.role === "user" && message.id === opts.acknowledgedMessageId)
+            answerLease.handoff = retained
           }
           stopStream(finalText, operationId)
         })()
@@ -1414,15 +1439,16 @@ export function useChat(
           const persistedMessages = useAppStore
             .getState()
             .chats.find((chat) => chat.id === runSid)?.messages ?? []
-          if (
-            finalText.trim()
-            && hasPersistedTerminalText(
-              persistedMessages,
-              finalText,
-              streamBaselineMessageIdRef.current,
-              opts?.acknowledgedMessageId,
-            )
-          ) {
+          reconcileCompletedAnswers(runSid, persistedMessages)
+          const baseline = baselineMessages.find((message) => message.id === streamBaselineMessageIdRef.current)
+          const candidate: CompletedAnswerHandoff = {
+            sessionId: runSid, operationId, text: finalText, baselineMessageId: streamBaselineMessageIdRef.current,
+            baselineMessageText: baseline?.role === "assistant" && baseline.type === "text" ? baseline.content : null,
+            baselineMessageIds: new Set(baselineMessages.map((message) => message.id)),
+            excludedCanonicalIds: new Set(answerLease.excludedCanonicalIds),
+            acknowledgedMessageId: opts?.acknowledgedMessageId ?? null, anchorSeen: false,
+          }
+          if (finalText.trim() && projectCompletedAnswers(persistedMessages, [candidate]).remaining.length === 0) {
             settleCompleted(historyReady)
           } else {
             // The first summary read can still race the runner's post-save
@@ -1454,6 +1480,7 @@ export function useChat(
       publishCompression,
       flushSegments,
       stopStream,
+      retainTerminalAcrossUnmount,
       clearPendingOperation,
       publishSendFailure,
       noteSessionOperation,
@@ -1471,12 +1498,15 @@ export function useChat(
     mountedRef.current = true
     return () => {
       mountedRef.current = false
+      retainTerminalAcrossUnmount()
+      if (answerLeaseRef.current) releaseCompletedAnswerLease(answerLeaseRef.current)
+      answerLeaseRef.current = null
       streamOperationRef.current = null
       subscriptionRef.current = null
       subscribedSidRef.current = null
       abortRef.current?.abort()
     }
-  }, [])
+  }, [retainTerminalAcrossUnmount])
 
   // ── Passive observation: engage runs driven ELSEWHERE ────────────────
   // A run started on another device, by a schedule, or before a reload flips
@@ -1730,8 +1760,13 @@ export function useChat(
   const regenerate = useCallback(async () => {
     if (!sid) return
     await rerun(sid, {
-      prepare: () =>
-        agentClient.truncateSessionMessages(sid, { mode: "after_last_user" }).catch(() => {}),
+      prepare: async () => {
+        const result = await agentClient.truncateSessionMessages(sid, { mode: "after_last_user" }).catch(() => null)
+        if (result?.success && result.session_id === sid) {
+          const messages = useAppStore.getState().chats.find((chat) => chat.id === sid)?.messages ?? []
+          invalidateCompletedAnswers(sid, { messages, targetId: messages.findLast((message) => message.role === "user")?.id ?? null })
+        }
+      },
     })
   }, [sid, rerun])
 
@@ -1772,9 +1807,13 @@ export function useChat(
       await rerun(sid, {
         prepare: async () => {
           await agentClient.patchSessionMessage(sid, messageId, { content: body }).catch(() => {})
-          await agentClient
+          const result = await agentClient
             .restoreSessionState(sid, { target_message_id: messageId, restore_files: false })
-            .catch(() => {})
+            .catch(() => null)
+          if (result?.success && result.session_id === sid && result.target_message_id === messageId) {
+            const messages = useAppStore.getState().chats.find((chat) => chat.id === sid)?.messages ?? []
+            invalidateCompletedAnswers(sid, { messages, targetId: messageId })
+          }
         },
       })
     },
@@ -2136,15 +2175,17 @@ export function useChat(
       // A new composer must not inherit the previous session's live observer or
       // stream buffer.  This does not cancel the server-side generation.
       abortRef.current?.abort()
+      retainTerminalAcrossUnmount()
       stopStream(null)
     }
     useAppStore.getState().selectSession(null)
-  }, [stopStream])
+  }, [retainTerminalAcrossUnmount, stopStream])
 
   const deleteMessage = useCallback(
     async (messageId: string) => {
       if (!sid) return
-      await agentClient.deleteSessionMessage(sid, messageId).catch(() => {})
+      const deleted = await agentClient.deleteSessionMessage(sid, messageId).then(() => true, () => false)
+      if (deleted) invalidateCompletedAnswerForDeletedMessage(sid, messageId)
       await useAppStore.getState().loadChatHistory(sid)
     },
     [sid],
