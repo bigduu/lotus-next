@@ -896,6 +896,26 @@ export function useChat(
     void useAppStore.getState().loadChatHistory(id)
   }, [retainTerminalAcrossUnmount, stopStream])
 
+  // Restored ordinary identities are scoped to this tab's same generation.
+  const makeRestoredOrdinaryStopFence = useCallback((runSid: string, operationId: number, originalOperationId: string): ContinuousStopFence => {
+    const backendScope = getBackendStorageScope()
+    const priorFence = continuousStopFences.get(runSid)
+    let restored!: ContinuousStopFence
+    restored = { sessionId: runSid, operationId, stop: coalesceExactStop(async (onDispatched) => {
+      const capability = await readUpstreamRetryCapability()
+      const current = readOrdinaryRetryFence(backendScope, runSid)
+      if (!current || current.operationId !== originalOperationId || !current.started) throw new Error("Execution identity unavailable")
+      if (capability === "unsupported") {
+        if (continuousStopFences.get(runSid) !== priorFence && continuousStopFences.get(runSid) !== restored)
+          throw new Error("Legacy Stop no longer owns this session")
+        await requestLegacyStop(runSid, onDispatched); return
+      }
+      if (capability !== "supported" || !isRetryRunId(current.runId)) throw new Error("Exact Stop identity unavailable")
+      await stopExactContinuousRun(runSid, current.runId, onDispatched)
+    }) }
+    return restored
+  }, [])
+
   // Give every ordinary start a pane-owned identity before its ACK. A guarded
   // session reserves a unique persistent generation before the request is sent.
   const startOrdinaryExecution = useCallback((runSid: string, operationId: number, execute: () => Promise<ExecuteResponse>) => {
@@ -934,28 +954,20 @@ export function useChat(
         if ((!saved || !isRetryRunId(ack.run_id)) && continuousStopFences.get(runSid) === ownFence
             && paneStopFencesRef.current.get(runSid) === ownFence && mountedRef.current && navigationRef.current.sessionId === runSid)
           setUpstreamRetryFeedback({ sessionId: runSid, operationId, status: "identity_unsaved" })
-      } else if (ack.status === "already_running" || ack.status === "completed" || ack.status === "error" || ack.status === "cancelled")
-        restoreConfirmedUnstartedRetryFence(reservation.reservation)
+      } else if (ack.status === "already_running" || ack.status === "completed" || ack.status === "error" || ack.status === "cancelled") {
+        const restored = restoreConfirmedUnstartedRetryFence(reservation.reservation)
+        if (restored && continuousStopFences.get(runSid) === ownFence && paneStopFencesRef.current.get(runSid) === ownFence) {
+          const previous = readOrdinaryRetryFence(backendScope, runSid)
+          if (previous?.started) {
+            const priorFence = makeRestoredOrdinaryStopFence(runSid, operationId, previous.operationId)
+            continuousStopFences.set(runSid, priorFence)
+            paneStopFencesRef.current.set(runSid, priorFence)
+          }
+        }
+      }
     }, () => {})
     return execution
-  }, [])
-
-  // Restored ordinary identities are scoped to this tab's same generation.
-  const makeRestoredOrdinaryStopFence = useCallback((runSid: string, operationId: number, originalOperationId: string): ContinuousStopFence => {
-    const backendScope = getBackendStorageScope()
-    const priorFence = continuousStopFences.get(runSid)
-    return { sessionId: runSid, operationId, stop: coalesceExactStop(async (onDispatched) => {
-      const capability = await readUpstreamRetryCapability()
-      const current = readOrdinaryRetryFence(backendScope, runSid)
-      if (!current || current.operationId !== originalOperationId || !current.started) throw new Error("Execution identity unavailable")
-      if (capability === "unsupported") {
-        if (continuousStopFences.get(runSid) !== priorFence) throw new Error("Legacy Stop no longer owns this session")
-        await requestLegacyStop(runSid, onDispatched); return
-      }
-      if (capability !== "supported" || !isRetryRunId(current.runId)) throw new Error("Exact Stop identity unavailable")
-      await stopExactContinuousRun(runSid, current.runId, onDispatched)
-    }) }
-  }, [])
+  }, [makeRestoredOrdinaryStopFence])
 
   // A pane observing a run without an identity must not borrow a later pane's
   // fence. Only an explicitly unsupported old service can use legacy Stop.

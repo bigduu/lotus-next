@@ -4478,6 +4478,25 @@ describe("explicit continuous upstream retry", () => {
     expect(mocks.stopGeneration).not.toHaveBeenCalled()
     expect(observer.current.upstreamRetryStatus).toBe("stop_unconfirmed")
   })
+  it("recovers the earlier started ACK when a later ordinary request did not start", async () => {
+    allow()
+    const target = "ordinary-overlap-nonstart"
+    mocks.appState.chats = [{id:target,messages:[],config:{model:"test-model"}}]
+    mocks.sendMessage.mockResolvedValue({session_id:target}); mocks.stopGeneration.mockResolvedValue(undefined)
+    const earlier = deferred<{session_id:string;status:"started";run_id:string}>()
+    const later = deferred<{session_id:string;status:"already_running";run_id:string}>()
+    mocks.execute.mockReturnValueOnce(earlier.promise).mockReturnValueOnce(later.promise)
+    mocks.subscribeToEvents.mockImplementation((_sid: string, _h: SubscriptionHandlers, controller: AbortController) => {
+      const sub=deferred<void>();controller.signal.addEventListener("abort",()=>sub.resolve(),{once:true});return sub.promise
+    })
+    const first=await mountUseChat({mode:"bound",sessionId:target});const second=await mountUseChat({mode:"bound",sessionId:target})
+    await act(async()=>{await first.current.send("first turn")});await act(async()=>{await second.current.send("later turn")})
+    await act(async()=>{earlier.resolve({session_id:target,status:"started",run_id:"earlier-run"});await Promise.resolve()})
+    await act(async()=>{later.resolve({session_id:target,status:"already_running",run_id:"not-an-owned-receipt"});for(let i=0;i<8;i++)await Promise.resolve()})
+    expect(readContinuousRetryFence("https://fixture.test/api/v1",target)).toEqual({kind:"confirmed",runId:"earlier-run"})
+    await act(async()=>{second.current.stop();for(let i=0;i<8;i++)await Promise.resolve()})
+    expect(mocks.stopGeneration).toHaveBeenCalledExactlyOnceWith(target,"earlier-run")
+  })
   it("does not claim an already running execution adopted the requested mode",async()=>{
     allow();mocks.execute.mockResolvedValue({session_id:sid,status:"already_running",run_id:"other-owned-run"})
     const sub=deferred<void>();mocks.subscribeToEvents.mockReturnValue(sub.promise)

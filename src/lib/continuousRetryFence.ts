@@ -52,6 +52,77 @@ function parseRecord(raw: string): RecordValue | null {
   } catch { return null }
 }
 
+// Only in-page ACK evidence is retained. Eviction or a reload leaves the receipt pending.
+type RememberedOrdinaryStart = { tabKey: string; pendingRaw: string; confirmedRaw: string; createdAt: number; conflicting: boolean }
+const rememberedOrdinaryStarts = new Map<string, RememberedOrdinaryStart>()
+const maxRememberedOrdinaryStarts = 64, rememberedStartLifetimeMs = 5 * 60_000
+let rememberedStartTimer: ReturnType<typeof setTimeout> | null = null
+const rememberedStartKey = (tabKey: string, operationId: string) => JSON.stringify([tabKey, operationId])
+
+function pruneRememberedStarts(now: number): void {
+  for (const [key, entry] of rememberedOrdinaryStarts)
+    if (now < entry.createdAt || now - entry.createdAt >= rememberedStartLifetimeMs) rememberedOrdinaryStarts.delete(key)
+}
+
+function scheduleRememberedStartCleanup(): void {
+  if (rememberedStartTimer !== null) clearTimeout(rememberedStartTimer)
+  rememberedStartTimer = null
+  const now = Date.now()
+  pruneRememberedStarts(now)
+  if (rememberedOrdinaryStarts.size === 0) return
+  let earliest = Infinity
+  for (const entry of rememberedOrdinaryStarts.values()) earliest = Math.min(earliest, entry.createdAt + rememberedStartLifetimeMs)
+  try {
+    rememberedStartTimer = setTimeout(() => { rememberedStartTimer = null; scheduleRememberedStartCleanup() }, Math.max(0, earliest - now))
+    ;(rememberedStartTimer as unknown as { unref?: () => void }).unref?.()
+  } catch { rememberedOrdinaryStarts.clear() }
+}
+
+function forgetRememberedStartsForTab(tabKey: string): void {
+  for (const [key, entry] of rememberedOrdinaryStarts) if (entry.tabKey === tabKey) rememberedOrdinaryStarts.delete(key)
+  scheduleRememberedStartCleanup()
+}
+
+function rememberOrdinaryStart(reservation: RetryFenceReservation, confirmedRaw: string): void {
+  // Cap both entry count and retained input sizes; unusually large keys fail closed.
+  if (reservation.tabKey.length > 4096 || reservation.pendingRaw.length > 1024) return
+  const now = Date.now()
+  if (!Number.isFinite(now)) return
+  pruneRememberedStarts(now)
+  const key = rememberedStartKey(reservation.tabKey, reservation.operationId), previous = rememberedOrdinaryStarts.get(key)
+  if (previous) {
+    if (previous.pendingRaw !== reservation.pendingRaw || previous.confirmedRaw !== confirmedRaw) previous.conflicting = true
+  } else {
+    rememberedOrdinaryStarts.set(key, { tabKey: reservation.tabKey, pendingRaw: reservation.pendingRaw, confirmedRaw, createdAt: now, conflicting: false })
+  }
+  while (rememberedOrdinaryStarts.size > maxRememberedOrdinaryStarts) rememberedOrdinaryStarts.delete(rememberedOrdinaryStarts.keys().next().value!)
+  scheduleRememberedStartCleanup()
+}
+
+function takeRememberedOrdinaryStart(tabKey: string, operationId: string, pendingRaw: string): string | null {
+  pruneRememberedStarts(Date.now())
+  const key = rememberedStartKey(tabKey, operationId), entry = rememberedOrdinaryStarts.get(key)
+  rememberedOrdinaryStarts.delete(key)
+  scheduleRememberedStartCleanup()
+  return entry && !entry.conflicting && entry.pendingRaw === pendingRaw ? entry.confirmedRaw : null
+}
+
+function recordStartedAck(reservation: RetryFenceReservation, pending: PendingRecord, confirmedRaw: string): boolean {
+  try {
+    const currentRaw = sessionStorage.getItem(reservation.tabKey)
+    if (currentRaw !== reservation.pendingRaw) {
+      const current = currentRaw === null ? null : parseRecord(currentRaw)
+      if (pending.origin === "ordinary" && current?.state === "pending" && current.operationId !== pending.operationId)
+        rememberOrdinaryStart(reservation, confirmedRaw)
+      return false
+    }
+    sessionStorage.setItem(reservation.tabKey, confirmedRaw)
+    const confirmed = sessionStorage.getItem(reservation.tabKey) === confirmedRaw
+    if (confirmed) forgetRememberedStartsForTab(reservation.tabKey)
+    return confirmed
+  } catch { return false }
+}
+
 function readTabFence(backend: string, sessionId: string): TabFence {
   try {
     const raw = sessionStorage.getItem(tabKeyFor(backend, sessionId))
@@ -133,7 +204,17 @@ export function discardUnsentContinuousRetryFence(reservation: RetryFenceReserva
 
 /** Restore only after the caller verifies that this operation's ACK proves it did not start. */
 export function restoreConfirmedUnstartedRetryFence(reservation: RetryFenceReservation): boolean {
-  return discardUnsentContinuousRetryFence(reservation)
+  if (!discardUnsentContinuousRetryFence(reservation)) return false
+  const previousRaw = reservation.priorTabRaw, previous = previousRaw === null ? null : parseRecord(previousRaw)
+  if (!previous || previous.state !== "pending" || previous.origin !== "ordinary" || previousRaw === null) return true
+  const confirmedRaw = takeRememberedOrdinaryStart(reservation.tabKey, previous.operationId, previousRaw)
+  if (confirmedRaw === null) return true
+  try {
+    if (sessionStorage.getItem(reservation.tabKey) !== previousRaw) return true
+    sessionStorage.setItem(reservation.tabKey, confirmedRaw)
+    if (sessionStorage.getItem(reservation.tabKey) === confirmedRaw) forgetRememberedStartsForTab(reservation.tabKey)
+  } catch { /* Keep the persisted receipt fail-closed. */ }
+  return true
 }
 
 /** A malformed or late ACK cannot confirm a newer tab operation. */
@@ -143,11 +224,7 @@ export function confirmContinuousRetryFence(reservation: RetryFenceReservation, 
   if (!pending || pending.state !== "pending" || pending.operationId !== reservation.operationId) return false
   const raw = JSON.stringify({ version: 1, operationId: reservation.operationId, state: "confirmed", runId,
     ...(pending.origin ? { origin: pending.origin } : {}) } satisfies ConfirmedRecord)
-  try {
-    if (sessionStorage.getItem(reservation.tabKey) !== reservation.pendingRaw) return false
-    sessionStorage.setItem(reservation.tabKey, raw)
-    return sessionStorage.getItem(reservation.tabKey) === raw
-  } catch { return false }
+  return recordStartedAck(reservation, pending, raw)
 }
 
 /** Record a started ACK with no run ID after the caller has validated its session and status. */
@@ -155,11 +232,7 @@ export function confirmOrdinaryStartedWithoutRunId(reservation: RetryFenceReserv
   const pending = parseRecord(reservation.pendingRaw)
   if (!pending || pending.state !== "pending" || pending.origin !== "ordinary" || pending.operationId !== reservation.operationId) return false
   const raw = JSON.stringify({ version: 1, operationId: reservation.operationId, state: "started_unidentified", origin: "ordinary" } satisfies StartedUnidentifiedRecord)
-  try {
-    if (sessionStorage.getItem(reservation.tabKey) !== reservation.pendingRaw) return false
-    sessionStorage.setItem(reservation.tabKey, raw)
-    return sessionStorage.getItem(reservation.tabKey) === raw
-  } catch { return false }
+  return recordStartedAck(reservation, pending, raw)
 }
 
 /** Verify protected-session storage writes without overwriting an existing key. */

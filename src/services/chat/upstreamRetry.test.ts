@@ -20,11 +20,13 @@ it("accepts the bounded exact opaque execution identity", () => expect(isRetryRu
 
 it("distinguishes valid legacy, unsupported, malformed and unavailable responses", async () => {
   get.mockResolvedValueOnce({ model:null, system_prompt:"", base_system_prompt:"", default_session_permission_mode:"default" })
+    .mockResolvedValueOnce({ model:null, system_prompt:"", base_system_prompt:"" })
     .mockResolvedValueOnce({ upstream_retry:{supported_modes:["bounded"]} })
     .mockResolvedValueOnce({ upstream_retry:{supported_modes:"until_cancelled"} })
     .mockResolvedValueOnce({ upstream_retry:{supported_modes:["bounded",true]} })
     .mockResolvedValueOnce({})
     .mockRejectedValueOnce(new Error("network"))
+  expect(await readUpstreamRetryCapability()).toBe("unsupported")
   expect(await readUpstreamRetryCapability()).toBe("unsupported")
   expect(await readUpstreamRetryCapability()).toBe("unsupported")
   expect(await readUpstreamRetryCapability()).toBe("unknown")

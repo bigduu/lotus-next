@@ -15,7 +15,8 @@ export async function readUpstreamRetryCapability(): Promise<UpstreamRetryCapabi
   if (!("upstream_retry" in value)) {
     const legacy = value as Record<string, unknown>
     return (typeof legacy.system_prompt === "string" && typeof legacy.base_system_prompt === "string"
-      && ["default", "auto", "bypass"].includes(legacy.default_session_permission_mode as string)
+      && (legacy.default_session_permission_mode === undefined
+        || ["default", "auto", "bypass"].includes(legacy.default_session_permission_mode as string))
       && (legacy.model === null || typeof legacy.model === "string")) ? "unsupported" : "unknown"
   }
   const policy = value.upstream_retry

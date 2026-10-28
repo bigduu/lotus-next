@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
+import { isRetryRunId } from "@services/chat/upstreamRetry"
 import {
   beginContinuousRetryFence, beginOrdinaryRetryFence, confirmContinuousRetryFence, confirmOrdinaryStartedWithoutRunId,
   discardUnsentContinuousRetryFence, isOrdinaryRetryFenceCurrent, readContinuousRetryFence, readOrdinaryRetryFence, restoreConfirmedUnstartedRetryFence,
@@ -203,6 +204,132 @@ describe("continuous retry Stop recovery", () => {
     expect(restoreConfirmedUnstartedRetryFence(rejected)).toBe(false)
     expect(confirmContinuousRetryFence(newer, "new-run")).toBe(true)
     expect(readContinuousRetryFence(backend, sid)).toEqual({ kind: "confirmed", runId: "new-run" })
+  })
+  it("recovers an earlier ordinary started ACK after a later non-start", () => {
+    const earlier = reserveOrdinary({ ensureGuard: true }), later = reserveOrdinary()
+    expect(confirmContinuousRetryFence(earlier, "earlier-run")).toBe(false)
+    expect(readOrdinaryRetryFence(backend, sid)).toEqual({ operationId: later.operationId, started: false, runId: null })
+    expect(restoreConfirmedUnstartedRetryFence(later)).toBe(true)
+    expect(readOrdinaryRetryFence(backend, sid)).toEqual({ operationId: earlier.operationId, started: true, runId: "earlier-run" })
+    expect(readContinuousRetryFence(backend, sid)).toEqual({ kind: "confirmed", runId: "earlier-run" })
+  })
+  it("recovers an earlier ordinary started ACK without run ID after a later non-start", () => {
+    const earlier = reserveOrdinary({ ensureGuard: true }), later = reserveOrdinary()
+    expect(confirmOrdinaryStartedWithoutRunId(earlier)).toBe(false)
+    expect(readOrdinaryRetryFence(backend, sid)).toEqual({ operationId: later.operationId, started: false, runId: null })
+    expect(restoreConfirmedUnstartedRetryFence(later)).toBe(true)
+    expect(readOrdinaryRetryFence(backend, sid)).toEqual({ operationId: earlier.operationId, started: true, runId: null })
+    expect(readContinuousRetryFence(backend, sid)).toEqual({ kind: "ambiguous" })
+  })
+  it("never lets an older ACK overwrite a third ordinary generation", () => {
+    const earlier = reserveOrdinary({ ensureGuard: true }), middle = reserveOrdinary()
+    expect(confirmContinuousRetryFence(earlier, "earlier-run")).toBe(false)
+    const newest = reserveOrdinary()
+    expect(restoreConfirmedUnstartedRetryFence(middle)).toBe(false)
+    expect(readOrdinaryRetryFence(backend, sid)).toEqual({ operationId: newest.operationId, started: false, runId: null })
+    expect(confirmContinuousRetryFence(newest, "newest-run")).toBe(true)
+    expect(restoreConfirmedUnstartedRetryFence(middle)).toBe(false)
+    expect(readContinuousRetryFence(backend, sid)).toEqual({ kind: "confirmed", runId: "newest-run" })
+  })
+  it("rechecks the current generation after rollback before replaying a remembered ACK", () => {
+    const earlier = reserveOrdinary({ ensureGuard: true }), later = reserveOrdinary()
+    expect(confirmContinuousRetryFence(earlier, "earlier-run")).toBe(false)
+    const get = sessionStorage.getItem.bind(sessionStorage), set = sessionStorage.setItem.bind(sessionStorage)
+    const newestId = crypto.randomUUID()
+    const newestRaw = JSON.stringify({ version: 1, operationId: newestId, state: "pending", origin: "ordinary" })
+    let tabReads = 0
+    vi.spyOn(sessionStorage, "getItem").mockImplementation(key => {
+      if (key === later.tabKey && ++tabReads === 3) set(key, newestRaw)
+      return get(key)
+    })
+    expect(restoreConfirmedUnstartedRetryFence(later)).toBe(true)
+    expect(readOrdinaryRetryFence(backend, sid)).toEqual({ operationId: newestId, started: false, runId: null })
+  })
+  it("does not remember a malformed run ID or an earlier non-start", () => {
+    const earlier = reserveOrdinary({ ensureGuard: true }), later = reserveOrdinary()
+    expect(confirmContinuousRetryFence(earlier, "bad\nheader")).toBe(false)
+    expect(restoreConfirmedUnstartedRetryFence(earlier)).toBe(false)
+    expect(restoreConfirmedUnstartedRetryFence(later)).toBe(true)
+    expect(readOrdinaryRetryFence(backend, sid)).toEqual({ operationId: earlier.operationId, started: false, runId: null })
+  })
+  it("does not automatically replay an ACK after a merely unsent rollback", () => {
+    const earlier = reserveOrdinary({ ensureGuard: true }), later = reserveOrdinary()
+    expect(confirmContinuousRetryFence(earlier, "earlier-run")).toBe(false)
+    expect(discardUnsentContinuousRetryFence(later)).toBe(true)
+    expect(readOrdinaryRetryFence(backend, sid)).toEqual({ operationId: earlier.operationId, started: false, runId: null })
+  })
+  it("does not remember a superseded continuous ACK as an ordinary one", () => {
+    const continuous = beginContinuousRetryFence(backend, sid)!, ordinary = reserveOrdinary()
+    expect(confirmContinuousRetryFence(continuous, "continuous-run")).toBe(false)
+    expect(restoreConfirmedUnstartedRetryFence(ordinary)).toBe(true)
+    expect(readContinuousRetryFence(backend, sid)).toEqual({ kind: "pending" })
+    expect(readOrdinaryRetryFence(backend, sid)).toBeNull()
+  })
+  it("leaves conflicting started ACK identities pending rather than guessing", () => {
+    const earlier = reserveOrdinary({ ensureGuard: true }), later = reserveOrdinary()
+    expect(confirmContinuousRetryFence(earlier, "first-run")).toBe(false)
+    expect(confirmContinuousRetryFence(earlier, "conflicting-run")).toBe(false)
+    expect(restoreConfirmedUnstartedRetryFence(later)).toBe(true)
+    expect(readOrdinaryRetryFence(backend, sid)).toEqual({ operationId: earlier.operationId, started: false, runId: null })
+  })
+  it("does not replay expired ACK evidence", () => {
+    let now = Date.now()
+    vi.spyOn(Date, "now").mockImplementation(() => now)
+    const earlier = reserveOrdinary({ ensureGuard: true }), later = reserveOrdinary()
+    expect(confirmContinuousRetryFence(earlier, "earlier-run")).toBe(false)
+    now += 5 * 60_000 + 1
+    expect(restoreConfirmedUnstartedRetryFence(later)).toBe(true)
+    expect(readOrdinaryRetryFence(backend, sid)).toEqual({ operationId: earlier.operationId, started: false, runId: null })
+  })
+  it("bounds remembered ACKs and evicts the oldest evidence", () => {
+    let first: { session: string; earlier: ReturnType<typeof reserveOrdinary>; later: ReturnType<typeof reserveOrdinary> } | undefined
+    let last: typeof first
+    for (let i = 0; i < 65; i++) {
+      const session = `bounded-cache-${i}`
+      const initial = beginOrdinaryRetryFence(backend, session, { ensureGuard: true })
+      if (initial.kind !== "reserved") throw new Error("earlier operation was not reserved")
+      const next = beginOrdinaryRetryFence(backend, session)
+      if (next.kind !== "reserved") throw new Error("later operation was not reserved")
+      expect(confirmContinuousRetryFence(initial.reservation, `run-${i}`)).toBe(false)
+      last = { session, earlier: initial.reservation, later: next.reservation }
+      first ??= last
+    }
+    expect(restoreConfirmedUnstartedRetryFence(first!.later)).toBe(true)
+    expect(readOrdinaryRetryFence(backend, first!.session)).toEqual({ operationId: first!.earlier.operationId, started: false, runId: null })
+    expect(restoreConfirmedUnstartedRetryFence(last!.later)).toBe(true)
+    expect(readOrdinaryRetryFence(backend, last!.session)).toEqual({ operationId: last!.earlier.operationId, started: true, runId: "run-64" })
+  })
+  it("does not retain ACKs for unusually large session keys", () => {
+    const session = "x".repeat(5000)
+    const earlier = beginOrdinaryRetryFence(backend, session, { ensureGuard: true })
+    const later = beginOrdinaryRetryFence(backend, session)
+    if (earlier.kind !== "reserved" || later.kind !== "reserved") throw new Error("operations were not reserved")
+    expect(confirmContinuousRetryFence(earlier.reservation, "earlier-run")).toBe(false)
+    expect(restoreConfirmedUnstartedRetryFence(later.reservation)).toBe(true)
+    expect(readOrdinaryRetryFence(backend, session)).toEqual({ operationId: earlier.reservation.operationId, started: false, runId: null })
+  })
+  it("keeps pending if replay cannot be written", () => {
+    const earlier = reserveOrdinary({ ensureGuard: true }), later = reserveOrdinary()
+    expect(confirmContinuousRetryFence(earlier, "earlier-run")).toBe(false)
+    const set = sessionStorage.setItem.bind(sessionStorage)
+    vi.spyOn(sessionStorage, "setItem").mockImplementation((key, value) => {
+      if (key === later.tabKey && JSON.parse(value).state === "confirmed") throw new Error("blocked")
+      set(key, value)
+    })
+    expect(restoreConfirmedUnstartedRetryFence(later)).toBe(true)
+    expect(readOrdinaryRetryFence(backend, sid)).toEqual({ operationId: earlier.operationId, started: false, runId: null })
+  })
+  it("cannot recover in-memory ACK evidence after a page/module reload", async () => {
+    const earlier = reserveOrdinary({ ensureGuard: true }), later = reserveOrdinary()
+    expect(confirmContinuousRetryFence(earlier, "earlier-run")).toBe(false)
+    // Keep the real validator while reloading the fence module's in-memory state.
+    vi.doMock("@services/chat/upstreamRetry", () => ({ isRetryRunId }))
+    vi.resetModules()
+    try {
+      const reloaded = await import("./continuousRetryFence")
+      expect(reloaded.restoreConfirmedUnstartedRetryFence(later)).toBe(true)
+      expect(reloaded.readOrdinaryRetryFence(backend, sid)).toEqual({ operationId: earlier.operationId, started: false, runId: null })
+    } finally { vi.doUnmock("@services/chat/upstreamRetry") }
   })
   it("restores a continuous pending receipt when a superseding ordinary operation was unsent", () => {
     const pending = beginContinuousRetryFence(backend, sid)!
