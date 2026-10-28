@@ -440,7 +440,7 @@ export const packAndVerifyCurrentArtifact = (temporaryRoot) => {
   const extractRoot = path.join(temporaryRoot, "current-source")
   mkdirSync(extractRoot, { mode: 0o700 })
   runCaptured("tar", ["-xzf", tarballPath, "-C", extractRoot])
-  return verifyExtractedCurrentArtifact({
+  const artifact = verifyExtractedCurrentArtifact({
     tarballPath,
     packageRoot: path.join(extractRoot, "package"),
     sourceDistRoot,
@@ -448,9 +448,10 @@ export const packAndVerifyCurrentArtifact = (temporaryRoot) => {
     expectedVersion,
     packRecord,
   })
+  return { ...artifact, tarballPath, packRecord }
 }
 
-const generateTlsIdentity = (temporaryRoot) => {
+export const generateTlsIdentity = (temporaryRoot) => {
   const tlsRoot = path.join(temporaryRoot, "tls")
   const certificatePath = path.join(tlsRoot, "remote.lotus.test.crt")
   const keyPath = path.join(tlsRoot, "remote.lotus.test.key")

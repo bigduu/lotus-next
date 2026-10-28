@@ -132,7 +132,7 @@ describe("durable formal version ownership", () => {
 })
 
 describe("historical explicit pre-merge Dev feature evidence", () => {
-  const workflow = readFileSync(".github/workflows/ci.yml", "utf8")
+  const workflow = readFileSync("scripts/fixtures/ci-dev-feature-v1.yml", "utf8")
   const fixture = () => {
     const source = "d".repeat(40), head = "f".repeat(40), base = "b".repeat(40), snapshot = "a".repeat(40), tree = "c".repeat(40)
     const pr = { number: 450, state: "closed", merged: true, base: { ref: "dev", repo: { full_name: "bigduu/lotus-next" } },
@@ -203,6 +203,10 @@ describe("publication trusts normal protected Dev admission", () => {
   it("accepts a normal merged Dev source without claiming a historical CI snapshot or attempt", () => {
     expect(verify(fixture())).toEqual({ sourceTree: "c".repeat(40) })
   })
+  it("also accepts the unchanged complete historical Dev graph", () => {
+    const historical = readFileSync("scripts/fixtures/ci-dev-feature-v1.yml", "utf8")
+    expect(verify(fixture(), historical)).toEqual({ sourceTree: "c".repeat(40) })
+  })
   it.each([
     ["unmerged PR", x => { x.pr.merged = false }], ["open PR", x => { x.pr.state = "open" }],
     ["Main PR", x => { x.pr.base.ref = "main" }], ["foreign base", x => { x.pr.base.repo.full_name = "other/lotus-next" }],
@@ -226,8 +230,17 @@ describe("publication trusts normal protected Dev admission", () => {
     ["conditional owner", s => s.replace("  real-bamboo:\n", "  real-bamboo:\n    if: false\n")],
     ["ignored failure", s => s.replace("  verify:\n", "  verify:\n    continue-on-error: true\n")],
     ["missing aggregate always", s => s.replace("    name: Feature acceptance\n    if: ${{ always() }}", "    name: Feature acceptance\n    if: success()")],
-    ["missing runtime need", s => s.replace("[source, verify, browser-summary, real-bamboo, native-actor]", "[source, verify, browser-summary, native-actor]")],
+    ["missing runtime need", s => s.replace("[source, verify, browser-summary, real-bamboo, real-bamboo-package, real-bamboo-surface, native-actor]", "[source, verify, browser-summary, native-actor]")],
     ["missing browser need", s => s.replace("needs: [verify, browser]", "needs: [verify]")],
+    ["missing package owner", s => s.replace("[source, verify, browser-summary, real-bamboo, real-bamboo-package, real-bamboo-surface, native-actor]", "[source, verify, browser-summary, real-bamboo, real-bamboo-surface, native-actor]")],
+    ["forged package result", s => s.replace("REAL_BAMBOO_PACKAGE_RESULT: ${{ needs.real-bamboo-package.result }}", "REAL_BAMBOO_PACKAGE_RESULT: success")],
+    ["forged surface result", s => s.replace("REAL_BAMBOO_SURFACE_RESULT: ${{ needs.real-bamboo-surface.result }}", "REAL_BAMBOO_SURFACE_RESULT: success")],
+    ["fake package guard", s => s.replace("run: node scripts/feature-bamboo-package.mjs guard", "run: echo success")],
+    ["fake local surface", s => s.replace("feature-bamboo-package.mjs surface ${{ matrix.mode }}", "feature-bamboo-package.mjs surface local")],
+    ["unbound package download", s => s.replace("FEATURE_PACKAGE_ARTIFACT_ID: ${{ needs.real-bamboo-package.outputs.artifact_id }}", "FEATURE_PACKAGE_ARTIFACT_ID: 42")],
+    ["missing HTTPS matrix mode", s => s.replace("          - remote\n", "")],
+    ["extra surface matrix mode", s => s.replace("          - remote\n", "          - remote\n          - fake\n")],
+    ["matrix cancels sibling", s => s.replace("      fail-fast: false\n      matrix:\n        mode:", "      fail-fast: true\n      matrix:\n        mode:")],
     ["fake aggregate", s => s.replace("run: node scripts/feature-acceptance.mjs summarize", "run: echo success")],
     ["skipped aggregate step", s => s.replace("        run: node scripts/feature-acceptance.mjs summarize", "        if: false\n        run: node scripts/feature-acceptance.mjs summarize")],
     ["forged runtime result", s => s.replace("REAL_BAMBOO_RESULT: ${{ needs.real-bamboo.result }}", "REAL_BAMBOO_RESULT: success")],
@@ -240,6 +253,49 @@ describe("publication trusts normal protected Dev admission", () => {
     ["browser matrix repeats the shard key", s => s.replace("        shard:\n", "        shard:\n          - 1\n        shard:\n")],
   ])("rejects incomplete gate wiring: %s", (_name, mutate) => {
     expect(() => verify(fixture(), mutate(workflow))).toThrow()
+  })
+})
+
+describe("split Dev feature receipt", () => {
+  const workflow = readFileSync(".github/workflows/ci.yml", "utf8")
+  const fixture = () => {
+    const source = "d".repeat(40), head = "f".repeat(40), base = "b".repeat(40), snapshot = "a".repeat(40), tree = "c".repeat(40)
+    const pr = { number: 482, state: "closed", merged: true, base: { ref: "dev", repo: { full_name: "bigduu/lotus-next" } },
+      head: { sha: head, repo: { full_name: "bigduu/lotus-next" } }, merge_commit_sha: source, merged_at: "2026-10-28T12:00:00Z" }
+    const run = { id: 10, run_attempt: 2, workflow_id: 1, path: ".github/workflows/ci.yml", event: "pull_request", head_sha: head,
+      repository: { full_name: "bigduu/lotus-next" }, head_repository: { full_name: "bigduu/lotus-next" }, status: "completed", conclusion: "success" }
+    const steps = { "Node 22": ["Verify Node 22 Unit compatibility"], "Node 24": ["Verify architecture, build, and package contents"],
+      "Real Bamboo / Node 24": ["Verify a real chat round trip with the pinned published Bamboo"],
+      "Prepare real Bamboo test package": ["Pack the exact-source test artifact", "Upload the original test package"],
+      "Real Bamboo local / Node 24": ["Verify the current source artifact on the selected browser surface"],
+      "Real Bamboo remote / Node 24": ["Verify the current source artifact on the selected browser surface"],
+      "Native Actor acceptance / Native Actor / Node 24": ["Verify three negative controls and restored real Actor proof"] }
+    for (const n of [1, 2, 3, 4]) steps[`Browser / Node 24 / shard ${n} of 4`] = ["Verify the all-surface browser shard"]
+    const names = devFeatureJobNames(workflow)
+    const jobs = { total_count: names.length, jobs: names.map(name => ({ name, run_id: 10,
+      run_attempt: name === "Feature acceptance" || name === "Real Bamboo remote / Node 24" ? 2 : 1,
+      head_sha: head, status: "completed", conclusion: "success", completed_at: "2026-10-28T11:00:00Z",
+      steps: (steps[name] || []).map(name => ({ name, status: "completed", conclusion: "success" })) })) }
+    const receipt = { schemaVersion: 2, kind: "lotus-feature-acceptance/v2", source: { repository: "bigduu/lotus-next", pullRequest: 482,
+      baseRef: "dev", headSha: head, baseSha: base, runId: "10", sourceRunAttempt: 1, testedSnapshot: snapshot, testedTree: tree },
+      gates: { source: "success", verify: "success", browser: "success", realBamboo: "success", realBambooPackage: "success",
+        realBambooSurface: "success", nativeActor: "success" }, acceptanceRunAttempt: 2 }
+    const merged = { sha: source, parents: [{ sha: base }, { sha: head }], tree: { sha: tree } }
+    const tested = { ...clone(merged), sha: snapshot }
+    return { source, pr, run, jobs, receipt, merged, tested }
+  }
+  const verify = x => verifyDevAcceptance(x.source, x.pr, x.run, x.jobs, x.receipt, x.merged, x.tested, 1, workflow)
+  it("accepts earlier successful siblings and the original package with a later HTTPS result", () => {
+    expect(() => verify(fixture())).not.toThrow()
+  })
+  it.each(["Prepare real Bamboo test package", "Real Bamboo / Node 24", "Real Bamboo local / Node 24", "Real Bamboo remote / Node 24"])(
+    "rejects an incomplete split owner: %s", name => {
+      const x = fixture(); x.jobs.jobs.find(job => job.name === name).conclusion = "skipped"
+      expect(() => verify(x)).toThrow()
+    })
+  it("rejects an old receipt masquerading as a split acceptance", () => {
+    const x = fixture(); x.receipt.kind = "lotus-feature-acceptance/v1"; x.receipt.schemaVersion = 1
+    expect(() => verify(x)).toThrow()
   })
 })
 
