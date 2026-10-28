@@ -22,14 +22,14 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-export const REAL_BAMBOO_REVISION = "d6325a732c7669f94962f604e4ce98966e374d73";
+export const REAL_BAMBOO_REVISION = "4786b7db862cabbebce49e288da62b284ccf5b72";
 
-// Published executable identity from Bamboo v2026.10.18. Browser-host sources
+// Published executable identity from Bamboo v2026.10.19. Browser-host sources
 // still come from the same verified Git checkout; Cargo is not rerun here.
 export const REAL_BAMBOO_BINARY = Object.freeze({
-  url: "https://github.com/bigduu/Bamboo-agent/releases/download/v2026.10.18/bamboo-x86_64-unknown-linux-gnu",
-  bytes: 247723520,
-  sha256: "06df1bd069b42c46958dcdb7084c1822a8c2d5cb39d0f95affceb3820bbcc8e1",
+  url: "https://github.com/bigduu/Bamboo-agent/releases/download/v2026.10.19/bamboo-x86_64-unknown-linux-gnu",
+  bytes: 248709064,
+  sha256: "f37f51bafe1d49055adcb0e1b51067e2f9a07ad0cb36497a91f86889e5773286",
 });
 
 export const verifyBambooBinary = (

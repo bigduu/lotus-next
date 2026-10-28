@@ -35,7 +35,9 @@ actual normally merged Dev PR, its original complete CI run and Actions feature
 receipt. All eleven selected jobs and required runtime steps must succeed before
 Dev admission; the actual tested merge and admitted Dev tree must match. No
 candidate/version registration on Main is required before the release build.
-The known Bamboo HTTPS failure still blocks #450; do not skip or weaken it.
+The earlier Bamboo HTTPS failure in #450 remains recorded. Require a fresh
+real-runtime result against the matching published Bamboo source and binary;
+a source fix alone does not establish that acceptance.
 
 `publish-npm.yml` runs only from protected Dev controls; it never builds moving
 dev. It has one dispatch path: preflight -> build/pack -> publish.
@@ -58,9 +60,9 @@ Started or missing evidence stops
 rebuilding, as does a replacement dispatch for the same version.
 Missing original output stops recovery. Historical candidate/receipt functions
 and fixed published-version recovery keep their old identities and cannot admit
-a new feature cut through the current CLI. These source changes do not activate
-publication or alter branch protection; normal review and full feature acceptance
-remain required before a real release.
+a new feature cut through the current CLI. The reviewed workflow becomes available
+on protected Dev after admission. It does not itself authorize publication; full
+feature acceptance and release authorization remain required.
 
 After the dependent cutover, only a fully accepted dev cut may become a frozen
 release. Release work builds/packages/publishes the formal artifact once; it

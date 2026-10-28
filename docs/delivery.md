@@ -1,8 +1,8 @@
 # Lotus Next delivery
 
 This repository follows the unified Zenith #399 delivery contract. The feature
-and single-artifact release changes below are staged until their reviewed PR is
-accepted. Main remains the default branch; the target publisher uses protected
+and single-artifact release changes below activate on protected Dev only after
+their reviewed PR is accepted. Main remains the default branch; the publisher uses protected
 Dev controls to build the frozen release source. Check the installed workflows
 before a release; the new path has not yet been exercised in production.
 
@@ -16,8 +16,9 @@ before a release; the new path has not yet been exercised in production.
 The release/main rows require complete feature acceptance and normal review.
 The minimal publisher has one dispatch path. It reads the actual merged Dev PR,
 original CI run and feature receipt; it does not require an unreleased candidate
-or version record to be committed to Main. The known published Bamboo HTTPS
-failure still blocks #450 and remains with its feature/input owner.
+or version record to be committed to Main. The earlier Bamboo HTTPS failure in
+#450 remains recorded; a fresh real-runtime result against the matching published
+Bamboo source and binary is required before accepting the feature.
 
 ## Build and publish the original package once
 
@@ -131,15 +132,15 @@ it does not authorize builds or publication on main push/promotion events.
 
 ## Main promotion gate
 
-The staged `Main Admission` check is a separate read-only `pull_request_target`
-workflow for Main; dev PRs keep the original Feature acceptance alone. Bootstrap
-its reviewed workflow/helper controls into Main first and require its real check
-in Main protection with an up-to-date base before activation. Main controls execute at the exact workflow
+The `Main Admission` check is a separate read-only `pull_request_target`
+workflow for Main; dev PRs keep Feature acceptance. The reviewed Main bootstrap
+and required check are installed; use Dev as the feature base while the complete
+feature and publication controls await their own release and promotion. Main controls execute at the exact workflow
 SHA; the PR is fetched as Git data and is never executed. Admission verifies
 `release/<S>`, protected Dev ancestry, actual merge parents and unchanged S tree,
 one annotated formal version tag, registry SHA-1/SHA-512 and the original complete
 frontend manifest. Registry-served SLSA source binding must identify the actual
 successful Dev publication run/controller. It does not claim Sigstore certificate
 verification. Missing, ambiguous, moved or unpublished evidence fails closed;
-there is no Main build, package, test or publish fallback. No positive promotion
-or protection activation is established by these staged source changes.
+there is no Main build, package, test or publish fallback. A positive promotion
+still requires an actual completed publication and its evidence.
