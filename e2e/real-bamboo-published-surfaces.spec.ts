@@ -343,6 +343,10 @@ const exerciseSurface = async ({
       exact: true,
     });
     await expect(settingsButton).toBeVisible();
+    if (currentSourceArtifact && definition.label === "desktop") {
+      await settingsButton.focus();
+      await expect(settingsButton).toBeFocused();
+    }
     await settingsButton.click();
     // The pinned published baseline predates full-page Settings. Current-source
     // packages must exercise the page contract, without falling back to a modal.
@@ -353,6 +357,10 @@ const exerciseSurface = async ({
       settings.getByRole("heading", { name: "系统设置", exact: true }),
     ).toBeVisible();
     await closeSettings(settings, settingsLayout);
+    if (currentSourceArtifact && definition.label === "desktop") {
+      // Wait for Settings' asynchronous opener restoration before moving focus.
+      await expect(settingsButton).toBeFocused();
+    }
     await composer.focus();
     await expect(composer).toBeFocused();
 

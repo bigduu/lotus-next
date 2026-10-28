@@ -29,7 +29,7 @@ const fixture = async (version = "0.0.0") => {
     mkdirSync(directory, { recursive: true }); writeFileSync(path.join(directory, "package.json"), JSON.stringify({ version: "1.62.1" }))
   }
   const git = (...args) => execFileSync("git", ["-C", source, ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim()
-  git("init", "-q"); git("config", "user.name", "Fixture"); git("config", "user.email", "fixture@example.invalid")
+  git("init", "-q", "--initial-branch=dev"); git("config", "user.name", "Fixture"); git("config", "user.email", "fixture@example.invalid")
   git("add", "--all"); git("-c", "core.hooksPath=/dev/null", "-c", "commit.gpgSign=false", "commit", "-qm", "fixture")
   // Exercise the actual copied CLI module in Node, outside Vitest's module
   // resolver. This also retains its real file path and Git checkout boundary.
@@ -40,7 +40,29 @@ const fixture = async (version = "0.0.0") => {
   const env = { CI: "true", GITHUB_ACTIONS: "true", GITHUB_REPOSITORY: "bigduu/lotus-next", GITHUB_EVENT_NAME: "workflow_dispatch",
     GITHUB_REF: "refs/heads/test", GITHUB_WORKFLOW_REF: "bigduu/lotus-next/.github/workflows/ci.yml@refs/heads/test",
     GITHUB_SHA: git("rev-parse", "HEAD"), GITHUB_RUN_ID: "123", GITHUB_RUN_ATTEMPT: "2", RUNNER_TEMP: parent }
-  return { source, browser, module, env }
+  return { source, browser, module, env, git, parent }
+}
+const featureFixture = async () => {
+  const f = await fixture()
+  f.git("checkout", "-qb", "feature/446")
+  writeFileSync(path.join(f.source, "feature.txt"), "feature\n")
+  f.git("add", "."); f.git("-c", "core.hooksPath=/dev/null", "-c", "commit.gpgSign=false", "commit", "-qm", "feature")
+  const head = f.git("rev-parse", "HEAD")
+  f.git("checkout", "-q", "dev")
+  writeFileSync(path.join(f.source, "base.txt"), "base\n")
+  f.git("add", "."); f.git("-c", "core.hooksPath=/dev/null", "-c", "commit.gpgSign=false", "commit", "-qm", "advance base")
+  const base = f.git("rev-parse", "HEAD")
+  f.git("-c", "core.hooksPath=/dev/null", "-c", "commit.gpgSign=false", "merge", "--no-ff", "-qm", "test merge", "feature/446")
+  const snapshot = f.git("rev-parse", "HEAD")
+  const event = { number: 446, pull_request: { number: 446,
+    base: { ref: "dev", sha: base, repo: { full_name: "bigduu/lotus-next" } },
+    head: { ref: "feature/446", sha: head, repo: { full_name: "bigduu/lotus-next" } } } }
+  const eventPath = path.join(f.parent, "event.json")
+  writeFileSync(eventPath, JSON.stringify(event))
+  const env = { ...f.env, GITHUB_EVENT_NAME: "pull_request", GITHUB_REF: "refs/pull/446/merge",
+    GITHUB_WORKFLOW_REF: "bigduu/lotus-next/.github/workflows/ci.yml@refs/pull/446/merge",
+    GITHUB_SHA: snapshot, FEATURE_WORKFLOW_SHA: snapshot, GITHUB_BASE_REF: "dev", GITHUB_HEAD_REF: "feature/446", GITHUB_EVENT_PATH: eventPath }
+  return { ...f, env, base, head, snapshot, event, eventPath }
 }
 let sharedFixture
 const shared = () => sharedFixture ??= fixture()
@@ -49,6 +71,24 @@ describe("current-source verification browser", () => {
     const f = await shared(), record = f.module.verificationContext(f.source, f.browser, f.env)
     expect(record).toMatchObject({ purpose: "current-source-verification", sourceSha: f.env.GITHUB_SHA, runId: "123", runAttempt: "2" })
     expect(f.module.verificationContext(f.source, f.browser, {}).runId).toBe(null)
+  })
+  it("accepts a real PR merge snapshot with its distinct base/head/tree identity", async () => {
+    const f = await featureFixture()
+    const record = f.module.verificationContext(f.source, f.browser, f.env)
+    expect(record.featureSource).toMatchObject({ baseSha: f.base, headSha: f.head,
+      testedSnapshot: f.snapshot, testedTree: f.git("rev-parse", "HEAD^{tree}"), pullRequest: 446 })
+    expect(record.sourceSha).toBe(f.snapshot)
+    expect(record.sourceSha).not.toBe(f.head)
+    expect(record.purpose).toBe("current-source-verification")
+  })
+  it("rejects PR head checkout or a base/head event that differs from the tested merge", async () => {
+    const f = await featureFixture()
+    const changed = structuredClone(f.event); changed.pull_request.base.sha = f.head
+    writeFileSync(f.eventPath, JSON.stringify(changed))
+    expect(() => f.module.verificationContext(f.source, f.browser, f.env)).toThrow()
+    writeFileSync(f.eventPath, JSON.stringify(f.event))
+    f.git("checkout", "--detach", "-q", f.head)
+    expect(() => f.module.verificationContext(f.source, f.browser, { ...f.env, GITHUB_SHA: f.head })).toThrow()
   })
   it.each([
     { GITHUB_SHA: "a".repeat(40) }, { GITHUB_REPOSITORY: "other/repo" }, { GITHUB_EVENT_NAME: "push" },
@@ -107,15 +147,15 @@ describe("current-source verification browser", () => {
     }, () => { ran = true })).toThrow(/cannot write a publication/)
     expect(ran).toBe(false)
   })
-  it("wires the exact browser into full and both packed topologies while preserving publication controls", () => {
+  it("wires the exact browser into feature topologies without repeating it in publication", () => {
     const ci = readFileSync(".github/workflows/ci.yml", "utf8")
     expect(ci).toContain('node scripts/verification-browser.mjs prepare "${GITHUB_WORKSPACE}" "${RUNNER_TEMP}/verification-browser"')
     expect(ci).toContain('node node_modules/@playwright/test/cli.js test --config="${RUNNER_TEMP}/verification-browser/real-bamboo.config.mjs"')
-    expect(ci).toContain('--current-source --verification-browser "${RUNNER_TEMP}/verification-browser"')
-    expect(ci).toContain("name: real-bamboo-verification-browser")
+    expect(ci).toContain('feature-bamboo-package.mjs surface ${{ matrix.mode }} "${RUNNER_TEMP}/feature-bamboo-package" "${RUNNER_TEMP}/verification-browser"')
+    expect(ci).toContain("name: real-bamboo-verification-browser-attempt-${{ github.run_attempt }}\n")
     const publication = readFileSync(".github/workflows/publish-npm.yml", "utf8")
-    expect(publication).toContain('scripts/verification-browser.mjs "${RUNNER_TEMP}/release-control/"')
-    expect(publication).toContain('--current-source --accepted-identity "${ACCEPTED_IDENTITY_PATH}" --publication-browser "${RUNNER_TEMP}/release-browser"')
+    expect(publication).toContain("run: node scripts/release-source.mjs")
+    expect(publication).not.toContain("--publication-browser")
     expect(publication).not.toContain("--verification-browser")
   })
 })

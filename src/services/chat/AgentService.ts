@@ -1,3 +1,4 @@
+import { isRetryRunId, type UpstreamRetrySelection } from "./upstreamRetry";
 import type { PublicRunDiagnostic } from "./runDiagnostic"
 import { uiText } from "@shared/i18n/ui"
 import { debugLog } from "@shared/utils/debugFlags";
@@ -490,6 +491,8 @@ export interface ExecuteResponse {
 }
 
 export interface ExecuteRequest {
+  upstream_retry?: UpstreamRetrySelection;
+  live_bootstrap_resume?: boolean;
   model?: string;
   model_ref?: { provider: string; model: string };
   provider?: string;
@@ -1340,8 +1343,12 @@ export class AgentClient {
     reasoningEffort?: ReasoningEffort,
     clientSync?: ExecuteClientSync,
     modelRef?: { provider: string; model: string },
+    upstreamRetry?: UpstreamRetrySelection,
+    liveBootstrapResume?: boolean,
   ): Promise<ExecuteResponse> {
     const payload: ExecuteRequest = {};
+    if (upstreamRetry) payload.upstream_retry = upstreamRetry;
+    if (liveBootstrapResume === true) payload.live_bootstrap_resume = true;
     if (model) {
       payload.model = model;
     }
@@ -2039,7 +2046,13 @@ export class AgentClient {
   /**
    * Stop generation for a session
    */
-  async stopGeneration(sessionId: string): Promise<void> {
+  async stopGeneration(sessionId: string, runId?: string): Promise<void> {
+    if (runId !== undefined) {
+      if (!isRetryRunId(runId)) throw new Error("Invalid execution identity");
+      // The realtime Stop is session-scoped; use only the exact-run REST path.
+      await apiClient.post(`stop/${encodeURIComponent(sessionId)}`, undefined, { headers: { "Bamboo-Run-Id": runId } });
+      return;
+    }
     // Send the control frame first: it shares the already-live agent socket and
     // cannot sit behind chat submission work. REST is a fallback only when no
     // protocol-ready socket exists. Sending both could let a late REST request

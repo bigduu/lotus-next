@@ -194,7 +194,7 @@ test("a failed source run keeps its completed live tool until canonical history 
   await expect(input).toHaveText("Keep this new unsent draft.")
   expect(writes).toEqual(["POST /api/v1/chat", `POST /api/v1/execute/${oldId}`])
   expect(observation.pageErrors).toEqual([])
-  expect(observation.errorResponses.every((error) => error === `503 ${standaloneScenario.origin}/api/v1/history/${oldId}`)).toBe(true)
+  expect(observation.errorResponses.filter((error) => error !== `503 ${standaloneScenario.origin}/api/v1/history/${oldId}`)).toEqual([])
 })
 
 test("a candidate typed Source rejection preserves the unsent draft and the original saved source", async ({ page }, info) => {

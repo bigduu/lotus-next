@@ -4,6 +4,7 @@ export const diagnosticStopGuidance = {
   attempts_exhausted: "Automatic retry attempt limit reached",
   time_budget_exhausted: "Automatic retry time budget exhausted",
   retry_delay_exceeds_budget: "Required retry delay exceeds the remaining time budget",
+  retry_delay_too_large: "Required retry delay is too large to schedule safely",
   non_retryable_transport: "Transport failure is not automatically retryable",
   unclassified_error_body: "Upstream error response could not be safely classified",
   cancelled_or_dropped: "Request cancelled or its caller stopped waiting",
@@ -14,9 +15,10 @@ export interface PublicRequestDiagnostic {
   kind?: never
   schema_version: 1; diagnostic_id: string; request_id: string; error_id: string
   observed_at: string; provider: "anthropic"; session_hash: string; run_id: string | null
-  attempt: number; attempt_limit: number; event: "stop"; phase: DiagnosticPhase
-  failure: string; status: number | null; attempt_timeout_ms: number; total_budget_ms: number
-  attempt_elapsed_ms: number; total_elapsed_ms: number; remaining_budget_ms: number
+  retry_mode?: "until_cancelled"
+  attempt: number; attempt_limit: number | null; event: "stop"; phase: DiagnosticPhase
+  failure: string; status: number | null; attempt_timeout_ms: number; total_budget_ms: number | null
+  attempt_elapsed_ms: number; total_elapsed_ms: number; remaining_budget_ms: number | null
   retry_delay_ms: number | null; stop_reason: DiagnosticStopReason
   upstream_outcome: "unknown" | "response_received"
 }
@@ -62,7 +64,7 @@ export function generatedDiagnosticError(d: PublicRunDiagnostic): string {
   }
   return "Anthropic upstream request failed (" + (d.status === null ? "no HTTP response" : "HTTP " + d.status)
     + "): " + d.failure + ". " + diagnosticStopGuidance[d.stop_reason] + " after " + d.attempt
-    + " request(s) (limit " + d.attempt_limit + "). Diagnostic ID: " + d.diagnostic_id
+    + " request(s)" + (d.attempt_limit === null ? "" : " (limit " + d.attempt_limit + ")") + ". Diagnostic ID: " + d.diagnostic_id
     + ". Try again later or contact the upstream gateway administrator."
 }
 
@@ -70,7 +72,7 @@ export function generatedDiagnosticError(d: PublicRunDiagnostic): string {
 export function decodeRunDiagnostic(value: unknown, sessionId: string, error: string): Readonly<PublicRunDiagnostic> | null {
   try {
     const v = record(value), keys = Object.keys(v)
-    const allowed = v.kind === "stream_timeout" ? timeoutFields : fields
+    const allowed = v.kind === "stream_timeout" ? timeoutFields : v.retry_mode === "until_cancelled" ? [...fields,"retry_mode"] : fields
     if (keys.length !== allowed.length || keys.some((k) => !allowed.includes(k))) return null
     if (v.schema_version !== 1) return null
     if (typeof v.diagnostic_id !== "string" || !budgetUuid.test(v.diagnostic_id)
@@ -84,19 +86,25 @@ export function decodeRunDiagnostic(value: unknown, sessionId: string, error: st
     if (new TextEncoder().encode(JSON.stringify(v)).length > 4096) return null
     if (v.kind === "stream_timeout") return decodeStreamTimeout(v, error)
     if (v.provider !== "anthropic" || v.event !== "stop" || v.request_id !== v.diagnostic_id) return null
-    if (!nat(v.attempt_limit) || v.attempt_limit < 1 || v.attempt_limit > 4 || !nat(v.attempt) || v.attempt > v.attempt_limit) return null
+    if (!nat(v.attempt)) return null
+    if (v.retry_mode === "until_cancelled") {
+      if (v.attempt_limit !== null || v.total_budget_ms !== null || v.remaining_budget_ms !== null
+        || ["attempts_exhausted","time_budget_exhausted","retry_delay_exceeds_budget"].includes(v.stop_reason as string)) return null
+    } else if (!nat(v.attempt_limit) || v.attempt_limit < 1 || v.attempt > v.attempt_limit
+      || !nat(v.total_budget_ms) || v.total_budget_ms > 3_600_000 || !nat(v.remaining_budget_ms)
+      || v.remaining_budget_ms > v.total_budget_ms) return null
     if (v.status !== null && (!nat(v.status) || v.status < 100 || v.status > 599)) return null
     if (!["send_headers","error_body","response_status","backoff"].includes(v.phase as string)
       || !["unknown","response_received"].includes(v.upstream_outcome as string)
       || typeof v.failure !== "string" || !failures.has(v.failure)
       || typeof v.stop_reason !== "string" || !Object.hasOwn(diagnosticStopGuidance, v.stop_reason)) return null
-    for (const k of ["attempt_timeout_ms","total_budget_ms","attempt_elapsed_ms","total_elapsed_ms","remaining_budget_ms"]) if (!nat(v[k])) return null
-    if ((v.attempt_timeout_ms as number) > 60_000 || (v.total_budget_ms as number) > 60_000
-      || (v.remaining_budget_ms as number) > (v.total_budget_ms as number)) return null
+    for (const k of ["attempt_timeout_ms","attempt_elapsed_ms","total_elapsed_ms"]) if (!nat(v[k])) return null
+    if ((v.attempt_timeout_ms as number) > 60_000) return null
     if (v.retry_delay_ms !== null && !nat(v.retry_delay_ms)) return null
     const d = v as unknown as PublicRequestDiagnostic
     if (diagnosticErrorText(error) !== generatedDiagnosticError(d)) return null
     return Object.freeze({
+      ...(d.retry_mode ? { retry_mode: d.retry_mode } : {}),
       schema_version:1, diagnostic_id:d.diagnostic_id, request_id:d.request_id, error_id:d.error_id,
       observed_at:d.observed_at, provider:d.provider, session_hash:d.session_hash, run_id:d.run_id,
       attempt:d.attempt, attempt_limit:d.attempt_limit, event:d.event, phase:d.phase, failure:d.failure, status:d.status,
