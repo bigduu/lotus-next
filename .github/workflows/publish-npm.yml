@@ -8,7 +8,7 @@ on:
         required: true
         type: string
       source_ref:
-        description: "Accepted annotated release tag (refs/tags/lotus-next-vVERSION)"
+        description: "Formal tag to claim before building (refs/tags/lotus-next-vVERSION); do not pre-create it"
         required: true
         type: string
       expected_source_sha:
@@ -44,7 +44,7 @@ jobs:
     name: Validate publication request
     if: github.ref == 'refs/heads/dev' && github.ref_protected
     permissions:
-      contents: read
+      contents: write
       actions: read
       pull-requests: read
     outputs:
@@ -80,10 +80,11 @@ jobs:
           SOURCE_REF_INPUT: ${{ inputs.source_ref }}
           EXPECTED_SOURCE_SHA_INPUT: ${{ inputs.expected_source_sha }}
           EXPECTED_WORKFLOW_SHA: ${{ github.workflow_sha }}
+          LOTUS_RELEASE_TAG_RULESET_ID: ${{ vars.LOTUS_RELEASE_TAG_RULESET_ID }}
           SOURCE_RECEIPT_PATH: ${{ runner.temp }}/release-source-receipt.json
-        run: node scripts/release-source.mjs
+        run: node scripts/release-source.mjs reserve
 
-      - name: Validate version, source, and registry vacancy
+      - name: Validate version and clean controller source
         env:
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
@@ -95,16 +96,6 @@ jobs:
           test "${GITHUB_REF}" = "refs/heads/dev"
           test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
           test -z "$(git status --porcelain --untracked-files=all)"
-          if npm view "@bigduu/lotus-next@${LOTUS_NEXT_RELEASE_VERSION}" version \
-            > "${RUNNER_TEMP}/npm-view.out" 2> "${RUNNER_TEMP}/npm-view.err"; then
-            echo "::error::@bigduu/lotus-next@${LOTUS_NEXT_RELEASE_VERSION} is already published."
-            exit 1
-          fi
-          if ! grep -q "E404" "${RUNNER_TEMP}/npm-view.err"; then
-            cat "${RUNNER_TEMP}/npm-view.err" >&2
-            echo "::error::The registry did not prove that the requested version is vacant."
-            exit 1
-          fi
 
       - name: Upload the run-bound release source receipt
         id: receipt
@@ -346,6 +337,7 @@ jobs:
           SOURCE_REF_INPUT: ${{ inputs.source_ref }}
           EXPECTED_SOURCE_SHA_INPUT: ${{ inputs.expected_source_sha }}
           EXPECTED_WORKFLOW_SHA: ${{ github.workflow_sha }}
+          LOTUS_RELEASE_TAG_RULESET_ID: ${{ vars.LOTUS_RELEASE_TAG_RULESET_ID }}
           SOURCE_RECEIPT_PATH: ${{ runner.temp }}/fresh-release-source-receipt.json
         run: node scripts/release-source.mjs
 

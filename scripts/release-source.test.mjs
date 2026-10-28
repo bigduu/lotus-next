@@ -13,7 +13,9 @@ const currentPublication = readFileSync(".github/workflows/publish-npm.yml", "ut
 // Small structural fixture for the historical parser; no shallow-Git dependency.
 const legacyPublication = currentPublication
   .replace("      source_receipt_artifact_id: ${{ steps.receipt.outputs.artifact-id }}\n", "")
-  .replace("    permissions:\n      contents: read\n      actions: read\n      pull-requests: read\n", "")
+  .replace("    permissions:\n      contents: write\n      actions: read\n      pull-requests: read\n", "")
+  .replace("        run: node scripts/release-source.mjs reserve", "        run: node scripts/release-source.mjs")
+  .replaceAll("          LOTUS_RELEASE_TAG_RULESET_ID: ${{ vars.LOTUS_RELEASE_TAG_RULESET_ID }}\n", "")
   .replace("          GH_TOKEN: ${{ github.token }}\n          FEATURE_PR_INPUT: ${{ inputs.feature_pr }}\n", "")
   .replaceAll("    if: github.ref == 'refs/heads/dev' && github.ref_protected\n", "")
   .replace("  build:\n", "  real-bamboo:\n")
