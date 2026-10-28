@@ -15,7 +15,7 @@ const stageLabels = { send_headers:"run_diagnostics_phase_headers", error_body:"
   first_semantic:"run_diagnostics_phase_first_semantic", semantic_idle:"run_diagnostics_phase_semantic_idle" } as const
 const stopLabels = { attempts_exhausted:"run_diagnostics_stop_attempts", time_budget_exhausted:"run_diagnostics_stop_time",
   retry_delay_exceeds_budget:"run_diagnostics_stop_delay", non_retryable_transport:"run_diagnostics_stop_transport",
-  unclassified_error_body:"run_diagnostics_stop_body", cancelled_or_dropped:"run_diagnostics_stop_cancelled" } as const
+  retry_delay_too_large:"run_diagnostics_stop_delay_too_large", unclassified_error_body:"run_diagnostics_stop_body", cancelled_or_dropped:"run_diagnostics_stop_cancelled" } as const
 
 export function RunDiagnosticsDialogContent({ subject, isCurrent, onClose, download = downloadRunDiagnostics, readSession = readCanonical }: {
   subject: RunDiagnosticsSubject
@@ -83,7 +83,7 @@ export function RunDiagnosticsDialogContent({ subject, isCurrent, onClose, downl
           <dt>{t("run_diagnostics_semantic_gap")}</dt><dd>{detail.semantic_output_started ? `${detail.last_semantic_ms_ago} ms` : t("run_diagnostics_output_not_started")}</dd>
           <dt>{t("run_diagnostics_retry_safety")}</dt><dd>{t(detail.retry_safe ? "run_diagnostics_retry_safe" : "run_diagnostics_retry_unsafe")}</dd>
         </> : <>
-          <dt>{t("run_diagnostics_attempts")}</dt><dd>{detail?.attempt !== null && detail?.attempt !== undefined ? String(detail.attempt) + " / " + detail.attempt_limit : t("run_diagnostics_not_provided")}</dd>
+          <dt>{t("run_diagnostics_attempts")}</dt><dd>{detail?.attempt !== null && detail?.attempt !== undefined ? detail.retry_mode === "until_cancelled" ? t("run_diagnostics_continuous_attempts", { count: detail.attempt }) : String(detail.attempt) + " / " + detail.attempt_limit : t("run_diagnostics_not_provided")}</dd>
           <dt>{t("run_diagnostics_stop_reason")}</dt><dd>{detail?.retry_stop_reason ? t(stopLabels[detail.retry_stop_reason]) : t("run_diagnostics_not_provided")}</dd>
         </>}
       </dl>

@@ -1,3 +1,5 @@
+import { LiveBootstrapRetryNotice } from "@/components/chat/LiveBootstrapRetryNotice"
+import { useLiveBootstrapRetry } from "@/hooks/useLiveBootstrapRetry"
 import { useSessionDrop } from "@/hooks/useSessionDrop"
 import type { ComposerInputHandle } from "@/components/chat/ComposerEditor"
 import { uiText, useUiLocale } from "@shared/i18n/ui"
@@ -307,6 +309,8 @@ export function ChatPane({
 
   const queue = useGuidanceQueue(currentSessionId, currentlyRunning)
   const rootAuthority = useRootOrchestrationMode(currentSessionId, currentChat?.kind)
+  const liveRetry = useLiveBootstrapRetry(currentSessionId, currentlyRunning, rootAuthority.isRoot)
+  const stopWithLiveFence = () => { liveRetry.cancelForStop(); stop() }
   // Invalidate cached Work eligibility on mode/lifecycle changes. This key is
   // only a local read fence; initialization revision still comes from scope GET.
   const workAuthorityKey = `${rootAuthority.authority?.birthToken ?? ""}:${rootAuthority.authority?.epoch ?? ""}:${rootAuthority.authority?.enabled ?? ""}`
@@ -831,19 +835,25 @@ export function ChatPane({
       && liveSendRef.current === send
       && (!!secondary || useAppStore.getState().currentSessionId === currentSessionId)
       && getNavigationVersion?.() === originNavigationVersion
-    const sendSnapshot = (path: string | null) => send(finalText, {
-      skillIds: snapshot.selectedSkill ? [snapshot.selectedSkill.id] : undefined,
-      ...(snapshot.typedWorkflow ? { workflowSelection: snapshot.typedWorkflow } : {}),
-      images: images.length ? images : undefined,
-      workspacePath: path,
-      projectId: snapshot.projectId,
-      templatePrompt: snapshot.templatePrompt,
-      permissionMode: snapshot.permissionMode ?? undefined,
-      rootOrchestrationOnly: snapshot.rootOrchestrationOnly,
-      thinkingMode: snapshot.thinkingMode,
-      reasoningSelection: snapshot.reasoningSelection,
-      ...(prepareWorktree ? { isOriginCurrent } : {}),
-    })
+    const sendSnapshot = (path: string | null) => {
+      const submitSnapshot = (liveBootstrapResume: boolean) => send(finalText, {
+        skillIds: snapshot.selectedSkill ? [snapshot.selectedSkill.id] : undefined,
+        ...(snapshot.typedWorkflow ? { workflowSelection: snapshot.typedWorkflow } : {}),
+        images: images.length ? images : undefined,
+        workspacePath: path,
+        projectId: snapshot.projectId,
+        templatePrompt: snapshot.templatePrompt,
+        permissionMode: snapshot.permissionMode ?? undefined,
+        rootOrchestrationOnly: snapshot.rootOrchestrationOnly,
+        thinkingMode: snapshot.thinkingMode,
+        reasoningSelection: snapshot.reasoningSelection,
+        ...(prepareWorktree ? { isOriginCurrent } : {}),
+        ...(liveBootstrapResume ? { liveBootstrapResume: true } : {}),
+      })
+      const negotiated = liveRetry.prepareInitial()
+      return typeof negotiated === "boolean" ? submitSnapshot(negotiated)
+        : negotiated.then((ready) => isOriginCurrent() ? submitSnapshot(ready) : { kind: "blocked" as const })
+    }
     // React pending state cannot guard two submit callbacks in the same event.
     submissionActiveRef.current = true
     const submission = semanticComposer && currentSessionId
@@ -1180,7 +1190,7 @@ export function ChatPane({
             {secondary?.historyRead?.status === "error" ? (
               <Button variant="outline" size="sm" onClick={secondary.historyRead.retry}>{uiText("retry_b8784c8d")}</Button>
             ) : null}
-            {currentlyRunning ? <Button variant="outline" size="sm" onClick={stop}>{uiText("stop_generation_9ad0aac3")}</Button> : null}
+            {currentlyRunning ? <Button variant="outline" size="sm" onClick={stopWithLiveFence}>{uiText("stop_generation_9ad0aac3")}</Button> : null}
           </div>
         ) : !currentSessionId && !secondary && !sending && !pendingUserText && pendingUserImages.length === 0 && !pendingUserMessages?.length ? (
           // Main-pane home view: session shortcuts + quick-start templates.
@@ -1295,6 +1305,21 @@ export function ChatPane({
           </div>
         ) : null}
 
+        <LiveBootstrapRetryNotice offer={liveRetry.offer} disabled={executionBlocked || rootMode.unsafe || modelSaving}
+          onConfirm={() => { if (!rootSessionUnsafe()) void liveRetry.confirm() }} onStop={() => void liveRetry.stop()} />
+
+        {chat.upstreamRetryStatus ? <p role="status" className="mx-4 mb-2 text-xs text-muted-foreground">
+          {uiText(chat.upstreamRetryStatus === "requesting" ? "upstream_retry_requesting"
+            : chat.upstreamRetryStatus === "already_running" ? "upstream_retry_already_running"
+            : chat.upstreamRetryStatus === "enabled" ? "upstream_retry_enabled"
+            : chat.upstreamRetryStatus === "stopping" ? "upstream_retry_stopping"
+              : chat.upstreamRetryStatus === "stop_requested" ? "upstream_retry_stop_requested"
+                : chat.upstreamRetryStatus === "not_started" ? "upstream_retry_not_started"
+                : chat.upstreamRetryStatus === "unavailable" ? "upstream_retry_unavailable"
+                  : chat.upstreamRetryStatus === "identity_unsaved" ? "upstream_retry_identity_unsaved"
+                    : chat.upstreamRetryStatus === "identity_unavailable" ? "upstream_retry_identity_unavailable" : "upstream_retry_stop_unconfirmed")}
+        </p> : null}
+
         {queue.error && <div role="alert" className="mx-auto mb-1 w-[calc(100%-1.5rem)] max-w-full rounded-lg border border-destructive/40 px-3 py-2 text-xs text-destructive">{queue.error}</div>}
         {workPanelTarget ? createPortal(ticketScope?.binding.supervisor_session_id === currentSessionId ? (
           <LazyTicketWorkPanel key={currentSessionId} onReady={focusWorkPanel} controller={tickets} selectedWorkId={selectedWorkId} onShowAll={() => openTicketWork(null)} onReference={tickets.canSendIngress && ticketScope.capabilities?.message_references_v1 === true && !pendingTicketMessage ? (request) => {
@@ -1335,7 +1360,7 @@ export function ChatPane({
           onDraftChange={setDraft}
           executionBlocked={executionBlocked}
           onSubmit={submit}
-          onStop={stop}
+          onStop={stopWithLiveFence}
           sending={currentlyRunning}
           queueMode={queue.mode}
           onQueueModeChange={currentSessionId && !submissionPending && !semanticComposer ? queue.setMode : undefined}
