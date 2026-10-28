@@ -106,6 +106,20 @@ const submissionRejectionCode = (error: unknown): SubmissionRejectionCode | null
   }
 }
 
+// This provisional producer response explicitly refuses this request before it
+// starts. A generic conflict, missing session binding, or lost response is not
+// proof of non-start and must keep the pending identity fence.
+const isUnpreparedContinuousRetryRefusal = (error: unknown, sessionId: string): boolean => {
+  if (!isApiError(error) || error.status !== 409 || !error.body) return false
+  try {
+    const body: unknown = JSON.parse(error.body)
+    if (!body || typeof body !== "object" || Array.isArray(body) || Object.hasOwn(body, "run_id")) return false
+    const value = body as { session_id?: unknown; error?: unknown }
+    if (value.session_id !== sessionId || !value.error || typeof value.error !== "object" || Array.isArray(value.error)) return false
+    return (value.error as { code?: unknown }).code === "retry_resume_not_prepared"
+  } catch { return false }
+}
+
 export type GenerationFailure = {
   diagnostic?: Readonly<PublicRunDiagnostic>
   kind: "generation-failed"
@@ -1105,6 +1119,8 @@ export function useChat(
         const executeModel = opts?.modelSelection?.model ?? effectiveModel
         const executeModelRef = opts?.modelSelection ? opts.modelSelection.modelRef : effectiveModelRef
         let ownFence: ContinuousStopFence | null = null
+        let previousFence: ContinuousStopFence | undefined
+        let previousPaneFence: ContinuousStopFence | undefined
         const execution = opts?.upstreamRetry
           ? agentClient.execute(runSid, executeModel || undefined, executeReasoningEffort, undefined, executeModelRef, opts.upstreamRetry)
           : startOrdinaryExecution(runSid, operationId, () => agentClient.execute(runSid, executeModel || undefined, executeReasoningEffort, undefined, executeModelRef))
@@ -1116,6 +1132,8 @@ export function useChat(
             if (ack?.session_id !== runSid || ack.status !== "started" || !isRetryRunId(ack.run_id)) throw new Error("Execution did not start with a valid identity")
             return stopExactContinuousRun(runSid, ack.run_id, onDispatched)
           })) }
+          previousFence = continuousStopFences.get(runSid)
+          previousPaneFence = paneStopFencesRef.current.get(runSid)
           continuousStopFences.set(runSid, ownFence)
           paneStopFencesRef.current.set(runSid, ownFence)
         }
@@ -1146,16 +1164,35 @@ export function useChat(
             ac.abort()
           }
         }).catch((err) => {
+          const refused = !!reservation && isUnpreparedContinuousRetryRefusal(err, runSid)
+          if (refused && reservation && ownFence) {
+            // The response may arrive after navigation, Stop, or a successor.
+            // The storage compare-and-restore protects every newer reservation.
+            const restored = restoreConfirmedUnstartedRetryFence(reservation)
+            const ownsSharedFence = continuousStopFences.get(runSid) === ownFence
+            const ownsPaneFence = paneStopFencesRef.current.get(runSid) === ownFence
+            if (restored && ownsSharedFence && ownsPaneFence && mountedRef.current
+                && navigationRef.current.sessionId === runSid)
+              setUpstreamRetryFeedback((current) => current?.sessionId === runSid && current.operationId === operationId
+                ? { ...current, status: "not_started" } : current)
+            if (restored && ownsSharedFence) {
+              if (reservation.priorTabRaw !== null && previousFence) continuousStopFences.set(runSid, previousFence)
+              else continuousStopFences.delete(runSid)
+            }
+            if (restored && ownsPaneFence) {
+              if (reservation.priorTabRaw !== null && previousPaneFence) paneStopFencesRef.current.set(runSid, previousPaneFence)
+              else paneStopFencesRef.current.delete(runSid)
+            }
+          }
           if (!ownsStream()) return
           observeSessionExecutionConflict(runSid, err)
-          // The run never started, so no terminal will ever arrive — settle
-          // the subscription instead of leaving it (and the UI) hanging.
+          // A refusal settles the stream; unknown delivery remains guarded.
           publishSendFailure({
             kind: "generation-failed",
             operationId,
             sessionId: runSid,
             pendingOperationId: opts?.pendingOperationId,
-            message: toFailureMessage(err),
+            message: refused ? uiText("upstream_retry_not_started") : toFailureMessage(err),
           })
           stopStream(null, operationId)
           ac.abort()

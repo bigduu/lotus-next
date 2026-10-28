@@ -4,7 +4,7 @@ import { installArtifactRuntime, standaloneScenario } from "./support/artifactRu
 
 // Controlled API/WS contract only. This does not run provider retries or timers.
 const sid="all-surface-session", at="2026-10-27T00:00:00Z"
-async function fixture(page:Page, support:boolean, abortExecuteAck=false) {
+async function fixture(page:Page, support:boolean, abortExecuteAck=false, refuseExecute=false) {
   await page.addInitScript((id)=>{localStorage.setItem("bodhi_onboarded_v1","1");localStorage.setItem("lotus_ui_locale_v1","en-US");localStorage.setItem("lotus_next_last_session",id)},sid)
   const runtime=await installArtifactRuntime(page,standaloneScenario,[],{bootstrapRequestState:"local_bypass"})
   let supported=support, reads=0, activeRun:string|null=null
@@ -28,6 +28,7 @@ async function fixture(page:Page, support:boolean, abortExecuteAck=false) {
     if(path===`/api/v1/task/${sid}`)return route.fulfill({json:{session_id:sid,items:[]}})
     if(path===`/api/v1/respond/${sid}/pending`)return route.fulfill({json:{has_pending_question:false}})
     if(path===`/api/v1/execute/${sid}`&&req.method()==="POST") {
+      if(refuseExecute)return route.fulfill({status:409,json:{session_id:sid,error:{code:"retry_resume_not_prepared",message:"synthetic private server detail"}}})
       activeRun="synthetic-original-run";session.is_running=true
       if(abortExecuteAck)return route.abort("failed")
       return route.fulfill({json:{session_id:sid,status:"started",run_id:activeRun,events_url:`/api/v1/events/${sid}`}})
@@ -107,6 +108,22 @@ test("a lost Execute ACK survives reload as unknown and never sends an unfenced 
   expect(f.writes).toHaveLength(1)
   expect(f.cancelledRuns).toEqual([])
   expect(f.runtime.clientFrames.filter((x)=>!!x&&typeof x==="object"&&"type" in x&&x.type==="stop")).toEqual([])
+})
+test("a scoped 409 reports that retry did not start and permits a fresh explicit request",async({page})=>{
+  const f=await fixture(page,true,false,true),action=page.getByRole("button",{name:"Retry connection until stopped",exact:true})
+  await action.click()
+  await expect(page.getByRole("status").filter({hasText:"The retry did not start. Review the session before trying again."})).toBeVisible()
+  await expect(page.getByText("Continuous connection retries are enabled for this run.",{exact:false})).toHaveCount(0)
+  await expect(page.getByText("Earlier completed reply",{exact:true})).toBeVisible()
+  await expect(page.getByText("synthetic private server detail",{exact:true})).toHaveCount(0)
+  await expect(action).toBeEnabled()
+  await action.click()
+  await expect.poll(()=>f.writes.length).toBe(2)
+  expect(f.writes.every((entry)=>entry.path===`/api/v1/execute/${sid}`&&
+    (entry.body as {upstream_retry?:{mode?:string}})?.upstream_retry?.mode==="until_cancelled")).toBe(true)
+  expect(f.cancelledRuns).toEqual([])
+  expect(f.runtime.clientFrames.filter((x)=>!!x&&typeof x==="object"&&"type" in x&&x.type==="stop")).toEqual([])
+  expect(f.runtime.pageErrors).toEqual([])
 })
 test("old producer hides continuous retry while keeping ordinary retry available",async({page})=>{
   const f=await fixture(page,false)

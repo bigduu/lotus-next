@@ -4390,6 +4390,168 @@ describe("explicit continuous upstream retry", () => {
     await act(async () => { hook.current.stop(); for (let i=0;i<8;i++) await Promise.resolve() })
     expect(mocks.stopGeneration).toHaveBeenCalledExactlyOnceWith(target, "ordinary-exact")
   })
+  const refusedResume = (sessionId: string) => new ApiError("synthetic private server detail", 409, "Conflict", JSON.stringify({
+    session_id: sessionId, error: { code: "retry_resume_not_prepared", message: "synthetic private server detail" },
+  }))
+  const abortableSubscription = (_sid: string, _h: SubscriptionHandlers, controller: AbortController) => {
+    const sub = deferred<void>()
+    controller.signal.addEventListener("abort", () => sub.resolve(), { once: true })
+    return sub.promise
+  }
+
+  it("cleans only the refused 409 retry and allows a later explicit run", async () => {
+    allow()
+    const id = "resume-refused-own-operation"
+    const messages = [{ id: "saved-user", role: "user", content: "Synthetic instruction", createdAt: "" },
+      { id: "saved-answer", role: "assistant", type: "text", content: "Synthetic answer", createdAt: "" }]
+    mocks.appState.chats = [{ id, messages, lastRunStatus: "error", config: { model: "test-model" } }]
+    const reply = deferred<{ session_id: string; status: "started"; run_id: string }>()
+    mocks.execute.mockReturnValueOnce(reply.promise).mockResolvedValueOnce({ session_id: id, status: "started", run_id: "later-exact-run" })
+    mocks.stopGeneration.mockResolvedValue(undefined)
+    mocks.subscribeToEvents.mockImplementation(abortableSubscription)
+    const hook = await mountUseChat({ mode: "bound", sessionId: id })
+    let first!: Promise<void>, second!: Promise<void>
+    await act(async () => { first = hook.current.retry(undefined, options); await Promise.resolve() })
+    expect(readContinuousRetryFence("https://fixture.test/api/v1", id)).toEqual({ kind: "pending" })
+    await act(async () => { reply.reject(refusedResume(id)); await first })
+    expect(readContinuousRetryFence("https://fixture.test/api/v1", id)).toEqual({ kind: "ambiguous" })
+    expect(hook.current.upstreamRetryStatus).toBe("not_started")
+    expect(hook.current.streamPhase).toBeNull()
+    expect(hook.current.sendFailure?.message).not.toContain("synthetic private server detail")
+    expect(mocks.appState.chats[0].messages).toEqual(messages)
+    expect(mocks.sendMessage).not.toHaveBeenCalled()
+    expect(mocks.truncateSessionMessages).not.toHaveBeenCalled()
+    expect(mocks.stopGeneration).not.toHaveBeenCalled()
+    await act(async () => { second = hook.current.retry(undefined, options); await Promise.resolve(); await Promise.resolve() })
+    expect(mocks.execute).toHaveBeenCalledTimes(2)
+    expect(hook.current.upstreamRetryStatus).toBe("enabled")
+    await act(async () => { hook.current.stop(); await second })
+    expect(mocks.stopGeneration).toHaveBeenCalledExactlyOnceWith(id, "later-exact-run")
+  })
+
+  it("cleans a refused 409 retry even after Stop was clicked while its ACK was pending", async () => {
+    allow()
+    const id = "resume-refused-after-stop"
+    mocks.appState.chats = [{ id, messages: [], lastRunStatus: "error", config: { model: "test-model" } }]
+    const reply = deferred<{ session_id: string; status: "started"; run_id: string }>()
+    mocks.execute.mockReturnValue(reply.promise)
+    mocks.subscribeToEvents.mockImplementation(abortableSubscription)
+    const hook = await mountUseChat({ mode: "bound", sessionId: id })
+    let request!: Promise<void>
+    await act(async () => { request = hook.current.retry(undefined, options); await Promise.resolve() })
+    await act(async () => { hook.current.stop() })
+    expect(mocks.stopGeneration).not.toHaveBeenCalled()
+    await act(async () => { reply.reject(refusedResume(id)); await request; for (let i = 0; i < 8; i++) await Promise.resolve() })
+    expect(readContinuousRetryFence("https://fixture.test/api/v1", id)).toEqual({ kind: "ambiguous" })
+    expect(hook.current.upstreamRetryStatus).toBe("not_started")
+    expect(mocks.stopGeneration).not.toHaveBeenCalled()
+  })
+
+  it("preserves the earlier ordinary receipt when a later continuous request receives a refused 409", async () => {
+    allow()
+    const id = "resume-refused-preserve-prior"
+    mocks.appState.chats = [{ id, messages: [], lastRunStatus: "error", config: { model: "test-model" } }]
+    mocks.sendMessage.mockResolvedValue({ session_id: id })
+    mocks.stopGeneration.mockResolvedValue(undefined)
+    const ordinary = deferred<{ session_id: string; status: "started"; run_id: string }>()
+    const retry = deferred<{ session_id: string; status: "started"; run_id: string }>()
+    mocks.execute.mockReturnValueOnce(ordinary.promise).mockReturnValueOnce(retry.promise)
+    mocks.subscribeToEvents.mockImplementation(abortableSubscription)
+    const first = await mountUseChat({ mode: "bound", sessionId: id })
+    const second = await mountUseChat({ mode: "bound", sessionId: id })
+    await act(async () => { await first.current.send("one synthetic message") })
+    let request!: Promise<void>
+    await act(async () => { request = second.current.retry(undefined, options); await Promise.resolve() })
+    await act(async () => { ordinary.resolve({ session_id: id, status: "started", run_id: "earlier-owned-run" }); await Promise.resolve() })
+    await act(async () => { retry.reject(refusedResume(id)); await request })
+    expect(readContinuousRetryFence("https://fixture.test/api/v1", id)).toEqual({ kind: "confirmed", runId: "earlier-owned-run" })
+    await act(async () => { first.current.stop(); for (let i = 0; i < 8; i++) await Promise.resolve() })
+    expect(mocks.stopGeneration).toHaveBeenCalledExactlyOnceWith(id, "earlier-owned-run")
+    expect(mocks.sendMessage).toHaveBeenCalledTimes(1)
+    expect(mocks.truncateSessionMessages).not.toHaveBeenCalled()
+  })
+
+  it("does not clear a successor receipt when an older request receives a delayed refused 409", async () => {
+    allow()
+    const id = "resume-refused-preserve-successor"
+    mocks.appState.chats = [{ id, messages: [], lastRunStatus: "error", config: { model: "test-model" } }]
+    const retry = deferred<{ session_id: string; status: "started"; run_id: string }>()
+    mocks.execute.mockReturnValueOnce(retry.promise).mockResolvedValueOnce({ session_id: id, status: "started", run_id: "successor-owned-run" })
+    mocks.sendMessage.mockResolvedValue({ session_id: id })
+    mocks.stopGeneration.mockResolvedValue(undefined)
+    mocks.subscribeToEvents.mockImplementation(abortableSubscription)
+    const first = await mountUseChat({ mode: "bound", sessionId: id })
+    const second = await mountUseChat({ mode: "bound", sessionId: id })
+    let request!: Promise<void>
+    await act(async () => { request = first.current.retry(undefined, options); await Promise.resolve() })
+    await act(async () => { await second.current.send("one successor message"); await Promise.resolve() })
+    expect(readContinuousRetryFence("https://fixture.test/api/v1", id)).toEqual({ kind: "confirmed", runId: "successor-owned-run" })
+    await act(async () => { retry.reject(refusedResume(id)); await request })
+    expect(readContinuousRetryFence("https://fixture.test/api/v1", id)).toEqual({ kind: "confirmed", runId: "successor-owned-run" })
+    await act(async () => { second.current.stop(); for (let i = 0; i < 8; i++) await Promise.resolve() })
+    expect(mocks.stopGeneration).toHaveBeenCalledExactlyOnceWith(id, "successor-owned-run")
+    expect(mocks.sendMessage).toHaveBeenCalledTimes(1)
+    expect(mocks.truncateSessionMessages).not.toHaveBeenCalled()
+  })
+
+  it("does not clear another tab's receipt or shared guard on a refused 409", async () => {
+    allow()
+    const id = "resume-refused-another-tab"
+    mocks.appState.chats = [{ id, messages: [], lastRunStatus: "error", config: { model: "test-model" } }]
+    const reply = deferred<{ session_id: string; status: "started"; run_id: string }>()
+    mocks.execute.mockReturnValue(reply.promise)
+    mocks.subscribeToEvents.mockImplementation(abortableSubscription)
+    const hook = await mountUseChat({ mode: "bound", sessionId: id })
+    let request!: Promise<void>
+    await act(async () => { request = hook.current.retry(undefined, options); await Promise.resolve() })
+    const guardKey = localStorage.key(0)!, guard = localStorage.getItem(guardKey)
+    sessionStorage.clear() // Simulate another tab's independent session storage.
+    const otherTab = beginContinuousRetryFence("https://fixture.test/api/v1", id)!
+    expect(confirmContinuousRetryFence(otherTab, "other-tab-run")).toBe(true)
+    await act(async () => { reply.reject(refusedResume(id)); await request })
+    expect(readContinuousRetryFence("https://fixture.test/api/v1", id)).toEqual({ kind: "confirmed", runId: "other-tab-run" })
+    expect(localStorage.getItem(guardKey)).toBe(guard)
+    expect(mocks.stopGeneration).not.toHaveBeenCalled()
+  })
+
+  it("cleans a refused 409 after the originating pane unmounts", async () => {
+    allow()
+    const id = "resume-refused-after-unmount"
+    mocks.appState.chats = [{ id, messages: [], lastRunStatus: "error", config: { model: "test-model" } }]
+    const reply = deferred<{ session_id: string; status: "started"; run_id: string }>()
+    mocks.execute.mockReturnValue(reply.promise)
+    mocks.subscribeToEvents.mockImplementation(abortableSubscription)
+    const hook = await mountUseChat({ mode: "bound", sessionId: id })
+    let request!: Promise<void>
+    await act(async () => { request = hook.current.retry(undefined, options); await Promise.resolve() })
+    hook.unmount()
+    await act(async () => { reply.reject(refusedResume(id)); await request; for (let i = 0; i < 8; i++) await Promise.resolve() })
+    expect(readContinuousRetryFence("https://fixture.test/api/v1", id)).toEqual({ kind: "ambiguous" })
+    expect(mocks.stopGeneration).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    new ApiError("conflict", 409, "Conflict", JSON.stringify({ session_id: "another-session", error: { code: "retry_resume_not_prepared" } })),
+    new ApiError("conflict", 409, "Conflict", JSON.stringify({ session_id: "resume-unknown-409", error: { code: "another_conflict" } })),
+    new ApiError("conflict", 409, "Conflict", JSON.stringify({ session_id: "resume-unknown-409", run_id: "conflicting-run", error: { code: "retry_resume_not_prepared" } })),
+    new ApiError("unavailable", 503, "Unavailable", JSON.stringify({ session_id: "resume-unknown-409", error: { code: "retry_resume_not_prepared" } })),
+    new ApiError("conflict", 409, "Conflict", "not-json"),
+    new NetworkRequestError(),
+  ])("keeps a refused 409 or lost response pending when its non-start cannot be attributed (%s)", async (error) => {
+    allow()
+    const id = "resume-unknown-409"
+    mocks.appState.chats = [{ id, messages: [], lastRunStatus: "error", config: { model: "test-model" } }]
+    mocks.execute.mockRejectedValue(error)
+    mocks.subscribeToEvents.mockImplementation(abortableSubscription)
+    const hook = await mountUseChat({ mode: "bound", sessionId: id })
+    await act(async () => { await hook.current.retry(undefined, options) })
+    expect(readContinuousRetryFence("https://fixture.test/api/v1", id)).toEqual({ kind: "pending" })
+    expect(hook.current.upstreamRetryStatus).not.toBe("enabled")
+    expect(mocks.stopGeneration).not.toHaveBeenCalled()
+    expect(mocks.sendMessage).not.toHaveBeenCalled()
+    expect(mocks.truncateSessionMessages).not.toHaveBeenCalled()
+  })
+
   it("permits another explicit continuous retry after a confirmed non-start", async () => {
     allow()
     mocks.execute.mockResolvedValueOnce({ session_id: sid, status: "completed" })
