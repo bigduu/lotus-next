@@ -130,6 +130,8 @@ split independent lifecycle, recovery or persistence work before extending it.
 
 After the reviewed control-only bootstrap into Main, `main-promotion.yml` runs
 only on `pull_request_target` to Main and executes the exact Main workflow SHA.
+Once its ready-event update has reached Main, marking a draft ready reruns this
+read-only check. Until then, open the initial release promotion ready for review.
 It fetches PR Git objects as data; it never runs PR/package code. `Main Admission`
 requires same-repository `release/<S>`, protected Dev ancestry, the actual B/S
 merge with tree equal to S, an annotated formal tag and the original npm package,
