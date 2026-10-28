@@ -66,7 +66,7 @@ const environment = {
 
 describe("feature delivery activation boundary", () => {
   it("recognizes the complete feature graph while preserving historical graph reads", () => {
-    expect(devFeatureJobNames(readFileSync(".github/workflows/ci.yml", "utf8"))).toHaveLength(11)
+    expect(devFeatureJobNames(readFileSync(".github/workflows/ci.yml", "utf8"))).toHaveLength(14)
     expect(acceptanceJobNames(shardedWorkflow)).toHaveLength(12)
   })
 })

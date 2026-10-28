@@ -129,9 +129,13 @@ out the actual PR merge snapshot consistently in every source test job:
    desktop/tablet/phone inventory. `build` owns TypeScript compilation; `verify` does
    not invoke `type-check` again before the same build. Standalone `type-check`
    remains available while iterating, and a compiler failure still fails CI.
-3. Real Bamboo runs on every feature PR after all browser shards pass. It
-   downloads the same verified Node 24 artifact instead of rebuilding it. The
-   pinned published Bamboo executable and its same-source, compatibility-checked
+3. Real Bamboo runs on every feature PR using the same verified Node 24 artifact
+   instead of rebuilding it. An independently rerunnable chat/runtime job and
+   local/HTTPS matrix each retain their own results. A separate producer packs
+   the already-built test artifact once; both surfaces verify the original
+   same-run ZIP digest, producer attempt, source receipt, tarball and identity.
+   The matrix uses `fail-fast: false` so one failure does not cancel the other.
+   The pinned published Bamboo executable and its same-source, compatibility-checked
    browser host drive the original round trip, packed loopback and HTTPS/WSS
    surfaces. CI records the source identities and the host file hash. These
    use isolated data and deterministic
@@ -153,10 +157,13 @@ Dev protection requires `Feature acceptance`. The staged feature workflow must
 pass that real check before admission; editing YAML alone does not establish
 acceptance. Do not admit a feature while its evidence is missing or failed.
 
-For a failed shard, rerun that job and its dependencies. Other successful
-shards and the original same-run source receipt remain reusable. Source
-receipts from another source/run or a future attempt are rejected. Keep the
-first failure in the report instead of replacing it with the retry result.
+For a failed shard or real-Bamboo surface, rerun failed jobs only. Other
+successful jobs, the original same-run source receipt and test tarball remain
+reusable. A producer may pack on a later attempt only when every prior pack is
+positively known not to have started; missing, expired, damaged or unproven
+original bytes stop recovery. Source receipts from another source/run or a
+future attempt are rejected. Keep the first failure in the report instead of
+replacing it with the retry result. The test tarball is not a formal release.
 
 ## Preserve source identity
 

@@ -100,7 +100,8 @@ describe("feature merge snapshot admission", () => {
     const cli = path.resolve("scripts/feature-acceptance.mjs")
     const environment = { ...process.env, ...f.environment, FEATURE_RECEIPT_PATH: sourcePath,
       FEATURE_ACCEPTANCE_PATH: acceptedPath, GITHUB_OUTPUT: path.join(f.directory, "outputs"),
-      SOURCE_RESULT: "success", VERIFY_RESULT: "success", BROWSER_RESULT: "success", REAL_BAMBOO_RESULT: "success", NATIVE_ACTOR_RESULT: "success" }
+      SOURCE_RESULT: "success", VERIFY_RESULT: "success", BROWSER_RESULT: "success", REAL_BAMBOO_RESULT: "success",
+      REAL_BAMBOO_PACKAGE_RESULT: "success", REAL_BAMBOO_SURFACE_RESULT: "success", NATIVE_ACTOR_RESULT: "success" }
     const run = (command, changes = {}) => spawnSync(process.execPath, [cli, command], { cwd: f.root, encoding: "utf8", env: { ...environment, ...changes } })
     expect(run("source").status).toBe(0)
     const failed = run("summarize", { REAL_BAMBOO_RESULT: "skipped" })
@@ -108,13 +109,14 @@ describe("feature merge snapshot admission", () => {
     expect(failed.stderr).toContain("realBamboo")
     expect(run("summarize").status).toBe(0)
     const receipt = JSON.parse(readFileSync(acceptedPath, "utf8"))
-    expect(receipt).toMatchObject({ kind: "lotus-feature-acceptance/v1", acceptanceRunAttempt: 2,
+    expect(receipt).toMatchObject({ kind: "lotus-feature-acceptance/v2", acceptanceRunAttempt: 2,
       source: { testedSnapshot: f.snapshot, testedTree: f.tree }, gates: { realBamboo: "success", nativeActor: "success" } })
   })
 })
 
 describe("complete feature result collection", () => {
-  const results = { source: "success", verify: "success", browser: "success", realBamboo: "success", nativeActor: "success" }
+  const results = { source: "success", verify: "success", browser: "success", realBamboo: "success",
+    realBambooPackage: "success", realBambooSurface: "success", nativeActor: "success" }
   it("requires all tests before dev admission", () => expect(requireFeatureResults(results)).toBe(results))
   it.each(Object.keys(results))("propagates missing, skipped and failed %s", (name) => {
     for (const value of ["failure", "cancelled", "skipped", "", "unknown", undefined]) expect(() => requireFeatureResults({ ...results, [name]: value })).toThrow()
@@ -137,14 +139,14 @@ describe("feature workflow phase policy", () => {
   it("requires every gate and rejects success stubs or skipped real-runtime admission", () => {
     const aggregate = job("feature-acceptance")
     expect(aggregate).toContain("if: ${{ always() }}")
-    expect(aggregate).toContain("needs: [source, verify, browser-summary, real-bamboo, native-actor]")
+    expect(aggregate).toContain("needs: [source, verify, browser-summary, real-bamboo, real-bamboo-package, real-bamboo-surface, native-actor]")
     expect(aggregate).toContain("run: node scripts/feature-acceptance.mjs summarize")
-    for (const [name, id] of [["SOURCE_RESULT", "source"], ["VERIFY_RESULT", "verify"], ["BROWSER_RESULT", "browser-summary"], ["REAL_BAMBOO_RESULT", "real-bamboo"], ["NATIVE_ACTOR_RESULT", "native-actor"]]) {
+    for (const [name, id] of [["SOURCE_RESULT", "source"], ["VERIFY_RESULT", "verify"], ["BROWSER_RESULT", "browser-summary"], ["REAL_BAMBOO_RESULT", "real-bamboo"], ["REAL_BAMBOO_PACKAGE_RESULT", "real-bamboo-package"], ["REAL_BAMBOO_SURFACE_RESULT", "real-bamboo-surface"], ["NATIVE_ACTOR_RESULT", "native-actor"]]) {
       expect(aggregate).toContain(`${name}: \${{ needs.${id}.result }}`)
     }
     expect(ci).not.toContain("continue-on-error:")
     expect(job("real-bamboo")).not.toContain("workflow_dispatch")
-    expect(job("real-bamboo")).toContain("needs: [source, verify, browser-summary]")
+    expect(job("real-bamboo")).toContain("needs: [source, verify]")
   })
   it("shares the one verified Node24 dist instead of rebuilding it for real-runtime tests", () => {
     const real = job("real-bamboo")
@@ -154,6 +156,23 @@ describe("feature workflow phase policy", () => {
     expect(real).toContain("npx playwright install-deps chromium")
     expect(real).toContain("npx playwright install ffmpeg")
     expect(real).not.toContain("playwright install --with-deps")
+  })
+  it("keeps real Bamboo groups independently rerunnable while reusing one exact package", () => {
+    const producer = job("real-bamboo-package")
+    expect(producer).toContain("run: node scripts/feature-bamboo-package.mjs guard")
+    expect(producer).toContain("run: node scripts/feature-bamboo-package.mjs prepare")
+    expect(producer).toContain("name: real-bamboo-test-package")
+    expect(producer).not.toContain("overwrite: true")
+    const surface = job("real-bamboo-surface")
+    expect(surface).toContain("needs: [source, verify, real-bamboo-package]")
+    expect(surface).toContain("fail-fast: false")
+    expect(surface).toContain("        mode:\n          - local\n          - remote")
+    expect(surface).toContain("run: node scripts/feature-bamboo-package.mjs retrieve")
+    expect(surface).toContain("run: node scripts/feature-bamboo-package.mjs surface ${{ matrix.mode }}")
+    expect(surface).toContain("FEATURE_PACKAGE_ARTIFACT_ID: ${{ needs.real-bamboo-package.outputs.artifact_id }}")
+    expect(surface).toContain("test-results-real-bamboo/${{ matrix.mode }}/")
+    expect(surface).not.toMatch(/npm (?:run build|pack)/u)
+    expect(job("real-bamboo")).not.toContain("published-real-bamboo-acceptance.mjs")
   })
   it("runs Unit once on Node 22 and builds and tests browsers only on Node 24", () => {
     const verify = job("verify"), browser = job("browser")
