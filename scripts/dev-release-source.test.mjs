@@ -16,7 +16,7 @@ describe("minimal publication requires complete pre-merge Dev feature evidence",
       "Real Bamboo / Node 24": ["Verify a real chat round trip with the pinned published Bamboo", "Verify the current source artifact on local and secure browser surfaces"],
       "Native Actor acceptance / Native Actor / Node 24": ["Verify three negative controls and restored real Actor proof"] }
     for (const n of [1, 2, 3, 4]) steps[`Browser / Node 24 / shard ${n} of 4`] = ["Verify the all-surface browser shard"]
-    const jobs = { total_count: 11, jobs: devFeatureJobNames(workflow).map(name => ({ name, head_sha: head, status: "completed", conclusion: "success",
+    const jobs = { total_count: 11, jobs: devFeatureJobNames(workflow).map(name => ({ name, run_id: 10, run_attempt: 1, head_sha: head, status: "completed", conclusion: "success",
       completed_at: "2026-10-27T11:00:00Z", steps: (steps[name] || []).map(name => ({ name, status: "completed", conclusion: "success" })) })) }
     const receipt = { schemaVersion: 1, kind: "lotus-feature-acceptance/v1", source: { repository: "bigduu/lotus-next", pullRequest: 450,
       baseRef: "dev", headSha: head, baseSha: base, runId: "10", sourceRunAttempt: 1, testedSnapshot: snapshot, testedTree: tree },
@@ -37,6 +37,11 @@ describe("minimal publication requires complete pre-merge Dev feature evidence",
     const x = fixture(); x.jobs.jobs.find(j => j.name === "Real Bamboo / Node 24").steps[1].conclusion = "skipped"
     expect(() => verify(x)).toThrow()
   })
+  it("accepts successful earlier-attempt jobs when the final acceptance receipt matches its own attempt", () => {
+    const x = fixture(); x.run.run_attempt = 2; x.receipt.acceptanceRunAttempt = 2
+    x.jobs.jobs.find(job => job.name === "Feature acceptance").run_attempt = 2
+    expect(() => verify(x)).not.toThrow()
+  })
   it.each([
     ["foreign source", x => { x.pr.head.repo.full_name = "other/repo" }],
     ["Main instead of Dev", x => { x.pr.base.ref = "main" }],
@@ -44,6 +49,11 @@ describe("minimal publication requires complete pre-merge Dev feature evidence",
     ["foreign run", x => { x.run.workflow_id = 2 }],
     ["manual diagnostic", x => { x.run.event = "workflow_dispatch" }],
     ["wrong run source", x => { x.run.head_sha = x.source }],
+    ["job from another run", x => { x.jobs.jobs[0].run_id = 999 }],
+    ["future job attempt", x => { x.jobs.jobs[0].run_attempt = 2 }],
+    ["missing job attempt", x => { delete x.jobs.jobs[0].run_attempt }],
+    ["fractional job attempt", x => { x.jobs.jobs[0].run_attempt = 0.5 }],
+    ["acceptance job from another attempt", x => { x.run.run_attempt = 2; x.receipt.acceptanceRunAttempt = 2 }],
     ["fractional source attempt", x => { x.receipt.source.sourceRunAttempt = 0.5 }],
     ["fractional acceptance attempt", x => { x.receipt.acceptanceRunAttempt = 0.5 }],
     ["invalid tested snapshot", x => { x.receipt.source.testedSnapshot = "invalid" }],

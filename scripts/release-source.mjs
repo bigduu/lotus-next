@@ -105,6 +105,9 @@ export const verifyDevAcceptance = (sourceSha, pr, run, jobs, receipt, merged, t
   assert.equal(jobs.total_count, jobs.jobs.length)
   assert.deepEqual(jobs.jobs.map(job => job.name).sort(), names.sort())
   for (const job of jobs.jobs) {
+    assert.equal(job.run_id, run.id, "Feature job belongs to a different run")
+    assert.ok(Number.isSafeInteger(job.run_attempt) && job.run_attempt > 0 && job.run_attempt <= run.run_attempt,
+      "Feature job has an invalid or future attempt")
     assert.equal(job.head_sha, pr.head.sha); assert.equal(job.status, "completed"); assert.equal(job.conclusion, "success")
     assert.ok(Date.parse(job.completed_at) <= Date.parse(pr.merged_at), "Feature evidence must predate Dev admission")
   }
@@ -124,6 +127,8 @@ export const verifyDevAcceptance = (sourceSha, pr, run, jobs, receipt, merged, t
   for (const value of [source.baseSha, source.headSha, source.testedSnapshot, source.testedTree]) assert.match(value, sha)
   for (const value of [source.sourceRunAttempt, receipt.acceptanceRunAttempt]) assert.ok(Number.isSafeInteger(value) && value > 0)
   assert.ok(source.sourceRunAttempt > 0 && source.sourceRunAttempt <= receipt.acceptanceRunAttempt && receipt.acceptanceRunAttempt <= run.run_attempt)
+  assert.equal(jobs.jobs.find(job => job.name === "Feature acceptance").run_attempt, receipt.acceptanceRunAttempt,
+    "Feature acceptance job and receipt attempts differ")
   assert.equal(merged.sha, sourceSha); assert.equal(tested.sha, source.testedSnapshot)
   assert.deepEqual(merged.parents.map(item => item.sha), [source.baseSha, source.headSha])
   assert.deepEqual(tested.parents.map(item => item.sha), [source.baseSha, source.headSha])
