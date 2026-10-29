@@ -82,11 +82,11 @@ difference in the test map. Runtime acceptance, lint analysis and formal release
 outputs have distinct purposes; none may be copied into another workflow merely
 to repeat its existing gate.
 
-Lotus runs its Unit suite once on the minimum supported Node 22 and produces one
-canonical Node 24 dist for four browser case shards. Real Bamboo consumes that
-same dist. Do not repeat the Unit or browser suites or build another dist solely
-because the test-runner Node version differs. Preserve complete case coverage
-and explicit native negative-control source variants.
+The Lotus target runs its Unit suite once on the minimum supported Node 22 and
+produces one canonical Node 24 dist for four browser case shards. Real Bamboo
+consumes that same dist. Do not repeat the Unit or browser suites or build
+another dist solely because the test-runner Node version differs. Preserve
+complete case coverage and explicit native negative-control source variants.
 The selected publication/verification browser still needs its OS dependencies
 and FFmpeg for video evidence. Removing an unused default Chromium download must
 not remove those real runtime prerequisites.
@@ -121,20 +121,25 @@ Keep these identities separate:
 4. The trusted workflow controller and original build run/job/attempt.
 5. The later main promotion commit.
 
-Admission must prove the feature result belongs to the accepted inputs and
-that the frozen source preserves the tested product tree. Preserve the actual
-tested snapshot even when GitHub's eventual merge SHA differs. Equal trees do
-not make the two runtime identities interchangeable. Never relabel a release
-binary as built on a later main merge.
+Feature admission requires passing Unit/E2E for the actual tested inputs before
+the normal protected dev merge. Preserve the real test snapshot and run when
+available; equal trees do not make different runtime identities interchangeable.
+Never relabel a release binary as built on a later main merge.
+
+Lotus publication trusts the normal protected dev merge and verifies its PR,
+parents, source tree, dev ancestry and current feature gate. It does not require
+expired feature job or artifact records, and it cannot independently prove the
+details of those deleted results. Bamboo and Bodhi retain their own original
+feature-run admission requirements; follow their local release guides.
 
 Use a protected, reviewed repository controller to dispatch a selected frozen
 release source. The controller may run from `dev` or `main` according to the
 repository, but it builds only the selected `release/<SHA>` source. Do not give
 an unprotected release branch access to publishing credentials. This is the
 sole release producer; a main push or promotion does not produce it again.
-A new release-source admission contract must
-reject incomplete, skipped, failed, stale or foreign feature evidence. Historical
-compile-only or runtime-skipped receipts cannot authorize a new-contract release.
+Before a feature merges, reject incomplete, skipped, failed, stale or foreign
+feature results. Historical compile-only or runtime-skipped receipts cannot
+authorize a new-contract release.
 Retain old receipt parsers only for their explicitly frozen recovery routes.
 
 Use the one existing version allocator or explicit reviewed unused version.

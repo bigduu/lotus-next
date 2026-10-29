@@ -168,3 +168,85 @@ test("assistant link can be copied or opened as a new top-level browser tab", as
   expect(calls.filter((call) => call.method === "POST" && call.path === `${browserPath}/tabs`)).toHaveLength(3)
   expect(observation.pageErrors).toEqual([])
 })
+
+test("an in-app link waits for an in-flight browser close and opens in the reopened scope", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop-chromium", "Desktop link-to-browser regression")
+  await page.addInitScript(() => {
+    localStorage.setItem("bodhi_onboarded_v1", "1")
+    localStorage.setItem("lotus_next_last_session", "all-surface-session")
+  })
+  const observation = await installArtifactRuntime(page, standaloneScenario, [{
+    id: "assistant-link", role: "assistant", content: `[Open issue](${linkedUrl})`, created_at: "2026-09-25T00:00:00Z",
+  }])
+  const calls: Array<{ method: string; path: string; body?: Record<string, unknown> }> = []
+  let open = false, epoch = 1
+  let tabs: Array<{ tab_id: string; url: string; title: string; active: boolean }> = []
+  let releaseClose: (() => void) | undefined
+  const state = () => ({
+    profile_mode: "shared", storage_shared: true, page_epoch: epoch, frame_seq: 0,
+    active_tab_id: tabs.find((tab) => tab.active)?.tab_id ?? null, tabs,
+    url: tabs.find((tab) => tab.active)?.url ?? "", title: tabs.find((tab) => tab.active)?.title ?? "",
+    viewport: { width: 640, height: 480 }, can_go_back: false, can_go_forward: false,
+  })
+  await page.route("**/api/v1/browser/sessions/all-surface-session**", async (route) => {
+    const request = route.request(), path = new URL(request.url()).pathname, method = request.method()
+    const body = request.postData() ? request.postDataJSON() as Record<string, unknown> : undefined
+    calls.push({ method, path, ...(body ? { body } : {}) })
+    if (path === browserPath && method === "DELETE") {
+      await new Promise<void>((resolve) => { releaseClose = resolve })
+      open = false
+      return route.fulfill({ status: 204 })
+    }
+    if (path === browserPath && method === "PUT") {
+      expect(body ?? {}).toEqual({})
+      open = true; epoch += 1
+      tabs = [{ tab_id: `initial-${epoch}`, url: "about:blank", title: "Initial page", active: true }]
+      return route.fulfill({ json: state() })
+    }
+    if (!open) return route.fulfill({ status: 404, json: { error: { code: "browser_not_open", type: "browser_error", message: "closed" } } })
+    if (path === browserPath && method === "GET") return route.fulfill({ json: state() })
+    if (path === `${browserPath}/frame` && method === "GET") {
+      await new Promise((resolve) => setTimeout(resolve, 80))
+      return route.fulfill({ status: 204 })
+    }
+    if (method === "POST" && path === `${browserPath}/tabs`) {
+      expect(body?.url).toBe(linkedUrl)
+      expect(body?.expected_epoch).toBe(epoch)
+      tabs = tabs.map((tab) => ({ ...tab, active: false }))
+      tabs.push({ tab_id: `linked-${epoch}`, url: linkedUrl, title: "Linked issue", active: true })
+      epoch += 1
+      return route.fulfill({ json: state() })
+    }
+    if (method === "POST" && path === `${browserPath}/viewport`) return route.fulfill({ json: state() })
+    return route.fulfill({ status: 404 })
+  })
+
+  try {
+    await page.goto(standaloneScenario.entryUrl, { waitUntil: "domcontentloaded" })
+    await page.getByRole("button", { name: "打开侧边面板" }).click()
+    const panel = workbenchPanel(page)
+    await panel.getByRole("button", { name: /浏览器.*输入网址后打开/ }).click()
+    const browser = panel.getByRole("region", { name: "内置浏览器" })
+    await expect(browser.getByText("当前模式：共享账户")).toBeAttached()
+    if ((await browser.locator("details").getAttribute("open")) === null) await browser.locator("summary").click()
+    await browser.getByRole("button", { name: "关闭当前聊天浏览器" }).click()
+    await expect.poll(() => Boolean(releaseClose)).toBe(true)
+
+    await page.locator('[data-streamdown="link"]', { hasText: "Open issue" }).click()
+    const dialog = page.getByRole("dialog", { name: "打开外部链接？" })
+    await dialog.getByRole("button", { name: "打开链接" }).click()
+    await page.getByRole("menuitem", { name: "在应用内打开" }).click()
+    await expect(dialog).toHaveCount(0)
+    await page.waitForTimeout(200)
+    expect(calls.filter((call) => call.method === "POST" && call.path === `${browserPath}/tabs`)).toHaveLength(0)
+    expect(calls.filter((call) => call.method === "PUT")).toHaveLength(1)
+
+    releaseClose?.()
+    await expect(panel.getByRole("tab", { name: /Linked issue/ })).toHaveAttribute("aria-selected", "true")
+    expect(calls.filter((call) => call.path === browserPath && ["PUT", "DELETE"].includes(call.method)).map((call) => call.method)).toEqual(["PUT", "DELETE", "PUT"])
+    expect(calls.filter((call) => call.method === "POST" && call.path === `${browserPath}/tabs`)).toHaveLength(1)
+    expect(observation.pageErrors).toEqual([])
+  } finally {
+    releaseClose?.()
+  }
+})
