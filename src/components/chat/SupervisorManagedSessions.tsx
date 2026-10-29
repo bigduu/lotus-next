@@ -38,12 +38,22 @@ export function SupervisorManagedSessionsDialog({ open, onOpenChange, returnFocu
   const t = useUiText(), controller = useSupervisorManagedSessions(open, dependencies)
   const [scopeOpen, setScopeOpen] = useState(false)
   const scopeTrigger = useRef<HTMLButtonElement>(null)
+  const scopeClosing = useRef(false)
   const reviewed = controller.rows.find((row) => row.session_id === controller.review?.target_session_id)
+  const onScopeChange = (next: boolean) => {
+    if (!next) {
+      // Radix can dispatch the child's outside pointer event after its closing click.
+      scopeClosing.current = true
+      window.setTimeout(() => { scopeClosing.current = false }, 0)
+    }
+    setScopeOpen(next)
+    if (!next) void controller.refresh()
+  }
   return <>
-    <Dialog open={open} onOpenChange={(next) => { if (!controller.submitting && !scopeOpen) onOpenChange(next) }}>
+    <Dialog open={open} onOpenChange={(next) => { if (!controller.submitting && !scopeOpen && !scopeClosing.current) onOpenChange(next) }}>
       <DialogContent className="max-h-[85dvh] overflow-y-auto" showCloseButton={!controller.submitting}
-        onEscapeKeyDown={(event) => { if (controller.submitting || scopeOpen) event.preventDefault() }}
-        onInteractOutside={(event) => { if (controller.submitting || scopeOpen) event.preventDefault() }}
+        onEscapeKeyDown={(event) => { if (controller.submitting || scopeOpen || scopeClosing.current) event.preventDefault() }}
+        onInteractOutside={(event) => { if (controller.submitting || scopeOpen || scopeClosing.current) event.preventDefault() }}
         onCloseAutoFocus={returnFocus ? (event) => { event.preventDefault(); returnFocus() } : undefined}>
         <DialogHeader><DialogTitle>{t("supervisor_sessions_title")}</DialogTitle><DialogDescription>{t(controller.currentUser ? "supervisor_sessions_current_user_description" : "supervisor_sessions_description")}</DialogDescription></DialogHeader>
         <div className="space-y-3" data-testid="supervisor-managed-sessions">
@@ -76,8 +86,8 @@ export function SupervisorManagedSessionsDialog({ open, onOpenChange, returnFocu
           <Button variant="outline" disabled={controller.submitting} onClick={() => onOpenChange(false)}>{t("supervisor_scope_close")}</Button>
         </DialogFooter>
       </DialogContent>
-      {scopeOpen ? <SupervisorProjectScopeDialog open onOpenChange={(next) => { setScopeOpen(next); if (!next) void controller.refresh() }} returnFocus={() => scopeTrigger.current?.focus()} /> : null}
     </Dialog>
+    {scopeOpen ? <SupervisorProjectScopeDialog open onOpenChange={onScopeChange} returnFocus={() => scopeTrigger.current?.focus()} /> : null}
   </>
 }
 export function SupervisorManagedSessionsPanel({ active, onSelectSession, dependencies }: {

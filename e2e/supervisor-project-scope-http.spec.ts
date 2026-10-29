@@ -105,7 +105,8 @@ for (const [mode, text] of [["unconfirmed", "本次提交结果未确认"], ["ac
 }
 
 
-test("closing current-user scope returns to the managed-session directory", async ({ page }, info) => {
+for (const method of ["button", "icon", "escape"] as const) {
+ test(`closing current-user scope via ${method} returns to the managed-session directory`, async ({ page }, info) => {
   await page.addInitScript(() => localStorage.setItem("bodhi_onboarded_v1", "1"))
   const runtime = await installArtifactRuntime(page, standaloneScenario, [], { bootstrapRequestState: "local_bypass" })
   const base = observation([], 0)
@@ -137,10 +138,14 @@ test("closing current-user scope returns to the managed-session directory", asyn
   await trigger.click()
   const scope = page.getByRole("dialog", { name: "Supervisor 管理", exact: true })
   await expect(scope.getByTestId("current-user-management")).toBeVisible()
-  await scope.getByRole("button", { name: "关闭", exact: true }).first().click()
+  if (method === "escape") await scope.press("Escape")
+  else await scope.getByRole("button", { name: method === "button" ? "关闭" : "Close", exact: true }).first().click()
   await expect(scope).toBeHidden()
   await expect(managed).toBeVisible()
   await expect(trigger).toBeFocused()
+  await managed.getByRole("button", { name: "关闭", exact: true }).first().click()
+  await expect(managed).toBeHidden()
   expect(writes).toEqual([])
   expect(runtime.pageErrors).toEqual([])
-})
+ })
+}
