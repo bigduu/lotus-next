@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { ApiError, isApiError } from "@services/api"
 import { sameProjects, sameSupervisor } from "@services/supervisorScope/client"
 import { canWriteManagedSessions, decodeManagedSessionReceipt, managedSessionsClient, managedSessionsProblem,
-  type CurrentUserSessionTarget, type ManagedSessionIntent, type ManagedSessionLink, type ManagedSessionReceipt, type ManagedSessionsQuery, type ManagedSessionsResponse, type SessionCandidate, type SessionCandidatesPage } from "@services/supervisorScope/managedSessions"
+  type ManagedSessionIntent, type ManagedSessionLink, type ManagedSessionReceipt, type ManagedSessionsQuery, type ManagedSessionsResponse, type SessionCandidate, type SessionCandidatesPage } from "@services/supervisorScope/managedSessions"
 import type { ScopeProblem } from "@services/supervisorScope/types"
 
 export interface ManagedSessionsDependencies {
@@ -19,8 +19,6 @@ interface View {
 }
 const initial = (): View => ({ observation: null, candidates: [], nextOffset: null, nextAfter: null, loading: false, catalogError: false,
   loadingMore: false, problem: null, review: null, notice: null, submitting: false, writeBlocked: true })
-// Decoding builds each target with the same known fields; a mismatch hides only the label.
-const sameTarget = (a: CurrentUserSessionTarget | undefined, b: CurrentUserSessionTarget | undefined) => !!a && !!b && JSON.stringify(a) === JSON.stringify(b)
 export function useSupervisorManagedSessions(active: boolean, dependencies: ManagedSessionsDependencies = managedSessionsClient) {
   const [view, setView] = useState<View>(initial)
   const latest = useRef(view); latest.current = view
@@ -103,13 +101,13 @@ export function useSupervisorManagedSessions(active: boolean, dependencies: Mana
   }, [dependencies, hydrate])
   const rows = useMemo(() => {
     if (view.observation?.management_access) {
-      const summaries = new Map(view.candidates.map((candidate) => [candidate.session_id, candidate]))
+      // A label is reusable only for the exact decoded target observation.
+      const summaries = new Map(view.candidates.map((candidate) => [JSON.stringify(candidate.observedTarget), candidate]))
       const ownerAvailable = view.observation.owner_authorization.available
-      return view.observation.sessions.map((link) => {
-        const summary = ownerAvailable ? summaries.get(link.session_id) : undefined
-        return { session_id: link.session_id, link, summary: sameTarget(summary?.observedTarget, link.current_user_target) ? summary : undefined,
-          status: "current_user" as const, canEnable: false }
-      })
+      return view.observation.sessions.map((link) => ({
+        session_id: link.session_id, link, summary: ownerAvailable && link.current_user_target ? summaries.get(JSON.stringify(link.current_user_target)) : undefined,
+        status: "current_user" as const, canEnable: false,
+      }))
     }
     const allowed = new Set(view.observation?.scope.allowed_projects)
     const candidates = new Map(view.candidates.map((session) => [session.session_id, session]))
