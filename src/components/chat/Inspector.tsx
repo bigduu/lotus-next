@@ -531,7 +531,7 @@ export function Inspector({
         className={cn(
           "fixed z-50 flex flex-col bg-card",
           // mobile: bottom sheet
-          "inset-x-0 bottom-0 max-h-[85vh] rounded-t-2xl border-t",
+          "inset-x-0 bottom-0 max-h-[90dvh] rounded-t-2xl border-t",
           // desktop (narrow): right rail overlay
           "md:inset-y-0 md:right-0 md:left-auto md:w-96 md:max-h-none md:rounded-none md:border-l md:border-t-0",
         )}
