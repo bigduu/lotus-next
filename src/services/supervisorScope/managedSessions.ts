@@ -54,6 +54,8 @@ export interface SessionCandidate {
   readonly model: string
   readonly is_running: boolean
   readonly last_run_status?: string
+  /** Display metadata is bound to the observed identity and never grants access. */
+  readonly observedTarget?: CurrentUserSessionTarget
 }
 export interface SessionCandidatesPage { readonly sessions: readonly SessionCandidate[]; readonly nextOffset: number | null }
 export interface ManagedSessionIntent {
@@ -178,6 +180,35 @@ export const managedSessionsClient = {
     const response = decodeManagedSessions(await apiClient.get<unknown>(`supervisor/default/sessions${page ? `?${params}` : ""}`, { signal }))
     if (page?.after !== undefined && response.next_after === page.after) return invalid()
     return response
+  },
+  async describe(links: readonly ManagedSessionLink[], signal?: AbortSignal): Promise<readonly SessionCandidate[]> {
+    // These non-authoritative labels must never block the canonical directory.
+    // Bound both the page size and request concurrency; a changed or missing
+    // session keeps its ID rather than inheriting another incarnation's title.
+    if (links.length > 20) return []
+    const result: (SessionCandidate | null)[] = links.map(() => null)
+    let index = 0
+    const worker = async () => {
+      while (!signal?.aborted) {
+        const position = index++
+        if (position >= links.length) return
+        const target = links[position]?.current_user_target
+        if (!target || !managedSessionId(target.session_id)) continue
+        try {
+          const body = record(await apiClient.get<unknown>(`sessions/${encodeURIComponent(target.session_id)}`, { signal, cache: "no-store" }))
+          const session = record(body?.session)
+          if (!session || session.id !== target.session_id || session.created_at !== target.created_at || session.kind !== target.kind
+            || session.root_session_id !== target.root_session_id || (session.parent_session_id ?? null) !== target.parent_session_id
+            || (session.project_id ?? null) !== target.project_id || typeof session.title !== "string"
+            || typeof session.model !== "string" || typeof session.is_running !== "boolean") continue
+          result[position] = { session_id: target.session_id, title: session.title, project_id: target.project_id, model: session.model,
+            is_running: session.is_running, ...(typeof session.last_run_status === "string" ? { last_run_status: session.last_run_status } : {}),
+            observedTarget: { ...target } }
+        } catch { /* Details are optional; the canonical row remains visible. */ }
+      }
+    }
+    await Promise.all(Array.from({ length: Math.min(4, links.length) }, worker))
+    return result.filter((summary): summary is SessionCandidate => summary !== null)
   },
   async candidates(offset = 0): Promise<SessionCandidatesPage> {
     const page = await agentClient.listSessions({ kind: "root", limit: 100, offset })

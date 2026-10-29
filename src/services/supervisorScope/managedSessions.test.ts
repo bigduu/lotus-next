@@ -88,3 +88,40 @@ it("pages owner Root summaries without treating index metadata as a management g
   expect(await managedSessionsClient.candidates()).toEqual({ sessions: [{ session_id: "root-a", title: "A", project_id: "p1", model: "target-model", is_running: true, last_run_status: "running" }], nextOffset: 100 })
   expect(agentClient.listSessions).toHaveBeenCalledExactlyOnceWith({ kind: "root", limit: 100, offset: 0 })
 })
+
+it("uses only exact canonical session detail as a best-effort title", async () => {
+  const links = currentUserManagedSessionsFixture().sessions
+  const detail = (i: number) => {
+    const target = links[i]!.current_user_target!
+    return { session: { id: target.session_id, created_at: target.created_at, kind: target.kind, root_session_id: target.root_session_id,
+      parent_session_id: target.parent_session_id, project_id: target.project_id, title: i ? "Child title" : "Root title", model: "display-model", is_running: false } }
+  }
+  vi.mocked(apiClient.get).mockImplementation(async (path) => path.endsWith("root-a") ? detail(0) : detail(1))
+  const signal = new AbortController().signal
+  const summaries = await managedSessionsClient.describe(links, signal)
+  expect(summaries.map((summary) => [summary.session_id, summary.title])).toEqual([["root-a", "Root title"], ["child-a", "Child title"]])
+  expect(summaries[0]?.observedTarget).toEqual(links[0]?.current_user_target)
+  expect(apiClient.get).toHaveBeenCalledWith("sessions/root-a", { signal, cache: "no-store" })
+  expect(apiClient.putOnce).not.toHaveBeenCalled()
+})
+it("never uses a mismatched or unavailable detail as the canonical session title", async () => {
+  const links = currentUserManagedSessionsFixture().sessions, target = links[0]!.current_user_target!
+  vi.mocked(apiClient.get).mockImplementation(async (path) => {
+    if (path.endsWith("child-a")) throw new Error("unavailable")
+    return { session: { id: target.session_id, created_at: "2020-01-01T00:00:00Z", kind: target.kind, root_session_id: target.root_session_id,
+      parent_session_id: target.parent_session_id, project_id: target.project_id, title: "Wrong incarnation", model: "x", is_running: false } }
+  })
+  expect(await managedSessionsClient.describe(links, new AbortController().signal)).toEqual([])
+})
+
+it("bounds optional detail requests to four concurrent reads", async () => {
+  const link = currentUserManagedSessionsFixture().sessions[0]!, target = link.current_user_target!
+  const links = Array.from({ length: 9 }, (_, i) => {
+    const id = `root-${i}`
+    return { ...link, session_id: id, root_session_id: id, current_user_target: { ...target, session_id: id, root_session_id: id } }
+  })
+  let active = 0, peak = 0
+  vi.mocked(apiClient.get).mockImplementation(async () => { active++; peak = Math.max(peak, active); await Promise.resolve(); active--; return {} })
+  expect(await managedSessionsClient.describe(links)).toEqual([])
+  expect(apiClient.get).toHaveBeenCalledTimes(9); expect(peak).toBeLessThanOrEqual(4)
+})

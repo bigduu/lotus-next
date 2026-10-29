@@ -2,12 +2,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { ApiError, isApiError } from "@services/api"
 import { sameProjects, sameSupervisor } from "@services/supervisorScope/client"
 import { canWriteManagedSessions, decodeManagedSessionReceipt, managedSessionsClient, managedSessionsProblem,
-  type ManagedSessionIntent, type ManagedSessionReceipt, type ManagedSessionsQuery, type ManagedSessionsResponse, type SessionCandidate, type SessionCandidatesPage } from "@services/supervisorScope/managedSessions"
+  type CurrentUserSessionTarget, type ManagedSessionIntent, type ManagedSessionLink, type ManagedSessionReceipt, type ManagedSessionsQuery, type ManagedSessionsResponse, type SessionCandidate, type SessionCandidatesPage } from "@services/supervisorScope/managedSessions"
 import type { ScopeProblem } from "@services/supervisorScope/types"
 
 export interface ManagedSessionsDependencies {
   read(signal?: AbortSignal, page?: ManagedSessionsQuery): Promise<ManagedSessionsResponse>
   candidates(offset?: number): Promise<SessionCandidatesPage>
+  describe?(links: readonly ManagedSessionLink[], signal?: AbortSignal): Promise<readonly SessionCandidate[]>
   update(intent: ManagedSessionIntent): Promise<ManagedSessionReceipt>
 }
 type Notice = "saved" | "conflict" | "rejected" | "unknown"
@@ -18,12 +19,24 @@ interface View {
 }
 const initial = (): View => ({ observation: null, candidates: [], nextOffset: null, nextAfter: null, loading: false, catalogError: false,
   loadingMore: false, problem: null, review: null, notice: null, submitting: false, writeBlocked: true })
+const sameTarget = (a: CurrentUserSessionTarget | undefined, b: CurrentUserSessionTarget | undefined) => !!a && !!b
+  && a.session_id === b.session_id && a.created_at === b.created_at && a.kind === b.kind && a.root_session_id === b.root_session_id
+  && a.parent_session_id === b.parent_session_id && a.project_id === b.project_id && a.metadata_version === b.metadata_version
+  && a.authority_sha256 === b.authority_sha256 && a.ancestry_sha256 === b.ancestry_sha256
 export function useSupervisorManagedSessions(active: boolean, dependencies: ManagedSessionsDependencies = managedSessionsClient) {
   const [view, setView] = useState<View>(initial)
   const latest = useRef(view); latest.current = view
   const visible = useRef(active); visible.current = active
   const generation = useRef(0), readVersion = useRef(0), controller = useRef<AbortController | null>(null)
   const mutation = useRef<object | null>(null), pageFlight = useRef<object | null>(null)
+  const hydrate = useCallback((links: readonly ManagedSessionLink[], request: AbortController, current: () => boolean) => {
+    if (!dependencies.describe || !links.length) return
+    void dependencies.describe(links, request.signal).then((summaries) => {
+      if (!current() || request.signal.aborted) return
+      setView((previous) => previous.observation?.management_access && previous.observation.owner_authorization.available ? { ...previous,
+        candidates: [...new Map([...previous.candidates, ...summaries].map((summary) => [summary.session_id, summary])).values()] } : previous)
+    }).catch(() => { /* A missing label must not hide canonical sessions. */ })
+  }, [dependencies])
   const load = useCallback(async () => {
     const scope = generation.current, version = ++readVersion.current
     controller.current?.abort(); pageFlight.current = null; const request = new AbortController(); controller.current = request
@@ -45,8 +58,9 @@ export function useSupervisorManagedSessions(active: boolean, dependencies: Mana
     setView((previous) => ({ ...previous, loading: false, observation: canonical,
       candidates: candidates.sessions, nextOffset: candidates.nextOffset, nextAfter: canonical.next_after ?? null,
       catalogError, problem: null, review: null, writeBlocked: false }))
+    if (canonical.management_access && canonical.owner_authorization.available) hydrate(canonical.sessions, request, current)
     return canonical
-  }, [dependencies])
+  }, [dependencies, hydrate])
   useEffect(() => {
     generation.current += 1; mutation.current = null; pageFlight.current = null
     setView(initial()); if (active) void load()
@@ -71,6 +85,9 @@ export function useSupervisorManagedSessions(active: boolean, dependencies: Mana
         setView((previous) => ({ ...previous, observation: { ...page,
           sessions: [...new Map([...(previous.observation?.sessions ?? []), ...page.sessions].map((session) => [session.session_id, session])).values()] },
           nextAfter: page.next_after ?? null, problem: null }))
+        const request = controller.current
+        if (request && page.owner_authorization.available) hydrate(page.sessions, request,
+          () => visible.current && generation.current === scope && readVersion.current === version && controller.current === request)
         return
       }
       const page = await dependencies.candidates(offset ?? undefined)
@@ -85,11 +102,17 @@ export function useSupervisorManagedSessions(active: boolean, dependencies: Mana
       })
     }
     finally { if (pageFlight.current === token) { const notify = stillCurrent(); pageFlight.current = null; if (notify) setView((previous) => ({ ...previous, loadingMore: false })) } }
-  }, [dependencies])
+  }, [dependencies, hydrate])
   const rows = useMemo(() => {
-    if (view.observation?.management_access) return view.observation.sessions.map((link) => ({
-      session_id: link.session_id, link, summary: undefined as SessionCandidate | undefined, status: "current_user" as const, canEnable: false,
-    }))
+    if (view.observation?.management_access) {
+      const summaries = new Map(view.candidates.map((candidate) => [candidate.session_id, candidate]))
+      const ownerAvailable = view.observation.owner_authorization.available
+      return view.observation.sessions.map((link) => {
+        const summary = ownerAvailable ? summaries.get(link.session_id) : undefined
+        return { session_id: link.session_id, link, summary: sameTarget(summary?.observedTarget, link.current_user_target) ? summary : undefined,
+          status: "current_user" as const, canEnable: false }
+      })
+    }
     const allowed = new Set(view.observation?.scope.allowed_projects)
     const candidates = new Map(view.candidates.map((session) => [session.session_id, session]))
     const links = new Map(view.observation?.sessions.map((link) => [link.session_id, link]))
