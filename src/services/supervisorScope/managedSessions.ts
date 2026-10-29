@@ -182,8 +182,7 @@ export const managedSessionsClient = {
     return response
   },
   async describe(links: readonly ManagedSessionLink[], signal?: AbortSignal): Promise<readonly SessionCandidate[]> {
-    const { describeManagedSessionLabels } = await import("./managedSessionDescriptions")
-    return describeManagedSessionLabels(links, signal)
+    return (await import("./sessionLabels")).describe(links, signal)
   },
   async candidates(offset = 0): Promise<SessionCandidatesPage> {
     const page = await agentClient.listSessions({ kind: "root", limit: 100, offset })

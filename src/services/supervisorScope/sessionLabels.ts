@@ -6,7 +6,7 @@ const safeId = (value: string) => value.length > 0 && value.length <= 256 && val
   && !value.includes("/") && !value.includes("\\") && ![...value].some((character) => character.charCodeAt(0) < 32 || character.charCodeAt(0) >= 127 && character.charCodeAt(0) <= 159)
   && value !== "bamboo-default-supervisor"
 
-export async function describeManagedSessionLabels(links: readonly ManagedSessionLink[], signal?: AbortSignal): Promise<readonly SessionCandidate[]> {
+export async function describe(links: readonly ManagedSessionLink[], signal?: AbortSignal): Promise<readonly SessionCandidate[]> {
   // These non-authoritative labels must never block the canonical directory.
   // Bound both the page size and request concurrency; a changed or missing
   // session keeps its ID rather than inheriting another incarnation's title.
