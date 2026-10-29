@@ -727,7 +727,11 @@ const main = async () => {
   assert.equal(product.name, "@bigduu/lotus-next"); assert.equal(product.version, "0.0.0")
   const merged = api(`git/commits/${sourceSha}`)
   assert.equal(git("rev-parse", `${sourceSha}^{tree}`), merged.tree.sha)
-  assert.deepEqual(git("show", "-s", "--format=%P", sourceSha).split(" "), merged.parents.map(parent => parent.sha))
+  // History formatting hides parents at a shallow boundary. Read the raw
+  // commit object so the comparison still checks both immutable parent IDs.
+  const headers = git("cat-file", "-p", sourceSha).split("\n\n", 1)[0]
+  const parents = [...headers.matchAll(/^parent ([0-9a-f]{40})$/gm)].map(match => match[1])
+  assert.deepEqual(parents, merged.parents.map(parent => parent.sha))
   const facts = verifyProtectedDevMerge(sourceSha, pr, merged, sourceWorkflow)
   const refresh = () => {
     const current = api("branches/dev"); verifyDevProtection(current)
