@@ -24,7 +24,7 @@ import {
 } from "@shared/types/tokenBudget"
 import { FileChangeList } from "./FileChangeList"
 import { ActorSnapshotPanel } from "./ActorSnapshotPanel"
-import { SupervisorManagedSessionsPanel } from "./SupervisorManagedSessions"
+import { LazySupervisorManagedSessionsPanel } from "./LazySupervisorManagedSessionsPanel"
 import { isDefaultSupervisor } from "@/lib/supervisor"
 
 function GoalSection({
@@ -338,7 +338,7 @@ export function Inspector({
 
         <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4">
           {chat && isDefaultSupervisor(chat) ? <>
-            <SupervisorManagedSessionsPanel active={open} onSelectSession={async (id) => {
+            <LazySupervisorManagedSessionsPanel active={open} onSelectSession={async (id) => {
               const navigation = ++managedNavigation.current
               const before = useAppStore.getState().currentSessionId
               const current = () => managedNavigation.current === navigation && useAppStore.getState().currentSessionId === before

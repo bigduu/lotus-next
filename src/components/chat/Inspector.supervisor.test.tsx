@@ -14,14 +14,14 @@ Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
 const roots: Root[] = []
 const initial = useAppStore.getState()
 afterEach(() => { for (const root of roots.splice(0)) act(() => root.unmount()); useAppStore.setState(initial, true); managed.select = null; document.body.replaceChildren() })
-function renderSession(chat: Omit<ChatItem, "config" | "createdAt">) {
+async function renderSession(chat: Omit<ChatItem, "config" | "createdAt">) {
   useAppStore.setState({ chats: [{ ...chat, createdAt: 0, config: { systemPromptId: "", baseSystemPrompt: "", lastUsedEnhancedPrompt: null } }], currentSessionId: chat.id, loadTaskList: vi.fn().mockResolvedValue(undefined) })
   const root = createRoot(document.body.appendChild(document.createElement("div"))); roots.push(root)
-  act(() => root.render(<Inspector embedded open sessionId={chat.id} onClose={() => {}} onCopySessionId={() => {}} />))
+  await act(async () => root.render(<Inspector embedded open sessionId={chat.id} onClose={() => {}} onCopySessionId={() => {}} />))
   return root
 }
-it("places managed sessions first and keeps Supervisor Child topology collapsed and inactive", () => {
-  renderSession({ id: "bamboo-default-supervisor", title: "Bodhi", kind: "root", messages: [] })
+it("places managed sessions first and keeps Supervisor Child topology collapsed and inactive", async () => {
+  await renderSession({ id: "bamboo-default-supervisor", title: "Bodhi", kind: "root", messages: [] })
   const managed = document.querySelector('[data-testid="managed-view"]')!
   const details = document.querySelector<HTMLDetailsElement>('[data-testid="supervisor-auxiliary-agents"]')!
   expect(managed.compareDocumentPosition(details) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0)
@@ -32,16 +32,16 @@ it("places managed sessions first and keeps Supervisor Child topology collapsed 
 it.each([
   { id: "ordinary", title: "Supervisor", kind: "root" as const },
   { id: "child", title: "Child", kind: "child" as const, parentSessionId: "bamboo-default-supervisor", rootSessionId: "bamboo-default-supervisor" },
-])("preserves the normal Actor Inspector for $id", (chat) => {
-  renderSession({ ...chat, messages: [] })
+])("preserves the normal Actor Inspector for $id", async (chat) => {
+  await renderSession({ ...chat, messages: [] })
   expect(document.querySelector('[data-testid="managed-view"]')).toBeNull()
   expect(document.querySelector('[data-testid="supervisor-auxiliary-agents"]')).toBeNull()
   expect(document.querySelector('[data-testid="actor-view"]')?.getAttribute("data-active")).toBe("true")
 })
 
 const supervisor = "bamboo-default-supervisor"
-function navigation() {
-  const root = renderSession({ id: supervisor, title: "Supervisor", kind: "root", messages: [] })
+async function navigation() {
+  const root = await renderSession({ id: supervisor, title: "Supervisor", kind: "root", messages: [] })
   const source = useAppStore.getState().chats[0]
   const select = vi.fn((id: string | null) => useAppStore.setState({ currentSessionId: id }))
   act(() => useAppStore.setState({ chats: [source, { ...source, id: "target", title: "Cold target", messages: [] }],
@@ -54,7 +54,7 @@ function deferred<T>() {
   return { promise, resolve }
 }
 it("hydrates persisted history before selecting an idle managed target opened for the first time", async () => {
-  const { select } = navigation(), history = deferred<void>()
+  const { select } = await navigation(), history = deferred<void>()
   const load = vi.fn(async (id: string) => {
     await history.promise
     useAppStore.setState((state) => ({ chats: state.chats.map((chat) => chat.id !== id ? chat : { ...chat,
@@ -71,7 +71,7 @@ it("hydrates persisted history before selecting an idle managed target opened fo
   expect(useAppStore.getState().chats.find((chat) => chat.id === "target")?.messages[0]).toMatchObject({ content: "Saved target history" })
 })
 it("does not hydrate or select a late restored target after the user selects another session", async () => {
-  const { select } = navigation(), restored = deferred<boolean>(), load = vi.fn()
+  const { select } = await navigation(), restored = deferred<boolean>(), load = vi.fn()
   act(() => useAppStore.setState({ restoreSession: vi.fn(() => restored.promise), loadChatHistory: load }))
   let opening!: Promise<boolean>
   await act(async () => { opening = managed.select!("target") })
@@ -81,7 +81,7 @@ it("does not hydrate or select a late restored target after the user selects ano
   expect(useAppStore.getState().currentSessionId).toBe("other")
 })
 it("a slow managed history read cannot override a newer user selection", async () => {
-  const { select } = navigation(), history = deferred<void>(), load = vi.fn(() => history.promise)
+  const { select } = await navigation(), history = deferred<void>(), load = vi.fn(() => history.promise)
   act(() => useAppStore.setState({ loadChatHistory: load }))
   let opening!: Promise<boolean>
   await act(async () => { opening = managed.select!("target") })
@@ -92,7 +92,7 @@ it("a slow managed history read cannot override a newer user selection", async (
   expect(useAppStore.getState().currentSessionId).toBe("other")
 })
 it("closing the Inspector retires an unfinished managed navigation before selection", async () => {
-  const { root, select } = navigation(), history = deferred<void>(), load = vi.fn(() => history.promise)
+  const { root, select } = await navigation(), history = deferred<void>(), load = vi.fn(() => history.promise)
   act(() => useAppStore.setState({ loadChatHistory: load }))
   let opening!: Promise<boolean>
   await act(async () => { opening = managed.select!("target") })
