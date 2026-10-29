@@ -139,14 +139,14 @@ for (const method of ["button", "icon", "escape"] as const) {
   const managedBounds = (await managed.boundingBox())!
   expect(managedBounds.y).toBeGreaterThanOrEqual(0)
   expect(managedBounds.y + managedBounds.height).toBeLessThanOrEqual(viewport.height)
-  expect(await managed.evaluate((element) => getComputedStyle(element).overflowY)).toBe("auto")
+  await expect(managed).toHaveCSS("overflow-y", "auto")
   await trigger.click()
   const scope = page.getByRole("dialog", { name: "Supervisor 管理", exact: true })
   await expect(scope.getByTestId("current-user-management")).toBeVisible()
   const scopeBounds = (await scope.boundingBox())!
   expect(scopeBounds.y).toBeGreaterThanOrEqual(0)
   expect(scopeBounds.y + scopeBounds.height).toBeLessThanOrEqual(viewport.height)
-  expect(await scope.evaluate((element) => getComputedStyle(element).overflowY)).toBe("auto")
+  await expect(scope).toHaveCSS("overflow-y", "auto")
   if (method === "escape") await scope.press("Escape")
   else await scope.getByRole("button", { name: method === "button" ? "关闭" : "Close", exact: true }).first().click()
   await expect(scope).toBeHidden()
