@@ -19,10 +19,8 @@ interface View {
 }
 const initial = (): View => ({ observation: null, candidates: [], nextOffset: null, nextAfter: null, loading: false, catalogError: false,
   loadingMore: false, problem: null, review: null, notice: null, submitting: false, writeBlocked: true })
-const sameTarget = (a: CurrentUserSessionTarget | undefined, b: CurrentUserSessionTarget | undefined) => !!a && !!b
-  && a.session_id === b.session_id && a.created_at === b.created_at && a.kind === b.kind && a.root_session_id === b.root_session_id
-  && a.parent_session_id === b.parent_session_id && a.project_id === b.project_id && a.metadata_version === b.metadata_version
-  && a.authority_sha256 === b.authority_sha256 && a.ancestry_sha256 === b.ancestry_sha256
+// Decoding builds each target with the same known fields; a mismatch hides only the label.
+const sameTarget = (a: CurrentUserSessionTarget | undefined, b: CurrentUserSessionTarget | undefined) => !!a && !!b && JSON.stringify(a) === JSON.stringify(b)
 export function useSupervisorManagedSessions(active: boolean, dependencies: ManagedSessionsDependencies = managedSessionsClient) {
   const [view, setView] = useState<View>(initial)
   const latest = useRef(view); latest.current = view
