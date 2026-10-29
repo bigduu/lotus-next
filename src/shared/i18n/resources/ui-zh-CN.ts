@@ -838,6 +838,8 @@ export const uiZhCn = {
   "supervisor_work_retry": "重新读取",
   "supervisor_work_empty": "此工作范围还没有记录工作。",
   "supervisor_work_mutation_disabled": "此服务已禁用工作变更，已有记录仍可查看。",
+  "supervisor_work_storage_read_only": "工作存储为只读，已有记录仍可查看。",
+  "supervisor_work_storage_unconfirmed": "工作存储的健康状态未确认，暂不能更改。",
   "supervisor_work_dispatch_disabled": "此服务已禁用工作派发，已有记录仍可查看。",
   "supervisor_work_diagnostics": "工作详情与诊断",
   "supervisor_work_submission_diagnostics": "提交诊断",

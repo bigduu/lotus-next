@@ -838,6 +838,8 @@ export const uiEnUs = {
   "supervisor_work_retry": "Check again",
   "supervisor_work_empty": "No Work has been recorded in this scope yet.",
   "supervisor_work_mutation_disabled": "Work changes are disabled on this service. Existing records remain available to read.",
+  "supervisor_work_storage_read_only": "Work storage is read-only. Existing records remain available to read.",
+  "supervisor_work_storage_unconfirmed": "Work storage health is unconfirmed. Changes are unavailable.",
   "supervisor_work_dispatch_disabled": "Work dispatch is disabled on this service. Existing records remain available to read.",
   "supervisor_work_diagnostics": "Work details and diagnostics",
   "supervisor_work_submission_diagnostics": "Submission diagnostics",

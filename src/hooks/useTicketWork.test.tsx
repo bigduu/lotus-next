@@ -813,3 +813,18 @@ it("never promotes an HTTP 403 with a readable or contradictory scope", async ()
   expect(controller.canInitialize).toBe(false)
   expect(ticketClient.load).toHaveBeenCalledTimes(1)
 })
+
+it.each([
+  { health: "read_only", mutation: true, expected: "Work storage is read-only.", disabled: false },
+  { health: "read_only", mutation: false, expected: "Work storage is read-only.", disabled: true },
+  { health: "future-health", mutation: true, expected: "Work storage health is unconfirmed.", disabled: false },
+])("describes storage health independently of the mutation gate: $health/$mutation", async ({ health, mutation, expected, disabled }) => {
+  await act(async () => { await changeLocale("en-US") })
+  try {
+    snapshot.scope.health = health; snapshot.scope.mutation_enabled = mutation
+    await mount()
+    expect(container.textContent).toContain(expected)
+    expect(container.textContent?.includes("Work changes are disabled on this service.")).toBe(disabled)
+    expect(controller.canRespond).toBe(false)
+  } finally { await act(async () => { await changeLocale("zh-CN") }) }
+})
