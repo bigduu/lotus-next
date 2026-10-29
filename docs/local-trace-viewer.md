@@ -35,8 +35,10 @@ admission. Recheck the live contract and current Dev base at integration time.
    synthetic provider, and leave outbound OTLP disabled. Do not substitute an
    older published binary.
 2. Create two synthetic sessions. Complete at least two distinct traces in the
-   first and one in the second; wait for them to settle. Place distinct
-   synthetic prompt, tool-body, path and credential sentinels in the fixture.
+   first and one in the second; wait for them to settle. For UI pagination at
+   the panel’s fixed page size of 50, create at least 51 distinct traces in the
+   first session. Place distinct synthetic prompt, tool-body, path and
+   credential sentinels in the fixture.
 3. Read the first session with `limit=1` and its opaque next cursor; verify two
    distinct trace IDs, session identity, coverage and retention metadata. Read
    the second session, verify disjoint IDs, and require 404 for each session's
