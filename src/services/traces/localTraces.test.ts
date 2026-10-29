@@ -7,7 +7,7 @@ vi.mock("@services/api", () => ({ apiClient: { get: mocks.get } }))
 const traceId = "a".repeat(32), otherId = "c".repeat(32), spanId = "b".repeat(16)
 const summary = { trace_id: traceId, started_at: "2026-10-29T10:00:00Z", ended_at: "2026-10-29T10:00:02Z",
   status: "success", span_count: 1, partial: false }
-const page = { schema_version: 1, session_id: "session/a", collection_state: "enabled", traces: [summary],
+const page = { schema_version: 1, session_id: "session/a", collection_state: "enabled", coverage: "best_effort", traces: [summary],
   next_cursor: "opaque+next=?", retention: { max_spans: 2048, evicted_spans: null }, prompt: "PROMPT_SENTINEL" }
 const span = { span_id: spanId, parent_span_id: null, kind: "llm", started_at: summary.started_at, ended_at: summary.ended_at,
   status: "success", model: "fixture-model", provider: "openai", name: "TOOL_BODY_SENTINEL", error_type: "KEY_SENTINEL",
@@ -25,6 +25,8 @@ describe("local trace v1 adapter", () => {
     expect(result.traces).toEqual([{ traceId: otherId, startedAt: summary.started_at, durationMs: 2000,
       status: "cancelled", spanCount: 1, partial: false }])
     expect(result.nextCursor).toBe("opaque+next=?")
+    expect(result.coverage).toBe("best_effort")
+    expect(parseTracePage({ ...page, coverage: "future-coverage" }, "session/a", "all").coverage).toBe("unknown")
     expect(result.retention).toEqual({ maxSpans: 2048, evictedSpans: null })
     expect(JSON.stringify(result)).not.toContain("PROMPT_SENTINEL")
   })

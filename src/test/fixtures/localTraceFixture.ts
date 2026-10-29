@@ -18,7 +18,7 @@ export const fixtureTraceDetail: TraceDetail = {
   ],
 }
 export const fixturePage: TracePage = {
-  availability: "enabled", traces: [fixtureTrace], nextCursor: null,
+  availability: "enabled", coverage: "best_effort", traces: [fixtureTrace], nextCursor: null,
   retention: { maxSpans: 2048, evictedSpans: 0 },
 }
 export const fixtureTraceSource: LocalTraceSource = {

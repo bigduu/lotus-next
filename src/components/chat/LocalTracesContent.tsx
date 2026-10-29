@@ -221,6 +221,7 @@ function TraceSession({ sessionId, source }: { sessionId: string; source: LocalT
     {pageState?.key === key && pageState.error ? <p role="alert" className="py-6 text-sm text-destructive">{uiText("local_trace_error")}</p> : null}
     {page?.availability === "unsupported" ? <p className="py-6 text-sm text-muted-foreground">{uiText("local_trace_unsupported")}</p> : null}
     {page?.availability === "disabled" ? <p className="py-6 text-sm text-muted-foreground">{uiText("local_trace_disabled")}</p> : null}
+    {page?.availability === "enabled" ? <p className="mt-3 text-xs text-muted-foreground">{uiText(page.coverage === "best_effort" ? "local_trace_coverage_best_effort" : "local_trace_coverage_unknown")}</p> : null}
     {page?.availability === "enabled" && !page.traces.length ? <p className="py-6 text-sm text-muted-foreground">{uiText("local_trace_empty")}</p> : null}
     {page?.availability === "enabled" && page.traces.length > 0 ? <div className="local-trace-grid mt-4 grid min-w-0 gap-4">
       <section aria-label={uiText("local_trace_list")} className="min-w-0 space-y-2">

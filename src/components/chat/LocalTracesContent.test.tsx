@@ -57,6 +57,7 @@ describe("local trace presentation", () => {
     expect(text()).toContain("Model call")
     expect(text()).toContain("Tool call")
     expect(text()).toContain("2,048 spans")
+    expect(text()).toContain("Recording is best effort")
     await click("Model call")
     expect(field("Model")).toBe("fixture-model")
     expect(field("Provider")).toBe("fixture-provider")
@@ -84,7 +85,7 @@ describe("local trace presentation", () => {
     ["disabled", "Local trace recording is disabled"],
     ["unsupported", "does not provide local trace inspection"],
   ] as const)("distinguishes %s from an empty recording", async (availability, message) => {
-    list.mockResolvedValue({ availability, traces: [], nextCursor: null, retention: null })
+    list.mockResolvedValue({ availability, coverage: "unknown", traces: [], nextCursor: null, retention: null })
     await mount()
     expect(text()).toContain(message)
     expect(text()).not.toContain("No traces on this page")

@@ -38,6 +38,7 @@ export type TraceSpan = {
 export type TraceDetail = { traceId: string; partial: boolean; spans: TraceSpan[] }
 export type TracePage = {
   availability: "enabled" | "disabled" | "unsupported"
+  coverage: "best_effort" | "unknown"
   traces: TraceSummary[]
   nextCursor: string | null
   retention: { maxSpans: number | null; evictedSpans: number | null } | null
@@ -105,7 +106,8 @@ export function parseTracePage(value: unknown, sessionId: string, filter: TraceF
   if (new Set(traces.map((trace) => trace.traceId)).size !== traces.length) invalid()
   const nextCursor = raw.next_cursor === null ? null : typeof raw.next_cursor === "string" && raw.next_cursor.length > 0 && raw.next_cursor.length <= 2048 ? raw.next_cursor : invalid()
   const retention = record(raw.retention)
-  return { availability: raw.collection_state, traces: filter === "all" ? traces : traces.filter((trace) => trace.status === filter), nextCursor,
+  return { availability: raw.collection_state, coverage: raw.coverage === "best_effort" ? "best_effort" : "unknown",
+    traces: filter === "all" ? traces : traces.filter((trace) => trace.status === filter), nextCursor,
     retention: { maxSpans: numberOrNull(retention.max_spans), evictedSpans: numberOrNull(retention.evicted_spans) } }
 }
 export function parseTraceDetail(value: unknown, sessionId: string, traceId: string): TraceDetail {

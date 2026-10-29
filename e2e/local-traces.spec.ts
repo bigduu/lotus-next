@@ -5,7 +5,7 @@ import { installArtifactRuntime, standaloneScenario } from "./support/artifactRu
 // evidence of a real Bamboo/OTel round trip.
 const sessionId = "all-surface-session", traceId = "a".repeat(32), rootId = "b".repeat(16)
 const base = "2026-10-29T10:00:00.000Z"
-const list = { schema_version: 1, session_id: sessionId, collection_state: "enabled", next_cursor: null,
+const list = { schema_version: 1, session_id: sessionId, collection_state: "enabled", coverage: "best_effort", next_cursor: null,
   retention: { max_spans: 2048, evicted_spans: 3 }, traces: [{ trace_id: traceId, started_at: base,
     ended_at: "2026-10-29T10:00:02.400Z", status: "success", span_count: 3, partial: false }] }
 const detail = { schema_version: 1, session_id: sessionId, trace: { trace_id: traceId, partial: false, spans: [
@@ -40,6 +40,7 @@ test("session trace panel renders synthetic v1 data safely at the current viewpo
   const dialog = page.getByRole("dialog", { name: "Local traces", exact: true })
   await expect(dialog).toBeVisible()
   await expect(dialog.getByRole("region", { name: "Span timeline" })).toBeVisible()
+  await expect(dialog).toContainText("Recording is best effort")
   await dialog.getByRole("button", { name: /Model call/ }).click()
   const details = dialog.getByRole("region", { name: "Span details" })
   await expect(details).toContainText("fixture-model")
