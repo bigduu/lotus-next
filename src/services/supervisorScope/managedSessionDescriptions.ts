@@ -1,7 +1,10 @@
 import { apiClient } from "@services/api"
-import { managedSessionId, type ManagedSessionLink, type SessionCandidate } from "./managedSessions"
+import type { ManagedSessionLink, SessionCandidate } from "./managedSessions"
 
 const record = (value: unknown): Record<string, unknown> | null => value !== null && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null
+const safeId = (value: string) => value.length > 0 && value.length <= 256 && value.trim() === value && value !== "." && !value.includes("..")
+  && !value.includes("/") && !value.includes("\\") && ![...value].some((character) => character.charCodeAt(0) < 32 || character.charCodeAt(0) >= 127 && character.charCodeAt(0) <= 159)
+  && value !== "bamboo-default-supervisor"
 
 export async function describeManagedSessionLabels(links: readonly ManagedSessionLink[], signal?: AbortSignal): Promise<readonly SessionCandidate[]> {
   // These non-authoritative labels must never block the canonical directory.
@@ -15,7 +18,7 @@ export async function describeManagedSessionLabels(links: readonly ManagedSessio
       const position = index++
       if (position >= links.length) return
       const target = links[position]?.current_user_target
-      if (!target || !managedSessionId(target.session_id)) continue
+      if (!target || !safeId(target.session_id)) continue
       try {
         const body = record(await apiClient.get<unknown>(`sessions/${encodeURIComponent(target.session_id)}`, { signal, cache: "no-store" }))
         const session = record(body?.session)
