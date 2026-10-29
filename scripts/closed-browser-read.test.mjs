@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { assertClosedBrowserRead, closedBrowserResourceError, unexplainedBrowserErrors } from "../e2e/support/closedBrowserRead.ts"
+import { assertClosedBrowserRead, closedBrowserResourceError, unsupportedSharedResourceError, unexplainedBrowserErrors } from "../e2e/support/closedBrowserRead.ts"
 
 const origin = "http://127.0.0.1:18080"
 const sessionId = "selected"
@@ -62,5 +62,22 @@ describe("observed initial closed-browser read", () => {
       .toEqual({ httpErrors: bad, consoleErrors: [closedBrowserResourceError, "app error"] })
     expect(unexplainedBrowserErrors([read.response], [closedBrowserResourceError], null, origin, sessionId))
       .toEqual({ httpErrors: [read.response], consoleErrors: [closedBrowserResourceError] })
+  })
+
+  it("accounts only for a verified unsupported-shared refusal and its reconciled closed read", () => {
+    const read = receipt()
+    const refusal = {
+      response: { method: "PUT", url, status: 503 },
+      body: { error: { type: "browser_error", code: "browser_unavailable", message: "browser runtime unavailable: browser_shared_profile_unsupported: request clean explicitly" } },
+      closedResponse: read.response,
+      closedBody: read.body,
+      consoleErrors: [{ text: unsupportedSharedResourceError, url }, { text: closedBrowserResourceError, url }],
+    }
+    const responses = [read.response, refusal.response, refusal.closedResponse]
+    const errors = [closedBrowserResourceError, unsupportedSharedResourceError, closedBrowserResourceError]
+    expect(unexplainedBrowserErrors(responses, errors, read, origin, sessionId, refusal))
+      .toEqual({ httpErrors: [], consoleErrors: [] })
+    refusal.body.error.message = "different browser failure"
+    expect(() => unexplainedBrowserErrors(responses, errors, read, origin, sessionId, refusal)).toThrow()
   })
 })

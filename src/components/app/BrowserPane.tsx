@@ -318,10 +318,10 @@ export function BrowserPaneView({
   if (!browser.state) {
     return (
       <section className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 p-6 text-center text-sm text-muted-foreground" aria-label={uiText("built_in_browser_42d6809d")}>
-        {profileControls}
-        {browser.profilePhase === "closed" ? null : browser.loading ? <LoaderCircle className="size-5 animate-spin" aria-hidden="true" /> : <Globe2 className="size-5" aria-hidden="true" />}
-        {browser.profilePhase !== "closed" ? <p role="status">{browser.loading ? uiText("starting_browser_30a20dd1") : browser.error || uiText("connecting_to_browser_01a12061")}</p> : browser.error ? <p role="alert">{browser.error}</p> : null}
-        {!browser.loading && (browser.error || browser.profilePhase === "closed") ? <Button size="sm" variant="outline" onClick={browser.retry}>{uiText("browser_profile_refresh")}</Button> : null}
+        {!browser.entryOpening ? profileControls : null}
+        {browser.entryOpening || browser.loading ? <LoaderCircle className="size-5 animate-spin" aria-hidden="true" /> : browser.profilePhase === "closed" ? null : <Globe2 className="size-5" aria-hidden="true" />}
+        {browser.entryOpening || browser.loading ? <p role="status">{uiText("starting_browser_30a20dd1")}</p> : browser.profilePhase !== "closed" ? <p role="status">{browser.error || uiText("connecting_to_browser_01a12061")}</p> : browser.error ? <p role="alert">{browser.error}</p> : null}
+        {!browser.entryOpening && !browser.loading && (browser.error || browser.profilePhase === "closed") ? <Button size="sm" variant="outline" onClick={browser.retry}>{uiText("browser_profile_refresh")}</Button> : null}
       </section>
     )
   }
