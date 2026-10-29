@@ -35,7 +35,7 @@ export function SupervisorProjectScopeDialog({ open, onOpenChange, dependencies,
   const notice = state.notice && uiText(state.notice.code && codeKeys[state.notice.code] || noticeKeys[state.notice.kind])
   const problem = state.problem && uiText(state.problem.code && codeKeys[state.problem.code] || problemKeys[state.problem.kind])
   return <Dialog open={open} onOpenChange={(value) => { if (!state.submitting) onOpenChange(value) }}>
-    <DialogContent showCloseButton={!state.submitting} className="max-h-[85dvh] overflow-y-auto"
+    <DialogContent showCloseButton={!state.submitting} className="max-h-[90dvh] overflow-y-auto"
       onEscapeKeyDown={(event) => { if (state.submitting) event.preventDefault() }}
       onInteractOutside={(event) => { if (state.submitting) event.preventDefault() }}
       onCloseAutoFocus={returnFocus ? (event) => { event.preventDefault(); returnFocus() } : undefined}>

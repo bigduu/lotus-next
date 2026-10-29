@@ -51,7 +51,7 @@ export function SupervisorManagedSessionsDialog({ open, onOpenChange, returnFocu
   }
   return <>
     <Dialog open={open} onOpenChange={(next) => { if (!controller.submitting && !scopeOpen && !scopeClosing.current) onOpenChange(next) }}>
-      <DialogContent className="max-h-[85dvh] overflow-y-auto" showCloseButton={!controller.submitting}
+      <DialogContent className="max-h-[90dvh] overflow-y-auto" showCloseButton={!controller.submitting}
         onEscapeKeyDown={(event) => { if (controller.submitting || scopeOpen || scopeClosing.current) event.preventDefault() }}
         onInteractOutside={(event) => { if (controller.submitting || scopeOpen || scopeClosing.current) event.preventDefault() }}
         onCloseAutoFocus={returnFocus ? (event) => { event.preventDefault(); returnFocus() } : undefined}>
