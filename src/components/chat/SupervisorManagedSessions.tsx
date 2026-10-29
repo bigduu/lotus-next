@@ -76,8 +76,8 @@ export function SupervisorManagedSessionsDialog({ open, onOpenChange, returnFocu
           <Button variant="outline" disabled={controller.submitting} onClick={() => onOpenChange(false)}>{t("supervisor_scope_close")}</Button>
         </DialogFooter>
       </DialogContent>
+      {scopeOpen ? <SupervisorProjectScopeDialog open onOpenChange={(next) => { setScopeOpen(next); if (!next) void controller.refresh() }} returnFocus={() => scopeTrigger.current?.focus()} /> : null}
     </Dialog>
-    {scopeOpen ? <SupervisorProjectScopeDialog open onOpenChange={(next) => { setScopeOpen(next); if (!next) void controller.refresh() }} returnFocus={() => scopeTrigger.current?.focus()} /> : null}
   </>
 }
 export function SupervisorManagedSessionsPanel({ active, onSelectSession, dependencies }: {

@@ -773,7 +773,7 @@ export const uiEnUs = {
   "settings_hint_metrics": "Review session, tool call and model usage statistics.",
   "settings_hint_jiandu": "Manage searchable agent memory and archives.",
   "settings_hint_system": "Configure proxies, context management and runtime maintenance.",
-  "supervisor_entry_description": "Coordinate explicitly authorized sessions and follow tasks and results.",
+  "supervisor_entry_description": "Coordinate sessions and follow tasks and results under the current access rules.",
   "supervisor_rename": "Rename coordinating assistant",
   "supervisor_rename_description": "Choose a name for your coordinating assistant. It will keep coordinating sessions and following tasks, with existing conversations preserved.",
   "supervisor_name": "Assistant name",

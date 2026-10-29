@@ -773,7 +773,7 @@ export const uiZhCn = {
   "settings_hint_metrics": "查看会话、工具调用和模型用量的统计。",
   "settings_hint_jiandu": "管理 Agent 可检索的记忆与归档。",
   "settings_hint_system": "配置代理、上下文管理和运行维护等高级选项。",
-  "supervisor_entry_description": "协调已明确授权的会话，跟进任务与结果。",
+  "supervisor_entry_description": "按照当前访问规则协调会话，跟进任务与结果。",
   "supervisor_rename": "重命名统筹助手",
   "supervisor_rename_description": "给你的统筹助手起个名字。改名后，它仍会协调会话并跟进任务，已有对话保持不变。",
   "supervisor_name": "助手名称",

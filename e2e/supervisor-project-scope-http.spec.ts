@@ -103,3 +103,44 @@ for (const [mode, text] of [["unconfirmed", "本次提交结果未确认"], ["ac
     expect(f.runtime.pageErrors).toEqual([])
   })
 }
+
+
+test("closing current-user scope returns to the managed-session directory", async ({ page }, info) => {
+  await page.addInitScript(() => localStorage.setItem("bodhi_onboarded_v1", "1"))
+  const runtime = await installArtifactRuntime(page, standaloneScenario, [], { bootstrapRequestState: "local_bypass" })
+  const base = observation([], 0)
+  const currentScope = { ...base, code: "current_user_scope_ready",
+    capabilities: { ...base.capabilities, supervisor_current_user_scope_v1: true },
+    management_access: { kind: "current_user", default_all_projects: true, default_all_sessions: true,
+      requires_project_authorization: false, requires_session_attachment: false, orchestration_revision: 1 } }
+  const directory = { scope: base.scope, capabilities: { managed_sessions_http_v1: true, supervisor_current_user_scope_v1: true },
+    management_access: { kind: "current_user", requires_session_attachment: false }, sessions: [], next_after: null, legacy_links: {},
+    owner_authorization: base.owner_authorization }
+  const writes: string[] = []
+  await page.route("**/api/v1/**", async (route) => {
+    const request = route.request(), path = new URL(request.url()).pathname
+    if (["/api/v1/supervisor/default/scope", "/api/v1/supervisor/default/sessions"].includes(path)) {
+      if (request.method() !== "GET") { writes.push(path); return route.abort() }
+      return route.fulfill({ json: path.endsWith("/scope") ? currentScope : directory })
+    }
+    if (path === "/api/v1/projects") return route.fulfill({ json: { projects: [] } })
+    return route.fallback()
+  })
+  await page.goto(standaloneScenario.entryUrl)
+  if (info.project.name === "phone-chromium") await page.getByRole("button", { name: "菜单", exact: true }).click()
+  const row = page.locator("aside").first().getByRole("button", { name: "Supervisor", exact: true }).locator("..")
+  await row.getByRole("button", { name: "会话操作", exact: true }).click()
+  await page.getByRole("menuitem", { name: "管理会话", exact: true }).click()
+  const managed = page.getByRole("dialog", { name: "受管会话", exact: true })
+  const trigger = managed.getByRole("button", { name: "Supervisor 管理", exact: true })
+  await expect(trigger).toBeVisible()
+  await trigger.click()
+  const scope = page.getByRole("dialog", { name: "Supervisor 管理", exact: true })
+  await expect(scope.getByTestId("current-user-management")).toBeVisible()
+  await scope.getByRole("button", { name: "关闭", exact: true }).first().click()
+  await expect(scope).toBeHidden()
+  await expect(managed).toBeVisible()
+  await expect(trigger).toBeFocused()
+  expect(writes).toEqual([])
+  expect(runtime.pageErrors).toEqual([])
+})
