@@ -192,6 +192,10 @@ const apiResponse = (method: string, pathnameWithSearch: string): unknown => {
     return { sessions, total: sessions.length, limit: 200, offset: 0 }
   }
   switch (`${method} ${pathnameWithSearch}`) {
+    case "GET /api/v1/execute/defaults":
+      // Model the published legacy producer's defaults shape. An empty or malformed
+      // response remains unknown and must not enable session-wide Stop.
+      return { model: null, system_prompt: "", base_system_prompt: "", default_session_permission_mode: "default" }
     case "GET /api/v1/bootstrap":
       return bootstrapDocument
     case "GET /api/v1/bamboo/setup/status":

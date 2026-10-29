@@ -5,6 +5,7 @@ import { uiText } from "@shared/i18n/ui"
 import type { RunDiagnosticsSubject } from "@/lib/runDiagnosticId"
 import { RunDiagnosticsEntry, type RunDiagnosticsContentProps } from "./RunDiagnosticsEntry"
 import { RunDiagnosticsDialogContent } from "./RunDiagnosticsDialogContent"
+import { generatedDiagnosticError } from "@services/chat/runDiagnostic"
 import { diagnosticFixture, diagnosticFixtureError, timeoutDiagnosticFixture, timeoutDiagnosticFixtureError } from "@services/chat/runDiagnostic.testFixtures"
 
 const environment = globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
@@ -219,4 +220,19 @@ describe("v2 canonical diagnostic read and refresh", () => {
     expect(document.body.textContent).not.toContain("PRIVATE_CANARY")
     expect(JSON.parse(document.querySelector("pre")!.textContent!).diagnostic).toMatchObject({ canonical_status:"unavailable",failure_stage:null,attempt:null })
   })
+})
+
+
+it("renders and exports continuous stop evidence without a fabricated finite limit",async()=>{
+  const d={...diagnosticFixture(a.sessionId!),retry_mode:"until_cancelled" as const,attempt:7,attempt_limit:null,
+    total_budget_ms:null,remaining_budget_ms:null,stop_reason:"cancelled_or_dropped" as const}
+  const download=vi.fn(),readSession=vi.fn()
+  mount(<RunDiagnosticsDialogContent subject={{...a,errorBinding:generatedDiagnosticError(d),liveDiagnostic:d}}
+    isCurrent={()=>true} onClose={vi.fn()} readSession={readSession} download={download}/>)
+  const details=document.querySelector("dl")!
+  expect(details.textContent).toContain(uiText("run_diagnostics_continuous_attempts",{count:7}))
+  expect(details.textContent).not.toContain("7 / null")
+  expect(readSession).not.toHaveBeenCalled()
+  await click(uiText("run_diagnostics_download"))
+  expect(download.mock.calls[0]?.[0].diagnostic).toMatchObject({retry_mode:"until_cancelled",attempt:7,attempt_limit:null,total_budget_ms:null,remaining_budget_ms:null})
 })

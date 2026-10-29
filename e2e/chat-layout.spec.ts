@@ -80,6 +80,9 @@ async function expectDisclosureAlignment(scope: Locator) {
   await expect(scope.locator("[data-tool-call-entry-detail]")).toContainText("Read complete.")
   await expect(reasoning).toBeVisible()
   await expect(scope.locator('[data-message-role="assistant"] p').first()).toBeVisible()
+  // Rotating the square icon temporarily expands its bounding box. Measure
+  // settled alignment after the real CSS rotation, without timing sleeps.
+  await expect(scope.locator("[data-process-toggle] .process-activity-icon").first()).toHaveCSS("rotate", "90deg")
   const edges = await scope.evaluate((element) => {
     const tool = element.querySelector("[data-tool-call-entry-heading]")!
     const reasoning = element.querySelector("[data-reasoning-toggle]")!
@@ -98,6 +101,16 @@ async function expectDisclosureAlignment(scope: Locator) {
   expect(Math.abs(edges.toolIcon - edges.body)).toBeLessThanOrEqual(1)
 }
 
+function composerColumnShift(main: Locator) {
+  return main.locator("[data-composer-column]").evaluate((element) => {
+    const transform = element.ownerDocument.defaultView!.getComputedStyle(element).transform
+    const Matrix = (element.ownerDocument.defaultView as unknown as {
+      DOMMatrixReadOnly: new (value: string) => { m41: number }
+    }).DOMMatrixReadOnly
+    return transform === "none" ? 0 : new Matrix(transform).m41
+  })
+}
+
 async function expectComposerAlignment(scope: Locator) {
   // Read one browser frame so an in-progress shared transition cannot be
   // mistaken for misalignment by sampling the two columns at different times.
@@ -109,12 +122,15 @@ async function expectComposerAlignment(scope: Locator) {
     return {
       transcriptWidth: transcript.width, composerWidth: composer.width,
       transcriptLeft: transcript.left, composerLeft: composer.left,
+      availableWidth: element.querySelector("[data-chat-body]")!.getBoundingClientRect().width
+        - parseFloat(element.ownerDocument.defaultView!.getComputedStyle(element.querySelector("[data-chat-body]")!).paddingInlineEnd) - 24,
       textLeft: input.getBoundingClientRect().left + parseFloat(style.borderLeftWidth) + parseFloat(style.paddingLeft),
       bodyLeft: element.querySelector('[data-message-role="assistant"] p')!.getBoundingClientRect().left,
     }
   })
   expect(Math.abs(edges.transcriptWidth - edges.composerWidth)).toBeLessThanOrEqual(1)
   expect(Math.abs(edges.transcriptLeft - edges.composerLeft)).toBeLessThanOrEqual(1)
+  expect(Math.abs(edges.transcriptWidth - edges.availableWidth)).toBeLessThanOrEqual(1)
   expect(Math.abs(edges.textLeft - edges.bodyLeft)).toBeLessThanOrEqual(1.1)
   return edges.composerLeft + edges.composerWidth / 2
 }
@@ -133,7 +149,7 @@ test("chat tools, reasoning, body, and composer share reading edges on every vie
   expect(observation.pageErrors).toEqual([])
 })
 
-test("Environment moves the transcript, input content, and reading control together", async ({ page }, testInfo) => {
+test("Environment reserves shared pane space for the transcript, composer, and reading control", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "desktop-chromium", "wide and constrained desktop Environment geometry")
   await openLayout(page)
   const main = page.locator("[data-chat-layout]").first()
@@ -146,15 +162,17 @@ test("Environment moves the transcript, input content, and reading control toget
     await page.setViewportSize({ width, height: 900 })
     await page.getByRole("button", { name: "打开 Environment", exact: true }).click()
     await expect(floating).toHaveAttribute("data-state", "open")
-    const expectedShift = await main.evaluate((element) => Math.max(-166, Math.min(0, (1152 - element.getBoundingClientRect().width) / 2)))
-    await expect.poll(() => main.locator("[data-composer-column]").evaluate((element) => parseFloat(element.ownerDocument.defaultView!.getComputedStyle(element).left))).toBe(expectedShift)
-    const shiftedCenter = await expectComposerAlignment(main)
+    const expectedInset = await main.evaluate((element) => element.getBoundingClientRect().width >= 1484 ? 332 : 0)
+    await expect.poll(() => main.locator("[data-chat-body]").evaluate((element) => parseFloat(element.ownerDocument.defaultView!.getComputedStyle(element).paddingInlineEnd))).toBe(expectedInset)
+    await expect.poll(() => composerColumnShift(main)).toBe(0)
+    const reservedCenter = await expectComposerAlignment(main)
     await expectDisclosureAlignment(main)
     await page.getByRole("button", { name: "收起 Environment", exact: true }).click()
     await expect(floating).toHaveAttribute("data-state", "closed")
-    await expect.poll(() => main.locator("[data-composer-column]").evaluate((element) => parseFloat(element.ownerDocument.defaultView!.getComputedStyle(element).left))).toBe(0)
+    await expect.poll(() => main.locator("[data-chat-body]").evaluate((element) => parseFloat(element.ownerDocument.defaultView!.getComputedStyle(element).paddingInlineEnd))).toBe(0)
+    await expect.poll(() => composerColumnShift(main)).toBe(0)
     const centered = await expectComposerAlignment(main)
-    expect(Math.abs(centered - shiftedCenter + expectedShift)).toBeLessThanOrEqual(1)
+    expect(Math.abs(centered - reservedCenter - expectedInset / 2)).toBeLessThanOrEqual(1)
   }
   // Grow the transcript while pinned, then perform actual reader input.
   await page.setViewportSize({ width: 1900, height: 900 })

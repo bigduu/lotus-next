@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
-import { REAL_BAMBOO_REVISION } from "./support/realBambooRuntime.ts";
+import { FEATURE_BAMBOO_HOST_REVISION, REAL_BAMBOO_REVISION } from "./support/realBambooRuntime.ts";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -100,7 +100,7 @@ const queryMemory = async (
   return { data, items };
 };
 
-test("source-built isolated Bamboo runtime exposes the canonical contract", async () => {
+test("isolated published Bamboo runtime exposes the canonical contract", async () => {
   const baseUrl = new URL(requiredEnvironment("LOTUS_REAL_BAMBOO_BASE_URL"));
   const sessionId = requiredEnvironment("LOTUS_REAL_BAMBOO_SESSION_ID");
   const revision = requiredEnvironment("LOTUS_REAL_BAMBOO_REVISION");
@@ -111,6 +111,10 @@ test("source-built isolated Bamboo runtime exposes the canonical contract", asyn
   expect(baseUrl.protocol).toBe("http:");
   expect(baseUrl.hostname).toBe("127.0.0.1");
   expect(revision).toBe(REAL_BAMBOO_REVISION);
+  expect(requiredEnvironment("LOTUS_REAL_BAMBOO_HOST_REVISION")).toBe(
+    process.env.BAMBOO_E2E_HOST_SOURCE_DIR ? FEATURE_BAMBOO_HOST_REVISION : REAL_BAMBOO_REVISION,
+  );
+  expect(requiredEnvironment("LOTUS_REAL_BAMBOO_HOST_SHA256")).toMatch(/^[0-9a-f]{64}$/);
   expect(sessionId).toMatch(/^[0-9a-f-]{36}$/i);
   expect(path.isAbsolute(observationsPath)).toBe(true);
 

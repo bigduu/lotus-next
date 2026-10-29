@@ -20,7 +20,7 @@ describe("frozen public diagnostic v2 binding", () => {
     { error_id:null },{ provider:"private provider" },{ session_hash:null },{ session_hash:"0".repeat(16) },
     { run_id:"private-execution-proof" },{ observed_at:"private timestamp" },{ event:"attempt_start" },
     { phase:"private body" },{ failure:"PRIVATE_BODY" },{ upstream_outcome:"sent" },{ attempt:5 },{ attempt:-1 },
-    { attempt_limit:0 },{ attempt_limit:5 },{ total_budget_ms:60001 },{ remaining_budget_ms:60001 },
+    { attempt_limit:0 },{ attempt_limit:Number.MAX_SAFE_INTEGER+1 },{ total_budget_ms:3600001 },{ remaining_budget_ms:60001 },
     { attempt_timeout_ms:60001 },{ status:999 },{ retry_delay_ms:-1 },{ stop_reason:null },
     { stop_reason:"private reason" },{ total_elapsed_ms:Number.MAX_SAFE_INTEGER+1 },{ api_key:"PRIVATE_CANARY" },
   ])("rejects unknown/malformed/free-text projection %j", (patch) => {
@@ -104,5 +104,36 @@ describe("provider-independent stream timeout diagnostics", () => {
     expect(inspectCanonicalDiagnostic({ ...saved,last_run_error:"LLM error: " + timeoutError }, sid, timeoutError)).toEqual({ status:"changed", diagnostic:null })
     expect(inspectCanonicalDiagnostic({ ...saved, last_run_error:generatedDiagnosticError(next), last_run_diagnostic:next }, sid, timeoutError)).toEqual({ status:"changed", diagnostic:null })
     expect(inspectCanonicalDiagnostic({ ...saved, last_run_diagnostic:null }, sid, timeoutError)).toEqual({ status:"not_provided", diagnostic:null })
+  })
+})
+
+
+describe("configured and continuous initial-request receipts", () => {
+  const continuous = () => ({...diagnosticFixture(sid),retry_mode:"until_cancelled" as const,attempt:7,
+    attempt_limit:null,total_budget_ms:null,remaining_budget_ms:null,stop_reason:"cancelled_or_dropped" as const})
+  const cancelledError="Anthropic upstream request failed (no HTTP response): initial response headers timed out. Request cancelled or its caller stopped waiting after 7 request(s). Diagnostic ID: 9ab6cd70-bc43-4fed-9f10-50c2873fa287. Try again later or contact the upstream gateway administrator."
+  it("accepts configured six-attempt/120-second bounded receipts without changing legacy binding",()=>{
+    const d={...diagnosticFixture(sid),attempt:6,attempt_limit:6,total_budget_ms:120000}
+    const text=error.replace("after 1 request(s) (limit 4)","after 6 request(s) (limit 6)")
+    expect(decodeRunDiagnostic(d,sid,text)).toEqual(d)
+    expect(decodeRunDiagnostic(d,sid,error)).toBeNull()
+    expect(decodeRunDiagnostic(d,"foreign",text)).toBeNull()
+  })
+  it("reads a cancelled continuous receipt without fabricating a finite limit",()=>{
+    const d=continuous()
+    expect(generatedDiagnosticError(d)).toBe(cancelledError)
+    expect(decodeRunDiagnostic(d,sid,cancelledError)).toEqual(d)
+    expect(Object.isFrozen(decodeRunDiagnostic(d,sid,cancelledError))).toBe(true)
+  })
+  it.each([{attempt_limit:6},{total_budget_ms:120000},{remaining_budget_ms:0},{retry_mode:"bounded"},
+    {retry_mode:null},{stop_reason:"attempts_exhausted"},{stop_reason:"time_budget_exhausted"},
+    {stop_reason:"retry_delay_exceeds_budget"},{attempt:Number.MAX_SAFE_INTEGER+1},{secret:"PRIVATE_CANARY"}])("rejects invalid mixed-mode receipt %j",patch=>{
+    const d={...continuous(),...patch}
+    expect(decodeRunDiagnostic(d,sid,cancelledError)).toBeNull()
+  })
+  it("keeps the one-hour bounded cap and supports the explicit unschedulable delay reason",()=>{
+    const d={...diagnosticFixture(sid),total_budget_ms:3600000,stop_reason:"retry_delay_too_large" as const}
+    expect(decodeRunDiagnostic(d,sid,generatedDiagnosticError(d))).toEqual(d)
+    expect(decodeRunDiagnostic({...d,total_budget_ms:3600001},sid,generatedDiagnosticError(d))).toBeNull()
   })
 })

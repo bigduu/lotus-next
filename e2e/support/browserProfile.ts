@@ -1,27 +1,22 @@
 import { expect, type Locator, type Page } from "@playwright/test"
 
-/** A legacy404 permits a user-explicit default open, not a guessed mode. */
-export async function openClosedBrowserAtServiceDefault(page: Page, pane: Locator, sessionId: string) {
-  await expect(pane.getByText("当前聊天浏览器已关闭", { exact: true })).toBeVisible()
-  await expect(pane.getByRole("combobox", { name: "下次打开的模式", exact: true })).toHaveCount(0)
-  const sessionPath = `/api/v1/browser/sessions/${encodeURIComponent(sessionId)}`
-  const [response] = await Promise.all([
-    page.waitForResponse((response) =>
-      new URL(response.url()).pathname === sessionPath && response.request().method() === "PUT"),
-    pane.getByRole("button", { name: "按当前服务默认设置打开", exact: true }).click(),
-  ])
-  expect(response.status()).toBe(200)
-  expect(response.request().postDataJSON()).toEqual({})
-}
-
-/** Linux/Windows Bamboo17 requires the user's explicit clean intent. */
+/** Switch to clean explicitly, whether the default opened shared or was refused. */
 export async function openClosedBrowserExplicitlyClean(page: Page, pane: Locator, sessionId: string) {
-  await expect(pane.getByText("当前聊天浏览器已关闭", { exact: true })).toBeVisible()
-  await expect(pane.getByRole("combobox", { name: "下次打开的模式", exact: true })).toHaveCount(0)
+  const closed = pane.getByText("当前聊天浏览器已关闭", { exact: true })
+  const shared = pane.getByText("当前模式：共享账户", { exact: true })
+  await expect(closed.or(shared)).toBeAttached()
+  if (await shared.count()) {
+    if ((await pane.locator("details").getAttribute("open")) === null) await pane.locator("summary").click()
+    await pane.getByRole("combobox", { name: "下次打开的模式" }).selectOption("clean")
+    await pane.getByRole("button", { name: "关闭当前聊天浏览器", exact: true }).click()
+    await expect(closed).toBeVisible()
+  }
   const sessionPath = `/api/v1/browser/sessions/${encodeURIComponent(sessionId)}`
+  const openClean = pane.getByRole("button", { name: "以干净会话打开", exact: true })
+  const openSelected = pane.getByRole("button", { name: "打开浏览器", exact: true })
   const [response] = await Promise.all([
     page.waitForResponse((response) => new URL(response.url()).pathname === sessionPath && response.request().method() === "PUT"),
-    pane.getByRole("button", { name: "以干净会话打开", exact: true }).click(),
+    (await openClean.count() ? openClean : openSelected).click(),
   ])
   expect(response.status()).toBe(200)
   expect(response.request().postDataJSON()).toEqual({ profile_mode: "clean" })

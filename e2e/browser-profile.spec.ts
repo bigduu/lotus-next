@@ -1,12 +1,12 @@
 import { expect, test, type Page } from "@playwright/test"
 import { installArtifactRuntime, standaloneScenario } from "./support/artifactRuntime.js"
 import { workbenchPanel } from "./support/workbench.js"
-import { openClosedBrowserAtServiceDefault, openClosedBrowserExplicitlyClean } from "./support/browserProfile.js"
+import { openClosedBrowserExplicitlyClean } from "./support/browserProfile.js"
 
 const a = "all-surface-session", b = "profile-chat-b"
 type Mode = "shared" | "clean"
 type Scope = { mode: Mode; generation: number; tabs: string[]; epoch: number; viewport: { width: number; height: number } }
-async function fixture(page: Page, { legacy = false, cleanOnly = false }: { legacy?: boolean; cleanOnly?: boolean } = {}) {
+async function fixture(page: Page, { legacy = false, cleanOnly = false, delayOpen = 0 }: { legacy?: boolean; cleanOnly?: boolean; delayOpen?: number } = {}) {
   await page.addInitScript(() => { localStorage.setItem("bodhi_onboarded_v1", "1"); localStorage.setItem("lotus_next_last_session", "all-surface-session") })
   const observation = await installArtifactRuntime(page, standaloneScenario)
   const scopes = new Map<string, Scope>()
@@ -34,6 +34,7 @@ async function fixture(page: Page, { legacy = false, cleanOnly = false }: { lega
           scopes.delete(id); return route.fulfill({ status: 204 })
         }
         expect(Object.keys(body ?? {})).toEqual(body?.profile_mode === undefined ? [] : ["profile_mode"])
+        if (delayOpen) await new Promise((resolve) => setTimeout(resolve, delayOpen))
         if (cleanOnly && !scope && body?.profile_mode !== "clean") return route.fulfill({ status: 503,
           json: { error: { code: "browser_unavailable", type: "browser_error", message: "browser runtime unavailable: browser_shared_profile_unsupported: request clean explicitly" } } })
         if (conflictOpen) { conflictOpen = false; scope = create(id, "clean"); return failure(409, "browser_profile_mode_conflict") }
@@ -72,18 +73,12 @@ async function fixture(page: Page, { legacy = false, cleanOnly = false }: { lega
   return { observation, panel, browser, writes, scopes, refuseClose: (code = "browser_runtime_unavailable") => { refuseClose = code }, conflictOpen: () => { conflictOpen = true }, emptyOpens: () => { emptyOpens = true } }
 }
 
-test("synthetic clean-only host: closed bootstrap requires explicit clean UI intent after default refusal", async ({ page }, testInfo) => {
+test("synthetic clean-only host: default refusal remains visible and clean requires an explicit intent", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "desktop-chromium", "Desktop clean-only profile flow")
   const f = await fixture(page, { cleanOnly: true })
   await expect(f.browser.getByText("当前聊天浏览器已关闭", { exact: true })).toBeVisible()
   await expect(f.browser.getByRole("combobox")).toHaveCount(0)
-  expect(f.writes).toEqual([])
-  const [refusal] = await Promise.all([
-    page.waitForResponse((response) => new URL(response.url()).pathname === `/api/v1/browser/sessions/${a}` && response.request().method() === "PUT"),
-    f.browser.getByRole("button", { name: "按当前服务默认设置打开", exact: true }).click(),
-  ])
-  expect(refusal.status()).toBe(503)
-  expect(await refusal.json()).toMatchObject({ error: { code: "browser_unavailable" } })
+  await expect(f.browser.getByText(/当前服务不支持打开共享浏览器/)).toBeVisible()
   await expect(f.browser.getByRole("button", { name: "以干净会话打开", exact: true })).toBeEnabled()
   expect(f.writes).toEqual([{ id: a, method: "PUT", body: {} }])
   expect(f.scopes.has(a)).toBe(false)
@@ -98,13 +93,9 @@ test("synthetic clean-only host: closed bootstrap requires explicit clean UI int
 test("synthetic profiles: explicit choices, chat-owned close, zero-tab scope and fresh clean reopen", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "desktop-chromium", "Desktop profile flow; phone has no browser workbench")
   const f = await fixture(page)
-  await expect(f.browser.getByText("当前聊天浏览器已关闭", { exact: true })).toBeVisible()
   const select = f.browser.getByRole("combobox", { name: "下次打开的模式" })
-  await expect(select).toHaveCount(0)
-  expect(f.writes).toEqual([])
-  await f.browser.getByRole("button", { name: "按当前服务默认设置打开", exact: true }).click()
-  expect(f.writes).toEqual([{ id: a, method: "PUT", body: {} }])
   await expect(f.browser.getByText("当前模式：共享账户")).toBeAttached()
+  expect(f.writes).toEqual([{ id: a, method: "PUT", body: {} }])
   if ((await f.browser.locator("details").getAttribute("open")) === null) await f.browser.locator("summary").click()
   await expect(f.browser.getByText(/不构成安全隔离/)).toBeVisible()
   await select.selectOption("clean")
@@ -121,8 +112,6 @@ test("synthetic profiles: explicit choices, chat-owned close, zero-tab scope and
   await page.getByRole("button", { name: "Profile B", exact: true }).click()
   await page.getByRole("button", { name: "打开侧边面板" }).click()
   await f.panel.getByRole("button", { name: /浏览器.*输入网址后打开/ }).click()
-  await expect(select).toHaveCount(0)
-  await f.browser.getByRole("button", { name: "按当前服务默认设置打开", exact: true }).click()
   await expect.poll(() => f.scopes.get(b)?.mode).toBe("shared")
   const bBefore = structuredClone(f.scopes.get(b))
   await page.getByRole("button", { name: "Profile A", exact: true }).click()
@@ -149,11 +138,22 @@ test("synthetic profiles: explicit choices, chat-owned close, zero-tab scope and
   await page.screenshot({ path: testInfo.outputPath("profiles-cross-chat.png") })
 })
 
+test("a reported shared scope can be closed and explicitly reopened clean", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop-chromium", "Desktop profile flow")
+  const f = await fixture(page)
+  await expect(f.browser.getByText("当前模式：共享账户")).toBeAttached()
+  await openClosedBrowserExplicitlyClean(page, f.browser, a)
+  await expect(f.browser.getByText("当前模式：干净会话")).toBeAttached()
+  expect(f.writes).toEqual([
+    { id: a, method: "PUT", body: {} },
+    { id: a, method: "DELETE", body: undefined },
+    { id: a, method: "PUT", body: { profile_mode: "clean" } },
+  ])
+})
+
 test("synthetic profile refusal: busy, unknown DELETE and mode conflict read canonical state without replay", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "desktop-chromium", "Desktop profile flow; phone has no browser workbench")
   const f = await fixture(page)
-  await expect(f.browser.getByRole("combobox")).toHaveCount(0)
-  await f.browser.getByRole("button", { name: "按当前服务默认设置打开", exact: true }).click()
   await expect(f.browser.getByText("当前模式：共享账户")).toBeAttached()
   if ((await f.browser.locator("details").getAttribute("open")) === null) await f.browser.locator("summary").click()
   f.refuseClose("browser_busy")
@@ -186,13 +186,9 @@ test("synthetic profile refusal: busy, unknown DELETE and mode conflict read can
 })
 
 
-test("synthetic legacy404: only an explicit default open, no unsupported modes or automatic reopen", async ({ page }, testInfo) => {
+test("synthetic legacy404: entry opens with server defaults without claiming a mode", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "desktop-chromium", "Desktop profile flow; phone has no browser workbench")
   const f = await fixture(page, { legacy: true })
-  await expect(f.browser.getByText("当前聊天浏览器已关闭", { exact: true })).toBeVisible()
-  await expect(f.browser.getByRole("combobox")).toHaveCount(0)
-  expect(f.writes).toEqual([])
-  await openClosedBrowserAtServiceDefault(page, f.browser, a)
   await expect(f.browser.getByText("当前服务尚未报告浏览器账户模式，暂不能选择。", { exact: true })).toBeAttached()
   await expect(f.browser.getByRole("combobox")).toHaveCount(0)
   await expect(f.browser.getByRole("button", { name: "关闭当前聊天浏览器" })).toHaveCount(0)
@@ -220,7 +216,6 @@ test("synthetic legacy404: only an explicit default open, no unsupported modes o
 test("synthetic empty profile reopen keeps the selected browser recovery surface", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "desktop-chromium", "Desktop profile recovery")
   const f = await fixture(page)
-  await f.browser.getByRole("button", { name: "按当前服务默认设置打开", exact: true }).click()
   await expect(f.browser.getByText("当前模式：共享账户")).toBeAttached()
   if ((await f.browser.locator("details").getAttribute("open")) === null) await f.browser.locator("summary").click()
   f.emptyOpens()
@@ -241,4 +236,27 @@ test("synthetic empty profile reopen keeps the selected browser recovery surface
   expect(f.writes).toHaveLength(5)
   expect(f.observation.pageErrors).toEqual([])
   await page.screenshot({ path: testInfo.outputPath("empty-profile-reopen.png") })
+})
+
+test("Browser entry coalesces repeated clicks and opens shared again after an explicit close", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop-chromium", "Desktop browser entry")
+  const f = await fixture(page, { delayOpen: 1500 })
+  await expect.poll(() => f.writes.length).toBe(1)
+  await f.panel.getByRole("button", { name: "打开工作面板标签页" }).click()
+  await expect(page.getByRole("menuitem", { name: "浏览器", exact: true })).toBeDisabled()
+  await page.keyboard.press("Escape")
+  await expect(f.browser.getByText("当前模式：共享账户")).toBeAttached()
+  expect(f.writes).toEqual([{ id: a, method: "PUT", body: {} }])
+  if ((await f.browser.locator("details").getAttribute("open")) === null) await f.browser.locator("summary").click()
+  await f.browser.getByRole("button", { name: "关闭当前聊天浏览器" }).click()
+  await expect(f.browser.getByText("当前聊天浏览器已关闭", { exact: true })).toBeVisible()
+  await f.panel.getByRole("button", { name: "打开工作面板标签页" }).click()
+  await page.getByRole("menuitem", { name: "浏览器", exact: true }).click()
+  await expect(f.browser.getByText("当前模式：共享账户")).toBeAttached()
+  expect(f.writes).toEqual([
+    { id: a, method: "PUT", body: {} },
+    { id: a, method: "DELETE", body: undefined },
+    { id: a, method: "PUT", body: {} },
+  ])
+  expect(f.observation.pageErrors).toEqual([])
 })

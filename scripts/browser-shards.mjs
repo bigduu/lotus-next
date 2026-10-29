@@ -4,7 +4,7 @@ import { appendFileSync, existsSync, readFileSync, readdirSync, writeFileSync } 
 import { join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 
-export const browserNodes = [22, 24]
+export const browserNodes = [24]
 export const shardCount = 4
 const projects = ["desktop-chromium", "tablet-chromium", "phone-chromium"]
 const sorted = (values) => [...values].sort()
@@ -36,12 +36,12 @@ export const verifyPartition = (inventory, partitions) => {
 }
 
 export const summarizeShards = (receipts, { sourceSha, runId, runAttempt, verifyResult, browserResult }) => {
-  assert.equal(verifyResult, "success", "Both Node verification lanes must succeed")
+  assert.equal(verifyResult, "success", "Unit compatibility and canonical Node 24 verification must succeed")
   assert.equal(browserResult, "success", "Every browser shard must succeed")
   const latest = new Map()
   const attempts = new Set()
   for (const receipt of receipts) {
-    assert.equal(receipt.schemaVersion, 1)
+    assert.equal(receipt.schemaVersion, 2, "Feature browser receipts require the single-producer contract")
     assert.equal(receipt.sourceSha, sourceSha, "Browser shard source differs")
     assert.equal(receipt.runId, runId, "Browser shard run differs")
     assert.ok(Number.isSafeInteger(receipt.runAttempt) && receipt.runAttempt > 0 && receipt.runAttempt <= runAttempt)
@@ -54,6 +54,8 @@ export const summarizeShards = (receipts, { sourceSha, runId, runAttempt, verify
   assert.equal(latest.size, browserNodes.length * shardCount, "Missing browser shard")
   const shards = [...latest.values()].sort((a, b) => a.node - b.node || a.shard - b.shard)
   const inventory = shards[0].inventory
+  assert.equal(inventory.schemaVersion, 2)
+  assert.equal(inventory.producerNode, 24, "Feature browsers must consume the canonical Node 24 build")
   assert.deepEqual(inventory.projects, projects)
   verifyPartition(inventory.tests, inventory.shards)
   for (const receipt of shards) {
@@ -73,12 +75,14 @@ export const summarizeShards = (receipts, { sourceSha, runId, runAttempt, verify
     for (const test of parts.flatMap((part) => part.cases)) counts[test.outcome]++
     return { node, cases: inventory.tests.length, ...counts, browserWallMs: end - start, browserRunnerMs: parts.reduce((sum, part) => sum + part.durationMs, 0) }
   })
-  return { schemaVersion: 1, sourceSha, runId, runAttempt, lanes, shards: shards.map(({ node, shard, runAttempt, startedAt, durationMs }) => ({ node, shard, runAttempt, startedAt, durationMs })) }
+  return { schemaVersion: 2, sourceSha, runId, runAttempt, lanes, shards: shards.map(({ node, shard, runAttempt, startedAt, durationMs }) => ({ node, shard, runAttempt, startedAt, durationMs })) }
 }
 
 const sourceSha = () => execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim()
 const readInventory = () => {
   const inventory = json("browser-inventory.json")
+  assert.equal(inventory.schemaVersion, 2)
+  assert.equal(inventory.producerNode, 24)
   const manifest = json("dist/lotus-next-manifest.json")
   assert.equal(inventory.sourceSha, sourceSha())
   assert.equal(manifest.sourceRevision, inventory.sourceSha)
@@ -94,18 +98,19 @@ const receiptFiles = (directory) => readdirSync(directory, { withFileTypes: true
 const main = () => {
   const command = process.argv[2]
   if (command === "inventory") {
+    assert.equal(Number(process.versions.node.split(".")[0]), 24, "Only Node 24 produces the feature browser artifact")
     const list = (shard) => JSON.parse(execFileSync(process.execPath, ["node_modules/@playwright/test/cli.js", "test", "--list", "--reporter=json", ...(shard ? [`--shard=${shard}/${shardCount}`] : [])], { env: { ...process.env, CI: "true" }, encoding: "utf8", maxBuffer: 16 * 1024 * 1024 }))
     const full = list()
     assert.deepEqual(full.config.projects.map((project) => project.name), projects)
     const tests = reportCases(full).map((test) => test.id)
     const shards = Array.from({ length: shardCount }, (_, index) => reportCases(list(index + 1)).map((test) => test.id))
     verifyPartition(tests, shards)
-    write("browser-inventory.json", { sourceSha: sourceSha(), projects, tests, shards })
+    write("browser-inventory.json", { schemaVersion: 2, producerNode: 24, sourceSha: sourceSha(), projects, tests, shards })
     console.log(`${tests.length} cases partitioned exactly once: ${shards.map((shard) => shard.length).join(" / ")}`)
   } else if (command === "check-source") {
     readInventory()
   } else if (command === "receipt") {
-    const receipt = { schemaVersion: 1, sourceSha: sourceSha(), runId: process.env.GITHUB_RUN_ID, runAttempt: Number(process.env.GITHUB_RUN_ATTEMPT), node: Number(process.versions.node.split(".")[0]), shard: Number(process.env.BROWSER_SHARD), status: process.env.SHARD_STATUS }
+    const receipt = { schemaVersion: 2, sourceSha: sourceSha(), runId: process.env.GITHUB_RUN_ID, runAttempt: Number(process.env.GITHUB_RUN_ATTEMPT), node: Number(process.versions.node.split(".")[0]), shard: Number(process.env.BROWSER_SHARD), status: process.env.SHARD_STATUS }
     try {
       receipt.inventory = readInventory()
       const report = json("browser-results.json")

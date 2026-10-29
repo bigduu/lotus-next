@@ -22,14 +22,14 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-export const REAL_BAMBOO_REVISION = "d6325a732c7669f94962f604e4ce98966e374d73";
+export const REAL_BAMBOO_REVISION = "4786b7db862cabbebce49e288da62b284ccf5b72";
 
-// Published executable identity from Bamboo v2026.10.18. Browser-host sources
+// Published executable identity from Bamboo v2026.10.19. Browser-host sources
 // still come from the same verified Git checkout; Cargo is not rerun here.
 export const REAL_BAMBOO_BINARY = Object.freeze({
-  url: "https://github.com/bigduu/Bamboo-agent/releases/download/v2026.10.18/bamboo-x86_64-unknown-linux-gnu",
-  bytes: 247723520,
-  sha256: "06df1bd069b42c46958dcdb7084c1822a8c2d5cb39d0f95affceb3820bbcc8e1",
+  url: "https://github.com/bigduu/Bamboo-agent/releases/download/v2026.10.19/bamboo-x86_64-unknown-linux-gnu",
+  bytes: 248709064,
+  sha256: "f37f51bafe1d49055adcb0e1b51067e2f9a07ad0cb36497a91f86889e5773286",
 });
 
 export const verifyBambooBinary = (
@@ -43,6 +43,53 @@ export const verifyBambooBinary = (
   if (Buffer.from(bytes.subarray(0, 6)).toString("hex") !== "7f454c460201" ||
       bytes[18] !== 62 || bytes[19] !== 0)
     throw new Error("Published Bamboo binary must be Linux x86_64 ELF");
+};
+
+// Feature CI verifies the executable and browser host against the same released
+// source. The explicit pair check preserves the original host identity evidence.
+export const FEATURE_BAMBOO_HOST_REVISION = "4786b7db862cabbebce49e288da62b284ccf5b72";
+const FEATURE_BAMBOO_HOST_PAIR = Object.freeze({
+  binaryRevision: REAL_BAMBOO_REVISION,
+  hostRevision: FEATURE_BAMBOO_HOST_REVISION,
+  binaryAdapterTree: "55390529b9823112c56ce9c993c4aa8ad473cd01",
+  hostAdapterTree: "55390529b9823112c56ce9c993c4aa8ad473cd01",
+  binaryHostBlob: "3c6a6e5463394bc689f95528446c9fc983e150a6",
+  hostHostBlob: "3c6a6e5463394bc689f95528446c9fc983e150a6",
+  binaryPackageBlob: "4df53cb8e1e41e1e6a34ad5e65843a866ae8101d",
+  hostPackageBlob: "4df53cb8e1e41e1e6a34ad5e65843a866ae8101d",
+  binaryLockBlob: "f29cb9346fdd3fcd00fbc24789c646c86c1441ac",
+  hostLockBlob: "f29cb9346fdd3fcd00fbc24789c646c86c1441ac",
+});
+export type BambooHostPairObservation = { [K in keyof typeof FEATURE_BAMBOO_HOST_PAIR]: string };
+
+/** Reject changes to the exact reviewed binary/host pair or its adapter inputs. */
+export const assertFeatureBambooHostPair = (actual: BambooHostPairObservation): void => {
+  for (const key of Object.keys(FEATURE_BAMBOO_HOST_PAIR) as Array<keyof BambooHostPairObservation>) {
+    if (actual[key] !== FEATURE_BAMBOO_HOST_PAIR[key])
+      throw new Error(`Bamboo feature host compatibility mismatch: ${key}`);
+  }
+};
+
+/** Explicit host verification is confined to a dev PR's feature verification. */
+export const resolveFeatureBrowserHost = (environment: NodeJS.ProcessEnv):
+  { mode: "same-source" } | { mode: "feature-pair"; directory: string } => {
+  const directory = environment.BAMBOO_E2E_HOST_SOURCE_DIR?.trim();
+  const revision = environment.BAMBOO_E2E_HOST_REVISION?.trim();
+  const feature = environment.GITHUB_ACTIONS === "true"
+    && environment.GITHUB_REPOSITORY === "bigduu/lotus-next"
+    && environment.GITHUB_EVENT_NAME === "pull_request"
+    && environment.GITHUB_BASE_REF === "dev"
+    && /^refs\/pull\/[1-9][0-9]*\/merge$/.test(environment.GITHUB_REF ?? "");
+  const publication = !!(environment.PUBLICATION_WORKFLOW_SHA
+    || environment.LOTUS_NEXT_RELEASE_SOURCE_RECEIPT || environment.LOTUS_NEXT_ACCEPTANCE_SOURCE_DIR);
+  if (directory || revision) {
+    if (!feature || publication) throw new Error("Mixed Bamboo host is limited to feature PR verification");
+    if (!directory || !path.isAbsolute(directory) || revision !== FEATURE_BAMBOO_HOST_REVISION)
+      throw new Error("Feature verification requires the exact accepted Bamboo host checkout");
+    return { mode: "feature-pair", directory };
+  }
+  if (feature) throw new Error("Feature verification requires the exact accepted Bamboo host checkout");
+  return { mode: "same-source" };
 };
 
 const REAL_BAMBOO_MODEL = "gpt-4o-mini";
@@ -88,6 +135,8 @@ const EXPORTED_ENVIRONMENT_KEYS = [
   "LOTUS_REAL_USER_MARKER",
   "LOTUS_REAL_ASSISTANT_MARKER",
   "LOTUS_REAL_BAMBOO_REVISION",
+  "LOTUS_REAL_BAMBOO_HOST_REVISION",
+  "LOTUS_REAL_BAMBOO_HOST_SHA256",
   "LOTUS_REAL_BAMBOO_CONTAINER_ID",
   "LOTUS_REAL_PROVIDER_CONTAINER_ID",
   "LOTUS_REAL_BAMBOO_RUN_ID",
@@ -154,7 +203,11 @@ interface RuntimeState {
   imageBuildAttempted: boolean;
   runtimeImage?: string;
   sourceValidation?: SourceValidation;
+  featureHostValidation?: SourceValidation;
+  featureHostPair?: BambooHostPairObservation;
+  browserHostSha256?: string;
   imageRevision?: string;
+  imageHostRevision?: string;
   containerUser?: string;
   containerUid?: number;
   containerGid?: number;
@@ -498,11 +551,13 @@ const ensureDocker = async (): Promise<string> => {
 
 const validateSourceDirectory = async (
   configuredDirectory: string,
+  expectedRevision = REAL_BAMBOO_REVISION,
+  label = "BAMBOO_E2E_SOURCE_DIR",
 ): Promise<SourceValidation> => {
   const directory = await realpath(path.resolve(configuredDirectory)).catch(
     () => {
       throw new Error(
-        `BAMBOO_E2E_SOURCE_DIR does not exist: ${configuredDirectory}`,
+        `${label} does not exist: ${configuredDirectory}`,
       );
     },
   );
@@ -515,13 +570,13 @@ const validateSourceDirectory = async (
   ]).catch((error: unknown) => {
     const detail = error instanceof Error ? error.message : String(error);
     throw new Error(
-      `BAMBOO_E2E_SOURCE_DIR is not a readable Git checkout: ${detail}`,
+      `${label} is not a readable Git checkout: ${detail}`,
     );
   });
   const head = headOutput.trim();
-  if (head !== REAL_BAMBOO_REVISION) {
+  if (head !== expectedRevision) {
     throw new Error(
-      `BAMBOO_E2E_SOURCE_DIR must be exactly Bamboo ${REAL_BAMBOO_REVISION}; found ${head || "<empty>"}.`,
+      `${label} must be exactly Bamboo ${expectedRevision}; found ${head || "<empty>"}.`,
     );
   }
 
@@ -539,11 +594,39 @@ const validateSourceDirectory = async (
       .slice(0, 20)
       .join("\n");
     throw new Error(
-      `BAMBOO_E2E_SOURCE_DIR must be completely clean, including untracked files. git status --porcelain reported:\n${sample}`,
+      `${label} must be completely clean, including untracked files. git status --porcelain reported:\n${sample}`,
     );
   }
 
   return { directory, head, clean: true };
+};
+
+const browserSourceObjects = async (source: SourceValidation) => {
+  const paths = [
+    "crates/app/bamboo-server/src/browser",
+    "browser-runtime/host.cjs",
+    "browser-runtime/package.json",
+    "browser-runtime/package-lock.json",
+  ];
+  const { stdout } = await runCommand("git", ["--no-replace-objects", "-C", source.directory,
+    "rev-parse", ...paths.map((item) => `HEAD:${item}`)]);
+  const objects = stdout.trim().split(/\r?\n/u);
+  if (objects.length !== paths.length || objects.some((value) => !/^[0-9a-f]{40}$/.test(value)))
+    throw new Error("Could not verify Bamboo browser source objects");
+  return { adapterTree: objects[0], hostBlob: objects[1], packageBlob: objects[2], lockBlob: objects[3] };
+};
+
+const validateFeatureHostPair = async (binary: SourceValidation, host: SourceValidation): Promise<BambooHostPairObservation> => {
+  const [binaryObjects, hostObjects] = await Promise.all([browserSourceObjects(binary), browserSourceObjects(host)]);
+  const observation = {
+    binaryRevision: binary.head, hostRevision: host.head,
+    binaryAdapterTree: binaryObjects.adapterTree, hostAdapterTree: hostObjects.adapterTree,
+    binaryHostBlob: binaryObjects.hostBlob, hostHostBlob: hostObjects.hostBlob,
+    binaryPackageBlob: binaryObjects.packageBlob, hostPackageBlob: hostObjects.packageBlob,
+    binaryLockBlob: binaryObjects.lockBlob, hostLockBlob: hostObjects.lockBlob,
+  };
+  assertFeatureBambooHostPair(observation);
+  return observation;
 };
 
 const inspectImageRevision = async (image: string): Promise<string> => {
@@ -596,6 +679,18 @@ const createExactSourceArchive = async (
   throwIfInterrupted(state);
   await rm(archivePath, { force: true });
   throwIfInterrupted(state);
+  if (state.featureHostValidation) {
+    if (!state.featureHostPair) throw new Error("Bamboo feature host pair was not verified");
+    const hostArchive = path.join(state.tempRoot, "bamboo-feature-host.tar");
+    await runCommand("git", ["--no-replace-objects", "-C", state.featureHostValidation.directory,
+      "archive", "--format=tar", `--output=${hostArchive}`, FEATURE_BAMBOO_HOST_REVISION,
+      "browser-runtime/host.cjs"]);
+    throwIfInterrupted(state);
+    await runCommand("tar", ["-xf", hostArchive, "-C", contextPath]);
+    await rm(hostArchive, { force: true });
+    throwIfInterrupted(state);
+  }
+  state.browserHostSha256 = sha256(await readFile(path.join(contextPath, "browser-runtime", "host.cjs")));
   // Keep the Bamboo source provenance exact while adding the harness-owned
   // deterministic provider as an explicit, auditable test-only build input.
   await copyFile(
@@ -634,6 +729,12 @@ const buildPinnedBambooImage = async (
       schemaVersion: 1,
       sourceRevision: REAL_BAMBOO_REVISION,
       ...REAL_BAMBOO_BINARY,
+      browserHost: {
+        revision: state.featureHostValidation?.head ?? source.head,
+        sha256: state.browserHostSha256,
+        mode: state.featureHostValidation ? "feature-pair" : "same-source",
+        compatibility: state.featureHostPair ?? null,
+      },
     });
     state.imageBuildAttempted = true;
     await runCommand("docker", [
@@ -648,6 +749,7 @@ const buildPinnedBambooImage = async (
       image,
       "--label",
       `lotus.real-bamboo.run=${state.runId}`,
+      ...(state.featureHostValidation ? ["--label", `lotus.real-bamboo.browser-host-revision=${state.featureHostValidation.head}`] : []),
       contextPath,
     ]);
     throwIfInterrupted(state);
@@ -659,6 +761,13 @@ const buildPinnedBambooImage = async (
   const revision = await inspectImageRevision(image);
   throwIfInterrupted(state);
   state.imageRevision = revision;
+  if (state.featureHostValidation) {
+    const { stdout } = await runCommand("docker", ["image", "inspect", "--format",
+      '{{ index .Config.Labels "lotus.real-bamboo.browser-host-revision" }}', image]);
+    state.imageHostRevision = stdout.trim();
+    if (state.imageHostRevision !== state.featureHostValidation.head)
+      throw new Error("Docker image browser-host revision differs from the verified feature checkout");
+  }
   return image;
 };
 
@@ -1638,9 +1747,10 @@ const revisionEvidence = (state: RuntimeState) => ({
         headExact: state.sourceValidation.head === REAL_BAMBOO_REVISION,
         clean: state.sourceValidation.clean,
         cleanlinessCommand: "git status --porcelain=v1 --untracked-files=all",
-        buildContext:
-          "git archive of the verified browser host plus the hash-verified published executable and harness-owned provider",
-        bambooSourceArchiveExact: true,
+        buildContext: state.featureHostValidation
+          ? "git archive of the binary source with one separately verified feature host file, published executable, and harness provider"
+          : "git archive of the verified browser host plus the hash-verified published executable and harness-owned provider",
+        bambooSourceArchiveExact: !state.featureHostValidation,
         providerHarnessInjected: true,
       }
     : {
@@ -1649,9 +1759,17 @@ const revisionEvidence = (state: RuntimeState) => ({
         bambooSourceArchiveExact: null,
         providerHarnessInjected: null,
       },
+  browserHost: {
+    mode: state.featureHostValidation ? "feature-pair" : "same-source",
+    revision: state.featureHostValidation?.head ?? state.sourceValidation?.head ?? null,
+    clean: state.featureHostValidation?.clean ?? state.sourceValidation?.clean ?? null,
+    sha256: state.browserHostSha256 ?? null,
+    compatibility: state.featureHostPair ?? null,
+  },
   image: {
     reference: state.runtimeImage ?? null,
     ociRevision: state.imageRevision ?? null,
+    browserHostRevision: state.imageHostRevision ?? null,
     revisionExact: state.imageRevision
       ? state.imageRevision === REAL_BAMBOO_REVISION
       : null,
@@ -1672,6 +1790,12 @@ const runtimeSummary = (
     ? state.sourceValidation.head === REAL_BAMBOO_REVISION
     : null,
   sourceClean: state.sourceValidation?.clean ?? null,
+  browserHost: {
+    mode: state.featureHostValidation ? "feature-pair" : "same-source",
+    revision: state.featureHostValidation?.head ?? state.sourceValidation?.head ?? null,
+    sha256: state.browserHostSha256 ?? null,
+    compatibility: state.featureHostPair ?? null,
+  },
   imageRevisionExact: state.imageRevision
     ? state.imageRevision === REAL_BAMBOO_REVISION
     : null,
@@ -2069,6 +2193,7 @@ const globalSetup = async (): Promise<() => Promise<void>> => {
     state.dockerServerVersion = await ensureDocker();
 
     const configuredSource = process.env.BAMBOO_E2E_SOURCE_DIR?.trim();
+    const hostSelection = resolveFeatureBrowserHost(process.env);
     const configuredImage = process.env.BAMBOO_E2E_IMAGE?.trim();
     if (configuredImage) {
       throw new Error(
@@ -2083,6 +2208,12 @@ const globalSetup = async (): Promise<() => Promise<void>> => {
 
     advanceStage(state, "validating Bamboo source");
     state.sourceValidation = await validateSourceDirectory(configuredSource);
+    if (hostSelection.mode === "feature-pair") {
+      advanceStage(state, "validating feature browser host compatibility");
+      state.featureHostValidation = await validateSourceDirectory(hostSelection.directory,
+        FEATURE_BAMBOO_HOST_REVISION, "BAMBOO_E2E_HOST_SOURCE_DIR");
+      state.featureHostPair = await validateFeatureHostPair(state.sourceValidation, state.featureHostValidation);
+    }
 
     advanceStage(state, "creating isolated runtime root");
     mkdirSync(tempRoot, { mode: 0o700 });
@@ -2221,6 +2352,9 @@ const globalSetup = async (): Promise<() => Promise<void>> => {
     process.env.LOTUS_REAL_USER_MARKER = state.userMarker;
     process.env.LOTUS_REAL_ASSISTANT_MARKER = state.assistantMarker;
     process.env.LOTUS_REAL_BAMBOO_REVISION = REAL_BAMBOO_REVISION;
+    if (!state.browserHostSha256) throw new Error("Missing verified Bamboo browser host digest");
+    process.env.LOTUS_REAL_BAMBOO_HOST_REVISION = state.featureHostValidation?.head ?? REAL_BAMBOO_REVISION;
+    process.env.LOTUS_REAL_BAMBOO_HOST_SHA256 = state.browserHostSha256;
     process.env.LOTUS_REAL_BAMBOO_CONTAINER_ID = state.containerId;
     process.env.LOTUS_REAL_PROVIDER_CONTAINER_ID = state.providerContainerId;
     process.env.LOTUS_REAL_BAMBOO_RUN_ID = state.runId;

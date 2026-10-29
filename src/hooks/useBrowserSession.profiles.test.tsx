@@ -7,7 +7,7 @@ import type { BrowserProfileMode, BrowserState } from "@services/browser/types"
 import { useBrowserSession } from "./useBrowserSession"
 
 vi.mock("@services/browser/BrowserService", () => ({ browserService: {
-  open: vi.fn(), openProfile: vi.fn(), get: vi.fn(), close: vi.fn(), frame: vi.fn(), closeTab: vi.fn(),
+  open: vi.fn(), openProfile: vi.fn(), get: vi.fn(), close: vi.fn(), frame: vi.fn(), closeTab: vi.fn(), navigate: vi.fn(), viewport: vi.fn(),
 } }))
 
 const state = (mode: BrowserProfileMode, epoch = 1): BrowserState => ({
@@ -33,12 +33,283 @@ beforeEach(() => {
   vi.mocked(browserService.close).mockImplementation(async (id) => { states[id] = null })
   host = document.body.appendChild(document.createElement("div")); root = createRoot(host)
 })
-afterEach(async () => { await act(async () => root.unmount()); host.remove(); vi.resetAllMocks() })
+afterEach(async () => { await act(async () => root.unmount()); host.remove(); vi.resetAllMocks(); vi.useRealTimers() })
 async function negotiatedClosed() {
   await render()
   await act(async () => browser.closeProfile("a"))
   vi.mocked(browserService.close).mockClear()
 }
+
+it("opens a closed browser once for a Browser-entry click, including repeated clicks during the read", async () => {
+  states.a = null
+  let rejectRead!: (reason: unknown) => void
+  vi.mocked(browserService.get).mockImplementationOnce(() => new Promise((_resolve, reject) => { rejectRead = reject }))
+  await render()
+  await act(async () => { browser.requestEntryOpen("a"); browser.requestEntryOpen("a") })
+  expect(browser.entryOpening).toBe(true)
+  expect(browserService.open).not.toHaveBeenCalled()
+  await act(async () => { rejectRead(notOpen()) })
+  expect(browserService.open).toHaveBeenCalledExactlyOnceWith("a", expect.any(AbortSignal))
+  expect(browserService.openProfile).not.toHaveBeenCalled()
+  expect(browser.profile).toEqual({ kind: "reported", mode: "shared", storageShared: true })
+  expect(browser.entryOpening).toBe(false)
+})
+
+it("does not reopen on hide, read retry, or an existing clean scope; a later entry click opens shared after close", async () => {
+  states.a = state("clean")
+  await render()
+  await act(async () => browser.requestEntryOpen("a"))
+  await render("a", false)
+  await render()
+  await act(async () => browser.retry())
+  expect(browser.profile).toMatchObject({ kind: "reported", mode: "clean" })
+  expect(browserService.open).not.toHaveBeenCalled()
+  await act(async () => browser.closeProfile("a"))
+  expect(browser.profilePhase).toBe("closed")
+  await act(async () => browser.requestEntryOpen("a"))
+  expect(browserService.open).toHaveBeenCalledTimes(1)
+  expect(browser.profile).toMatchObject({ kind: "reported", mode: "shared" })
+})
+
+it("rechecks a cached active scope on entry before deciding whether to open", async () => {
+  await render()
+  states.a = null // Another client closed the scope before this view noticed.
+  await act(async () => { browser.requestEntryOpen("a"); browser.requestEntryOpen("a") })
+  expect(browserService.open).toHaveBeenCalledExactlyOnceWith("a", expect.any(AbortSignal))
+  expect(browserService.openProfile).not.toHaveBeenCalled()
+  expect(browser.profile).toMatchObject({ kind: "reported", mode: "shared" })
+})
+
+it.each(["navigate", "viewport"] as const)("waits for an in-flight %s before rechecking an entry", async (operation) => {
+  await render()
+  let finishAction!: () => void
+  const result = { ...state("shared", 8), url: "https://example.test/" }
+  const deferred = () => new Promise<BrowserState>((resolve) => { finishAction = () => { states.a = result; resolve(result) } })
+  vi.mocked(browserService.navigate).mockImplementationOnce(deferred)
+  vi.mocked(browserService.viewport).mockImplementationOnce(deferred)
+  let action!: Promise<BrowserState | null>
+  await act(async () => { action = operation === "navigate" ? browser.navigate(result.url) : browser.viewport({ width: 800, height: 600 }) })
+  await act(async () => browser.requestEntryOpen("a"))
+  expect(browserService.get).toHaveBeenCalledTimes(1)
+  expect(browser.entryOpening).toBe(true)
+  let response!: BrowserState | null
+  await act(async () => { finishAction(); response = await action })
+  expect(response?.url).toBe(result.url)
+  expect(browser.state?.url).toBe(result.url)
+  expect(browserService.get).toHaveBeenCalledTimes(2)
+  expect(browserService.open).not.toHaveBeenCalled()
+  expect(browser.entryOpening).toBe(false)
+})
+
+it("keeps a queued action failure visible through rechecks and later automatic actions until retry", async () => {
+  await render()
+  let failAction!: () => void
+  vi.mocked(browserService.navigate).mockImplementationOnce(() => new Promise((_resolve, reject) => {
+    failAction = () => reject(new NetworkRequestError())
+  }))
+  let action!: Promise<BrowserState | null>
+  await act(async () => { action = browser.navigate("https://example.test/") })
+  await act(async () => browser.requestEntryOpen("a"))
+  await act(async () => { failAction(); await action })
+  expect(browserService.get).toHaveBeenCalledTimes(2)
+  expect(browser.error).toBeTruthy()
+  const error = browser.error
+  vi.mocked(browserService.navigate).mockResolvedValueOnce(state("shared", 9))
+  await act(async () => browser.navigate("https://example.test/next"))
+  expect(browser.error).toBe(error)
+  await render("b")
+  expect(browser.error).toBeNull()
+  await render("a")
+  expect(browser.error).toBe(error)
+  await act(async () => browser.retry())
+  expect(browser.error).toBeNull()
+})
+
+it("shows a queued action refusal together with a failed canonical read", async () => {
+  await render()
+  let refuseAction!: () => void
+  vi.mocked(browserService.navigate).mockImplementationOnce(() => new Promise((_resolve, reject) => {
+    refuseAction = () => reject(new ApiError("busy", 503, "Unavailable", JSON.stringify({ error: { code: "browser_busy", type: "browser_error" } })))
+  }))
+  vi.mocked(browserService.get).mockRejectedValueOnce(new NetworkRequestError())
+  let action!: Promise<BrowserState | null>
+  await act(async () => { action = browser.navigate("https://example.test/") })
+  await act(async () => browser.requestEntryOpen("a"))
+  await act(async () => { refuseAction(); await action })
+  expect(browser.error).toContain("本次请求未执行")
+  expect(browser.error).toContain("暂时无法使用")
+  expect(browserService.open).not.toHaveBeenCalled()
+})
+
+it("keeps a queued action refusal visible during and after empty-scope read failures", async () => {
+  vi.useFakeTimers()
+  states.a = { ...state("shared"), tabs: [], active_tab_id: null }
+  await render()
+  let refuseAction!: () => void
+  vi.mocked(browserService.navigate).mockImplementationOnce(() => new Promise((_resolve, reject) => {
+    refuseAction = () => reject(new ApiError("busy", 503, "Unavailable", JSON.stringify({ error: { code: "browser_busy", type: "browser_error" } })))
+  }))
+  let action!: Promise<BrowserState | null>
+  await act(async () => { action = browser.navigate("https://example.test/") })
+  await act(async () => browser.requestEntryOpen("a"))
+  await act(async () => { refuseAction(); await action })
+  vi.mocked(browserService.get).mockRejectedValueOnce(new NetworkRequestError())
+    .mockRejectedValueOnce(new NetworkRequestError()).mockRejectedValueOnce(new NetworkRequestError())
+  await act(async () => { await vi.advanceTimersByTimeAsync(3000) })
+  expect(browser.error).toContain("本次请求未执行")
+  expect(browser.error).toContain("暂时无法使用")
+  await act(async () => { await vi.advanceTimersByTimeAsync(2000) })
+  expect(browser.error).toContain("本次请求未执行")
+})
+
+it("opens once for a new entry intent received while close is in flight", async () => {
+  await render()
+  let finishClose!: () => void
+  vi.mocked(browserService.close).mockImplementationOnce(() => new Promise((resolve) => {
+    finishClose = () => { states.a = null; resolve() }
+  }))
+  let closing!: Promise<void>
+  await act(async () => { closing = browser.closeProfile("a") })
+  await act(async () => { browser.requestEntryOpen("a"); browser.requestEntryOpen("a") })
+  expect(browser.entryOpening).toBe(true)
+  expect(browserService.open).not.toHaveBeenCalled()
+  await act(async () => { finishClose(); await closing })
+  expect(browserService.close).toHaveBeenCalledTimes(1)
+  expect(browserService.open).toHaveBeenCalledExactlyOnceWith("a", expect.any(AbortSignal))
+  expect(browserService.openProfile).not.toHaveBeenCalled()
+  expect(browser.profile).toMatchObject({ kind: "reported", mode: "shared" })
+  expect(browser.entryOpening).toBe(false)
+})
+
+it("keeps the active scope and the unconfirmed close warning when a queued entry follows a failed close", async () => {
+  states.a = state("clean")
+  await render()
+  let failClose!: () => void
+  vi.mocked(browserService.close).mockImplementationOnce(() => new Promise((_resolve, reject) => {
+    failClose = () => reject(new NetworkRequestError())
+  }))
+  let closing!: Promise<void>
+  await act(async () => { closing = browser.closeProfile("a") })
+  await act(async () => browser.requestEntryOpen("a"))
+  await act(async () => { failClose(); await closing })
+  expect(browserService.close).toHaveBeenCalledTimes(1)
+  expect(browserService.open).not.toHaveBeenCalled()
+  expect(browserService.openProfile).not.toHaveBeenCalled()
+  expect(browser.profile).toMatchObject({ kind: "reported", mode: "clean" })
+  expect(browser.error).toContain("未确认")
+  expect(browser.entryOpening).toBe(false)
+})
+
+it("preserves an unconfirmed open warning when empty-scope reads fail and recover", async () => {
+  vi.useFakeTimers()
+  states.a = null
+  const empty = { ...state("shared"), tabs: [], active_tab_id: null }
+  vi.mocked(browserService.open).mockImplementationOnce(async () => { states.a = empty; throw new NetworkRequestError() })
+  await render()
+  await act(async () => browser.requestEntryOpen("a"))
+  expect(browser.profilePhase).toBe("active")
+  expect(browser.error).toContain("未确认")
+
+  vi.mocked(browserService.get).mockRejectedValueOnce(new NetworkRequestError())
+  await act(async () => { await vi.advanceTimersByTimeAsync(500) })
+  await act(async () => { await vi.advanceTimersByTimeAsync(1000) })
+  expect(browser.error).toContain("未确认")
+
+  vi.mocked(browserService.get).mockRejectedValueOnce(new NetworkRequestError())
+    .mockRejectedValueOnce(new NetworkRequestError()).mockRejectedValueOnce(new NetworkRequestError())
+  await act(async () => { await vi.advanceTimersByTimeAsync(3000) })
+  expect(browser.error).toContain("未确认")
+  await act(async () => { await vi.advanceTimersByTimeAsync(2000) })
+  expect(browser.error).toContain("未确认")
+  expect(browserService.open).toHaveBeenCalledTimes(1)
+})
+
+it("opens from a fresh entry click after a closed scope was hidden", async () => {
+  states.a = null
+  await render()
+  await render("a", false)
+  await act(async () => browser.requestEntryOpen("a"))
+  await render()
+  expect(browserService.open).toHaveBeenCalledTimes(1)
+  expect(browser.profile).toMatchObject({ kind: "reported", mode: "shared" })
+})
+
+it("keeps a legacy default open unreported after an entry click", async () => {
+  states.a = null
+  const { profile_mode: _mode, storage_shared: _shared, ...legacy } = state("shared")
+  vi.mocked(browserService.open).mockImplementationOnce(async () => { states.a = legacy; return legacy })
+  await render()
+  await act(async () => browser.requestEntryOpen("a"))
+  expect(browserService.open).toHaveBeenCalledTimes(1)
+  expect(browser.profilePhase).toBe("active")
+  expect(browser.profile).toEqual({ kind: "unreported" })
+})
+
+it("shows an unconfirmed failed open without replay, then permits a new entry click", async () => {
+  states.a = null
+  vi.mocked(browserService.open).mockRejectedValueOnce(new NetworkRequestError())
+  await render()
+  await act(async () => browser.requestEntryOpen("a"))
+  expect(browser.error).toContain("未确认")
+  expect(browser.entryOpening).toBe(false)
+  await act(async () => browser.retry())
+  expect(browserService.open).toHaveBeenCalledTimes(1)
+  await act(async () => browser.requestEntryOpen("a"))
+  expect(browserService.open).toHaveBeenCalledTimes(2)
+  expect(browser.profile).toMatchObject({ kind: "reported", mode: "shared" })
+})
+
+it("retries a failed initial read when the entry is selected after the failure", async () => {
+  states.a = null
+  vi.mocked(browserService.get).mockRejectedValueOnce(new NetworkRequestError())
+  await render()
+  expect(browser.error).toBeTruthy()
+  await act(async () => browser.requestEntryOpen("a"))
+  expect(browserService.open).toHaveBeenCalledTimes(1)
+  expect(browser.profile).toMatchObject({ kind: "reported", mode: "shared" })
+  expect(browser.entryOpening).toBe(false)
+})
+
+it("keeps an entry intent after its read fails and opens only after the user retries the read", async () => {
+  states.a = null
+  let rejectRead!: (reason: unknown) => void
+  vi.mocked(browserService.get).mockImplementationOnce(() => new Promise((_resolve, reject) => { rejectRead = reject }))
+  await render()
+  await act(async () => browser.requestEntryOpen("a"))
+  await act(async () => rejectRead(new NetworkRequestError()))
+  expect(browser.entryOpening).toBe(false)
+  expect(browser.error).toBeTruthy()
+  expect(browserService.open).not.toHaveBeenCalled()
+  await act(async () => browser.retry())
+  expect(browserService.open).toHaveBeenCalledTimes(1)
+  expect(browser.profile).toMatchObject({ kind: "reported", mode: "shared" })
+})
+
+it("reports the exact unsupported-shared refusal without silently opening clean", async () => {
+  states.a = null
+  vi.mocked(browserService.open).mockRejectedValueOnce(new ApiError("unavailable", 503, "Unavailable", JSON.stringify({
+    error: { type: "browser_error", code: "browser_unavailable", message: "browser runtime unavailable: browser_shared_profile_unsupported: request clean explicitly" },
+  })))
+  await render()
+  await act(async () => browser.requestEntryOpen("a"))
+  expect(browser.error).toContain("不支持打开共享浏览器")
+  expect(browser.error).not.toContain("未确认")
+  expect(browserService.open).toHaveBeenCalledTimes(1)
+  expect(browserService.openProfile).not.toHaveBeenCalled()
+  await act(async () => browser.openClean("a"))
+  expect(browser.profile).toMatchObject({ kind: "reported", mode: "clean", storageShared: false })
+})
+
+it("does not transfer a pending entry click to a different chat", async () => {
+  let rejectRead!: (reason: unknown) => void
+  vi.mocked(browserService.get).mockImplementationOnce(() => new Promise((_resolve, reject) => { rejectRead = reject }))
+  await render()
+  await act(async () => browser.requestEntryOpen("a"))
+  await render("b")
+  await act(async () => rejectRead(notOpen()))
+  expect(browser.readySessionId).toBe("b")
+  expect(browserService.open).not.toHaveBeenCalled()
+})
 
 
 it("uses an explicit mode-free first open before the server confirms profile support", async () => {

@@ -24,6 +24,8 @@ type Scope = {
   controller: AbortController
 }
 
+type EntryOpenRequest = { sessionId: string; phase: "waiting" | "read" | "opening" }
+
 type Invalidation = boolean | ((state: BrowserState) => boolean)
 
 const TRANSIENT_STATE_READ_NOTICE_THRESHOLD = 3
@@ -41,6 +43,17 @@ const browserErrorCode = (error: unknown): string | null => {
 const isBrowserBusy = (error: unknown): boolean =>
   isApiError(error) && error.status === 503 && browserErrorCode(error) === "browser_busy"
 
+const isSharedProfileUnsupported = (error: unknown): boolean => {
+  if (!isApiError(error) || error.status !== 503 || !error.body) return false
+  try {
+    const body = JSON.parse(error.body) as { error?: { code?: unknown; type?: unknown; message?: unknown } }
+    return body.error?.code === "browser_unavailable" && body.error.type === "browser_error" &&
+      body.error.message === "browser runtime unavailable: browser_shared_profile_unsupported: request clean explicitly"
+  } catch {
+    return false
+  }
+}
+
 const isTransientStateReadError = (error: unknown): boolean =>
   (isApiError(error) && error.status >= 500 && error.status < 600 && !isBrowserBusy(error)) ||
   error instanceof NetworkRequestError || error instanceof RequestTimeoutError
@@ -55,6 +68,7 @@ const userMessage = (error: unknown): string => {
   if (error instanceof BrowserProfileOutcomeUnknown) return uiText("browser_profile_outcome_unknown")
   if (isApiError(error)) {
     if (isBrowserBusy(error)) return uiText("browser_request_busy")
+    if (isSharedProfileUnsupported(error)) return uiText("browser_shared_unsupported")
     if (conflictCode(error) === "browser_profile_mode_conflict") return uiText("browser_profile_conflict")
     if (error.status === 404) return uiText("this_bamboo_version_does_not_provide_a_built_in_browser_625d56e1")
     if (error.status === 409) {
@@ -77,11 +91,16 @@ export function useBrowserSession(sessionId: string | null, active: boolean) {
   const [busy, setBusy] = useState(false)
   const [domLoading, setDomLoading] = useState(false)
   const [screenshotLoading, setScreenshotLoading] = useState(false)
-  const [errorCause, setErrorCause] = useState<{ cause: unknown; profileOutcomeUnknown?: boolean } | null>(null)
-  const error = errorCause === null ? null
+  const [errorCause, setErrorCause] = useState<{ cause: unknown; profileOutcomeUnknown?: boolean; source?: "empty-state-read" } | null>(null)
+  const entryActionFailuresRef = useRef(new Map<string, unknown>())
+  const currentError = errorCause === null ? null
     : errorCause.profileOutcomeUnknown && !(errorCause.cause instanceof BrowserProfileOutcomeUnknown)
       ? `${uiText("browser_profile_outcome_unknown")} ${userMessage(errorCause.cause)}`
       : userMessage(errorCause.cause)
+  const entryActionError = sessionId && entryActionFailuresRef.current.has(sessionId)
+    ? userMessage(entryActionFailuresRef.current.get(sessionId)) : null
+  const error = entryActionError && currentError && entryActionError !== currentError
+    ? `${entryActionError} ${currentError}` : entryActionError || currentError
   const [retryVersion, setRetryVersion] = useState(0)
   const [profile, setProfile] = useState<BrowserProfileReport>({ kind: "unreported" })
   const [profilePhase, setProfilePhase] = useState<"active" | "closed" | "unknown">("unknown")
@@ -90,6 +109,12 @@ export function useBrowserSession(sessionId: string | null, active: boolean) {
   const profileFlightsRef = useRef(new Map<string, Promise<void>>())
   const profileFailuresRef = useRef(new Map<string, unknown>())
   const scopeRef = useRef<Scope | null>(null)
+  const readScopeRef = useRef<Scope | null>(null)
+  const initialReadPendingRef = useRef<Scope | null>(null)
+  const actionFlightsRef = useRef(new Map<Scope, number>())
+  const entryOpenRef = useRef<EntryOpenRequest | null>(null)
+  const [entryOpenVersion, setEntryOpenVersion] = useState(0)
+  const [entryOpening, setEntryOpening] = useState(false)
   const stateRef = useRef<BrowserState | null>(null)
   const stateVersionRef = useRef(0)
   const mutationVersionRef = useRef(0)
@@ -140,6 +165,21 @@ export function useBrowserSession(sessionId: string | null, active: boolean) {
     setProfilePhase("closed")
   }, [])
 
+  const finishEntryOpen = useCallback((id: string) => {
+    if (entryOpenRef.current?.sessionId !== id) return
+    entryOpenRef.current = null
+    setEntryOpening(false)
+  }, [])
+
+  // A click on the Browser entry is the authorization to open a closed scope.
+  // Keep one intent until its canonical read and any resulting write settle.
+  const requestEntryOpen = useCallback((id: string) => {
+    if (id !== sessionId || entryOpenRef.current?.sessionId === id) return
+    entryOpenRef.current = { sessionId: id, phase: "waiting" }
+    setEntryOpening(true)
+    setEntryOpenVersion((version) => version + 1)
+  }, [sessionId])
+
   useEffect(() => {
     return () => {
       if (frame) URL.revokeObjectURL(frame.objectUrl)
@@ -149,6 +189,13 @@ export function useBrowserSession(sessionId: string | null, active: boolean) {
   useEffect(() => {
     scopeRef.current?.controller.abort()
     scopeRef.current = null
+    readScopeRef.current = null
+    if (!sessionId || !active || (entryOpenRef.current && entryOpenRef.current.sessionId !== sessionId)) {
+      entryOpenRef.current = null
+      setEntryOpening(false)
+    } else if (entryOpenRef.current?.phase === "read" || entryOpenRef.current?.phase === "waiting") {
+      setEntryOpening(true)
+    }
     stateRef.current = null
     mutationVersionRef.current += 1
     framePollResetRef.current += 1
@@ -171,16 +218,21 @@ export function useBrowserSession(sessionId: string | null, active: boolean) {
     const controller = new AbortController()
     const scope: Scope = { sessionId, controller }
     scopeRef.current = scope
+    initialReadPendingRef.current = scope
+    const actionFlights = actionFlightsRef.current
     const isCurrent = () => scopeRef.current === scope && !controller.signal.aborted
 
     const run = async () => {
-      // browser_not_open already exists on older hosts. A read never proves
-      // support for mode-bearing writes and must never bootstrap a browser.
+      // A read never proves support for mode-bearing writes. Only a separate
+      // Browser-entry intent may open a closed scope after this read.
       const initial = await browserService.get(sessionId, controller.signal)
       if (!isCurrent()) return
+      if (initialReadPendingRef.current === scope) initialReadPendingRef.current = null
+      readScopeRef.current = scope
       publishState(initial)
       setReadySessionId(sessionId)
       setLoading(false)
+      finishEntryOpen(sessionId)
 
       let after = 0
       let observedEpoch = initial.page_epoch
@@ -205,13 +257,19 @@ export function useBrowserSession(sessionId: string | null, active: boolean) {
             if (!isCurrent()) return
             if (isTransientStateReadError(cause)) {
               emptyStateReadFailures += 1
-              if (emptyStateReadFailures >= TRANSIENT_STATE_READ_NOTICE_THRESHOLD) setErrorCause({ cause })
+              if (emptyStateReadFailures >= TRANSIENT_STATE_READ_NOTICE_THRESHOLD) {
+                setErrorCause({ cause, profileOutcomeUnknown: profileFailuresRef.current.get(sessionId) instanceof BrowserProfileOutcomeUnknown, source: "empty-state-read" })
+              }
               continue
             }
             throw cause
           }
           if (!isCurrent()) return
-          if (emptyStateReadFailures > 0) setErrorCause(null)
+          if (emptyStateReadFailures > 0) setErrorCause((current) => {
+            if (current?.source !== "empty-state-read") return current
+            const failure = profileFailuresRef.current.get(sessionId)
+            return failure === undefined ? null : { cause: failure }
+          })
           emptyStateReadFailures = 0
           if (version === stateVersionRef.current) publishState(refreshed)
           lastStateRefresh = Date.now()
@@ -342,16 +400,26 @@ export function useBrowserSession(sessionId: string | null, active: boolean) {
 
     void run().catch((cause: unknown) => {
       if (!isCurrent() || cause instanceof RequestCancelledError) return
-      if (isBrowserClosed(cause)) { publishClosed(sessionId); return }
+      if (initialReadPendingRef.current === scope) initialReadPendingRef.current = null
+      if (isBrowserClosed(cause)) {
+        readScopeRef.current = scope
+        publishClosed(sessionId)
+        if (entryOpenRef.current?.phase === "opening") finishEntryOpen(sessionId)
+        return
+      }
       setErrorCause({ cause, profileOutcomeUnknown: profileFailuresRef.current.get(sessionId) instanceof BrowserProfileOutcomeUnknown })
       setLoading(false)
+      if (entryOpenRef.current?.phase === "opening") finishEntryOpen(sessionId)
+      else if (entryOpenRef.current?.sessionId === sessionId) setEntryOpening(false)
     })
 
     return () => {
       controller.abort()
+      if (initialReadPendingRef.current === scope) initialReadPendingRef.current = null
+      actionFlights.delete(scope)
       if (scopeRef.current === scope) scopeRef.current = null
     }
-  }, [sessionId, active, retryVersion, publishState, publishClosed])
+  }, [sessionId, active, retryVersion, publishState, publishClosed, finishEntryOpen])
 
   const refreshOnConflict = useCallback(async (scope: Scope, cause: unknown): Promise<boolean> => {
     if (!isApiError(cause) || cause.status !== 409) return false
@@ -378,6 +446,7 @@ export function useBrowserSession(sessionId: string | null, active: boolean) {
       const scope = scopeRef.current
       if (!scope || !stateRef.current) return Promise.resolve(null)
 
+      actionFlightsRef.current.set(scope, (actionFlightsRef.current.get(scope) ?? 0) + 1)
       const task = actionQueueRef.current.catch(() => undefined).then(async () => {
         if (scopeRef.current !== scope || scope.controller.signal.aborted) return null
         const currentState = stateRef.current
@@ -409,6 +478,9 @@ export function useBrowserSession(sessionId: string | null, active: boolean) {
             setErrorCause(null)
             return null
           }
+          if (entryOpenRef.current?.sessionId === scope.sessionId && entryOpenRef.current.phase === "waiting") {
+            entryActionFailuresRef.current.set(scope.sessionId, cause)
+          }
           setErrorCause({ cause })
           return null
         } finally {
@@ -417,6 +489,13 @@ export function useBrowserSession(sessionId: string | null, active: boolean) {
             framePollResetRef.current += 1
           }
           if (markBusy && scopeRef.current === scope) setBusy(false)
+        }
+      }).finally(() => {
+        const remaining = (actionFlightsRef.current.get(scope) ?? 1) - 1
+        if (remaining > 0) actionFlightsRef.current.set(scope, remaining)
+        else actionFlightsRef.current.delete(scope)
+        if (scopeRef.current === scope && entryOpenRef.current?.phase === "waiting") {
+          setEntryOpenVersion((version) => version + 1)
         }
       })
       actionQueueRef.current = task
@@ -616,7 +695,7 @@ export function useBrowserSession(sessionId: string | null, active: boolean) {
           }
         }
       } catch (cause) {
-        const failure = !isApiError(cause) || (cause.status >= 500 && !isBrowserBusy(cause))
+        const failure = !isApiError(cause) || (cause.status >= 500 && !isBrowserBusy(cause) && !isSharedProfileUnsupported(cause))
           ? new BrowserProfileOutcomeUnknown("Browser operation outcome unconfirmed", { cause }) : cause
         profileFailuresRef.current.set(id, failure)
       } finally {
@@ -634,7 +713,29 @@ export function useBrowserSession(sessionId: string | null, active: boolean) {
   const openClean = useCallback((id: string) => changeProfile(id, "open", "clean", true), [changeProfile])
   const closeProfile = useCallback((id: string) => changeProfile(id, "close"), [changeProfile])
 
-  const retry = useCallback(() => setRetryVersion((version) => version + 1), [])
+  useEffect(() => {
+    const request = entryOpenRef.current
+    const scope = scopeRef.current
+    if (!request || !active || request.sessionId !== sessionId || !scope || scope.sessionId !== sessionId) return
+    if (request.phase === "waiting") {
+      if (profileFlightsRef.current.has(request.sessionId) || actionFlightsRef.current.has(scope) || busy) return
+      request.phase = "read"
+      // Recheck a cached scope: it may have been closed elsewhere. A read
+      // already in progress can serve the same intent without being restarted.
+      if (initialReadPendingRef.current !== scope) setRetryVersion((version) => version + 1)
+      return
+    }
+    if (request.phase !== "read" || readScopeRef.current !== scope || profilePhaseRef.current !== "closed" ||
+      profileFlightsRef.current.has(request.sessionId) || busy) return
+    request.phase = "opening"
+    setEntryOpening(true)
+    void changeProfile(request.sessionId, "open")
+  }, [entryOpenVersion, sessionId, active, profilePhase, busy, changeProfile])
+
+  const retry = useCallback(() => {
+    if (sessionId) entryActionFailuresRef.current.delete(sessionId)
+    setRetryVersion((version) => version + 1)
+  }, [sessionId])
   const hasPendingDialog = useCallback(() => Boolean(stateRef.current?.pending_dialog), [])
 
   return {
@@ -642,6 +743,8 @@ export function useBrowserSession(sessionId: string | null, active: boolean) {
     readySessionId,
     profile,
     profilePhase,
+    requestEntryOpen,
+    entryOpening,
     openProfile,
     openDefault,
     openClean,

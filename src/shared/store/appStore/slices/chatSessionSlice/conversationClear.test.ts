@@ -6,6 +6,8 @@ import type { AppState } from "../.."
 import { createChatSlice } from "../chatSessionSlice"
 import { createTokenBudgetSlice } from "../tokenBudgetSlice"
 import { mapHistoryMessagesToUi, sessionSummaryToChatItem } from "./messageMapping"
+import { acquireCompletedAnswerLease, getCompletedAnswerHandoffs, resetCompletedAnswerHandoffsForTest,
+  retainCompletedAnswer } from "@/lib/completedAnswerHandoffRegistry"
 
 const summary = (id = "fixture/a"): SessionSummary => ({
   id, kind: "root", title: id, title_version: 2, pinned: true, root_session_id: id, spawn_depth: 0,
@@ -43,9 +45,36 @@ beforeEach(() => {
   vi.spyOn(agentClient, "patchSession").mockResolvedValue(undefined)
   vi.spyOn(console, "warn").mockImplementation(() => {})
 })
-afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers() })
+afterEach(() => { resetCompletedAnswerHandoffsForTest(); vi.restoreAllMocks(); vi.useRealTimers() })
 
 describe("verified conversation clear state", () => {
+  it("retires only the cleared session's pending handoff and fences an older callback", async () => {
+    const store = harness()
+    const pending = { sessionId: "fixture/a", operationId: 1, handoffId: "cleared-answer", text: "synthetic answer",
+      acknowledgedMessageId: "old", baselineMessageId: null, baselineMessageIds: new Set<string>(), anchorSeen: true }
+    const other = { ...pending, sessionId: "fixture/b", handoffId: "other-answer" }
+    retainCompletedAnswer(acquireCompletedAnswerLease("fixture/a"), pending)
+    retainCompletedAnswer(acquireCompletedAnswerLease("fixture/b"), other)
+    const late = acquireCompletedAnswerLease("fixture/a")
+    await store.getState().clearConversation("fixture/a")
+    retainCompletedAnswer(late, { ...pending, handoffId: "late-answer" })
+    expect(getCompletedAnswerHandoffs().map((item) => item.handoffId)).toEqual(["other-answer"])
+  })
+  it("fences a remote clear at notification time without discarding newer work during its delayed read", async () => {
+    const store = harness(), held = deferred<HistoryResponse>()
+    vi.mocked(agentClient.getHistory).mockReturnValueOnce(held.promise)
+    const oldAnswer = { sessionId: "fixture/a", operationId: 1, handoffId: "before-event", text: "old synthetic answer",
+      acknowledgedMessageId: "old", baselineMessageId: null, baselineMessageIds: new Set<string>(), anchorSeen: true }
+    retainCompletedAnswer(acquireCompletedAnswerLease("fixture/a"), oldAnswer)
+    store.getState().reconcileClearedConversation("fixture/a")
+    expect(getCompletedAnswerHandoffs()).toHaveLength(0)
+    const newer = { ...oldAnswer, handoffId: "after-event", acknowledgedMessageId: "new-user", anchorSeen: false }
+    retainCompletedAnswer(acquireCompletedAnswerLease("fixture/a"), newer)
+    held.resolve(cleared)
+    await vi.waitFor(() => expect(store.getState().chats[0].messages.map((message) => message.id)).toEqual(["system"]))
+    expect(getCompletedAnswerHandoffs().map((item) => item.handoffId)).toEqual(["after-event"])
+  })
+
   it("keeps identity, scope, other sessions and unfinished tasks; success waits for canonical readback", async () => {
     const store = harness(), read = deferred<HistoryResponse>()
     const before = store.getState().chats[0], other = store.getState().chats[1]

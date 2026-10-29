@@ -128,11 +128,15 @@ for (const theme of ["light", "dark"] as const) {
         await expect(option).toHaveCSS("outline-color", result.colors["--focus-ring"])
         await expect(option).toHaveCSS("outline-offset", "-2px")
         await page.keyboard.press("Escape")
+        await expect(page.locator(".model-effort-panel")).toBeHidden()
+        await expect(modelPicker).toBeFocused()
       }
 
       const newSession = page.getByRole("button", { name: "新建会话", exact: true })
-      await page.keyboard.press("Tab")
-      await newSession.focus()
+      const manageProjects = page.getByRole("button", { name: "管理项目", exact: true })
+      await manageProjects.focus()
+      await expect(manageProjects).toBeFocused()
+      await page.keyboard.press("Shift+Tab")
       await expect(newSession).toBeFocused()
       expect(await newSession.evaluate((element) => element.matches(":focus-visible"))).toBe(true)
       await expect(newSession).toHaveCSS("box-shadow", /4px/)
@@ -147,8 +151,11 @@ for (const theme of ["light", "dark"] as const) {
     })
     expect(forcedSurface).toEqual({ outlineStyle: "solid", outlineWidth: 2 })
     const newSession = page.getByRole("button", { name: "新建会话", exact: true })
-    await page.keyboard.press("Tab")
-    await newSession.focus()
+    const manageProjects = page.getByRole("button", { name: "管理项目", exact: true })
+    await manageProjects.focus()
+    await expect(manageProjects).toBeFocused()
+    await page.keyboard.press("Shift+Tab")
+    await expect(newSession).toBeFocused()
     expect(await newSession.evaluate((element) => element.ownerDocument.defaultView!.getComputedStyle(element).outlineStyle)).toBe("solid")
     expect(await newSession.evaluate((element) => parseFloat(element.ownerDocument.defaultView!.getComputedStyle(element).outlineWidth))).toBeGreaterThanOrEqual(2)
 
@@ -185,11 +192,18 @@ test("neutral defaults and saved jade choices remain selectable across responsiv
   await page.goto(standaloneScenario.entryUrl)
   await expect(page.locator("[data-message-list-content]")).toContainText("Aligned response.")
   const geometry = await page.locator("[data-chat-layout]").first().evaluate((element) => {
-    const transcript = element.querySelector("[data-message-list-content]")!.getBoundingClientRect()
+    const transcriptElement = element.querySelector("[data-message-list-content]")!
+    const transcript = transcriptElement.getBoundingClientRect()
+    const viewport = transcriptElement.parentElement!
+    const viewportStyle = element.ownerDocument.defaultView!.getComputedStyle(viewport)
+    const availableWidth = viewport.clientWidth - parseFloat(viewportStyle.paddingLeft) - parseFloat(viewportStyle.paddingRight)
     const composer = element.querySelector("[data-composer-surface]")!.getBoundingClientRect()
-    return { width: transcript.width, leftDifference: Math.abs(transcript.left - composer.left), widthDifference: Math.abs(transcript.width - composer.width) }
+    return { width: transcript.width, availableWidth, overflow: viewport.scrollWidth - viewport.clientWidth,
+      leftDifference: Math.abs(transcript.left - composer.left), widthDifference: Math.abs(transcript.width - composer.width) }
   })
-  expect(geometry.width).toBeLessThanOrEqual(832)
+  expect(geometry.width).toBeGreaterThan(0)
+  expect(Math.abs(geometry.width - geometry.availableWidth)).toBeLessThanOrEqual(1)
+  expect(geometry.overflow).toBeLessThanOrEqual(1)
   expect(geometry.leftDifference).toBeLessThanOrEqual(1)
   expect(geometry.widthDifference).toBeLessThanOrEqual(1)
 

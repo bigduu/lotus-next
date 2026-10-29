@@ -2,21 +2,57 @@ name: Frontend checks
 
 on:
   pull_request:
-  push:
-    branches:
-      - main
-  workflow_dispatch:
+    branches: [dev]
 
 permissions:
   contents: read
+
+env:
+  FEATURE_WORKFLOW_SHA: ${{ github.workflow_sha }}
 
 concurrency:
   group: frontend-checks-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
+  source:
+    name: Feature Source
+    runs-on: ubuntu-latest
+    outputs:
+      tested_snapshot: ${{ steps.source.outputs.tested_snapshot }}
+      tested_tree: ${{ steps.source.outputs.tested_tree }}
+    steps:
+      - name: Check out the actual PR merge snapshot
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 2
+          persist-credentials: false
+
+      - name: Set up source verification Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          package-manager-cache: false
+
+      - name: Bind the exact feature base, head, snapshot and tree
+        id: source
+        env:
+          FEATURE_RECEIPT_PATH: ${{ runner.temp }}/feature-source.json
+        run: node scripts/feature-acceptance.mjs source
+
+      - name: Preserve the run-bound feature source
+        uses: actions/upload-artifact@v5
+        with:
+          name: feature-source
+          overwrite: true
+          path: ${{ runner.temp }}/feature-source.json
+          if-no-files-found: error
+          retention-days: 30
+
   verify:
     name: Node ${{ matrix.node }}
+    needs: source
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -29,7 +65,7 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v7
         with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ github.sha }}
 
       - name: Set up Node.js
         uses: actions/setup-node@v7
@@ -41,16 +77,24 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Verify architecture, behavior, build, and package contents
-        run: npm run verify
+      - name: Verify Node 22 Unit compatibility
+        if: matrix.node == 22
+        run: npm run test:run
+
+      - name: Verify architecture, build, and package contents
+        if: matrix.node == 24
+        run: npm run verify:artifact
 
       - name: Verify the deterministic provider fixture
+        if: matrix.node == 24
         run: python3 e2e/support/realBambooProvider.py --self-test
 
       - name: Verify the complete four-shard browser inventory
+        if: matrix.node == 24
         run: node scripts/browser-shards.mjs inventory
 
       - name: Share the verified exact-source artifact and inventory
+        if: matrix.node == 24
         uses: actions/upload-artifact@v5
         with:
           name: browser-input-node-${{ matrix.node }}
@@ -69,7 +113,6 @@ jobs:
       fail-fast: false
       matrix:
         node:
-          - 22
           - 24
         shard:
           - 1
@@ -83,7 +126,7 @@ jobs:
       - name: Check out exact source
         uses: actions/checkout@v7
         with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ github.sha }}
 
       - name: Set up Node.js
         uses: actions/setup-node@v7
@@ -161,7 +204,7 @@ jobs:
       - name: Check out exact source
         uses: actions/checkout@v7
         with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ github.sha }}
 
       - name: Set up Node.js
         uses: actions/setup-node@v7
@@ -190,21 +233,90 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+  real-bamboo-package:
+    name: Prepare real Bamboo test package
+    needs: [source, verify]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      artifact_id: ${{ steps.upload.outputs.artifact-id }}
+      artifact_digest: ${{ steps.upload.outputs.artifact-digest }}
+      producer_attempt: ${{ steps.attempt.outputs.value }}
+    steps:
+      - name: Check out the actual PR merge snapshot
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 2
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Refuse another test package after an earlier pack started
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/feature-bamboo-package.mjs guard
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Restore the verified Node 24 artifact and inventory
+        uses: actions/download-artifact@v5
+        with:
+          name: browser-input-node-24
+
+      - name: Check the exact artifact source and inventory
+        run: node scripts/browser-shards.mjs check-source
+
+      - name: Restore the original feature source receipt
+        uses: actions/download-artifact@v5
+        with:
+          name: feature-source
+          path: ${{ runner.temp }}/accepted-feature-source
+
+      - name: Pack the exact-source test artifact
+        env:
+          FEATURE_RECEIPT_PATH: ${{ runner.temp }}/accepted-feature-source/feature-source.json
+        run: node scripts/feature-bamboo-package.mjs prepare "${RUNNER_TEMP}/feature-bamboo-package"
+
+      - name: Record the physical producer attempt
+        id: attempt
+        run: echo "value=${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload the original test package
+        id: upload
+        uses: actions/upload-artifact@v5
+        with:
+          name: real-bamboo-test-package
+          path: ${{ runner.temp }}/feature-bamboo-package/
+          if-no-files-found: error
+          retention-days: 14
+
   real-bamboo:
-    name: Real Bamboo / Node 22
-    if: ${{ github.event_name == 'workflow_dispatch' }}
-    needs: [verify, browser-summary]
+    name: Real Bamboo / Node 24
+    needs: [source, verify]
     runs-on: ubuntu-latest
     timeout-minutes: 60
 
     env:
-      BAMBOO_E2E_REVISION: d6325a732c7669f94962f604e4ce98966e374d73
+      BAMBOO_E2E_REVISION: 4786b7db862cabbebce49e288da62b284ccf5b72
+      BAMBOO_E2E_HOST_REVISION: 4786b7db862cabbebce49e288da62b284ccf5b72
 
     steps:
       - name: Check out Lotus Next
         uses: actions/checkout@v7
         with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ github.sha }}
+          fetch-depth: 2
+          persist-credentials: false
 
       - name: Check out the paired Bamboo revision
         uses: actions/checkout@v7
@@ -217,37 +329,41 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v7
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
           cache-dependency-path: package-lock.json
 
       - name: Install dependencies
         run: npm ci
 
-      - name: Build the production Lotus Next artifact
-        run: npm run build
+      - name: Restore the verified Node 24 artifact and inventory
+        uses: actions/download-artifact@v5
+        with:
+          name: browser-input-node-24
 
-      - name: Install Chromium
-        run: npx playwright install --with-deps chromium
+      - name: Check the exact artifact source and inventory
+        run: node scripts/browser-shards.mjs check-source
+
+      - name: Install pinned browser system dependencies
+        run: npx playwright install-deps chromium
+
+      - name: Install the Playwright video recorder
+        run: npx playwright install ffmpeg
 
       - name: Prepare the fixed verification browser
         run: node scripts/verification-browser.mjs prepare "${GITHUB_WORKSPACE}" "${RUNNER_TEMP}/verification-browser"
 
-      - name: Build exact Bamboo and verify a real chat round trip
+      - name: Verify a real chat round trip with the pinned published Bamboo
         env:
           BAMBOO_E2E_SOURCE_DIR: ${{ github.workspace }}/.e2e-bamboo
+          BAMBOO_E2E_HOST_SOURCE_DIR: ${{ github.workspace }}/.e2e-bamboo
         run: node node_modules/@playwright/test/cli.js test --config="${RUNNER_TEMP}/verification-browser/real-bamboo.config.mjs"
-
-      - name: Verify the current source artifact on local and secure browser surfaces
-        env:
-          BAMBOO_E2E_SOURCE_DIR: ${{ github.workspace }}/.e2e-bamboo
-        run: node scripts/published-real-bamboo-acceptance.mjs --current-source --verification-browser "${RUNNER_TEMP}/verification-browser"
 
       - name: Upload the verification browser identity
         if: ${{ always() }}
         uses: actions/upload-artifact@v5
         with:
-          name: real-bamboo-verification-browser
+          name: real-bamboo-verification-browser-attempt-${{ github.run_attempt }}
           path: ${{ runner.temp }}/verification-browser/browser-identity.json
           if-no-files-found: error
           retention-days: 14
@@ -256,13 +372,165 @@ jobs:
         if: ${{ always() }}
         uses: actions/upload-artifact@v5
         with:
-          name: playwright-report-real-bamboo-node-22
+          name: playwright-report-real-bamboo-node-24-attempt-${{ github.run_attempt }}
           path: |
             playwright-report-real-bamboo/
-            playwright-report-real-bamboo-local/
-            playwright-report-real-bamboo-remote/
             test-results-real-bamboo/
-            test-results-real-bamboo-local/
-            test-results-real-bamboo-remote/
           if-no-files-found: error
           retention-days: 14
+
+  real-bamboo-surface:
+    name: Real Bamboo ${{ matrix.mode }} / Node 24
+    needs: [source, verify, real-bamboo-package]
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        mode:
+          - local
+          - remote
+    permissions:
+      actions: read
+      contents: read
+    env:
+      BAMBOO_E2E_REVISION: 4786b7db862cabbebce49e288da62b284ccf5b72
+      BAMBOO_E2E_HOST_REVISION: 4786b7db862cabbebce49e288da62b284ccf5b72
+      FEATURE_PACKAGE_ARTIFACT_ID: ${{ needs.real-bamboo-package.outputs.artifact_id }}
+      FEATURE_PACKAGE_ARTIFACT_DIGEST: ${{ needs.real-bamboo-package.outputs.artifact_digest }}
+      FEATURE_PACKAGE_PRODUCER_ATTEMPT: ${{ needs.real-bamboo-package.outputs.producer_attempt }}
+
+    steps:
+      - name: Check out Lotus Next
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 2
+          persist-credentials: false
+
+      - name: Check out the paired Bamboo revision
+        uses: actions/checkout@v7
+        with:
+          repository: bigduu/Bamboo-agent
+          ref: ${{ env.BAMBOO_E2E_REVISION }}
+          path: .e2e-bamboo
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Restore the verified Node 24 artifact and inventory
+        uses: actions/download-artifact@v5
+        with:
+          name: browser-input-node-24
+
+      - name: Check the exact artifact source and inventory
+        run: node scripts/browser-shards.mjs check-source
+
+      - name: Restore the original feature source receipt
+        uses: actions/download-artifact@v5
+        with:
+          name: feature-source
+          path: ${{ runner.temp }}/accepted-feature-source
+
+      - name: Verify and restore the original test package by ID
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FEATURE_RECEIPT_PATH: ${{ runner.temp }}/accepted-feature-source/feature-source.json
+        run: node scripts/feature-bamboo-package.mjs retrieve "${RUNNER_TEMP}/feature-bamboo-package"
+
+      - name: Install pinned browser system dependencies
+        run: npx playwright install-deps chromium
+
+      - name: Install the Playwright video recorder
+        run: npx playwright install ffmpeg
+
+      - name: Prepare the fixed verification browser
+        run: node scripts/verification-browser.mjs prepare "${GITHUB_WORKSPACE}" "${RUNNER_TEMP}/verification-browser"
+
+      - name: Verify the current source artifact on the selected browser surface
+        env:
+          FEATURE_RECEIPT_PATH: ${{ runner.temp }}/accepted-feature-source/feature-source.json
+          BAMBOO_E2E_SOURCE_DIR: ${{ github.workspace }}/.e2e-bamboo
+          BAMBOO_E2E_HOST_SOURCE_DIR: ${{ github.workspace }}/.e2e-bamboo
+        run: node scripts/feature-bamboo-package.mjs surface ${{ matrix.mode }} "${RUNNER_TEMP}/feature-bamboo-package" "${RUNNER_TEMP}/verification-browser"
+
+      - name: Upload the verification browser identity
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v5
+        with:
+          name: real-bamboo-${{ matrix.mode }}-verification-browser-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/verification-browser/browser-identity.json
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload real Bamboo browser evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v5
+        with:
+          name: playwright-report-real-bamboo-${{ matrix.mode }}-node-24-attempt-${{ github.run_attempt }}
+          path: |
+            playwright-report-real-bamboo-${{ matrix.mode }}/
+            test-results-real-bamboo-${{ matrix.mode }}/
+            test-results-real-bamboo/${{ matrix.mode }}/
+          if-no-files-found: error
+          retention-days: 14
+
+  native-actor:
+    name: Native Actor acceptance
+    needs: [source, verify]
+    uses: ./.github/workflows/actor-native.yml
+
+  feature-acceptance:
+    name: Feature acceptance
+    if: ${{ always() }}
+    needs: [source, verify, browser-summary, real-bamboo, real-bamboo-package, real-bamboo-surface, native-actor]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the actual PR merge snapshot
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 2
+          persist-credentials: false
+
+      - name: Set up acceptance verification Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          package-manager-cache: false
+
+      - name: Restore the original source receipt across attempts
+        uses: actions/download-artifact@v5
+        with:
+          name: feature-source
+          path: ${{ runner.temp }}/accepted-feature-source
+
+      - name: Require every feature gate on the exact tested snapshot
+        env:
+          SOURCE_RESULT: ${{ needs.source.result }}
+          VERIFY_RESULT: ${{ needs.verify.result }}
+          BROWSER_RESULT: ${{ needs.browser-summary.result }}
+          REAL_BAMBOO_RESULT: ${{ needs.real-bamboo.result }}
+          REAL_BAMBOO_PACKAGE_RESULT: ${{ needs.real-bamboo-package.result }}
+          REAL_BAMBOO_SURFACE_RESULT: ${{ needs.real-bamboo-surface.result }}
+          NATIVE_ACTOR_RESULT: ${{ needs.native-actor.result }}
+          FEATURE_RECEIPT_PATH: ${{ runner.temp }}/accepted-feature-source/feature-source.json
+          FEATURE_ACCEPTANCE_PATH: ${{ runner.temp }}/feature-acceptance.json
+        run: node scripts/feature-acceptance.mjs summarize
+
+      - name: Preserve complete feature acceptance
+        uses: actions/upload-artifact@v5
+        with:
+          name: feature-acceptance
+          overwrite: true
+          path: ${{ runner.temp }}/feature-acceptance.json
+          if-no-files-found: error
+          retention-days: 30

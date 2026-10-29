@@ -865,7 +865,9 @@ const integrationFixture = () => {
   // Keep its source-bound pins stable when a later release changes the pairing.
   const sourceFiles = new Map([
     [".github/workflows/ci.yml", legacyWorkflow.replace(/BAMBOO_E2E_REVISION: [^\r\n]+/, `BAMBOO_E2E_REVISION: ${historicalBamboo}`)],
-    [".github/workflows/publish-npm.yml", readRepositoryBytes(".github/workflows/publish-npm.yml").toString()],
+    // Synthetic old-source pin fixture; never substitute today's Dev publisher
+    // for the immutable historical source returned by git show.
+    [".github/workflows/publish-npm.yml", `BAMBOO_E2E_REVISION: ${historicalBamboo}`],
     ["e2e/support/realBambooRuntime.ts", `export const REAL_BAMBOO_REVISION = "${historicalBamboo}";`],
     ["scripts/published-real-bamboo-acceptance.test.mjs", `const expectedBambooRevision = "${historicalBamboo}"`],
   ])
