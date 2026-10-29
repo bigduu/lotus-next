@@ -27,7 +27,7 @@ runtime are being implemented in parallel; verify session isolation, retention,
 authentication and the same UI against the resulting real backend before
 admission. Recheck the live contract and current Dev base at integration time.
 
-## Pending real-backend acceptance
+## Real-backend acceptance
 
 1. Start an isolated, loopback-only Bamboo built from the reviewed trace
    implementation with a recorded source revision and executable digest. Serve
@@ -51,5 +51,15 @@ admission. Recheck the live contract and current Dev base at integration time.
    desktop/phone layout. Capture only synthetic data, and retain the runtime,
    artifact and source identities with the results.
 
-This procedure is prepared but has not been run until the new Bamboo runtime
-and its isolated fixture are available.
+Live checks were run against Lotus `1d1c7aae276b4bc254b0815f445951a3a091fcd5`
+and Bamboo candidate `14e70a222be7138cdae07363ef5398cb26134a1e` using
+synthetic sessions and a synthetic provider. They covered 51 traces across
+two pages, bidirectional session isolation, tool spans, zero versus unknown
+usage, and desktop and phone layouts. The separately configured disabled
+instance was also checked at both sizes. The browser
+overrode only the setup-status read; trace responses came from Bamboo, and a
+503 was deliberately injected to exercise refresh recovery. See the PR for
+the executable digest and validation details.
+
+Repeat the applicable checks for any later Bamboo candidate before admission;
+this result does not establish acceptance of a different backend revision.
