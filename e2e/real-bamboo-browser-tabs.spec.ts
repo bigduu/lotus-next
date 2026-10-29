@@ -154,17 +154,18 @@ const installSessionEntry = async (context: BrowserContext, baseUrl: string, ses
 
 const assertBundledBrowserRuntime = async (testInfo: TestInfo) => {
   const containerId = requiredEnv("LOTUS_REAL_BAMBOO_CONTAINER_ID")
-  const probe = `const fs=require('node:fs');const p=require('/usr/local/libexec/bamboo-browser/node_modules/playwright-core');const meta=require('/usr/local/libexec/bamboo-browser/node_modules/playwright-core/package.json');const browsers=require('/usr/local/libexec/bamboo-browser/node_modules/playwright-core/browsers.json').browsers;const shell=browsers.find(b=>b.name==='chromium-headless-shell');const host=process.env.BAMBOO_BROWSER_HOST_SCRIPT;fs.accessSync(host,fs.constants.R_OK);fs.accessSync('/opt/ms-playwright/chromium_headless_shell-'+shell.revision,fs.constants.R_OK|fs.constants.X_OK);(async()=>{const browser=await p.chromium.launch({headless:true});const version=browser.version();await browser.close();process.stdout.write(JSON.stringify({node:process.version,playwright:meta.version,chromium:version,revision:shell.revision,host}));})().catch(e=>{console.error(e);process.exitCode=1})`
+  const probe = `const fs=require('node:fs');const crypto=require('node:crypto');const p=require('/usr/local/libexec/bamboo-browser/node_modules/playwright-core');const meta=require('/usr/local/libexec/bamboo-browser/node_modules/playwright-core/package.json');const browsers=require('/usr/local/libexec/bamboo-browser/node_modules/playwright-core/browsers.json').browsers;const shell=browsers.find(b=>b.name==='chromium-headless-shell');const host=process.env.BAMBOO_BROWSER_HOST_SCRIPT;fs.accessSync(host,fs.constants.R_OK);const hostSha256=crypto.createHash('sha256').update(fs.readFileSync(host)).digest('hex');fs.accessSync('/opt/ms-playwright/chromium_headless_shell-'+shell.revision,fs.constants.R_OK|fs.constants.X_OK);(async()=>{const browser=await p.chromium.launch({headless:true});const version=browser.version();await browser.close();process.stdout.write(JSON.stringify({node:process.version,playwright:meta.version,chromium:version,revision:shell.revision,host,hostSha256}));})().catch(e=>{console.error(e);process.exitCode=1})`
   const { stdout } = await execFileAsync("docker", ["exec", "--user", "10001", containerId, "/usr/local/bin/node", "-e", probe], { timeout: 20_000 })
-  const runtime = JSON.parse(stdout) as { node: string; playwright: string; chromium: string; revision: string; host: string }
+  const runtime = JSON.parse(stdout) as { node: string; playwright: string; chromium: string; revision: string; host: string; hostSha256: string }
   expect(runtime).toEqual({
     node: "v24.21.0",
     playwright: "1.62.1",
     chromium: "151.0.7922.34",
     revision: "1234",
     host: "/usr/local/libexec/bamboo-browser/host.cjs",
+    hostSha256: requiredEnv("LOTUS_REAL_BAMBOO_HOST_SHA256"),
   })
-  await testInfo.attach("bundled-browser-runtime", { body: JSON.stringify(runtime, null, 2), contentType: "application/json" })
+  await testInfo.attach("bundled-browser-runtime", { body: JSON.stringify({ ...runtime, binaryRevision: requiredEnv("LOTUS_REAL_BAMBOO_REVISION"), hostRevision: requiredEnv("LOTUS_REAL_BAMBOO_HOST_REVISION") }, null, 2), contentType: "application/json" })
 }
 
 const exerciseSurface = async (

@@ -58,6 +58,9 @@ const runtime = vi.hoisted(() => ({
   worktreeControl: null as import("@services/workspace/newChatWorktreeTypes").NewChatWorktreeControlProps | null,
   getProject: vi.fn(), createWorktree: vi.fn(), bindWorkspace: vi.fn(),
   observeStateDispatch: null as ((dispatch: unknown, value: unknown) => void) | null,
+  liveRetry: { canPrepare: false, prepareInitial: vi.fn<() => boolean | Promise<boolean>>(),
+    offer: null as import("@/hooks/useLiveBootstrapRetry").LiveBootstrapView | null,
+    confirm: vi.fn(), stop: vi.fn(), cancelForStop: vi.fn() },
 }))
 // Observe actual dispatcher calls, including equal-state updates which React
 // may queue without rendering. Always retain the real hook and stable setter.
@@ -91,6 +94,7 @@ vi.mock("@shared/store/appStore", async () => {
 })
 type ProviderState = typeof runtime.providerState
 vi.mock("@shared/store/appStore/slices/providerSlice", () => ({ useProviderStore: <T,>(selector: (state: ProviderState) => T) => selector(runtime.providerState) }))
+vi.mock("@/hooks/useLiveBootstrapRetry", () => ({ useLiveBootstrapRetry: () => runtime.liveRetry }))
 vi.mock("@/hooks/useGuidanceQueue", () => ({ useGuidanceQueue: () => ({ mode: "after_round", setMode: vi.fn(), send: runtime.queueSend, cancel: vi.fn(), pending: [], error: null, busy: false, hasUnconfirmed: false }) }))
 vi.mock("@/hooks/useTicketWork", () => ({ useTicketWork: () => runtime.ticketWork ?? {
   state: null, connected: false, negotiated: true, availability: { kind: "ready" }, refreshing: false, canRefresh: true, initializing: false, initializationError: null, canInitialize: false, initialize: async () => false, error: null, busy: {}, uncertain: {},
@@ -306,6 +310,9 @@ function resizePane(wide: boolean) {
 beforeEach(() => {
   localStorage.clear()
   sessionStorage.clear(); runtime.ticketWork = null
+  runtime.liveRetry.prepareInitial.mockReset().mockReturnValue(false)
+  runtime.liveRetry.confirm.mockReset(); runtime.liveRetry.stop.mockReset(); runtime.liveRetry.cancelForStop.mockReset()
+  runtime.liveRetry.offer = null
   rootFields.root_mode_transition_epoch = 0
   vi.mocked(agentClient.getSession).mockReset().mockImplementation(async (sessionId) => ({
     session: { ...rootFields, id: sessionId, kind: "root", root_orchestration_only: false, thinking_mode: "standard" },
@@ -1025,6 +1032,33 @@ describe("ChatPane composer acknowledgement", () => {
     )
   })
 
+  it("opts in the first Execute only when the live protocol is negotiated", async () => {
+    runtime.liveRetry.prepareInitial.mockReturnValue(true)
+    const send = vi.fn<Send>().mockResolvedValue({ kind: "accepted", operationId: 1, sessionId: "new-session", navigated: false })
+    const textarea = await mount(send, null)
+    change(textarea, "synthetic message")
+    act(() => composer().onSubmit()); await flush()
+    expect(send).toHaveBeenCalledWith("synthetic message", expect.objectContaining({ liveBootstrapResume: true }))
+  })
+  it("does not send a delayed first submission after leaving its origin", async () => {
+    const negotiation = deferred<boolean>(); runtime.liveRetry.prepareInitial.mockReturnValue(negotiation.promise)
+    const send = vi.fn<Send>()
+    const textarea = await mount(send, null)
+    change(textarea, "synthetic message")
+    act(() => composer().onSubmit())
+    runtime.state.currentSessionId = "different-session"
+    await act(async () => { negotiation.resolve(true); await negotiation.promise; await Promise.resolve() })
+    expect(send).not.toHaveBeenCalled()
+  })
+  it("does not offer the old new-execution action for a finished error", async () => {
+    await mount(vi.fn<Send>(), "failed-session", false, "", "error")
+    expect(document.body.textContent).not.toContain(uiText("upstream_retry_until_stopped"))
+  })
+  it("fences an in-flight confirmation before the composer requests Stop", async () => {
+    await mount(vi.fn<Send>(), "running-session", true, "")
+    act(() => composer().onStop())
+    expect(runtime.liveRetry.cancelForStop).toHaveBeenCalledOnce()
+  })
   it("does not inherit a previous session's sending flag in a blank new chat", async () => {
     await mount(vi.fn<Send>(), null, true, null)
     expect(composer().sending).toBe(false)
@@ -1952,7 +1986,8 @@ it("centers the jump-to-bottom control on the composer column", async () => {
   expect(anchor).not.toBeNull()
   expect(anchor?.className).toContain("inset-x-0")
   expect(anchor?.className).toContain("px-3")
-  expect(anchor?.className).toContain("max-w-6xl")
+  expect(anchor?.className).toContain("max-w-full")
+  expect(anchor?.className).not.toContain("max-w-6xl")
   expect(region?.querySelector('[data-testid="composer-shell"]')).not.toBeNull()
 
   await act(async () => button?.click())
@@ -1980,17 +2015,21 @@ it("shows Environment by default and only suppresses it while the side pane is o
   await act(async () => root.render(render(false)))
   expect(container.querySelector("[data-environment-floating]")?.getAttribute("data-state"))
     .toBe("open")
-  expect(runtime.messageList?.contentShiftX).toBe(-166)
+  expect(runtime.messageList?.contentShiftX ?? 0).toBe(0)
+  expect(composer().contentShiftX ?? 0).toBe(0)
+  expect(container.querySelector<HTMLElement>("[data-chat-body]")?.style.paddingInlineEnd).toBe("332px")
 
   await act(async () => root.render(render(true)))
   expect(container.querySelector("[data-environment-floating]")?.getAttribute("data-state"))
     .toBe("closed")
-  expect(runtime.messageList?.contentShiftX).toBe(0)
+  expect(runtime.messageList?.contentShiftX ?? 0).toBe(0)
+  expect(Number.parseFloat(container.querySelector<HTMLElement>("[data-chat-body]")?.style.paddingInlineEnd ?? "NaN")).toBe(0)
 
   await act(async () => root.render(render(false)))
   expect(container.querySelector("[data-environment-floating]")?.getAttribute("data-state"))
     .toBe("open")
-  expect(runtime.messageList?.contentShiftX).toBe(-166)
+  expect(runtime.messageList?.contentShiftX ?? 0).toBe(0)
+  expect(container.querySelector<HTMLElement>("[data-chat-body]")?.style.paddingInlineEnd).toBe("332px")
   rectSpy.mockRestore()
 })
 
@@ -2021,20 +2060,33 @@ it("auto-shows Environment once the chat surface clears it and animates state ch
   expect(floating()?.getAttribute("aria-hidden")).toBe("true")
   expect(floating()?.style.transition).toContain("transform 200ms ease-out")
   expect(floating()?.style.transform).toContain("translateX(0.75rem)")
-  expect(runtime.messageList?.contentShiftX).toBe(0)
+  expect(runtime.messageList?.contentShiftX ?? 0).toBe(0)
   expect(container.querySelector("[data-environment-inline]")).toBeNull()
-  expect(container.querySelector<HTMLElement>("[data-chat-body]")?.style.paddingRight).toBe("")
+  expect(Number.parseFloat(container.querySelector<HTMLElement>("[data-chat-body]")?.style.paddingInlineEnd ?? "NaN")).toBe(0)
+
+  containerWidth = 1483
+  await act(async () => window.dispatchEvent(new Event("resize")))
+  expect(floating()?.getAttribute("data-state")).toBe("closed")
+  expect(Number.parseFloat(container.querySelector<HTMLElement>("[data-chat-body]")?.style.paddingInlineEnd ?? "NaN")).toBe(0)
 
   containerWidth = 1484
   await act(async () => window.dispatchEvent(new Event("resize")))
   expect(floating()?.getAttribute("data-state")).toBe("open")
   expect(floating()?.style.transform).toContain("translateX(0)")
-  expect(runtime.messageList?.contentShiftX).toBe(-166)
+  expect(runtime.messageList?.contentShiftX ?? 0).toBe(0)
+  expect(composer().contentShiftX ?? 0).toBe(0)
+  expect(container.querySelector<HTMLElement>("[data-chat-body]")?.style.paddingInlineEnd).toBe("332px")
+
+  containerWidth = 1485
+  await act(async () => window.dispatchEvent(new Event("resize")))
+  expect(floating()?.getAttribute("data-state")).toBe("open")
+  expect(container.querySelector<HTMLElement>("[data-chat-body]")?.style.paddingInlineEnd).toBe("332px")
 
   containerWidth = 1400
   await act(async () => window.dispatchEvent(new Event("resize")))
   expect(floating()?.getAttribute("data-state")).toBe("closed")
-  expect(runtime.messageList?.contentShiftX).toBe(0)
+  expect(runtime.messageList?.contentShiftX ?? 0).toBe(0)
+  expect(Number.parseFloat(container.querySelector<HTMLElement>("[data-chat-body]")?.style.paddingInlineEnd ?? "NaN")).toBe(0)
 
   const compactLauncher = container.querySelector<HTMLButtonElement>(
     'button[aria-label="打开 Environment"]',
@@ -2043,7 +2095,9 @@ it("auto-shows Environment once the chat surface clears it and animates state ch
 
   expect(floating()?.getAttribute("data-state")).toBe("open")
   expect(floating()?.getAttribute("aria-hidden")).toBe("false")
-  expect(runtime.messageList?.contentShiftX).toBe(-124)
+  expect(runtime.messageList?.contentShiftX ?? 0).toBe(0)
+  expect(composer().contentShiftX ?? 0).toBe(0)
+  expect(Number.parseFloat(container.querySelector<HTMLElement>("[data-chat-body]")?.style.paddingInlineEnd ?? "NaN")).toBe(0)
   expect(container.querySelector("[data-environment-inline]")).toBeNull()
   rectSpy.mockRestore()
 })

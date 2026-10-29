@@ -66,6 +66,235 @@ export const acceptanceJobNames = (source) => {
   return names
 }
 
+// This graph belongs to the new Dev feature contract. Keep the historical
+// parser above separate so adding this read-only proof cannot authorize an old
+// publisher to consume a new-contract receipt.
+export const devFeatureJobNames = (source) => {
+  assert.equal(typeof source, "string", "Feature acceptance requires its source workflow")
+  const graph = workflowBlock(source, "jobs", 0)
+  const ids = [...graph.matchAll(/^  ([a-z][a-z0-9-]*):\s*$/gm)].map((match) => match[1]).sort()
+  const split = ids.includes("real-bamboo-package")
+  const expectedIds = ["browser", "browser-summary", "feature-acceptance", "native-actor", "real-bamboo", "source", "verify"]
+  if (split) expectedIds.push("real-bamboo-package", "real-bamboo-surface")
+  assert.deepEqual(ids, expectedIds.sort(), "Unknown Dev feature workflow graph")
+  assert.match(source, /pull_request:\n    branches: \[dev\]/)
+  const matrixValues = (job, key) => [...workflowBlock(workflowBlock(workflowBlock(job, "strategy", 4), "matrix", 6), key, 8)
+    .matchAll(/^          - (\d+)$/gm)].map((match) => Number(match[1]))
+  const verify = workflowBlock(graph, "verify", 2), browser = workflowBlock(graph, "browser", 2)
+  assert.equal(workflowValue(verify, "name", 4), "Node ${{ matrix.node }}")
+  assert.deepEqual(matrixValues(verify, "node"), [22, 24])
+  assert.equal(workflowValue(browser, "name", 4), "Browser / Node ${{ matrix.node }} / shard ${{ matrix.shard }} of 4")
+  assert.deepEqual(matrixValues(browser, "node"), [24])
+  assert.deepEqual(matrixValues(browser, "shard"), [1, 2, 3, 4])
+  assert.equal(workflowValue(workflowBlock(graph, "real-bamboo", 2), "name", 4), "Real Bamboo / Node 24")
+  const names = ["Feature Source", "Node 22", "Node 24", ...[1, 2, 3, 4].map(n => `Browser / Node 24 / shard ${n} of 4`),
+    "Browser acceptance", "Real Bamboo / Node 24", "Native Actor acceptance / Native Actor / Node 24", "Feature acceptance"]
+  if (split) {
+    assert.equal(workflowValue(workflowBlock(graph, "real-bamboo-package", 2), "name", 4), "Prepare real Bamboo test package")
+    const surface = workflowBlock(graph, "real-bamboo-surface", 2)
+    assert.equal(workflowValue(surface, "name", 4), "Real Bamboo ${{ matrix.mode }} / Node 24")
+    const strategy = workflowBlock(surface, "strategy", 4), matrix = workflowBlock(strategy, "matrix", 6)
+    assert.equal(workflowValue(strategy, "fail-fast", 6), "false")
+    assert.deepEqual([...workflowMappingKeys(matrix, 8)], ["mode"])
+    const modes = workflowBlock(matrix, "mode", 8).split(/\r?\n/).filter(line => line.trim())
+    assert.deepEqual(modes, ["          - local", "          - remote"], "Feature surfaces must include exactly local and remote")
+    names.push("Prepare real Bamboo test package", "Real Bamboo local / Node 24", "Real Bamboo remote / Node 24")
+  }
+  return names
+}
+
+export const verifyDevProtection = branch => {
+  assert.equal(branch?.name, "dev")
+  assert.equal(branch.protected, true, "Dev must remain protected")
+  assert.equal(branch.protection?.enabled, true, "Dev protection must be enabled")
+  const checks = branch.protection?.required_status_checks
+  assert.equal(checks?.enforcement_level, "everyone", "Dev admission must apply to administrators")
+  assert.ok(Array.isArray(checks?.contexts) && checks.contexts.includes("Feature acceptance"), "Dev must require Feature acceptance")
+  assert.ok(Array.isArray(checks?.checks) && checks.checks.some(check => check.context === "Feature acceptance" && check.app_id === 15368),
+    "Dev must require the GitHub Actions Feature acceptance check")
+  assert.match(branch.commit?.sha ?? "", sha)
+  return branch.commit.sha
+}
+
+// Current releases trust normal protected Dev admission. This checks the
+// immutable source/merge and complete gate wiring, not expired CI execution.
+export const verifyProtectedDevMerge = (sourceSha, pr, merged, sourceWorkflow) => {
+  assert.match(sourceSha, sha)
+  assert.equal(pr.state, "closed"); assert.equal(pr.merged, true)
+  assert.equal(pr.base?.ref, "dev"); assert.equal(pr.base.repo.full_name, repository); assert.match(pr.base.sha, sha)
+  assert.equal(pr.head?.repo?.full_name, repository); assert.match(pr.head.sha, sha)
+  assert.ok(Number.isSafeInteger(pr.number) && pr.number > 0)
+  assert.equal(pr.merge_commit_sha, sourceSha); assert.equal(merged.sha, sourceSha)
+  assert.equal(merged.parents.length, 2, "Dev admission requires a normal two-parent merge")
+  for (const parent of merged.parents) assert.match(parent.sha, sha)
+  assert.equal(merged.parents[0].sha, pr.base.sha, "Dev merge must preserve the admitted base")
+  assert.equal(merged.parents[1].sha, pr.head.sha, "Dev merge must directly include the feature head")
+  assert.notEqual(merged.parents[0].sha, pr.head.sha)
+  assert.match(merged.tree.sha, sha)
+  devFeatureJobNames(sourceWorkflow)
+  const triggers = workflowBlock(sourceWorkflow, "on", 0)
+  assert.deepEqual([...workflowMappingKeys(triggers, 2)], ["pull_request"])
+  const pullRequest = workflowBlock(triggers, "pull_request", 2)
+  assert.deepEqual([...workflowMappingKeys(pullRequest, 4)], ["branches"])
+  assert.equal(workflowValue(pullRequest, "branches", 4), "[dev]")
+  const graph = workflowBlock(sourceWorkflow, "jobs", 0)
+  for (const [name, axes] of [["verify", ["node"]], ["browser", ["node", "shard"]]]) {
+    const matrix = workflowBlock(workflowBlock(workflowBlock(graph, name, 2), "strategy", 4), "matrix", 6)
+    assert.deepEqual([...workflowMappingKeys(matrix, 8)].sort(), axes, "Feature matrix cannot add, exclude or override lanes")
+  }
+  const split = workflowMappingKeys(graph, 2).has("real-bamboo-package")
+  const needs = { source: null, verify: "source", browser: "verify", "browser-summary": "[verify, browser]",
+    "real-bamboo": split ? "[source, verify]" : "[source, verify, browser-summary]", "native-actor": "[source, verify]",
+    "feature-acceptance": split ? "[source, verify, browser-summary, real-bamboo, real-bamboo-package, real-bamboo-surface, native-actor]"
+      : "[source, verify, browser-summary, real-bamboo, native-actor]" }
+  if (split) Object.assign(needs, { "real-bamboo-package": "[source, verify]",
+    "real-bamboo-surface": "[source, verify, real-bamboo-package]" })
+  assert.deepEqual([...workflowMappingKeys(graph, 2)].sort(), Object.keys(needs).sort())
+  for (const [name, dependencies] of Object.entries(needs)) {
+    const job = workflowBlock(graph, name, 2), keys = workflowMappingKeys(job, 4)
+    assert.ok(!keys.has("continue-on-error"), "Feature owners cannot ignore failures")
+    if (dependencies === null) assert.ok(!keys.has("needs"))
+    else assert.equal(workflowValue(job, "needs", 4), dependencies)
+    if (["browser-summary", "feature-acceptance"].includes(name)) assert.equal(workflowValue(job, "if", 4), "${{ always() }}")
+    else assert.ok(!keys.has("if"), "Feature owners cannot be conditionally skipped")
+  }
+  const aggregate = workflowBlock(graph, "feature-acceptance", 2)
+  assert.equal(workflowValue(aggregate, "name", 4), "Feature acceptance")
+  const steps = workflowBlock(aggregate, "steps", 4).split(/^ {6}-[ \t]/m)
+    .filter(step => /^name: Require every feature gate on the exact tested snapshot$/m.test(step))
+  assert.equal(steps.length, 1)
+  const aggregateEnv = {
+    SOURCE_RESULT: "${{ needs.source.result }}", VERIFY_RESULT: "${{ needs.verify.result }}",
+    BROWSER_RESULT: "${{ needs.browser-summary.result }}", REAL_BAMBOO_RESULT: "${{ needs.real-bamboo.result }}",
+    NATIVE_ACTOR_RESULT: "${{ needs.native-actor.result }}",
+    FEATURE_RECEIPT_PATH: "${{ runner.temp }}/accepted-feature-source/feature-source.json",
+    FEATURE_ACCEPTANCE_PATH: "${{ runner.temp }}/feature-acceptance.json",
+  }
+  if (split) Object.assign(aggregateEnv, { REAL_BAMBOO_PACKAGE_RESULT: "${{ needs.real-bamboo-package.result }}",
+    REAL_BAMBOO_SURFACE_RESULT: "${{ needs.real-bamboo-surface.result }}" })
+  verifyWorkflowStepShape(steps[0], ["env", "name", "run"], "env", Object.keys(aggregateEnv).sort())
+  assert.equal(workflowValue(steps[0], "run", 8), "node scripts/feature-acceptance.mjs summarize")
+  verifyWorkflowEnvironment(steps[0], 8, aggregateEnv)
+  if (split) {
+    const step = (jobId, stepName) => {
+      const found = workflowBlock(workflowBlock(graph, jobId, 2), "steps", 4).split(/^ {6}-[ \t]/m)
+        .filter(value => value.startsWith(`name: ${stepName}\n`))
+      assert.equal(found.length, 1, `Missing or ambiguous feature step: ${stepName}`)
+      return found[0]
+    }
+    const chat = step("real-bamboo", "Verify a real chat round trip with the pinned published Bamboo")
+    verifyWorkflowStepShape(chat, ["env", "name", "run"], "env", ["BAMBOO_E2E_HOST_SOURCE_DIR", "BAMBOO_E2E_SOURCE_DIR"])
+    assert.equal(workflowValue(chat, "run", 8), 'node node_modules/@playwright/test/cli.js test --config="${RUNNER_TEMP}/verification-browser/real-bamboo.config.mjs"')
+    verifyWorkflowEnvironment(chat, 8, { BAMBOO_E2E_SOURCE_DIR: "${{ github.workspace }}/.e2e-bamboo",
+      BAMBOO_E2E_HOST_SOURCE_DIR: "${{ github.workspace }}/.e2e-bamboo" })
+    const guard = step("real-bamboo-package", "Refuse another test package after an earlier pack started")
+    verifyWorkflowStepShape(guard, ["env", "name", "run"], "env", ["GH_TOKEN"])
+    assert.equal(workflowValue(guard, "run", 8), "node scripts/feature-bamboo-package.mjs guard")
+    verifyWorkflowEnvironment(guard, 8, { GH_TOKEN: "${{ github.token }}" })
+    const pack = step("real-bamboo-package", "Pack the exact-source test artifact")
+    verifyWorkflowStepShape(pack, ["env", "name", "run"], "env", ["FEATURE_RECEIPT_PATH"])
+    assert.equal(workflowValue(pack, "run", 8), 'node scripts/feature-bamboo-package.mjs prepare "${RUNNER_TEMP}/feature-bamboo-package"')
+    verifyWorkflowEnvironment(pack, 8, { FEATURE_RECEIPT_PATH: "${{ runner.temp }}/accepted-feature-source/feature-source.json" })
+    const packageJob = workflowBlock(graph, "real-bamboo-package", 2)
+    const outputs = workflowBlock(packageJob, "outputs", 4)
+    const expectedOutputs = { artifact_id: "${{ steps.upload.outputs.artifact-id }}",
+      artifact_digest: "${{ steps.upload.outputs.artifact-digest }}", producer_attempt: "${{ steps.attempt.outputs.value }}" }
+    assert.deepEqual([...workflowMappingKeys(outputs, 6, true)].sort(), Object.keys(expectedOutputs).sort())
+    for (const [key, value] of Object.entries(expectedOutputs)) assert.equal(workflowValue(outputs, key, 6), value)
+    const attempt = step("real-bamboo-package", "Record the physical producer attempt")
+    verifyWorkflowStepShape(attempt, ["id", "name", "run"], "unused", [])
+    assert.equal(workflowValue(attempt, "id", 8), "attempt")
+    assert.equal(workflowValue(attempt, "run", 8), 'echo "value=${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"')
+    const upload = step("real-bamboo-package", "Upload the original test package")
+    verifyWorkflowStepShape(upload, ["id", "name", "uses", "with"], "with", ["if-no-files-found", "name", "path", "retention-days"])
+    assert.equal(workflowValue(upload, "id", 8), "upload")
+    assert.equal(workflowValue(upload, "uses", 8), "actions/upload-artifact@v5")
+    const uploadInputs = workflowBlock(upload, "with", 8)
+    for (const [key, value] of Object.entries({ name: "real-bamboo-test-package", path: "${{ runner.temp }}/feature-bamboo-package/",
+      "if-no-files-found": "error", "retention-days": "14" })) assert.equal(workflowValue(uploadInputs, key, 10), value)
+    {
+      const id = "real-bamboo-surface"
+      const owner = workflowBlock(graph, id, 2)
+      const ownerEnv = workflowBlock(owner, "env", 4)
+      const bambooRevision = workflowValue(ownerEnv, "BAMBOO_E2E_REVISION", 6)
+      assert.match(bambooRevision, sha)
+      verifyWorkflowEnvironment(owner, 4, { BAMBOO_E2E_REVISION: bambooRevision, BAMBOO_E2E_HOST_REVISION: bambooRevision,
+        FEATURE_PACKAGE_ARTIFACT_ID: "${{ needs.real-bamboo-package.outputs.artifact_id }}",
+        FEATURE_PACKAGE_ARTIFACT_DIGEST: "${{ needs.real-bamboo-package.outputs.artifact_digest }}",
+        FEATURE_PACKAGE_PRODUCER_ATTEMPT: "${{ needs.real-bamboo-package.outputs.producer_attempt }}" })
+      const retrieve = step(id, "Verify and restore the original test package by ID")
+      verifyWorkflowStepShape(retrieve, ["env", "name", "run"], "env", ["FEATURE_RECEIPT_PATH", "GH_TOKEN"])
+      assert.equal(workflowValue(retrieve, "run", 8), 'node scripts/feature-bamboo-package.mjs retrieve "${RUNNER_TEMP}/feature-bamboo-package"')
+      verifyWorkflowEnvironment(retrieve, 8, { FEATURE_RECEIPT_PATH: "${{ runner.temp }}/accepted-feature-source/feature-source.json",
+        GH_TOKEN: "${{ github.token }}" })
+      const surface = step(id, "Verify the current source artifact on the selected browser surface")
+      verifyWorkflowStepShape(surface, ["env", "name", "run"], "env", ["BAMBOO_E2E_HOST_SOURCE_DIR", "BAMBOO_E2E_SOURCE_DIR", "FEATURE_RECEIPT_PATH"])
+      assert.equal(workflowValue(surface, "run", 8), 'node scripts/feature-bamboo-package.mjs surface ${{ matrix.mode }} "${RUNNER_TEMP}/feature-bamboo-package" "${RUNNER_TEMP}/verification-browser"')
+      verifyWorkflowEnvironment(surface, 8, { BAMBOO_E2E_SOURCE_DIR: "${{ github.workspace }}/.e2e-bamboo",
+        BAMBOO_E2E_HOST_SOURCE_DIR: "${{ github.workspace }}/.e2e-bamboo",
+        FEATURE_RECEIPT_PATH: "${{ runner.temp }}/accepted-feature-source/feature-source.json" })
+    }
+  }
+  return { sourceTree: merged.tree.sha }
+}
+
+// Only inspect evidence supplied by a later release controller; this function
+// has no network, versioning, build, packing or publication side effects.
+export const verifyDevAcceptance = (sourceSha, pr, run, jobs, receipt, merged, tested, workflowId, sourceWorkflow) => {
+  assert.match(sourceSha, sha)
+  assert.equal(pr.state, "closed"); assert.equal(pr.merged, true)
+  assert.equal(pr.base?.ref, "dev"); assert.equal(pr.base.repo.full_name, repository)
+  assert.equal(pr.head?.repo?.full_name, repository); assert.equal(pr.merge_commit_sha, sourceSha)
+  assert.equal(run.event, "pull_request"); assert.equal(run.workflow_id, workflowId)
+  assert.equal(run.path.split("@")[0], ".github/workflows/ci.yml")
+  assert.equal(run.repository?.full_name, repository); assert.equal(run.head_repository?.full_name, repository)
+  assert.equal(run.head_sha, pr.head.sha); assert.equal(run.status, "completed"); assert.equal(run.conclusion, "success")
+  assert.match(pr.head.sha, sha)
+  for (const value of [pr.number, run.id, run.run_attempt]) assert.ok(Number.isSafeInteger(value) && value > 0)
+  const names = devFeatureJobNames(sourceWorkflow)
+  assert.equal(jobs.total_count, jobs.jobs.length)
+  assert.deepEqual(jobs.jobs.map(job => job.name).sort(), names.sort())
+  for (const job of jobs.jobs) {
+    assert.equal(job.run_id, run.id, "Feature job belongs to a different run")
+    assert.ok(Number.isSafeInteger(job.run_attempt) && job.run_attempt > 0 && job.run_attempt <= run.run_attempt,
+      "Feature job has an invalid or future attempt")
+    assert.equal(job.head_sha, pr.head.sha); assert.equal(job.status, "completed"); assert.equal(job.conclusion, "success")
+    assert.ok(Date.parse(job.completed_at) <= Date.parse(pr.merged_at), "Feature evidence must predate Dev admission")
+  }
+  const split = names.includes("Prepare real Bamboo test package")
+  const requiredSteps = [["Node 22", "Verify Node 22 Unit compatibility"], ["Node 24", "Verify architecture, build, and package contents"],
+    ...[1, 2, 3, 4].map(n => [`Browser / Node 24 / shard ${n} of 4`, "Verify the all-surface browser shard"]),
+    ["Real Bamboo / Node 24", "Verify a real chat round trip with the pinned published Bamboo"],
+    ["Native Actor acceptance / Native Actor / Node 24", "Verify three negative controls and restored real Actor proof"]]
+  if (split) requiredSteps.push(["Prepare real Bamboo test package", "Pack the exact-source test artifact"],
+    ["Prepare real Bamboo test package", "Upload the original test package"],
+    ["Real Bamboo local / Node 24", "Verify the current source artifact on the selected browser surface"],
+    ["Real Bamboo remote / Node 24", "Verify the current source artifact on the selected browser surface"])
+  else requiredSteps.push(["Real Bamboo / Node 24", "Verify the current source artifact on local and secure browser surfaces"])
+  for (const [job, step] of requiredSteps) {
+    const found = jobs.jobs.find(item => item.name === job).steps.filter(item => item.name === step)
+    assert.equal(found.length, 1); assert.equal(found[0].status, "completed"); assert.equal(found[0].conclusion, "success")
+  }
+  assert.equal(receipt.schemaVersion, split ? 2 : 1)
+  assert.equal(receipt.kind, split ? "lotus-feature-acceptance/v2" : "lotus-feature-acceptance/v1")
+  const gates = { source: "success", verify: "success", browser: "success", realBamboo: "success", nativeActor: "success" }
+  if (split) Object.assign(gates, { realBambooPackage: "success", realBambooSurface: "success" })
+  assert.deepEqual(receipt.gates, gates)
+  const source = receipt.source
+  assert.equal(source.repository, repository); assert.equal(source.pullRequest, pr.number); assert.equal(source.baseRef, "dev")
+  assert.equal(source.headSha, pr.head.sha); assert.equal(source.runId, String(run.id))
+  for (const value of [source.baseSha, source.headSha, source.testedSnapshot, source.testedTree]) assert.match(value, sha)
+  for (const value of [source.sourceRunAttempt, receipt.acceptanceRunAttempt]) assert.ok(Number.isSafeInteger(value) && value > 0)
+  assert.ok(source.sourceRunAttempt > 0 && source.sourceRunAttempt <= receipt.acceptanceRunAttempt && receipt.acceptanceRunAttempt <= run.run_attempt)
+  assert.equal(jobs.jobs.find(job => job.name === "Feature acceptance").run_attempt, receipt.acceptanceRunAttempt,
+    "Feature acceptance job and receipt attempts differ")
+  assert.equal(merged.sha, sourceSha); assert.equal(tested.sha, source.testedSnapshot)
+  assert.deepEqual(merged.parents.map(item => item.sha), [source.baseSha, source.headSha])
+  assert.deepEqual(tested.parents.map(item => item.sha), [source.baseSha, source.headSha])
+  assert.equal(merged.tree.sha, source.testedTree); assert.equal(tested.tree.sha, source.testedTree)
+  return { sourceTree: source.testedTree, testedSnapshot: source.testedSnapshot, featureRunAttempt: receipt.acceptanceRunAttempt }
+}
+
 const acceptanceWorkflow = (candidate) => execFileSync("git", ["show", `${candidate.sourceSha}:.github/workflows/ci.yml`], { encoding: "utf8" })
 
 export const verifyAcceptanceEvidence = (candidate, run, jobs, pullRequest, sourceWorkflow = acceptanceWorkflow(candidate)) => {
@@ -311,7 +540,7 @@ export const verifyCandidateBackendPins = (candidate, files) => {
   assert.ok(files.acceptanceTest.includes(`"${candidate.bambooSha}"`))
 }
 
-const main = async () => {
+export const legacySource = async () => {
   const environment = process.env
   assert.equal(environment.GITHUB_REPOSITORY, repository)
   assert.equal(environment.GITHUB_REF, `refs/heads/${environment.DEFAULT_BRANCH}`)
@@ -367,6 +596,178 @@ const main = async () => {
   }).map(([key, value]) => `${key}=${value}\n`).join(""))
   console.log(`Accepted source ${candidate.sourceRef} -> ${candidate.sourceSha}; workflow ${environment.GITHUB_SHA}`)
 }
+
+
+// Administrator governance prerequisite: audit no bypass actors separately.
+// Metadata:read does not guarantee that GitHub reveals bypass_actors here.
+export const verifyVersionTagRuleset = (rule, rulesetId) => {
+  assert.equal(rule.id, rulesetId); assert.equal(rule.source_type, "Repository")
+  assert.equal(rule.source, repository); assert.equal(rule.target, "tag"); assert.equal(rule.enforcement, "active")
+  exactKeys(rule.conditions, ["ref_name"])
+  assert.deepEqual(rule.conditions.ref_name, { include: ["refs/tags/lotus-next-v*"], exclude: [] })
+  assert.deepEqual(rule.rules.map(item => item.type).sort(), ["deletion", "update"])
+  for (const item of rule.rules) {
+    if (item.parameters !== undefined) {
+      assert.ok(item.type === "update")
+      assert.deepEqual(item.parameters, { update_allows_fetch_and_merge: false })
+    }
+  }
+  const visible = Object.hasOwn(rule, "bypass_actors")
+  if (visible) assert.ok(Array.isArray(rule.bypass_actors) && rule.bypass_actors.length === 0,
+    "Visible bypass actors violate the administrator prerequisite")
+  return { rulesetId, bypassActorsVisible: visible }
+}
+
+export const versionTagOwner = (env) => {
+  const { LOTUS_NEXT_RELEASE_VERSION: version, EXPECTED_SOURCE_SHA_INPUT: sourceSha,
+    GITHUB_RUN_ID: runId, GITHUB_WORKFLOW_SHA: workflowSha } = env
+  assert.match(version, versionPattern); assert.notEqual(version, "0.0.0")
+  assert.match(sourceSha, sha); assert.match(workflowSha, sha); assert.match(runId, /^[1-9][0-9]*$/)
+  return { kind: "lotus-publication-owner/v1", repository, version, sourceSha, runId, workflowSha }
+}
+
+export const readOwnedVersionTag = (owner, read) => {
+  const ref = `refs/tags/lotus-next-v${owner.version}`, found = read(`git/ref/${ref.slice(5)}`)
+  if (found === null) return null
+  assert.equal(found.ref, ref); assert.equal(found.object.type, "tag", "Require an owned annotated version tag")
+  assert.match(found.object.sha, sha)
+  const object = read(`git/tags/${found.object.sha}`)
+  assert.equal(object.sha, found.object.sha); assert.equal(object.tag, ref.slice(10))
+  assert.equal(object.object.type, "commit"); assert.equal(object.object.sha, owner.sourceSha)
+  // One trailing LF is Git's normal annotation terminator, not another field.
+  const message = object.message?.endsWith("\n") ? object.message.slice(0, -1) : object.message
+  assert.ok(message === JSON.stringify(owner), "Version belongs to another run/controller or an unowned historical tag; never rebuild")
+  return object.sha
+}
+
+export const claimVersionTag = async (owner, { read, create, registryVacant, refresh, expectedTag }) => {
+  const existing = readOwnedVersionTag(owner, read)
+  if (expectedTag !== undefined) assert.equal(existing, expectedTag, "Version tag changed during admission; never replace it")
+  if (existing) { refresh(); return existing }
+  // Never leave a new reservation for an already published/unknown version.
+  await registryVacant()
+  refresh()
+  const readback = expected => {
+    const object = readOwnedVersionTag(owner, read)
+    assert.ok(object, "Version tag creation was not confirmed; stop without another write or build")
+    if (expected) assert.equal(object, expected, "Version tag object changed during creation")
+    return object
+  }
+  let object
+  try {
+    object = create("git/tags", { tag: `lotus-next-v${owner.version}`, message: JSON.stringify(owner),
+      object: owner.sourceSha, type: "commit" })
+  } catch { return readback() } // Unknown write: only read, never retry a POST.
+  assert.match(object.sha, sha)
+  assert.equal(object.tag, `lotus-next-v${owner.version}`)
+  assert.equal(object.object.type, "commit"); assert.equal(object.object.sha, owner.sourceSha)
+  assert.equal(object.message, JSON.stringify(owner))
+  refresh()
+  try { create("git/refs", { ref: `refs/tags/lotus-next-v${owner.version}`, sha: object.sha }) }
+  catch { return readback(object.sha) } // The create-only ref is the atomic race winner.
+  assert.equal(readback(), object.sha, "Created tag ref changed before its readback")
+  return object.sha
+}
+
+export const assertUnclaimedTagRetry = (env, read) => {
+  const attempt = Number(env.GITHUB_RUN_ATTEMPT), runId = Number(env.GITHUB_RUN_ID)
+  assert.ok(Number.isSafeInteger(attempt) && attempt > 0 && Number.isSafeInteger(runId) && runId > 0)
+  for (let prior = 1; prior < attempt; prior++) {
+    const data = read(`actions/runs/${runId}/attempts/${prior}/jobs?per_page=100`)
+    assert.equal(data.total_count, data.jobs.length, "Incomplete earlier preflight evidence")
+    const matches = data.jobs.filter(job => job.name === "Validate publication request")
+    assert.equal(matches.length, 1, "Missing or ambiguous earlier preflight")
+    const [job] = matches
+    for (const [key, value] of Object.entries({ run_id: runId, run_attempt: prior, head_sha: env.GITHUB_SHA, status: "completed" })) assert.equal(job[key], value)
+    assert.ok(Array.isArray(job.steps))
+    if (job.conclusion === "skipped") { assert.equal(job.steps.length, 0); continue }
+    const steps = job.steps.filter(step => step.name === "Resolve the reviewed immutable release candidate")
+    assert.equal(steps.length, 1); assert.equal(steps[0].status, "completed")
+    assert.equal(steps[0].conclusion, "skipped", "Earlier tag claim may have started; a missing original tag cannot be recreated")
+  }
+}
+
+const main = async () => {
+  const env = process.env, sourceSha = env.EXPECTED_SOURCE_SHA_INPUT, version = env.LOTUS_NEXT_RELEASE_VERSION
+  assert.equal(env.GITHUB_REPOSITORY, repository); assert.equal(env.GITHUB_REF_PROTECTED, "true")
+  assert.equal(env.GITHUB_REF, "refs/heads/dev"); assert.equal(env.GITHUB_EVENT_NAME, "workflow_dispatch")
+  assert.equal(env.GITHUB_WORKFLOW_REF, `${repository}/${workflowPath}@refs/heads/dev`)
+  assert.equal(env.GITHUB_WORKFLOW_SHA, env.GITHUB_SHA)
+  assert.equal(env.EXPECTED_WORKFLOW_SHA, env.GITHUB_SHA); assert.match(env.GITHUB_SHA, sha); assert.match(sourceSha, sha)
+  assert.match(version, versionPattern); assert.notEqual(version, "0.0.0")
+  assert.equal(env.SOURCE_REF_INPUT, `refs/tags/lotus-next-v${version}`)
+  const git = (...args) => execFileSync("git", ["--no-replace-objects", ...args], { encoding: "utf8" }).trim()
+  const api = route => JSON.parse(execFileSync("gh", ["api", `repos/${repository}/${route}`], { encoding: "utf8", maxBuffer: 8 * 1024 * 1024 }))
+  const id = value => { assert.match(value ?? "", /^[1-9][0-9]*$/); assert.ok(Number.isSafeInteger(Number(value))); return Number(value) }
+  const prId = id(env.FEATURE_PR_INPUT)
+  const mode = process.argv[2] ?? "verify"
+  assert.ok(["reserve", "verify"].includes(mode)); id(env.GITHUB_RUN_ID)
+  const rulesetId = id(env.LOTUS_RELEASE_TAG_RULESET_ID), owner = versionTagOwner(env)
+  const read = route => {
+    try { return api(route) } catch (error) {
+      if (route.startsWith("git/ref/tags/")) {
+        let body
+        try { body = JSON.parse(error.stdout?.toString() ?? "") } catch { /* Unknown response is not absence. */ }
+        if (String(body?.status) === "404") return null
+      }
+      throw new Error("Required GitHub publication state is unavailable")
+    }
+  }
+  assert.equal(git("rev-parse", "HEAD"), env.GITHUB_SHA); assert.equal(git("status", "--porcelain", "--untracked-files=all"), "")
+  // Reject another run before any reservation, registry query or product work;
+  // this identity does not depend on the lifetime of Actions run history.
+  const initialTag = readOwnedVersionTag(owner, read)
+  if (mode === "verify") assert.ok(initialTag, "Missing original version tag; never recreate it during publication")
+  else if (!initialTag) assertUnclaimedTagRetry(env, read)
+  const pr = api(`pulls/${prId}`)
+  assert.equal(pr.number, prId)
+  git("fetch", "--no-tags", "origin", sourceSha)
+  const sourceWorkflow = git("show", `${sourceSha}:.github/workflows/ci.yml`)
+  const product = JSON.parse(git("show", `${sourceSha}:package.json`))
+  assert.equal(product.name, "@bigduu/lotus-next"); assert.equal(product.version, "0.0.0")
+  const merged = api(`git/commits/${sourceSha}`)
+  assert.equal(git("rev-parse", `${sourceSha}^{tree}`), merged.tree.sha)
+  // History formatting hides parents at a shallow boundary. Read the raw
+  // commit object so the comparison still checks both immutable parent IDs.
+  const headers = git("cat-file", "-p", sourceSha).split("\n\n", 1)[0]
+  const parents = [...headers.matchAll(/^parent ([0-9a-f]{40})$/gm)].map(match => match[1])
+  assert.deepEqual(parents, merged.parents.map(parent => parent.sha))
+  const facts = verifyProtectedDevMerge(sourceSha, pr, merged, sourceWorkflow)
+  const refresh = () => {
+    const current = api("branches/dev"); verifyDevProtection(current)
+    for (const revision of new Set([env.GITHUB_SHA, sourceSha])) {
+      const proof = api(`compare/${revision}...${current.commit.sha}`)
+      assert.equal(proof.merge_base_commit.sha, revision); assert.ok(["identical", "ahead"].includes(proof.status))
+    }
+    assert.equal(api(`git/ref/heads/release/${sourceSha}`).object.sha, sourceSha, "Frozen release source moved")
+    assert.equal(api(`pulls/${prId}`).merge_commit_sha, sourceSha)
+    return verifyVersionTagRuleset(api(`rulesets/${rulesetId}`), rulesetId)
+  }
+  refresh()
+  const tagObjectSha = mode === "reserve" ? await claimVersionTag(owner, { read, refresh, expectedTag: initialTag,
+    registryVacant: async () => {
+      const response = await fetch(`https://registry.npmjs.org/@bigduu%2flotus-next/${version}`,
+        { redirect: "error", signal: AbortSignal.timeout(30000) })
+      await response.body?.cancel()
+      assert.equal(response.status, 404, "Registry must explicitly prove version vacancy before reserving its tag")
+    },
+    create: (route, value) => JSON.parse(execFileSync("gh", ["api", `repos/${repository}/${route}`, "--method", "POST", "--input", "-"],
+      { input: JSON.stringify(value), encoding: "utf8", timeout: 30000, maxBuffer: 65536, stdio: ["pipe", "pipe", "pipe"] })),
+  }) : initialTag
+  git("fetch", "--no-tags", "origin", env.SOURCE_REF_INPUT)
+  assert.equal(git("cat-file", "-t", "FETCH_HEAD"), "tag"); assert.equal(git("rev-parse", "FETCH_HEAD"), tagObjectSha)
+  assert.equal(git("rev-parse", "FETCH_HEAD^{commit}"), sourceSha)
+  assert.equal(readOwnedVersionTag(owner, read), tagObjectSha)
+  const tagProtection = refresh()
+  const bambooSha = sourceWorkflow.match(/^\s*BAMBOO_E2E_REVISION: ([0-9a-f]{40})$/m)?.[1]; assert.match(bambooSha ?? "", sha)
+  const result = { schemaVersion: 1, repository, version, sourceRef: env.SOURCE_REF_INPUT, sourceSha, sourceTree: facts.sourceTree,
+    bambooSha, tagObjectSha, workflowRef: env.GITHUB_WORKFLOW_REF, workflowSha: env.GITHUB_SHA, runId: env.GITHUB_RUN_ID,
+    runAttempt: env.GITHUB_RUN_ATTEMPT, featurePr: prId, tagProtection }
+  writeFileSync(env.SOURCE_RECEIPT_PATH, JSON.stringify(result, null, 2) + "\n", { flag: "wx" })
+  appendFileSync(env.GITHUB_OUTPUT, Object.entries({ source_sha: sourceSha, source_tree: facts.sourceTree, source_ref: result.sourceRef,
+    bamboo_sha: bambooSha, workflow_sha: env.GITHUB_SHA, tag_object_sha: tagObjectSha }).map(([key, value]) => `${key}=${value}\n`).join(""))
+}
+
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   main().catch((error) => {

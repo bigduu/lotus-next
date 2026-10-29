@@ -93,6 +93,13 @@ describe("read-only Main promotion", () => {
     expect(x.urls).toHaveLength(3)
     expect(x.routes["actions/runs/77"].run_attempt).toBe(2) // Original provenance attempt remains 1.
   })
+  it("rejects a draft and admits the unchanged promotion after it is marked ready", async () => {
+    const x = fixture()
+    x.routes["pulls/9"].draft = true
+    await expect(x.run()).rejects.toThrow()
+    x.routes["pulls/9"].draft = false
+    expect(await x.run()).toEqual({ source: S, merge: M, version, publisher: C, runId: 77 })
+  })
   it.each([
     ["untrusted checkout", x => { x.state.head = S }], ["wrong event", x => { x.env.GITHUB_EVENT_NAME = "pull_request" }],
     ["fork", x => { x.event.pull_request.head.repo = { full_name: "other/lotus-next" } }],
@@ -123,6 +130,9 @@ describe("read-only Main promotion", () => {
   it("keeps the Main entry point separate, trusted and free of product commands", () => {
     const workflow = readFileSync(".github/workflows/main-promotion.yml", "utf8")
     expect(workflow).toContain("pull_request_target:"); expect(workflow).toContain("branches: [main]")
+    const trigger = workflow.match(/^  pull_request_target:\n((?:    .*\n)+)/mu)?.[1]
+    const types = trigger?.match(/^    types: \[([^\]]+)\]$/mu)?.[1].split(",").map(type => type.trim())
+    expect(types).toEqual(["opened", "synchronize", "reopened", "ready_for_review"])
     expect(workflow).toContain("ref: ${{ github.workflow_sha }}"); expect(workflow).toContain("persist-credentials: false")
     expect(workflow).not.toMatch(/npm ci|npm run|npm publish|id-token: write|contents: write|secrets\./)
     expect(readFileSync(".github/workflows/ci.yml", "utf8")).toContain("branches: [dev]")

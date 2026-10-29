@@ -157,15 +157,20 @@ it("a subscribed canonical conflict blocks execution and preserves only manual r
   expect(document.body.textContent).toContain(uiText("session_migration_unconfirmed"))
 })
 
-it.each(["loading", "unknown", "current", "read-error"] as const)("does not automatically assess %s Sessions but retains explicit read-only access", async (kind) => {
+it.each(["loading", "unknown", "current", "read-error"] as const)("does not automatically assess %s Sessions and hides idle controls unless recovery is needed", async (kind) => {
   const state: SessionExecutionCompatibilityView = kind === "current" ? { ...view(), report: {
     ...view().report!, session_version: 2, status: "compatible" } } : { ...view(), report: null,
     observed: kind === "unknown", loading: kind === "loading", readError: kind === "read-error" }
   await act(async () => root!.render(<SessionCompatibilityNotice sessionId="legacy-a" state={state} />))
   expect(mocks.assess).not.toHaveBeenCalled()
   expect(mocks.migrate).not.toHaveBeenCalled()
-  await refreshMigration()
-  expect(mocks.assess).toHaveBeenCalledTimes(1)
+  if (kind === "read-error") {
+    await refreshMigration()
+    expect(mocks.assess).toHaveBeenCalledTimes(1)
+  } else {
+    expect(document.querySelector('[data-testid="session-version-migration"]')).toBeNull()
+    expect(document.body.textContent).toBe("")
+  }
   expect(document.body.textContent).not.toContain(uiText("session_migration_action"))
   expect(mocks.migrate).not.toHaveBeenCalled()
 })
@@ -203,7 +208,8 @@ it("subscribed canonical current-v2 does not reset the acknowledged intent while
   expect(document.body.textContent).toContain(uiText("session_migration_in_progress"))
   const intent = mocks.migrate.mock.calls[0][0]
   await act(async () => { finishLifetime({ ...assessment, session_version: 2, eligible: false }); await Promise.resolve() })
-  expect(document.body.textContent).toContain(uiText("session_migration_completed"))
+  expect(document.querySelector('[data-testid="session-version-migration"]')).toBeNull()
+  expect(document.body.textContent).toBe("")
   expect(mocks.migrate).toHaveBeenCalledTimes(1)
   expect(mocks.migrate.mock.calls[0][0]).toEqual(intent)
   expect(mocks.assess).toHaveBeenCalledTimes(2)

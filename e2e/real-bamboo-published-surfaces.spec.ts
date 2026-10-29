@@ -1,6 +1,6 @@
 import { workbenchPanel } from "./support/workbench.js"
 import { openClosedBrowserExplicitlyClean } from "./support/browserProfile.js"
-import { assertClosedBrowserRead, unexplainedBrowserErrors, type ClosedBrowserRead } from "./support/closedBrowserRead.js"
+import { assertClosedBrowserRead, closedBrowserResourceError, unsupportedSharedResourceError, unexplainedBrowserErrors, type ClosedBrowserRead, type DefaultOpenRefusal } from "./support/closedBrowserRead.js"
 import { expectComposerText } from "./support/composer.js"
 import {
   devices,
@@ -129,13 +129,14 @@ const assertCanonicalPage = async (
   pageOrigin: string,
   browserSessionId: string | null,
   initialClosedRead: ClosedBrowserRead | null,
+  defaultOpenRefusal: DefaultOpenRefusal | null,
 ): Promise<void> => {
   await observation.drain();
   const httpRequests = observation.requests.filter((request) =>
     ["http:", "https:"].includes(new URL(request.url).protocol),
   );
   const unexplained = unexplainedBrowserErrors(
-    observation.responses, observation.consoleErrors, initialClosedRead, pageOrigin, browserSessionId,
+    observation.responses, observation.consoleErrors, initialClosedRead, pageOrigin, browserSessionId, defaultOpenRefusal,
   );
   const legacyRequests = httpRequests.filter((request) =>
     /^\/v1(?:\/|$)/u.test(new URL(request.url).pathname),
@@ -286,6 +287,7 @@ const exerciseSurface = async ({
     `published-${entryUrl.protocol.slice(0, -1)}-${definition.label}`;
   let observation: PageObservation | undefined;
   let initialClosedRead: ClosedBrowserRead | null = null;
+  let defaultOpenRefusal: DefaultOpenRefusal | null = null;
   let beforeExplicitOpen = true;
   const initialConsoleErrors: { text: string; url: string }[] = [];
   const observeInitialConsole = (message: ConsoleMessage): void => {
@@ -301,6 +303,15 @@ const exerciseSurface = async ({
       response.url() === `${entryUrl.origin}/api/v1/browser/sessions/${encodeURIComponent(sessionId)}` &&
       response.request().method() === "GET") : null;
     void initialResponse?.catch(() => undefined);
+    let readCount = 0;
+    const reconciledResponse = expectsInitialClosedRead ? page.waitForResponse((response) =>
+      response.url() === `${entryUrl.origin}/api/v1/browser/sessions/${encodeURIComponent(sessionId)}` &&
+      response.request().method() === "GET" && ++readCount === 2) : null;
+    const defaultResponse = expectsInitialClosedRead ? page.waitForResponse((response) =>
+      response.url() === `${entryUrl.origin}/api/v1/browser/sessions/${encodeURIComponent(sessionId)}` &&
+      response.request().method() === "PUT") : null;
+    void reconciledResponse?.catch(() => undefined);
+    void defaultResponse?.catch(() => undefined);
     const observed = await page.goto(entryUrl.href, {
       waitUntil: "domcontentloaded",
     });
@@ -332,6 +343,10 @@ const exerciseSurface = async ({
       exact: true,
     });
     await expect(settingsButton).toBeVisible();
+    if (currentSourceArtifact && definition.label === "desktop") {
+      await settingsButton.focus();
+      await expect(settingsButton).toBeFocused();
+    }
     await settingsButton.click();
     // The pinned published baseline predates full-page Settings. Current-source
     // packages must exercise the page contract, without falling back to a modal.
@@ -342,6 +357,10 @@ const exerciseSurface = async ({
       settings.getByRole("heading", { name: "系统设置", exact: true }),
     ).toBeVisible();
     await closeSettings(settings, settingsLayout);
+    if (currentSourceArtifact && definition.label === "desktop") {
+      // Wait for Settings' asynchronous opener restoration before moving focus.
+      await expect(settingsButton).toBeFocused();
+    }
     await composer.focus();
     await expect(composer).toBeFocused();
 
@@ -363,14 +382,35 @@ const exerciseSurface = async ({
         const response = await initialResponse!;
         const body = await response.json() as unknown;
         await response.finished();
+        const opened = await defaultResponse!;
+        const openedBody = await opened.json() as unknown;
+        const reconciled = await reconciledResponse!;
+        const reconciledBody = await reconciled.json() as unknown;
+        expect(opened.request().postDataJSON()).toEqual({});
+        expect([200, 503]).toContain(opened.status());
+        expect(reconciled.status()).toBe(opened.status() === 200 ? 200 : 404);
         await observation.drain();
+        const browserRequests = observation.requests.filter((request) => request.url === response.url());
+        const readIndex = browserRequests.findIndex((request) => request.method === "GET");
+        const openIndex = browserRequests.findIndex((request) => request.method === "PUT");
+        const readBeforeOpen = readIndex >= 0 && openIndex > readIndex;
+        const closedErrors = initialConsoleErrors.filter((error) => error.text === closedBrowserResourceError && error.url === response.url());
         initialClosedRead = {
           response: { method: response.request().method(), url: response.url(), status: response.status() },
-          body, beforeExplicitOpen, consoleErrors: [...initialConsoleErrors],
+          body, beforeExplicitOpen: readBeforeOpen, consoleErrors: closedErrors.slice(0, 1),
         };
         assertClosedBrowserRead(initialClosedRead, entryUrl.origin, sessionId);
+        if (opened.status() === 503) {
+          defaultOpenRefusal = {
+            response: { method: opened.request().method(), url: opened.url(), status: opened.status() },
+            body: openedBody,
+            closedResponse: { method: reconciled.request().method(), url: reconciled.url(), status: reconciled.status() },
+            closedBody: reconciledBody,
+            consoleErrors: [...closedErrors.slice(1), ...initialConsoleErrors.filter((error) => error.text === unsupportedSharedResourceError && error.url === opened.url())],
+          };
+        }
         beforeExplicitOpen = false;
-        await openClosedBrowserExplicitlyClean(page, pane, sessionId);
+        if (opened.status() === 503) await openClosedBrowserExplicitlyClean(page, pane, sessionId);
       }
       await expect(pane).toHaveAttribute(
         startsWithEmptyBrowser ? "data-browser-empty" : "data-browser-pane",
@@ -412,6 +452,7 @@ const exerciseSurface = async ({
       entryUrl.origin,
       currentSourceArtifact && !definition.mobile ? sessionId : null,
       initialClosedRead,
+      defaultOpenRefusal,
     );
     if (currentSourceArtifact && definition.mobile) {
       expect(
