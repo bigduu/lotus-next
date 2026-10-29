@@ -17,6 +17,7 @@ import {
   X,
   PanelRightOpen,
   BookText,
+  Activity,
 } from "lucide-react"
 import { useShallow } from "zustand/react/shallow"
 import { Button } from "@/components/ui/button"
@@ -70,6 +71,7 @@ import { RootOrchestrationControl } from "@/components/chat/RootOrchestrationCon
 import { useWorkflowCatalog } from "@/components/chat/useWorkflowCatalog"
 import { WorkflowSelectionControl } from "@/components/chat/WorkflowSelectionControl"
 import { WorkflowRunsDialog } from "@/components/chat/WorkflowRunsDialog"
+import { LocalTracesDialog } from "@/components/chat/LocalTracesDialog"
 import { ConversationClearDialog } from "@/components/chat/ConversationClearDialog"
 import {
   Select,
@@ -569,6 +571,7 @@ export function ChatPane({
   const slashQuery = !menusDismissed && draft.startsWith("/") ? draft.slice(1) : null
   const catalogState = useWorkflowCatalog(currentSessionId, slashQuery !== null || workflowPicker !== null)
   const [workflowRunsOpen, setWorkflowRunsOpen] = useState(false)
+  const [localTracesOpen, setLocalTracesOpen] = useState(false)
   const [clearTarget, setClearTarget] = useState<{ id: string; title: string } | null>(null)
   const workflowDisabled = submissionPending || currentlyRunning || queue.hasUnconfirmed || rootMode.unsafe
   // A hidden Environment must not strand its open editor (phone/workbench changes).
@@ -1012,6 +1015,8 @@ export function ChatPane({
       onClick: () => setClearTarget({ id: currentSessionId, title: currentChat?.title || currentSessionId }) }] : []),
     ...(currentSessionId ? [{ label: uiText("workflow_run_title"), icon: <BookText className="size-4" />,
       onClick: () => setWorkflowRunsOpen(true) }] : []),
+    ...(currentSessionId ? [{ label: uiText("local_trace_title"), icon: <Activity className="size-4" />,
+      onClick: () => setLocalTracesOpen(true) }] : []),
     ...(currentSessionId && messages.length > 0
       ? [
           {
@@ -1107,6 +1112,9 @@ export function ChatPane({
               <>
                 <Button size="icon" variant="ghost" aria-label={uiText("workflow_run_title")} onClick={() => setWorkflowRunsOpen(true)}>
                   <BookText className="size-4" />
+                </Button>
+                <Button size="icon" variant="ghost" aria-label={uiText("local_trace_title")} onClick={() => setLocalTracesOpen(true)}>
+                  <Activity className="size-4" />
                 </Button>
                 <Button
                   size="icon"
@@ -1511,6 +1519,8 @@ export function ChatPane({
         onClose={() => setClearTarget(null)} /> : null}
       {workflowRunsOpen && currentSessionId && pageVisible !== false ? <WorkflowRunsDialog key={currentSessionId}
         sessionId={currentSessionId} sessionTitle={currentChat?.title || currentSessionId} onClose={() => setWorkflowRunsOpen(false)} /> : null}
+      {localTracesOpen && currentSessionId && pageVisible !== false ? <LocalTracesDialog key={currentSessionId}
+        sessionId={currentSessionId} onClose={() => setLocalTracesOpen(false)} /> : null}
 
       <ImageLightbox src={preview} onClose={() => setPreview(null)} />
 
