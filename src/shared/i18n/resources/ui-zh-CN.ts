@@ -726,6 +726,7 @@ export const uiZhCn = {
   "sidebar_cross_project_drop_unavailable": "暂不支持跨项目移动，请拖到会话所属项目内。",
   "sidebar_section_drag_hint": "拖动以调整同项目内的分区顺序",
   "sidebar_section_new_session": "在 {{v0}} 中新建会话",
+  "sidebar_section_assign_failed": "会话未加入分区，请从会话菜单手动移动。",
   "sidebar_project_drop_hint": "将本项目的会话拖到这里，移回未分区",
   "sidebar_section_empty": "拖动会话到这里",
   "sidebar_section_duplicate": "此项目中已有同名分区。",

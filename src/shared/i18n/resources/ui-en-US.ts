@@ -726,6 +726,7 @@ export const uiEnUs = {
   "sidebar_cross_project_drop_unavailable": "Cross-project moves are not supported. Drop within the session’s project.",
   "sidebar_section_drag_hint": "Drag to reorder sections within this project",
   "sidebar_section_new_session": "New session in {{v0}}",
+  "sidebar_section_assign_failed": "The session was not added to its section. Move it from the session menu.",
   "sidebar_project_drop_hint": "Drop a session from this project to remove its section assignment",
   "sidebar_section_empty": "Drop a session here",
   "sidebar_section_duplicate": "A section with this name already exists in this project.",

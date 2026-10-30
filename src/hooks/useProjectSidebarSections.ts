@@ -108,12 +108,20 @@ async function applySidebarUpdate(projectId: string, legacy: ProjectSectionPrefe
  * serialize with sidebar drags and edits for the same Project.
  */
 export async function assignSessionToSectionDurable(projectId: string, sessionId: string, sectionId: string | null, legacyName?: string | null): Promise<boolean> {
-  const failure = await applySidebarUpdate(projectId, readProjectSectionPreferences(), (previous) => {
+  const transform = (previous: ProjectSectionPreferences): ProjectSectionPreferences => {
     const current = getProjectPreference(previous, projectId).sessionSections[sessionId]
     if (current === undefined ? sectionId === null : current === sectionId) return previous
     return setSessionSection(previous, projectId, sessionId, sectionId, legacyName ?? undefined)
-  })
-  return failure === null
+  }
+  // A concurrent sidebar write holding the project can only delay this
+  // assignment; wait for a quiet core so it is not silently dropped. Genuine
+  // failures (conflict/network) still resolve false.
+  for (let attempt = 0; ; attempt += 1) {
+    const failure = await applySidebarUpdate(projectId, readProjectSectionPreferences(), transform)
+    if (failure !== "busy") return failure === null
+    if (attempt >= 40) return false // ~10s; never wedge a session creation path.
+    await new Promise((resolve) => setTimeout(resolve, 250))
+  }
 }
 
 export function useProjectSidebarSections(projects: Record<string, ProjectManifest>) {

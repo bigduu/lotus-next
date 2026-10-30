@@ -397,4 +397,38 @@ describe("durable session section assignment", () => {
     await expect(assignSessionToSectionDurable("p1", "root-1", sectionId)).resolves.toBe(true)
     expect(useAppStore.getState().updateProject).not.toHaveBeenCalled()
   })
+
+  it("waits for a concurrent write to settle instead of dropping the assignment", async () => {
+    useAppStore.setState({
+      projects: { p1: manifest({ ...empty, sections: [{ id: sectionId, name: "Research" }] }) },
+    })
+    // The first PATCH (the hook's own edit) is held until acknowledged; every
+    // later PATCH (the durable retry) saves immediately.
+    let acknowledge!: (project: ProjectManifest) => void
+    useAppStore.setState({ updateProject: vi.fn()
+      .mockImplementationOnce(() => new Promise<ProjectManifest>((resolve) => { acknowledge = resolve }))
+      .mockImplementation(async (id: string, revision: number, request: PatchProjectRequest) => {
+        const current = useAppStore.getState().projects[id]!
+        const saved = { ...current, sidebar: request.sidebar ?? request.import_sidebar!, revision: revision + 1 }
+        useAppStore.setState((state) => ({ projects: { ...state.projects, [id]: saved } }))
+        return saved
+      }) })
+    await mount()
+    const updateStarted = hook.update("p1", (previous) => setSessionSection(previous, "p1", "other", null))
+    await act(async () => { await Promise.resolve() })
+    const durable = assignSessionToSectionDurable("p1", "new-session", sectionId)
+    // The first attempt hits the busy core and schedules a delayed retry.
+    await act(async () => { await Promise.resolve() })
+    expect(useAppStore.getState().updateProject).toHaveBeenCalledOnce()
+    const saved = manifest({ sections: [{ id: sectionId, name: "Research" }], session_sections: {}, hidden_legacy: false })
+    saved.revision = 2
+    await act(async () => {
+      useAppStore.setState({ projects: { p1: saved } })
+      acknowledge(saved)
+      await updateStarted
+    })
+    // The durable retry lands once the core is quiet.
+    await expect(durable).resolves.toBe(true)
+    expect(useAppStore.getState().projects.p1!.sidebar?.session_sections["new-session"]).toBe(sectionId)
+  })
 })

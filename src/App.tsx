@@ -648,13 +648,18 @@ function App() {
           newChatEpoch={newChatEpoch}
           getNavigationVersion={getNavigationVersion}
           onNewSessionInProjectSection={pendingSection && pendingSection.projectId === pendingProjectId ? (sessionId) => {
-            // The composer confirmed a NEW session; commit the section intent
-            // exactly once and drop it for any subsequent creation.
+            // The composer confirmed a NEW session; commit exactly this intent.
+            // A late acknowledgement from an older submission must not clear a
+            // newer intent (e.g. the user already started another section chat).
             const intent = pendingSection
-            setPendingSection(null)
+            setPendingSection((current) => current === intent ? null : current)
             const project = useAppStore.getState().projects[intent.projectId]
             if (!project || project.status !== "active" || project.sidebar === undefined) return
-            void assignSessionToSectionDurable(intent.projectId, sessionId, intent.sectionId, project.section).catch(() => {})
+            void assignSessionToSectionDurable(intent.projectId, sessionId, intent.sectionId, project.section).then((assigned) => {
+              // A dropped assignment leaves the session unsectioned; tell the
+              // user so an explicit move can retry it instead of losing it.
+              if (!assigned) setCopyFeedback({ message: uiText("sidebar_section_assign_failed"), failed: true })
+            }).catch(() => setCopyFeedback({ message: uiText("sidebar_section_assign_failed"), failed: true }))
           } : undefined}
           onSelectProject={(projectId) => {
             mainNavigationVersion.current += 1
