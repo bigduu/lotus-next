@@ -79,37 +79,37 @@ it("does not retry a metadata conflict when stable target authority changed", as
 })
 
 it("permits C1 clear but does not claim it was confirmed without bound proof", async () => {
-  const store=harness(), read=vi.spyOn(managedSessionsClient,"readBoundHistory").mockResolvedValueOnce(bound("initial"))
+  const store=harness(), read=vi.spyOn(managedSessionsClient,"readBoundHistory").mockResolvedValueOnce(bound("initial")).mockResolvedValueOnce(bound(""))
   const detail=vi.spyOn(agentClient,"getSession").mockResolvedValue({session:summary(target.session_id)})
   vi.spyOn(agentClient,"getPendingQuestion").mockResolvedValue({has_pending_question:false})
   const clear=vi.spyOn(agentClient,"clearSession").mockResolvedValue(undefined)
   const generic=vi.spyOn(agentClient,"getHistory")
   await open(store)
   await expect(store.getState().clearConversation(target.session_id)).rejects.toMatchObject({reason:"readback_failed"})
-  expect(clear).toHaveBeenCalledOnce();expect(detail).toHaveBeenCalledOnce();expect(read).toHaveBeenCalledOnce()
+  expect(clear).toHaveBeenCalledOnce();expect(detail).toHaveBeenCalledOnce();expect(read).toHaveBeenCalledTimes(2)
   expect(generic).not.toHaveBeenCalled();expect(store.getState().chats[0].messages[0]?.id).toBe("initial")
   expect(store.getState().conversationClears[target.session_id]).toMatchObject({busy:false,error:"readback_failed"})
   expect(store.getState().conversationClears[target.session_id].confirmed).not.toBe(true)
 })
 
 it("keeps an uncertain C1 outcome unknown without bound confirmation evidence", async () => {
-  const store=harness(), read=vi.spyOn(managedSessionsClient,"readBoundHistory").mockResolvedValueOnce(bound("initial"))
+  const store=harness(), read=vi.spyOn(managedSessionsClient,"readBoundHistory").mockResolvedValueOnce(bound("initial")).mockResolvedValueOnce(bound(""))
   const detail=vi.spyOn(agentClient,"getSession"), generic=vi.spyOn(agentClient,"getHistory"), clear=vi.spyOn(agentClient,"clearSession")
   await open(store);store.setState({conversationClears:{[target.session_id]:{busy:false,error:"unknown"}}})
   await expect(store.getState().verifyConversationClear(target.session_id)).rejects.toMatchObject({reason:"readback_failed"})
   expect(store.getState().conversationClears[target.session_id]).toMatchObject({busy:false,error:"unknown",refreshFailed:true})
-  expect(read).toHaveBeenCalledOnce();expect(detail).not.toHaveBeenCalled();expect(generic).not.toHaveBeenCalled();expect(clear).not.toHaveBeenCalled()
+  expect(read).toHaveBeenCalledTimes(2);expect(detail).not.toHaveBeenCalled();expect(generic).not.toHaveBeenCalled();expect(clear).not.toHaveBeenCalled()
 })
 
 it("keeps C1 clear available after selecting the session from the sidebar", async () => {
-  const store=harness(), read=vi.spyOn(managedSessionsClient,"readBoundHistory").mockResolvedValueOnce(bound("initial"))
+  const store=harness(), read=vi.spyOn(managedSessionsClient,"readBoundHistory").mockResolvedValueOnce(bound("initial")).mockResolvedValueOnce(bound(""))
   const detail=vi.spyOn(agentClient,"getSession").mockResolvedValue({session:summary(target.session_id)})
   vi.spyOn(agentClient,"getPendingQuestion").mockResolvedValue({has_pending_question:false})
   const clear=vi.spyOn(agentClient,"clearSession").mockResolvedValue(undefined)
   const generic=vi.spyOn(agentClient,"getHistory")
   await open(store);store.getState().selectSession("other");store.getState().selectSession(target.session_id)
   await expect(store.getState().clearConversation(target.session_id)).rejects.toMatchObject({reason:"readback_failed"})
-  expect(clear).toHaveBeenCalledOnce();expect(detail).toHaveBeenCalledOnce();expect(read).toHaveBeenCalledOnce();expect(generic).not.toHaveBeenCalled()
+  expect(clear).toHaveBeenCalledOnce();expect(detail).toHaveBeenCalledOnce();expect(read).toHaveBeenCalledTimes(2);expect(generic).not.toHaveBeenCalled()
 })
 
 it("applies bound token usage even when a monotonic refresh has no message changes", async () => {
@@ -159,23 +159,23 @@ it("retains a refreshed metadata revision while waiting for an assistant checkpo
 })
 
 it("does not change live token state when managed clear verification is unprovable", async () => {
-  const store=harness(),read=vi.spyOn(managedSessionsClient,"readBoundHistory").mockResolvedValueOnce(bound("initial",5))
+  const store=harness(),read=vi.spyOn(managedSessionsClient,"readBoundHistory").mockResolvedValueOnce(bound("initial",5)).mockResolvedValueOnce(bound(""))
   await open(store);store.setState({conversationClears:{[target.session_id]:{busy:false,error:"unknown"}}})
   store.getState().updateTokenUsage(target.session_id,{systemTokens:1,summaryTokens:0,windowTokens:98,totalTokens:99,budgetLimit:100})
   await expect(store.getState().verifyConversationClear(target.session_id)).rejects.toMatchObject({reason:"readback_failed"})
-  expect(read).toHaveBeenCalledOnce();expect(store.getState().tokenUsages[target.session_id]?.totalTokens).toBe(99)
+  expect(read).toHaveBeenCalledTimes(2);expect(store.getState().tokenUsages[target.session_id]?.totalTokens).toBe(99)
   expect(store.getState().conversationClears[target.session_id]).toMatchObject({error:"unknown",refreshFailed:true})
 })
 
 it("does not consume an unprovable managed clear readback", async () => {
   const store=harness(),read=vi.spyOn(managedSessionsClient,"readBoundHistory").mockResolvedValueOnce(bound("initial")).mockRejectedValueOnce(conflict())
-  const directory=vi.spyOn(managedSessionsClient,"read"),generic=vi.spyOn(agentClient,"getHistory")
+  const directory=vi.spyOn(managedSessionsClient,"read").mockResolvedValue(page(target.metadata_version+1,"f".repeat(64))),generic=vi.spyOn(agentClient,"getHistory")
   await open(store);store.setState({conversationClears:{[target.session_id]:{busy:false,error:"unknown"}}})
   await expect(store.getState().verifyConversationClear(target.session_id)).rejects.toMatchObject({reason:"readback_failed"})
   expect(store.getState().conversationClears[target.session_id]).toMatchObject({error:"unknown",refreshFailed:true})
-  expect(store.getState().managedHistoryBindings[target.session_id].status).toBe("active")
-  expect(store.getState().chats[0].messages[0]?.id).toBe("initial");expect(read).toHaveBeenCalledOnce()
-  expect(directory).not.toHaveBeenCalled();expect(generic).not.toHaveBeenCalled()
+  expect(store.getState().managedHistoryBindings[target.session_id].status).toBe("stale")
+  expect(store.getState().chats[0].messages[0]?.id).toBe("initial");expect(read).toHaveBeenCalledTimes(2)
+  expect(directory).toHaveBeenCalledOnce();expect(generic).not.toHaveBeenCalled()
 })
 
 it("preserves a live token event received between assistant checkpoint retries", async () => {

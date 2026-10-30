@@ -656,6 +656,16 @@ export interface HistoryResponse {
   session_id: string;
   /** Present on identity-bound history; null means no persisted token snapshot. */
   bound_token_usage?: TokenBudgetUsage | null;
+  /** Requested only for identity-bound clear verification. */
+  bound_clear_evidence?: {
+    full_message_count: number;
+    /** Observation of this Host's startup/runner registry, not cross-process stop proof. */
+    execution_active: boolean;
+    has_pending_question: boolean;
+    has_pending_approval: boolean;
+  };
+  is_delta?: boolean;
+  truncated?: boolean;
   compression_events?: Array<{
     id: string;
     created_at: string;

@@ -205,15 +205,22 @@ function validBoundTokenUsage(value: unknown): boolean {
 
 export const managedSessionsClient = {
   /** The producer binds identity and history under one canonical storage read. */
-  async readBoundHistory(selection: ManagedSessionSelection): Promise<HistoryResponse> {
+  async readBoundHistory(selection: ManagedSessionSelection, options?: { clearReadback?: boolean }): Promise<HistoryResponse> {
     if (!reference(selection.supervisor) || !sameTarget(selection.target, decodedTarget(selection.target))) return invalid()
+    const body = options?.clearReadback ? { ...selection, clear_readback: true } : selection
     const result = record(await apiClient.postOnce<unknown>(
-      `supervisor/default/sessions/${encodeURIComponent(selection.target.session_id)}/history`, selection, { cache: "no-store" },
+      `supervisor/default/sessions/${encodeURIComponent(selection.target.session_id)}/history`, body, { cache: "no-store" },
     ))
     if (!result || result.session_id !== selection.target.session_id || !reference(result.supervisor)
       || !sameSupervisor(result.supervisor, selection.supervisor) || !sameTarget(decodedTarget(result.current_user_target), selection.target)
       || result.history_snapshot_source !== "durable" || !Array.isArray(result.messages)
       || !Object.hasOwn(result, "bound_token_usage") || !validBoundTokenUsage(result.bound_token_usage)) return invalid()
+    if (options?.clearReadback) {
+      const evidence = record(result.bound_clear_evidence)
+      if (!evidence || !safeRevision(evidence.full_message_count)
+        || typeof evidence.execution_active !== "boolean" || typeof evidence.has_pending_question !== "boolean"
+        || typeof evidence.has_pending_approval !== "boolean" || result.is_delta !== false || result.truncated !== false) return invalid()
+    }
     return result as unknown as HistoryResponse
   },
   async read(signal?: AbortSignal, page?: ManagedSessionsQuery) {
@@ -290,9 +297,12 @@ export async function revalidateManagedSelection(selection: ManagedSessionSelect
 
 /** Retry one explicit target-stale response only for a newer metadata revision
  * of the identical Supervisor, lifetime, authority, ancestry and Project. */
-export async function readBoundHistoryRefreshingMetadata(selection: ManagedSessionSelection, current: () => boolean): Promise<{ history: HistoryResponse; selection: ManagedSessionSelection }> {
+export async function readBoundHistoryRefreshingMetadata(selection: ManagedSessionSelection, current: () => boolean,
+  options?: { clearReadback?: boolean }): Promise<{ history: HistoryResponse; selection: ManagedSessionSelection }> {
+  const read = (candidate: ManagedSessionSelection) => options?.clearReadback
+    ? managedSessionsClient.readBoundHistory(candidate, options) : managedSessionsClient.readBoundHistory(candidate)
   try {
-    return { history: await managedSessionsClient.readBoundHistory(selection), selection }
+    return { history: await read(selection), selection }
   } catch (error) {
     let code: unknown
     if (isApiError(error) && error.status === 409) {
@@ -303,6 +313,6 @@ export async function readBoundHistoryRefreshingMetadata(selection: ManagedSessi
     if (!current() || !found || !sameTargetIdentity(found, selection.target)
       || found.metadata_version <= selection.target.metadata_version) throw error
     const updated = { supervisor: selection.supervisor, target: found }
-    return { history: await managedSessionsClient.readBoundHistory(updated), selection: updated }
+    return { history: await read(updated), selection: updated }
   }
 }
