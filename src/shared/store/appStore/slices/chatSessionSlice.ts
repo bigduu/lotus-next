@@ -194,16 +194,10 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
 
   selectSession: (sessionId) => {
     const prev = get();
-    const managed = sessionId ? prev.managedHistoryBindings[sessionId] : undefined;
-    if (prev.currentSessionId === sessionId && prev.latestActiveSessionId === sessionId && !managed) return;
-    // A deliberate ordinary-sidebar selection leaves the managed view. Fence
-    // its in-flight bound reads before returning to ordinary session behavior.
-    const managedHistoryBindings = { ...prev.managedHistoryBindings };
-    if (sessionId && managed) {
-      historyReads.get(get)?.delete(sessionId);
-      delete managedHistoryBindings[sessionId];
+    if (prev.currentSessionId === sessionId && prev.latestActiveSessionId === sessionId) {
+      return;
     }
-    set({ currentSessionId: sessionId, latestActiveSessionId: sessionId, managedHistoryBindings });
+    set({ currentSessionId: sessionId, latestActiveSessionId: sessionId });
   },
 
   getSessionNavigationRevision: () => navigationRevision,
