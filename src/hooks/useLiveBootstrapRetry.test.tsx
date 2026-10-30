@@ -8,6 +8,7 @@ vi.mock("@/lib/continuousRetryFence", () => ({ readContinuousRetryFence: mocks.f
 import { useLiveBootstrapRetry } from "./useLiveBootstrapRetry"
 import { ApiError } from "@services/api/errors"
 import { readLiveBootstrapConfirmation } from "@services/chat/liveBootstrapRetry"
+import { uiText } from "@shared/i18n/ui"
 import { LiveBootstrapRetryNotice } from "@/components/chat/LiveBootstrapRetryNotice"
 const capability = { upstream_retry: { supported_modes: ["bounded", "until_cancelled"] }, live_bootstrap_resume: {
   protocol_version: 1, offer_timeout_ms: 600000, waiting_endpoint: "execute/{session_id}/retry",
@@ -29,7 +30,7 @@ async function mount(initial: Props, display = false) {
   function Harness(props: Props) {
     current = useLiveBootstrapRetry(props.sessionId, props.running, props.root)
     return display ? <LiveBootstrapRetryNotice offer={current.offer} disabled={false}
-      onConfirm={() => void current.confirm()} onStop={() => void current.stop()} /> : null
+      onConfirm={() => void current.confirm()} onStop={() => void current.stop()} onRefresh={() => void current.refresh()} /> : null
   }
   const render = async (props: Props) => { await act(async () => { root.render(<Harness {...props}/>); for(let i=0;i<8;i++) await Promise.resolve() }) }
   await render(initial)
@@ -390,4 +391,68 @@ it.each(["confirmation", "stop"] as const)("does not claim a %s result when the 
     await oldAction
   })
   expect(hook.current.offer).toMatchObject({runId:"run-a",status:"identity_unavailable"})
+})
+
+it("retries the exact Stop once with the rotated run identity after the first Stop is refused", async () => {
+  let retryReads = 0
+  mocks.get.mockImplementation(async (path:string) => path === "execute/defaults" ? capability
+    : ++retryReads === 1 ? waiting("s","run-a") : waiting("s","run-b"))
+  // The fence confirms whichever identity the backend currently offers.
+  mocks.fence.mockImplementation(() => ({kind:"confirmed",runId: retryReads === 1 ? "run-a" : "run-b"}))
+  // The server rotated its cancellable owner: the first exact Stop is refused (409).
+  mocks.stop.mockRejectedValueOnce(new Error("409 Requested run is not the current cancellable owner"))
+  const hook = await mount({sessionId:"s",running:true,root:true})
+  await act(async () => { await hook.current.stop() })
+  // Re-observation sees the successor run; the fence confirms it and the exact Stop retries once.
+  expect(mocks.stop).toHaveBeenCalledTimes(2)
+  expect(mocks.stop).toHaveBeenNthCalledWith(1, "s", "run-a")
+  expect(mocks.stop).toHaveBeenNthCalledWith(2, "s", "run-b")
+  expect(hook.current.offer).toMatchObject({runId:"run-b",status:"stop_requested"})
+})
+
+it("keeps stop_unconfirmed and recovers through Refresh when no waiting offer remains", async () => {
+  let offerAvailable = true
+  mocks.get.mockImplementation(async (path:string) => path === "execute/defaults" ? capability
+    : offerAvailable ? waiting("s","run-a") : {session_id:"s",status:"unavailable"})
+  mocks.fence.mockReturnValue({kind:"confirmed",runId:"run-a"})
+  mocks.stop.mockRejectedValue(new Error("409 Requested run is not the current cancellable owner"))
+  const hook = await mount({sessionId:"s",running:true,root:true}, true)
+  await act(async () => { await hook.current.stop() })
+  offerAvailable = false
+  await act(async () => { for (let i=0;i<16;i++) await Promise.resolve() })
+  expect(hook.current.offer).toMatchObject({runId:"run-a",status:"stop_unconfirmed"})
+  // Refresh re-observes the backend; with no offer left the banner clears instead of fabricating one.
+  await act(async () => { await hook.current.refresh() })
+  expect(hook.current.offer).toBeNull()
+})
+
+it("Refresh restores a live offer whose identity the fence re-confirms after a stop_unconfirmed dead end", async () => {
+  let offered = "run-a"
+  mocks.get.mockImplementation(async (path:string) => path === "execute/defaults" ? capability : waiting("s",offered))
+  mocks.fence.mockImplementation(() => ({kind:"confirmed",runId:offered}))
+  mocks.stop.mockRejectedValue(new Error("synthetic lost Stop response"))
+  const hook = await mount({sessionId:"s",running:true,root:true}, true)
+  await act(async () => { await hook.current.stop() })
+  expect(hook.current.offer).toMatchObject({runId:"run-a",status:"stop_unconfirmed"})
+  // The banner shows a Refresh control for the terminal stop diagnostic.
+  expect([...document.querySelectorAll("button")].some(b => b.textContent === uiText("live_retry_refresh"))).toBe(true)
+  offered = "run-b"
+  await act(async () => { await hook.current.refresh() })
+  expect(hook.current.offer).toMatchObject({runId:"run-b",status:"waiting"})
+  // After Refresh the Stop control is usable again and targets the refreshed identity.
+  mocks.stop.mockClear(); mocks.stop.mockResolvedValue(undefined)
+  await act(async () => { await hook.current.stop() })
+  expect(mocks.stop).toHaveBeenCalledExactlyOnceWith("s","run-b")
+  expect(hook.current.offer).toMatchObject({runId:"run-b",status:"stop_requested"})
+})
+
+it("Refresh does not resurrect an offer whose identity the fence cannot confirm", async () => {
+  mocks.fence.mockReturnValue({kind:"confirmed",runId:"other-run"})
+  const hook = await mount({sessionId:"s",running:true,root:true})
+  await act(async () => { await hook.current.stop() })
+  // The entry fence precheck refuses the borrowed identity before any Stop is sent.
+  expect(hook.current.offer).toMatchObject({status:"identity_unavailable"})
+  await act(async () => { await hook.current.refresh() })
+  expect(hook.current.offer).toMatchObject({status:"identity_unavailable"})
+  expect(mocks.stop).not.toHaveBeenCalled()
 })

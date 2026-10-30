@@ -211,25 +211,74 @@ export function useLiveBootstrapRetry(sessionId: string | null, running: boolean
     cancelForStop()
     const action = { epoch: current.epoch, runId: selected.runId }
     stopActionRef.current = action
-    const owns = () => mountedRef.current && contextRef.current.epoch === action.epoch && stopActionRef.current === action
-      && viewRef.current?.sessionId === selected.sessionId && viewRef.current.runId === action.runId
+    const active = () => mountedRef.current && contextRef.current.epoch === action.epoch && stopActionRef.current === action
+      && viewRef.current?.sessionId === selected.sessionId
       && scope === getBackendStorageScope()
+    const owns = () => active() && viewRef.current?.runId === action.runId
     const settle = (status: LiveStatus) => { if (owns()) settleOwnedView(scope, selected, status) }
+    // The exact-run Stop can fail because the server-side cancellable owner
+    // rotated to a successor run id (409) or the response was lost. Re-observe
+    // once and retry the exact Stop against the identity the fence confirms.
+    const recoverWithFreshIdentity = async (): Promise<boolean> => {
+      const capabilityValue = await readLiveBootstrapCapability()
+      if (!capabilityValue || !active()) return false
+      const observation = await readLiveBootstrapOffer(selected.sessionId, capabilityValue.offerTimeoutMs)
+      if (!active() || observation.kind !== "waiting") return false
+      const fenceNow = readContinuousRetryFence(scope, selected.sessionId)
+      if (fenceNow.kind !== "confirmed" || fenceNow.runId !== observation.runId) return false
+      await agentClient.stopGeneration(selected.sessionId, observation.runId)
+      // The adopted identity settles through the fence, not owns(): the poll
+      // loop may not have rotated the stale view to the successor yet.
+      if (active()) settleOwnedView(scope, { ...selected, runId: observation.runId }, "stop_requested")
+      return true
+    }
     try {
       const currentCapability = await readLiveBootstrapCapability()
       if (!owns()) return
       const currentFence = readContinuousRetryFence(scope, selected.sessionId)
       if (!currentCapability || currentFence.kind !== "confirmed" || currentFence.runId !== selected.runId) {
+        try { if (await recoverWithFreshIdentity()) return } catch { /* fall through */ }
         settle("stop_unconfirmed"); return
       }
       await agentClient.stopGeneration(selected.sessionId, selected.runId)
       settle("stop_requested")
     } catch {
+      try { if (await recoverWithFreshIdentity()) return } catch { /* fall through */ }
       settle("stop_unconfirmed")
     } finally {
       if (stopActionRef.current === action) stopActionRef.current = null
     }
   }, [cancelForStop, settleOwnedView, update])
 
-  return { canPrepare: !!canPrepare, prepareInitial, offer: root && view?.sessionId === sessionId ? view : null, confirm, stop, cancelForStop }
+  /** Re-observe the backend offer and recompute the banner without inventing a run. */
+  const refresh = useCallback(async () => {
+    const selected = viewRef.current, current = contextRef.current
+    if (!selected || selected.sessionId !== current.sessionId || !current.root) return
+    const scope = getBackendStorageScope()
+    try {
+      const capabilityValue = await readLiveBootstrapCapability()
+      if (!capabilityValue || scope !== getBackendStorageScope()) return
+      const started = performance.now()
+      const observation = await readLiveBootstrapOffer(selected.sessionId, capabilityValue.offerTimeoutMs)
+      if (scope !== getBackendStorageScope()) return
+      if (observation.kind === "unavailable") { update(null); return }
+      // Unfreeze this pane's stop observation so the recomputed offer can own it.
+      stopRef.current = null
+      actionRef.current = null
+      stopActionRef.current = null
+      const deadline = started + observation.expiresInMs
+      const secondsRemaining = Math.max(0, Math.ceil((deadline - performance.now()) / 1000))
+      const fence = readContinuousRetryFence(scope, selected.sessionId)
+      const record = readLiveBootstrapConfirmation(selected.sessionId, observation.runId)
+      const status: LiveStatus = secondsRemaining === 0 ? "expired"
+        : record === "pending" ? "unconfirmed" : record === "accepted" ? "continued"
+          : record === "unavailable" || fence.kind !== "confirmed" || fence.runId !== observation.runId ? "identity_unavailable"
+            : observation.confirming ? "confirming" : "waiting"
+      update({ sessionId: selected.sessionId, runId: observation.runId, status, secondsRemaining, deadline })
+    } catch {
+      // A failed refresh must not fabricate or withdraw observed state.
+    }
+  }, [update])
+
+  return { canPrepare: !!canPrepare, prepareInitial, offer: root && view?.sessionId === sessionId ? view : null, confirm, stop, refresh, cancelForStop }
 }

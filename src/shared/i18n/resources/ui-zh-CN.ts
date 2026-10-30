@@ -965,6 +965,7 @@ export const uiZhCn = {
   "upstream_retry_stopping": "正在等待本次执行标识，以安全请求停止…",
   "upstream_retry_stop_requested": "已请求停止本次执行，尚未确认停止。",
   "upstream_retry_stop_unconfirmed": "无法确认本次执行的停止结果，请刷新会话后再开始新一轮。",
+  "live_retry_refresh": "刷新会话状态",
   "upstream_retry_identity_unsaved": "本次执行标识未能保存。即使当前可以停止，刷新后也可能无法停止。",
   "upstream_retry_identity_unavailable": "无法安全保存或恢复本次执行标识，本次未发送新的重试或停止请求。请先核对会话再继续。",
   "upstream_retry_unavailable": "当前服务未确认支持持续连接重试。",

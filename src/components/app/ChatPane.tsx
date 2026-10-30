@@ -1315,7 +1315,8 @@ export function ChatPane({
         ) : null}
 
         <LiveBootstrapRetryNotice offer={liveRetry.offer} disabled={executionBlocked || rootMode.unsafe || modelSaving}
-          onConfirm={() => { if (!rootSessionUnsafe()) void liveRetry.confirm() }} onStop={() => void liveRetry.stop()} />
+          onConfirm={() => { if (!rootSessionUnsafe()) void liveRetry.confirm() }} onStop={() => void liveRetry.stop()}
+          onRefresh={() => { if (!rootSessionUnsafe()) void liveRetry.refresh() }} />
 
         {chat.upstreamRetryStatus ? <p role="status" className="mx-4 mb-2 text-xs text-muted-foreground">
           {uiText(chat.upstreamRetryStatus === "requesting" ? "upstream_retry_requesting"

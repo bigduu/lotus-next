@@ -965,6 +965,7 @@ export const uiEnUs = {
   "upstream_retry_stopping": "Waiting for this execution identity to request Stop safely…",
   "upstream_retry_stop_requested": "Stop requested for this execution. Stopping has not yet been confirmed.",
   "upstream_retry_stop_unconfirmed": "Stop could not be confirmed for this execution. Refresh the session before starting another run.",
+  "live_retry_refresh": "Refresh session status",
   "upstream_retry_identity_unsaved": "The execution identity was not saved. If Stop is available now, it may become unavailable after refreshing.",
   "upstream_retry_identity_unavailable": "The execution identity could not be safely stored or recovered. No new retry or Stop request was sent. Review the session before continuing.",
   "upstream_retry_unavailable": "This service no longer confirms support for continuous connection retries.",
