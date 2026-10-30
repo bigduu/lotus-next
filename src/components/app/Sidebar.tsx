@@ -159,6 +159,9 @@ export function Sidebar({
   // sessions in one repository must not issue one inventory request per row.
   const mergeStates = useWorktreeMergeStates(
     rootChats.map((chat) => chat.config?.projectId?.trim()).filter((id): id is string => !!id),
+    // The visible session set: a new session may mean a new worktree in a
+    // Project already read, so its arrival re-reads rather than staying stale.
+    rootChats.map((chat) => chat.id).join(","),
   )
   const groups = useMemo(() => {
     // Only root sessions in the sidebar — child sub-agent sessions live in the

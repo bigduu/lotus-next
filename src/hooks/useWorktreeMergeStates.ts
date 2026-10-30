@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useState } from "react"
 import { apiClient } from "@services/api"
 import { backendSupports } from "@/lib/backendFeatures"
 
@@ -100,9 +100,8 @@ export const mergeStateFor = (
  * Gated on the backend capability, so a frontend released ahead of its backend
  * makes no request at all — every row simply renders without a badge.
  */
-export function useWorktreeMergeStates(projectIds: readonly string[]) {
+export function useWorktreeMergeStates(projectIds: readonly string[], refreshKey: string) {
   const [states, setStates] = useState<Map<string, CheckoutMergeState>>(() => new Map())
-  const loaded = useRef(new Set<string>())
   // A stable dependency: callers pass a freshly built array on every render.
   const wanted = projectIds.join("\u0000")
 
@@ -111,15 +110,17 @@ export function useWorktreeMergeStates(projectIds: readonly string[]) {
     // row appearing is enough to re-run this once they are known.
     if (!backendSupports(FEATURE)) return
     let alive = true
-    const missing = (wanted ? wanted.split("\u0000") : []).filter((id) => id && !loaded.current.has(id))
-    if (missing.length) {
-      for (const id of missing) loaded.current.add(id)
-      void loadWorktreeMergeStates(missing).then((loadedStates) => {
-        if (alive) setStates(loadedStates)
-      })
-    }
+    const ids = (wanted ? wanted.split("\u0000") : []).filter(Boolean)
+    if (!ids.length) return
+    void loadWorktreeMergeStates(ids).then((loadedStates) => {
+      if (alive) setStates(loadedStates)
+    })
     return () => { alive = false }
-  }, [wanted])
+    // `refreshKey` is the visible session set. A new session can mean a new
+    // worktree in an already-loaded Project, so caching a Project forever would
+    // leave that session without a badge until reload. Re-reading when the set
+    // changes keeps that cheap: SSE title updates do not alter it.
+  }, [wanted, refreshKey])
 
   return states
 }
