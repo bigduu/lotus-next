@@ -8,7 +8,7 @@ import {
   PROJECT_SECTIONS_STORAGE_KEY, createProjectSection, readProjectSectionPreferences,
   setSessionSection, writeProjectSectionPreferences,
 } from "@/lib/projectSidebarPreferences"
-import { useProjectSidebarSections } from "./useProjectSidebarSections"
+import { assignSessionToSectionDurable, useProjectSidebarSections } from "./useProjectSidebarSections"
 
 const sectionId = "section:00000000-0000-4000-8000-000000000001"
 const empty: ProjectSidebar = { sections: [], session_sections: {}, hidden_legacy: false }
@@ -345,5 +345,56 @@ describe("durable Project sidebar sections", () => {
     await mount()
     expect(readProjectSectionPreferences().projects.p1).toBeDefined()
     expect(hook.errors.p1).toContain("更新 Bamboo")
+  })
+})
+
+describe("durable session section assignment", () => {
+  it("assigns a newly created session to its section through the single-writer core", async () => {
+    useAppStore.setState({
+      projects: { p1: manifest({ ...empty, sections: [{ id: sectionId, name: "Research" }] }) },
+    })
+    await expect(assignSessionToSectionDurable("p1", "new-session", sectionId)).resolves.toBe(true)
+    expect(useAppStore.getState().updateProject).toHaveBeenCalledOnce()
+    const saved = useAppStore.getState().projects.p1!
+    expect(saved.sidebar?.session_sections["new-session"]).toBe(sectionId)
+    expect(saved.revision).toBe(2)
+  })
+
+  it("serializes with a concurrent hook update instead of racing the revision", async () => {
+    let acknowledge!: (project: ProjectManifest) => void
+    const save = vi.fn(() => new Promise<ProjectManifest>((resolve) => { acknowledge = resolve }))
+    useAppStore.setState({
+      projects: { p1: manifest({ ...empty, sections: [{ id: sectionId, name: "Research" }] }) },
+      updateProject: save,
+    })
+    await mount()
+    const durable = assignSessionToSectionDurable("p1", "new-session", sectionId)
+    // The hook's own edit arrives while the durable assignment is in flight.
+    await act(async () => { await hook.update("p1", (previous) => previous) })
+    expect(save).toHaveBeenCalledOnce()
+    await act(async () => {
+      const saved = manifest({ ...empty, sections: [{ id: sectionId, name: "Research" }], session_sections: { "new-session": sectionId } })
+      useAppStore.setState({ projects: { p1: saved } })
+      acknowledge(saved)
+    })
+    await expect(durable).resolves.toBe(true)
+    expect(useAppStore.getState().projects.p1!.sidebar?.session_sections["new-session"]).toBe(sectionId)
+  })
+
+  it("keeps the session unsectioned when the durable assignment fails", async () => {
+    useAppStore.setState({
+      projects: { p1: manifest({ ...empty, sections: [{ id: sectionId, name: "Research" }] }) },
+      updateProject: vi.fn().mockRejectedValue(new Error("offline")),
+    })
+    await expect(assignSessionToSectionDurable("p1", "new-session", sectionId)).resolves.toBe(false)
+    expect(useAppStore.getState().projects.p1!.sidebar?.session_sections).toEqual({})
+  })
+
+  it("skips the PATCH when the session already has the requested section", async () => {
+    useAppStore.setState({
+      projects: { p1: manifest({ sections: [{ id: sectionId, name: "Research" }], session_sections: { "root-1": sectionId }, hidden_legacy: false }) },
+    })
+    await expect(assignSessionToSectionDurable("p1", "root-1", sectionId)).resolves.toBe(true)
+    expect(useAppStore.getState().updateProject).not.toHaveBeenCalled()
   })
 })

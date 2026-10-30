@@ -85,7 +85,8 @@ export function Sidebar({
   chats: ChatItem[]
   booted: boolean
   currentSessionId: string | null | undefined
-  onNewChat: (projectId?: string | null) => void
+  /** `sectionId` records where a section-scoped new session should land. */
+  onNewChat: (projectId?: string | null, sectionId?: string | null) => void
   onSelect: (id: string) => void | Promise<void>
   onOpenExistingSession?: OpenWorkSession
   onRename: (id: string, title: string) => void | Promise<void>
@@ -369,10 +370,16 @@ export function Sidebar({
         data-project-section={section.name} data-section-id={section.id ?? "none"} data-section-project={project.id}
         aria-disabled={project.status !== "active" || project.sidebar === undefined || sectionBusy.has(project.id)}
         style={{ marginInlineStart: 12 }} className="mb-1 rounded-md feedback-motion switch-feedback">
-        <ProjectSectionHeader onManageSections={() => {
-          setSectionDialogMode("manage")
-          setSectioningProjectId(project.id)
-        }}>
+        <ProjectSectionHeader
+          sectionName={section.name}
+          onNewSession={project.status === "active" && !disabled ? () => {
+            onNewChat(project.id, section.id)
+            onClose()
+          } : undefined}
+          onManageSections={() => {
+            setSectionDialogMode("manage")
+            setSectioningProjectId(project.id)
+          }}>
           <button type="button" aria-expanded={expanded} aria-controls={contentId} disabled={!!query}
             className="flex min-w-0 flex-1 select-none items-center gap-1 rounded-md px-2 py-1.5 text-left text-xs font-medium text-muted-foreground outline-none hover:text-foreground disabled:cursor-default"
             data-sidebar-section-header
