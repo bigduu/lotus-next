@@ -1680,7 +1680,9 @@ const analyzeSource = (file, source) => {
       }
     }
 
-    if (ts.isVariableDeclaration(node) && ts.isObjectBindingPattern(node.name) && isImportMetaEnv(node.initializer)) {
+    // A `for (const {...} of ...)` binding declares no initializer, so the
+    // initializer is simply absent rather than an import.meta.env access.
+    if (ts.isVariableDeclaration(node) && node.initializer && ts.isObjectBindingPattern(node.name) && isImportMetaEnv(node.initializer)) {
       for (const element of node.name.elements) {
         const name = staticName(element.propertyName ?? element.name);
         if (name && secretShapedViteName.test(name)) {
