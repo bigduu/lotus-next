@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react"
 import { apiClient } from "@services/api"
+import { backendSupports } from "@/lib/backendFeatures"
 
 /**
  * Per-checkout merge state, derived by the backend from **local Git refs only**.
@@ -33,6 +34,9 @@ interface MergeRepository {
 
 /** Normalised key so a trailing slash never splits one checkout into two rows. */
 const key = (path: string) => path.replace(/\/+$/, "")
+
+/** The capability the backend must advertise before this feature may ask it. */
+export const FEATURE = "worktree_merge_state"
 
 /**
  * Load merge state for the given Projects in one batch.
@@ -92,6 +96,9 @@ export const mergeStateFor = (
  * carried across calls so a Project is fetched at most once per page session, and
  * a failed Project is retried on the next call while every row keeps its muted
  * default in the meantime.
+ *
+ * Gated on the backend capability, so a frontend released ahead of its backend
+ * makes no request at all — every row simply renders without a badge.
  */
 export function useWorktreeMergeStates(projectIds: readonly string[]) {
   const [states, setStates] = useState<Map<string, CheckoutMergeState>>(() => new Map())
@@ -100,6 +107,9 @@ export function useWorktreeMergeStates(projectIds: readonly string[]) {
   const wanted = projectIds.join("\u0000")
 
   useEffect(() => {
+    // Capabilities arrive in the same response that produces these rows, so a
+    // row appearing is enough to re-run this once they are known.
+    if (!backendSupports(FEATURE)) return
     let alive = true
     const missing = (wanted ? wanted.split("\u0000") : []).filter((id) => id && !loaded.current.has(id))
     if (missing.length) {
