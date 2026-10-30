@@ -2,10 +2,20 @@ export interface SupervisorReference {
   readonly session_id: "bamboo-default-supervisor"
   readonly incarnation_id: string
 }
+/** A canonical read observation, never a front-end grant or a model target reference. */
+export interface CurrentUserManagementAccess {
+  readonly kind: "current_user"
+  readonly default_all_projects: true
+  readonly default_all_sessions: true
+  readonly requires_project_authorization: false
+  readonly requires_session_attachment: false
+  readonly orchestration_revision: number
+}
 export interface ProjectScopeResponse {
-  readonly code: "project_scope_uninitialized" | "project_scope_configured"
+  readonly code: "project_scope_uninitialized" | "project_scope_configured" | "current_user_scope_ready"
   readonly scope: { readonly supervisor: SupervisorReference; readonly state_revision: number; readonly allowed_projects: readonly string[] }
-  readonly capabilities: { readonly project_scope_v1: true; readonly supervised_root_create_v1: boolean; readonly project_scope_http_write_v1?: true }
+  readonly capabilities: { readonly project_scope_v1: true; readonly supervised_root_create_v1: boolean; readonly project_scope_http_write_v1?: true; readonly supervisor_current_user_scope_v1?: true }
+  readonly management_access?: CurrentUserManagementAccess
   readonly owner_authorization: { readonly available: boolean; readonly required: true; readonly http_registration: false } & (
     { readonly kind: "trusted_host_intent"; readonly code?: never }
     | { readonly kind: "existing_access"; readonly code: null }
