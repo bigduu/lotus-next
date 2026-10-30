@@ -489,6 +489,35 @@ describe("ChatPane new-chat worktree first send", () => {
   })
 })
 
+describe("ChatPane section-scoped new session", () => {
+  it("notifies once when a section-intent send creates the session, and not for existing sessions", async () => {
+    const send = vi.fn<Send>().mockResolvedValue({ kind: "accepted", operationId: 1, sessionId: "created-session", navigated: true })
+    const onNewSessionInProjectSection = vi.fn()
+    const pane = await mountWorktreeChat(send)
+    await pane.render({ onNewSessionInProjectSection })
+    act(() => { write("", "from section header"); composer().onSubmit() })
+    await flush()
+    expect(send).toHaveBeenCalledExactlyOnceWith("from section header", expect.objectContaining({ projectId: "p1" }))
+    expect(onNewSessionInProjectSection).toHaveBeenCalledExactlyOnceWith("created-session")
+    // A later send inside the now-current session must not re-apply the intent.
+    await pane.render({ chat: createChat(send, "created-session"), onNewSessionInProjectSection })
+    act(() => { write("created-session", "follow-up"); composer().onSubmit() })
+    await flush()
+    expect(onNewSessionInProjectSection).toHaveBeenCalledExactlyOnceWith("created-session")
+  })
+
+  it("does not notify when the intent is absent or the send did not create a session", async () => {
+    const send = vi.fn<Send>().mockResolvedValue({ kind: "accepted", operationId: 1, sessionId: "created-session", navigated: true })
+    const onNewSessionInProjectSection = vi.fn()
+    const pane = await mountWorktreeChat(send)
+    await pane.render({ onNewSessionInProjectSection: undefined })
+    act(() => { write("", "no intent"); composer().onSubmit() })
+    await flush()
+    expect(send).toHaveBeenCalledOnce()
+    expect(onNewSessionInProjectSection).not.toHaveBeenCalled()
+  })
+})
+
 describe("ChatPane new-chat worktree lifecycle fences", () => {
   it.each(["timeout", "partial-http-400"])("locks uncertain creation (%s), preserves draft, and never retries create", async (kind) => {
     runtime.createWorktree.mockRejectedValueOnce(kind === "timeout" ? new RequestTimeoutError() : new ApiError("partial checkout", 400, "Bad Request"))

@@ -35,6 +35,7 @@ vi.mock("@/components/chat/SessionRow", () => ({
 
 import { Sidebar } from "./Sidebar"
 import { useAppStore } from "@shared/store/appStore"
+import { uiText } from "@shared/i18n/ui"
 import { PINNED_PROJECTS_STORAGE_KEY, PROJECT_SECTIONS_STORAGE_KEY, SIDEBAR_SESSION_DRAG_TYPE, SIDEBAR_SECTION_DRAG_TYPE } from "@/lib/projectSidebarPreferences"
 import { DEFAULT_SUPERVISOR_SESSION_ID } from "@/lib/supervisor"
 
@@ -658,6 +659,29 @@ describe("Sidebar server sections", () => {
     expect(target.getAttribute("aria-disabled")).toBe("true")
     await drop(target, { projectId: "p1", sessionId: "first" })
     expect(updateProject).not.toHaveBeenCalled()
+  })
+
+  it("creates a session scoped to a section from the section header button", async () => {
+    setup()
+    const section = container.querySelector('[data-section-project="p1"][data-project-section="lotus"]')!
+    const create = section.querySelector<HTMLButtonElement>(`button[aria-label="${uiText("sidebar_section_new_session", { v0: "lotus" })}"]`)!
+    await act(async () => create.click())
+    expect(props.onNewChat).toHaveBeenCalledExactlyOnceWith("p1", lotusA)
+    expect(props.onClose).toHaveBeenCalledOnce()
+  })
+
+  it("omits the section new-session entry while a section write is busy", async () => {
+    const { updateProject } = setup()
+    const persist = updateProject.getMockImplementation()!
+    let confirm!: () => Promise<void>
+    updateProject.mockImplementationOnce((...args) => new Promise<ProjectManifest>((resolve) => {
+      confirm = async () => { resolve(await persist(...args)) }
+    }))
+    click("Move first to lotus")
+    const section = container.querySelector('[data-section-project="p1"][data-project-section="lotus"]')!
+    expect(section.querySelector(`button[aria-label="${uiText("sidebar_section_new_session", { v0: "lotus" })}"]`)).toBeNull()
+    await act(async () => { await confirm() })
+    expect(section.querySelector(`button[aria-label="${uiText("sidebar_section_new_session", { v0: "lotus" })}"]`)).not.toBeNull()
   })
 
   it("does not show one Project's failed save inside another Project's dialog", async () => {

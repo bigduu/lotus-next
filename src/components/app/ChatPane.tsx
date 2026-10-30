@@ -190,6 +190,7 @@ export function ChatPane({
   pickedWorkspace,
   worktreePath,
   pendingProjectId,
+  onNewSessionInProjectSection,
   newChatEpoch = 0,
   getNavigationVersion,
   onSelectProject,
@@ -215,6 +216,8 @@ export function ChatPane({
   worktreePath?: string | null
   /** Project preselected for the next NEW session (project-grouped sidebar). */
   pendingProjectId?: string | null
+  /** Notified once when a NEW session lands after a section-scoped 新建 intent. */
+  onNewSessionInProjectSection?: (sessionId: string) => void
   /** Explicit New chat intent, including new → new with a null session ID. */
   newChatEpoch?: number
   /** Synchronous navigation-intent fence owned by the main App. */
@@ -910,6 +913,12 @@ export function ChatPane({
           || getNavigationVersion?.() !== originNavigationVersion
           || (!result.navigated && !isOriginCurrent()))) return
         if (frozenReference) setTicketReference((current) => current?.id === frozenReference.id ? null : current)
+        // A section-scoped creation intent applies to exactly this new session;
+        // the callback owns clearing it, so later sends never re-apply it. Even
+        // a send whose navigation was interrupted still created the session.
+        if (!currentSessionId && snapshot.projectId && onNewSessionInProjectSection) {
+          onNewSessionInProjectSection(result.sessionId)
+        }
 
         // Commit only fields that still have the exact mutation revision captured
         // by this submission. A late acknowledgement must never erase edits or a
