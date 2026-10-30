@@ -86,3 +86,22 @@ it("does not transfer a clear receipt to a later unbound view", async () => {
   expect(store.getState().conversationClears[id]).toMatchObject({busy:false,error:"unknown",readbackConfirmed:true})
   expect(store.getState().conversationClears[id].confirmed).not.toBe(true)
 })
+
+it("uses a newer clear's baseline when an earlier clear reload is still pending", async () => {
+  const store=harness();let finishOld!:(v:HistoryResponse)=>void
+  const old=new Promise<HistoryResponse>((resolve)=>{finishOld=resolve})
+  let details=0
+  vi.spyOn(agentClient,"getSession").mockImplementation(async()=>({session:{...summary(),...(++details===5 ? {token_usage:{
+    system_tokens:1,summary_tokens:0,window_tokens:19,total_tokens:20,budget_limit:100,truncation_occurred:false,segments_removed:0}} : {})}}))
+  vi.spyOn(agentClient,"getPendingQuestion").mockResolvedValue({has_pending_question:false})
+  const history=vi.spyOn(agentClient,"getHistory").mockResolvedValueOnce(cleared).mockReturnValueOnce(old)
+    .mockResolvedValueOnce(cleared).mockResolvedValueOnce(cleared)
+  vi.spyOn(agentClient,"clearSession").mockResolvedValue(undefined)
+  await store.getState().clearConversation(id);store.getState().updateTokenUsage(id,token(99))
+  store.getState().reconcileClearedConversation(id);await vi.waitFor(()=>expect(history).toHaveBeenCalledTimes(2))
+  await store.getState().clearConversation(id)
+  await store.getState().loadChatHistory(id,{mode:"replace",throwOnError:true})
+  expect(store.getState().tokenUsages[id]?.totalTokens).toBe(20)
+  finishOld(cleared);await new Promise((resolve)=>setTimeout(resolve,0))
+  expect(store.getState().tokenUsages[id]?.totalTokens).toBe(20)
+})

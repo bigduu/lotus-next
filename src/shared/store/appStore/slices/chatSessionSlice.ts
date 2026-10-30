@@ -47,6 +47,7 @@ export type {
 export { mapHistoryMessagesToUi } from "./chatSessionSlice/messageMapping";
 
 import type { ChatSlice, ConversationClearState } from "./chatSessionSlice/types";
+import type { ManagedSessionSelection } from "@services/supervisorScope/managedSessions";
 
 const agentClient = AgentClient.getInstance();
 
@@ -83,9 +84,10 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
   const replacementRequired = new Set<string>();
   // Retain the pre-write revision until its clear-feed reconciliation arrives;
   // the account event can be delivered after the HTTP response.
-  const pendingClearRevisions = new Map<string, ReturnType<typeof tokenBudgetRevision>>();
+  type ClearTokenFence = { revision: ReturnType<typeof tokenBudgetRevision>; selection: ManagedSessionSelection | undefined };
+  const pendingClearRevisions = new Map<string, ClearTokenFence>();
   const acknowledgedClears = new Map<string, AppState["managedHistoryBindings"][string] | undefined>();
-  const replacementRevisions = new Map<string, ReturnType<typeof tokenBudgetRevision>>();
+  const replacementRevisions = new Map<string, ClearTokenFence>();
   let navigationRevision = 0;
   const reconcileClear = (sessionId: string, newEvent: boolean) => {
     // An event has no revision. Fence work known at notification time, not
@@ -852,7 +854,7 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
     const bindingAtStart = get().managedHistoryBindings[sessionId];
     const tokenRevisionAtStart = tokenBudgetRevision(get, sessionId);
     acknowledgedClears.delete(sessionId);
-    pendingClearRevisions.set(sessionId, tokenRevisionAtStart);
+    pendingClearRevisions.set(sessionId, { revision: tokenRevisionAtStart, selection: bindingAtStart?.selection });
     clearState(sessionId, { busy: true });
     historyReads.get(get)?.delete(sessionId);
     try {
@@ -912,8 +914,8 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
         },
       }, { skipBackendPatch: true });
       invalidateCompletedAnswers(sessionId);
-      if (tokenBudgetRevision(get, sessionId).usage === tokenRevision.usage) get().clearTokenUsageValue(sessionId);
-      if (tokenBudgetRevision(get, sessionId).truncation === tokenRevision.truncation) get().clearTruncationInfo(sessionId);
+      if (tokenBudgetRevision(get, sessionId).usage === tokenRevision.usage) get().clearTokenUsageValue(sessionId, { fromSnapshot: true });
+      if (tokenBudgetRevision(get, sessionId).truncation === tokenRevision.truncation) get().clearTruncationInfo(sessionId, { fromSnapshot: true });
       const acknowledged = prior?.error !== "unknown" && acknowledgedClears.has(sessionId)
         && acknowledgedClears.get(sessionId) === binding;
       if (acknowledged) acknowledgedClears.delete(sessionId);
@@ -1009,8 +1011,12 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
           // Clear replacement intent survives superseding monotonic reads and
           // failures. Read token state too: the live cache outranks list config.
           const afterClear = replacementRequired.has(sessionId);
-          const tokenRevision = (afterClear && replacementRevisions.get(sessionId))
-            || (selection ? tokenRevisionAtStart : afterClear ? tokenBudgetRevision(get, sessionId) : { usage: 0, truncation: 0 });
+          const clearFence = [pendingClearRevisions.get(sessionId), afterClear ? replacementRevisions.get(sessionId) : undefined]
+            .find((candidate) => candidate && (candidate.selection
+              ? selection && managedModule!.sameManagedSelectionIdentity(candidate.selection, selection)
+              : !selection));
+          const tokenRevision = clearFence?.revision
+            ?? (selection ? tokenRevisionAtStart : afterClear ? tokenBudgetRevision(get, sessionId) : { usage: 0, truncation: 0 });
           // A separately fetched ID-only detail could belong to a different
           // lifetime. The bound response includes token state from its snapshot.
           const detail = afterClear && !selection ? (await agentClient.getSession(sessionId)).session : undefined;
@@ -1191,13 +1197,15 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
           if (afterClear) { replacementRequired.delete(sessionId); replacementRevisions.delete(sessionId); }
           if (refreshTokenState) {
             if (tokenBudgetRevision(get, sessionId).usage === tokenRevision.usage) {
-              get().clearTokenUsageValue(sessionId);
-              if (tokenConfig?.tokenUsage) get().updateTokenUsage(sessionId, tokenConfig.tokenUsage);
+              get().clearTokenUsageValue(sessionId, { fromSnapshot: true });
+              if (tokenConfig?.tokenUsage && tokenBudgetRevision(get, sessionId).usage === tokenRevision.usage)
+                get().updateTokenUsage(sessionId, tokenConfig.tokenUsage, { fromSnapshot: true });
             }
             if (tokenBudgetRevision(get, sessionId).truncation === tokenRevision.truncation) {
-              get().clearTruncationInfo(sessionId);
-              if (selection && tokenConfig?.truncationOccurred !== undefined && tokenConfig.segmentsRemoved !== undefined)
-                get().setTruncationInfo(sessionId, tokenConfig.truncationOccurred, tokenConfig.segmentsRemoved);
+              get().clearTruncationInfo(sessionId, { fromSnapshot: true });
+              if (selection && tokenConfig?.truncationOccurred !== undefined && tokenConfig.segmentsRemoved !== undefined
+                && tokenBudgetRevision(get, sessionId).truncation === tokenRevision.truncation)
+                get().setTruncationInfo(sessionId, tokenConfig.truncationOccurred, tokenConfig.segmentsRemoved, { fromSnapshot: true });
             }
           }
           debugLog("[ChatSlice]", "loadChatHistory.applied", {
