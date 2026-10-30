@@ -88,6 +88,19 @@ it("retires a refresh when the clear event arrives during it and preserves the l
   held.resolve(snapshot("late stale",1));await refresh;expectLive(store)
 })
 
+it("retains the event fence when a newer normal refresh supersedes its replacement read", async ()=>{
+  const store=harness(),held=deferred<HistoryResponse>()
+  const read=vi.spyOn(managedSessionsClient,"readBoundHistory").mockResolvedValueOnce(snapshot("original"))
+    .mockReturnValueOnce(held.promise).mockResolvedValueOnce(snapshot(""))
+  const {write,clear}=writeSetup();await open(store);const clearing=store.getState().clearConversation(id)
+  await vi.waitFor(()=>expect(clear).toHaveBeenCalledOnce());live(store);write.resolve()
+  await expect(clearing).rejects.toMatchObject({reason:"readback_failed"})
+  store.getState().reconcileClearedConversation(id);await vi.waitFor(()=>expect(read).toHaveBeenCalledTimes(2))
+  await store.getState().loadChatHistory(id,{mode:"monotonic",throwOnError:true})
+  expect(read).toHaveBeenCalledTimes(3);expectLive(store)
+  held.resolve(snapshot("late stale",1));await new Promise((resolve)=>setTimeout(resolve,0));expectLive(store)
+})
+
 it("does not mistake a snapshot's own cache writes for a new live token before the event", async ()=>{
   const store=harness(),read=vi.spyOn(managedSessionsClient,"readBoundHistory").mockResolvedValueOnce(snapshot("original",5))
     .mockResolvedValueOnce(snapshot("original")).mockResolvedValueOnce(snapshot("original",20))
