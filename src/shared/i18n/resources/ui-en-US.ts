@@ -2808,6 +2808,7 @@ export const uiEnUs = {
   "supervisor_sessions_saving": "Saving…",
   "supervisor_sessions_saved": "Management relationship saved and verified.",
   "supervisor_sessions_unknown": "The request outcome is unconfirmed. Check the refreshed relationships before a new action. The request will not be resent automatically.",
+  "supervisor_managed_history_stale": "This managed session is no longer available as selected. Reload the app, then select it again from the Supervisor directory.",
   "supervisor_sessions_conflict": "The management scope changed. Refresh and review the current state before another action.",
   "supervisor_sessions_rejected": "The service refused this change. Review access, Project scope and the current session.",
   "supervisor_sessions_unsupported": "This Bamboo version does not provide session management. Existing sessions remain available.",

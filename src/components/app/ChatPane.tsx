@@ -300,6 +300,8 @@ export function ChatPane({
       (currentChat?.messages ?? []).map((m) => ({ metadata: (m as { metadata?: { runtime_kind?: unknown } }).metadata, content: "content" in m ? m.content : undefined })),
     )
   const currentlyRunning = currentChat?.isRunning === true || (sending && streaming !== null) || backgroundExecWaiting
+  const managedHistoryStale = useAppStore((state) => currentSessionId
+    ? state.managedHistoryBindings?.[currentSessionId]?.status === "stale" : false)
   const visibleSendFailure = sendFailure?.sessionId === currentSessionId ? sendFailure : null
   const persistedRunError = !visibleSendFailure
     && !currentlyRunning
@@ -1271,6 +1273,7 @@ export function ChatPane({
         />
         )}
 
+        {managedHistoryStale && <div role="alert" className="mx-4 mb-2 text-xs text-destructive">{uiText("supervisor_managed_history_stale")}</div>}
         {visibleSendFailure || persistedRunError ? (
           <div
             role="alert"

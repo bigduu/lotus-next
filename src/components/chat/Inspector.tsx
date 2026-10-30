@@ -430,6 +430,7 @@ export function Inspector({
                     ...(stagedSessions ? { stagedSessions } : {}),
                     ...(verify ? {
                       readHistory: readBoundHistory,
+                      managedSelection: selection,
                       beforeApply: async () => current() && matchesCached() && Boolean(await verify?.()),
                       canApply: () => current() && matchesCached(),
                       selectOnApply: true,

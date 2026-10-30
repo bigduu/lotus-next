@@ -2806,6 +2806,7 @@ export const uiZhCn = {
   "supervisor_sessions_saving": "正在保存…",
   "supervisor_sessions_saved": "管理关系已保存并核实。",
   "supervisor_sessions_unknown": "请求结果尚未确认。请检查刷新后的管理关系，再决定下一步操作。请求不会自动重发。",
+  "supervisor_managed_history_stale": "受管理会话已不再与原选择一致。请重新加载应用，然后从 Supervisor 目录重新选择会话。",
   "supervisor_sessions_conflict": "管理范围已变化。请刷新并检查当前状态，再重新选择操作。",
   "supervisor_sessions_rejected": "服务拒绝了本次更改。请检查访问权限、项目范围和当前会话。",
   "supervisor_sessions_unsupported": "此 Bamboo 版本未提供会话管理入口，已有会话仍可使用。",

@@ -16,7 +16,7 @@ const select = () => {
 const bound = () => {
   const { supervisor, target } = select()
   return { session_id: target.session_id, supervisor, current_user_target: target,
-    history_snapshot_source: "durable", messages: [{ id: "m1", role: "assistant", content: "Synthetic answer", created_at: "2026-10-27T00:00:00Z" }] }
+    history_snapshot_source: "durable", bound_token_usage: null, messages: [{ id: "m1", role: "assistant", content: "Synthetic answer", created_at: "2026-10-27T00:00:00Z" }] }
 }
 beforeEach(() => vi.clearAllMocks())
 it("retains the producer's supported capability and distinguishes an older producer", () => {
@@ -35,6 +35,7 @@ it.each([
   { current_user_target: { ...select().target, ancestry_sha256: "f".repeat(64) } },
   { supervisor: { ...select().supervisor, incarnation_id: "22222222-2222-4222-8222-222222222222" } },
   { session_id: "other" }, { messages: null }, { history_snapshot_source: "unknown" },
+  { history_snapshot_source: "matched_cache" }, { bound_token_usage: undefined }, { bound_token_usage: { total_tokens: 1 } },
 ])("rejects a mismatched or malformed bound response %# without falling back", async (patch) => {
   vi.mocked(apiClient.postOnce).mockResolvedValue({ ...bound(), ...patch })
   await expect(managedSessionsClient.readBoundHistory(select())).rejects.toThrow()

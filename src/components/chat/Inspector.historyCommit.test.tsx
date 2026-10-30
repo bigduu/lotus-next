@@ -32,7 +32,7 @@ const deferred = <T,>() => {
   const promise = new Promise<T>((done) => { resolve = done })
   return { promise, resolve }
 }
-const history = (id: string, content: string): HistoryResponse => ({ session_id: id, messages: [
+const history = (id: string, content: string): HistoryResponse => ({ session_id: id, bound_token_usage: null, messages: [
   { id: `${id}-${content}`, role: "assistant", content, created_at: "2026-10-29T00:00:00Z" },
 ] })
 const summary = (id: string, createdAt = "2026-10-27T00:00:00Z"): SessionSummary => ({

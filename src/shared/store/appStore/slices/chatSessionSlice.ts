@@ -12,6 +12,7 @@ import { ConversationClearError, readClearedConversation, requestConversationCle
 import type { AppState } from "../";
 import { useProviderStore } from "./providerSlice";
 import { tokenBudgetRevision } from "./tokenBudgetSlice";
+import { mapTokenBudgetUsage } from "@shared/types/tokenBudget";
 import { applyExecutionEvent } from "./executionStateSlice";
 import { applyReplayableSessionEventToList, isSessionMetadataEvent } from "./sessionMetadataSlice";
 import i18n from "@shared/i18n";
@@ -104,6 +105,7 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
   latestActiveSessionId: null,
   sessionIndexRevision: 0,
   conversationClears: {},
+  managedHistoryBindings: {},
 
   addChat: async (chatData) => {
     const title = (chatData.title || i18n.t("chat.sidebar.newSession")).trim();
@@ -237,8 +239,11 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
           ? (newChats[0]?.id ?? null)
           : state.latestActiveSessionId;
 
+      const managedHistoryBindings = { ...state.managedHistoryBindings };
+      for (const id of toDelete) delete managedHistoryBindings[id];
       return {
         ...state,
+        managedHistoryBindings,
         chats: newChats,
         currentSessionId: nextCurrent,
         latestActiveSessionId: nextLatest,
@@ -830,6 +835,12 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
     if (prior?.error === "unknown" || prior?.error === "readback_failed") {
       throw new ConversationClearError(prior.error);
     }
+    // Clear has no identity-bound operation or readback. Do not send it for a
+    // managed target that may have been replaced since it was selected.
+    if (get().managedHistoryBindings[sessionId]) {
+      clearState(sessionId, { busy: false, error: "unsupported" });
+      throw new ConversationClearError("unsupported");
+    }
     clearState(sessionId, { busy: true });
     historyReads.get(get)?.delete(sessionId);
     try {
@@ -846,6 +857,13 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
 
   verifyConversationClear: async (sessionId) => {
     const prior = get().conversationClears[sessionId];
+    if (get().managedHistoryBindings[sessionId]) {
+      // A prior uncertain outcome stays uncertain; the unbound readback cannot
+      // verify the identity or safely replace this managed conversation.
+      const reason = prior?.error === "unknown" || prior?.error === "readback_failed" ? prior.error : "unsupported";
+      clearState(sessionId, { ...prior, busy: false, error: reason, ...(reason === "unsupported" ? {} : { refreshFailed: true }) });
+      throw new ConversationClearError(reason);
+    }
     const reads = historyReads.get(get) ?? new Map<string, object>();
     historyReads.set(get, reads);
     const request = {};
@@ -889,6 +907,7 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
   loadChatHistory: async (sessionId, options) => {
     const stagedTarget = options?.stagedSessions?.find((item) => item.id === sessionId);
     if ((options?.stagedSessions && !stagedTarget) || (options?.readHistory && !options.selectOnApply)
+      || (options?.managedSelection && (!options.selectOnApply || options.managedSelection.target.session_id !== sessionId))
       || ((options?.stagedSessions || options?.selectOnApply)
       && (!options.beforeApply || !options.canApply || !options.throwOnError || options.mode === "monotonic"))) {
       throw new Error("Staged session history requires a guarded target");
@@ -904,6 +923,14 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
     };
     if (options?.signal?.aborted) return discardRead();
     if (get().conversationClears[sessionId]?.busy) return discardRead();
+    const bindingAtStart = get().managedHistoryBindings[sessionId];
+    if (bindingAtStart?.status === "stale" && !options?.managedSelection) {
+      if (options?.throwOnError) throw new Error("Managed session must be selected again");
+      return;
+    }
+    const selection = options?.managedSelection ?? bindingAtStart?.selection;
+    const bindingIsCurrent = () => get().managedHistoryBindings[sessionId] === bindingAtStart;
+    let managedModule: typeof import("@services/supervisorScope/managedSessions") | undefined;
     const reads = historyReads.get(get) ?? new Map<string, object>();
     historyReads.set(get, reads);
     const request = {};
@@ -934,18 +961,30 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
             return;
           }
 
-          const history = options?.readHistory ? await options.readHistory() : await agentClient.getHistory(sessionId);
-          if (options?.signal?.aborted) return discardRead();
+          const tokenRevisionBeforeHistory = tokenBudgetRevision(get, sessionId);
+          if (selection) managedModule = await import("@services/supervisorScope/managedSessions");
+          const history = selection ? await managedModule!.managedSessionsClient.readBoundHistory(selection)
+            : options?.readHistory ? await options.readHistory() : await agentClient.getHistory(sessionId);
+          if (options?.signal?.aborted || selection && !bindingIsCurrent()) return discardRead();
           if (history.session_id !== sessionId) throw new Error("History session mismatch");
           if (!isCurrentRead()) return discardRead();
           // Clear replacement intent survives superseding monotonic reads and
           // failures. Read token state too: the live cache outranks list config.
           const afterClear = replacementRequired.has(sessionId);
-          const tokenRevision = afterClear ? tokenBudgetRevision(get, sessionId) : { usage: 0, truncation: 0 };
-          const detail = afterClear ? (await agentClient.getSession(sessionId)).session : undefined;
-          if (options?.signal?.aborted || !isCurrentRead()) return discardRead();
-          if (afterClear && (history.session_id !== sessionId || detail?.id !== sessionId)) throw new Error("History session mismatch");
-          const tokenConfig = detail ? sessionSummaryToChatItem(detail).config : undefined;
+          const tokenRevision = selection ? tokenRevisionBeforeHistory
+            : afterClear ? tokenBudgetRevision(get, sessionId) : { usage: 0, truncation: 0 };
+          // A separately fetched ID-only detail could belong to a different
+          // lifetime. The bound response includes token state from its snapshot.
+          const detail = afterClear && !selection ? (await agentClient.getSession(sessionId)).session : undefined;
+          if (options?.signal?.aborted || !isCurrentRead() || selection && !bindingIsCurrent()) return discardRead();
+          if (afterClear && !selection && detail?.id !== sessionId) throw new Error("History session mismatch");
+          if (selection && !Object.hasOwn(history, "bound_token_usage")) throw new Error("Bound token snapshot unavailable");
+          const refreshTokenState = afterClear || Boolean(options?.managedSelection);
+          const tokenConfig = refreshTokenState && selection ? {
+            tokenUsage: mapTokenBudgetUsage(history.bound_token_usage),
+            truncationOccurred: history.bound_token_usage?.truncation_occurred,
+            segmentsRemoved: history.bound_token_usage?.segments_removed,
+          } : detail ? sessionSummaryToChatItem(detail).config : undefined;
           const cachedChat = get().chats.find((item) => item.id === sessionId) ?? stagedChat;
           if (!cachedChat) return discardRead();
           debugLog("[ChatSlice]", "loadChatHistory.response", {
@@ -978,7 +1017,8 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
           // A newer read, clear, navigation, or abort retires this read even if
           // the asynchronous check later succeeds.
           if (options?.beforeApply && !await options.beforeApply()) return discardRead();
-          if ((options?.canApply && !options.canApply()) || options?.signal?.aborted || !isCurrentRead()) return discardRead();
+          if ((options?.canApply && !options.canApply()) || options?.signal?.aborted || !isCurrentRead()
+            || selection && (!bindingIsCurrent() || !options?.managedSelection && get().currentSessionId !== sessionId)) return discardRead();
           const currentChat = get().chats.find((item) => item.id === sessionId) ?? stagedChat;
           if (!currentChat) return discardRead();
           let nextMessages = mapHistoryMessagesToUi(sessionId, history.messages);
@@ -1053,8 +1093,8 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
 
           const liveTokenState = get();
           const latestTokenRevision = tokenBudgetRevision(get, sessionId);
-          const newerUsage = afterClear && latestTokenRevision.usage !== tokenRevision.usage;
-          const newerTruncation = afterClear && latestTokenRevision.truncation !== tokenRevision.truncation;
+          const newerUsage = refreshTokenState && latestTokenRevision.usage !== tokenRevision.usage;
+          const newerTruncation = refreshTokenState && latestTokenRevision.truncation !== tokenRevision.truncation;
           // History owns only its hydrated fields. A permission read/write may
           // have confirmed a newer mode/ETag while getHistory was in flight.
           const historyConfig = {
@@ -1087,7 +1127,8 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
           if (options?.selectOnApply || options?.stagedSessions) {
             let applied = false;
             set((state) => {
-              if ((options.canApply && !options.canApply()) || options.signal?.aborted || !isCurrentRead()) return state;
+              if ((options.canApply && !options.canApply()) || options.signal?.aborted || !isCurrentRead()
+                || selection && !bindingIsCurrent()) return state;
               const staged = options.stagedSessions ?? [];
               const root = staged.find((item) => item.kind === "root");
               if (staged.length && !root) return state;
@@ -1099,6 +1140,8 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
               applied = true;
               return { ...merged, chats: merged.chats.map((item) => item.id === sessionId
                 ? { ...item, ...historyUpdate, config: { ...target.config, ...historyConfig } } : item),
+                ...(options.managedSelection ? { managedHistoryBindings: { ...state.managedHistoryBindings,
+                  [sessionId]: { selection: { supervisor: { ...options.managedSelection.supervisor }, target: { ...options.managedSelection.target } }, status: "active" as const } } } : {}),
                 ...(options.selectOnApply ? { currentSessionId: sessionId, latestActiveSessionId: sessionId } : {}) };
             });
             if (!applied) return discardRead();
@@ -1107,13 +1150,17 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
             get().updateSession(sessionId, historyUpdate, { skipBackendPatch: true });
           }
           reconcileCompletedAnswers(sessionId, nextMessages);
-          if (afterClear) {
-            replacementRequired.delete(sessionId);
+          if (afterClear) replacementRequired.delete(sessionId);
+          if (refreshTokenState) {
             if (tokenBudgetRevision(get, sessionId).usage === tokenRevision.usage) {
               get().clearTokenUsageValue(sessionId);
               if (tokenConfig?.tokenUsage) get().updateTokenUsage(sessionId, tokenConfig.tokenUsage);
             }
-            if (tokenBudgetRevision(get, sessionId).truncation === tokenRevision.truncation) get().clearTruncationInfo(sessionId);
+            if (tokenBudgetRevision(get, sessionId).truncation === tokenRevision.truncation) {
+              get().clearTruncationInfo(sessionId);
+              if (selection && tokenConfig?.truncationOccurred !== undefined && tokenConfig.segmentsRemoved !== undefined)
+                get().setTruncationInfo(sessionId, tokenConfig.truncationOccurred, tokenConfig.segmentsRemoved);
+            }
           }
           debugLog("[ChatSlice]", "loadChatHistory.applied", {
             sessionId,
@@ -1128,6 +1175,16 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
           if (options?.signal?.aborted || !isCurrentRead() || (discarded !== undefined && error === discarded)) {
             if (options?.throwOnError) throw error;
             return;
+          }
+          if (selection && bindingAtStart && bindingIsCurrent()) {
+            const problem = managedModule?.managedSessionsProblem(error);
+            if (problem && ["conflict", "missing", "unsupported", "forbidden", "authentication", "invalid"].includes(problem.kind)) {
+              set((state) => state.managedHistoryBindings[sessionId] !== bindingAtStart ? state : {
+                managedHistoryBindings: { ...state.managedHistoryBindings, [sessionId]: { ...bindingAtStart, status: "stale" } },
+              });
+              if (options?.throwOnError) throw error;
+              return;
+            }
           }
           if (attempt >= retries) {
             console.warn(`[ChatSlice] Failed to load history for ${sessionId}:`, error);
@@ -1187,17 +1244,24 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
           // message append must render immediately — especially queued guidance
           // admitted between a tool result and the next provider call. Terminal
           // events still wait for the assistant tail to reach durable history.
-          await get().loadChatHistory(sessionId, {
-            mode: "monotonic",
-            waitForAssistant: reason !== "message_appended",
-            retries: 3,
-            retryDelayMs: 250,
-          });
+          const managed = Boolean(get().managedHistoryBindings[sessionId]);
+          try {
+            await get().loadChatHistory(sessionId, {
+              mode: "monotonic",
+              waitForAssistant: reason !== "message_appended",
+              retries: 3,
+              retryDelayMs: 250,
+              throwOnError: managed,
+            });
+          } catch { return; }
+          // This endpoint has no target binding. Do not mix a replacement
+          // session's pending question into an identity-bound view.
+          if (managed || get().managedHistoryBindings[sessionId]) return;
           // Reconcile the pending clarification so one answered/raised on another
           // device clears/appears here too.
           try {
             const pending = await agentClient.getPendingQuestion(sessionId);
-            if (get().currentSessionId !== sessionId) {
+            if (get().currentSessionId !== sessionId || get().managedHistoryBindings[sessionId]) {
               return;
             }
             if (pending.has_pending_question) {

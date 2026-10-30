@@ -183,6 +183,22 @@ const sameTarget = (a: CurrentUserSessionTarget, b: CurrentUserSessionTarget): b
   && a.project_id === b.project_id && a.metadata_version === b.metadata_version
   && a.authority_sha256 === b.authority_sha256 && a.ancestry_sha256 === b.ancestry_sha256
 
+function validBoundTokenUsage(value: unknown): boolean {
+  if (value === null) return true
+  const usage = record(value)
+  if (!usage || !["system_tokens", "summary_tokens", "window_tokens", "total_tokens", "budget_limit", "segments_removed"].every((key) => safeRevision(usage[key]))
+    || typeof usage.truncation_occurred !== "boolean") return false
+  for (const key of ["max_context_tokens", "prompt_cached_tool_outputs", "prompt_cached_tool_tokens_saved", "thinking_tokens", "cache_read_input_tokens"]) {
+    if (usage[key] !== undefined && !safeRevision(usage[key])) return false
+  }
+  if (usage.provider_prompt_usage !== undefined && usage.provider_prompt_usage !== null) {
+    const provider = record(usage.provider_prompt_usage)
+    if (!provider || !["input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens"].every((key) => safeRevision(provider[key]))
+      || provider.retained_from_previous_call !== undefined && typeof provider.retained_from_previous_call !== "boolean") return false
+  }
+  return true
+}
+
 export const managedSessionsClient = {
   /** The producer binds identity and history under one canonical storage read. */
   async readBoundHistory(selection: ManagedSessionSelection): Promise<HistoryResponse> {
@@ -192,7 +208,8 @@ export const managedSessionsClient = {
     ))
     if (!result || result.session_id !== selection.target.session_id || !reference(result.supervisor)
       || !sameSupervisor(result.supervisor, selection.supervisor) || !sameTarget(decodedTarget(result.current_user_target), selection.target)
-      || (result.history_snapshot_source !== "durable" && result.history_snapshot_source !== "matched_cache") || !Array.isArray(result.messages)) return invalid()
+      || result.history_snapshot_source !== "durable" || !Array.isArray(result.messages)
+      || !Object.hasOwn(result, "bound_token_usage") || !validBoundTokenUsage(result.bound_token_usage)) return invalid()
     return result as unknown as HistoryResponse
   },
   async read(signal?: AbortSignal, page?: ManagedSessionsQuery) {
