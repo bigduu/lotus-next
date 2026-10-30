@@ -183,6 +183,9 @@ const sameTargetIdentity = (a: CurrentUserSessionTarget, b: CurrentUserSessionTa
   && a.project_id === b.project_id && a.authority_sha256 === b.authority_sha256 && a.ancestry_sha256 === b.ancestry_sha256
 const sameTarget = (a: CurrentUserSessionTarget, b: CurrentUserSessionTarget): boolean =>
   sameTargetIdentity(a, b) && a.metadata_version === b.metadata_version
+/** Metadata revisions may change without changing the selected lifetime. */
+export const sameManagedSelectionIdentity = (a: ManagedSessionSelection, b: ManagedSessionSelection): boolean =>
+  sameSupervisor(a.supervisor, b.supervisor) && sameTargetIdentity(a.target, b.target)
 
 function validBoundTokenUsage(value: unknown): boolean {
   if (value === null) return true
