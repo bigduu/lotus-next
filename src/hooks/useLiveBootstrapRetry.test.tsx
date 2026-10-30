@@ -444,6 +444,48 @@ it("keeps an in-flight Stop settlement when a concurrent Refresh observes the sa
   expect(hook.current.offer).toMatchObject({runId:"run-a",status:"stop_requested"})
 })
 
+it("a poll during the pending recovered Stop neither clears the action nor resurrects actions", async () => {
+  let retryReads = 0
+  const recoveredStop = deferred<void>()
+  mocks.get.mockImplementation(async (path:string) => path === "execute/defaults" ? capability
+    : ++retryReads === 1 ? waiting("s","run-a") : waiting("s","run-b"))
+  mocks.fence.mockImplementation(() => ({kind:"confirmed",runId: retryReads === 1 ? "run-a" : "run-b"}))
+  mocks.stop.mockImplementation(async (_sid: string, runId: string) => {
+    if (runId === "run-a") throw new Error("409 Requested run is not the current cancellable owner")
+    return recoveredStop.promise
+  })
+  const hook = await mount({sessionId:"s",running:true,root:true})
+  let stopping!: Promise<void>
+  await act(async () => { stopping = hook.current.stop(); for (let i=0;i<12;i++) await Promise.resolve() })
+  expect(mocks.stop).toHaveBeenNthCalledWith(1, "s", "run-a")
+  expect(mocks.stop).toHaveBeenNthCalledWith(2, "s", "run-b")
+  // The recovered Stop is pending; a five-second poll must not clear its
+  // ownership or publish an actionable view for the still-offered successor.
+  await act(async () => { await vi.advanceTimersByTimeAsync(5000) })
+  expect(hook.current.offer?.status).not.toBe("waiting")
+  await act(async () => { recoveredStop.resolve(); await stopping })
+  expect(hook.current.offer).toMatchObject({runId:"run-b",status:"stop_requested"})
+  await act(async () => { await vi.advanceTimersByTimeAsync(5000) })
+  expect(hook.current.offer).toMatchObject({runId:"run-b",status:"stop_requested"})
+})
+
+it("Refresh re-offers the same fence-confirmed run after both Stop attempts failed transiently", async () => {
+  mocks.stop.mockRejectedValue(new Error("network unreachable"))
+  const hook = await mount({sessionId:"s",running:true,root:true}, true)
+  await act(async () => { await hook.current.stop() })
+  // First attempt + recovery retry both failed without reaching the server.
+  expect(mocks.stop).toHaveBeenCalledTimes(2)
+  expect(hook.current.offer).toMatchObject({runId:"run-a",status:"stop_unconfirmed"})
+  // Once connectivity recovers, Refresh observes the same still-waiting run and
+  // re-offers an exact Stop for it instead of dead-ending on the stale fence.
+  await act(async () => { await hook.current.refresh() })
+  expect(hook.current.offer).toMatchObject({runId:"run-a",status:"waiting"})
+  mocks.stop.mockClear(); mocks.stop.mockResolvedValue(undefined)
+  await act(async () => { await hook.current.stop() })
+  expect(mocks.stop).toHaveBeenCalledExactlyOnceWith("s","run-a")
+  expect(hook.current.offer).toMatchObject({runId:"run-a",status:"stop_requested"})
+})
+
 it("keeps stop_unconfirmed and recovers through Refresh when no waiting offer remains", async () => {
   let offerAvailable = true
   mocks.get.mockImplementation(async (path:string) => path === "execute/defaults" ? capability

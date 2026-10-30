@@ -201,8 +201,11 @@ export function useLiveBootstrapRetry(sessionId: string | null, running: boolean
 
   const stop = useCallback(async () => {
     const selected = viewRef.current, current = contextRef.current
+    // `stop_unconfirmed` stays retryable: an unconfirmed Stop never provably
+    // reached the server, so a later attempt against the same fence-confirmed
+    // identity is the documented Refresh recovery, not a duplicate.
     if (!selected || selected.sessionId !== current.sessionId || !current.running || !current.root
-        || ["stopping", "stop_requested", "stop_unconfirmed", "identity_unavailable", "expired", "unavailable"].includes(selected.status)) return
+        || ["stopping", "stop_requested", "identity_unavailable", "expired", "unavailable"].includes(selected.status)) return
     const fence = readContinuousRetryFence(getBackendStorageScope(), selected.sessionId)
     if (fence.kind !== "confirmed" || fence.runId !== selected.runId) {
       update({ ...selected, status: "identity_unavailable" }); return
@@ -226,15 +229,25 @@ export function useLiveBootstrapRetry(sessionId: string | null, running: boolean
       if (!active() || observation.kind !== "waiting") return false
       const fenceNow = readContinuousRetryFence(scope, selected.sessionId)
       if (fenceNow.kind !== "confirmed" || fenceNow.runId !== observation.runId) return false
-      await agentClient.stopGeneration(selected.sessionId, observation.runId)
-      // Freeze the adopted identity exactly like cancelForStop froze the original:
-      // otherwise the next poll sees the still-offered successor as unfenced and
-      // would resurrect actions over the recovered stop_requested state.
+      // Adopt the successor's ownership before awaiting its Stop response: a
+      // poll during the pending request must neither clear this action nor
+      // resurrect an actionable view for the still-offered successor.
+      const adopted = { epoch: action.epoch, runId: observation.runId }
+      stopActionRef.current = adopted
       stopRef.current = JSON.stringify([selected.sessionId, observation.runId])
-      // The adopted identity settles through the fence, not owns(): the poll
-      // loop may not have rotated the stale view to the successor yet.
-      if (active()) settleOwnedView(scope, { ...selected, runId: observation.runId }, "stop_requested")
-      return true
+      try {
+        await agentClient.stopGeneration(selected.sessionId, observation.runId)
+        // The adopted identity settles through the fence, not owns(): the poll
+        // loop may not have rotated the stale view to the successor yet.
+        if (stopActionRef.current === adopted) settleOwnedView(scope, { ...selected, runId: observation.runId }, "stop_requested")
+        if (stopActionRef.current === adopted) stopActionRef.current = null
+        return true
+      } catch (error) {
+        // Hand ownership back so the caller's outer settle path stays
+        // authoritative for the stop_unconfirmed diagnosis.
+        if (stopActionRef.current === adopted) stopActionRef.current = action
+        throw error
+      }
     }
     try {
       const currentCapability = await readLiveBootstrapCapability()
@@ -273,7 +286,11 @@ export function useLiveBootstrapRetry(sessionId: string | null, running: boolean
       // An in-flight confirmation or Stop still owns the live view; its pending
       // settlement must survive a concurrent manual Refresh.
       if (actionRef.current || stopActionRef.current) return
-      if (stopRef.current === JSON.stringify([selected.sessionId, observation.runId])) return
+      // An acknowledged stop keeps its fence even for the same run; an
+      // unconfirmed Stop never provably reached the server, so the still
+      // waiting, fence-confirmed same run may be offered for Stop again.
+      const stopFenced = stopRef.current === JSON.stringify([selected.sessionId, observation.runId])
+      if (stopFenced && viewRef.current?.status !== "stop_unconfirmed") return
       // Unfreeze this pane's stop observation so the recomputed offer can own it.
       stopRef.current = null
       const deadline = started + observation.expiresInMs
