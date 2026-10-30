@@ -42,6 +42,8 @@ export function useSupervisorManagedSessions(active: boolean, dependencies: Mana
     try { canonical = await dependencies.read(request.signal) }
     catch (error) {
       if (!current()) return null
+      // Invalidate pending navigations immediately, before React renders the refusal.
+      readVersion.current += 1
       setView((previous) => ({ ...previous, loading: false, observation: null, nextAfter: null, problem: managedSessionsProblem(error), writeBlocked: true }))
       return null
     }
@@ -63,6 +65,14 @@ export function useSupervisorManagedSessions(active: boolean, dependencies: Mana
     return () => { generation.current += 1; readVersion.current += 1; controller.current?.abort() }
   }, [active, load])
   const refresh = useCallback(() => visible.current && !mutation.current ? load() : Promise.resolve(null), [load])
+  const navigationGuard = useCallback((requireObservation = true) => {
+    const scope = generation.current, version = readVersion.current, observed = latest.current.observation
+    const problem = latest.current.problem, flight = pageFlight.current
+    return () => visible.current && generation.current === scope && readVersion.current === version
+      && (requireObservation ? observed !== null && pageFlight.current === null && latest.current.observation === observed
+        && !latest.current.loading && !latest.current.problem && observed.owner_authorization.available
+        : latest.current.problem === problem && pageFlight.current === flight)
+  }, [])
   const loadMore = useCallback(async () => {
     const current = latest.current
     if (!visible.current || pageFlight.current || mutation.current || current.loading || current.nextOffset === null && current.nextAfter === null) return
@@ -147,7 +157,7 @@ export function useSupervisorManagedSessions(active: boolean, dependencies: Mana
       setView((previous) => ({ ...previous, review: null, notice, writeBlocked: canonical === null }))
     } finally { if (stillCurrent()) { mutation.current = null; setView((previous) => ({ ...previous, submitting: false })) } }
   }, [dependencies, load])
-  return { ...view, rows, refresh, loadMore, reviewTarget, confirm, currentUser: view.observation?.management_access?.kind === "current_user",
+  return { ...view, rows, refresh, loadMore, navigationGuard, reviewTarget, confirm, currentUser: view.observation?.management_access?.kind === "current_user",
     cancelReview: () => setView((previous) => ({ ...previous, review: null })),
     canManage: !view.loading && !view.submitting && !view.writeBlocked && canWriteManagedSessions(view.observation) }
 }

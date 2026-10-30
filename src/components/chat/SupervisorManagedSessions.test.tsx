@@ -45,7 +45,7 @@ it("opens the selected current-user Child through existing navigation without ma
   const child = document.querySelector('[data-managed-session="child-a"]')!
   expect(child.textContent).toContain("Child")
   await act(async () => button("supervisor_sessions_open", child).click())
-  expect(h.select).toHaveBeenCalledExactlyOnceWith("child-a", { target: currentUserManagedSessionsFixture().sessions[1]!.current_user_target, supervisor: currentUserManagedSessionsFixture().scope.supervisor }); expect(h.dependencies.update).not.toHaveBeenCalled()
+  expect(h.select).toHaveBeenCalledExactlyOnceWith("child-a", { target: currentUserManagedSessionsFixture().sessions[1]!.current_user_target, supervisor: currentUserManagedSessionsFixture().scope.supervisor }, expect.any(Function)); expect(h.dependencies.update).not.toHaveBeenCalled()
 })
 it("distinguishes canonical authorized, stale and detached rows with explicit review before any write", async () => {
   const h = await mount()
@@ -107,7 +107,7 @@ it("opens a later current-user page directly from Browse using the observed targ
   const row = dialog.querySelector('[data-managed-session="later-child"]')!
   expect(row).not.toBeNull()
   await act(async () => button("supervisor_sessions_open", row).click())
-  expect(h.select).toHaveBeenCalledExactlyOnceWith("later-child", { target, supervisor: first.scope.supervisor })
+  expect(h.select).toHaveBeenCalledExactlyOnceWith("later-child", { target, supervisor: first.scope.supervisor }, expect.any(Function))
 })
 it("returns keyboard focus to a stable control when the last directory page loads", async () => {
   const first = currentUserManagedSessionsFixture("child-a"), later = { ...first, next_after: null, sessions: [] }
@@ -152,4 +152,57 @@ it("withdraws conflicting directory rows and keeps them unavailable if refresh f
   expect(panel.textContent).toContain(uiText("supervisor_sessions_conflict"))
   await act(async () => panel.querySelector<HTMLButtonElement>(`button[aria-label="${uiText("supervisor_sessions_refresh")}"]`)!.click())
   expect(panel.querySelectorAll('[data-managed-session]')).toHaveLength(0); expect(h.select).not.toHaveBeenCalled()
+})
+
+
+it("invalidates an in-flight open as soon as its directory is refreshed", async () => {
+  const first = currentUserManagedSessionsFixture(), pending = new Promise<boolean>(() => {}), select = vi.fn((_id: string, _selection?: unknown, _current?: () => boolean) => pending)
+  let calls = 0
+  const dependencies: ManagedSessionsDependencies = { read: vi.fn(async () => { if (++calls > 1) throw new ApiError("denied", 403, ""); return first }), candidates: vi.fn(), update: vi.fn() }
+  const root = createRoot(document.body.appendChild(document.createElement("div"))); roots.push(root)
+  await act(async () => root.render(<SupervisorManagedSessionsPanel active onSelectSession={select} dependencies={dependencies} />))
+  const row = document.querySelector('[data-managed-session="child-a"]')!
+  await act(async () => button("supervisor_sessions_open", row).click())
+  const guard = select.mock.calls[0]![2] as (() => boolean) | undefined
+  expect(typeof guard).toBe("function"); expect(guard!()).toBe(true)
+  const refresh = document.querySelector<HTMLButtonElement>(`button[aria-label="${uiText("supervisor_sessions_refresh")}"]`)!
+  await act(async () => refresh.click()); expect(guard!()).toBe(false)
+})
+
+
+it("can open a fresh Browse result while the panel's initial directory read is pending", async () => {
+  const fixture = currentUserManagedSessionsFixture(), pending = new Promise<ManagedSessionsResponse>(() => {}), select = vi.fn()
+  let calls = 0
+  const dependencies: ManagedSessionsDependencies = { read: vi.fn(async () => ++calls === 1 ? pending : fixture), candidates: vi.fn(), update: vi.fn() }
+  const root = createRoot(document.body.appendChild(document.createElement("div"))); roots.push(root)
+  await act(async () => root.render(<SupervisorManagedSessionsPanel active onSelectSession={select} dependencies={dependencies} />))
+  await act(async () => button("supervisor_sessions_manage").click())
+  const dialog = document.querySelector('[data-testid="supervisor-managed-sessions"]')!, row = dialog.querySelector('[data-managed-session="child-a"]')!
+  await act(async () => button("supervisor_sessions_open", row).click())
+  expect(select).toHaveBeenCalledExactlyOnceWith("child-a", { target: fixture.sessions[1]!.current_user_target, supervisor: fixture.scope.supervisor }, expect.any(Function))
+})
+
+
+it("lets a fresh Browse observation open after an earlier panel read failed", async () => {
+  const fixture = currentUserManagedSessionsFixture(), select = vi.fn(); let calls = 0
+  const dependencies: ManagedSessionsDependencies = { read: vi.fn(async () => { if (++calls === 1) throw new ApiError("denied", 403, ""); return fixture }), candidates: vi.fn(), update: vi.fn() }
+  const root = createRoot(document.body.appendChild(document.createElement("div"))); roots.push(root)
+  await act(async () => root.render(<SupervisorManagedSessionsPanel active onSelectSession={select} dependencies={dependencies} />))
+  await act(async () => button("supervisor_sessions_manage").click())
+  const dialog = document.querySelector('[data-testid="supervisor-managed-sessions"]')!, row = dialog.querySelector('[data-managed-session="child-a"]')!
+  await act(async () => button("supervisor_sessions_open", row).click())
+  expect(select).toHaveBeenCalledExactlyOnceWith("child-a", { target: fixture.sessions[1]!.current_user_target, supervisor: fixture.scope.supervisor }, expect.any(Function))
+})
+it("invalidates a Browse open when an older pending panel read reports a denial", async () => {
+  const fixture = currentUserManagedSessionsFixture(); let rejectInitial!: (error: unknown) => void
+  const pending = new Promise<ManagedSessionsResponse>((_resolve, reject) => { rejectInitial = reject }); let calls = 0
+  const select = vi.fn((_id: string, _selection?: unknown, _guard?: () => boolean) => new Promise<boolean>(() => {}))
+  const dependencies: ManagedSessionsDependencies = { read: vi.fn(async () => ++calls === 1 ? pending : fixture), candidates: vi.fn(), update: vi.fn() }
+  const root = createRoot(document.body.appendChild(document.createElement("div"))); roots.push(root)
+  await act(async () => root.render(<SupervisorManagedSessionsPanel active onSelectSession={select} dependencies={dependencies} />))
+  await act(async () => button("supervisor_sessions_manage").click())
+  const dialog = document.querySelector('[data-testid="supervisor-managed-sessions"]')!, row = dialog.querySelector('[data-managed-session="child-a"]')!
+  await act(async () => button("supervisor_sessions_open", row).click())
+  const guard = select.mock.calls[0]![2]!; expect(guard()).toBe(true)
+  await act(async () => { rejectInitial(new ApiError("denied", 403, "")); await Promise.resolve() }); expect(guard()).toBe(false)
 })

@@ -338,16 +338,28 @@ export function Inspector({
 
         <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4">
           {chat && isDefaultSupervisor(chat) ? <>
-            <LazySupervisorManagedSessionsPanel active={open} onSelectSession={async (id, selection) => {
+            <LazySupervisorManagedSessionsPanel active={open} onSelectSession={async (id, selection, directoryCurrent) => {
               const navigation = ++managedNavigation.current
               const before = useAppStore.getState().currentSessionId
               const current = () => managedNavigation.current === navigation && useAppStore.getState().currentSessionId === before
+                && (!directoryCurrent || directoryCurrent())
               let verify: (() => Promise<boolean>) | undefined
               if (selection) {
                 if (selection.target.session_id !== id) return false
                 const { revalidateManagedSelection } = await import("@services/supervisorScope/managedSessions")
                 verify = () => revalidateManagedSelection(selection, current)
                 if (!current() || !await verify()) return false
+              }
+              if (selection) {
+                const target = selection.target, cached = useAppStore.getState().chats.find((item) => item.id === id)
+                if (cached && (cached.createdAt !== Date.parse(target.created_at) || cached.kind !== target.kind
+                  || cached.rootSessionId !== target.root_session_id || (cached.parentSessionId ?? null) !== target.parent_session_id)) return false
+                if (cached && (cached.config.projectId ?? null) !== target.project_id) {
+                  await useAppStore.getState().refreshChatsNow()
+                  if (!current()) return false
+                  if (target.kind === "child") await useAppStore.getState().loadSubagentSessions(target.root_session_id, { force: true })
+                  if (!current() || !verify || !await verify() || !current()) return false
+                }
               }
               const restored = await useAppStore.getState().restoreSession(id)
               if (!restored || !current()) return false
@@ -362,7 +374,7 @@ export function Inspector({
               await useAppStore.getState().loadChatHistory(id, { throwOnError: true })
               if (!current() || !matchesCached()) return false
               if (verify && !await verify()) return false
-              if (!current()) return false
+              if (!current() || !matchesCached()) return false
               useAppStore.getState().selectSession(id)
               return true
             }} />

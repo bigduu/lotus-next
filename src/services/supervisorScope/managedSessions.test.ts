@@ -149,3 +149,29 @@ it("refuses changed Supervisor incarnation or missing current-user access", asyn
   vi.mocked(apiClient.get).mockResolvedValueOnce({ ...fixture, owner_authorization: { ...fixture.owner_authorization, available: false } })
   expect(await revalidateManagedSelection({ target, supervisor: fixture.scope.supervisor }, () => true)).toBe(false)
 })
+
+
+it("can revalidate a legal 129-byte session ID within the 128-byte query bound", async () => {
+  const fixture = currentUserManagedSessionsFixture(), id = "a".repeat(129)
+  const target = { ...fixture.sessions[0]!.current_user_target!, session_id: id, root_session_id: id }
+  const row = { ...fixture.sessions[0]!, session_id: id, root_session_id: id, current_user_target: target }
+  vi.mocked(apiClient.get).mockResolvedValue({ ...fixture, sessions: [row] })
+  expect(await revalidateManagedSelection({ target, supervisor: fixture.scope.supervisor }, () => true)).toBe(true)
+  const request = String(vi.mocked(apiClient.get).mock.calls[0]![0])
+  const params = new URLSearchParams(request.split("?")[1]); expect(new TextEncoder().encode(params.get("query")!).length).toBeLessThanOrEqual(128)
+})
+it("does not reject an exact target merely because more than 400 matching rows precede it", async () => {
+  const fixture = currentUserManagedSessionsFixture(), id = "z"
+  const target = { ...fixture.sessions[0]!.current_user_target!, session_id: id, root_session_id: id }
+  const read = vi.spyOn(managedSessionsClient, "read")
+  for (let page = 0; page < 21; page++) {
+    const sessions = Array.from({ length: 20 }, (_, i) => {
+      const other = `a${String(page * 20 + i).padStart(4, "0")}`, observed = { ...target, session_id: other, root_session_id: other }
+      return { ...fixture.sessions[0]!, session_id: other, root_session_id: other, current_user_target: observed }
+    })
+    read.mockResolvedValueOnce({ ...fixture, sessions, next_after: sessions[19]!.session_id })
+  }
+  read.mockResolvedValueOnce({ ...fixture, sessions: [{ ...fixture.sessions[0]!, session_id: id, root_session_id: id, current_user_target: target }], next_after: null })
+  try { expect(await revalidateManagedSelection({ target, supervisor: fixture.scope.supervisor }, () => true)).toBe(true); expect(read).toHaveBeenCalledTimes(22) }
+  finally { read.mockRestore() }
+})
