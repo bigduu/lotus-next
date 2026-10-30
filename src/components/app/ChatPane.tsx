@@ -285,6 +285,8 @@ export function ChatPane({
   // session we just left turn a blank/new conversation into a Stop button.
   const executionBlocked = chat.executionCompatibility?.blocked === true
   const currentlyRunning = currentChat?.isRunning === true || (sending && streaming !== null)
+  const managedHistoryStale = useAppStore((state) => currentSessionId
+    ? state.managedHistoryBindings?.[currentSessionId]?.status === "stale" : false)
   const visibleSendFailure = sendFailure?.sessionId === currentSessionId ? sendFailure : null
   const persistedRunError = !visibleSendFailure
     && !currentlyRunning
@@ -1248,6 +1250,7 @@ export function ChatPane({
         />
         )}
 
+        {managedHistoryStale && <div role="alert" className="mx-4 mb-2 text-xs text-destructive">{uiText("supervisor_managed_history_stale")}</div>}
         {visibleSendFailure || persistedRunError ? (
           <div
             role="alert"

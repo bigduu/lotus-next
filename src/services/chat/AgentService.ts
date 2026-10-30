@@ -654,6 +654,8 @@ const parseMessageHistory = (sessionId: string, value: unknown): MessageHistoryR
 
 export interface HistoryResponse {
   session_id: string;
+  /** Present on identity-bound history; null means no persisted token snapshot. */
+  bound_token_usage?: TokenBudgetUsage | null;
   compression_events?: Array<{
     id: string;
     created_at: string;

@@ -1,6 +1,7 @@
 import { ChatItem, Message } from "@shared/types/chat";
 import type { HistoryResponse, ReasoningEffort, SessionSummary } from "@services/chat/AgentService";
 import type { ConversationClearFailure } from "@services/chat/conversationClear";
+import type { ManagedSessionSelection } from "@services/supervisorScope/managedSessions";
 
 export interface ConversationClearState {
   busy: boolean;
@@ -40,6 +41,8 @@ export interface ChatSlice {
   /** Advances after each authoritative root-index refresh. */
   sessionIndexRevision: number;
   conversationClears: Record<string, ConversationClearState>;
+  /** Identity retained for every subsequent history read of a managed view. */
+  managedHistoryBindings: Record<string, { selection: ManagedSessionSelection; status: "active" | "stale" }>;
 
   // Actions
   addChat: (chat: Omit<ChatItem, "id">) => Promise<string>;
@@ -114,6 +117,8 @@ export interface ChatSlice {
       signal?: AbortSignal;
       /** A bound history reader is allowed only in a guarded navigation. */
       readHistory?: () => Promise<HistoryResponse>;
+      /** Bind this guarded navigation and all later refreshes to its target. */
+      managedSelection?: ManagedSessionSelection;
       /** Revalidate an observed target before committing any history fields. */
       beforeApply?: () => Promise<boolean>;
       /** Synchronously fence local navigation after the asynchronous check. */
