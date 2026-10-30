@@ -99,15 +99,15 @@ it("keeps an uncertain C1 outcome unknown after a bound readback", async () => {
   expect(read).toHaveBeenCalledTimes(2);expect(detail).not.toHaveBeenCalled();expect(generic).not.toHaveBeenCalled();expect(clear).not.toHaveBeenCalled()
 })
 
-it("restores the ordinary clear route when the session is explicitly selected from the sidebar", async () => {
-  const store=harness();vi.spyOn(managedSessionsClient,"readBoundHistory").mockResolvedValue(bound("initial"))
+it("keeps C1 clear available after selecting the session from the sidebar", async () => {
+  const store=harness(), read=vi.spyOn(managedSessionsClient,"readBoundHistory").mockResolvedValueOnce(bound("initial")).mockResolvedValueOnce(bound(""))
   const detail=vi.spyOn(agentClient,"getSession").mockResolvedValue({session:summary(target.session_id)})
   vi.spyOn(agentClient,"getPendingQuestion").mockResolvedValue({has_pending_question:false})
   const clear=vi.spyOn(agentClient,"clearSession").mockResolvedValue(undefined)
-  const generic=vi.spyOn(agentClient,"getHistory").mockResolvedValue({session_id:target.session_id,messages:[]})
+  const generic=vi.spyOn(agentClient,"getHistory")
   await open(store);store.getState().selectSession("other");store.getState().selectSession(target.session_id)
   await store.getState().clearConversation(target.session_id)
-  expect(clear).toHaveBeenCalledOnce();expect(detail).toHaveBeenCalledTimes(2);expect(generic).toHaveBeenCalledOnce()
+  expect(clear).toHaveBeenCalledOnce();expect(detail).toHaveBeenCalledOnce();expect(read).toHaveBeenCalledTimes(2);expect(generic).not.toHaveBeenCalled()
 })
 
 it("applies bound token usage even when a monotonic refresh has no message changes", async () => {
@@ -129,17 +129,18 @@ it("does not replace a newer live token event during a bound refresh", async () 
   expect(store.getState().chats[0].config.tokenUsage?.totalTokens).toBe(99)
 })
 
-it("does not retry or restore a binding after an ordinary selection cancels directory revalidation", async () => {
+it("does not retry or apply a bound read after its pane cancels directory revalidation", async () => {
   const store=harness();let resolve!: (value:ReturnType<typeof page>)=>void
   const delayed=new Promise<ReturnType<typeof page>>((done)=>{resolve=done})
   const read=vi.spyOn(managedSessionsClient,"readBoundHistory").mockResolvedValueOnce(bound("initial")).mockRejectedValueOnce(conflict())
   const directory=vi.spyOn(managedSessionsClient,"read").mockReturnValue(delayed)
-  await open(store);const pending=store.getState().loadChatHistory(target.session_id,{throwOnError:true})
+  await open(store);const controller=new AbortController()
+  const pending=store.getState().loadChatHistory(target.session_id,{throwOnError:true,signal:controller.signal})
   await vi.waitFor(()=>expect(directory).toHaveBeenCalledOnce())
-  store.getState().selectSession(target.session_id)
+  controller.abort()
   resolve(page(target.metadata_version+1))
   await expect(pending).rejects.toMatchObject({name:"AbortError"})
-  expect(read).toHaveBeenCalledTimes(2);expect(store.getState().managedHistoryBindings[target.session_id]).toBeUndefined()
+  expect(read).toHaveBeenCalledTimes(2);expect(store.getState().managedHistoryBindings[target.session_id].status).toBe("active")
   expect(store.getState().chats[0].messages[0]?.id).toBe("initial")
 })
 
@@ -240,8 +241,17 @@ it("keeps a clear outcome unknown if its managed binding is abandoned while the 
   const generic=vi.spyOn(agentClient,"getHistory").mockResolvedValue({session_id:target.session_id,messages:[]})
   await open(store);const pending=store.getState().clearConversation(target.session_id)
   await vi.waitFor(()=>expect(clear).toHaveBeenCalledOnce())
-  store.getState().selectSession(target.session_id);finish()
+  store.setState({managedHistoryBindings:{}});finish()
   await expect(pending).rejects.toMatchObject({reason:"unknown"})
   expect(store.getState().conversationClears[target.session_id].error).toBe("unknown")
   expect(generic).not.toHaveBeenCalled()
+})
+
+it("keeps managed history bound when an existing pane is focused", async () => {
+  const store=harness(), read=vi.spyOn(managedSessionsClient,"readBoundHistory").mockResolvedValueOnce(bound("initial")).mockResolvedValueOnce(bound("after focus"))
+  const generic=vi.spyOn(agentClient,"getHistory").mockResolvedValue(bound("wrong route"))
+  await open(store);store.getState().selectSession(target.session_id)
+  await store.getState().loadChatHistory(target.session_id,{throwOnError:true})
+  expect(read).toHaveBeenCalledTimes(2);expect(generic).not.toHaveBeenCalled()
+  expect(store.getState().chats[0].messages[0]?.id).toBe("after focus")
 })
