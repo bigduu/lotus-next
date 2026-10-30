@@ -1,5 +1,5 @@
 import { ChatItem, Message } from "@shared/types/chat";
-import type { ReasoningEffort, SessionSummary } from "@services/chat/AgentService";
+import type { HistoryResponse, ReasoningEffort, SessionSummary } from "@services/chat/AgentService";
 import type { ConversationClearFailure } from "@services/chat/conversationClear";
 
 export interface ConversationClearState {
@@ -112,6 +112,8 @@ export interface ChatSlice {
       throwOnError?: boolean;
       /** Fence abandoned read results; does not cancel backend execution. */
       signal?: AbortSignal;
+      /** A bound history reader is allowed only in a guarded navigation. */
+      readHistory?: () => Promise<HistoryResponse>;
       /** Revalidate an observed target before committing any history fields. */
       beforeApply?: () => Promise<boolean>;
       /** Synchronously fence local navigation after the asynchronous check. */

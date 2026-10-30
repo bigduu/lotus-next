@@ -2782,6 +2782,7 @@ export const uiEnUs = {
   "supervisor_sessions_catalog_failed": "Session summaries could not be read. Current management relationships are shown; adding sessions is unavailable until a refresh succeeds.",
   "supervisor_sessions_auxiliary": "Auxiliary child agents",
   "supervisor_sessions_unverified": "Unable to verify",
+  "supervisor_sessions_bound_history_unsupported": "This Bamboo version cannot verify managed session history. Update Bamboo to open it here; ordinary session navigation is still available.",
   "supervisor_sessions_open_failed": "This session could not be opened. Refresh its current state and try again.",
   "session_migration_action": "Migrate to the current version",
   "session_migration_preserves_context": "Keep this session, its history, model, workspace and permissions. Migration starts only when the session is idle.",

@@ -888,7 +888,8 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
 
   loadChatHistory: async (sessionId, options) => {
     const stagedTarget = options?.stagedSessions?.find((item) => item.id === sessionId);
-    if ((options?.stagedSessions && !stagedTarget) || ((options?.stagedSessions || options?.selectOnApply)
+    if ((options?.stagedSessions && !stagedTarget) || (options?.readHistory && !options.selectOnApply)
+      || ((options?.stagedSessions || options?.selectOnApply)
       && (!options.beforeApply || !options.canApply || !options.throwOnError || options.mode === "monotonic"))) {
       throw new Error("Staged session history requires a guarded target");
     }
@@ -933,7 +934,7 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
             return;
           }
 
-          const history = await agentClient.getHistory(sessionId);
+          const history = options?.readHistory ? await options.readHistory() : await agentClient.getHistory(sessionId);
           if (options?.signal?.aborted) return discardRead();
           if (history.session_id !== sessionId) throw new Error("History session mismatch");
           if (!isCurrentRead()) return discardRead();
