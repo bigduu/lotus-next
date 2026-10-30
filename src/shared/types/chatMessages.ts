@@ -236,6 +236,8 @@ export interface ChatItem {
    */
   titleVersion?: number;
   createdAt: number;
+  /** Original server precision for matching an observed session lifetime. */
+  createdAtExact?: string;
   pinned?: boolean;
   messages: Message[];
   config: {

@@ -193,14 +193,12 @@ export function clearRefreshChatsThrottleWindow(): {
  * Apply a fetched session list to the store.
  * Preserves in-memory messages and merges local state.
  */
-export function applySessionsList(
+function sessionListUpdate(
   sessions: SessionSummary[],
-  set: ChatSliceSet,
   scope: SessionListScope = { kind: "all" },
-): void {
+): (state: AppState) => AppState {
   const next = sessions.map(sessionSummaryToChatItem);
-
-  set((state) => {
+  return (state) => {
     // Reconcile executionBySession against every summary.
     let executionBySession = state.executionBySession;
     for (const summary of sessions) {
@@ -404,7 +402,15 @@ export function applySessionsList(
       latestActiveSessionId,
       sessionIndexRevision,
     };
-  });
+  };
+}
+
+export function mergeSessionsList(state: AppState, sessions: SessionSummary[], scope: SessionListScope = { kind: "all" }): AppState {
+  return sessionListUpdate(sessions, scope)(state);
+}
+
+export function applySessionsList(sessions: SessionSummary[], set: ChatSliceSet, scope: SessionListScope = { kind: "all" }): void {
+  set(sessionListUpdate(sessions, scope));
 }
 
 export function executeLoadSubagentSessions(

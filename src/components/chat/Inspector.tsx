@@ -8,7 +8,7 @@ import {
   selectSessionById,
 } from "@shared/store/appStore"
 import { useProviderStore } from "@shared/store/appStore/slices/providerSlice"
-import { agentClient, type GoldConfig, type GoalState } from "@services/chat/AgentService"
+import { agentClient, type GoldConfig, type GoalState, type SessionSummary } from "@services/chat/AgentService"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import {
@@ -340,43 +340,106 @@ export function Inspector({
           {chat && isDefaultSupervisor(chat) ? <>
             <LazySupervisorManagedSessionsPanel active={open} onSelectSession={async (id, selection, directoryCurrent) => {
               const navigation = ++managedNavigation.current
-              const before = useAppStore.getState().currentSessionId
-              const current = () => managedNavigation.current === navigation && useAppStore.getState().currentSessionId === before
-                && (!directoryCurrent || directoryCurrent())
-              let verify: (() => Promise<boolean>) | undefined
-              if (selection) {
-                if (selection.target.session_id !== id) return false
-                const { revalidateManagedSelection } = await import("@services/supervisorScope/managedSessions")
-                verify = () => revalidateManagedSelection(selection, current)
-                if (!current() || !await verify()) return false
-              }
-              if (selection) {
-                const target = selection.target, cached = useAppStore.getState().chats.find((item) => item.id === id)
-                if (cached && (cached.createdAt !== Date.parse(target.created_at) || cached.kind !== target.kind
-                  || cached.rootSessionId !== target.root_session_id || (cached.parentSessionId ?? null) !== target.parent_session_id)) return false
-                if (cached && (cached.config.projectId ?? null) !== target.project_id) {
-                  await useAppStore.getState().refreshChatsNow()
-                  if (!current()) return false
-                  if (target.kind === "child") await useAppStore.getState().loadSubagentSessions(target.root_session_id, { force: true })
-                  if (!current() || !verify || !await verify() || !current()) return false
+              const initialState = useAppStore.getState(), before = initialState.currentSessionId
+              const initialCached = initialState.chats.find((item) => item.id === id)
+              const initialRoot = selection && initialState.chats.find((item) => item.id === selection.target.root_session_id)
+              const initialExecution = initialState.executionBySession
+              const watched = selection ? [...new Set([id, selection.target.root_session_id])] : []
+              const signature = (state: ReturnType<typeof useAppStore.getState>) => JSON.stringify(watched.map((key) => {
+                const item = state.chats.find((chat) => chat.id === key)
+                return item ? [item.createdAtExact, item.kind, item.rootSessionId, item.parentSessionId, item.config.projectId] : null
+              }))
+              const initialSignature = signature(initialState)
+              const initialTree = selection ? initialState.chats.filter((item) => item.kind === "child" && item.rootSessionId === selection.target.root_session_id) : []
+              const treeSignature = (state: ReturnType<typeof useAppStore.getState>) => JSON.stringify(selection ? state.chats
+                .filter((item) => item.kind === "child" && item.rootSessionId === selection.target.root_session_id)
+                .map((item) => [item.id, item.createdAtExact, item.parentSessionId, item.config.projectId]).sort((a, b) => String(a[0]).localeCompare(String(b[0]))) : [])
+              const initialTreeSignature = treeSignature(initialState)
+              const revision = initialState.getSessionNavigationRevision()
+              let identityChanged = false, treeChanged = false
+              const unobserve = selection ? useAppStore.subscribe((state) => {
+                if (signature(state) !== initialSignature) identityChanged = true
+                if (treeSignature(state) !== initialTreeSignature) treeChanged = true
+              }) : undefined
+              try {
+                const current = () => !identityChanged && managedNavigation.current === navigation && useAppStore.getState().currentSessionId === before
+                  && useAppStore.getState().getSessionNavigationRevision() === revision
+                  && (!directoryCurrent || directoryCurrent())
+                let verify: (() => Promise<boolean>) | undefined
+                if (selection) {
+                  if (selection.target.session_id !== id) return false
+                  const { revalidateManagedSelection } = await import("@services/supervisorScope/managedSessions")
+                  verify = () => revalidateManagedSelection(selection, current)
+                  if (!current() || !await verify()) return false
                 }
-              }
-              const restored = await useAppStore.getState().restoreSession(id)
-              if (!restored || !current()) return false
-              const matchesCached = () => {
-                if (!selection) return true
-                const target = selection.target, cached = useAppStore.getState().chats.find((item) => item.id === id)
-                return !!cached && cached.createdAt === Date.parse(target.created_at) && cached.kind === target.kind
-                  && cached.rootSessionId === target.root_session_id && (cached.parentSessionId ?? null) === target.parent_session_id
-                  && (cached.config.projectId ?? null) === target.project_id
-              }
-              if (!matchesCached()) return false
-              await useAppStore.getState().loadChatHistory(id, { throwOnError: true })
-              if (!current() || !matchesCached()) return false
-              if (verify && !await verify()) return false
-              if (!current() || !matchesCached()) return false
-              useAppStore.getState().selectSession(id)
-              return true
+                let stagedSessions: SessionSummary[] | undefined
+                const initialProject = initialCached?.config.projectId ?? null
+                const matchesSummary = (summary: SessionSummary) => {
+                  if (!selection) return false
+                  const target = selection.target
+                  return summary.id === id && summary.created_at === target.created_at && summary.kind === target.kind
+                    && summary.root_session_id === target.root_session_id && (summary.parent_session_id ?? null) === target.parent_session_id
+                    && (summary.project_id ?? null) === target.project_id
+                }
+                if (selection) {
+                  const target = selection.target
+                  if (initialCached && (initialCached.createdAt !== Date.parse(target.created_at) || initialCached.createdAtExact !== target.created_at
+                    || initialCached.kind !== target.kind || initialCached.rootSessionId !== target.root_session_id
+                    || (initialCached.parentSessionId ?? null) !== target.parent_session_id)) return false
+                  const cachedRoot = initialCached && (target.kind === "root" ? initialCached
+                    : useAppStore.getState().chats.find((item) => item.id === target.root_session_id))
+                  const cachedChildren = cachedRoot && useAppStore.getState().chats.filter((item) => item.kind === "child" && item.rootSessionId === cachedRoot.id).length
+                  const needsTree = cachedRoot?.kind === "root" && cachedChildren !== (cachedRoot.subagentCount ?? 0)
+                  if (!initialCached || initialProject !== target.project_id || needsTree) {
+                    const detail = await agentClient.getSession(id)
+                    if (!current() || !matchesSummary(detail.session)) return false
+                    stagedSessions = await useAppStore.getState().stageSessionForNavigation(detail.session) ?? undefined
+                    if (!current() || !stagedSessions) return false
+                  }
+                } else {
+                  const restored = await useAppStore.getState().restoreSession(id)
+                  if (!restored || !current()) return false
+                }
+                const matchesCached = () => {
+                  if (!selection) return true
+                  const target = selection.target, state = useAppStore.getState(), cached = state.chats.find((item) => item.id === id)
+                  if (stagedSessions && (cached !== initialCached || treeChanged || initialTree.some((item) =>
+                    state.chats.find((chat) => chat.id === item.id) !== item) || stagedSessions.some((item) => {
+                      const existing = state.chats.find((chat) => chat.id === item.id)
+                      return (existing && (existing.createdAtExact !== item.created_at || existing.kind !== item.kind
+                        || existing.rootSessionId !== item.root_session_id || (existing.parentSessionId ?? null) !== (item.parent_session_id ?? null)))
+                        || state.executionBySession[item.id] !== initialExecution[item.id]
+                    }))) return false
+                  const stagedTarget = stagedSessions?.find((item) => item.id === id)
+                  const stagedRoot = stagedSessions?.find((item) => item.id === target.root_session_id)
+                  const cachedRoot = stagedRoot && useAppStore.getState().chats.find((item) => item.id === stagedRoot.id)
+                  if (stagedRoot && (cachedRoot !== initialRoot || cachedRoot && (cachedRoot.kind !== "root" || cachedRoot.createdAtExact !== stagedRoot.created_at))) return false
+                  if (!cached) return !!stagedTarget && matchesSummary(stagedTarget)
+                  return cached.createdAt === Date.parse(target.created_at) && cached.createdAtExact === target.created_at && cached.kind === target.kind
+                    && cached.rootSessionId === target.root_session_id && (cached.parentSessionId ?? null) === target.parent_session_id
+                    && ((cached.config.projectId ?? null) === target.project_id
+                      || !!initialCached && !!stagedTarget && (cached.config.projectId ?? null) === initialProject && matchesSummary(stagedTarget))
+                }
+                if (!matchesCached()) return false
+                try {
+                  await useAppStore.getState().loadChatHistory(id, {
+                    throwOnError: true,
+                    ...(stagedSessions ? { stagedSessions } : {}),
+                    ...(verify ? {
+                      beforeApply: async () => current() && matchesCached() && Boolean(await verify?.()),
+                      canApply: () => current() && matchesCached(),
+                      selectOnApply: true,
+                    } : {}),
+                  })
+                } catch (error) {
+                  if (error instanceof DOMException && error.name === "AbortError") return false
+                  throw error
+                }
+                if (selection) return true
+                if (!current() || !matchesCached()) return false
+                useAppStore.getState().selectSession(id)
+                return true
+              } finally { unobserve?.() }
             }} />
             <details className="rounded-lg border p-3" open={auxiliaryOpen} onToggle={(event) => setAuxiliaryOpen(event.currentTarget.open)} data-testid="supervisor-auxiliary-agents">
               <summary className="cursor-pointer text-xs font-medium text-muted-foreground">{uiText("supervisor_sessions_auxiliary")}</summary>
