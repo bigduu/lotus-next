@@ -81,7 +81,10 @@ const historyReads = new WeakMap<() => AppState, Map<string, object>>();
 export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, get) => {
   const deferredClears = new Set<string>();
   const replacementRequired = new Set<string>();
-  const activeClearRevisions = new Map<string, ReturnType<typeof tokenBudgetRevision>>();
+  // Retain the pre-write revision until its clear-feed reconciliation arrives;
+  // the account event can be delivered after the HTTP response.
+  const pendingClearRevisions = new Map<string, ReturnType<typeof tokenBudgetRevision>>();
+  const acknowledgedClears = new Map<string, AppState["managedHistoryBindings"][string] | undefined>();
   const replacementRevisions = new Map<string, ReturnType<typeof tokenBudgetRevision>>();
   let navigationRevision = 0;
   const reconcileClear = (sessionId: string, newEvent: boolean) => {
@@ -93,9 +96,11 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
     if (timer) { clearTimeout(timer); reconcileTimers.delete(sessionId); }
     if (!get().chats.some((chat) => chat.id === sessionId)) return;
     if (newEvent) {
-      const activeRevision = activeClearRevisions.get(sessionId);
-      if (activeRevision) replacementRevisions.set(sessionId, activeRevision);
-      else replacementRevisions.delete(sessionId);
+      const pendingRevision = pendingClearRevisions.get(sessionId);
+      if (pendingRevision) {
+        replacementRevisions.set(sessionId, pendingRevision);
+        pendingClearRevisions.delete(sessionId);
+      } else if (!replacementRequired.has(sessionId)) replacementRevisions.delete(sessionId);
     }
     replacementRequired.add(sessionId);
     if (get().conversationClears[sessionId]?.busy) { deferredClears.add(sessionId); return; }
@@ -211,9 +216,11 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
   invalidateSessionNavigation: (sessionId) => {
     navigationRevision += 1;
     const reads = historyReads.get(get);
-    if (!sessionId) { reads?.clear(); return; }
+    if (!sessionId) { reads?.clear(); pendingClearRevisions.clear(); replacementRevisions.clear(); acknowledgedClears.clear(); return; }
     const affected = new Set([sessionId, ...get().chats.filter((chat) => chat.rootSessionId === sessionId).map((chat) => chat.id)]);
-    for (const id of affected) reads?.delete(id);
+    for (const id of affected) {
+      reads?.delete(id); pendingClearRevisions.delete(id); replacementRevisions.delete(id); acknowledgedClears.delete(id);
+    }
   },
 
   deleteSession: async (sessionId) => {
@@ -844,7 +851,8 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
     }
     const bindingAtStart = get().managedHistoryBindings[sessionId];
     const tokenRevisionAtStart = tokenBudgetRevision(get, sessionId);
-    activeClearRevisions.set(sessionId, tokenRevisionAtStart);
+    acknowledgedClears.delete(sessionId);
+    pendingClearRevisions.set(sessionId, tokenRevisionAtStart);
     clearState(sessionId, { busy: true });
     historyReads.get(get)?.delete(sessionId);
     try {
@@ -852,15 +860,16 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
       // The original C1 write is ID-only; if the view binding changed during
       // the request, do not confirm its outcome with a different read path.
       if (get().managedHistoryBindings[sessionId] !== bindingAtStart) throw new ConversationClearError("unknown");
+      acknowledgedClears.set(sessionId, bindingAtStart);
       // Verification alone applies the canonical fields; never optimistically
       // erase messages after POST, and never route through best-effort history.
       await get().verifyConversationClear(sessionId, { tokenRevision: tokenRevisionAtStart });
     } catch (cause) {
       const error = cause instanceof ConversationClearError ? cause : new ConversationClearError("unknown", { cause });
+      if (error.reason !== "readback_failed") acknowledgedClears.delete(sessionId);
+      if (error.reason !== "unknown" && error.reason !== "readback_failed") pendingClearRevisions.delete(sessionId);
       clearState(sessionId, { busy: false, error: error.reason });
       throw error;
-    } finally {
-      if (activeClearRevisions.get(sessionId) === tokenRevisionAtStart) activeClearRevisions.delete(sessionId);
     }
   },
 
@@ -905,9 +914,12 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
       invalidateCompletedAnswers(sessionId);
       if (tokenBudgetRevision(get, sessionId).usage === tokenRevision.usage) get().clearTokenUsageValue(sessionId);
       if (tokenBudgetRevision(get, sessionId).truncation === tokenRevision.truncation) get().clearTruncationInfo(sessionId);
-      clearState(sessionId, prior?.error === "unknown"
-        ? { busy: false, error: "unknown", readbackConfirmed: true }
-        : { busy: false, confirmed: true });
+      const acknowledged = prior?.error !== "unknown" && acknowledgedClears.has(sessionId)
+        && acknowledgedClears.get(sessionId) === binding;
+      if (acknowledged) acknowledgedClears.delete(sessionId);
+      clearState(sessionId, acknowledged
+        ? { busy: false, confirmed: true }
+        : { busy: false, error: "unknown", readbackConfirmed: true });
     } catch (cause) {
       clearState(sessionId, { busy: false, error: prior?.error === "unknown" ? "unknown" : "readback_failed",
         refreshFailed: prior?.error === "unknown" || prior?.error === "readback_failed" });
