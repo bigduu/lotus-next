@@ -3,7 +3,7 @@ import { createRoot, type Root } from "react-dom/client"
 import { afterEach, expect, it, vi } from "vitest"
 import { ApiError } from "@services/api"
 import { uiText } from "@shared/i18n/ui"
-import { httpScopeFixture, scopeFixture } from "@services/supervisorScope/testFixtures"
+import { currentUserScopeFixture, httpScopeFixture, scopeFixture } from "@services/supervisorScope/testFixtures"
 import type { ProjectScopeDependencies } from "@/hooks/useSupervisorProjectScope"
 import type { ProjectScopeIntent, ProjectScopeReceipt, ProjectScopeResponse } from "@services/supervisorScope/types"
 import { SupervisorProjectScopeDialog } from "./SupervisorProjectScopeDialog"
@@ -31,6 +31,19 @@ it("allows admitted web confirmation without any native bridge", async () => {
   expect([...h.dialog.querySelectorAll('[data-testid="project-scope-review"] code')].map((c) => c.textContent)).toEqual(["p1", "p2"])
   expect(button("supervisor_scope_http_confirm").disabled).toBe(false); expect(h.update).not.toHaveBeenCalled()
   act(() => button("supervisor_scope_close").click()); expect(h.close).toHaveBeenCalledWith(false); expect(h.update).not.toHaveBeenCalled()
+})
+it.each([{ allowed_projects: [] }, { allowed_projects: ["p1"] }])("shows default current-user management with legacy metadata %j, without an access editor", async ({ allowed_projects }) => {
+  const current = currentUserScopeFixture()
+  const h = await mount({ ...current, scope: { ...current.scope, allowed_projects } })
+  expect(h.dialog.textContent).toContain(uiText("supervisor_scope_current_user_ready"))
+  expect(h.dialog.textContent).toContain(uiText("supervisor_scope_current_user_legacy_note"))
+  expect(h.dialog.textContent).not.toContain(uiText("supervisor_scope_empty"))
+  expect(h.dialog.querySelector('input[type="checkbox"]')).toBeNull()
+  expect(button("supervisor_scope_preview")).toBeUndefined()
+  expect(button("supervisor_scope_http_confirm")).toBeUndefined()
+  expect(h.update).not.toHaveBeenCalled()
+  await act(async () => button("supervisor_scope_refresh").click())
+  expect(h.update).not.toHaveBeenCalled()
 })
 it.each([
   [scopeFixture(), "supervisor_scope_http_unsupported"],

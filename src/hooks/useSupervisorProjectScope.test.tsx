@@ -2,7 +2,7 @@ import { act } from "react"
 import { createRoot, type Root } from "react-dom/client"
 import { afterEach, expect, it, vi } from "vitest"
 import { ApiError } from "@services/api"
-import { httpScopeFixture, scopeFixture } from "@services/supervisorScope/testFixtures"
+import { currentUserScopeFixture, httpScopeFixture, scopeFixture } from "@services/supervisorScope/testFixtures"
 import type { ProjectOption, ProjectScopeIntent, ProjectScopeReceipt, ProjectScopeResponse } from "@services/supervisorScope/types"
 import { useSupervisorProjectScope, type ProjectScopeDependencies } from "./useSupervisorProjectScope"
 
@@ -33,6 +33,30 @@ it("keeps legacy Host-only scope readable and previewable without a web write", 
   const h = await mount({ scope: scopeFixture() }); h.edit("p2", true); h.review(); await h.confirm()
   expect(h.value.canEdit).toBe(true); expect(h.value.canConfirm).toBe(false)
   expect(h.value.review?.mutation.allowed_projects).toEqual(["p1", "p2"]); expect(h.update).not.toHaveBeenCalled()
+})
+it("keeps current-user management readable without legacy Project authorization editing", async () => {
+  const h = await mount({ scope: currentUserScopeFixture(), projects: [] })
+  h.edit("p2", true); h.review(); await h.confirm()
+  expect(h.value.observation?.code).toBe("current_user_scope_ready")
+  expect(h.value.canEdit).toBe(false); expect(h.value.canConfirm).toBe(false)
+  expect(h.value.draft).toEqual([]); expect(h.value.review).toBeNull(); expect(h.update).not.toHaveBeenCalled()
+})
+it("withdraws a legacy authorization draft when a fresh response reports current-user management", async () => {
+  const h = await mount(); h.edit("p2", true); h.review()
+  h.setCanonical(currentUserScopeFixture()); await h.refresh(); h.review(); await h.confirm()
+  expect(h.value.canEdit).toBe(false); expect(h.value.review).toBeNull(); expect(h.update).not.toHaveBeenCalled()
+})
+it("does not describe a legacy receipt as an access grant after a current-user transition", async () => {
+  const h = await mount(); h.review()
+  h.update.mockImplementationOnce(async (intent) => {
+    h.setCanonical({ ...currentUserScopeFixture(), scope: { ...currentUserScopeFixture().scope,
+      state_revision: 1, allowed_projects: [...intent.mutation.allowed_projects] } })
+    return { supervisor: intent.supervisor, state_revision: 1, changed: true, link_revision: null }
+  })
+  await h.confirm()
+  expect(h.value.observation?.code).toBe("current_user_scope_ready")
+  expect(h.value.notice?.kind).not.toBe("saved"); expect(h.value.canConfirm).toBe(false)
+  expect(h.update).toHaveBeenCalledTimes(1)
 })
 it("blocks unavailable access without inferring permission from UI or native presence", async () => {
   const invoke = vi.fn(); vi.stubGlobal("__TAURI_INTERNALS__", { invoke })

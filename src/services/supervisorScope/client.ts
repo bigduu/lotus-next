@@ -1,6 +1,6 @@
 import { apiClient, isApiError } from "@services/api"
 import { projectService } from "@services/project"
-import { scopeErrorCodes, type ProjectOption, type ProjectScopeIntent, type ProjectScopeReceipt, type ProjectScopeResponse, type ScopeErrorCode, type ScopeProblem, type SupervisorReference } from "./types"
+import { scopeErrorCodes, type CurrentUserManagementAccess, type ProjectOption, type ProjectScopeIntent, type ProjectScopeReceipt, type ProjectScopeResponse, type ScopeErrorCode, type ScopeProblem, type SupervisorReference } from "./types"
 
 const record = (value: unknown): Record<string, unknown> | null => value !== null && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null
 export const safeRevision = (value: unknown): value is number => typeof value === "number" && Number.isSafeInteger(value) && value >= 0
@@ -21,11 +21,22 @@ const invalid = (): never => { throw new InvalidScopeResponse("invalid_project_s
 export function decodeProjectScope(value: unknown): ProjectScopeResponse {
   const body = record(value), scope = record(body?.scope), caps = record(body?.capabilities), owner = record(body?.owner_authorization)
   const ids = scope?.allowed_projects
+  const currentUser = body?.code === "current_user_scope_ready"
   if (!body || !scope || !reference(scope.supervisor) || !safeRevision(scope.state_revision)
     || !Array.isArray(ids) || ids.length > 64 || !ids.every(projectId) || new Set(ids).size !== ids.length
-    || body.code !== (ids.length ? "project_scope_configured" : "project_scope_uninitialized")
     || caps?.project_scope_v1 !== true || typeof caps.supervised_root_create_v1 !== "boolean"
     || typeof owner?.available !== "boolean" || owner.required !== true || owner.http_registration !== false) return invalid()
+  let management: CurrentUserManagementAccess | undefined
+  if (currentUser) {
+    const access = record(body.management_access)
+    if (caps.supervisor_current_user_scope_v1 !== true || owner.kind !== "existing_access"
+      || access?.kind !== "current_user" || access.default_all_projects !== true || access.default_all_sessions !== true
+      || access.requires_project_authorization !== false || access.requires_session_attachment !== false
+      || !safeRevision(access.orchestration_revision)) return invalid()
+    management = { kind: "current_user", default_all_projects: true, default_all_sessions: true,
+      requires_project_authorization: false, requires_session_attachment: false, orchestration_revision: access.orchestration_revision }
+  } else if (body.code !== (ids.length ? "project_scope_configured" : "project_scope_uninitialized")
+    || body.management_access !== undefined || caps.supervisor_current_user_scope_v1 !== undefined) return invalid()
   let authorization: ProjectScopeResponse["owner_authorization"]
   if (owner.kind === "existing_access") {
     if (caps.project_scope_http_write_v1 !== true || owner.code !== null) return invalid()
@@ -33,13 +44,16 @@ export function decodeProjectScope(value: unknown): ProjectScopeResponse {
   } else if (owner.kind === "trusted_host_intent" && caps.project_scope_http_write_v1 === undefined && owner.code === undefined) {
     authorization = { available: owner.available, required: true, kind: "trusted_host_intent", http_registration: false }
   } else return invalid()
-  return { code: ids.length ? "project_scope_configured" : "project_scope_uninitialized", scope: { supervisor: { session_id: "bamboo-default-supervisor", incarnation_id: scope.supervisor.incarnation_id }, state_revision: scope.state_revision, allowed_projects: [...ids].sort() },
+  return { code: currentUser ? "current_user_scope_ready" : ids.length ? "project_scope_configured" : "project_scope_uninitialized", scope: { supervisor: { session_id: "bamboo-default-supervisor", incarnation_id: scope.supervisor.incarnation_id }, state_revision: scope.state_revision, allowed_projects: [...ids].sort() },
     capabilities: { project_scope_v1: true, supervised_root_create_v1: caps.supervised_root_create_v1,
-      ...(caps.project_scope_http_write_v1 === true ? { project_scope_http_write_v1: true as const } : {}) },
+      ...(caps.project_scope_http_write_v1 === true ? { project_scope_http_write_v1: true as const } : {}),
+      ...(currentUser ? { supervisor_current_user_scope_v1: true as const } : {}) },
+    ...(management ? { management_access: management } : {}),
     owner_authorization: authorization }
 }
-/** Consume the server's existing access result; do not add local login or native gates. */
-export const canWriteProjectScope = (scope: ProjectScopeResponse | null) => scope?.capabilities.project_scope_http_write_v1 === true
+/** Legacy full-set editing only. Current-user management needs no Project grant or attach. */
+export const canWriteProjectScope = (scope: ProjectScopeResponse | null) => scope?.management_access === undefined
+  && scope?.capabilities.project_scope_http_write_v1 === true
   && scope.owner_authorization.kind === "existing_access" && scope.owner_authorization.available && scope.owner_authorization.code === null
 export function decodeProjectScopeReceipt(value: unknown, intent: ProjectScopeIntent): ProjectScopeReceipt {
   const body = record(value)

@@ -1,5 +1,5 @@
 import { ChatItem, Message } from "@shared/types/chat";
-import type { ReasoningEffort } from "@services/chat/AgentService";
+import type { ReasoningEffort, SessionSummary } from "@services/chat/AgentService";
 import type { ConversationClearFailure } from "@services/chat/conversationClear";
 
 export interface ConversationClearState {
@@ -45,6 +45,8 @@ export interface ChatSlice {
   addChat: (chat: Omit<ChatItem, "id">) => Promise<string>;
   selectSession: (sessionId: string | null) => void;
   deleteSession: (sessionId: string) => Promise<void>;
+  getSessionNavigationRevision: () => number;
+  invalidateSessionNavigation: (sessionId?: string) => void;
   deleteSessions: (sessionIds: string[]) => Promise<void>;
   updateSession: (
     sessionId: string,
@@ -97,6 +99,8 @@ export interface ChatSlice {
   refreshConversationClear: (sessionId: string) => Promise<void>;
   /** Fence old reads immediately on a cross-client clear event, then refetch. */
   reconcileClearedConversation: (sessionId: string) => void;
+  /** Read a cold target's root tree without changing the session cache. */
+  stageSessionForNavigation: (target: SessionSummary) => Promise<SessionSummary[] | null>;
   loadChatHistory: (
     sessionId: string,
     options?: {
@@ -108,6 +112,14 @@ export interface ChatSlice {
       throwOnError?: boolean;
       /** Fence abandoned read results; does not cancel backend execution. */
       signal?: AbortSignal;
+      /** Revalidate an observed target before committing any history fields. */
+      beforeApply?: () => Promise<boolean>;
+      /** Synchronously fence local navigation after the asynchronous check. */
+      canApply?: () => boolean;
+      /** Cold summaries remain private until this guarded history read commits. */
+      stagedSessions?: SessionSummary[];
+      /** Select in the same guarded store update as the history commit. */
+      selectOnApply?: boolean;
     },
   ) => Promise<void>;
   /**

@@ -11,6 +11,7 @@ import { ApiError } from "@services/api";
 import { ConversationClearError, readClearedConversation, requestConversationClear } from "@services/chat/conversationClear";
 import type { AppState } from "../";
 import { useProviderStore } from "./providerSlice";
+import { tokenBudgetRevision } from "./tokenBudgetSlice";
 import { applyExecutionEvent } from "./executionStateSlice";
 import { applyReplayableSessionEventToList, isSessionMetadataEvent } from "./sessionMetadataSlice";
 import i18n from "@shared/i18n";
@@ -30,6 +31,7 @@ import {
   executeForcedRefreshChats,
   executeRefreshChats,
   listAllSessionPages,
+  mergeSessionsList,
   refreshChatsState,
   settleTrailingRefreshCallbacks,
 } from "./chatSessionSlice/refreshChats";
@@ -78,6 +80,7 @@ const historyReads = new WeakMap<() => AppState, Map<string, object>>();
 export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, get) => {
   const deferredClears = new Set<string>();
   const replacementRequired = new Set<string>();
+  let navigationRevision = 0;
   const reconcileClear = (sessionId: string, newEvent: boolean) => {
     // An event has no revision. Fence work known at notification time, not
     // newer work created while the replacement read is in flight.
@@ -195,7 +198,17 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
     set({ currentSessionId: sessionId, latestActiveSessionId: sessionId });
   },
 
+  getSessionNavigationRevision: () => navigationRevision,
+  invalidateSessionNavigation: (sessionId) => {
+    navigationRevision += 1;
+    const reads = historyReads.get(get);
+    if (!sessionId) { reads?.clear(); return; }
+    const affected = new Set([sessionId, ...get().chats.filter((chat) => chat.rootSessionId === sessionId).map((chat) => chat.id)]);
+    for (const id of affected) reads?.delete(id);
+  },
+
   deleteSession: async (sessionId) => {
+    get().invalidateSessionNavigation(sessionId);
     try {
       await agentClient.deleteSession(sessionId);
     } catch (error) {
@@ -764,6 +777,25 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
     }
   },
 
+  stageSessionForNavigation: async (target) => {
+    try {
+      const root = target.kind === "root" ? target : (await agentClient.getSession(target.root_session_id)).session;
+      if (root.kind !== "root" || root.id !== target.root_session_id) return null;
+      const children = (root.subagent_count ?? 0) > 0
+        ? await listAllSessionPages({ kind: "child", root_session_id: root.id }) : [];
+      if (target.kind === "child") {
+        const listed = children.find((item) => item.id === target.id);
+        if (!listed || listed.created_at !== target.created_at || listed.kind !== target.kind
+          || listed.root_session_id !== target.root_session_id || (listed.parent_session_id ?? null) !== (target.parent_session_id ?? null)
+          || (listed.project_id ?? null) !== (target.project_id ?? null)) return null;
+      }
+      return [root, ...children.map((item) => item.id === target.id ? target : item)];
+    } catch (error) {
+      debugLog("[ChatSlice]", "stageSessionForNavigation.error", { sessionId: target.id, error });
+      return null;
+    }
+  },
+
   dismissConversationClear: (sessionId) => {
     const state = get().conversationClears[sessionId];
     if (state?.busy || state?.error === "unknown" || state?.error === "readback_failed") return;
@@ -855,6 +887,12 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
   reconcileClearedConversation: (sessionId) => reconcileClear(sessionId, true),
 
   loadChatHistory: async (sessionId, options) => {
+    const stagedTarget = options?.stagedSessions?.find((item) => item.id === sessionId);
+    if ((options?.stagedSessions && !stagedTarget) || ((options?.stagedSessions || options?.selectOnApply)
+      && (!options.beforeApply || !options.canApply || !options.throwOnError || options.mode === "monotonic"))) {
+      throw new Error("Staged session history requires a guarded target");
+    }
+    const stagedChat = stagedTarget ? sessionSummaryToChatItem(stagedTarget) : undefined;
     let discarded: DOMException | undefined;
     const discardRead = () => {
       // Strict consumers may retire live evidence only after confirmation.
@@ -888,7 +926,7 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
         try {
           // Avoid spurious backend calls when the UI layout references a stale session id.
           // (e.g. after backend reset or manual data cleanup)
-          const chat = get().chats.find((c) => c.id === sessionId);
+          const chat = get().chats.find((c) => c.id === sessionId) ?? stagedChat;
           if (!chat) {
             debugLog("[ChatSlice]", "loadChatHistory.skipMissingChat", { sessionId, attempt });
             if (options?.throwOnError) throw new Error("Session is unavailable");
@@ -902,18 +940,19 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
           // Clear replacement intent survives superseding monotonic reads and
           // failures. Read token state too: the live cache outranks list config.
           const afterClear = replacementRequired.has(sessionId);
+          const tokenRevision = afterClear ? tokenBudgetRevision(get, sessionId) : { usage: 0, truncation: 0 };
           const detail = afterClear ? (await agentClient.getSession(sessionId)).session : undefined;
           if (options?.signal?.aborted || !isCurrentRead()) return discardRead();
           if (afterClear && (history.session_id !== sessionId || detail?.id !== sessionId)) throw new Error("History session mismatch");
           const tokenConfig = detail ? sessionSummaryToChatItem(detail).config : undefined;
-          const currentChat = get().chats.find((item) => item.id === sessionId);
-          if (!currentChat) return discardRead();
+          const cachedChat = get().chats.find((item) => item.id === sessionId) ?? stagedChat;
+          if (!cachedChat) return discardRead();
           debugLog("[ChatSlice]", "loadChatHistory.response", {
             sessionId,
             attempt,
             historyMessageCount: history.messages.length,
-            localMessageCount: currentChat.messages.length,
-            localStoredMessageCount: currentChat.messageCount ?? null,
+            localMessageCount: cachedChat.messages.length,
+            localStoredMessageCount: cachedChat.messageCount ?? null,
             lastMessageId: history.messages[history.messages.length - 1]?.id ?? null,
             lastRole: history.messages[history.messages.length - 1]?.role ?? null,
           });
@@ -934,6 +973,13 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
             continue;
           }
 
+          // Keep the response staged while an opt-in target check is pending.
+          // A newer read, clear, navigation, or abort retires this read even if
+          // the asynchronous check later succeeds.
+          if (options?.beforeApply && !await options.beforeApply()) return discardRead();
+          if ((options?.canApply && !options.canApply()) || options?.signal?.aborted || !isCurrentRead()) return discardRead();
+          const currentChat = get().chats.find((item) => item.id === sessionId) ?? stagedChat;
+          if (!currentChat) return discardRead();
           let nextMessages = mapHistoryMessagesToUi(sessionId, history.messages);
 
           if (mode === "monotonic" && !afterClear) {
@@ -1004,40 +1050,69 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
             }
           }
 
+          const liveTokenState = get();
+          const latestTokenRevision = tokenBudgetRevision(get, sessionId);
+          const newerUsage = afterClear && latestTokenRevision.usage !== tokenRevision.usage;
+          const newerTruncation = afterClear && latestTokenRevision.truncation !== tokenRevision.truncation;
           // History owns only its hydrated fields. A permission read/write may
           // have confirmed a newer mode/ETag while getHistory was in flight.
-          get().updateSession(sessionId, {
-            messages: nextMessages,
-            messageCount: history.messages.length,
-            config: {
-              ...currentChat.config,
-              ...(tokenConfig ? { tokenUsage: tokenConfig.tokenUsage, truncationOccurred: tokenConfig.truncationOccurred,
-                segmentsRemoved: tokenConfig.segmentsRemoved } : {}),
-              ...(history.gold_config != null ? { goldConfig: history.gold_config } : {}),
-              ...(history.goal_state != null ? { goalState: history.goal_state } : {}),
-              compressionEvents: (history.compression_events || []).map((event) => ({
-                id: event.id,
-                createdAt: event.created_at,
-                messagesCompressed: event.messages_compressed,
-                segmentsRemoved: event.segments_removed,
-              })),
-              syncCursor: {
-                messageCount: history.messages.length,
-                lastMessageId: history.messages[history.messages.length - 1]?.id ?? null,
-                hasPendingQuestion: Boolean(
-                  get().executionBySession?.[sessionId]?.interaction.pendingQuestion,
-                ),
-                pendingQuestionToolCallId:
-                  get().executionBySession?.[sessionId]?.interaction.pendingQuestion?.toolCallId ??
-                  null,
-              },
+          const historyConfig = {
+            ...(tokenConfig ? { tokenUsage: newerUsage ? liveTokenState.tokenUsages[sessionId] : tokenConfig.tokenUsage,
+              truncationOccurred: newerTruncation ? liveTokenState.truncationOccurred[sessionId] : tokenConfig.truncationOccurred,
+              segmentsRemoved: newerTruncation ? liveTokenState.segmentsRemoved[sessionId] : tokenConfig.segmentsRemoved } : {}),
+            ...(history.gold_config != null ? { goldConfig: history.gold_config } : {}),
+            ...(history.goal_state != null ? { goalState: history.goal_state } : {}),
+            compressionEvents: (history.compression_events || []).map((event) => ({
+              id: event.id,
+              createdAt: event.created_at,
+              messagesCompressed: event.messages_compressed,
+              segmentsRemoved: event.segments_removed,
+            })),
+            syncCursor: {
+              messageCount: history.messages.length,
+              lastMessageId: history.messages[history.messages.length - 1]?.id ?? null,
+              hasPendingQuestion: Boolean(
+                get().executionBySession?.[sessionId]?.interaction.pendingQuestion,
+              ),
+              pendingQuestionToolCallId:
+                get().executionBySession?.[sessionId]?.interaction.pendingQuestion?.toolCallId ??
+                null,
             },
-          }, { skipBackendPatch: true });
+          };
+          const historyUpdate: Partial<ChatItem> = {
+            messages: nextMessages, messageCount: history.messages.length,
+            config: { ...currentChat.config, ...historyConfig },
+          };
+          if (options?.selectOnApply || options?.stagedSessions) {
+            let applied = false;
+            set((state) => {
+              if ((options.canApply && !options.canApply()) || options.signal?.aborted || !isCurrentRead()) return state;
+              const staged = options.stagedSessions ?? [];
+              const root = staged.find((item) => item.kind === "root");
+              if (staged.length && !root) return state;
+              let merged = state;
+              if (root) merged = mergeSessionsList(merged, [root], { kind: "upsert" });
+              if (root) merged = mergeSessionsList(merged, staged.filter((item) => item.kind === "child"), { kind: "children", rootSessionId: root.id });
+              const target = merged.chats.find((item) => item.id === sessionId);
+              if (!target) return state;
+              applied = true;
+              return { ...merged, chats: merged.chats.map((item) => item.id === sessionId
+                ? { ...item, ...historyUpdate, config: { ...target.config, ...historyConfig } } : item),
+                ...(options.selectOnApply ? { currentSessionId: sessionId, latestActiveSessionId: sessionId } : {}) };
+            });
+            if (!applied) return discardRead();
+            if (options.stagedSessions) get().reconcileSessionPermissionModes(options.stagedSessions.filter((item) => item.kind === "child"));
+          } else {
+            get().updateSession(sessionId, historyUpdate, { skipBackendPatch: true });
+          }
           reconcileCompletedAnswers(sessionId, nextMessages);
           if (afterClear) {
             replacementRequired.delete(sessionId);
-            get().clearTokenUsage(sessionId);
-            if (tokenConfig?.tokenUsage) get().updateTokenUsage(sessionId, tokenConfig.tokenUsage);
+            if (tokenBudgetRevision(get, sessionId).usage === tokenRevision.usage) {
+              get().clearTokenUsageValue(sessionId);
+              if (tokenConfig?.tokenUsage) get().updateTokenUsage(sessionId, tokenConfig.tokenUsage);
+            }
+            if (tokenBudgetRevision(get, sessionId).truncation === tokenRevision.truncation) get().clearTruncationInfo(sessionId);
           }
           debugLog("[ChatSlice]", "loadChatHistory.applied", {
             sessionId,

@@ -118,6 +118,7 @@ export const canReuseSessionListChat = (prev: ChatItem, next: ChatItem): boolean
     prev.title === next.title &&
     prev.titleVersion === next.titleVersion &&
     prev.createdAt === next.createdAt &&
+    prev.createdAtExact === next.createdAtExact &&
     prev.pinned === next.pinned &&
     prev.messages === next.messages &&
     areChatConfigsEquivalent(prev.config, next.config)

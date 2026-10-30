@@ -108,6 +108,7 @@ export const sessionSummaryToChatItem = (s: SessionSummary): ChatItem => {
     title: s.title || i18n.t("chat.session.defaultTitle"),
     titleVersion: s.title_version ?? 0,
     createdAt: createdAtMs,
+    createdAtExact: s.created_at,
     pinned: s.pinned,
     messages: [],
     config: {

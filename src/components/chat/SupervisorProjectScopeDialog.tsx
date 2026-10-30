@@ -26,6 +26,7 @@ export function SupervisorProjectScopeDialog({ open, onOpenChange, dependencies,
   useUiLocale()
   const state = useSupervisorProjectScope(open, dependencies)
   const prefix = useId(), scope = state.observation?.scope
+  const currentUser = state.observation?.management_access?.kind === "current_user"
   const authorization = state.observation?.owner_authorization
   const projects = new Map(state.projects.map((project) => [project.id, project]))
   const ids = [...new Set([...projects.keys(), ...(scope?.allowed_projects ?? []), ...(state.draft ?? [])])].sort()
@@ -34,24 +35,30 @@ export function SupervisorProjectScopeDialog({ open, onOpenChange, dependencies,
   const notice = state.notice && uiText(state.notice.code && codeKeys[state.notice.code] || noticeKeys[state.notice.kind])
   const problem = state.problem && uiText(state.problem.code && codeKeys[state.problem.code] || problemKeys[state.problem.kind])
   return <Dialog open={open} onOpenChange={(value) => { if (!state.submitting) onOpenChange(value) }}>
-    <DialogContent showCloseButton={!state.submitting} className="max-h-[85dvh] overflow-y-auto"
+    <DialogContent showCloseButton={!state.submitting} className="max-h-[90dvh] overflow-y-auto"
       onEscapeKeyDown={(event) => { if (state.submitting) event.preventDefault() }}
       onInteractOutside={(event) => { if (state.submitting) event.preventDefault() }}
       onCloseAutoFocus={returnFocus ? (event) => { event.preventDefault(); returnFocus() } : undefined}>
       <DialogHeader>
-        <DialogTitle>{uiText("supervisor_scope_title")}</DialogTitle>
-        <DialogDescription>{uiText("supervisor_scope_description")}</DialogDescription>
+        <DialogTitle>{uiText(currentUser ? "supervisor_scope_current_user_title" : "supervisor_scope_title")}</DialogTitle>
+        <DialogDescription>{uiText(currentUser ? "supervisor_scope_current_user_description" : "supervisor_scope_description")}</DialogDescription>
       </DialogHeader>
       <div className="space-y-3 text-sm" data-testid="supervisor-project-scope">
         {state.reading ? <p role="status">{uiText("supervisor_scope_loading")}</p> : null}
         {problem ? <p role="alert">{problem}</p> : null}
         {notice ? <p role={state.notice?.kind === "saved" ? "status" : "alert"}>{notice}</p> : null}
         {scope ? <>
-          <p data-testid="project-scope-current">{uiText(scope.allowed_projects.length ? "supervisor_scope_configured" : "supervisor_scope_empty", { count: scope.allowed_projects.length })}</p>
+          <p data-testid="project-scope-current">{uiText(currentUser ? "supervisor_scope_current_user_ready" : scope.allowed_projects.length ? "supervisor_scope_configured" : "supervisor_scope_empty", { count: scope.allowed_projects.length })}</p>
           <dl className="space-y-1 text-xs [overflow-wrap:anywhere]">
             <dt>{uiText("supervisor_scope_identity_label")}</dt><dd>{scope.supervisor.session_id} · {scope.supervisor.incarnation_id}</dd>
             <dt>{uiText("supervisor_scope_revision")}</dt><dd>{scope.state_revision}</dd>
           </dl>
+          {currentUser ? <section className="space-y-2" data-testid="current-user-management">
+            <p className="text-muted-foreground">{uiText("supervisor_scope_current_user_boundaries")}</p>
+            <p>{uiText("supervisor_scope_current_user_legacy", { count: scope.allowed_projects.length })}</p>
+            {scope.allowed_projects.length ? <ul className="space-y-1 [overflow-wrap:anywhere]">{scope.allowed_projects.map((id) => <li key={id}>{projects.get(id)?.name || id} <code>{id}</code></li>)}</ul> : null}
+            <p className="text-muted-foreground">{uiText("supervisor_scope_current_user_legacy_note")}</p>
+          </section> : <>
           {!state.reading ? <p role="status">{uiText(authorization?.kind !== "existing_access" ? "supervisor_scope_http_unsupported"
             : state.writeAvailable ? "supervisor_scope_http_ready" : "supervisor_scope_unavailable")}</p> : null}
           <p className="text-muted-foreground">{uiText("supervisor_scope_boundaries")}</p>
@@ -82,6 +89,7 @@ export function SupervisorProjectScopeDialog({ open, onOpenChange, dependencies,
             <Button variant="outline" disabled={state.submitting || state.reading} onClick={state.backToEdit}>{uiText("supervisor_scope_edit")}</Button>
             <Button disabled={!state.canConfirm} onClick={() => void state.confirm()}>{uiText(state.submitting ? "supervisor_scope_http_confirming" : "supervisor_scope_http_confirm")}</Button>
           </div> : <Button variant="outline" disabled={!state.canEdit} onClick={state.reviewDraft}>{uiText("supervisor_scope_preview")}</Button>}
+          </>}
         </> : null}
       </div>
       <DialogFooter>

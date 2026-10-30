@@ -103,3 +103,87 @@ for (const [mode, text] of [["unconfirmed", "本次提交结果未确认"], ["ac
     expect(f.runtime.pageErrors).toEqual([])
   })
 }
+
+
+for (const method of ["button", "icon", "escape"] as const) {
+ test(`closing current-user scope via ${method} returns to the managed-session directory`, async ({ page }, info) => {
+  await page.addInitScript(() => localStorage.setItem("bodhi_onboarded_v1", "1"))
+  const runtime = await installArtifactRuntime(page, standaloneScenario, [], { bootstrapRequestState: "local_bypass" })
+  const base = observation([], 0)
+  const currentScope = { ...base, code: "current_user_scope_ready",
+    capabilities: { ...base.capabilities, supervisor_current_user_scope_v1: true },
+    management_access: { kind: "current_user", default_all_projects: true, default_all_sessions: true,
+      requires_project_authorization: false, requires_session_attachment: false, orchestration_revision: 1 } }
+  const directory = { scope: base.scope, capabilities: { managed_sessions_http_v1: true, supervisor_current_user_scope_v1: true },
+    management_access: { kind: "current_user", requires_session_attachment: false }, sessions: [], next_after: null, legacy_links: {},
+    owner_authorization: base.owner_authorization }
+  const writes: string[] = []
+  await page.route("**/api/v1/**", async (route) => {
+    const request = route.request(), path = new URL(request.url()).pathname
+    if (["/api/v1/supervisor/default/scope", "/api/v1/supervisor/default/sessions"].includes(path)) {
+      if (request.method() !== "GET") { writes.push(path); return route.abort() }
+      return route.fulfill({ json: path.endsWith("/scope") ? currentScope : directory })
+    }
+    if (path === "/api/v1/projects") return route.fulfill({ json: { projects: [] } })
+    return route.fallback()
+  })
+  await page.goto(standaloneScenario.entryUrl)
+  if (info.project.name === "phone-chromium") await page.getByRole("button", { name: "菜单", exact: true }).click()
+  const row = page.locator("aside").first().getByRole("button", { name: "Supervisor", exact: true }).locator("..")
+  await row.getByRole("button", { name: "会话操作", exact: true }).click()
+  await page.getByRole("menuitem", { name: "管理会话", exact: true }).click()
+  const managed = page.getByRole("dialog", { name: "受管会话", exact: true })
+  const trigger = managed.getByRole("button", { name: "Supervisor 管理", exact: true })
+  await expect(trigger).toBeVisible()
+  const viewport = page.viewportSize()!
+  const managedBounds = (await managed.boundingBox())!
+  expect(managedBounds.y).toBeGreaterThanOrEqual(0)
+  expect(managedBounds.y + managedBounds.height).toBeLessThanOrEqual(viewport.height)
+  await expect(managed).toHaveCSS("overflow-y", "auto")
+  await trigger.click()
+  const scope = page.getByRole("dialog", { name: "Supervisor 管理", exact: true })
+  await expect(scope.getByTestId("current-user-management")).toBeVisible()
+  const scopeBounds = (await scope.boundingBox())!
+  expect(scopeBounds.y).toBeGreaterThanOrEqual(0)
+  expect(scopeBounds.y + scopeBounds.height).toBeLessThanOrEqual(viewport.height)
+  await expect(scope).toHaveCSS("overflow-y", "auto")
+  if (method === "escape") await scope.press("Escape")
+  else await scope.getByRole("button", { name: method === "button" ? "关闭" : "Close", exact: true }).first().click()
+  await expect(scope).toBeHidden()
+  await expect(managed).toBeVisible()
+  await expect(trigger).toBeFocused()
+  await managed.getByRole("button", { name: "关闭", exact: true }).first().click()
+  await expect(managed).toBeHidden()
+  expect(writes).toEqual([])
+  expect(runtime.pageErrors).toEqual([])
+ })
+}
+
+
+test("keyboard focus returns to Refresh when a delayed final directory page removes Load more", async ({ page }, info) => {
+  await page.addInitScript(() => localStorage.setItem("bodhi_onboarded_v1", "1"))
+  const runtime = await installArtifactRuntime(page, standaloneScenario, [], { bootstrapRequestState: "local_bypass" })
+  const base = observation([], 0), directory = { scope: base.scope,
+    capabilities: { managed_sessions_http_v1: true, supervisor_current_user_scope_v1: true },
+    management_access: { kind: "current_user", requires_session_attachment: false }, sessions: [], next_after: "root-a", legacy_links: {},
+    owner_authorization: base.owner_authorization }
+  await page.route("**/api/v1/supervisor/default/sessions**", async (route) => {
+    const url = new URL(route.request().url())
+    if (url.searchParams.has("after")) {
+      await new Promise((resolve) => setTimeout(resolve, 200))
+      return route.fulfill({ json: { ...directory, next_after: null } })
+    }
+    return route.fulfill({ json: directory })
+  })
+  await page.goto(standaloneScenario.entryUrl)
+  if (info.project.name === "phone-chromium") await page.getByRole("button", { name: "菜单", exact: true }).click()
+  const row = page.locator("aside").first().getByRole("button", { name: "Supervisor", exact: true }).locator("..")
+  await row.getByRole("button", { name: "会话操作", exact: true }).click()
+  await page.getByRole("menuitem", { name: "管理会话", exact: true }).click()
+  const managed = page.getByRole("dialog", { name: "受管会话", exact: true })
+  const more = managed.getByRole("button", { name: "加载更多会话", exact: true })
+  await expect(more).toBeVisible(); await more.focus(); await page.keyboard.press("Enter")
+  await expect(more).toHaveCount(0)
+  await expect(managed.getByRole("button", { name: "重新读取", exact: true })).toBeFocused()
+  expect(runtime.pageErrors).toEqual([])
+})
