@@ -222,6 +222,8 @@ export function useLiveBootstrapRetry(sessionId: string | null, running: boolean
     // The exact-run Stop can fail because the server-side cancellable owner
     // rotated to a successor run id (409) or the response was lost. Re-observe
     // once and retry the exact Stop against the identity the fence confirms.
+    // Returns true when the outcome — success or failure — was settled on the
+    // adopted identity and the caller must not settle its stale view again.
     const recoverWithFreshIdentity = async (): Promise<boolean> => {
       const capabilityValue = await readLiveBootstrapCapability()
       if (!capabilityValue || !active()) return false
@@ -242,11 +244,16 @@ export function useLiveBootstrapRetry(sessionId: string | null, running: boolean
         if (stopActionRef.current === adopted) settleOwnedView(scope, { ...selected, runId: observation.runId }, "stop_requested")
         if (stopActionRef.current === adopted) stopActionRef.current = null
         return true
-      } catch (error) {
-        // Hand ownership back so the caller's outer settle path stays
-        // authoritative for the stop_unconfirmed diagnosis.
-        if (stopActionRef.current === adopted) stopActionRef.current = action
-        throw error
+      } catch {
+        // Settle the failure on the adopted identity too: the outer settle
+        // targets the stale original run, which the rotated fence would reject
+        // by clearing the banner entirely — stranding the still-running
+        // successor behind the stop fence with neither Stop nor Refresh.
+        if (stopActionRef.current === adopted) {
+          settleOwnedView(scope, { ...selected, runId: observation.runId }, "stop_unconfirmed")
+          stopActionRef.current = null
+        }
+        return true
       }
     }
     try {

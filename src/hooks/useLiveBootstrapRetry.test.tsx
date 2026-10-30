@@ -486,6 +486,29 @@ it("Refresh re-offers the same fence-confirmed run after both Stop attempts fail
   expect(hook.current.offer).toMatchObject({runId:"run-a",status:"stop_requested"})
 })
 
+it("settles a doubly-failed recovery on the adopted identity instead of clearing the banner", async () => {
+  let retryReads = 0
+  mocks.get.mockImplementation(async (path:string) => path === "execute/defaults" ? capability
+    : ++retryReads === 1 ? waiting("s","run-a") : waiting("s","run-b"))
+  mocks.fence.mockImplementation(() => ({kind:"confirmed",runId: retryReads === 1 ? "run-a" : "run-b"}))
+  // Both the original and the recovered exact Stop fail without reaching the server.
+  mocks.stop.mockRejectedValue(new Error("network unreachable"))
+  const hook = await mount({sessionId:"s",running:true,root:true})
+  await act(async () => { await hook.current.stop() })
+  expect(mocks.stop).toHaveBeenCalledTimes(2)
+  // The banner survives on the adopted successor identity, keeping Refresh available.
+  expect(hook.current.offer).toMatchObject({runId:"run-b",status:"stop_unconfirmed"})
+  await act(async () => { await vi.advanceTimersByTimeAsync(5000) })
+  expect(hook.current.offer).toMatchObject({runId:"run-b",status:"stop_unconfirmed"})
+  // Connectivity recovers: Refresh re-offers the successor and the exact Stop succeeds.
+  mocks.stop.mockClear(); mocks.stop.mockResolvedValue(undefined)
+  await act(async () => { await hook.current.refresh() })
+  expect(hook.current.offer).toMatchObject({runId:"run-b",status:"waiting"})
+  await act(async () => { await hook.current.stop() })
+  expect(mocks.stop).toHaveBeenCalledExactlyOnceWith("s","run-b")
+  expect(hook.current.offer).toMatchObject({runId:"run-b",status:"stop_requested"})
+})
+
 it("keeps stop_unconfirmed and recovers through Refresh when no waiting offer remains", async () => {
   let offerAvailable = true
   mocks.get.mockImplementation(async (path:string) => path === "execute/defaults" ? capability
