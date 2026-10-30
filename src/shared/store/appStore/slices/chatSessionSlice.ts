@@ -888,15 +888,35 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
     reads.set(sessionId, request);
     const binding = get().managedHistoryBindings[sessionId];
     const readbackFence = binding ? undefined : clearTokenFence(sessionId, undefined);
-    const tokenRevision = options?.tokenRevision ?? readbackFence?.revision ?? tokenBudgetRevision(get, sessionId);
+    let tokenRevision = options?.tokenRevision ?? readbackFence?.revision ?? tokenBudgetRevision(get, sessionId);
     const current = () => reads.get(sessionId) === request && get().managedHistoryBindings[sessionId] === binding;
     clearState(sessionId, { ...prior, busy: true });
     try {
-      // Bound UI history filters runtime messages and does not bind the full
-      // message count, running state or pending questions. It is insufficient
-      // to confirm C1; an ID-only detail read cannot supply that proof either.
-      if (binding) throw new ConversationClearError("readback_failed");
-      const { history, session } = await readClearedConversation(sessionId, agentClient);
+      let history: HistoryResponse;
+      let session: Awaited<ReturnType<typeof readClearedConversation>>["session"] | undefined;
+      let verifiedSelection = binding?.selection;
+      let sameSelectionIdentity: typeof import("@services/supervisorScope/managedSessions").sameManagedSelectionIdentity | undefined;
+      if (binding) {
+        if (binding.status !== "active") throw new ConversationClearError("readback_failed");
+        const managed = await import("@services/supervisorScope/managedSessions");
+        sameSelectionIdentity = managed.sameManagedSelectionIdentity;
+        const fence = clearTokenFence(sessionId, binding.selection, sameSelectionIdentity);
+        tokenRevision = options?.tokenRevision ?? fence?.revision ?? tokenRevision;
+        const result = await managed.readBoundHistoryRefreshingMetadata(binding.selection, current, { clearReadback: true });
+        history = result.history;
+        verifiedSelection = result.selection;
+        const evidence = history.bound_clear_evidence;
+        if (history.session_id !== sessionId || history.is_delta !== false || history.truncated !== false
+          || history.bound_token_usage !== null || !Array.isArray(history.messages)
+          || !evidence || !Number.isSafeInteger(evidence.full_message_count) || evidence.full_message_count < 0
+          || evidence.full_message_count !== history.messages.length || history.messages.length > 1
+          || history.messages.some((message) => message.role !== "system") || evidence.execution_active !== false
+          || evidence.has_pending_question !== false || evidence.has_pending_approval !== false) {
+          throw new ConversationClearError("readback_failed");
+        }
+      } else {
+        ({ history, session } = await readClearedConversation(sessionId, agentClient));
+      }
       if (!current()) throw new ConversationClearError("readback_failed");
       const chat = get().chats.find((item) => item.id === sessionId);
       if (!chat) throw new ConversationClearError("readback_failed");
@@ -904,10 +924,10 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
       const latestTokenRevision = tokenBudgetRevision(get, sessionId);
       const newerUsage = latestTokenRevision.usage !== tokenRevision.usage;
       const newerTruncation = latestTokenRevision.truncation !== tokenRevision.truncation;
-      get().updateSession(sessionId, {
+      const update: Partial<ChatItem> = {
         messages: mapHistoryMessagesToUi(sessionId, history.messages),
         messageCount: history.messages.length,
-        hasAttachments: session.has_attachments,
+        ...(session ? { hasAttachments: session.has_attachments } : {}),
         config: { ...chat.config, tokenUsage: newerUsage ? latest.tokenUsages[sessionId] : undefined,
           truncationOccurred: newerTruncation ? latest.truncationOccurred[sessionId] : undefined,
           segmentsRemoved: newerTruncation ? latest.segmentsRemoved[sessionId] : undefined,
@@ -918,17 +938,42 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
           syncCursor: { messageCount: history.messages.length, lastMessageId: history.messages.at(-1)?.id ?? null,
             hasPendingQuestion: false, pendingQuestionToolCallId: null },
         },
-      }, { skipBackendPatch: true });
+      };
+      if (binding && verifiedSelection) {
+        let applied = false;
+        set((state) => {
+          if (!current()) return state;
+          const target = state.chats.find((item) => item.id === sessionId);
+          if (!target) return state;
+          applied = true;
+          return { ...state,
+            chats: state.chats.map((item) => item.id === sessionId ? { ...item, ...update } : item),
+            managedHistoryBindings: { ...state.managedHistoryBindings,
+              [sessionId]: { selection: verifiedSelection!, status: "active" as const } },
+          };
+        });
+        if (!applied) throw new ConversationClearError("readback_failed");
+      } else {
+        get().updateSession(sessionId, update, { skipBackendPatch: true });
+      }
       invalidateCompletedAnswers(sessionId);
       if (tokenBudgetRevision(get, sessionId).usage === tokenRevision.usage) get().clearTokenUsageValue(sessionId, { fromSnapshot: true });
       if (tokenBudgetRevision(get, sessionId).truncation === tokenRevision.truncation) get().clearTruncationInfo(sessionId, { fromSnapshot: true });
-      const acknowledged = prior?.error !== "unknown" && acknowledgedClears.has(sessionId)
-        && acknowledgedClears.get(sessionId) === binding;
+      const acknowledgedBinding = acknowledgedClears.get(sessionId);
+      const sameAcknowledgedTarget = acknowledgedBinding === binding || Boolean(binding && acknowledgedBinding
+        && binding.status === "active" && acknowledgedBinding.status === "active"
+        && sameSelectionIdentity?.(acknowledgedBinding.selection, binding.selection));
+      const acknowledged = prior?.error !== "unknown" && acknowledgedClears.has(sessionId) && sameAcknowledgedTarget;
       if (acknowledged) acknowledgedClears.delete(sessionId);
       clearState(sessionId, acknowledged
         ? { busy: false, confirmed: true }
         : { busy: false, error: "unknown", readbackConfirmed: true });
     } catch (cause) {
+      if (binding && current() && cause instanceof ApiError && cause.status === 409) {
+        set((state) => state.managedHistoryBindings[sessionId] !== binding ? state : {
+          managedHistoryBindings: { ...state.managedHistoryBindings, [sessionId]: { ...binding, status: "stale" } },
+        });
+      }
       clearState(sessionId, { busy: false, error: prior?.error === "unknown" ? "unknown" : "readback_failed",
         refreshFailed: prior?.error === "unknown" || prior?.error === "readback_failed" });
       if (cause instanceof ConversationClearError) throw cause;

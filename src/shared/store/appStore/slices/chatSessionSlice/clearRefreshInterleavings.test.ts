@@ -41,7 +41,7 @@ afterEach(()=>{vi.restoreAllMocks();vi.useRealTimers()})
 
 it.each(["during write","after response","during refresh","after refresh"] as const)("preserves live token groups when they arrive %s before the clear event", async (when)=>{
   const store=harness(),held=deferred<HistoryResponse>()
-  const read=vi.spyOn(managedSessionsClient,"readBoundHistory").mockResolvedValueOnce(snapshot("original"))
+  const read=vi.spyOn(managedSessionsClient,"readBoundHistory").mockResolvedValueOnce(snapshot("original")).mockRejectedValueOnce(new Error("synthetic clear readback unavailable"))
     .mockImplementationOnce(()=>when==="during refresh" ? held.promise : Promise.resolve(snapshot("original")))
     .mockResolvedValueOnce(snapshot(""))
   const {write,clear}=writeSetup();await open(store)
@@ -50,7 +50,7 @@ it.each(["during write","after response","during refresh","after refresh"] as co
   write.resolve();await expect(clearing).rejects.toMatchObject({reason:"readback_failed"})
   if(when==="after response") live(store)
   const refresh=store.getState().loadChatHistory(id,{mode:"monotonic",throwOnError:true})
-  await vi.waitFor(()=>expect(read).toHaveBeenCalledTimes(2))
+  await vi.waitFor(()=>expect(read).toHaveBeenCalledTimes(3))
   if(when==="during refresh") {live(store);held.resolve(snapshot("original"))}
   await refresh
   if(when==="after refresh") live(store);else expectLive(store)
@@ -60,64 +60,64 @@ it.each(["during write","after response","during refresh","after refresh"] as co
 
 it("preserves a live token received after the clear event while its replacement read is pending", async ()=>{
   const store=harness(),held=deferred<HistoryResponse>()
-  const read=vi.spyOn(managedSessionsClient,"readBoundHistory").mockResolvedValueOnce(snapshot("original")).mockReturnValueOnce(held.promise)
+  const read=vi.spyOn(managedSessionsClient,"readBoundHistory").mockResolvedValueOnce(snapshot("original")).mockRejectedValueOnce(new Error("synthetic clear readback unavailable")).mockReturnValueOnce(held.promise)
   const {write,clear}=writeSetup();await open(store);const clearing=store.getState().clearConversation(id)
   await vi.waitFor(()=>expect(clear).toHaveBeenCalledOnce());write.resolve();await expect(clearing).rejects.toMatchObject({reason:"readback_failed"})
-  store.getState().reconcileClearedConversation(id);await vi.waitFor(()=>expect(read).toHaveBeenCalledTimes(2))
+  store.getState().reconcileClearedConversation(id);await vi.waitFor(()=>expect(read).toHaveBeenCalledTimes(3))
   live(store);held.resolve(snapshot(""));await vi.waitFor(()=>expect(store.getState().chats[0].messages).toHaveLength(0));expectLive(store)
 })
 
 it("keeps the write-start token fence when the event arrives before the response", async ()=>{
-  const store=harness(),read=vi.spyOn(managedSessionsClient,"readBoundHistory").mockResolvedValueOnce(snapshot("original")).mockResolvedValueOnce(snapshot(""))
+  const store=harness(),read=vi.spyOn(managedSessionsClient,"readBoundHistory").mockResolvedValueOnce(snapshot("original")).mockRejectedValueOnce(new Error("synthetic clear readback unavailable")).mockResolvedValueOnce(snapshot(""))
   const {write,clear}=writeSetup();await open(store);const clearing=store.getState().clearConversation(id)
   await vi.waitFor(()=>expect(clear).toHaveBeenCalledOnce());live(store);store.getState().reconcileClearedConversation(id)
   write.resolve();await expect(clearing).rejects.toMatchObject({reason:"readback_failed"})
-  await vi.waitFor(()=>expect(read).toHaveBeenCalledTimes(2));await vi.waitFor(()=>expect(store.getState().chats[0].messages).toHaveLength(0));expectLive(store)
+  await vi.waitFor(()=>expect(read).toHaveBeenCalledTimes(3));await vi.waitFor(()=>expect(store.getState().chats[0].messages).toHaveLength(0));expectLive(store)
 })
 
 it("retires a refresh when the clear event arrives during it and preserves the live token in its replacement", async ()=>{
   const store=harness(),held=deferred<HistoryResponse>()
-  const read=vi.spyOn(managedSessionsClient,"readBoundHistory").mockResolvedValueOnce(snapshot("original"))
+  const read=vi.spyOn(managedSessionsClient,"readBoundHistory").mockResolvedValueOnce(snapshot("original")).mockRejectedValueOnce(new Error("synthetic clear readback unavailable"))
     .mockReturnValueOnce(held.promise).mockResolvedValueOnce(snapshot(""))
   const {write,clear}=writeSetup();await open(store);const clearing=store.getState().clearConversation(id)
   await vi.waitFor(()=>expect(clear).toHaveBeenCalledOnce());live(store);write.resolve()
   await expect(clearing).rejects.toMatchObject({reason:"readback_failed"})
-  const refresh=store.getState().loadChatHistory(id,{mode:"monotonic"});await vi.waitFor(()=>expect(read).toHaveBeenCalledTimes(2))
-  store.getState().reconcileClearedConversation(id);await vi.waitFor(()=>expect(read).toHaveBeenCalledTimes(3))
+  const refresh=store.getState().loadChatHistory(id,{mode:"monotonic"});await vi.waitFor(()=>expect(read).toHaveBeenCalledTimes(3))
+  store.getState().reconcileClearedConversation(id);await vi.waitFor(()=>expect(read).toHaveBeenCalledTimes(4))
   await vi.waitFor(()=>expect(store.getState().chats[0].messages).toHaveLength(0))
   held.resolve(snapshot("late stale",1));await refresh;expectLive(store)
 })
 
 it("retains the event fence when a newer normal refresh supersedes its replacement read", async ()=>{
   const store=harness(),held=deferred<HistoryResponse>()
-  const read=vi.spyOn(managedSessionsClient,"readBoundHistory").mockResolvedValueOnce(snapshot("original"))
+  const read=vi.spyOn(managedSessionsClient,"readBoundHistory").mockResolvedValueOnce(snapshot("original")).mockRejectedValueOnce(new Error("synthetic clear readback unavailable"))
     .mockReturnValueOnce(held.promise).mockResolvedValueOnce(snapshot(""))
   const {write,clear}=writeSetup();await open(store);const clearing=store.getState().clearConversation(id)
   await vi.waitFor(()=>expect(clear).toHaveBeenCalledOnce());live(store);write.resolve()
   await expect(clearing).rejects.toMatchObject({reason:"readback_failed"})
-  store.getState().reconcileClearedConversation(id);await vi.waitFor(()=>expect(read).toHaveBeenCalledTimes(2))
+  store.getState().reconcileClearedConversation(id);await vi.waitFor(()=>expect(read).toHaveBeenCalledTimes(3))
   await store.getState().loadChatHistory(id,{mode:"monotonic",throwOnError:true})
-  expect(read).toHaveBeenCalledTimes(3);expectLive(store)
+  expect(read).toHaveBeenCalledTimes(4);expectLive(store)
   held.resolve(snapshot("late stale",1));await new Promise((resolve)=>setTimeout(resolve,0));expectLive(store)
 })
 
 it("does not mistake a snapshot's own cache writes for a new live token before the event", async ()=>{
-  const store=harness(),read=vi.spyOn(managedSessionsClient,"readBoundHistory").mockResolvedValueOnce(snapshot("original",5))
+  const store=harness(),read=vi.spyOn(managedSessionsClient,"readBoundHistory").mockResolvedValueOnce(snapshot("original",5)).mockRejectedValueOnce(new Error("synthetic clear readback unavailable"))
     .mockResolvedValueOnce(snapshot("original")).mockResolvedValueOnce(snapshot("original",20))
   const {write,clear}=writeSetup();await open(store);const clearing=store.getState().clearConversation(id)
   await vi.waitFor(()=>expect(clear).toHaveBeenCalledOnce());write.resolve();await expect(clearing).rejects.toMatchObject({reason:"readback_failed"})
   await store.getState().loadChatHistory(id,{mode:"monotonic",throwOnError:true});expect(store.getState().tokenUsages[id]).toBeUndefined()
   await store.getState().loadChatHistory(id,{mode:"monotonic",throwOnError:true})
-  expect(read).toHaveBeenCalledTimes(3);expect(store.getState().tokenUsages[id]?.totalTokens).toBe(20)
+  expect(read).toHaveBeenCalledTimes(4);expect(store.getState().tokenUsages[id]?.totalTokens).toBe(20)
 })
 
 it("never transfers a pending token fence to another target birth with the same ID", async ()=>{
-  const store=harness(),read=vi.spyOn(managedSessionsClient,"readBoundHistory").mockResolvedValueOnce(snapshot("original"))
+  const store=harness(),read=vi.spyOn(managedSessionsClient,"readBoundHistory").mockResolvedValueOnce(snapshot("original")).mockRejectedValueOnce(new Error("synthetic clear readback unavailable"))
     .mockResolvedValueOnce(snapshot("replacement",20))
   const {write,clear}=writeSetup();await open(store);const clearing=store.getState().clearConversation(id)
   await vi.waitFor(()=>expect(clear).toHaveBeenCalledOnce());live(store);write.resolve();await expect(clearing).rejects.toMatchObject({reason:"readback_failed"})
   const replacement={...selection,target:{...target,created_at:"2026-10-31T00:00:00Z"}}
-  await open(store,replacement);expect(read).toHaveBeenCalledTimes(2)
+  await open(store,replacement);expect(read).toHaveBeenCalledTimes(3)
   expect(store.getState().tokenUsages[id]?.totalTokens).toBe(20);expect(store.getState().truncationOccurred[id]).toBe(false)
 })
 
@@ -135,7 +135,7 @@ it("keeps the token fence after an unknown write until its later event", async (
 
 it("does not allow a refresh started before the write to publish afterwards", async ()=>{
   const store=harness(),held=deferred<HistoryResponse>()
-  const read=vi.spyOn(managedSessionsClient,"readBoundHistory").mockResolvedValueOnce(snapshot("original")).mockReturnValueOnce(held.promise)
+  const read=vi.spyOn(managedSessionsClient,"readBoundHistory").mockResolvedValueOnce(snapshot("original")).mockReturnValueOnce(held.promise).mockRejectedValueOnce(new Error("synthetic clear readback unavailable"))
   const {write,clear}=writeSetup();await open(store)
   const old=store.getState().loadChatHistory(id,{mode:"monotonic"});await vi.waitFor(()=>expect(read).toHaveBeenCalledTimes(2))
   const clearing=store.getState().clearConversation(id);await vi.waitFor(()=>expect(clear).toHaveBeenCalledOnce())
@@ -147,7 +147,7 @@ it("does not allow a refresh started before the write to publish afterwards", as
 })
 
 it.each(["usage","truncation"] as const)("preserves only the %s group updated during the write", async (group)=>{
-  const store=harness(),read=vi.spyOn(managedSessionsClient,"readBoundHistory").mockResolvedValueOnce(snapshot("original",5))
+  const store=harness(),read=vi.spyOn(managedSessionsClient,"readBoundHistory").mockResolvedValueOnce(snapshot("original",5)).mockRejectedValueOnce(new Error("synthetic clear readback unavailable"))
     .mockResolvedValueOnce(snapshot("original")).mockResolvedValueOnce(snapshot(""))
   const {write,clear}=writeSetup();await open(store);const clearing=store.getState().clearConversation(id)
   await vi.waitFor(()=>expect(clear).toHaveBeenCalledOnce())
@@ -156,14 +156,14 @@ it.each(["usage","truncation"] as const)("preserves only the %s group updated du
   await store.getState().loadChatHistory(id,{mode:"monotonic",throwOnError:true})
   expect(store.getState().tokenUsages[id]?.totalTokens).toBe(group==="usage" ? 99 : undefined)
   expect(store.getState().truncationOccurred[id]).toBe(group==="truncation" ? true : undefined)
-  store.getState().reconcileClearedConversation(id);await vi.waitFor(()=>expect(read).toHaveBeenCalledTimes(3))
+  store.getState().reconcileClearedConversation(id);await vi.waitFor(()=>expect(read).toHaveBeenCalledTimes(4))
   await vi.waitFor(()=>expect(store.getState().chats[0].messages).toHaveLength(0))
   expect(store.getState().tokenUsages[id]?.totalTokens).toBe(group==="usage" ? 99 : undefined)
   expect(store.getState().segmentsRemoved[id]).toBe(group==="truncation" ? 3 : undefined)
 })
 
 it("does not start a bound refresh while the clear request is still busy", async ()=>{
-  const store=harness(),read=vi.spyOn(managedSessionsClient,"readBoundHistory").mockResolvedValueOnce(snapshot("original"))
+  const store=harness(),read=vi.spyOn(managedSessionsClient,"readBoundHistory").mockResolvedValueOnce(snapshot("original")).mockRejectedValueOnce(new Error("synthetic clear readback unavailable"))
   const {write,clear}=writeSetup();await open(store);const clearing=store.getState().clearConversation(id)
   await vi.waitFor(()=>expect(clear).toHaveBeenCalledOnce())
   await expect(store.getState().loadChatHistory(id,{throwOnError:true})).rejects.toMatchObject({name:"AbortError"})
@@ -173,7 +173,7 @@ it("does not start a bound refresh while the clear request is still busy", async
 it("keeps the same fence through a metadata-only revalidation", async ()=>{
   const store=harness(),next=target.metadata_version+1
   const conflict=new ApiError("changed",409,"Conflict",JSON.stringify({code:"target_observation_stale"}))
-  const read=vi.spyOn(managedSessionsClient,"readBoundHistory").mockResolvedValueOnce(snapshot("original"))
+  const read=vi.spyOn(managedSessionsClient,"readBoundHistory").mockResolvedValueOnce(snapshot("original")).mockRejectedValueOnce(new Error("synthetic clear readback unavailable"))
     .mockRejectedValueOnce(conflict).mockResolvedValueOnce(snapshot("original"))
   const updated={...target,metadata_version:next}
   vi.spyOn(managedSessionsClient,"read").mockResolvedValue({...fixture,sessions:[{...fixture.sessions[0]!,target_metadata_version:next,current_user_target:updated}]})
@@ -181,12 +181,12 @@ it("keeps the same fence through a metadata-only revalidation", async ()=>{
   await vi.waitFor(()=>expect(clear).toHaveBeenCalledOnce());live(store);write.resolve()
   await expect(clearing).rejects.toMatchObject({reason:"readback_failed"})
   await store.getState().loadChatHistory(id,{mode:"monotonic",throwOnError:true})
-  expect(read).toHaveBeenCalledTimes(3);expectLive(store)
+  expect(read).toHaveBeenCalledTimes(4);expectLive(store)
   expect(store.getState().managedHistoryBindings[id].selection.target.metadata_version).toBe(next)
 })
 
 it("keeps the fence after a failed refresh and permits a fresh snapshot after event reconciliation", async ()=>{
-  const store=harness(),read=vi.spyOn(managedSessionsClient,"readBoundHistory").mockResolvedValueOnce(snapshot("original"))
+  const store=harness(),read=vi.spyOn(managedSessionsClient,"readBoundHistory").mockResolvedValueOnce(snapshot("original")).mockRejectedValueOnce(new Error("synthetic clear readback unavailable"))
     .mockRejectedValueOnce(new Error("synthetic read failure")).mockResolvedValueOnce(snapshot(""))
     .mockResolvedValueOnce(snapshot("",20))
   const {write,clear}=writeSetup();await open(store);const clearing=store.getState().clearConversation(id)
@@ -197,19 +197,19 @@ it("keeps the fence after a failed refresh and permits a fresh snapshot after ev
   expect(store.getState().truncationOccurred[id]).toBe(true);store.getState().reconcileClearedConversation(id)
   await vi.waitFor(()=>expect(store.getState().chats[0].messages).toHaveLength(0));expectLive(store)
   await store.getState().loadChatHistory(id,{mode:"monotonic",throwOnError:true})
-  expect(read).toHaveBeenCalledTimes(4);expect(store.getState().tokenUsages[id]?.totalTokens).toBe(20)
+  expect(read).toHaveBeenCalledTimes(5);expect(store.getState().tokenUsages[id]?.totalTokens).toBe(20)
 })
 
 it("retains the event-reload fence until a failed replacement read succeeds", async ()=>{
-  const store=harness(),read=vi.spyOn(managedSessionsClient,"readBoundHistory").mockResolvedValueOnce(snapshot("original"))
+  const store=harness(),read=vi.spyOn(managedSessionsClient,"readBoundHistory").mockResolvedValueOnce(snapshot("original")).mockRejectedValueOnce(new Error("synthetic clear readback unavailable"))
     .mockRejectedValueOnce(new Error("synthetic event read failure")).mockResolvedValueOnce(snapshot(""))
   vi.spyOn(console,"warn").mockImplementation(()=>{})
   const {write,clear}=writeSetup();await open(store);const clearing=store.getState().clearConversation(id)
   await vi.waitFor(()=>expect(clear).toHaveBeenCalledOnce());live(store);write.resolve()
   await expect(clearing).rejects.toMatchObject({reason:"readback_failed"})
-  store.getState().reconcileClearedConversation(id);await vi.waitFor(()=>expect(read).toHaveBeenCalledTimes(2))
+  store.getState().reconcileClearedConversation(id);await vi.waitFor(()=>expect(read).toHaveBeenCalledTimes(3))
   await vi.waitFor(()=>expect(console.warn).toHaveBeenCalled())
   expect(store.getState().tokenUsages[id]?.totalTokens).toBe(99)
   await store.getState().loadChatHistory(id,{mode:"monotonic",throwOnError:true})
-  expect(read).toHaveBeenCalledTimes(3);expectLive(store)
+  expect(read).toHaveBeenCalledTimes(4);expectLive(store)
 })

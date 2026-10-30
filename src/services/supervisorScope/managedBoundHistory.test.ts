@@ -57,3 +57,27 @@ it("does not treat an older or unsupported producer as an atomic history reader"
   await expect(revalidateManagedSelection(selected, () => true)).resolves.toBe(false)
   expect(apiClient.postOnce).not.toHaveBeenCalled()
 })
+
+
+it("requests complete clear evidence only for the explicit bound readback", async () => {
+  const response = { ...bound(), messages: [], is_delta: false, truncated: false,
+    bound_clear_evidence: { full_message_count: 0, execution_active: false, has_pending_question: false, has_pending_approval: false } }
+  vi.mocked(apiClient.postOnce).mockResolvedValue(response)
+  await expect(managedSessionsClient.readBoundHistory(select(), { clearReadback: true })).resolves.toEqual(response)
+  expect(apiClient.postOnce).toHaveBeenCalledExactlyOnceWith("supervisor/default/sessions/root-a/history",
+    { ...select(), clear_readback: true }, { cache: "no-store" })
+  expect(apiClient.get).not.toHaveBeenCalled()
+})
+
+it.each([
+  { bound_clear_evidence: undefined },
+  { bound_clear_evidence: { full_message_count: -1, execution_active: false, has_pending_question: false, has_pending_approval: false } },
+  { bound_clear_evidence: { full_message_count: 0, execution_active: null, has_pending_question: false, has_pending_approval: false } },
+  { is_delta: true }, { truncated: true }, { is_delta: undefined },
+  { current_user_target: { ...select().target, authority_sha256: "f".repeat(64) } },
+])("fails closed on incomplete or mismatched clear evidence %#", async (patch) => {
+  vi.mocked(apiClient.postOnce).mockResolvedValue({ ...bound(), messages: [], is_delta: false, truncated: false,
+    bound_clear_evidence: { full_message_count: 0, execution_active: false, has_pending_question: false, has_pending_approval: false }, ...patch })
+  await expect(managedSessionsClient.readBoundHistory(select(), { clearReadback: true })).rejects.toThrow()
+  expect(apiClient.get).not.toHaveBeenCalled()
+})
