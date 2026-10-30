@@ -88,6 +88,11 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
   const pendingClearRevisions = new Map<string, ClearTokenFence>();
   const acknowledgedClears = new Map<string, AppState["managedHistoryBindings"][string] | undefined>();
   const replacementRevisions = new Map<string, ClearTokenFence>();
+  const clearTokenFence = (sessionId: string, selection: ManagedSessionSelection | undefined,
+    sameIdentity?: (a: ManagedSessionSelection, b: ManagedSessionSelection) => boolean) =>
+    [pendingClearRevisions.get(sessionId), replacementRevisions.get(sessionId)]
+      .find((candidate) => candidate && (candidate.selection
+        ? selection && sameIdentity?.(candidate.selection, selection) : !selection));
   let navigationRevision = 0;
   const reconcileClear = (sessionId: string, newEvent: boolean) => {
     // An event has no revision. Fence work known at notification time, not
@@ -882,7 +887,8 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
     const request = {};
     reads.set(sessionId, request);
     const binding = get().managedHistoryBindings[sessionId];
-    const tokenRevision = options?.tokenRevision ?? tokenBudgetRevision(get, sessionId);
+    const readbackFence = binding ? undefined : clearTokenFence(sessionId, undefined);
+    const tokenRevision = options?.tokenRevision ?? readbackFence?.revision ?? tokenBudgetRevision(get, sessionId);
     const current = () => reads.get(sessionId) === request && get().managedHistoryBindings[sessionId] === binding;
     clearState(sessionId, { ...prior, busy: true });
     try {
@@ -1011,10 +1017,7 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
           // Clear replacement intent survives superseding monotonic reads and
           // failures. Read token state too: the live cache outranks list config.
           const afterClear = replacementRequired.has(sessionId);
-          const clearFence = [pendingClearRevisions.get(sessionId), afterClear ? replacementRevisions.get(sessionId) : undefined]
-            .find((candidate) => candidate && (candidate.selection
-              ? selection && managedModule!.sameManagedSelectionIdentity(candidate.selection, selection)
-              : !selection));
+          const clearFence = clearTokenFence(sessionId, selection, managedModule?.sameManagedSelectionIdentity);
           const tokenRevision = clearFence?.revision
             ?? (selection ? tokenRevisionAtStart : afterClear ? tokenBudgetRevision(get, sessionId) : { usage: 0, truncation: 0 });
           // A separately fetched ID-only detail could belong to a different

@@ -105,3 +105,20 @@ it("uses a newer clear's baseline when an earlier clear reload is still pending"
   finishOld(cleared);await new Promise((resolve)=>setTimeout(resolve,0))
   expect(store.getState().tokenUsages[id]?.totalTokens).toBe(20)
 })
+
+it.each(["before event","after failed event reload"] as const)("retains newer live state on explicit readback %s", async (timing) => {
+  const store=harness(),history=setup(),warn=vi.spyOn(console,"warn").mockImplementation(()=>{})
+  history.mockRejectedValueOnce(new Error("synthetic first readback failed"))
+  if(timing==="after failed event reload") history.mockRejectedValueOnce(new Error("synthetic event read failed"))
+  const clear=vi.spyOn(agentClient,"clearSession").mockResolvedValue(undefined)
+  await expect(store.getState().clearConversation(id)).rejects.toMatchObject({reason:"readback_failed"})
+  store.getState().updateTokenUsage(id,token(99));store.getState().setTruncationInfo(id,true,3)
+  if(timing==="after failed event reload") {
+    store.getState().reconcileClearedConversation(id);await vi.waitFor(()=>expect(warn).toHaveBeenCalled())
+  }
+  await store.getState().verifyConversationClear(id)
+  expect(store.getState().tokenUsages[id]?.totalTokens).toBe(99)
+  expect(store.getState().chats[0].config.tokenUsage?.totalTokens).toBe(99)
+  expect(store.getState().truncationOccurred[id]).toBe(true);expect(store.getState().segmentsRemoved[id]).toBe(3)
+  expect(store.getState().conversationClears[id].confirmed).toBe(true);expect(clear).toHaveBeenCalledOnce()
+})
