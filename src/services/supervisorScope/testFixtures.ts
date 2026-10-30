@@ -30,7 +30,7 @@ export const currentUserManagedSessionsFixture = (next_after: string | null = nu
     { session_id: "child-a", kind: "child", root_session_id: "root-a", parent_session_id: "root-a", project_id: "outside-legacy",
       created_at: "2026-10-27T00:01:00Z", metadata_version: 3, authority_sha256: "c".repeat(64), ancestry_sha256: "d".repeat(64) },
   ]
-  return { capabilities: { managed_sessions_http_v1: true, supervisor_current_user_scope_v1: true },
+  return { capabilities: { managed_sessions_http_v1: true, supervisor_current_user_scope_v1: true, current_user_bound_history_v1: true },
     scope: { ...httpScopeFixture().scope, state_revision: 4, allowed_projects: [] },
     owner_authorization: { available: true, required: true, kind: "existing_access", http_registration: false, code: null },
     management_access: { kind: "current_user", requires_session_attachment: false }, next_after,

@@ -32,6 +32,7 @@ function StateMessages({ controller }: { controller: Controller }) {
     {controller.notice ? <p role={controller.notice === "saved" ? "status" : "alert"} className="text-xs text-muted-foreground">{t(noticeKeys[controller.notice])}</p> : null}
     {controller.catalogError ? <p role="alert" className="text-xs text-muted-foreground">{t("supervisor_sessions_catalog_failed")}</p> : null}
     {controller.observation && !controller.observation.owner_authorization.available ? <p role="status" className="text-xs text-muted-foreground">{t("supervisor_scope_access_required")}</p> : null}
+    {controller.currentUser && controller.observation?.capabilities.current_user_bound_history_v1 !== true ? <p role="status" className="text-xs text-muted-foreground">{t("supervisor_sessions_bound_history_unsupported")}</p> : null}
   </>
 }
 function SessionLabel({ row }: { row: Row }) {
@@ -89,7 +90,7 @@ export function SupervisorManagedSessionsDialog({ open, onOpenChange, returnFocu
                   {!row.link?.authorized ? <Button size="sm" variant="outline" disabled={!controller.canManage || !row.canEnable || controller.catalogError}
                     onClick={() => controller.reviewTarget(row.session_id, true)}>{t(row.status === "reconfirm" ? "supervisor_sessions_reconfirm_action" : "supervisor_sessions_attach")}</Button> : null}
                   {row.link?.enabled ? <Button size="sm" variant="ghost" disabled={!controller.canManage} onClick={() => controller.reviewTarget(row.session_id, false)}>{t("supervisor_sessions_detach")}</Button> : null}
-                </div> : onOpenSession ? <Button size="sm" variant="ghost" disabled={opening || controller.loading || controller.loadingMore || !!controller.problem || !controller.observation?.owner_authorization.available}
+                </div> : onOpenSession ? <Button size="sm" variant="ghost" disabled={opening || controller.loading || controller.loadingMore || !!controller.problem || !controller.observation?.owner_authorization.available || controller.observation.capabilities.current_user_bound_history_v1 !== true}
                   onClick={() => { if (controller.observation) onOpenSession(row, controller.observation, controller.navigationGuard()) }}>{t("supervisor_sessions_open")}</Button> : null}
               </li>)}
             </ul>
@@ -118,7 +119,7 @@ export function SupervisorManagedSessionsPanel({ active, onSelectSession, depend
     if (openingRef.current) return
     const target = row.link?.current_user_target, panelCurrent = controller.navigationGuard(!sourceCurrent)
     const current = () => panelCurrent() && (!sourceCurrent || sourceCurrent())
-    if (!current() || observation.management_access && (!observation.owner_authorization.available || !target)) { setOpenFailed(true); return }
+    if (!current() || observation.management_access && (!observation.owner_authorization.available || !target || observation.capabilities.current_user_bound_history_v1 !== true)) { setOpenFailed(true); return }
     openingRef.current = true; setOpening(row.session_id); setOpenFailed(false)
     try {
       const result = target && observation.management_access
@@ -137,7 +138,7 @@ export function SupervisorManagedSessionsPanel({ active, onSelectSession, depend
     {controller.observation && !controller.loading && !rows.length ? <p className="mb-3 text-xs text-muted-foreground">{t(controller.currentUser ? "supervisor_sessions_current_user_empty" : controller.observation.scope.allowed_projects.length ? "supervisor_sessions_none_attached" : "supervisor_sessions_no_scope")}</p> : null}
     <ul className="max-h-64 space-y-3 overflow-y-auto">{rows.map((row) => <li key={row.session_id} className="flex items-center gap-2" data-managed-session={row.session_id}>
       <SessionLabel row={row} />
-      <Button size="sm" variant="ghost" disabled={opening !== null || controller.loading || controller.loadingMore || !!controller.problem || !controller.observation?.owner_authorization.available} onClick={() => { if (controller.observation) void openSession(row, controller.observation) }}>{t("supervisor_sessions_open")}</Button>
+      <Button size="sm" variant="ghost" disabled={opening !== null || controller.loading || controller.loadingMore || !!controller.problem || !controller.observation?.owner_authorization.available || !!controller.currentUser && controller.observation.capabilities.current_user_bound_history_v1 !== true} onClick={() => { if (controller.observation) void openSession(row, controller.observation) }}>{t("supervisor_sessions_open")}</Button>
     </li>)}</ul>
     {controller.currentUser && controller.nextAfter !== null ? <Button ref={paging.more} size="sm" variant="outline" disabled={controller.loadingMore || controller.loading} onClick={() => { paging.remember(); void controller.loadMore() }}>{t("supervisor_sessions_more")}</Button> : null}
     <Button ref={paging.fallback} variant="outline" size="sm" className="mt-3" onClick={() => setManaging(true)}>{t(controller.currentUser ? "supervisor_sessions_browse" : "supervisor_sessions_manage")}</Button>

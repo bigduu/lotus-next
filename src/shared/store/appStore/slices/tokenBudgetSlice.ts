@@ -10,16 +10,20 @@ export interface TokenBudgetState {
   segmentsRemoved: Record<string, number>;
 }
 
+/** A durable snapshot does not create a new live-event revision. */
+type TokenMutationOptions = { fromSnapshot?: boolean };
+
 export interface TokenBudgetActions {
-  updateTokenUsage: (sessionId: string, usage: TokenUsage) => void;
+  updateTokenUsage: (sessionId: string, usage: TokenUsage, options?: TokenMutationOptions) => void;
   setTruncationInfo: (
     sessionId: string,
     truncationOccurred: boolean,
     segmentsRemoved: number,
+    options?: TokenMutationOptions,
   ) => void;
   clearTokenUsage: (sessionId: string) => void;
-  clearTokenUsageValue: (sessionId: string) => void;
-  clearTruncationInfo: (sessionId: string) => void;
+  clearTokenUsageValue: (sessionId: string, options?: TokenMutationOptions) => void;
+  clearTruncationInfo: (sessionId: string, options?: TokenMutationOptions) => void;
 }
 
 export type TokenBudgetSlice = TokenBudgetState & TokenBudgetActions;
@@ -45,8 +49,8 @@ export const createTokenBudgetSlice: StateCreator<TokenBudgetSlice, [], [], Toke
   truncationOccurred: {},
   segmentsRemoved: {},
 
-  updateTokenUsage: (sessionId, usage) => {
-    advanceTokenBudgetRevision(get, sessionId, "usage");
+  updateTokenUsage: (sessionId, usage, options) => {
+    if (!options?.fromSnapshot) advanceTokenBudgetRevision(get, sessionId, "usage");
     set((state) => {
       const previous = state.tokenUsages[sessionId];
       let nextUsage = usage;
@@ -101,8 +105,8 @@ export const createTokenBudgetSlice: StateCreator<TokenBudgetSlice, [], [], Toke
     });
   },
 
-  setTruncationInfo: (sessionId, truncationOccurred, segmentsRemoved) => {
-    advanceTokenBudgetRevision(get, sessionId, "truncation");
+  setTruncationInfo: (sessionId, truncationOccurred, segmentsRemoved, options) => {
+    if (!options?.fromSnapshot) advanceTokenBudgetRevision(get, sessionId, "truncation");
     set((state) => ({
       truncationOccurred: {
         ...state.truncationOccurred,
@@ -115,16 +119,16 @@ export const createTokenBudgetSlice: StateCreator<TokenBudgetSlice, [], [], Toke
     }));
   },
 
-  clearTokenUsageValue: (sessionId) => {
-    advanceTokenBudgetRevision(get, sessionId, "usage");
+  clearTokenUsageValue: (sessionId, options) => {
+    if (!options?.fromSnapshot) advanceTokenBudgetRevision(get, sessionId, "usage");
     set((state) => {
       const { [sessionId]: _, ...tokenUsages } = state.tokenUsages;
       return { tokenUsages };
     });
   },
 
-  clearTruncationInfo: (sessionId) => {
-    advanceTokenBudgetRevision(get, sessionId, "truncation");
+  clearTruncationInfo: (sessionId, options) => {
+    if (!options?.fromSnapshot) advanceTokenBudgetRevision(get, sessionId, "truncation");
     set((state) => {
       const { [sessionId]: _, ...truncationOccurred } = state.truncationOccurred;
       const { [sessionId]: __, ...segmentsRemoved } = state.segmentsRemoved;

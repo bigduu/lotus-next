@@ -32,7 +32,7 @@ const deferred = <T,>() => {
   const promise = new Promise<T>((done) => { resolve = done })
   return { promise, resolve }
 }
-const history = (id: string, content: string): HistoryResponse => ({ session_id: id, messages: [
+const history = (id: string, content: string): HistoryResponse => ({ session_id: id, bound_token_usage: null, messages: [
   { id: `${id}-${content}`, role: "assistant", content, created_at: "2026-10-29T00:00:00Z" },
 ] })
 const summary = (id: string, createdAt = "2026-10-27T00:00:00Z"): SessionSummary => ({
@@ -54,6 +54,7 @@ async function setup() {
   const secondEntry = { ...entry, session_id: second.session_id, root_session_id: second.root_session_id, current_user_target: second }
   const page = { ...fixture, sessions: [entry, secondEntry] }
   const read = vi.spyOn(managedSessionsClient, "read").mockResolvedValue(page)
+  vi.spyOn(managedSessionsClient, "readBoundHistory").mockImplementation((selected) => agentClient.getHistory(selected.target.session_id))
   const select = vi.fn((id: string | null) => useAppStore.setState({ currentSessionId: id }))
   useAppStore.setState({ chats: [chat(supervisor), chat("target"), chat("second")], currentSessionId: supervisor,
     restoreSession: vi.fn().mockResolvedValue(true), selectSession: select, loadTaskList: vi.fn().mockResolvedValue(undefined) })
@@ -500,4 +501,25 @@ it("updates an existing Root's child count before opening and later hydrating a 
   await act(async () => { await useAppStore.getState().loadSubagentSessions("target", { force: true }) })
   expect(cached("target")?.messages[0]).toMatchObject({ content: "child" })
   expect(useAppStore.getState().currentSessionId).toBe("target")
+})
+
+
+it("opens managed history through the bound reader without the generic history fallback", async () => {
+  const { fixture, target } = await setup()
+  const bound = vi.mocked(managedSessionsClient.readBoundHistory).mockResolvedValue(history("target", "bound"))
+  const generic = vi.spyOn(agentClient, "getHistory")
+  await act(async () => { expect(await managed.select!("target", selection(fixture, target))).toBe(true) })
+  expect(bound).toHaveBeenCalledExactlyOnceWith(selection(fixture, target))
+  expect(generic).not.toHaveBeenCalled()
+  expect(cached("target")?.messages[0]).toMatchObject({ content: "bound" })
+})
+
+it("leaves navigation and cache untouched when the bound history request is refused", async () => {
+  const { fixture, target } = await setup()
+  vi.mocked(managedSessionsClient.readBoundHistory).mockRejectedValue(new Error("target changed"))
+  const generic = vi.spyOn(agentClient, "getHistory"), before = cached("target")
+  await act(async () => { await expect(managed.select!("target", selection(fixture, target))).rejects.toThrow("target changed") })
+  expect(generic).not.toHaveBeenCalled()
+  expect(cached("target")).toEqual(before)
+  expect(useAppStore.getState().currentSessionId).toBe(supervisor)
 })
