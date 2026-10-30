@@ -33,6 +33,8 @@ import { AssistantMarkdown } from "@/components/chat/AssistantMarkdown"
 import { Reasoning } from "@/components/chat/Reasoning"
 import { ToolCalls } from "@/components/chat/ToolCalls"
 import { ProcessActivity } from "@/components/chat/ProcessActivity"
+import { RuntimeNoticeCard, BackgroundExecWaitHint } from "@/components/chat/RuntimeNoticeCard"
+import { runtimeNoticeFromMetadata } from "@/components/chat/runtimeNotices"
 import { groupSubAgents } from "./subAgentGroups"
 import { SubAgents } from "@/components/chat/SubAgents"
 import { cn } from "@/lib/utils"
@@ -453,6 +455,7 @@ export function MessageList({
   streamingReasoning,
   liveSegments,
   streamStatus,
+  backgroundExecWaiting = false,
   pendingUserText,
   pendingUserImages = [],
   pendingUserMessages,
@@ -482,6 +485,9 @@ export function MessageList({
   streamingReasoning: string | null
   liveSegments: LiveSegment[]
   streamStatus: string | null
+  /** Execution-gated background-wait state from the chat pane: true only while
+   *  the run is actually suspended waiting on a monitored background command. */
+  backgroundExecWaiting?: boolean
   pendingUserText: string | null
   pendingUserImages?: readonly { url?: string; base64?: string; type?: string }[]
   pendingUserMessages?: readonly PendingUserMessageView[]
@@ -701,6 +707,11 @@ export function MessageList({
       m as { images?: Array<{ url?: string; base64?: string; type?: string }> }
     ).images
     const isUser = m.role === "user"
+    // Runtime-authored notices (e.g. background exec wait) render as a
+    // localized status card instead of their raw English machine text.
+    const runtimeNotice = !isUser
+      ? runtimeNoticeFromMetadata((m as { metadata?: Record<string, unknown> }).metadata, text)
+      : null
     const showMessageActions = !readOnly && !options?.live && !isCompletedAnswerHandoff(m) && (isUser || actionableAssistantIndexes.has(idx))
     // Truly empty (no text, no images, no reasoning) → skip the blank bubble.
     if (!text.trim() && !imgs?.length) return null
@@ -776,6 +787,8 @@ export function MessageList({
           {renderImages(imgs)}
           {isUser ? (
             <>{m.role === "user" && "inReplyTo" in m && m.inReplyTo ? <div className="mb-1 text-xs" data-testid="message-request-reference">{uiText("ticket_referenced_request__7209ca36")}{m.inReplyTo}</div> : null}{text}</>
+          ) : runtimeNotice ? (
+            <RuntimeNoticeCard notice={runtimeNotice} />
           ) : text.trim() ? (
             <AssistantMarkdown isStreaming={Boolean(it.streaming)} onPreviewImage={onPreviewImage}>{text}</AssistantMarkdown>
           ) : null}
@@ -857,6 +870,14 @@ export function MessageList({
             {renderItem(item, index, { live: true })}
           </Fragment>
         ))}
+
+        {/* While the chat pane confirms a live background-exec wait (suspended
+            run + wait notice still latest), keep a visible running hint instead
+            of an abruptly idle transcript. Execution-gated so a cancelled or
+            errored run never leaves a stale spinner behind. */}
+        {!streaming && backgroundExecWaiting ? (
+          <BackgroundExecWaitHint className="px-1 py-1" />
+        ) : null}
       </div>
     </div>
   )

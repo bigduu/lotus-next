@@ -1,4 +1,5 @@
 import { LiveBootstrapRetryNotice } from "@/components/chat/LiveBootstrapRetryNotice"
+import { backgroundExecWaitActive } from "@/components/chat/runtimeNotices"
 import { useLiveBootstrapRetry } from "@/hooks/useLiveBootstrapRetry"
 import { useSessionDrop } from "@/hooks/useSessionDrop"
 import type { ComposerInputHandle } from "@/components/chat/ComposerEditor"
@@ -287,7 +288,17 @@ export function ChatPane({
   // scoped to the session rendered by this pane.  Do not let a run from the
   // session we just left turn a blank/new conversation into a Stop button.
   const executionBlocked = chat.executionCompatibility?.blocked === true
-  const currentlyRunning = currentChat?.isRunning === true || (sending && streaming !== null)
+  // A background-exec wait keeps the run live from the user's perspective: the
+  // runtime suspended the session while the monitored command still executes,
+  // and its result returns automatically. Keep the running presentation until
+  // the completion injection resumes the run (is_running flips back true) or
+  // the transcript grows past the wait notice.
+  const backgroundExecWaiting = currentChat?.lastRunStatus === "suspended"
+    && currentChat?.isRunning !== true
+    && backgroundExecWaitActive(
+      (currentChat?.messages ?? []).map((m) => ({ metadata: (m as { metadata?: { runtime_kind?: unknown } }).metadata, content: "content" in m ? m.content : undefined })),
+    )
+  const currentlyRunning = currentChat?.isRunning === true || (sending && streaming !== null) || backgroundExecWaiting
   const visibleSendFailure = sendFailure?.sessionId === currentSessionId ? sendFailure : null
   const persistedRunError = !visibleSendFailure
     && !currentlyRunning
@@ -1231,6 +1242,7 @@ export function ChatPane({
           streamingReasoning={streamingReasoning}
           liveSegments={liveSegments}
           streamStatus={streamStatus}
+          backgroundExecWaiting={backgroundExecWaiting}
           pendingUserText={pendingUserText}
           pendingUserImages={pendingUserImages}
           pendingUserMessages={pendingUserMessages}

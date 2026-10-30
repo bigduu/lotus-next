@@ -316,17 +316,28 @@ export const mapHistoryMessagesToUi = (
         continue;
       }
 
-      const metadata =
-        typeof msg.reasoning === "string" && msg.reasoning.trim().length > 0
-          ? { reasoning: msg.reasoning }
+      // Runtime-authored notices carry identifying metadata (e.g.
+      // `runtime_kind: "background_exec_wait"` + `exec_session_id`) that the
+      // message renderer needs to present a localized status card instead of
+      // the raw English machine text. Pass the backend metadata through
+      // alongside the optional reasoning.
+      const runtimeMetadata =
+        msg.metadata && typeof msg.metadata === "object" && !Array.isArray(msg.metadata)
+          ? msg.metadata
           : {};
+      const metadata: AssistantTextMessage["metadata"] = {
+        ...runtimeMetadata,
+        ...(typeof msg.reasoning === "string" && msg.reasoning.trim().length > 0
+          ? { reasoning: msg.reasoning }
+          : {}),
+      };
       const asst: AssistantTextMessage = {
         role: "assistant",
         type: "text",
         id: msg.id,
         createdAt,
         content: msg.content || "",
-        metadata,
+        metadata: Object.keys(metadata).length ? metadata : undefined,
         isCompressed: Boolean(msg.compressed),
         compressedEventId: msg.compressed_by_event_id,
       };
