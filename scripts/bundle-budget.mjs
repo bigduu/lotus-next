@@ -28,7 +28,16 @@ export const BUNDLE_BASELINE = Object.freeze({
 // ceilings. No optional renderer/Settings ownership boundary is relaxed.
 export const BUNDLE_BUDGET = Object.freeze({
   javascriptRawBytes: 1_900_000,
-  javascriptGzipBytes: 590_000,
+  // 2026-10-31: the sidebar worktree-state badge (#503) adds a per-row checkout
+  // indicator. Measured startup gzip moves 589,414 -> 590,044 (+630, 0.107%),
+  // and the ceiling rises only by the minimum 100 bytes that clears it. The
+  // increment was already minimised in the change itself: its three states share
+  // one element tree, its copy reuses existing utility classes, and no new
+  // runtime dependency was added. Making the badge lazily loaded was measured and
+  // reverted — it cost startup bytes rather than saving them.
+  // The CSS ceilings below are untouched: the badge only reuses classes the
+  // composed build already emits.
+  javascriptGzipBytes: 590_100,
   minimumRawReduction: 0.02,
   minimumGzipReduction: -0.04,
   // Preserve #254's accepted CSS ceilings, verified by the composed build above.

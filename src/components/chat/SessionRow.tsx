@@ -146,19 +146,11 @@ export function SessionRow({
         )}
         <span className="truncate">{chat.title || uiText("new_session_c57c30bc")}</span>
       </button>
-      {mergeState ? (
-        <span
-          className={cn(
-            "mr-0.5 shrink-0",
-            // A muted state is ambient information: reveal it on hover/focus so
-            // ordinary rows stay quiet, but never hide a real signal.
-            (mergeState.state === "primary" || mergeState.state === "unknown")
-              && "opacity-0 group-hover/row:opacity-100 group-focus-within/row:opacity-100 feedback-motion transition-opacity",
-          )}
-        >
-          <WorktreeStateBadge merge={mergeState} running={chat.isRunning} />
-        </span>
-      ) : null}
+      {/* A muted state is ambient: revealed on hover/focus so ordinary rows stay
+          quiet, while a real signal is always visible. */}
+      {mergeState ? <span className={mergeState.state === "merged" || mergeState.state === "in_progress" ? undefined : "opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity"}>
+        <WorktreeStateBadge merge={mergeState} running={chat.isRunning} />
+      </span> : null}
       {dragHandle}
       {unread && <span id={unreadDescriptionId} className="sr-only">{uiText("unread_messages_519491f4")}</span>}
 

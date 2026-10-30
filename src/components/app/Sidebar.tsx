@@ -157,11 +157,9 @@ export function Sidebar({
 
   // One merge-state load per Project, shared by every row: a sidebar with many
   // sessions in one repository must not issue one inventory request per row.
-  const mergeProjectIds = useMemo(
-    () => [...new Set(rootChats.map((chat) => chat.config?.projectId?.trim()).filter((id): id is string => !!id))],
-    [rootChats],
+  const mergeStates = useWorktreeMergeStates(
+    rootChats.map((chat) => chat.config?.projectId?.trim()).filter((id): id is string => !!id),
   )
-  const mergeStates = useWorktreeMergeStates(mergeProjectIds)
   const groups = useMemo(() => {
     // Only root sessions in the sidebar — child sub-agent sessions live in the
     // inspector's sub-agents panel, not as top-level chats.
