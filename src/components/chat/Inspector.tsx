@@ -366,10 +366,13 @@ export function Inspector({
                   && useAppStore.getState().getSessionNavigationRevision() === revision
                   && (!directoryCurrent || directoryCurrent())
                 let verify: (() => Promise<boolean>) | undefined
+                let readBoundHistory: (() => Promise<import("@services/chat/AgentService").HistoryResponse>) | undefined
                 if (selection) {
                   if (selection.target.session_id !== id) return false
-                  const { revalidateManagedSelection } = await import("@services/supervisorScope/managedSessions")
-                  verify = () => revalidateManagedSelection(selection, current)
+                  const selected = selection
+                  const { managedSessionsClient, revalidateManagedSelection } = await import("@services/supervisorScope/managedSessions")
+                  verify = () => revalidateManagedSelection(selected, current)
+                  readBoundHistory = () => managedSessionsClient.readBoundHistory(selected)
                   if (!current() || !await verify()) return false
                 }
                 let stagedSessions: SessionSummary[] | undefined
@@ -426,6 +429,7 @@ export function Inspector({
                     throwOnError: true,
                     ...(stagedSessions ? { stagedSessions } : {}),
                     ...(verify ? {
+                      readHistory: readBoundHistory,
                       beforeApply: async () => current() && matchesCached() && Boolean(await verify?.()),
                       canApply: () => current() && matchesCached(),
                       selectOnApply: true,

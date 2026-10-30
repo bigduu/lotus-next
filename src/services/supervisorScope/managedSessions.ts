@@ -1,5 +1,5 @@
 import { apiClient, isApiError } from "@services/api"
-import { agentClient } from "@services/chat/AgentService"
+import { agentClient, type HistoryResponse } from "@services/chat/AgentService"
 import { projectId, safeRevision, sameSupervisor, scopeProblem } from "./client"
 import type { ScopeProblem, SupervisorReference } from "./types"
 
@@ -39,7 +39,7 @@ export interface LegacyManagedLink {
   readonly target_metadata_version: number
 }
 export interface ManagedSessionsResponse {
-  readonly capabilities: { readonly managed_sessions_http_v1: true; readonly supervisor_current_user_scope_v1?: true }
+  readonly capabilities: { readonly managed_sessions_http_v1: true; readonly supervisor_current_user_scope_v1?: true; readonly current_user_bound_history_v1?: boolean }
   readonly scope: { readonly supervisor: SupervisorReference; readonly state_revision: number; readonly allowed_projects: readonly string[] }
   readonly sessions: readonly ManagedSessionLink[]
   readonly management_access?: { readonly kind: "current_user"; readonly requires_session_attachment: false }
@@ -112,6 +112,7 @@ export function decodeManagedSessions(value: unknown): ManagedSessionsResponse {
     || !Array.isArray(projects) || projects.length > 64 || !projects.every(projectId) || new Set(projects).size !== projects.length
     || caps?.managed_sessions_http_v1 !== true || !Array.isArray(links) || links.length > 256
     || typeof owner?.available !== "boolean" || owner.required !== true || owner.kind !== "existing_access" || owner.http_registration !== false || owner.code !== null) return invalid()
+  if (caps.current_user_bound_history_v1 !== undefined && typeof caps.current_user_bound_history_v1 !== "boolean") return invalid()
   const management = record(body?.management_access)
   if (management || caps.supervisor_current_user_scope_v1 !== undefined) {
     if (management?.kind !== "current_user" || management.requires_session_attachment !== false || caps.supervisor_current_user_scope_v1 !== true
@@ -129,7 +130,8 @@ export function decodeManagedSessions(value: unknown): ManagedSessionsResponse {
         target_project_id: link.target_project_id, target_metadata_version: link.target_metadata_version }]
     }))
     return { scope: { supervisor: { ...scope.supervisor }, state_revision: scope.state_revision, allowed_projects: [...projects].sort() },
-      capabilities: { managed_sessions_http_v1: true, supervisor_current_user_scope_v1: true },
+      capabilities: { managed_sessions_http_v1: true, supervisor_current_user_scope_v1: true,
+        ...(caps.current_user_bound_history_v1 !== undefined ? { current_user_bound_history_v1: caps.current_user_bound_history_v1 } : {}) },
       owner_authorization: { available: owner.available, required: true, kind: "existing_access", http_registration: false, code: null },
       management_access: { kind: "current_user", requires_session_attachment: false }, sessions,
       next_after: body.next_after as string | null, legacy_links: legacy }
@@ -167,7 +169,32 @@ export function managedSessionsProblem(error: unknown): ScopeProblem {
   if (isApiError(error) && error.status === 501) return { kind: "unsupported" }
   return scopeProblem(error)
 }
+function decodedTarget(value: unknown): CurrentUserSessionTarget {
+  const target = record(value)
+  if (!target) return invalid()
+  const row = currentUserEntry({ session_id: target.session_id, link_revision: 0, enabled: true, authorized: true, authorization_error: null,
+    target_created_at: target.created_at, target_project_id: target.project_id, target_metadata_version: target.metadata_version,
+    kind: target.kind, root_session_id: target.root_session_id, parent_session_id: target.parent_session_id, current_user_target: target })
+  return row.current_user_target!
+}
+const sameTarget = (a: CurrentUserSessionTarget, b: CurrentUserSessionTarget): boolean =>
+  a.session_id === b.session_id && a.created_at === b.created_at && a.kind === b.kind
+  && a.root_session_id === b.root_session_id && a.parent_session_id === b.parent_session_id
+  && a.project_id === b.project_id && a.metadata_version === b.metadata_version
+  && a.authority_sha256 === b.authority_sha256 && a.ancestry_sha256 === b.ancestry_sha256
+
 export const managedSessionsClient = {
+  /** The producer binds identity and history under one canonical storage read. */
+  async readBoundHistory(selection: ManagedSessionSelection): Promise<HistoryResponse> {
+    if (!reference(selection.supervisor) || !sameTarget(selection.target, decodedTarget(selection.target))) return invalid()
+    const result = record(await apiClient.postOnce<unknown>(
+      `supervisor/default/sessions/${encodeURIComponent(selection.target.session_id)}/history`, selection, { cache: "no-store" },
+    ))
+    if (!result || result.session_id !== selection.target.session_id || !reference(result.supervisor)
+      || !sameSupervisor(result.supervisor, selection.supervisor) || !sameTarget(decodedTarget(result.current_user_target), selection.target)
+      || (result.history_snapshot_source !== "durable" && result.history_snapshot_source !== "matched_cache") || !Array.isArray(result.messages)) return invalid()
+    return result as unknown as HistoryResponse
+  },
   async read(signal?: AbortSignal, page?: ManagedSessionsQuery) {
     const params = new URLSearchParams()
     if (page) {
@@ -223,13 +250,10 @@ export async function revalidateManagedSelection(selection: ManagedSessionSelect
   const seen = new Set<string>()
   while (current()) {
     const page = await managedSessionsClient.read(undefined, { query, limit: 20, ...(after ? { after } : {}) })
-    if (!current() || page.management_access?.kind !== "current_user" || !page.owner_authorization.available
+    if (!current() || page.management_access?.kind !== "current_user" || page.capabilities.current_user_bound_history_v1 !== true || !page.owner_authorization.available
       || !sameSupervisor(supervisor, page.scope.supervisor)) return false
     const found = page.sessions.find((entry) => entry.session_id === target.session_id)?.current_user_target
-    if (found) return found.session_id === target.session_id && found.created_at === target.created_at && found.kind === target.kind
-      && found.root_session_id === target.root_session_id && found.parent_session_id === target.parent_session_id
-      && found.project_id === target.project_id && found.metadata_version === target.metadata_version
-      && found.authority_sha256 === target.authority_sha256 && found.ancestry_sha256 === target.ancestry_sha256
+    if (found) return sameTarget(found, target)
     if (!page.next_after || seen.has(page.next_after)) return false
     seen.add(page.next_after); after = page.next_after
   }

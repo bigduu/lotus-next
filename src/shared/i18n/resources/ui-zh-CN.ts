@@ -2815,6 +2815,7 @@ export const uiZhCn = {
   "supervisor_sessions_catalog_failed": "无法读取会话摘要。当前管理关系仍会显示；刷新成功后可添加会话。",
   "supervisor_sessions_auxiliary": "辅助子代理",
   "supervisor_sessions_unverified": "无法验证",
+  "supervisor_sessions_bound_history_unsupported": "此 Bamboo 版本无法验证受管理会话的历史。请更新 Bamboo 后在此打开；普通会话导航仍可使用。",
   "supervisor_sessions_open_failed": "无法打开此会话，请刷新当前状态后重试。",
   "session_migration_action": "迁移到当前版本",
   "session_migration_preserves_context": "保留当前会话、历史、模型、工作区和权限；仅在会话空闲时迁移。",
