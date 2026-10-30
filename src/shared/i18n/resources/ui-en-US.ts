@@ -506,6 +506,12 @@ export const uiEnUs = {
   "message_queue_interject": "Interjection queued · before the next response",
 
   "worktrees_title": "Worktrees",
+  // Sidebar checkout badge; `{{base}}` is the branch the verdict refers to.
+  // An unknown state must never read as a proven merge.
+  "worktree_state_merged": "Merged into {{base}}",
+  "worktree_state_in_progress": "Unmerged vs. {{base}}",
+  "worktree_state_primary": "Project checkout",
+  "worktree_state_unknown": "Merge target unreadable",
   "worktrees_description": "Manage repository checkouts and open one for a new session.",
   "worktrees_global_root": "Default worktree directory",
   "worktrees_root_hint": "Choose an existing directory on the backend host. Changes apply to worktrees created here; existing checkouts stay in place. An unavailable directory returns an error.",
