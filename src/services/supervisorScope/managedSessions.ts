@@ -29,6 +29,7 @@ export interface CurrentUserSessionTarget {
   readonly metadata_version: number
   readonly project_id: string | null
 }
+export interface ManagedSessionSelection { readonly supervisor: SupervisorReference; readonly target: CurrentUserSessionTarget }
 export interface ManagedSessionsQuery { readonly query?: string; readonly after?: string; readonly limit?: number }
 export interface LegacyManagedLink {
   readonly revision: number
@@ -203,4 +204,26 @@ export const managedSessionsClient = {
     }))
     return decodeManagedSessionReceipt(response?.receipt, intent)
   },
+}
+
+
+/** Re-read the observed directory identity before opening it; this is not an atomic history read or an access grant. */
+export async function revalidateManagedSelection(selection: ManagedSessionSelection, current: () => boolean): Promise<boolean> {
+  const { target, supervisor } = selection
+  // The producer bounds directory queries in UTF-8 bytes, not JavaScript code units.
+  if (new TextEncoder().encode(target.session_id).length > 128) return false
+  let after: string | undefined
+  for (let pageIndex = 0; pageIndex < 20 && current(); pageIndex++) {
+    const page = await managedSessionsClient.read(undefined, { query: target.session_id, limit: 20, ...(after ? { after } : {}) })
+    if (!current() || page.management_access?.kind !== "current_user" || !page.owner_authorization.available
+      || !sameSupervisor(supervisor, page.scope.supervisor)) return false
+    const found = page.sessions.find((entry) => entry.session_id === target.session_id)?.current_user_target
+    if (found) return found.session_id === target.session_id && found.created_at === target.created_at && found.kind === target.kind
+      && found.root_session_id === target.root_session_id && found.parent_session_id === target.parent_session_id
+      && found.project_id === target.project_id && found.metadata_version === target.metadata_version
+      && found.authority_sha256 === target.authority_sha256 && found.ancestry_sha256 === target.ancestry_sha256
+    if (!page.next_after || page.next_after === after) return false
+    after = page.next_after
+  }
+  return false
 }

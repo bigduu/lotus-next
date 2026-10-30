@@ -1,13 +1,24 @@
-import { useRef, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { RefreshCw } from "lucide-react"
 import { useUiText } from "@shared/i18n/ui"
 import { useSupervisorManagedSessions, type ManagedSessionsDependencies } from "@/hooks/useSupervisorManagedSessions"
+import type { ManagedSessionSelection, ManagedSessionsResponse } from "@services/supervisorScope/managedSessions"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { SupervisorProjectScopeDialog } from "./SupervisorProjectScopeDialog"
 
 type Controller = ReturnType<typeof useSupervisorManagedSessions>
 type Row = Controller["rows"][number]
+function usePagingFocus(loading: boolean, cursor: string | number | null) {
+  const more = useRef<HTMLButtonElement>(null), fallback = useRef<HTMLButtonElement>(null), pending = useRef<HTMLButtonElement | null>(null)
+  useEffect(() => {
+    const previous = pending.current
+    if (!previous || loading) return
+    pending.current = null
+    if (!previous.isConnected && document.activeElement === document.body) fallback.current?.focus()
+  }, [loading, cursor])
+  return { more, fallback, remember: () => { pending.current = document.activeElement === more.current ? more.current : null } }
+}
 const statusKeys = { current_user: "supervisor_sessions_current_user_status", authorized: "supervisor_sessions_authorized", reconfirm: "supervisor_sessions_reconfirm", detached: "supervisor_sessions_detached", available: "supervisor_sessions_available", unavailable: "supervisor_sessions_unverified" } as const
 const problemKeys = { unsupported: "supervisor_sessions_unsupported", missing: "supervisor_sessions_missing", authentication: "supervisor_scope_access_required", forbidden: "supervisor_scope_forbidden",
   conflict: "supervisor_sessions_conflict", unavailable: "supervisor_sessions_unavailable", invalid: "supervisor_sessions_invalid", error: "supervisor_sessions_unavailable" } as const
@@ -32,10 +43,12 @@ function SessionLabel({ row }: { row: Row }) {
     {row.summary?.model ? <p className="text-xs text-muted-foreground">{t("supervisor_sessions_model", { model: row.summary.model })}</p> : null}
   </div>
 }
-export function SupervisorManagedSessionsDialog({ open, onOpenChange, returnFocus, dependencies }: {
+export function SupervisorManagedSessionsDialog({ open, onOpenChange, returnFocus, dependencies, onOpenSession, opening = false, openFailed = false }: {
   open: boolean; onOpenChange: (open: boolean) => void; returnFocus?: () => void; dependencies?: ManagedSessionsDependencies
+  onOpenSession?: (row: Row, observation: ManagedSessionsResponse) => void; opening?: boolean; openFailed?: boolean
 }) {
   const t = useUiText(), controller = useSupervisorManagedSessions(open, dependencies)
+  const paging = usePagingFocus(controller.loadingMore, controller.nextAfter ?? controller.nextOffset)
   const [scopeOpen, setScopeOpen] = useState(false)
   const scopeTrigger = useRef<HTMLButtonElement>(null)
   const scopeClosing = useRef(false)
@@ -58,6 +71,7 @@ export function SupervisorManagedSessionsDialog({ open, onOpenChange, returnFocu
         <DialogHeader><DialogTitle>{t("supervisor_sessions_title")}</DialogTitle><DialogDescription>{t(controller.currentUser ? "supervisor_sessions_current_user_description" : "supervisor_sessions_description")}</DialogDescription></DialogHeader>
         <div className="space-y-3" data-testid="supervisor-managed-sessions">
           <StateMessages controller={controller} />
+          {openFailed ? <p role="alert" className="text-xs text-destructive">{t("supervisor_sessions_open_failed")}</p> : null}
           <Button ref={scopeTrigger} variant="outline" size="sm" disabled={controller.submitting} onClick={() => { controller.cancelReview(); setScopeOpen(true) }}>{t(controller.currentUser ? "supervisor_scope_current_user_title" : "supervisor_scope_title")}</Button>
           {controller.currentUser ? <p className="text-xs text-muted-foreground">{t("supervisor_sessions_legacy_links", { count: Object.keys(controller.observation?.legacy_links ?? {}).length })}</p>
             : controller.observation?.scope.allowed_projects.length === 0 ? <p className="text-xs text-muted-foreground">{t("supervisor_sessions_no_scope")}</p> : null}
@@ -75,14 +89,15 @@ export function SupervisorManagedSessionsDialog({ open, onOpenChange, returnFocu
                   {!row.link?.authorized ? <Button size="sm" variant="outline" disabled={!controller.canManage || !row.canEnable || controller.catalogError}
                     onClick={() => controller.reviewTarget(row.session_id, true)}>{t(row.status === "reconfirm" ? "supervisor_sessions_reconfirm_action" : "supervisor_sessions_attach")}</Button> : null}
                   {row.link?.enabled ? <Button size="sm" variant="ghost" disabled={!controller.canManage} onClick={() => controller.reviewTarget(row.session_id, false)}>{t("supervisor_sessions_detach")}</Button> : null}
-                </div> : null}
+                </div> : onOpenSession ? <Button size="sm" variant="ghost" disabled={opening || controller.loading || !!controller.problem || !controller.observation?.owner_authorization.available}
+                  onClick={() => { if (controller.observation) onOpenSession(row, controller.observation) }}>{t("supervisor_sessions_open")}</Button> : null}
               </li>)}
             </ul>
-            {controller.nextOffset !== null || controller.nextAfter !== null ? <Button size="sm" variant="outline" disabled={controller.loadingMore || controller.loading || controller.submitting} onClick={() => void controller.loadMore()}>{t("supervisor_sessions_more")}</Button> : null}
+            {controller.nextOffset !== null || controller.nextAfter !== null ? <Button ref={paging.more} size="sm" variant="outline" disabled={controller.loadingMore || controller.loading || controller.submitting} onClick={() => { paging.remember(); void controller.loadMore() }}>{t("supervisor_sessions_more")}</Button> : null}
           </>}
         </div>
         <DialogFooter>
-          <Button variant="outline" disabled={controller.loading || controller.submitting} onClick={() => void controller.refresh()}>{t("supervisor_scope_refresh")}</Button>
+          <Button ref={paging.fallback} variant="outline" disabled={controller.loading || controller.submitting} onClick={() => void controller.refresh()}>{t("supervisor_scope_refresh")}</Button>
           <Button variant="outline" disabled={controller.submitting} onClick={() => onOpenChange(false)}>{t("supervisor_scope_close")}</Button>
         </DialogFooter>
       </DialogContent>
@@ -91,19 +106,26 @@ export function SupervisorManagedSessionsDialog({ open, onOpenChange, returnFocu
   </>
 }
 export function SupervisorManagedSessionsPanel({ active, onSelectSession, dependencies }: {
-  active: boolean; onSelectSession: (id: string) => void | Promise<boolean>; dependencies?: ManagedSessionsDependencies
+  active: boolean; onSelectSession: (id: string, selection?: ManagedSessionSelection) => void | Promise<boolean>; dependencies?: ManagedSessionsDependencies
 }) {
   const t = useUiText(), controller = useSupervisorManagedSessions(active, dependencies)
+  const paging = usePagingFocus(controller.loadingMore, controller.nextAfter ?? controller.nextOffset)
   const [managing, setManaging] = useState(false)
   const [opening, setOpening] = useState<string | null>(null), [openFailed, setOpenFailed] = useState(false)
-  const trigger = useRef<HTMLButtonElement>(null)
+  const openingRef = useRef(false)
   const rows = controller.rows.filter((row) => !!row.link)
-  const openSession = async (id: string) => {
-    if (opening) return
-    setOpening(id); setOpenFailed(false)
-    try { if (await onSelectSession(id) === false) setOpenFailed(true) }
-    catch { setOpenFailed(true) }
-    finally { setOpening(null) }
+  const openSession = async (row: Row, observation: ManagedSessionsResponse) => {
+    if (openingRef.current) return
+    const target = row.link?.current_user_target
+    if (observation.management_access && (!observation.owner_authorization.available || !target)) { setOpenFailed(true); return }
+    openingRef.current = true; setOpening(row.session_id); setOpenFailed(false)
+    try {
+      const result = target && observation.management_access
+        ? await onSelectSession(row.session_id, { target, supervisor: observation.scope.supervisor })
+        : await onSelectSession(row.session_id)
+      if (result === false) setOpenFailed(true)
+    } catch { setOpenFailed(true) }
+    finally { openingRef.current = false; setOpening(null) }
   }
   return <section className="rounded-lg border p-3" data-testid="supervisor-managed-panel" aria-busy={controller.loading}>
     <div className="mb-2 flex items-center justify-between gap-2"><h3 className="text-sm font-medium">{t("supervisor_sessions_title")}</h3>
@@ -114,10 +136,10 @@ export function SupervisorManagedSessionsPanel({ active, onSelectSession, depend
     {controller.observation && !controller.loading && !rows.length ? <p className="mb-3 text-xs text-muted-foreground">{t(controller.currentUser ? "supervisor_sessions_current_user_empty" : controller.observation.scope.allowed_projects.length ? "supervisor_sessions_none_attached" : "supervisor_sessions_no_scope")}</p> : null}
     <ul className="max-h-64 space-y-3 overflow-y-auto">{rows.map((row) => <li key={row.session_id} className="flex items-center gap-2" data-managed-session={row.session_id}>
       <SessionLabel row={row} />
-      <Button size="sm" variant="ghost" disabled={opening !== null} onClick={() => void openSession(row.session_id)}>{t("supervisor_sessions_open")}</Button>
+      <Button size="sm" variant="ghost" disabled={opening !== null || !!controller.problem || !controller.observation?.owner_authorization.available} onClick={() => { if (controller.observation) void openSession(row, controller.observation) }}>{t("supervisor_sessions_open")}</Button>
     </li>)}</ul>
-    {controller.currentUser && controller.nextAfter !== null ? <Button size="sm" variant="outline" disabled={controller.loadingMore || controller.loading} onClick={() => void controller.loadMore()}>{t("supervisor_sessions_more")}</Button> : null}
-    <Button ref={trigger} variant="outline" size="sm" className="mt-3" onClick={() => setManaging(true)}>{t(controller.currentUser ? "supervisor_sessions_browse" : "supervisor_sessions_manage")}</Button>
-    {managing ? <SupervisorManagedSessionsDialog open dependencies={dependencies} onOpenChange={(next) => { setManaging(next); if (!next) void controller.refresh() }} returnFocus={() => trigger.current?.focus()} /> : null}
+    {controller.currentUser && controller.nextAfter !== null ? <Button ref={paging.more} size="sm" variant="outline" disabled={controller.loadingMore || controller.loading} onClick={() => { paging.remember(); void controller.loadMore() }}>{t("supervisor_sessions_more")}</Button> : null}
+    <Button ref={paging.fallback} variant="outline" size="sm" className="mt-3" onClick={() => setManaging(true)}>{t(controller.currentUser ? "supervisor_sessions_browse" : "supervisor_sessions_manage")}</Button>
+    {managing ? <SupervisorManagedSessionsDialog open dependencies={dependencies} onOpenSession={openSession} opening={opening !== null} openFailed={openFailed} onOpenChange={(next) => { setManaging(next); if (!next) void controller.refresh() }} returnFocus={() => paging.fallback.current?.focus()} /> : null}
   </section>
 }

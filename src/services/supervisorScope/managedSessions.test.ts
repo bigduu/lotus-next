@@ -1,7 +1,7 @@
 import { expect, it, vi } from "vitest"
 import { apiClient, ApiError } from "@services/api"
 import { agentClient } from "@services/chat/AgentService"
-import { canWriteManagedSessions, decodeManagedSessionReceipt, decodeManagedSessions, managedSessionsClient, managedSessionsProblem, type ManagedSessionIntent, type ManagedSessionsResponse } from "./managedSessions"
+import { canWriteManagedSessions, decodeManagedSessionReceipt, decodeManagedSessions, managedSessionsClient, managedSessionsProblem, revalidateManagedSelection, type ManagedSessionIntent, type ManagedSessionsResponse } from "./managedSessions"
 import { currentUserManagedSessionsFixture } from "./testFixtures"
 vi.mock("@services/api", async (original) => ({ ...await original<typeof import("@services/api")>(), apiClient: { get: vi.fn(), putOnce: vi.fn(), put: vi.fn(), post: vi.fn() } }))
 vi.mock("@services/chat/AgentService", () => ({ agentClient: { listSessions: vi.fn() } }))
@@ -124,4 +124,28 @@ it("bounds optional detail requests to four concurrent reads", async () => {
   vi.mocked(apiClient.get).mockImplementation(async () => { active++; peak = Math.max(peak, active); await Promise.resolve(); active--; return {} })
   expect(await managedSessionsClient.describe(links)).toEqual([])
   expect(apiClient.get).toHaveBeenCalledTimes(9); expect(peak).toBeLessThanOrEqual(4)
+})
+
+
+it("revalidates an exact current-user observation through bounded canonical pages", async () => {
+  const fixture = currentUserManagedSessionsFixture(), target = fixture.sessions[1]!.current_user_target!
+  vi.mocked(apiClient.get).mockResolvedValueOnce({ ...fixture, sessions: [], next_after: "before-child" }).mockResolvedValueOnce(fixture)
+  expect(await revalidateManagedSelection({ target, supervisor: fixture.scope.supervisor }, () => true)).toBe(true)
+  expect(apiClient.get).toHaveBeenNthCalledWith(1, "supervisor/default/sessions?limit=20&query=child-a", { signal: undefined })
+  expect(apiClient.get).toHaveBeenNthCalledWith(2, "supervisor/default/sessions?limit=20&after=before-child&query=child-a", { signal: undefined })
+  expect(apiClient.putOnce).not.toHaveBeenCalled()
+})
+it.each(["created_at", "authority_sha256", "ancestry_sha256", "metadata_version"] as const)("rejects changed current-user target %s", async (field) => {
+  const fixture = currentUserManagedSessionsFixture(), target = fixture.sessions[1]!.current_user_target!
+  const changed = { ...target, [field]: field === "metadata_version" ? target.metadata_version + 1 : field === "created_at" ? "2026-10-28T00:00:00Z" : "e".repeat(64) }
+  const row = { ...fixture.sessions[1]!, target_created_at: changed.created_at, target_metadata_version: changed.metadata_version, current_user_target: changed }
+  vi.mocked(apiClient.get).mockResolvedValue({ ...fixture, sessions: [row] })
+  expect(await revalidateManagedSelection({ target, supervisor: fixture.scope.supervisor }, () => true)).toBe(false)
+})
+it("refuses changed Supervisor incarnation or missing current-user access", async () => {
+  const fixture = currentUserManagedSessionsFixture(), target = fixture.sessions[1]!.current_user_target!
+  vi.mocked(apiClient.get).mockResolvedValueOnce({ ...fixture, scope: { ...fixture.scope, supervisor: { ...fixture.scope.supervisor, incarnation_id: "22222222-2222-4222-8222-222222222222" } } })
+  expect(await revalidateManagedSelection({ target, supervisor: fixture.scope.supervisor }, () => true)).toBe(false)
+  vi.mocked(apiClient.get).mockResolvedValueOnce({ ...fixture, owner_authorization: { ...fixture.owner_authorization, available: false } })
+  expect(await revalidateManagedSelection({ target, supervisor: fixture.scope.supervisor }, () => true)).toBe(false)
 })

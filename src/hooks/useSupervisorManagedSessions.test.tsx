@@ -69,7 +69,7 @@ it("rejects a new page from a different canonical Supervisor incarnation", async
   const h = await mount(currentUserManagedSessionsFixture("child-a")), next = currentUserManagedSessionsFixture()
   h.read.mockResolvedValueOnce({ ...next, scope: { ...next.scope, supervisor: { ...next.scope.supervisor, incarnation_id: "22222222-2222-4222-8222-222222222222" } } })
   await act(async () => h.value.loadMore())
-  expect(h.value.problem?.kind).toBe("conflict"); expect(h.value.rows.map((row) => row.session_id)).toEqual(["root-a", "child-a"])
+  expect(h.value.problem?.kind).toBe("conflict"); expect(h.value.rows).toEqual([]); expect(h.value.nextAfter).toBeNull()
   expect(h.candidates).not.toHaveBeenCalled(); expect(h.update).not.toHaveBeenCalled()
 })
 it("lists only allowed candidates and canonical links without automatically attaching", async () => {

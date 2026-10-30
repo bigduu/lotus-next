@@ -338,13 +338,30 @@ export function Inspector({
 
         <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4">
           {chat && isDefaultSupervisor(chat) ? <>
-            <LazySupervisorManagedSessionsPanel active={open} onSelectSession={async (id) => {
+            <LazySupervisorManagedSessionsPanel active={open} onSelectSession={async (id, selection) => {
               const navigation = ++managedNavigation.current
               const before = useAppStore.getState().currentSessionId
               const current = () => managedNavigation.current === navigation && useAppStore.getState().currentSessionId === before
+              let verify: (() => Promise<boolean>) | undefined
+              if (selection) {
+                if (selection.target.session_id !== id) return false
+                const { revalidateManagedSelection } = await import("@services/supervisorScope/managedSessions")
+                verify = () => revalidateManagedSelection(selection, current)
+                if (!current() || !await verify()) return false
+              }
               const restored = await useAppStore.getState().restoreSession(id)
               if (!restored || !current()) return false
+              const matchesCached = () => {
+                if (!selection) return true
+                const target = selection.target, cached = useAppStore.getState().chats.find((item) => item.id === id)
+                return !!cached && cached.createdAt === Date.parse(target.created_at) && cached.kind === target.kind
+                  && cached.rootSessionId === target.root_session_id && (cached.parentSessionId ?? null) === target.parent_session_id
+                  && (cached.config.projectId ?? null) === target.project_id
+              }
+              if (!matchesCached()) return false
               await useAppStore.getState().loadChatHistory(id, { throwOnError: true })
+              if (!current() || !matchesCached()) return false
+              if (verify && !await verify()) return false
               if (!current()) return false
               useAppStore.getState().selectSession(id)
               return true

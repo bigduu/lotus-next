@@ -93,8 +93,8 @@ export function useSupervisorManagedSessions(active: boolean, dependencies: Mana
       if (stillCurrent()) setView((previous) => {
         if (!current.observation?.management_access) return { ...previous, catalogError: true }
         const problem = managedSessionsProblem(error)
-        return { ...previous, problem, ...(["authentication", "forbidden"].includes(problem.kind)
-          ? { observation: null, nextAfter: null, writeBlocked: true } : {}) }
+        return { ...previous, problem, ...(["authentication", "forbidden", "conflict"].includes(problem.kind)
+          ? { observation: null, candidates: [], nextAfter: null, nextOffset: null, writeBlocked: true } : {}) }
       })
     }
     finally { if (pageFlight.current === token) { const notify = stillCurrent(); pageFlight.current = null; if (notify) setView((previous) => ({ ...previous, loadingMore: false })) } }
