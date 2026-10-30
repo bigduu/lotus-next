@@ -227,6 +227,10 @@ export function useLiveBootstrapRetry(sessionId: string | null, running: boolean
       const fenceNow = readContinuousRetryFence(scope, selected.sessionId)
       if (fenceNow.kind !== "confirmed" || fenceNow.runId !== observation.runId) return false
       await agentClient.stopGeneration(selected.sessionId, observation.runId)
+      // Freeze the adopted identity exactly like cancelForStop froze the original:
+      // otherwise the next poll sees the still-offered successor as unfenced and
+      // would resurrect actions over the recovered stop_requested state.
+      stopRef.current = JSON.stringify([selected.sessionId, observation.runId])
       // The adopted identity settles through the fence, not owns(): the poll
       // loop may not have rotated the stale view to the successor yet.
       if (active()) settleOwnedView(scope, { ...selected, runId: observation.runId }, "stop_requested")
@@ -255,17 +259,23 @@ export function useLiveBootstrapRetry(sessionId: string | null, running: boolean
     const selected = viewRef.current, current = contextRef.current
     if (!selected || selected.sessionId !== current.sessionId || !current.root) return
     const scope = getBackendStorageScope()
+    const epoch = current.epoch
+    // A Refresh observation is only as fresh as the context that requested it:
+    // a pane switch or unmount must discard the response, mirroring the poll loop.
+    const owns = () => mountedRef.current && contextRef.current.epoch === epoch && scope === getBackendStorageScope()
     try {
       const capabilityValue = await readLiveBootstrapCapability()
-      if (!capabilityValue || scope !== getBackendStorageScope()) return
+      if (!capabilityValue || !owns()) return
       const started = performance.now()
       const observation = await readLiveBootstrapOffer(selected.sessionId, capabilityValue.offerTimeoutMs)
-      if (scope !== getBackendStorageScope()) return
+      if (!owns()) return
       if (observation.kind === "unavailable") { update(null); return }
+      // An in-flight confirmation or Stop still owns the live view; its pending
+      // settlement must survive a concurrent manual Refresh.
+      if (actionRef.current || stopActionRef.current) return
+      if (stopRef.current === JSON.stringify([selected.sessionId, observation.runId])) return
       // Unfreeze this pane's stop observation so the recomputed offer can own it.
       stopRef.current = null
-      actionRef.current = null
-      stopActionRef.current = null
       const deadline = started + observation.expiresInMs
       const secondsRemaining = Math.max(0, Math.ceil((deadline - performance.now()) / 1000))
       const fence = readContinuousRetryFence(scope, selected.sessionId)

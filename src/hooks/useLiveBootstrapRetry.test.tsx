@@ -408,6 +408,40 @@ it("retries the exact Stop once with the rotated run identity after the first St
   expect(mocks.stop).toHaveBeenNthCalledWith(1, "s", "run-a")
   expect(mocks.stop).toHaveBeenNthCalledWith(2, "s", "run-b")
   expect(hook.current.offer).toMatchObject({runId:"run-b",status:"stop_requested"})
+  // The adopted identity is stop-fenced: a later poll of the still-offered
+  // successor must not resurrect actions over the recovered stop state.
+  await act(async () => { await vi.advanceTimersByTimeAsync(5000) })
+  expect(hook.current.offer).toMatchObject({runId:"run-b",status:"stop_requested"})
+})
+
+it("discards a pending Refresh response after the pane switches sessions", async () => {
+  const pending = deferred<unknown>()
+  let reads = 0
+  mocks.get.mockImplementation((path:string) => path === "execute/defaults" ? Promise.resolve(capability)
+    : ++reads === 1 ? Promise.resolve(waiting("s","run-a")) : pending.promise)
+  const hook = await mount({sessionId:"s",running:true,root:true})
+  expect(hook.current.offer).toMatchObject({runId:"run-a",status:"waiting"})
+  mocks.fence.mockReturnValue({kind:"confirmed",runId:"run-next"})
+  let refreshing!: Promise<void>
+  await act(async () => { refreshing = hook.current.refresh(); await Promise.resolve() })
+  await hook.render({sessionId:"next",running:true,root:true})
+  // The stale session's "unavailable" response must not clear the new session's view.
+  await act(async () => { pending.resolve({session_id:"s",status:"unavailable"}); await refreshing })
+  expect(hook.current.offer).toBeNull()
+  expect(reads).toBeGreaterThanOrEqual(2)
+})
+
+it("keeps an in-flight Stop settlement when a concurrent Refresh observes the same offer", async () => {
+  const stopPending = deferred<void>()
+  mocks.stop.mockReturnValue(stopPending.promise)
+  const hook = await mount({sessionId:"s",running:true,root:true})
+  let stopping!: Promise<void>
+  await act(async () => { stopping = hook.current.stop(); for (let i=0;i<12;i++) await Promise.resolve() })
+  expect(mocks.stop).toHaveBeenCalledExactlyOnceWith("s","run-a")
+  // Refresh runs while the exact Stop response is still pending.
+  await act(async () => { await hook.current.refresh() })
+  await act(async () => { stopPending.resolve(); await stopping })
+  expect(hook.current.offer).toMatchObject({runId:"run-a",status:"stop_requested"})
 })
 
 it("keeps stop_unconfirmed and recovers through Refresh when no waiting offer remains", async () => {
