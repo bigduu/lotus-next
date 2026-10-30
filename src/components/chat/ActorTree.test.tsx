@@ -175,8 +175,11 @@ describe("ActorTree", () => {
   })
 
   it("marks idle ancestors as running while a descendant runs, without overriding terminal states", () => {
-    const status = (actorId: string) =>
-      treeItem(container, actorId)?.querySelector<HTMLElement>("[data-actor-status]")!
+    const status = (actorId: string): HTMLElement => {
+      const found = treeItem(container, actorId)?.querySelector<HTMLElement>("[data-actor-status]")
+      expect(found).not.toBeNull()
+      return found as HTMLElement
+    }
     const topology = snapshot([
       row("root", null, { lifecycle: "cold" }),
       row("child-a", "root", { lifecycle: "running" }),
