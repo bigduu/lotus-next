@@ -20,6 +20,7 @@ import {
   LEGACY_PROJECT_SECTION_ID, reorderProjectSection,
 } from "@/lib/projectSidebarPreferences"
 import { useProjectSidebarSections } from "@/hooks/useProjectSidebarSections"
+import { mergeStateFor, useWorktreeMergeStates } from "@/hooks/useWorktreeMergeStates"
 import { useAppStore } from "@shared/store/appStore"
 import { openLocalFolder } from "@shared/utils/openExternalLink"
 import { cn } from "@/lib/utils"
@@ -154,6 +155,13 @@ export function Sidebar({
     return counts
   }, [rootChats])
 
+  // One merge-state load per Project, shared by every row: a sidebar with many
+  // sessions in one repository must not issue one inventory request per row.
+  const mergeProjectIds = useMemo(
+    () => [...new Set(rootChats.map((chat) => chat.config?.projectId?.trim()).filter((id): id is string => !!id))],
+    [rootChats],
+  )
+  const mergeStates = useWorktreeMergeStates(mergeProjectIds)
   const groups = useMemo(() => {
     // Only root sessions in the sidebar — child sub-agent sessions live in the
     // inspector's sub-agents panel, not as top-level chats.
@@ -321,6 +329,7 @@ export function Sidebar({
       key={chat.id} chat={chat} active={chat.id === currentSessionId}
       unread={chat.id !== currentSessionId && isSessionUnread(chat, readState)}
       projectId={project?.id}
+      mergeState={mergeStateFor(mergeStates, chat.config?.workspacePath)}
       dragHandle={drag && project && project.status === "active" && project.sidebar !== undefined && !query
         ? <drag.Handle source={{ kind: "session", projectId: project.id, id: chat.id }} label={`${uiText("sidebar_move_to_section")} · ${chat.title || uiText("new_session_c57c30bc")}`} disabled={sectionBusy.has(project.id)} /> : undefined}
       sections={project ? getProjectSections(sectionPreferences, project.id, project.section) : undefined}

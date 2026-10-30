@@ -506,6 +506,10 @@ export const uiZhCn = {
   "message_queue_interject": "插话 · 队列中，下一次模型回复前发送",
 
   "worktrees_title": "Worktree 管理",
+  "worktree_state_merged": "已合并到 {{base}}",
+  "worktree_state_in_progress": "相对 {{base}} 仍有未合并的提交",
+  "worktree_state_primary": "项目主工作区",
+  "worktree_state_unknown": "无法判断分支状态：读不到合并目标分支",
   "worktrees_description": "管理仓库工作区，并选择一个开始新会话。",
   "worktrees_global_root": "全局 worktree 根目录",
   "worktrees_root_hint": "选择后端主机上已存在的目录。配置用于此处新建的 worktree，现有目录不会迁移；目录不可用时会明确报错。",
