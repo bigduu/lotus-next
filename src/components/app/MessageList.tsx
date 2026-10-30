@@ -33,6 +33,8 @@ import { AssistantMarkdown } from "@/components/chat/AssistantMarkdown"
 import { Reasoning } from "@/components/chat/Reasoning"
 import { ToolCalls } from "@/components/chat/ToolCalls"
 import { ProcessActivity } from "@/components/chat/ProcessActivity"
+import { RuntimeNoticeCard, BackgroundExecWaitHint } from "@/components/chat/RuntimeNoticeCard"
+import { runtimeNoticeFromMetadata, backgroundExecWaitActive, type WaitDetectMessage } from "@/components/chat/runtimeNotices"
 import { groupSubAgents } from "./subAgentGroups"
 import { SubAgents } from "@/components/chat/SubAgents"
 import { cn } from "@/lib/utils"
@@ -701,6 +703,11 @@ export function MessageList({
       m as { images?: Array<{ url?: string; base64?: string; type?: string }> }
     ).images
     const isUser = m.role === "user"
+    // Runtime-authored notices (e.g. background exec wait) render as a
+    // localized status card instead of their raw English machine text.
+    const runtimeNotice = !isUser
+      ? runtimeNoticeFromMetadata((m as { metadata?: Record<string, unknown> }).metadata, text)
+      : null
     const showMessageActions = !readOnly && !options?.live && !isCompletedAnswerHandoff(m) && (isUser || actionableAssistantIndexes.has(idx))
     // Truly empty (no text, no images, no reasoning) → skip the blank bubble.
     if (!text.trim() && !imgs?.length) return null
@@ -776,6 +783,8 @@ export function MessageList({
           {renderImages(imgs)}
           {isUser ? (
             <>{m.role === "user" && "inReplyTo" in m && m.inReplyTo ? <div className="mb-1 text-xs" data-testid="message-request-reference">{uiText("ticket_referenced_request__7209ca36")}{m.inReplyTo}</div> : null}{text}</>
+          ) : runtimeNotice ? (
+            <RuntimeNoticeCard notice={runtimeNotice} />
           ) : text.trim() ? (
             <AssistantMarkdown isStreaming={Boolean(it.streaming)} onPreviewImage={onPreviewImage}>{text}</AssistantMarkdown>
           ) : null}
@@ -857,6 +866,13 @@ export function MessageList({
             {renderItem(item, index, { live: true })}
           </Fragment>
         ))}
+
+        {/* While the latest persisted message is a background-exec wait notice,
+            the run is still live from the user's perspective: keep a visible
+            running hint instead of an abruptly idle transcript. */}
+        {!streaming && backgroundExecWaitActive(messages as unknown as WaitDetectMessage[]) ? (
+          <BackgroundExecWaitHint className="px-1 py-1" />
+        ) : null}
       </div>
     </div>
   )
