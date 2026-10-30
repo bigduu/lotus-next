@@ -174,6 +174,41 @@ describe("ActorTree", () => {
     expect(container.innerHTML).not.toContain(secret)
   })
 
+  it("marks idle ancestors as running while a descendant runs, without overriding terminal states", () => {
+    const status = (actorId: string) =>
+      treeItem(container, actorId)?.querySelector<HTMLElement>("[data-actor-status]")!
+    const topology = snapshot([
+      row("root", null, { lifecycle: "cold" }),
+      row("child-a", "root", { lifecycle: "running" }),
+      row("child-b", "root", { lifecycle: "completed" }),
+    ])
+    const { container, rerender } = renderTree({ topology })
+    expect(status("root").dataset.actorStatus).toBe("cold")
+    expect(status("root").dataset.inheritsRunning).toBe("true")
+    expect(status("root").getAttribute("title")).toBe("运行中")
+    expect(status("child-a").dataset.actorStatus).toBe("running")
+    expect(status("child-a").dataset.inheritsRunning).toBeUndefined()
+    expect(status("child-b").dataset.actorStatus).toBe("completed")
+    expect(status("child-b").dataset.inheritsRunning).toBeUndefined()
+
+    // A failed ancestor keeps its own terminal icon even with a running leaf.
+    rerender({ topology: snapshot([
+      row("root", null, { lifecycle: "cold" }),
+      row("bad", "root", { lifecycle: "failed" }),
+      row("leaf", "bad", { lifecycle: "running" }),
+    ]) })
+    expect(status("bad").dataset.actorStatus).toBe("failed")
+    expect(status("bad").dataset.inheritsRunning).toBeUndefined()
+    expect(status("root").dataset.inheritsRunning).toBe("true")
+
+    // No running descendant: nothing is marked as running.
+    rerender({ topology: snapshot([
+      row("root", null, { lifecycle: "cold" }),
+      row("done", "root", { lifecycle: "completed" }),
+    ]) })
+    expect(status("root").dataset.inheritsRunning).toBeUndefined()
+  })
+
   it("shows empty, stale and retry states without requesting child history", () => {
     const onRetry = vi.fn()
     const onSelectActor = vi.fn()

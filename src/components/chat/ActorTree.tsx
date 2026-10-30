@@ -1,7 +1,22 @@
 import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type KeyboardEvent } from "react"
 import { defaultRangeExtractor, observeElementRect, useVirtualizer, type Range, type Rect, type Virtualizer } from "@tanstack/react-virtual"
-import { ChevronDown, ChevronRight, RefreshCw } from "lucide-react"
+import {
+  CircleAlert,
+  CircleCheck,
+  CircleDot,
+  CircleMinus,
+  CircleOff,
+  CirclePause,
+  CircleSlash,
+  CircleX,
+  ChevronDown,
+  ChevronRight,
+  Clock3,
+  LoaderCircle,
+  RefreshCw,
+  type LucideIcon,
+} from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
@@ -45,6 +60,48 @@ const HEALTH_LABEL: Record<ActorHealth, string> = {
   get blocked_needs_input() { return uiText("waiting_for_input_6569c6e6") },
   get lost() { return uiText("disconnected_481cf3ad") },
   get unknown() { return uiText("unknown_state_93e474c6") },
+}
+
+/** One glanceable per-row status icon family (outlined circles), keyed by lifecycle. */
+const LIFECYCLE_ICON: Record<ActorTreeNode["lifecycle"], { Icon: LucideIcon; cls: string; spin?: boolean }> = {
+  active: { Icon: CircleDot, cls: "text-primary" },
+  unknown: { Icon: CircleSlash, cls: "text-muted-foreground" },
+  cold: { Icon: CircleOff, cls: "text-muted-foreground" },
+  queued: { Icon: Clock3, cls: "text-amber-500" },
+  running: { Icon: LoaderCircle, cls: "text-primary", spin: true },
+  suspended: { Icon: CirclePause, cls: "text-muted-foreground" },
+  completed: { Icon: CircleCheck, cls: "text-emerald-500" },
+  failed: { Icon: CircleX, cls: "text-destructive" },
+  cancelled: { Icon: CircleMinus, cls: "text-muted-foreground" },
+  retired: { Icon: CircleMinus, cls: "text-muted-foreground" },
+  lost: { Icon: CircleAlert, cls: "text-destructive" },
+}
+
+/** Only an idle parent inherits a busy subtree; its own terminal outcome wins. */
+const INHERITS_RUNNING: ReadonlySet<ActorTreeNode["lifecycle"]> = new Set(["active", "cold", "unknown"])
+
+/**
+ * A running descendant means its ancestors are orchestrating, not idle. Compute
+ * the set of actors whose subtree contains a running node, so an idle parent
+ * row can show the running indicator while keeping its own lifecycle text.
+ */
+function actorsWithRunningDescendant(topology: ActorTreeData): ReadonlySet<string> {
+  const withRunningDescendant = new Set<string>()
+  const hasRunningDescendant = (actorId: string, visited: Set<string>): boolean => {
+    if (!visited.add(actorId)) return false
+    let descendantRunning = false
+    for (const childId of topology.childrenById[actorId] ?? []) {
+      const child = topology.byId[childId]
+      if (child && hasRunningDescendant(childId, visited)) descendantRunning = true
+    }
+    if (topology.byId[actorId]?.lifecycle === "running") descendantRunning = true
+    if (descendantRunning) withRunningDescendant.add(actorId)
+    return descendantRunning
+  }
+  if (topology.byId[topology.rootActorId]) {
+    hasRunningDescendant(topology.rootActorId, new Set())
+  }
+  return withRunningDescendant
 }
 
 interface VisibleActorRow {
@@ -140,6 +197,7 @@ export function ActorTree({
     () => visibleActorRows(topology, expandedActorIds),
     [topology, expandedActorIds],
   )
+  const runningSubtrees = useMemo(() => actorsWithRunningDescendant(topology), [topology])
   const rowsRef = useRef(rows)
   rowsRef.current = rows
   const getItemKey = useCallback((index: number) => rowsRef.current[index]?.node.actorId ?? index, [])
@@ -282,6 +340,9 @@ export function ActorTree({
                   : "actor_placement_missing")
                 : undefined
               const health = node.health === null ? uiText("health_unknown_d7b6f7ae") : HEALTH_LABEL[node.health]
+              const inheritsRunning = INHERITS_RUNNING.has(node.lifecycle) && runningSubtrees.has(node.actorId)
+              const statusIcon = inheritsRunning ? LIFECYCLE_ICON.running : LIFECYCLE_ICON[node.lifecycle]
+              const statusTitle = inheritsRunning ? LIFECYCLE_LABEL.running : lifecycle
               return (
                 <div
                   key={virtualRow.key}
@@ -315,6 +376,15 @@ export function ActorTree({
                 >
                   <span data-actor-toggle aria-hidden="true" className="flex size-5 shrink-0 items-center justify-center">
                     {row.hasChildren ? expanded ? <ChevronDown className="size-4" /> : <ChevronRight className="size-4" /> : null}
+                  </span>
+                  <span
+                    data-actor-status={node.lifecycle}
+                    data-inherits-running={inheritsRunning ? "true" : undefined}
+                    aria-hidden="true"
+                    title={statusTitle}
+                    className={cn("flex size-3.5 shrink-0 items-center justify-center", statusIcon.cls)}
+                  >
+                    <statusIcon.Icon className={cn("size-3.5", statusIcon.spin && "animate-spin")} />
                   </span>
                   <span className="min-w-0 flex-1">
                     <span className="flex min-w-0 items-center gap-1">
