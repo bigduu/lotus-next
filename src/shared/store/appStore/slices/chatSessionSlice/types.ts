@@ -97,7 +97,7 @@ export interface ChatSlice {
   /** Restore a persisted session id that may refer to an unloaded child. */
   restoreSession: (sessionId: string) => Promise<boolean>;
   clearConversation: (sessionId: string) => Promise<void>;
-  verifyConversationClear: (sessionId: string) => Promise<void>;
+  verifyConversationClear: (sessionId: string, options?: { tokenRevision?: { usage: number; truncation: number } }) => Promise<void>;
   dismissConversationClear: (sessionId: string) => void;
   refreshConversationClear: (sessionId: string) => Promise<void>;
   /** Fence old reads immediately on a cross-client clear event, then refetch. */
