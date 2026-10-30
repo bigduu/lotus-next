@@ -34,7 +34,7 @@ import { Reasoning } from "@/components/chat/Reasoning"
 import { ToolCalls } from "@/components/chat/ToolCalls"
 import { ProcessActivity } from "@/components/chat/ProcessActivity"
 import { RuntimeNoticeCard, BackgroundExecWaitHint } from "@/components/chat/RuntimeNoticeCard"
-import { runtimeNoticeFromMetadata, backgroundExecWaitActive, type WaitDetectMessage } from "@/components/chat/runtimeNotices"
+import { runtimeNoticeFromMetadata } from "@/components/chat/runtimeNotices"
 import { groupSubAgents } from "./subAgentGroups"
 import { SubAgents } from "@/components/chat/SubAgents"
 import { cn } from "@/lib/utils"
@@ -455,6 +455,7 @@ export function MessageList({
   streamingReasoning,
   liveSegments,
   streamStatus,
+  backgroundExecWaiting = false,
   pendingUserText,
   pendingUserImages = [],
   pendingUserMessages,
@@ -484,6 +485,9 @@ export function MessageList({
   streamingReasoning: string | null
   liveSegments: LiveSegment[]
   streamStatus: string | null
+  /** Execution-gated background-wait state from the chat pane: true only while
+   *  the run is actually suspended waiting on a monitored background command. */
+  backgroundExecWaiting?: boolean
   pendingUserText: string | null
   pendingUserImages?: readonly { url?: string; base64?: string; type?: string }[]
   pendingUserMessages?: readonly PendingUserMessageView[]
@@ -867,10 +871,11 @@ export function MessageList({
           </Fragment>
         ))}
 
-        {/* While the latest persisted message is a background-exec wait notice,
-            the run is still live from the user's perspective: keep a visible
-            running hint instead of an abruptly idle transcript. */}
-        {!streaming && backgroundExecWaitActive(messages as unknown as WaitDetectMessage[]) ? (
+        {/* While the chat pane confirms a live background-exec wait (suspended
+            run + wait notice still latest), keep a visible running hint instead
+            of an abruptly idle transcript. Execution-gated so a cancelled or
+            errored run never leaves a stale spinner behind. */}
+        {!streaming && backgroundExecWaiting ? (
           <BackgroundExecWaitHint className="px-1 py-1" />
         ) : null}
       </div>

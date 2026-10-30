@@ -1242,6 +1242,7 @@ export function ChatPane({
           streamingReasoning={streamingReasoning}
           liveSegments={liveSegments}
           streamStatus={streamStatus}
+          backgroundExecWaiting={backgroundExecWaiting}
           pendingUserText={pendingUserText}
           pendingUserImages={pendingUserImages}
           pendingUserMessages={pendingUserMessages}

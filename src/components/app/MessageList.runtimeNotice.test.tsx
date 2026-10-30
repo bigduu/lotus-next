@@ -61,7 +61,7 @@ const noticeHistoryMessage = {
   },
 }
 
-function renderMessageList(messages: Message[], liveSegments: LiveSegment[] = []) {
+function renderMessageList(messages: Message[], liveSegments: LiveSegment[] = [], backgroundExecWaiting = false) {
   const container = document.createElement("div")
   document.body.appendChild(container)
   const root = createRoot(container)
@@ -81,6 +81,7 @@ function renderMessageList(messages: Message[], liveSegments: LiveSegment[] = []
         streamingReasoning={null}
         liveSegments={liveSegments}
         streamStatus={null}
+        backgroundExecWaiting={backgroundExecWaiting}
         pendingUserText={null}
         forking={false}
         onSelectSubAgent={vi.fn()}
@@ -128,10 +129,19 @@ describe("runtime background-exec wait notices", () => {
     expect(container.textContent).not.toContain("Moved command")
   })
 
-  it("shows the waiting hint while the notice is the latest message", () => {
+  it("shows the waiting hint while the chat pane confirms an active background wait", () => {
     const messages = mapHistoryMessagesToUi("runtime-notice-session", [noticeHistoryMessage])
-    const container = renderMessageList(messages)
+    const container = renderMessageList(messages, [], true)
     expect(container.textContent).toContain(uiText("runtime_notice_background_exec_running_93d0e2c1"))
+  })
+
+  it("suppresses the waiting hint when execution has ended, even if the notice stays latest", () => {
+    // A cancelled/errored run refreshes summary + history without appending a
+    // transcript message, so the wait notice can remain the latest message.
+    // The execution-gated prop must keep the spinner hidden in that state.
+    const messages = mapHistoryMessagesToUi("runtime-notice-session", [noticeHistoryMessage])
+    const container = renderMessageList(messages, [], false)
+    expect(container.textContent).not.toContain(uiText("runtime_notice_background_exec_running_93d0e2c1"))
   })
 
   it("hides the waiting hint once the transcript grows past the notice", () => {
