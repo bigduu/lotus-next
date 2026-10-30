@@ -177,11 +177,12 @@ function decodedTarget(value: unknown): CurrentUserSessionTarget {
     kind: target.kind, root_session_id: target.root_session_id, parent_session_id: target.parent_session_id, current_user_target: target })
   return row.current_user_target!
 }
-const sameTarget = (a: CurrentUserSessionTarget, b: CurrentUserSessionTarget): boolean =>
+const sameTargetIdentity = (a: CurrentUserSessionTarget, b: CurrentUserSessionTarget): boolean =>
   a.session_id === b.session_id && a.created_at === b.created_at && a.kind === b.kind
   && a.root_session_id === b.root_session_id && a.parent_session_id === b.parent_session_id
-  && a.project_id === b.project_id && a.metadata_version === b.metadata_version
-  && a.authority_sha256 === b.authority_sha256 && a.ancestry_sha256 === b.ancestry_sha256
+  && a.project_id === b.project_id && a.authority_sha256 === b.authority_sha256 && a.ancestry_sha256 === b.ancestry_sha256
+const sameTarget = (a: CurrentUserSessionTarget, b: CurrentUserSessionTarget): boolean =>
+  sameTargetIdentity(a, b) && a.metadata_version === b.metadata_version
 
 function validBoundTokenUsage(value: unknown): boolean {
   if (value === null) return true
@@ -251,8 +252,8 @@ export const managedSessionsClient = {
 }
 
 
-/** Re-read the observed directory identity before opening it; this is not an atomic history read or an access grant. */
-export async function revalidateManagedSelection(selection: ManagedSessionSelection, current: () => boolean): Promise<boolean> {
+/** Directory observations are not themselves a history read or access grant. */
+async function findManagedTarget(selection: ManagedSessionSelection, current: () => boolean): Promise<CurrentUserSessionTarget | null> {
   const { target, supervisor } = selection
   // Search a UTF-8-safe prefix when the Session ID exceeds the producer's query limit.
   const encoder = new TextEncoder()
@@ -262,17 +263,43 @@ export async function revalidateManagedSelection(selection: ManagedSessionSelect
     if (bytes + size > 128) break
     query += character; bytes += size
   }
-  if (!query.trim()) return false
+  if (!query.trim()) return null
   let after: string | undefined
   const seen = new Set<string>()
   while (current()) {
     const page = await managedSessionsClient.read(undefined, { query, limit: 20, ...(after ? { after } : {}) })
     if (!current() || page.management_access?.kind !== "current_user" || page.capabilities.current_user_bound_history_v1 !== true || !page.owner_authorization.available
-      || !sameSupervisor(supervisor, page.scope.supervisor)) return false
+      || !sameSupervisor(supervisor, page.scope.supervisor)) return null
     const found = page.sessions.find((entry) => entry.session_id === target.session_id)?.current_user_target
-    if (found) return sameTarget(found, target)
-    if (!page.next_after || seen.has(page.next_after)) return false
+    if (found) return found
+    if (!page.next_after || seen.has(page.next_after)) return null
     seen.add(page.next_after); after = page.next_after
   }
-  return false
+  return null
+}
+
+
+/** Re-read the exact observed directory identity before opening it. */
+export async function revalidateManagedSelection(selection: ManagedSessionSelection, current: () => boolean): Promise<boolean> {
+  const found = await findManagedTarget(selection, current)
+  return found !== null && sameTarget(found, selection.target)
+}
+
+/** Retry one explicit target-stale response only for a newer metadata revision
+ * of the identical Supervisor, lifetime, authority, ancestry and Project. */
+export async function readBoundHistoryRefreshingMetadata(selection: ManagedSessionSelection, current: () => boolean): Promise<{ history: HistoryResponse; selection: ManagedSessionSelection }> {
+  try {
+    return { history: await managedSessionsClient.readBoundHistory(selection), selection }
+  } catch (error) {
+    let code: unknown
+    if (isApiError(error) && error.status === 409) {
+      try { code = record(JSON.parse(error.body ?? "null"))?.code } catch { /* unknown conflicts are not retried */ }
+    }
+    if (code !== "target_observation_stale" || !current()) throw error
+    const found = await findManagedTarget(selection, current)
+    if (!current() || !found || !sameTargetIdentity(found, selection.target)
+      || found.metadata_version <= selection.target.metadata_version) throw error
+    const updated = { supervisor: selection.supervisor, target: found }
+    return { history: await managedSessionsClient.readBoundHistory(updated), selection: updated }
+  }
 }
