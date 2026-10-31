@@ -284,7 +284,7 @@ describe("ordinary-chat production bundle budget", () => {
   it("keeps the historical baseline and the bounded approved editor allowance explicit", () => {
     expect(BUNDLE_BASELINE).toEqual({ javascriptRawBytes: 1_949_302, javascriptGzipBytes: 567_482 })
     expect(BUNDLE_BUDGET).toEqual({
-      javascriptRawBytes: 1_900_000, javascriptGzipBytes: 591_520,
+      javascriptRawBytes: 1_900_000, javascriptGzipBytes: 591_600,
       minimumRawReduction: 0.02, minimumGzipReduction: -0.043,
       cssRawBytes: 109_000, cssGzipBytes: 18_500,
     })

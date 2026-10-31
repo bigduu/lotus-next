@@ -967,4 +967,40 @@ describe("Sidebar session ordering", () => {
     expect(stored.ranks.elsewhere).toBeGreaterThan(0)
     expect(snapshots.p1.sidebar!.session_sections.second).toBe(lotusA)
   })
+
+  it("re-sorts the destination bucket with a promotion that landed mid-move", async () => {
+    const lotusA = "section:00000000-0000-4000-8000-000000000011"
+    const p1 = project("p1", "Zenith", "Development")
+    p1.sidebar!.sections.push({ id: lotusA, name: "lotus" })
+    const { updateProject, snapshots } = installProjectBackend({ p1 })
+    render({ chats: [projectChat("first", "p1"), projectChat("second", "p1"), projectChat("third", "p1")] })
+    click("项目")
+    // Destination starts as [first, second]; third stays behind for the drop.
+    await clickAndSave("Move first to lotus")
+    await clickAndSave("Move second to lotus")
+    const destination = () => container.querySelector(`[data-section-id="${lotusA}"]`)!
+    expect(renderedSessions(destination())).toEqual(["first", "second"])
+
+    const persist = updateProject.getMockImplementation()!
+    let confirm!: () => Promise<void>
+    updateProject.mockImplementationOnce((...args) => new Promise<ProjectManifest>((resolve) => {
+      confirm = async () => { resolve(await persist(...args)) }
+    }))
+    const pickup: SidebarDragPickup = { kind: "session", projectId: "p1", id: "third",
+      revision: useAppStore.getState().projects.p1!.revision }
+    let moved: Promise<boolean> | undefined
+    await act(async () => {
+      moved = dragHarness.current!.onMoveSession(pickup, { projectId: "p1", sectionId: lotusA, sessionId: "first" }, false)
+    })
+    // While the move is pending, the user writes into the destination's last row,
+    // which promotes it above the row the drop is anchored to.
+    act(() => { recordSessionUserInput("second", 1_700_000_100_000) })
+
+    await act(async () => { await confirm() })
+    await act(async () => { await moved })
+
+    expect(snapshots.p1.sidebar!.session_sections.third).toBe(lotusA)
+    // third is anchored above first, but `second`'s promotion must survive ahead of it.
+    expect(renderedSessions(destination())).toEqual(["second", "third", "first"])
+  })
 })

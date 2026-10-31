@@ -192,6 +192,23 @@ export function commitSessionOrder(order: SessionOrder): SessionOrder {
   return publish(order)
 }
 
+/**
+ * Order bare session ids with the row rule (rank first, then last submission).
+ *
+ * The incoming order is the fallback for ids that carry neither, so callers pass
+ * the rows in the order they currently render. `rankSessionAt` rebases whatever
+ * it is given, so a bucket captured before an await must be re-sorted through
+ * this to reflect a submission that landed in the meantime.
+ */
+export function sortSessionIds(order: SessionOrder, ids: readonly string[]): string[] {
+  return [...ids].sort((left, right) => {
+    const leftRank = order.ranks[left] ?? Number.NEGATIVE_INFINITY
+    const rightRank = order.ranks[right] ?? Number.NEGATIVE_INFINITY
+    if (leftRank !== rightRank) return leftRank > rightRank ? -1 : 1
+    return (order.activity[right] ?? 0) - (order.activity[left] ?? 0)
+  })
+}
+
 /** Recency key: later wins. */
 export function sessionSortTime(chat: OrderableChat, order: SessionOrder = emptyOrder): number {
   const created = finite(chat.createdAt) ? chat.createdAt : 0

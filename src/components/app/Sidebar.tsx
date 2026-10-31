@@ -18,6 +18,7 @@ import {
   commitSessionOrder,
   rankSessionAt,
   sessionOrderSnapshot,
+  sortSessionIds,
   useSessionOrder,
 } from "@/lib/sidebarSessionOrder"
 import {
@@ -337,10 +338,10 @@ export function Sidebar({
    * the row lives in a different section, move the membership too.
    *
    * A cross-section drop commits the position only after the server confirms
-   * the move, so a rejected move cannot silently reorder the old section. The
-   * ranking is then recomputed against the live snapshot: a submission or
-   * another project's reorder that happened during the round-trip must survive
-   * instead of being replaced by the pre-request snapshot.
+   * the move, so a rejected move cannot silently reorder the old section. Both
+   * inputs are also re-read at confirmation time: a submission that promoted a
+   * destination row during the round-trip must survive, and the destination
+   * bucket must be re-sorted before it is rebased by `rankSessionAt`.
    */
   const reorderDraggedSession = (pickup: SidebarDragPickup, target: SidebarDropTarget, after: boolean): Promise<boolean> => {
     const chat = rootChats.find((candidate) => candidate.id === pickup.id)
@@ -349,12 +350,16 @@ export function Sidebar({
     if (!chat || !project || project.status !== "active" || !target.sessionId) return Promise.resolve(false)
     // Pin the narrowed value: the closure below runs after the await boundary.
     const targetSessionId = target.sessionId
+    const targetSectionId = target.sectionId
     if (chat.config?.projectId?.trim() !== project.id || targetSessionId === pickup.id) return Promise.resolve(false)
-    const bucket = bucketSessionIds(project.id, target.sectionId)
+    const bucket = bucketSessionIds(project.id, targetSectionId)
     if (!bucket.includes(targetSessionId)) return Promise.resolve(false)
-    const rank = () => rankSessionAt(sessionOrderSnapshot(), bucket, pickup.id, targetSessionId, after)
-    if (getSessionSection(sectionPreferences, project.id, pickup.id, project.section) !== target.sectionId) {
-      return moveSessionToSection(project.id, pickup.id, target.sectionId, pickup)
+    const rank = () => {
+      const latest = sessionOrderSnapshot()
+      return rankSessionAt(latest, sortSessionIds(latest, bucket), pickup.id, targetSessionId, after)
+    }
+    if (getSessionSection(sectionPreferences, project.id, pickup.id, project.section) !== targetSectionId) {
+      return moveSessionToSection(project.id, pickup.id, targetSectionId, pickup)
         .then((saved) => { if (saved) commitSessionOrder(rank()); return saved })
     }
     commitSessionOrder(rank())
