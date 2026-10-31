@@ -56,17 +56,27 @@ export const BUNDLE_BUDGET = Object.freeze({
   // during the first sidebar render, so it is not moved behind a lazy boundary.
   // The same source measured 591,585 locally and 591,481-591,500 in the hosted
   // Node 24 build, so the ceiling keeps a margin over the larger reading.
+  // 2026-10-31 (#512): the sidebar failed-run marker adds a durable red state to
+  // session rows (root and Supervisor) so a finished run that ended in error is
+  // visible outside its own conversation. Composed on #510 above, the production
+  // build moves raw 1,883,167 -> 1,884,009 and gzip 591,569 -> 591,770 (+201,
+  // 0.034%), and the ceiling rises only by the minimum 200 bytes that clears it.
+  // The increment was minimised first: both rows reuse the one AlertCircle glyph
+  // the startup closure already ships (AlertTriangle was measured and cost 191
+  // extra bytes on its own), and the marker shares the existing fixed-width status
+  // slot rather than adding a second element. The CSS ceilings below are untouched:
+  // the marker only reuses classes the composed build already emits.
   // 2026-10-31 (#516): the sidebar running indicator must also cover background
   // shells, which outlive the main execution, so the launch parser and the
   // cached per-transcript scan join the first sidebar render (the sheet is a
   // session-independent activity signal — deferring it would drop the dot).
-  // Measured locally at 591,930 gzip (+345 over the 591,585 dev reading,
-  // 0.058%); the hosted Node 24 build reads marginally lower. The increment was
-  // minimised first: the detection loop is no longer duplicated between the
-  // cached and uncached paths, the id-collection helper is internal, and only
-  // two functions stay exported for production callers. The ceiling rises only
-  // by the minimum that clears the larger local reading with a margin.
-  javascriptGzipBytes: 592_000,
+  // Composed on #512 above, the production build moves gzip 591,770 -> 592,116
+  // (+346, 0.059%), and the measured reduction moves to -4.34%. The increment
+  // was minimised first: the detection loop is no
+  // longer duplicated between the cached and uncached paths, the id-collection
+  // helper is internal, and only two functions stay exported for production
+  // callers. The ceiling rises only by the minimum that clears it.
+  javascriptGzipBytes: 592_400,
   minimumRawReduction: 0.02,
   // 2026-10-31 (#516): the added background-shell scan moves the measured gzip
   // reduction to -4.31%; the floor follows by the same smallest 0.1% step.
