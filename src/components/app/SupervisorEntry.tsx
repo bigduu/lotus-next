@@ -14,11 +14,13 @@ import { ErrorBoundary } from "@/components/app/ErrorBoundary"
 
 const ManagedSessionsDialog = lazy(async () => ({ default: (await import("@/components/chat/SupervisorManagedSessions")).SupervisorManagedSessionsDialog }))
 
-export function SupervisorEntry({ chat, active, unread, busy, disabled, onSelect, onRename }: {
+export function SupervisorEntry({ chat, active, unread, busy, running, disabled, onSelect, onRename }: {
   chat?: ChatItem
   active: boolean
   unread: boolean
   busy: boolean
+  /** Work still in flight (execution, background shell, live sub-agent). */
+  running?: boolean
   disabled: boolean
   onSelect: () => void
   onRename: (id: string, title: string) => void | Promise<void>
@@ -37,6 +39,8 @@ export function SupervisorEntry({ chat, active, unread, busy, disabled, onSelect
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState(false)
   const title = chat?.title?.trim() || "Supervisor"
+  // Explicit `running` wins; otherwise fall back to backend `is_running`.
+  const busyNow = running ?? chat?.isRunning === true
 
   const save = async () => {
     const nextTitle = draft.trim()
@@ -63,8 +67,8 @@ export function SupervisorEntry({ chat, active, unread, busy, disabled, onSelect
           onClick={onSelect}>
           <CircleDot className="size-4 shrink-0" aria-hidden="true" />
           <span className="min-w-0 flex-1 truncate text-left" title={title}>{title}</span>
-          {chat?.isRunning || unread ? <span aria-hidden="true" className={cn("size-1.5 shrink-0 rounded-full bg-primary", chat?.isRunning && "animate-pulse")} /> : null}
-          <span id={statusId} className="sr-only">{chat?.isRunning ? uiText("running_1f0eb99b") : unread ? uiText("unread_messages_519491f4") : ""}</span>
+          {busyNow || unread ? <span aria-hidden="true" className={cn("size-1.5 shrink-0 rounded-full bg-primary", busyNow && "animate-pulse")} /> : null}
+          <span id={statusId} className="sr-only">{busyNow ? uiText("running_1f0eb99b") : unread ? uiText("unread_messages_519491f4") : ""}</span>
         </Button>
         <DialogTrigger asChild>
           <Button variant="ghost" size="icon" className="mr-1 size-8 shrink-0 text-muted-foreground"

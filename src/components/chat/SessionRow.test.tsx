@@ -71,3 +71,30 @@ it("keeps an internal grip gesture out of the native editor drag protocol", () =
   expect(setData).toHaveBeenCalledWith(SIDEBAR_SESSION_DRAG_TYPE, JSON.stringify({ projectId: "p1", sessionId: "root" }))
   act(() => root.unmount()); host.remove()
 })
+
+it("shows the running indicator for work in flight even when the backend reports idle", () => {
+  Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
+  const host = document.body.appendChild(document.createElement("div")); const root = createRoot(host)
+  const noop = () => {}
+  const render = (running?: boolean, isRunning?: boolean) => act(() => root.render(<SessionRow
+    chat={{ id: "s", title: "Session", isRunning }} active={false} running={running}
+    onSelect={noop} onRename={noop} onDelete={noop} onTogglePin={noop} onCopySessionId={noop} />))
+  const indicator = () => host.querySelector("[data-session-running]")
+
+  // A background shell keeps the row alive after `is_running` went false.
+  render(true, false)
+  expect(indicator()?.getAttribute("aria-label")).toBe("运行中")
+  expect(indicator()?.className).toContain("animate-pulse")
+
+  // An explicit false wins over a stale backend flag.
+  render(false, true)
+  expect(indicator()).toBeNull()
+
+  // Callers that only know `is_running` keep the original behaviour.
+  render(undefined, true)
+  expect(indicator()).not.toBeNull()
+  render(undefined, false)
+  expect(indicator()).toBeNull()
+
+  act(() => root.unmount()); host.remove()
+})

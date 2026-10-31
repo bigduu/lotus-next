@@ -1,0 +1,117 @@
+import type { Message } from "@shared/types/chatMessages"
+import { isBusyPhase, type SessionExecutionState } from "@shared/store/appStore/slices/executionStateSlice"
+
+/**
+ * Background shell (bash) launch detection for sidebar activity indicators.
+ *
+ * A background tool launch returns an ordinary `tool_result` whose JSON body is
+ * `{ bash_id, command, status: "running", cwd, environment }`. `command` is the
+ * load-bearing discriminator: BashOutput (`{bash_id, status, exit_code, ...}`)
+ * and BashInput (`{bash_id, status, bytes_written, ...}`) results also report
+ * `status: "running"` while the shell is alive but carry no `command`, so
+ * reading/feeding a live shell must not count as a second launch. This mirrors
+ * the tool-card parser in `components/chat/ToolCalls.tsx`.
+ *
+ * Terminal outcomes arrive separately (the `backgroundBash` store slice, keyed
+ * by `bash_id`), so a shell counts as running until its id is recorded there.
+ */
+export function parseBackgroundBashLaunch(resultText: unknown): string | null {
+  if (typeof resultText !== "string" || resultText.length === 0) return null
+  let value: unknown
+  try {
+    value = JSON.parse(resultText)
+  } catch {
+    return null
+  }
+  if (!value || typeof value !== "object") return null
+  const row = value as { bash_id?: unknown; command?: unknown; status?: unknown }
+  if (
+    typeof row.bash_id !== "string" ||
+    row.bash_id.length === 0 ||
+    row.status !== "running" ||
+    typeof row.command !== "string" ||
+    row.command.length === 0
+  ) {
+    return null
+  }
+  return row.bash_id
+}
+
+/** Every `bash_id` a transcript ever launched in the background, in message order. */
+export function collectBackgroundBashIds(messages: readonly Message[]): string[] {
+  const ids: string[] = []
+  for (const message of messages) {
+    if ((message as { type?: string }).type !== "tool_result") continue
+    const result = (message as { result?: { result?: unknown } }).result
+    const bashId = parseBackgroundBashLaunch(result?.result)
+    if (bashId !== null && !ids.includes(bashId)) ids.push(bashId)
+  }
+  return ids
+}
+
+/**
+ * True when at least one background shell launched by this transcript has no
+ * recorded terminal outcome. `backgroundBash` is the store slice keyed by
+ * `bash_id`; a missing entry means the shell is still running.
+ */
+export function hasRunningBackgroundBash(
+  messages: readonly Message[],
+  backgroundBash: Readonly<Record<string, unknown>>,
+): boolean {
+  for (const message of messages) {
+    if ((message as { type?: string }).type !== "tool_result") continue
+    const result = (message as { result?: { result?: unknown } }).result
+    const bashId = parseBackgroundBashLaunch(result?.result)
+    if (bashId !== null && backgroundBash[bashId] === undefined) return true
+  }
+  return false
+}
+
+/**
+ * Scan results are cached per message array identity: a sidebar row re-renders
+ * far more often than a transcript changes, and each transcript can carry
+ * thousands of tool results.
+ */
+const launchedIdsCache = new WeakMap<readonly Message[], string[]>()
+
+const launchedIds = (messages: readonly Message[]): string[] => {
+  const cached = launchedIdsCache.get(messages)
+  if (cached !== undefined) return cached
+  const ids = collectBackgroundBashIds(messages)
+  launchedIdsCache.set(messages, ids)
+  return ids
+}
+
+/**
+ * Cached {@link hasRunningBackgroundBash}. `backgroundBash` is read reactively
+ * by the caller, so a terminal outcome flips this without rescanning messages.
+ */
+export function sessionHasRunningBackgroundBash(
+  messages: readonly Message[] | undefined,
+  backgroundBash: Readonly<Record<string, unknown>>,
+): boolean {
+  if (!messages || messages.length === 0) return false
+  return launchedIds(messages).some((bashId) => backgroundBash[bashId] === undefined)
+}
+
+/**
+ * The sidebar's "still working" predicate. A session counts as running while
+ * any work is in flight — the main execution, a live sub-agent, or a background
+ * shell, which outlives the main execution and therefore keeps running after
+ * the backend reports `is_running: false`.
+ */
+export function sessionHasLiveWork(
+  session: {
+    isRunning?: boolean
+    messages?: readonly Message[]
+  },
+  execution: SessionExecutionState | undefined,
+  backgroundBash: Readonly<Record<string, unknown>>,
+): boolean {
+  if (session.isRunning) return true
+  if (execution) {
+    if (isBusyPhase(execution.phase)) return true
+    if (execution.children.runningCount > 0) return true
+  }
+  return sessionHasRunningBackgroundBash(session.messages, backgroundBash)
+}
