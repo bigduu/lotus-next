@@ -34,6 +34,7 @@ export function SessionRow({
   chat,
   active,
   unread = false,
+  running,
   onSelect,
   onRename,
   onDelete,
@@ -49,6 +50,11 @@ export function SessionRow({
   chat: Chat
   active: boolean
   unread?: boolean
+  /**
+   * The session still has work in flight (executing, a running background
+   * shell, or a live sub-agent). Defaults to the backend `is_running` flag.
+   */
+  running?: boolean
   onSelect: () => void
   onRename: (title: string) => void
   onDelete: () => void
@@ -76,11 +82,15 @@ export function SessionRow({
   const [draft, setDraft] = useState(chat.title ?? "")
   const inputRef = useRef<HTMLInputElement>(null)
   const unreadDescriptionId = useId()
+  // Explicit `running` wins; otherwise fall back to the backend summary flag so
+  // callers that only know `is_running` keep the indicator.
+  const busy = running ?? chat.isRunning === true
   const failureDescriptionId = useId()
   // A failed last run is a durable session state, so the row keeps a red marker
-  // until a later run succeeds. A live run outranks it, and a cancelled run is a
-  // deliberate user choice rather than an error.
-  const runFailed = !chat.isRunning && chat.lastRunStatus === "error"
+  // until a later run succeeds. Live work outranks it — a background shell can
+  // still be running after the run that launched it failed — and a cancelled
+  // run is a deliberate user choice rather than an error.
+  const runFailed = !busy && chat.lastRunStatus === "error"
   const runFailureDetail = runFailed
     ? chat.lastRunError?.trim() || uiText("session_last_run_failed_hint")
     : null
@@ -163,8 +173,14 @@ export function SessionRow({
           data-session-run-failure={runFailed ? "" : undefined}
           className="flex size-3.5 shrink-0 items-center justify-center"
         >
-          {chat.isRunning ? (
-            <span className="size-1.5 animate-pulse rounded-full bg-primary" />
+          {busy ? (
+            <span
+              data-session-running=""
+              role="img"
+              aria-label={uiText("running_1f0eb99b")}
+              title={uiText("running_1f0eb99b")}
+              className="size-1.5 animate-pulse rounded-full bg-primary"
+            />
           ) : runFailed ? (
             <AlertCircle aria-hidden="true" className="size-3.5 text-destructive" />
           ) : unread ? (
@@ -176,7 +192,7 @@ export function SessionRow({
       {/* A muted state is ambient: revealed on hover/focus so ordinary rows stay
           quiet, while a real signal is always visible. */}
       {mergeState ? <span className={mergeState.state === "merged" || mergeState.state === "in_progress" ? undefined : "opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity"}>
-        <WorktreeStateBadge merge={mergeState} running={chat.isRunning} />
+        <WorktreeStateBadge merge={mergeState} running={busy} />
       </span> : null}
       {dragHandle}
       {unread && <span id={unreadDescriptionId} className="sr-only">{uiText("unread_messages_519491f4")}</span>}

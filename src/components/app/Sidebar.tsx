@@ -1,5 +1,6 @@
 import { useUiText } from "@shared/i18n/ui"
 import { isSessionUnread, useSessionReadState } from "@/lib/sessionReadState"
+import { sessionHasLiveWork } from "@/lib/sessionBackgroundTasks"
 import { lazy, Suspense, useId, useMemo, useRef, useState } from "react"
 import { ChevronRight, Plus, Search, X, Cog, PanelLeftClose, FolderClosed, CalendarDays, ChevronDown, GitBranch } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -122,6 +123,10 @@ export function Sidebar({
   const sessionOrder = useSessionOrder()
   const { preferences: sectionPreferences, update: updateSectionPreferences, busy: sectionBusy, errors: sectionErrors } = useProjectSidebarSections(projects)
   const readState = useSessionReadState()
+  // Live activity sources: a running background shell outlives the main
+  // execution (backend `is_running` goes false), so it is tracked separately.
+  const backgroundBash = useAppStore((state) => state.backgroundBash)
+  const executionBySession = useAppStore((state) => state.executionBySession)
   const disclosureId = useId()
   const supervisorOpening = useRef(false)
   const [supervisorBusy, setSupervisorBusy] = useState(false)
@@ -142,6 +147,14 @@ export function Sidebar({
     }
   }
   const query = search.trim().toLowerCase()
+
+  /**
+   * A session is "running" while any work is still in flight, not only while
+   * the main execution runs: a background shell (which outlives `is_running`)
+   * or a live sub-agent keeps the indicator lit.
+   */
+  const isSessionRunning = (chat: ChatItem): boolean =>
+    sessionHasLiveWork(chat, executionBySession[chat.id], backgroundBash)
 
   const switchGroupingMode = (mode: SidebarGroupingMode) => {
     setGroupingMode(mode)
@@ -383,6 +396,7 @@ export function Sidebar({
     const project = projectId ? projects[projectId] : undefined
     return <SessionRow
       key={chat.id} chat={chat} active={chat.id === currentSessionId}
+      running={isSessionRunning(chat)}
       unread={chat.id !== currentSessionId && isSessionUnread(chat, readState)}
       projectId={project?.id}
       mergeState={mergeStateFor(mergeStates, chat.config?.workspacePath)}
@@ -609,7 +623,8 @@ export function Sidebar({
         </div>
         <div className="px-2 pb-2">
           <SupervisorEntry chat={supervisor} active={supervisorActive} unread={supervisorUnread}
-            busy={supervisorBusy} disabled={!booted || supervisorBusy}
+            busy={supervisorBusy} running={!!supervisor && isSessionRunning(supervisor)}
+            disabled={!booted || supervisorBusy}
             onSelect={() => void openSupervisor()} onRename={onRename} />
           {supervisorError ? <p role="alert" className="px-2 pb-2 text-sm text-destructive">{supervisorError}</p> : null}
           <Button
