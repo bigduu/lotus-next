@@ -15,6 +15,12 @@ import { ProjectGroupHeader } from "@/components/app/ProjectGroupHeader"
 import { ProjectSectionDialog } from "@/components/app/ProjectSectionDialog"
 import { groupChats, groupChatsByProject, type ChatGroup } from "@/lib/groupChats"
 import {
+  commitSessionOrder,
+  rankSessionAt,
+  sessionOrderSnapshot,
+  useSessionOrder,
+} from "@/lib/sidebarSessionOrder"
+import {
   readPinnedProjectIds, writePinnedProjectIds,
   getProjectSections, getSessionSection, createProjectSection, removeProjectSection, setSessionSection,
   LEGACY_PROJECT_SECTION_ID, reorderProjectSection,
@@ -110,6 +116,9 @@ export function Sidebar({
   const [projectActionBusy, setProjectActionBusy] = useState(false)
   const [projectActionError, setProjectActionError] = useState<string | null>(null)
   const projects = useAppStore((state) => state.projects)
+  // Drag positions and the last user submission per session. Sending a message
+  // republishes this, which is what promotes that session to the front.
+  const sessionOrder = useSessionOrder()
   const { preferences: sectionPreferences, update: updateSectionPreferences, busy: sectionBusy, errors: sectionErrors } = useProjectSidebarSections(projects)
   const readState = useSessionReadState()
   const disclosureId = useId()
@@ -172,7 +181,7 @@ export function Sidebar({
         const project = projects[projectId]
         if (!project) return uiText("unknown_project_9714067d")
         return project.status === "archived" ? uiText("archived_01a84e81", { v0: project.name }) : project.name
-      })
+      }, sessionOrder)
       const pinnedSessions = grouped.find((group) => group.key === "__pinned")
       const projectGroups = grouped.filter((group) => group.key !== "__pinned")
       const seen = new Set(projectGroups.map((group) => group.key))
@@ -190,8 +199,8 @@ export function Sidebar({
       })
       return pinnedSessions ? [pinnedSessions, ...projectGroups] : projectGroups
     }
-    return groupChats(rootChats, new Date())
-  }, [groupingMode, pinnedProjectIds, projects, rootChats, uiText])
+    return groupChats(rootChats, new Date(), sessionOrder)
+  }, [groupingMode, pinnedProjectIds, projects, rootChats, sessionOrder, uiText])
 
   const isProjectMode = groupingMode === "project"
   // Project groups are few and stable — the "older" fold is a date-mode concept.
@@ -313,9 +322,45 @@ export function Sidebar({
       && project.revision === pickup.revision && confirmedProjectRevision(project) === pickup.revision
       && !sectionBusy.has(project.id)
   }
-  const moveDraggedSession = (pickup: SidebarDragPickup, target: SidebarDropTarget) => {
+  /** One bucket's sessions in the order they are currently rendered. */
+  const bucketSessionIds = (projectId: string, sectionId: string | null): string[] => {
+    const project = projects[projectId]
+    const group = groups.find((candidate) => candidate.key === projectId)
+    if (!project || !group) return []
+    return group.chats
+      .filter((chat) => getSessionSection(sectionPreferences, project.id, chat.id, project.section) === sectionId)
+      .map((chat) => chat.id)
+  }
+
+  /**
+   * Drop a session onto another row: remember that explicit position and, when
+   * the row lives in a different section, move the membership too.
+   *
+   * A cross-section drop commits the position only after the server confirms
+   * the move, so a rejected move cannot silently reorder the old section.
+   */
+  const reorderDraggedSession = (pickup: SidebarDragPickup, target: SidebarDropTarget, after: boolean): Promise<boolean> => {
+    const chat = rootChats.find((candidate) => candidate.id === pickup.id)
+    const project = projects[target.projectId]
+    // Canonical project identity is read from the session, never from the drag payload.
+    if (!chat || !project || project.status !== "active" || !target.sessionId) return Promise.resolve(false)
+    if (chat.config?.projectId?.trim() !== project.id || target.sessionId === pickup.id) return Promise.resolve(false)
+    const bucket = bucketSessionIds(project.id, target.sectionId)
+    if (!bucket.includes(target.sessionId)) return Promise.resolve(false)
+    const next = rankSessionAt(sessionOrderSnapshot(), bucket, pickup.id, target.sessionId, after)
+    if (getSessionSection(sectionPreferences, project.id, pickup.id, project.section) !== target.sectionId) {
+      return moveSessionToSection(project.id, pickup.id, target.sectionId, pickup)
+        .then((saved) => { if (saved) commitSessionOrder(next); return saved })
+    }
+    commitSessionOrder(next)
+    return Promise.resolve(true)
+  }
+
+  const moveDraggedSession = (pickup: SidebarDragPickup, target: SidebarDropTarget, after = false) => {
     if (!pickupIsCurrent(pickup) || pickup.projectId !== target.projectId) return Promise.resolve(false)
-    return moveSessionToSection(pickup.projectId, pickup.id, target.sectionId, pickup)
+    return target.sessionId
+      ? reorderDraggedSession(pickup, target, after)
+      : moveSessionToSection(pickup.projectId, pickup.id, target.sectionId, pickup)
   }
   const moveDraggedSection = (pickup: SidebarDragPickup, target: SidebarDropTarget, after: boolean) => {
     if (!pickupIsCurrent(pickup) || pickup.projectId !== target.projectId) return
@@ -332,7 +377,7 @@ export function Sidebar({
       projectId={project?.id}
       mergeState={mergeStateFor(mergeStates, chat.config?.workspacePath)}
       dragHandle={drag && project && project.status === "active" && project.sidebar !== undefined && !query
-        ? <drag.Handle source={{ kind: "session", projectId: project.id, id: chat.id }} label={`${uiText("sidebar_move_to_section")} · ${chat.title || uiText("new_session_c57c30bc")}`} disabled={sectionBusy.has(project.id)} /> : undefined}
+        ? <drag.Handle source={{ kind: "session", projectId: project.id, id: chat.id }} label={`${uiText("sidebar_session_drag_hint")} · ${chat.title || uiText("new_session_c57c30bc")}`} disabled={sectionBusy.has(project.id)} /> : undefined}
       sections={project ? getProjectSections(sectionPreferences, project.id, project.section) : undefined}
       sectionId={project ? getSessionSection(sectionPreferences, project.id, chat.id, project.section) : undefined}
       onMoveToSection={project && project.sidebar !== undefined && !sectionBusy.has(project.id) ? (sectionId) => moveSessionToSection(project.id, chat.id, sectionId) : undefined}
@@ -366,7 +411,20 @@ export function Sidebar({
   const renderProjectSections = (group: ChatGroup, drag?: SidebarDragParts) => {
     const project = projects[group.key]!
     const sections = getProjectSections(sectionPreferences, project.id, project.section)
-    if (!sections.length) return renderSessionBucket(group, true, sectionDisclosureKey(project.id, null), drag)
+    const disabled = project.status !== "active" || project.sidebar === undefined || sectionBusy.has(project.id) || !!query
+    if (!sections.length) {
+      // A project without custom sections still needs a drop zone around its
+      // rows, otherwise a session could only ever be dropped on the header and
+      // could never be reordered.
+      const key = sectionDisclosureKey(project.id, null)
+      const DropTarget = drag?.Target ?? StaticDropTarget
+      return <DropTarget target={{ projectId: project.id, sectionId: null }} disabled={disabled}
+        data-project-section="" data-section-id="none" data-section-project={project.id}
+        aria-disabled={project.status !== "active" || project.sidebar === undefined || sectionBusy.has(project.id)}
+        style={{ marginInlineStart: 12 }} className="mb-1 rounded-md feedback-motion switch-feedback">
+        {renderSessionBucket(group, true, key, drag)}
+      </DropTarget>
+    }
     const targets = [...sections, { id: null, name: uiText("sidebar_no_section") }]
     return targets.map((section) => {
       const key = sectionDisclosureKey(project.id, section.id)
@@ -375,7 +433,6 @@ export function Sidebar({
       const expanded = !!query || !disclosures.closedSections.has(key)
       const contentId = `${disclosureId}-section-${encodeURIComponent(key)}`
       const DropTarget = drag?.Target ?? StaticDropTarget
-      const disabled = project.status !== "active" || project.sidebar === undefined || sectionBusy.has(project.id) || !!query
       return <DropTarget key={key} target={{ projectId: project.id, sectionId: section.id }} disabled={disabled}
         data-project-section={section.name} data-section-id={section.id ?? "none"} data-section-project={project.id}
         aria-disabled={project.status !== "active" || project.sidebar === undefined || sectionBusy.has(project.id)}

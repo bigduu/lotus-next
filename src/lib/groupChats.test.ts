@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest"
 import type { ChatItem } from "@shared/types/chatMessages"
-import { groupChats } from "./groupChats"
+import { groupChats, groupChatsByProject } from "./groupChats"
+import type { SessionOrder } from "./sidebarSessionOrder"
 
 function chat(id: string, date: string, extra: Partial<ChatItem> = {}): ChatItem {
   return {
@@ -56,5 +57,29 @@ describe("groupChats", () => {
 
   it("returns no groups for an empty list", () => {
     expect(groupChats([], new Date())).toEqual([])
+  })
+
+  it("moves a session into today once the user writes into it", () => {
+    const chats = [chat("written", "2026-08-01T12:00:00"), chat("today", "2026-09-05T09:00:00")]
+    const order: SessionOrder = {
+      version: 1,
+      ranks: { written: 1 },
+      activity: { written: new Date("2026-09-05T14:00:00").getTime() },
+    }
+    expect(groupChats(chats, new Date("2026-09-05T15:00:00"), order).map((group) => ({
+      key: group.key, ids: group.chats.map((c) => c.id),
+    }))).toEqual([{ key: "2026-09-05", ids: ["written", "today"] }])
+    // Without the recorded submission nothing moves.
+    expect(groupChats(chats, new Date("2026-09-05T15:00:00")).map((group) => group.key))
+      .toEqual(["2026-09-05", "2026-08-01"])
+  })
+
+  it("keeps a manual drag position inside its project group", () => {
+    const chats = [
+      chat("newest", "2026-09-05T12:00:00", { config: { systemPromptId: "", baseSystemPrompt: "", lastUsedEnhancedPrompt: null, projectId: "p1" } }),
+      chat("older", "2026-09-01T12:00:00", { config: { systemPromptId: "", baseSystemPrompt: "", lastUsedEnhancedPrompt: null, projectId: "p1" } }),
+    ]
+    const order: SessionOrder = { version: 1, ranks: { older: 2, newest: 1 }, activity: {} }
+    expect(groupChatsByProject(chats, () => "p1", order)[0]!.chats.map((c) => c.id)).toEqual(["older", "newest"])
   })
 })

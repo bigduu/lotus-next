@@ -5,6 +5,7 @@ import { useSessionDrop } from "@/hooks/useSessionDrop"
 import type { ComposerInputHandle } from "@/components/chat/ComposerEditor"
 import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { useMarkSessionRead } from "@/lib/sessionReadState"
+import { recordSessionUserInput } from "@/lib/sidebarSessionOrder"
 import { useMediaQuery } from "@shared/hooks/useMediaQuery"
 import { lazy, Suspense, useCallback, useEffect, useId, useMemo, useRef, useState } from "react"
 import { createPortal } from "react-dom"
@@ -761,6 +762,7 @@ export function ChatPane({
       goalRequestActive.current = true; setGoalSaving(true)
       void agentClient.sendMessage({ message: text.trim(), session_id: sessionId, model: currentChat?.config?.model ?? "" }).then(async (response) => {
         if (response.session_id !== sessionId || !response.goal_command) throw new Error("Goal command was not acknowledged")
+        recordSessionUserInput(sessionId)
         useAppStore.getState().setInputContentIfRevision(draftKey, revision, "")
         if (currentDraftKeyRef.current === draftKey) {
           const action = response.goal_command.action
