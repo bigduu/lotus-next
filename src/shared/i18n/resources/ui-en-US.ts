@@ -578,6 +578,8 @@ export const uiEnUs = {
   "plugin_nova_app_reconnect_sent": "Reconnect request sent. Check the actual connection status.",
   "plugin_nova_app_reconnect_unavailable": "The owned desktop connection is unverified or disabled. Check the existing MCP settings before reconnecting.",
   "plugin_nova_app_install_unconfirmed": "Nova.app installation has not been confirmed. Refresh passive status before deciding to retry.",
+  "plugin_nova_app_install_reason": "Nova.app installation was not confirmed ({{reason}}). Refresh passive status before deciding to retry.",
+  "plugin_nova_app_install_checksum": "The published Nova.app archive no longer matches the checksum this server accepted, so nothing was installed. Install it manually using the checksum from the trusted release, or update the server.",
   "plugin_nova_app_reconnect_unconfirmed": "The desktop reconnect could not be confirmed. Refresh and check its actual connection; no other server was selected.",
   "plugin_jiandu_root_overlap": "Move the memory directory outside the Jiandu plugin installation directory, then refresh.",
   "plugin_jiandu_root_unavailable": "Memory directory safety could not be confirmed. Check the directory, then refresh.",
