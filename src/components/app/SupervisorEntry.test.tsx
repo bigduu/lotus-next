@@ -43,6 +43,11 @@ it("marks a supervisor whose last run failed, and stays quiet when it did not", 
 it("announces failure and unread independently instead of letting one replace the other", () => {
   const view = render(chat({ lastRunStatus: "error", lastRunError: "boom" }), true)
   const button = view.host.querySelector("button")!
+  // The unread state must not push the failure icon out of the row: visual
+  // priority is running, then failed, then unread (matching SessionRow).
+  const marker = view.host.querySelector<HTMLElement>("[data-session-run-failure]")
+  expect(marker?.getAttribute("title")).toBe("boom")
+  expect(view.host.querySelector("[data-session-running]")).toBeNull()
   // Both states reach assistive tech: the red marker replaces the dot visually, but
   // the unread state must not disappear from the description.
   const describedBy = button.getAttribute("aria-describedby")!.split(" ")

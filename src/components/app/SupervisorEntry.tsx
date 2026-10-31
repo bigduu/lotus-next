@@ -76,11 +76,13 @@ export function SupervisorEntry({ chat, active, unread, busy, running, disabled,
           onClick={onSelect}>
           <CircleDot className="size-4 shrink-0" aria-hidden="true" />
           <span className="min-w-0 flex-1 truncate text-left" title={title}>{title}</span>
-          {busyNow || unread ? <span data-session-running="" aria-hidden="true" className={cn("size-1.5 shrink-0 rounded-full bg-primary", busyNow && "animate-pulse")} /> : runFailed ? (
+          {/* Visual priority matches SessionRow: live work, then failed, then
+              unread. The screen-reader descriptions still announce both. */}
+          {busyNow ? <span data-session-running="" aria-hidden="true" className="size-1.5 shrink-0 animate-pulse rounded-full bg-primary" /> : runFailed ? (
             <span title={runFailureDetail ?? undefined} data-session-run-failure="" aria-hidden="true" className="shrink-0">
               <AlertCircle className="size-3.5 text-destructive" />
             </span>
-          ) : null}
+          ) : unread ? <span aria-hidden="true" className="size-1.5 shrink-0 rounded-full bg-primary" /> : null}
           <span id={statusId} className="sr-only">{busyNow ? uiText("running_1f0eb99b") : unread ? uiText("unread_messages_519491f4") : ""}</span>
           {runFailed ? <span id={failureDescriptionId} className="sr-only">{uiText("session_last_run_failed_hint")}</span> : null}
         </Button>
