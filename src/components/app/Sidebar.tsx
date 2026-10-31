@@ -337,22 +337,27 @@ export function Sidebar({
    * the row lives in a different section, move the membership too.
    *
    * A cross-section drop commits the position only after the server confirms
-   * the move, so a rejected move cannot silently reorder the old section.
+   * the move, so a rejected move cannot silently reorder the old section. The
+   * ranking is then recomputed against the live snapshot: a submission or
+   * another project's reorder that happened during the round-trip must survive
+   * instead of being replaced by the pre-request snapshot.
    */
   const reorderDraggedSession = (pickup: SidebarDragPickup, target: SidebarDropTarget, after: boolean): Promise<boolean> => {
     const chat = rootChats.find((candidate) => candidate.id === pickup.id)
     const project = projects[target.projectId]
     // Canonical project identity is read from the session, never from the drag payload.
     if (!chat || !project || project.status !== "active" || !target.sessionId) return Promise.resolve(false)
-    if (chat.config?.projectId?.trim() !== project.id || target.sessionId === pickup.id) return Promise.resolve(false)
+    // Pin the narrowed value: the closure below runs after the await boundary.
+    const targetSessionId = target.sessionId
+    if (chat.config?.projectId?.trim() !== project.id || targetSessionId === pickup.id) return Promise.resolve(false)
     const bucket = bucketSessionIds(project.id, target.sectionId)
-    if (!bucket.includes(target.sessionId)) return Promise.resolve(false)
-    const next = rankSessionAt(sessionOrderSnapshot(), bucket, pickup.id, target.sessionId, after)
+    if (!bucket.includes(targetSessionId)) return Promise.resolve(false)
+    const rank = () => rankSessionAt(sessionOrderSnapshot(), bucket, pickup.id, targetSessionId, after)
     if (getSessionSection(sectionPreferences, project.id, pickup.id, project.section) !== target.sectionId) {
       return moveSessionToSection(project.id, pickup.id, target.sectionId, pickup)
-        .then((saved) => { if (saved) commitSessionOrder(next); return saved })
+        .then((saved) => { if (saved) commitSessionOrder(rank()); return saved })
     }
-    commitSessionOrder(next)
+    commitSessionOrder(rank())
     return Promise.resolve(true)
   }
 

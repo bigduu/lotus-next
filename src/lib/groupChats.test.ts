@@ -82,4 +82,33 @@ describe("groupChats", () => {
     const order: SessionOrder = { version: 1, ranks: { older: 2, newest: 1 }, activity: {} }
     expect(groupChatsByProject(chats, () => "p1", order)[0]!.chats.map((c) => c.id)).toEqual(["older", "newest"])
   })
+
+  it("never lets a touch yesterday push Yesterday above Today", () => {
+    // The user wrote into an old session late yesterday, so it keeps a finite
+    // rank and the newest activity, but its day is still yesterday.
+    const order: SessionOrder = {
+      version: 1,
+      ranks: { yesterday: 9, today: 1 },
+      activity: { yesterday: new Date("2026-09-04T22:00:00").getTime() },
+    }
+    const chats = [chat("yesterday", "2026-08-01T12:00:00"), chat("today", "2026-09-05T09:00:00")]
+    expect(groupChats(chats, new Date("2026-09-05T15:00:00"), order).map((group) => ({
+      key: group.key, ids: group.chats.map((c) => c.id),
+    }))).toEqual([
+      { key: "2026-09-05", ids: ["today"] },
+      { key: "2026-09-04", ids: ["yesterday"] },
+    ])
+  })
+
+  it("keeps Project order stable when a session inside one Project moves", () => {
+    const project = (id: string) => ({ systemPromptId: "", baseSystemPrompt: "", lastUsedEnhancedPrompt: null, projectId: id })
+    const chats = [
+      chat("p1-new", "2026-09-05T12:00:00", { config: project("p1") }),
+      chat("p2-old", "2026-09-01T12:00:00", { config: project("p2") }),
+    ]
+    // Dragging p2's only session to the top of its group must not lift Project 2
+    // above Project 1: Projects stay ordered by their newest created session.
+    const order: SessionOrder = { version: 1, ranks: { "p2-old": 5, "p1-new": 1 }, activity: {} }
+    expect(groupChatsByProject(chats, (id) => id ?? "unassigned", order).map((group) => group.key)).toEqual(["p1", "p2"])
+  })
 })

@@ -37,7 +37,7 @@ import { Sidebar } from "./Sidebar"
 import { useAppStore } from "@shared/store/appStore"
 import { uiText } from "@shared/i18n/ui"
 import { PINNED_PROJECTS_STORAGE_KEY, PROJECT_SECTIONS_STORAGE_KEY, SIDEBAR_SESSION_DRAG_TYPE, SIDEBAR_SECTION_DRAG_TYPE } from "@/lib/projectSidebarPreferences"
-import { SESSION_ORDER_STORAGE_KEY, clearSessionOrder, recordSessionUserInput } from "@/lib/sidebarSessionOrder"
+import { SESSION_ORDER_STORAGE_KEY, clearSessionOrder, parseSessionOrder, recordSessionUserInput } from "@/lib/sidebarSessionOrder"
 import { DEFAULT_SUPERVISOR_SESSION_ID } from "@/lib/supervisor"
 
 type Props = ComponentProps<typeof Sidebar>
@@ -933,5 +933,38 @@ describe("Sidebar session ordering", () => {
     const section = () => container.querySelector(`[data-section-id="${lotusA}"]`)!
     expect(renderedSessions(section())).toEqual(["first", "second"])
     expect(updateProject).toHaveBeenCalledTimes(2)
+  })
+
+  it("keeps a submission made while a cross-section move is pending", async () => {
+    const lotusA = "section:00000000-0000-4000-8000-000000000011"
+    const p1 = project("p1", "Zenith", "Development")
+    p1.sidebar!.sections.push({ id: lotusA, name: "lotus" })
+    const { updateProject, snapshots } = installProjectBackend({ p1 })
+    render({ chats: [projectChat("first", "p1"), projectChat("second", "p1")] })
+    click("项目")
+    await clickAndSave("Move first to lotus")
+
+    const persist = updateProject.getMockImplementation()!
+    let confirm!: () => Promise<void>
+    updateProject.mockImplementationOnce((...args) => new Promise<ProjectManifest>((resolve) => {
+      confirm = async () => { resolve(await persist(...args)) }
+    }))
+    const pickup: SidebarDragPickup = { kind: "session", projectId: "p1", id: "second",
+      revision: useAppStore.getState().projects.p1!.revision }
+    let moved: Promise<boolean> | undefined
+    // Act on the drop without waiting: the server response is still pending.
+    await act(async () => {
+      moved = dragHarness.current!.onMoveSession(pickup, { projectId: "p1", sectionId: lotusA, sessionId: "first" }, true)
+    })
+    // Another session is written into while the move is in flight.
+    act(() => { recordSessionUserInput("elsewhere", 1_700_000_000_000) })
+
+    await act(async () => { await confirm() })
+    await act(async () => { await moved })
+
+    const stored = parseSessionOrder(localStorage.getItem(SESSION_ORDER_STORAGE_KEY))
+    expect(stored.activity.elsewhere).toBe(1_700_000_000_000)
+    expect(stored.ranks.elsewhere).toBeGreaterThan(0)
+    expect(snapshots.p1.sidebar!.session_sections.second).toBe(lotusA)
   })
 })
