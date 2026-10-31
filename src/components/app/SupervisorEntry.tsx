@@ -27,6 +27,7 @@ export function SupervisorEntry({ chat, active, unread, busy, disabled, onSelect
   const menu = useSidebarContextMenu(disabled)
   const descriptionId = useId()
   const statusId = useId()
+  const failureDescriptionId = useId()
   const nameId = useId()
   const [open, setOpen] = useState(false)
   const [scopeOpen, setScopeOpen] = useState(false)
@@ -64,7 +65,7 @@ export function SupervisorEntry({ chat, active, unread, busy, disabled, onSelect
     <div className="mb-2">
       <div {...menu.rowProps} className={cn("flex select-none items-center rounded-md", active && "bg-sidebar-accent")}>
         <Button variant="ghost" aria-current={active ? "page" : undefined}
-          aria-describedby={`${descriptionId} ${statusId}`} aria-busy={busy || undefined} disabled={disabled}
+          aria-describedby={runFailed ? `${descriptionId} ${statusId} ${failureDescriptionId}` : `${descriptionId} ${statusId}`} aria-busy={busy || undefined} disabled={disabled}
           className={cn("min-w-0 flex-1 justify-start gap-2", unread && "font-semibold")}
           onClick={onSelect}>
           <CircleDot className="size-4 shrink-0" aria-hidden="true" />
@@ -74,7 +75,8 @@ export function SupervisorEntry({ chat, active, unread, busy, disabled, onSelect
               <AlertCircle className="size-3.5 text-destructive" />
             </span>
           ) : chat?.isRunning || unread ? <span aria-hidden="true" className={cn("size-1.5 shrink-0 rounded-full bg-primary", chat?.isRunning && "animate-pulse")} /> : null}
-          <span id={statusId} className="sr-only">{chat?.isRunning ? uiText("running_1f0eb99b") : runFailed ? uiText("session_last_run_failed_hint") : unread ? uiText("unread_messages_519491f4") : ""}</span>
+          <span id={statusId} className="sr-only">{chat?.isRunning ? uiText("running_1f0eb99b") : unread ? uiText("unread_messages_519491f4") : ""}</span>
+          {runFailed ? <span id={failureDescriptionId} className="sr-only">{uiText("session_last_run_failed_hint")}</span> : null}
         </Button>
         <DialogTrigger asChild>
           <Button variant="ghost" size="icon" className="mr-1 size-8 shrink-0 text-muted-foreground"

@@ -8,11 +8,11 @@ import { SupervisorEntry } from "./SupervisorEntry"
 const chat = (overrides: Partial<ChatItem>): ChatItem =>
   ({ id: "supervisor", title: "Supervisor", ...overrides }) as ChatItem
 
-const render = (entry: ChatItem) => {
+const render = (entry: ChatItem, unread = false) => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
   const host = document.body.appendChild(document.createElement("div")); const root = createRoot(host)
   const noop = () => {}
-  act(() => root.render(<SupervisorEntry chat={entry} active={false} unread={false} busy={false} disabled={false}
+  act(() => root.render(<SupervisorEntry chat={entry} active={false} unread={unread} busy={false} disabled={false}
     onSelect={noop} onRename={noop} />))
   const cleanup = () => { act(() => root.unmount()); host.remove() }
   return { host, cleanup }
@@ -38,4 +38,17 @@ it("marks a supervisor whose last run failed, and stays quiet when it did not", 
   expect(completed.host.querySelector("[data-session-run-failure]")).toBeNull()
   expect(completed.host.querySelector(".rounded-full.bg-primary")).toBeNull()
   completed.cleanup()
+})
+
+it("announces failure and unread independently instead of letting one replace the other", () => {
+  const view = render(chat({ lastRunStatus: "error", lastRunError: "boom" }), true)
+  const button = view.host.querySelector("button")!
+  // Both states reach assistive tech: the red marker replaces the dot visually, but
+  // the unread state must not disappear from the description.
+  const describedBy = button.getAttribute("aria-describedby")!.split(" ")
+  expect(describedBy.length).toBeGreaterThanOrEqual(3)
+  const described = describedBy.map((id) => view.host.querySelector<HTMLElement>(`[id="${id}"]`)?.textContent ?? "")
+  expect(described.some((text) => text.includes(uiText("unread_messages_519491f4")))).toBe(true)
+  expect(described.some((text) => text.includes(uiText("session_last_run_failed_hint")))).toBe(true)
+  view.cleanup()
 })
