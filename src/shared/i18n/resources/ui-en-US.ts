@@ -1415,6 +1415,7 @@ export const uiEnUs = {
   "reload_state_df7392cc": "Reload state",
   "new_messages_ce3b9bb1": "New messages",
   "unread_messages_519491f4": "Unread messages",
+  "session_last_run_failed_hint": "This session's last run failed. Open it for the error details.",
   "session_actions_e6f6d875": "Session actions",
   "rename_0d0cbac2": "Rename",
   "generate_title_with_ai_f327dbdd": "Generate title with AI",

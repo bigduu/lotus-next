@@ -1,6 +1,6 @@
 import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { useEffect, useId, useRef, useState, type ReactNode } from "react"
-import { Check, Copy, List, MoreHorizontal, Pencil, Pin, PinOff, RotateCcw, Sparkles, Trash2 } from "lucide-react"
+import { AlertCircle, Check, Copy, List, MoreHorizontal, Pencil, Pin, PinOff, RotateCcw, Sparkles, Trash2 } from "lucide-react"
 import { ConversationClearDialog } from "./ConversationClearDialog"
 import { cn } from "@/lib/utils"
 import { SIDEBAR_SESSION_DRAG_TYPE, type ProjectSidebarSection } from "@/lib/projectSidebarPreferences"
@@ -18,7 +18,16 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 
-type Chat = { id: string; title?: string | null; isRunning?: boolean; pinned?: boolean }
+type Chat = {
+  id: string
+  title?: string | null
+  isRunning?: boolean
+  pinned?: boolean
+  /** Persisted terminal status of the last run (`completed` / `error` / `cancelled`). */
+  lastRunStatus?: string | null
+  /** Verbatim backend error for the last failed run, when the server reported one. */
+  lastRunError?: string | null
+}
 
 /** A sidebar session row: select, plus a ⋯ menu for session actions. */
 export function SessionRow({
@@ -67,6 +76,16 @@ export function SessionRow({
   const [draft, setDraft] = useState(chat.title ?? "")
   const inputRef = useRef<HTMLInputElement>(null)
   const unreadDescriptionId = useId()
+  const failureDescriptionId = useId()
+  // A failed last run is a durable session state, so the row keeps a red marker
+  // until a later run succeeds. A live run outranks it, and a cancelled run is a
+  // deliberate user choice rather than an error.
+  const runFailed = !chat.isRunning && chat.lastRunStatus === "error"
+  const runFailureDetail = runFailed
+    ? chat.lastRunError?.trim() || uiText("session_last_run_failed_hint")
+    : null
+  const describedBy = [unread ? unreadDescriptionId : null, runFailed ? failureDescriptionId : null]
+    .filter(Boolean).join(" ") || undefined
 
   useEffect(() => {
     if (editing) {
@@ -131,19 +150,27 @@ export function SessionRow({
           if (dragged.current && event.detail !== 0) { event.preventDefault(); return }
           onSelect()
         }}
-        aria-describedby={unread ? unreadDescriptionId : undefined}
+        aria-describedby={describedBy}
         className={cn(
           "flex min-w-0 flex-1 items-center gap-2 py-2 pl-2 pr-1 text-left text-sm rounded-md outline-none focus-visible:ring-2 focus-visible:ring-ring",
           (active || unread) && "font-medium",
         )}
       >
-        {chat.isRunning ? (
-          <span className="size-1.5 shrink-0 animate-pulse rounded-full bg-primary" />
-        ) : unread ? (
-          <span aria-hidden="true" title={uiText("new_messages_ce3b9bb1")} className="size-1.5 shrink-0 rounded-full bg-primary" />
-        ) : (
-          <span className="size-1.5 shrink-0" />
-        )}
+        {/* One fixed-width slot keeps titles aligned whether the row shows a live
+            run, an unread dot, or the red failed-run marker. */}
+        <span
+          title={runFailureDetail ?? undefined}
+          data-session-run-failure={runFailed ? "" : undefined}
+          className="flex size-3.5 shrink-0 items-center justify-center"
+        >
+          {chat.isRunning ? (
+            <span className="size-1.5 animate-pulse rounded-full bg-primary" />
+          ) : runFailed ? (
+            <AlertCircle aria-hidden="true" className="size-3.5 text-destructive" />
+          ) : unread ? (
+            <span aria-hidden="true" title={uiText("new_messages_ce3b9bb1")} className="size-1.5 rounded-full bg-primary" />
+          ) : null}
+        </span>
         <span className="truncate">{chat.title || uiText("new_session_c57c30bc")}</span>
       </button>
       {/* A muted state is ambient: revealed on hover/focus so ordinary rows stay
@@ -153,6 +180,7 @@ export function SessionRow({
       </span> : null}
       {dragHandle}
       {unread && <span id={unreadDescriptionId} className="sr-only">{uiText("unread_messages_519491f4")}</span>}
+      {runFailed && <span id={failureDescriptionId} className="sr-only">{uiText("session_last_run_failed_hint")}</span>}
 
       <DropdownMenu open={menu.open} onOpenChange={menu.onOpenChange}>
         <DropdownMenuTrigger

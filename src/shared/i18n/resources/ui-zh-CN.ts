@@ -1413,6 +1413,7 @@ export const uiZhCn = {
   "reload_state_df7392cc": "重新读取",
   "new_messages_ce3b9bb1": "有新消息",
   "unread_messages_519491f4": "未读消息",
+  "session_last_run_failed_hint": "该会话上次运行失败，打开后可查看错误详情。",
   "session_actions_e6f6d875": "会话操作",
   "rename_0d0cbac2": "重命名",
   "generate_title_with_ai_f327dbdd": "AI 生成标题",
