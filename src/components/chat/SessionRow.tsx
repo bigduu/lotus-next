@@ -6,6 +6,8 @@ import { cn } from "@/lib/utils"
 import { SIDEBAR_SESSION_DRAG_TYPE, type ProjectSidebarSection } from "@/lib/projectSidebarPreferences"
 import { useSidebarContextMenu } from "@/hooks/useSidebarContextMenu"
 import { agentClient } from "@services/chat/AgentService"
+import { WorktreeStateBadge } from "./WorktreeStateBadge"
+import type { CheckoutMergeState } from "@/hooks/useWorktreeMergeStates"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -33,6 +35,7 @@ export function SessionRow({
   sectionId = null,
   onMoveToSection,
   dragHandle,
+  mergeState,
 }: {
   chat: Chat
   active: boolean
@@ -47,6 +50,12 @@ export function SessionRow({
   sections?: readonly ProjectSidebarSection[]
   sectionId?: string | null
   onMoveToSection?: (sectionId: string | null) => void
+  /**
+   * Git state of this session's checkout. Omitted when the session does not run
+   * in a registered worktree, in which case the row shows no badge and keeps the
+   * same layout.
+   */
+  mergeState?: CheckoutMergeState
 }) {
   useUiLocale()
   const menu = useSidebarContextMenu()
@@ -137,6 +146,11 @@ export function SessionRow({
         )}
         <span className="truncate">{chat.title || uiText("new_session_c57c30bc")}</span>
       </button>
+      {/* A muted state is ambient: revealed on hover/focus so ordinary rows stay
+          quiet, while a real signal is always visible. */}
+      {mergeState ? <span className={mergeState.state === "merged" || mergeState.state === "in_progress" ? undefined : "opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity"}>
+        <WorktreeStateBadge merge={mergeState} running={chat.isRunning} />
+      </span> : null}
       {dragHandle}
       {unread && <span id={unreadDescriptionId} className="sr-only">{uiText("unread_messages_519491f4")}</span>}
 

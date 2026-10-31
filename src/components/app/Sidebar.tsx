@@ -20,6 +20,7 @@ import {
   LEGACY_PROJECT_SECTION_ID, reorderProjectSection,
 } from "@/lib/projectSidebarPreferences"
 import { useProjectSidebarSections } from "@/hooks/useProjectSidebarSections"
+import { mergeStateFor, useWorktreeMergeStates } from "@/hooks/useWorktreeMergeStates"
 import { useAppStore } from "@shared/store/appStore"
 import { openLocalFolder } from "@shared/utils/openExternalLink"
 import { cn } from "@/lib/utils"
@@ -85,7 +86,8 @@ export function Sidebar({
   chats: ChatItem[]
   booted: boolean
   currentSessionId: string | null | undefined
-  onNewChat: (projectId?: string | null) => void
+  /** `sectionId` records where a section-scoped new session should land. */
+  onNewChat: (projectId?: string | null, sectionId?: string | null) => void
   onSelect: (id: string) => void | Promise<void>
   onOpenExistingSession?: OpenWorkSession
   onRename: (id: string, title: string) => void | Promise<void>
@@ -153,6 +155,14 @@ export function Sidebar({
     return counts
   }, [rootChats])
 
+  // One merge-state load per Project, shared by every row: a sidebar with many
+  // sessions in one repository must not issue one inventory request per row.
+  const mergeStates = useWorktreeMergeStates(
+    rootChats.map((chat) => chat.config?.projectId?.trim()).filter((id): id is string => !!id),
+    // The visible session set: a new session may mean a new worktree in a
+    // Project already read, so its arrival re-reads rather than staying stale.
+    rootChats.map((chat) => chat.id).join(","),
+  )
   const groups = useMemo(() => {
     // Only root sessions in the sidebar — child sub-agent sessions live in the
     // inspector's sub-agents panel, not as top-level chats.
@@ -320,6 +330,7 @@ export function Sidebar({
       key={chat.id} chat={chat} active={chat.id === currentSessionId}
       unread={chat.id !== currentSessionId && isSessionUnread(chat, readState)}
       projectId={project?.id}
+      mergeState={mergeStateFor(mergeStates, chat.config?.workspacePath)}
       dragHandle={drag && project && project.status === "active" && project.sidebar !== undefined && !query
         ? <drag.Handle source={{ kind: "session", projectId: project.id, id: chat.id }} label={`${uiText("sidebar_move_to_section")} · ${chat.title || uiText("new_session_c57c30bc")}`} disabled={sectionBusy.has(project.id)} /> : undefined}
       sections={project ? getProjectSections(sectionPreferences, project.id, project.section) : undefined}
@@ -369,10 +380,16 @@ export function Sidebar({
         data-project-section={section.name} data-section-id={section.id ?? "none"} data-section-project={project.id}
         aria-disabled={project.status !== "active" || project.sidebar === undefined || sectionBusy.has(project.id)}
         style={{ marginInlineStart: 12 }} className="mb-1 rounded-md feedback-motion switch-feedback">
-        <ProjectSectionHeader onManageSections={() => {
-          setSectionDialogMode("manage")
-          setSectioningProjectId(project.id)
-        }}>
+        <ProjectSectionHeader
+          sectionName={section.name}
+          onNewSession={project.status === "active" && !disabled ? () => {
+            onNewChat(project.id, section.id)
+            onClose()
+          } : undefined}
+          onManageSections={() => {
+            setSectionDialogMode("manage")
+            setSectioningProjectId(project.id)
+          }}>
           <button type="button" aria-expanded={expanded} aria-controls={contentId} disabled={!!query}
             className="flex min-w-0 flex-1 select-none items-center gap-1 rounded-md px-2 py-1.5 text-left text-xs font-medium text-muted-foreground outline-none hover:text-foreground disabled:cursor-default"
             data-sidebar-section-header

@@ -61,7 +61,7 @@ export function useSupervisorProjectScope(open: boolean, dependencies = defaultP
 
   const edit = useCallback((id: string, checked: boolean) => {
     setView((s) => {
-      if (!s.observation || s.reading || s.submitting || s.catalogError || !s.draft) return s
+      if (!s.observation || s.observation.management_access || s.reading || s.submitting || s.catalogError || !s.draft) return s
       const option = s.projects.find((p) => p.id === id)
       if (checked && (option?.status !== "active" || !s.draft.includes(id) && s.draft.length >= 64)) return s
       if (!checked && !s.draft.includes(id)) return s
@@ -71,7 +71,7 @@ export function useSupervisorProjectScope(open: boolean, dependencies = defaultP
   }, [])
   const review = useCallback(() => {
     setView((s) => {
-      if (!s.observation || s.reading || s.submitting || s.catalogError || s.draft === null) return s
+      if (!s.observation || s.observation.management_access || s.reading || s.submitting || s.catalogError || s.draft === null) return s
       const intent: ProjectScopeIntent = Object.freeze({ supervisor: Object.freeze({ ...s.observation.scope.supervisor }),
         expected_state_revision: s.observation.scope.state_revision,
         mutation: Object.freeze({ kind: "configure_project_scope", allowed_projects: Object.freeze([...s.draft]) }) })
@@ -98,7 +98,7 @@ export function useSupervisorProjectScope(open: boolean, dependencies = defaultP
       if (!current()) return
       const fresh = await load(true)
       if (!current()) return
-      if (receipt && fresh && sameSupervisor(receipt.supervisor, fresh.scope.supervisor)
+      if (receipt && fresh && !fresh.management_access && sameSupervisor(receipt.supervisor, fresh.scope.supervisor)
         && receipt.state_revision === fresh.scope.state_revision && sameProjects(intent.mutation.allowed_projects, fresh.scope.allowed_projects)) notice = { kind: "saved" }
       setView((v) => ({ ...v, review: null, notice,
         writeBlocked: ["authentication", "rejected", "unavailable"].includes(notice.kind) }))
@@ -111,6 +111,6 @@ export function useSupervisorProjectScope(open: boolean, dependencies = defaultP
   const writeAvailable = !view.writeBlocked && canWriteProjectScope(view.observation)
   return { ...view, writeAvailable, invalidSelection, edit, reviewDraft: review, confirm, refresh,
     backToEdit: () => setView((s) => ({ ...s, review: null, notice: null })),
-    canEdit: !!view.observation && !view.reading && !view.submitting && !view.catalogError,
+    canEdit: !!view.observation && !view.observation.management_access && !view.reading && !view.submitting && !view.catalogError,
     canConfirm: !invalidSelection && !!view.review && !view.reading && !view.submitting && !view.catalogError && writeAvailable }
 }

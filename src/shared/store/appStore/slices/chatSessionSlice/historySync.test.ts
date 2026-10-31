@@ -589,3 +589,67 @@ describe("concurrent history read authority", () => {
     expect(store.getState().chats).toEqual([]);
   });
 });
+
+
+describe("guarded history application", () => {
+  it("does not let a pending old guard overwrite a newer confirmed history read", async () => {
+    const pending = deferred<boolean>();
+    const guard = vi.fn(() => pending.promise);
+    vi.spyOn(agentClient, "getHistory").mockResolvedValueOnce(staleToolTail).mockResolvedValueOnce(committedHistory);
+    const store = harness();
+    const old = store.getState().loadChatHistory("session-1", { throwOnError: true, beforeApply: guard });
+    const outcome = expect(old).rejects.toMatchObject({ name: "AbortError" });
+    await vi.waitFor(() => expect(guard).toHaveBeenCalledOnce());
+    await store.getState().loadChatHistory("session-1", { throwOnError: true });
+    const current = store.getState().chats[0];
+    pending.resolve(true);
+    await outcome;
+    expect(store.getState().chats[0]).toBe(current);
+    expect(current.messages.at(-1)?.id).toBe("assistant-final");
+  });
+
+  it("does not commit when cancellation occurs while the guard is pending", async () => {
+    const pending = deferred<boolean>();
+    const guard = vi.fn(() => pending.promise);
+    vi.spyOn(agentClient, "getHistory").mockResolvedValueOnce(committedHistory);
+    const store = harness();
+    const original = store.getState().chats[0];
+    const controller = new AbortController();
+    const read = store.getState().loadChatHistory("session-1", { signal: controller.signal, throwOnError: true, beforeApply: guard });
+    const outcome = expect(read).rejects.toMatchObject({ name: "AbortError" });
+    await vi.waitFor(() => expect(guard).toHaveBeenCalledOnce());
+    controller.abort();
+    pending.resolve(true);
+    await outcome;
+    expect(store.getState().chats[0]).toBe(original);
+  });
+
+  it("rechecks local navigation after the asynchronous check settles and before applying", async () => {
+    vi.spyOn(agentClient, "getHistory").mockResolvedValueOnce(committedHistory);
+    const store = harness(["session-1", "session-2"]);
+    const original = store.getState().chats[0];
+    const beforeApply = vi.fn(async () => {
+      queueMicrotask(() => store.setState({ currentSessionId: "session-2" }));
+      return true;
+    });
+    const read = store.getState().loadChatHistory("session-1", { throwOnError: true, beforeApply,
+      canApply: () => store.getState().currentSessionId === "session-1" });
+    await expect(read).rejects.toMatchObject({ name: "AbortError" });
+    expect(store.getState().chats[0]).toBe(original);
+    expect(store.getState().currentSessionId).toBe("session-2");
+  });
+
+  it("preserves newer session configuration while the target check is pending", async () => {
+    const pending = deferred<boolean>();
+    const guard = vi.fn(() => pending.promise);
+    vi.spyOn(agentClient, "getHistory").mockResolvedValueOnce(committedHistory);
+    const store = harness();
+    const read = store.getState().loadChatHistory("session-1", { throwOnError: true, beforeApply: guard });
+    await vi.waitFor(() => expect(guard).toHaveBeenCalledOnce());
+    store.setState((state) => ({ chats: state.chats.map((chat) => ({ ...chat, config: { ...chat.config, projectId: "new-project" } })) }));
+    pending.resolve(true);
+    await read;
+    expect(store.getState().chats[0].config.projectId).toBe("new-project");
+    expect(store.getState().chats[0].messages.at(-1)?.id).toBe("assistant-final");
+  });
+});

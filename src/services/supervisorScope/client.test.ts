@@ -8,9 +8,37 @@ vi.mock("@services/api", async (original) => ({ ...await original<typeof import(
   apiClient: { get: vi.fn(), put: vi.fn(), putOnce: vi.fn(), post: vi.fn() } }))
 vi.mock("@services/project", () => ({ projectService: { listProjects: vi.fn() } }))
 
-import { httpScopeFixture, scopeFixture } from "./testFixtures"
+import { currentUserScopeFixture, httpScopeFixture, scopeFixture } from "./testFixtures"
 const intent: ProjectScopeIntent = { supervisor: scopeFixture().scope.supervisor, expected_state_revision: 2,
   mutation: { kind: "configure_project_scope", allowed_projects: ["p2"] } }
+
+describe("current-user management observation", () => {
+  it.each([{ allowed_projects: [] }, { allowed_projects: ["p1"] }])("does not treat legacy Project metadata %j as access restrictions", ({ allowed_projects }) => {
+    const body = { ...currentUserScopeFixture(), scope: { ...currentUserScopeFixture().scope, allowed_projects } }
+    expect(decodeProjectScope(body)).toEqual(body)
+    expect(canWriteProjectScope(decodeProjectScope(body))).toBe(false)
+  })
+  it("reads the new scope without submitting an authorization or attach mutation", async () => {
+    vi.mocked(apiClient.get).mockResolvedValue(currentUserScopeFixture())
+    const signal = new AbortController().signal
+    expect(await supervisorScopeClient.read(signal)).toEqual(currentUserScopeFixture())
+    expect(apiClient.get).toHaveBeenCalledExactlyOnceWith("supervisor/default/scope", { signal })
+    expect(apiClient.putOnce).not.toHaveBeenCalled(); expect(apiClient.post).not.toHaveBeenCalled()
+  })
+  it.each([
+    { ...currentUserScopeFixture(), management_access: undefined },
+    { ...currentUserScopeFixture(), capabilities: httpScopeFixture().capabilities },
+    ...[
+      { kind: "front_end_grant" }, { default_all_projects: false }, { default_all_sessions: false },
+      { requires_project_authorization: true }, { requires_session_attachment: true },
+      { orchestration_revision: -1 }, { orchestration_revision: Number.MAX_SAFE_INTEGER + 1 },
+    ].map((patch) => ({ ...currentUserScopeFixture(), management_access: { ...currentUserScopeFixture().management_access, ...patch } })),
+    { ...currentUserScopeFixture(), code: "project_scope_uninitialized" },
+    { ...currentUserScopeFixture(), owner_authorization: scopeFixture().owner_authorization },
+  ])("rejects incomplete or contradictory current-user markers %#", (body) => {
+    expect(() => decodeProjectScope(body)).toThrow()
+  })
+})
 
 describe("Supervisor Project scope read contract", () => {
   it("uses only the canonical GET and never writes or invokes native while reading", async () => {

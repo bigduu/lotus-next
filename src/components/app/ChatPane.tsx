@@ -1,4 +1,5 @@
 import { LiveBootstrapRetryNotice } from "@/components/chat/LiveBootstrapRetryNotice"
+import { backgroundExecWaitActive } from "@/components/chat/runtimeNotices"
 import { useLiveBootstrapRetry } from "@/hooks/useLiveBootstrapRetry"
 import { useSessionDrop } from "@/hooks/useSessionDrop"
 import type { ComposerInputHandle } from "@/components/chat/ComposerEditor"
@@ -190,6 +191,7 @@ export function ChatPane({
   pickedWorkspace,
   worktreePath,
   pendingProjectId,
+  onNewSessionInProjectSection,
   newChatEpoch = 0,
   getNavigationVersion,
   onSelectProject,
@@ -215,6 +217,8 @@ export function ChatPane({
   worktreePath?: string | null
   /** Project preselected for the next NEW session (project-grouped sidebar). */
   pendingProjectId?: string | null
+  /** Notified once when a NEW session lands after a section-scoped 新建 intent. */
+  onNewSessionInProjectSection?: (sessionId: string) => void
   /** Explicit New chat intent, including new → new with a null session ID. */
   newChatEpoch?: number
   /** Synchronous navigation-intent fence owned by the main App. */
@@ -284,7 +288,17 @@ export function ChatPane({
   // scoped to the session rendered by this pane.  Do not let a run from the
   // session we just left turn a blank/new conversation into a Stop button.
   const executionBlocked = chat.executionCompatibility?.blocked === true
-  const currentlyRunning = currentChat?.isRunning === true || (sending && streaming !== null)
+  // A background-exec wait keeps the run live from the user's perspective: the
+  // runtime suspended the session while the monitored command still executes,
+  // and its result returns automatically. Keep the running presentation until
+  // the completion injection resumes the run (is_running flips back true) or
+  // the transcript grows past the wait notice.
+  const backgroundExecWaiting = currentChat?.lastRunStatus === "suspended"
+    && currentChat?.isRunning !== true
+    && backgroundExecWaitActive(
+      (currentChat?.messages ?? []).map((m) => ({ metadata: (m as { metadata?: { runtime_kind?: unknown } }).metadata, content: "content" in m ? m.content : undefined })),
+    )
+  const currentlyRunning = currentChat?.isRunning === true || (sending && streaming !== null) || backgroundExecWaiting
   const visibleSendFailure = sendFailure?.sessionId === currentSessionId ? sendFailure : null
   const persistedRunError = !visibleSendFailure
     && !currentlyRunning
@@ -910,6 +924,12 @@ export function ChatPane({
           || getNavigationVersion?.() !== originNavigationVersion
           || (!result.navigated && !isOriginCurrent()))) return
         if (frozenReference) setTicketReference((current) => current?.id === frozenReference.id ? null : current)
+        // A section-scoped creation intent applies to exactly this new session;
+        // the callback owns clearing it, so later sends never re-apply it. Even
+        // a send whose navigation was interrupted still created the session.
+        if (!currentSessionId && snapshot.projectId && onNewSessionInProjectSection) {
+          onNewSessionInProjectSection(result.sessionId)
+        }
 
         // Commit only fields that still have the exact mutation revision captured
         // by this submission. A late acknowledgement must never erase edits or a
@@ -1222,6 +1242,7 @@ export function ChatPane({
           streamingReasoning={streamingReasoning}
           liveSegments={liveSegments}
           streamStatus={streamStatus}
+          backgroundExecWaiting={backgroundExecWaiting}
           pendingUserText={pendingUserText}
           pendingUserImages={pendingUserImages}
           pendingUserMessages={pendingUserMessages}
@@ -1306,7 +1327,8 @@ export function ChatPane({
         ) : null}
 
         <LiveBootstrapRetryNotice offer={liveRetry.offer} disabled={executionBlocked || rootMode.unsafe || modelSaving}
-          onConfirm={() => { if (!rootSessionUnsafe()) void liveRetry.confirm() }} onStop={() => void liveRetry.stop()} />
+          onConfirm={() => { if (!rootSessionUnsafe()) void liveRetry.confirm() }} onStop={() => void liveRetry.stop()}
+          onRefresh={() => { if (!rootSessionUnsafe()) void liveRetry.refresh() }} />
 
         {chat.upstreamRetryStatus ? <p role="status" className="mx-4 mb-2 text-xs text-muted-foreground">
           {uiText(chat.upstreamRetryStatus === "requesting" ? "upstream_retry_requesting"

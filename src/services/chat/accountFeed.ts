@@ -131,6 +131,7 @@ const applyChange = (change: ChangeEvent): void => {
   if (event.type === "session_cleared" && sessionId) {
     store.reconcileClearedConversation(sessionId);
   }
+  if (event.type === "session_deleted") store.invalidateSessionNavigation(sessionId);
 
   // Server-side preference-gated notifications → surface as a browser
   // notification when the user isn't actively watching that session.

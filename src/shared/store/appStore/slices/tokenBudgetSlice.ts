@@ -18,18 +18,35 @@ export interface TokenBudgetActions {
     segmentsRemoved: number,
   ) => void;
   clearTokenUsage: (sessionId: string) => void;
+  clearTokenUsageValue: (sessionId: string) => void;
+  clearTruncationInfo: (sessionId: string) => void;
 }
 
 export type TokenBudgetSlice = TokenBudgetState & TokenBudgetActions;
 
+// A clear-recovery read may be waiting on a separate target confirmation.
+// Track later token events per store/session without treating an unrelated
+// session's update as a change to this one.
+type TokenRevisions = { usage: number; truncation: number };
+const tokenRevisions = new WeakMap<() => TokenBudgetSlice, Map<string, TokenRevisions>>();
+export const tokenBudgetRevision = (get: () => TokenBudgetSlice, sessionId: string): TokenRevisions =>
+  tokenRevisions.get(get)?.get(sessionId) ?? { usage: 0, truncation: 0 };
+const advanceTokenBudgetRevision = (get: () => TokenBudgetSlice, sessionId: string, group: keyof TokenRevisions): void => {
+  const revisions = tokenRevisions.get(get) ?? new Map<string, TokenRevisions>();
+  const previous = tokenBudgetRevision(get, sessionId);
+  revisions.set(sessionId, { ...previous, [group]: previous[group] + 1 });
+  tokenRevisions.set(get, revisions);
+};
+
 export const createTokenBudgetSlice: StateCreator<TokenBudgetSlice, [], [], TokenBudgetSlice> = (
-  set,
+  set, get,
 ) => ({
   tokenUsages: {},
   truncationOccurred: {},
   segmentsRemoved: {},
 
-  updateTokenUsage: (sessionId, usage) =>
+  updateTokenUsage: (sessionId, usage) => {
+    advanceTokenBudgetRevision(get, sessionId, "usage");
     set((state) => {
       const previous = state.tokenUsages[sessionId];
       let nextUsage = usage;
@@ -81,9 +98,11 @@ export const createTokenBudgetSlice: StateCreator<TokenBudgetSlice, [], [], Toke
           [sessionId]: nextUsage,
         },
       };
-    }),
+    });
+  },
 
-  setTruncationInfo: (sessionId, truncationOccurred, segmentsRemoved) =>
+  setTruncationInfo: (sessionId, truncationOccurred, segmentsRemoved) => {
+    advanceTokenBudgetRevision(get, sessionId, "truncation");
     set((state) => ({
       truncationOccurred: {
         ...state.truncationOccurred,
@@ -93,9 +112,29 @@ export const createTokenBudgetSlice: StateCreator<TokenBudgetSlice, [], [], Toke
         ...state.segmentsRemoved,
         [sessionId]: segmentsRemoved,
       },
-    })),
+    }));
+  },
 
-  clearTokenUsage: (sessionId) =>
+  clearTokenUsageValue: (sessionId) => {
+    advanceTokenBudgetRevision(get, sessionId, "usage");
+    set((state) => {
+      const { [sessionId]: _, ...tokenUsages } = state.tokenUsages;
+      return { tokenUsages };
+    });
+  },
+
+  clearTruncationInfo: (sessionId) => {
+    advanceTokenBudgetRevision(get, sessionId, "truncation");
+    set((state) => {
+      const { [sessionId]: _, ...truncationOccurred } = state.truncationOccurred;
+      const { [sessionId]: __, ...segmentsRemoved } = state.segmentsRemoved;
+      return { truncationOccurred, segmentsRemoved };
+    });
+  },
+
+  clearTokenUsage: (sessionId) => {
+    advanceTokenBudgetRevision(get, sessionId, "usage");
+    advanceTokenBudgetRevision(get, sessionId, "truncation");
     set((state) => {
       const { [sessionId]: _, ...remainingUsages } = state.tokenUsages;
       const { [sessionId]: __, ...remainingTruncation } = state.truncationOccurred;
@@ -105,5 +144,6 @@ export const createTokenBudgetSlice: StateCreator<TokenBudgetSlice, [], [], Toke
         truncationOccurred: remainingTruncation,
         segmentsRemoved: remainingSegments,
       };
-    }),
+    });
+  },
 });
