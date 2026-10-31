@@ -99,6 +99,13 @@ export function sessionHasRunningBackgroundBash(
  * any work is in flight — the main execution, a live sub-agent, or a background
  * shell, which outlives the main execution and therefore keeps running after
  * the backend reports `is_running: false`.
+ *
+ * A background launch only counts while this client holds an execution entry
+ * for the session, i.e. it actually engaged with it. `BashCompleted` is
+ * replayable session state, so an engaged session is re-delivered the outcome
+ * as soon as it is observed again (see `selectShouldObserve`, which keeps such
+ * sessions observed on purpose). Without that fence a transcript launch with no
+ * recorded outcome would pulse forever for a session this client never watches.
  */
 export function sessionHasLiveWork(
   session: {
@@ -112,6 +119,7 @@ export function sessionHasLiveWork(
   if (execution) {
     if (isBusyPhase(execution.phase)) return true
     if (execution.children.runningCount > 0) return true
+    return sessionHasRunningBackgroundBash(session.messages, backgroundBash)
   }
-  return sessionHasRunningBackgroundBash(session.messages, backgroundBash)
+  return false
 }
