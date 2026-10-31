@@ -87,6 +87,28 @@ it("keeps old backend management unsupported without inventing an empty authoriz
   expect(document.querySelectorAll('[data-managed-session]')).toHaveLength(0)
   expect(h.dependencies.update).not.toHaveBeenCalled()
 })
+it("keeps a 503 read failure transient with an invitation to refresh", async () => {
+  const read: ManagedSessionsDependencies["read"] = vi.fn(async () => { throw new ApiError("unavailable", 503, "") })
+  await mount({ panel: true, read })
+  const panel = document.querySelector('[data-testid="supervisor-managed-panel"]')!
+  expect(panel.querySelector('[role="alert"]')?.textContent).toBe(uiText("supervisor_sessions_unavailable"))
+  expect(panel.textContent).not.toContain(uiText("supervisor_sessions_read_failed"))
+})
+it("reports a permanent read failure without inviting a refresh", async () => {
+  const read: ManagedSessionsDependencies["read"] = vi.fn(async () => { throw new Error("network down") })
+  await mount({ panel: true, read })
+  const panel = document.querySelector('[data-testid="supervisor-managed-panel"]')!
+  expect(panel.querySelector('[role="alert"]')?.textContent).toBe(uiText("supervisor_sessions_read_failed"))
+  expect(panel.textContent).not.toContain(uiText("supervisor_sessions_unavailable"))
+})
+it("names a vanished Project distinctly from a generic read failure", async () => {
+  const read: ManagedSessionsDependencies["read"] = vi.fn(async () => { throw new ApiError("gone", 404, "", JSON.stringify({ code: "project_unavailable" })) })
+  await mount({ panel: true, read })
+  const panel = document.querySelector('[data-testid="supervisor-managed-panel"]')!
+  expect(panel.querySelector('[role="alert"]')?.textContent).toBe(uiText("supervisor_sessions_project_unavailable"))
+  expect(panel.textContent).not.toContain(uiText("supervisor_sessions_read_failed"))
+  expect(panel.textContent).not.toContain(uiText("supervisor_sessions_unavailable"))
+})
 it("makes managed independent sessions the panel contents and opens the selected target", async () => {
   const h = await mount({ panel: true })
   const panel = document.querySelector('[data-testid="supervisor-managed-panel"]')!
