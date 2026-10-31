@@ -71,10 +71,11 @@ describe("sidebar live-work predicate", () => {
   const execution = (phase: SessionExecutionState["phase"], runningChildren = 0) =>
     ({ phase, children: { byId: {}, runningCount: runningChildren } }) as SessionExecutionState
 
-  it("counts a running background shell even when the backend reports idle", () => {
+  it("counts a running background shell while the client holds the session", () => {
     const session = { isRunning: false, messages: [resultMessage(launch("bash-1"), "m1")] }
-    expect(sessionHasLiveWork(session, undefined, {})).toBe(true)
-    expect(sessionHasLiveWork(session, undefined, { "bash-1": { status: "completed", exitCode: 0 } })).toBe(false)
+    expect(sessionHasLiveWork(session, execution("idle"), {})).toBe(true)
+    expect(sessionHasLiveWork(session, execution("completed"), {})).toBe(true)
+    expect(sessionHasLiveWork(session, execution("idle"), { "bash-1": { status: "completed", exitCode: 0 } })).toBe(false)
   })
 
   it("counts an active execution phase and live sub-agents", () => {
@@ -86,5 +87,13 @@ describe("sidebar live-work predicate", () => {
 
   it("keeps the backend flag authoritative when it is set", () => {
     expect(sessionHasLiveWork({ isRunning: true, messages: [] }, execution("idle"), {})).toBe(true)
+    expect(sessionHasLiveWork({ isRunning: true, messages: [] }, undefined, {})).toBe(true)
+  })
+
+  it("does not classify a session this client never engaged with", () => {
+    // No execution entry: nothing has been observed for it, so a transcript
+    // launch alone must not pulse forever (BashCompleted replays on observe).
+    const session = { isRunning: false, messages: [resultMessage(launch("bash-1"), "m1")] }
+    expect(sessionHasLiveWork(session, undefined, {})).toBe(false)
   })
 })
