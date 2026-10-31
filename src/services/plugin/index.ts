@@ -1,4 +1,4 @@
-export { PluginService, pluginService } from "./PluginService";
+export { PluginService, novaInstallReason, pluginService } from "./PluginService";
 export type {
   InstalledPluginView,
   JianduSetupReport,

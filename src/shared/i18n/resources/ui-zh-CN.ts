@@ -576,6 +576,8 @@ export const uiZhCn = {
   "plugin_nova_app_reconnect_sent": "重连请求已发送，请查看实际连接状态。",
   "plugin_nova_app_reconnect_unavailable": "桌面连接尚未验证或已禁用，请先检查现有 MCP 设置。",
   "plugin_nova_app_install_unconfirmed": "尚未确认 Nova.app 安装结果。请先刷新被动状态，再决定是否重试。",
+  "plugin_nova_app_install_reason": "尚未确认 Nova.app 安装结果（{{reason}}）。请先刷新被动状态，再决定是否重试。",
+  "plugin_nova_app_install_checksum": "已发布的 Nova.app 归档与服务端接受的校验和不一致，本次未安装任何内容。请按可信发布版本提供的校验和手动安装，或更新服务端。",
   "plugin_nova_app_reconnect_unconfirmed": "无法确认桌面重连结果，请刷新检查实际连接状态。",
   "plugin_jiandu_root_overlap": "请将记忆目录移出 Jiandu 插件安装目录后刷新。",
   "plugin_jiandu_root_unavailable": "无法确认记忆目录安全性，请检查目录并刷新。",

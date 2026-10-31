@@ -2,6 +2,7 @@ import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { useCallback, useEffect, useRef, useState } from "react"
 import { Blocks, Plus, RefreshCw, RotateCw, Trash2 } from "lucide-react"
 import {
+  novaInstallReason,
   pluginService,
   type InstalledPluginView,
   type JianduSetupReport,
@@ -72,6 +73,15 @@ interface FormState {
   pluginId?: string
   pluginName?: string
   initialSource?: PluginSourceSpec | null
+}
+
+/** Render a rejected Nova.app install with the server's finite reason when known. */
+function novaInstallMessage(reason: string | null): string {
+  // A moved release asset is not a transient network fault: retrying cannot
+  // succeed, so name the cause instead of asking the user to refresh again.
+  if (reason === "archive_checksum_mismatch") return uiText("plugin_nova_app_install_checksum")
+  if (reason) return uiText("plugin_nova_app_install_reason", { reason })
+  return uiText("plugin_nova_app_install_unconfirmed")
 }
 
 type ReconciliationIntent =
@@ -229,12 +239,16 @@ export function SettingsPlugins() {
     if (!novaSetup?.install.available || !novaSetup.artifact || !beginOperation("nova-app-install", false)) return
     const { artifact_id: artifactId, version } = novaSetup.artifact
     reconciliationIntent.current = { type: "nova-app-install", artifactId, version }
+    let failureReason: string | null = null
     try {
       await pluginService.installNovaApp(artifactId)
-    } catch {
+    } catch (error) {
       // No automatic POST retry. The owned backend operation may still finish.
+      // Keep the server's finite reason: a rejection is never reconciled, and
+      // the reason is the only actionable detail the user can act on.
+      failureReason = novaInstallReason(error)
     } finally {
-      if (mountedRef.current) setActionError(uiText("plugin_nova_app_install_unconfirmed"))
+      if (mountedRef.current) setActionError(novaInstallMessage(failureReason))
       await finishOperation()
     }
   }
