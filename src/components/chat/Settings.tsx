@@ -336,7 +336,7 @@ export type SettingsTabId = (typeof TABS)[number]["id"]
 
 const TAB_GROUPS: { label: string; tabs: SettingsTabId[] }[] = [
   { get label() { return uiText("settings_group_appearance") }, tabs: ["general", "notifications"] },
-  { get label() { return uiText("settings_group_connections") }, tabs: ["providers", "config-share", "model-limits", "mcp", "clusters"] },
+  { get label() { return uiText("settings_group_connections") }, tabs: ["providers", "config-share", "model-limits", "retry", "mcp", "clusters"] },
   { get label() { return uiText("settings_group_capabilities") }, tabs: ["plugins", "skills", "prompts", "workflows", "schedules", "jiandu"] },
   { get label() { return uiText("settings_group_safety") }, tabs: ["permissions", "masking", "env", "metrics", "system"] },
 ]
