@@ -37,6 +37,28 @@ const Target: SidebarDragParts["Target"] = ({ target, disabled, children, style,
 
 const parts = { Handle, Target }
 
+/**
+ * The session row under the pointer when the gesture ended, plus which half of
+ * it was hit. Rows are not droppables themselves — the enclosing bucket stays
+ * the single dnd-kit target — so a bucket drop can still turn into an explicit
+ * position without nesting droppables.
+ */
+function rowUnderPointer(position: { x?: number; y?: number } | null | undefined) {
+  const x = position?.x
+  const y = position?.y
+  if (typeof x !== "number" || typeof y !== "number" || !Number.isFinite(x) || !Number.isFinite(y)) return null
+  if (typeof document.elementsFromPoint !== "function") return null
+  for (const element of document.elementsFromPoint(x, y)) {
+    const row = element.closest?.<HTMLElement>("[data-sidebar-session]")
+    const sessionId = row?.dataset.sidebarSession
+    if (!row || !sessionId) continue
+    const bounds = row.getBoundingClientRect()
+    // A row's own top half inserts above it; the bottom half inserts below.
+    return { sessionId, after: y > bounds.top + bounds.height / 2 }
+  }
+  return null
+}
+
 /** Observe initialization synchronously; external cancellation also releases 0.5 sensor listeners. */
 function Lifecycle({ scopeKey, state, onCancel, getPickup }: { scopeKey: string; state: SidebarProjectDragProps; onCancel: () => void; getPickup: () => SidebarDragPickup | null }) {
   const manager = useDragDropManager()
@@ -139,15 +161,20 @@ export default function SidebarProjectDrag(props: SidebarProjectDragProps) {
     onDragOver={(event) => check(event.operation)}
     onDragEnd={(event) => {
       const source = pickup.current
-      const target = sidebarDropTarget(event.operation.target?.data)
+      const zone = sidebarDropTarget(event.operation.target?.data)
       clear()
-      if (event.canceled || !source || !target || !validSidebarDrop(source, target, currentState())) return
+      if (event.canceled || !source || !zone || !validSidebarDrop(source, zone, currentState())) return
       if (source.kind === "session") {
+        // A bucket drop keeps its previous meaning; landing on a row asks for an
+        // explicit position inside that bucket (and, if needed, that section).
+        const row = rowUnderPointer(event.operation.position.current)
+        const target = row && row.sessionId !== source.id ? { ...zone, sessionId: row.sessionId } : zone
+        const after = row?.after ?? false
         const sourceElement = event.operation.source?.element
         const sidebar = sourceElement?.closest("aside")
         const scope = props.scopeKey
         const version = focusVersion.current
-        void props.onMoveSession(source, target).then((saved) => {
+        void props.onMoveSession(source, target, after).then((saved) => {
           if (saved && version === focusVersion.current && latest.current.scopeKey === scope) {
             setReturnFocus({ source, sidebar, sourceElement, scope, version })
           }
@@ -158,7 +185,7 @@ export default function SidebarProjectDrag(props: SidebarProjectDragProps) {
         const header = element?.querySelector("[data-sidebar-section-header]") ?? element
         const bounds = header?.getBoundingClientRect()
         const after = !!bounds && event.operation.position.current.y > bounds.top + bounds.height / 2
-        props.onMoveSection(source, target, after)
+        props.onMoveSection(source, zone, after)
       }
     }}>
     <Lifecycle scopeKey={props.scopeKey} state={props} onCancel={clear} getPickup={() => pickup.current} />

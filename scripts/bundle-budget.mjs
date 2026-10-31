@@ -45,11 +45,22 @@ export const BUNDLE_BUDGET = Object.freeze({
   // recovery path adds no new dependency or string table.
   // The CSS ceilings below are untouched: the badge only reuses classes the
   // composed build already emits.
-  javascriptGzipBytes: 590_500,
+  // 2026-10-31 (#510): sidebar session ordering adds the device-local order model
+  // (explicit drag position plus the last user submission), the row-drop target
+  // resolution, and one new i18n hint. Against dev 464c1ab the production build
+  // moves 590,444 -> 591,500 gzip (+1,056, 0.179%) and raw 1,879,746 -> 1,883,023.
+  // The increment was minimised before raising anything: unused exports are gone,
+  // rank comparison no longer allocates a helper, and new startup copy was
+  // reworded so the CSS scanner stops emitting an unused `.grow` utility (that
+  // wording alone had added 18 startup CSS bytes). The order must stay readable
+  // during the first sidebar render, so it is not moved behind a lazy boundary.
+  // The same source measured 591,500 locally and 591,481 in the hosted Node 24
+  // build, so the ceiling carries a 20-byte margin above the larger reading.
+  javascriptGzipBytes: 591_520,
   minimumRawReduction: 0.02,
-  // 2026-10-31 (#500): measured gzip reduction is -4.04% against the frozen
-  // historical baseline; the floor follows by the minimum 0.1% step.
-  minimumGzipReduction: -0.041,
+  // 2026-10-31 (#510): measured gzip reduction is -4.2339% against the frozen
+  // historical baseline; the floor follows by the smallest 0.1% step.
+  minimumGzipReduction: -0.043,
   // Preserve #254's accepted CSS ceilings, verified by the composed build above.
   cssRawBytes: 109_000,
   cssGzipBytes: 18_500,

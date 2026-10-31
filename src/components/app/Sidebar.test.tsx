@@ -37,6 +37,7 @@ import { Sidebar } from "./Sidebar"
 import { useAppStore } from "@shared/store/appStore"
 import { uiText } from "@shared/i18n/ui"
 import { PINNED_PROJECTS_STORAGE_KEY, PROJECT_SECTIONS_STORAGE_KEY, SIDEBAR_SESSION_DRAG_TYPE, SIDEBAR_SECTION_DRAG_TYPE } from "@/lib/projectSidebarPreferences"
+import { SESSION_ORDER_STORAGE_KEY, clearSessionOrder, parseSessionOrder, recordSessionUserInput } from "@/lib/sidebarSessionOrder"
 import { DEFAULT_SUPERVISOR_SESSION_ID } from "@/lib/supervisor"
 
 type Props = ComponentProps<typeof Sidebar>
@@ -106,6 +107,7 @@ beforeAll(async () => {
 beforeEach(() => {
   vi.restoreAllMocks()
   localStorage.clear()
+  clearSessionOrder()
   useAppStore.setState({ projects: {}, ...initialProjectActions })
   vi.useFakeTimers()
   vi.setSystemTime(new Date("2026-09-05T15:00:00"))
@@ -533,6 +535,16 @@ async function drop(target: Element, payload: unknown, mime = SIDEBAR_SESSION_DR
   })
 }
 
+/** Drop `sourceId` onto another session row, which is a position request. */
+async function dropOnRow(sourceId: string, targetId: string, after: boolean, sectionId: string | null = null, projectId = "p1") {
+  const pickup: SidebarDragPickup = { kind: "session", projectId, id: sourceId,
+    revision: useAppStore.getState().projects[projectId]?.revision ?? 0 }
+  await act(async () => { await dragHarness.current!.onMoveSession(pickup, { projectId, sectionId, sessionId: targetId }, after) })
+}
+
+const renderedSessions = (scope: ParentNode) =>
+  [...scope.querySelectorAll("[data-session]")].map((element) => element.getAttribute("data-session"))
+
 describe("Sidebar server sections", () => {
   const lotusA = "section:00000000-0000-4000-8000-000000000011"
   const lotusB = "section:00000000-0000-4000-8000-000000000012"
@@ -875,5 +887,84 @@ describe("Sidebar server sections", () => {
     expect(container.querySelector('[data-project-section="lotus"]')!.textContent).toContain("lotus0 个会话")
     expect(updateProject).toHaveBeenCalledTimes(2)
     expect(localStorage.getItem(PROJECT_SECTIONS_STORAGE_KEY)).toBeNull()
+  })
+})
+
+describe("Sidebar session ordering", () => {
+  it("promotes the session the user just wrote into to the front", () => {
+    render()
+    expect(renderedSessions(container).slice(0, 2)).toEqual(["day-0", "day-1"])
+    // Submitting input is the recency signal: the session leaves its older date
+    // group and becomes the first row of today.
+    act(() => { recordSessionUserInput("day-3") })
+    expect(renderedSessions(container).slice(0, 3)).toEqual(["day-3", "day-0", "day-1"])
+  })
+
+  it("reorders a session dropped on another row without writing to the server", async () => {
+    const { updateProject } = installProjectBackend({ p1: project("p1", "Zenith") })
+    render({ chats: [projectChat("first", "p1"), projectChat("second", "p1")] })
+    click("项目")
+    const bucket = () => container.querySelector('[data-section-project="p1"][data-section-id="none"]')!
+    expect(renderedSessions(bucket())).toEqual(["first", "second"])
+
+    await dropOnRow("second", "first", false)
+    expect(renderedSessions(bucket())).toEqual(["second", "first"])
+    expect(updateProject).not.toHaveBeenCalled()
+    expect(localStorage.getItem(SESSION_ORDER_STORAGE_KEY)).toContain("second")
+
+    // The position survives a remount, which is what makes it a real order.
+    await act(async () => root.unmount())
+    root = createRoot(container)
+    await act(async () => root.render(<Sidebar {...props} />))
+    expect(renderedSessions(bucket())).toEqual(["second", "first"])
+  })
+
+  it("moves a session into another section at the dropped position", async () => {
+    const lotusA = "section:00000000-0000-4000-8000-000000000011"
+    const p1 = project("p1", "Zenith", "Development")
+    p1.sidebar!.sections.push({ id: lotusA, name: "lotus" })
+    const { updateProject, snapshots } = installProjectBackend({ p1 })
+    render({ chats: [projectChat("first", "p1"), projectChat("second", "p1")] })
+    click("项目")
+    await clickAndSave("Move first to lotus")
+    await dropOnRow("second", "first", true, lotusA)
+
+    expect(snapshots.p1.sidebar!.session_sections.second).toBe(lotusA)
+    const section = () => container.querySelector(`[data-section-id="${lotusA}"]`)!
+    expect(renderedSessions(section())).toEqual(["first", "second"])
+    expect(updateProject).toHaveBeenCalledTimes(2)
+  })
+
+  it("keeps a submission made while a cross-section move is pending", async () => {
+    const lotusA = "section:00000000-0000-4000-8000-000000000011"
+    const p1 = project("p1", "Zenith", "Development")
+    p1.sidebar!.sections.push({ id: lotusA, name: "lotus" })
+    const { updateProject, snapshots } = installProjectBackend({ p1 })
+    render({ chats: [projectChat("first", "p1"), projectChat("second", "p1")] })
+    click("项目")
+    await clickAndSave("Move first to lotus")
+
+    const persist = updateProject.getMockImplementation()!
+    let confirm!: () => Promise<void>
+    updateProject.mockImplementationOnce((...args) => new Promise<ProjectManifest>((resolve) => {
+      confirm = async () => { resolve(await persist(...args)) }
+    }))
+    const pickup: SidebarDragPickup = { kind: "session", projectId: "p1", id: "second",
+      revision: useAppStore.getState().projects.p1!.revision }
+    let moved: Promise<boolean> | undefined
+    // Act on the drop without waiting: the server response is still pending.
+    await act(async () => {
+      moved = dragHarness.current!.onMoveSession(pickup, { projectId: "p1", sectionId: lotusA, sessionId: "first" }, true)
+    })
+    // Another session is written into while the move is in flight.
+    act(() => { recordSessionUserInput("elsewhere", 1_700_000_000_000) })
+
+    await act(async () => { await confirm() })
+    await act(async () => { await moved })
+
+    const stored = parseSessionOrder(localStorage.getItem(SESSION_ORDER_STORAGE_KEY))
+    expect(stored.activity.elsewhere).toBe(1_700_000_000_000)
+    expect(stored.ranks.elsewhere).toBeGreaterThan(0)
+    expect(snapshots.p1.sidebar!.session_sections.second).toBe(lotusA)
   })
 })
