@@ -22,7 +22,7 @@ import { useSyncExternalStore } from "react"
  */
 
 const STORAGE_KEY = "lotus.sidebar.session-order.v1"
-/** Upper bound on remembered ids so an abandoned device cannot grow forever. */
+/** Upper bound on remembered ids so an abandoned device cannot expand forever. */
 const MAX_IDS = 4_000
 
 export type SessionOrder = {
@@ -198,22 +198,12 @@ export function sessionSortTime(chat: OrderableChat, order: SessionOrder = empty
   return Math.max(created, order.activity[chat.id] ?? 0)
 }
 
-export function sessionRank(order: SessionOrder, sessionId: string): number {
-  const rank = order.ranks[sessionId]
-  return finite(rank) ? rank : Number.NEGATIVE_INFINITY
-}
-
 /** Explicit drag position first, newest user input next. */
 export function compareSidebarSessions(left: OrderableChat, right: OrderableChat, order: SessionOrder = emptyOrder): number {
-  const leftRank = sessionRank(order, left.id)
-  const rightRank = sessionRank(order, right.id)
-  if (leftRank > rightRank) return -1
-  if (leftRank < rightRank) return 1
+  const leftRank = order.ranks[left.id] ?? Number.NEGATIVE_INFINITY
+  const rightRank = order.ranks[right.id] ?? Number.NEGATIVE_INFINITY
+  if (leftRank !== rightRank) return leftRank > rightRank ? -1 : 1
   return sessionSortTime(right, order) - sessionSortTime(left, order)
-}
-
-export function orderSidebarSessions<T extends OrderableChat>(chats: readonly T[], order: SessionOrder = emptyOrder): T[] {
-  return [...chats].sort((left, right) => compareSidebarSessions(left, right, order))
 }
 
 /** Test/support hook: forget every remembered position and activity time. */
