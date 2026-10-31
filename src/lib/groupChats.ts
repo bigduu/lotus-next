@@ -1,14 +1,14 @@
 import { uiText, uiLanguage } from "@shared/i18n/ui"
 import type { ChatItem } from "@shared/types/chatMessages"
 import { NO_PROJECT_GROUP_KEY } from "@services/project"
+import {
+  compareSidebarSessions,
+  emptySessionOrder,
+  sessionSortTime,
+  type SessionOrder,
+} from "./sidebarSessionOrder"
 
 export type ChatGroup = { key: string; label: string; chats: ChatItem[] }
-
-function chatTime(c: ChatItem): number {
-  // Sidebar ordering follows creation time: a session stays in the day group
-  // where it was created instead of jumping to the top whenever it is updated.
-  return typeof c.createdAt === "number" ? c.createdAt : 0
-}
 
 const dayKey = (d: Date) =>
   `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`
@@ -24,19 +24,32 @@ function dayLabel(ts: number, now: Date): string {
   }).format(d)
 }
 
+const sortChats = (chats: readonly ChatItem[], order: SessionOrder) =>
+  [...chats].sort((left, right) => compareSidebarSessions(left, right, order))
+
+/** Newest creation in a bucket; group order must not follow row order. */
+const newestCreation = (group: ChatGroup) =>
+  group.chats.reduce((newest, chat) => Math.max(newest, typeof chat.createdAt === "number" ? chat.createdAt : 0), 0)
+
 /**
- * Group sessions for the sidebar: pinned first, then by creation date
- * (今天 / 昨天 / M月D日), newest day first and newest created first within a day.
+ * Group sessions for the sidebar: pinned first, then by the session's ordering
+ * date (今天 / 昨天 / M月D日), newest day first and newest row first within a day.
+ *
+ * A session's ordering date is its creation day until the user submits input to
+ * it; that submission is the recency signal, so the session the user is talking
+ * to now moves to the front instead of staying buried under its creation day.
+ *
+ * Days are ordered by date alone. A drag position or a submission only orders
+ * rows inside their own day, so yesterday's session cannot push Yesterday above
+ * Today just because the user touched it.
  */
-export function groupChats(chats: ChatItem[], now: Date): ChatGroup[] {
-  const pinned = chats.filter((c) => c.pinned).sort((a, b) => chatTime(b) - chatTime(a))
-  const rest = [...chats.filter((c) => !c.pinned)].sort(
-    (a, b) => chatTime(b) - chatTime(a),
-  )
+export function groupChats(chats: ChatItem[], now: Date, order: SessionOrder = emptySessionOrder): ChatGroup[] {
+  const pinned = sortChats(chats.filter((c) => c.pinned), order)
+  const rest = sortChats(chats.filter((c) => !c.pinned), order)
 
   const byDay = new Map<string, ChatGroup>()
   for (const c of rest) {
-    const time = chatTime(c)
+    const time = sessionSortTime(c, order)
     const key = dayKey(new Date(time))
     const bucket = byDay.get(key)
     if (bucket) bucket.chats.push(c)
@@ -45,7 +58,8 @@ export function groupChats(chats: ChatItem[], now: Date): ChatGroup[] {
 
   const groups: ChatGroup[] = []
   if (pinned.length) groups.push({ key: "__pinned", label: uiText("pinned_section"), chats: pinned })
-  groups.push(...byDay.values())
+  // Day keys are zero-padded `YYYY-MM-DD`, so a plain string compare is newest-first.
+  groups.push(...[...byDay.values()].sort((left, right) => right.key.localeCompare(left.key)))
   return groups
 }
 
@@ -53,41 +67,35 @@ export function groupChats(chats: ChatItem[], now: Date): ChatGroup[] {
  * Group sessions by their authoritative Project: pinned first, then one group
  * per Project (label resolved from the Project store by the caller), with
  * unassigned sessions falling into a trailing "未分配" group. Within a group,
- * newest created first.
+ * the user's drag position wins, then newest user input first.
+ *
+ * Projects keep their pre-existing order (newest created session first) and the
+ * unassigned group stays last, so dragging or writing inside one Project never
+ * reshuffles the Project list itself.
  */
 export function groupChatsByProject(
   chats: ChatItem[],
   resolveLabel: (projectId: string | null) => string,
+  order: SessionOrder = emptySessionOrder,
 ): ChatGroup[] {
-  const pinned = chats.filter((c) => c.pinned).sort((a, b) => chatTime(b) - chatTime(a))
-  const rest = [...chats.filter((c) => !c.pinned)].sort(
-    (a, b) => chatTime(b) - chatTime(a),
-  )
+  const pinned = sortChats(chats.filter((c) => c.pinned), order)
+  const rest = sortChats(chats.filter((c) => !c.pinned), order)
 
-  const order: string[] = []
   const byProject = new Map<string, ChatGroup>()
   for (const c of rest) {
     const raw = c.config?.projectId?.trim()
     const key = raw || NO_PROJECT_GROUP_KEY
     const bucket = byProject.get(key)
     if (bucket) bucket.chats.push(c)
-    else {
-      byProject.set(key, { key, label: resolveLabel(raw || null), chats: [c] })
-      order.push(key)
-    }
+    else byProject.set(key, { key, label: resolveLabel(raw || null), chats: [c] })
   }
 
   const groups: ChatGroup[] = []
   if (pinned.length) groups.push({ key: "__pinned", label: uiText("pinned_section"), chats: pinned })
-  // Unassigned sessions always render last; keep first-seen order otherwise
-  // (already sorted by newest creation time).
-  const sortedKeys = [
-    ...order.filter((key) => key !== NO_PROJECT_GROUP_KEY),
-    ...(order.includes(NO_PROJECT_GROUP_KEY) ? [NO_PROJECT_GROUP_KEY] : []),
-  ]
-  for (const key of sortedKeys) {
-    const group = byProject.get(key)
-    if (group) groups.push(group)
-  }
+  const projectGroups = [...byProject.values()].filter((group) => group.key !== NO_PROJECT_GROUP_KEY)
+  projectGroups.sort((left, right) => newestCreation(right) - newestCreation(left))
+  groups.push(...projectGroups)
+  const unassigned = byProject.get(NO_PROJECT_GROUP_KEY)
+  if (unassigned) groups.push(unassigned)
   return groups
 }
