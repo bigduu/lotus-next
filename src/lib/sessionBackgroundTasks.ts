@@ -37,8 +37,8 @@ export function parseBackgroundBashLaunch(resultText: unknown): string | null {
   return row.bash_id
 }
 
-/** Every `bash_id` a transcript ever launched in the background, in message order. */
-export function collectBackgroundBashIds(messages: readonly Message[]): string[] {
+/** Every `bash_id` a transcript launched in the background, in message order. */
+function collectBackgroundBashIds(messages: readonly Message[]): string[] {
   const ids: string[] = []
   for (const message of messages) {
     if ((message as { type?: string }).type !== "tool_result") continue
@@ -50,48 +50,29 @@ export function collectBackgroundBashIds(messages: readonly Message[]): string[]
 }
 
 /**
- * True when at least one background shell launched by this transcript has no
- * recorded terminal outcome. `backgroundBash` is the store slice keyed by
- * `bash_id`; a missing entry means the shell is still running.
- */
-export function hasRunningBackgroundBash(
-  messages: readonly Message[],
-  backgroundBash: Readonly<Record<string, unknown>>,
-): boolean {
-  for (const message of messages) {
-    if ((message as { type?: string }).type !== "tool_result") continue
-    const result = (message as { result?: { result?: unknown } }).result
-    const bashId = parseBackgroundBashLaunch(result?.result)
-    if (bashId !== null && backgroundBash[bashId] === undefined) return true
-  }
-  return false
-}
-
-/**
  * Scan results are cached per message array identity: a sidebar row re-renders
  * far more often than a transcript changes, and each transcript can carry
  * thousands of tool results.
  */
 const launchedIdsCache = new WeakMap<readonly Message[], string[]>()
 
-const launchedIds = (messages: readonly Message[]): string[] => {
-  const cached = launchedIdsCache.get(messages)
-  if (cached !== undefined) return cached
-  const ids = collectBackgroundBashIds(messages)
-  launchedIdsCache.set(messages, ids)
-  return ids
-}
-
 /**
- * Cached {@link hasRunningBackgroundBash}. `backgroundBash` is read reactively
- * by the caller, so a terminal outcome flips this without rescanning messages.
+ * True when a background shell launched by this transcript has no recorded
+ * terminal outcome. `backgroundBash` is the store slice keyed by `bash_id`; a
+ * missing entry means the shell is still running. Read reactively by the
+ * caller, so a terminal outcome flips this without rescanning messages.
  */
 export function sessionHasRunningBackgroundBash(
   messages: readonly Message[] | undefined,
   backgroundBash: Readonly<Record<string, unknown>>,
 ): boolean {
   if (!messages || messages.length === 0) return false
-  return launchedIds(messages).some((bashId) => backgroundBash[bashId] === undefined)
+  let ids = launchedIdsCache.get(messages)
+  if (ids === undefined) {
+    ids = collectBackgroundBashIds(messages)
+    launchedIdsCache.set(messages, ids)
+  }
+  return ids.some((bashId) => backgroundBash[bashId] === undefined)
 }
 
 /**

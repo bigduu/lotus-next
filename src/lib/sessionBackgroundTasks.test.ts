@@ -2,8 +2,6 @@ import { describe, expect, it } from "vitest"
 import type { Message } from "@shared/types/chatMessages"
 import type { SessionExecutionState } from "@shared/store/appStore/slices/executionStateSlice"
 import {
-  collectBackgroundBashIds,
-  hasRunningBackgroundBash,
   parseBackgroundBashLaunch,
   sessionHasLiveWork,
   sessionHasRunningBackgroundBash,
@@ -30,25 +28,25 @@ describe("background bash detection", () => {
     expect(parseBackgroundBashLaunch(JSON.stringify({ command: "x", status: "running" }))).toBeNull()
   })
 
-  it("collects each launched shell once, ignoring non-result messages and output readbacks", () => {
+  it("reports running until every launched shell has a terminal outcome", () => {
+    const messages = [resultMessage(launch("bash-1"), "m1"), resultMessage(launch("bash-2"), "m2")]
+    expect(sessionHasRunningBackgroundBash(messages, {})).toBe(true)
+    expect(sessionHasRunningBackgroundBash(messages, { "bash-1": { status: "completed", exitCode: 0 } })).toBe(true)
+    expect(sessionHasRunningBackgroundBash(messages, {
+      "bash-1": { status: "completed", exitCode: 0 },
+      "bash-2": { status: "killed", exitCode: null },
+    })).toBe(false)
+  })
+
+  it("ignores non-result messages and output readbacks when deciding", () => {
     const messages = [
       { id: "a", role: "user", content: "go" } as unknown as Message,
       resultMessage(launch("bash-1"), "m1"),
       resultMessage(launch("bash-1"), "m2"),
-      resultMessage(launch("bash-2"), "m3"),
+      // A readback reuses `status: "running"` without a command: not a launch.
       resultMessage(JSON.stringify({ bash_id: "bash-1", status: "running", output: "tail" }), "m4"),
     ]
-    expect(collectBackgroundBashIds(messages)).toEqual(["bash-1", "bash-2"])
-  })
-
-  it("reports running until every launched shell has a terminal outcome", () => {
-    const messages = [resultMessage(launch("bash-1"), "m1"), resultMessage(launch("bash-2"), "m2")]
-    expect(hasRunningBackgroundBash(messages, {})).toBe(true)
-    expect(hasRunningBackgroundBash(messages, { "bash-1": { status: "completed", exitCode: 0 } })).toBe(true)
-    expect(hasRunningBackgroundBash(messages, {
-      "bash-1": { status: "completed", exitCode: 0 },
-      "bash-2": { status: "killed", exitCode: null },
-    })).toBe(false)
+    expect(sessionHasRunningBackgroundBash(messages, { "bash-1": { status: "completed", exitCode: 0 } })).toBe(false)
   })
 
   it("treats transcripts without launches, and missing transcripts, as idle", () => {

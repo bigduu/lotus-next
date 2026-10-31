@@ -56,11 +56,21 @@ export const BUNDLE_BUDGET = Object.freeze({
   // during the first sidebar render, so it is not moved behind a lazy boundary.
   // The same source measured 591,585 locally and 591,481-591,500 in the hosted
   // Node 24 build, so the ceiling keeps a margin over the larger reading.
-  javascriptGzipBytes: 591_600,
+  // 2026-10-31 (#516): the sidebar running indicator must also cover background
+  // shells, which outlive the main execution, so the launch parser and the
+  // cached per-transcript scan join the first sidebar render (the sheet is a
+  // session-independent activity signal — deferring it would drop the dot).
+  // Measured locally at 591,930 gzip (+345 over the 591,585 dev reading,
+  // 0.058%); the hosted Node 24 build reads marginally lower. The increment was
+  // minimised first: the detection loop is no longer duplicated between the
+  // cached and uncached paths, the id-collection helper is internal, and only
+  // two functions stay exported for production callers. The ceiling rises only
+  // by the minimum that clears the larger local reading with a margin.
+  javascriptGzipBytes: 592_000,
   minimumRawReduction: 0.02,
-  // 2026-10-31 (#510): measured gzip reduction is -4.2488% against the frozen
-  // historical baseline; the floor follows by the smallest 0.1% step.
-  minimumGzipReduction: -0.043,
+  // 2026-10-31 (#516): the added background-shell scan moves the measured gzip
+  // reduction to -4.31%; the floor follows by the same smallest 0.1% step.
+  minimumGzipReduction: -0.044,
   // Preserve #254's accepted CSS ceilings, verified by the composed build above.
   cssRawBytes: 109_000,
   cssGzipBytes: 18_500,
