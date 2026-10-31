@@ -47,8 +47,8 @@ export const BUNDLE_BUDGET = Object.freeze({
   // composed build already emits.
   // 2026-10-31: the sidebar failed-run marker adds a durable red state to session
   // rows (root and Supervisor) so a finished run that ended in error is visible
-  // outside its own conversation. Measured startup gzip moves 590,417 -> 590,602
-  // (+185, 0.031%) and the ceiling rises only by the minimum 200 bytes that clears
+  // outside its own conversation. Measured startup gzip moves 590,408 -> 590,589
+  // (+181, 0.031%) and the ceiling rises only by the minimum 200 bytes that clears
   // it. The increment was minimised first: both rows reuse the one AlertCircle glyph
   // the startup closure already ships (AlertTriangle was measured and cost 191 extra
   // bytes on its own), the marker shares the existing fixed-width status slot rather
