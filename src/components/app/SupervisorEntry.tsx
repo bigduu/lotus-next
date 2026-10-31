@@ -1,5 +1,5 @@
 import { lazy, Suspense, useId, useRef, useState } from "react"
-import { CircleDot, MoreHorizontal, Pencil, RotateCcw } from "lucide-react"
+import { AlertCircle, CircleDot, MoreHorizontal, Pencil, RotateCcw } from "lucide-react"
 import { useUiText } from "@shared/i18n/ui"
 import type { ChatItem } from "@shared/types/chatMessages"
 import { Button } from "@/components/ui/button"
@@ -27,6 +27,7 @@ export function SupervisorEntry({ chat, active, unread, busy, disabled, onSelect
   const menu = useSidebarContextMenu(disabled)
   const descriptionId = useId()
   const statusId = useId()
+  const failureDescriptionId = useId()
   const nameId = useId()
   const [open, setOpen] = useState(false)
   const [scopeOpen, setScopeOpen] = useState(false)
@@ -37,6 +38,12 @@ export function SupervisorEntry({ chat, active, unread, busy, disabled, onSelect
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState(false)
   const title = chat?.title?.trim() || "Supervisor"
+  // The supervisor is one more session in the same list, so a failed last run
+  // carries the same red marker here instead of surfacing only inside the pane.
+  const runFailed = !!chat && !chat.isRunning && chat.lastRunStatus === "error"
+  const runFailureDetail = runFailed
+    ? chat.lastRunError?.trim() || uiText("session_last_run_failed_hint")
+    : null
 
   const save = async () => {
     const nextTitle = draft.trim()
@@ -58,13 +65,18 @@ export function SupervisorEntry({ chat, active, unread, busy, disabled, onSelect
     <div className="mb-2">
       <div {...menu.rowProps} className={cn("flex select-none items-center rounded-md", active && "bg-sidebar-accent")}>
         <Button variant="ghost" aria-current={active ? "page" : undefined}
-          aria-describedby={`${descriptionId} ${statusId}`} aria-busy={busy || undefined} disabled={disabled}
+          aria-describedby={runFailed ? `${descriptionId} ${statusId} ${failureDescriptionId}` : `${descriptionId} ${statusId}`} aria-busy={busy || undefined} disabled={disabled}
           className={cn("min-w-0 flex-1 justify-start gap-2", unread && "font-semibold")}
           onClick={onSelect}>
           <CircleDot className="size-4 shrink-0" aria-hidden="true" />
           <span className="min-w-0 flex-1 truncate text-left" title={title}>{title}</span>
-          {chat?.isRunning || unread ? <span aria-hidden="true" className={cn("size-1.5 shrink-0 rounded-full bg-primary", chat?.isRunning && "animate-pulse")} /> : null}
+          {runFailed ? (
+            <span title={runFailureDetail ?? undefined} data-session-run-failure="" aria-hidden="true" className="shrink-0">
+              <AlertCircle className="size-3.5 text-destructive" />
+            </span>
+          ) : chat?.isRunning || unread ? <span aria-hidden="true" className={cn("size-1.5 shrink-0 rounded-full bg-primary", chat?.isRunning && "animate-pulse")} /> : null}
           <span id={statusId} className="sr-only">{chat?.isRunning ? uiText("running_1f0eb99b") : unread ? uiText("unread_messages_519491f4") : ""}</span>
+          {runFailed ? <span id={failureDescriptionId} className="sr-only">{uiText("session_last_run_failed_hint")}</span> : null}
         </Button>
         <DialogTrigger asChild>
           <Button variant="ghost" size="icon" className="mr-1 size-8 shrink-0 text-muted-foreground"

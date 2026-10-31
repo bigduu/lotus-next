@@ -56,7 +56,17 @@ export const BUNDLE_BUDGET = Object.freeze({
   // during the first sidebar render, so it is not moved behind a lazy boundary.
   // The same source measured 591,585 locally and 591,481-591,500 in the hosted
   // Node 24 build, so the ceiling keeps a margin over the larger reading.
-  javascriptGzipBytes: 591_600,
+  // 2026-10-31 (#512): the sidebar failed-run marker adds a durable red state to
+  // session rows (root and Supervisor) so a finished run that ended in error is
+  // visible outside its own conversation. Composed on #510 above, the production
+  // build moves raw 1,883,167 -> 1,884,009 and gzip 591,569 -> 591,770 (+201,
+  // 0.034%), and the ceiling rises only by the minimum 200 bytes that clears it.
+  // The increment was minimised first: both rows reuse the one AlertCircle glyph
+  // the startup closure already ships (AlertTriangle was measured and cost 191
+  // extra bytes on its own), and the marker shares the existing fixed-width status
+  // slot rather than adding a second element. The CSS ceilings below are untouched:
+  // the marker only reuses classes the composed build already emits.
+  javascriptGzipBytes: 591_800,
   minimumRawReduction: 0.02,
   // 2026-10-31 (#510): measured gzip reduction is -4.2488% against the frozen
   // historical baseline; the floor follows by the smallest 0.1% step.
