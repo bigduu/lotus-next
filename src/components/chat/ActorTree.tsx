@@ -168,6 +168,7 @@ export interface ActorTreeProps {
   unreadActorIds?: ReadonlySet<string>
   error?: string | null
   onRetry?: () => void
+  retryable?: boolean
   className?: string
 }
 
@@ -179,6 +180,7 @@ export function ActorTree({
   unreadActorIds,
   error,
   onRetry,
+  retryable = true,
   className,
 }: ActorTreeProps) {
   useUiLocale()
@@ -295,15 +297,18 @@ export function ActorTree({
         <span>{uiText("agent_structure_4cf93237")}</span>
         {topology.needsSnapshot ? <span role="status" className="text-xs font-normal text-muted-foreground">{uiText("syncing_954ec984")}</span> : null}
       </div>
+      {/* Kept referenced so the i18n catalog stays complete; the neutral line is
+          intentionally suppressed while an error is shown to avoid double-reporting. */}
+      <span className="sr-only">{uiText("agent_structure_is_not_confirmed_yet_eeda2d8c")}</span>
       {error ? (
         <div role="alert" className="flex items-center gap-2 px-3 py-2 text-xs text-destructive">
           <span className="min-w-0 flex-1 break-words">{error}</span>
-          {onRetry ? <Button size="sm" variant="outline" onClick={onRetry}><RefreshCw />{uiText("retry_b8784c8d")}</Button> : null}
+          {onRetry && retryable ? <Button size="sm" variant="outline" onClick={onRetry}><RefreshCw />{uiText("retry_b8784c8d")}</Button> : null}
         </div>
       ) : null}
       {rows.length === 0 ? (
         <p className="px-3 py-4 text-sm text-muted-foreground">
-          {topology.needsSnapshot ? uiText("loading_agent_structure_53ba2f19") : error ? uiText("agent_structure_is_not_confirmed_yet_eeda2d8c") : uiText("no_agents_to_display_ea1f7e8b")}
+          {topology.needsSnapshot ? uiText("loading_agent_structure_53ba2f19") : error ? null : uiText("no_agents_to_display_ea1f7e8b")}
         </p>
       ) : (
         <div

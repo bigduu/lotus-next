@@ -38,7 +38,7 @@ export function ActorSnapshotPanel({ rootId, active, selectedActorId, descendant
             : uiText("there_is_a_gap_in_agent_events_state_was_reloaded_but_e_0c545fcb")}
       </p> : null}
       {rootId ? <ActorTree topology={tree} selectedActorId={selectedActorId} onSelectActor={onSelectActor}
-        error={state.error} onRetry={() => { void state.refresh() }} />
+        error={state.error} onRetry={() => { void state.refresh() }} retryable={state.retryable} />
         : <p className="px-3 py-4 text-sm text-muted-foreground">{uiText("select_a_root_session_to_load_agent_structure_abe1ec98")}</p>}
     </section>
   )

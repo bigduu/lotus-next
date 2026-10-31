@@ -12,6 +12,8 @@ interface SnapshotState {
   snapshot: ActorSubtreeSnapshot | null
   loading: boolean
   error: string | null
+  /** Classification of the retained error; only UI affordances read it. */
+  retryable: boolean
   /** A gap clears only when its own authority domain is proven recovered. */
   gapReason: ActorSnapshotGapReason | null
   /** Origin of the retained Actor warning; null for Root/tree observations. */
@@ -37,7 +39,7 @@ function retryableSnapshotFailure(error: unknown): boolean {
 export function useActorSnapshot(rootId: string | null, active: boolean, interestedActorId: string | null = null, descendantCountHint: number | null = null) {
   useUiLocale()
   useRenderProbe("hook.useActorSnapshot")
-  const [state, setState] = useState<SnapshotState>({ rootId: null, snapshot: null, loading: false, error: null, gapReason: null, gapActorId: null })
+  const [state, setState] = useState<SnapshotState>({ rootId: null, snapshot: null, loading: false, error: null, retryable: false, gapReason: null, gapActorId: null })
   const generation = useRef(0)
   const request = useRef<AbortController | null>(null)
   const retryTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -68,7 +70,7 @@ export function useActorSnapshot(rootId: string | null, active: boolean, interes
     const controller = new AbortController()
     request.current = controller
     setState((previous) => ({ rootId: id, snapshot: previous.rootId === id ? previous.snapshot : null,
-      loading: true, error: null, gapReason: previous.rootId === id ? previous.gapReason : null,
+      loading: true, error: null, retryable: false, gapReason: previous.rootId === id ? previous.gapReason : null,
       gapActorId: previous.rootId === id ? previous.gapActorId : null }))
     try {
       const snapshot = await getActorSnapshot(id, id, controller.signal)
@@ -85,7 +87,7 @@ export function useActorSnapshot(rootId: string | null, active: boolean, interes
         actorTreeCursorCovers(snapshot.stream_cursor, requiredTreeCursor.current)) {
         requiredTreeCursor.current = undefined
       }
-      setState(() => ({ rootId: id, snapshot, loading: false, error: null,
+      setState(() => ({ rootId: id, snapshot, loading: false, error: null, retryable: false,
         gapReason: workerGap.current?.reason ?? (requiredTreeCursor.current !== undefined ? "transport_gap" : null),
         gapActorId: workerGap.current?.actorId ?? null }))
     } catch (error) {
@@ -95,7 +97,7 @@ export function useActorSnapshot(rootId: string | null, active: boolean, interes
         // last confirmed tree. Keep its subscription and retry at a bounded
         // rate until a covering Root snapshot proves the gap repaired.
         setState((previous) => previous.rootId === id ? {
-          ...previous, loading: false, error: failureMessage(error),
+          ...previous, loading: false, error: failureMessage(error), retryable: true,
           gapReason: workerGap.current?.reason ?? "transport_gap", gapActorId: workerGap.current?.actorId ?? null,
         } : previous)
         const delay = Math.min(500 * 2 ** Math.min(retryAttempts.current, 6), 30_000)
@@ -108,6 +110,7 @@ export function useActorSnapshot(rootId: string | null, active: boolean, interes
       }
       snapshotRef.current = null
       setState((previous) => ({ rootId: id, snapshot: null, loading: false, error: failureMessage(error),
+        retryable: retryableSnapshotFailure(error),
         gapReason: previous.rootId === id ? previous.gapReason : null,
         gapActorId: previous.rootId === id ? previous.gapActorId : null }))
     } finally {
@@ -267,6 +270,6 @@ export function useActorSnapshot(rootId: string | null, active: boolean, interes
   }, [authorized, rootId, interestedActorId, queueRefresh])
 
   const visible = state.rootId === rootId ? state : { rootId, snapshot: null,
-    loading: active && rootId !== null, error: null, gapReason: null, gapActorId: null }
+    loading: active && rootId !== null, error: null, retryable: false, gapReason: null, gapActorId: null }
   return { ...visible, refresh }
 }
