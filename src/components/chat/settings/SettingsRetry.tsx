@@ -57,10 +57,15 @@ export function SettingsRetry() {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [saved, setSaved] = useState(false)
+  // Fields this user actually changed. Saving merges only these onto the
+  // freshly read section, so another panel's edit to a different field is
+  // preserved instead of being restored to this panel's stale snapshot.
+  const [edited, setEdited] = useState<ReadonlySet<Field>>(() => new Set<Field>())
 
   const apply = useCallback((envelope: { data: CoreSectionData; revision: number }) => {
     setDraft({ ...(envelope.data.llm_retry ?? ({} as LlmRetryConfig)) })
     setRevision(envelope.revision)
+    setEdited(new Set<Field>())
   }, [])
 
   const reload = useCallback(async () => {
@@ -91,11 +96,21 @@ export function SettingsRetry() {
     setSaved(false)
     try {
       const current = await settingsService.getTypedSection<CoreSectionData>(CORE_SECTION)
-      // Re-read right before writing so an unrelated edit to `core` is kept.
+      // Re-read right before writing, then merge. Only fields this panel edited
+      // are taken from the draft; everything else comes from the fresh read, so
+      // a concurrent edit is kept rather than reverted to a stale value.
+      const latest = current.data.llm_retry
+      const merged: LlmRetryConfig = { ...(latest ?? ({} as LlmRetryConfig)) }
+      for (const key of edited) merged[key] = draft[key]
+      const invalidMerged = validateDraft(merged)
+      if (invalidMerged) {
+        setError(invalidMerged)
+        return
+      }
       apply(
         await settingsService.putTypedSection<CoreSectionData>(
           CORE_SECTION,
-          { ...current.data, llm_retry: draft },
+          { ...current.data, llm_retry: merged },
           current.revision,
         ),
       )
@@ -141,6 +156,7 @@ export function SettingsRetry() {
               onChange={(event) => {
                 const next = Number(event.target.value)
                 setSaved(false)
+                setEdited((previous) => new Set(previous).add(key))
                 setDraft({ ...draft, [key]: Number.isFinite(next) ? next : 0 })
               }}
             />

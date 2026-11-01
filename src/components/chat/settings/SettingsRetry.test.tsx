@@ -127,6 +127,34 @@ describe("SettingsRetry", () => {
     expect(host.querySelector('[role="alert"]')?.textContent).toContain("max_attempts")
   })
 
+  it("keeps a concurrent edit to an untouched field instead of reverting it", async () => {
+    // Another panel saved a new deadline after this panel loaded.
+    const concurrent = { ...policy, attempt_timeout_ms: 240_000 }
+    const unrelated = { server: { port: 9562 } }
+    getTypedSection
+      .mockResolvedValueOnce(envelope({ ...unrelated, llm_retry: policy }, 3))
+      .mockResolvedValueOnce(envelope({ ...unrelated, llm_retry: concurrent }, 4))
+    putTypedSection.mockResolvedValue(
+      envelope({ ...unrelated, llm_retry: { ...concurrent, max_attempts: 10 } }, 5),
+    )
+
+    const host = await mount()
+    await flush()
+    await act(async () => {
+      setValue(field(host, "max_attempts"), "10")
+    })
+    await act(async () => {
+      button(host, "save").click()
+    })
+    await flush()
+
+    expect(putTypedSection).toHaveBeenCalledTimes(1)
+    const [, data] = putTypedSection.mock.calls[0] as [string, { llm_retry: Record<string, number> }]
+    // The edited field is applied; the other panel's deadline survives.
+    expect(data.llm_retry.max_attempts).toBe(10)
+    expect(data.llm_retry.attempt_timeout_ms).toBe(240_000)
+  })
+
   it("reports an unconfirmed save and reloads the current values", async () => {
     putTypedSection.mockRejectedValue(new Error("conflict"))
 
