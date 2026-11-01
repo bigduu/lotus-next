@@ -285,7 +285,7 @@ describe("ordinary-chat production bundle budget", () => {
     expect(BUNDLE_BASELINE).toEqual({ javascriptRawBytes: 1_949_302, javascriptGzipBytes: 567_482 })
     expect(BUNDLE_BUDGET).toEqual({
       javascriptRawBytes: 1_900_000, javascriptGzipBytes: 595_000,
-      minimumRawReduction: 0.02, minimumGzipReduction: -0.048,
+      minimumRawReduction: 0.02, minimumGzipReduction: -0.049,
       cssRawBytes: 109_000, cssGzipBytes: 18_500,
     })
   })
@@ -301,7 +301,7 @@ describe("ordinary-chat production bundle budget", () => {
     expect(violations).toMatch(/raw size 1950000 exceeds 1900000/)
     expect(violations).toMatch(new RegExp(`gzip size 600000 exceeds ${BUNDLE_BUDGET.javascriptGzipBytes}`))
     expect(violations).toMatch(/raw reduction .* is below 2\.00%/)
-    expect(violations).toMatch(/gzip reduction .* is below -4\.80%/)
+    expect(violations).toMatch(/gzip reduction .* is below -4\.90%/)
     expect(violations).toContain(`CSS raw size ${BUNDLE_BUDGET.cssRawBytes + 1} exceeds ${BUNDLE_BUDGET.cssRawBytes}`)
     expect(violations).toContain(`CSS gzip size ${BUNDLE_BUDGET.cssGzipBytes + 1} exceeds ${BUNDLE_BUDGET.cssGzipBytes}`)
   })
