@@ -715,6 +715,7 @@ export const uiZhCn = {
   "runtime_models_saved_discovered": "实例已保存，并发现 {{count}} 个候选模型。请选择运行时模型并保存后使用。",
   "process_activity": "处理过程",
   "process_tool_count": "{{count}} 次工具调用",
+  "turn_collapse_processed_with_tools": "处理了 {{v0}} · {{count}} 次工具调用",
   "sidebar_create_section": "创建分区",
   "sidebar_manage_sections": "管理分区",
   "sidebar_move_to_section": "移动到分区…",

@@ -89,14 +89,29 @@ export const BUNDLE_BUDGET = Object.freeze({
   // render, so it is not moved behind a lazy boundary. The ceiling rises to
   // the next round 594,000 that clears the hosted reading, and the
   // gzip-reduction floor follows by the same smallest 0.1% step.
-  javascriptGzipBytes: 594_000,
+  // 2026-11-01 (#518): the finished-turn loop collapse folds each completed
+  // turn's middle behind one expandable divider (elapsed time + tool count),
+  // so the transcript's reading flow shows only conclusions. The turn folding
+  // lives in the always-mounted MessageList closure. Composed on #494 the
+  // production build moves 593,786 -> 594,714 gzip (+928). The increment was
+  // minimised first: the divider reuses the already-shipped DisclosurePanel,
+  // ChevronRight and duration formatter, its row uses only utility classes
+  // the composed CSS already emits (the initial hover/mono styling was
+  // measured and reverted for 261 CSS bytes), and no new dependency or lazy
+  // boundary is introduced. The ceiling rises to the next round 595,000 that
+  // clears the composed reading, and the floor follows by the same smallest
+  // 0.1% step.
+  javascriptGzipBytes: 595_000,
   minimumRawReduction: 0.02,
   // 2026-10-31 (#516): the added background-shell scan moves the measured gzip
   // reduction to -4.31%; the floor follows by the same smallest 0.1% step.
   // 2026-11-01 (#494): the bound managed-history increment above moves the
   // measured gzip reduction to -4.64%; the floor follows by the same smallest
   // 0.1% step.
-  minimumGzipReduction: -0.047,
+  // 2026-11-01 (#518): the turn-collapse divider composed on #494 moves the
+  // measured gzip reduction to -4.80%; the floor follows by the same smallest
+  // 0.1% step.
+  minimumGzipReduction: -0.048,
   // Preserve #254's accepted CSS ceilings, verified by the composed build above.
   cssRawBytes: 109_000,
   cssGzipBytes: 18_500,
