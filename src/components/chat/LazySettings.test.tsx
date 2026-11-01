@@ -282,8 +282,9 @@ describe("Settings page controls", () => {
 
       const category = view.container.querySelector<HTMLSelectElement>("#settings-category")
       expect(category?.querySelectorAll("optgroup")).toHaveLength(4)
-      expect(category?.options).toHaveLength(18)
+      expect(category?.options).toHaveLength(19)
       expect(category?.querySelector('option[value="config-share"]')?.textContent).toBe(uiText("share_title"))
+      expect(category?.querySelector('option[value="retry"]')?.textContent).toBe(uiText("retry_settings_1a7c4e91"))
       await click([...nav?.querySelectorAll("button") ?? []].find((button) => button.textContent === uiText("share_title")) ?? null)
       expect(onTabChange).toHaveBeenLastCalledWith("config-share")
       await act(async () => {
