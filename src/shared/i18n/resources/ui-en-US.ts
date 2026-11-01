@@ -717,6 +717,7 @@ export const uiEnUs = {
   "runtime_models_saved_discovered": "Instance saved. Discovered {{count}} candidate models. Select Runtime models and save to make them available.",
   "process_activity": "Activity",
   "process_tool_count": "{{count}} tool calls",
+  "turn_collapse_processed_with_tools": "Processed {{v0}} · {{count}} tool calls",
   "sidebar_create_section": "Create section",
   "sidebar_manage_sections": "Manage sections",
   "sidebar_move_to_section": "Move to section…",
