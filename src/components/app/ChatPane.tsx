@@ -5,6 +5,7 @@ import { useSessionDrop } from "@/hooks/useSessionDrop"
 import type { ComposerInputHandle } from "@/components/chat/ComposerEditor"
 import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { useMarkSessionRead } from "@/lib/sessionReadState"
+import { recordSessionUserInput } from "@/lib/sidebarSessionOrder"
 import { useMediaQuery } from "@shared/hooks/useMediaQuery"
 import { lazy, Suspense, useCallback, useEffect, useId, useMemo, useRef, useState } from "react"
 import { createPortal } from "react-dom"
@@ -299,6 +300,8 @@ export function ChatPane({
       (currentChat?.messages ?? []).map((m) => ({ metadata: (m as { metadata?: { runtime_kind?: unknown } }).metadata, content: "content" in m ? m.content : undefined })),
     )
   const currentlyRunning = currentChat?.isRunning === true || (sending && streaming !== null) || backgroundExecWaiting
+  const managedHistoryStale = useAppStore((state) => currentSessionId
+    ? state.managedHistoryBindings?.[currentSessionId]?.status === "stale" : false)
   const visibleSendFailure = sendFailure?.sessionId === currentSessionId ? sendFailure : null
   const persistedRunError = !visibleSendFailure
     && !currentlyRunning
@@ -761,6 +764,7 @@ export function ChatPane({
       goalRequestActive.current = true; setGoalSaving(true)
       void agentClient.sendMessage({ message: text.trim(), session_id: sessionId, model: currentChat?.config?.model ?? "" }).then(async (response) => {
         if (response.session_id !== sessionId || !response.goal_command) throw new Error("Goal command was not acknowledged")
+        recordSessionUserInput(sessionId)
         useAppStore.getState().setInputContentIfRevision(draftKey, revision, "")
         if (currentDraftKeyRef.current === draftKey) {
           const action = response.goal_command.action
@@ -1269,6 +1273,7 @@ export function ChatPane({
         />
         )}
 
+        {managedHistoryStale && <div role="alert" className="mx-4 mb-2 text-xs text-destructive">{uiText("supervisor_managed_history_stale")}</div>}
         {visibleSendFailure || persistedRunError ? (
           <div
             role="alert"

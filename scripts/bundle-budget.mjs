@@ -45,11 +45,77 @@ export const BUNDLE_BUDGET = Object.freeze({
   // recovery path adds no new dependency or string table.
   // The CSS ceilings below are untouched: the badge only reuses classes the
   // composed build already emits.
-  javascriptGzipBytes: 590_500,
+  // 2026-10-31 (#510): sidebar session ordering adds the device-local order model
+  // (explicit drag position plus the last user submission), the row-drop target
+  // resolution, and one new i18n hint. Against dev 464c1ab the production build
+  // moves 590,444 -> 591,585 gzip (+1,141, 0.193%) and raw 1,879,746 -> 1,883,177.
+  // The increment was minimised before raising anything: unused exports are gone,
+  // rank comparison no longer allocates a helper, and new startup copy was
+  // reworded so the CSS scanner stops emitting an unused `.grow` utility (that
+  // wording alone had added 18 startup CSS bytes). The order must stay readable
+  // during the first sidebar render, so it is not moved behind a lazy boundary.
+  // The same source measured 591,585 locally and 591,481-591,500 in the hosted
+  // Node 24 build, so the ceiling keeps a margin over the larger reading.
+  // 2026-10-31 (#512): the sidebar failed-run marker adds a durable red state to
+  // session rows (root and Supervisor) so a finished run that ended in error is
+  // visible outside its own conversation. Composed on #510 above, the production
+  // build moves raw 1,883,167 -> 1,884,009 and gzip 591,569 -> 591,770 (+201,
+  // 0.034%), and the ceiling rises only by the minimum 200 bytes that clears it.
+  // The increment was minimised first: both rows reuse the one AlertCircle glyph
+  // the startup closure already ships (AlertTriangle was measured and cost 191
+  // extra bytes on its own), and the marker shares the existing fixed-width status
+  // slot rather than adding a second element. The CSS ceilings below are untouched:
+  // the marker only reuses classes the composed build already emits.
+  // 2026-10-31 (#516): the sidebar running indicator must also cover background
+  // shells, which outlive the main execution, so the launch parser and the
+  // cached per-transcript scan join the first sidebar render (the sheet is a
+  // session-independent activity signal — deferring it would drop the dot).
+  // Composed on #512 above, the production build moves gzip 591,770 -> 592,116
+  // (+346, 0.059%), and the measured reduction moves to -4.34%. The increment
+  // was minimised first: the detection loop is no
+  // longer duplicated between the cached and uncached paths, the id-collection
+  // helper is internal, and only two functions stay exported for production
+  // callers. The ceiling rises only by the minimum that clears it.
+  // 2026-11-01 (#494): binding supervisor-managed history and clear
+  // confirmation to the session identity adds the binding record in the chat
+  // session state, the identity-bound refresh and clear-readback paths, two
+  // i18n notices, and the stale-binding alert in the chat pane. Against dev
+  // 66e7dea the production build moves 592,149 -> 593,786 gzip (+1,670,
+  // 0.282%), and the measured reduction moves to -4.64%. The increment was
+  // minimised first: the binding record reuses the existing session refresh
+  // flow, the readback evidence reuses the existing history fetch (one extra
+  // request field), and the alerts reuse existing alert styling without new
+  // dependencies. The binding must be live during the first managed-session
+  // render, so it is not moved behind a lazy boundary. The ceiling rises to
+  // the next round 594,000 that clears the hosted reading, and the
+  // gzip-reduction floor follows by the same smallest 0.1% step.
+  // 2026-11-01 (#518): the finished-turn loop collapse folds each completed
+  // turn's middle behind one expandable divider (elapsed time + tool count),
+  // so the transcript's reading flow shows only conclusions. The turn folding
+  // lives in the always-mounted MessageList closure. Composed on #494 the
+  // production build moves 593,786 -> 594,714 gzip (+928). The increment was
+  // minimised first: the divider reuses the already-shipped DisclosurePanel,
+  // ChevronRight and duration formatter, its row uses only utility classes
+  // the composed CSS already emits (the initial hover/mono styling was
+  // measured and reverted for 261 CSS bytes), and no new dependency or lazy
+  // boundary is introduced. The ceiling rises to the next round 595,000 that
+  // clears the composed reading, and the floor follows by the same smallest
+  // 0.1% step.
+  javascriptGzipBytes: 595_000,
   minimumRawReduction: 0.02,
-  // 2026-10-31 (#500): measured gzip reduction is -4.04% against the frozen
-  // historical baseline; the floor follows by the minimum 0.1% step.
-  minimumGzipReduction: -0.041,
+  // 2026-10-31 (#516): the added background-shell scan moves the measured gzip
+  // reduction to -4.31%; the floor follows by the same smallest 0.1% step.
+  // 2026-11-01 (#494): the bound managed-history increment above moves the
+  // measured gzip reduction to -4.64%; the floor follows by the same smallest
+  // 0.1% step.
+  // 2026-11-01 (#518): the turn-collapse divider composed on #494 moves the
+  // measured gzip reduction to -4.80%; the floor follows by the same smallest
+  // 0.1% step.
+  // 2026-11-01 (release): the published build stamps the real version into the
+  // bundle (0.0.0 locally, 2026.11.x in publication), which measured -4.80%
+  // against the -4.8% floor and failed the 2026.11.1 publication. The floor
+  // follows by the minimum 0.1% step to keep the accepted #518 increment.
+  minimumGzipReduction: -0.049,
   // Preserve #254's accepted CSS ceilings, verified by the composed build above.
   cssRawBytes: 109_000,
   cssGzipBytes: 18_500,

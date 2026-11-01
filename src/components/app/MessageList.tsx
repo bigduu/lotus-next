@@ -16,9 +16,10 @@ import {
   type Rect,
   type Virtualizer,
 } from "@tanstack/react-virtual"
-import { Copy, Pencil, RotateCcw, GitFork, MoreHorizontal, Trash2 } from "lucide-react"
+import { Copy, Pencil, RotateCcw, GitFork, MoreHorizontal, Trash2, ChevronRight } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { BrandMark } from "@/components/ui/brand-mark"
+import { DisclosurePanel } from "@/components/chat/DisclosurePanel"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -111,11 +112,24 @@ type ProcessItem = {
   thinking?: boolean
   status?: string | null
 }
+/** A finished turn's folded middle: processes and intermediate bodies hide
+ *  behind one divider so only the final conclusion stays in reading flow. */
+type TurnCollapseItem = {
+  kind: "collapsedTurn"
+  key: string
+  finalId: string
+  items: RenderItem[]
+  indexes: number[]
+  toolCalls: number
+  startedAt: number | null
+  finishedAt: number | null
+}
 type RenderItem = { kind: "msg"; m: Message; streaming?: boolean } | ProcessItem
+type DisplayItem = RenderItem | TurnCollapseItem
 
 type HistoryEntry = {
   key: string
-  item: RenderItem
+  item: DisplayItem
   itemIndex: number
 }
 
@@ -251,7 +265,7 @@ function isFinalAssistantResponse(item: RenderItem): boolean {
 }
 
 function buildActionableAssistantIndexes(
-  items: RenderItem[],
+  items: DisplayItem[],
   includeTrailingAssistant: boolean,
 ): Set<number> {
   const indexes = new Set<number>()
@@ -264,11 +278,77 @@ function buildActionableAssistantIndexes(
       candidate = null
       continue
     }
+    if (item.kind === "collapsedTurn") continue
     if (isFinalAssistantResponse(item)) candidate = index
   }
 
   if (includeTrailingAssistant && candidate !== null) indexes.add(candidate)
   return indexes
+}
+
+/** Fold a completed turn's middle behind one divider. Runs only for turns whose
+ *  final summary is already on the record (a later item exists or the run is not
+ *  live), so the streaming loop keeps every intermediate visible as it happens. */
+function buildDisplayItems(
+  items: RenderItem[],
+  collapseLastTurn: boolean,
+): DisplayItem[] {
+  const turns: { start: number; end: number; summary: number | null }[] = []
+  let start = 0
+  const isUserBoundary = (item: RenderItem) => item.kind === "msg" && item.m.role === "user"
+  for (let index = 0; index <= items.length; index += 1) {
+    // A new user message (or the transcript end) closes the current turn.
+    if (index < items.length && !isUserBoundary(items[index])) continue
+    let summary: number | null = null
+    // The conclusion must be the turn's last item; a trailing process has no
+    // recorded summary yet and the whole turn stays in reading flow.
+    for (let scan = index - 1; scan > start; scan -= 1) {
+      if (isFinalAssistantResponse(items[scan])) { summary = scan; break }
+      if (items[scan].kind === "process") break
+    }
+    turns.push({ start, end: index, summary })
+    start = index
+  }
+  const excluded = new Set<number>()
+  const collapses: TurnCollapseItem[] = []
+  for (let t = 0; t < turns.length; t += 1) {
+    const { start: boundary, end, summary } = turns[t]
+    if (summary == null || summary !== end - 1) continue
+    if (!collapseLastTurn && t === turns.length - 1) continue
+    const indexes: number[] = []
+    for (let index = boundary + 1; index < summary; index += 1) indexes.push(index)
+    if (!indexes.length || !indexes.some((index) => items[index].kind === "process")) continue
+    const timestamps = indexes.flatMap((index) => {
+      const item = items[index]
+      return item.kind === "msg" ? [item.m.createdAt] : item.parts.flatMap((part) =>
+        part.kind === "tools" ? part.items.map((message) => message.createdAt) : [part.createdAt])
+    })
+    const first = timestamps.map((value) => Date.parse(String(value || ""))).find(Number.isFinite)
+    const last = [...timestamps].reverse().map((value) => Date.parse(String(value || ""))).find(Number.isFinite)
+    for (const index of indexes) excluded.add(index)
+    collapses.push({
+      kind: "collapsedTurn",
+      key: `collapsed-turn-${items[summary].kind === "msg" ? items[summary].m.id : boundary}`,
+      finalId: items[summary].kind === "msg" ? items[summary].m.id : "",
+      items: indexes.map((index) => items[index]),
+      indexes,
+      toolCalls: toolCallCount(items.slice(boundary + 1, summary)),
+      startedAt: first ?? null,
+      finishedAt: last ?? null,
+    })
+  }
+  if (!collapses.length) return items
+  const out: DisplayItem[] = []
+  for (let index = 0; index < items.length; index += 1) {
+    const collapse = collapses.find((c) => c.indexes[0] === index)
+    if (collapse) {
+      out.push(collapse)
+      index = collapse.indexes[collapse.indexes.length - 1]
+      continue
+    }
+    if (!excluded.has(index)) out.push(items[index])
+  }
+  return out
 }
 
 function toolCallCount(items: RenderItem[]): number {
@@ -289,16 +369,21 @@ function renderItemKey(item: RenderItem, index: number): string {
   return item.key || `activity-${index}`
 }
 
-function buildHistoryEntries(items: RenderItem[]): HistoryEntry[] {
-  return items.map((item, itemIndex) => ({ key: renderItemKey(item, itemIndex), item, itemIndex }))
+function buildHistoryEntries(items: DisplayItem[]): HistoryEntry[] {
+  return items.map((item, itemIndex) => {
+    if (item.kind === "collapsedTurn") return { key: item.key, item, itemIndex }
+    return { key: renderItemKey(item, itemIndex), item, itemIndex }
+  })
 }
 
 function estimateHistoryEntrySize(
   entry: HistoryEntry | undefined,
   processOpen: boolean,
   toolOpen: boolean,
+  turnOpen: boolean,
 ): number {
   if (!entry) return 120
+  if (entry.item.kind === "collapsedTurn") return turnOpen ? 96 + entry.item.items.length * 40 : 24
   if (entry.item.kind === "process") return processOpen ? 96 + entry.item.parts.length * (toolOpen ? 160 : 40) : 36
   return entry.item.m.role === "user" ? 112 : 220
 }
@@ -515,21 +600,32 @@ export function MessageList({
     () => buildLiveItems(liveSegments, streaming, streamingReasoning, sending || streamingActive, streamStatus),
     [liveSegments, sending, streamStatus, streaming, streamingActive, streamingReasoning],
   )
-  const actionableAssistantIndexes = useMemo(
-    () => buildActionableAssistantIndexes(renderItems, !sending),
-    [renderItems, sending],
+  // The turn still being streamed stays fully visible; every finished turn with
+  // a recorded conclusion folds its middle into one divider.
+  const displayItems = useMemo(
+    () => buildDisplayItems(renderItems, !(sending || liveItems.length > 0)),
+    [renderItems, sending, liveItems.length],
   )
-  const historyEntries = useMemo(() => buildHistoryEntries(renderItems), [renderItems])
+  const actionableAssistantIndexes = useMemo(
+    () => buildActionableAssistantIndexes(displayItems, !sending),
+    [displayItems, sending],
+  )
+  const historyEntries = useMemo(() => buildHistoryEntries(displayItems), [displayItems])
   const [openProcessKeys, setOpenProcessKeys] = useState<Set<string>>(() => new Set())
   const [openToolKeys, setOpenToolKeys] = useState<Set<string>>(() => new Set())
+  // A finished turn's divider key → expanded. Expanded turns stay expanded while
+  // the transcript mounts; the collapsed default is the reading-flow contract.
+  const [openTurnKeys, setOpenTurnKeys] = useState<Set<string>>(() => new Set())
   // Keep child choices above virtual rows and the live/history handoff.
   const [openSubAgentIds, setOpenSubAgentIds] = useState<Set<string>>(() => new Set())
   const historyEntriesRef = useRef(historyEntries)
   const openProcessKeysRef = useRef(openProcessKeys)
   const openToolKeysRef = useRef(openToolKeys)
+  const openTurnKeysRef = useRef(openTurnKeys)
   historyEntriesRef.current = historyEntries
   openProcessKeysRef.current = openProcessKeys
   openToolKeysRef.current = openToolKeys
+  openTurnKeysRef.current = openTurnKeys
 
   const scrollElementRef = useRef<HTMLDivElement | null>(null)
   const setScrollElement = useCallback((node: HTMLDivElement | null) => {
@@ -549,6 +645,7 @@ export function MessageList({
       entry?.item.kind === "process" && entry.item.parts.some((part) =>
         part.kind === "tools" && openToolKeysRef.current.has(`tools-${part.items[0]?.id}`),
       ),
+      Boolean(entry && openTurnKeysRef.current.has(entry.key)),
     )
   }, [])
   const virtualizer = useVirtualizer<HTMLDivElement, HTMLDivElement>({
@@ -571,13 +668,37 @@ export function MessageList({
     openProcessKeys,
     openToolKeys,
     openSubAgentIds,
+    openTurnKeys,
   })
+  // A finished turn folding behind its divider swaps the keys of interior
+  // entries (activity-*/message-* → collapsed-turn-*) — and the live→history
+  // handoff appends rows — without invalidating react-virtual's cached sizes
+  // for unchanged indexes. react-virtual rebuilds measurements only from the
+  // smallest changed index (pendingMin), so a 220px estimate can survive where
+  // a 724px report now renders and every later row lands inside it. Whenever
+  // the entry sequence changes in any way (identity at a position, or count),
+  // re-measure every mounted row.
+  const previousEntryKeysRef = useRef(historyEntries.map((entry) => entry.key))
+  useLayoutEffect(() => {
+    const previous = previousEntryKeysRef.current
+    previousEntryKeysRef.current = historyEntries.map((entry) => entry.key)
+    const changed = previous.length !== historyEntries.length
+      || previous.some((key, index) => key !== historyEntries[index]?.key)
+    if (!changed) return
+    const rows = scrollElementRef.current?.querySelectorAll<HTMLDivElement>("[data-history-entry-key]")
+    for (const row of rows ?? []) {
+      const index = virtualizer.indexFromElement(row)
+      if (index < 0) continue
+      virtualizer.resizeItem(index, row.offsetHeight || estimateSize(index))
+    }
+  }, [estimateSize, historyEntries, virtualizer])
   useLayoutEffect(() => {
     const previous = previousExpansionStateRef.current
-    previousExpansionStateRef.current = { openProcessKeys, openToolKeys, openSubAgentIds }
+    previousExpansionStateRef.current = { openProcessKeys, openToolKeys, openSubAgentIds, openTurnKeys }
     const changedKeys = new Set<string>()
     collectChangedKeys(previous.openProcessKeys, openProcessKeys, changedKeys)
     collectChangedKeys(previous.openToolKeys, openToolKeys, changedKeys)
+    collectChangedKeys(previous.openTurnKeys, openTurnKeys, changedKeys)
     const changedChildren = new Set<string>()
     collectChangedKeys(previous.openSubAgentIds, openSubAgentIds, changedChildren)
     for (const id of changedChildren) changedKeys.add(`subagent-${id}`)
@@ -594,7 +715,7 @@ export function MessageList({
       const index = virtualizer.indexFromElement(row)
       virtualizer.resizeItem(index, row.offsetHeight || estimateSize(index))
     }
-  }, [estimateSize, openProcessKeys, openToolKeys, openSubAgentIds, virtualizer])
+  }, [estimateSize, openProcessKeys, openToolKeys, openSubAgentIds, openTurnKeys, virtualizer])
 
   const setProcessOpen = useCallback((key: string, open: boolean) => {
     setOpenProcessKeys((current) => withSetMembership(current, key, open))
@@ -602,10 +723,25 @@ export function MessageList({
   const setToolOpen = useCallback((key: string, open: boolean) => {
     setOpenToolKeys((current) => withSetMembership(current, key, open))
   }, [])
+  const setTurnOpen = useCallback((key: string, open: boolean) => {
+    setOpenTurnKeys((current) => withSetMembership(current, key, open))
+  }, [])
 
   const setSubAgentExpanded = useCallback((id: string, open: boolean) => {
     setOpenSubAgentIds((current) => withSetMembership(current, id, open))
   }, [])
+
+  // Divider triggers are addressed by their turn key across virtual remounts.
+  // A stable per-key object keeps DisclosurePanel's focus restoration working.
+  const turnToggleRefs = useRef(new Map<string, React.RefObject<HTMLButtonElement | null>>())
+  const turnTriggerRef = (key: string): React.RefObject<HTMLButtonElement | null> => {
+    let ref = turnToggleRefs.current.get(key)
+    if (!ref) {
+      ref = { current: null }
+      turnToggleRefs.current.set(key, ref)
+    }
+    return ref
+  }
 
   const subAgentGroups = useMemo(() => groupSubAgents([...renderItems, ...liveItems]
     .flatMap((item) => item.kind === "process" ? [{ key: item.key,
@@ -624,12 +760,65 @@ export function MessageList({
   ) : null
 
   const renderItem = (
-    it: RenderItem,
+    it: DisplayItem,
     idx: number,
     options?: { live?: boolean },
   ) => {
+    if (it.kind === "collapsedTurn") {
+      const expanded = openTurnKeys.has(it.key)
+      const elapsed = it.startedAt != null && it.finishedAt != null
+        ? formatElapsedDuration(it.finishedAt - it.startedAt) : null
+      // The divider reads as one line: lines — 处理了 45秒 · 1 次工具调用 — lines.
+      const detail = elapsed
+        ? it.toolCalls > 0
+          ? uiText("turn_collapse_processed_with_tools", { v0: elapsed, count: it.toolCalls })
+          : uiText("processed_db5f0926", { v0: elapsed })
+        : it.toolCalls > 0
+          ? uiText("process_tool_count", { count: it.toolCalls })
+          : uiText("process_activity")
+      const contentId = `turn-content-${it.key}`
+      return (
+        <div data-turn-collapse={it.key} data-expansion-key={it.key} key={it.key}>
+          <button
+            type="button"
+            data-turn-toggle
+            ref={turnTriggerRef(it.key)}
+            aria-expanded={expanded}
+            aria-controls={contentId}
+            aria-label={detail}
+            className="flex w-full items-center gap-3 py-1 text-xs text-muted-foreground"
+            onClick={() => setTurnOpen(it.key, !expanded)}
+          >
+            <span className="h-px flex-1 bg-border" aria-hidden="true" />
+            <span className="whitespace-nowrap" data-turn-brief>{detail}</span>
+            <ChevronRight
+              className={`size-3 shrink-0 ${expanded ? "rotate-90" : ""}`}
+              aria-hidden="true"
+            />
+            <span className="h-px flex-1 bg-border" aria-hidden="true" />
+          </button>
+          <DisclosurePanel
+            id={contentId}
+            expanded={expanded}
+            triggerRef={turnTriggerRef(it.key)}
+            className="turn-collapse-content"
+          >
+            <div className="flex flex-col gap-2 pt-1">
+              {it.items.map((item, index) => (
+                <Fragment key={renderItemKey(item, it.indexes[index])}>
+                  {/* Nested rows render with their original history index for
+                      stable keys; -1 keeps them out of display-index lookups.
+                      The process branch keeps ownership of its SubAgents group. */}
+                  {renderItem(item, -1)}
+                </Fragment>
+              ))}
+            </div>
+          </DisclosurePanel>
+        </div>
+      )
+    }
     if (it.kind === "process") {
-      const active = options?.live ? it.active : idx === renderItems.length - 1 && sending && !hasPendingUser && !latestRunFinished && liveItems.length === 0
+      const active = options?.live ? it.active : it === renderItems.at(-1) && sending && !hasPendingUser && !latestRunFinished && liveItems.length === 0
       const reasoning = it.parts.findLast((part) => part.kind === "reasoning")
       const latestTool = it.parts.findLast((part) => part.kind === "tools" && part.runningCallIds?.size)
         ?? it.parts.findLast((part) => part.kind === "tools")

@@ -206,3 +206,15 @@ it("invalidates a Browse open when an older pending panel read reports a denial"
   const guard = select.mock.calls[0]![2]!; expect(guard()).toBe(true)
   await act(async () => { rejectInitial(new ApiError("denied", 403, "")); await Promise.resolve() }); expect(guard()).toBe(false)
 })
+
+
+it.each([undefined, false])("explains and disables managed opening when bound history is unavailable (%s)", async (available) => {
+  const canonical = currentUserManagedSessionsFixture()
+  const capabilities = { ...canonical.capabilities, current_user_bound_history_v1: available }
+  const h = await mount({ canonical: { ...canonical, capabilities }, panel: true })
+  expect(document.body.textContent).toContain(uiText("supervisor_sessions_bound_history_unsupported"))
+  const row = document.querySelector('[data-managed-session="child-a"]')!
+  expect(button("supervisor_sessions_open", row).disabled).toBe(true)
+  await act(async () => button("supervisor_sessions_open", row).click())
+  expect(h.select).not.toHaveBeenCalled()
+})

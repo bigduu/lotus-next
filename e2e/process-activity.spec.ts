@@ -544,33 +544,49 @@ test("completed history merges tools and reasoning while preserving each assista
   const thirdReasoning = "Saved reasoning after the body remains complete."
   const firstBody = "Saved assistant body separates the two activities."
   const secondBody = "Saved final assistant body remains visible."
-  const call = (id: string, name: string) => ({
-    id: `${id}-message`, role: "assistant", content: "", created_at: at,
+  const call = (id: string, name: string, second: number) => ({
+    id: `${id}-message`, role: "assistant", content: "", created_at: `2026-10-06T00:00:${String(second).padStart(2, "0")}.000Z`,
     tool_calls: [{ id, function: { name, arguments: JSON.stringify({ file_path: `/tmp/${id}.md` }) } }],
   })
-  const result = (id: string, content: string) => ({ id: `${id}-result`, role: "tool", tool_call_id: id, content, created_at: at })
-  const thought = (id: string, reasoning: string) => ({ id, role: "assistant", content: "", reasoning, metadata: { reasoning }, created_at: at })
+  const result = (id: string, content: string, second: number) => ({ id: `${id}-result`, role: "tool", tool_call_id: id, content, created_at: `2026-10-06T00:00:${String(second).padStart(2, "0")}.000Z` })
+  const thought = (id: string, reasoning: string, second: number) => ({ id, role: "assistant", content: "", reasoning, metadata: { reasoning }, created_at: `2026-10-06T00:00:${String(second).padStart(2, "0")}.000Z` })
   const history = [
     { id: "saved-user", role: "user", content: "Keep the process together until a visible answer.", created_at: at },
-    call("saved-read", "Read"), result("saved-read", "Saved first tool result."), thought("saved-thought-one", firstReasoning),
-    call("saved-grep", "Grep"), result("saved-grep", "Saved second tool result."), thought("saved-thought-two", secondReasoning),
-    { id: "saved-body-one", role: "assistant", content: firstBody, created_at: at },
-    call("saved-check", "Read"), result("saved-check", "Saved third tool result."), thought("saved-thought-three", thirdReasoning),
-    { id: "saved-body-two", role: "assistant", content: secondBody, created_at: at },
+    call("saved-read", "Read", 1), result("saved-read", "Saved first tool result.", 3), thought("saved-thought-one", firstReasoning, 4),
+    call("saved-grep", "Grep", 5), result("saved-grep", "Saved second tool result.", 7), thought("saved-thought-two", secondReasoning, 8),
+    { id: "saved-body-one", role: "assistant", content: firstBody, created_at: "2026-10-06T00:00:09.000Z" },
+    call("saved-check", "Read", 10), result("saved-check", "Saved third tool result.", 12), thought("saved-thought-three", thirdReasoning, 13),
+    { id: "saved-body-two", role: "assistant", content: secondBody, created_at: "2026-10-06T00:00:14.000Z" },
   ]
   const observation = await openProcessFixture(page, history, true)
   await page.goto(standaloneScenario.entryUrl)
   const transcript = page.locator("[data-message-list-content]").first()
+  // The finished turn folds its whole middle behind one divider; only the
+  // final conclusion stays in reading flow.
+  const divider = transcript.locator("[data-turn-toggle]")
+  await expect(divider).toHaveCount(1)
+  await expect(divider).toHaveAttribute("aria-expanded", "false")
+  // The folded middle stays mounted for disclosure; only the conclusion is visible.
+  await expect(divider).toHaveAccessibleName("处理了 12秒 · 3 次工具调用")
+  const visibleAssistantBodies = transcript.locator('[data-message-role="assistant"]:visible')
+  await expect(visibleAssistantBodies).toHaveCount(1)
+  await expect(visibleAssistantBodies).toContainText(secondBody)
+  expect(await visibleAssistantBodies.evaluate(
+    (element) => element.closest("[data-turn-collapse]") === null && element.closest("[data-process-activity]") === null,
+  )).toBe(true)
+
+  // Expanding the divider restores the original processes and the intermediate body.
+  await divider.click()
   const processes = transcript.locator("[data-process-activity]")
   await expect(processes).toHaveCount(2)
   for (let index = 0; index < 2; index += 1) {
-    await expect(processes.nth(index).locator("[data-process-toggle]")).toHaveAccessibleName("处理过程")
+    // Timestamped turns expose each activity's own elapsed label.
+    await expect(processes.nth(index).locator("[data-process-toggle]")).toHaveAccessibleName(/处理了 \d+秒/)
     await expect(processes.nth(index).locator("[data-process-toggle]")).toHaveAttribute("aria-expanded", "false")
   }
   await expect(processes.first().locator("[data-process-brief]")).toHaveText(secondReasoning)
   await expect(processes.nth(1).locator("[data-process-brief]")).toHaveText(thirdReasoning)
   await expect(transcript.locator("[data-process-shimmer]")).toHaveCount(0)
-  await expectBodiesOutsideProcesses(transcript, [firstBody, secondBody])
   await expandProcessDetails(processes.first())
   const firstThoughts = processes.first().getByRole("region", { name: "思考过程", exact: true })
   await expect(firstThoughts).toHaveCount(2)
@@ -581,7 +597,9 @@ test("completed history merges tools and reasoning while preserving each assista
   await expandProcessDetails(processes.nth(1))
   await expect(processes.nth(1).getByRole("region", { name: "思考过程", exact: true })).toHaveText(thirdReasoning)
   await expect(processes.nth(1).locator("[data-tool-call-entry-detail]")).toContainText("Saved third tool result.")
-  await expectBodiesOutsideProcesses(transcript, [firstBody, secondBody])
+  const fold = transcript.locator("[data-turn-collapse]")
+  await expect(fold.locator(`[data-message-row="saved-body-one"]`)).toContainText(firstBody)
+  await expect(fold.locator('[data-message-role="assistant"]')).toHaveCount(1)
   expect(observation.pageErrors).toEqual([])
   expect(observation.consoleErrors).toEqual([])
 })
@@ -605,6 +623,12 @@ for (const motion of ["normal", "reduced", "VDI"] as const) {
     await page.goto(standaloneScenario.entryUrl)
     await expectFixtureSessionReady(page)
     if (motion === "VDI") await page.locator("body").evaluate((body) => { body.setAttribute("data-vdi-safe", "true") })
+    // The finished turn folds its middle behind one divider; open it before
+    // interacting with the nested process disclosure.
+    const turnDivider = page.locator("[data-message-list-content]").first().locator("[data-turn-toggle]")
+    await expect(turnDivider).toHaveCount(1)
+    await turnDivider.click()
+    await expect(turnDivider).toHaveAttribute("aria-expanded", "true")
     const process = page.locator("[data-message-list-content]").first().locator("[data-process-activity]")
     const toggle = process.locator("[data-process-toggle]")
     const content = process.locator("[data-process-content]")
@@ -694,6 +718,10 @@ test("a saved single-tool activity reveals its raw result with one disclosure", 
   const observation = await openProcessFixture(page, history, true)
   await page.goto(standaloneScenario.entryUrl)
   const transcript = page.locator("[data-message-list-content]").first()
+  // Open the finished turn's folded middle first, then the process layer.
+  const turnDivider = transcript.locator("[data-turn-toggle]")
+  await expect(turnDivider).toHaveCount(1)
+  await turnDivider.click()
   const process = transcript.locator("[data-process-activity]")
   await expect(process).toHaveCount(1)
   const toggle = process.locator("[data-process-toggle]")
