@@ -276,6 +276,13 @@ function sessionListUpdate(
           : nextConfig.bypassPermissions,
         compressionEvents: prev.config?.compressionEvents ?? c.config?.compressionEvents,
         syncCursor: prev.config?.syncCursor ?? c.config?.syncCursor,
+        // Index summaries are ID-only. A bound view must keep token state from
+        // its guarded snapshot, including an explicit absence of token usage.
+        ...(state.managedHistoryBindings?.[c.id] ? {
+          tokenUsage: prevConfig.tokenUsage,
+          truncationOccurred: prevConfig.truncationOccurred,
+          segmentsRemoved: prevConfig.segmentsRemoved,
+        } : {}),
       };
 
       const mergedChat: ChatItem = {

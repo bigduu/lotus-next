@@ -76,11 +76,27 @@ export const BUNDLE_BUDGET = Object.freeze({
   // longer duplicated between the cached and uncached paths, the id-collection
   // helper is internal, and only two functions stay exported for production
   // callers. The ceiling rises only by the minimum that clears it.
-  javascriptGzipBytes: 592_400,
+  // 2026-11-01 (#494): binding supervisor-managed history and clear
+  // confirmation to the session identity adds the binding record in the chat
+  // session state, the identity-bound refresh and clear-readback paths, two
+  // i18n notices, and the stale-binding alert in the chat pane. Against dev
+  // 66e7dea the production build moves 592,149 -> 593,786 gzip (+1,670,
+  // 0.282%), and the measured reduction moves to -4.64%. The increment was
+  // minimised first: the binding record reuses the existing session refresh
+  // flow, the readback evidence reuses the existing history fetch (one extra
+  // request field), and the alerts reuse existing alert styling without new
+  // dependencies. The binding must be live during the first managed-session
+  // render, so it is not moved behind a lazy boundary. The ceiling rises to
+  // the next round 594,000 that clears the hosted reading, and the
+  // gzip-reduction floor follows by the same smallest 0.1% step.
+  javascriptGzipBytes: 594_000,
   minimumRawReduction: 0.02,
   // 2026-10-31 (#516): the added background-shell scan moves the measured gzip
   // reduction to -4.31%; the floor follows by the same smallest 0.1% step.
-  minimumGzipReduction: -0.044,
+  // 2026-11-01 (#494): the bound managed-history increment above moves the
+  // measured gzip reduction to -4.64%; the floor follows by the same smallest
+  // 0.1% step.
+  minimumGzipReduction: -0.047,
   // Preserve #254's accepted CSS ceilings, verified by the composed build above.
   cssRawBytes: 109_000,
   cssGzipBytes: 18_500,
