@@ -3,7 +3,6 @@ import i18n from "@shared/i18n"
 import {
   Fragment,
   useCallback,
-  useEffect,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -671,6 +670,28 @@ export function MessageList({
     openSubAgentIds,
     openTurnKeys,
   })
+  // A finished turn folding behind its divider swaps the keys of interior
+  // entries (activity-*/message-* → collapsed-turn-*) — and the live→history
+  // handoff appends rows — without invalidating react-virtual's cached sizes
+  // for unchanged indexes. react-virtual rebuilds measurements only from the
+  // smallest changed index (pendingMin), so a 220px estimate can survive where
+  // a 724px report now renders and every later row lands inside it. Whenever
+  // the entry sequence changes in any way (identity at a position, or count),
+  // re-measure every mounted row.
+  const previousEntryKeysRef = useRef(historyEntries.map((entry) => entry.key))
+  useLayoutEffect(() => {
+    const previous = previousEntryKeysRef.current
+    previousEntryKeysRef.current = historyEntries.map((entry) => entry.key)
+    const changed = previous.length !== historyEntries.length
+      || previous.some((key, index) => key !== historyEntries[index]?.key)
+    if (!changed) return
+    const rows = scrollElementRef.current?.querySelectorAll<HTMLDivElement>("[data-history-entry-key]")
+    for (const row of rows ?? []) {
+      const index = virtualizer.indexFromElement(row)
+      if (index < 0) continue
+      virtualizer.resizeItem(index, row.offsetHeight || estimateSize(index))
+    }
+  }, [estimateSize, historyEntries, virtualizer])
   useLayoutEffect(() => {
     const previous = previousExpansionStateRef.current
     previousExpansionStateRef.current = { openProcessKeys, openToolKeys, openSubAgentIds, openTurnKeys }
@@ -765,18 +786,16 @@ export function MessageList({
             aria-expanded={expanded}
             aria-controls={contentId}
             aria-label={detail}
-            className="group relative flex w-full items-center gap-3 py-1 text-xs text-muted-foreground"
+            className="flex w-full items-center gap-3 py-1 text-xs text-muted-foreground"
             onClick={() => setTurnOpen(it.key, !expanded)}
           >
-            <span className="h-px flex-1 bg-border transition-colors group-hover:bg-primary/50" aria-hidden="true" />
-            <span className="flex items-center gap-1 whitespace-nowrap font-mono text-[11px]" data-turn-brief>
-              {detail}
-            </span>
+            <span className="h-px flex-1 bg-border" aria-hidden="true" />
+            <span className="whitespace-nowrap" data-turn-brief>{detail}</span>
             <ChevronRight
-              className={`size-3 shrink-0 transition-transform ${expanded ? "rotate-90" : ""}`}
+              className={`size-3 shrink-0 ${expanded ? "rotate-90" : ""}`}
               aria-hidden="true"
             />
-            <span className="h-px flex-1 bg-border transition-colors group-hover:bg-primary/50" aria-hidden="true" />
+            <span className="h-px flex-1 bg-border" aria-hidden="true" />
           </button>
           <DisclosurePanel
             id={contentId}
@@ -974,16 +993,6 @@ export function MessageList({
   const renderHistoryEntry = (entry: HistoryEntry) => renderItem(entry.item, entry.itemIndex)
 
   const virtualItems = virtualizer.getVirtualItems()
-
-  // TEMP DIAGNOSTIC (remove before commit): expose virtualizer measurement cache.
-  useEffect(() => {
-    const measurements = (virtualizer as unknown as {
-      measurementsCache: Array<{ key: string; start: number; size: number }>
-    }).measurementsCache
-    if (typeof window !== "undefined") {
-      ;(window as unknown as { __virtualDiag?: unknown }).__virtualDiag = measurements.map(({ key, start, size }) => ({ key, start, size }))
-    }
-  })
 
   return (
     <div ref={setScrollElement} onScroll={onScroll} className="min-h-0 min-w-0 flex-1 overflow-y-auto px-3">
