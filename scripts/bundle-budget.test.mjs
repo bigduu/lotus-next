@@ -16,6 +16,7 @@ const temporaryDirectories = []
 const featureEntries = [
   ["src/components/app/ProjectWorkBoard.tsx", "ProjectWorkBoard"],
   ["src/components/app/BrowserPane.tsx", "BrowserPane"],
+  ["src/components/chat/ComposerEditor.tsx", "ComposerEditor"],
   ["src/components/chat/Settings.tsx", "Settings"],
   ["src/components/chat/StreamdownMarkdown.tsx", "StreamdownMarkdown"],
   ["src/components/chat/StreamdownMermaid.tsx", "StreamdownMermaid"],
