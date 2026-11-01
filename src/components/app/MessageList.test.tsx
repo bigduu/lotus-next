@@ -892,6 +892,8 @@ describe("subagent transcript provenance", () => {
     // The completed turn folds its middle (including the spawn process) behind
     // the divider keyed by its final summary message.
     expect(card().closest("[data-history-entry-key]")?.getAttribute("data-history-entry-key")).toBe("collapsed-turn-answer")
+    // The process renderer owns its SubAgents group; the fold renders it once.
+    expect(host.querySelectorAll('[data-subagent-id="child"]')).toHaveLength(1)
     expect(card().querySelector("button")!.getAttribute("aria-expanded")).toBe("true")
     const persistedCard = card()
     render({ messages: [...messages, user("new-turn")], liveSegments: [], sending: false, mergedSubAgents: { child: { status: "completed" } } })

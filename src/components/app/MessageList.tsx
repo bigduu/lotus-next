@@ -804,17 +804,14 @@ export function MessageList({
             className="turn-collapse-content"
           >
             <div className="flex flex-col gap-2 pt-1">
-              {it.items.map((item, index) => {
-                const children = item.kind === "process" ? subAgentGroups.byOrigin.get(item.key) : undefined
-                return (
-                  <Fragment key={renderItemKey(item, it.indexes[index])}>
-                    {/* Nested rows render with their original history index for
-                        stable keys; -1 keeps them out of display-index lookups. */}
-                    {renderItem(item, -1)}
-                    {children ? <SubAgents agents={children} onOpen={onSelectSubAgent} expandedIds={openSubAgentIds} onExpandedChange={setSubAgentExpanded} /> : null}
-                  </Fragment>
-                )
-              })}
+              {it.items.map((item, index) => (
+                <Fragment key={renderItemKey(item, it.indexes[index])}>
+                  {/* Nested rows render with their original history index for
+                      stable keys; -1 keeps them out of display-index lookups.
+                      The process branch keeps ownership of its SubAgents group. */}
+                  {renderItem(item, -1)}
+                </Fragment>
+              ))}
             </div>
           </DisclosurePanel>
         </div>
