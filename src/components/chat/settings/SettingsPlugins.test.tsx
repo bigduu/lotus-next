@@ -40,6 +40,15 @@ const novaAppReport = (installed = false): NovaAppSetupReport => ({
   artifact: { artifact_id: "fixture-reviewed-app", version: "0.3.1", url: "https://fixture.invalid/app.zip", sha256: "a".repeat(64), signing: "ad_hoc", install_mode: "local_ad_hoc", development: true },
   manual_guidance: "Open the app and grant permissions manually", desktop_server_id: "nova", desktop_readiness: "not_tested",
 })
+const untrustedJiandu = (): JianduSetupReport => ({
+  ...jianduReport(), trust: { trusted: false, reason: "publisher_not_trusted" },
+  install: { available: false, reason: "publisher_not_trusted" },
+  trust_action: { available: true, reason: null, expected_revision: 7,
+    publisher: { label: "jiandu (bigduu official)", algorithm: "ed25519", public_key: "ab".repeat(32) } },
+})
+const trustedJiandu = (): JianduSetupReport => ({
+  ...jianduReport(), trust_action: { ...untrustedJiandu().trust_action!, available: false, reason: "publisher_already_trusted", expected_revision: 8 },
+})
 let novaAppSetup: NovaAppSetupReport | null
 let jianduSetup: JianduSetupReport | null
 const deferred = <T,>() => {
@@ -98,6 +107,74 @@ afterEach(() => {
 })
 
 describe("official plugin center", () => {
+  it("reviews the publisher and Bamboo host before adoption, with a mutation-free cancel", async () => {
+    jianduSetup = untrustedJiandu()
+    await mount()
+    expect(button("安装 Jiandu 连接器").disabled).toBe(true)
+    await click("信任 Jiandu 官方发布者")
+    const dialog = document.querySelector('[role="dialog"]')!
+    expect(dialog.textContent).toContain("运行 Bamboo 的电脑")
+    expect(dialog.textContent).toContain("jiandu (bigduu official)")
+    expect(dialog.textContent).toContain("ab".repeat(32))
+    expect(dialog.textContent).toContain(jianduSetup.release!.manifest_url)
+    expect(post).not.toHaveBeenCalled()
+    await click("取消")
+    expect(document.querySelector('[role="dialog"]')).toBeNull()
+    expect(post).not.toHaveBeenCalled()
+  })
+
+  it("enables installation only after fresh setup confirms the reviewed publisher was saved", async () => {
+    jianduSetup = untrustedJiandu()
+    post.mockImplementationOnce(async () => { jianduSetup = trustedJiandu() })
+    await mount(); await click("信任 Jiandu 官方发布者"); await click("确认信任发布者")
+    expect(post).toHaveBeenCalledExactlyOnceWith("plugins/official/jiandu/trust", { expected_revision: 7, expected_public_key: "ab".repeat(32) })
+    expect(button("安装 Jiandu 连接器").disabled).toBe(false)
+    expect(document.querySelector('[role="alert"]')).toBeNull()
+  })
+
+  it("does not infer saved trust from a successful POST alone", async () => {
+    jianduSetup = untrustedJiandu()
+    await mount(); await click("信任 Jiandu 官方发布者"); await click("确认信任发布者")
+    expect(button("安装 Jiandu 连接器").disabled).toBe(true)
+    expect(document.querySelector('[role="alert"]')?.textContent).toContain("尚未确认 Jiandu 发布者信任已保存")
+    expect(post).toHaveBeenCalledTimes(1)
+  })
+
+  it("keeps the reviewed revision fixed and surfaces a concurrent configuration conflict", async () => {
+    jianduSetup = untrustedJiandu()
+    await mount(); await click("信任 Jiandu 官方发布者")
+    jianduSetup = { ...untrustedJiandu(), trust_action: { ...untrustedJiandu().trust_action!, expected_revision: 9 } }
+    post.mockRejectedValueOnce(new ApiError("Conflict", 409, "Conflict"))
+    await click("确认信任发布者")
+    expect(post).toHaveBeenCalledExactlyOnceWith("plugins/official/jiandu/trust", { expected_revision: 7, expected_public_key: "ab".repeat(32) })
+    expect(button("安装 Jiandu 连接器").disabled).toBe(true)
+    expect(document.querySelector('[role="alert"]')?.textContent).toContain("信任设置已变更")
+  })
+
+  it("reconciles a lost trust response by polling without another POST or automatic installation", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] })
+    jianduSetup = untrustedJiandu()
+    await mount(); await click("信任 Jiandu 官方发布者")
+    post.mockImplementationOnce(async () => { jianduSetup = trustedJiandu(); throw new Error("response lost") })
+    get.mockImplementationOnce(async () => ({ plugins: [] }))
+    get.mockImplementationOnce(async () => ({ servers: [] }))
+    get.mockRejectedValueOnce(new Error("setup temporarily unavailable"))
+    await click("确认信任发布者")
+    expect(button("安装 Jiandu 连接器").disabled).toBe(true)
+    await act(async () => { vi.advanceTimersByTime(10_000) })
+    expect(button("安装 Jiandu 连接器").disabled).toBe(false)
+    expect(document.querySelector('[role="alert"]')).toBeNull()
+    expect(post).toHaveBeenCalledTimes(1)
+  })
+
+  it("offers no trust shortcut for a blocked source", async () => {
+    jianduSetup = { ...untrustedJiandu(), trust_action: { ...untrustedJiandu().trust_action!, available: false, reason: "source_not_trusted" } }
+    await mount()
+    expect(button("信任 Jiandu 官方发布者")).toBeUndefined()
+    expect(button("安装 Jiandu 连接器").disabled).toBe(true)
+    expect(document.body.textContent).toContain("来源不在服务端允许列表")
+    expect(post).not.toHaveBeenCalled()
+  })
   it("preserves built-in memory and disables the connector on legacy Bamboo", async () => {
     await mount()
     const card = document.querySelector('article[aria-label="Jiandu"]')!

@@ -19,6 +19,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import {
   ResponsiveDialog,
   ResponsiveDialogContent,
+  ResponsiveDialogDescription,
   ResponsiveDialogTitle,
 } from "@/components/ui/responsive-dialog"
 import { cn } from "@/lib/utils"
@@ -87,6 +88,7 @@ function novaInstallMessage(reason: string | null): string {
 type ReconciliationIntent =
   | { type: "install"; id: string }
   | { type: "jiandu-install" }
+  | { type: "jiandu-trust"; publicKey: string }
   | { type: "nova-app-install"; artifactId: string; version: string }
   | { type: "toggle"; id: string; enabled: boolean }
 
@@ -99,6 +101,7 @@ export function SettingsPlugins() {
   const [serversConfirmed, setServersConfirmed] = useState(false)
   const [jiandu, setJiandu] = useState<JianduSetupReport | null>(null)
   const [jianduError, setJianduError] = useState<JianduSetupError>("loading")
+  const [jianduTrustReview, setJianduTrustReview] = useState<JianduSetupReport | null>(null)
   const [novaSetup, setNovaSetup] = useState<NovaAppSetupReport | null>(null)
   const [novaSetupError, setNovaSetupError] = useState<NovaSetupError>("loading")
   const [novaReconnectSent, setNovaReconnectSent] = useState(false)
@@ -156,6 +159,8 @@ export function SettingsPlugins() {
     if (
       (intent?.type === "install" && list.status === "fulfilled" && list.value.some((plugin) => plugin.id === intent.id && plugin.status === "installed")) ||
       (intent?.type === "jiandu-install" && setup.status === "fulfilled" && setup.value.installed.state === "ready") ||
+      (intent?.type === "jiandu-trust" && setup.status === "fulfilled" && setup.value.trust.trusted &&
+        setup.value.trust_action?.publisher.public_key.toLowerCase() === intent.publicKey.toLowerCase()) ||
       (intent?.type === "nova-app-install" && novaApp.status === "fulfilled" &&
         novaApp.value.artifact?.artifact_id === intent.artifactId && novaApp.value.app?.success &&
         novaApp.value.app.state === "installed" && novaApp.value.app.version === intent.version &&
@@ -218,6 +223,23 @@ export function SettingsPlugins() {
     } finally {
       const list = await finishOperation()
       if (mountedRef.current && list) setActionError(list.some((plugin) => plugin.id === NOVA_PLUGIN.id && plugin.status === "installed") ? null : uiText("plugin_install_failed"))
+    }
+  }
+
+  const trustJiandu = async () => {
+    const review = jianduTrustReview
+    if (!review?.trust_action?.available || !beginOperation("jiandu-trust", false)) return
+    setJianduTrustReview(null)
+    reconciliationIntent.current = { type: "jiandu-trust", publicKey: review.trust_action.publisher.public_key }
+    let message = uiText("plugin_jiandu_trust_unconfirmed")
+    try {
+      await pluginService.trustOfficialJiandu(review)
+    } catch (error) {
+      if (isApiError(error) && error.status === 409) message = uiText("plugin_jiandu_trust_changed")
+      else if (isApiError(error) && error.status === 404) message = uiText("plugin_jiandu_trust_unsupported")
+    } finally {
+      if (mountedRef.current) setActionError(message)
+      await finishOperation()
     }
   }
 
@@ -384,7 +406,8 @@ export function SettingsPlugins() {
   const jianduPanel = <JianduSetupPanel report={jiandu} error={jianduError}
     disabled={operation !== null || loading} installing={operation === "jiandu-install"}
     copying={operation === "jiandu-copy"} copiedConfiguration={copiedJianduConfig} copyError={copyError}
-    onInstall={() => void installJiandu()} onCopy={() => void copyJiandu()} />
+    onInstall={() => void installJiandu()} onCopy={() => void copyJiandu()}
+    onReviewTrust={() => { if (!busyRef.current && jiandu?.trust_action?.available) setJianduTrustReview(jiandu) }} />
   const novaPanel = <NovaSetupPanel report={novaSetup} error={novaSetupError}
     disabled={operation !== null || loading} installing={operation === "nova-app-install"} reconnecting={operation === "nova-reconnect"}
     reconnectSent={novaReconnectSent} starting={operation === "nova-app-start"} startSent={novaStartSent}
@@ -518,6 +541,28 @@ export function SettingsPlugins() {
           )}
         </TabsContent>
       </Tabs>
+
+      <ResponsiveDialog open={jianduTrustReview !== null} onOpenChange={(open) => { if (!open) setJianduTrustReview(null) }}>
+        <ResponsiveDialogContent className="gap-4 p-5 sm:max-w-lg">
+          <ResponsiveDialogTitle>{uiText("plugin_jiandu_review_trust")}</ResponsiveDialogTitle>
+          <ResponsiveDialogDescription>{uiText("plugin_jiandu_trust_description")}</ResponsiveDialogDescription>
+          <p className="text-sm text-muted-foreground">{uiText("plugin_jiandu_host", {
+            os: jianduTrustReview?.host.os ?? "", arch: jianduTrustReview?.host.arch ?? "",
+          })}</p>
+          <dl className="min-w-0 space-y-2 text-xs">
+            <dt className="text-muted-foreground">{uiText("plugin_jiandu_trust_publisher")}</dt>
+            <dd>{jianduTrustReview?.trust_action?.publisher.label}</dd>
+            <dt className="text-muted-foreground">{uiText("plugin_jiandu_trust_key")}</dt>
+            <dd className="break-all font-mono">{jianduTrustReview?.trust_action?.publisher.public_key}</dd>
+            <dt className="text-muted-foreground">{uiText("plugin_jiandu_trust_source")}</dt>
+            <dd className="break-all">{jianduTrustReview?.release?.manifest_url}</dd>
+          </dl>
+          <div className="flex flex-wrap justify-end gap-2">
+            <Button size="sm" variant="secondary" onClick={() => setJianduTrustReview(null)}>{uiText("cancel_2cd0f3be")}</Button>
+            <Button size="sm" disabled={operation !== null} onClick={() => void trustJiandu()}>{uiText("plugin_jiandu_confirm_trust")}</Button>
+          </div>
+        </ResponsiveDialogContent>
+      </ResponsiveDialog>
 
       <PluginFormDialog
         open={form !== null}

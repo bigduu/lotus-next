@@ -55,6 +55,11 @@ export interface JianduSetupReport {
   host: { os: string; arch: string; libc: string | null; supported: boolean; reason: string | null };
   release: { version: string; manifest_url: string; sha256: string } | null;
   trust: { trusted: boolean; reason: string | null };
+  /** Optional capability: older servers cannot offer publisher adoption. */
+  trust_action?: {
+    available: boolean; reason: string | null; expected_revision: number;
+    publisher: { label: string; algorithm: "ed25519"; public_key: string };
+  } | null;
   install: { available: boolean; reason: string | null };
   installed: { state: "missing" | "installing" | "ready" | "unverified"; version: string | null; reason: string | null };
   external_client: { command: string; args: ["--data-dir", string] } | null;

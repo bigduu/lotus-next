@@ -1,5 +1,6 @@
 import { expect, test, type Page } from "@playwright/test"
 import { installArtifactRuntime, standaloneScenario } from "./support/artifactRuntime.js"
+import type { JianduSetupReport } from "../src/services/plugin/types.js"
 
 // Built frontend + fixture APIs and clipboard only. This does not certify a
 // published download, native executable, OS clipboard, or an external MCP host.
@@ -30,6 +31,73 @@ test.beforeEach(async ({ page }) => {
       (globalThis as unknown as { fixtureCopied: string }).fixtureCopied = value
     } } })
   })
+})
+
+const publisherKey = "bba9d0e5553401125f939bc3d844e891706d579a611fea9215545771d5306676"
+const adoptionSetup = (): JianduSetupReport => ({
+  ...setup(), plugin_id: "jiandu", external_client: null, installed: { state: "missing", version: null, reason: null },
+  trust: { trusted: false, reason: "publisher_not_trusted" },
+  install: { available: false, reason: "publisher_not_trusted" },
+  trust_action: { available: true, reason: null, expected_revision: 4,
+    publisher: { label: "jiandu (bigduu official)", algorithm: "ed25519", public_key: publisherKey } },
+})
+
+test("Jiandu reviews publisher adoption, cancels without mutation and enables installation from fresh evidence", async ({ page }, testInfo) => {
+  await installArtifactRuntime(page, standaloneScenario)
+  let report = adoptionSetup()
+  const posts: { path: string; body: unknown }[] = []
+  await page.route("**/api/v1/plugins**", async (route) => {
+    const path = new URL(route.request().url()).pathname
+    if (path.endsWith("/jiandu/setup")) return route.fulfill({ json: report })
+    if (route.request().method() === "GET") return route.fulfill({ json: { plugins: [] } })
+    posts.push({ path, body: route.request().postDataJSON() })
+    report = { ...report, trust: { trusted: true, reason: null }, install: { available: true, reason: null },
+      trust_action: { ...report.trust_action!, available: false, reason: "publisher_already_trusted", expected_revision: 5 } }
+    return route.fulfill({ status: 204 })
+  })
+  await page.route("**/api/v1/mcp/servers**", (route) => route.fulfill({ json: { servers: [] } }))
+  await page.goto(standaloneScenario.entryUrl)
+  await openPlugins(page)
+  const card = page.getByRole("article", { name: "Jiandu", exact: true })
+  await expect(card.getByRole("button", { name: "安装 Jiandu 连接器" })).toBeDisabled()
+  await card.getByRole("button", { name: "信任 Jiandu 官方发布者" }).click()
+  const dialog = page.getByRole("dialog", { name: "信任 Jiandu 官方发布者" })
+  await expect(dialog).toContainText(publisherKey)
+  await expect(dialog).toContainText("运行 Bamboo 的电脑")
+  await expect(dialog).toContainText("签名和哈希校验继续生效")
+  await testInfo.attach(`jiandu-publisher-review-${testInfo.project.name}`, { body: await page.screenshot({ animations: "disabled" }), contentType: "image/png" })
+  await dialog.getByRole("button", { name: "取消", exact: true }).click()
+  expect(posts).toEqual([])
+  await card.getByRole("button", { name: "信任 Jiandu 官方发布者" }).click()
+  await page.getByRole("dialog").getByRole("button", { name: "确认信任发布者" }).click()
+  await expect(card.getByRole("button", { name: "安装 Jiandu 连接器" })).toBeEnabled()
+  expect(posts).toEqual([{ path: "/api/v1/plugins/official/jiandu/trust", body: { expected_revision: 4, expected_public_key: publisherKey } }])
+  await expect(page.getByRole("alert")).toHaveCount(0)
+  await testInfo.attach(`jiandu-install-enabled-${testInfo.project.name}`, { body: await page.screenshot({ animations: "disabled" }), contentType: "image/png" })
+  expect(await page.evaluate(() => {
+    const browser = globalThis as unknown as { document: { documentElement: { scrollWidth: number } }; innerWidth: number }
+    return browser.document.documentElement.scrollWidth <= browser.innerWidth + 1
+  })).toBe(true)
+})
+
+test("Jiandu retains a stale publisher review on conflict and does not auto-retry adoption", async ({ page }) => {
+  await installArtifactRuntime(page, standaloneScenario)
+  const report = adoptionSetup()
+  const posts: unknown[] = []
+  await page.route("**/api/v1/plugins**", async (route) => {
+    if (route.request().url().endsWith("/jiandu/setup")) return route.fulfill({ json: report })
+    if (route.request().method() === "GET") return route.fulfill({ json: { plugins: [] } })
+    posts.push(route.request().postDataJSON())
+    return route.fulfill({ status: 409, json: { error: "configuration changed" } })
+  })
+  await page.goto(standaloneScenario.entryUrl)
+  await openPlugins(page)
+  await page.getByRole("button", { name: "信任 Jiandu 官方发布者" }).click()
+  report.trust_action!.expected_revision = 5
+  await page.getByRole("dialog").getByRole("button", { name: "确认信任发布者" }).click()
+  await expect(page.getByRole("alert")).toContainText("信任设置已变更")
+  await expect(page.getByRole("button", { name: "安装 Jiandu 连接器" })).toBeDisabled()
+  expect(posts).toEqual([{ expected_revision: 4, expected_public_key: publisherKey }])
 })
 
 test("Jiandu reconciles an uncertain installation and copies the fresh same-host configuration", async ({ page }, testInfo) => {

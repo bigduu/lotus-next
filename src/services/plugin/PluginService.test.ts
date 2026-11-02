@@ -15,6 +15,38 @@ const get = vi.fn()
 beforeEach(() => { get.mockReset(); vi.spyOn(apiClient, "get").mockImplementation(get) })
 
 describe("Jiandu setup authority", () => {
+  const adoption = (): JianduSetupReport => ({
+    ...report(), trust: { trusted: false, reason: "publisher_not_trusted" },
+    install: { available: false, reason: "publisher_not_trusted" },
+    trust_action: { available: true, reason: null, expected_revision: 7,
+      publisher: { label: "jiandu (bigduu official)", algorithm: "ed25519", public_key: "ab".repeat(32) } },
+  })
+  it("binds explicit adoption to the reviewed revision and publisher without forwarding other authority", async () => {
+    const value = adoption()
+    get.mockResolvedValue(value)
+    const post = vi.spyOn(apiClient, "post").mockResolvedValue(undefined)
+    const observed = await service.getJianduSetup()
+    await service.trustOfficialJiandu(observed)
+    expect(post).toHaveBeenCalledExactlyOnceWith("plugins/official/jiandu/trust", {
+      expected_revision: 7, expected_public_key: "ab".repeat(32),
+    })
+  })
+  it.each([
+    ["unsafe revision", { expected_revision: Number.MAX_SAFE_INTEGER + 1 }],
+    ["negative revision", { expected_revision: -1 }],
+    ["wrong algorithm", { publisher: { label: "Jiandu", algorithm: "rsa", public_key: "ab".repeat(32) } }],
+    ["malformed key", { publisher: { label: "Jiandu", algorithm: "ed25519", public_key: "unknown" } }],
+    ["contradictory reason", { reason: "source_not_trusted" }],
+  ])("rejects adoption metadata with %s", async (_name, change) => {
+    const value = adoption()
+    get.mockResolvedValue({ ...value, trust_action: { ...value.trust_action, ...change } })
+    await expect(service.getJianduSetup()).rejects.toThrow("could not be verified")
+  })
+  it("withholds adoption when the backend does not advertise the capability", async () => {
+    const post = vi.spyOn(apiClient, "post").mockResolvedValue(undefined)
+    await expect(service.trustOfficialJiandu(report())).rejects.toThrow("could not be verified")
+    expect(post).not.toHaveBeenCalled()
+  })
   it.each([false, true])("accepts the complete host report (ready=%s) without browser platform inference", async (ready) => {
     const value = report(ready)
     get.mockResolvedValue(value)
