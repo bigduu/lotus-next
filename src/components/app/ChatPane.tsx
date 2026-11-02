@@ -5,6 +5,7 @@ import { useSessionDrop } from "@/hooks/useSessionDrop"
 import type { ComposerInputHandle } from "@/components/chat/ComposerEditor"
 import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { useMarkSessionRead } from "@/lib/sessionReadState"
+import { useRenderProbe } from "@/lib/renderProbe"
 import { recordSessionUserInput } from "@/lib/sidebarSessionOrder"
 import { useMediaQuery } from "@shared/hooks/useMediaQuery"
 import { lazy, Suspense, useCallback, useEffect, useId, useMemo, useRef, useState } from "react"
@@ -246,6 +247,7 @@ export function ChatPane({
   pageVisible?: boolean
 }) {
   useUiLocale()
+  useRenderProbe("app.ChatPane")
   const historyBlocked = !!secondary?.historyRead && secondary.historyRead.status !== "ready"
   const {
     chats,

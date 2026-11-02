@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import { OutputRateTracker } from "@/lib/outputRate"
+import { renderProbe } from "@/lib/renderProbe"
 
 export function useOutputRate(sessionId: string | null | undefined, active: boolean) {
   const tracker = useRef(new OutputRateTracker())
@@ -10,8 +11,12 @@ export function useOutputRate(sessionId: string | null | undefined, active: bool
     if (!active || !sessionId) return
     const timer = window.setInterval(() => {
       const rate = tracker.current.rate()
-      setSnapshot((previous) => previous?.sessionId === sessionId && previous.rate === rate
-        ? previous : { sessionId, rate })
+      renderProbe.count("outputRate.tick")
+      setSnapshot((previous) => {
+        if (previous?.sessionId === sessionId && previous.rate === rate) return previous
+        renderProbe.count("outputRate.commit")
+        return { sessionId, rate }
+      })
     }, 500)
     return () => window.clearInterval(timer)
   }, [active, sessionId])

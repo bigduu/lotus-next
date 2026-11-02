@@ -36,9 +36,10 @@ import { ToolCalls } from "@/components/chat/ToolCalls"
 import { ProcessActivity } from "@/components/chat/ProcessActivity"
 import { RuntimeNoticeCard, BackgroundExecWaitHint } from "@/components/chat/RuntimeNoticeCard"
 import { runtimeNoticeFromMetadata } from "@/components/chat/runtimeNotices"
-import { groupSubAgents } from "./subAgentGroups"
+import { collectSubAgentOrigins, placeSubAgents } from "./subAgentGroups"
 import { SubAgents } from "@/components/chat/SubAgents"
 import { cn } from "@/lib/utils"
+import { renderProbe, useRenderProbe } from "@/lib/renderProbe"
 import { isCompletedAnswerHandoff } from "@/lib/completedAnswerHandoff"
 import type { Message } from "@shared/types/chatMessages"
 import type { ChildProgress } from "@shared/store/appStore/slices/executionStateSlice/types"
@@ -590,6 +591,7 @@ export function MessageList({
   onEditMessage: (id: string, text: string) => void
 }) {
   useUiLocale()
+  useRenderProbe("app.MessageList")
   const [editingMsg, setEditingMsg] = useState<{ id: string; text: string } | null>(null)
 
   const pendingUsers = pendingUserMessages ?? (pendingUserText?.trim() || pendingUserImages.length
@@ -743,10 +745,19 @@ export function MessageList({
     return ref
   }
 
-  const subAgentGroups = useMemo(() => groupSubAgents([...renderItems, ...liveItems]
-    .flatMap((item) => item.kind === "process" ? [{ key: item.key,
-      messages: item.parts.flatMap((part) => part.kind === "tools" ? part.items : []),
-    }] : []), mergedSubAgents), [renderItems, liveItems, mergedSubAgents])
+  const subAgentCandidates = useMemo(() => {
+    renderProbe.count("subagent.origins.memo")
+    return collectSubAgentOrigins([...renderItems, ...liveItems]
+      .flatMap((item) => item.kind === "process" ? [{ key: item.key,
+        messages: item.parts.flatMap((part) => part.kind === "tools" ? part.items : []),
+      }] : []))
+  }, [renderItems, liveItems])
+  // Placement is a cheap step over the transcript-derived candidates, so child
+  // status churn re-associates cards without re-scanning or re-parsing history.
+  const subAgentGroups = useMemo(() => {
+    renderProbe.count("subagent.place")
+    return placeSubAgents(subAgentCandidates, mergedSubAgents)
+  }, [subAgentCandidates, mergedSubAgents])
 
   const renderImages = (imgs: readonly { url?: string; base64?: string; type?: string }[] | undefined) => imgs?.length ? (
     <div className="mb-1.5 flex flex-wrap gap-1.5">

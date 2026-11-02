@@ -2,6 +2,7 @@ import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { useEffect, useMemo, useRef } from "react"
 import { RefreshCw } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { useRenderProbe } from "@/lib/renderProbe"
 import { useActorSnapshot } from "@/hooks/useActorSnapshot"
 import { actorSnapshotTree } from "@/services/chat/actorSnapshot"
 import type { ActorTreeData } from "@/services/chat/actorTreeView"
@@ -16,6 +17,7 @@ export function ActorSnapshotPanel({ rootId, active, selectedActorId, descendant
   onSelectActor: (actorId: string) => void
 }) {
   useUiLocale()
+  useRenderProbe("inspector.actorSnapshotPanel")
   const state = useActorSnapshot(rootId, active, selectedActorId, descendantCountHint)
   const previousTree = useRef<ActorTreeData | undefined>(undefined)
   const tree = useMemo(() => state.snapshot ? actorSnapshotTree(state.snapshot, state.loading, previousTree.current) : {
