@@ -1,7 +1,8 @@
-import { useId, useState } from "react"
+import { memo, useCallback, useId, useRef, useState } from "react"
 import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { Bot, Loader2, Check, AlertCircle, ChevronRight } from "lucide-react"
 import { cn } from "@/lib/utils"
+import { useRenderProbe } from "@/lib/renderProbe"
 import { MachineTag } from "@/components/chat/MachineTag"
 import type { SessionPlacement } from "@services/chat/AgentService"
 import type { ChildProgress } from "@shared/store/appStore/slices/executionStateSlice/types"
@@ -28,11 +29,12 @@ const LABEL = {
   get retired() { return uiText("exited_899df7e2") }, get unknown() { return uiText("plugin_connection_unknown") },
 }
 
-function SubAgentCard({ child, childId, onOpen, expanded, onExpandedChange }: {
-  child: ChildProgress; childId: string; onOpen?: () => void
-  expanded?: boolean; onExpandedChange?: (expanded: boolean) => void
+const SubAgentCard = memo(function SubAgentCard({ child, childId, onOpen, expanded, onExpandedChange }: {
+  child: ChildProgress; childId: string; onOpen?: (childId: string) => void
+  expanded?: boolean; onExpandedChange?: (childId: string, expanded: boolean) => void
 }) {
   useUiLocale()
+  useRenderProbe("subagent.card")
   const [localExpanded, setLocalExpanded] = useState(false)
   const open = expanded ?? localExpanded
   const detailsId = useId()
@@ -57,7 +59,11 @@ function SubAgentCard({ child, childId, onOpen, expanded, onExpandedChange }: {
         data-subagent-toggle
         aria-expanded={open}
         aria-controls={detailsId}
-        onClick={() => onExpandedChange ? onExpandedChange(!open) : setLocalExpanded(!open)}
+        onClick={() => {
+          const next = !open
+          if (onExpandedChange) onExpandedChange(childId, next)
+          else setLocalExpanded(next)
+        }}
         className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left hover:bg-accent/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       >
         {st === "running" ? (
@@ -89,13 +95,13 @@ function SubAgentCard({ child, childId, onOpen, expanded, onExpandedChange }: {
             {detail}
           </div>
         ) : null}
-        {onOpen ? <button type="button" onClick={onOpen} className="text-xs underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+        {onOpen ? <button type="button" onClick={() => onOpen(childId)} className="text-xs underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
           {uiText("subagent_open_conversation", { title: child.title || uiText("sub_agent_acd37b4c") })}
         </button> : null}
       </div>
     </article>
   )
-}
+})
 
 /** Compact child summaries; expansion is presentation state, never execution authority. */
 export function SubAgents({
@@ -112,6 +118,15 @@ export function SubAgents({
   onExpandedChange?: (childId: string, expanded: boolean) => void
 }) {
   useUiLocale()
+  useRenderProbe("subagent.group")
+  // Stable per-child callbacks: a parent re-rendering with an inline handler
+  // must not defeat the card memo and restart every row's DOM work.
+  const onOpenRef = useRef(onOpen)
+  const onExpandedRef = useRef(onExpandedChange)
+  onOpenRef.current = onOpen
+  onExpandedRef.current = onExpandedChange
+  const openChild = useCallback((id: string) => { onOpenRef.current?.(id) }, [])
+  const expandChild = useCallback((id: string, expanded: boolean) => { onExpandedRef.current?.(id, expanded) }, [])
   const entries = Object.entries(agents)
   if (entries.length === 0) return null
 
@@ -121,8 +136,8 @@ export function SubAgents({
         <div className="text-xs font-medium text-muted-foreground">{uiText("subagents_76d97a95")}{entries.length})</div>
         {originUnconfirmed ? <p className="text-xs text-muted-foreground">{uiText("subagent_origin_unknown")}</p> : null}
         {entries.map(([id, c]) => (
-          <SubAgentCard key={id} childId={id} child={c} onOpen={onOpen ? () => onOpen(id) : undefined}
-            expanded={expandedIds?.has(id)} onExpandedChange={onExpandedChange ? (open) => onExpandedChange(id, open) : undefined} />
+          <SubAgentCard key={id} childId={id} child={c} onOpen={onOpen ? openChild : undefined}
+            expanded={expandedIds?.has(id)} onExpandedChange={onExpandedChange ? expandChild : undefined} />
         ))}
       </div>
     </div>

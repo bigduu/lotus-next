@@ -1,6 +1,7 @@
-import { expect, it } from "vitest"
+import { afterEach, expect, it } from "vitest"
 import type { Message } from "@shared/types/chatMessages"
-import { groupSubAgents } from "./subAgentGroups"
+import { renderProbe } from "@/lib/renderProbe"
+import { collectSubAgentOrigins, groupSubAgents, placeSubAgents } from "./subAgentGroups"
 const call = (id: string, toolName = "sub_agent", action = "create"): Message => ({
   id, role: "assistant", type: "tool_call", createdAt: "", toolCalls: [{ toolCallId: id, toolName, parameters: { action } }],
 })
@@ -70,4 +71,41 @@ it("requires the matching legacy/compact result shape and preserves failed or un
   const groups = [{ key: "not-birth", messages: [compactCall("compact"), result("compact"), call("legacy"), actorResult("legacy"),
     actorResult("unmatched"), compactCall("failed"), failed, compactCall("reused"), actorResult("reused", "child", { reused: true })] }]
   expect(groupSubAgents(groups, { child: {} }).byOrigin.size).toBe(0)
+})
+
+afterEach(() => { renderProbe.disable(); renderProbe.reset() })
+
+it("parses a create result once no matter how often the transcript is re-scanned", () => {
+  renderProbe.enable(); renderProbe.reset()
+  const groups = [{ key: "birth", messages: [call("create"), result("create")] }]
+  expect(collectSubAgentOrigins(groups)).toEqual([{ key: "birth", id: "child" }])
+  const parsedOnce = renderProbe.read()["subagent.origins.parse"]
+  collectSubAgentOrigins(groups)
+  collectSubAgentOrigins(groups)
+  expect(renderProbe.read()["subagent.origins.parse"]).toBe(parsedOnce)
+  expect(renderProbe.read()["subagent.origins.cache-hit"]).toBe(2)
+})
+
+it("re-parses when a streamed result grows instead of trusting the cached row", () => {
+  renderProbe.enable(); renderProbe.reset()
+  const streamed = result("create")
+  expect(collectSubAgentOrigins([{ key: "birth", messages: [call("create"), streamed] }]))
+    .toEqual([{ key: "birth", id: "child" }])
+  // The same message object grows in place, exactly like a streamed result.
+  ;(streamed as unknown as { result: unknown }).result =
+    { tool_name: "sub_agent", result: JSON.stringify({ child_session_id: "grown" }), display_preference: "Default" }
+  expect(collectSubAgentOrigins([{ key: "birth", messages: [call("create"), streamed] }]))
+    .toEqual([{ key: "birth", id: "grown" }])
+  expect(renderProbe.read()["subagent.origins.parse"]).toBe(2)
+})
+
+it("derives candidates from the transcript alone and lets agents decide placement", () => {
+  const groups = [{ key: "birth", messages: [call("create"), result("create")] }]
+  const candidates = collectSubAgentOrigins(groups)
+  // Re-deriving must not depend on any child-state map.
+  expect(collectSubAgentOrigins(groups)).toEqual(candidates)
+  expect(placeSubAgents(candidates, { child: { status: "running" } }).byOrigin.get("birth")).toEqual({ child: { status: "running" } })
+  // An id the index does not know yet stays out of every group.
+  expect(placeSubAgents(candidates, {}).byOrigin.size).toBe(0)
+  expect(placeSubAgents(candidates, {})).toEqual(groupSubAgents(groups, {}))
 })
