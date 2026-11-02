@@ -7,6 +7,7 @@ import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { useMarkSessionRead } from "@/lib/sessionReadState"
 import { recordSessionUserInput } from "@/lib/sidebarSessionOrder"
 import { useMediaQuery } from "@shared/hooks/useMediaQuery"
+import { isTerminalRunStatus } from "@shared/store/appStore/slices/executionStateSlice"
 import { lazy, Suspense, useCallback, useEffect, useId, useMemo, useRef, useState } from "react"
 import { createPortal } from "react-dom"
 import {
@@ -309,8 +310,14 @@ export function ChatPane({
   // Deliberately narrower than `currentlyRunning`: Stop and the composer input
   // lock stay tied to `currentlyRunning`, because a yielded Root has no runner to
   // cancel — offering Stop there would only fail.
+  //
+  // A terminal status always wins, exactly as `applySummaryInner` decides it: a
+  // lingering child count must never keep a finished parent presented (and
+  // controlled) as an active run, which would suppress its error/diagnostic
+  // surface and route ordinary submissions into the queue.
   const delegationWaiting = (currentChat?.runningChildCount ?? 0) > 0
     && currentChat?.isRunning !== true
+    && !isTerminalRunStatus(currentChat?.lastRunStatus)
   const currentlyRunning = currentChat?.isRunning === true || (sending && streaming !== null) || backgroundExecWaiting
   const managedHistoryStale = useAppStore((state) => currentSessionId
     ? state.managedHistoryBindings?.[currentSessionId]?.status === "stale" : false)

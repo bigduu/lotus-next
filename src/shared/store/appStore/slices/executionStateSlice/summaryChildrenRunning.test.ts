@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { SessionSummary } from "@services/chat/AgentService";
 import { selectShouldObserve } from "../../selectors/executionSelectors";
-import { applyExecutionEvent, createInitialExecutionState } from "./reducer";
+import { applyExecutionEvent, createInitialExecutionState, isTerminalRunStatus } from "./reducer";
 
 const NOW = "2026-11-02T03:00:00.000Z";
 
@@ -102,5 +102,27 @@ describe("summary reconciliation while children execute", () => {
       () => NOW,
     );
     expect(next["root-1"].phase).toBe("cancelled");
+  });
+});
+
+/**
+ * `isTerminalRunStatus` is the shared verdict used by both the reducer above and
+ * the pane's delegation predicate. They must agree: while the reducer settled a
+ * finished parent, a pane that still called it "running" suppressed its
+ * error/diagnostic surface and routed ordinary submissions into the queue.
+ */
+describe("terminal run status", () => {
+  it("treats a real verdict as the end of a run", () => {
+    expect(isTerminalRunStatus("completed")).toBe(true);
+    expect(isTerminalRunStatus("error")).toBe(true);
+    expect(isTerminalRunStatus("cancelled")).toBe(true);
+  });
+
+  it("does not treat a wait or an absent verdict as the end of a run", () => {
+    // "suspended" is a wait (delegation / background bash), not a finish.
+    expect(isTerminalRunStatus("suspended")).toBe(false);
+    expect(isTerminalRunStatus("running")).toBe(false);
+    expect(isTerminalRunStatus(null)).toBe(false);
+    expect(isTerminalRunStatus(undefined)).toBe(false);
   });
 });

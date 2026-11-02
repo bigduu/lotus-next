@@ -668,8 +668,17 @@ const applyAgentEventInner = (
 // applySessionSummary — reconciliation rules from the plan §B.4
 // =============================================================================
 
-const isBackendStatus = (s: string | undefined): s is "completed" | "error" | "cancelled" =>
+/**
+ * The persisted `last_run_status` values that end a run. Callers that must decide
+ * "is this still an active run?" share this predicate so a lingering
+ * `running_child_count` can never outvote a verdict the server has already
+ * reached. `"suspended"` is deliberately absent: it is a wait, not an end.
+ */
+export const isTerminalRunStatus = (s: string | null | undefined): boolean =>
   s === "completed" || s === "error" || s === "cancelled";
+
+const isBackendStatus = (s: string | undefined): s is "completed" | "error" | "cancelled" =>
+  isTerminalRunStatus(s);
 
 const applySummaryInner = (
   entry: SessionExecutionState,
