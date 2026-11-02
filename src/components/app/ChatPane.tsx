@@ -7,6 +7,7 @@ import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { useMarkSessionRead } from "@/lib/sessionReadState"
 import { recordSessionUserInput } from "@/lib/sidebarSessionOrder"
 import { useMediaQuery } from "@shared/hooks/useMediaQuery"
+import { isTerminalRunStatus } from "@shared/store/appStore/slices/executionStateSlice"
 import { lazy, Suspense, useCallback, useEffect, useId, useMemo, useRef, useState } from "react"
 import { createPortal } from "react-dom"
 import {
@@ -299,6 +300,24 @@ export function ChatPane({
     && backgroundExecWaitActive(
       (currentChat?.messages ?? []).map((m) => ({ metadata: (m as { metadata?: { runtime_kind?: unknown } }).metadata, content: "content" in m ? m.content : undefined })),
     )
+  // Delegation keeps the run live from the user's perspective for the same
+  // reason: the Root yields while its children execute, so `is_running` can read
+  // `false` during the hand-off. `runningChildCount` is the server's own count of
+  // executing children, so the transcript keeps its running presentation (active
+  // process row, no false "finished" reading) and agrees with the sidebar dot,
+  // which already treats this as live work.
+  //
+  // Deliberately narrower than `currentlyRunning`: Stop and the composer input
+  // lock stay tied to `currentlyRunning`, because a yielded Root has no runner to
+  // cancel — offering Stop there would only fail.
+  //
+  // A terminal status always wins, exactly as `applySummaryInner` decides it: a
+  // lingering child count must never keep a finished parent presented (and
+  // controlled) as an active run, which would suppress its error/diagnostic
+  // surface and route ordinary submissions into the queue.
+  const delegationWaiting = (currentChat?.runningChildCount ?? 0) > 0
+    && currentChat?.isRunning !== true
+    && !isTerminalRunStatus(currentChat?.lastRunStatus)
   const currentlyRunning = currentChat?.isRunning === true || (sending && streaming !== null) || backgroundExecWaiting
   const managedHistoryStale = useAppStore((state) => currentSessionId
     ? state.managedHistoryBindings?.[currentSessionId]?.status === "stale" : false)
@@ -1235,9 +1254,10 @@ export function ChatPane({
           mergedSubAgents={mergedSubAgents}
           subAgentError={subAgentView.error}
           onRefreshSubAgents={() => { void subAgentView.refresh() }}
-          sending={currentlyRunning}
+          sending={currentlyRunning || delegationWaiting}
           latestRunFinished={
             !currentlyRunning &&
+            !delegationWaiting &&
             streamPhase === null &&
             currentChat?.lastRunStatus === "completed"
           }
