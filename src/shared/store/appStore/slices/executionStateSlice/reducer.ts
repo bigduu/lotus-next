@@ -668,8 +668,17 @@ const applyAgentEventInner = (
 // applySessionSummary — reconciliation rules from the plan §B.4
 // =============================================================================
 
-const isBackendStatus = (s: string | undefined): s is "completed" | "error" | "cancelled" =>
+/**
+ * The persisted `last_run_status` values that end a run. Callers that must decide
+ * "is this still an active run?" share this predicate so a lingering
+ * `running_child_count` can never outvote a verdict the server has already
+ * reached. `"suspended"` is deliberately absent: it is a wait, not an end.
+ */
+export const isTerminalRunStatus = (s: string | null | undefined): boolean =>
   s === "completed" || s === "error" || s === "cancelled";
+
+const isBackendStatus = (s: string | undefined): s is "completed" | "error" | "cancelled" =>
+  isTerminalRunStatus(s);
 
 const applySummaryInner = (
   entry: SessionExecutionState,
@@ -743,6 +752,36 @@ const applySummaryInner = (
     "running_children",
     "settling",
   ]);
+
+  // `is_running` is the runner's own liveness, and a Root yields to its children:
+  // while that delegation wait is persisted, a summary read can report
+  // `is_running: false` even though every child is still executing. Settling to
+  // a terminal phase here would also drop the live subscription
+  // (`selectShouldObserve`), freezing the open transcript on its last tool row —
+  // which reads to the user as a hang. Stay busy while the server still counts a
+  // running child.
+  //
+  // Only an otherwise-ambiguous summary (`last_run_status` carries no terminal
+  // verdict) qualifies: a real completion, error or cancellation always wins, so
+  // a lingering child count can never keep a finished session pulsing. A question
+  // this session is waiting on keeps its own phase too.
+  const childrenStillRunning = (runningChildCount ?? 0) > 0;
+  if (
+    childrenStillRunning &&
+    lastRunStatus === null &&
+    hasPendingQuestion !== true &&
+    entry.phase !== "waiting_user_answer"
+  ) {
+    return {
+      ...merged,
+      phase: "running_children",
+      confidence: "summary",
+      timestamps: { ...merged.timestamps, settledAt: null, terminalAt: null },
+      error: null,
+      activeReasons: appendReason(merged.activeReasons, "summary:children_running"),
+    };
+  }
+
   if (inProgress.has(entry.phase)) {
     if (lastRunStatus === "completed") {
       debugRespondState("summary.notRunning.transition", {
