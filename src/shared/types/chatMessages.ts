@@ -219,6 +219,15 @@ export interface ChatItem {
   /** Total descendants in this root's flattened sub-agent tree. Children report zero. */
   subagentCount?: number;
   /**
+   * How many of this session's direct children are executing right now, from
+   * `SessionSummary.running_child_count`. A root yields while it waits for its
+   * children, so `isRunning` alone can report `false` during that window even
+   * though real work is in flight; this count is the server-side truth that
+   * closes the gap, and it needs no local observation, so it also covers
+   * sessions this client never opened.
+   */
+  runningChildCount?: number;
+  /**
    * Which machine this session's agent runs on (deployment kind + host),
    * mirrored from the backend `SessionSummary.placement`. Present for every
    * session; local/root sessions carry the backend's own host, remote children

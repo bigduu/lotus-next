@@ -104,6 +104,7 @@ export const sessionSummaryToChatItem = (s: SessionSummary): ChatItem => {
     lifecycle: s.lifecycle ?? null,
     residentName: s.resident_name ?? null,
     subagentCount: s.subagent_count ?? 0,
+    runningChildCount: s.running_child_count ?? 0,
     placement: s.placement ?? null,
     title: s.title || i18n.t("chat.session.defaultTitle"),
     titleVersion: s.title_version ?? 0,
