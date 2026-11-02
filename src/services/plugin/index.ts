@@ -1,4 +1,6 @@
 export { PluginService, novaInstallReason, pluginService } from "./PluginService";
+export { publisherPolicyService, publisherChangeConfirmed } from "./PublisherPolicyService";
+export type { PublisherPolicy, PublisherPolicyChange, PublisherMode, OfficialPublisher } from "./PublisherPolicyService";
 export type {
   InstalledPluginView,
   JianduSetupReport,
