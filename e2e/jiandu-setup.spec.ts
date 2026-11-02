@@ -42,6 +42,31 @@ const adoptionSetup = (): JianduSetupReport => ({
     publisher: { label: "jiandu (bigduu official)", algorithm: "ed25519", public_key: publisherKey } },
 })
 
+for (const [reason, guidance] of [
+  ["memory_root_overlaps_plugin", "请将记忆目录移出 Jiandu 插件安装目录后刷新"],
+  ["memory_root_unavailable", "无法确认记忆目录安全性"],
+  ["artifact_unavailable", "尚无已接受的连接器版本"],
+]) {
+  test(`Jiandu preserves ${reason} guidance when publisher adoption is already satisfied`, async ({ page }) => {
+    await installArtifactRuntime(page, standaloneScenario)
+    const report: JianduSetupReport = { ...adoptionSetup(), trust: { trusted: true, reason: null },
+      trust_action: { ...adoptionSetup().trust_action!, available: false, reason: "publisher_already_trusted" },
+      install: { available: false, reason },
+      installed: { state: reason === "artifact_unavailable" ? "missing" : "unverified", version: null, reason: reason === "artifact_unavailable" ? null : reason },
+      release: reason === "artifact_unavailable" ? null : adoptionSetup().release }
+    await page.route("**/api/v1/plugins**", async (route) => {
+      expect(route.request().method()).toBe("GET")
+      return route.fulfill({ json: route.request().url().endsWith("/jiandu/setup") ? report : { plugins: [] } })
+    })
+    await page.goto(standaloneScenario.entryUrl)
+    await openPlugins(page)
+    const card = page.getByRole("article", { name: "Jiandu", exact: true })
+    await expect(card).toContainText(guidance)
+    await expect(card.getByRole("button", { name: "安装 Jiandu 连接器" })).toBeDisabled()
+    await expect(card.getByRole("button", { name: "信任 Jiandu 官方发布者" })).toHaveCount(0)
+  })
+}
+
 test("Jiandu reviews publisher adoption, cancels without mutation and enables installation from fresh evidence", async ({ page }, testInfo) => {
   await installArtifactRuntime(page, standaloneScenario)
   let report = adoptionSetup()

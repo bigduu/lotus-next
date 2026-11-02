@@ -175,6 +175,21 @@ describe("official plugin center", () => {
     expect(document.body.textContent).toContain("来源不在服务端允许列表")
     expect(post).not.toHaveBeenCalled()
   })
+
+  it.each([
+    ["memory_root_overlaps_plugin", "请将记忆目录移出 Jiandu 插件安装目录后刷新"],
+    ["memory_root_unavailable", "无法确认记忆目录安全性"],
+    ["artifact_unavailable", "尚无已接受的连接器版本"],
+  ])("preserves %s installation guidance after publisher trust is satisfied", async (reason, message) => {
+    jianduSetup = { ...trustedJiandu(), install: { available: false, reason },
+      installed: { state: reason === "artifact_unavailable" ? "missing" : "unverified", version: null, reason: reason === "artifact_unavailable" ? null : reason },
+      release: reason === "artifact_unavailable" ? null : trustedJiandu().release }
+    await mount()
+    expect(document.body.textContent).toContain(message)
+    expect(button("安装 Jiandu 连接器").disabled).toBe(true)
+    expect(button("信任 Jiandu 官方发布者")).toBeUndefined()
+    expect(post).not.toHaveBeenCalled()
+  })
   it("preserves built-in memory and disables the connector on legacy Bamboo", async () => {
     await mount()
     const card = document.querySelector('article[aria-label="Jiandu"]')!

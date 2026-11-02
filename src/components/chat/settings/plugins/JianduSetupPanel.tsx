@@ -35,7 +35,9 @@ export function JianduSetupPanel({ report, error, disabled, installing, copying,
   const ready = report?.installed.state === "ready"
   const configuration = ready && report.external_client
     ? JSON.stringify({ mcpServers: { jiandu: report.external_client } }, null, 2) : null
-  const reason = report?.host.reason ?? report?.trust_action?.reason ?? report?.trust.reason ?? report?.installed.reason ?? report?.install.reason
+  const trustActionReason = report?.trust.trusted || report?.trust_action?.reason === "publisher_already_trusted"
+    ? null : report?.trust_action?.reason
+  const reason = report?.host.reason ?? trustActionReason ?? report?.trust.reason ?? report?.installed.reason ?? report?.install.reason
   const memoryRootStatus = reason === "memory_root_unavailable" || reason === "memory_root_overlaps_plugin" ? reasonKeys[reason] : null
   const status = error === "loading" ? "loading_4927a53b" : error === "legacy" ? "plugin_jiandu_legacy" : error
     ? "plugin_jiandu_unknown" : ready ? "plugin_jiandu_ready" : memoryRootStatus ?? (report?.installed.state === "installing"
