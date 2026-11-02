@@ -50,6 +50,70 @@ it("keeps first observed order when the session index changes recency order", ()
   expect(mergeSubAgentView("other", [chat("a")], {}, make("succeeded"), true)).toEqual({})
 })
 
+it("reuses one view identity while only unrendered token detail changes", () => {
+  const chats = [chat("actor-0")]
+  const snapshot = make("succeeded")
+  const first = mergeSubAgentView("root", chats,
+    { "actor-0": { status: "running", outputPreview: "a", roundCount: 1 } }, snapshot, true)
+  const second = mergeSubAgentView("root", chats,
+    { "actor-0": { status: "running", outputPreview: "ab", roundCount: 2 } }, snapshot, true,
+    Object.keys(first), first)
+  // A child token must not allocate a new card state: the collapsed card shows
+  // neither the preview nor the round count.
+  expect(second).toBe(first)
+  expect(second["actor-0"].status).toBe("completed")
+  expect(second["actor-0"].outputPreview).toBeUndefined()
+})
+
+it("keeps untouched cards stable and rebuilds only the one that changed", () => {
+  const chats = [chat("b", 2), chat("a", 1)]
+  const first = mergeSubAgentView("root", chats, {}, null, false)
+  const moved = [{ ...chat("b", 2), placement: { kind: "local", host: "box-1" } }, chat("a", 1)]
+  const changed = mergeSubAgentView("root", moved, {}, null, false, Object.keys(first), first)
+  expect(changed).not.toBe(first)
+  expect(changed.b).not.toBe(first.b)
+  expect(changed.a).toBe(first.a)
+})
+
+it("rebuilds a card when its placement changes but not when the host is repeated", () => {
+  const placed = (host: string) => ({ ...chat("actor-0"), placement: { kind: "docker", host } }) as ChatItem
+  const first = mergeSubAgentView("root", [placed("box-1")], {}, null, false)
+  const same = mergeSubAgentView("root", [placed("box-1")], {}, null, false, Object.keys(first), first)
+  expect(same).toBe(first)
+  const moved = mergeSubAgentView("root", [placed("box-2")], {}, null, false, Object.keys(first), first)
+  expect(moved).not.toBe(first)
+  expect((moved["actor-0"] as { placement?: { host: string } }).placement?.host).toBe("box-2")
+})
+
+it("does not hand out a fresh view when a poll returns the identical cards", async () => {
+  Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
+  const host = document.createElement("div"), root = createRoot(host)
+  const current = { ...chat("root"), parentSessionId: null, rootSessionId: "root", subagentCount: 1 }
+  let view!: ReturnType<typeof useSubAgentView>
+  function Harness({ live }: { live: Record<string, ChildProgress> }) {
+    view = useSubAgentView(current, [current, chat("actor-0")], live, true)
+    return null
+  }
+  const render = async (live: Record<string, ChildProgress>) => { await act(async () => root.render(<Harness live={live} />)) }
+  try {
+    read.snapshot = make("succeeded")
+    await render({ "actor-0": { status: "running" } })
+    const settled = view.agents
+    // The lease-driven refresh returns an equal but distinct snapshot object.
+    read.snapshot = make("succeeded")
+    await render({ "actor-0": { status: "running" } })
+    expect(view.agents).toBe(settled)
+    // Token-level detail alone is invisible to the card and must not reallocate.
+    await render({ "actor-0": { status: "running", outputPreview: "more output" } })
+    expect(view.agents).toBe(settled)
+    // A real lifecycle change still lands.
+    read.snapshot = make("cancelled", 2)
+    await render({ "actor-0": { status: "cancelled" } })
+    expect(view.agents).not.toBe(settled)
+    expect(view.agents["actor-0"].status).toBe("cancelled")
+  } finally { act(() => root.unmount()) }
+})
+
 it("re-reads on legacy lifecycle changes without letting unordered or duplicate hints overwrite a snapshot", async () => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
   const host = document.createElement("div"), root = createRoot(host)
