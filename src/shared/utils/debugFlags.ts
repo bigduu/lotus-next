@@ -1,6 +1,10 @@
 type DebugFlagKey = "bodhi_debug_ui_layout" | "bodhi_debug_verbose";
 
-const isDevRuntime = (): boolean => Boolean(import.meta.env.DEV) && import.meta.env.MODE !== "test";
+/**
+ * Dev-only runtime predicate. Exported so opt-in diagnostics reuse this single
+ * `import.meta.env` authority instead of adding another read.
+ */
+export const isDevRuntime = (): boolean => Boolean(import.meta.env.DEV) && import.meta.env.MODE !== "test";
 
 const readFlag = (key: DebugFlagKey): boolean => {
   if (!isDevRuntime()) return false;
