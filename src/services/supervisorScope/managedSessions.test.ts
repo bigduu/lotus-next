@@ -1,13 +1,50 @@
 import { expect, it, vi } from "vitest"
 import { apiClient, ApiError } from "@services/api"
 import { agentClient } from "@services/chat/AgentService"
-import { canWriteManagedSessions, decodeManagedSessionReceipt, decodeManagedSessions, managedSessionsClient, managedSessionsProblem, type ManagedSessionIntent, type ManagedSessionsResponse } from "./managedSessions"
+import { canWriteManagedSessions, decodeManagedSessionReceipt, decodeManagedSessions, managedSessionsClient, managedSessionsProblem, revalidateManagedSelection, type ManagedSessionIntent, type ManagedSessionsResponse } from "./managedSessions"
+import { currentUserManagedSessionsFixture } from "./testFixtures"
 vi.mock("@services/api", async (original) => ({ ...await original<typeof import("@services/api")>(), apiClient: { get: vi.fn(), putOnce: vi.fn(), put: vi.fn(), post: vi.fn() } }))
 vi.mock("@services/chat/AgentService", () => ({ agentClient: { listSessions: vi.fn() } }))
 const fixture = (): ManagedSessionsResponse => ({ capabilities: { managed_sessions_http_v1: true }, scope: { supervisor: { session_id: "bamboo-default-supervisor", incarnation_id: "11111111-1111-4111-8111-111111111111" }, state_revision: 4, allowed_projects: ["p1"] },
   sessions: [{ session_id: "root-a", link_revision: 3, enabled: true, authorized: true, target_created_at: "2026-10-25T00:00:00Z", target_project_id: "p1", target_metadata_version: 2 }],
   owner_authorization: { available: true, required: true, kind: "existing_access", http_registration: false, code: null } })
 const intent: ManagedSessionIntent = { supervisor: fixture().scope.supervisor, expected_state_revision: 4, target_session_id: "root-b", enabled: true }
+it("preserves the canonical Root/Child target observations and separates legacy links without granting writes", () => {
+  const body = currentUserManagedSessionsFixture("child-a")
+  expect(decodeManagedSessions(body)).toEqual(body)
+  expect(canWriteManagedSessions(body)).toBe(false)
+  expect(decodeManagedSessions(body).sessions.map((entry) => entry.session_id)).toEqual(["root-a", "child-a"])
+  expect(decodeManagedSessions(body).sessions[0]?.target_project_id).toBeNull()
+  expect(decodeManagedSessions(body).sessions[1]?.current_user_target?.ancestry_sha256).toBe("d".repeat(64))
+})
+it.each([
+  (body: ManagedSessionsResponse) => ({ ...body, management_access: undefined }),
+  (body: ManagedSessionsResponse) => ({ ...body, management_access: { kind: "current_user", requires_session_attachment: true } }),
+  (body: ManagedSessionsResponse) => ({ ...body, legacy_links: [] }),
+  (body: ManagedSessionsResponse) => ({ ...body, next_after: undefined }),
+  (body: ManagedSessionsResponse) => ({ ...body, sessions: Array.from({ length: 21 }, () => body.sessions[0]) }),
+  ...[
+    { current_user_target: undefined }, { link_revision: 1 }, { authorized: false }, { target_metadata_version: 99 },
+    { parent_session_id: "unrelated-root" }, { target_created_at: "2026-10-27T09:00:00Z" },
+  ].map((patch) => (body: ManagedSessionsResponse) => ({ ...body, sessions: [{ ...body.sessions[0], ...patch }] })),
+])("rejects incomplete or mismatched current-user directory observations %#", (damage) => {
+  expect(() => decodeManagedSessions(damage(currentUserManagedSessionsFixture()))).toThrow()
+})
+it("uses the canonical after/query/limit page and never falls back to an attachment mutation", async () => {
+  vi.mocked(apiClient.get).mockResolvedValue(currentUserManagedSessionsFixture())
+  const signal = new AbortController().signal
+  const result = await managedSessionsClient.read(signal, { after: "root-a", query: "task & plan", limit: 20 })
+  expect(result).toEqual(currentUserManagedSessionsFixture())
+  expect(apiClient.get).toHaveBeenCalledExactlyOnceWith("supervisor/default/sessions?limit=20&after=root-a&query=task+%26+plan", { signal })
+  expect(apiClient.putOnce).not.toHaveBeenCalled(); expect(agentClient.listSessions).not.toHaveBeenCalled()
+})
+it("refuses an oversized page request or repeated cursor without retrying", async () => {
+  await expect(managedSessionsClient.read(undefined, { limit: 21 })).rejects.toThrow()
+  expect(apiClient.get).not.toHaveBeenCalled()
+  vi.mocked(apiClient.get).mockResolvedValue(currentUserManagedSessionsFixture("root-a"))
+  await expect(managedSessionsClient.read(undefined, { after: "root-a" })).rejects.toThrow()
+  expect(apiClient.get).toHaveBeenCalledTimes(1)
+})
 it("reads only canonical metadata and preserves unavailable target proof without a grant", async () => {
   const base = fixture(), body: ManagedSessionsResponse = { ...base, sessions: [{ ...base.sessions[0]!, authorized: false, authorization_error: "target_authority_unavailable" }] }
   vi.mocked(apiClient.get).mockResolvedValue({ ...body, private_history: "not part of the view" })
@@ -50,4 +87,91 @@ it("pages owner Root summaries without treating index metadata as a management g
   ], total: 120, offset: 0, limit: 100, next_offset: 100 } as never)
   expect(await managedSessionsClient.candidates()).toEqual({ sessions: [{ session_id: "root-a", title: "A", project_id: "p1", model: "target-model", is_running: true, last_run_status: "running" }], nextOffset: 100 })
   expect(agentClient.listSessions).toHaveBeenCalledExactlyOnceWith({ kind: "root", limit: 100, offset: 0 })
+})
+
+it("uses only exact canonical session detail as a best-effort title", async () => {
+  const links = currentUserManagedSessionsFixture().sessions
+  const detail = (i: number) => {
+    const target = links[i]!.current_user_target!
+    return { session: { id: target.session_id, created_at: target.created_at, kind: target.kind, root_session_id: target.root_session_id,
+      parent_session_id: target.parent_session_id, project_id: target.project_id, title: i ? "Child title" : "Root title", model: "display-model", is_running: false } }
+  }
+  vi.mocked(apiClient.get).mockImplementation(async (path) => path.endsWith("root-a") ? detail(0) : detail(1))
+  const signal = new AbortController().signal
+  const summaries = await managedSessionsClient.describe(links, signal)
+  expect(summaries.map((summary) => [summary.session_id, summary.title])).toEqual([["root-a", "Root title"], ["child-a", "Child title"]])
+  expect(summaries[0]?.observedTarget).toEqual(links[0]?.current_user_target)
+  expect(apiClient.get).toHaveBeenCalledWith("sessions/root-a", { signal, cache: "no-store" })
+  expect(apiClient.putOnce).not.toHaveBeenCalled()
+})
+it("never uses a mismatched or unavailable detail as the canonical session title", async () => {
+  const links = currentUserManagedSessionsFixture().sessions, target = links[0]!.current_user_target!
+  vi.mocked(apiClient.get).mockImplementation(async (path) => {
+    if (path.endsWith("child-a")) throw new Error("unavailable")
+    return { session: { id: target.session_id, created_at: "2020-01-01T00:00:00Z", kind: target.kind, root_session_id: target.root_session_id,
+      parent_session_id: target.parent_session_id, project_id: target.project_id, title: "Wrong incarnation", model: "x", is_running: false } }
+  })
+  expect(await managedSessionsClient.describe(links, new AbortController().signal)).toEqual([])
+})
+
+it("bounds optional detail requests to four concurrent reads", async () => {
+  const link = currentUserManagedSessionsFixture().sessions[0]!, target = link.current_user_target!
+  const links = Array.from({ length: 9 }, (_, i) => {
+    const id = `root-${i}`
+    return { ...link, session_id: id, root_session_id: id, current_user_target: { ...target, session_id: id, root_session_id: id } }
+  })
+  let active = 0, peak = 0
+  vi.mocked(apiClient.get).mockImplementation(async () => { active++; peak = Math.max(peak, active); await Promise.resolve(); active--; return {} })
+  expect(await managedSessionsClient.describe(links)).toEqual([])
+  expect(apiClient.get).toHaveBeenCalledTimes(9); expect(peak).toBeLessThanOrEqual(4)
+})
+
+
+it("revalidates an exact current-user observation through bounded canonical pages", async () => {
+  const fixture = currentUserManagedSessionsFixture(), target = fixture.sessions[1]!.current_user_target!
+  vi.mocked(apiClient.get).mockResolvedValueOnce({ ...fixture, sessions: [], next_after: "before-child" }).mockResolvedValueOnce(fixture)
+  expect(await revalidateManagedSelection({ target, supervisor: fixture.scope.supervisor }, () => true)).toBe(true)
+  expect(apiClient.get).toHaveBeenNthCalledWith(1, "supervisor/default/sessions?limit=20&query=child-a", { signal: undefined })
+  expect(apiClient.get).toHaveBeenNthCalledWith(2, "supervisor/default/sessions?limit=20&after=before-child&query=child-a", { signal: undefined })
+  expect(apiClient.putOnce).not.toHaveBeenCalled()
+})
+it.each(["created_at", "authority_sha256", "ancestry_sha256", "metadata_version"] as const)("rejects changed current-user target %s", async (field) => {
+  const fixture = currentUserManagedSessionsFixture(), target = fixture.sessions[1]!.current_user_target!
+  const changed = { ...target, [field]: field === "metadata_version" ? target.metadata_version + 1 : field === "created_at" ? "2026-10-28T00:00:00Z" : "e".repeat(64) }
+  const row = { ...fixture.sessions[1]!, target_created_at: changed.created_at, target_metadata_version: changed.metadata_version, current_user_target: changed }
+  vi.mocked(apiClient.get).mockResolvedValue({ ...fixture, sessions: [row] })
+  expect(await revalidateManagedSelection({ target, supervisor: fixture.scope.supervisor }, () => true)).toBe(false)
+})
+it("refuses changed Supervisor incarnation or missing current-user access", async () => {
+  const fixture = currentUserManagedSessionsFixture(), target = fixture.sessions[1]!.current_user_target!
+  vi.mocked(apiClient.get).mockResolvedValueOnce({ ...fixture, scope: { ...fixture.scope, supervisor: { ...fixture.scope.supervisor, incarnation_id: "22222222-2222-4222-8222-222222222222" } } })
+  expect(await revalidateManagedSelection({ target, supervisor: fixture.scope.supervisor }, () => true)).toBe(false)
+  vi.mocked(apiClient.get).mockResolvedValueOnce({ ...fixture, owner_authorization: { ...fixture.owner_authorization, available: false } })
+  expect(await revalidateManagedSelection({ target, supervisor: fixture.scope.supervisor }, () => true)).toBe(false)
+})
+
+
+it("can revalidate a legal 129-byte session ID within the 128-byte query bound", async () => {
+  const fixture = currentUserManagedSessionsFixture(), id = "a".repeat(129)
+  const target = { ...fixture.sessions[0]!.current_user_target!, session_id: id, root_session_id: id }
+  const row = { ...fixture.sessions[0]!, session_id: id, root_session_id: id, current_user_target: target }
+  vi.mocked(apiClient.get).mockResolvedValue({ ...fixture, sessions: [row] })
+  expect(await revalidateManagedSelection({ target, supervisor: fixture.scope.supervisor }, () => true)).toBe(true)
+  const request = String(vi.mocked(apiClient.get).mock.calls[0]![0])
+  const params = new URLSearchParams(request.split("?")[1]); expect(new TextEncoder().encode(params.get("query")!).length).toBeLessThanOrEqual(128)
+})
+it("does not reject an exact target merely because more than 400 matching rows precede it", async () => {
+  const fixture = currentUserManagedSessionsFixture(), id = "z"
+  const target = { ...fixture.sessions[0]!.current_user_target!, session_id: id, root_session_id: id }
+  const read = vi.spyOn(managedSessionsClient, "read")
+  for (let page = 0; page < 21; page++) {
+    const sessions = Array.from({ length: 20 }, (_, i) => {
+      const other = `a${String(page * 20 + i).padStart(4, "0")}`, observed = { ...target, session_id: other, root_session_id: other }
+      return { ...fixture.sessions[0]!, session_id: other, root_session_id: other, current_user_target: observed }
+    })
+    read.mockResolvedValueOnce({ ...fixture, sessions, next_after: sessions[19]!.session_id })
+  }
+  read.mockResolvedValueOnce({ ...fixture, sessions: [{ ...fixture.sessions[0]!, session_id: id, root_session_id: id, current_user_target: target }], next_after: null })
+  try { expect(await revalidateManagedSelection({ target, supervisor: fixture.scope.supervisor }, () => true)).toBe(true); expect(read).toHaveBeenCalledTimes(22) }
+  finally { read.mockRestore() }
 })

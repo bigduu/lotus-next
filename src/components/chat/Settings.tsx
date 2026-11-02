@@ -16,6 +16,7 @@ import {
   Monitor,
   Moon,
   Network,
+  RotateCw,
   Plug,
   Settings2,
   Share2,
@@ -50,6 +51,7 @@ import { SettingsMetrics } from "@/components/chat/settings/SettingsMetrics"
 import { SettingsSystem } from "@/components/chat/settings/SettingsSystem"
 import { SettingsJiandu } from "@/components/chat/settings/SettingsJiandu"
 import { SettingsModelLimits } from "@/components/chat/settings/SettingsModelLimits"
+import { SettingsRetry } from "@/components/chat/settings/SettingsRetry"
 import { SettingsConfigShare } from "@/components/chat/settings/SettingsConfigShare"
 import "./Settings.css"
 
@@ -313,6 +315,7 @@ const TABS = [
   { id: "providers", icon: Cpu, get label() { return uiText("provider_9e218722") }, render: () => <SettingsProviders /> },
   { id: "config-share", icon: Share2, get label() { return uiText("share_title") }, render: () => <SettingsConfigShare /> },
   { id: "model-limits", icon: Gauge, get label() { return uiText("model_limits_05ff605e") }, render: () => <SettingsModelLimits /> },
+  { id: "retry", icon: RotateCw, get label() { return uiText("retry_settings_1a7c4e91") }, render: () => <SettingsRetry /> },
   { id: "mcp", icon: Plug, label: "MCP", render: () => <SettingsMcp /> },
   { id: "plugins", icon: Blocks, get label() { return uiText("plugins_e806fbbe") }, render: () => <SettingsPlugins /> },
   { id: "skills", icon: BookOpen, get label() { return uiText("skills_99aea2f9") }, render: () => <SettingsSkills /> },
@@ -333,7 +336,7 @@ export type SettingsTabId = (typeof TABS)[number]["id"]
 
 const TAB_GROUPS: { label: string; tabs: SettingsTabId[] }[] = [
   { get label() { return uiText("settings_group_appearance") }, tabs: ["general", "notifications"] },
-  { get label() { return uiText("settings_group_connections") }, tabs: ["providers", "config-share", "model-limits", "mcp", "clusters"] },
+  { get label() { return uiText("settings_group_connections") }, tabs: ["providers", "config-share", "model-limits", "retry", "mcp", "clusters"] },
   { get label() { return uiText("settings_group_capabilities") }, tabs: ["plugins", "skills", "prompts", "workflows", "schedules", "jiandu"] },
   { get label() { return uiText("settings_group_safety") }, tabs: ["permissions", "masking", "env", "metrics", "system"] },
 ]

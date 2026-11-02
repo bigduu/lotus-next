@@ -34,6 +34,7 @@ import {
 } from "@/lib/contextCompression"
 import { getSystemPromptEnhancementText } from "@shared/utils/systemPromptEnhancement"
 import { isCopilotConclusionWithOptionsEnhancementEnabled } from "@shared/utils/copilotConclusionWithOptionsEnhancementUtils"
+import { recordSessionUserInput } from "@/lib/sidebarSessionOrder"
 import {
   acknowledgePendingTemplatePrompt,
   type PendingTemplatePromptSnapshot,
@@ -2245,6 +2246,9 @@ export function useChat(
       operation.acknowledgedSessionId = acknowledgedSessionId
       operation.pendingOperationId = operation.id
       noteSessionOperation(acknowledgedSessionId, operation.id)
+      // The user just submitted into this session: promote it to the front of
+      // the sidebar instead of leaving it under its original creation day.
+      recordSessionUserInput(acknowledgedSessionId)
       if (templatePrompt) acknowledgePendingTemplatePrompt(templatePrompt)
 
       // A valid ACK retains its submitted content even after navigation.

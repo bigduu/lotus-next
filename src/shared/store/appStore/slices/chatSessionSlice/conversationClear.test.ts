@@ -220,6 +220,44 @@ describe("verified conversation clear state", () => {
     expect(store.getState().tokenUsages["fixture/a"]).toBeUndefined()
   })
 
+  it("preserves newer live token state received while guarded clear recovery waits", async () => {
+    const store = harness(), stale = deferred<HistoryResponse>(), guard = deferred<boolean>()
+    const beforeApply = vi.fn(() => guard.promise)
+    vi.mocked(agentClient.getHistory).mockReturnValueOnce(stale.promise).mockResolvedValueOnce(cleared)
+    store.getState().reconcileClearedConversation("fixture/a")
+    const reading = store.getState().loadChatHistory("fixture/a", { throwOnError: true, beforeApply })
+    await vi.waitFor(() => expect(beforeApply).toHaveBeenCalledOnce())
+    const fresh = { systemTokens: 7, summaryTokens: 0, windowTokens: 8, totalTokens: 15, budgetLimit: 100 }
+    store.getState().updateTokenUsage("fixture/a", fresh)
+    store.getState().setTruncationInfo("fixture/a", true, 3)
+    guard.resolve(true)
+    await reading
+    stale.resolve(old)
+    await Promise.resolve()
+    expect(store.getState().tokenUsages["fixture/a"]).toEqual(fresh)
+    expect(store.getState().truncationOccurred["fixture/a"]).toBe(true)
+    expect(store.getState().segmentsRemoved["fixture/a"]).toBe(3)
+  })
+
+  it.each(["usage", "truncation"] as const)("clears only the untouched token group when %s updates during guarded recovery", async (updated) => {
+    const store = harness(), stale = deferred<HistoryResponse>(), guard = deferred<boolean>()
+    const oldUsage = { systemTokens: 1, summaryTokens: 2, windowTokens: 3, totalTokens: 6, budgetLimit: 100 }
+    const fresh = { systemTokens: 7, summaryTokens: 0, windowTokens: 8, totalTokens: 15, budgetLimit: 100 }
+    store.getState().updateTokenUsage("fixture/a", oldUsage)
+    store.getState().setTruncationInfo("fixture/a", true, 9)
+    vi.mocked(agentClient.getHistory).mockReturnValueOnce(stale.promise).mockResolvedValueOnce(cleared)
+    store.getState().reconcileClearedConversation("fixture/a")
+    const beforeApply = vi.fn(() => guard.promise)
+    const reading = store.getState().loadChatHistory("fixture/a", { throwOnError: true, beforeApply })
+    await vi.waitFor(() => expect(beforeApply).toHaveBeenCalledOnce())
+    if (updated === "usage") store.getState().updateTokenUsage("fixture/a", fresh)
+    else store.getState().setTruncationInfo("fixture/a", true, 3)
+    guard.resolve(true); await reading; stale.resolve(old); await Promise.resolve()
+    expect(store.getState().tokenUsages["fixture/a"]).toEqual(updated === "usage" ? fresh : undefined)
+    expect(store.getState().truncationOccurred["fixture/a"]).toBe(updated === "truncation" ? true : undefined)
+    expect(store.getState().segmentsRemoved["fixture/a"]).toBe(updated === "truncation" ? 3 : undefined)
+  })
+
   it.each([false, true])("replaces both live/config token caches from authoritative detail, new usage=%s", async (newUsage) => {
     const store = harness(), before = { systemTokens: 1, summaryTokens: 2, windowTokens: 3, totalTokens: 6, budgetLimit: 100,
       cacheReadInputTokens: 99, prefixCache: { inputTokens: 1, cacheCreationInputTokens: 2, cacheReadInputTokens: 99 } }

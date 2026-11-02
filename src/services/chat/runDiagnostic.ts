@@ -99,7 +99,9 @@ export function decodeRunDiagnostic(value: unknown, sessionId: string, error: st
       || typeof v.failure !== "string" || !failures.has(v.failure)
       || typeof v.stop_reason !== "string" || !Object.hasOwn(diagnosticStopGuidance, v.stop_reason)) return null
     for (const k of ["attempt_timeout_ms","attempt_elapsed_ms","total_elapsed_ms"]) if (!nat(v[k])) return null
-    if ((v.attempt_timeout_ms as number) > 60_000) return null
+    // Ceiling, not the default: a slow first-byte route may configure a long
+    // headers deadline, and rejecting it would silently drop the receipt.
+    if ((v.attempt_timeout_ms as number) > 600_000) return null
     if (v.retry_delay_ms !== null && !nat(v.retry_delay_ms)) return null
     const d = v as unknown as PublicRequestDiagnostic
     if (diagnosticErrorText(error) !== generatedDiagnosticError(d)) return null

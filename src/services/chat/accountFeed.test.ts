@@ -54,6 +54,7 @@ const createStore = () => ({
   refreshChatsNow: vi.fn(async () => {}),
   reconcileOpenSession: vi.fn(),
   reconcileClearedConversation: vi.fn(),
+  invalidateSessionNavigation: vi.fn(),
   applyServerTitle: vi.fn(),
   applyServerPinned: vi.fn(),
 });
@@ -110,6 +111,13 @@ describe("accountFeed cursor and reset lifecycle", () => {
   afterEach(() => {
     stopAccountFeed();
     vi.unstubAllGlobals();
+  });
+
+  it("immediately fences pending opens when a remote session is deleted", () => {
+    startAccountFeed();
+    capturedHandlers().onChange(change(8, { type: "session_deleted" }));
+    expect(store.invalidateSessionNavigation).toHaveBeenCalledExactlyOnceWith("session-1");
+    expect(store.refreshSessionsIndex).not.toHaveBeenCalled();
   });
 
   it("keeps feed delivery failure authoritative over HTTP health", () => {

@@ -37,6 +37,13 @@ async function chooseSession(page: Page, title: string) {
 }
 
 async function inspectCompletedTool(transcript: Locator) {
+  // A finished turn with a recorded conclusion folds its middle behind the
+  // divider; reveal that layer before the nested process disclosures.
+  const turnToggles = transcript.locator("[data-turn-toggle]")
+  for (let index = 0; index < await turnToggles.count(); index += 1) {
+    const toggle = turnToggles.nth(index)
+    if (await toggle.getAttribute("aria-expanded") === "false") await toggle.click()
+  }
   for (const selector of ["[data-process-toggle]", "[data-tool-call-toggle]", "[data-tool-call-entry-toggle]"]) {
     const toggles = transcript.locator(selector)
     for (let index = 0; index < await toggles.count(); index += 1) {

@@ -89,6 +89,12 @@ test("saved terminal states survive unordered legacy events and reconnect withou
   await expect(card("actor-0")).toHaveAttribute("data-subagent-status", "done")
   await expect(card("actor-1")).toHaveAttribute("data-subagent-status", "error")
   await expect(card("actor-2")).toHaveAttribute("data-subagent-status", "cancelled")
+  // The finished first turn folds its spawn records behind the turn divider;
+  // open that fold before exercising the nested subagent disclosure.
+  const turnDivider = page.locator("[data-turn-toggle]").first()
+  await expect(turnDivider).toHaveAttribute("aria-expanded", "false")
+  await turnDivider.focus(); await turnDivider.press("Enter")
+  await expect(turnDivider).toHaveAttribute("aria-expanded", "true")
   const toggle = card("actor-0").locator("[data-subagent-toggle]")
   await expect(toggle).toHaveAttribute("aria-expanded", "false")
   await toggle.focus(); await toggle.press("Enter")
@@ -127,24 +133,28 @@ test("new turns, status refreshes and reload keep old cards at their originating
   const state = await fixture(page)
   await page.goto(standaloneScenario.entryUrl)
   const origin = (id: string) => page.locator(`[data-subagent-id="${id}"]`).first().evaluate((node) => node.closest("[data-history-entry-key]")?.getAttribute("data-history-entry-key"))
-  await expect.poll(() => origin("actor-0")).toBe("activity-create-1")
-  await expect.poll(() => origin("actor-1")).toBe("activity-create-1")
+  // The finished first turn folds its middle behind the divider keyed by the
+  // turn's summary; the spawn records and their cards live inside that fold.
+  await expect.poll(() => origin("actor-0")).toBe("collapsed-turn-answer-1")
+  await expect.poll(() => origin("actor-1")).toBe("collapsed-turn-answer-1")
   await expect.poll(() => origin("actor-2")).toBe("activity-create-3")
+  // Reveal the folded middle before interacting with its cards.
+  await page.locator('[data-history-entry-key="collapsed-turn-answer-1"] [data-turn-toggle]').click()
   const toggle = page.locator('[data-subagent-id="actor-0"] [data-subagent-toggle]').first()
   await toggle.click()
-  const ids = await page.locator('[data-history-entry-key="activity-create-1"] [data-subagent-id]').evaluateAll((nodes) => nodes.map((node) => node.getAttribute("data-subagent-id")))
+  const ids = await page.locator('[data-history-entry-key="collapsed-turn-answer-1"] [data-subagent-id]').evaluateAll((nodes) => nodes.map((node) => node.getAttribute("data-subagent-id")))
   state.history.push(user("Third turn"), { id: "tasks", role: "assistant", content: "", created_at: at,
     tool_calls: [{ id: "tasks", function: { name: "TaskList", arguments: "{}" } }] })
   await expect.poll(() => state.channels.has(`agent.${rootId}`)).toBe(true)
   state.emit({ type: "message_appended", session_id: rootId })
   await expect(page.getByText("Third turn", { exact: true })).toBeVisible()
-  await expect.poll(() => origin("actor-0")).toBe("activity-create-1")
-  expect(await page.locator('[data-history-entry-key="activity-create-1"] [data-subagent-id]').evaluateAll((nodes) => nodes.map((node) => node.getAttribute("data-subagent-id")))).toEqual(ids)
+  await expect.poll(() => origin("actor-0")).toBe("collapsed-turn-answer-1")
+  expect(await page.locator('[data-history-entry-key="collapsed-turn-answer-1"] [data-subagent-id]').evaluateAll((nodes) => nodes.map((node) => node.getAttribute("data-subagent-id")))).toEqual(ids)
   await expect(toggle).toHaveAttribute("aria-expanded", "true")
   await page.reload()
   // Like ordinary tool expansion, this choice belongs to the mounted conversation.
   await expect(toggle).toHaveAttribute("aria-expanded", "false")
-  await expect.poll(() => origin("actor-0")).toBe("activity-create-1")
+  await expect.poll(() => origin("actor-0")).toBe("collapsed-turn-answer-1")
   await expect.poll(() => origin("actor-2")).toBe("activity-create-3")
   await page.screenshot({ path: testInfo.outputPath("subagent-stable-turns.png"), animations: "disabled" })
   expect(state.observation.pageErrors).toEqual([])
@@ -164,6 +174,8 @@ test("a denied snapshot shows unconfirmed states and an explicit retry", async (
 test("child expansion survives virtual row removal and opens the original transcript only on demand", async ({ page }, testInfo) => {
   const state = await fixture(page)
   await page.goto(standaloneScenario.entryUrl)
+  // Reveal the finished first turn's folded middle before using its cards.
+  await page.locator("[data-turn-toggle]").first().click()
   const card = page.locator('[data-subagent-id="actor-0"]').first()
   const toggle = card.locator("[data-subagent-toggle]")
   await toggle.click()

@@ -113,11 +113,13 @@ export const canReuseSessionListChat = (prev: ChatItem, next: ChatItem): boolean
     prev.planMode === next.planMode &&
     prev.subagentType === next.subagentType &&
     prev.subagentCount === next.subagentCount &&
+    prev.runningChildCount === next.runningChildCount &&
     prev.placement?.kind === next.placement?.kind &&
     prev.placement?.host === next.placement?.host &&
     prev.title === next.title &&
     prev.titleVersion === next.titleVersion &&
     prev.createdAt === next.createdAt &&
+    prev.createdAtExact === next.createdAtExact &&
     prev.pinned === next.pinned &&
     prev.messages === next.messages &&
     areChatConfigsEquivalent(prev.config, next.config)

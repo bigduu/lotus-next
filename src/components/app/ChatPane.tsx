@@ -1,10 +1,14 @@
 import { LiveBootstrapRetryNotice } from "@/components/chat/LiveBootstrapRetryNotice"
+import { backgroundExecWaitActive } from "@/components/chat/runtimeNotices"
 import { useLiveBootstrapRetry } from "@/hooks/useLiveBootstrapRetry"
 import { useSessionDrop } from "@/hooks/useSessionDrop"
 import type { ComposerInputHandle } from "@/components/chat/ComposerEditor"
 import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { useMarkSessionRead } from "@/lib/sessionReadState"
+import { useRenderProbe } from "@/lib/renderProbe"
+import { recordSessionUserInput } from "@/lib/sidebarSessionOrder"
 import { useMediaQuery } from "@shared/hooks/useMediaQuery"
+import { isTerminalRunStatus } from "@shared/store/appStore/slices/executionStateSlice"
 import { lazy, Suspense, useCallback, useEffect, useId, useMemo, useRef, useState } from "react"
 import { createPortal } from "react-dom"
 import {
@@ -192,6 +196,7 @@ export function ChatPane({
   pickedWorkspace,
   worktreePath,
   pendingProjectId,
+  onNewSessionInProjectSection,
   newChatEpoch = 0,
   getNavigationVersion,
   onSelectProject,
@@ -217,6 +222,8 @@ export function ChatPane({
   worktreePath?: string | null
   /** Project preselected for the next NEW session (project-grouped sidebar). */
   pendingProjectId?: string | null
+  /** Notified once when a NEW session lands after a section-scoped 新建 intent. */
+  onNewSessionInProjectSection?: (sessionId: string) => void
   /** Explicit New chat intent, including new → new with a null session ID. */
   newChatEpoch?: number
   /** Synchronous navigation-intent fence owned by the main App. */
@@ -243,6 +250,7 @@ export function ChatPane({
   pageVisible?: boolean
 }) {
   useUiLocale()
+  useRenderProbe("app.ChatPane")
   const historyBlocked = !!secondary?.historyRead && secondary.historyRead.status !== "ready"
   const {
     chats,
@@ -286,7 +294,37 @@ export function ChatPane({
   // scoped to the session rendered by this pane.  Do not let a run from the
   // session we just left turn a blank/new conversation into a Stop button.
   const executionBlocked = chat.executionCompatibility?.blocked === true
-  const currentlyRunning = currentChat?.isRunning === true || (sending && streaming !== null)
+  // A background-exec wait keeps the run live from the user's perspective: the
+  // runtime suspended the session while the monitored command still executes,
+  // and its result returns automatically. Keep the running presentation until
+  // the completion injection resumes the run (is_running flips back true) or
+  // the transcript grows past the wait notice.
+  const backgroundExecWaiting = currentChat?.lastRunStatus === "suspended"
+    && currentChat?.isRunning !== true
+    && backgroundExecWaitActive(
+      (currentChat?.messages ?? []).map((m) => ({ metadata: (m as { metadata?: { runtime_kind?: unknown } }).metadata, content: "content" in m ? m.content : undefined })),
+    )
+  // Delegation keeps the run live from the user's perspective for the same
+  // reason: the Root yields while its children execute, so `is_running` can read
+  // `false` during the hand-off. `runningChildCount` is the server's own count of
+  // executing children, so the transcript keeps its running presentation (active
+  // process row, no false "finished" reading) and agrees with the sidebar dot,
+  // which already treats this as live work.
+  //
+  // Deliberately narrower than `currentlyRunning`: Stop and the composer input
+  // lock stay tied to `currentlyRunning`, because a yielded Root has no runner to
+  // cancel — offering Stop there would only fail.
+  //
+  // A terminal status always wins, exactly as `applySummaryInner` decides it: a
+  // lingering child count must never keep a finished parent presented (and
+  // controlled) as an active run, which would suppress its error/diagnostic
+  // surface and route ordinary submissions into the queue.
+  const delegationWaiting = (currentChat?.runningChildCount ?? 0) > 0
+    && currentChat?.isRunning !== true
+    && !isTerminalRunStatus(currentChat?.lastRunStatus)
+  const currentlyRunning = currentChat?.isRunning === true || (sending && streaming !== null) || backgroundExecWaiting
+  const managedHistoryStale = useAppStore((state) => currentSessionId
+    ? state.managedHistoryBindings?.[currentSessionId]?.status === "stale" : false)
   const visibleSendFailure = sendFailure?.sessionId === currentSessionId ? sendFailure : null
   const persistedRunError = !visibleSendFailure
     && !currentlyRunning
@@ -750,6 +788,7 @@ export function ChatPane({
       goalRequestActive.current = true; setGoalSaving(true)
       void agentClient.sendMessage({ message: text.trim(), session_id: sessionId, model: currentChat?.config?.model ?? "" }).then(async (response) => {
         if (response.session_id !== sessionId || !response.goal_command) throw new Error("Goal command was not acknowledged")
+        recordSessionUserInput(sessionId)
         useAppStore.getState().setInputContentIfRevision(draftKey, revision, "")
         if (currentDraftKeyRef.current === draftKey) {
           const action = response.goal_command.action
@@ -913,6 +952,12 @@ export function ChatPane({
           || getNavigationVersion?.() !== originNavigationVersion
           || (!result.navigated && !isOriginCurrent()))) return
         if (frozenReference) setTicketReference((current) => current?.id === frozenReference.id ? null : current)
+        // A section-scoped creation intent applies to exactly this new session;
+        // the callback owns clearing it, so later sends never re-apply it. Even
+        // a send whose navigation was interrupted still created the session.
+        if (!currentSessionId && snapshot.projectId && onNewSessionInProjectSection) {
+          onNewSessionInProjectSection(result.sessionId)
+        }
 
         // Commit only fields that still have the exact mutation revision captured
         // by this submission. A late acknowledgement must never erase edits or a
@@ -1219,9 +1264,10 @@ export function ChatPane({
           mergedSubAgents={mergedSubAgents}
           subAgentError={subAgentView.error}
           onRefreshSubAgents={() => { void subAgentView.refresh() }}
-          sending={currentlyRunning}
+          sending={currentlyRunning || delegationWaiting}
           latestRunFinished={
             !currentlyRunning &&
+            !delegationWaiting &&
             streamPhase === null &&
             currentChat?.lastRunStatus === "completed"
           }
@@ -1230,6 +1276,7 @@ export function ChatPane({
           streamingReasoning={streamingReasoning}
           liveSegments={liveSegments}
           streamStatus={streamStatus}
+          backgroundExecWaiting={backgroundExecWaiting}
           pendingUserText={pendingUserText}
           pendingUserImages={pendingUserImages}
           pendingUserMessages={pendingUserMessages}
@@ -1256,6 +1303,7 @@ export function ChatPane({
         />
         )}
 
+        {managedHistoryStale && <div role="alert" className="mx-4 mb-2 text-xs text-destructive">{uiText("supervisor_managed_history_stale")}</div>}
         {visibleSendFailure || persistedRunError ? (
           <div
             role="alert"
@@ -1314,7 +1362,8 @@ export function ChatPane({
         ) : null}
 
         <LiveBootstrapRetryNotice offer={liveRetry.offer} disabled={executionBlocked || rootMode.unsafe || modelSaving}
-          onConfirm={() => { if (!rootSessionUnsafe()) void liveRetry.confirm() }} onStop={() => void liveRetry.stop()} />
+          onConfirm={() => { if (!rootSessionUnsafe()) void liveRetry.confirm() }} onStop={() => void liveRetry.stop()}
+          onRefresh={() => { if (!rootSessionUnsafe()) void liveRetry.refresh() }} />
 
         {chat.upstreamRetryStatus ? <p role="status" className="mx-4 mb-2 text-xs text-muted-foreground">
           {uiText(chat.upstreamRetryStatus === "requesting" ? "upstream_retry_requesting"

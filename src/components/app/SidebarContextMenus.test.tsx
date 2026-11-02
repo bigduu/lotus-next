@@ -41,7 +41,7 @@ const fixtures = {
     label="Project" sessionCount={1} expanded contentId="content" disabled={false} pinned={false}
     onToggleExpanded={action} onNewChat={action} onEdit={action} onTogglePin={action}
     onCreateSection={action} onManageSections={action} onReveal={action} onArchive={action} />,
-  section: () => <ProjectSectionHeader onManageSections={action}><button onClick={action}>Section</button></ProjectSectionHeader>,
+  section: () => <ProjectSectionHeader sectionName="Research" onNewSession={action} onManageSections={action}><button onClick={action}>Section</button></ProjectSectionHeader>,
   supervisor: () => <SupervisorEntry chat={{ id: "supervisor", title: "Supervisor" } as ChatItem}
     active={false} unread={false} busy={false} disabled={false} onSelect={action} onRename={action} />,
 }
@@ -96,6 +96,18 @@ describe("sidebar item context menus", () => {
     await context(render(fixtures.section()))
     await act(async () => document.querySelector<HTMLElement>('[role="menuitem"]')!.click())
     expect(action).toHaveBeenCalledTimes(1)
+  })
+  it("section header exposes a direct new-session button that skips the menu", async () => {
+    render(fixtures.section())
+    const create = [...container.querySelectorAll<HTMLButtonElement>("button")].find((button) =>
+      button.getAttribute("aria-label") === uiText("sidebar_section_new_session", { v0: "Research" }))!
+    await act(async () => create.click())
+    expect(action).toHaveBeenCalledTimes(1)
+    // The menu carries the same entry, so both surfaces stay identical.
+    await context(create)
+    const items = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].map((item) => item.textContent)
+    expect(items).toContain(uiText("sidebar_section_new_session", { v0: "Research" }))
+    expect(items).toContain(uiText("sidebar_manage_sections"))
   })
   it("supervisor keeps rename and offers session management and Project-scope review entries", async () => {
     await context(render(fixtures.supervisor()))

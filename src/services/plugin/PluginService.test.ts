@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { apiClient, ApiError } from "@services/api"
-import { PluginService } from "./PluginService"
+import { PluginService, novaInstallReason } from "./PluginService"
 import type { JianduSetupReport, NovaAppSetupReport } from "./types"
 
 const service = new PluginService()
@@ -202,5 +202,34 @@ describe("Nova explicit lifecycle contract", () => {
     post.mockClear()
     await expect(service.startNovaApp(novaReport(true))).rejects.toThrow("could not be verified")
     expect(post).not.toHaveBeenCalled()
+  })
+})
+
+describe("official Nova install rejection reasons", () => {
+  const rejected = (body?: string) => new ApiError("Conflict", 409, "Conflict", body)
+
+  it("reads the finite reason from the preserved error body", () => {
+    expect(novaInstallReason(rejected(JSON.stringify({
+      error: { type: "official_nova_unavailable", reason: "archive_checksum_mismatch" },
+    })))).toBe("archive_checksum_mismatch")
+  })
+
+  it.each([
+    ["no body", undefined],
+    ["non-JSON body", "not json"],
+    ["missing error object", JSON.stringify({ message: "Conflict" })],
+    ["missing reason", JSON.stringify({ error: { type: "official_nova_unavailable" } })],
+    ["non-string reason", JSON.stringify({ error: { reason: 42 } })],
+    // Only stable identifier shapes are surfaced; arbitrary server text must
+    // never reach the UI through this helper.
+    ["prose reason", JSON.stringify({ error: { reason: "Nova.app failed to install!" } })],
+    ["over-long reason", JSON.stringify({ error: { reason: "a".repeat(65) } })],
+  ])("falls back to null for %s", (_label, body) => {
+    expect(novaInstallReason(rejected(body))).toBeNull()
+  })
+
+  it("ignores non-HTTP failures that carry no server reason", () => {
+    expect(novaInstallReason(new Error("network exploded"))).toBeNull()
+    expect(novaInstallReason(undefined)).toBeNull()
   })
 })

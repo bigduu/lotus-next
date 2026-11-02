@@ -27,6 +27,7 @@ type WorkflowControlProps = ComponentProps<(typeof import("@/components/chat/Wor
 type State = {
   bindWorkspace: typeof import("@services/project/ProjectService").projectService.bindWorkspace
   currentSessionId: string | null
+  managedHistoryBindings?: Record<string, { status: "active" | "stale" }>
   projects: Record<string, { project_path: string; name: string }>
   chats: { id: string; config: { reasoningEffort?: ReasoningEffort | null } }[]
   getInputState(id: string): State["inputStates"][string]
@@ -270,6 +271,13 @@ async function mount(
   const textarea = container.querySelector<HTMLTextAreaElement>("textarea"); if (!textarea) throw new Error("textarea did not render")
   return textarea
 }
+it("shows a refresh-and-reselect alert only for a stale managed session", async () => {
+  runtime.state.managedHistoryBindings = { "managed": { status: "active" } }
+  await mount(vi.fn<Send>(), "managed")
+  expect(document.body.textContent).not.toContain(uiText("supervisor_managed_history_stale"))
+  act(() => { runtime.state.managedHistoryBindings = { "managed": { status: "stale" } }; notify() })
+  expect(document.body.querySelector('[role="alert"]')?.textContent).toBe(uiText("supervisor_managed_history_stale"))
+})
 function change(textarea: HTMLTextAreaElement, value: string) {
   const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set
   act(() => { setter?.call(textarea, value); textarea.dispatchEvent(new Event("input", { bubbles: true })) })
@@ -486,6 +494,35 @@ describe("ChatPane new-chat worktree first send", () => {
     expect(runtime.createWorktree).toHaveBeenCalledTimes(1)
     expect(runtime.bindWorkspace).toHaveBeenNthCalledWith(2, "p1", 12, { path: "/trees/task" })
     expect(send).toHaveBeenCalledOnce()
+  })
+})
+
+describe("ChatPane section-scoped new session", () => {
+  it("notifies once when a section-intent send creates the session, and not for existing sessions", async () => {
+    const send = vi.fn<Send>().mockResolvedValue({ kind: "accepted", operationId: 1, sessionId: "created-session", navigated: true })
+    const onNewSessionInProjectSection = vi.fn()
+    const pane = await mountWorktreeChat(send)
+    await pane.render({ onNewSessionInProjectSection })
+    act(() => { write("", "from section header"); composer().onSubmit() })
+    await flush()
+    expect(send).toHaveBeenCalledExactlyOnceWith("from section header", expect.objectContaining({ projectId: "p1" }))
+    expect(onNewSessionInProjectSection).toHaveBeenCalledExactlyOnceWith("created-session")
+    // A later send inside the now-current session must not re-apply the intent.
+    await pane.render({ chat: createChat(send, "created-session"), onNewSessionInProjectSection })
+    act(() => { write("created-session", "follow-up"); composer().onSubmit() })
+    await flush()
+    expect(onNewSessionInProjectSection).toHaveBeenCalledExactlyOnceWith("created-session")
+  })
+
+  it("does not notify when the intent is absent or the send did not create a session", async () => {
+    const send = vi.fn<Send>().mockResolvedValue({ kind: "accepted", operationId: 1, sessionId: "created-session", navigated: true })
+    const onNewSessionInProjectSection = vi.fn()
+    const pane = await mountWorktreeChat(send)
+    await pane.render({ onNewSessionInProjectSection: undefined })
+    act(() => { write("", "no intent"); composer().onSubmit() })
+    await flush()
+    expect(send).toHaveBeenCalledOnce()
+    expect(onNewSessionInProjectSection).not.toHaveBeenCalled()
   })
 })
 

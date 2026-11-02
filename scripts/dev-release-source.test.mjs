@@ -319,6 +319,12 @@ describe("protected Dev publication CLI", () => {
       const source = git("rev-parse", "HEAD"), tree = git("rev-parse", "HEAD^{tree}")
       git("commit", "--quiet", "--allow-empty", "-m", "Later trusted controller")
       const controller = git("rev-parse", "HEAD")
+      if (change?.startsWith("shallow ")) {
+        // Model checkout@v7's shallow boundary at the accepted merge: Git's
+        // history display hides its parents even though the commit object has them.
+        writeFileSync(join(repo, ".git", "shallow"), `${source}\n`)
+        expect(git("show", "-s", "--format=%P", source)).toBe("")
+      }
       const owner = versionTagOwner({ LOTUS_NEXT_RELEASE_VERSION: "2026.10.30", EXPECTED_SOURCE_SHA_INPUT: source,
         GITHUB_RUN_ID: "99", GITHUB_WORKFLOW_SHA: controller })
       const reserve = ["new tag", "lost ref response", "registry published", "registry unknown"].includes(change)
@@ -345,7 +351,7 @@ describe("protected Dev publication CLI", () => {
       if (change === "unaccepted controller") routes[`compare/${controller}...${controller}`].merge_base_commit.sha = base
       if (change === "non-ancestor source") routes[`compare/${source}...${controller}`].merge_base_commit.sha = base
       if (change === "moved release ref") routes[`git/ref/heads/release/${source}`].object.sha = controller
-      if (change === "forged Git parents") routes[`git/commits/${source}`].parents[0].sha = controller
+      if (change === "forged Git parents" || change === "shallow forged parents") routes[`git/commits/${source}`].parents[0].sha = controller
       if (change === "moved tag") routes[`git/tags/${object}`].object.sha = controller
       writeFileSync(join(bin, "gh"), `#!${process.execPath}\nconst fs = require('node:fs');
 const {spawnSync}=require('node:child_process');
@@ -404,6 +410,12 @@ globalThis.fetch=async(url,options)=>{if(url!=='https://registry.npmjs.org/@bigd
     for (const key of ["testedSnapshot", "featureRun", "featureRunAttempt"]) expect(result.receipt).not.toHaveProperty(key)
     expect(result.calls.filter(route => route.startsWith("actions/"))).toEqual([])
     expect(result.receipt.tagProtection).toEqual({ rulesetId: 7, bypassActorsVisible: false })
+  })
+  it("reads the accepted merge's real parents even at a shallow boundary", () => {
+    const result = runSource("shallow accepted source")
+    expect(result.status, result.stderr).toBe(0)
+    expect(result.receipt.sourceSha).toBe(result.source)
+    expect(runSource("shallow forged parents").status).toBe(1)
   })
   it.each(["new tag", "lost ref response"])("reserves %s through the actual CLI and local Git ref/object readback", change => {
     const result = runSource(change)

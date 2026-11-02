@@ -93,7 +93,7 @@ it("cancels when Settings makes the source ancestry inert without opening a dial
 it("commits one valid completed gesture and ignores an explicitly cancelled one", () => {
   pickup()
   act(() => harness.provider!.onDragEnd!({ operation: operation(), canceled: false }))
-  expect(props.onMoveSession).toHaveBeenCalledExactlyOnceWith({ kind: "session", projectId: "p1", id: "root", revision: 1 }, { projectId: "p1", sectionId: "custom" })
+  expect(props.onMoveSession).toHaveBeenCalledExactlyOnceWith({ kind: "session", projectId: "p1", id: "root", revision: 1 }, { projectId: "p1", sectionId: "custom" }, false)
   pickup()
   act(() => harness.provider!.onDragEnd!({ operation: operation(), canceled: true }))
   expect(props.onMoveSession).toHaveBeenCalledTimes(1)

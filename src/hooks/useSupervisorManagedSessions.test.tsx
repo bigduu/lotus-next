@@ -2,8 +2,9 @@ import { act } from "react"
 import { createRoot, type Root } from "react-dom/client"
 import { afterEach, expect, it, vi } from "vitest"
 import { ApiError } from "@services/api"
-import type { ManagedSessionIntent, ManagedSessionReceipt, ManagedSessionsResponse, SessionCandidatesPage } from "@services/supervisorScope/managedSessions"
+import type { ManagedSessionIntent, ManagedSessionReceipt, ManagedSessionsResponse, SessionCandidate, SessionCandidatesPage } from "@services/supervisorScope/managedSessions"
 import { useSupervisorManagedSessions, type ManagedSessionsDependencies } from "./useSupervisorManagedSessions"
+import { currentUserManagedSessionsFixture } from "@services/supervisorScope/testFixtures"
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
 const roots: Root[] = []
 afterEach(() => { for (const root of roots.splice(0)) act(() => root.unmount()); document.body.replaceChildren() })
@@ -11,8 +12,8 @@ const deferred = <T,>() => { let resolve!: (value: T) => void; const promise = n
 const fixture = (): ManagedSessionsResponse => ({ capabilities: { managed_sessions_http_v1: true }, scope: { supervisor: { session_id: "bamboo-default-supervisor", incarnation_id: "11111111-1111-4111-8111-111111111111" }, state_revision: 4, allowed_projects: ["p1"] },
   sessions: [{ session_id: "a", link_revision: 3, enabled: true, authorized: true, target_created_at: "2026-10-25T00:00:00Z", target_project_id: "p1", target_metadata_version: 2 }],
   owner_authorization: { available: true, required: true, kind: "existing_access", http_registration: false, code: null } })
-async function mount() {
-  let canonical = fixture()
+async function mount(initial = fixture()) {
+  let canonical = initial
   const read = vi.fn(async () => structuredClone(canonical))
   const update = vi.fn<(intent: ManagedSessionIntent) => Promise<ManagedSessionReceipt>>().mockRejectedValue(new Error("lost response"))
   const candidates = vi.fn<() => Promise<SessionCandidatesPage>>().mockResolvedValue({ sessions: [
@@ -30,6 +31,47 @@ async function mount() {
     review(id = "b", enabled = true) { act(() => value.reviewTarget(id, enabled)) },
     async confirm() { await act(async () => value.confirm()) }, async refresh() { await act(async () => value.refresh()) } }
 }
+it("lists canonical Root/Child sessions outside legacy Projects without a candidate or attach gate", async () => {
+  const h = await mount(currentUserManagedSessionsFixture())
+  expect(h.value.rows.map((row) => [row.session_id, row.status])).toEqual([["root-a", "current_user"], ["child-a", "current_user"]])
+  expect(h.value.canManage).toBe(false); expect(h.value.rows.every((row) => !row.canEnable)).toBe(true)
+  expect(h.candidates).not.toHaveBeenCalled()
+  h.review("root-a", true); h.review("child-a", false); await h.confirm()
+  expect(h.value.review).toBeNull(); expect(h.update).not.toHaveBeenCalled()
+})
+it("loads another canonical page and discards a page completing after refresh", async () => {
+  const h = await mount(currentUserManagedSessionsFixture("child-a")), pending = deferred<ManagedSessionsResponse>()
+  h.read.mockReturnValueOnce(pending.promise)
+  let page!: Promise<void>; act(() => { page = h.value.loadMore() })
+  expect(h.read).toHaveBeenLastCalledWith(expect.any(AbortSignal), { after: "child-a", limit: 20 })
+  h.setCanonical({ ...currentUserManagedSessionsFixture(), sessions: [] }); await h.refresh()
+  await act(async () => { pending.resolve(currentUserManagedSessionsFixture()); await page })
+  expect(h.value.rows).toEqual([]); expect(h.value.nextAfter).toBeNull(); expect(h.value.loadingMore).toBe(false)
+})
+it("appends a canonical page once without fetching candidates or creating links", async () => {
+  const h = await mount(currentUserManagedSessionsFixture("child-a")), next = currentUserManagedSessionsFixture()
+  const entry = next.sessions[0]!
+  h.read.mockResolvedValueOnce({ ...next, sessions: [{ ...entry, session_id: "root-b", root_session_id: "root-b",
+    current_user_target: { ...entry.current_user_target!, session_id: "root-b", root_session_id: "root-b" } }] })
+  await act(async () => { await Promise.all([h.value.loadMore(), h.value.loadMore()]) })
+  expect(h.read).toHaveBeenCalledTimes(2)
+  expect(h.value.rows.map((row) => row.session_id)).toEqual(["root-a", "child-a", "root-b"])
+  expect(h.value.nextAfter).toBeNull(); expect(h.candidates).not.toHaveBeenCalled(); expect(h.update).not.toHaveBeenCalled()
+})
+it("withdraws canonical rows after application access is refused on a page read", async () => {
+  const h = await mount(currentUserManagedSessionsFixture("child-a"))
+  h.read.mockRejectedValueOnce(new ApiError("denied", 403, "", "{}"))
+  await act(async () => h.value.loadMore())
+  expect(h.value.problem?.kind).toBe("forbidden"); expect(h.value.observation).toBeNull()
+  expect(h.value.rows).toEqual([]); expect(h.value.nextAfter).toBeNull(); expect(h.update).not.toHaveBeenCalled()
+})
+it("rejects a new page from a different canonical Supervisor incarnation", async () => {
+  const h = await mount(currentUserManagedSessionsFixture("child-a")), next = currentUserManagedSessionsFixture()
+  h.read.mockResolvedValueOnce({ ...next, scope: { ...next.scope, supervisor: { ...next.scope.supervisor, incarnation_id: "22222222-2222-4222-8222-222222222222" } } })
+  await act(async () => h.value.loadMore())
+  expect(h.value.problem?.kind).toBe("conflict"); expect(h.value.rows).toEqual([]); expect(h.value.nextAfter).toBeNull()
+  expect(h.candidates).not.toHaveBeenCalled(); expect(h.update).not.toHaveBeenCalled()
+})
 it("lists only allowed candidates and canonical links without automatically attaching", async () => {
   const h = await mount()
   expect(h.value.rows.map((row) => [row.session_id, row.status])).toEqual([["a", "authorized"], ["b", "available"]])
@@ -87,4 +129,57 @@ it("discards candidate pages that finish after a canonical refresh", async () =>
   await h.refresh()
   await act(async () => { pending.resolve({ sessions: [{ session_id: "late", title: "late", project_id: "p1", model: "x", is_running: false }], nextOffset: null }); await page })
   expect(h.value.rows.some((row) => row.session_id === "late")).toBe(false); expect(h.value.loadingMore).toBe(false)
+})
+
+it("hydrates current-user titles without gating canonical rows and ignores late old-target titles", async () => {
+  const first = currentUserManagedSessionsFixture(), old = deferred<readonly SessionCandidate[]>()
+  const target = first.sessions[0]!.current_user_target!
+  const nextTarget = { ...target, created_at: "2026-10-29T00:00:00Z", authority_sha256: "e".repeat(64) }
+  const second = { ...first, sessions: [{ ...first.sessions[0]!, target_created_at: nextTarget.created_at, current_user_target: nextTarget }] }
+  let canonical = first
+  const read = vi.fn(async () => canonical)
+  const describe = vi.fn().mockReturnValueOnce(old.promise).mockResolvedValueOnce([{ session_id: "root-a", title: "New title", project_id: null, model: "x", is_running: false, observedTarget: nextTarget }])
+  const dependencies: ManagedSessionsDependencies = { read, describe, candidates: vi.fn(), update: vi.fn() }
+  let value!: ReturnType<typeof useSupervisorManagedSessions>
+  function Probe() { value = useSupervisorManagedSessions(true, dependencies); return null }
+  const root = createRoot(document.body.appendChild(document.createElement("div"))); roots.push(root)
+  await act(async () => root.render(<Probe />))
+  expect(value.rows[0]?.session_id).toBe("root-a"); expect(value.rows[0]?.summary).toBeUndefined()
+  canonical = second; await act(async () => { await value.refresh() })
+  expect(value.rows[0]?.summary?.title).toBe("New title")
+  await act(async () => { old.resolve([{ session_id: "root-a", title: "Old title", project_id: null, model: "x", is_running: false, observedTarget: target }]); await old.promise })
+  expect(value.rows[0]?.summary?.title).toBe("New title"); expect(dependencies.update).not.toHaveBeenCalled()
+})
+
+it("hides cached current-user labels if a later directory page lacks owner access", async () => {
+  const first = currentUserManagedSessionsFixture("child-a"), target = first.sessions[0]!.current_user_target!
+  const read = vi.fn().mockResolvedValueOnce(first).mockResolvedValueOnce({ ...first, sessions: [], next_after: null,
+    owner_authorization: { ...first.owner_authorization, available: false } })
+  const describe = vi.fn(async () => [{ session_id: target.session_id, title: "Title", project_id: target.project_id, model: "x", is_running: false, observedTarget: target }])
+  const dependencies: ManagedSessionsDependencies = { read, describe, candidates: vi.fn(), update: vi.fn() }
+  let value!: ReturnType<typeof useSupervisorManagedSessions>
+  function Probe() { value = useSupervisorManagedSessions(true, dependencies); return null }
+  const root = createRoot(document.body.appendChild(document.createElement("div"))); roots.push(root)
+  await act(async () => root.render(<Probe />))
+  expect(value.rows[0]?.summary?.title).toBe("Title")
+  await act(async () => value.loadMore())
+  expect(value.observation?.owner_authorization.available).toBe(false)
+  expect(value.rows[0]?.summary).toBeUndefined(); expect(describe).toHaveBeenCalledTimes(1)
+})
+
+it("hydrates titles from each canonical page without turning summaries into grants", async () => {
+  const first = currentUserManagedSessionsFixture("child-a"), target = first.sessions[0]!.current_user_target!
+  const nextTarget = { ...target, session_id: "root-b", root_session_id: "root-b" }
+  const next = { ...first, next_after: null, sessions: [{ ...first.sessions[0]!, session_id: "root-b", root_session_id: "root-b", current_user_target: nextTarget }] }
+  const read = vi.fn().mockResolvedValueOnce(first).mockResolvedValueOnce(next)
+  const describe = vi.fn(async (links: ManagedSessionsResponse["sessions"]) => links.map((link) => ({
+    session_id: link.session_id, title: `Title ${link.session_id}`, project_id: link.target_project_id, model: "x", is_running: false, observedTarget: link.current_user_target! })))
+  const dependencies: ManagedSessionsDependencies = { read, describe, candidates: vi.fn(), update: vi.fn() }
+  let value!: ReturnType<typeof useSupervisorManagedSessions>
+  function Probe() { value = useSupervisorManagedSessions(true, dependencies); return null }
+  const root = createRoot(document.body.appendChild(document.createElement("div"))); roots.push(root)
+  await act(async () => root.render(<Probe />))
+  await act(async () => value.loadMore())
+  expect(value.rows.map((row) => row.summary?.title)).toEqual(["Title root-a", "Title child-a", "Title root-b"])
+  expect(value.rows.every((row) => !row.canEnable)).toBe(true); expect(dependencies.update).not.toHaveBeenCalled()
 })

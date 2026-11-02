@@ -29,6 +29,7 @@ export type ExecutionReason =
   | "optimistic:retry"
   | "optimistic:openSession.forceSubscribe"
   | "summary:is_running"
+  | "summary:children_running"
   | "summary:terminal"
   | "sse:token"
   | "sse:tool_start"

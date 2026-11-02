@@ -42,6 +42,32 @@ export interface EnvVarsListResponse {
   entries: EnvVarResponse[];
 }
 
+/** Typed section document plus the CAS revision it was read at. */
+export interface TypedSectionEnvelope<T> {
+  data: T
+  revision: number
+  loaded_at: string
+  source_path: string
+  source_kind: string
+  status: string
+  last_error: string | null
+}
+
+/** `core.json` `llm_retry` sub-object (initial-request retry policy). */
+export interface LlmRetryConfig {
+  max_attempts: number
+  attempt_timeout_ms: number
+  total_budget_ms: number
+  base_delay_ms: number
+  max_delay_ms: number
+}
+
+/** The `core` section fields this panel reads and preserves. */
+export interface CoreSectionData {
+  llm_retry?: LlmRetryConfig
+  [key: string]: unknown
+}
+
 export interface UpsertEnvVarRequest {
   name: string;
   value: string;
@@ -334,6 +360,31 @@ export class SettingsService {
   }
 
   // ── Env Vars ────────────────────────────────────────────────────
+
+  /**
+   * Read one typed configuration section with its CAS revision.
+   *
+   * The section endpoints are used instead of `POST /bamboo/config` because a
+   * whole-config write rewrites unrelated section files (see the
+   * `model_limits.json` clobber documented on `useSystemConfig`).
+   */
+  async getTypedSection<T>(section: string): Promise<TypedSectionEnvelope<T>> {
+    return apiClient.get<TypedSectionEnvelope<T>>(
+      `/bamboo/config/sections/${encodeURIComponent(section)}`,
+    );
+  }
+
+  /** Persist one typed section, guarded by the revision that was read. */
+  async putTypedSection<T>(
+    section: string,
+    data: T,
+    expectedRevision: number,
+  ): Promise<TypedSectionEnvelope<T>> {
+    return apiClient.put<TypedSectionEnvelope<T>>(
+      `/bamboo/config/sections/${encodeURIComponent(section)}`,
+      { expected_revision: expectedRevision, data },
+    );
+  }
 
   /**
    * List all environment variables (secrets are masked).

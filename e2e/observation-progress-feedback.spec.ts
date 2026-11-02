@@ -94,6 +94,11 @@ test("#2016 new feedback has no pending dialog and exhaustion renders one honest
   await expect(page.getByText(unfinishedSummary, { exact: true })).toHaveCount(1)
   await expect(stop).toBeHidden()
   await expect(page.getByRole("dialog")).toHaveCount(0)
+  // The finished turn folds its evidence rounds behind one divider; the
+  // summary stays in reading flow. Open the fold, then the process layer.
+  const divider = page.locator("[data-turn-toggle]")
+  await expect(divider).toHaveAttribute("aria-expanded", "false")
+  await divider.click()
   await page.locator("[data-process-toggle]").first().click()
   await expect(page.locator("[data-tool-call-entry-toggle]")).toHaveCount(6)
   expect(f.writes).toEqual([])

@@ -587,6 +587,26 @@ describe("official plugin center", () => {
     expect(post).toHaveBeenCalledTimes(1)
   })
 
+  it("reports the server's finite reason when a pinned archive no longer matches its checksum", async () => {
+    novaAppSetup = novaAppReport()
+    // Exactly how bamboo rejects the republished Nova v0.3.1 assets: the accepted
+    // digest no longer describes the published bytes, so nothing was installed.
+    post.mockRejectedValueOnce(new ApiError("Conflict", 409, "Conflict",
+      JSON.stringify({ error: { type: "official_nova_unavailable", reason: "archive_checksum_mismatch" } })))
+    await mount(); await click("安装 Nova.app（本地 ad-hoc）")
+    expect(document.body.textContent).toContain("校验和不一致")
+    expect(document.body.textContent).not.toContain("archive_checksum_mismatch")
+    expect(post).toHaveBeenCalledTimes(1)
+  })
+
+  it("falls back to the generic message when the rejection carries no finite reason", async () => {
+    novaAppSetup = novaAppReport()
+    post.mockRejectedValueOnce(new ApiError("Conflict", 409, "Conflict", "SECRET_SERVER_DETAILS"))
+    await mount(); await click("安装 Nova.app（本地 ad-hoc）")
+    expect(document.body.textContent).toContain("尚未确认 Nova.app 安装结果")
+    expect(document.body.textContent).not.toContain("SECRET_SERVER_DETAILS")
+  })
+
   it("does not treat a successful POST report as passive app confirmation", async () => {
     novaAppSetup = novaAppReport(); post.mockResolvedValueOnce(novaAppReport(true))
     await mount(); await click("安装 Nova.app（本地 ad-hoc）")

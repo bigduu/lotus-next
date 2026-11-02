@@ -37,6 +37,7 @@ export {
   isBusyPhase,
   isInputLockedPhase,
   isCancellablePhase,
+  isTerminalRunStatus,
   createInitialExecutionState,
   applyExecutionEvent,
 } from "./executionStateSlice/reducer";

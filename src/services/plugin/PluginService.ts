@@ -5,7 +5,7 @@
  * parsed defensively (never trust the raw JSON shape), mirroring the
  * normalize* pattern in mcp/McpService.ts.
  */
-import { apiClient } from "../api";
+import { apiClient, isApiError } from "../api";
 import type {
   InstalledPluginView,
   JianduSetupReport,
@@ -158,6 +158,27 @@ const parseNovaAppSetup = (value: unknown): NovaAppSetupReport => {
       app.version !== connector.version || start.reason !== null)) return invalid();
   }
   return value as unknown as NovaAppSetupReport;
+};
+
+/**
+ * Extract the backend's finite failure reason from an official-Nova rejection.
+ *
+ * The server answers `409 {"error":{"type":"official_nova_unavailable","reason":"…"}}`.
+ * `ApiError.message` only carries the generic HTTP status text for that shape, so
+ * the reason has to be read from the preserved raw body. Without it the UI can
+ * only say "not confirmed", which hides the one actionable fact — e.g. a release
+ * asset whose bytes no longer match the accepted checksum.
+ */
+export const novaInstallReason = (error: unknown): string | null => {
+  if (!isApiError(error) || typeof error.body !== "string") return null;
+  try {
+    const body = JSON.parse(error.body) as { error?: { reason?: unknown } };
+    const reason = body.error?.reason;
+    // Reasons are short, stable identifiers — never render arbitrary server text.
+    return typeof reason === "string" && /^[a-z0-9_]{1,64}$/.test(reason) ? reason : null;
+  } catch {
+    return null;
+  }
 };
 
 export class PluginService {

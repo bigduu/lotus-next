@@ -605,6 +605,54 @@ describe("MessageList activity grouping", () => {
     expect(process.querySelector("[data-process-content]")?.hasAttribute("inert")).toBe(false)
   })
 
+  it("folds a finished turn's middle behind a divider showing elapsed time and tool count", () => {
+    const container = renderMessageList([
+      ...toolTurn("folded", "2026-09-20T00:00:00Z", "2026-09-20T00:01:05Z"),
+      { id: "next-user", role: "user", content: "next request", createdAt: "2026-09-20T00:02:00Z" },
+    ], false)
+    const divider = container.querySelector<HTMLElement>("[data-turn-toggle]")!
+    expect(divider.getAttribute("aria-expanded")).toBe("false")
+    // 00:00:10 (first intermediate body) → 00:00:30 (last tool result) = 20s…
+    // …plus the folded reasoning parts up to 00:01:05 recorded on the final
+    // message's metadata; the divider reports the full folded middle span.
+    expect(divider.getAttribute("aria-label")).toBe("处理了 55秒 · 1 次工具调用")
+    // Only the final conclusion stays visible outside the fold.
+    expect(container.querySelector('[data-assistant-content="folded process"]')?.closest("[data-turn-collapse]")).not.toBeNull()
+    expect(container.querySelector('[data-assistant-content="folded final"]')?.closest("[data-turn-collapse]")).toBeNull()
+    // The folded middle is mounted for disclosure but inert until expanded.
+    const fold = container.querySelector<HTMLElement>("[data-turn-collapse]")!
+    expect(fold.querySelector("[data-process-toggle]")?.getAttribute("aria-expanded")).toBe("false")
+    expect(fold.querySelector(".turn-collapse-content")?.hasAttribute("inert")).toBe(true)
+    act(() => divider.click())
+    expect(divider.getAttribute("aria-expanded")).toBe("true")
+    expect(fold.querySelector(".turn-collapse-content")?.hasAttribute("inert")).toBe(false)
+    expect(fold.querySelector('[data-assistant-content="folded process"]')).not.toBeNull()
+  })
+
+  it("keeps the live tail unfolded while streaming and folds it once the summary is recorded", () => {
+    const host = document.createElement("div"); document.body.appendChild(host)
+    const root = createRoot(host); mountedRoots.push(root)
+    const history = toolTurn("tail", "2026-09-20T00:00:00Z", "2026-09-20T00:01:05Z")
+    const props: Parameters<typeof MessageList>[0] = {
+      scrollRef: createRef(), contentRef: createRef(), onScroll: vi.fn(),
+      messages: history.slice(0, 4), mergedSubAgents: {}, sending: true,
+      latestRunFinished: false, streaming: null, streamingActive: true,
+      streamingReasoning: null, liveSegments: [], streamStatus: null, pendingUserText: null,
+      forking: false, onSelectSubAgent: vi.fn(), onPreviewImage: vi.fn(), onRegenerate: vi.fn(),
+      onFork: vi.fn(), onDelete: vi.fn(), onEditMessage: vi.fn(),
+    }
+    const render = (updates: Partial<typeof props>) => act(() => root.render(<MessageList {...props} {...updates} />))
+    render({})
+    expect(host.querySelector("[data-turn-toggle]")).toBeNull()
+    expect(host.querySelector('[data-assistant-content="tail process"]')).not.toBeNull()
+    // The recorded summary finishes the turn; the middle collapses behind the divider.
+    render({ messages: history, sending: false, streamingActive: false })
+    expect(host.querySelector("[data-turn-toggle]")?.getAttribute("aria-expanded")).toBe("false")
+    const fold = host.querySelector<HTMLElement>("[data-turn-collapse]")!
+    expect(fold.querySelector('[data-assistant-content="tail process"]')).not.toBeNull()
+    expect(host.querySelector('[data-assistant-content="tail final"]')?.closest("[data-turn-collapse]")).toBeNull()
+  })
+
   it("merges tools and reasoning through empty messages and splits only at visible messages", () => {
     const tools = toolTurn("one", "2026-09-20T00:00:00Z", "2026-09-20T00:01:05Z").slice(2, 4)
     const thought = (id: string, content = ""): Message => ({ id, role: "assistant", type: "text", content, metadata: { reasoning: id }, createdAt: "" })
@@ -641,12 +689,14 @@ describe("MessageList activity grouping", () => {
         const key = this.dataset.historyEntryKey
         if (key === "message-latest-user") return 52
         if (key === "message-latest-process") return 44
-        if (key === "activity-latest-call") return this.querySelector('[data-tool-items][aria-expanded="true"]') ? 293 : 25
+        if (key === "collapsed-turn-latest-final") return this.querySelector('[data-tool-items][aria-expanded="true"]') ? 293 : 25
         if (key === "message-latest-final") return 640
         return 0
       })
     try {
       const container = renderMessageList(toolTurn("latest", "2026-09-20T00:00:00Z", "2026-09-20T00:01:05Z"), false)
+      // The finished turn's middle is folded behind its divider; open it first.
+      act(() => container.querySelector<HTMLButtonElement>("[data-turn-toggle]")!.click())
       act(() => container.querySelector<HTMLButtonElement>("[data-process-toggle]")!.click())
       const finalRow = container.querySelector<HTMLElement>('[data-history-entry-key="message-latest-final"]')!
       const toolToggle = container.querySelector<HTMLButtonElement>('[data-tool-items="2"]')!
@@ -839,7 +889,11 @@ describe("subagent transcript provenance", () => {
     expect(card().compareDocumentPosition(answer) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     const messages = [user("turn-1"), ...spawn("live-create", "child"), { id: "answer", role: "assistant", type: "text", content: "Birth answer", createdAt: "" } as Message]
     render({ messages, liveSegments: [], sending: false })
-    expect(card().closest("[data-history-entry-key]")?.getAttribute("data-history-entry-key")).toBe("activity-live-create")
+    // The completed turn folds its middle (including the spawn process) behind
+    // the divider keyed by its final summary message.
+    expect(card().closest("[data-history-entry-key]")?.getAttribute("data-history-entry-key")).toBe("collapsed-turn-answer")
+    // The process renderer owns its SubAgents group; the fold renders it once.
+    expect(host.querySelectorAll('[data-subagent-id="child"]')).toHaveLength(1)
     expect(card().querySelector("button")!.getAttribute("aria-expanded")).toBe("true")
     const persistedCard = card()
     render({ messages: [...messages, user("new-turn")], liveSegments: [], sending: false, mergedSubAgents: { child: { status: "completed" } } })
@@ -848,9 +902,78 @@ describe("subagent transcript provenance", () => {
     act(() => card().querySelector<HTMLButtonElement>("button")!.click())
     render({ messages, liveSegments: [], sending: false, mergedSubAgents: { child: { status: "cancelled" } } })
     expect(card().querySelector("button")!.getAttribute("aria-expanded")).toBe("false")
-    expect(card().closest("[data-history-entry-key]")?.getAttribute("data-history-entry-key")).toBe("activity-live-create")
+    expect(card().closest("[data-history-entry-key]")?.getAttribute("data-history-entry-key")).toBe("collapsed-turn-answer")
   })
 
+})
+
+
+describe("cleared transcript subagent history", () => {
+  const systemOnly: Message[] = [
+    { id: "retained-system", role: "system", content: "cleared conversation", createdAt: "2026-11-02T00:00:00Z" },
+  ]
+  const children = { "child-1": { status: "completed" }, "child-2": { status: "error" } }
+  const renderCleared = (messages: Message[], agents: Record<string, { status: string }>) => {
+    const host = document.createElement("div"); document.body.appendChild(host)
+    const root = createRoot(host); mountedRoots.push(root)
+    act(() => {
+      root.render(
+        <MessageList
+          scrollRef={createRef()} contentRef={createRef()} onScroll={vi.fn()}
+          messages={messages} mergedSubAgents={agents} sending={false}
+          latestRunFinished={true} streaming={null} streamingActive={false}
+          streamingReasoning={null} liveSegments={[]} streamStatus={null}
+          pendingUserText={null} forking={false}
+          onSelectSubAgent={vi.fn()} onPreviewImage={vi.fn()} onRegenerate={vi.fn()}
+          onFork={vi.fn()} onDelete={vi.fn()} onEditMessage={vi.fn()}
+        />,
+      )
+    })
+    return host
+  }
+  it("folds cleared-transcript children into one collapsed history line that expands to the cards", () => {
+    const host = renderCleared(systemOnly, children)
+    // Collapsed by default: one line, no stacked cards, empty state still visible.
+    const entry = host.querySelector<HTMLElement>("[data-cleared-subagents]")
+    expect(entry).not.toBeNull()
+    expect(host.querySelector("[data-subagent-group]")).toBeNull()
+    const toggle = entry!.querySelector<HTMLButtonElement>("[data-cleared-subagents-toggle]")!
+    expect(toggle.getAttribute("aria-expanded")).toBe("false")
+    expect(entry!.querySelector("[data-cleared-subagents-brief]")?.textContent)
+      .toBe(uiText("cleared_session_subagents", { count: 2 }))
+    expect(host.textContent).toContain(uiText("start_a_new_conversation_bab6ab18"))
+
+    // Expanding reveals the same SubAgents card list (shared renderer, no copy).
+    act(() => toggle.click())
+    expect(host.querySelector<HTMLButtonElement>("[data-cleared-subagents-toggle]")!.getAttribute("aria-expanded")).toBe("true")
+    const group = host.querySelector("[data-subagent-group]")
+    expect(group).not.toBeNull()
+    expect([...group!.querySelectorAll("[data-subagent-id]")].map((node) => node.getAttribute("data-subagent-id")))
+      .toEqual(["child-1", "child-2"])
+    expect(host.textContent).toContain(uiText("start_a_new_conversation_bab6ab18"))
+
+    act(() => host.querySelector<HTMLButtonElement>("[data-cleared-subagents-toggle]")!.click())
+    expect(host.querySelector("[data-subagent-group]")).toBeNull()
+    expect(host.querySelector<HTMLButtonElement>("[data-cleared-subagents-toggle]")!.getAttribute("aria-expanded")).toBe("false")
+  })
+  it("keeps the cleared fold off an empty transcript without children", () => {
+    const host = renderCleared([], {})
+    expect(host.querySelector("[data-cleared-subagents]")).toBeNull()
+    expect(host.querySelector("[data-subagent-group]")).toBeNull()
+    expect(host.textContent).toContain(uiText("start_a_new_conversation_bab6ab18"))
+  })
+  it("keeps unplaced cards directly rendered while normal messages exist", () => {
+    const host = renderCleared([
+      { id: "user-1", role: "user", content: "question", createdAt: "2026-11-02T00:00:00Z" },
+      { id: "assistant-1", role: "assistant", type: "text", content: "answer", createdAt: "2026-11-02T00:00:01Z" },
+    ], children)
+    expect(host.querySelector("[data-cleared-subagents]")).toBeNull()
+    const group = host.querySelector("[data-subagent-group]")
+    expect(group).not.toBeNull()
+    expect([...group!.querySelectorAll("[data-subagent-id]")].map((node) => node.getAttribute("data-subagent-id")))
+      .toEqual(["child-1", "child-2"])
+    expect(host.textContent).not.toContain(uiText("start_a_new_conversation_bab6ab18"))
+  })
 })
 
 

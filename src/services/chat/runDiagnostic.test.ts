@@ -21,7 +21,7 @@ describe("frozen public diagnostic v2 binding", () => {
     { run_id:"private-execution-proof" },{ observed_at:"private timestamp" },{ event:"attempt_start" },
     { phase:"private body" },{ failure:"PRIVATE_BODY" },{ upstream_outcome:"sent" },{ attempt:5 },{ attempt:-1 },
     { attempt_limit:0 },{ attempt_limit:Number.MAX_SAFE_INTEGER+1 },{ total_budget_ms:3600001 },{ remaining_budget_ms:60001 },
-    { attempt_timeout_ms:60001 },{ status:999 },{ retry_delay_ms:-1 },{ stop_reason:null },
+    { attempt_timeout_ms:600001 },{ status:999 },{ retry_delay_ms:-1 },{ stop_reason:null },
     { stop_reason:"private reason" },{ total_elapsed_ms:Number.MAX_SAFE_INTEGER+1 },{ api_key:"PRIVATE_CANARY" },
   ])("rejects unknown/malformed/free-text projection %j", (patch) => {
     expect(decodeRunDiagnostic({ ...diagnosticFixture(sid), ...patch },sid,error)).toBeNull()

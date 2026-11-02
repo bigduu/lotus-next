@@ -9,6 +9,10 @@ import { NewChatWorktreeControl } from "./NewChatWorktreeControl"
 import { changeLocale } from "@shared/i18n"
 import { useAppStore } from "@shared/store/appStore"
 
+// The editor mounts behind a lazy dynamic entry. Preload it once so the lazy
+// import resolves deterministically inside jsdom (vite-node module cache).
+await import("@/components/chat/ComposerEditor")
+
 const mountedRoots: Root[] = []
 const originalScrollIntoView = HTMLElement.prototype.scrollIntoView
 const reactActEnvironment = globalThis as typeof globalThis & {
@@ -32,7 +36,7 @@ afterEach(() => {
   useAppStore.setState({ systemPrompts: [], lastSelectedPromptId: null })
 })
 
-function mountComposer(overrides: Partial<ComponentProps<typeof Composer>> = {}) {
+async function mountComposer(overrides: Partial<ComponentProps<typeof Composer>> = {}) {
   const container = document.createElement("div")
   document.body.appendChild(container)
   const root = createRoot(container)
@@ -70,10 +74,13 @@ function mountComposer(overrides: Partial<ComponentProps<typeof Composer>> = {})
     ...overrides,
   }
 
-  act(() => root.render(<Composer {...props} />))
+  // The editor is a lazy dynamic entry; rendering inside an async act flushes
+  // the dynamic import so the real editor is mounted before assertions.
+  await act(async () => {
+    root.render(<Composer {...props} />)
+  })
 
   const textarea = container.querySelector<HTMLDivElement>('[data-composer-editor][aria-label="消息"]')
-  expect(textarea).not.toBeNull()
   return { container, inputRef, props, textarea: textarea!, rerender: (next: Partial<ComponentProps<typeof Composer>>) => act(() => root.render(<Composer {...props} {...next} />)) }
 }
 
@@ -95,8 +102,8 @@ function dispatchSubmitShortcut(
 }
 
 describe("Composer submission controls", () => {
-  it("fills the available pane width while retaining shrinkable columns and gutters", () => {
-    const { container } = mountComposer()
+  it("fills the available pane width while retaining shrinkable columns and gutters", async () => {
+    const { container } = await mountComposer()
     const column = container.querySelector<HTMLElement>("[data-composer-column]")!
     expect(column.classList.contains("w-full")).toBe(true)
     expect(column.classList.contains("max-w-full")).toBe(true)
@@ -105,8 +112,8 @@ describe("Composer submission controls", () => {
     expect(column.parentElement?.classList.contains("px-3")).toBe(true)
   })
 
-  it("keeps exact column offsets with token-timed transforms without shifting the viewport", () => {
-    const { container, rerender } = mountComposer()
+  it("keeps exact column offsets with token-timed transforms without shifting the viewport", async () => {
+    const { container, rerender } = await mountComposer()
     const column = container.querySelector<HTMLElement>("[data-composer-column]")!
     for (const shift of [-166, -124, 0]) {
       rerender({ contentShiftX: shift })
@@ -117,15 +124,15 @@ describe("Composer submission controls", () => {
     }
   })
 
-  it("sends semantic ingress during execution without showing legacy queue controls", () => {
-    const { container, textarea, props } = mountComposer({ sending: true, sendWhileRunning: true })
+  it("sends semantic ingress during execution without showing legacy queue controls", async () => {
+    const { container, textarea, props } = await mountComposer({ sending: true, sendWhileRunning: true })
     expect(container.querySelector('[aria-label="发送时机"]')).toBeNull()
     expect(container.querySelector('[aria-label="发送消息"]')).not.toBeNull()
     dispatchSubmitShortcut(textarea)
     expect(props.onSubmit).toHaveBeenCalledTimes(1)
   })
-  it("keeps permission, runtime, and submission controls inside the composer surface", () => {
-    const { container } = mountComposer({
+  it("keeps permission, runtime, and submission controls inside the composer surface", async () => {
+    const { container } = await mountComposer({
       workflowControl: <span data-testid="workflow-chip">Review · 本条消息</span>,
       permissionControl: <span data-testid="permission-control">Auto</span>,
       runtimeControls: <span data-testid="runtime-controls">Model</span>,
@@ -142,8 +149,8 @@ describe("Composer submission controls", () => {
     expect(surface?.contains(send)).toBe(true)
   })
 
-  it("keeps the optional output rate in the toolbar without narrowing or replacing the editor", () => {
-    const view = mountComposer({ outputRate: null })
+  it("keeps the optional output rate in the toolbar without narrowing or replacing the editor", async () => {
+    const view = await mountComposer({ outputRate: null })
     const surface = view.container.querySelector("[data-composer-surface]")
     const inputRow = view.textarea.parentElement?.parentElement
     const toolbar = view.container.querySelector("[data-composer-toolbar]")
@@ -176,9 +183,9 @@ describe("Composer submission controls", () => {
   it.each([
     ["native composition", { isComposing: true }],
     ["legacy IME key code", { keyCode: 229 }],
-  ])("does not submit Enter during %s", (_label, eventInit) => {
+  ])("does not submit Enter during %s", async (_label, eventInit) => {
     const onSubmit = vi.fn()
-    const { textarea } = mountComposer({ onSubmit })
+    const { textarea } = await mountComposer({ onSubmit })
 
     for (const modifiers of [{}, { ctrlKey: true }, { metaKey: true }]) {
       expect(dispatchSubmitShortcut(textarea, { ...eventInit, ...modifiers }).defaultPrevented).toBe(false)
@@ -187,17 +194,17 @@ describe("Composer submission controls", () => {
     expect(onSubmit).not.toHaveBeenCalled()
   })
 
-  it.each([{}, { ctrlKey: true }, { metaKey: true }])("submits once for Enter with modifiers %j", (modifiers) => {
+  it.each([{}, { ctrlKey: true }, { metaKey: true }])("submits once for Enter with modifiers %j", async (modifiers) => {
     const onSubmit = vi.fn()
-    const { textarea } = mountComposer({ onSubmit })
+    const { textarea } = await mountComposer({ onSubmit })
 
     expect(dispatchSubmitShortcut(textarea, modifiers).defaultPrevented).toBe(true)
 
     expect(onSubmit).toHaveBeenCalledTimes(1)
   })
 
-  it.each([{}, { ctrlKey: true }, { metaKey: true }])("inserts a newline for Shift+Enter with modifiers %j", (modifiers) => {
-    const { textarea, props } = mountComposer()
+  it.each([{}, { ctrlKey: true }, { metaKey: true }])("inserts a newline for Shift+Enter with modifiers %j", async (modifiers) => {
+    const { textarea, props } = await mountComposer()
     expect(dispatchSubmitShortcut(textarea, { ...modifiers, shiftKey: true }).defaultPrevented).toBe(true)
     expect(props.onSubmit).not.toHaveBeenCalled()
   })
@@ -208,8 +215,8 @@ describe("Composer submission controls", () => {
     { sending: true },
     { sending: true, onQueueModeChange: vi.fn(), submissionPending: true },
     { sending: true, onQueueModeChange: vi.fn(), draft: "" },
-  ])("keeps guarded Enter submission safe: %j", (overrides) => {
-    const { textarea, props } = mountComposer(overrides)
+  ])("keeps guarded Enter submission safe: %j", async (overrides) => {
+    const { textarea, props } = await mountComposer(overrides)
     expect(dispatchSubmitShortcut(textarea).defaultPrevented).toBe(true)
     expect(props.onSubmit).not.toHaveBeenCalled()
   })
@@ -217,15 +224,15 @@ describe("Composer submission controls", () => {
   it.each<Partial<ComponentProps<typeof Composer>>>([
     { attachments: [{ id: "image", name: "image.png", url: "data:image/png;base64," }] },
     { selectedWorkflow: { name: "review", content: "Review the change" } },
-  ])("submits non-text content through the same handler: %j", (overrides) => {
-    const { textarea, props } = mountComposer({ ...overrides, draft: "" })
+  ])("submits non-text content through the same handler: %j", async (overrides) => {
+    const { textarea, props } = await mountComposer({ ...overrides, draft: "" })
     dispatchSubmitShortcut(textarea)
     expect(props.onSubmit).toHaveBeenCalledOnce()
   })
 
-  it("lets the open slash picker select on Enter without sending", () => {
+  it("lets the open slash picker select on Enter without sending", async () => {
     const onPick = vi.fn()
-    const { textarea, props } = mountComposer({ draft: "/goal", slashQuery: "goal", onPickGoal: onPick })
+    const { textarea, props } = await mountComposer({ draft: "/goal", slashQuery: "goal", onPickGoal: onPick })
     expect(dispatchSubmitShortcut(textarea, { isComposing: true }).defaultPrevented).toBe(false)
     expect(dispatchSubmitShortcut(textarea, { keyCode: 229 }).defaultPrevented).toBe(false)
     expect(onPick).not.toHaveBeenCalled()
@@ -234,9 +241,9 @@ describe("Composer submission controls", () => {
     expect(props.onSubmit).not.toHaveBeenCalled()
   })
 
-  it("routes picker keys only to their own pane, leaving parameter textareas and IME alone", () => {
-    const first = mountComposer({ draft: "/goal", slashQuery: "goal", onPickGoal: vi.fn() })
-    const second = mountComposer({ draft: "/goal", slashQuery: "goal", onPickGoal: vi.fn() })
+  it("routes picker keys only to their own pane, leaving parameter textareas and IME alone", async () => {
+    const first = await mountComposer({ draft: "/goal", slashQuery: "goal", onPickGoal: vi.fn() })
+    const second = await mountComposer({ draft: "/goal", slashQuery: "goal", onPickGoal: vi.fn() })
     const parameters = document.body.appendChild(document.createElement("textarea"))
     expect(first.textarea.id).not.toBe(second.textarea.id)
     expect(dispatchSubmitShortcut(parameters).defaultPrevented).toBe(false)
@@ -250,9 +257,9 @@ describe("Composer submission controls", () => {
     expect(first.props.onPickGoal).toHaveBeenCalledOnce()
   })
 
-  it("shows a disabled pending control without exposing the generation stop action", () => {
+  it("shows a disabled pending control without exposing the generation stop action", async () => {
     const onStop = vi.fn()
-    const { container, inputRef, textarea } = mountComposer({
+    const { container, inputRef, textarea } = await mountComposer({
       onStop,
       sending: true,
       submissionPending: true,
@@ -269,8 +276,8 @@ describe("Composer submission controls", () => {
     expect(onStop).not.toHaveBeenCalled()
   })
 
-  it("exposes distinct accessible actions for generation and idle states", () => {
-    const sendingView = mountComposer({ sending: true })
+  it("exposes distinct accessible actions for generation and idle states", async () => {
+    const sendingView = await mountComposer({ sending: true })
     const stop = sendingView.container.querySelector<HTMLButtonElement>('button[aria-label="停止生成"]')
     expect(stop).not.toBeNull()
     expect(stop?.className).toContain("bg-primary")
@@ -278,14 +285,14 @@ describe("Composer submission controls", () => {
     expect(stop?.querySelector("svg")?.getAttribute("fill")).toBe("currentColor")
     expect(stop?.querySelector("svg")?.getAttribute("stroke")).toBe("currentColor")
 
-    const idleView = mountComposer()
+    const idleView = await mountComposer()
     expect(idleView.container.querySelector('button[aria-label="发送消息"]')).not.toBeNull()
     expect(idleView.textarea.getAttribute("aria-busy")).toBe("false")
   })
 })
 
-it("offers queue submission and Stop together while generating", () => {
-  const { container, props, textarea } = mountComposer({ sending: true, queueMode: "after_round", onQueueModeChange: vi.fn() })
+it("offers queue submission and Stop together while generating", async () => {
+  const { container, props, textarea } = await mountComposer({ sending: true, queueMode: "after_round", onQueueModeChange: vi.fn() })
   expect(container.querySelector('button[aria-label="加入队列"]')).not.toBeNull()
   expect(container.querySelector('button[aria-label="停止生成"]')).not.toBeNull()
   const timing = container.querySelector<HTMLSelectElement>('select[aria-label="发送时机"]')
@@ -296,7 +303,7 @@ it("offers queue submission and Stop together while generating", () => {
 })
 
 describe("Composer new-chat project chip", () => {
-  it("shows the project chip for new chats and hides the manual workspace button once a project is selected", () => {
+  it("shows the project chip for new chats and hides the manual workspace button once a project is selected", async () => {
     useAppStore.setState({
       projectsAvailable: true,
       projects: {
@@ -309,11 +316,11 @@ describe("Composer new-chat project chip", () => {
       },
     })
 
-    const bare = mountComposer({ hasSession: false })
+    const bare = await mountComposer({ hasSession: false })
     expect(bare.container.textContent).toContain("选择项目")
     expect(bare.container.textContent).toContain("选择工作目录")
 
-    const picked = mountComposer({ hasSession: false, selectedProjectId: "p1" })
+    const picked = await mountComposer({ hasSession: false, selectedProjectId: "p1" })
     expect(picked.container.textContent).toContain("Zenith")
     const workspaceButton = [...picked.container.querySelectorAll("button")].find((b) =>
       b.textContent?.includes("工作目录"),
@@ -323,16 +330,16 @@ describe("Composer new-chat project chip", () => {
     useAppStore.setState({ projects: {}, projectsAvailable: null })
   })
 
-  it("hides the project chip entirely when the backend has no Project API", () => {
+  it("hides the project chip entirely when the backend has no Project API", async () => {
     useAppStore.setState({ projectsAvailable: false, projects: {} })
-    const view = mountComposer({ hasSession: false })
+    const view = await mountComposer({ hasSession: false })
     expect(view.container.textContent).not.toContain("选择项目")
     useAppStore.setState({ projectsAvailable: null })
   })
 })
 
 describe("Composer new-chat prompt chip", () => {
-  it("uses the real default preset without rendering a duplicate fallback option", () => {
+  it("uses the real default preset without rendering a duplicate fallback option", async () => {
     useAppStore.setState({
       lastSelectedPromptId: null,
       systemPrompts: [{
@@ -343,7 +350,7 @@ describe("Composer new-chat prompt chip", () => {
       }],
     })
 
-    const { container } = mountComposer({ hasSession: false })
+    const { container } = await mountComposer({ hasSession: false })
     const trigger = container.querySelector<HTMLButtonElement>('button[title="系统提示词:Bodhi"]')
 
     expect(trigger?.textContent).toContain("Bodhi")
@@ -361,7 +368,7 @@ describe("Composer new-chat prompt chip", () => {
 
 it("formats the output rate with the selected UI locale instead of the French browser locale", async () => {
   vi.spyOn(window.navigator, "language", "get").mockReturnValue("fr-FR")
-  const view = mountComposer({ outputRate: 1234.5 })
+  const view = await mountComposer({ outputRate: 1234.5 })
   await act(async () => { await changeLocale("en-US") })
   expect(view.container.querySelector("[data-output-rate]")?.textContent).toContain("1,234.5")
   await act(async () => { await changeLocale("fr-FR") })
@@ -372,8 +379,8 @@ it("formats the output rate with the selected UI locale instead of the French br
 
 it("routes @file Enter only to the owning composer in split panes", async () => {
   const files = [{ name: "README.md", path: "README.md", is_directory: false }]
-  const first = mountComposer({ draft: "@re", displayWorkspace: "/first", workspaceFiles: files })
-  const second = mountComposer({ draft: "@re", displayWorkspace: "/second", workspaceFiles: files })
+  const first = await mountComposer({ draft: "@re", displayWorkspace: "/first", workspaceFiles: files })
+  const second = await mountComposer({ draft: "@re", displayWorkspace: "/second", workspaceFiles: files })
   const editor = (element: HTMLElement) => (element as HTMLElement & { editor: Editor }).editor
   await act(async () => {
     editor(first.textarea).commands.setTextSelection(4)
@@ -404,7 +411,7 @@ describe("container-aware composer toolbar", () => {
 
   it("uses pane width, preserves the editor across resize, and keeps primary controls visible", async () => {
     const resize = observeWidth(440)
-    const { container, textarea, props } = mountComposer({
+    const { container, textarea, props } = await mountComposer({
       permissionControl: <button data-permission>Default</button>,
       runtimeControls: <button data-model>Model · Ultra</button>,
     })
@@ -429,7 +436,7 @@ describe("container-aware composer toolbar", () => {
 
   it("returns focus on Escape and closes controls on session changes without sending", async () => {
     observeWidth(420)
-    const { container, props, rerender } = mountComposer({ draftKey: "session-a" })
+    const { container, props, rerender } = await mountComposer({ draftKey: "session-a" })
     const more = container.querySelector<HTMLButtonElement>('[aria-label="更多"]')!
     act(() => more.click())
     act(() => document.activeElement?.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })))
@@ -443,9 +450,9 @@ describe("container-aware composer toolbar", () => {
     expect(props.onSubmit).not.toHaveBeenCalled()
   })
 
-  it("places the new-chat workspace slot beside Project on desktop and omits it for existing sessions", () => {
+  it("places the new-chat workspace slot beside Project on desktop and omits it for existing sessions", async () => {
     observeWidth(900)
-    const h = mountComposer({ hasSession: false, workspaceControl: <button data-workspace-control>Current workspace</button> })
+    const h = await mountComposer({ hasSession: false, workspaceControl: <button data-workspace-control>Current workspace</button> })
     const slot = h.container.querySelector('[data-workspace-control]')!
     expect(slot.closest('[data-composer-secondary-controls]')).not.toBeNull()
     expect(slot.previousElementSibling?.getAttribute('data-slot')).toBe('dropdown-menu-trigger')
@@ -456,7 +463,7 @@ describe("container-aware composer toolbar", () => {
   it("keeps compact More open when its nested worktree selector is inspected and cancelled", async () => {
     observeWidth(420)
     const onChange = vi.fn()
-    const h = mountComposer({ hasSession: false, workspaceControl: <NewChatWorktreeControl projectId={null} workspacePath="/repo" value={null} onChange={onChange} /> })
+    const h = await mountComposer({ hasSession: false, workspaceControl: <NewChatWorktreeControl projectId={null} workspacePath="/repo" value={null} onChange={onChange} /> })
     expect(h.container.querySelector('[data-new-chat-worktree-control]')).toBeNull()
     act(() => h.container.querySelector<HTMLButtonElement>('[aria-label="更多"]')!.click())
     const trigger = document.querySelector<HTMLButtonElement>('button[aria-label="会话工作区"]')!
@@ -473,7 +480,7 @@ describe("container-aware composer toolbar", () => {
   it("keeps More open while a nested preset menu is cancelled", async () => {
     observeWidth(420)
     useAppStore.setState({ systemPrompts: [{ id: "preset", name: "Bodhi", content: "Existing preset", isDefault: true }] })
-    const { container, props } = mountComposer({ hasSession: false })
+    const { container, props } = await mountComposer({ hasSession: false })
     act(() => container.querySelector<HTMLButtonElement>('[aria-label="更多"]')!.click())
     const preset = document.querySelector<HTMLButtonElement>('button[title="系统提示词:Bodhi"]')!
     act(() => preset.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })))
@@ -488,7 +495,7 @@ describe("container-aware composer toolbar", () => {
 
   it("dismisses More before opening the workspace picker", async () => {
     observeWidth(420)
-    const { container, props } = mountComposer({ hasSession: false })
+    const { container, props } = await mountComposer({ hasSession: false })
     act(() => container.querySelector<HTMLButtonElement>('[aria-label="更多"]')!.click())
     const workspace = [...document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')]
       .find((button) => button.title === "默认工作目录")!
@@ -501,16 +508,16 @@ describe("container-aware composer toolbar", () => {
 })
 
 describe("explicit execution compatibility conflict", () => {
-  it("preserves editing while disabling both button and keyboard submit, then recovers explicitly", () => {
-    const h = mountComposer({ executionBlocked: true })
+  it("preserves editing while disabling both button and keyboard submit, then recovers explicitly", async () => {
+    const h = await mountComposer({ executionBlocked: true })
     expect(h.container.querySelector<HTMLButtonElement>('[aria-label="发送消息"]')?.disabled).toBe(true)
     dispatchSubmitShortcut(h.textarea); expect(h.props.onSubmit).not.toHaveBeenCalled()
     expect(h.textarea.textContent).toContain("保留这条消息")
     h.rerender({ executionBlocked: false }); dispatchSubmitShortcut(h.textarea)
     expect(h.props.onSubmit).toHaveBeenCalledTimes(1)
   })
-  it("keeps Stop available for an existing run while blocking new execution", () => {
-    const h = mountComposer({ executionBlocked: true, sending: true, sendWhileRunning: true })
+  it("keeps Stop available for an existing run while blocking new execution", async () => {
+    const h = await mountComposer({ executionBlocked: true, sending: true, sendWhileRunning: true })
     const stop = h.container.querySelector<HTMLButtonElement>('[aria-label="停止生成"]')!
     expect(stop.disabled).toBe(false); act(() => stop.click())
     expect(h.props.onStop).toHaveBeenCalledTimes(1); expect(h.props.onSubmit).not.toHaveBeenCalled()

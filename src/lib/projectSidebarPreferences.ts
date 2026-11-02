@@ -50,7 +50,7 @@ const validName = (value: unknown): value is string =>
   typeof value === "string" && !!value.trim() && [...value.trim()].length <= 80 && !Array.from(value).some((character) => { const code = character.codePointAt(0)!; return code < 32 || code === 127 })
 const emptyPreferences = (): ProjectSectionPreferences => ({ version: 1, projects: {} })
 const emptyProjectPreference = (): ProjectSectionPreference => ({ sections: [], sessionSections: {}, hiddenLegacy: false })
-const getProjectPreference = (preferences: ProjectSectionPreferences, projectId: string) =>
+export const getProjectPreference = (preferences: ProjectSectionPreferences, projectId: string) =>
   Object.hasOwn(preferences.projects, projectId) ? preferences.projects[projectId]! : emptyProjectPreference()
 
 /** Legacy import source only. New organization is written to Bamboo. */

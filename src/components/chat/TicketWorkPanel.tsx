@@ -97,7 +97,8 @@ export function TicketWorkPanel({ controller, onReference, selectedWorkId, onSho
     <p className="my-2 text-xs text-muted-foreground">{uiText("supervisor_work_management_scope")}</p>
     {!state.current.complete ? <p role="status" className="text-sm text-muted-foreground">{uiText("ticket_only_some_work_is_shown_other_work_may_still__ee267ea7")}</p> : null}
     {!controller.connected ? <p role="status" className="text-sm text-muted-foreground">{uiText("ticket_the_connection_is_not_confirmed_answers_and_a_aaac8c0d")}</p> : null}
-    {!state.current.scope.mutation_enabled || state.current.scope.health !== "writable" ? <p role="status" className="text-sm text-muted-foreground">{uiText(!state.current.scope.mutation_enabled ? "supervisor_work_mutation_disabled" : "ticket_this_ticket_is_read_only__4b7b2251")}</p> : null}
+    {!state.current.scope.mutation_enabled ? <p role="status" className="text-sm text-muted-foreground">{uiText("supervisor_work_mutation_disabled")}</p> : null}
+    {state.current.scope.health !== "writable" ? <p role="status" className="text-sm text-muted-foreground">{uiText(state.current.scope.health === "read_only" ? "supervisor_work_storage_read_only" : "supervisor_work_storage_unconfirmed")}</p> : null}
     {!state.current.scope.dispatch_enabled ? <p role="status" className="text-sm text-muted-foreground">{uiText("supervisor_work_dispatch_disabled")}</p> : null}
     {state.current.complete && controller.connected && overview.ticket_count === 0 && visibleWorks.length === 0 ? <p role="status" className="my-2 text-sm text-muted-foreground">{uiText("supervisor_work_empty")}</p> : null}
     {controller.error ? <p role="alert" className="my-2 text-sm text-destructive">{controller.error}</p> : null}

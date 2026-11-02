@@ -11,6 +11,7 @@ import { useThemeStore } from "@shared/store/themeStore"
 import { getUserMessageColors } from "@shared/theme/userMessageColors"
 import { applyGlobalAccentToDocument, getGlobalAccentColors } from "@shared/theme/globalAccentColors"
 import { useChat } from "@/hooks/useChat"
+import { assignSessionToSectionDurable } from "@/hooks/useProjectSidebarSections"
 import { useWorkbenchBrowserSelection } from "@/hooks/useWorkbenchBrowserSelection"
 import { useWorkbenchState } from "@/hooks/useWorkbenchState"
 import { useWorkbenchWidth } from "@/hooks/useWorkbenchWidth"
@@ -251,6 +252,9 @@ function App() {
   const [wsPickerOpen, setWsPickerOpen] = useState(false)
   // Project selected for the NEXT new chat (project-grouped sidebar "新建").
   const [pendingProjectId, setPendingProjectId] = useState<string | null>(null)
+  // Section selected for the NEXT new chat (section header "新建"). It only
+  // applies while `pendingProjectId` still matches the section's project.
+  const [pendingSection, setPendingSection] = useState<{ projectId: string; sectionId: string | null } | null>(null)
   const [projectManagerOpen, setProjectManagerOpen] = useState(false)
   const [worktreesOpen, setWorktreesOpen] = useState(false)
   const [pickedWorktree, setPickedWorktree] = useState<{ projectId: string; path: string } | null>(null)
@@ -466,9 +470,11 @@ function App() {
             chats={chats}
             booted={booted}
             currentSessionId={currentSessionId}
-            onNewChat={(projectId) => {
+            onNewChat={(projectId, sectionId) => {
               setPickedWorktree(null)
               setPendingProjectId(projectId ?? null)
+              // A section intent is only valid together with its project pick.
+              setPendingSection(projectId && sectionId !== undefined ? { projectId, sectionId } : null)
               // The project (or its default workspace) owns the next session's cwd.
               if (projectId) setPickedWorkspace(null)
               newChat()
@@ -641,9 +647,25 @@ function App() {
           pendingProjectId={pendingProjectId}
           newChatEpoch={newChatEpoch}
           getNavigationVersion={getNavigationVersion}
+          onNewSessionInProjectSection={pendingSection && pendingSection.projectId === pendingProjectId ? (sessionId) => {
+            // The composer confirmed a NEW session; commit exactly this intent.
+            // A late acknowledgement from an older submission must not clear a
+            // newer intent (e.g. the user already started another section chat).
+            const intent = pendingSection
+            setPendingSection((current) => current === intent ? null : current)
+            const project = useAppStore.getState().projects[intent.projectId]
+            if (!project || project.status !== "active" || project.sidebar === undefined) return
+            void assignSessionToSectionDurable(intent.projectId, sessionId, intent.sectionId, project.section).then((assigned) => {
+              // A dropped assignment leaves the session unsectioned; tell the
+              // user so an explicit move can retry it instead of losing it.
+              if (!assigned) setCopyFeedback({ message: uiText("sidebar_section_assign_failed"), failed: true })
+            }).catch(() => setCopyFeedback({ message: uiText("sidebar_section_assign_failed"), failed: true }))
+          } : undefined}
           onSelectProject={(projectId) => {
             mainNavigationVersion.current += 1
             setPendingProjectId(projectId)
+            // A manual project pick replaces any section-scoped intent.
+            setPendingSection(null)
             setPickedWorktree(null)
             // A manual project pick owns the workspace; drop a manual choice.
             if (projectId) setPickedWorkspace(null)
@@ -680,7 +702,7 @@ function App() {
           setPickedWorkspace(p)
           setPickedWorktree(null)
           // Manual workspace choice overrides a project pick for the next chat.
-          if (p) setPendingProjectId(null)
+          if (p) { setPendingProjectId(null); setPendingSection(null) }
         }}
       />
 
@@ -688,6 +710,8 @@ function App() {
         onOpen={(projectId, path) => {
           newChat()
           setPendingProjectId(projectId)
+          // A worktree-scoped creation is its own intent; drop any section pick.
+          setPendingSection(null)
           setPickedWorkspace(path)
           setPickedWorktree({ projectId, path })
           setWorktreesOpen(false)

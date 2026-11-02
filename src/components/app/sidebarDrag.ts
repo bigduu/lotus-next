@@ -5,7 +5,11 @@ import { confirmedProjectRevision } from "@shared/store/appStore/slices/projectS
 import { getProjectSections, LEGACY_PROJECT_SECTION_ID, type ProjectSectionPreferences } from "@/lib/projectSidebarPreferences"
 
 export type SidebarDragSource = { kind: "session" | "section"; projectId: string; id: string }
-export type SidebarDropTarget = { projectId: string; sectionId: string | null }
+/**
+ * A drop destination. `sessionId` is only present when the gesture ended over a
+ * session row, which asks for a position (reorder) rather than a bucket move.
+ */
+export type SidebarDropTarget = { projectId: string; sectionId: string | null; sessionId?: string | null }
 export type SidebarDragPickup = SidebarDragSource & { revision: number }
 export type SidebarDragState = {
   projects: Record<string, ProjectManifest>
@@ -24,8 +28,10 @@ export function sidebarDragSource(value: unknown): SidebarDragSource | null {
 export function sidebarDropTarget(value: unknown): SidebarDropTarget | null {
   if (!value || typeof value !== "object") return null
   const target = value as Record<string, unknown>
-  return typeof target.projectId === "string" && (target.sectionId === null || typeof target.sectionId === "string")
-    ? { projectId: target.projectId, sectionId: target.sectionId } : null
+  if (typeof target.projectId !== "string" || (target.sectionId !== null && typeof target.sectionId !== "string")) return null
+  return typeof target.sessionId === "string" && target.sessionId
+    ? { projectId: target.projectId, sectionId: target.sectionId, sessionId: target.sessionId }
+    : { projectId: target.projectId, sectionId: target.sectionId }
 }
 
 /** Re-read canonical membership and the confirmed server revision at pickup and drop. */
@@ -52,7 +58,11 @@ export type SidebarDragParts = {
 
 export type SidebarProjectDragProps = SidebarDragState & {
   scopeKey: string
-  onMoveSession: (pickup: SidebarDragPickup, target: SidebarDropTarget) => Promise<boolean>
+  /**
+   * `after` only applies to a row target: true means "place below that row".
+   * A bucket target ignores it.
+   */
+  onMoveSession: (pickup: SidebarDragPickup, target: SidebarDropTarget, after?: boolean) => Promise<boolean>
   onMoveSection: (pickup: SidebarDragPickup, target: SidebarDropTarget, after: boolean) => void
   children: (parts?: SidebarDragParts) => ReactNode
 }

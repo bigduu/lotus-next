@@ -467,6 +467,32 @@ it("does not start duplicate refreshes or accept a late status after navigation"
   expect(controller.refreshing).toBe(false)
 })
 
+
+it.each(["resolve", "reject"] as const)("ignores a late Work read after a mode change (%s)", async (outcome) => {
+  await mount("root", true, "standard:1")
+  const old = structuredClone(snapshot)
+  let finish!: () => void
+  vi.mocked(ticketClient.load).mockReturnValueOnce(new Promise((resolve, reject) => {
+    finish = () => outcome === "resolve" ? resolve(old) : reject(new Error("stale mode read failed"))
+  }))
+  let pending!: Promise<void>
+  act(() => { pending = controller.refresh() })
+  const oldSignal = vi.mocked(ticketClient.load).mock.calls[1][1]!
+  const fresh = structuredClone(snapshot)
+  fresh.snapshot.seq += 3
+  fresh.snapshot.commit = "new-mode-snapshot"
+  fresh.scope.overview.snapshot = { ...fresh.snapshot }
+  fresh.scope.overview.index_seq = fresh.snapshot.seq
+  vi.mocked(ticketClient.load).mockResolvedValueOnce(fresh)
+  await mount("root", true, "ultra:2")
+  expect(oldSignal.aborted).toBe(true)
+  expect(controller.state?.current.snapshot.commit).toBe("new-mode-snapshot")
+  await act(async () => { finish(); await pending })
+  expect(controller.state?.current.snapshot.commit).toBe("new-mode-snapshot")
+  expect(controller.availability.kind).toBe("ready")
+  expect(controller.error).toBeNull()
+})
+
 function offerInitialization() {
   const scope = initializableTicketScope()
   const presentation = scopeAvailability(scope, "root")!
@@ -786,4 +812,19 @@ it("never promotes an HTTP 403 with a readable or contradictory scope", async ()
   expect(controller.state).toBeNull()
   expect(controller.canInitialize).toBe(false)
   expect(ticketClient.load).toHaveBeenCalledTimes(1)
+})
+
+it.each([
+  { health: "read_only", mutation: true, expected: "Work storage is read-only.", disabled: false },
+  { health: "read_only", mutation: false, expected: "Work storage is read-only.", disabled: true },
+  { health: "future-health", mutation: true, expected: "Work storage health is unconfirmed.", disabled: false },
+])("describes storage health independently of the mutation gate: $health/$mutation", async ({ health, mutation, expected, disabled }) => {
+  await act(async () => { await changeLocale("en-US") })
+  try {
+    snapshot.scope.health = health; snapshot.scope.mutation_enabled = mutation
+    await mount()
+    expect(container.textContent).toContain(expected)
+    expect(container.textContent?.includes("Work changes are disabled on this service.")).toBe(disabled)
+    expect(controller.canRespond).toBe(false)
+  } finally { await act(async () => { await changeLocale("zh-CN") }) }
 })
