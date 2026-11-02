@@ -123,3 +123,21 @@ export type PluginApiRecord = Partial<{
   status: string;
   registered: unknown;
 }>;
+
+export type PublisherMode = "follow_defaults" | "explicit"
+export interface OfficialPublisher {
+  id: string
+  key: { label: string; algorithm: "ed25519"; public_key: string }
+  trusted: boolean
+  revoked: boolean
+}
+export interface PublisherPolicy {
+  expected_revision: number
+  publisher_mode: PublisherMode
+  enforcement: "strict" | "off"
+  custom_key_count: number
+  publishers: OfficialPublisher[]
+}
+export type PublisherPolicyChange =
+  | { type: "set_mode"; publisher_mode: PublisherMode }
+  | { type: "revoke" | "trust"; publisher_id: string }

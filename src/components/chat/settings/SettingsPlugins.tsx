@@ -29,6 +29,7 @@ import { NovaSetupPanel, type NovaSetupError } from "./plugins/NovaSetupPanel"
 import { PluginRuntime } from "./plugins/PluginRuntime"
 import { NOVA_PLUGIN } from "./plugins/officialPlugins"
 import { JianduSetupPanel, type JianduSetupError } from "./plugins/JianduSetupPanel"
+import { PublisherTrustPanel } from "./plugins/PublisherTrustPanel"
 import { copyText } from "@shared/utils/clipboard"
 
 function StatusBadge({ status }: { status: PluginStatus }) {
@@ -417,6 +418,8 @@ export function SettingsPlugins() {
 
   return (
     <div className="space-y-4">
+      <PublisherTrustPanel disabled={loading || operation !== null} observedRevision={jiandu?.trust_action?.expected_revision}
+        onBegin={() => beginOperation("publisher-policy", false)} onEnd={finishOperation} />
       <div className="flex flex-wrap items-start justify-between gap-3">
         <p className="max-w-xl text-sm leading-relaxed text-muted-foreground">{uiText("plugin_center_description")}</p>
         <div className="flex flex-wrap gap-2">
