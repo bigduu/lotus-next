@@ -620,6 +620,8 @@ export function MessageList({
   const [openTurnKeys, setOpenTurnKeys] = useState<Set<string>>(() => new Set())
   // Keep child choices above virtual rows and the live/history handoff.
   const [openSubAgentIds, setOpenSubAgentIds] = useState<Set<string>>(() => new Set())
+  // Cleared-transcript history entry: one collapsed line, presentation state only.
+  const [clearedSubAgentsOpen, setClearedSubAgentsOpen] = useState(false)
   const historyEntriesRef = useRef(historyEntries)
   const openProcessKeysRef = useRef(openProcessKeys)
   const openToolKeysRef = useRef(openToolKeys)
@@ -758,6 +760,13 @@ export function MessageList({
     renderProbe.count("subagent.place")
     return placeSubAgents(subAgentCandidates, mergedSubAgents)
   }, [subAgentCandidates, mergedSubAgents])
+
+  // A cleared transcript keeps at most one retained system message; with no
+  // streaming, pending user or live segments there is no visible body at all.
+  // Unplaced children then lose every provenance match, so fold them behind a
+  // single history entry line instead of stacking the cards above the fold.
+  const transcriptCleared = messages.every((message) => message.role === "system")
+    && !streaming && !hasPendingUser && liveSegments.length === 0
 
   const renderImages = (imgs: readonly { url?: string; base64?: string; type?: string }[] | undefined) => imgs?.length ? (
     <div className="mb-1.5 flex flex-wrap gap-1.5">
@@ -1016,8 +1025,33 @@ export function MessageList({
         {subAgentError ? <div role="status" className="text-xs text-muted-foreground" data-subagent-error>
           {subAgentError}{onRefreshSubAgents ? <Button variant="ghost" size="sm" onClick={onRefreshSubAgents}>{uiText("subagent_refresh")}</Button> : null}
         </div> : null}
-        <SubAgents agents={subAgentGroups.unplaced} originUnconfirmed onOpen={onSelectSubAgent} expandedIds={openSubAgentIds} onExpandedChange={setSubAgentExpanded} />
-        {messages.length === 0 && !streaming && !hasPendingUser && liveSegments.length === 0 && (
+        {transcriptCleared ? (
+          // Cleared transcript: provenance is gone, so unplaced children become
+          // one collapsed history entry. Presentation state only — the cards
+          // themselves still render through the unchanged SubAgents contract.
+          Object.keys(subAgentGroups.unplaced).length > 0 ? (
+            <div data-cleared-subagents>
+              <button
+                type="button"
+                data-cleared-subagents-toggle
+                aria-expanded={clearedSubAgentsOpen}
+                onClick={() => setClearedSubAgentsOpen(!clearedSubAgentsOpen)}
+                className="flex w-full items-center gap-2 rounded-lg px-2 py-1 text-left text-xs text-muted-foreground hover:bg-accent/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                <ChevronRight aria-hidden="true" className={cn("size-3 shrink-0 text-muted-foreground transition-transform", clearedSubAgentsOpen && "rotate-90")} />
+                <span data-cleared-subagents-brief className="min-w-0 truncate">
+                  {uiText("cleared_session_subagents", { count: Object.keys(subAgentGroups.unplaced).length })}
+                </span>
+              </button>
+              {clearedSubAgentsOpen ? (
+                <SubAgents agents={subAgentGroups.unplaced} originUnconfirmed onOpen={onSelectSubAgent} expandedIds={openSubAgentIds} onExpandedChange={setSubAgentExpanded} />
+              ) : null}
+            </div>
+          ) : null
+        ) : (
+          <SubAgents agents={subAgentGroups.unplaced} originUnconfirmed onOpen={onSelectSubAgent} expandedIds={openSubAgentIds} onExpandedChange={setSubAgentExpanded} />
+        )}
+        {transcriptCleared && (
           <div className="flex flex-col items-center gap-2 py-20 text-center">
             <BrandMark className="size-10 text-primary" />
             <p className="text-sm text-muted-foreground">{uiText("start_a_new_conversation_bab6ab18")}</p>
