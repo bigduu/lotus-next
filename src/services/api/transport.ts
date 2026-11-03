@@ -495,15 +495,17 @@ export class HttpTransport {
   }
 
   /** Same cancellation/deadline kernel with an explicit zero-retry budget. */
-  requestOnce(input: string | URL, init: RequestInit = {}): Promise<Response> {
-    return this.execute(input, init, 1);
+  requestOnce(input: string | URL, init: RequestInit = {}, logicalTimeoutMs?: number): Promise<Response> {
+    return this.execute(input, init, 1, logicalTimeoutMs);
   }
 
   private async execute(
     input: string | URL,
     init: RequestInit,
     configuredAttempts: number,
+    logicalTimeoutMs = this.logicalTimeoutMs,
   ): Promise<Response> {
+    assertPositiveFinite(logicalTimeoutMs, "logicalTimeoutMs");
     assertCanonicalInput(input);
     let snapshot: RequestInitSnapshot;
     try {
@@ -519,7 +521,7 @@ export class HttpTransport {
       !hasOneShotBody(snapshot.body)
         ? configuredAttempts
         : 1;
-    const context = createCancellationContext(snapshot.callerSignal, this.logicalTimeoutMs);
+    const context = createCancellationContext(snapshot.callerSignal, logicalTimeoutMs);
     const requestInit: RequestInit = Object.freeze({
       ...snapshot.requestInit,
       signal: context.signal,
