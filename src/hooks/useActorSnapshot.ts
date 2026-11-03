@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react"
 import { isApiError, NetworkRequestError, RequestTimeoutError } from "@services/api/errors"
 import { actorSnapshotRegresses, actorTreeCursorCovers, getActorSnapshot, type ActorSubtreeSnapshot } from "@services/chat/actorSnapshot"
 import { subscribeActor, subscribeActorTree } from "@services/chat/v2Stream"
+import { renderProbe, useRenderProbe } from "@/lib/renderProbe"
 
 export type ActorSnapshotGapReason = "transport_gap" | "scope_mismatch" | "activation_mismatch" | "snapshot_regression"
 
@@ -35,6 +36,7 @@ function retryableSnapshotFailure(error: unknown): boolean {
 /** A public snapshot view with one selected or previewed Actor interest. */
 export function useActorSnapshot(rootId: string | null, active: boolean, interestedActorId: string | null = null, descendantCountHint: number | null = null) {
   useUiLocale()
+  useRenderProbe("hook.useActorSnapshot")
   const [state, setState] = useState<SnapshotState>({ rootId: null, snapshot: null, loading: false, error: null, gapReason: null, gapActorId: null })
   const generation = useRef(0)
   const request = useRef<AbortController | null>(null)
@@ -58,6 +60,7 @@ export function useActorSnapshot(rootId: string | null, active: boolean, interes
   const refresh = useCallback(async () => {
     const current = scope.current
     if (!current.rootId || !current.active) return
+    renderProbe.count("actorSnapshot.read")
     const id = current.rootId
     const version = ++generation.current
     if (retryTimer.current !== null) { clearTimeout(retryTimer.current); retryTimer.current = null }

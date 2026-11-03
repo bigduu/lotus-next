@@ -92,11 +92,19 @@ export function sessionHasLiveWork(
   session: {
     isRunning?: boolean
     messages?: readonly Message[]
+    /**
+     * The server's own count of this session's executing children
+     * (`SessionSummary.running_child_count`). A delegating Root yields, so
+     * `isRunning` can read `false` mid-hand-off; unlike the local `execution`
+     * entry this is also known for a session this client never opened.
+     */
+    runningChildCount?: number
   },
   execution: SessionExecutionState | undefined,
   backgroundBash: Readonly<Record<string, unknown>>,
 ): boolean {
   if (session.isRunning) return true
+  if ((session.runningChildCount ?? 0) > 0) return true
   if (execution) {
     if (isBusyPhase(execution.phase)) return true
     if (execution.children.runningCount > 0) return true

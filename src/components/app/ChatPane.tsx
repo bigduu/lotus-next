@@ -3,10 +3,12 @@ import { backgroundExecWaitActive } from "@/components/chat/runtimeNotices"
 import { useLiveBootstrapRetry } from "@/hooks/useLiveBootstrapRetry"
 import { useSessionDrop } from "@/hooks/useSessionDrop"
 import type { ComposerInputHandle } from "@/components/chat/ComposerEditor"
-import { uiText, useUiLocale } from "@shared/i18n/ui"
+import { uiLanguage, uiText, useUiLocale } from "@shared/i18n/ui"
 import { useMarkSessionRead } from "@/lib/sessionReadState"
+import { useRenderProbe } from "@/lib/renderProbe"
 import { recordSessionUserInput } from "@/lib/sidebarSessionOrder"
 import { useMediaQuery } from "@shared/hooks/useMediaQuery"
+import { isTerminalRunStatus } from "@shared/store/appStore/slices/executionStateSlice"
 import { lazy, Suspense, useCallback, useEffect, useId, useMemo, useRef, useState } from "react"
 import { createPortal } from "react-dom"
 import {
@@ -37,7 +39,9 @@ import { useAppStore, selectChildren } from "@shared/store/appStore"
 import { agentClient } from "@services/chat/AgentService"
 import { commandService, type CommandItem } from "@services/command"
 import { prepareWorkflowSelection, workflowUnavailableReason, type TypedWorkflowDraft, type WorkflowSelection } from "@services/command/workflowCatalog"
-import { getErrorMessage } from "@services/api/errors"
+import { getErrorMessage, isApiError } from "@services/api/errors"
+import { tokenBudgetRevision } from "@shared/store/appStore/slices/tokenBudgetSlice"
+import { mapTokenBudgetUsage } from "@shared/types/tokenBudget"
 import { useSubAgentView } from "@/hooks/useSubAgentView"
 import { useProviderStore } from "@shared/store/appStore/slices/providerSlice"
 import { getRuntimeModelIds, resolveNewChatModelRef } from "@shared/types/providerConfig"
@@ -124,6 +128,7 @@ type EnvironmentPreference = "auto" | "open" | "closed"
 
 const MESSAGE_WORKSPACE_WIDTH = 1152
 const ENVIRONMENT_OCCUPIED_WIDTH = 332
+const COMPACT_COMMAND = "/compact"
 
 // Only auto-open Environment when a 72rem chat pane still fits beside it.
 // Reserve its space in the layout so the chat can expand without being shifted
@@ -246,6 +251,7 @@ export function ChatPane({
   pageVisible?: boolean
 }) {
   useUiLocale()
+  useRenderProbe("app.ChatPane")
   const historyBlocked = !!secondary?.historyRead && secondary.historyRead.status !== "ready"
   const {
     chats,
@@ -299,9 +305,28 @@ export function ChatPane({
     && backgroundExecWaitActive(
       (currentChat?.messages ?? []).map((m) => ({ metadata: (m as { metadata?: { runtime_kind?: unknown } }).metadata, content: "content" in m ? m.content : undefined })),
     )
+  // Delegation keeps the run live from the user's perspective for the same
+  // reason: the Root yields while its children execute, so `is_running` can read
+  // `false` during the hand-off. `runningChildCount` is the server's own count of
+  // executing children, so the transcript keeps its running presentation (active
+  // process row, no false "finished" reading) and agrees with the sidebar dot,
+  // which already treats this as live work.
+  //
+  // Deliberately narrower than `currentlyRunning`: Stop and the composer input
+  // lock stay tied to `currentlyRunning`, because a yielded Root has no runner to
+  // cancel — offering Stop there would only fail.
+  //
+  // A terminal status always wins, exactly as `applySummaryInner` decides it: a
+  // lingering child count must never keep a finished parent presented (and
+  // controlled) as an active run, which would suppress its error/diagnostic
+  // surface and route ordinary submissions into the queue.
+  const delegationWaiting = (currentChat?.runningChildCount ?? 0) > 0
+    && currentChat?.isRunning !== true
+    && !isTerminalRunStatus(currentChat?.lastRunStatus)
   const currentlyRunning = currentChat?.isRunning === true || (sending && streaming !== null) || backgroundExecWaiting
-  const managedHistoryStale = useAppStore((state) => currentSessionId
-    ? state.managedHistoryBindings?.[currentSessionId]?.status === "stale" : false)
+  const managedHistoryStatus = useAppStore((state) => currentSessionId
+    ? state.managedHistoryBindings?.[currentSessionId]?.status : undefined)
+  const managedHistoryStale = managedHistoryStatus === "stale"
   const visibleSendFailure = sendFailure?.sessionId === currentSessionId ? sendFailure : null
   const persistedRunError = !visibleSendFailure
     && !currentlyRunning
@@ -431,6 +456,17 @@ export function ChatPane({
   const [dragOver, setDragOver] = useState(false)
   const [goalSaving, setGoalSaving] = useState(false)
   const goalRequestActive = useRef(false)
+  const [compactingSessions, setCompactingSessions] = useState<ReadonlySet<string>>(() => new Set())
+  // The ref claims immediately. Render state follows the selected session.
+  const compactionRequests = useRef(compactingSessions)
+  const compacting = Boolean(currentSessionId && compactingSessions.has(currentSessionId))
+  const setCompactionPending = (id: string, pending: boolean) => {
+    const sessions = new Set(compactionRequests.current)
+    if (pending) sessions.add(id)
+    else sessions.delete(id)
+    compactionRequests.current = sessions
+    if (mountedRef.current) setCompactingSessions(sessions)
+  }
   const [selectedSkill, setSelectedSkill] = useState<SkillDefinition | null>(null)
   // Workflow commands for the slash menu; the picked one expands into the
   // message on send (content + user input).
@@ -538,7 +574,7 @@ export function ChatPane({
   const clearInputReasoningEffort = useAppStore((s) => s.clearInputReasoningEffort)
   const rootMode = useRootThinkingMode({
     sessionId: currentSessionId, draftKey, ordinarySelection: reasoningSelection, root: rootAuthority,
-    disabled: submissionPending || currentlyRunning || queue.busy || queue.hasUnconfirmed,
+    disabled: submissionPending || compacting || currentlyRunning || queue.busy || queue.hasUnconfirmed,
   })
   const rootSessionUnsafe = () => rootMode.busy || rootMode.blocked
     || Boolean(currentSessionId && getRootModeFenceState(currentSessionId) !== "clear")
@@ -551,7 +587,7 @@ export function ChatPane({
     ? currentChat?.config?.model_ref?.model || currentChat?.config?.model || defaultChatModel || ""
     : resolveNewChatModelRef(providerSnapshot, selectedModel)?.model || ""
   const [modelSaving, setModelSaving] = useState(false)
-  const modelControlDisabled = modelSaving || currentlyRunning || submissionPending
+  const modelControlDisabled = modelSaving || compacting || currentlyRunning || submissionPending
     || queue.busy || queue.hasUnconfirmed
   const handleModelChange = async (model: string) => {
     if (modelControlDisabled || model === activeModel) return
@@ -734,17 +770,91 @@ export function ChatPane({
       })
   }, [slashQuery])
 
+  const compactionUnavailableReason = () => {
+    if (!currentSessionId) return uiText("compact_open_session")
+    if (rootMode.child || managedHistoryStatus || (currentChat && isDefaultSupervisor(currentChat))
+      || ticketScope?.binding.supervisor_session_id === currentSessionId) return uiText("compact_root_only")
+    if (executionBlocked || isSessionExecutionBlocked(currentSessionId) || historyBlocked
+      || rootSessionUnsafe()) return uiText("compact_session_unavailable")
+    if (currentlyRunning || delegationWaiting || currentChat?.lastRunStatus === "suspended"
+      || pendingApproval || pendingQuestion || questionLoading || questionSubmitting
+      || submissionActiveRef.current || goalRequestActive.current || compactionRequests.current.has(currentSessionId)
+      || submissionPending
+      || modelSaving || queue.busy || queue.hasUnconfirmed || queue.pending.length
+      || ticketIngress.busy || pendingTicketMessage) return uiText("compact_wait_for_session")
+    if (attachments.length || selectedSkill || selectedWorkflow || typedWorkflow) {
+      return uiText("compact_send_alone")
+    }
+    return null
+  }
+
+  const compactDraft = (revision: number, fromMenu = false) => {
+    const unavailable = compactionUnavailableReason()
+    if (!currentSessionId || unavailable) {
+      if (unavailable) showToast(unavailable)
+      return
+    }
+    const sessionId = currentSessionId
+    let commandRevision = revision
+    if (fromMenu) {
+      if (!useAppStore.getState().setInputContentIfRevision(draftKey, revision, COMPACT_COMMAND)) return
+      const normalized = useAppStore.getState().inputStates[draftKey]
+      if (normalized?.content !== COMPACT_COMMAND) return
+      commandRevision = normalized.contentRevision
+      menuDraftRef.current = { key: draftKey, text: COMPACT_COMMAND }
+    }
+    const tokenRevision = tokenBudgetRevision(useAppStore.getState, sessionId)
+    setCompactionPending(sessionId, true)
+    setMenusDismissed(true)
+    composerInputRef.current?.focus()
+    void agentClient.compactSessionContext(sessionId).then(async (receipt) => {
+      const store = useAppStore.getState()
+      store.setInputContentIfRevision(draftKey, commandRevision, "")
+      if (receipt.status === "unchanged") {
+        if (mountedRef.current) showToast(uiText("compact_context_unchanged"))
+        return
+      }
+      const currentTokenRevision = tokenBudgetRevision(useAppStore.getState, sessionId)
+      const usage = mapTokenBudgetUsage(receipt.token_usage)
+      if (usage && tokenRevision.usage === currentTokenRevision.usage) {
+        store.updateTokenUsage(sessionId, usage, { fromSnapshot: true })
+      }
+      if (tokenRevision.truncation === currentTokenRevision.truncation) {
+        store.setTruncationInfo(sessionId, receipt.token_usage.truncation_occurred,
+          receipt.token_usage.segments_removed, { fromSnapshot: true })
+      }
+      if (mountedRef.current) {
+        const percent = new Intl.NumberFormat(uiLanguage(), { maximumFractionDigits: 1 })
+        showToast(uiText("compact_context_applied", {
+          before: percent.format(receipt.usage_before_percent),
+          after: percent.format(receipt.usage_after_percent),
+        }))
+      }
+      try { await store.loadChatHistory(sessionId, { mode: "monotonic" }) }
+      catch { /* The command receipt already confirms the durable compaction. */ }
+    }, (error) => {
+      observeSessionExecutionConflict(sessionId, error)
+      if (mountedRef.current) showToast(uiText(isApiError(error) && error.status === 404
+        ? "compact_context_not_found" : "compact_context_unconfirmed"), "error", getErrorMessage(error))
+    }).finally(() => setCompactionPending(sessionId, false))
+  }
+
   const submit = () => {
+    const storeAtSubmit = useAppStore.getState()
+    const draftAtSubmit = storeAtSubmit.inputStates[draftKey]
+    const text = draftAtSubmit?.content ?? ""
+    if (text.trim().toLowerCase() === COMPACT_COMMAND) {
+      compactDraft(draftAtSubmit?.contentRevision ?? 0)
+      return
+    }
     // Keep an in-flight admission from capturing or clearing a second draft.
-    if (submissionActiveRef.current || executionBlocked || isSessionExecutionBlocked(currentSessionId) || historyBlocked || submissionPending || modelSaving || queue.busy || ticketIngress.busy || rootMode.busy || goalRequestActive.current) return
+    if (submissionActiveRef.current || executionBlocked || isSessionExecutionBlocked(currentSessionId) || historyBlocked || submissionPending || modelSaving || queue.busy || ticketIngress.busy || rootMode.busy || goalRequestActive.current
+      || (currentSessionId && compactionRequests.current.has(currentSessionId))) return
     if (semanticComposer && !tickets.canSendIngress) { showToast(uiText("ticket_the_ticket_connection_or_write_permission_is__c3da124f"), "error"); return }
     if (rootSessionUnsafe()) {
       setRootModeConflict(uiText("the_root_permission_change_is_unconfirmed_sending_and_e_a75a6b4f"))
       return
     }
-    const storeAtSubmit = useAppStore.getState()
-    const draftAtSubmit = storeAtSubmit.inputStates[draftKey]
-    const text = draftAtSubmit?.content ?? ""
     const goalCommand = !selectedWorkflow && !typedWorkflow && !selectedSkill && attachments.length === 0
       ? /^\/goal(?:\s+([\s\S]*))?$/i.exec(text.trim()) : null
     if (goalCommand && !pendingTicketMessage && (currentSessionId || !goalCommand[1]?.trim())) {
@@ -1235,9 +1345,10 @@ export function ChatPane({
           mergedSubAgents={mergedSubAgents}
           subAgentError={subAgentView.error}
           onRefreshSubAgents={() => { void subAgentView.refresh() }}
-          sending={currentlyRunning}
+          sending={currentlyRunning || delegationWaiting}
           latestRunFinished={
             !currentlyRunning &&
+            !delegationWaiting &&
             streamPhase === null &&
             currentChat?.lastRunStatus === "completed"
           }
@@ -1380,6 +1491,9 @@ export function ChatPane({
           )}
           <div className="shrink-0" hidden={historyBlocked} inert={historyBlocked} data-history-composer-blocked={historyBlocked}>
           <ContextCompressionNotice feedback={contextCompression} />
+          {compacting ? (
+            <p role="status" className="mx-4 text-xs text-muted-foreground">{uiText("compact_in_progress")}</p>
+          ) : null}
           <Composer
           draft={draft}
           draftKey={draftKey}
@@ -1476,7 +1590,7 @@ export function ChatPane({
               />
             </>
           )}
-          submissionPending={submissionPending || preparationPending || goalSaving || queue.busy || ticketIngress.busy || modelSaving || rootMode.busy}
+          submissionPending={submissionPending || preparationPending || goalSaving || compacting || queue.busy || ticketIngress.busy || modelSaving || rootMode.busy}
           inputRef={composerInputRef}
           attachments={attachments}
           onAddFiles={(files) => void addFiles(files)}
@@ -1495,6 +1609,13 @@ export function ChatPane({
           onOpenCatalog={() => openWorkflowPicker("composer")}
           onPickCatalog={() => { openWorkflowPicker("composer"); if (slashQuery !== null) setDraft("") }}
           onPickGoal={currentSessionId ? () => { launchWorkbench(onOpenInspector); setDraft(""); setMenusDismissed(true) } : undefined}
+          onPickCompact={() => {
+            const latest = useAppStore.getState().inputStates[draftKey]
+            if (currentDraftKeyRef.current === draftKey && latest?.content === draft) {
+              compactDraft(latest.contentRevision ?? 0, true)
+            }
+          }}
+          compactUnavailable={compactionUnavailableReason()}
           slashQuery={slashQuery}
           onMentionQueryChange={setAtQuery}
           displayWorkspace={displayWorkspace}

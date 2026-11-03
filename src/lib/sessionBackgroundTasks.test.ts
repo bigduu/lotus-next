@@ -88,6 +88,15 @@ describe("sidebar live-work predicate", () => {
     expect(sessionHasLiveWork({ isRunning: true, messages: [] }, undefined, {})).toBe(true)
   })
 
+  it("counts the server's running children with no local execution entry", () => {
+    // A Root yields while it delegates, so `is_running` can read false during the
+    // hand-off. `running_child_count` is the server's own truth, and unlike the
+    // local `execution` entry it is available for a session never opened here.
+    expect(sessionHasLiveWork({ isRunning: false, runningChildCount: 2 }, undefined, {})).toBe(true)
+    expect(sessionHasLiveWork({ isRunning: false, runningChildCount: 1 }, execution("idle"), {})).toBe(true)
+    expect(sessionHasLiveWork({ isRunning: false, runningChildCount: 0 }, undefined, {})).toBe(false)
+  })
+
   it("does not classify a session this client never engaged with", () => {
     // No execution entry: nothing has been observed for it, so a transcript
     // launch alone must not pulse forever (BashCompleted replays on observe).

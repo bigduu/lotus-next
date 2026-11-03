@@ -908,6 +908,75 @@ describe("subagent transcript provenance", () => {
 })
 
 
+describe("cleared transcript subagent history", () => {
+  const systemOnly: Message[] = [
+    { id: "retained-system", role: "system", content: "cleared conversation", createdAt: "2026-11-02T00:00:00Z" },
+  ]
+  const children = { "child-1": { status: "completed" }, "child-2": { status: "error" } }
+  const renderCleared = (messages: Message[], agents: Record<string, { status: string }>) => {
+    const host = document.createElement("div"); document.body.appendChild(host)
+    const root = createRoot(host); mountedRoots.push(root)
+    act(() => {
+      root.render(
+        <MessageList
+          scrollRef={createRef()} contentRef={createRef()} onScroll={vi.fn()}
+          messages={messages} mergedSubAgents={agents} sending={false}
+          latestRunFinished={true} streaming={null} streamingActive={false}
+          streamingReasoning={null} liveSegments={[]} streamStatus={null}
+          pendingUserText={null} forking={false}
+          onSelectSubAgent={vi.fn()} onPreviewImage={vi.fn()} onRegenerate={vi.fn()}
+          onFork={vi.fn()} onDelete={vi.fn()} onEditMessage={vi.fn()}
+        />,
+      )
+    })
+    return host
+  }
+  it("folds cleared-transcript children into one collapsed history line that expands to the cards", () => {
+    const host = renderCleared(systemOnly, children)
+    // Collapsed by default: one line, no stacked cards, empty state still visible.
+    const entry = host.querySelector<HTMLElement>("[data-cleared-subagents]")
+    expect(entry).not.toBeNull()
+    expect(host.querySelector("[data-subagent-group]")).toBeNull()
+    const toggle = entry!.querySelector<HTMLButtonElement>("[data-cleared-subagents-toggle]")!
+    expect(toggle.getAttribute("aria-expanded")).toBe("false")
+    expect(entry!.querySelector("[data-cleared-subagents-brief]")?.textContent)
+      .toBe(uiText("cleared_session_subagents", { count: 2 }))
+    expect(host.textContent).toContain(uiText("start_a_new_conversation_bab6ab18"))
+
+    // Expanding reveals the same SubAgents card list (shared renderer, no copy).
+    act(() => toggle.click())
+    expect(host.querySelector<HTMLButtonElement>("[data-cleared-subagents-toggle]")!.getAttribute("aria-expanded")).toBe("true")
+    const group = host.querySelector("[data-subagent-group]")
+    expect(group).not.toBeNull()
+    expect([...group!.querySelectorAll("[data-subagent-id]")].map((node) => node.getAttribute("data-subagent-id")))
+      .toEqual(["child-1", "child-2"])
+    expect(host.textContent).toContain(uiText("start_a_new_conversation_bab6ab18"))
+
+    act(() => host.querySelector<HTMLButtonElement>("[data-cleared-subagents-toggle]")!.click())
+    expect(host.querySelector("[data-subagent-group]")).toBeNull()
+    expect(host.querySelector<HTMLButtonElement>("[data-cleared-subagents-toggle]")!.getAttribute("aria-expanded")).toBe("false")
+  })
+  it("keeps the cleared fold off an empty transcript without children", () => {
+    const host = renderCleared([], {})
+    expect(host.querySelector("[data-cleared-subagents]")).toBeNull()
+    expect(host.querySelector("[data-subagent-group]")).toBeNull()
+    expect(host.textContent).toContain(uiText("start_a_new_conversation_bab6ab18"))
+  })
+  it("keeps unplaced cards directly rendered while normal messages exist", () => {
+    const host = renderCleared([
+      { id: "user-1", role: "user", content: "question", createdAt: "2026-11-02T00:00:00Z" },
+      { id: "assistant-1", role: "assistant", type: "text", content: "answer", createdAt: "2026-11-02T00:00:01Z" },
+    ], children)
+    expect(host.querySelector("[data-cleared-subagents]")).toBeNull()
+    const group = host.querySelector("[data-subagent-group]")
+    expect(group).not.toBeNull()
+    expect([...group!.querySelectorAll("[data-subagent-id]")].map((node) => node.getAttribute("data-subagent-id")))
+      .toEqual(["child-1", "child-2"])
+    expect(host.textContent).not.toContain(uiText("start_a_new_conversation_bab6ab18"))
+  })
+})
+
+
 describe("image attachment visibility", () => {
   it("renders each retained acknowledgement as its own image bubble and preview", () => {
     const image = (name: string) => ({ id: name, url: `data:image/png;base64,${name}`, name, size: 1, type: "image/png" })

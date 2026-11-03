@@ -927,6 +927,24 @@ describe("HttpTransport isolation and one-shot path", () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
+  it("extends only the selected one-shot request's deadline", async () => {
+    vi.useFakeTimers();
+    const fetchImplementation = vi.fn<FetchFunction>(() => new Promise(() => {}));
+    const transport = transportWith(fetchImplementation, { logicalTimeoutMs: 20 });
+    const regular = transport.requestOnce("https://api.example/regular", { method: "POST" })
+      .catch((error: unknown) => error);
+    const long = transport.requestOnce("https://api.example/long", { method: "POST" }, 100)
+      .catch((error: unknown) => error);
+
+    await vi.advanceTimersByTimeAsync(20);
+    await expect(regular).resolves.toBeInstanceOf(RequestTimeoutError);
+    expect(fetchImplementation.mock.calls[1][1]?.signal?.aborted).toBe(false);
+    await vi.advanceTimersByTimeAsync(80);
+    await expect(long).resolves.toBeInstanceOf(RequestTimeoutError);
+    expect(fetchImplementation).toHaveBeenCalledTimes(2);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
   it("requestOnce never retries even for a safe method", async () => {
     const original = new Error("offline");
     const fetchImplementation = vi.fn<FetchFunction>().mockRejectedValue(original);

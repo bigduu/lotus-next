@@ -1,5 +1,5 @@
 import { uiText, useUiLocale, uiLanguage } from "@shared/i18n/ui"
-import { useId, useRef, useState, useEffect, type Ref, type ReactNode } from "react"
+import { lazy, Suspense, useId, useRef, useState, useEffect, type Ref, type ReactNode } from "react"
 import {
   X,
   Paperclip,
@@ -16,7 +16,7 @@ import {
 } from "lucide-react"
 import { useShallow } from "zustand/react/shallow"
 import { Button } from "@/components/ui/button"
-import { ComposerEditor, type ComposerInputHandle, type ComposerFocusSnapshot, type FileSuggestion } from "@/components/chat/ComposerEditor"
+import type { ComposerInputHandle, ComposerFocusSnapshot, FileSuggestion } from "@/components/chat/ComposerEditor"
 import { composerControlClassName, composerIconButtonClassName } from "@/components/chat/composerStyles"
 import {
   DropdownMenu,
@@ -35,6 +35,12 @@ import type { WorkflowCatalogState } from "@/components/chat/useWorkflowCatalog"
 import type { CommandItem } from "@services/command"
 import type { GuidanceMode } from "@services/chat/guidance"
 import type { WorkspaceFileEntry } from "@services/workspace/types"
+
+// The Tiptap editor graph is startup-expensive; keep it behind a dynamic
+// feature entry like Settings/Markdown. Types erase at compile time.
+const ComposerEditor = lazy(() =>
+  import("@/components/chat/ComposerEditor").then((module) => ({ default: module.ComposerEditor })),
+)
 
 /**
  * Base system-prompt preset chip for NEW chats: the selected preset's content
@@ -163,6 +169,8 @@ export function Composer({
   onPickCatalog,
   onOpenCatalog,
   onPickGoal,
+  onPickCompact,
+  compactUnavailable,
   slashQuery,
   onMentionQueryChange,
   displayWorkspace,
@@ -218,6 +226,8 @@ export function Composer({
   onPickCatalog?: () => void
   onOpenCatalog?: () => void
   onPickGoal?: () => void
+  onPickCompact?: () => void
+  compactUnavailable?: string | null
   slashQuery: string | null
   onMentionQueryChange: (query: string | null) => void
   displayWorkspace: string | null | undefined
@@ -320,6 +330,8 @@ export function Composer({
           onPickWorkflow={onPickWorkflow}
           onPickCatalog={onPickCatalog}
           onPickGoal={onPickGoal}
+          onPickCompact={onPickCompact}
+          compactUnavailable={compactUnavailable}
           onDismiss={onDismissMenus}
         />
       )}
@@ -396,7 +408,16 @@ export function Composer({
           {workflowControl}
           {workflowUndoControl}
           <div className="relative">
-            <ComposerEditor
+            <Suspense
+              fallback={
+                <div
+                  data-composer-editor=""
+                  aria-hidden="true"
+                  className="min-h-11 w-full px-2 py-2 text-base"
+                />
+              }
+            >
+              <ComposerEditor
               key={draftKey}
               id={inputId}
               inputRef={inputRef}
@@ -413,6 +434,7 @@ export function Composer({
               title={uiText("enter_to_send_shift_enter_for_a_new_line_b6153e81")}
               placeholder={canQueue ? uiText("type_a_message_to_add_to_the_queue_38c6f67b") : uiText("send_a_message_ae2f86f0")}
             />
+            </Suspense>
           </div>
           <div data-composer-toolbar className="flex flex-wrap items-center gap-1">
             <div className="flex min-w-0 flex-wrap items-center gap-1"

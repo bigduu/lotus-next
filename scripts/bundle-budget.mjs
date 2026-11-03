@@ -126,6 +126,7 @@ const immediateBootstrapNames = new Set(["ErrorBoundary", "Root"])
 const optionalFeatureEntries = Object.freeze([
   { label: "ProjectWorkBoard", source: "src/components/app/ProjectWorkBoard.tsx" },
   { label: "BrowserPane", source: "src/components/app/BrowserPane.tsx" },
+  { label: "ComposerEditor", source: "src/components/chat/ComposerEditor.tsx" },
   { label: "Settings", source: "src/components/chat/Settings.tsx" },
   { label: "StreamdownMarkdown", source: "src/components/chat/StreamdownMarkdown.tsx" },
   { label: "StreamdownMermaid", source: "src/components/chat/StreamdownMermaid.tsx" },
@@ -143,6 +144,7 @@ const optionalFeatureEntries = Object.freeze([
 const forbiddenStartupModulePaths = Object.freeze([
   "src/components/app/ProjectWorkBoard.tsx",
   "src/components/app/BrowserPane.tsx",
+  "src/components/chat/ComposerEditor.tsx",
   "src/components/chat/Settings.tsx",
   "src/components/chat/StreamdownMarkdown.tsx",
   "src/components/chat/StreamdownMermaid.tsx",

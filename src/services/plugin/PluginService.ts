@@ -96,6 +96,15 @@ const parseJianduSetup = (value: unknown): JianduSetupReport => {
   if (client !== null && (!isRecord(client) || !absoluteHostPath(client.command, host.os) ||
     !Array.isArray(client.args) || client.args.length !== 2 || client.args[0] !== "--data-dir" ||
     !absoluteHostPath(client.args[1], host.os))) return invalid();
+  const action = value.trust_action;
+  if (action !== undefined && action !== null) {
+    if (!isRecord(action) || typeof action.available !== "boolean" || !nullableString(action.reason) ||
+      !Number.isSafeInteger(action.expected_revision) || (action.expected_revision as number) < 1 ||
+      !isRecord(action.publisher) || !nonemptyString(action.publisher.label) || action.publisher.algorithm !== "ed25519" ||
+      typeof action.publisher.public_key !== "string" || !/^[a-f\d]{64}$/i.test(action.publisher.public_key)) return invalid();
+    if (action.available && (action.reason !== null || !host.supported || release === null ||
+      trust.trusted || trust.reason !== "publisher_not_trusted" || installed.state === "installing")) return invalid();
+  }
   const eligible = host.supported && trust.trusted && release !== null;
   if (install.available && (!eligible || installed.state !== "missing")) return invalid();
   if ((installed.state === "ready") !== (client !== null) ||
@@ -182,6 +191,15 @@ export const novaInstallReason = (error: unknown): string | null => {
 };
 
 export class PluginService {
+  async trustOfficialJiandu(report: JianduSetupReport): Promise<void> {
+    const action = parseJianduSetup(report).trust_action;
+    if (!action?.available) throw new Error("Jiandu publisher trust could not be verified.");
+    await apiClient.post<unknown>("plugins/official/jiandu/trust", {
+      expected_revision: action.expected_revision,
+      expected_public_key: action.publisher.public_key,
+    });
+  }
+
   async getNovaAppSetup(): Promise<NovaAppSetupReport> {
     return parseNovaAppSetup(await apiClient.get<unknown>("plugins/nova/app"));
   }
