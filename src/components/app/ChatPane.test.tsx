@@ -44,7 +44,9 @@ type State = {
   clearInputThinkingModeIfRevision(id: string, revision: number): boolean
   changeSessionReasoningEffort(id: string, effort: ReasoningEffort | null): Promise<void>
   refreshChatsNow(): Promise<void>
-  loadChatHistory(id: string): Promise<void>
+  loadChatHistory: ReturnType<typeof vi.fn>
+  updateTokenUsage: ReturnType<typeof vi.fn>
+  setTruncationInfo: ReturnType<typeof vi.fn>
 }
 const runtime = vi.hoisted(() => ({
   state: {} as State, listeners: new Set<() => void>(), composer: null as ComposerProps | null,
@@ -126,6 +128,7 @@ vi.mock("@services/chat/AgentService", () => ({ isThinkingMode: (v: unknown) => 
   getSession: vi.fn(),
   selectRootMode: vi.fn(),
   recoverRootMode: vi.fn(),
+  compactSessionContext: vi.fn(),
   sendMessage: vi.fn().mockImplementation(async (request) => ({ session_id: request.session_id, goal_command: { action: "set_prompt", should_execute: true } })),
   execute: vi.fn().mockResolvedValue(undefined),
 } }))
@@ -334,6 +337,9 @@ beforeEach(() => {
   vi.mocked(agentClient.sendMessage).mockReset().mockImplementation(async (request) => ({
     session_id: request.session_id, goal_command: { action: "set_prompt", should_execute: true },
   }) as Awaited<ReturnType<typeof agentClient.sendMessage>>)
+  vi.mocked(agentClient.compactSessionContext).mockReset().mockImplementation(async (session_id) => ({
+    session_id, status: "unchanged",
+  }))
   vi.mocked(agentClient.execute).mockReset().mockResolvedValue({ session_id: "root-session", status: "started", events_url: "" })
   runtime.queueSend.mockClear()
   runtime.queueSend.mockResolvedValue({ kind: "accepted", operationId: 0, sessionId: "queue-chat", navigated: false })
@@ -368,6 +374,7 @@ beforeEach(() => {
     selectedModel: "test-model",
     refreshChatsNow: vi.fn().mockResolvedValue(undefined),
     loadChatHistory: vi.fn().mockResolvedValue(undefined),
+    updateTokenUsage: vi.fn(), setTruncationInfo: vi.fn(),
     changeSessionReasoningEffort: vi.fn().mockResolvedValue(undefined),
     changeSessionModel: vi.fn().mockResolvedValue(undefined),
     setSelectedModel: (model) => { runtime.state.selectedModel = model; notify() },
@@ -1875,6 +1882,131 @@ it("handles a goal command without sending it to the conversation", async () => 
   expect(agentClient.sendMessage).toHaveBeenCalledWith({ session_id: "goal-chat", model: "", message: "/goal 完成测试并说明结果" })
   expect(send).not.toHaveBeenCalled()
   expect(input.value).toBe("")
+})
+
+it("dispatches one compaction request and leaves a newer draft intact", async () => {
+  const request = deferred<Awaited<ReturnType<typeof agentClient.compactSessionContext>>>()
+  vi.mocked(agentClient.compactSessionContext).mockReturnValueOnce(request.promise)
+  const send = vi.fn<Send>()
+  const input = await mount(send, "compact-chat")
+  change(input, " /COMPACT  ")
+  act(() => {
+    composer().onSubmit()
+    composer().onSubmit()
+  })
+  expect(agentClient.compactSessionContext).toHaveBeenCalledExactlyOnceWith("compact-chat")
+  expect(composer().submissionPending).toBe(true)
+  expect(document.body.textContent).toContain(uiText("compact_in_progress"))
+  expect(send).not.toHaveBeenCalled()
+  expect(agentClient.sendMessage).not.toHaveBeenCalled()
+  expect(agentClient.execute).not.toHaveBeenCalled()
+  expect(runtime.queueSend).not.toHaveBeenCalled()
+
+  change(input, "new message")
+  await act(async () => request.resolve({
+    session_id: "compact-chat", status: "compacted",
+    usage_before_percent: 73, usage_after_percent: 24.5,
+    token_usage: { total_tokens: 24500, max_context_tokens: 100000, system_tokens: 500, summary_tokens: 500,
+      window_tokens: 23500, budget_limit: 96000, truncation_occurred: false, segments_removed: 0 },
+  }))
+
+  expect(composer().submissionPending).toBe(false)
+  expect(input.value).toBe("new message")
+  expect(runtime.state.loadChatHistory).toHaveBeenCalledWith("compact-chat", { mode: "monotonic" })
+  expect(runtime.state.updateTokenUsage).toHaveBeenCalledWith("compact-chat", expect.objectContaining({
+    totalTokens: 24500, maxContextTokens: 100000,
+  }), { fromSnapshot: true })
+  expect(runtime.toastProps?.toast?.message).toBe(uiText("compact_context_applied", { before: "73", after: "24.5" }))
+})
+
+it("preserves the compaction draft if the backend route is unavailable", async () => {
+  vi.mocked(agentClient.compactSessionContext).mockRejectedValueOnce(new ApiError("not found", 404, "Not Found"))
+  const send = vi.fn<Send>()
+  const input = await mount(send, "compact-chat")
+  change(input, "/compact")
+  await act(async () => composer().onSubmit())
+  expect(agentClient.compactSessionContext).toHaveBeenCalledOnce()
+  expect(send).not.toHaveBeenCalled()
+  expect(runtime.toastProps?.toast).toMatchObject({ kind: "error", message: uiText("compact_context_not_found") })
+  expect(input.value).toBe("/compact")
+})
+
+it("keeps a failed compact menu selection ready to retry as a command", async () => {
+  const send = vi.fn<Send>()
+  vi.mocked(agentClient.compactSessionContext).mockRejectedValueOnce(new Error("offline"))
+  const input = await mount(send, "compact-chat")
+  change(input, "/co")
+  await act(async () => composer().onPickCompact?.())
+  expect(agentClient.compactSessionContext).toHaveBeenCalledExactlyOnceWith("compact-chat")
+  expect(input.value).toBe("/compact")
+  expect(runtime.toastProps?.toast?.message).toBe(uiText("compact_context_unconfirmed"))
+
+  await act(async () => composer().onSubmit())
+  expect(agentClient.compactSessionContext).toHaveBeenCalledTimes(2)
+  expect(runtime.state.loadChatHistory).not.toHaveBeenCalled()
+  expect(runtime.toastProps?.toast?.message).toBe(uiText("compact_context_unchanged"))
+  expect(send).not.toHaveBeenCalled()
+  expect(input.value).toBe("")
+})
+
+it.each(["running", "attachment"] as const)("keeps /compact local when blocked by %s", async (block) => {
+  const send = vi.fn<Send>()
+  const input = await mount(send, "compact-chat", block === "running")
+  if (block === "attachment") await addImage("keep.png")
+  change(input, "/compact")
+  await act(async () => composer().onSubmit())
+  const reason = uiText(block === "running" ? "compact_wait_for_session" : "compact_send_alone")
+  expect(composer().compactUnavailable).toBe(reason)
+  expect(runtime.toastProps?.toast?.message).toBe(reason)
+  expect(agentClient.compactSessionContext).not.toHaveBeenCalled()
+  expect(send).not.toHaveBeenCalled()
+  expect(runtime.queueSend).not.toHaveBeenCalled()
+  expect(input.value).toBe("/compact")
+  if (block === "attachment") expect(composer().attachments).toHaveLength(1)
+})
+
+it.each(["child", "managed", "supervisor"] as const)("blocks compaction for a known %s session", async (kind) => {
+  const send = vi.fn<Send>()
+  const id = kind === "supervisor" ? "bamboo-default-supervisor" : "compact-chat"
+  if (kind === "managed") runtime.state.managedHistoryBindings = { [id]: { status: "active" } }
+  if (kind === "child") vi.mocked(agentClient.getSession).mockResolvedValueOnce({
+    session: { id, kind: "child" },
+  } as Awaited<ReturnType<typeof agentClient.getSession>>)
+  const input = await mount(send, id)
+  change(input, "/compact")
+  await act(async () => composer().onSubmit())
+  expect(agentClient.compactSessionContext).not.toHaveBeenCalled()
+  expect(send).not.toHaveBeenCalled()
+  expect(input.value).toBe("/compact")
+  expect(composer().compactUnavailable).toBe(uiText("compact_root_only"))
+})
+
+it("keeps compaction feedback and draft clearing scoped to the originating session", async () => {
+  const request = deferred<Awaited<ReturnType<typeof agentClient.compactSessionContext>>>()
+  vi.mocked(agentClient.compactSessionContext).mockReturnValueOnce(request.promise)
+  const send = vi.fn<Send>().mockResolvedValue({ kind: "blocked" })
+  const container = document.body.appendChild(document.createElement("div"))
+  const root = createRoot(container); roots.push(root)
+  const render = (id: string) => act(async () => {
+    root.render(<ChatPane chat={createChat(send, id)} pickedWorkspace="/picked"
+      onOpenWorkspacePicker={vi.fn()} onOpenInspector={vi.fn()} splitOpen={false}
+      onToggleSplit={vi.fn()} onOpenSidebar={vi.fn()} sidebarCollapsed={false} />)
+  })
+  await render("origin")
+  change(container.querySelector("textarea")!, "/compact")
+  act(() => composer().onSubmit())
+  expect(agentClient.compactSessionContext).toHaveBeenCalledExactlyOnceWith("origin")
+
+  await render("other")
+  change(container.querySelector("textarea")!, "draft in other session")
+  expect(document.body.textContent).not.toContain(uiText("compact_in_progress"))
+  expect(composer().submissionPending).toBe(false)
+  await act(async () => composer().onSubmit())
+  expect(send).toHaveBeenCalledExactlyOnceWith("draft in other session", expect.anything())
+  await act(async () => request.resolve({ session_id: "origin", status: "unchanged" }))
+  expect(runtime.state.inputStates.origin.content).toBe("")
+  expect(container.querySelector("textarea")?.value).toBe("draft in other session")
+  expect(runtime.toastProps?.toast).toBeNull()
 })
 
 it("retains a goal command when saving fails", async () => {

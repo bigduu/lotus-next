@@ -181,6 +181,19 @@ export interface TokenBudgetUsage {
   };
 }
 
+export type SessionCompactionReceipt =
+  | { session_id: string; status: "unchanged" }
+  | {
+      session_id: string;
+      status: "compacted";
+      usage_before_percent: number;
+      usage_after_percent: number;
+      token_usage: TokenBudgetUsage;
+    };
+
+const nonnegativeFinite = (value: unknown): value is number =>
+  typeof value === "number" && Number.isFinite(value) && value >= 0;
+
 export interface ContextSummaryInfo {
   summary: string;
   messages_summarized: number;
@@ -1588,6 +1601,26 @@ export class AgentClient {
     if (receipt?.success !== true || receipt.session_id !== sessionId) {
       throw new Error("Invalid conversation clear receipt");
     }
+  }
+
+  /** Compress one idle session without submitting a chat turn. */
+  async compactSessionContext(sessionId: string): Promise<SessionCompactionReceipt> {
+    const encodedSessionId = encodeURIComponent(sessionId);
+    // Bamboo bounds summary preparation to five minutes. Allow time for the commit acknowledgement.
+    const receipt = await apiClient.postOnce<SessionCompactionReceipt>(
+      `sessions/${encodedSessionId}/compact`, undefined, { logicalTimeoutMs: 310_000 },
+    );
+    if (receipt?.session_id === sessionId) {
+      if (receipt.status === "unchanged") return receipt;
+      if (receipt.status === "compacted" && nonnegativeFinite(receipt.usage_before_percent)
+        && nonnegativeFinite(receipt.usage_after_percent)) {
+        const usage = receipt.token_usage;
+        if (usage && [usage.total_tokens, usage.system_tokens, usage.summary_tokens,
+          usage.window_tokens, usage.budget_limit, usage.segments_removed].every(nonnegativeFinite)
+          && typeof usage.truncation_occurred === "boolean") return receipt;
+      }
+    }
+    throw new Error("Invalid context compaction receipt");
   }
 
   /**

@@ -13,12 +13,14 @@ afterEach(() => {
   document.body.replaceChildren()
 })
 
-async function mount(query: string, onPickCatalog: () => void, onPickGoal?: () => void) {
+async function mount(query: string, onPickCatalog: () => void, onPickGoal?: () => void,
+  compact: { action?: () => void; unavailable?: string } = {}) {
   const root = createRoot(document.body.appendChild(document.createElement("div")))
   roots.push(root)
   const onPickWorkflow = vi.fn()
   await act(async () => root.render(<SlashMenu inputId="composer" skills={[]} workflows={[]} query={query}
-    onPick={vi.fn()} onPickWorkflow={onPickWorkflow} onPickCatalog={onPickCatalog} onPickGoal={onPickGoal} />))
+    onPick={vi.fn()} onPickWorkflow={onPickWorkflow} onPickCatalog={onPickCatalog} onPickGoal={onPickGoal}
+    onPickCompact={compact.action} compactUnavailable={compact.unavailable} />))
   return { onPickWorkflow }
 }
 
@@ -43,4 +45,26 @@ describe("slash menu catalog entry", () => {
     await act(async () => buttons[0].click())
     expect(goal).toHaveBeenCalledOnce()
   })
+})
+
+it("selects the compact command directly from its name", async () => {
+  const action = vi.fn()
+  const { onPickWorkflow } = await mount("comp", vi.fn(), undefined, { action })
+  const button = document.querySelector<HTMLButtonElement>("button")!
+  expect(button.textContent).toContain("/compact")
+  expect(button.textContent).toContain("压缩当前会话的上下文")
+  await act(async () => button.click())
+  expect(action).toHaveBeenCalledOnce()
+  expect(onPickWorkflow).not.toHaveBeenCalled()
+})
+
+it("gives a disabled exact compact entry without invoking the command", async () => {
+  const action = vi.fn()
+  await mount("compact", vi.fn(), undefined, { action, unavailable: "session is busy" })
+  const buttons = [...document.querySelectorAll<HTMLButtonElement>("button")]
+  expect(buttons).toHaveLength(1)
+  expect(buttons[0].disabled).toBe(true)
+  expect(buttons[0].textContent).toContain("session is busy")
+  await act(async () => buttons[0].click())
+  expect(action).not.toHaveBeenCalled()
 })

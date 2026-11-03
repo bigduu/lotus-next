@@ -169,6 +169,8 @@ export function Composer({
   onPickCatalog,
   onOpenCatalog,
   onPickGoal,
+  onPickCompact,
+  compactUnavailable,
   slashQuery,
   onMentionQueryChange,
   displayWorkspace,
@@ -224,6 +226,8 @@ export function Composer({
   onPickCatalog?: () => void
   onOpenCatalog?: () => void
   onPickGoal?: () => void
+  onPickCompact?: () => void
+  compactUnavailable?: string | null
   slashQuery: string | null
   onMentionQueryChange: (query: string | null) => void
   displayWorkspace: string | null | undefined
@@ -326,6 +330,8 @@ export function Composer({
           onPickWorkflow={onPickWorkflow}
           onPickCatalog={onPickCatalog}
           onPickGoal={onPickGoal}
+          onPickCompact={onPickCompact}
+          compactUnavailable={compactUnavailable}
           onDismiss={onDismissMenus}
         />
       )}
