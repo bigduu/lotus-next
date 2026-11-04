@@ -10,7 +10,29 @@ The existing pinned inspector explicitly requests `assignments` with full covera
 
 The API type now names the existing optional `work_id`, `generation`, `authority_epoch` and `process_stopped` inspector fields. Older backends may omit them; the UI keeps raw locatable refs while current ownership stays unconfirmed. `active_assignment=null` does not prove a process stopped. Only an explicit `process_stopped=true` confirms that historical stop.
 
-No claimed-at, heartbeat, effective-progress, end-reason or server update timestamp is invented. Current Bamboo observation/patrol/recovery HTTP DTOs are unavailable, so those sources remain unsupported. The panel adds no timer, watchdog, diagnosis, model call or state machine. A recovery request/ACK is not observed progress; a failed terminal fact is not acceptance.
+## Runtime snapshot
+
+The selected owner Work detail reads Bamboo's observation API after the board
+and inspector identify the same current Assignment. The read also covers a
+current pointer with an unresolved outcome and a unique stopped attempt linked
+to an exact open yielded Question. Those
+reads rely on the backend to verify the saved runtime evidence. The read sends only
+Project, Work and Assignment IDs. The response must match those IDs, the
+generation, original Assignment authority epoch and exact Ticket commit. An
+unresolved or yielded attempt can retain its original epoch after the writer reopens and
+advances the board snapshot's epoch. It is a one-shot,
+uncached snapshot. Closing or switching details, losing owner access, or
+going offline invalidates the display. The existing refresh and reconnect
+paths obtain a new pinned snapshot before requesting evidence again.
+
+Task entry, heartbeat, effective progress (including the committed sequence)
+and expected wait are independently rendered. Missing facts stay unknown,
+including progress when a heartbeat is available. Wait allowance is a patrol
+diagnostic threshold. It does not establish the next patrol check or a business
+deadline. An unresolved execution outcome is displayed only when the backend
+reports it. Denied and unavailable reads retain unknown facts. Incident and
+recovery history, program and model timing, and observations for historical
+stopped Assignments require separate acceptance.
 
 Going offline invalidates the current association/access display. Reconnect uses the existing board refresh and discards the old pinned details. The fixed snapshot establishes reference provenance, not live physical health.
 
@@ -32,4 +54,4 @@ The original component's full verify reported 172 files / 3457 passing tests, in
 
 Three new parent browser cases use those captured board/inspect responses plus separately labelled controlled Session GET results, with no API writes or provider. Desktop/light and 390px/dark screenshots cover an active exact callback, stopped history with a missing Session, and denied access. The existing startup CSS budget remains 109000 bytes; both feature slices must pass it together.
 
-Planning, manual completion, actual runtime/health observations, patrol incidents and Sprint adapters remain separately gated by their confirmed backend capabilities and evidence.
+Planning, manual completion, patrol incidents and Sprint adapters remain separately gated by their confirmed backend capabilities and evidence.

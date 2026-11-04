@@ -33,16 +33,48 @@ for (const colorScheme of ["light", "dark"] as const) {
         blocked: state === "blocked" ? { reason: "Dependency pending", resume_state: "active" } : null, paused: state === "blocked", active_assignment: "assignment", current_submission: state === "submitted" ? "submission" : null, accepted_submission: null, depends_on: [] },
       stage: ["todo", "doing", "testing", "done", null][index], context: null, adopted_context: null,
     }))
+    let questionSnapshot = false
+    const currentEnvelope = () => questionSnapshot ? { ...envelope, snapshot: { ...snapshot, commit: "yielded-question-snapshot", authority_epoch: 2 } } : envelope
+    const currentRows = () => questionSnapshot ? rows.map((row) => row === rows[1]
+      ? { ...row, ticket: { ...row.ticket, active_assignment: null } } : row) : rows
     await page.route("**/api/v1/projects", (route) => route.fulfill({ json: { projects: [project] } }))
     await page.route("**/api/v1/projects/project-board", (route) => route.fulfill({ json: project }))
-    await page.route("**/api/v1/tickets/project-board", (route) => route.fulfill({ json: { ...envelope, data: { project_id: project.id,
+    await page.route("**/api/v1/tickets/project-board", (route) => route.fulfill({ json: { ...currentEnvelope(), data: { project_id: project.id,
       counts: { todo: 1, doing: 1, testing: 1, done: 1, blocked: 1, cancelled: 1, total: 5 },
-      rows: route.request().postDataJSON().include_cancelled ? rows : rows.slice(0, 4),
+      rows: route.request().postDataJSON().include_cancelled ? currentRows() : currentRows().slice(0, 4),
     } } }))
-    await page.route("**/api/v1/tickets/inspect", (route) => route.fulfill({ json: { ...envelope, data: [{ ticket: rows[2].ticket, requests: [],
-      assignments: [{ id: "assignment", state: "running", runtime: { session_id: "owner-session", run_id: "run-1" }, workspace: null }],
-      submissions: [{ id: "submission", work_id: "work-2", generation: 1, contract_revision: 1, stale: false, artifacts: [], evidence: ["All checks passed"], updated_seq: 10 }],
-    }] } }))
+    await page.route("**/api/v1/tickets/inspect", (route) => {
+      const selected = currentRows().find((row) => row.ticket.id === route.request().postDataJSON().ids[0])!
+      const current = selected.ticket.id === "work-1"
+      const yielded = current && questionSnapshot
+      expect(route.request().postDataJSON().fixed_commit).toBe(currentEnvelope().snapshot.commit)
+      return route.fulfill({ json: { ...currentEnvelope(), data: [{ ticket: selected.ticket,
+        requests: yielded ? [{ id: "question", work_id: "work-1", assignment_id: "assignment", generation: 1, contract_revision: 1,
+          prompt_revision: 1, kind: { kind: "question" }, prompt: "Input needed", status: "open", worker_packet_hash: "a".repeat(64) }] : [],
+        assignments: [{ id: "assignment", state: yielded ? "blocked" : "running", runtime: { session_id: "owner-session", run_id: "run-1" },
+          workspace: null, ...(current ? { work_id: selected.ticket.id, generation: 1, authority_epoch: 1, contract_revision: 1 } : {}),
+          ...(yielded ? { process_stopped: true, awaiting_request: "question" } : {}) }],
+        submissions: selected === rows[2] ? [{ id: "submission", work_id: "work-2", generation: 1, contract_revision: 1,
+          stale: false, artifacts: [], evidence: ["All checks passed"], updated_seq: 10 }] : [],
+      }] } })
+    })
+    const at = Date.parse("2026-11-04T04:30:00Z")
+    let runtimeReads = 0
+    await page.route("**/api/v1/tickets/patrol/observation", (route) => {
+      expect(route.request().method()).toBe("POST")
+      expect(route.request().postDataJSON()).toEqual({ project_id: project.id, work_id: "work-1", assignment_id: "assignment" })
+      runtimeReads++
+      if (runtimeReads === 3) return route.fulfill({ status: 404, json: { error: "Legacy route" } })
+      return route.fulfill({ json: { state: "observed",
+        scope: { project_id: project.id, work_id: "work-1", assignment_id: "assignment", generation: 1, authority_epoch: 1 },
+        ticket_commit: currentEnvelope().snapshot.commit, started_at_ms: questionSnapshot ? null : at - 1000,
+        heartbeat_at_ms: questionSnapshot ? null : at,
+        progress: runtimeReads === 2 ? { sequence: 9, at_ms: at - 500 } : null,
+        expected_wait: runtimeReads === 1 ? null : { kind: questionSnapshot ? "user" : "dependency",
+          issued_at_ms: at, diagnostic_allowance_until_ms: at + 300_000 },
+        execution_outcome_unknown: false,
+      } })
+    })
     await page.route("**/api/v1/tickets/sprints/list", (route) => route.fulfill({ status: 404, json: { error: "Sprint planning is unsupported by this legacy fixture" } }))
     expect(workChunk?.isDynamicEntry).toBe(true)
     let releaseWork!: () => void
@@ -90,7 +122,8 @@ for (const colorScheme of ["light", "dark"] as const) {
     const viewport = page.viewportSize()!
     const columns = await dialog.locator(".project-work-stages").evaluate((element) => element.ownerDocument.defaultView!.getComputedStyle(element).gridTemplateColumns.trim().split(/\s+/).length)
     expect(columns).toBe(viewport.width >= 1280 ? 4 : viewport.width >= 768 ? 2 : 1)
-    expect((await dialog.boundingBox())!.width).toBeCloseTo(Math.min(viewport.width, 1024), 0)
+    // Reopening the lazy dialog starts its scale transition. Measure the settled geometry.
+    await expect.poll(async () => (await dialog.boundingBox())?.width ?? 0).toBeCloseTo(Math.min(viewport.width, 1024), 0)
     await dialog.getByRole("checkbox", { name: "显示已取消" }).focus()
     await expect(boardButton).toHaveAttribute("aria-pressed", "true")
     await expect(boardButton).toHaveClass(/bg-primary/)
@@ -103,13 +136,43 @@ for (const colorScheme of ["light", "dark"] as const) {
     await expect(dialog.getByTestId("project-work-details")).toContainText("All checks passed")
     await expect(dialog.getByTestId("project-work-details")).toContainText("owner-session")
     await dialog.getByRole("button", { name: "关闭详情" }).click()
+    expect(runtimeReads).toBe(0)
+    await dialog.getByTestId("project-work-work-1").click()
+    const runtime = dialog.getByTestId("assignment-observation")
+    const fact = (label: string) => runtime.locator("dl > div").filter({ has: page.getByText(label, { exact: true }) }).locator("dd")
+    await expect(fact("最后心跳").locator("time")).toHaveAttribute("datetime", new Date(at).toISOString())
+    await expect(fact("最后有效进展")).toHaveText("未知")
+    expect(runtimeReads).toBe(1)
+    await info.attach(`project-work-runtime-heartbeat-only-${colorScheme}`, { body: await runtime.screenshot(), contentType: "image/png" })
+    await dialog.getByRole("button", { name: "刷新", exact: true }).click()
+    await expect(fact("最后有效进展").locator("time")).toHaveAttribute("datetime", new Date(at - 500).toISOString())
+    await expect(fact("已核验进展序号")).toHaveText("9")
+    await expect(fact("等待原因")).toHaveText("等待依赖项")
+    await expect(fact("巡检诊断宽限至").locator("time")).toHaveAttribute("datetime", new Date(at + 300_000).toISOString())
+    expect(runtimeReads).toBe(2)
+    await info.attach(`project-work-runtime-progress-and-wait-${colorScheme}`, { body: await runtime.screenshot(), contentType: "image/png" })
+    await dialog.getByRole("button", { name: "刷新", exact: true }).click()
+    await expect(runtime.getByTestId("assignment-observation-status")).toHaveText("当前选择的运行时观测不可用。")
+    await expect(fact("最后心跳")).toHaveText("未知")
+    await expect(fact("最后有效进展")).toHaveText("未知")
+    expect(runtimeReads).toBe(3)
+    questionSnapshot = true
+    await dialog.getByRole("button", { name: "刷新", exact: true }).click()
+    await expect(fact("等待原因")).toHaveText("等待用户输入")
+    await expect(fact("巡检诊断宽限至").locator("time")).toHaveAttribute("datetime", new Date(at + 300_000).toISOString())
+    await expect(fact("最后心跳")).toHaveText("未知")
+    await expect(fact("最后有效进展")).toHaveText("未知")
+    await expect(dialog.getByTestId("assignment-owner-status")).toHaveText("当前无活跃认领引用")
+    expect(runtimeReads).toBe(4)
+    await info.attach(`project-work-runtime-user-wait-${colorScheme}`, { body: await runtime.screenshot(), contentType: "image/png" })
+    await dialog.getByRole("button", { name: "关闭详情" }).click()
     expect(await dialog.evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1)
     await info.attach(`project-work-${colorScheme}`, { body: await page.screenshot(), contentType: "image/png" })
     await page.keyboard.press("Escape")
     await expect(dialog).not.toBeVisible()
     expect(observation.pageErrors).toEqual([])
     expect(workReads().some((request) => request.url.endsWith("/tickets/inspect"))).toBe(true)
-    expect(ticketRequests.filter((request) => request.method === "POST").every((request) => /tickets\/(project-board|inspect|sprints\/list)$/.test(request.url))).toBe(true)
+    expect(ticketRequests.filter((request) => request.method === "POST").every((request) => /tickets\/(project-board|inspect|sprints\/list|patrol\/observation)$/.test(request.url))).toBe(true)
     await info.attach("project-work-lazy-boundary-mock-evidence", { body: Buffer.from(JSON.stringify({
       source: artifact.sourceRevision, sourceDirty: artifact.sourceDirty,
       mode: "controlled HTTP/WebSocket and locally fulfilled production assets; no Bamboo server",
