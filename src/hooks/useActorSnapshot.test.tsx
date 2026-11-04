@@ -498,7 +498,7 @@ describe("local actor snapshot lifecycle", () => {
     expect(state.snapshot?.nodes).toHaveLength(129)
   })
 
-  it.each([[401, "权限"], [403, "权限"], [404, "暂不提供"], [501, "暂不提供"], [409, "正在变化"], [413, "读取上限"], [503, "Bamboo 服务暂时不可用"]])(
+  it.each([[401, "权限"], [403, "权限"], [404, "暂不提供"], [501, "暂不提供"], [409, "正在变化"], [413, "读取上限"]])(
     "clears stale success on HTTP %s and exposes a readable error", async (status, text) => {
       await mount("root")
       vi.mocked(getActorSnapshot).mockRejectedValueOnce(new ApiError("private payload", status, "Error", "broker-token"))
@@ -507,6 +507,21 @@ describe("local actor snapshot lifecycle", () => {
       expect(state.error).toContain(text); expect(state.error).not.toContain("broker-token")
     },
   )
+
+  it.each([
+    [new NetworkRequestError(), "网络请求未完成"],
+    [new RequestTimeoutError(), "读取代理结构超时"],
+    [new ApiError("unavailable", 503, "Service Unavailable"), "Bamboo 服务暂时不可用"],
+  ])("keeps the last confirmed tree on a transient refresh failure", async (failure, message) => {
+    await mount("root")
+    const previous = state.snapshot
+    expect(previous).not.toBeNull()
+    vi.mocked(getActorSnapshot).mockRejectedValueOnce(failure)
+    await act(async () => state.refresh())
+    expect(state.snapshot).toBe(previous)
+    expect(state.error).toContain(message)
+    expect(state.retryable).toBe(true)
+  })
 })
 
 describe("snapshot-only ActorTree panel", () => {
@@ -522,6 +537,7 @@ describe("snapshot-only ActorTree panel", () => {
     const alert = host.querySelector('[role="alert"]')!
     expect(alert.textContent).toContain(text)
     expect(Boolean(alert.querySelector("button"))).toBe(retryable)
+    expect(host.querySelector('button[aria-label="刷新代理结构"]')).toBeNull()
     expect(host.textContent).not.toContain("代理结构尚未确认")
   })
 
@@ -529,10 +545,10 @@ describe("snapshot-only ActorTree panel", () => {
     const pending = deferred(); vi.mocked(getActorSnapshot).mockReturnValueOnce(pending.promise)
     await act(async () => root.render(<ActorSnapshotPanel rootId={id} active selectedActorId={id} onSelectActor={vi.fn()} />))
     expect(host.querySelector('[role="treeitem"]')).toBeNull()
-    await act(async () => pending.reject(new Error("unavailable")))
+    await act(async () => pending.reject(new NetworkRequestError()))
     expect(host.querySelector('[role="treeitem"]')).toBeNull()
     vi.mocked(getActorSnapshot).mockResolvedValueOnce(actorSnapshotFixture(id, 0))
-    await act(async () => host.querySelector<HTMLButtonElement>('button[aria-label="刷新代理结构"]')!.click())
+    await act(async () => host.querySelector<HTMLButtonElement>('[role="alert"] button')!.click())
     expect(host.querySelector('[role="treeitem"]')?.getAttribute("data-actor-id")).toBe(id)
   })
 

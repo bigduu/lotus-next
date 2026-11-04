@@ -28,7 +28,7 @@ export function ActorSnapshotPanel({ rootId, active, selectedActorId, descendant
     <section className="rounded-lg border" data-actor-snapshot-panel aria-busy={state.loading}>
       <div className="flex items-center justify-between gap-2 px-3 py-2 text-xs text-muted-foreground">
         <span>{uiText("actor_saved_state")}</span>
-        {rootId ? <Button size="sm" variant="ghost" disabled={state.loading} onClick={() => { void state.refresh() }} aria-label={uiText("refresh_agent_structure_277bb85d")}><RefreshCw /></Button> : null}
+        {rootId && !state.error ? <Button size="sm" variant="ghost" disabled={state.loading} onClick={() => { void state.refresh() }} aria-label={uiText("refresh_agent_structure_277bb85d")}><RefreshCw /></Button> : null}
       </div>
       {state.gapReason ? <p role="status" data-actor-gap={state.gapReason} data-actor-gap-origin={state.gapActorId ?? undefined} className="px-3 pb-2 text-xs text-muted-foreground [overflow-wrap:anywhere]">
         {state.gapReason === "snapshot_regression"

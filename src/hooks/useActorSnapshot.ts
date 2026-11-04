@@ -96,7 +96,9 @@ export function useActorSnapshot(rootId: string | null, active: boolean, interes
         gapActorId: workerGap.current?.actorId ?? null }))
     } catch (error) {
       if (controller.signal.aborted || generation.current !== version || scope.current.rootId !== id || !scope.current.active) return
-      if (snapshotRef.current && requiredTreeCursor.current !== undefined && retryableSnapshotFailure(error)) {
+      const retryable = retryableSnapshotFailure(error)
+      const pendingTreeGap = requiredTreeCursor.current !== undefined
+      if (snapshotRef.current && pendingTreeGap && retryable) {
         // A pending Host transaction or interrupted read cannot revoke the
         // last confirmed tree. Keep its subscription and retry at a bounded
         // rate until a covering Root snapshot proves the gap repaired.
@@ -112,9 +114,11 @@ export function useActorSnapshot(rootId: string | null, active: boolean, interes
         }, delay)
         return
       }
-      snapshotRef.current = null
-      setState((previous) => ({ rootId: id, snapshot: null, loading: false, error: failureMessage(error),
-        retryable: retryableSnapshotFailure(error),
+      // Transport failures leave the last confirmed tree usable. A conflict
+      // outside gap recovery can change the authority behind that tree.
+      const snapshot = retryable && !(isApiError(error) && error.status === 409) ? snapshotRef.current : null
+      snapshotRef.current = snapshot
+      setState((previous) => ({ rootId: id, snapshot, loading: false, error: failureMessage(error), retryable,
         gapReason: previous.rootId === id ? previous.gapReason : null,
         gapActorId: previous.rootId === id ? previous.gapActorId : null }))
     } finally {
