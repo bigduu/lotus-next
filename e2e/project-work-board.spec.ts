@@ -36,7 +36,7 @@ for (const colorScheme of ["light", "dark"] as const) {
     let questionSnapshot = false
     const currentEnvelope = () => questionSnapshot ? { ...envelope, snapshot: { ...snapshot, commit: "yielded-question-snapshot", authority_epoch: 2 } } : envelope
     const currentRows = () => questionSnapshot ? rows.map((row) => row === rows[1]
-      ? { ...row, ticket: { ...row.ticket, active_assignment: null } } : row) : rows
+      ? { ...row, ticket: { ...row.ticket, active_assignment: null, blocked: { reason: "User input needed", resume_state: "active" } } } : row) : rows
     await page.route("**/api/v1/projects", (route) => route.fulfill({ json: { projects: [project] } }))
     await page.route("**/api/v1/projects/project-board", (route) => route.fulfill({ json: project }))
     await page.route("**/api/v1/tickets/project-board", (route) => route.fulfill({ json: { ...currentEnvelope(), data: { project_id: project.id,
@@ -139,6 +139,7 @@ for (const colorScheme of ["light", "dark"] as const) {
     expect(runtimeReads).toBe(0)
     await dialog.getByTestId("project-work-work-1").click()
     const runtime = dialog.getByTestId("assignment-observation")
+    await expect(runtime.getByRole("heading", { name: "运行时观测" })).toBeVisible()
     const fact = (label: string) => runtime.locator("dl > div").filter({ has: page.getByText(label, { exact: true }) }).locator("dd")
     await expect(fact("最后心跳").locator("time")).toHaveAttribute("datetime", new Date(at).toISOString())
     await expect(fact("最后有效进展")).toHaveText("未知")

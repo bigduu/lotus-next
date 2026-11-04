@@ -97,7 +97,9 @@ export function AssignmentHealthPanel(props: AssignmentHealthPanelProps) {
       {owner.status === "none" ? <p className="mb-3 text-xs text-muted-foreground">{copy.noCurrentHint}</p> : null}
       {owner.attempt ? attemptFacts(owner.attempt) : props.currentAssignmentId ? <dl><Fact label={copy.assignment}>{identifier(props.currentAssignmentId)}</Fact></dl> : null}
       <div className="mt-3 rounded-lg bg-muted/40 p-3" data-testid="assignment-observation">
-        <p className="mb-2 font-medium" data-testid="assignment-execution-status">{copy[execution]}</p>
+        {props.runtimeObservation
+          ? <h6 className="mb-2 font-medium">{copy.runtimeTitle}</h6>
+          : <p className="mb-2 font-medium" data-testid="assignment-execution-status">{copy[execution]}</p>}
         {props.runtimeObservation ? <>
           <p className="mb-3 text-xs text-muted-foreground">{copy.runtimeSnapshot}</p>
           <dl className="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2">

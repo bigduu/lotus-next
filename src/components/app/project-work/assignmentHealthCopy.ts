@@ -4,6 +4,7 @@ import type { AssignmentHealthCopy } from "@/components/app/project-work/assignm
 // Call in parent render after useUiLocale().
 export const makeAssignmentHealthCopy = (): AssignmentHealthCopy => ({
   title: uiText("assignment_health_title"),
+  runtimeTitle: uiText("assignment_health_runtime_title"),
   runtimeSnapshot: uiText("assignment_health_runtime_snapshot"),
   taskEntry: uiText("assignment_health_task_entry"),
   progressSequence: uiText("assignment_health_progress_sequence"),

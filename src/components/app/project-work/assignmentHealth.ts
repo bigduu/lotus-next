@@ -203,7 +203,7 @@ export function recoveryState(incident: PatrolIncident, observation: AssignmentO
 }
 
 export const assignmentHealthCopyKeys = [
-  "runtimeSnapshot", "taskEntry", "progressSequence", "waitIssued", "diagnosticAllowance", "user", "dependency", "running_tool", "outcomeUnknown", "runtimeDenied", "runtimeUnavailable",
+  "runtimeTitle", "runtimeSnapshot", "taskEntry", "progressSequence", "waitIssued", "diagnosticAllowance", "user", "dependency", "running_tool", "outcomeUnknown", "runtimeDenied", "runtimeUnavailable",
   "title", "updatedAt", "available", "unsupported", "unknown", "notRecorded", "staleHint", "currentExecutor", "confirmed", "noCurrentExecutor", "noCurrentHint", "ownerUnknown", "assignment", "work", "generation", "authorityEpoch", "step", "attempt", "session", "run", "role", "executor", "collaborator", "reviewer", "claimedAt", "processStopped", "stoppedConfirmed", "stopUnconfirmed", "heartbeat", "progress", "heartbeatHint", "waitReason", "blockReason", "awaitingRequest", "nextCheck", "endReason", "history", "emptyHistory", "openSession", "sessionDenied", "sessionMissing", "sessionUnknown", "navigationUnavailable", "patrol", "patrolUnsupported", "noIncidents", "incident", "historicalIncident", "sourceRevision", "evidence", "fingerprint", "diagnosisAttempts", "findings", "uncertainty", "escalation", "recovery", "requestedAt", "acknowledgedAt", "recoveryHint", "running", "waiting", "blocked", "open", "diagnosing", "cooldown", "resolved", "requested", "acknowledged", "progress_observed", "terminal_observed", "unconfirmed", "not_recorded",
 ] as const
 export type AssignmentHealthCopy = Record<typeof assignmentHealthCopyKeys[number], string>

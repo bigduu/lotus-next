@@ -34,6 +34,7 @@ export const uiZhCn = {
   "chat_worktree_context_changed": "项目或工作区已改变，请在发送前重新检查 worktree 配置。",
   "assignment_health_opening_session": "正在检查会话访问权限…",
   "assignment_health_title": "执行与会话历史",
+  "assignment_health_runtime_title": "运行时观测",
   "assignment_health_runtime_snapshot": "运行时快照。刷新项目工单可重新读取。",
   "assignment_health_task_entry": "任务进入执行时间",
   "assignment_health_progress_sequence": "已核验进展序号",

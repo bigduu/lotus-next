@@ -34,6 +34,7 @@ export const uiEnUs = {
   "chat_worktree_context_changed": "The Project or workspace changed. Review the worktree configuration before sending.",
   "assignment_health_opening_session": "Checking Session access…",
   "assignment_health_title": "Execution and session history",
+  "assignment_health_runtime_title": "Runtime observation",
   "assignment_health_runtime_snapshot": "Runtime snapshot. Refresh Project Work to read again.",
   "assignment_health_task_entry": "Task entered at",
   "assignment_health_progress_sequence": "Verified progress sequence",
