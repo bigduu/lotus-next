@@ -2,6 +2,7 @@ import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { useEffect, useMemo, useRef, useState } from "react"
 import { ArrowRight, Copy, X, FolderGit2 } from "lucide-react"
 import { useShallow } from "zustand/react/shallow"
+import { shallow } from "zustand/shallow"
 import {
   useAppStore,
   selectCurrentChat,
@@ -356,6 +357,9 @@ export function Inspector({
                 .map((item) => [item.id, item.createdAtExact, item.parentSessionId, item.config.projectId]).sort((a, b) => String(a[0]).localeCompare(String(b[0]))) : [])
               const initialTreeSignature = treeSignature(initialState)
               const revision = initialState.getSessionNavigationRevision()
+              const navigationTargets = new Set([id, ...watched])
+              if (before) navigationTargets.add(before)
+              if (selection?.target.parent_session_id) navigationTargets.add(selection.target.parent_session_id)
               let identityChanged = false, treeChanged = false
               const unobserve = selection ? useAppStore.subscribe((state) => {
                 if (signature(state) !== initialSignature) identityChanged = true
@@ -363,7 +367,7 @@ export function Inspector({
               }) : undefined
               try {
                 const current = () => !identityChanged && managedNavigation.current === navigation && useAppStore.getState().currentSessionId === before
-                  && useAppStore.getState().getSessionNavigationRevision() === revision
+                  && useAppStore.getState().getSessionNavigationRevision(navigationTargets) <= revision
                   && (!directoryCurrent || directoryCurrent())
                 let verify: (() => Promise<boolean>) | undefined
                 let readBoundHistory: (() => Promise<import("@services/chat/AgentService").HistoryResponse>) | undefined
@@ -397,7 +401,11 @@ export function Inspector({
                     const detail = await agentClient.getSession(id)
                     if (!current() || !matchesSummary(detail.session)) return false
                     stagedSessions = await useAppStore.getState().stageSessionForNavigation(detail.session) ?? undefined
-                    if (!current() || !stagedSessions) return false
+                    if (!stagedSessions) return false
+                    // Include cold descendants before admitting a staged tree. An
+                    // in-flight deletion may predate the local cache of that row.
+                    for (const staged of stagedSessions) navigationTargets.add(staged.id)
+                    if (!current()) return false
                   }
                 } else {
                   const restored = await useAppStore.getState().restoreSession(id)
@@ -409,9 +417,14 @@ export function Inspector({
                   if (stagedSessions && (cached !== initialCached || treeChanged || initialTree.some((item) =>
                     state.chats.find((chat) => chat.id === item.id) !== item) || stagedSessions.some((item) => {
                       const existing = state.chats.find((chat) => chat.id === item.id)
+                      const previous = initialExecution[item.id], execution = state.executionBySession[item.id]
+                      // An index refresh advances syncedAt even when execution is unchanged.
+                      const executionChanged = execution !== previous && (!execution || !previous
+                        || !shallow(execution, { ...previous, backend: execution.backend })
+                        || !shallow(execution.backend, { ...previous.backend, syncedAt: execution.backend.syncedAt }))
                       return (existing && (existing.createdAtExact !== item.created_at || existing.kind !== item.kind
                         || existing.rootSessionId !== item.root_session_id || (existing.parentSessionId ?? null) !== (item.parent_session_id ?? null)))
-                        || state.executionBySession[item.id] !== initialExecution[item.id]
+                        || executionChanged
                     }))) return false
                   const stagedTarget = stagedSessions?.find((item) => item.id === id)
                   const stagedRoot = stagedSessions?.find((item) => item.id === target.root_session_id)
