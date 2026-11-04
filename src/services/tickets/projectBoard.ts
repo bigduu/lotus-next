@@ -40,6 +40,7 @@ export interface BoardAssignment {
   work_id?: string
   generation?: number
   authority_epoch?: number
+  contract_revision?: number
   process_stopped?: boolean
   runtime: { session_id: string; run_id: string } | null
   awaiting_request?: string | null
