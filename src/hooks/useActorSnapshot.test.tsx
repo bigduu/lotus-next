@@ -1,9 +1,9 @@
 import { act } from "react"
 import { createRoot, type Root } from "react-dom/client"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
-import { ApiError } from "@services/api/errors"
+import { ApiError, NetworkRequestError, RequestTimeoutError } from "@services/api/errors"
 import { changeLocale } from "@shared/i18n"
-import { getActorSnapshot, type ActorSubtreeSnapshot } from "@services/chat/actorSnapshot"
+import { getActorSnapshot, InvalidActorSnapshotError, type ActorSubtreeSnapshot } from "@services/chat/actorSnapshot"
 import { subscribeActor, subscribeActorTree } from "@services/chat/v2Stream"
 import { ActorSnapshotPanel } from "@/components/chat/ActorSnapshotPanel"
 import { actorSnapshotFixture, actorSnapshotV2Fixture } from "@/test/fixtures/actorSnapshot"
@@ -498,7 +498,7 @@ describe("local actor snapshot lifecycle", () => {
     expect(state.snapshot?.nodes).toHaveLength(129)
   })
 
-  it.each([[401, "权限"], [403, "权限"], [404, "暂不提供"], [501, "暂不提供"], [409, "正在变化"], [413, "读取上限"], [503, "暂时无法确认"]])(
+  it.each([[401, "权限"], [403, "权限"], [404, "暂不提供"], [501, "暂不提供"], [409, "正在变化"], [413, "读取上限"], [503, "Bamboo 服务暂时不可用"]])(
     "clears stale success on HTTP %s and exposes a readable error", async (status, text) => {
       await mount("root")
       vi.mocked(getActorSnapshot).mockRejectedValueOnce(new ApiError("private payload", status, "Error", "broker-token"))
@@ -510,6 +510,21 @@ describe("local actor snapshot lifecycle", () => {
 })
 
 describe("snapshot-only ActorTree panel", () => {
+  it.each([
+    [new InvalidActorSnapshotError(), "代理结构响应无效或不受支持", false],
+    [new NetworkRequestError(), "网络请求未完成", true],
+    [new RequestTimeoutError(), "读取代理结构超时", true],
+    [new ApiError("unavailable", 503, "Service Unavailable"), "Bamboo 服务暂时不可用", true],
+    [new ApiError("unsupported", 501, "Not Implemented"), "当前 Bamboo 暂不提供此代理结构", false],
+  ])("distinguishes %s and only offers retry for transient failures", async (failure, text, retryable) => {
+    vi.mocked(getActorSnapshot).mockRejectedValueOnce(failure)
+    await act(async () => root.render(<ActorSnapshotPanel rootId="root" active selectedActorId="root" onSelectActor={vi.fn()} />))
+    const alert = host.querySelector('[role="alert"]')!
+    expect(alert.textContent).toContain(text)
+    expect(Boolean(alert.querySelector("button"))).toBe(retryable)
+    expect(host.textContent).not.toContain("代理结构尚未确认")
+  })
+
   it.each(["__proto__", "constructor"])("does not fabricate prototype rows for valid %s scope", async (id) => {
     const pending = deferred(); vi.mocked(getActorSnapshot).mockReturnValueOnce(pending.promise)
     await act(async () => root.render(<ActorSnapshotPanel rootId={id} active selectedActorId={id} onSelectActor={vi.fn()} />))
@@ -524,7 +539,8 @@ describe("snapshot-only ActorTree panel", () => {
   it("renders unknown durable observations and keeps expansion separate from explicit selection", async () => {
     const selected = vi.fn()
     await act(async () => root.render(<ActorSnapshotPanel rootId="root" active selectedActorId="root" onSelectActor={selected} />))
-    expect(host.textContent).toContain("健康与队列信息尚未提供")
+    expect(host.textContent).toContain("已保存的代理状态")
+    expect(host.textContent).not.toContain("健康与队列信息尚未提供")
     const child = host.querySelector<HTMLElement>('[data-actor-id="actor-0"]')!
     expect(child.getAttribute("aria-label")).toContain("运行中，远端，健康状态未知")
     act(() => child.querySelector<HTMLElement>("[data-actor-toggle]")!.click())
@@ -593,7 +609,7 @@ describe("snapshot-only ActorTree panel", () => {
     vi.mocked(getActorSnapshot).mockRejectedValueOnce(new Error("invalid"))
     await act(async () => root.render(<ActorSnapshotPanel rootId="root" active selectedActorId="root" onSelectActor={vi.fn()} />))
     expect(host.querySelector('[role="alert"]')?.textContent).toContain("暂时无法确认")
-    expect(host.textContent).toContain("代理结构尚未确认")
+    expect(host.textContent).not.toContain("代理结构尚未确认")
     expect(host.querySelector('[role="tree"]')).toBeNull()
   })
 })

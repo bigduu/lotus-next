@@ -1,7 +1,7 @@
 import { uiText, useUiLocale } from "@shared/i18n/ui"
 import { useCallback, useEffect, useRef, useState } from "react"
 import { isApiError, NetworkRequestError, RequestTimeoutError } from "@services/api/errors"
-import { actorSnapshotRegresses, actorTreeCursorCovers, getActorSnapshot, type ActorSubtreeSnapshot } from "@services/chat/actorSnapshot"
+import { actorSnapshotRegresses, actorTreeCursorCovers, getActorSnapshot, InvalidActorSnapshotError, type ActorSubtreeSnapshot } from "@services/chat/actorSnapshot"
 import { subscribeActor, subscribeActorTree } from "@services/chat/v2Stream"
 import { renderProbe, useRenderProbe } from "@/lib/renderProbe"
 
@@ -26,7 +26,11 @@ function failureMessage(error: unknown): string {
     if (error.status === 404 || error.status === 501) return uiText("this_bamboo_version_does_not_provide_agent_structure_ch_ae23a7fe")
     if (error.status === 409) return uiText("agent_structure_or_permissions_are_changing_and_cannot__bc1899b0")
     if (error.status === 413) return uiText("agent_structure_exceeds_the_current_read_limit_and_cann_a53518ef")
+    if (error.status >= 500) return uiText("bamboo_is_temporarily_unavailable_check_that_the_servic_f2489632")
   }
+  if (error instanceof InvalidActorSnapshotError) return uiText("the_agent_structure_response_is_invalid_or_unsupported__d3bdb4ac")
+  if (error instanceof RequestTimeoutError) return uiText("actor_structure_read_timeout")
+  if (error instanceof NetworkRequestError) return uiText("actor_structure_read_network")
   return uiText("agent_structure_cannot_be_confirmed_right_now_reload_st_2ba610a7")
 }
 

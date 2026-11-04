@@ -297,9 +297,6 @@ export function ActorTree({
         <span>{uiText("agent_structure_4cf93237")}</span>
         {topology.needsSnapshot ? <span role="status" className="text-xs font-normal text-muted-foreground">{uiText("syncing_954ec984")}</span> : null}
       </div>
-      {/* Kept referenced so the i18n catalog stays complete; the neutral line is
-          intentionally suppressed while an error is shown to avoid double-reporting. */}
-      <span className="sr-only">{uiText("agent_structure_is_not_confirmed_yet_eeda2d8c")}</span>
       {error ? (
         <div role="alert" className="flex items-center gap-2 px-3 py-2 text-xs text-destructive">
           <span className="min-w-0 flex-1 break-words">{error}</span>
