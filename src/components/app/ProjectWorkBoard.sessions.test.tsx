@@ -120,16 +120,26 @@ const sample = (commit = active.snapshot.commit) => ({
   progress: null, expected_wait: null, execution_outcome_unknown: false,
 })
 
+const savedStatus = (commit = active.snapshot.commit) => ({
+  scope: sample().scope, state: "available", ticket_commit: commit, ticket_cursor: active.snapshot.seq,
+  execution_facts_revision: active.snapshot.seq,
+  checkpoint: { version: 1, cursor: active.snapshot.seq, source_revision: active.snapshot.seq, execution_facts_match: true,
+    last_check_ms: observedAt, next_check_ms: observedAt + 30_000, incident: null },
+})
+const patrolState = () => document.querySelector('[data-testid="patrol-checkpoint-state"]')?.textContent
+
 it("reads only the pinned current Assignment and clears facts offline", async () => {
-  vi.mocked(apiClient.postOnce).mockResolvedValue(sample())
+  vi.mocked(apiClient.postOnce).mockImplementation(async (path) => path === "tickets/patrol/status" ? savedStatus() : sample())
   await render()
-  expect(apiClient.postOnce).toHaveBeenCalledTimes(1)
+  expect(apiClient.postOnce).toHaveBeenCalledTimes(2)
   expect(observation()?.querySelector("time")?.dateTime).toBe(new Date(observedAt).toISOString())
   expect(observation()?.textContent).toContain("Last effective progressUnknown")
+  expect(patrolState()).toBe("Saved checkpoint")
   vi.spyOn(navigator, "onLine", "get").mockReturnValue(false)
   await act(async () => window.dispatchEvent(new Event("offline")))
   expect(observation()?.querySelector("time")).toBeNull()
-  expect(apiClient.postOnce).toHaveBeenCalledTimes(1)
+  expect(patrolState()).toBe("Unknown")
+  expect(apiClient.postOnce).toHaveBeenCalledTimes(2)
 })
 
 it("does not start an observation when the inspector's active Assignment fence is inconsistent", async () => {
@@ -139,20 +149,27 @@ it("does not start an observation when the inspector's active Assignment fence i
   expect(apiClient.postOnce).not.toHaveBeenCalled()
 })
 
-it("cannot paint a late sample after a board refresh remounts the same Work on a new commit", async () => {
-  let finish!: (value: unknown) => void
+it("cannot paint late runtime or patrol evidence after refreshing to a new commit", async () => {
+  let finishObservation!: (value: unknown) => void
+  let finishStatus!: (value: unknown) => void
   vi.mocked(apiClient.postOnce)
-    .mockImplementationOnce(() => new Promise((resolve) => { finish = resolve }))
-    .mockResolvedValueOnce(sample("new-commit"))
+    .mockImplementationOnce(() => new Promise((resolve) => { finishObservation = resolve }))
+    .mockImplementationOnce(() => new Promise((resolve) => { finishStatus = resolve }))
+    .mockImplementation(async (path) => path === "tickets/patrol/status"
+      ? { ...savedStatus("new-commit"), state: "busy", checkpoint: null } : sample("new-commit"))
   await render()
-  const signal = vi.mocked(apiClient.postOnce).mock.calls[0][2]?.signal
+  const signals = vi.mocked(apiClient.postOnce).mock.calls.map((call) => call[2]?.signal)
   vi.mocked(projectBoardClient.page).mockResolvedValue({ ...active, snapshot: { ...active.snapshot, commit: "new-commit" } })
   await act(async () => [...document.querySelectorAll("button")].find((button) => button.textContent === uiText("refresh_aee88743"))!.click())
-  expect(signal?.aborted).toBe(true)
-  expect(apiClient.postOnce).toHaveBeenCalledTimes(2)
-  await act(async () => finish({ ...sample(), progress: { sequence: 1, at_ms: observedAt } }))
+  expect(signals.map((signal) => signal?.aborted)).toEqual([true, true])
+  expect(apiClient.postOnce).toHaveBeenCalledTimes(4)
+  await act(async () => {
+    finishObservation({ ...sample(), progress: { sequence: 1, at_ms: observedAt } })
+    finishStatus(savedStatus())
+  })
   expect(observation()?.querySelector("time")?.dateTime).toBe(new Date(observedAt).toISOString())
   expect(observation()?.textContent).toContain("Last effective progressUnknown")
+  expect(patrolState()).toBe("Checkpoint busy")
 })
 
 it("aborts the runtime sample on owner access loss and ignores its late result", async () => {
@@ -164,7 +181,7 @@ it("aborts the runtime sample on owner access loss and ignores its late result",
   expect(signal?.aborted).toBe(true)
   await act(async () => finish(sample()))
   expect(observation()).toBeNull()
-  expect(apiClient.postOnce).toHaveBeenCalledTimes(1)
+  expect(apiClient.postOnce).toHaveBeenCalledTimes(2)
 })
 
 it.each([true, false])("reads a restarted current pointer with stop proof %s without showing a current executor", async (stopped) => {
@@ -179,7 +196,7 @@ it.each([true, false])("reads a restarted current pointer with stop proof %s wit
     ...sample(), state: "unknown", started_at_ms: null, heartbeat_at_ms: null, execution_outcome_unknown: true,
   })
   await render()
-  expect(apiClient.postOnce).toHaveBeenCalledTimes(1)
+  expect(apiClient.postOnce).toHaveBeenCalledTimes(2)
   expect(observation()?.textContent).toContain("Execution outcome is unconfirmed.")
   expect(observation()?.textContent).toContain("Last heartbeatUnknown")
   expect(document.querySelector('[data-testid="assignment-owner-status"]')?.textContent).toBe(uiText("assignment_health_owner_unknown"))
@@ -207,3 +224,25 @@ it.each(["answered", "wrong generation", "ambiguous"] as const)(
     expect(observation()?.textContent).toContain("Last effective progressUnknown")
   },
 )
+
+it.each(["submitted", "cancelled"] as const)("reads saved patrol only for the exact %s attempt", async (state) => {
+  const work = { ...activeView.ticket, state, active_assignment: null, current_submission: state === "submitted" ? "submission" : null }
+  const attempt = { ...activeView.assignments[0], state, process_stopped: true }
+  vi.mocked(projectBoardClient.page).mockResolvedValue({
+    ...active, data: { ...active.data, rows: active.data.rows.map((row) => ({ ...row, ticket: { ...row.ticket, ...work } })) },
+  })
+  vi.mocked(projectBoardClient.inspect).mockResolvedValue({
+    ...activeView, ticket: work, assignments: [attempt],
+    submissions: state === "submitted" ? [{
+      id: "submission", work_id: work.id, assignment_id: attempt.id, generation: work.generation,
+      contract_revision: work.contract_revision, stale: false, artifacts: [], evidence: [], updated_seq: active.snapshot.seq,
+    }] : [],
+  })
+  vi.mocked(apiClient.postOnce).mockResolvedValue(savedStatus())
+  await render()
+  expect(apiClient.postOnce).toHaveBeenCalledExactlyOnceWith("tickets/patrol/status", {
+    project_id: project.id, work_id: work.id, assignment_id: attempt.id,
+  }, { signal: expect.any(AbortSignal), cache: "no-store" })
+  expect(patrolState()).toBe("Saved checkpoint")
+  expect(observation()?.textContent).toContain("Last effective progressUnknown")
+})

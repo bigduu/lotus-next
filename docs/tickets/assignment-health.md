@@ -36,6 +36,21 @@ stopped Assignments require separate acceptance.
 
 Going offline invalidates the current association/access display. Reconnect uses the existing board refresh and discards the old pinned details. The fixed snapshot establishes reference provenance, not live physical health.
 
+## Saved patrol checkpoint
+
+The selected detail reads the owner-only patrol status independently of the
+runtime observation. The pinned inspector can still identify the saved
+checkpoint after submission or cancellation when it proves the exact attempt.
+The response must match the Ticket commit and cursor and the scope, including
+the attempt's dispatch epoch. If the inspector cannot corroborate the epoch
+after reconciliation, the status stays unknown.
+
+The card distinguishes a saved checkpoint from a stale historical record,
+an absent check and an unreadable checkpoint. Check times and incident phase
+describe the saved checkpoint. A queued escalation indicates delivery to the
+Supervisor Inbox. Execution progress and owner acceptance retain their own
+evidence.
+
 ## Existing Session navigation
 
 The parent reads the existing `GET sessions/{encoded-id}` for unique, scoped canonical Assignment/RuntimeReceipt targets, with four bounded concurrent reads and cancellation when details change. Successful matching responses permit a Session button. HTTP 403 and 404 preserve the recorded IDs with distinct denied/missing explanations; transport failures and inconsistent identity/Project metadata stay unknown.

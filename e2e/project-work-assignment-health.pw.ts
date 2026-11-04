@@ -38,6 +38,8 @@ for (const scenario of [
       } else if (request.method() === "POST" && path.endsWith("/tickets/patrol/observation")) {
         runtimeReads++
         await route.fulfill({ status: 404, json: { error: "Runtime observation unavailable in this legacy fixture" } })
+      } else if (request.method() === "POST" && path.endsWith("/tickets/patrol/status")) {
+        await route.fulfill({ status: 404, json: { error: "Patrol checkpoint unavailable in this legacy fixture" } })
       } else if ((request.method() === "POST" && path.endsWith("/tickets/sprints/list")) || (request.method() === "GET" && path.endsWith("/tickets/scope"))) {
         // This older fixture deliberately has no Sprint capability. New read
         // probes must preserve its original All Work behavior.
@@ -52,6 +54,7 @@ for (const scenario of [
     await expect.poll(() => sessionReads).toBe(1)
     await expect(page.getByTestId("assignment-observation")).toContainText("最后有效进展未知")
     if (!scenario.stopped) await expect(page.getByTestId("assignment-observation-status")).toHaveText("当前选择的运行时观测不可用。")
+    await expect(page.getByTestId("patrol-checkpoint-state")).toHaveText(scenario.stopped ? "未知" : "巡检状态不可用")
     expect(runtimeReads).toBe(scenario.stopped ? 0 : 1)
     if (scenario.stopped) {
       await page.getByTestId("assignment-history").locator("summary").click()
