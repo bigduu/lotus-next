@@ -1,4 +1,6 @@
 import { useId, type ReactNode } from "react"
+import type { PatrolStatusRead } from "@services/tickets/patrolStatus"
+import { PatrolStatusSummary } from "./PatrolStatusSummary"
 import type { RuntimeObservationRead } from "@services/tickets/runtimeObservation"
 import { Button } from "@/components/ui/button"
 import {
@@ -13,6 +15,7 @@ export interface AssignmentHealthPanelProps {
   currentAssignmentId: string | null
   attempts: HealthRead<readonly AssignmentAttempt[]>
   runtimeObservation?: RuntimeObservationRead
+  patrolStatus?: PatrolStatusRead
   observations?: HealthRead<readonly AssignmentObservation[]>
   incidents?: HealthRead<readonly PatrolIncident[]>
   sessions?: HealthRead<readonly SessionAccessRef[]>
@@ -141,7 +144,8 @@ export function AssignmentHealthPanel(props: AssignmentHealthPanelProps) {
         : <p className="mt-2 text-muted-foreground">{status === "available" ? copy.emptyHistory : copy[status]}</p>}
     </details>
 
-    <div className="mt-4 min-w-0 border-t pt-3" data-testid="assignment-patrol">
+    {props.patrolStatus ? <PatrolStatusSummary read={props.patrolStatus} locale={locale} />
+      : <div className="mt-4 min-w-0 border-t pt-3" data-testid="assignment-patrol">
       <div className="flex flex-wrap items-center gap-2"><h5 className="font-medium">{copy.patrol}</h5><span className="rounded-md border px-2 py-0.5 text-xs">{copy[incidentStatus]}</span></div>
       <p className="mt-1 text-xs text-muted-foreground">{copy.updatedAt}: {time(props.incidents?.updatedAt)}</p>
       {incidentStatus === "unsupported" ? <p className="mt-2">{copy.patrolUnsupported}</p> : incidentStatus === "unknown" ? <p className="mt-2">{copy.staleHint}</p> : !incidents.length ? <p className="mt-2">{copy.noIncidents}</p> : null}
@@ -176,6 +180,6 @@ export function AssignmentHealthPanel(props: AssignmentHealthPanelProps) {
           <p className="mt-3 text-xs text-muted-foreground">{copy.recoveryHint}</p>
         </li>
       })}</ul>
-    </div>
+    </div>}
   </section>
 }

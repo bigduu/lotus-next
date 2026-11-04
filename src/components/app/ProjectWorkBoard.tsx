@@ -9,6 +9,7 @@ import type { ProjectManifest } from "@services/project"
 import { getErrorMessage } from "@services/api"
 import { boardCountsKnown, projectBoardClient, type BoardAssignment, type BoardStage, type BoardWorkView, type ProjectBoardRow, type ProjectContext } from "@services/tickets/projectBoard"
 import type { SnapshotRef } from "@services/tickets/types"
+import { readPatrolStatus, type PatrolStatusRead } from "@services/tickets/patrolStatus"
 import { readRuntimeObservation, type RuntimeObservationRead } from "@services/tickets/runtimeObservation"
 import { useProjectWorkBoard } from "@/hooks/useProjectWorkBoard"
 import { useAssignmentSessions } from "@/hooks/useAssignmentSessions"
@@ -16,7 +17,7 @@ import { ticketWorkLabels } from "@/components/chat/ticketWorkLabels"
 import { Button } from "@/components/ui/button"
 
 import { AssignmentHealthPanel } from "./project-work/AssignmentHealthPanel"
-import { runtimeObservationTarget, type HealthRead } from "./project-work/assignmentHealth"
+import { runtimeObservationTarget, savedPatrolTarget, type HealthRead } from "./project-work/assignmentHealth"
 import { makeAssignmentHealthCopy } from "./project-work/assignmentHealthCopy"
 import { ProjectSprintPanel } from "./project-work/ProjectSprintPanel"
 import type { SprintFilter } from "@services/tickets/sprints"
@@ -38,6 +39,7 @@ function WorkDetails({ row, snapshot, projectId, onClose, onOpenSession }: { row
   const [view, setView] = useState<BoardWorkView | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [observation, setObservation] = useState<RuntimeObservationRead>({ status: "unknown" })
+  const [patrolStatus, setPatrolStatus] = useState<PatrolStatusRead>({ status: "unknown" })
   const [navigationError, setNavigationError] = useState<string | null>(null)
   const [opening, setOpening] = useState(false)
   const navigationBusy = useRef(false)
@@ -72,13 +74,31 @@ function WorkDetails({ row, snapshot, projectId, onClose, onOpenSession }: { row
     setObservation({ status: "unknown" })
     if (!assignmentId || !mode || assignmentAuthorityEpoch === undefined) return
     const controller = new AbortController()
-    void readRuntimeObservation({
-      mode, projectId, workId, assignmentId, generation, assignmentAuthorityEpoch, snapshot: { commit, seq, authority_epoch: authorityEpoch },
-    }, controller.signal).then((result) => {
+    const target = {
+      mode, projectId, workId, assignmentId, generation, assignmentAuthorityEpoch,
+      snapshot: { commit, seq, authority_epoch: authorityEpoch },
+    }
+    void readRuntimeObservation(target, controller.signal).then((result) => {
       if (!controller.signal.aborted && navigator.onLine) setObservation(result)
     })
     return () => controller.abort()
   }, [mode, projectId, workId, assignmentId, generation, assignmentAuthorityEpoch, commit, seq, authorityEpoch])
+
+  const patrolTarget = view && sessions.online ? savedPatrolTarget(row.ticket, view, authorityEpoch, nowMs) : undefined
+  const patrolAssignmentId = patrolTarget?.assignmentId
+  const patrolAuthorityEpoch = patrolTarget?.assignmentAuthorityEpoch
+  useEffect(() => {
+    setPatrolStatus({ status: "unknown" })
+    if (!patrolAssignmentId || patrolAuthorityEpoch === undefined) return
+    const controller = new AbortController()
+    void readPatrolStatus({
+      projectId, workId, assignmentId: patrolAssignmentId, generation, assignmentAuthorityEpoch: patrolAuthorityEpoch,
+      snapshot: { commit, seq, authority_epoch: authorityEpoch },
+    }, controller.signal).then((result) => {
+      if (!controller.signal.aborted && navigator.onLine) setPatrolStatus(result)
+    })
+    return () => controller.abort()
+  }, [projectId, workId, patrolAssignmentId, generation, patrolAuthorityEpoch, commit, seq, authorityEpoch])
   const assignment = view?.assignments.find((item) => item.id === currentAssignmentId)
   return <section aria-label={row.ticket.contract.title} className="min-w-0 rounded-xl border bg-background p-4 text-sm" data-testid="project-work-details">
     <div className="flex items-start justify-between gap-3"><h3 className="min-w-0 break-words font-semibold">{row.ticket.contract.title}</h3><Button size="sm" variant="ghost" onClick={onClose}>{uiText("project_work_close_details")}</Button></div>
@@ -95,6 +115,7 @@ function WorkDetails({ row, snapshot, projectId, onClose, onOpenSession }: { row
     <div className="mt-4"><AssignmentHealthPanel
       workId={workId} generation={generation} authorityEpoch={authorityEpoch}
       currentAssignmentId={currentAssignmentId} attempts={attempts}
+      patrolStatus={patrolAssignmentId ? patrolStatus : { status: "unknown" }}
       runtimeObservation={assignmentId ? observation : { status: "unknown" }} sessions={sessions.sessions}
       blockReason={row.ticket.blocked?.reason} nowMs={nowMs} locale={locale} copy={makeAssignmentHealthCopy()}
       onOpenSession={onOpenSession && sessions.online ? (id) => void openSession(id) : undefined}

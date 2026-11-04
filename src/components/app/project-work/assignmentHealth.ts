@@ -110,22 +110,29 @@ export function currentAssignment(input: {
 
 // Only choose a selector from the pinned inspector. The observation endpoint
 // still verifies runtime, ownership and the saved yield or unresolved outcome.
-export function runtimeObservationTarget(
-  work: Work, view: BoardWorkView, authorityEpoch: number, nowMs: number,
-): { assignmentId: string; assignmentAuthorityEpoch: number; mode: RuntimeObservationMode } | undefined {
+function matchesPinnedWork(work: Work, view: BoardWorkView) {
   const inspected = view.ticket
-  if (work.kind !== "work" || inspected.id !== work.id || inspected.generation !== work.generation
-    || inspected.active_assignment !== work.active_assignment || inspected.state !== work.state
-    || inspected.contract_revision !== work.contract_revision || inspected.current_submission !== work.current_submission
-    || view.assignments.some((attempt) => attempt.work_id !== undefined && attempt.work_id !== work.id)) return
+  return work.kind === "work" && inspected.id === work.id && inspected.generation === work.generation
+    && inspected.active_assignment === work.active_assignment && inspected.state === work.state
+    && inspected.contract_revision === work.contract_revision && inspected.current_submission === work.current_submission
+    && view.assignments.every((attempt) => attempt.work_id === undefined || attempt.work_id === work.id)
+}
 
-  // A reopened writer advances the snapshot epoch. A yielded or unresolved
-  // attempt can retain its dispatch epoch, which Bamboo returns in the Scope.
-  const exact = view.assignments.filter((attempt): attempt is BoardAssignment & { authority_epoch: number } =>
+function scopedAttempts(work: Work, view: BoardWorkView, authorityEpoch: number) {
+  // A reopened writer advances the snapshot epoch. An attempt can retain its
+  // dispatch epoch, which Bamboo returns in the Scope.
+  return view.assignments.filter((attempt): attempt is BoardAssignment & { authority_epoch: number } =>
     attempt.work_id === work.id && attempt.generation === work.generation
     && attempt.contract_revision === work.contract_revision
     && typeof attempt.authority_epoch === "number" && Number.isSafeInteger(attempt.authority_epoch)
     && attempt.authority_epoch >= 1 && attempt.authority_epoch <= authorityEpoch)
+}
+
+export function runtimeObservationTarget(
+  work: Work, view: BoardWorkView, authorityEpoch: number, nowMs: number,
+): { assignmentId: string; assignmentAuthorityEpoch: number; mode: RuntimeObservationMode } | undefined {
+  if (!matchesPinnedWork(work, view)) return
+  const exact = scopedAttempts(work, view, authorityEpoch)
   if (work.active_assignment) {
     const attempt = exact.find((item) => item.id === work.active_assignment)
     if (attempt?.state === "outcome_unknown" && view.assignments.filter((item) => item.id === attempt.id).length === 1) {
@@ -155,6 +162,33 @@ export function runtimeObservationTarget(
   })
   if (matches.length === 1 && view.assignments.filter((attempt) => attempt.id === matches[0].id).length === 1) {
     return { assignmentId: matches[0].id, assignmentAuthorityEpoch: matches[0].authority_epoch, mode: "yielded_question" }
+  }
+}
+
+// The saved checkpoint can survive a submission or cancellation. The live
+// observation selector still requires independently verified runtime evidence.
+export function savedPatrolTarget(work: Work, view: BoardWorkView, authorityEpoch: number, nowMs: number) {
+  if (!matchesPinnedWork(work, view)) return
+  const exact = scopedAttempts(work, view, authorityEpoch)
+  let id = work.active_assignment
+  if (!id && work.current_submission) {
+    const matches = view.submissions.filter((item) => item.id === work.current_submission)
+    const submission = matches.length === 1 ? matches[0] : undefined
+    if (!submission?.assignment_id || submission.stale || submission.work_id !== work.id
+      || submission.generation !== work.generation || submission.contract_revision !== work.contract_revision) return
+    id = submission.assignment_id
+  }
+  if (!id && work.state === "cancelled") {
+    const candidates = view.assignments.filter((item) => item.work_id === work.id && item.generation === work.generation
+      && item.contract_revision === work.contract_revision)
+    if (candidates.length !== 1) return
+    id = candidates[0].id
+  }
+  if (!id) return runtimeObservationTarget(work, view, authorityEpoch, nowMs)
+
+  const attempt = exact.find((item) => item.id === id)
+  if (attempt && view.assignments.filter((item) => item.id === id).length === 1) {
+    return { assignmentId: id, assignmentAuthorityEpoch: attempt.authority_epoch }
   }
 }
 

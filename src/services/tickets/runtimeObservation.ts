@@ -1,5 +1,4 @@
-import { apiClient, isApiError } from "@services/api"
-import type { SnapshotRef } from "./types"
+import { matchesPatrolScope, nonNegativeInteger, object, readPatrol, timestamp, type PatrolReadTarget } from "./patrolRead"
 
 type WaitKind = "user" | "dependency" | "running_tool"
 
@@ -17,34 +16,14 @@ export type RuntimeObservationRead =
 
 export type RuntimeObservationMode = "active" | "yielded_question" | "outcome_unknown"
 
-interface ObservationTarget {
+interface ObservationTarget extends PatrolReadTarget {
   mode: RuntimeObservationMode
-  projectId: string
-  workId: string
-  assignmentId: string
-  generation: number
-  assignmentAuthorityEpoch: number
-  snapshot: SnapshotRef
 }
-
-const object = (value: unknown): Record<string, unknown> | undefined =>
-  value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined
-
-const nonNegativeInteger = (value: unknown): value is number =>
-  typeof value === "number" && Number.isSafeInteger(value) && value >= 0
-
-// The panel formats these as four-digit ISO dates. Never substitute the client
-// clock for a server timestamp, including when their clocks differ.
-const timestamp = (value: unknown): value is number =>
-  nonNegativeInteger(value) && value <= 253402300799999
 
 function decode(value: unknown, target: ObservationTarget): RuntimeObservationRead {
   const data = object(value)
-  const scope = object(data?.scope)
-  const { projectId, workId, assignmentId, generation, assignmentAuthorityEpoch, snapshot } = target
-  if (!data || !scope || scope.project_id !== projectId || scope.work_id !== workId
-    || scope.assignment_id !== assignmentId || scope.generation !== generation
-    || scope.authority_epoch !== assignmentAuthorityEpoch || data.ticket_commit !== snapshot.commit
+  const { snapshot } = target
+  if (!data || !matchesPatrolScope(data.scope, target) || data.ticket_commit !== snapshot.commit
     || typeof data.execution_outcome_unknown !== "boolean") return { status: "unknown" }
 
   const { started_at_ms: startedAt, heartbeat_at_ms: heartbeatAt, execution_outcome_unknown: outcomeUnknown } = data
@@ -78,18 +57,5 @@ function decode(value: unknown, target: ObservationTarget): RuntimeObservationRe
 }
 
 export async function readRuntimeObservation(target: ObservationTarget, signal: AbortSignal): Promise<RuntimeObservationRead> {
-  const { projectId, workId, assignmentId } = target
-  try {
-    const response = await apiClient.postOnce<unknown>("tickets/patrol/observation", {
-      project_id: projectId, work_id: workId, assignment_id: assignmentId,
-    }, { signal, cache: "no-store" })
-    return decode(response, target)
-  } catch (failure) {
-    if (isApiError(failure)) {
-      if (failure.status === 401 || failure.status === 403) return { status: "denied" }
-      // A 404 can also come from a stale selector on a supported backend.
-      if (failure.status === 404 || failure.status === 405 || failure.status === 501) return { status: "unavailable" }
-    }
-    return { status: "unknown" }
-  }
+  return readPatrol("observation", target, signal, (value) => decode(value, target))
 }

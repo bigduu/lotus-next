@@ -59,6 +59,26 @@ for (const colorScheme of ["light", "dark"] as const) {
       }] } })
     })
     const at = Date.parse("2026-11-04T04:30:00Z")
+    const scope = { project_id: project.id, work_id: "work-1", assignment_id: "assignment", generation: 1, authority_epoch: 1 }
+    let statusReads = 0
+    await page.route("**/api/v1/tickets/patrol/status", (route) => {
+      expect(route.request().method()).toBe("POST")
+      expect(route.request().postDataJSON()).toEqual({ project_id: project.id, work_id: "work-1", assignment_id: "assignment" })
+      const base = { scope, ticket_commit: currentEnvelope().snapshot.commit, ticket_cursor: snapshot.seq, execution_facts_revision: 9 }
+      statusReads++
+      if (statusReads >= 3) return route.fulfill({ json: { ...base, state: statusReads === 3 ? "busy" : "not_checked", checkpoint: null } })
+      const stale = statusReads === 2
+      const id = { scope, progress_sequence: 8 }
+      return route.fulfill({ json: { ...base, state: stale ? "stale" : "available",
+        checkpoint: { version: 1, cursor: 9, source_revision: stale ? 8 : 9, execution_facts_match: !stale,
+          last_check_ms: at - 2000, next_check_ms: at + 28_000, incident: {
+            id, reason: "evidence_unknown", phase: "open", attempts: 0, last_diagnosis_at_ms: null,
+            accounting_pending: false, blocked_reason: null,
+            escalation: { operation: { kind: "escalation", incident: id }, reason: "uncertain", deliveries: 1, queued: true, next_delivery_ms: at },
+          },
+        },
+      } })
+    })
     let runtimeReads = 0
     await page.route("**/api/v1/tickets/patrol/observation", (route) => {
       expect(route.request().method()).toBe("POST")
@@ -66,7 +86,7 @@ for (const colorScheme of ["light", "dark"] as const) {
       runtimeReads++
       if (runtimeReads === 3) return route.fulfill({ status: 404, json: { error: "Legacy route" } })
       return route.fulfill({ json: { state: "observed",
-        scope: { project_id: project.id, work_id: "work-1", assignment_id: "assignment", generation: 1, authority_epoch: 1 },
+        scope,
         ticket_commit: currentEnvelope().snapshot.commit, started_at_ms: questionSnapshot ? null : at - 1000,
         heartbeat_at_ms: questionSnapshot ? null : at,
         progress: runtimeReads === 2 ? { sequence: 9, at_ms: at - 500 } : null,
@@ -137,13 +157,21 @@ for (const colorScheme of ["light", "dark"] as const) {
     await expect(dialog.getByTestId("project-work-details")).toContainText("owner-session")
     await dialog.getByRole("button", { name: "关闭详情" }).click()
     expect(runtimeReads).toBe(0)
+    expect(statusReads).toBe(0)
     await dialog.getByTestId("project-work-work-1").click()
     const runtime = dialog.getByTestId("assignment-observation")
+    const patrol = dialog.getByTestId("assignment-patrol")
+    const checkpointState = patrol.getByTestId("patrol-checkpoint-state")
     await expect(runtime.getByRole("heading", { name: "运行时观测" })).toBeVisible()
     const fact = (label: string) => runtime.locator("dl > div").filter({ has: page.getByText(label, { exact: true }) }).locator("dd")
     await expect(fact("最后心跳").locator("time")).toHaveAttribute("datetime", new Date(at).toISOString())
     await expect(fact("最后有效进展")).toHaveText("未知")
     expect(runtimeReads).toBe(1)
+    await expect(checkpointState).toHaveText("已保存检查点")
+    await expect(patrol.getByText("已排入 Supervisor 收件箱", { exact: true })).toBeVisible()
+    await expect(patrol.locator("time").first()).toHaveAttribute("datetime", new Date(at - 2000).toISOString())
+    await expect(patrol).not.toContainText("恢复成功")
+    await info.attach(`project-work-patrol-queued-${colorScheme}`, { body: await patrol.screenshot(), contentType: "image/png" })
     await info.attach(`project-work-runtime-heartbeat-only-${colorScheme}`, { body: await runtime.screenshot(), contentType: "image/png" })
     await dialog.getByRole("button", { name: "刷新", exact: true }).click()
     await expect(fact("最后有效进展").locator("time")).toHaveAttribute("datetime", new Date(at - 500).toISOString())
@@ -151,12 +179,18 @@ for (const colorScheme of ["light", "dark"] as const) {
     await expect(fact("等待原因")).toHaveText("等待依赖项")
     await expect(fact("巡检诊断宽限至").locator("time")).toHaveAttribute("datetime", new Date(at + 300_000).toISOString())
     expect(runtimeReads).toBe(2)
+    await expect(checkpointState).toHaveText("检查点已过期")
+    await expect(patrol).toContainText("以下字段显示历史记录")
+    await info.attach(`project-work-patrol-stale-${colorScheme}`, { body: await patrol.screenshot(), contentType: "image/png" })
     await info.attach(`project-work-runtime-progress-and-wait-${colorScheme}`, { body: await runtime.screenshot(), contentType: "image/png" })
     await dialog.getByRole("button", { name: "刷新", exact: true }).click()
     await expect(runtime.getByTestId("assignment-observation-status")).toHaveText("当前选择的运行时观测不可用。")
     await expect(fact("最后心跳")).toHaveText("未知")
     await expect(fact("最后有效进展")).toHaveText("未知")
     expect(runtimeReads).toBe(3)
+    await expect(checkpointState).toHaveText("检查点暂时忙碌")
+    await expect(patrol.locator("time")).toHaveCount(0)
+    await expect(patrol).not.toContainText("已排入 Supervisor 收件箱")
     questionSnapshot = true
     await dialog.getByRole("button", { name: "刷新", exact: true }).click()
     await expect(fact("等待原因")).toHaveText("等待用户输入")
@@ -165,6 +199,8 @@ for (const colorScheme of ["light", "dark"] as const) {
     await expect(fact("最后有效进展")).toHaveText("未知")
     await expect(dialog.getByTestId("assignment-owner-status")).toHaveText("当前无活跃认领引用")
     expect(runtimeReads).toBe(4)
+    await expect(checkpointState).toHaveText("尚无检查记录")
+    expect(statusReads).toBe(4)
     await info.attach(`project-work-runtime-user-wait-${colorScheme}`, { body: await runtime.screenshot(), contentType: "image/png" })
     await dialog.getByRole("button", { name: "关闭详情" }).click()
     expect(await dialog.evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1)
@@ -173,7 +209,7 @@ for (const colorScheme of ["light", "dark"] as const) {
     await expect(dialog).not.toBeVisible()
     expect(observation.pageErrors).toEqual([])
     expect(workReads().some((request) => request.url.endsWith("/tickets/inspect"))).toBe(true)
-    expect(ticketRequests.filter((request) => request.method === "POST").every((request) => /tickets\/(project-board|inspect|sprints\/list|patrol\/observation)$/.test(request.url))).toBe(true)
+    expect(ticketRequests.filter((request) => request.method === "POST").every((request) => /tickets\/(project-board|inspect|sprints\/list|patrol\/(observation|status))$/.test(request.url))).toBe(true)
     await info.attach("project-work-lazy-boundary-mock-evidence", { body: Buffer.from(JSON.stringify({
       source: artifact.sourceRevision, sourceDirty: artifact.sourceDirty,
       mode: "controlled HTTP/WebSocket and locally fulfilled production assets; no Bamboo server",
