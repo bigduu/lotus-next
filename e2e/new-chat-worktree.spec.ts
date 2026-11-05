@@ -1,15 +1,17 @@
 import { expect, test, type Page } from "@playwright/test"
 import { installArtifactRuntime, standaloneScenario } from "./support/artifactRuntime.js"
 import { expectComposerText, revealComposerSettings } from "./support/composer.js"
-import type { ProjectManifest } from "../src/services/project/types.js"
+import type { PatchProjectRequest, ProjectManifest, ProjectSidebar } from "../src/services/project/types.js"
 
 // Built frontend + fixture API only. This verifies request ordering and UI
 // lifecycle, not real Git/filesystem behavior or model execution.
 const root = "/Volumes/External/worktrees"
 const target = `${root}/first-chat`
 const selection = { repository: "/repo/zenith", root, name: "first-chat", branch: "chat/first-chat" }
+const sectionInZenith = { id: "section:00000000-0000-4000-8000-0000000000a1", name: "Section chat" }
 
-async function install(page: Page, mode: "success" | "bind-conflict" | "uncertain" | "delayed" = "success") {
+async function install(page: Page, mode: "success" | "bind-conflict" | "uncertain" | "delayed" | "chat-delayed" = "success",
+  options: { section?: { id: string; name: string } } = {}) {
   await page.addInitScript(() => {
     localStorage.setItem("bodhi_onboarded_v1", "1")
     localStorage.setItem("lotus_ui_locale_v1", "zh-CN")
@@ -20,19 +22,34 @@ async function install(page: Page, mode: "success" | "bind-conflict" | "uncertai
     schema_version: 3, project_path: "/repo/zenith", project_path_status: "configured",
     workspace_bindings: [], workspace_count: 1,
     created_at: "2026-10-15T00:00:00Z", updated_at: "2026-10-15T00:00:00Z",
+    // Only the section-scoped regression needs durable sidebar state; every
+    // other case keeps the original sectionless manifest.
+    ...(options.section ? { sidebar: { sections: [options.section], session_sections: {}, hidden_legacy: false } } : {}),
   }
   const creates: unknown[] = []
   const bindings: Array<{ body: unknown; revision: string | undefined }> = []
   const chats: Array<Record<string, unknown>> = []
   const executes: unknown[] = []
   const order: string[] = []
+  const sidebarWrites: ProjectSidebar[] = []
   let releaseCreate = () => {}
   const createGate = new Promise<void>((resolve) => { releaseCreate = resolve })
+  let releaseChat = () => {}
+  const chatGate = new Promise<void>((resolve) => { releaseChat = resolve })
   await page.route("**/api/v1/**", async (route) => {
     const request = route.request()
     const path = new URL(request.url()).pathname
     if (path === "/api/v1/projects") return route.fulfill({ json: { projects: [project] } })
     if (path === "/api/v1/projects/project-a") {
+      if (request.method() === "PATCH") {
+        // Durable section assignment writes land here, not in composer state.
+        const body = request.postDataJSON() as PatchProjectRequest
+        if (body.sidebar) {
+          sidebarWrites.push(structuredClone(body.sidebar))
+          project = { ...project, sidebar: structuredClone(body.sidebar), revision: project.revision + 1 }
+        }
+        return route.fulfill({ json: project, headers: { ETag: `"${project.revision}"` } })
+      }
       // Match the real server's omission of an empty binding list.
       return route.fulfill({ json: { ...project, workspace_bindings: project.workspace_bindings.length ? project.workspace_bindings : undefined } })
     }
@@ -60,6 +77,7 @@ async function install(page: Page, mode: "success" | "bind-conflict" | "uncertai
     if (path === "/api/v1/chat") {
       chats.push(request.postDataJSON())
       order.push("chat")
+      if (mode === "chat-delayed") await chatGate
       return route.fulfill({ json: { session_id: "all-surface-session", status: "success" } })
     }
     if (path === "/api/v1/execute/all-surface-session") {
@@ -71,7 +89,7 @@ async function install(page: Page, mode: "success" | "bind-conflict" | "uncertai
   })
   await page.goto(standaloneScenario.entryUrl)
   await expect(page.getByRole("textbox", { name: "消息", exact: true })).toBeVisible()
-  return { observation, creates, bindings, chats, executes, order, releaseCreate }
+  return { observation, creates, bindings, chats, executes, order, sidebarWrites, releaseCreate, releaseChat }
 }
 
 async function revealSidebar(page: Page) {
@@ -105,6 +123,22 @@ async function configure(page: Page) {
   expect(bounds).not.toBeNull()
   expect(bounds!.x).toBeGreaterThanOrEqual(0)
   expect(bounds!.x + bounds!.width).toBeLessThanOrEqual((page.viewportSize()?.width ?? Infinity) + 1)
+}
+
+/** Same prepared worktree, but reached from a section header's own 新建 action. */
+async function configureInSection(page: Page) {
+  await revealSidebar(page)
+  const groupToggle = page.getByRole("button", { name: "切换为项目视图", exact: true })
+  if (await groupToggle.isVisible()) await groupToggle.click()
+  await page.getByRole("button", { name: `在 ${sectionInZenith.name} 中新建会话`, exact: true }).click()
+  await expect(page.getByRole("heading", { name: "开始新任务", exact: true })).toBeVisible()
+  await revealComposerSettings(page)
+  await page.getByRole("button", { name: "会话工作区", exact: true }).click()
+  await page.getByRole("button", { name: "新建 worktree", exact: true }).click()
+  await page.getByLabel("目标根目录", { exact: true }).fill(root)
+  await page.getByLabel("文件夹名称", { exact: true }).fill(selection.name)
+  await page.getByLabel("新分支", { exact: true }).fill(selection.branch)
+  await expect(page.locator("[data-worktree-target]")).toHaveText(target)
 }
 
 async function closeSettings(page: Page) {
@@ -222,5 +256,28 @@ test("leaving while create is in flight stops stale binding and sending", async 
   expect(state.bindings).toEqual([])
   expect(state.chats).toEqual([])
   expect(state.executes).toEqual([])
+  expect(state.observation.pageErrors).toEqual([])
+})
+
+test("a section-scoped new chat keeps its durable assignment when leaving during a pending acknowledgement", async ({ page }) => {
+  const state = await install(page, "chat-delayed", { section: sectionInZenith })
+  await configureInSection(page)
+  await closeSettings(page)
+  await submit(page, "Assign this section chat before leaving")
+  // The acknowledgement is held open, so the session exists but the composer
+  // has not been told yet.
+  await expect.poll(() => state.chats.length).toBe(1)
+  expect(state.chats[0]).toMatchObject({ project_id: "project-a", workspace_path: target })
+  await revealSidebar(page)
+  await page.getByRole("button", { name: /All-surface acceptance/ }).first().click()
+  state.releaseChat()
+  // The assignment is durable project metadata for a session that already
+  // exists, so it must outlive the abandoned composer's navigation.
+  await expect.poll(() => state.sidebarWrites.length).toBe(1)
+  expect(state.sidebarWrites.at(-1)!.session_sections["all-surface-session"]).toBe(sectionInZenith.id)
+  expect(state.sidebarWrites.at(-1)!.sections).toEqual([sectionInZenith])
+  // ...while the stale-navigation guard still suppresses composer-level writes:
+  // the abandoned draft is neither cleared into nor moved onto this session.
+  await expectComposerText(page.getByRole("textbox", { name: "消息", exact: true }), "")
   expect(state.observation.pageErrors).toEqual([])
 })
