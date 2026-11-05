@@ -531,6 +531,30 @@ describe("ChatPane section-scoped new session", () => {
     expect(send).toHaveBeenCalledOnce()
     expect(onNewSessionInProjectSection).not.toHaveBeenCalled()
   })
+
+  it("persists the assignment when navigating away during a pending prepared send", async () => {
+    const acknowledgement = deferred<Awaited<ReturnType<Send>>>()
+    const send = vi.fn<Send>().mockReturnValueOnce(acknowledgement.promise)
+    const onNewSessionInProjectSection = vi.fn()
+    const pane = await mountWorktreeChat(send)
+    let navigationVersion = 0
+    await pane.render({ onNewSessionInProjectSection, getNavigationVersion: () => navigationVersion })
+    act(() => { worktreeControl().onChange(worktreeSelection); write("", "from section header") })
+    act(() => composer().onSubmit())
+    await flush()
+    expect(send).toHaveBeenCalledOnce()
+    // A worktree countdown is now pending; the user navigates to another section.
+    navigationVersion += 1
+    await act(async () => {
+      acknowledgement.resolve({ kind: "accepted", operationId: 1, sessionId: "created-session", navigated: false })
+    })
+    await flush()
+    // The session already exists, so its durable section assignment is not an
+    // abandoned-composer update and must outlive the navigation.
+    expect(onNewSessionInProjectSection).toHaveBeenCalledExactlyOnceWith("created-session")
+    // The stale-navigation guard still suppresses the abandoned composer's writes.
+    expect(runtime.state.inputStates[""]?.content).toBe("from section header")
+  })
 })
 
 describe("ChatPane new-chat worktree lifecycle fences", () => {
